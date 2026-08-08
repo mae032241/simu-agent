@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tcad-artifact"
+version = "0.1.0"
+description = "Execution-only detached TCAD dispatcher"
+requires-python = ">=3.10"
+dependencies = [
+  "scidiscovery>=0.1.0",
+]
+
+[project.scripts]
+tcad-control-daemon = "tcad_artifact.execution_daemon:main"
+tcad-control-mcp = "tcad_artifact.execution_mcp:main"
+scidiscovery-tcad-transport = "tcad_artifact.ssh_transport:main"
+
+[project.entry-points."scidiscovery.agent_role_packs"]
+tcad_artifact = "tcad_artifact.role_pack:role_directory"
+
+[project.entry-points."scidiscovery.transform_adapters"]
+tcad_artifact = "tcad_artifact.transform_adapter:TCADProjectTransformAdapter"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["tcad_artifact*"]
+
+[tool.setuptools.package-data]
+"tcad_artifact" = ["roles/*.md"]
+
+[tool.setuptools.data-files]
+"share/tcad-artifact/systemd" = ["deploy/systemd/*.in"]
+"share/tcad-artifact/config" = ["config/*.json"]

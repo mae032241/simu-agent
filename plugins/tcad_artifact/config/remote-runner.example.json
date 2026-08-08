@@ -1,0 +1,20 @@
+{
+  "exchange_root": "/home/tcad/scidiscovery-tcad/exchange",
+  "max_concurrent_runs": 1,
+  "max_transfer_bytes": 536870912,
+  "result_root": "/home/tcad/scidiscovery-tcad/state/runs",
+  "state_root": "/home/tcad/scidiscovery-tcad/state",
+  "tools": [
+    {
+      "arguments": [],
+      "environment": {
+        "LM_LICENSE_FILE": "/etc/synopsys/license.dat",
+        "PATH": "/opt/synopsys/tcad/current/bin:/usr/bin:/bin",
+        "SNPSLMD_LICENSE_FILE": "/etc/synopsys/license.dat",
+        "STROOT": "/opt/synopsys/tcad/current"
+      },
+      "executable": "/opt/synopsys/tcad/current/bin/sprocess",
+      "profile_id": "sentaurus-sprocess-r2020.09"
+    }
+  ]
+}

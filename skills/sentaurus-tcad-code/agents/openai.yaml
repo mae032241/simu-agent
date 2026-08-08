@@ -1,0 +1,4 @@
+interface:
+  display_name: "Sentaurus TCAD Code"
+  short_description: "Author and review SProcess and SDevice code safely"
+  default_prompt: "Use $sentaurus-tcad-code to author or review a directly executable SProcess or SDevice project."

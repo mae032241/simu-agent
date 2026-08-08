@@ -1,0 +1,32 @@
+# SciDiscovery control service
+[Unit]
+Description=SciDiscovery control service
+After=local-fs.target
+
+[Service]
+Type=simple
+User=@CONTROL_USER@
+Group=@CONTROL_GROUP@
+SupplementaryGroups=@PYTHON_ACCESS_GROUP@
+UMask=0007
+WorkingDirectory=@PROJECT_ROOT@
+Environment=PYTHONPATH=@PYTHONPATH@
+Environment=PYTHONNOUSERSITE=1
+RuntimeDirectory=scidiscovery
+RuntimeDirectoryMode=0770
+ExecStart=@PYTHON@ -m scidiscovery.artifact_agent.interfaces.mcp_daemon --project-root @PROJECT_ROOT@ --state-root @STATE_ROOT@ --socket @CONTROL_SOCKET@ --task-secret-file @TASK_SECRET@ --approval-secret-file @APPROVAL_SECRET@ --approval-base-url http://127.0.0.1:@APPROVAL_PORT@ @TCAD_ADAPTER_ARGS@
+Restart=on-failure
+RestartSec=2s
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=@STATE_ROOT@ @RUNTIME_ROOT@
+ProtectControlGroups=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_VSOCK
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target

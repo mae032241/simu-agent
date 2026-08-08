@@ -1,0 +1,30 @@
+# SciDiscovery local human approval service
+[Unit]
+Description=SciDiscovery loopback approval UI
+After=scidiscovery-control.service
+
+[Service]
+Type=simple
+User=@APPROVAL_USER@
+Group=@CONTROL_GROUP@
+SupplementaryGroups=@PYTHON_ACCESS_GROUP@
+UMask=0007
+WorkingDirectory=@PROJECT_ROOT@
+Environment=PYTHONPATH=@PYTHONPATH@
+Environment=PYTHONNOUSERSITE=1
+ExecStart=@PYTHON@ -m scidiscovery.artifact_agent.interfaces.cli --project-root @PROJECT_ROOT@ --state-root @STATE_ROOT@ --task-secret-file @TASK_SECRET@ --approval-secret-file @APPROVAL_SECRET@ --shared-group serve-approval-ui --host 127.0.0.1 --port @APPROVAL_PORT@ --identity-id @LOCAL_IDENTITY@ --display-name @LOCAL_DISPLAY_NAME@
+Restart=on-failure
+RestartSec=2s
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=@STATE_ROOT@
+ProtectControlGroups=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+RestrictAddressFamilies=AF_INET AF_INET6
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target
