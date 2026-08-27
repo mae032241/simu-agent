@@ -1,0 +1,729 @@
+"""Development-only direct-solver bridge for task-bound deck debugging."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import re
+import stat
+import threading
+from pathlib import Path
+
+from scidiscovery.artifact_agent.execution_bridge import ExecutionAdapter
+from scidiscovery.artifact_agent.schema.execution import LocalFileDescriptor
+from scidiscovery.artifact_agent.service.tcad_debug import (
+    CollectedTCADDebugFile,
+    CollectedTCADDebugRun,
+    PreparedTCADDebugRun,
+    TCADDebugSource,
+    TCADSourceDiagnostic,
+)
+
+from .execution_control import ResourceLimits, SolverCapabilitySnapshot, TCADJobSpec
+from .project_packager import (
+    DeckProjectDraft,
+    PackagerError,
+    ResolvedProjectInput,
+    package_deck_project,
+)
+
+
+# Author-side runs are manual-backed preflight/smoke checks plus one
+# control-derived initialization probe. Full study execution belongs to the
+# reviewed, approved production bridge.
+_PREFLIGHT_WALL_SECONDS = 60
+_SMOKE_WALL_SECONDS = 180
+_INITIALIZATION_WALL_SECONDS = 120
+_MAX_MEMORY_BYTES = 2 * 1024 * 1024 * 1024
+_PREFLIGHT_OUTPUT_BYTES = 2 * 1024 * 1024
+_SMOKE_OUTPUT_BYTES = 8 * 1024 * 1024
+_MAX_OUTPUT_FILE_BYTES = 8 * 1024 * 1024
+_MAX_OUTPUT_FILES = 63
+_MAX_PROCESSES = 8
+_MAX_LOG_BYTES = 512 * 1024
+_MAX_MANIFEST_BYTES = 1024 * 1024
+_MAX_RESPONSE_LOG_CHARS = 8192
+_MAX_RAW_OUTPUT_BYTES = _SMOKE_OUTPUT_BYTES - _MAX_RESPONSE_LOG_CHARS
+_MANUAL_BACKED_RELEASE = "R-2020.09"
+
+
+def _development_limits(mode: str) -> tuple[int, int, int]:
+    if mode == "preflight":
+        return _PREFLIGHT_WALL_SECONDS, _PREFLIGHT_OUTPUT_BYTES, 4
+    if mode == "smoke":
+        return _SMOKE_WALL_SECONDS, _SMOKE_OUTPUT_BYTES, _MAX_PROCESSES
+    if mode == "initialization":
+        return _INITIALIZATION_WALL_SECONDS, _SMOKE_OUTPUT_BYTES, _MAX_PROCESSES
+    raise ValueError("development debug mode is unsupported")
+
+
+def _development_arguments(
+    *, release: str, solver_kind: str, entrypoint: str, mode: str
+) -> tuple[str, ...]:
+    if not entrypoint.endswith(".cmd"):
+        raise ValueError("development debug requires a direct command file")
+    if (
+        release == _MANUAL_BACKED_RELEASE
+        and solver_kind == "sprocess"
+        and mode == "initialization"
+    ):
+        return (entrypoint,)
+    option = {
+        (_MANUAL_BACKED_RELEASE, "sprocess", "preflight"): "-s",
+        (_MANUAL_BACKED_RELEASE, "sprocess", "smoke"): "-f",
+        (_MANUAL_BACKED_RELEASE, "sdevice", "preflight"): "-P",
+        (_MANUAL_BACKED_RELEASE, "sdevice", "smoke"): "-i",
+    }.get((release, solver_kind, mode))
+    if option is None:
+        raise ValueError("development debug mode is unsupported for the solver")
+    return option, entrypoint
+
+
+def _manual_backed_release(snapshot: SolverCapabilitySnapshot) -> str:
+    release = snapshot.public_release_label
+    if re.search(r"(?<![A-Za-z0-9.])R-2020\.09(?![A-Za-z0-9.])", release):
+        return _MANUAL_BACKED_RELEASE
+    raise ValueError("development debug release has no bundled mode contract")
+
+
+def _development_mode(job: TCADJobSpec) -> str:
+    archive_paths = {item.relative_path for item in job.archive_entries}
+    if (
+        job.solver_kind == "sprocess"
+        and len(job.arguments) == 1
+        and job.arguments[0] in archive_paths
+    ):
+        return "initialization"
+    if len(job.arguments) != 2 or job.arguments[1] not in archive_paths:
+        raise ValueError("development debug arguments are outside the controlled modes")
+    option = job.arguments[0]
+    if job.solver_kind == "sprocess":
+        modes = {"-s": "preflight", "-f": "smoke"}
+    elif job.solver_kind == "sdevice":
+        modes = {"-P": "preflight", "-i": "smoke"}
+    else:
+        modes = {}
+    try:
+        return modes[option]
+    except KeyError as error:
+        raise ValueError(
+            "development debug arguments are outside the controlled modes"
+        ) from error
+
+
+class TCADDevelopmentDebugBridge:
+    """Prepare bounded, control-selected development jobs for direct solvers."""
+
+    def __init__(self, adapter: ExecutionAdapter) -> None:
+        self.adapter = adapter
+        self._submission_bindings: dict[
+            tuple[str, str], tuple[str, str, str]
+        ] = {}
+        self._binding_lock = threading.Lock()
+
+    def prepare(
+        self,
+        *,
+        project: bytes,
+        capability: bytes,
+        sources: tuple[TCADDebugSource, ...],
+        exchange_directory: Path,
+        mode: str,
+    ) -> PreparedTCADDebugRun:
+        draft = DeckProjectDraft.model_validate_json(project, strict=True)
+        snapshot = SolverCapabilitySnapshot.model_validate_json(
+            capability, strict=True
+        )
+        if draft.solver_kind not in {"sprocess", "sdevice"}:
+            raise ValueError("development debug requires a direct TCAD solver")
+        release = _manual_backed_release(snapshot)
+        mode_wall, mode_output, mode_processes = _development_limits(mode)
+        mode_arguments = _development_arguments(
+            release=release,
+            solver_kind=draft.solver_kind,
+            entrypoint=draft.entrypoint,
+            mode=mode,
+        )
+        if (
+            draft.tool_profile != snapshot.profile_id
+            or draft.solver_kind != snapshot.solver_kind
+            or draft.capability_sha256 != snapshot.capability_sha256
+        ):
+            raise ValueError("development debug capability differs from the project")
+        if draft.arguments:
+            raise ValueError(
+                "development debug does not admit worker-selected solver arguments"
+            )
+        try:
+            self._require_active_capability(snapshot)
+        except ValueError as error:
+            if str(error) == "development debug capability is not active":
+                raise
+            raise ValueError(
+                "development debug capability discovery failed"
+            ) from error
+        except Exception as error:
+            raise ValueError(
+                "development debug capability discovery failed"
+            ) from error
+        source_map = {item.source_name: item for item in sources}
+        if len(source_map) != len(sources):
+            raise ValueError("development debug task sources are not unique")
+        if mode == "initialization":
+            if draft.development_initialization_entrypoint is None:
+                raise ValueError(
+                    "initialization mode requires an author-declared development entrypoint"
+                )
+            draft = draft.model_copy(
+                update={
+                    "entrypoint": draft.development_initialization_entrypoint,
+                    "development_initialization_entrypoint": None,
+                    "parameter_bindings": (),
+                    "case_parameter_bindings": (),
+                    "runtime_assertions": (),
+                    "realization_manifest": (),
+                    "materialization_report": None,
+                    "preflight_attestation": None,
+                }
+            )
+            mode_arguments = _development_arguments(
+                release=release,
+                solver_kind=draft.solver_kind,
+                entrypoint=draft.entrypoint,
+                mode=mode,
+            )
+        resolved = []
+        payloads = {}
+        for slot in draft.input_slots:
+            try:
+                source = source_map[slot.semantic_name]
+            except KeyError as error:
+                raise ValueError(
+                    "development debug project slot has no exact task input"
+                ) from error
+            if source.media_type != slot.media_type:
+                raise ValueError(
+                    "development debug project slot media type differs"
+                )
+            resolved.append(
+                ResolvedProjectInput(
+                    semantic_name=slot.semantic_name,
+                    target_relative_path=slot.target_relative_path,
+                    artifact_ref=source.artifact_ref,
+                    media_type=source.media_type,
+                    size_bytes=len(source.content),
+                )
+            )
+            payloads[slot.semantic_name] = source.content
+        exchange = exchange_directory.absolute()
+        try:
+            exchange.mkdir(parents=True, exist_ok=True, mode=0o750)
+            if exchange.is_symlink() or not exchange.is_dir():
+                raise ValueError(
+                    "development debug exchange is not a real directory"
+                )
+        except ValueError:
+            raise
+        except Exception as error:
+            raise ValueError("development debug exchange setup failed") from error
+        try:
+            packaged = package_deck_project(
+                draft,
+                capability=snapshot,
+                resolved_inputs=tuple(resolved),
+                input_payloads=payloads,
+                output_root=exchange / "prepared",
+            )
+        except PackagerError as error:
+            raise ValueError("development debug project packaging failed") from error
+        except Exception as error:
+            reason = (
+                "development debug archive path is unsupported"
+                if str(error) == "name is too long"
+                else "development debug project packaging failed"
+            )
+            raise ValueError(reason) from error
+        try:
+            limits = ResourceLimits(
+                wall_time_seconds=min(
+                    draft.resource_limits.wall_time_seconds, mode_wall
+                ),
+                cpu_time_seconds=min(
+                    draft.resource_limits.cpu_time_seconds, mode_wall
+                ),
+                max_memory_bytes=min(
+                    draft.resource_limits.max_memory_bytes, _MAX_MEMORY_BYTES
+                ),
+                max_output_bytes=min(
+                    draft.resource_limits.max_output_bytes, mode_output
+                ),
+                max_processes=min(
+                    draft.resource_limits.max_processes, mode_processes
+                ),
+            )
+            job = packaged.job_spec.model_copy(
+                update={
+                    "execution_purpose": "development_debug",
+                    "arguments": mode_arguments,
+                    "expected_outputs": (),
+                    "limits": limits,
+                }
+            )
+            job_path = exchange / "development-debug-job.json"
+            raw = _canonical(job.model_dump(mode="python"))
+            if job_path.exists():
+                if job_path.is_symlink() or job_path.read_bytes() != raw:
+                    raise ValueError("development debug job changed within one run")
+            else:
+                _write_new(job_path, raw)
+            return PreparedTCADDebugRun(
+                submission=_descriptor(
+                    "development_debug_submission", job_path, "application/json"
+                ),
+                wall_time_seconds=limits.wall_time_seconds,
+            )
+        except Exception as error:
+            raise ValueError(
+                "development debug job materialization failed"
+            ) from error
+
+    def clamp_wall_time(
+        self, prepared: PreparedTCADDebugRun, *, wall_time_seconds: int
+    ) -> PreparedTCADDebugRun:
+        if wall_time_seconds < 1:
+            raise ValueError("development debug wall-time bound is exhausted")
+        raw = _read_descriptor(prepared.submission, max_bytes=1024 * 1024)
+        job = TCADJobSpec.model_validate_json(raw, strict=True)
+        if job.execution_purpose != "development_debug":
+            raise ValueError("development debug submission purpose changed")
+        bounded = min(
+            prepared.wall_time_seconds,
+            job.limits.wall_time_seconds,
+            wall_time_seconds,
+        )
+        limits = job.limits.model_copy(
+            update={
+                "wall_time_seconds": bounded,
+                "cpu_time_seconds": min(job.limits.cpu_time_seconds, bounded),
+            }
+        )
+        clamped = job.model_copy(update={"limits": limits})
+        source = Path(prepared.submission.local_path).absolute()
+        path = source.parent / f"development-debug-job-{bounded}.json"
+        encoded = _canonical(clamped.model_dump(mode="python"))
+        if path.exists():
+            if path.is_symlink() or path.read_bytes() != encoded:
+                raise ValueError("development debug clamped job changed")
+        else:
+            _write_new(path, encoded)
+        return PreparedTCADDebugRun(
+            submission=_descriptor(
+                "development_debug_submission", path, "application/json"
+            ),
+            wall_time_seconds=bounded,
+        )
+
+    def submit(self, submission: LocalFileDescriptor) -> tuple[str, str]:
+        key = (submission.local_path, submission.sha256)
+        with self._binding_lock:
+            binding = self._submission_bindings.get(key)
+        if binding is None:
+            raise ValueError("development debug transport submission is not bound")
+        profile_id, solver_kind, capability_sha256 = binding
+        snapshot = next(
+            (
+                value
+                for value in self._capabilities()
+                if value.profile_id == profile_id
+                and value.solver_kind == solver_kind
+                and value.capability_sha256 == capability_sha256
+            ),
+            None,
+        )
+        if snapshot is None:
+            raise ValueError("development debug capability is no longer active")
+        result = self.adapter.submit(submission)
+        with self._binding_lock:
+            self._submission_bindings.pop(key, None)
+        return result
+
+    def prepare_submission(
+        self, prepared: PreparedTCADDebugRun
+    ) -> LocalFileDescriptor:
+        raw = _read_descriptor(prepared.submission, max_bytes=1024 * 1024)
+        job = TCADJobSpec.model_validate_json(raw, strict=True)
+        if job.execution_purpose != "development_debug":
+            raise ValueError("development debug submission purpose changed")
+        if (
+            job.solver_kind not in {"sprocess", "sdevice"}
+            or job.expected_outputs
+            or _development_mode(job)
+            not in {"preflight", "smoke", "initialization"}
+        ):
+            raise ValueError("development debug submission boundary is invalid")
+        active_capability = self._require_job_capability(job)
+        _manual_backed_release(active_capability)
+        archive = LocalFileDescriptor.model_validate(
+            job.input_archive.model_dump(mode="python"), strict=True
+        )
+        preparer = getattr(self.adapter, "prepare_development_debug", None)
+        if preparer is None:
+            raise ValueError(
+                "configured TCAD adapter does not support development debug"
+            )
+        submission = preparer(
+            job_spec_file=prepared.submission,
+            archive=archive,
+            exchange_directory=Path(prepared.submission.local_path).parent,
+        )
+        key = (submission.local_path, submission.sha256)
+        with self._binding_lock:
+            self._submission_bindings[key] = (
+                job.tool_profile,
+                job.solver_kind,
+                job.capability_sha256,
+            )
+        return submission
+
+    def status(self, external_run_id: str) -> str:
+        return self.adapter.status(external_run_id)
+
+    def cancel(self, external_run_id: str) -> str:
+        return self.adapter.cancel(external_run_id)
+
+    def collect(self, external_run_id: str) -> CollectedTCADDebugRun:
+        descriptors = self.adapter.collect(external_run_id)
+        if len(descriptors) > _MAX_OUTPUT_FILES + 2:
+            raise ValueError("development debug output count exceeds its bound")
+        for descriptor in descriptors:
+            _validate_output_name(descriptor.name)
+        by_name = {item.name: item for item in descriptors}
+        if len(by_name) != len(descriptors):
+            raise ValueError("development debug outputs contain duplicate names")
+        try:
+            log_descriptor = by_name.pop("tcad_log")
+            manifest_descriptor = by_name.pop("tcad_manifest")
+        except KeyError as error:
+            raise ValueError("development debug control outputs are incomplete") from error
+        log_raw = _read_descriptor(log_descriptor, max_bytes=_MAX_LOG_BYTES)
+        manifest_raw = _read_descriptor(
+            manifest_descriptor, max_bytes=_MAX_MANIFEST_BYTES
+        )
+        try:
+            manifest = json.loads(manifest_raw)
+        except (UnicodeDecodeError, json.JSONDecodeError) as error:
+            raise ValueError("development debug manifest is invalid") from error
+        if not isinstance(manifest, dict):
+            raise ValueError("development debug manifest is invalid")
+        files = []
+        total = 0
+        for name, descriptor in sorted(by_name.items()):
+            content = _read_descriptor(
+                descriptor, max_bytes=_MAX_OUTPUT_FILE_BYTES
+            )
+            total += len(content)
+            if total > _MAX_RAW_OUTPUT_BYTES:
+                raise ValueError("development debug outputs exceed their total bound")
+            files.append(
+                CollectedTCADDebugFile(
+                    name=name,
+                    media_type=descriptor.media_type,
+                    content=content,
+                )
+            )
+        log_excerpt = _sanitize_log(log_raw)
+        files.append(
+            CollectedTCADDebugFile(
+                name="debug.log.txt",
+                media_type="text/plain; charset=utf-8",
+                content=log_excerpt.encode("utf-8"),
+            )
+        )
+        terminal = str(manifest.get("terminal_state", "failed"))
+        if terminal not in {"succeeded", "failed", "cancelled"}:
+            terminal = "failed"
+        try:
+            exit_code = int(manifest.get("exit_code", 99))
+        except (TypeError, ValueError):
+            exit_code = 99
+        error = str(manifest.get("error", ""))[:4096]
+        layer, summary = _earliest_diagnostic(
+            terminal=terminal,
+            exit_code=exit_code,
+            error=error,
+            log=log_excerpt,
+            output_count=len(by_name),
+        )
+        source_diagnostic = _source_diagnostic(
+            error=_sanitize_log(error.encode("utf-8")),
+            log=log_excerpt,
+        )
+        return CollectedTCADDebugRun(
+            terminal_state=terminal,
+            exit_code=exit_code,
+            diagnostic_layer=layer,
+            summary=summary,
+            log_excerpt=log_excerpt,
+            files=tuple(files),
+            source_diagnostic=source_diagnostic,
+        )
+
+    def _capabilities(self) -> tuple[SolverCapabilitySnapshot, ...]:
+        return tuple(
+            SolverCapabilitySnapshot.model_validate_json(item.content, strict=True)
+            for item in self.adapter.capabilities()
+            if item.schema_id == "tcad.solver-capability.v2"
+        )
+
+    def _require_active_capability(
+        self, expected: SolverCapabilitySnapshot
+    ) -> None:
+        if expected not in self._capabilities():
+            raise ValueError("development debug capability is not active")
+
+    def _require_job_capability(
+        self, job: TCADJobSpec
+    ) -> SolverCapabilitySnapshot:
+        active = next(
+            (
+                value
+                for value in self._capabilities()
+                if value.profile_id == job.tool_profile
+                and value.solver_kind == job.solver_kind
+                and value.capability_sha256 == job.capability_sha256
+            ),
+            None,
+        )
+        if active is None:
+            raise ValueError("development debug capability is not active")
+        return active
+
+
+def _earliest_diagnostic(
+    *, terminal: str, exit_code: int, error: str, log: str, output_count: int
+) -> tuple[str, str]:
+    combined = (error + "\n" + log).lower()
+    if terminal == "succeeded" and exit_code == 0:
+        return (
+            "complete",
+            "Direct-solver development check completed within its bounded contract.",
+        )
+    if exit_code == 124 or "wall_time_exceeded" in combined:
+        return "resource_limit", "Direct-solver debug reached a fixed resource limit."
+    layers = (
+        ("parser", ("syntax", "parse error", "parser", "unexpected token")),
+        (
+            "initialization",
+            ("initialization", "initial solution", "contact", "unknown region"),
+        ),
+        (
+            "numerical",
+            ("convergence", "diverg", "newton", "residual", "time step"),
+        ),
+    )
+    for layer, markers in layers:
+        if any(marker in combined for marker in markers):
+            return layer, f"Direct-solver debug stopped at the {layer} layer."
+    if exit_code == 0 and any(
+        marker in combined
+        for marker in ("required output missing", "output exceeds", "regular file")
+    ):
+        return (
+            "output_contract",
+            "Direct-solver debug completed but failed the declared output contract.",
+        )
+    if exit_code < 0:
+        return (
+            "runtime",
+            f"Direct-solver debug terminated by signal {-exit_code} before output validation.",
+        )
+    return "runtime", "Direct-solver debug failed at an unclassified runtime layer."
+
+
+def _source_diagnostic(*, error: str, log: str) -> TCADSourceDiagnostic | None:
+    """Extract one bounded, public-safe locator hint from a solver diagnostic."""
+
+    combined = "\n".join(value for value in (error, log) if value)
+    if not combined:
+        return None
+    entrypoint_match = re.search(
+        r"(?im)^Checking syntax of "
+        r"([A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*\.cmd)\s*:",
+        combined,
+    )
+    source_relative_path = (
+        entrypoint_match.group(1) if entrypoint_match is not None else None
+    )
+    file_line_matches = list(
+        re.finditer(r'(?i)\bfile\s+"[^"]+"\s+line\s+(\d+)', combined)
+    )
+    reported_line = (
+        int(file_line_matches[-1].group(1)) if file_line_matches else None
+    )
+    procedure_match = re.search(
+        r'(?i)procedure\s+"?([A-Za-z0-9_.:-]+)"?\s+line\s+(\d+)',
+        combined,
+    )
+    procedure = procedure_match.group(1) if procedure_match is not None else None
+    procedure_line = (
+        int(procedure_match.group(2)) if procedure_match is not None else None
+    )
+    command_match = re.search(
+        r'(?is)\bwhile executing\s*\n?\s*"([^"\x00]{1,1024})"',
+        combined,
+    )
+    command_excerpt = (
+        command_match.group(1).strip() if command_match is not None else None
+    )
+    error_markers = (
+        "can't read",
+        "can't use",
+        "expected ",
+        "invalid command",
+        "wrong # args",
+        "domain error",
+        "syntax error",
+        "parse error",
+    )
+    message = next(
+        (
+            line.strip()
+            for line in combined.splitlines()
+            if line.strip()
+            and any(marker in line.lower() for marker in error_markers)
+        ),
+        "",
+    )
+    if not message and error.strip():
+        message = error.strip().splitlines()[0]
+    if not message:
+        return None
+    message = message[:2048]
+    if command_excerpt is not None:
+        command_excerpt = command_excerpt[:1024]
+    return TCADSourceDiagnostic(
+        source_relative_path=source_relative_path,
+        reported_line=reported_line,
+        line_basis=(
+            "entrypoint_solver_reported"
+            if source_relative_path is not None and reported_line is not None
+            else "solver_reported"
+            if reported_line is not None
+            else "log_only"
+        ),
+        procedure=procedure,
+        procedure_line=procedure_line,
+        message=message,
+        command_excerpt=command_excerpt,
+    )
+
+
+def _sanitize_log(raw: bytes) -> str:
+    text = raw.decode("utf-8", errors="replace")
+    if len(text) > _MAX_RESPONSE_LOG_CHARS:
+        half = _MAX_RESPONSE_LOG_CHARS // 2
+        text = (
+            text[:half]
+            + "\n--- bounded diagnostic omission ---\n"
+            + text[-half:]
+        )
+    text = re.sub(r"(?<![A-Za-z0-9_.-])(?:/[A-Za-z0-9_.-]+){2,}", "<path>", text)
+    text = re.sub(
+        r"(?i)\b[A-Z]:\\(?:[^\s\\]+\\)*[^\s\\]*",
+        "<path>",
+        text,
+    )
+    text = re.sub(r"\b[0-9]{2,6}@[A-Za-z0-9_.-]+\b", "<license-endpoint>", text)
+    text = re.sub(
+        r"(?im)\b(?:SNPSLMD_LICENSE_FILE|LM_LICENSE_FILE|PATH|HOME)\s*=\s*\S+",
+        "<redacted-environment>",
+        text,
+    )
+    text = re.sub(
+        r"(?im)^.*\b(?:password|credential|private[_ -]?key|access[_ -]?token)\b.*$",
+        "<redacted-private-line>",
+        text,
+    )
+    return text
+
+
+def _read_descriptor(
+    descriptor: LocalFileDescriptor, *, max_bytes: int
+) -> bytes:
+    path = Path(descriptor.local_path).expanduser().absolute()
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        handle = os.open(path, flags)
+    except OSError as error:
+        raise ValueError("development debug output is unavailable") from error
+    try:
+        metadata = os.fstat(handle)
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_size > max_bytes:
+            raise ValueError("development debug output exceeds its bound")
+        with os.fdopen(handle, "rb", closefd=False) as stream:
+            raw = stream.read(max_bytes + 1)
+    finally:
+        os.close(handle)
+    if (
+        len(raw) != descriptor.size_bytes
+        or len(raw) > max_bytes
+        or hashlib.sha256(raw).hexdigest() != descriptor.sha256
+    ):
+        raise ValueError("development debug output differs from its descriptor")
+    return raw
+
+
+def _validate_output_name(value: str) -> None:
+    parts = Path(value).parts
+    if (
+        len(value) > 512
+        or Path(value).is_absolute()
+        or not parts
+        or len(parts) > 8
+        or "\\" in value
+        or any(
+            re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", part) is None
+            for part in parts
+        )
+    ):
+        raise ValueError("development debug output name is unsafe")
+
+
+def _descriptor(name: str, path: Path, media_type: str) -> LocalFileDescriptor:
+    raw = path.read_bytes()
+    return LocalFileDescriptor(
+        name=name,
+        local_path=str(path.absolute()),
+        sha256=hashlib.sha256(raw).hexdigest(),
+        size_bytes=len(raw),
+        media_type=media_type,
+    )
+
+
+def _write_new(path: Path, raw: bytes) -> None:
+    descriptor = os.open(
+        path,
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
+        0o440,
+    )
+    try:
+        with os.fdopen(descriptor, "wb", closefd=False) as stream:
+            stream.write(raw)
+            stream.flush()
+            os.fsync(stream.fileno())
+    finally:
+        os.close(descriptor)
+
+
+def _canonical(value: object) -> bytes:
+    return json.dumps(
+        value,
+        allow_nan=False,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+
+
+__all__ = ["TCADDevelopmentDebugBridge"]

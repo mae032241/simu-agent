@@ -1,0 +1,51 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
+build/
+dist/
+
+# Generated AI-platform configuration
+.codex/
+/AGENTS.md
+.claude/
+.mcp.json
+CLAUDE.md
+
+# Runtime state and local configuration
+.scidiscovery/
+.scidiscovery-state/
+agent/runtime/
+config/local/
+*.sqlite
+*.sqlite3
+*.db
+*.sock
+*.pid
+
+# Scientific and simulator outputs are separate from the framework source
+/workspace/
+logs/
+results/
+sentaurus/
+research/
+portable_delivery/
+git_release/
+
+# Secrets and machine credentials
+.env
+.env.*
+*.lic
+*.pem
+*.key
+id_ed25519
+id_rsa
+
+# Editors and operating systems
+.DS_Store
+Thumbs.db
+*.swp
+*~

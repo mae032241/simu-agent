@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "scidiscovery-ingaas-fig4"
+version = "0.1.0"
+description = "Frozen deterministic Fig.4 scoring transforms"
+requires-python = ">=3.10"
+dependencies = ["scidiscovery>=0.1.0", "tcad-artifact>=0.1.0"]
+
+[project.entry-points."scidiscovery.transform_adapters"]
+ingaas_fig4 = "ingaas_fig4.transform_adapter:InGaAsFig4TransformAdapter"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["ingaas_fig4*"]

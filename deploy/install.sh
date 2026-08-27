@@ -1,0 +1,1008 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+readonly SOURCE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+readonly WORKSPACE="${SCID_WORKSPACE:-${SOURCE_ROOT}/workspace/default}"
+readonly PYTHON="${SCID_PYTHON:-$(command -v python3 || true)}"
+readonly SERVICE_USER="${SCID_SERVICE_USER:-${SUDO_USER:-$(id -un)}}"
+readonly SERVICE_GROUP="${SCID_SERVICE_GROUP:-$(id -gn "$SERVICE_USER")}"
+readonly PLATFORM="${SCID_PLATFORM:-codex}"
+readonly PLUGIN_SPECIFICATION="${SCID_PLUGINS:-tcad_artifact,curve_score}"
+readonly INSTALL_ROOT="${SCID_INSTALL_ROOT:-/opt/scidiscovery}"
+readonly SITE_ROOT="${INSTALL_ROOT}/site"
+readonly SCID_STATE="${SCID_STATE_ROOT:-/var/lib/scidiscovery}"
+readonly TCAD_STATE="${TCAD_STATE_ROOT:-/var/lib/scidiscovery-tcad}"
+readonly CONFIG_ROOT="${SCID_CONFIG_ROOT:-/etc/scidiscovery}"
+readonly BACKUP_ROOT="${SCID_BACKUP_ROOT:-/var/backups/scidiscovery}"
+readonly CONTROL_SOCKET="/run/scidiscovery/control.sock"
+readonly WORKER_SOCKET="/run/scidiscovery-worker/worker.sock"
+readonly TCAD_SOCKET="/run/scidiscovery-tcad/control.sock"
+readonly TCAD_COMMAND_CONFIG="${SCID_TCAD_COMMAND_CONFIG:-}"
+readonly APPROVAL_PORT="${SCID_APPROVAL_PORT:-8765}"
+readonly WEB_FETCH_ALLOW_FAKE_IP="${SCID_WEB_FETCH_ALLOW_FAKE_IP:-0}"
+readonly -a PLATFORM_SKILLS=(
+    sentaurus-tcad-code
+    scientific-paper-evidence
+)
+PACKAGE_STAGE=""
+TRANSACTION_ROOT=""
+ROLLBACK_ARMED=0
+declare -a SELECTED_PLUGINS=()
+declare -a SELECTED_PLUGIN_DISTRIBUTIONS=()
+
+die() {
+    printf 'ERROR: %s\n' "$*" >&2
+    if [[ "$ROLLBACK_ARMED" -eq 1 ]]; then
+        rollback_install 1
+    fi
+    exit 1
+}
+
+validate_systemd_value() {
+    local name="$1" value="$2"
+    [[ ! "$value" =~ [[:cntrl:]] && "$value" != *'"'* && \
+       "$value" != *'%'* && "$value" != *'$'* && "$value" != *'@'* && \
+       "$value" != *'\\'* ]] || \
+        die "${name} contains a character unsafe for systemd templates"
+}
+
+require_sources() {
+    local path plugin_ids plugin_distributions
+    for path in \
+        pyproject.toml \
+        deploy/plugin_selection.py \
+        skills/sentaurus-tcad-code/SKILL.md \
+        skills/sentaurus-tcad-code/references/control-materialization.md \
+        skills/sentaurus-tcad-code/references/diagnostics.md \
+        skills/sentaurus-tcad-code/references/execution-contract.md \
+        skills/sentaurus-tcad-code/references/review.md \
+        skills/sentaurus-tcad-code/references/sdevice.md \
+        skills/sentaurus-tcad-code/references/sprocess.md \
+        skills/sentaurus-tcad-code/references/sprocess-r2020.09-recipes.md \
+        skills/sentaurus-tcad-code/references/manuals/catalog.json \
+        skills/sentaurus-tcad-code/references/manuals/topics.json \
+        skills/sentaurus-tcad-code/references/manuals/R-2020.09/sprocess_ug.pdf \
+        skills/sentaurus-tcad-code/references/manuals/R-2020.09/sdevice_ug.pdf \
+        skills/sentaurus-tcad-code/references/manuals/R-2020.09/sentaurus_relnote.pdf \
+        skills/sentaurus-tcad-code/scripts/manual_search.py \
+        skills/sentaurus-tcad-code/scripts/manual_extract.py \
+        skills/sentaurus-tcad-code/scripts/validate_deck_project.py \
+        skills/scientific-paper-evidence/SKILL.md \
+        skills/scientific-paper-evidence/agents/openai.yaml \
+        skills/scientific-paper-evidence/references/digitization-spec.md \
+        skills/scientific-paper-evidence/scripts/digitize_plot.py \
+        skills/scientific-paper-evidence/scripts/render_curve_support.py \
+        skills/scientific-paper-evidence/scripts/validate_evidence_bundle.py \
+        plugins/tcad_artifact/pyproject.toml \
+        deploy/systemd/scidiscovery-control.service.in \
+        deploy/systemd/scidiscovery-worker.service.in \
+        deploy/systemd/scidiscovery-approval-ui.service.in \
+        plugins/tcad_artifact/deploy/systemd/tcad-control.service.in
+    do
+        [[ -f "${SOURCE_ROOT}/${path}" ]] || die "missing source: ${path}"
+    done
+    [[ "$WORKSPACE" = /* && -d "$WORKSPACE" && ! -L "$WORKSPACE" ]] || \
+        die "SCID_WORKSPACE must name an existing absolute project directory"
+    [[ "$WORKSPACE" != "$SOURCE_ROOT" ]] || \
+        die "SCID_WORKSPACE must be separate from the source repository"
+    for path in \
+        "$WORKSPACE" "$PYTHON" "$INSTALL_ROOT" "$SCID_STATE" "$TCAD_STATE" \
+        "$CONFIG_ROOT" "$BACKUP_ROOT"
+    do
+        [[ "$path" = /* ]] || die "deployment paths must be absolute: ${path}"
+        validate_systemd_value "deployment path" "$path"
+    done
+    [[ "$SERVICE_USER" =~ ^[A-Za-z_][A-Za-z0-9_-]*$ ]] || \
+        die "SCID_SERVICE_USER is invalid"
+    [[ "$SERVICE_GROUP" =~ ^[A-Za-z_][A-Za-z0-9_-]*$ ]] || \
+        die "SCID_SERVICE_GROUP is invalid"
+    [[ "$APPROVAL_PORT" =~ ^[0-9]+$ && "$APPROVAL_PORT" -ge 1 && "$APPROVAL_PORT" -le 65535 ]] || \
+        die "SCID_APPROVAL_PORT must be in 1..65535"
+    [[ "$WEB_FETCH_ALLOW_FAKE_IP" =~ ^[01]$ ]] || \
+        die "SCID_WEB_FETCH_ALLOW_FAKE_IP must be 0 or 1"
+    [[ -n "$PYTHON" && -x "$PYTHON" ]] || die "base Python is unavailable: ${PYTHON}"
+    [[ "$PLATFORM" == "codex" ]] || \
+        die "SCID_PLATFORM must be codex"
+    plugin_ids="$(
+        "$PYTHON" "$SOURCE_ROOT/deploy/plugin_selection.py" \
+            --source-root "$SOURCE_ROOT" --plugins "$PLUGIN_SPECIFICATION" --field id
+    )" || die "SCID_PLUGINS validation failed"
+    plugin_distributions="$(
+        "$PYTHON" "$SOURCE_ROOT/deploy/plugin_selection.py" \
+            --source-root "$SOURCE_ROOT" --plugins "$PLUGIN_SPECIFICATION" \
+            --field distribution
+    )" || die "SCID_PLUGINS distribution resolution failed"
+    mapfile -t SELECTED_PLUGINS <<<"$plugin_ids"
+    mapfile -t SELECTED_PLUGIN_DISTRIBUTIONS <<<"$plugin_distributions"
+    [[ "${#SELECTED_PLUGINS[@]}" -gt 0 ]] || die "SCID_PLUGINS selected no plugins"
+    [[ " ${SELECTED_PLUGINS[*]} " == *" tcad_artifact "* ]] || \
+        die "this TCAD service deployment requires the tcad_artifact plugin"
+    printf 'Selected plugins: %s\n' "$(IFS=,; printf '%s' "${SELECTED_PLUGINS[*]}")"
+    command -v pdftotext >/dev/null || die "pdftotext is required for task PDF inputs"
+    command -v pdfimages >/dev/null || die "pdfimages is required for paper figure extraction"
+    command -v pdftoppm >/dev/null || die "pdftoppm is required for paper figure inspection"
+    command -v bwrap >/dev/null || die "bubblewrap is required for isolated worker analysis"
+    command -v systemd-analyze >/dev/null || die "systemd-analyze is required to validate service units"
+    if [[ -n "$TCAD_COMMAND_CONFIG" ]]; then
+        [[ "$TCAD_COMMAND_CONFIG" = /* && -f "$TCAD_COMMAND_CONFIG" && ! -L "$TCAD_COMMAND_CONFIG" ]] || \
+            die "SCID_TCAD_COMMAND_CONFIG must name an absolute regular file"
+        validate_systemd_value "SCID_TCAD_COMMAND_CONFIG" "$TCAD_COMMAND_CONFIG"
+    fi
+}
+
+validate_source() {
+    local plugin pythonpath="${SOURCE_ROOT}/src"
+    for plugin in "${SELECTED_PLUGINS[@]}"; do
+        pythonpath+=":${SOURCE_ROOT}/plugins/${plugin}"
+    done
+    (
+        cd "$WORKSPACE"
+        if [[ -f research/current.yaml ]]; then
+            PYTHONNOUSERSITE=1 PYTHONPATH="$pythonpath" \
+                "$PYTHON" -m scidiscovery.research_state validate \
+                --workspace "$WORKSPACE"
+        fi
+        PYTHONNOUSERSITE=1 PYTHONPATH="$pythonpath" "$PYTHON" - <<'PY'
+import scidiscovery.artifact_agent
+import tcad_artifact
+print('source imports: pass')
+PY
+    )
+}
+
+validate_base_python() {
+    "$PYTHON" -m pip --version
+    "$PYTHON" - <<'PY'
+from importlib.metadata import PackageNotFoundError, version
+from packaging.version import Version
+import sys
+
+
+def parsed_version(distribution: str) -> Version:
+    try:
+        raw = version(distribution)
+    except PackageNotFoundError as exc:
+        raise SystemExit(
+            f"missing base Python dependency: {distribution}; "
+            "install it with Conda or the system Python package manager"
+        ) from exc
+    print(f"base dependency: {distribution}={raw}")
+    return Version(raw)
+
+
+if not Version("2") <= parsed_version("pydantic") < Version("3"):
+    raise SystemExit("base Python requires pydantic>=2,<3")
+if not Version("6") <= parsed_version("PyYAML") < Version("7"):
+    raise SystemExit("base Python requires PyYAML>=6,<7")
+if not Version("10") <= parsed_version("Pillow") < Version("13"):
+    raise SystemExit("base Python requires Pillow>=10,<13")
+if parsed_version("setuptools") < Version("68"):
+    raise SystemExit("base Python requires setuptools>=68")
+if sys.version_info < (3, 11):
+    parsed_version("tomli")
+print("base Python dependency check: pass")
+PY
+}
+
+require_root() {
+    [[ "$(id -u)" -eq 0 ]] || die "install and uninstall require sudo"
+    command -v systemctl >/dev/null || die "systemctl is unavailable"
+}
+
+render_unit() {
+    local template="$1" output="$2"
+    shift 2
+    "$PYTHON" - "$template" "$output" "$@" <<'PY'
+from pathlib import Path
+import os
+import re
+import sys
+
+text = Path(sys.argv[1]).read_text(encoding='utf-8')
+for assignment in sys.argv[3:]:
+    key, separator, value = assignment.partition('=')
+    if not separator:
+        raise SystemExit(f'invalid template assignment: {assignment}')
+    text = text.replace(f'@{key}@', value)
+remaining = sorted(set(re.findall(r'@[A-Z0-9_]+@', text)))
+if remaining:
+    raise SystemExit('unresolved placeholders: ' + ', '.join(remaining))
+target = Path(sys.argv[2])
+target.parent.mkdir(parents=True, exist_ok=True)
+temporary = target.with_name('.' + target.name + '.tmp')
+temporary.write_text(text, encoding='utf-8')
+os.replace(temporary, target)
+PY
+}
+
+render_units() {
+    local output="$1" adapter_args
+    if [[ -n "$TCAD_COMMAND_CONFIG" ]]; then
+        adapter_args="--tcad-command-config \"${TCAD_COMMAND_CONFIG}\""
+    else
+        adapter_args="--tcad-socket \"${TCAD_SOCKET}\""
+    fi
+    local common=(
+        "PROJECT_ROOT=${WORKSPACE}"
+        "STATE_ROOT=${SCID_STATE}"
+        "CONTROL_GROUP=${SERVICE_GROUP}"
+        "PYTHON_ACCESS_GROUP=${SERVICE_GROUP}"
+        "PYTHONPATH=${SITE_ROOT}"
+        "PYTHON=${PYTHON}"
+        "RUNTIME_IDENTITY=${SITE_ROOT}/runtime-identity.json"
+        "TASK_SECRET=${CONFIG_ROOT}/task-token.key"
+        "APPROVAL_SECRET=${CONFIG_ROOT}/approval-receipt.key"
+    )
+    render_unit \
+        "${SOURCE_ROOT}/deploy/systemd/scidiscovery-control.service.in" \
+        "${output}/scidiscovery-control.service" \
+        "${common[@]}" \
+        "CONTROL_USER=${SERVICE_USER}" \
+        "CONTROL_SOCKET=${CONTROL_SOCKET}" \
+        "TCAD_ADAPTER_ARGS=${adapter_args}" \
+        "APPROVAL_PORT=${APPROVAL_PORT}" \
+        "RUNTIME_ROOT=/run/scidiscovery"
+    render_unit \
+        "${SOURCE_ROOT}/deploy/systemd/scidiscovery-worker.service.in" \
+        "${output}/scidiscovery-worker.service" \
+        "${common[@]}" \
+        "CONTROL_USER=${SERVICE_USER}" \
+        "WORKER_SOCKET=${WORKER_SOCKET}" \
+        "WEB_FETCH_ALLOW_FAKE_IP=${WEB_FETCH_ALLOW_FAKE_IP}" \
+        "TCAD_ADAPTER_ARGS=${adapter_args}" \
+        "RUNTIME_ROOT=/run/scidiscovery-worker"
+    render_unit \
+        "${SOURCE_ROOT}/deploy/systemd/scidiscovery-approval-ui.service.in" \
+        "${output}/scidiscovery-approval-ui.service" \
+        "${common[@]}" \
+        "APPROVAL_USER=${SERVICE_USER}" \
+        "APPROVAL_PORT=${APPROVAL_PORT}" \
+        "LOCAL_IDENTITY=local_user" \
+        "LOCAL_DISPLAY_NAME=Local_user"
+    render_unit \
+        "${SOURCE_ROOT}/plugins/tcad_artifact/deploy/systemd/tcad-control.service.in" \
+        "${output}/tcad-control.service" \
+        "PROJECT_ROOT=${WORKSPACE}" \
+        "PYTHONPATH=${SITE_ROOT}" \
+        "EXECUTION_USER=${SERVICE_USER}" \
+        "CONTROL_GROUP=${SERVICE_GROUP}" \
+        "EXECUTION_PYTHON=${PYTHON}" \
+        "RUNTIME_IDENTITY=${SITE_ROOT}/runtime-identity.json" \
+        "EXECUTION_STATE_ROOT=${TCAD_STATE}" \
+        "EXECUTION_POLICY=${CONFIG_ROOT}/tcad-policy.json" \
+        "EXECUTION_SOCKET=${TCAD_SOCKET}" \
+        "EXECUTION_RUNTIME_ROOT=/run/scidiscovery-tcad"
+}
+
+preview() {
+    local stage
+    stage="$(mktemp -d)"
+    render_units "$stage"
+    systemd-analyze verify "$stage"/*.service
+    (
+        cd "$SOURCE_ROOT"
+        PYTHONPATH="${SOURCE_ROOT}/src:${SOURCE_ROOT}/plugins/tcad_artifact" "$PYTHON" - <<PY
+from pathlib import Path
+from scidiscovery.platforms import initialize_platform
+
+common = {
+    'python_executable': Path('$PYTHON'),
+    'control_socket': Path('$CONTROL_SOCKET'),
+    'worker_socket': Path('$WORKER_SOCKET'),
+    'worker_workspace_root': Path('$SCID_STATE') / 'workspaces',
+    'dry_run': True,
+}
+initialize_platform(
+    'codex', Path('$SOURCE_ROOT'),
+    codex_config_root=Path('$stage/codex'), **common,
+)
+try:
+    Path('$WORKSPACE').resolve().relative_to(Path('$SOURCE_ROOT').resolve())
+except ValueError:
+    initialize_platform(
+        'codex', Path('$WORKSPACE'),
+        codex_config_root=Path('$stage/external-workspace-codex'), **common,
+    )
+print('deployment preview: pass')
+PY
+    )
+    rm -rf "$stage"
+    printf '%s\n' 'No package, state, service, or platform configuration was changed.'
+}
+
+ensure_secret() {
+    local path="$1"
+    if [[ ! -e "$path" ]]; then
+        umask 077
+        "$PYTHON" - "$path" <<'PY'
+from pathlib import Path
+import os
+import sys
+Path(sys.argv[1]).write_bytes(os.urandom(32))
+PY
+    fi
+    [[ -f "$path" && ! -L "$path" ]] || die "unsafe secret path: ${path}"
+    [[ "$(stat -c %s "$path")" -eq 32 ]] || die "secret must be 32 bytes: ${path}"
+    chown "$SERVICE_USER:$SERVICE_GROUP" "$path"
+    chmod 0600 "$path"
+}
+
+normalize_database_ownership() {
+    local directory link
+    local -a directories=("${SCID_STATE}/database" "$TCAD_STATE")
+    for directory in "${directories[@]}"; do
+        if [[ -e "$directory" ]]; then
+            [[ -d "$directory" && ! -L "$directory" ]] || \
+                die "unsafe database directory: ${directory}"
+            chown "$SERVICE_USER:$SERVICE_GROUP" "$directory"
+        else
+            install -d -o "$SERVICE_USER" -g "$SERVICE_GROUP" -m 0770 "$directory"
+        fi
+        link="$(find "$directory" -maxdepth 1 -type l -name '*.sqlite3*' -print -quit)"
+        [[ -z "$link" ]] || die "database directory contains a symlink: ${link}"
+        find "$directory" -maxdepth 1 -type f -name '*.sqlite3*' \
+            -exec chown "$SERVICE_USER:$SERVICE_GROUP" {} +
+    done
+}
+
+install_packages() {
+    local stage source_stage source_root plugin plugin_root selected_distributions
+    local -a package_roots
+    stage="${INSTALL_ROOT}/.site.new.$$"
+    source_stage="$(mktemp -d)"
+    source_root="${source_stage}/scidiscovery"
+    install -d -o root -g root -m 0755 "$INSTALL_ROOT"
+    rm -rf "$stage"
+    install -d "$source_root/src"
+    cp -a "$SOURCE_ROOT/pyproject.toml" "$SOURCE_ROOT/README.md" \
+        "$SOURCE_ROOT/roles" "$SOURCE_ROOT/deploy" "$SOURCE_ROOT/skills" \
+        "$source_root/"
+    [[ ! -f "$SOURCE_ROOT/README.zh-CN.md" ]] || \
+        cp -a "$SOURCE_ROOT/README.zh-CN.md" "$source_root/"
+    cp -a "$SOURCE_ROOT/src/scidiscovery" "$source_root/src/"
+    package_roots=("$source_root")
+    for plugin in "${SELECTED_PLUGINS[@]}"; do
+        plugin_root="${source_stage}/plugin-${plugin}"
+        install -d "$plugin_root"
+        cp -a "$SOURCE_ROOT/plugins/${plugin}/." "$plugin_root/"
+        package_roots+=("$plugin_root")
+    done
+    find "$source_stage" -type d \( -name __pycache__ -o -name '*.egg-info' -o -name build \) \
+        -prune -exec rm -rf {} +
+    printf 'Building local application packages (offline, without dependencies)...\n'
+    "$PYTHON" -m pip install --disable-pip-version-check --no-input --no-index \
+        --root-user-action=ignore --no-deps --no-build-isolation \
+        --progress-bar off --upgrade \
+        --target "$stage" "${package_roots[@]}"
+    [[ -f "$stage/share/scidiscovery/skills/scientific-paper-evidence/scripts/digitize_plot.py" ]] || \
+        die "installed package is missing the scientific paper evidence tool"
+    [[ -f "$stage/share/scidiscovery/skills/scientific-paper-evidence/scripts/render_curve_support.py" ]] || \
+        die "installed package is missing the scientific paper evidence support renderer"
+    [[ -f "$stage/share/scidiscovery/skills/scientific-paper-evidence/scripts/validate_evidence_bundle.py" ]] || \
+        die "installed package is missing the scientific paper evidence validator"
+    rm -rf "$source_stage"
+    selected_distributions="$(IFS=,; printf '%s' "${SELECTED_PLUGIN_DISTRIBUTIONS[*]}")"
+    SCID_SELECTED_DISTRIBUTIONS="$selected_distributions" \
+        PYTHONNOUSERSITE=1 PYTHONPATH="$stage" "$PYTHON" - <<'PY'
+import os
+from importlib.metadata import distribution, entry_points
+from scidiscovery.platforms.roles import load_roles
+from scidiscovery.artifact_agent.interfaces.mcp_root import ROOT_TOOLS
+from scidiscovery.artifact_agent.interfaces.mcp_worker import WORKER_TOOLS
+from scidiscovery.artifact_agent.transforms import load_transform_adapters
+from tcad_artifact.execution_control import EXECUTION_TOOLS
+assert len(ROOT_TOOLS) == 36
+assert len(WORKER_TOOLS) == 18
+assert len(EXECUTION_TOOLS) == 5
+for name in os.environ['SCID_SELECTED_DISTRIBUTIONS'].split(','):
+    distribution(name)
+roles = load_roles()
+assert len(roles) == len({item.name for item in roles})
+adapters = load_transform_adapters()
+registered_adapters = entry_points(group='scidiscovery.transform_adapters')
+assert len(adapters) == len(registered_adapters)
+assert sum(item.supports_transform_profile("tcad.reviewed-deck-package.v2") for item in adapters) == 1
+if "scidiscovery-curve-score" in os.environ['SCID_SELECTED_DISTRIBUTIONS'].split(','):
+    assert sum(item.supports_transform_profile("scidiscovery.curve-score.sprocess-log.v1") for item in adapters) == 1
+    assert sum(item.supports_transform_profile("scidiscovery.curve-bundle.sprocess-plx.v1") for item in adapters) == 1
+    assert sum(item.supports_transform_profile("scidiscovery.curve-bundle.figure-evidence.v1") for item in adapters) == 1
+    assert sum(item.supports_transform_profile("scidiscovery.curve-reference-coverage.v1") for item in adapters) == 1
+    assert sum(item.supports_transform_profile("scidiscovery.curve-score.v1") for item in adapters) == 1
+print('installed package probe: pass')
+PY
+    PYTHONNOUSERSITE=1 PYTHONPATH="$stage" "$PYTHON" -m \
+        scidiscovery.runtime_identity write \
+        --manifest "$stage/runtime-identity.json"
+    PYTHONNOUSERSITE=1 PYTHONPATH="$stage" "$PYTHON" -m \
+        scidiscovery.runtime_identity verify \
+        --manifest "$stage/runtime-identity.json"
+    PACKAGE_STAGE="$stage"
+}
+
+activate_packages() {
+    local replaced quoted_python quoted_site_root quoted_tcad_result_root
+    [[ -n "$PACKAGE_STAGE" && -d "$PACKAGE_STAGE" ]] || \
+        die "validated package stage is unavailable"
+    replaced="${INSTALL_ROOT}/.site.replaced.$$"
+    rm -rf "$replaced"
+    [[ ! -e "$SITE_ROOT" ]] || mv "$SITE_ROOT" "$replaced"
+    mv "$PACKAGE_STAGE" "$SITE_ROOT"
+    PACKAGE_STAGE=""
+    rm -rf "$replaced"
+    chmod -R a-w "$SITE_ROOT"
+    find "$SITE_ROOT" -type d -exec chmod a+rx {} +
+    printf -v quoted_python '%q' "$PYTHON"
+    printf -v quoted_site_root '%q' "$SITE_ROOT"
+    printf -v quoted_tcad_result_root '%q' "${SCID_STATE}/executor-results"
+    cat > /usr/local/bin/scid <<EOF
+#!/usr/bin/env bash
+env PYTHONNOUSERSITE=1 PYTHONPATH=${quoted_site_root} ${quoted_python} -m scidiscovery.runtime_identity verify --manifest ${quoted_site_root}/runtime-identity.json || exit
+exec env PYTHONNOUSERSITE=1 PYTHONPATH=${quoted_site_root} ${quoted_python} -m scidiscovery.artifact_agent.interfaces.cli "\$@"
+EOF
+    chown root:root /usr/local/bin/scid
+    chmod 0755 /usr/local/bin/scid
+    cat > /usr/local/bin/scidiscovery-tcad-transport <<EOF
+#!/usr/bin/env bash
+env PYTHONNOUSERSITE=1 PYTHONPATH=${quoted_site_root} ${quoted_python} -m scidiscovery.runtime_identity verify --manifest ${quoted_site_root}/runtime-identity.json || exit
+exec env PYTHONNOUSERSITE=1 PYTHONPATH=${quoted_site_root} SCIDISCOVERY_TCAD_RESULT_ROOT=${quoted_tcad_result_root} ${quoted_python} -m tcad_artifact.ssh_transport "\$@"
+EOF
+    chown root:root /usr/local/bin/scidiscovery-tcad-transport
+    chmod 0755 /usr/local/bin/scidiscovery-tcad-transport
+}
+
+write_policy() {
+    if [[ -e "${CONFIG_ROOT}/tcad-policy.json" ]]; then
+        [[ -f "${CONFIG_ROOT}/tcad-policy.json" && ! -L "${CONFIG_ROOT}/tcad-policy.json" ]] || \
+            die "unsafe existing TCAD policy"
+        PYTHONNOUSERSITE=1 PYTHONPATH="$SITE_ROOT" "$PYTHON" - "${CONFIG_ROOT}/tcad-policy.json" <<'PY'
+from pathlib import Path
+import os
+import sys
+from tcad_artifact.execution_control import migrate_execution_policy_json
+
+path = Path(sys.argv[1])
+content, migrated = migrate_execution_policy_json(path.read_bytes())
+if migrated:
+    temporary = path.with_name('.' + path.name + '.tmp')
+    temporary.write_bytes(content)
+    os.replace(temporary, path)
+    print('legacy deployment-smoke TCAD policy migrated: pass')
+else:
+    print('existing TCAD policy preserved: pass')
+PY
+        chown root:"$SERVICE_GROUP" "${CONFIG_ROOT}/tcad-policy.json"
+        chmod 0640 "${CONFIG_ROOT}/tcad-policy.json"
+        return
+    fi
+    "$PYTHON" - "${CONFIG_ROOT}/tcad-policy.json" "$WORKSPACE" "$SCID_STATE" <<'PY'
+from pathlib import Path
+import json
+import os
+import sys
+
+payload = {
+    'allowed_input_roots': [
+        str(Path(sys.argv[3]).joinpath('execution-exchange').absolute()),
+    ],
+    'max_concurrent_runs': 1,
+    'tools': [{
+        'arguments': [],
+        'environment': {},
+        'executable': str(Path('/bin/true').resolve()),
+        'profile_id': 'deployment_smoke',
+        'public_arguments': [],
+        'public_release_label': 'Deployment smoke capability',
+        'release_evidence': 'deployment smoke executable',
+        'solver_kind': 'deterministic_tool',
+    }],
+}
+raw = json.dumps(payload, sort_keys=True, separators=(',', ':')).encode()
+path = Path(sys.argv[1])
+temporary = path.with_name('.' + path.name + '.tmp')
+temporary.write_bytes(raw)
+os.replace(temporary, path)
+PY
+    chown root:"$SERVICE_GROUP" "${CONFIG_ROOT}/tcad-policy.json"
+    chmod 0640 "${CONFIG_ROOT}/tcad-policy.json"
+}
+
+retire_old_deployment() {
+    local unit
+    for unit in \
+        tcad-artifact-execution.service \
+        tcad-artifact-runner.service \
+        artifact-agent-control.service \
+        artifact-agent-worker.service \
+        artifact-agent-approval-ui.service \
+        scidiscovery-control.service \
+        scidiscovery-worker.service \
+        scidiscovery-approval-ui.service \
+        tcad-control.service
+    do
+        systemctl disable --now "$unit" >/dev/null 2>&1 || true
+    done
+    if mountpoint -q "$WORKSPACE/.codex"; then
+        umount "$WORKSPACE/.codex"
+    fi
+    rm -f \
+        /etc/systemd/system/tcad-artifact-execution.service \
+        /etc/systemd/system/tcad-artifact-runner.service \
+        /etc/systemd/system/artifact-agent-control.service \
+        /etc/systemd/system/artifact-agent-worker.service \
+        /etc/systemd/system/artifact-agent-approval-ui.service \
+        /etc/systemd/system/tcad-control.service.d/m9-packet-store.conf
+    rmdir /etc/systemd/system/tcad-control.service.d >/dev/null 2>&1 || true
+    systemctl daemon-reload
+}
+
+backup_legacy_user_entrypoints() {
+    local backup="$1" home bin name moved=0
+    home="$(getent passwd "$SERVICE_USER" | cut -d: -f6)"
+    bin="${home}/.local/bin"
+    for name in \
+        artifact-agent artifact-agent-legacy-readonly artifact-agent-mcp \
+        scid scid-legacy-readonly tcad-artifact-execution-daemon \
+        tcad-artifact-execution-mcp tcad-artifact-init \
+        tcad-artifact-runner-daemon
+    do
+        if [[ -f "${bin}/${name}" || -L "${bin}/${name}" ]]; then
+            install -d -o root -g root -m 0755 "${backup}/legacy-user-bin"
+            mv "${bin}/${name}" "${backup}/legacy-user-bin/${name}"
+            moved=1
+        fi
+    done
+    [[ "$moved" -eq 0 ]] || printf 'Legacy user CLI backup: %s\n' "${backup}/legacy-user-bin"
+}
+
+install_platform_skill() {
+    local backup="$1" platform="$2" skill_root="$3" skill="$4"
+    local source target stage
+    source="${SOURCE_ROOT}/skills/${skill}"
+    target="${skill_root}/${skill}"
+    stage="${skill_root}/.${skill}.new.$$"
+    [[ -f "${source}/SKILL.md" ]] || die "missing platform Skill: ${skill}"
+    install -d -o "$SERVICE_USER" -g "$SERVICE_GROUP" -m 0755 "$skill_root"
+    if [[ -e "$target" ]]; then
+        install -d -o root -g root -m 0755 "${backup}/skills/${platform}"
+        cp -a "$target" "${backup}/skills/${platform}/${skill}"
+    fi
+    rm -rf "$stage"
+    cp -a "$source" "$stage"
+    chown -R "$SERVICE_USER:$SERVICE_GROUP" "$stage"
+    find "$stage" -type d -exec chmod 0755 {} +
+    find "$stage" -type f -exec chmod 0644 {} +
+    find "$stage/scripts" -type f -exec chmod 0755 {} +
+    rm -rf "$target"
+    mv "$stage" "$target"
+    printf '%s Skill installed: %s\n' "$platform" "$target"
+}
+
+install_platform_skills() {
+    local backup="$1" service_home skill
+    service_home="$(getent passwd "$SERVICE_USER" | cut -d: -f6)"
+    [[ -n "$service_home" && "$service_home" = /* ]] || \
+        die "cannot resolve home directory for ${SERVICE_USER}"
+    for skill in "${PLATFORM_SKILLS[@]}"; do
+        install_platform_skill "$backup" codex \
+            "${SCID_CODEX_SKILL_ROOT:-${service_home}/.codex/skills}" "$skill"
+    done
+}
+
+prepare_managed_platform_paths() {
+    local path link
+    for path in \
+        "$SOURCE_ROOT/.codex" \
+        "$WORKSPACE/.codex"
+    do
+        [[ -e "$path" ]] || continue
+        [[ -d "$path" && ! -L "$path" ]] || die "unsafe managed platform directory: ${path}"
+        link="$(find "$path" -type l -print -quit)"
+        [[ -z "$link" ]] || die "managed platform directory contains a symlink: ${link}"
+        chown -R "$SERVICE_USER:$SERVICE_GROUP" "$path"
+        chmod -R u+rwX "$path"
+    done
+    for path in \
+        "$SOURCE_ROOT/AGENTS.md" \
+        "$WORKSPACE/AGENTS.md"
+    do
+        [[ -e "$path" ]] || continue
+        [[ -f "$path" && ! -L "$path" ]] || die "unsafe managed platform file: ${path}"
+        chown "$SERVICE_USER:$SERVICE_GROUP" "$path"
+        chmod u+rw "$path"
+    done
+}
+
+configure_platform() {
+    local timestamp backup workspace_is_nested=0
+    timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
+    backup="${BACKUP_ROOT}/${timestamp}"
+    install -d -o root -g root -m 0755 "$BACKUP_ROOT" "$backup"
+    [[ ! -e "$SOURCE_ROOT/.codex" ]] || cp -a "$SOURCE_ROOT/.codex" "$backup/framework-codex"
+    [[ ! -e "$SOURCE_ROOT/AGENTS.md" ]] || cp -a "$SOURCE_ROOT/AGENTS.md" "$backup/framework-AGENTS.md"
+    [[ ! -e "$WORKSPACE/.codex" ]] || cp -a "$WORKSPACE/.codex" "$backup/workspace-codex"
+    [[ ! -e "$WORKSPACE/AGENTS.md" ]] || cp -a "$WORKSPACE/AGENTS.md" "$backup/AGENTS.md"
+    backup_legacy_user_entrypoints "$backup"
+    install_platform_skills "$backup"
+    if [[ "$(realpath -e "$WORKSPACE")" == "$SOURCE_ROOT/"* ]]; then
+        workspace_is_nested=1
+        rm -rf "$WORKSPACE/.codex"
+    else
+        install -d -o "$SERVICE_USER" -g "$SERVICE_GROUP" -m 0755 "$WORKSPACE/.codex"
+    fi
+    install -d -o "$SERVICE_USER" -g "$SERVICE_GROUP" -m 0755 "$SOURCE_ROOT/.codex"
+    prepare_managed_platform_paths
+    runuser -u "$SERVICE_USER" -- env PYTHONNOUSERSITE=1 PYTHONPATH="$SITE_ROOT" "$PYTHON" - <<PY
+from pathlib import Path
+from scidiscovery.platforms import initialize_platform
+
+source_root = Path('$SOURCE_ROOT')
+workspace = Path('$WORKSPACE')
+workspace_is_nested = bool($workspace_is_nested)
+prompt = workspace / 'AGENTS.md'
+if prompt.exists():
+    text = prompt.read_text(encoding='utf-8')
+    managed_blocks = [
+        ('<!-- BEGIN TCAD CONTROL -->', '<!-- END TCAD CONTROL -->'),
+        ('<!-- LEGACY EXECUTION ENTRY BEGIN:', '<!-- LEGACY EXECUTION ENTRY END -->'),
+    ]
+    if workspace_is_nested:
+        managed_blocks.append((
+            '<!-- BEGIN SCIDISCOVERY SCHEDULER -->',
+            '<!-- END SCIDISCOVERY SCHEDULER -->',
+        ))
+    for begin, end in managed_blocks:
+        if begin not in text and end not in text:
+            continue
+        if text.count(begin) != 1 or text.count(end) != 1:
+            raise RuntimeError(f'malformed managed block in {prompt}: {begin}')
+        before, remainder = text.split(begin, 1)
+        _, after = remainder.split(end, 1)
+        text = before.rstrip() + '\n' + after.lstrip()
+    prompt.write_text(text, encoding='utf-8')
+common = {
+    'python_executable': Path('$PYTHON'),
+    'python_path': Path('$SITE_ROOT'),
+    'control_socket': Path('$CONTROL_SOCKET'),
+    'worker_socket': Path('$WORKER_SOCKET'),
+    'worker_workspace_root': Path('$SCID_STATE') / 'workspaces',
+}
+initialize_platform(
+    'codex', source_root,
+    codex_config_root=source_root / '.codex', **common,
+)
+if not workspace_is_nested:
+    initialize_platform(
+        'codex', workspace,
+        codex_config_root=workspace / '.codex', **common,
+    )
+PY
+    [[ ! -e "$SOURCE_ROOT/.codex" ]] || chown -R "$SERVICE_USER:$SERVICE_GROUP" "$SOURCE_ROOT/.codex"
+    [[ ! -e "$SOURCE_ROOT/AGENTS.md" ]] || chown "$SERVICE_USER:$SERVICE_GROUP" "$SOURCE_ROOT/AGENTS.md"
+    [[ ! -e "$WORKSPACE/.codex" ]] || chown -R "$SERVICE_USER:$SERVICE_GROUP" "$WORKSPACE/.codex"
+    [[ ! -e "$WORKSPACE/AGENTS.md" ]] || chown "$SERVICE_USER:$SERVICE_GROUP" "$WORKSPACE/AGENTS.md"
+    printf 'Platform configuration backup: %s\n' "$backup"
+}
+
+install_units() {
+    local stage unit
+    stage="$(mktemp -d)"
+    render_units "$stage"
+    for unit in \
+        scidiscovery-control.service \
+        scidiscovery-worker.service \
+        scidiscovery-approval-ui.service \
+        tcad-control.service
+    do
+        install -o root -g root -m 0644 "$stage/$unit" "/etc/systemd/system/$unit"
+    done
+    systemd-analyze verify "$stage"/*.service
+    rm -rf "$stage"
+    systemctl daemon-reload
+}
+
+wait_for_socket() {
+    local socket="$1" service="$2" count
+    for count in $(seq 1 50); do
+        [[ -S "$socket" ]] && return 0
+        systemctl is-active --quiet "$service" || break
+        sleep 0.1
+    done
+    systemctl --no-pager --full status "$service" >&2 || true
+    die "service socket did not become ready: ${socket}"
+}
+
+probe_mcp() {
+    local module="$1" socket="$2" expected="$3"
+    printf '{"jsonrpc":"2.0","id":1,"method":"tools/list"}\n' | \
+        PYTHONNOUSERSITE=1 PYTHONPATH="$SITE_ROOT" "$PYTHON" -m "$module" --socket "$socket" | \
+        "$PYTHON" -c '
+import json, sys
+payload = json.load(sys.stdin)
+observed = len(payload["result"]["tools"])
+expected = int(sys.argv[1])
+if observed != expected:
+    raise SystemExit(f"tool count mismatch: expected={expected} observed={observed}")
+print(f"MCP tool probe: pass ({observed})")
+' "$expected"
+}
+
+verify_installation() {
+    local unit
+    local units=(
+        scidiscovery-control.service \
+        scidiscovery-worker.service \
+        scidiscovery-approval-ui.service
+    )
+    if [[ -z "$TCAD_COMMAND_CONFIG" ]]; then
+        units+=(tcad-control.service)
+    fi
+    for unit in "${units[@]}"
+    do
+        systemctl is-active --quiet "$unit" || die "service is not active: ${unit}"
+    done
+    wait_for_socket "$CONTROL_SOCKET" scidiscovery-control.service
+    wait_for_socket "$WORKER_SOCKET" scidiscovery-worker.service
+probe_mcp scidiscovery.artifact_agent.interfaces.mcp_proxy "$CONTROL_SOCKET" 36
+    printf '{"jsonrpc":"2.0","id":1,"method":"tools/list"}\n' | \
+        PYTHONNOUSERSITE=1 PYTHONPATH="$SITE_ROOT" "$PYTHON" -m \
+        scidiscovery.artifact_agent.interfaces.mcp_worker_proxy \
+        --socket "$WORKER_SOCKET" --worker-id ideator | \
+        "$PYTHON" -c 'import json,sys; assert len(json.load(sys.stdin)["result"]["tools"]) == 18; print("worker MCP probe: pass (18)")'
+    if [[ -z "$TCAD_COMMAND_CONFIG" ]]; then
+        wait_for_socket "$TCAD_SOCKET" tcad-control.service
+        probe_mcp tcad_artifact.execution_mcp "$TCAD_SOCKET" 5
+    fi
+    [[ "$(curl -sS -o /dev/null -w '%{http_code}' "http://127.0.0.1:${APPROVAL_PORT}/")" == 200 ]] || \
+        die "approval UI health probe failed"
+    PYTHONNOUSERSITE=1 PYTHONPATH="$SITE_ROOT" "$PYTHON" - \
+        "$SOURCE_ROOT" "$WORKSPACE" "$SITE_ROOT" "$PLATFORM" <<'PY'
+import json
+from pathlib import Path
+import sys
+from scidiscovery.platforms.roles import load_roles
+source_root = Path(sys.argv[1])
+workspace = Path(sys.argv[2])
+site = sys.argv[3]
+platform = sys.argv[4]
+role_names = {item.name for item in load_roles()}
+assert platform == 'codex'
+if platform == 'codex':
+    try:
+        import tomllib
+    except ImportError:
+        import tomli as tomllib
+    config = tomllib.loads(source_root.joinpath('.codex/config.toml').read_text(encoding='utf-8'))
+    assert set(config['mcp_servers']) == {'scidiscovery'}
+    assert config['mcp_servers']['scidiscovery']['enabled'] is True
+    assert config['mcp_servers']['scidiscovery']['env']['PYTHONPATH'] == site
+    assert config['mcp_servers']['scidiscovery']['env']['PYTHONNOUSERSITE'] == '1'
+    generated_roles = {
+        item.stem for item in source_root.joinpath('.codex/agents').glob('*.toml')
+    }
+    assert generated_roles == role_names
+    assert '<!-- BEGIN SCIDISCOVERY SCHEDULER -->' in source_root.joinpath('AGENTS.md').read_text(encoding='utf-8')
+    try:
+        workspace.resolve().relative_to(source_root.resolve())
+        nested = True
+    except ValueError:
+        nested = False
+    if nested:
+        assert not workspace.joinpath('.codex').exists()
+        if workspace.joinpath('AGENTS.md').exists():
+            assert '<!-- BEGIN SCIDISCOVERY SCHEDULER -->' not in workspace.joinpath('AGENTS.md').read_text(encoding='utf-8')
+    else:
+        assert workspace.joinpath('.codex/config.toml').is_file()
+        assert {
+            item.stem for item in workspace.joinpath('.codex/agents').glob('*.toml')
+        } == role_names
+        assert '<!-- BEGIN SCIDISCOVERY SCHEDULER -->' in workspace.joinpath('AGENTS.md').read_text(encoding='utf-8')
+    print(f'Codex framework profile probe: pass (1 MCP, {len(role_names)} roles)')
+PY
+}
+
+begin_install_transaction() {
+    local timestamp service_home unit name skill
+    local -a command units database_names
+    timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
+    TRANSACTION_ROOT="${BACKUP_ROOT}/.transaction-${timestamp}-$$"
+    install -d -o root -g root -m 0700 "$BACKUP_ROOT"
+    service_home="$(getent passwd "$SERVICE_USER" | cut -d: -f6)"
+    [[ -n "$service_home" && "$service_home" = /* ]] || \
+        die "cannot resolve home directory for ${SERVICE_USER}"
+    command=(
+        "$PYTHON" "${SOURCE_ROOT}/deploy/install_transaction.py" begin
+        --root "$TRANSACTION_ROOT"
+        --target "site=${SITE_ROOT}"
+        --target "scid-cli=/usr/local/bin/scid"
+        --target "tcad-transport-cli=/usr/local/bin/scidiscovery-tcad-transport"
+        --target "tcad-policy=${CONFIG_ROOT}/tcad-policy.json"
+        --target "task-secret=${CONFIG_ROOT}/task-token.key"
+        --target "approval-secret=${CONFIG_ROOT}/approval-receipt.key"
+        --target "framework-codex=${SOURCE_ROOT}/.codex"
+        --target "framework-agents=${SOURCE_ROOT}/AGENTS.md"
+        --target "workspace-codex=${WORKSPACE}/.codex"
+        --target "workspace-agents=${WORKSPACE}/AGENTS.md"
+    )
+    for skill in "${PLATFORM_SKILLS[@]}"; do
+        command+=(
+            --target "codex-skill-${skill}=${SCID_CODEX_SKILL_ROOT:-${service_home}/.codex/skills}/${skill}"
+        )
+    done
+    units=(
+        scidiscovery-control.service
+        scidiscovery-worker.service
+        scidiscovery-approval-ui.service
+        tcad-control.service
+        artifact-agent-control.service
+        artifact-agent-worker.service
+        artifact-agent-approval-ui.service
+        tcad-artifact-execution.service
+        tcad-artifact-runner.service
+    )
+    for unit in "${units[@]}"; do
+        name="unit-${unit%.service}"
+        command+=(--target "${name}=/etc/systemd/system/${unit}")
+    done
+    command+=(
+        --target "tcad-dropin=/etc/systemd/system/tcad-control.service.d"
+    )
+    database_names=(
+        artifact_agent task_tokens tasks approvals executions scheduler-bindings
+    )
+    for name in "${database_names[@]}"; do
+        command+=(--sqlite "db-${name}=${SCID_STATE}/database/${name}.sqlite3")
+    done
+    command+=(--sqlite "db-tcad-submissions=${TCAD_STATE}/submissions.sqlite3")
+    "${command[@]}"
+    : > "${TRANSACTION_ROOT}/active-units.txt"
+    : > "${TRANSACTION_ROOT}/enabled-units.txt"
+    for unit in "${units[@]}"; do
+        systemctl is-active --quiet "$unit" >/dev/null 2>&1 && \
+            printf '%s\n' "$unit" >> "${TRANSACTION_ROOT}/active-units.txt"
+        systemctl is-enabled --quiet "$unit" >/dev/null 2>&1 && \
+            printf '%s\n' "$unit" >> "${TRANSACTION_ROOT}/enabled-units.txt"
+    done
+    ROLLBACK_ARMED=1
+    trap 'rollback_install $?' ERR
+    trap 'rollback_install 130' INT TERM
+}
+
+rollback_install() {
+    local status="${1:-1}" unit secret
+    trap - ERR INT TERM
+    set +e
+    ROLLBACK_ARMED=0
+    for unit in \
+        scidiscovery-control.service scidiscovery-worker.service \
+        scidiscovery-approval-ui.service tcad-control.service
+    do
+        systemctl disable --now "$unit" >/dev/null 2>&1
+    done
+    if [[ -n "$TRANSACTION_ROOT" && -f "${TRANSACTION_ROOT}/manifest.json" ]]; then
+        "$PYTHON" "${SOURCE_ROOT}/deploy/install_transaction.py" rollback \
+            --root "$TRANSACTION_ROOT"
+        for secret in \
+            "${CONFIG_ROOT}/task-token.key" \
+            "${CONFIG_ROOT}/approval-receipt.key"
+        do
+            if [[ -e "$secret" ]]; then
+                if [[ -f "$secret" && ! -L "$secret" && "$(stat -c %s "$secret")" -eq 32 ]]; then
+                    chown "$SERVICE_USER:$SERVICE_GROUP" "$secret"
+                    chmod 0600 "$secret"
+                else
+                    printf 'WARNING: restored secret needs manual inspection: %s\n' \
+                        "$secret" >&2
+                fi
+            fi
+        done
+        systemctl daemon-reload
+        while IFS= read -r unit; do
+            [[ -z "$unit" ]] || systemctl enable "$unit" >/dev/null 2>&1
+        done < "${TRANSACTION_ROOT}/enabled-units.txt"
+        while IFS= read -r unit; do
+            [[ -z "$unit" ]] || systemctl start "$unit" >/dev/null 2>&1
+        done < "${TRANSACTION_ROOT}/active-units.txt"
+        printf 'Installation rolled back from transaction: %s\n' \
+            "$TRANSACTION_ROOT" >&2
+    fi
+    [[ -z "$PACKAGE_STAGE" ]] || rm -rf "$PACKAGE_STAGE"
+    exit "$status"
+}
+
+complete_install_transaction() {
+    local destination
+    destination="${BACKUP_ROOT}/transactions/${TRANSACTION_ROOT##*/.transaction-}"
+    "$PYTHON" "${SOURCE_ROOT}/deploy/install_transaction.py" seal \
+        --root "$TRANSACTION_ROOT" --destination "$destination"
+    ROLLBACK_ARMED=0
+    trap - ERR INT TERM
+    printf 'Install transaction evidence: %s\n' "$destination"
+}
+
+install_all() {
+    require_root
+    printf '[1/6] Validating source and selected base Python...\n'
+    validate_source
+    validate_base_python
+    printf '[2/6] Building and validating local application packages...\n'
+    install_packages
+    begin_install_transaction
+    printf '[3/6] Retiring the previous service deployment...\n'
+    retire_old_deployment
+    printf '[4/6] Installing state, policy, service, and platform configuration...\n'
+    activate_packages
+    install -d -o "$SERVICE_USER" -g "$SERVICE_GROUP" -m 0750 "$SCID_STATE" "$TCAD_STATE"
+    normalize_database_ownership
+    install -d -o root -g "$SERVICE_GROUP" -m 0750 "$CONFIG_ROOT"
+    ensure_secret "${CONFIG_ROOT}/task-token.key"
+    ensure_secret "${CONFIG_ROOT}/approval-receipt.key"
+    write_policy
+    install_units
+    configure_platform
+    printf '[5/6] Starting services...\n'
+    systemctl enable --now \
+        scidiscovery-control.service \
+        scidiscovery-worker.service \
+        scidiscovery-approval-ui.service
+    if [[ -z "$TCAD_COMMAND_CONFIG" ]]; then
+        systemctl enable --now tcad-control.service
+    else
+        systemctl disable --now tcad-control.service >/dev/null 2>&1 || true
+    fi
+    printf '[6/6] Verifying installed services and MCP interfaces...\n'
+    verify_installation
+    complete_install_transaction
+    printf '%s\n' \
+        'Clean SciDiscovery/TCAD deployment: pass' \
+        "Approval UI: http://127.0.0.1:${APPROVAL_PORT}" \
+        "$([[ -n "$TCAD_COMMAND_CONFIG" ]] && printf 'External TCAD transport configured.' || printf 'Local deployment smoke profile configured.')" \
+        "Restart Codex so the SciDiscovery MCP definition and role files reload."
+}
+
+status() {
+    systemctl --no-pager --full status \
+        scidiscovery-control.service \
+        scidiscovery-worker.service \
+        scidiscovery-approval-ui.service \
+        tcad-control.service || true
+    for socket in "$CONTROL_SOCKET" "$WORKER_SOCKET" "$TCAD_SOCKET"; do
+        [[ -S "$socket" ]] && printf 'socket ready: %s\n' "$socket" || printf 'socket missing: %s\n' "$socket"
+    done
+}
+
+uninstall_services() {
+    require_root
+    local unit
+    for unit in \
+        scidiscovery-control.service \
+        scidiscovery-worker.service \
+        scidiscovery-approval-ui.service \
+        tcad-control.service \
+        artifact-agent-control.service \
+        artifact-agent-worker.service \
+        artifact-agent-approval-ui.service \
+        tcad-artifact-execution.service \
+        tcad-artifact-runner.service
+    do
+        systemctl disable --now "$unit" >/dev/null 2>&1 || true
+        rm -f "/etc/systemd/system/$unit"
+    done
+    systemctl daemon-reload
+    printf '%s\n' 'Services removed. State and backups were preserved.'
+}
+
+case "${1:---dry-run}" in
+    --dry-run)
+        require_sources
+        validate_source
+        validate_base_python
+        preview
+        ;;
+    install)
+        require_sources
+        install_all
+        ;;
+    status) status ;;
+    uninstall) uninstall_services ;;
+    *) die "usage: $0 [--dry-run|install|status|uninstall]" ;;
+esac

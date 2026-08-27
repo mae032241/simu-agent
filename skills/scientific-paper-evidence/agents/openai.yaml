@@ -1,0 +1,4 @@
+interface:
+  display_name: "Scientific Paper Evidence"
+  short_description: "Digitize plots into traceable evidence"
+  default_prompt: "Use $scientific-paper-evidence to digitize a scientific plot into traceable curve evidence."

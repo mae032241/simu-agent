@@ -1,0 +1,49 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "scidiscovery"
+version = "0.1.0"
+description = "Portable, evidence-bound scientific discovery orchestration"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "Pillow>=10,<13",
+  "PyYAML>=6,<7",
+  "pydantic>=2,<3",
+  "tomli>=2; python_version < '3.11'",
+]
+
+[project.optional-dependencies]
+test = [
+  "pytest>=8,<10",
+]
+
+[project.scripts]
+scid = "scidiscovery.artifact_agent.interfaces.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"scidiscovery.artifact_agent.storage" = ["migrations/*.sql"]
+"scidiscovery.artifact_agent.approval_ui" = ["static/*.css", "static/*.js"]
+
+[tool.setuptools.data-files]
+"share/scidiscovery/roles" = ["roles/*.md"]
+"share/scidiscovery/deploy/systemd" = ["deploy/systemd/*.in"]
+"share/scidiscovery/skills/scientific-paper-evidence/scripts" = [
+  "skills/scientific-paper-evidence/scripts/digitize_plot.py",
+  "skills/scientific-paper-evidence/scripts/render_curve_support.py",
+  "skills/scientific-paper-evidence/scripts/validate_evidence_bundle.py",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["src", ".", "plugins/tcad_artifact", "plugins/ingaas_fig4", "plugins/curve_score"]
+testpaths = ["tests"]
+norecursedirs = ["portable_delivery"]
+markers = [
+  "process_e2e: launches real daemon and stdio proxy processes across Unix sockets",
+  "live_platform: requires a running Codex platform and is not part of hermetic pytest",
+]

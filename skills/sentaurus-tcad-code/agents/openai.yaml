@@ -1,0 +1,4 @@
+interface:
+  display_name: "Sentaurus TCAD Code"
+  short_description: "Write, review, and diagnose direct Sentaurus solver code"
+  default_prompt: "Use $sentaurus-tcad-code to produce the smallest defensible SProcess or SDevice code change, loading only the task-specific recipe or diagnostic reference."
