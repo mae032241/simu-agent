@@ -569,15 +569,57 @@ def test_five_operation_figure_family_requires_exact_review(tmp_path: Path) -> N
         assert rejected["admissible"] is False
         assert rejected["reason_code"] == "input_producer_family_mismatch"
 
-    intake_name = _complete_agent(
-        catalog,
-        runtime,
-        root,
-        operation_id=EXTRACTION,
-        name="figure_intake",
-        inputs=_bindings(names),
-        payload=_intake_payload(),
+    intake_request = {
+        "name": "figure_intake",
+        "operation_id": EXTRACTION,
+        "inputs": _bindings(names),
+        "instruction": "Handle only the exact bound figure family.",
+    }
+    assert root.call_tool("operation_preflight", intake_request)["admissible"] is True
+    root.call_tool("operation_invoke", intake_request)
+    extraction = catalog.operation(EXTRACTION)
+    intake_worker = LocalWorkerMCPRouter(
+        runtime.runs,
+        operation_id=extraction.spec.operation_id,
+        operation_digest=extraction.digest,
     )
+    opened_intake = intake_worker.call_tool("worker_open_assignment", {})
+    invalid_intake = _intake_payload()
+    invalid_intake["scientific_foundation"]["objective_contract"] = {
+        "objective_key": "figure_objective",
+        "intent": "engineering",
+        "statement": invalid_intake["scientific_foundation"]["objective"],
+        "closure_requirements": [
+            {
+                "requirement_key": "comparison_required",
+                "description": "Require one bounded comparison.",
+                "requirement_type": "comparison_present",
+            }
+        ],
+    }
+    Path(opened_intake["output_directory"], "result.json").write_bytes(
+        _envelope(invalid_intake)
+    )
+    rejected_intake = intake_worker.call_tool("worker_submit_result", {})
+    assert rejected_intake["state"] == "rejected"
+    assert {item["rule_id"] for item in rejected_intake["diagnostics"]} == {
+        "runtime.schema"
+    }
+    assert any(
+        item["path"].endswith("scientific_foundation.objective_contract")
+        and item["type"] == "json_schema.anyOf"
+        for item in rejected_intake["diagnostics"]
+    ), rejected_intake["diagnostics"]
+    invalid_intake["scientific_foundation"]["objective_contract"][
+        "closure_requirements"
+    ][0]["comparison_purposes"] = ["target_fit"]
+    Path(opened_intake["output_directory"], "result.json").write_bytes(
+        _envelope(invalid_intake)
+    )
+    assert intake_worker.call_tool("worker_submit_result", {})["state"] == "completed"
+    intake_name = root.call_tool("run_status", {"name": "figure_intake"})[
+        "output_artifact_name"
+    ]
     incomplete_audit = root.call_tool(
         "operation_preflight",
         {
@@ -676,7 +718,7 @@ def test_five_operation_figure_family_requires_exact_review(tmp_path: Path) -> N
         root.call_tool("operation_invoke", wrong_family_request)
     assert _binding_counts(runtime, instance) == before
 
-    revised_payload = _intake_payload()
+    revised_payload = json.loads(json.dumps(invalid_intake))
     revised_payload["scientific_foundation"]["summary"] = (
         "One target is frozen; its table status is stated without overclaim."
     )

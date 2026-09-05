@@ -9,6 +9,10 @@ from curve_score.plugin import PLUGIN as CURVE_PLUGIN
 from scidiscovery.artifact_agent.schema.common import canonical_json
 from scidiscovery.artifact_agent.schema.experiment import ExperimentPortfolio
 from scidiscovery.artifact_agent.schema.experiment_intent import ExperimentDesignIntent
+from scidiscovery.artifact_agent.schema.research_cycle import ScientificIntake
+from scidiscovery.artifact_agent.schema.research_objective import (
+    ObjectiveClosureRequirement,
+)
 from scidiscovery.artifact_agent.service.local_workspace import SealedFile, SealedWorkspace
 from scidiscovery.artifact_agent.service.run_outputs import (
     RunCheckerError,
@@ -511,6 +515,95 @@ def test_threshold_unit_vocabulary_is_visible_in_the_json_schema() -> None:
     assert requirement_unit["enum"] == claim_unit["enum"]
     assert "1" in requirement_unit["enum"]
     assert "probability" not in requirement_unit["enum"]
+
+
+@pytest.mark.parametrize(
+    ("requirement_type", "fields", "accepted"),
+    (
+        (None, {"target_keys": ["target_a"]}, True),
+        ("target_coverage", {"target_keys": ["target_a"]}, True),
+        ("target_coverage", {}, False),
+        (
+            "target_coverage",
+            {"target_keys": ["target_a"], "comparison_purposes": ["target_fit"]},
+            False,
+        ),
+        ("comparison_present", {"comparison_purposes": ["target_fit"]}, True),
+        (
+            "comparison_present",
+            {
+                "target_keys": ["target_a"],
+                "comparison_purposes": ["target_fit"],
+            },
+            True,
+        ),
+        ("comparison_present", {}, False),
+        (
+            "comparison_present",
+            {
+                "comparison_purposes": ["target_fit"],
+                "validation_check_keys": ["check_a"],
+            },
+            False,
+        ),
+        (
+            "validation_check_present",
+            {"validation_check_keys": ["check_a"]},
+            True,
+        ),
+        ("validation_check_present", {}, False),
+        (
+            "validation_check_present",
+            {
+                "validation_check_keys": ["check_a"],
+                "target_keys": ["target_a"],
+            },
+            False,
+        ),
+        ("target_coverage", {"target_keys": ["target_a", "target_a"]}, False),
+        (
+            "comparison_present",
+            {"comparison_purposes": ["target_fit", "target_fit"]},
+            False,
+        ),
+        (
+            "validation_check_present",
+            {"validation_check_keys": ["check_a", "check_a"]},
+            False,
+        ),
+    ),
+)
+def test_objective_closure_schema_matches_strict_model_acceptance(
+    requirement_type, fields, accepted,
+) -> None:
+    from jsonschema.validators import validator_for
+
+    payload = {
+        "requirement_key": "closure_a",
+        "description": "Close one bounded objective condition.",
+        **fields,
+    }
+    if requirement_type is not None:
+        payload["requirement_type"] = requirement_type
+
+    try:
+        ObjectiveClosureRequirement.model_validate_json(
+            canonical_json(payload), strict=True
+        )
+        model_accepts = True
+    except Exception:
+        model_accepts = False
+
+    direct_schema = ObjectiveClosureRequirement.model_json_schema(mode="validation")
+    nested_schema = ScientificIntake.model_json_schema(mode="validation")["$defs"][
+        "ObjectiveClosureRequirement"
+    ]
+    for schema in (direct_schema, nested_schema):
+        validator_type = validator_for(schema)
+        validator_type.check_schema(schema)
+        schema_accepts = not tuple(validator_type(schema).iter_errors(payload))
+        assert schema_accepts is accepted
+    assert model_accepts is accepted
 
 
 def test_evidence_source_projection_uses_only_exact_bound_inventory_aliases() -> None:

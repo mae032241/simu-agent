@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Annotated, Literal
 
-from pydantic import Field, model_validator
+from pydantic import ConfigDict, Field, model_validator
 
 from .common import Identifier, SchemaModel
 
@@ -42,17 +42,85 @@ class ObjectiveTarget(SchemaModel):
 
 
 class ObjectiveClosureRequirement(SchemaModel):
+    model_config = ConfigDict(
+        json_schema_extra={
+            "allOf": [
+                {
+                    "if": {
+                        "anyOf": [
+                            {"not": {"required": ["requirement_type"]}},
+                            {
+                                "properties": {
+                                    "requirement_type": {
+                                        "const": "target_coverage"
+                                    }
+                                },
+                                "required": ["requirement_type"],
+                            },
+                        ]
+                    },
+                    "then": {
+                        "properties": {
+                            "target_keys": {"minItems": 1},
+                            "comparison_purposes": {"maxItems": 0},
+                            "validation_check_keys": {"maxItems": 0},
+                        },
+                        "required": ["target_keys"],
+                    },
+                },
+                {
+                    "if": {
+                        "properties": {
+                            "requirement_type": {"const": "comparison_present"}
+                        },
+                        "required": ["requirement_type"],
+                    },
+                    "then": {
+                        "properties": {
+                            "comparison_purposes": {"minItems": 1},
+                            "validation_check_keys": {"maxItems": 0},
+                        },
+                        "required": ["comparison_purposes"],
+                    },
+                },
+                {
+                    "if": {
+                        "properties": {
+                            "requirement_type": {
+                                "const": "validation_check_present"
+                            }
+                        },
+                        "required": ["requirement_type"],
+                    },
+                    "then": {
+                        "properties": {
+                            "target_keys": {"maxItems": 0},
+                            "comparison_purposes": {"maxItems": 0},
+                            "validation_check_keys": {"minItems": 1},
+                        },
+                        "required": ["validation_check_keys"],
+                    },
+                },
+            ]
+        }
+    )
+
     requirement_key: Identifier
     description: Annotated[str, Field(min_length=1, max_length=4096)]
     requirement_type: Literal[
         "target_coverage", "comparison_present", "validation_check_present"
     ] = "target_coverage"
-    target_keys: Annotated[tuple[Identifier, ...], Field(max_length=64)] = ()
+    target_keys: Annotated[
+        tuple[Identifier, ...],
+        Field(max_length=64, json_schema_extra={"uniqueItems": True}),
+    ] = ()
     comparison_purposes: Annotated[
-        tuple[ComparisonPurpose, ...], Field(max_length=16)
+        tuple[ComparisonPurpose, ...],
+        Field(max_length=16, json_schema_extra={"uniqueItems": True}),
     ] = ()
     validation_check_keys: Annotated[
-        tuple[Identifier, ...], Field(max_length=128)
+        tuple[Identifier, ...],
+        Field(max_length=128, json_schema_extra={"uniqueItems": True}),
     ] = ()
 
     @model_validator(mode="after")
