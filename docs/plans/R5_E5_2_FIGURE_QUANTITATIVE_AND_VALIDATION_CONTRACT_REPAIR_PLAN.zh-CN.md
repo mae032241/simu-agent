@@ -1,7 +1,7 @@
 # R5 E5.2：当前 Fig.4 阻断的最小修复计划
 
 日期：2026-09-05
-状态：集成门 PASS。四项补丁均已实现并分别通过独立复审；基线 `a6742b7`；P1 `322d281`；P2 `c7c692a`；P3 `e2af10c`；P4 `036a544`。GPT-6 首轮指出的既定安装态证据缺口已补齐，第二轮独立复审 PASS、剩余阻断项 0；详见[集成报告](evidence/R5_E5_2_INTEGRATION_REPORT.zh-CN.md)与[第二轮审查](reviews/R5_E5_2_INTEGRATION_GPT6_SECOND_REVIEW.zh-CN.md)。尚未部署或进入真实端到端。
+状态：集成门 PASS，且已部署进入真实语义回归。四项补丁均已实现并分别通过独立复审；基线 `a6742b7`；P1 `322d281`；P2 `c7c692a`；P3 `e2af10c`；P4 `036a544`。GPT-6 首轮指出的既定安装态证据缺口已补齐，第二轮独立复审 PASS、剩余阻断项 0；详见[集成报告](evidence/R5_E5_2_INTEGRATION_REPORT.zh-CN.md)与[第二轮审查](reviews/R5_E5_2_INTEGRATION_GPT6_SECOND_REVIEW.zh-CN.md)。后续安装态真实回归发现轴端点语义和跟踪阈值职责仍未闭合；该新增阻断由[活动缺陷账本 E5.3](R5_NEXT_ITERATION_LIVE_DEFECTS.zh-CN.md)接管。本计划的实现／集成通过记录保留，但不再单独授权进入完整端到端。
 
 本文是 [真实缺陷账本](R5_NEXT_ITERATION_LIVE_DEFECTS.zh-CN.md) 的 E5 有界返工计划。
 采用 [当前架构](../ARCHITECTURE.zh-CN.md)、

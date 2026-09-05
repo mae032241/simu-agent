@@ -17,16 +17,15 @@
   封存科学结果和非约束性建议。旧 `next_action_kind/accepts_actions` 字段仅作兼容元数据，其类型化
   路由行为已经撤销；旧假设契约保留为历史证据，不再是当前运行规范。
 - [R5 下一轮真实端到端缺陷账本](R5_NEXT_ITERATION_LIVE_DEFECTS.zh-CN.md)：
-  当前 M7 真实 Fig.4 端到端实验前的唯一活动闭合计划；现场已经推翻“只安装论文图插件即可继续”的
-  旧判断。首轮独立审查发现初版遗漏单输出图 `ScientificIntake` 生产者与可编译 review edge，第二版
-  已按最小拓扑补正。第三版又将 UI 可读性、projector 精细诊断和部署透传再开发移出开跑前范围，
-  只保留图证据、Fig.4 必要保真度、preflight/invoke 等价与真实安装探针；最小范围独立审查
-  `PASS`、阻断 0，目前只放行 E0/E1。
+  当前 M7 真实 Fig.4 端到端实验的唯一活动缺陷与实施入口。E5.2 安装态回归新增 E5.3：请求 Agent
+  错误承担轴端点规范化与跟踪阈值设定，真实输出出现纵轴反转和生产者自定义验收门槛；完整科学链
+  暂停在独立图审查 `blocked`，E6 未放行。下一轮只解耦科学图证意图与确定性算法请求，不重写调度器。
 - [R5 E5.2 图曲线共享定量与校验合同闭合计划](R5_E5_2_FIGURE_QUANTITATIVE_AND_VALIDATION_CONTRACT_REPAIR_PLAN.zh-CN.md)：
   真实 Fig.4 回归推翻 E5.1 的“共享引用不可定量”语义，并暴露 Worker 可见来源合同、Python checker
   和 EvidenceAudit verdict 的错位。本文是当前 E5 返工子计划；保持 ABI 16，只连接已有
   `usage/evidence_paths`、修正 `coincident_overlap` 与局部 finding 传播，并要求真实 Worker 首次提交
-  和独立审查通过后才恢复端到端主线。
+  和独立审查通过后才恢复端到端主线。其代码与集成审查历史仍有效，但安装态真实回归发现的新轴
+  端点／跟踪职责缺陷由上述活动账本 E5.3 接管，E5.2 不再单独授权进入完整科学链。
 - [R5-H 最小收口实施记录](R5_H_MINIMAL_CLOSURE_IMPLEMENTATION.zh-CN.md)：
   记录当前边界、所有权、复杂度减法和 H0—H7 阶段门。
 - [R5-S 生产代码裁剪与控制面简化计划](R5_S_PRODUCTION_CODE_SIMPLIFICATION_PLAN.zh-CN.md)：

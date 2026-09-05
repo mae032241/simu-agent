@@ -244,7 +244,7 @@ def figure_parentage(inputs: tuple[Any, ...], parameters: Mapping[str, Any]) -> 
     request_labels = dict(request.artifact.labels)
     if (
         source.artifact.ref not in request.artifact.parent_refs
-        or request_labels.get("operation_id") != "science.figure.request.prepare.v1"
+        or not request_labels.get("operation_invocation_fingerprint")
         or request_labels.get("operation_output_port") != "figure_request"
     ):
         return False

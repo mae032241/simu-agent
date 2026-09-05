@@ -19,6 +19,8 @@ from scidiscovery.artifact_agent.schema.common import canonical_json
 from scidiscovery.builtin_plugin import CORE_PLUGIN
 from scidiscovery.general_science_plugin import PLUGIN as GENERAL_PLUGIN
 from scidiscovery.operations.catalog import compile_catalog
+from scidiscovery.operations.spec import CallableComponent, ComponentRef, ComponentSpec, ExecutorRef, PluginDefinition, PluginDependency, PLUGIN_PROTOCOL_VERSION
+from ingaas_fig4.figure_compilation import OPERATION as DOMAIN_COMPILE_OPERATION
 
 from tests.operations.test_curve_figure_digitization_tool import _request
 from tests.operations.test_general_transform_operations import _intake
@@ -44,8 +46,29 @@ def _envelope(payload: object, *, verdict: str = "pass") -> bytes:
     )
 
 
-def _system(tmp_path: Path):
-    catalog = compile_catalog((CORE_PLUGIN, GENERAL_PLUGIN, CURVE_PLUGIN, FIGURE_PLUGIN))
+def _compile_synthetic_request(values):
+    source = values["paper_source"][0]
+    marker = Image.open(io.BytesIO(source)).getpixel((0, 0))[0]
+    expected, request = _two_series_source_and_request(marker=marker)
+    assert source == expected
+    return {"figure_request": (canonical_json(request),)}
+
+
+SYNTHETIC_COMPILE = CallableComponent("transform", _compile_synthetic_request)
+SYNTHETIC_PLUGIN = PluginDefinition(
+    plugin_id="figure_fixture", version="0.1.0", protocol_version=PLUGIN_PROTOCOL_VERSION,
+    dependencies=(PluginDependency("general_science", "0.1.0"), PluginDependency("curve_figure_evidence", "0.1.0")),
+    components=(ComponentSpec("compile", "transform", "tests.operations.test_m5_figure_review_closure:SYNTHETIC_COMPILE"),),
+    operations=(DOMAIN_COMPILE_OPERATION.model_copy(update={
+        "operation_id": "test.figure.compile.v1",
+        "executor": ExecutorRef(kind="transform", component=ComponentRef("compile")),
+        "inputs": (DOMAIN_COMPILE_OPERATION.inputs[0].model_copy(update={"media_types": ("image/png",)}),),
+    }),),
+)
+
+
+def _system(tmp_path: Path, *, catalog=None):
+    catalog = catalog or compile_catalog((CORE_PLUGIN, GENERAL_PLUGIN, CURVE_PLUGIN, FIGURE_PLUGIN, SYNTHETIC_PLUGIN))
     project = tmp_path / "project"
     project.mkdir()
     runtime = open_runtime(
@@ -281,7 +304,7 @@ def _binding_counts(runtime, instance) -> tuple[int, int]:
     )
 
 
-def test_request_submit_rejects_shared_support_without_covered_endpoints(
+def test_intent_submit_rejects_source_hash_mismatch(
     tmp_path: Path,
 ) -> None:
     catalog, runtime, instance, root = _system(tmp_path)
@@ -302,37 +325,12 @@ def test_request_submit_rejects_shared_support_without_covered_endpoints(
         schema_id="opaque",
         media_type="image/png",
     )
-    payload = json.loads(_request(source_raw))
-    payload["series"] = [
-        {
-            **payload["series"][0],
-            "series_key": "covered",
-            "label": "Covered black line",
-            "color": "#000000",
-            "visible_label": "Covered",
-            "binding_bbox": [1, 3, 10, 7],
-            "seeds": [[1.0, 4.0], [9.0, 6.0]],
-        },
-        {
-            **payload["series"][0],
-            "series_key": "visible",
-            "label": "Visible red line",
-            "visible_label": "Visible",
-            "binding_bbox": [1, 3, 10, 7],
-            "seeds": [[1.0, 5.0], [9.0, 5.0]],
-        },
-    ]
-    payload["shared_support"] = [
-        {
-            "group_key": "red_over_black",
-            "visible_series": "visible",
-            "covered_series": ["covered"],
-            "pixel_ranges": [[4, 6]],
-            "mode": "overdraw",
-            "covered_eligible": False,
-            "max_endpoint_distance_px": 2.0,
-        }
-    ]
+    payload = {
+        "schema_version": "scidiscovery.figure-extraction-intent.v1",
+        "source_sha256": "0" * 64,
+        "figure": "Fig. 1", "panel": "whole figure",
+        "series_labels": ["Covered", "Visible"],
+    }
     request = {
         "name": "invalid_request",
         "operation_id": REQUEST,
@@ -357,7 +355,7 @@ def test_request_submit_rejects_shared_support_without_covered_endpoints(
         "curve.figure.request.source_binding"
     }
     assert any(
-        "covered-series endpoints" in item["message"]
+        "source hash differs" in item["message"]
         for item in rejected["diagnostics"]
     )
 
@@ -375,15 +373,12 @@ def test_five_operation_figure_family_requires_exact_review(tmp_path: Path) -> N
         media_type="image/png",
     )
 
-    request_name = _complete_agent(
-        catalog,
-        runtime,
-        root,
-        operation_id=REQUEST,
-        name="figure_request",
-        inputs=[{"port": "paper_source", "artifact_names": ["paper_source"]}],
-        payload=request_payload,
-    )
+    # This synthetic family fixture begins at the deterministic compiler output;
+    # the public intent/real domain compiler path has its own integration test.
+    request_name = root.call_tool("operation_invoke", {
+        "name": "figure_request", "operation_id": "test.figure.compile.v1",
+        "inputs": [{"port": "paper_source", "artifact_names": ["paper_source"]}],
+    })["result"]["outputs"][0]["artifact_name"]
     request_artifact = runtime.artifacts.get_by_id(
         runtime.scheduler_bindings.resolve(
             instance=instance.instance_id,
@@ -469,7 +464,7 @@ def test_five_operation_figure_family_requires_exact_review(tmp_path: Path) -> N
     second_source_raw, second_request_payload = _two_series_source_and_request(
         marker=254
     )
-    _register(
+    second_source = _register(
         runtime,
         instance,
         name="second_paper_source",
@@ -478,20 +473,10 @@ def test_five_operation_figure_family_requires_exact_review(tmp_path: Path) -> N
         schema_id="opaque",
         media_type="image/png",
     )
-    second_request_name = _complete_agent(
-        catalog,
-        runtime,
-        root,
-        operation_id=REQUEST,
-        name="second_figure_request",
-        inputs=[
-            {
-                "port": "paper_source",
-                "artifact_names": ["second_paper_source"],
-            }
-        ],
-        payload=second_request_payload,
-    )
+    second_request_name = root.call_tool("operation_invoke", {
+        "name": "second_figure_request", "operation_id": "test.figure.compile.v1",
+        "inputs": [{"port": "paper_source", "artifact_names": ["second_paper_source"]}],
+    })["result"]["outputs"][0]["artifact_name"]
     second_materialized = root.call_tool(
         "operation_invoke",
         {

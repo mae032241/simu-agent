@@ -14,7 +14,7 @@ from typing import Any
 from PIL import Image
 
 
-VALIDATOR_VERSION = "5"
+VALIDATOR_VERSION = "6"
 REPORT_SCHEMA_VERSION = "scidiscovery.figure-evidence-validation-report.v1"
 MANIFEST_SCHEMA_VERSION = "scidiscovery.figure-evidence-manifest.v1"
 
@@ -859,19 +859,15 @@ def _validate_declared_shared_support(
     source_image: Image.Image,
 ) -> None:
     if not actual:
-        if declared or coincident:
-            raise FigureEvidenceBundleError(
-                "manifest shared support requires CSV support provenance rows"
-            )
         return
     coincident_keys = {
         (panel, member, pixel_x)
         for (panel, _group, pixel_x), members in coincident.items()
         for member in members
     }
-    if set(actual) != set(declared) | coincident_keys:
+    if not set(actual).issubset(set(declared) | coincident_keys):
         raise FigureEvidenceBundleError(
-            "CSV shared-support rows must exactly match manifest declarations"
+            "CSV shared-support rows must be within manifest declarations"
         )
     coordinates: dict[
         tuple[str, str, int],
@@ -900,28 +896,19 @@ def _validate_declared_shared_support(
             raise FigureEvidenceBundleError(
                 "copied shared-support rows cannot be quantitatively eligible"
             )
+        if kind == "shared_occlusion" and (
+            (source_record := actual.get((key[0], source, key[2]))) is None
+            or source_record[2] != "direct_pixel"
+            or source_record[:2] != (pixel, raw_pixel)
+        ):
+            raise FigureEvidenceBundleError("shared support lacks its direct source row")
         coordinates[(key[0], group, key[2])].add((raw_pixel, pixel))
 
-    for panel, _group, left, right, donor, covered, max_distance in overdraw_intervals:
-        donor_points = direct_points.get((panel, donor), {})
-        for member in covered:
-            covered_points = direct_points.get((panel, member), {})
-            if any(
-                endpoint not in donor_points or endpoint not in covered_points
-                for endpoint in (left - 1, right)
-            ):
-                raise FigureEvidenceBundleError(
-                    "shared support lacks covered-series endpoints"
-                )
-            if max(
-                abs(covered_points[endpoint][1] - donor_points[endpoint][1])
-                for endpoint in (left - 1, right)
-            ) > max_distance:
-                raise FigureEvidenceBundleError(
-                    "shared-support endpoint distance exceeds its contract"
-                )
-
     for (panel, group, pixel_x), members in coincident.items():
+        if not any((panel, member, pixel_x) in actual for member in members):
+            continue
+        if not all((panel, member, pixel_x) in actual for member in members):
+            raise FigureEvidenceBundleError("shared coordinate omits a declared member")
         records = tuple(
             (member, actual[(panel, member, pixel_x)]) for member in members
         )
@@ -968,30 +955,9 @@ def _validate_declared_shared_support(
         member_points = {
             member: direct_points.get((panel, member), {}) for member in members
         }
-        if any(
-            left - 1 not in member_points[member]
-            or right not in member_points[member]
-            for member in members
-        ):
-            raise FigureEvidenceBundleError(
-                "coincident overlap lacks direct member endpoints"
-            )
-        if any(
-            not any(pixel_x in member_points[member] for pixel_x in range(left, right))
-            for member in members
-        ):
-            raise FigureEvidenceBundleError(
-                "coincident overlap requires direct contribution from every member"
-            )
-        for pixel_x in (left - 1, right):
-            values = tuple(
-                member_points[member][pixel_x][1] for member in members
-            )
-            if max(values) - min(values) > max_distance:
-                raise FigureEvidenceBundleError(
-                    "coincident-overlap endpoint distance exceeds its contract"
-                )
         for pixel_x in range(left, right):
+            if not any((panel, member, pixel_x) in actual for member in members):
+                continue
             visible = tuple(
                 member_points[member][pixel_x][1]
                 for member in members

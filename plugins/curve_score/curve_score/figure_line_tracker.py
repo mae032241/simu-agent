@@ -22,6 +22,7 @@ class TracePoint:
     shared_group: str = ""
     support_source_series: str = ""
     shared_eligible: bool = False
+    identity_ambiguous: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -172,7 +173,7 @@ def _select_path(
     fallback = (top + bottom - 1) / 2.0
     states: list[dict[str, object]] = []
     terminal_states: list[dict[str, object]] = []
-    ambiguous_columns = 0
+    ambiguous_columns: set[int] = set()
     search_top = min(bottom, top + config.plot_border_exclusion_px)
     search_bottom = max(search_top, bottom - config.plot_border_exclusion_px)
 
@@ -279,7 +280,7 @@ def _select_path(
                 candidate_states = next_states
         ranked = sorted(float(item["cost"]) for item in candidate_states)
         if len(ranked) > 1 and ranked[1] - ranked[0] <= config.ambiguity_margin_px:
-            ambiguous_columns += 1
+            ambiguous_columns.add(x)
         states = sorted(
             next_states,
             key=lambda item: (
@@ -305,10 +306,11 @@ def _select_path(
                 pixel_x_subpixel=float(x),
                 pixel_y_subpixel=selected[x]["subpixel_y"],
                 uncertainty_px=selected[x]["uncertainty_px"],
+                identity_ambiguous=x in ambiguous_columns,
             )
             for x in sorted(selected)
         ),
-        ambiguous_columns,
+        len(ambiguous_columns),
     )
 
 

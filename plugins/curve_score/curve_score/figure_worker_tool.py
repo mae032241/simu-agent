@@ -72,7 +72,8 @@ FIGURE_SOURCE_INSPECTION_TOOL = WorkerToolDefinition(
     description=(
         "Recover bounded embedded images from one exact bound PDF page, or "
         "canonicalize one exact bound raster, and return read-only preview paths "
-        "plus the source/object/hash/dimension fields required by the typed request."
+        "plus deterministic source metadata for scientific figure selection. "
+        "The Agent returns semantic selections, not pixel measurements."
     ),
     input_model=FigureSourceInspectionInput,
     capability="input.inspect_curve_figure",

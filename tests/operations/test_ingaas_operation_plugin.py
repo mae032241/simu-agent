@@ -10,6 +10,8 @@ from pathlib import Path
 import pytest
 
 from curve_score.plugin import PLUGIN as CURVE_PLUGIN
+from curve_figure_evidence.plugin import PLUGIN as FIGURE_PLUGIN
+from ingaas_fig4.figure_compilation import OPERATION as FIGURE_COMPILE_OPERATION
 from ingaas_fig4.plugin import PLUGIN as FIG4_PLUGIN
 from ingaas_fig4.transform_adapter import FIG4_BASELINE_RECOVERY_OPERATION
 from scidiscovery.artifact_agent.schema.refs import ArtifactRef
@@ -199,7 +201,7 @@ def _bound(payloads: dict[str, bytes]):
         ),
     }
     catalog = compile_catalog(
-        (CORE_PLUGIN, SCIENCE_PLUGIN, TCAD_PLUGIN, CURVE_PLUGIN, FIG4_PLUGIN)
+        (CORE_PLUGIN, SCIENCE_PLUGIN, TCAD_PLUGIN, CURVE_PLUGIN, FIGURE_PLUGIN, FIG4_PLUGIN)
     )
     return preflight_operation(
         catalog.operation(FIG4_BASELINE_RECOVERY_OPERATION),
@@ -209,13 +211,13 @@ def _bound(payloads: dict[str, bytes]):
     )
 
 
-def test_optional_fig4_plugin_adds_one_support_operation_without_digest_drift() -> None:
-    baseline = compile_catalog((CORE_PLUGIN, SCIENCE_PLUGIN, TCAD_PLUGIN, CURVE_PLUGIN))
+def test_optional_fig4_plugin_adds_two_support_operations_without_digest_drift() -> None:
+    baseline = compile_catalog((CORE_PLUGIN, SCIENCE_PLUGIN, TCAD_PLUGIN, CURVE_PLUGIN, FIGURE_PLUGIN))
     extended = compile_catalog(
-        (CORE_PLUGIN, SCIENCE_PLUGIN, TCAD_PLUGIN, CURVE_PLUGIN, FIG4_PLUGIN)
+        (CORE_PLUGIN, SCIENCE_PLUGIN, TCAD_PLUGIN, CURVE_PLUGIN, FIGURE_PLUGIN, FIG4_PLUGIN)
     )
     assert set(extended.operation_ids()) - set(baseline.operation_ids()) == {
-        FIG4_BASELINE_RECOVERY_OPERATION
+        FIG4_BASELINE_RECOVERY_OPERATION, FIGURE_COMPILE_OPERATION.operation_id,
     }
     assert extended.operation(FIG4_BASELINE_RECOVERY_OPERATION).spec.catalog_scope == "support"
     assert {

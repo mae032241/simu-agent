@@ -27,6 +27,7 @@ from .transform_adapter import (
     INTERPRETATION_BOUNDARY,
     score_baseline_recovery,
 )
+from .figure_compilation import COMPONENTS as FIGURE_COMPONENTS, OPERATION as FIGURE_OPERATION
 
 
 _INPUT_NAMES = (
@@ -299,9 +300,10 @@ PLUGIN = PluginDefinition(
         PluginDependency("builtin", "0.1.0"),
         PluginDependency("general_science", "0.1.0"),
         PluginDependency("tcad_artifact", "0.2.0"),
+        PluginDependency("curve_figure_evidence", "0.1.0"),
     ),
-    components=COMPONENTS,
-    operations=(OPERATION,),
+    components=COMPONENTS + FIGURE_COMPONENTS,
+    operations=(OPERATION, FIGURE_OPERATION),
 )
 
 

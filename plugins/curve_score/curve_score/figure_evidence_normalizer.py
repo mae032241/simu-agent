@@ -65,6 +65,7 @@ class FigureEvidenceNormalizationAudit:
     selected_point_count: int
     availability_status: str
     reason_code: str | None
+    shared_pixel_provenance: tuple[dict[str, object], ...] = ()
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -79,6 +80,7 @@ class FigureEvidenceNormalizationAudit:
             "selected_point_count": self.selected_point_count,
             "availability_status": self.availability_status,
             "reason_code": self.reason_code,
+            "shared_pixel_provenance": list(self.shared_pixel_provenance),
         }
 
 
@@ -284,6 +286,12 @@ def normalize_figure_evidence(
                 selected_point_count=len(selected_points),
                 availability_status=availability.status,
                 reason_code=availability.reason_code,
+                shared_pixel_provenance=tuple(
+                    {"point_index": row.point_index, "pixel_x": row.pixel_x,
+                     "pixel_y": row.pixel_y, "shared_group": row.shared_group,
+                     "support_source_series": row.support_source_series}
+                    for row in rows if row.shared_group
+                ),
             )
         )
     return (
@@ -303,6 +311,8 @@ class _EvidenceRow:
     pixel_y: float
     observed: int
     eligible: int
+    shared_group: str = ""
+    support_source_series: str = ""
 
 
 def _manifest_series(
@@ -399,6 +409,8 @@ def _curve_rows(
                         if has_eligibility
                         else 1
                     ),
+                    shared_group=row.get("shared_group", ""),
+                    support_source_series=row.get("support_source_series", ""),
                 )
             )
     except (csv.Error, KeyError, ValueError) as error:
@@ -486,8 +498,6 @@ def _validate_points(
     *,
     allow_duplicate_x: bool,
 ) -> None:
-    if len(points) < 2:
-        raise ValueError(f"qualified figure series has too few points: {series_key}")
     if any(
         right.x < left.x if allow_duplicate_x else right.x <= left.x
         for left, right in zip(points, points[1:])

@@ -1,0 +1,312 @@
+{
+  "figure_key": "yin-2025-fig4-zinc-depth",
+  "panel_key": "fig4",
+  "figure": "Fig. 4",
+  "citation": "Fig. 4, PDF page 6 (article page 123103-5)",
+  "plot_bbox": [
+    166,
+    36,
+    975,
+    686
+  ],
+  "exclusion_regions": [
+    [
+      640,
+      45,
+      970,
+      244
+    ],
+    [
+      187,
+      228,
+      334,
+      475
+    ],
+    [
+      349,
+      228,
+      497,
+      475
+    ]
+  ],
+  "series": [
+    {
+      "series_key": "measured_in083al017as",
+      "label": "In0.83Al0.17As measured concentration-depth profile",
+      "primitive_kind": "line",
+      "color": "#000000",
+      "color_tolerance": 45,
+      "line_style": "solid",
+      "binding_source": "legend",
+      "visible_label": "In0.83Al0.17As",
+      "binding_bbox": [
+        654,
+        67,
+        745,
+        78
+      ],
+      "min_color_pixels": 100,
+      "seeds": [
+        [
+          170,
+          125
+        ],
+        [
+          220,
+          75
+        ],
+        [
+          300,
+          75
+        ],
+        [
+          420,
+          95
+        ],
+        [
+          480,
+          115
+        ],
+        [
+          535,
+          142
+        ],
+        [
+          580,
+          177
+        ],
+        [
+          600,
+          218
+        ],
+        [
+          610,
+          294
+        ],
+        [
+          620,
+          430
+        ],
+        [
+          630,
+          520
+        ],
+        [
+          650,
+          525
+        ],
+        [
+          700,
+          590
+        ],
+        [
+          750,
+          590
+        ],
+        [
+          800,
+          620
+        ],
+        [
+          850,
+          620
+        ],
+        [
+          900,
+          620
+        ],
+        [
+          950,
+          620
+        ],
+        [
+          970,
+          620
+        ]
+      ],
+      "tracking": {
+        "max_vertical_step_px": 90,
+        "max_gap_px": 18,
+        "max_gap_vertical_displacement_px": 120,
+        "max_guide_distance_px": 45,
+        "ambiguity_margin_px": 0.25,
+        "guide_weight": 0.9,
+        "skip_penalty": 30,
+        "seed_radius_px": 4,
+        "plot_border_exclusion_px": 4
+      },
+      "eligibility": {
+        "default_eligible": true
+      }
+    },
+    {
+      "series_key": "measured_in083ga017as",
+      "label": "In0.83Ga0.17As measured concentration-depth profile",
+      "primitive_kind": "line",
+      "color": "#ff0000",
+      "color_tolerance": 45,
+      "line_style": "solid",
+      "binding_source": "legend",
+      "visible_label": "In0.83Ga0.17As",
+      "binding_bbox": [
+        654,
+        120,
+        745,
+        132
+      ],
+      "min_color_pixels": 100,
+      "seeds": [
+        [
+          170,
+          111
+        ],
+        [
+          220,
+          80
+        ],
+        [
+          280,
+          69
+        ],
+        [
+          340,
+          80
+        ],
+        [
+          400,
+          98
+        ],
+        [
+          460,
+          123
+        ],
+        [
+          500,
+          160
+        ],
+        [
+          520,
+          240
+        ],
+        [
+          530,
+          350
+        ],
+        [
+          540,
+          445
+        ],
+        [
+          550,
+          510
+        ],
+        [
+          560,
+          550
+        ],
+        [
+          600,
+          570
+        ],
+        [
+          650,
+          550
+        ],
+        [
+          700,
+          552
+        ],
+        [
+          750,
+          560
+        ],
+        [
+          800,
+          575
+        ],
+        [
+          850,
+          590
+        ],
+        [
+          900,
+          590
+        ],
+        [
+          950,
+          565
+        ],
+        [
+          970,
+          592
+        ]
+      ],
+      "tracking": {
+        "max_vertical_step_px": 90,
+        "max_gap_px": 18,
+        "max_gap_vertical_displacement_px": 120,
+        "max_guide_distance_px": 45,
+        "ambiguity_margin_px": 0.25,
+        "guide_weight": 0.9,
+        "skip_penalty": 50,
+        "seed_radius_px": 4,
+        "plot_border_exclusion_px": 4
+      },
+      "eligibility": {
+        "default_eligible": true,
+        "ineligible_pixel_regions": [
+          {
+            "pixel_range": [
+              537,
+              541
+            ],
+            "reason": "same_color_annotation_overlap"
+          }
+        ]
+      }
+    }
+  ],
+  "shared_support": [],
+  "detection_limit": {
+    "value": 3000000000000000.0,
+    "unit": "cm^-3",
+    "note": "Approximate SIMS detection limit: 3e15 cm^-3, from the gray dashed line labelled SIMS Detection Limit in the source-bound Fig. 4. Rows below this approximate level are locally ineligible."
+  },
+  "source_sha256": "750c8cb5944ed9fe25c5072db084bb0194ed682d5e1ea40f25103f4aa89c05c3",
+  "recovered_image_sha256": "88358eb5658c75cf7eddb3cb71fab5f2f8d5bf0d6e7252481193142adb19be5a",
+  "pdf_page": 6,
+  "pdf_object_id": 241,
+  "panel": "whole figure",
+  "axis_ticks": {
+    "x": {
+      "scale": "linear",
+      "unit": "um",
+      "ticks": [
+        [
+          166,
+          0
+        ],
+        [
+          974,
+          0.8
+        ]
+      ],
+      "uncertainty_px": 1
+    },
+    "y": {
+      "scale": "log10",
+      "unit": "cm^-3",
+      "ticks": [
+        [
+          685,
+          1000000000000000
+        ],
+        [
+          36,
+          100000000000000000000
+        ]
+      ],
+      "uncertainty_px": 1
+    }
+  }
+}

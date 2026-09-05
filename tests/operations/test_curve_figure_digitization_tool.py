@@ -4,6 +4,7 @@ import csv
 import hashlib
 import io
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -17,7 +18,6 @@ from curve_score.figure_digitization import (
 from curve_score.figure_evidence import FigureEvidenceValidationReport
 from curve_score.operation_transforms import bundle_figure_evidence
 from curve_score.schema import CurveBundle, CurveDomain, curve_series_domain_reason
-from curve_score.figure_science_operations import FIGURE_REQUEST_CONTEXT
 from curve_score.figure_evidence_validation import (
     FigureEvidenceBundleError,
     build_figure_evidence_validation_report,
@@ -30,7 +30,6 @@ from curve_score.figure_worker_tool import (
 from curve_score.operation_transforms import materialize_figure_evidence
 from scidiscovery.artifact_agent.schema.common import canonical_json
 from scidiscovery.artifact_agent.schema.refs import ArtifactRef
-from scidiscovery.operation_contract import SemanticRuleViolation
 
 
 def _png_with_points(points: tuple[tuple[int, int], ...]) -> bytes:
@@ -173,14 +172,12 @@ def _bundle_from_materialized(outputs: dict[str, tuple[bytes, ...]]) -> CurveBun
 def test_typed_request_is_bound_to_the_exact_raster_source() -> None:
     source = _valid_source()
     payload = json.loads(_request(source))
-    FIGURE_REQUEST_CONTEXT.implementation(payload, {"paper_source": source}, {})
+    build_digitized_figure_bundle(source, canonical_json(payload))
 
     changed = dict(payload)
     changed["source"] = {**payload["source"], "source_sha256": "0" * 64}
-    with pytest.raises(SemanticRuleViolation, match="source hash differs"):
-        FIGURE_REQUEST_CONTEXT.implementation(
-            changed, {"paper_source": source}, {}
-        )
+    with pytest.raises(ValueError, match="source hash differs"):
+        build_digitized_figure_bundle(source, canonical_json(changed))
 
 
 def test_materialization_is_deterministic_and_uses_transform_ports() -> None:
@@ -247,12 +244,12 @@ def test_unresolved_request_records_missing_calibration_without_guessing() -> No
             "recovery_tool_version": image.recovery_tool_version,
         },
     }
-    FIGURE_REQUEST_CONTEXT.implementation(payload, {"paper_source": source}, {})
+    FigureDigitizationRequest.model_validate_json(canonical_json(payload), strict=True)
     with pytest.raises(ValueError, match="unresolved figure request"):
         build_digitized_figure_bundle(source, canonical_json(payload))
 
 
-def test_undeclared_visible_gap_and_axis_seed_fail_closed_as_unresolved() -> None:
+def test_undeclared_visible_gap_and_bad_seed_are_local_diagnostics() -> None:
     source = _png_with_points(
         tuple((x, 10 - x) for x in (*range(1, 4), *range(6, 10)))
         + ((1, 1), (2, 1), (3, 1))
@@ -267,12 +264,13 @@ def test_undeclared_visible_gap_and_axis_seed_fail_closed_as_unresolved() -> Non
         }
     )
     manifest = json.loads(outputs["figure_manifest"][0])
-    messages = {item["message"] for item in manifest["ambiguities"]}
-    assert manifest["status"] == "unresolved"
+    messages = set(manifest["panels"][0]["series"][0]["tracking_diagnostics"])
+    assert manifest["status"] == "qualified"
+    assert manifest["ambiguities"] == []
     assert any("seed" in message for message in messages)
     assert any("undeclared trace gap" in message for message in messages)
     rows = tuple(csv.DictReader(outputs["curve_tables"][0].decode().splitlines()))
-    assert rows and not any(
+    assert rows and all(
         int(row["quantitative_measurement_claim_eligible"]) for row in rows
     )
 
@@ -318,8 +316,7 @@ def test_undeclared_cross_series_pixel_ownership_is_rejected() -> None:
 def test_unresolved_series_cannot_forge_eligible_rows() -> None:
     source = _valid_source()
     request = json.loads(_request(source))
-    request["series"][0]["seeds"] = [[1.0, 1.0], [9.0, 1.0]]
-    request["series"][0]["tracking"]["plot_border_exclusion_px"] = 1
+    request["series"][0]["binding_bbox"] = [1, 1, 3, 3]
     files, _ = build_digitized_figure_bundle(source, canonical_json(request))
     manifest = json.loads(files["figure_manifest/evidence.json"][0])
     table_name = manifest["panels"][0]["series"][0]["data_item"]
@@ -400,9 +397,6 @@ def test_deprecated_covered_eligibility_remains_parseable_but_is_not_granted() -
             "max_endpoint_distance_px": 2.0,
         }
     ]
-    FIGURE_REQUEST_CONTEXT.implementation(
-        request, {"paper_source": source}, {}
-    )
     outputs = materialize_figure_evidence(
         {
             "paper_source": (source,),
@@ -428,7 +422,7 @@ def test_deprecated_covered_eligibility_remains_parseable_but_is_not_granted() -
     assert not any(int(row["quantitative_measurement_claim_eligible"]) for row in shared)
 
 
-def test_overdraw_support_requires_preserved_covered_series_anchors() -> None:
+def test_overdraw_endpoint_gap_preserves_other_local_support() -> None:
     image = Image.new("RGB", (12, 12), "white")
     for x in range(1, 10):
         image.putpixel((x, 5), (255, 0, 0))
@@ -502,15 +496,12 @@ def test_overdraw_support_requires_preserved_covered_series_anchors() -> None:
             item["sha256"] = hashlib.sha256(changed).hexdigest()
             item["bytes"] = len(changed)
 
-    with pytest.raises(
-        FigureEvidenceBundleError,
-        match="lacks covered-series endpoints",
-    ):
-        build_figure_evidence_validation_report(
-            manifest_data_item="figure_manifest/evidence.json",
-            manifest_content=canonical_json(manifest),
-            sibling_files=siblings,
-        )
+    report = build_figure_evidence_validation_report(
+        manifest_data_item="figure_manifest/evidence.json",
+        manifest_content=canonical_json(manifest),
+        sibling_files=siblings,
+    )
+    assert report["metrics"]["eligible_curve_rows"] == 15
 
 
 def _coincident_overlap_request(
@@ -580,7 +571,7 @@ def test_coincident_overlap_uses_one_real_source_per_column() -> None:
     manifest = json.loads(outputs["figure_manifest"][0])
     report = json.loads(outputs["validation_report"][0])
     assert manifest["status"] == "qualified"
-    assert report["validator_version"] == "5"
+    assert report["validator_version"] == "6"
     assert report["metrics"]["eligible_curve_rows"] == 18
     assert report["metrics"]["global_unique_pixel_count"] == 15
     assert report["metrics"]["global_duplicate_pixel_rows"] == 3
@@ -871,7 +862,7 @@ def test_shared_source_raw_pixel_cannot_be_detached_from_subpixel_trace() -> Non
         )
 
 
-def test_coincident_overlap_requires_preserved_direct_member_anchors() -> None:
+def test_coincident_overlap_endpoint_gap_preserves_other_direct_pixels() -> None:
     source, request = _coincident_overlap_request()
     files, _ = build_digitized_figure_bundle(source, canonical_json(request))
     manifest = json.loads(files["figure_manifest/evidence.json"][0])
@@ -905,56 +896,46 @@ def test_coincident_overlap_requires_preserved_direct_member_anchors() -> None:
             item["sha256"] = hashlib.sha256(changed).hexdigest()
             item["bytes"] = len(changed)
 
-    with pytest.raises(
-        FigureEvidenceBundleError,
-        match="lacks direct member endpoints",
-    ):
-        build_figure_evidence_validation_report(
-            manifest_data_item="figure_manifest/evidence.json",
-            manifest_content=canonical_json(manifest),
-            sibling_files=siblings,
-        )
+    report = build_figure_evidence_validation_report(
+        manifest_data_item="figure_manifest/evidence.json",
+        manifest_content=canonical_json(manifest),
+        sibling_files=siblings,
+    )
+    assert report["metrics"]["eligible_curve_rows"] == 17
 
 
 def test_coincident_overlap_requires_each_member_binding_to_match() -> None:
     source, request = _coincident_overlap_request()
     request["series"][0]["binding_bbox"] = [4, 4, 5, 6]
     with pytest.raises(
-        SemanticRuleViolation,
+        ValueError,
         match="independently matched member bindings",
     ):
-        FIGURE_REQUEST_CONTEXT.implementation(
-            request,
-            {"paper_source": source},
-            {},
-        )
+        build_digitized_figure_bundle(source, canonical_json(request))
 
 
 @pytest.mark.parametrize(
-    ("black_overlap", "red_overlap", "distance", "message"),
+    ("black_overlap", "red_overlap", "distance", "shared_rows"),
     [
-        ((), (4, 5, 6), 2.0, "direct contribution"),
-        ((4,), (6,), 2.0, "lacks direct pixel 5"),
-        ((5,), (4, 6), 0.5, "endpoint distance"),
+        ((), (4, 5, 6), 2.0, 3),
+        ((4,), (6,), 2.0, 2),
+        ((5,), (4, 6), 0.5, 3),
     ],
 )
-def test_coincident_overlap_fails_closed_without_visible_support(
+def test_coincident_overlap_local_support_does_not_require_every_endpoint(
     black_overlap: tuple[int, ...],
     red_overlap: tuple[int, ...],
     distance: float,
-    message: str,
+    shared_rows: int,
 ) -> None:
     source, request = _coincident_overlap_request(
         black_overlap=black_overlap,
         red_overlap=red_overlap,
         max_member_distance_px=distance,
     )
-    with pytest.raises(SemanticRuleViolation, match=message):
-        FIGURE_REQUEST_CONTEXT.implementation(
-            request,
-            {"paper_source": source},
-            {},
-        )
+    _, report = build_digitized_figure_bundle(source, canonical_json(request))
+    assert report["metrics"]["shared_occlusion_curve_rows"] == shared_rows
+    assert report["metrics"]["eligible_curve_rows"] == 12 + 2 * shared_rows
 
 
 def test_pdf_embedded_image_selection_has_exact_object_identity(tmp_path: Path) -> None:
@@ -1024,9 +1005,6 @@ def test_pdf_request_is_replayed_by_the_formal_materializer(tmp_path: Path) -> N
             "min_visible_fraction": 0.4,
         }
     )
-    FIGURE_REQUEST_CONTEXT.implementation(
-        request, {"paper_source": source}, {}
-    )
     outputs = materialize_figure_evidence(
         {
             "paper_source": (source,),
@@ -1039,8 +1017,8 @@ def test_pdf_request_is_replayed_by_the_formal_materializer(tmp_path: Path) -> N
     assert manifest["source"]["pdf_object"] == "1 0"
 
 
-def test_frozen_fig4_preserves_red_evidence_and_black_uncertainty() -> None:
-    pdf = (
+def test_frozen_fig4_preserves_direct_evidence_and_local_gaps() -> None:
+    pdf = Path(os.environ["SCID_FIG4_FROZEN_SOURCE"]) if os.environ.get("SCID_FIG4_FROZEN_SOURCE") else (
         Path(__file__).resolve().parents[2]
         / "deliverables"
         / "m7-full-science-gpt56-20260903"
@@ -1065,8 +1043,8 @@ def test_frozen_fig4_preserves_red_evidence_and_black_uncertainty() -> None:
     by_key = {
         item["series_key"]: item for item in manifest["panels"][0]["series"]
     }
-    assert manifest["status"] == "unresolved"
-    assert manifest["metrics"]["qualified_series_count"] == 1
+    assert manifest["status"] == "qualified"
+    assert manifest["metrics"]["qualified_series_count"] == 2
     assert by_key["measured_in083al017as"]["point_count"] == 565
     assert by_key["measured_in083al017as"]["max_gap_px"] == 56
     assert by_key["measured_in083ga017as"]["point_count"] == 805
@@ -1075,12 +1053,25 @@ def test_frozen_fig4_preserves_red_evidence_and_black_uncertainty() -> None:
 
     bundle = _bundle_from_materialized(first)
     normalized = {item.series_key: item for item in bundle.series}
-    assert normalized["measured_in083al017as"].availability.status == "unavailable"
+    assert normalized["measured_in083al017as"].availability.status == "available"
     assert normalized["measured_in083ga017as"].availability.status == "available"
     report = json.loads(first["validation_report"][0])
     counts = {item["series_key"]: item for item in report["series"]}
-    assert counts["measured_in083al017as"]["eligible_row_count"] == 0
-    assert counts["measured_in083ga017as"]["eligible_row_count"] == 801
+    assert counts["measured_in083al017as"]["eligible_row_count"] == 563
+    assert counts["measured_in083ga017as"]["eligible_row_count"] == 800
+    ambiguous_columns = {
+        rows[0]["series_key"]: {
+            int(row["pixel_x_raw"])
+            for row in rows
+            if row["eligibility_reason"] == "ambiguous_path"
+        }
+        for table in first["curve_tables"]
+        if (rows := tuple(csv.DictReader(io.StringIO(table.decode("utf-8")))))
+    }
+    assert ambiguous_columns == {
+        "measured_in083al017as": {459, 538},
+        "measured_in083ga017as": {633},
+    }
     red_table = next(
         item
         for item in first["curve_tables"]

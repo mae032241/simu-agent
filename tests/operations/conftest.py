@@ -155,7 +155,7 @@ def installed_environments(
         "architecture": (core, architecture),
         "m7_effect": (core, m7_effect),
         "full": (core, tcad, curve),
-        "ingaas": (core, tcad, curve, ingaas),
+        "ingaas": (core, tcad, curve, figure, ingaas),
         "producer_family": (core, producer_family),
         "broken": (core, broken),
         "invalid_unicode": (core, invalid_unicode),

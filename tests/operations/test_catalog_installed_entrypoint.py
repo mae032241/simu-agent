@@ -155,7 +155,7 @@ from curve_score.figure_digitization_contract import FigureLineTracking
 from curve_score.figure_evidence_validation import VALIDATOR_VERSION
 from scidiscovery.operations.catalog import compile_installed_catalog
 
-assert VALIDATOR_VERSION == "5"
+assert VALIDATOR_VERSION == "6"
 tracking = FigureLineTracking.model_json_schema(mode="validation")
 legacy = tracking["properties"]["overdraw_candidate_endpoint_distance_px"]
 assert legacy["default"] == 8.0
@@ -169,6 +169,25 @@ assert "shared dependency" in prompt
 print("installed E5.2 curve contracts present")
 ''')
     assert output.strip() == "installed E5.2 curve contracts present"
+
+
+def test_installed_semantic_figure_compiler_includes_frozen_geometry(installed_probe) -> None:
+    output = installed_probe("ingaas", r'''
+import json
+from importlib.resources import files
+from ingaas_fig4.figure_compilation import GEOMETRY, OPERATION
+from scidiscovery.operations.catalog import compile_installed_catalog
+geometry_path = files("ingaas_fig4").joinpath("figure_geometry.json")
+assert json.loads(geometry_path.read_text()) == json.loads(GEOMETRY)
+assert json.loads(GEOMETRY)["source_sha256"] == "750c8cb5944ed9fe25c5072db084bb0194ed682d5e1ea40f25103f4aa89c05c3"
+catalog = compile_installed_catalog()
+assert catalog.operation(OPERATION.operation_id).spec.catalog_scope == "support"
+selection = catalog.operation("science.figure.request.prepare.v1")
+assert selection.spec.outputs[0].schema_id == "scidiscovery.figure-extraction-intent.v1"
+assert selection.spec.outputs[0].name == "figure_intent"
+print("installed semantic figure compiler and frozen geometry present")
+''')
+    assert output.strip() == "installed semantic figure compiler and frozen geometry present"
 
 
 def test_installed_evidence_alias_schema_matches_local_worker_submit(

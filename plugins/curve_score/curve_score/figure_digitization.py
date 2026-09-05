@@ -111,37 +111,25 @@ def _materialize_shared_support(
             donor = direct_by_x[support.visible_series]
             donor_result = by_x[support.visible_series]
             for left, right in support.pixel_ranges:
-                required = set(range(left, right))
-                if not required.issubset(donor):
-                    raise ValueError(
-                        "shared-support donor lacks direct pixel "
-                        f"{min(required - set(donor))}"
-                    )
+                required = set(range(left, right)) & donor.keys()
                 for covered_key in support.covered_series:
                     covered_direct = direct_by_x[covered_key]
                     covered_result = by_x[covered_key]
-                    if left - 1 not in covered_direct or right not in covered_direct:
-                        raise ValueError("shared support lacks covered-series endpoints")
-                    endpoint_distance = max(
+                    endpoint_distance = max((
                         abs(
                             covered_direct[endpoint].pixel_y_subpixel
                             - donor[endpoint].pixel_y_subpixel
                         )
                         for endpoint in (left - 1, right)
-                    )
+                        if endpoint in covered_direct and endpoint in donor
+                    ), default=0.0)
                     if endpoint_distance > support.max_endpoint_distance_px:
-                        raise ValueError(
-                            "shared-support endpoint distance exceeds its contract"
-                        )
-                    if any(pixel_x in covered_direct for pixel_x in required):
-                        raise ValueError(
-                            "shared support may fill only missing covered pixels"
-                        )
+                        continue
                     domain = definitions[covered_key].pixel_range or (
                         request.plot_bbox[0],
                         request.plot_bbox[2],
                     )
-                    for pixel_x in range(left, right):
+                    for pixel_x in sorted(required - covered_direct.keys()):
                         donor_point = donor[pixel_x]
                         covered_result[pixel_x] = replace(
                             mark_shared(
@@ -156,7 +144,6 @@ def _materialize_shared_support(
                             ),
                             point_index=pixel_x - domain[0],
                         )
-                    for pixel_x in range(left, right):
                         donor_result[pixel_x] = mark_shared(
                             donor[pixel_x],
                             group=support.group_key,
@@ -167,25 +154,6 @@ def _materialize_shared_support(
 
         members = support.member_series
         for left, right in support.pixel_ranges:
-            for member in members:
-                points = direct_by_x[member]
-                if left - 1 not in points or right not in points:
-                    raise ValueError(
-                        "coincident overlap lacks direct member endpoints"
-                    )
-                if not any(pixel_x in points for pixel_x in range(left, right)):
-                    raise ValueError(
-                        "coincident overlap requires direct contribution from every member"
-                    )
-            for endpoint in (left - 1, right):
-                endpoint_values = tuple(
-                    direct_by_x[member][endpoint].pixel_y_subpixel
-                    for member in members
-                )
-                if max(endpoint_values) - min(endpoint_values) > support.max_member_distance_px:
-                    raise ValueError(
-                        "coincident-overlap endpoint distance exceeds its contract"
-                    )
             sources = _coincident_sources(
                 members=members,
                 left=left,
@@ -197,17 +165,13 @@ def _materialize_shared_support(
                     member for member in members if pixel_x in direct_by_x[member]
                 )
                 if not available:
-                    raise ValueError(
-                        f"coincident overlap lacks direct pixel {pixel_x}"
-                    )
+                    continue
                 visible_points = tuple(
                     direct_by_x[member][pixel_x] for member in available
                 )
                 visible_y = tuple(point.pixel_y_subpixel for point in visible_points)
                 if max(visible_y) - min(visible_y) > support.max_member_distance_px:
-                    raise ValueError(
-                        "coincident-overlap member distance exceeds its contract"
-                    )
+                    continue
                 source_member = sources[pixel_x]
                 source_point = direct_by_x[source_member][pixel_x]
                 spread = max(visible_y) - min(visible_y)
@@ -233,6 +197,13 @@ def _materialize_shared_support(
                             shared_eligible=True,
                         ),
                         point_index=pixel_x - domain[0],
+                        identity_ambiguous=(
+                            source_point.identity_ambiguous
+                            or (
+                                pixel_x in direct_by_x[member]
+                                and direct_by_x[member][pixel_x].identity_ambiguous
+                            )
+                        ),
                     )
     return {
         key: tuple(value[x] for x in sorted(value)) for key, value in by_x.items()
@@ -254,9 +225,6 @@ def _coincident_sources(
         )
         for pixel_x in range(left, right)
     }
-    for pixel_x, available in available_by_x.items():
-        if not available:
-            raise ValueError(f"coincident overlap lacks direct pixel {pixel_x}")
 
     member_by_x: dict[int, str] = {}
 
@@ -271,15 +239,14 @@ def _coincident_sources(
                 return True
         return False
 
-    if any(not assign(member, set()) for member in members):
-        raise ValueError(
-            "coincident overlap cannot preserve one direct source for every member"
-        )
+    for member in members:
+        assign(member, set())
     return {
         pixel_x: member_by_x[pixel_x]
         if pixel_x in member_by_x
         else available_by_x[pixel_x][0]
         for pixel_x in range(left, right)
+        if available_by_x[pixel_x]
     }
 
 
@@ -324,6 +291,10 @@ def _curve_csv(
         below_limit = _inside(
             point.pixel_x_raw,
             series.eligibility.below_detection_limit_pixel_ranges,
+        ) or (
+            series.eligibility.below_detection_limit_value is not None
+            and _axis_value(axes.y, point.pixel_y_subpixel)
+            < series.eligibility.below_detection_limit_value
         )
         plain_ineligible = _inside(
             point.pixel_x_raw, series.eligibility.ineligible_pixel_ranges
@@ -346,6 +317,7 @@ def _curve_csv(
             and not plain_ineligible
             and not region_reason
             and not shared_ineligible
+            and not point.identity_ambiguous
         )
         reason = (
             "below_detection_limit"
@@ -354,6 +326,8 @@ def _curve_csv(
             if region_reason
             else "ineligible_range"
             if plain_ineligible
+            else "ambiguous_path"
+            if point.identity_ambiguous
             else "shared_occlusion"
             if shared_ineligible
             else "series_unresolved"
@@ -409,24 +383,55 @@ def _audit_overlay(
     traces: dict[str, tuple[TracePoint, ...]],
     unresolved: set[str],
 ) -> bytes:
-    overlay = image.copy()
+    plot, axes, series_values = request.require_ready()
+    # Each source-sized panel has its own trace, so coincident members do not
+    # paint over one another. The strip below it reports observed columns only.
+    panel_height = image.height + 70
+    overlay = Image.new(
+        "RGB", (max(image.width, 420), panel_height * len(series_values)), "white"
+    )
     draw = ImageDraw.Draw(overlay)
-    plot, _, series_values = request.require_ready()
-    draw.rectangle(plot, outline="#666666", width=1)
     colors = ("#00bfff", "#ff00ff", "#ffb000", "#00b060")
     for index, series in enumerate(series_values):
         color = colors[index % len(colors)]
-        draw.rectangle(series.binding_bbox, outline=color, width=2)
+        offset = index * panel_height + 25
+        overlay.paste(image, (0, offset))
+        draw.text((4, offset - 20), series.series_key, fill=color)
+        left, top, right, bottom = series.binding_bbox
+        draw.rectangle((left, top + offset, right, bottom + offset), outline=color, width=1)
         for x, y in series.seeds:
-            draw.line((x - 3, y, x + 3, y), fill=color, width=1)
-            draw.line((x, y - 3, x, y + 3), fill=color, width=1)
-        point_color = "#ff7f00" if series.series_key in unresolved else "#00b050"
+            draw.line((x - 3, y + offset, x + 3, y + offset), fill="#888888", width=1)
+            draw.line((x, y + offset - 3, x, y + offset + 3), fill="#888888", width=1)
+        domain = series.pixel_range or (plot[0], plot[2])
+        strip_y = offset + image.height + 3
+        draw.rectangle((domain[0], strip_y, domain[1] - 1, strip_y + 4), fill="#aaaaaa")
+        for point in traces[series.series_key]:
+            if point.shared_group:
+                x, y = point.pixel_x_subpixel, point.pixel_y_subpixel + offset
+                draw.ellipse((x - 2, y - 2, x + 2, y + 2), outline="#d6a000")
         for point in traces[series.series_key]:
             x = int(round(point.pixel_x_subpixel))
             y = int(round(point.pixel_y_subpixel))
-            draw.point((x, y), fill=point_color)
-        label_x, label_y = series.binding_bbox[:2]
-        draw.text((label_x, max(0, label_y - 12)), series.series_key, fill=color)
+            local_limit = (
+                series.series_key in unresolved
+                or point.identity_ambiguous
+                or not series.eligibility.default_eligible
+                or _inside(x, series.eligibility.ineligible_pixel_ranges)
+                or _inside(x, series.eligibility.below_detection_limit_pixel_ranges)
+                or (series.eligibility.below_detection_limit_value is not None
+                    and _axis_value(axes.y, point.pixel_y_subpixel)
+                    < series.eligibility.below_detection_limit_value)
+                or any(region.pixel_range[0] <= x < region.pixel_range[1]
+                       for region in series.eligibility.ineligible_pixel_regions)
+                or (point.support_kind == "shared_occlusion" and not point.shared_eligible)
+            )
+            point_color = "#ff4000" if local_limit else color
+            draw.point((x, y + offset), fill=point_color)
+            draw.line((x, strip_y, x, strip_y + 4), fill=(
+                "#ff4000" if local_limit else "#d6a000" if point.shared_group else color
+            ))
+        draw.text((4, strip_y + 9), "Trace: series color | shared: gold ring", fill="#333333")
+        draw.text((4, strip_y + 21), "Coverage: gray missing | red local limit", fill="#333333")
     stream = io.BytesIO()
     overlay.save(stream, format="PNG", optimize=False, compress_level=9)
     return stream.getvalue()
@@ -485,7 +490,7 @@ def build_digitized_figure_bundle(
                 image,
                 request,
                 traces,
-                {key for key, values in findings.items() if values},
+                {key for key, binding in bindings.items() if binding["status"] != "matched"},
             ),
             "image/png",
         ),
@@ -497,9 +502,9 @@ def build_digitized_figure_bundle(
         key = series.series_key
         points = traces[key]
         local_findings = findings[key]
-        series_unresolved = (
-            bool(local_findings) or bindings[key]["status"] != "matched"
-        )
+        # Tracking diagnostics describe extraction, not scientific identity.
+        # A missed seed or missing column cannot revoke other measured pixels.
+        series_unresolved = bindings[key]["status"] != "matched"
         item = f"curve_tables/{request.panel_key}--{key}.csv"
         siblings[item] = (
             _curve_csv(
@@ -535,6 +540,7 @@ def build_digitized_figure_bundle(
                 "candidates": [],
             }
             for finding in local_findings
+            if finding.code == "binding_pixels_missing"
         )
         manifest_series.append(
             {
@@ -551,6 +557,11 @@ def build_digitized_figure_bundle(
                 "point_count": len(points),
                 "visible_fraction": round(visible_fraction, 9),
                 "max_gap_px": max_gap,
+                "tracking_diagnostics": [
+                    finding.message for finding in local_findings
+                    if finding.code != "binding_pixels_missing"
+                ] + ([series.eligibility.detection_limit_note]
+                     if series.eligibility.detection_limit_note else []),
                 "uncertainty_px": round(
                     max(
                         (

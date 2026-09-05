@@ -51,7 +51,7 @@ def test_optional_plugin_adds_the_complete_figure_vertical_slice() -> None:
     assert "science.evidence.extract.figure.v1" not in optional.operation_ids()
     request = optional.operation("science.figure.request.prepare.v1")
     assert request.spec.outputs[0].schema_id == (
-        "scidiscovery.curve-figure-digitization-request.v2"
+        "scidiscovery.figure-extraction-intent.v1"
     )
     assert {
         item.name for item in operation_worker_tools(request)

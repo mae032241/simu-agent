@@ -9,6 +9,7 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .figure_evidence import (
+    FigureAxisCalibration,
     FigurePanelAxisCalibration,
     FigureSharedSupport,
     MAX_FORMAL_RGB_DISTANCE,
@@ -32,6 +33,52 @@ class _DigitizationModel(BaseModel):
         extra="forbid",
         frozen=True,
         strict=True,
+    )
+
+
+class FigureExtractionIntent(_DigitizationModel):
+    """Public scientific selection; all pixel measurements belong to tools."""
+
+    model_config = ConfigDict(json_schema_extra={
+        "oneOf": [
+            {"required": ["series_labels"], "properties": {
+                "series_labels": {"minItems": 1},
+                "unresolved_reasons": {"maxItems": 0},
+            }},
+            {"required": ["unresolved_reasons"], "properties": {
+                "series_labels": {"maxItems": 0},
+                "unresolved_reasons": {"minItems": 1},
+            }},
+        ],
+    })
+
+    schema_version: Literal["scidiscovery.figure-extraction-intent.v1"]
+    source_sha256: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
+    figure: ShortText
+    panel: ShortText
+    series_labels: Annotated[
+        tuple[ShortText, ...], Field(max_length=32, json_schema_extra={"uniqueItems": True})
+    ] = ()
+    unresolved_reasons: Annotated[tuple[ShortText, ...], Field(max_length=32)] = ()
+
+    @model_validator(mode="after")
+    def _unique_labels(self) -> FigureExtractionIntent:
+        if len(set(self.series_labels)) != len(self.series_labels):
+            raise ValueError("selected visible series labels must be unique")
+        if bool(self.series_labels) == bool(self.unresolved_reasons):
+            raise ValueError("select visible series or report unresolved reasons, never both")
+        return self
+
+
+def calibration_from_tick_pairs(
+    *, scale: str, unit: str, ticks: tuple[tuple[float, float], tuple[float, float]],
+    uncertainty_px: float,
+) -> FigureAxisCalibration:
+    """Normalize measured (pixel, value) pairs without breaking their pairing."""
+    low, high = sorted(ticks, key=lambda tick: tick[1])
+    return FigureAxisCalibration(
+        scale=scale, unit=unit, pixel_min=low[0], value_min=low[1],
+        pixel_max=high[0], value_max=high[1], reprojection_error_px=uncertainty_px,
     )
 
 
@@ -69,6 +116,8 @@ class FigureIneligibleRegion(_DigitizationModel):
 
 class FigureEligibility(_DigitizationModel):
     default_eligible: bool = False
+    below_detection_limit_value: Annotated[float, Field(gt=0.0)] | None = None
+    detection_limit_note: ShortText | None = None
     ineligible_pixel_ranges: Annotated[
         tuple[PixelRange, ...], Field(max_length=128)
     ] = ()
@@ -268,9 +317,11 @@ class FigureDigitizationRequest(_DigitizationModel):
             if not set(members).issubset(known):
                 raise ValueError("shared support references an unknown series")
             for interval in support.pixel_ranges:
-                if not plot_left < interval[0] < interval[1] < plot_right:
-                    raise ValueError("shared support requires direct endpoints")
                 for member in members:
+                    definition = next(item for item in self.series if item.series_key == member)
+                    domain = definition.pixel_range or (plot_left, plot_right)
+                    if not _valid_range(interval, left=domain[0], right=domain[1]):
+                        raise ValueError("shared support is outside a member trace domain")
                     claims.setdefault(member, []).append(interval)
         for intervals in claims.values():
             ordered = sorted(intervals)
