@@ -14,7 +14,7 @@ from typing import Any
 from PIL import Image
 
 
-VALIDATOR_VERSION = "4"
+VALIDATOR_VERSION = "5"
 REPORT_SCHEMA_VERSION = "scidiscovery.figure-evidence-validation-report.v1"
 MANIFEST_SCHEMA_VERSION = "scidiscovery.figure-evidence-manifest.v1"
 
@@ -956,13 +956,9 @@ def _validate_declared_shared_support(
             raise FigureEvidenceBundleError(
                 "coincident-overlap direct row must identify its own source series"
             )
-        if any(record[4] != source or record[5] for _, record in copied):
+        if any(record[4] != source for _, record in copied):
             raise FigureEvidenceBundleError(
-                "coincident-overlap copied rows must name the source and be ineligible"
-            )
-        if sum(record[5] for _, record in records) > 1:
-            raise FigureEvidenceBundleError(
-                "one shared evidence unit cannot contain multiple eligible rows"
+                "coincident-overlap copied rows must name the direct source"
             )
         coordinates[(panel, group, pixel_x)].update(
             (record[1], record[0]) for _, record in records

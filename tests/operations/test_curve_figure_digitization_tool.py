@@ -14,6 +14,7 @@ from curve_score.figure_digitization import (
     FigureDigitizationRequest,
     build_digitized_figure_bundle,
 )
+from curve_score.figure_evidence import FigureEvidenceValidationReport
 from curve_score.operation_transforms import bundle_figure_evidence
 from curve_score.schema import CurveBundle, CurveDomain, curve_series_domain_reason
 from curve_score.figure_science_operations import FIGURE_REQUEST_CONTEXT
@@ -579,6 +580,10 @@ def test_coincident_overlap_uses_one_real_source_per_column() -> None:
     manifest = json.loads(outputs["figure_manifest"][0])
     report = json.loads(outputs["validation_report"][0])
     assert manifest["status"] == "qualified"
+    assert report["validator_version"] == "5"
+    assert report["metrics"]["eligible_curve_rows"] == 18
+    assert report["metrics"]["global_unique_pixel_count"] == 15
+    assert report["metrics"]["global_duplicate_pixel_rows"] == 3
     assert report["metrics"]["cross_series_shared_pixel_count"] == 3
 
     rows_by_x: dict[int, list[dict[str, str]]] = {}
@@ -595,11 +600,16 @@ def test_coincident_overlap_uses_one_real_source_per_column() -> None:
         assert len(direct) == len(copied) == 1
         assert direct[0]["support_source_series"] == direct[0]["series_key"]
         assert copied[0]["support_source_series"] == direct[0]["series_key"]
-        assert sum(int(row["quantitative_measurement_claim_eligible"]) for row in rows) == 1
+        assert sum(int(row["quantitative_measurement_claim_eligible"]) for row in rows) == 2
 
     bundle = _bundle_from_materialized(outputs)
     assert all(item.availability.status == "available" for item in bundle.series)
-    assert all(len(item.valid_intervals) == 2 for item in bundle.series)
+    assert all(len(item.valid_intervals) == 1 for item in bundle.series)
+    for prior_version in ("2", "3", "4"):
+        FigureEvidenceValidationReport.model_validate_json(
+            canonical_json({**report, "validator_version": prior_version}),
+            strict=True,
+        )
 
 
 def test_coincident_overlap_preserves_each_simultaneously_visible_source() -> None:
@@ -625,7 +635,7 @@ def test_coincident_overlap_preserves_each_simultaneously_visible_source() -> No
     assert direct_sources == {"black", "red"}
 
 
-def test_shared_copy_cannot_be_made_independently_eligible() -> None:
+def test_coincident_shared_copy_can_be_quantitatively_eligible() -> None:
     source, request = _coincident_overlap_request()
     files, _ = build_digitized_figure_bundle(source, canonical_json(request))
     manifest = json.loads(files["figure_manifest/evidence.json"][0])
@@ -660,15 +670,100 @@ def test_shared_copy_cannot_be_made_independently_eligible() -> None:
         if item["data_item"] == table_name:
             item["sha256"] = hashlib.sha256(changed).hexdigest()
             item["bytes"] = len(changed)
-    with pytest.raises(
-        FigureEvidenceBundleError,
-        match="coincident-overlap copied rows must name the source and be ineligible",
-    ):
-        build_figure_evidence_validation_report(
-            manifest_data_item="figure_manifest/evidence.json",
-            manifest_content=canonical_json(manifest),
-            sibling_files=siblings,
-        )
+    report = build_figure_evidence_validation_report(
+        manifest_data_item="figure_manifest/evidence.json",
+        manifest_content=canonical_json(manifest),
+        sibling_files=siblings,
+    )
+    assert report["metrics"]["eligible_curve_rows"] == 18
+
+
+def test_coincident_overlap_preserves_member_local_detection_limit() -> None:
+    source, request = _coincident_overlap_request()
+    request["series"][0]["eligibility"] = {
+        "default_eligible": True,
+        "below_detection_limit_pixel_ranges": [[5, 6]],
+    }
+    outputs = materialize_figure_evidence(
+        {
+            "paper_source": (source,),
+            "figure_request": (canonical_json(request),),
+        }
+    )
+    rows_by_series = {
+        rows[0]["series_key"]: rows
+        for raw in outputs["curve_tables"]
+        if (rows := tuple(csv.DictReader(raw.decode().splitlines())))
+    }
+    black = next(row for row in rows_by_series["black"] if row["pixel_x_raw"] == "5")
+    red = next(row for row in rows_by_series["red"] if row["pixel_x_raw"] == "5")
+    assert black["quantitative_measurement_claim_eligible"] == "0"
+    assert black["below_sims_detection_limit"] == "1"
+    assert black["eligibility_reason"] == "below_detection_limit"
+    assert red["quantitative_measurement_claim_eligible"] == "1"
+    assert red["below_sims_detection_limit"] == "0"
+
+
+def test_local_possible_overdraw_does_not_make_whole_series_unresolved() -> None:
+    image = Image.new("RGB", (12, 12), "white")
+    for x in range(1, 10):
+        image.putpixel((x, 5), (255, 0, 0))
+    for x in range(1, 4):
+        image.putpixel((x, 4), (0, 0, 0))
+    for x in range(6, 10):
+        image.putpixel((x, 6), (0, 0, 0))
+    stream = io.BytesIO()
+    image.save(stream, format="PNG")
+    source = stream.getvalue()
+    request = json.loads(_request(source))
+    request["series"] = [
+        {
+            **request["series"][0],
+            "series_key": "a_gapped",
+            "label": "Gapped black line",
+            "color": "#000000",
+            "visible_label": "Gapped",
+            "binding_bbox": [1, 3, 10, 7],
+            "seeds": [[1.0, 4.0], [9.0, 6.0]],
+            "tracking": {
+                **request["series"][0]["tracking"],
+                "max_gap_px": 3,
+            },
+        },
+        {
+            **request["series"][0],
+            "series_key": "b_continuous",
+            "label": "Continuous red line",
+            "visible_label": "Continuous",
+            "binding_bbox": [1, 3, 10, 7],
+            "seeds": [[1.0, 5.0], [9.0, 5.0]],
+        },
+    ]
+    outputs = materialize_figure_evidence(
+        {
+            "paper_source": (source,),
+            "figure_request": (canonical_json(request),),
+        }
+    )
+    manifest = json.loads(outputs["figure_manifest"][0])
+    assert manifest["status"] == "qualified"
+    assert manifest["ambiguities"] == []
+    gapped_manifest = next(
+        item
+        for item in manifest["panels"][0]["series"]
+        if item["series_key"] == "a_gapped"
+    )
+    assert gapped_manifest["max_gap_px"] == 2
+    report = json.loads(outputs["validation_report"][0])
+    gapped_report = next(
+        item for item in report["series"] if item["series_key"] == "a_gapped"
+    )
+    assert gapped_report["eligible_row_count"] == 7
+    assert gapped_report["point_index_gap_count"] == 2
+    bundle = _bundle_from_materialized(outputs)
+    gapped = next(item for item in bundle.series if item.series_key == "a_gapped")
+    assert gapped.availability.status == "available"
+    assert len(gapped.valid_intervals) == 2
 
 
 def test_coincident_overlap_source_identity_is_checked_against_image() -> None:

@@ -96,64 +96,6 @@ def _declared_gaps(
     return tuple(sorted({*series.declared_gap_ranges, *shared}))
 
 
-def _overdraw_findings(
-    request: FigureDigitizationRequest,
-    direct: dict[str, tuple[TracePoint, ...]],
-) -> dict[str, list[LineFinding]]:
-    by_x = {
-        key: {point.pixel_x_raw: point for point in points}
-        for key, points in direct.items()
-    }
-    definitions = {item.series_key: item for item in request.series}
-    declared = set()
-    for support in request.shared_support:
-        members = (
-            support.covered_series
-            if support.mode == "overdraw"
-            else support.member_series
-        )
-        declared.update(
-            (member, left, right)
-            for member in members
-            for left, right in support.pixel_ranges
-        )
-    result = {key: [] for key in definitions}
-    for covered_key, covered in by_x.items():
-        observed = sorted(covered)
-        gaps = [
-            (previous + 1, current)
-            for previous, current in zip(observed, observed[1:])
-            if current - previous > 1
-        ]
-        for gap_left, gap_right in gaps:
-            if (covered_key, gap_left, gap_right) in declared:
-                continue
-            for donor_key, donor in by_x.items():
-                if donor_key == covered_key or not all(
-                    pixel_x in donor
-                    for pixel_x in range(gap_left - 1, gap_right + 1)
-                ):
-                    continue
-                endpoint_distance = max(
-                    abs(
-                        covered[endpoint].pixel_y_subpixel
-                        - donor[endpoint].pixel_y_subpixel
-                    )
-                    for endpoint in (gap_left - 1, gap_right)
-                )
-                if endpoint_distance <= definitions[
-                    covered_key
-                ].tracking.overdraw_candidate_endpoint_distance_px:
-                    result[covered_key].append(
-                        LineFinding(
-                            "possible_overdraw",
-                            f"possible overdraw by {donor_key} across pixels "
-                            f"[{gap_left},{gap_right})",
-                        )
-                    )
-    return result
-
-
 def _materialize_shared_support(
     request: FigureDigitizationRequest,
     direct: dict[str, tuple[TracePoint, ...]],
@@ -288,6 +230,7 @@ def _materialize_shared_support(
                                 source_point.uncertainty_px,
                                 spread + 0.5,
                             ),
+                            shared_eligible=True,
                         ),
                         point_index=pixel_x - domain[0],
                     )
@@ -525,8 +468,6 @@ def build_digitized_figure_bundle(
         local.extend(trace.findings)
         direct[series.series_key] = trace.points
         findings[series.series_key] = local
-    for key, values in _overdraw_findings(request, direct).items():
-        findings[key].extend(values)
     for support in request.shared_support:
         if support.mode == "coincident_overlap" and any(
             bindings[member]["status"] != "matched"

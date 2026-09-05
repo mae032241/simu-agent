@@ -76,7 +76,9 @@ coincident_overlap when independently bound member series have direct endpoints
 on both sides, every member contributes direct pixels inside the interval, the
 union supplies every column, and simultaneously visible points remain within
 max_member_distance_px. The materializer selects one real direct source per
-column; copied member rows stay quantitatively ineligible. If neither contract
+column; every member may use that confirmed shared coordinate quantitatively,
+subject to its own eligibility limits. Shared references are not independent
+physical observations. If neither contract
 is supported by the exact image, correct or omit the declaration; never loosen
 a threshold, invent endpoints, interpolate, average pixels, or use a tiny
 fragment merely to satisfy a non-empty requirement.
@@ -133,7 +135,7 @@ FIGURE_REQUEST_SEMANTIC_CONTRACT = scientific_semantic_contract(
     "The request selects one exact bound source image and never creates curve evidence.",
     "PDF selection binds the source hash, page, image index, object identity, recovered image hash, dimensions, and recovery version.",
     "A ready request explicitly anchors continuous solid lines; an unresolved request contains reasons and no partial digitization fields.",
-    "Every ready shared-support interval is either strict single-donor overdraw or a coincident overlap with independently bound members, two-sided direct anchors, member contribution, complete union support, and one real source coordinate per column; copied rows are never independently eligible.",
+    "Every ready shared-support interval is either strict single-donor overdraw or a coincident overlap with independently bound members, two-sided direct anchors, member contribution, complete union support, and one real source coordinate per column; confirmed coincident members may each use that coordinate quantitatively under their own eligibility limits without treating the references as independent observations.",
     payload_rule_id="curve.figure.request.internal_consistency",
     context_rule_id="curve.figure.request.source_binding",
 )

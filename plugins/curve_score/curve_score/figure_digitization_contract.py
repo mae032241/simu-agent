@@ -51,7 +51,14 @@ class FigureLineTracking(_DigitizationModel):
     seed_radius_px: Annotated[int, Field(ge=0, le=100)] = 4
     plot_border_exclusion_px: Annotated[int, Field(ge=0, le=100)] = 4
     overdraw_candidate_endpoint_distance_px: Annotated[
-        float, Field(ge=0.0, le=1000.0)
+        float,
+        Field(
+            ge=0.0,
+            le=1000.0,
+            description=(
+                "Deprecated request-v2 compatibility field; materialization ignores it."
+            ),
+        ),
     ] = 8.0
 
 

@@ -1,7 +1,7 @@
 # R5 E5.2：当前 Fig.4 阻断的最小修复计划
 
 日期：2026-09-05
-状态：最新独立复审 FAIL 后的第二轮修订提案，尚未重新复审；未实现、未放行安装或真实重跑。
+状态：最终独立计划复审 PASS；实施中；基线提交 `a6742b7`；P1 已实现、通过聚焦测试及独立实现复审（0 blocker/high/medium/low）；P2—P4 未实现。
 
 本文是 [真实缺陷账本](R5_NEXT_ITERATION_LIVE_DEFECTS.zh-CN.md) 的 E5 有界返工计划。
 采用 [当前架构](../ARCHITECTURE.zh-CN.md)、

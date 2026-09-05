@@ -496,7 +496,7 @@ class FigureEvidenceValidationReport(_FigureEvidenceModel):
     schema_version: Literal[
         "scidiscovery.figure-evidence-validation-report.v1"
     ]
-    validator_version: Literal["2", "3", "4"]
+    validator_version: Literal["2", "3", "4", "5"]
     integrity_status: Literal["valid"]
     figure_key: FigureKey
     source_status: Literal["qualified", "unresolved"]
@@ -555,13 +555,13 @@ class FigureEvidenceValidationReport(_FigureEvidenceModel):
                 - self.metrics.global_unique_pixel_count
             ),
         }
-        if self.validator_version in {"3", "4"}:
+        if self.validator_version in {"3", "4", "5"}:
             if any(
                 item.direct_row_count is None or item.shared_row_count is None
                 for item in self.series
             ):
                 raise ValueError(
-                    "validator v3/v4 requires direct/shared series counts"
+                    "validator v3/v4/v5 requires direct/shared series counts"
                 )
             expected.update(
                 {
