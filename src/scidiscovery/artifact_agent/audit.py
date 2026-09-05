@@ -13,7 +13,6 @@ from pydantic import Field, ValidationError
 
 from .schema.artifact import (
     ArtifactEnvelope,
-    ArtifactEvent,
     ArtifactRegisterRequest,
     artifact_register_mismatches,
 )
@@ -46,7 +45,6 @@ class OrphanScanReport(SchemaModel):
 class ArtifactVerificationReport(SchemaModel):
     checked_artifacts: Annotated[int, Field(ge=0)]
     verified_artifacts: Annotated[int, Field(ge=0)]
-    checked_events: Annotated[int, Field(ge=0)]
     checked_idempotency_records: Annotated[int, Field(ge=0)]
     orphan_scan: OrphanScanReport
     issues: tuple[AuditIssue, ...]
@@ -97,7 +95,7 @@ def verify_artifacts(
     registry: SQLiteArtifactRegistry,
     cas: ContentAddressedStore,
 ) -> ArtifactVerificationReport:
-    """Fully verify payloads, envelopes, journal entries, and direct provenance."""
+    """Fully verify payloads, envelopes, provenance, and idempotency bindings."""
 
     issues: list[AuditIssue] = []
     invalid_artifacts: set[str] = set()
@@ -125,7 +123,6 @@ def verify_artifacts(
             report("registry_integrity", snapshot.integrity)
         envelopes_raw = snapshot.envelopes
         links_raw = snapshot.links
-        events_raw = snapshot.events
         idempotency_raw = snapshot.idempotency_records
     except (
         sqlite3.DatabaseError,
@@ -149,22 +146,17 @@ def verify_artifacts(
         return ArtifactVerificationReport(
             checked_artifacts=0,
             verified_artifacts=0,
-            checked_events=0,
             checked_idempotency_records=0,
             orphan_scan=empty_scan,
             issues=tuple(issues),
         )
 
     envelopes: dict[str, ArtifactEnvelope] = {}
-    envelope_hashes: dict[str, str] = {}
     for row in envelopes_raw:
         envelope = _decode_envelope(row, report)
         if envelope is None:
             continue
         envelopes[envelope.artifact_id] = envelope
-        envelope_hashes[envelope.artifact_id] = hashlib.sha256(
-            row.envelope_json
-        ).hexdigest()
         try:
             cas.verify(envelope.sha256, expected_size=envelope.size_bytes)
         except (CASIntegrityError, OSError) as error:
@@ -211,32 +203,6 @@ def verify_artifacts(
             f"artifact_links has unknown source: {unknown_source}",
         )
 
-    event_counts: Counter[str] = Counter()
-    for row in events_raw:
-        event_counts[row.artifact_id] += 1
-        try:
-            if type(row.event_json) is not bytes:
-                raise ValueError("event_json is not bytes")
-            if hashlib.sha256(row.event_json).hexdigest() != row.event_sha256:
-                raise ValueError("event hash mismatch")
-            event = ArtifactEvent.model_validate_json(row.event_json, strict=True)
-            if event.canonical_json() != row.event_json:
-                raise ValueError("event JSON is not canonical")
-            if (
-                event.event_id != row.event_id
-                or event.event_type != row.event_type
-                or event.recorded_at != row.recorded_at
-                or event.artifact_ref.artifact_id != row.artifact_id
-            ):
-                raise ValueError("event columns disagree with event bytes")
-            envelope = envelopes.get(row.artifact_id)
-            if envelope is None or event.artifact_ref != envelope.ref:
-                raise ValueError("event does not resolve to its exact envelope")
-            if event.envelope_sha256 != envelope_hashes[row.artifact_id]:
-                raise ValueError("event envelope hash is incorrect")
-        except (ValidationError, ValueError) as error:
-            report("event_integrity", str(error), row.artifact_id)
-
     idempotency_counts: Counter[str] = Counter()
     for row in idempotency_raw:
         idempotency_counts[row.artifact_id] += 1
@@ -276,12 +242,6 @@ def verify_artifacts(
             report("idempotency_integrity", str(error), row.artifact_id)
 
     for artifact_id in envelopes:
-        if event_counts[artifact_id] != 1:
-            report(
-                "event_cardinality",
-                f"expected one registration event, found {event_counts[artifact_id]}",
-                artifact_id,
-            )
         if idempotency_counts[artifact_id] != 1:
             report(
                 "idempotency_cardinality",
@@ -310,7 +270,6 @@ def verify_artifacts(
     return ArtifactVerificationReport(
         checked_artifacts=len(envelopes_raw),
         verified_artifacts=max(0, len(envelopes) - len(invalid_artifacts)),
-        checked_events=len(events_raw),
         checked_idempotency_records=len(idempotency_raw),
         orphan_scan=orphan_report,
         issues=tuple(issues),
@@ -396,8 +355,6 @@ def _direct_references(envelope: ArtifactEnvelope) -> tuple[ArtifactRef, ...]:
     references = list(envelope.parent_refs)
     if envelope.supersedes_ref is not None:
         references.append(envelope.supersedes_ref)
-    if envelope.task_ref is not None:
-        references.append(envelope.task_ref)
     return tuple(references)
 
 
@@ -415,10 +372,7 @@ def _expected_links(
         )
         for position, reference in enumerate(envelope.parent_refs)
     ]
-    for relation, reference in (
-        ("supersedes", envelope.supersedes_ref),
-        ("task", envelope.task_ref),
-    ):
+    for relation, reference in (("supersedes", envelope.supersedes_ref),):
         if reference is not None:
             links.append(
                 (

@@ -15,14 +15,14 @@ Environment=PYTHONNOUSERSITE=1
 RuntimeDirectory=scidiscovery
 RuntimeDirectoryMode=0770
 ExecStartPre="@PYTHON@" -m scidiscovery.runtime_identity verify --manifest "@RUNTIME_IDENTITY@"
-ExecStart="@PYTHON@" -m scidiscovery.artifact_agent.interfaces.mcp_daemon --project-root "@PROJECT_ROOT@" --state-root "@STATE_ROOT@" --socket "@CONTROL_SOCKET@" --task-secret-file "@TASK_SECRET@" --approval-secret-file "@APPROVAL_SECRET@" --approval-base-url "http://127.0.0.1:@APPROVAL_PORT@" @TCAD_ADAPTER_ARGS@
+ExecStart="@PYTHON@" -m scidiscovery.artifact_agent.interfaces.mcp_daemon --project-root "@PROJECT_ROOT@" --state-root "@STATE_ROOT@" @LOCAL_WORKSPACE_ARGS@ --socket "@CONTROL_SOCKET@" --approval-secret-file "@APPROVAL_SECRET@" --approval-base-url "http://127.0.0.1:@APPROVAL_PORT@" --worker-backend "@WORKER_BACKEND@" --runtime-summary "/run/scidiscovery/runtime-summary.json" @PLUGIN_CONFIG_ARGS@
 Restart=on-failure
 RestartSec=2s
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths="@STATE_ROOT@" "@RUNTIME_ROOT@"
+ReadWritePaths="@STATE_ROOT@" @LOCAL_WORKSPACE_ACCESS@ "@RUNTIME_ROOT@"
 ProtectControlGroups=true
 ProtectKernelModules=true
 ProtectKernelTunables=true

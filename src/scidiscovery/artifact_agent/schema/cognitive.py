@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from typing import Annotated, Literal
 
 from pydantic import Field, model_validator
@@ -11,7 +12,14 @@ from .role_result import FormModel
 
 
 ReviewStatus = Literal["pass", "fail", "unknown", "not_applicable"]
-
+CriticDisposition = Literal[
+    "ready_for_experiment",
+    "revise_hypothesis",
+    "revise_evidence",
+    "design_model_counterfactual",
+    "inconclusive",
+    "reject",
+]
 
 class SourceReference(FormModel):
     source_key: Identifier
@@ -88,7 +96,9 @@ class HypothesisForm(FormModel):
 
 
 class HypothesisProposal(VersionedPayload):
-    objective: Annotated[str, Field(min_length=1, max_length=2048)]
+    schema_version: Literal[2] = 2
+    research_objective_key: Identifier
+    stage_objective: Annotated[str, Field(min_length=1, max_length=2048)]
     contradiction: Annotated[str, Field(min_length=1, max_length=2048)]
     evidence: Annotated[tuple[SourceReference, ...], Field(max_length=32)] = ()
     hypotheses: Annotated[tuple[HypothesisForm, ...], Field(max_length=6)] = ()
@@ -118,7 +128,7 @@ class HypothesisReviewForm(FormModel):
     hypothesis_key: Identifier
     physical_plausibility: ReviewStatus
     falsifiability: ReviewStatus
-    identifiability: ReviewStatus
+    finite_discriminability: ReviewStatus
     issues: Annotated[tuple[str, ...], Field(max_length=12)] = ()
     smallest_resolving_action: Annotated[
         str, Field(min_length=1, max_length=1024)
@@ -129,7 +139,7 @@ class HypothesisReviewForm(FormModel):
         dimensions = (
             self.physical_plausibility,
             self.falsifiability,
-            self.identifiability,
+            self.finite_discriminability,
         )
         if any(value != "pass" for value in dimensions) and self.smallest_resolving_action is None:
             raise ValueError("unresolved review requires smallest_resolving_action")
@@ -137,6 +147,8 @@ class HypothesisReviewForm(FormModel):
 
 
 class CriticReview(VersionedPayload):
+    schema_version: Literal[2] = 2
+    disposition: CriticDisposition
     reviews: Annotated[tuple[HypothesisReviewForm, ...], Field(max_length=6)] = ()
     global_issues: Annotated[tuple[str, ...], Field(max_length=12)] = ()
     evidence: Annotated[tuple[SourceReference, ...], Field(max_length=32)] = ()
@@ -149,7 +161,61 @@ class CriticReview(VersionedPayload):
             raise ValueError("a critic may review each hypothesis once")
         if len(source_keys) != len(set(source_keys)):
             raise ValueError("evidence source_key values must be unique")
+        statuses = tuple(
+            value
+            for review in self.reviews
+            for value in (
+                review.physical_plausibility,
+                review.falsifiability,
+                review.finite_discriminability,
+            )
+        )
+        if self.disposition in {
+            "ready_for_experiment",
+            "design_model_counterfactual",
+        } and any(value != "pass" for value in statuses):
+            raise ValueError(
+                "experiment-ready critic disposition requires all review dimensions to pass"
+            )
+        if self.disposition in {
+            "revise_hypothesis",
+            "revise_evidence",
+            "inconclusive",
+        } and (not statuses or all(value == "pass" for value in statuses)):
+            raise ValueError(
+                "unresolved critic disposition requires a non-passing review dimension"
+            )
+        if self.disposition == "reject" and "fail" not in statuses:
+            raise ValueError("reject disposition requires a failed review dimension")
         return self
+
+
+def critic_progress_fingerprint(raw: bytes) -> str:
+    """Fingerprint unresolved scientific dimensions, never reviewer prose."""
+
+    review = CriticReview.model_validate_json(raw, strict=True)
+    unresolved = tuple(
+        (
+            item.hypothesis_key,
+            dimension,
+            status,
+        )
+        for item in sorted(review.reviews, key=lambda value: value.hypothesis_key)
+        for dimension, status in (
+            ("physical_plausibility", item.physical_plausibility),
+            ("falsifiability", item.falsifiability),
+            ("finite_discriminability", item.finite_discriminability),
+        )
+        if status != "pass"
+    )
+    return hashlib.sha256(
+        canonical_json(
+            {
+                "disposition": review.disposition,
+                "unresolved": unresolved,
+            }
+        )
+    ).hexdigest()
 
 
 class EvidenceCheckForm(FormModel):
@@ -158,6 +224,15 @@ class EvidenceCheckForm(FormModel):
     status: ReviewStatus
     basis: Annotated[str, Field(min_length=1, max_length=1024)]
     evidence_keys: Annotated[tuple[Identifier, ...], Field(max_length=12)] = ()
+    hypothesis_keys: Annotated[tuple[Identifier, ...], Field(max_length=6)] = ()
+
+    @model_validator(mode="after")
+    def _references_are_unique(self) -> EvidenceCheckForm:
+        if len(self.evidence_keys) != len(set(self.evidence_keys)):
+            raise ValueError("evidence check evidence keys must be unique")
+        if len(self.hypothesis_keys) != len(set(self.hypothesis_keys)):
+            raise ValueError("evidence check hypothesis keys must be unique")
+        return self
 
 
 class EvidenceAudit(VersionedPayload):
@@ -199,6 +274,7 @@ def validate_evidence_audit(value: dict[str, object]) -> dict[str, object]:
 
 __all__ = [
     "CriticReview",
+    "CriticDisposition",
     "EvidenceAudit",
     "EvidenceCheckForm",
     "FalsifierForm",
@@ -209,6 +285,7 @@ __all__ = [
     "PredictionForm",
     "ReviewStatus",
     "SourceReference",
+    "critic_progress_fingerprint",
     "validate_critic_review",
     "validate_evidence_audit",
     "validate_hypothesis_proposal",

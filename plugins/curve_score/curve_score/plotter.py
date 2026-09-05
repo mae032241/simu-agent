@@ -9,7 +9,7 @@ from typing import Callable
 
 from PIL import Image, ImageDraw, ImageFont
 
-from scidiscovery.artifact_agent.schema.curve_score import (
+from .schema import (
     CurveBundle,
     CurveComparison,
     CurveComparisonSpec,

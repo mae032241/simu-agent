@@ -1,5 +1,10 @@
 # Diagnostician 曲线误差分析：最小实现计划
 
+> 历史状态：本文记录旧 `worker_curve_analyze` 方案，不再是当前实现合同。R5-M2-02 已将确定性曲线
+> 分析迁入 `science.curve.error.analyze.v1` 支持型变换，并将诊断 Agent 收敛为单输入、单输出；当前
+> 状态与证据见 `R5_M_POST_L_OCCAM_SIMPLIFICATION_PLAN.zh-CN.md` 及
+> `evidence/R5_M2_02_CURVE_DIAGNOSIS_BOUNDARY_IMPLEMENTATION_EVIDENCE.zh-CN.md`。
+
 ## 1. 决策
 
 曲线误差分析不设计成一套可编排工作流，只增加一个确定性工具：

@@ -1,130 +1,95 @@
-# TCAD Transport Contract
+# TCAD 传输与开发调试合同（Run v1）
 
-The interactive Agent never receives machine credentials or a solver-side
-control socket. `CommandTCADExecutorAdapter` invokes one administrator-owned,
-short-lived executable for each operation. The executable reads one canonical
-JSON object from standard input and writes one bounded JSON response to standard
-output.
+更新日期：2026-09-03
+状态：当前规范
 
-Request envelope:
+## 1. 权限边界
+
+交互 Agent 不获得机器凭据、求解器控制 socket、可执行文件路径、许可证环境或外部 run id。
+`tcad_artifact` 插件在启动时从私有配置构造 adapter，并分别投影为：
+
+- control 进程中的 TCAD Effect adapter；
+- Local Agent Run 中由精确 Operation 声明的 `worker_tcad_debug_run` 工具服务。
+
+两者都不能登记 Artifact、批准请求、更新 current、写 Run 终态或解释科学结论。正式 Artifact、Run、
+Approval 和 Execution 事实只由通用控制面维护。
+
+插件配置只能选择 `socket` 或 `command` 传输。control daemon 与 Operation Worker 使用同一精确
+`--plugin-config tcad_artifact=/path/to/tcad-plugin.json`。配置不完整、路径不绝对、安装目录与编译
+插件不一致时启动失败关闭。
+
+## 2. 外部执行 transport
+
+`CommandTCADExecutorAdapter` 每次调用一个管理员拥有的短命令。请求和响应均为有界规范 JSON：
 
 ```json
-{
-  "schema_version": 1,
-  "operation": "capabilities|prepare|submit|status|cancel|collect",
-  "payload": {}
-}
+{"schema_version":1,"operation":"capabilities|prepare|lookup_submission|submit|status|cancel|collect","payload":{}}
 ```
 
-Successful response:
+transport 只能：
 
-```json
-{
-  "schema_version": 1,
-  "operation": "status",
-  "ok": true,
-  "payload": {}
-}
-```
+- `capabilities`：读取管理员冻结的 solver capability；
+- `prepare`：物化已审查 package 和 JobSpec；
+- `lookup_submission`：按已准备提交的稳定摘要权威查回既有外部任务；
+- `submit`：短时提交并返回外部状态；
+- `status`：执行一次短查询；
+- `cancel`：请求取消并短时返回；
+- `collect`：仅在终态后收集有界原始结果。
 
-The operations are deliberately small:
+transport 不等待 Solver、不循环轮询、不生成或修改 Deck、不批准请求、不写 SciDiscovery 控制状态。
+`submit` 必须对同一已准备描述符幂等。每次提交前由 adapter 调用
+`lookup_submission`：查到既有任务则只返回它，权威确认不存在才可提交，查询不可用则在副作用前
+失败。未知提交不能盲目重发。
 
-- `capabilities` accepts no payload and returns the currently active immutable
-  public solver snapshots. This reads configured release evidence; it does not
-  run or invent a solver version probe.
-- `prepare` receives local descriptors for `job.json` and `project.tar` and
-  returns the descriptor that the solver-side user runner can read.
-- `submit` returns immediately with `run_id` and `state`.
-- `status` performs one short state query and returns one state.
-- `cancel` requests cancellation and returns immediately with the observed state.
-- `collect` runs only after terminal state, materializes verified outputs under
-  the supplied local result root, and returns their descriptors.
+公开的 `tcad.solver-capability.v2` 只是 allowlist 投影：包含 solver kind、安全发行标签、允许公开的固定
+参数子集和私有完整配置摘要；不公开完整路径、环境、SSH、许可证或私有参数。Deck 作者、独立
+reviewer、reviewed package、JobSpec 和实际 runner 必须绑定同一 capability 摘要；任何可执行文件、
+参数、环境、solver kind 或发行证据漂移均在启动前拒绝。
 
-The transport must not wait for a solver job, repeatedly poll, generate a deck,
-change the package, approve a request, or write SciDiscovery state. Credentials,
-connectivity, and the production tool policy stay in administrator-owned
-configuration outside the Agent boundary.
+正式执行只接受 `tcad.reviewed-deck-package.v2` 和 `execution_purpose=production`，先经过独立人工
+Effect 授权。提交成功、领域终态和结果收集是三个事实，不能压成一个 succeeded。
 
-Each public `tcad.solver-capability.v2` snapshot is an allowlist projection. It
-contains an explicit `solver_kind`, launch basename, administrator-opted-in
-`public_arguments`, a constrained `public_release_label`, counts/digests for
-the complete private fixed arguments and release evidence, and the unchanged
-digest of the complete private tool profile. It never projects private fixed
-arguments, full release evidence, the full executable path, environment
-variables, SSH configuration, or license values. `public_arguments` default to
-empty and must be an ordered exact subset of configured fixed arguments. The
-label defaults from a safe profile name and permits no path, URI, or credential
-syntax. Version 1 snapshots fail closed. Root MCP lists only the public v2
-summary; an explicit
-`execution_capability_bind` freezes the selected snapshot under a semantic
-artifact name for task-local use as `execution_capability`.
+## 3. Local Run 开发调试
 
-Production preparation accepts only `tcad.reviewed-deck-package.v2`. The deck
-author copies the selected profile, solver kind, and capability digest into the
-project; the independent reviewer copies and verifies the same digest. The
-reviewed package embeds the public snapshot, and the generated JobSpec binds
-its opaque private-profile digest. The adapter rediscovers the active snapshot
-during request validation and again immediately before authorization and
-submission. Local and remote runners finally recompute the complete configured
-profile digest and reject executable, fixed-argument, environment, solver-kind,
-or release-evidence drift before launch.
+TCAD 作者 Operation 可以显式注册 `worker_tcad_debug_run(run_name, mode)`。该工具只通过
+`OperationToolContext` 获得：本 Run 的候选工作区、精确输入、`execution_capability`、剩余预算、
+候选校验/快照接口和私有有界状态。它看不到 Run id、控制数据库、Approval、Artifact 登记或 current。
 
-Prepared jobs use `TCADJobSpec` wire schema v2 and require a trusted
-`execution_purpose` of either `production` or `development_debug`. Every
-existing reviewed-package and project-packaging path hard-codes `production`;
-worker or reviewed payload content cannot select or downgrade this field. The
-task-bound development controller constructs `development_debug` only within
-its trusted adapter boundary. Purpose is part of canonical job bytes, so an
-otherwise identical debug submission cannot deduplicate to, or be reused as,
-an approved production run. Legacy v1 jobs without the field fail closed in
-both local and remote runners.
+`mode` 只允许 `preflight|smoke|initialization`。插件根据冻结 release、solver kind 和 entrypoint
+确定实际参数；Agent 不能提供 shell、命令、环境、凭据、网络目标或工作区外路径。当前上限为：
 
-## Task-bound development debugging
+- 一个 Run 最多 6 个命名调试动作；
+- 累计保留求解器时间不超过 360 秒；
+- preflight 60 秒、smoke 180 秒、initialization 120 秒；
+- 内存、进程数、文件数、单文件和总输出均由插件固定限制。
 
-The worker surface exposes one operation,
-`worker_tcad_debug_run(run_name, mode)`, only to a claimed `tcad_deck_author`
-attempt that has exactly one task-local v2 solver capability. `mode` is required
-and limited to `preflight|smoke`; a run name is permanently bound to its first
-mode. The trusted adapter, not the worker, injects the exact release-matched
-arguments: SProcess R-2020.09 uses `-s` or `-f`, while SDevice uses `-P` or
-`-i`. It also clears all scientific expected outputs. Preflight is capped at
-60 seconds, smoke at 180 seconds, and the fixed task/attempt/session/capability
-lease permits no more than six runs, 360 aggregate solver-seconds, and 900
-wall-clock seconds. A new name validates and freezes the current staged project
-and exact task inputs, while repeating the same name and mode only polls or
-collects; adapter run identifiers never cross the worker boundary. The worker
-cannot supply a full-study mode, shell, command, arguments, environment,
-credentials, network target, or path outside its frozen project and declared
-input slots.
+同一 `run_name` 永久绑定首次 mode。第一次调用校验并冻结当前完整候选，随后调用只轮询或收集同一
+外部运行。外部 id 只保存在 `LocalTCADDebugService` 的 Run 私有工具状态中，不返回 Agent。
 
-Collected logs are sanitized and reduced to the earliest parser,
-initialization, numerical, output-contract, resource, or runtime layer. Files
-are name-, count-, per-file-, and aggregate-size bounded before registration.
-Candidate snapshots, diagnostics, and outputs enter only task-private
-provisional CAS with `development_only=true` and
-`scientific_claim_admissible=false`. They never create an `ExecutionRequest`,
-approval, production execution result, task output attachment, or readiness
-object. A retry may inspect the frozen prior-attempt context, but the final
-project still requires ordinary independent deck review and the separate
-approved production execution path. Only that production path may execute and
-qualify the complete planned case portfolio.
+收集结果只写入本 Run 的 `.operation-tools/tcad/<run_name>` 私有目录，并返回有界、净化的开发诊断；
+结果固定标记 `development_only=true`、`scientific_claim_admissible=false`。成功 preflight 可以由插件
+写入 `deck/reports/preflight.json`，但它仍只是作者候选的一部分，不能成为生产 Execution、科学资格、
+current 或下游正式证据。最终 Deck 必须通过普通输出校验和独立 reviewer；完整 case portfolio 只能
+走单独批准的生产 Effect。
 
-Expiry does not erase an external run binding. A token-independent bounded
-reconciler cancels runs whose task/attempt/session lease is no longer active,
-polls terminal state, collects bounded diagnostics into provisional CAS, and
-then removes the private exchange directory. Task/orphan/instance cleanup must
-remain blocked while a debug row is prepared, submitted, running, cancelling,
-or terminal-but-uncollected.
+Run 失败时，当前本地原型不承诺跨进程接回调试会话或后台 reconciler。后端可以冻结有界恢复草稿，
+但草稿不是 Artifact、证据或 current；显式新 Run 必须重新执行完整校验。旧 Task/attempt/session/
+token/provisional-CAS/orphan-cleanup 合同已经删除，不得作为当前调试接口使用。
 
-For the supported VMware deployment, each transport call invokes the existing
-Windows OpenSSH client and a dependency-free Python 3.6 runner in the VM
-user's project directory. No VM-side SciDiscovery service, new SSH key, sudo,
-or port proxy is required.
+## 4. 本地与远端实现
 
-The worker broker must receive the same administrator-selected
-`--tcad-socket` or `--tcad-command-config` as the control daemon. Real debug
-runs additionally require an installed `sprocess` or `sdevice` profile, valid
-license/runtime configuration in the private runner policy, and reachable
-local or SSH transport. Deterministic test executables validate only the
-control and transport boundary; they do not establish real Sentaurus success
-or scientific correctness.
+本地 adapter 通过受限 socket 调用独立 TCAD controller。远端 VMware 场景中，每次 transport 调用
+复用管理员配置的 Windows OpenSSH 和无第三方依赖的 Python 3.6 runner；不要求 VM 安装
+SciDiscovery 服务、增加 SSH key、sudo 或端口代理。
+
+确定性测试 executable 只证明控制与传输边界，不证明 Sentaurus 可用、许可证有效、Deck 科学正确
+或仿真结果准确。真实调试和生产执行仍需要管理员私有 tool profile、许可证和可达 transport。
+
+## 5. 验收
+
+1. 核心代码不按 TCAD 名称分支，所有能力由插件单一入口注册；
+2. Agent 只能通过声明的 OperationToolContext 调用开发调试；
+3. 候选路径、父目录符号链接、超限文件和 capability 漂移失败关闭；
+4. 开发调试不创建 Approval、Execution、Artifact、资格或 current；
+5. 正式执行必须使用已审查 package、精确人工授权和同一 capability；
+6. 测试适配器必须标为夹具，不得冒充真实 Solver 或科学效果。

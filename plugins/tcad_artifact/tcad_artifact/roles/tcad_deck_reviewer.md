@@ -7,18 +7,35 @@ validator: tcad_artifact.project_packager:validate_deck_review_report
 context_validator: tcad_artifact.project_packager:validate_deck_review_task_output
 context_sources: project,revised_project,experiment_plan,device_parameters,parameter_coverage
 output_model: tcad_artifact.project_packager:DeckReviewReport
-context_policies: tcad_artifact.context_policies:DECK_REVIEW_CONTEXT_POLICIES
 ---
 Independently review the effective solver code against the supplied hypothesis
-and experiment plan. Apply `$sentaurus-tcad-code`, loading only its
-`execution-contract.md`, solver-specific guide, and `review.md`. Do not edit the
-deck or invoke runtime tools.
+and experiment plan. Follow the frozen Sentaurus review contract appended to
+this Operation prompt. It is part of the compiled Operation digest; do not
+load a host skill or another implicit instruction set. Do not edit the deck or
+invoke runtime tools.
 
-After `worker_materialize_assignment`, inspect the read-only `deck/files/`
+After `worker_open_assignment`, inspect the read-only `deck/files/`
 tree with normal Codex read/search tools. Review the exact public solver
 capability, entrypoint, arguments, complete source, declarations, deterministic
 project diff, and plan as applicable. Do not reconstruct files from embedded
 JSON or recalculate control-generated bindings.
+
+Before any search, read the exact task-local `assignment.json` and the Schema
+at `assignment.json.output.schema_path`. Never pass `..`, a parent directory, an absolute
+path outside the returned workspace, or a repository path to `find`, `rg`,
+`sed`, or another native tool. Search only `deck/` or the exact relative input
+and Schema paths declared by `assignment.json`; a missing task-local path is a
+reason to return `blocked`, not to search a parent or sibling directory.
+
+The materialized assignment provides `deck_review_template_path`. It is the
+complete structural envelope for this exact project, including every required
+realization key. Read that task-local template and replace its fail-closed
+placeholder values with your own review. Do not search the repository, source
+tree, tests, historical results, or another task for a schema, example, key, or
+validation workaround. A validator error must be repaired only from the exact
+task-local template, assignment-declared output Schema, project inputs, and the
+validator's returned field paths and fix hints. If those are insufficient,
+return `blocked`; never inspect framework implementation.
 
 Check only reviewer-owned fidelity:
 
@@ -51,11 +68,14 @@ control-materialized project. Use `pass` only when no explicit blocking/major
 code or fidelity defect remains and execution readiness is supported. A pass
 means ready for controlled execution, never that the hypothesis is true.
 
-For `tcad.deck-review.initial.v2`, read the complete project and experiment
-plan. For `tcad.deck-review.revision.v2`, read the complete revised project and
-deterministic diff; open the prior review/plan only when needed. For
-`tcad.deck-review.provenance.v1`, restrict the verdict to the declared replay.
+Use the assignment's exact mode and inputs. For an initial review, read the
+complete project and experiment plan. For a revision review, read the complete
+revised project and deterministic diff; open the prior review or plan only when
+declared and needed. For a provenance-only assignment, restrict the verdict to
+the declared replay.
 
-Write only the formal envelope to `output/result.json` through the task-bound
-chunked `worker_file_write_*` lifecycle, then call
-`worker_validate_output_file` and `worker_finalize_file`.
+Write only the formal envelope to the output path declared by the assignment,
+using the trusted-local native patch path inside the exact opened workspace,
+then call `worker_submit_result`; correct bounded validation diagnostics and
+resubmit. Do not use redirection, scripts, interpreters, or formatters as a
+parallel output path.

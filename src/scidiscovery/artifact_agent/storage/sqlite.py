@@ -15,7 +15,6 @@ from pydantic import ValidationError
 
 from ..schema.artifact import (
     ArtifactEnvelope,
-    ArtifactEvent,
     ArtifactRegisterRequest,
     artifact_register_mismatches,
 )
@@ -26,9 +25,28 @@ REGISTRY_SCHEMA_VERSION = 1
 IMMUTABLE_TABLES = (
     "artifact_envelopes",
     "artifact_links",
-    "artifact_events",
     "idempotency_records",
 )
+_RETIRED_ARTIFACT_EVENTS_SQL = """
+CREATE TABLE IF NOT EXISTS artifact_events (
+    event_id TEXT PRIMARY KEY,
+    artifact_id TEXT NOT NULL,
+    event_type TEXT NOT NULL CHECK(event_type = 'artifact_registered'),
+    recorded_at TEXT NOT NULL,
+    event_json BLOB NOT NULL,
+    event_sha256 TEXT NOT NULL CHECK(length(event_sha256) = 64),
+    UNIQUE (artifact_id, event_type),
+    FOREIGN KEY (artifact_id) REFERENCES artifact_envelopes(artifact_id)
+);
+CREATE TRIGGER IF NOT EXISTS artifact_events_deny_update
+BEFORE UPDATE ON artifact_events BEGIN
+    SELECT RAISE(ABORT, 'artifact_events is append-only');
+END;
+CREATE TRIGGER IF NOT EXISTS artifact_events_deny_delete
+BEFORE DELETE ON artifact_events BEGIN
+    SELECT RAISE(ABORT, 'artifact_events is append-only');
+END;
+"""
 
 
 class ArtifactRegistryError(RuntimeError):
@@ -85,16 +103,6 @@ class RawLinkRecord:
 
 
 @dataclass(frozen=True)
-class RawEventRecord:
-    event_id: str
-    artifact_id: str
-    event_type: str
-    recorded_at: str
-    event_json: bytes
-    event_sha256: str
-
-
-@dataclass(frozen=True)
 class RawIdempotencyRecord:
     idempotency_key: str
     request_json: bytes
@@ -110,7 +118,6 @@ class RegistryAuditSnapshot:
     integrity: str
     envelopes: tuple[RawEnvelopeRecord, ...]
     links: tuple[RawLinkRecord, ...]
-    events: tuple[RawEventRecord, ...]
     idempotency_records: tuple[RawIdempotencyRecord, ...]
     referenced_digests: frozenset[object]
 
@@ -126,7 +133,6 @@ class SQLiteArtifactRegistry:
     def register(
         self,
         envelope: ArtifactEnvelope,
-        event: ArtifactEvent,
         *,
         idempotency_key: str,
         request_json: bytes,
@@ -153,15 +159,8 @@ class SQLiteArtifactRegistry:
             raise ValueError(
                 "request does not produce envelope fields: " + ", ".join(mismatches)
             )
-        if event.artifact_ref != envelope.ref:
-            raise ValueError("event artifact_ref must match the envelope identity")
-
         envelope_json = envelope.canonical_json()
         envelope_sha256 = hashlib.sha256(envelope_json).hexdigest()
-        if event.envelope_sha256 != envelope_sha256:
-            raise ValueError("event envelope_sha256 must match canonical envelope bytes")
-        event_json = event.canonical_json()
-        event_sha256 = hashlib.sha256(event_json).hexdigest()
 
         connection = self._connect()
         try:
@@ -242,22 +241,6 @@ class SQLiteArtifactRegistry:
             self._insert_links(connection, envelope)
             connection.execute(
                 """
-                INSERT INTO artifact_events (
-                    event_id, artifact_id, event_type, recorded_at,
-                    event_json, event_sha256
-                ) VALUES (?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    event.event_id,
-                    envelope.artifact_id,
-                    event.event_type,
-                    event.recorded_at,
-                    event_json,
-                    event_sha256,
-                ),
-            )
-            connection.execute(
-                """
                 INSERT INTO idempotency_records (
                     idempotency_key, request_json, request_sha256, artifact_id,
                     response_json, response_sha256, created_at
@@ -336,115 +319,6 @@ class SQLiteArtifactRegistry:
             ).fetchall()
         return tuple(self._decode_envelope_row(row) for row in rows)
 
-    def delete_artifacts(
-        self, references: tuple[ArtifactRef, ...]
-    ) -> tuple[ArtifactEnvelope, ...]:
-        """Administratively purge an ownership-safe subset of exact Artifacts.
-
-        Candidates with an incoming provenance link from a retained Artifact are
-        preserved. CAS byte reclamation is coordinated by ArtifactService after
-        this registry transaction commits.
-        """
-
-        if len(references) != len(set(references)):
-            raise ValueError("artifact references must be unique")
-        connection = self._connect()
-        try:
-            connection.execute("BEGIN IMMEDIATE")
-            candidates = {
-                reference.artifact_id: self._resolve_in_connection(
-                    connection, reference
-                )
-                for reference in references
-            }
-            if not candidates:
-                connection.execute("COMMIT")
-                return ()
-            connection.execute(
-                "CREATE TEMP TABLE purge_candidates (artifact_id TEXT PRIMARY KEY)"
-            )
-            connection.executemany(
-                "INSERT INTO purge_candidates (artifact_id) VALUES (?)",
-                ((value,) for value in candidates),
-            )
-            connection.execute(
-                "CREATE TEMP TABLE purge_protected (artifact_id TEXT PRIMARY KEY)"
-            )
-            connection.execute(
-                """
-                INSERT OR IGNORE INTO purge_protected (artifact_id)
-                SELECT link.target_artifact_id
-                FROM artifact_links AS link
-                JOIN purge_candidates AS target
-                  ON target.artifact_id = link.target_artifact_id
-                LEFT JOIN purge_candidates AS source
-                  ON source.artifact_id = link.source_artifact_id
-                WHERE source.artifact_id IS NULL
-                """
-            )
-            while True:
-                cursor = connection.execute(
-                    """
-                    INSERT OR IGNORE INTO purge_protected (artifact_id)
-                    SELECT link.target_artifact_id
-                    FROM artifact_links AS link
-                    JOIN purge_protected AS source
-                      ON source.artifact_id = link.source_artifact_id
-                    JOIN purge_candidates AS target
-                      ON target.artifact_id = link.target_artifact_id
-                    """
-                )
-                if cursor.rowcount == 0:
-                    break
-            deletable = tuple(
-                str(row["artifact_id"])
-                for row in connection.execute(
-                    """
-                    SELECT candidate.artifact_id
-                    FROM purge_candidates AS candidate
-                    LEFT JOIN purge_protected AS protected
-                      ON protected.artifact_id = candidate.artifact_id
-                    WHERE protected.artifact_id IS NULL
-                    ORDER BY candidate.artifact_id
-                    """
-                ).fetchall()
-            )
-            if deletable:
-                connection.execute(
-                    "CREATE TEMP TABLE purge_deletable (artifact_id TEXT PRIMARY KEY)"
-                )
-                connection.executemany(
-                    "INSERT INTO purge_deletable (artifact_id) VALUES (?)",
-                    ((value,) for value in deletable),
-                )
-                _drop_registry_delete_guards(connection)
-                connection.execute(
-                    """
-                    DELETE FROM artifact_links
-                    WHERE source_artifact_id IN (SELECT artifact_id FROM purge_deletable)
-                    """
-                )
-                for table in (
-                    "artifact_events",
-                    "idempotency_records",
-                    "artifact_envelopes",
-                ):
-                    connection.execute(
-                        f"""
-                        DELETE FROM {table}
-                        WHERE artifact_id IN (SELECT artifact_id FROM purge_deletable)
-                        """
-                    )
-                _create_registry_delete_guards(connection)
-            self._commit(connection)
-        except Exception:
-            if connection.in_transaction:
-                connection.execute("ROLLBACK")
-            raise
-        finally:
-            connection.close()
-        return tuple(candidates[value] for value in deletable)
-
     def referenced_digests(self) -> frozenset[str]:
         with self._connect() as connection:
             rows = connection.execute(
@@ -471,13 +345,6 @@ class SQLiteArtifactRegistry:
                 """
             ).fetchall()
         return tuple(RawLinkRecord(**dict(row)) for row in rows)
-
-    def raw_events(self) -> tuple[RawEventRecord, ...]:
-        with self._connect() as connection:
-            rows = connection.execute(
-                "SELECT * FROM artifact_events ORDER BY rowid"
-            ).fetchall()
-        return tuple(RawEventRecord(**dict(row)) for row in rows)
 
     def raw_idempotency_records(self) -> tuple[RawIdempotencyRecord, ...]:
         with self._connect() as connection:
@@ -513,9 +380,6 @@ class SQLiteArtifactRegistry:
                 ORDER BY source_artifact_id, relation, position
                 """
             ).fetchall()
-            event_rows = connection.execute(
-                "SELECT * FROM artifact_events ORDER BY rowid"
-            ).fetchall()
             idempotency_rows = connection.execute(
                 "SELECT * FROM idempotency_records ORDER BY rowid"
             ).fetchall()
@@ -525,7 +389,6 @@ class SQLiteArtifactRegistry:
                     RawEnvelopeRecord(**dict(row)) for row in envelope_rows
                 ),
                 links=tuple(RawLinkRecord(**dict(row)) for row in link_rows),
-                events=tuple(RawEventRecord(**dict(row)) for row in event_rows),
                 idempotency_records=tuple(
                     RawIdempotencyRecord(**dict(row))
                     for row in idempotency_rows
@@ -607,7 +470,7 @@ class SQLiteArtifactRegistry:
             raise RegistryConfigurationError(
                 "artifact registry schema cannot be inspected"
             ) from error
-        if actual != expected:
+        if actual not in (expected, _expected_schema_contract_with_retired_events()):
             raise RegistryConfigurationError(
                 "artifact registry schema differs from migration contract"
             )
@@ -713,8 +576,6 @@ class SQLiteArtifactRegistry:
         ]
         if envelope.supersedes_ref is not None:
             links.append(("supersedes", 0, envelope.supersedes_ref))
-        if envelope.task_ref is not None:
-            links.append(("task", 0, envelope.task_ref))
         connection.executemany(
             """
             INSERT INTO artifact_links (
@@ -742,8 +603,6 @@ def _direct_references(envelope: ArtifactEnvelope) -> tuple[ArtifactRef, ...]:
     references = list(envelope.parent_refs)
     if envelope.supersedes_ref is not None:
         references.append(envelope.supersedes_ref)
-    if envelope.task_ref is not None:
-        references.append(envelope.task_ref)
     return tuple(references)
 
 
@@ -772,6 +631,21 @@ def _expected_schema_contract() -> tuple[object, ...]:
     try:
         connection.execute("PRAGMA foreign_keys = ON")
         connection.executescript(_migration_sql())
+        return _schema_contract(connection)
+    finally:
+        connection.close()
+
+
+@lru_cache(maxsize=1)
+def _expected_schema_contract_with_retired_events() -> tuple[object, ...]:
+    """Accept the exact former v1 event table as inert state, never as authority."""
+
+    connection = sqlite3.connect(":memory:", isolation_level=None)
+    connection.row_factory = sqlite3.Row
+    try:
+        connection.execute("PRAGMA foreign_keys = ON")
+        connection.executescript(_migration_sql())
+        connection.executescript(_RETIRED_ARTIFACT_EVENTS_SQL)
         return _schema_contract(connection)
     finally:
         connection.close()
@@ -844,23 +718,6 @@ def _schema_contract(connection: sqlite3.Connection) -> tuple[object, ...]:
     return user_version, master, tuple(tables)
 
 
-def _drop_registry_delete_guards(connection: sqlite3.Connection) -> None:
-    for table in IMMUTABLE_TABLES:
-        connection.execute(f"DROP TRIGGER IF EXISTS {table}_deny_delete")
-
-
-def _create_registry_delete_guards(connection: sqlite3.Connection) -> None:
-    for table in IMMUTABLE_TABLES:
-        connection.execute(
-            f"""
-            CREATE TRIGGER IF NOT EXISTS {table}_deny_delete
-            BEFORE DELETE ON {table} BEGIN
-                SELECT RAISE(ABORT, '{table} is append-only');
-            END
-            """
-        )
-
-
 def _quote_identifier(value: object) -> str:
     return '"' + str(value).replace('"', '""') + '"'
 
@@ -891,7 +748,6 @@ __all__ = [
     "ArtifactRegistryError",
     "IdempotencyConflictError",
     "RawEnvelopeRecord",
-    "RawEventRecord",
     "RawIdempotencyRecord",
     "RawLinkRecord",
     "RegistryAuditSnapshot",

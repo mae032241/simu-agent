@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping, Protocol
 
+from .schema.approval import CompiledApprovalIdentity
 from .schema.execution import LocalFileDescriptor
 from .service.executions import ExecutionService, ExecutionServiceError
 
@@ -35,7 +35,15 @@ class ExecutionAdapter(Protocol):
         exchange_directory: Path,
     ) -> LocalFileDescriptor: ...
 
-    def submit(self, submission: LocalFileDescriptor) -> tuple[str, str]: ...
+    def submit(self, submission: LocalFileDescriptor) -> tuple[str, str]:
+        """Idempotently submit this exact frozen descriptor."""
+        ...
+
+    def lookup_submission(
+        self, submission: LocalFileDescriptor
+    ) -> tuple[str, str] | None:
+        """Authoritatively return an existing exact submission, or None."""
+        ...
 
     def status(self, external_run_id: str) -> str: ...
 
@@ -55,8 +63,30 @@ class ExecutionBridge:
     ) -> None:
         self.executions = executions
         self.adapters = dict(adapters)
+        missing_lookup = next(
+            (
+                name
+                for name, adapter in self.adapters.items()
+                if not callable(getattr(adapter, "lookup_submission", None))
+            ),
+            None,
+        )
+        if missing_lookup is not None:
+            raise ExecutionServiceError(
+                f"execution adapter {missing_lookup} has no authoritative "
+                "submission lookup"
+            )
 
-    def start(self, *, execution_id: str, approval_id: str) -> None:
+    def has_adapter(self, executor: str) -> bool:
+        return executor in self.adapters
+
+    def start(
+        self,
+        *,
+        execution_id: str,
+        approval_id: str,
+        compiled_identity: CompiledApprovalIdentity,
+    ) -> None:
         request = self.executions.request(execution_id)
         adapter = self._adapter(request.executor)
         self.validate_request(
@@ -67,13 +97,18 @@ class ExecutionBridge:
         payload = self.executions.authorize(
             execution_id=execution_id,
             approval_id=approval_id,
+            compiled_identity=compiled_identity,
         )
         submission = adapter.prepare(
             payload,
             preparation_profile=request.preparation_profile,
             exchange_directory=Path(payload.local_path).parent,
         )
-        external_run_id, external_state = adapter.submit(submission)
+        recovered = adapter.lookup_submission(submission)
+        if recovered is None:
+            external_run_id, external_state = adapter.submit(submission)
+        else:
+            external_run_id, external_state = recovered
         self.executions.record_submission(
             execution_id=execution_id,
             external_run_id=external_run_id,
@@ -136,31 +171,6 @@ class ExecutionBridge:
             raise ExecutionServiceError(
                 f"execution adapter {executor} returned an invalid capability"
             )
-        for item in values:
-            if item.kind != "solver_capability":
-                continue
-            if (
-                item.schema_id != "tcad.solver-capability.v2"
-                or item.payload_schema_version != 2
-            ):
-                raise ExecutionServiceError(
-                    f"execution adapter {executor} returned an unsupported solver "
-                    "capability schema"
-                )
-            try:
-                payload = json.loads(item.content)
-            except (UnicodeDecodeError, json.JSONDecodeError) as error:
-                raise ExecutionServiceError(
-                    f"execution adapter {executor} returned invalid solver capability bytes"
-                ) from error
-            if (
-                not isinstance(payload, dict)
-                or payload.get("schema_version") != 2
-                or payload.get("profile_id") != item.key
-            ):
-                raise ExecutionServiceError(
-                    f"execution adapter {executor} returned an invalid solver capability"
-                )
         return values
 
     def sync(self, *, execution_id: str) -> None:

@@ -24,7 +24,6 @@ Sha256 = Annotated[
     str,
     Field(min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$"),
 ]
-
 _Key = TypeVar("_Key")
 _Value = TypeVar("_Value")
 

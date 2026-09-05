@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
-import hashlib
 import html
 import ipaddress
 import logging
 import secrets
 import socket
 import threading
-import time
 from contextlib import nullcontext
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -28,28 +26,24 @@ from ..service.scheduler_bindings import (
     SchedulerBindingService,
     SchedulerInstanceNotFound,
 )
-from ..service.instance_admin import (
-    InstanceAdministrationError,
-    InstanceAdministrationService,
-    InstanceDeletionBlocked,
+from ..service.instance_management import (
+    InstanceManagementCapabilityError,
+    verify_instance_management_capability,
 )
-from ..service.maintenance import MaintenanceBusy, StateMaintenanceLock
-from ..service.orphan_admin import (
-    CONFIRM_ORPHAN_CLEANUP,
-    OrphanAdministrationError,
-    OrphanAdministrationService,
-    OrphanCleanupBlocked,
-    OrphanCleanupReceipt,
-)
+from ..service.maintenance import StateMaintenanceLock
 from ..storage import CASIntegrityError
-from .render import ReviewContext, _safe_raster_preview, render_review
+from .render import ReviewContext, render_review
 
 
 MAX_POST_BYTES = 64 * 1024
-DESTRUCTIVE_TOKEN_TTL_SECONDS = 15 * 60
-MAX_DESTRUCTIVE_TOKENS = 16
 STATIC_ROOT = Path(__file__).with_name("static")
 LOGGER = logging.getLogger(__name__)
+_RETIRED_INSTANCE_APPROVAL_KINDS = (
+    "instance_creation",
+    "research_instance_registration",
+    "session_binding",
+    "research_session_binding",
+)
 
 
 class ApprovalUI:
@@ -61,8 +55,7 @@ class ApprovalUI:
         port: int = 0,
         local_identity: LocalIdentityRef | None = None,
         bindings: SchedulerBindingService | None = None,
-        instance_admin: InstanceAdministrationService | None = None,
-        orphan_admin: OrphanAdministrationService | None = None,
+        instance_management_secret: bytes | None = None,
         maintenance: StateMaintenanceLock | None = None,
     ) -> None:
         try:
@@ -81,15 +74,9 @@ class ApprovalUI:
             display_name="Local user",
         )
         self.bindings = bindings
-        self.instance_admin = instance_admin
-        self.orphan_admin = orphan_admin
+        self.instance_management_secret = instance_management_secret
         self.maintenance = maintenance
         self.session_id = f"ui_{secrets.token_hex(16)}"
-        self._instance_delete_tokens: dict[str, dict[str, tuple[float, str]]] = {}
-        self._instance_delete_lock = threading.Lock()
-        self._orphan_cleanup_tokens: dict[str, tuple[float, str]] = {}
-        self._orphan_cleanup_lock = threading.Lock()
-        self._last_orphan_cleanup: OrphanCleanupReceipt | None = None
         self._server: ThreadingHTTPServer | None = None
         self._thread: threading.Thread | None = None
 
@@ -151,32 +138,18 @@ class ApprovalUI:
             return self._static(handler, "app.js", "text/javascript; charset=utf-8")
         if parsed.path == "/":
             instances = self.bindings.list_instances() if self.bindings is not None else ()
-            application_failures = (
-                self.bindings.decision_application_failures()
-                if self.bindings is not None
-                else ()
-            )
-            orphan_plan = self.orphan_admin.plan() if self.orphan_admin is not None else None
-            orphan_token = None
-            orphan_receipt = None
-            if orphan_plan is not None:
-                with self._orphan_cleanup_lock:
-                    orphan_token = _issue_destructive_token(
-                        self._orphan_cleanup_tokens,
-                        fingerprint=_plan_fingerprint(orphan_plan),
-                    )
-                    orphan_receipt = self._last_orphan_cleanup
             return self._respond(
                 handler,
                 HTTPStatus.OK,
                 _render_dashboard(
-                    self.service.list_requests(status="pending", limit=100),
+                    self.service.list_requests(
+                        status="pending",
+                        limit=100,
+                        excluded_kinds=_RETIRED_INSTANCE_APPROVAL_KINDS,
+                    ),
                     context_for=self._review_context,
                     instances=instances,
-                    application_failures=application_failures,
-                    orphan_plan=orphan_plan,
-                    orphan_token=orphan_token,
-                    orphan_receipt=orphan_receipt,
+                    csrf_token=self.session_id,
                 ),
                 "text/html; charset=utf-8",
             )
@@ -184,8 +157,26 @@ class ApprovalUI:
         query = parse_qs(parsed.query, strict_parsing=True)
         token = _one(query, "token")
         try:
+            if parsed.path == "/instances":
+                capability_token = _one(query, "capability")
+                capability = self._instance_capability(capability_token)
+                return self._respond(
+                    handler,
+                    HTTPStatus.OK,
+                    _render_instance_management(
+                        capability_token=capability_token or "",
+                        expires_at=capability.expires_at,
+                        csrf_token=self.session_id,
+                        instances=(
+                            self.bindings.list_instances(state="active")
+                            if self.bindings is not None
+                            else ()
+                        ),
+                    ),
+                    "text/html; charset=utf-8",
+                )
             if len(parts) == 2 and parts[0] == "instance":
-                if self.bindings is None or self.instance_admin is None:
+                if self.bindings is None:
                     return self._error(handler, HTTPStatus.NOT_FOUND)
                 instance = self.bindings.get_instance(instance_id=parts[1])
                 approval_ids = self.bindings.instance_history_approval_ids(
@@ -198,23 +189,10 @@ class ApprovalUI:
                     except ApprovalError:
                         continue
                 history.sort(key=lambda item: item.created_at, reverse=True)
-                plan = self.instance_admin.plan(instance_id=instance.instance_id)
-                with self._instance_delete_lock:
-                    delete_token = _issue_destructive_token(
-                        self._instance_delete_tokens.setdefault(
-                            instance.instance_id, {}
-                        ),
-                        fingerprint=_plan_fingerprint(plan),
-                    )
                 return self._respond(
                     handler,
                     HTTPStatus.OK,
-                    _render_instance_page(
-                        instance,
-                        tuple(history),
-                        plan=plan,
-                        delete_token=delete_token,
-                    ),
+                    _render_instance_page(instance, tuple(history)),
                     "text/html; charset=utf-8",
                 )
             if len(parts) == 2 and parts[0] == "review" and token:
@@ -227,6 +205,10 @@ class ApprovalUI:
                         access_token=token,
                         identity=self.identity,
                         context=self._review_context(parts[1]),
+                        read_only=(
+                            review.request.kind
+                            in _RETIRED_INSTANCE_APPROVAL_KINDS
+                        ),
                     ),
                     "text/html; charset=utf-8",
                 )
@@ -242,24 +224,12 @@ class ApprovalUI:
                         access_token=token,
                         identity=self.identity,
                         context=self._review_context(parts[1]),
+                        read_only=(
+                            review.request.kind
+                            in _RETIRED_INSTANCE_APPROVAL_KINDS
+                        ),
                     ),
                     "text/html; charset=utf-8",
-                )
-            if len(parts) == 3 and parts[0] == "preview" and token:
-                review = self.service.review(parts[1], access_token=token)
-                index = int(parts[2])
-                if not 0 <= index < len(review.subjects):
-                    raise IndexError("preview subject index is out of range")
-                envelope, content = review.subjects[index]
-                preview = _safe_raster_preview(content, envelope.media_type)
-                if preview is None:
-                    return self._error(handler, HTTPStatus.NOT_FOUND)
-                media_type, _, _ = preview
-                return self._respond(
-                    handler,
-                    HTTPStatus.OK,
-                    content,
-                    media_type,
                 )
             if len(parts) == 3 and parts[0] == "subject" and token:
                 review = self.service.review(parts[1], access_token=token)
@@ -276,7 +246,12 @@ class ApprovalUI:
                         "Content-Disposition": f"attachment; filename=subject-{index}.bin"
                     },
                 )
-        except (ApprovalAccessDenied, ValueError, IndexError):
+        except (
+            ApprovalAccessDenied,
+            InstanceManagementCapabilityError,
+            ValueError,
+            IndexError,
+        ):
             return self._error(handler, HTTPStatus.FORBIDDEN)
         except SchedulerInstanceNotFound:
             return self._error(handler, HTTPStatus.NOT_FOUND)
@@ -296,40 +271,7 @@ class ApprovalUI:
         except SchedulerBindingError:
             return None
         if owner is None:
-            proposal = self.bindings.find_instance_proposal_by_approval(
-                approval_id=approval_id
-            )
-            if proposal is not None:
-                return ReviewContext(
-                    instance_name=proposal.name,
-                    instance_title=proposal.title,
-                    instance_objective=proposal.objective,
-                    approval_name="实例创建审批",
-                    approval_logical_name="research_instance_registration",
-                    approval_revision=1,
-                    instance_status="proposed",
-                )
-            binding_request = (
-                self.bindings.find_session_binding_request_by_approval(
-                    approval_id=approval_id
-                )
-            )
-            if binding_request is None:
-                return None
-            candidates = self.bindings.session_binding_candidates(
-                request_id=binding_request.request_id
-            )
-            return ReviewContext(
-                instance_name="待用户选择",
-                instance_title="MCP 进程绑定",
-                instance_objective=(
-                    f"从 {len(candidates)} 个可用研究实例中选择当前进程的独占归属。"
-                ),
-                approval_name="进程绑定审批",
-                approval_logical_name="research_session_binding",
-                approval_revision=1,
-                instance_status="binding",
-            )
+            return None
         instance, binding = owner
         return ReviewContext(
             instance_name=instance.name,
@@ -345,10 +287,13 @@ class ApprovalUI:
             return self._error(handler, HTTPStatus.FORBIDDEN)
         parsed = urlparse(handler.path)
         parts = [part for part in parsed.path.split("/") if part]
-        if parts == ["maintenance", "orphans", "delete"]:
-            return self._handle_orphan_cleanup(handler)
-        if len(parts) == 3 and parts[0] == "instance" and parts[2] == "delete":
-            return self._handle_instance_delete(handler, instance_id=parts[1])
+        if len(parts) == 2 and parts[0] == "instances" and parts[1] in {
+            "create",
+            "select",
+        }:
+            return self._handle_instance_post(handler, action=parts[1])
+        if len(parts) == 3 and parts[0] == "review" and parts[2] == "refresh-access":
+            return self._handle_access_refresh(handler, approval_id=parts[1])
         if len(parts) != 3 or parts[0] != "review" or parts[2] != "decision":
             return self._error(handler, HTTPStatus.NOT_FOUND)
         with self._shared_maintenance():
@@ -376,6 +321,13 @@ class ApprovalUI:
                 rationale = _required(form, "rationale", allow_blank=True)
                 if _required(form, "confirm") != "confirm":
                     raise ValueError("confirmation mismatch")
+                review = self.service.review(parts[1], access_token=token)
+                if review.request.kind in _RETIRED_INSTANCE_APPROVAL_KINDS:
+                    return self._error(
+                        handler,
+                        HTTPStatus.CONFLICT,
+                        "该实例管理审批已经停用，只能读取历史内容。",
+                    )
                 decision_ref = self.service.record_ui_decision(
                     approval_id=parts[1],
                     access_token=token,
@@ -386,26 +338,6 @@ class ApprovalUI:
                     decided_by=self.identity,
                     ui_session_id=self.session_id,
                 )
-                if self.bindings is not None:
-                    try:
-                        self.bindings.apply_instance_proposal_decision(
-                            approval_id=parts[1],
-                            selected_option=selected,
-                        )
-                        self.bindings.apply_session_binding_decision(
-                            approval_id=parts[1],
-                            selected_option=selected,
-                        )
-                    except SchedulerBindingError as error:
-                        self.bindings.record_decision_application_failure(
-                            approval_id=parts[1], error=str(error)
-                        )
-                        return self._error(
-                            handler,
-                            HTTPStatus.CONFLICT,
-                            "人工决定已经不可变地记录，但实例状态应用失败；"
-                            "请在首页查看审批应用异常。",
-                        )
             except (UnicodeDecodeError, ValueError, ApprovalAccessDenied):
                 return self._error(handler, HTTPStatus.FORBIDDEN)
             except ApprovalExpired:
@@ -424,12 +356,15 @@ class ApprovalUI:
             },
         )
 
-    def _handle_instance_delete(
-        self, handler: BaseHTTPRequestHandler, *, instance_id: str
+    def _handle_instance_post(
+        self, handler: BaseHTTPRequestHandler, *, action: str
     ) -> None:
-        if self.instance_admin is None:
+        if not self._valid_host(handler):
+            return self._error(handler, HTTPStatus.FORBIDDEN)
+        if self.bindings is None:
             return self._error(handler, HTTPStatus.NOT_FOUND)
-        if not self._valid_origin(handler.headers.get("Origin")):
+        origin = handler.headers.get("Origin")
+        if not self._valid_origin(origin):
             return self._error(handler, HTTPStatus.FORBIDDEN)
         if (
             handler.headers.get("Content-Type", "").split(";", 1)[0]
@@ -448,54 +383,49 @@ class ApprovalUI:
                 strict_parsing=True,
                 keep_blank_values=True,
             )
-            token = _required(form, "delete_token")
-            confirmation_name = _required(form, "instance_name")
-            if _required(form, "confirm") != "delete_instance":
-                raise ValueError("confirmation mismatch")
-            with self._exclusive_maintenance():
-                plan = self.instance_admin.plan(instance_id=instance_id)
-                with self._instance_delete_lock:
-                    if not _destructive_token_matches(
-                        self._instance_delete_tokens.get(instance_id, {}),
-                        token,
-                        fingerprint=_plan_fingerprint(plan),
-                    ):
-                        raise ValueError("deletion token mismatch")
-                self.instance_admin.delete(
-                    instance_id=instance_id,
-                    confirmation_name=confirmation_name,
-                )
-            with self._instance_delete_lock:
-                tokens = self._instance_delete_tokens.get(instance_id)
-                if tokens is not None:
-                    tokens.pop(token, None)
-                    if not tokens:
-                        self._instance_delete_tokens.pop(instance_id, None)
-        except (InstanceDeletionBlocked, MaintenanceBusy) as error:
-            return self._error(handler, HTTPStatus.CONFLICT, str(error))
-        except (UnicodeDecodeError, ValueError, InstanceAdministrationError):
+            capability_token = _required(form, "capability")
+            capability = self._instance_capability(capability_token)
+            if not secrets.compare_digest(
+                _required(form, "csrf"), self.session_id
+            ):
+                raise ValueError("CSRF mismatch")
+            name = _required(form, "name")
+            with self._shared_maintenance():
+                if action == "create":
+                    instance = self.bindings.create_instance_and_bind_session(
+                        session_key=capability.session_key,
+                        name=name,
+                        title=_required(form, "title"),
+                        objective=_required(form, "objective"),
+                    )
+                else:
+                    instance = self.bindings.bind_session_by_name(
+                        session_key=capability.session_key,
+                        name=name,
+                    )
+        except (
+            UnicodeDecodeError,
+            InstanceManagementCapabilityError,
+            ValueError,
+        ):
             return self._error(handler, HTTPStatus.FORBIDDEN)
         except SchedulerInstanceNotFound:
             return self._error(handler, HTTPStatus.NOT_FOUND)
-        except OSError:
-            LOGGER.exception("instance deletion failed in the filesystem")
-            return self._error(
-                handler,
-                HTTPStatus.CONFLICT,
-                "实例删除未完成：运行目录无法安全移除，请检查服务日志后重试。",
-            )
+        except SchedulerBindingError as error:
+            return self._error(handler, HTTPStatus.CONFLICT, str(error))
         self._respond(
             handler,
             HTTPStatus.SEE_OTHER,
             b"",
             "text/plain; charset=utf-8",
-            extra_headers={"Location": "/?deleted=1"},
+            extra_headers={"Location": f"/instance/{instance.instance_id}"},
         )
 
-    def _handle_orphan_cleanup(self, handler: BaseHTTPRequestHandler) -> None:
-        if self.orphan_admin is None:
-            return self._error(handler, HTTPStatus.NOT_FOUND)
-        if not self._valid_origin(handler.headers.get("Origin")):
+    def _handle_access_refresh(
+        self, handler: BaseHTTPRequestHandler, *, approval_id: str
+    ) -> None:
+        origin = handler.headers.get("Origin")
+        if not self._valid_origin(origin):
             return self._error(handler, HTTPStatus.FORBIDDEN)
         if (
             handler.headers.get("Content-Type", "").split(";", 1)[0]
@@ -512,54 +442,40 @@ class ApprovalUI:
             form = parse_qs(
                 handler.rfile.read(length).decode("utf-8", errors="strict"),
                 strict_parsing=True,
-                keep_blank_values=True,
             )
-            token = _required(form, "maintenance_token")
-            if _required(form, "confirm") != "cleanup_orphans":
-                raise ValueError("confirmation mismatch")
-            confirmation = _required(form, "confirmation")
-            with self._exclusive_maintenance():
-                plan = self.orphan_admin.plan()
-                with self._orphan_cleanup_lock:
-                    if not _destructive_token_matches(
-                        self._orphan_cleanup_tokens,
-                        token,
-                        fingerprint=_plan_fingerprint(plan),
-                    ):
-                        raise ValueError("maintenance token mismatch")
-                receipt = self.orphan_admin.delete(confirmation=confirmation)
-            with self._orphan_cleanup_lock:
-                self._orphan_cleanup_tokens.pop(token, None)
-                self._last_orphan_cleanup = receipt
-        except (OrphanCleanupBlocked, MaintenanceBusy) as error:
-            return self._error(handler, HTTPStatus.CONFLICT, str(error))
-        except (UnicodeDecodeError, ValueError, OrphanAdministrationError):
+            if not secrets.compare_digest(
+                _required(form, "csrf"), self.session_id
+            ):
+                raise ValueError("CSRF mismatch")
+            with self._shared_maintenance():
+                launch = self.service.refresh_access(approval_id)
+        except (UnicodeDecodeError, ValueError, ApprovalAccessDenied):
             return self._error(handler, HTTPStatus.FORBIDDEN)
-        except OSError:
-            LOGGER.exception("orphan cleanup failed in the filesystem")
-            return self._error(
-                handler,
-                HTTPStatus.CONFLICT,
-                "孤儿清理未完成：运行目录无法安全移除，请检查服务日志后重试。",
-            )
+        except ApprovalExpired:
+            return self._error(handler, HTTPStatus.GONE)
+        except ApprovalError:
+            return self._error(handler, HTTPStatus.CONFLICT)
         self._respond(
             handler,
             HTTPStatus.SEE_OTHER,
             b"",
             "text/plain; charset=utf-8",
-            extra_headers={"Location": "/?orphans_cleaned=1"},
+            extra_headers={"Location": launch.review_path},
+        )
+
+    def _instance_capability(self, token: str | None):
+        if self.instance_management_secret is None or token is None:
+            raise InstanceManagementCapabilityError(
+                "instance-management capability is unavailable"
+            )
+        return verify_instance_management_capability(
+            token,
+            secret=self.instance_management_secret,
         )
 
     def _shared_maintenance(self):
         return (
             self.maintenance.shared()
-            if self.maintenance is not None
-            else nullcontext()
-        )
-
-    def _exclusive_maintenance(self):
-        return (
-            self.maintenance.exclusive(blocking=False)
             if self.maintenance is not None
             else nullcontext()
         )
@@ -662,68 +578,33 @@ class ApprovalUI:
         handler.wfile.write(body)
 
 
-def _plan_fingerprint(plan: object) -> str:
-    return hashlib.sha256(repr(plan).encode("utf-8")).hexdigest()
-
-
-def _issue_destructive_token(
-    tokens: dict[str, tuple[float, str]], *, fingerprint: str
-) -> str:
-    now = time.monotonic()
-    expired = [token for token, (expires_at, _) in tokens.items() if expires_at <= now]
-    for token in expired:
-        tokens.pop(token, None)
-    while len(tokens) >= MAX_DESTRUCTIVE_TOKENS:
-        oldest = min(tokens, key=lambda token: tokens[token][0])
-        tokens.pop(oldest, None)
-    token = secrets.token_urlsafe(32)
-    tokens[token] = (now + DESTRUCTIVE_TOKEN_TTL_SECONDS, fingerprint)
-    return token
-
-
-def _destructive_token_matches(
-    tokens: dict[str, tuple[float, str]], token: str, *, fingerprint: str
-) -> bool:
-    record = tokens.get(token)
-    if record is None:
-        return False
-    expires_at, expected_fingerprint = record
-    if expires_at <= time.monotonic():
-        tokens.pop(token, None)
-        return False
-    return secrets.compare_digest(expected_fingerprint, fingerprint)
-
-
 def _render_dashboard(
     items: tuple[object, ...],
     *,
     context_for,
     instances: tuple[object, ...] = (),
-    application_failures: tuple[tuple[str, str, str], ...] = (),
-    orphan_plan: object | None = None,
-    orphan_token: str | None = None,
-    orphan_receipt: object | None = None,
+    csrf_token: str,
 ) -> bytes:
     rows = []
     for item in items:
         review_path = getattr(item, "review_path", None)
-        if review_path is None:
+        access_expired = bool(getattr(item, "access_expired", False))
+        if review_path is None and not access_expired:
             continue
         kind_value = str(getattr(item, "kind", "review"))
         kind = html.escape(
             {
                 "scientific_foundation": "科学基础审批",
                 "execution_authorization": "执行授权审批",
-                "instance_creation": "研究实例创建审批",
-                "research_instance_registration": "研究实例创建审批",
-                "session_binding": "进程绑定审批",
-                "research_session_binding": "进程绑定审批",
                 "review": "科研审批",
             }.get(kind_value, kind_value)
         )
         question = html.escape(str(getattr(item, "question", "待审批事项")))
         created_at = html.escape(str(getattr(item, "created_at", "")))
         href = html.escape(str(review_path), quote=True)
+        approval_id = html.escape(
+            str(getattr(item, "approval_id", "")), quote=True
+        )
         context = context_for(str(getattr(item, "approval_id", "")))
         if context is None:
             instance = (
@@ -732,34 +613,39 @@ def _render_dashboard(
             )
             approval_name = "旧审批"
         else:
-            context_label = (
-                "待创建研究实例"
-                if context.instance_status == "proposed"
-                else (
-                    "待绑定研究实例"
-                    if context.instance_status == "binding"
-                    else "研究实例"
-                )
-            )
             instance = (
                 "<div class='approval-instance'>"
-                f"<span class='approval-instance-label'>{context_label}</span>"
+                "<span class='approval-instance-label'>研究实例</span>"
                 f"<strong>{html.escape(context.instance_title)}</strong>"
                 f"<code>{html.escape(context.instance_name)}</code></div>"
             )
             approval_name = context.approval_name
-        rows.append(
-            "<li class=\"approval-item\">"
-            f"<a href=\"{href}\">{instance}"
+        summary = (
+            f"{instance}"
             "<div class='approval-summary'>"
             f"<h2>{question}</h2>"
             "<p>"
             f"<span class='approval-kind'>{kind}</span>"
             f"<span>审批项：<code>{html.escape(approval_name)}</code></span>"
             f"<time>{created_at}</time></p></div>"
-            "<span class='approval-open' aria-hidden='true'>查看</span>"
-            "</a></li>"
         )
+        if access_expired:
+            csrf = html.escape(csrf_token, quote=True)
+            action = f"/review/{approval_id}/refresh-access"
+            rows.append(
+                "<li class='approval-item'>"
+                f"<div>{summary}</div>"
+                f"<form method='post' action='{action}'>"
+                f"<input type='hidden' name='csrf' value='{csrf}'>"
+                "<button type='submit'>刷新访问链接</button></form></li>"
+            )
+        else:
+            rows.append(
+                "<li class=\"approval-item\">"
+                f"<a href=\"{href}\">{summary}"
+                "<span class='approval-open' aria-hidden='true'>查看</span>"
+                "</a></li>"
+            )
     content = (
         "<ul class=\"approval-list\">" + "".join(rows) + "</ul>"
         if rows
@@ -793,29 +679,6 @@ def _render_dashboard(
         if instance_rows
         else "<p class='empty-state'>当前没有研究实例。</p>"
     )
-    maintenance_content = _render_orphan_maintenance(
-        orphan_plan, token=orphan_token, receipt=orphan_receipt
-    )
-    application_failure_content = ""
-    if application_failures:
-        failure_rows = "".join(
-            "<li><code>"
-            + html.escape(approval_id)
-            + "</code><span>"
-            + html.escape(
-                "实例创建" if object_type == "instance_proposal" else "进程绑定"
-            )
-            + "</span><p>"
-            + html.escape(error)
-            + "</p></li>"
-            for approval_id, object_type, error in application_failures
-        )
-        application_failure_content = (
-            "<section class='application-failures'><h2>审批应用异常</h2>"
-            "<p>人工决定已保存，但对应实例状态尚未成功应用。</p><ul>"
-            + failure_rows
-            + "</ul></section>"
-        )
     return (
         "<!doctype html><html lang=\"zh-CN\"><head>"
         "<meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
@@ -824,89 +687,70 @@ def _render_dashboard(
         "<header><p class=\"eyebrow\">SciDiscovery</p><h1>待审批事项</h1>"
         "<p>智能体只提交结构化科研对象；本页由固定代码按白名单数据格式渲染，不执行模型生成的 HTML。</p></header>"
         f"{content}<section class='instance-management'><h2>研究实例</h2>"
-        "<p>查看每个实例的审批历史，或显式清理悬空实例。</p>"
-        f"{instance_content}</section>{application_failure_content}"
-        f"{maintenance_content}</main></body></html>"
+        "<p>查看每个实例的审批历史。</p>"
+        f"{instance_content}</section>"
+        "</main></body></html>"
     ).encode("utf-8")
 
 
-def _render_orphan_maintenance(
-    plan: object | None, *, token: str | None, receipt: object | None
-) -> str:
-    if plan is None or token is None:
-        return ""
-    counts = (
-        ("孤儿任务", len(tuple(getattr(plan, "orphan_task_ids", ())))),
-        ("孤儿审批", len(tuple(getattr(plan, "orphan_approval_ids", ())))),
-        ("孤儿执行", len(tuple(getattr(plan, "orphan_execution_ids", ())))),
-        ("科研对象注册", len(tuple(getattr(plan, "artifact_refs", ())))),
-        ("工作进程目录", len(tuple(getattr(plan, "stale_workspace_names", ())))),
-        ("执行交换目录", len(tuple(getattr(plan, "stale_exchange_names", ())))),
-        ("执行结果目录", len(tuple(getattr(plan, "stale_executor_run_names", ())))),
-        ("提交标记", len(tuple(getattr(plan, "stale_submission_names", ())))),
+def _render_instance_management(
+    *,
+    capability_token: str,
+    expires_at: str,
+    csrf_token: str,
+    instances: tuple[object, ...],
+) -> bytes:
+    capability = html.escape(capability_token, quote=True)
+    csrf = html.escape(csrf_token, quote=True)
+    expiry = html.escape(expires_at)
+    options = "".join(
+        "<option value='"
+        + html.escape(str(getattr(instance, "name", "")), quote=True)
+        + "'>"
+        + html.escape(str(getattr(instance, "title", "")))
+        + " · "
+        + html.escape(str(getattr(instance, "name", "")))
+        + "</option>"
+        for instance in instances
     )
-    blockers = tuple(getattr(plan, "blockers", ()))
-    count_cards = "".join(
-        "<div><dt>" + html.escape(label) + "</dt><dd>" + str(value) + "</dd></div>"
-        for label, value in counts
+    select_form = (
+        "<form class='instance-command' method='post' action='/instances/select'>"
+        f"<input type='hidden' name='capability' value='{capability}'>"
+        f"<input type='hidden' name='csrf' value='{csrf}'>"
+        "<label>现有实例<select name='name' required>"
+        + options
+        + "</select></label>"
+        "<button type='submit'>进入所选实例</button></form>"
+        if options
+        else "<p class='empty-state'>当前没有可进入的研究实例。</p>"
     )
-    blocker_content = (
-        "<div class='delete-blockers'><strong>当前不能清理：</strong><ul>"
-        + "".join(f"<li>{html.escape(str(value))}</li>" for value in blockers)
-        + "</ul></div>"
-        if blockers
-        else ""
-    )
-    total = sum(value for _, value in counts)
-    disabled = " disabled" if blockers or total == 0 else ""
-    receipt_content = ""
-    if receipt is not None:
-        deleted = sum(
-            int(getattr(receipt, field, 0))
-            for field in (
-                "deleted_tasks",
-                "deleted_approvals",
-                "deleted_executions",
-                "deleted_artifact_registrations",
-                "deleted_workspaces",
-                "deleted_exchange_directories",
-                "deleted_executor_runs",
-                "deleted_submission_markers",
-            )
-        )
-        verification_ok = (
-            bool(getattr(receipt, "database_integrity_ok", False))
-            and bool(getattr(receipt, "artifact_integrity_ok", False))
-            and int(getattr(receipt, "remaining_cas_orphans", -1)) == 0
-        )
-        receipt_content = (
-            "<div class='maintenance-receipt'><strong>最近一次清理完成</strong>"
-            f"<p>共移除 {deleted} 个控制记录或运行条目；"
-            f"完整性校验：{'通过' if verification_ok else '需要检查'}。</p></div>"
-        )
     return (
-        "<section class='maintenance-management'><h2>系统维护</h2>"
-        "<p>这里只清理没有研究实例归属的控制状态和终态运行目录，不触及项目 workspace。"
-        "刷新页面即可重新扫描。</p>"
-        f"{receipt_content}<dl class='maintenance-counts'>{count_cards}</dl>"
-        f"{blocker_content}"
-        "<form class='orphan-cleanup' method='post' action='/maintenance/orphans/delete'>"
-        f"<input type='hidden' name='maintenance_token' value='{html.escape(token, quote=True)}'>"
-        "<input type='hidden' name='confirm' value='cleanup_orphans'>"
-        f"<label>输入 <code>{CONFIRM_ORPHAN_CLEANUP}</code> 以确认"
-        f"<input name='confirmation' autocomplete='off' required{disabled}></label>"
-        f"<button class='danger' type='submit'{disabled}>清理孤儿状态</button></form></section>"
-    )
+        "<!doctype html><html lang='zh-CN'><head><meta charset='utf-8'>"
+        "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+        "<title>研究实例管理</title>"
+        "<link rel='stylesheet' href='/static/style.css'></head><body>"
+        "<main class='instance-page'><header><p class='eyebrow'>SciDiscovery</p>"
+        "<h1>为当前科研会话选择实例</h1>"
+        "<p>本页的提交会直接建立唯一实例绑定，不产生科学审批或执行授权。</p>"
+        f"<time>链接有效期至 {expiry}</time></header>"
+        "<section><h2>进入现有实例</h2>"
+        f"{select_form}</section>"
+        "<section><h2>创建新实例</h2>"
+        "<form class='instance-command' method='post' action='/instances/create'>"
+        f"<input type='hidden' name='capability' value='{capability}'>"
+        f"<input type='hidden' name='csrf' value='{csrf}'>"
+        "<label>稳定名称<input name='name' required maxlength='256' pattern='[A-Za-z0-9][A-Za-z0-9_.:/-]{0,255}'></label>"
+        "<label>标题<input name='title' required maxlength='512'></label>"
+        "<label>研究目标<textarea name='objective' required maxlength='8192'></textarea></label>"
+        "<button type='submit'>创建并进入</button></form></section>"
+        "</main></body></html>"
+    ).encode("utf-8")
 
 
 def _render_instance_page(
     instance: object,
     history: tuple[object, ...],
-    *,
-    plan: object,
-    delete_token: str,
 ) -> bytes:
-    instance_id = html.escape(str(getattr(instance, "instance_id", "")), quote=True)
     name_raw = str(getattr(instance, "name", ""))
     name = html.escape(name_raw)
     title = html.escape(str(getattr(instance, "title", "")))
@@ -937,10 +781,6 @@ def _render_instance_page(
             {
                 "scientific_foundation": "科学基础审批",
                 "execution_authorization": "执行授权审批",
-                "instance_creation": "研究实例创建审批",
-                "research_instance_registration": "研究实例创建审批",
-                "session_binding": "进程绑定审批",
-                "research_session_binding": "进程绑定审批",
                 "review": "科研审批",
             }.get(kind_value, kind_value)
         )
@@ -978,32 +818,6 @@ def _render_instance_page(
         else "<p class='empty-state'>这个实例还没有审批记录。</p>"
     )
 
-    bindings = tuple(getattr(plan, "bindings", ()))
-    shared = tuple(getattr(plan, "shared_bindings", ()))
-    blockers = tuple(getattr(plan, "blockers", ()))
-    counts = {
-        "任务": len(tuple(getattr(plan, "exclusive_task_ids", ()))),
-        "审批": len(tuple(getattr(plan, "exclusive_approval_ids", ()))),
-        "执行": len(tuple(getattr(plan, "exclusive_execution_ids", ()))),
-        "直接科研对象": len(tuple(getattr(plan, "exclusive_artifact_ids", ()))),
-    }
-    count_text = "，".join(f"{label} {value}" for label, value in counts.items())
-    blocker_content = (
-        "<div class='delete-blockers'><strong>当前不能删除：</strong><ul>"
-        + "".join(f"<li>{html.escape(str(value))}</li>" for value in blockers)
-        + "</ul></div>"
-        if blockers
-        else ""
-    )
-    disabled = " disabled" if blockers else ""
-    delete_form = (
-        f"<form class='instance-delete' method='post' action='/instance/{instance_id}/delete'>"
-        f"<input type='hidden' name='delete_token' value='{html.escape(delete_token, quote=True)}'>"
-        "<input type='hidden' name='confirm' value='delete_instance'>"
-        f"<label>输入实例名 <code>{name}</code> 以确认"
-        f"<input name='instance_name' autocomplete='off' required{disabled}></label>"
-        f"<button class='danger' type='submit'{disabled}>永久删除实例</button></form>"
-    )
     return (
         "<!doctype html><html lang='zh-CN'><head><meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width,initial-scale=1'>"
@@ -1013,11 +827,7 @@ def _render_instance_page(
         f"<header><p class='eyebrow'>研究实例 · {state}</p><h1>{title}</h1>"
         f"<code>{name}</code><p>{objective}</p><time>{created_at}</time></header>"
         f"<section><h2>历史审批结果</h2>{history_content}</section>"
-        "<section class='danger-zone'><h2>删除实例</h2>"
-        f"<p>将移除 {len(bindings)} 条实例绑定及专属控制记录（{count_text}）。"
-        f"其他实例仍引用的 {len(shared)} 个共享对象会保留。实例专属 CAS 字节仅在没有其他注册引用时清理。"
-        "</p>"
-        f"{blocker_content}{delete_form}</section></main></body></html>"
+        "</main></body></html>"
     ).encode("utf-8")
 
 

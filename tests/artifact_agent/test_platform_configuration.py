@@ -2,46 +2,220 @@ from __future__ import annotations
 
 import sys
 import tomllib
+from importlib.util import find_spec
 from pathlib import Path
 
 import pytest
 
-from scidiscovery.artifact_agent.interfaces.mcp_root import ROOT_TOOLS
-from scidiscovery.platforms import initialize_platform
-from scidiscovery.platforms.roles import DOMAIN_ROLE_PATHS, load_roles
+from blind_csv_plugin.plugin import PLUGIN as BLIND_CSV_PLUGIN
+from curve_score.plugin import PLUGIN as CURVE_SCORE_PLUGIN
+from scidiscovery.builtin_plugin import CORE_PLUGIN
+from scidiscovery.general_science_plugin import PLUGIN as GENERAL_SCIENCE_PLUGIN
+from scidiscovery.artifact_agent.interfaces.mcp_root import root_tools_for_backend
+from scidiscovery.artifact_agent.interfaces.cli import build_parser
+from scidiscovery.artifact_agent.service.hardened_workspace import (
+    HardenedWorkerBackend,
+)
+from scidiscovery.artifact_agent.service.local_workspace import LocalTrustedBackend
+from scidiscovery.artifact_agent.runtime import open_runtime
+from scidiscovery.operations.catalog import compile_catalog, compile_installed_catalog
+from scidiscovery.operations.tooling import (
+    operation_agent_type,
+    operation_local_worker_tool_names,
+    operation_worker_server_name,
+    operation_worker_tool_names,
+)
+from scidiscovery.platforms import PlatformConflictError, initialize_platform
+from scidiscovery.platforms.codex import _operation_toml, validate_installation_profile
 
 
-def test_source_domain_roles_take_precedence_over_installed_entry_points() -> None:
-    repository = Path(__file__).resolve().parents[2]
-    assert len(load_roles()) == 8
-    assert set(DOMAIN_ROLE_PATHS) == {
-        "tcad_deck_author",
-        "tcad_deck_reviewer",
-    }
-    assert all(path.is_relative_to(repository / "plugins") for path in DOMAIN_ROLE_PATHS.values())
+def test_control_daemon_passes_backend_choice_to_the_only_root_runtime(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from scidiscovery.artifact_agent.interfaces import mcp_daemon
+
+    captured: dict[str, object] = {}
+
+    def fake_build_root_router(**values: object) -> object:
+        captured.update(values)
+        return object()
+
+    class FakeDaemon:
+        def __init__(self, _socket, router, **_values):
+            self.router = router
+
+        def serve_forever(self) -> None:
+            self.router._router("sch_" + "0" * 32)
+
+    monkeypatch.setattr(mcp_daemon, "build_root_router", fake_build_root_router)
+    monkeypatch.setattr(mcp_daemon, "UnixSocketDaemon", FakeDaemon)
+    monkeypatch.setattr(
+        mcp_daemon,
+        "compile_installed_catalog",
+        lambda: compile_catalog((CORE_PLUGIN, GENERAL_SCIENCE_PLUGIN)),
+    )
+    secret = tmp_path / "approval.key"
+    secret.write_bytes(b"x" * 32)
+    runtime = tmp_path / "run"
+    runtime.mkdir()
+    local_workspace_root = tmp_path / "worker-workspaces"
+
+    assert mcp_daemon.main(
+        [
+            "--project-root", str(tmp_path),
+            "--state-root", str(tmp_path / "state"),
+            "--socket", str(tmp_path / "control.sock"),
+            "--approval-secret-file", str(secret),
+            "--worker-backend", "local",
+            "--local-workspace-root", str(local_workspace_root),
+            "--runtime-summary", str(runtime / "summary.json"),
+        ]
+    ) == 0
+    assert captured["worker_backend"] == "local"
+    assert captured["local_workspace_root"] == local_workspace_root
 
 
-def test_codex_profile_contains_only_current_socket_boundaries(
+def test_approval_ui_cli_accepts_the_deployed_worker_backend() -> None:
+    args = build_parser().parse_args(
+        ["serve-approval-ui", "--worker-backend", "hardened"]
+    )
+    assert args.worker_backend == "hardened"
+
+
+def test_hardened_runtime_does_not_create_a_local_run_root(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    open_runtime(
+        project_root=project,
+        state_root=tmp_path / "state",
+        worker_backend="hardened",
+    )
+    assert not (project / ".scidiscovery-runs").exists()
+
+
+def test_curve_error_agent_is_available_after_plots_move_to_support_transform(
+    tmp_path: Path,
+) -> None:
+    catalog = compile_catalog(
+        (CORE_PLUGIN, GENERAL_SCIENCE_PLUGIN, CURVE_SCORE_PLUGIN)
+    )
+    compiled = catalog.operation("science.result.diagnose.curve-error.v1")
+    agent_type = operation_agent_type(compiled)
+
+    assert LocalTrustedBackend.unsupported_requirements(compiled) == ()
+    assert HardenedWorkerBackend.unsupported_requirements(compiled) == (
+        "native_shell",
+    )
+    assert LocalTrustedBackend.supports_operation(compiled)
+    assert not HardenedWorkerBackend.supports_operation(compiled)
+
+    for backend in ("local", "hardened"):
+        project = tmp_path / backend
+        project.mkdir()
+        initialize_platform(
+            "codex",
+            project,
+            control_socket=tmp_path / f"{backend}.sock",
+            codex_config_root=project / ".codex",
+            operation_catalog=catalog,
+            worker_backend=backend,
+        )
+        generated = {
+            path.stem for path in project.joinpath(".codex/agents").glob("*.toml")
+        }
+        assert (agent_type in generated) is (backend == "local")
+
+
+def test_legacy_role_discovery_module_is_absent() -> None:
+    assert find_spec("scidiscovery.platforms.roles") is None
+
+
+def test_local_tcad_runtime_config_is_bound_only_to_operations_that_need_it(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "AGENTS.md").write_text("# Project\n", encoding="utf-8")
+    config_path = tmp_path / "tcad-plugin.json"
+    config_path.write_text(
+        '{"socket_path":"' + str(tmp_path / "tcad.sock") + '","transport":"socket"}',
+        encoding="utf-8",
+    )
+    module_path = Path(__file__).resolve().parents[2] / "src"
+    initialize_platform(
+        "codex",
+        project,
+        python_executable=Path(sys.executable),
+        python_path=module_path,
+        control_socket=tmp_path / "control.sock",
+        state_root=tmp_path / "state",
+        runtime_plugin_configs={"tcad_artifact": config_path},
+    )
+    catalog = compile_installed_catalog()
+    config = tomllib.loads((project / ".codex/config.toml").read_text("utf-8"))
+    author = catalog.operation("tcad.deck.author.initial.v1")
+    reviewer = catalog.operation("tcad.deck.review.v1")
+    author_args = config["mcp_servers"][operation_worker_server_name(author)]["args"]
+    reviewer_args = config["mcp_servers"][operation_worker_server_name(reviewer)]["args"]
+    assert author_args[-2:] == [
+        "--plugin-config",
+        f"tcad_artifact={config_path}",
+    ]
+    assert "--plugin-config" not in reviewer_args
+    validate_installation_profile(
+        project,
+        workspace=project / "workspace",
+        python_path=module_path,
+        state_root=tmp_path / "state",
+        runtime_plugin_configs={"tcad_artifact": config_path},
+    )
+
+
+def test_codex_profile_rejects_config_for_a_plugin_outside_the_catalog(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    with pytest.raises(Exception, match="not present in the compiled catalog"):
+        initialize_platform(
+            "codex",
+            project,
+            control_socket=tmp_path / "control.sock",
+            runtime_plugin_configs={"not_installed": tmp_path / "unused.json"},
+        )
+
+
+def test_codex_profile_contains_root_and_compiled_operation_boundaries(
     tmp_path: Path,
 ) -> None:
     project = tmp_path / "project"
     project.mkdir()
     (project / "AGENTS.md").write_text("# Project\n", encoding="utf-8")
     config_root = project / ".codex"
+    local_workspace_root = project / ".scidiscovery-runs"
 
     initialize_platform(
         "codex",
         project,
         python_executable=Path(sys.executable),
         control_socket=tmp_path / "control.sock",
-        worker_socket=tmp_path / "worker.sock",
-        worker_workspace_root=tmp_path / "state" / "workspaces",
         codex_config_root=config_root,
+        local_workspace_root=local_workspace_root,
     )
     config = tomllib.loads(
         (config_root / "config.toml").read_text(encoding="utf-8")
     )
-    assert set(config["mcp_servers"]) == {"scidiscovery"}
+    catalog = compile_installed_catalog()
+    operations = tuple(
+        catalog.operation(operation_id)
+        for operation_id in catalog.operation_ids()
+        if catalog.operation(operation_id).spec.executor.kind == "agent"
+        and LocalTrustedBackend.supports_operation(
+            catalog.operation(operation_id)
+        )
+    )
+    worker_server_names = set(config["mcp_servers"]) - {"scidiscovery"}
+    assert len(worker_server_names) == len(operations)
     assert config["mcp_servers"]["scidiscovery"]["args"] == [
         "-m",
         "scidiscovery.artifact_agent.interfaces.mcp_proxy",
@@ -54,70 +228,160 @@ def test_codex_profile_contains_only_current_socket_boundaries(
         "SCIDISCOVERY_PRINCIPAL": "service",
     }
     assert config["mcp_servers"]["scidiscovery"]["enabled_tools"] == [
-        tool.name for tool in ROOT_TOOLS
+        tool.name for tool in root_tools_for_backend("local")
     ]
-    roles = sorted((config_root / "agents").glob("*.toml"))
-    assert len(roles) == 8
-    for path in roles:
-        role = tomllib.loads(path.read_text(encoding="utf-8"))
-        assert role["web_search"] == "live"
-        assert role["tools"]["view_image"] is True
-        assert role["tools"]["web_search"]["context_size"] == "high"
-        permission_name = f"scidiscovery-{path.stem.replace('_', '-')}"
-        assert role["default_permissions"] == permission_name
-        assert "sandbox_mode" not in role
-        profile = role["permissions"][permission_name]
-        assert profile["extends"] == ":read-only"
-        assert profile["workspace_roots"] == {
-            str(tmp_path / "state" / "workspaces"): True
-        }
-        assert "filesystem" not in profile
-        assert set(role["mcp_servers"]) == {"scidiscovery"}
-        server = role["mcp_servers"]["scidiscovery"]
-        assert server["args"][0:2] == [
-            "-m",
-            "scidiscovery.artifact_agent.interfaces.mcp_worker_proxy",
-        ]
-        assert "--socket" in server["args"]
-        assert "--worker-id" in server["args"]
-        assert server["env"]["PYTHONNOUSERSITE"] == "1"
-        assert server["env"]["PYTHONPATH"] == str(
-            Path(__file__).resolve().parents[2] / "src"
+    all_roles = sorted((config_root / "agents").glob("*.toml"))
+    operation_roles = tuple(path for path in all_roles if path.stem.startswith("op_"))
+    assert {path.stem for path in operation_roles} == {
+        operation_agent_type(compiled) for compiled in operations
+    }
+    assert operation_roles == tuple(all_roles)
+    for compiled in operations:
+        agent_type = operation_agent_type(compiled)
+        role = tomllib.loads(
+            (config_root / "agents" / f"{agent_type}.toml").read_text(
+                encoding="utf-8"
+            )
         )
-        assert {
-            "worker_begin_result_upload",
-            "worker_append_result_upload",
-            "worker_commit_result_upload",
-            "worker_get_assignment",
-            "worker_list_inputs",
-            "worker_read_input",
-            "worker_stage_input",
-            "worker_read_table",
-            "worker_profile_input",
-        }.isdisjoint(server["enabled_tools"])
-        assert {
-            "worker_file_write_begin",
-            "worker_file_write_chunk",
-            "worker_file_write_commit",
-            "worker_file_apply_patch",
-            "worker_file_json_patch",
-        }.issubset(server["enabled_tools"])
-        if path.stem != "tcad_deck_author":
-            assert "worker_tcad_debug_run" not in server["enabled_tools"]
-        rendered = path.read_text(encoding="utf-8")
-        assert "secret" not in rendered.lower()
-        assert "state-root" not in rendered
-        prompt = role["developer_instructions"].lower()
-        for forbidden in (
-            "artifact id",
-            "dispatch handle",
-            "dispatch_handle",
-            "hashes",
-            "session token",
-            "session_token",
-            "task ids",
-        ):
-            assert forbidden not in prompt
+        assert role["model"] == compiled.spec.executor.model
+        assert role["web_search"] == "disabled"
+        assert "default_permissions" not in role
+        assert "permissions" not in role
+        assert role["features"]["shell_tool"] is True
+        assert role["features"]["unified_exec"] is True
+        assert role["tools"]["view_image"] is True
+        operation_server_names = tuple(role["mcp_servers"])
+        assert len(operation_server_names) == 1
+        operation_server_name = operation_server_names[0]
+        assert operation_server_name in worker_server_names
+        assert role["mcp_servers"][operation_server_name]["enabled_tools"] == [
+            *operation_local_worker_tool_names(compiled),
+        ]
+        assert role["mcp_servers"][operation_server_name]["required"] is True
+        assert "spawned Operation worker, not the interactive scheduler" in role[
+            "developer_instructions"
+        ]
+        assert "trusted-local backend" in role["developer_instructions"]
+        assert "the only permitted chat" in role["developer_instructions"]
+        assert "已完成受控提交。" in role["developer_instructions"]
+        matching_parent_servers = [
+            server
+            for name, server in config["mcp_servers"].items()
+            if name in worker_server_names
+            and server["env"]["SCIDISCOVERY_ROLE"] == agent_type
+        ]
+        assert len(matching_parent_servers) == 1
+        assert matching_parent_servers[0]["required"] is False
+        assert matching_parent_servers[0]["enabled_tools"] == role["mcp_servers"][
+            operation_server_name
+        ]["enabled_tools"]
+        assert matching_parent_servers[0]["args"][:2] == [
+            "-m",
+            "scidiscovery.artifact_agent.interfaces.mcp_local_worker",
+        ]
+        assert matching_parent_servers[0]["args"][2:6] == [
+            "--state-root",
+            str(project / ".scidiscovery-state"),
+            "--local-workspace-root",
+            str(local_workspace_root),
+        ]
+        assert str(project / ".scidiscovery-state") in matching_parent_servers[0]["args"]
+    scheduler_prompt = (project / "AGENTS.md").read_text(encoding="utf-8")
+    discriminator = scheduler_prompt.index(
+        "This section applies only to the interactive parent scheduler."
+    )
+    scheduler_rule = scheduler_prompt.index(
+        "Act only as the interactive research scheduler."
+    )
+    assert discriminator < scheduler_rule
+    assert "do not call `instance_current`" in scheduler_prompt[discriminator:scheduler_rule]
+
+
+def test_codex_hardened_profile_remains_explicitly_compilable(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "AGENTS.md").write_text("# Project\n", encoding="utf-8")
+    catalog = compile_catalog(
+        (CORE_PLUGIN, GENERAL_SCIENCE_PLUGIN, BLIND_CSV_PLUGIN)
+    )
+    for compiled in (
+        catalog.operation(operation_id)
+        for operation_id in catalog.operation_ids()
+        if catalog.operation(operation_id).spec.executor.kind == "agent"
+        and HardenedWorkerBackend.supports_operation(
+            catalog.operation(operation_id)
+        )
+    ):
+        profile = tomllib.loads(
+            _operation_toml(
+                compiled,
+                    python=Path(sys.executable),
+                    python_path=Path(__file__).resolve().parents[2] / "src",
+                    state_root=tmp_path / "state",
+                    worker_backend="hardened",
+            )
+        )
+        server = profile["mcp_servers"][operation_worker_server_name(compiled)]
+        assert server["args"][:2] == [
+            "-m",
+            "scidiscovery.artifact_agent.interfaces.mcp_hardened_worker",
+        ]
+        assert "--local-workspace-root" not in server["args"]
+        assert server["enabled_tools"] == list(operation_worker_tool_names(compiled))
+    report = initialize_platform(
+        "codex",
+        project,
+        python_executable=Path(sys.executable),
+        control_socket=tmp_path / "control.sock",
+        worker_backend="hardened",
+        codex_config_root=project / ".codex",
+        operation_catalog=catalog,
+    )
+    assert report.changed
+    assert validate_installation_profile(
+        project,
+        workspace=project / "workspace",
+        python_path=Path(__file__).resolve().parents[2] / "src",
+        worker_backend="hardened",
+        operation_catalog=catalog,
+    )[1] > 0
+    with pytest.raises(PlatformConflictError):
+        validate_installation_profile(
+            project,
+            workspace=project / "workspace",
+            python_path=Path(__file__).resolve().parents[2] / "src",
+            worker_backend="local",
+            operation_catalog=catalog,
+        )
+
+
+def test_codex_installation_profile_probe_uses_the_compiled_catalog(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "AGENTS.md").write_text("# Project\n", encoding="utf-8")
+    module_path = Path(__file__).resolve().parents[2] / "src"
+    initialize_platform(
+        "codex",
+        project,
+        python_executable=Path(sys.executable),
+        python_path=module_path,
+        control_socket=tmp_path / "control.sock",
+        codex_config_root=project / ".codex",
+    )
+
+    catalog = compile_installed_catalog()
+    operation_count = sum(
+        catalog.operation(operation_id).spec.executor.kind == "agent"
+        and LocalTrustedBackend.supports_operation(
+            catalog.operation(operation_id)
+        )
+        for operation_id in catalog.operation_ids()
+    )
+    assert validate_installation_profile(
+        project, workspace=project / "workspace", python_path=module_path
+    ) == (1 + operation_count, operation_count)
 
 
 def test_codex_framework_profile_is_available_above_nested_workspace(
@@ -136,12 +400,19 @@ def test_codex_framework_profile_is_available_above_nested_workspace(
         framework,
         python_executable=Path(sys.executable),
         control_socket=tmp_path / "control.sock",
-        worker_socket=tmp_path / "worker.sock",
         codex_config_root=framework / ".codex",
     )
 
     assert (framework / ".codex/config.toml").is_file()
-    assert len(tuple((framework / ".codex/agents").glob("*.toml"))) == 8
+    catalog = compile_installed_catalog()
+    operation_count = sum(
+        catalog.operation(operation_id).spec.executor.kind == "agent"
+        and LocalTrustedBackend.supports_operation(
+            catalog.operation(operation_id)
+        )
+        for operation_id in catalog.operation_ids()
+    )
+    assert len(tuple((framework / ".codex/agents").glob("*.toml"))) == operation_count
     assert "<!-- BEGIN SCIDISCOVERY SCHEDULER -->" in (
         framework / "AGENTS.md"
     ).read_text(encoding="utf-8")
@@ -149,6 +420,46 @@ def test_codex_framework_profile_is_available_above_nested_workspace(
     assert "Project-specific scientific constraints." in (
         workspace / "AGENTS.md"
     ).read_text(encoding="utf-8")
+
+
+def test_external_workspace_validation_rejects_worker_root_drift(
+    tmp_path: Path,
+) -> None:
+    framework = tmp_path / "framework"
+    workspace = tmp_path / "workspace"
+    framework.mkdir()
+    workspace.mkdir()
+    local_workspace_root = workspace / ".scidiscovery-runs"
+    common = {
+        "python_executable": Path(sys.executable),
+        "control_socket": tmp_path / "control.sock",
+        "state_root": tmp_path / "state",
+        "local_workspace_root": local_workspace_root,
+    }
+    initialize_platform("codex", framework, **common)
+    initialize_platform("codex", workspace, **common)
+    validate_installation_profile(
+        framework,
+        workspace=workspace,
+        python_path=Path(__file__).resolve().parents[2] / "src",
+        state_root=tmp_path / "state",
+        local_workspace_root=local_workspace_root,
+    )
+    external_config = workspace / ".codex/config.toml"
+    external_config.write_text(
+        external_config.read_text(encoding="utf-8").replace(
+            str(local_workspace_root), str(tmp_path / "state/local-runs")
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(PlatformConflictError, match="external workspace"):
+        validate_installation_profile(
+            framework,
+            workspace=workspace,
+            python_path=Path(__file__).resolve().parents[2] / "src",
+            state_root=tmp_path / "state",
+            local_workspace_root=local_workspace_root,
+        )
 
 
 def test_platform_initializers_remove_only_retired_managed_roles(
@@ -172,7 +483,6 @@ def test_platform_initializers_remove_only_retired_managed_roles(
         project,
         python_executable=Path(sys.executable),
         control_socket=tmp_path / "control.sock",
-        worker_socket=tmp_path / "worker.sock",
         codex_config_root=project / ".codex",
         dry_run=True,
     )
@@ -183,7 +493,6 @@ def test_platform_initializers_remove_only_retired_managed_roles(
         project,
         python_executable=Path(sys.executable),
         control_socket=tmp_path / "control.sock",
-        worker_socket=tmp_path / "worker.sock",
         codex_config_root=project / ".codex",
     )
     assert not retired_codex.exists()
@@ -201,5 +510,4 @@ def test_platform_initializer_rejects_non_codex_platforms(
                 project,
                 python_executable=Path(sys.executable),
                 control_socket=tmp_path / "control.sock",
-                worker_socket=tmp_path / "worker.sock",
             )

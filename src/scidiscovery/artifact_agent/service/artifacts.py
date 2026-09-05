@@ -13,12 +13,11 @@ from pathlib import Path
 
 from ..schema.artifact import (
     ArtifactEnvelope,
-    ArtifactEvent,
     ArtifactRegisterRequest,
     ArtifactRegistration,
 )
 from ..schema.refs import ArtifactRef
-from ..storage.cas import CASIntegrityError, ContentAddressedStore
+from ..storage.cas import ContentAddressedStore
 from ..storage.sqlite import SQLiteArtifactRegistry
 
 
@@ -104,21 +103,12 @@ class ArtifactService:
             created_at=created_at,
             parent_refs=registration.parent_refs,
             supersedes_ref=registration.supersedes_ref,
-            task_ref=registration.task_ref,
             labels=registration.labels,
             confidentiality=registration.confidentiality,
             content_encoding=registration.content_encoding,
         )
-        event = ArtifactEvent(
-            event_id=f"evt_{uuid.uuid4().hex}",
-            event_type="artifact_registered",
-            artifact_ref=envelope.ref,
-            envelope_sha256=envelope.content_hash,
-            recorded_at=created_at,
-        )
         result = self.registry.register(
             envelope,
-            event,
             idempotency_key=idempotency_key,
             request_json=request_json,
             request_sha256=request_sha256,
@@ -167,28 +157,6 @@ class ArtifactService:
         envelope = self.registry.resolve(reference)
         self.cas.verify(envelope.sha256, expected_size=envelope.size_bytes)
         return envelope
-
-    def purge_registrations(
-        self, references: tuple[ArtifactRef, ...]
-    ) -> tuple[ArtifactEnvelope, ...]:
-        """Remove ownership-safe registry entries for instance administration.
-
-        The registry and CAS share a filesystem lock with registration. Payload
-        bytes are unlinked only when no retained envelope uses their digest.
-        """
-
-        with self._mutation_lock():
-            deleted = self.registry.delete_artifacts(references)
-            retained = self.registry.referenced_digests()
-            for digest in {item.sha256 for item in deleted} - retained:
-                try:
-                    self.cas.discard(digest)
-                except (OSError, CASIntegrityError):
-                    # Registry deletion is already committed. Preserve a
-                    # reportable orphan instead of leaving the instance cleanup
-                    # half-finished and non-idempotent.
-                    continue
-            return deleted
 
     @contextmanager
     def _mutation_lock(self) -> Iterator[None]:

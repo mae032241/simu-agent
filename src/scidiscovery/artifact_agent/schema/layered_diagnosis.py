@@ -6,17 +6,7 @@ from typing import Annotated, Literal
 
 from pydantic import Field, model_validator
 
-from .common import Identifier, SchemaModel, canonical_json, canonical_sha256
-from .curve_analysis import (
-    CurveErrorAnalysisReport,
-    analyze_curve_error,
-    failed_residual_analysis_available,
-)
-from .curve_score import CurveBundle, CurveConsistencyReport
-from .experiment import (
-    ExperimentPortfolio,
-    deterministic_validation_check_keys,
-)
+from .common import Identifier, SchemaModel, canonical_json
 from .validation import (
     HypothesisAssessment,
     RecommendedTaskMode,
@@ -135,10 +125,9 @@ class LayeredDiagnosisReport(SchemaModel):
     hypothesis_assessments: Annotated[
         tuple[HypothesisAssessment, ...], Field(max_length=32)
     ] = ()
-    curve_analysis: CurveErrorAnalysisReport | None = None
     remaining_contradiction: Annotated[str, Field(min_length=1, max_length=8192)]
-    recommended_task_mode: RecommendedTaskMode
     next_action: Annotated[str, Field(min_length=1, max_length=4096)]
+    recommended_task_mode: RecommendedTaskMode | None = None
 
     @model_validator(mode="after")
     def _verdict_and_assessments_follow_the_gates(self) -> LayeredDiagnosisReport:
@@ -251,113 +240,6 @@ def validate_layered_diagnosis(value: dict[str, object]) -> dict[str, object]:
     ).model_dump(mode="json")
 
 
-def validate_tcad_diagnosis_task_output(
-    value: dict[str, object],
-    inputs: dict[str, bytes],
-    handoff: dict[str, object],
-) -> None:
-    """Require exact validation-plan coverage before formal TCAD diagnosis."""
-
-    del handoff
-    diagnosis = LayeredDiagnosisReport.model_validate_json(
-        canonical_json(value), strict=True
-    )
-    if "experiment_plan" not in inputs:
-        return
-    if set(inputs) not in (
-        {"experiment_plan", "metric_report"},
-        {"experiment_plan", "metric_report", "curve_bundle"},
-    ):
-        raise ValueError(
-            "TCAD diagnosis coverage validation requires experiment_plan, "
-            "metric_report, and at most curve_bundle"
-        )
-    portfolio = ExperimentPortfolio.model_validate_json(
-        inputs["experiment_plan"], strict=True
-    )
-    metric_report = CurveConsistencyReport.model_validate_json(
-        inputs["metric_report"], strict=True
-    )
-    if portfolio.objective_key is None:
-        if diagnosis.objective_assessment is not None:
-            raise ValueError(
-                "objective_assessment is not admissible without plan objective_key"
-            )
-    else:
-        assessment = diagnosis.objective_assessment
-        if assessment is None:
-            raise ValueError(
-                "objective plan requires an explicit objective_assessment"
-            )
-        if assessment.objective_key != portfolio.objective_key:
-            raise ValueError(
-                "objective_assessment does not match the experiment objective_key"
-            )
-        objective_comparisons = tuple(
-            item
-            for item in metric_report.comparisons
-            if item.gate_scope == "objective" and item.purpose == "target_fit"
-        )
-        expected_keys = tuple(item.comparison_key for item in objective_comparisons)
-        if assessment.comparison_keys != expected_keys:
-            raise ValueError(
-                "objective_assessment must name the exact target-fit comparisons"
-            )
-        if diagnosis.gates.prerequisite_status == "invalid":
-            expected_status = "not_evaluable"
-        else:
-            statuses = {item.status for item in objective_comparisons if item.required}
-            expected_status = (
-                "fail"
-                if "fail" in statuses
-                else "inconclusive"
-                if not statuses or statuses & {"unavailable", "inconclusive"}
-                else "pass"
-            )
-        if assessment.status != expected_status:
-            raise ValueError(
-                "objective assessment status differs from exact target-fit metrics"
-            )
-    plans = tuple(
-        plan
-        for plan in portfolio.validation_plans
-        if plan.experiment_key == diagnosis.experiment_key
-        and plan.plan_key == diagnosis.plan_key
-    )
-    if len(plans) != 1:
-        raise ValueError("diagnosis does not name one exact experiment validation plan")
-    plan = plans[0]
-    expected_keys = deterministic_validation_check_keys(plan)
-    if metric_report.validation_scope != "complete_plan":
-        raise ValueError("TCAD diagnosis requires a complete-plan metric report")
-    if metric_report.validation_plan_sha256 != canonical_sha256(plan):
-        raise ValueError("metric report validation-plan digest does not match diagnosis")
-    if metric_report.covered_validation_check_keys != expected_keys:
-        raise ValueError(
-            "metric report does not cover the exact deterministic validation checks"
-        )
-    curve_bundle_raw = inputs.get("curve_bundle")
-    if curve_bundle_raw is None:
-        if diagnosis.curve_analysis is not None:
-            raise ValueError("curve analysis requires the exact curve_bundle input")
-        return
-    curve_bundle = CurveBundle.model_validate_json(curve_bundle_raw, strict=True)
-    analyzable = failed_residual_analysis_available(portfolio, metric_report)
-    if diagnosis.curve_analysis is None:
-        if analyzable:
-            raise ValueError(
-                "failed residual metric with curve_bundle requires curve_analysis"
-            )
-        return
-    expected_analysis = analyze_curve_error(
-        portfolio,
-        metric_report,
-        curve_bundle,
-        comparison_key=diagnosis.curve_analysis.selection_comparison_key,
-    ).report
-    if canonical_json(expected_analysis) != canonical_json(diagnosis.curve_analysis):
-        raise ValueError("curve analysis does not reproduce from exact task inputs")
-
 
 __all__ = [
     "GateStatus",
@@ -365,6 +247,5 @@ __all__ = [
     "ObjectiveDiagnosisAssessment",
     "ScientificGateResult",
     "ScientificGateSequence",
-    "validate_tcad_diagnosis_task_output",
     "validate_layered_diagnosis",
 ]

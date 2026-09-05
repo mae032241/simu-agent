@@ -74,6 +74,81 @@ class ApprovalPresentation(SchemaModel):
         return self
 
 
+class ReviewDocumentItem(SchemaModel):
+    kind: Literal[
+        "json_value", "json_tree", "status", "subject_metadata", "download"
+    ]
+    label: Annotated[str, Field(min_length=1, max_length=256)]
+    subject_index: Annotated[int, Field(ge=0, le=255)]
+    json_pointer: Annotated[str, Field(max_length=4096)] | None = None
+
+    @model_validator(mode="after")
+    def _validate_pointer_contract(self) -> ReviewDocumentItem:
+        pointer_kinds = {"json_value", "json_tree", "status"}
+        if self.kind in pointer_kinds:
+            if self.json_pointer is None:
+                raise ValueError("review item requires an absolute JSON pointer")
+            parse_json_pointer(self.json_pointer)
+        elif self.json_pointer is not None:
+            raise ValueError("metadata and download items cannot carry JSON pointers")
+        return self
+
+
+def parse_json_pointer(pointer: str) -> tuple[str, ...]:
+    """Decode one strict RFC 6901 pointer without reading a document."""
+
+    if pointer == "":
+        return ()
+    if not pointer.startswith("/"):
+        raise ValueError("JSON pointer must be empty or start with a slash")
+    decoded: list[str] = []
+    for raw_token in pointer[1:].split("/"):
+        token: list[str] = []
+        index = 0
+        while index < len(raw_token):
+            character = raw_token[index]
+            if character != "~":
+                token.append(character)
+                index += 1
+                continue
+            if index + 1 >= len(raw_token) or raw_token[index + 1] not in {"0", "1"}:
+                raise ValueError("JSON pointer contains an invalid escape")
+            token.append("~" if raw_token[index + 1] == "0" else "/")
+            index += 2
+        decoded.append("".join(token))
+    return tuple(decoded)
+
+
+class ReviewDocumentSection(SchemaModel):
+    title: Annotated[str, Field(min_length=1, max_length=256)]
+    description: Annotated[str, Field(max_length=4096)] = ""
+    items: Annotated[tuple[ReviewDocumentItem, ...], Field(min_length=1, max_length=512)]
+
+
+class ReviewDocument(SchemaModel):
+    locale: Literal["zh-CN"] = "zh-CN"
+    title: Annotated[str, Field(min_length=1, max_length=256)]
+    description: Annotated[str, Field(max_length=4096)] = ""
+    sections: Annotated[
+        tuple[ReviewDocumentSection, ...], Field(min_length=1, max_length=64)
+    ]
+
+    @model_validator(mode="after")
+    def _validate_document_bounds(self) -> ReviewDocument:
+        if sum(len(section.items) for section in self.sections) > 512:
+            raise ValueError("review document contains too many items")
+        if len(encode_canonical_json(self)) > 512 * 1024:
+            raise ValueError("review document exceeds the bounded byte budget")
+        return self
+
+
+class CompiledApprovalIdentity(SchemaModel):
+    operation_id: Identifier
+    operation_version: Annotated[str, Field(min_length=1, max_length=128)]
+    operation_digest: Sha256
+    approval_contract_digest: Sha256
+
+
 class ApprovalRequest(SchemaModel):
     approval_id: Identifier
     kind: Identifier
@@ -86,6 +161,8 @@ class ApprovalRequest(SchemaModel):
     expires_at: UtcRfc3339 | None = None
     nonce_hash: Sha256
     presentation: ApprovalPresentation | None = None
+    review_document: ReviewDocument | None = None
+    compiled_identity: CompiledApprovalIdentity | None = None
 
     @model_validator(mode="after")
     def _validate_request(self) -> ApprovalRequest:
@@ -102,16 +179,31 @@ class ApprovalRequest(SchemaModel):
             for item in self.presentation.translations
         ):
             raise ValueError("display translation subject_index is out of range")
+        if self.review_document is not None and any(
+            item.subject_index >= len(self.subject_refs)
+            for section in self.review_document.sections
+            for item in section.items
+        ):
+            raise ValueError("review document subject_index is out of range")
         return self
 
     def canonical_json(self) -> bytes:
-        if self.presentation is not None:
+        if any(
+            value is not None
+            for value in (
+                self.presentation,
+                self.review_document,
+                self.compiled_identity,
+            )
+        ):
             return encode_canonical_json(self)
         return encode_canonical_json(
             {
                 field_name: getattr(self, field_name)
                 for field_name in type(self).model_fields
-                if field_name != "presentation"
+                if field_name not in {
+                    "presentation", "review_document", "compiled_identity"
+                }
             }
         )
 
@@ -195,6 +287,7 @@ def _identity(ref: ArtifactRef) -> tuple[str, str, str, str]:
 
 
 __all__ = [
+    "CompiledApprovalIdentity",
     "ApprovalDisplayTranslation",
     "ApprovalOption",
     "ApprovalPresentation",
@@ -203,6 +296,10 @@ __all__ = [
     "HumanDecision",
     "LocalIdentityRef",
     "ReviewManifest",
+    "ReviewDocument",
+    "ReviewDocumentItem",
+    "ReviewDocumentSection",
+    "parse_json_pointer",
     "ReviewSubject",
     "subject_set_sha256",
     "approval_options_template",

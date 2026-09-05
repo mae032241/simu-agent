@@ -331,6 +331,10 @@ class RunIdInput(ExecutionToolInput):
     run_id: str = Field(min_length=1, max_length=256)
 
 
+class SubmissionDigestInput(ExecutionToolInput):
+    submission_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
 @dataclass(frozen=True)
 class ExecutionTool:
     name: str
@@ -350,6 +354,11 @@ EXECUTION_TOOLS = (
         "tcad_capabilities",
         "Return bounded public snapshots of configured TCAD capabilities.",
         EmptyInput,
+    ),
+    ExecutionTool(
+        "tcad_lookup_submission",
+        "Authoritatively look up one exact prepared TCAD submission.",
+        SubmissionDigestInput,
     ),
     ExecutionTool("tcad_submit", "Submit one prepared TCAD job and return immediately.", SubmitInput),
     ExecutionTool("tcad_status", "Read one short durable TCAD job status.", RunIdInput),
@@ -512,6 +521,18 @@ class TCADExecutionFacade:
             shutil.rmtree(run_dir, ignore_errors=True)
             raise
         return {"run_id": run_id, "state": "accepted", "accepted_at": submitted_at}
+
+    def tcad_lookup_submission(
+        self, *, submission_sha256: str
+    ) -> dict[str, Any]:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT run_id FROM submissions WHERE job_sha256 = ?",
+                (submission_sha256,),
+            ).fetchone()
+        if row is None:
+            return {"found": False}
+        return {"found": True, **self.tcad_status(run_id=row["run_id"])}
 
     def tcad_status(self, *, run_id: str) -> dict[str, Any]:
         row = self._submission_row(run_id)

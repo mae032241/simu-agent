@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Mapping
 
 from .common import GenerationReport, PlatformConflictError
+from scidiscovery.operations.catalog import CompiledCatalog
 
 
 def initialize_platform(
@@ -12,9 +14,12 @@ def initialize_platform(
     python_executable: Path | str | None = None,
     python_path: Path | str | None = None,
     control_socket: Path | str,
-    worker_socket: Path | str,
-    worker_workspace_root: Path | str | None = None,
+    state_root: Path | str | None = None,
+    local_workspace_root: Path | str | None = None,
+    worker_backend: str = "local",
     codex_config_root: Path | str | None = None,
+    operation_catalog: CompiledCatalog | None = None,
+    runtime_plugin_configs: Mapping[str, Path | str] | None = None,
     dry_run: bool = False,
 ) -> GenerationReport:
     normalized = platform.strip().lower()
@@ -27,9 +32,12 @@ def initialize_platform(
         python_executable=python_executable,
         python_path=python_path,
         control_socket=control_socket,
-        worker_socket=worker_socket,
+        state_root=state_root,
+        local_workspace_root=local_workspace_root,
+        worker_backend=worker_backend,
         codex_config_root=codex_config_root,
-        worker_workspace_root=worker_workspace_root,
+        operation_catalog=operation_catalog,
+        runtime_plugin_configs=runtime_plugin_configs,
         dry_run=dry_run,
     )
 

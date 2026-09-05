@@ -195,6 +195,10 @@ def _rpc(config, payload):
             if arguments:
                 raise ValueError("capability discovery accepts no arguments")
             result = _capabilities(config)
+        elif name == "tcad_lookup_submission":
+            result = _lookup_submission(
+                config, arguments.get("submission_sha256")
+            )
         elif name == "tcad_submit":
             result = _submit(config, arguments.get("submission"))
         elif name == "tcad_status":
@@ -315,6 +319,20 @@ def _submit(config, descriptor):
         )
         _write_new(os.path.join(run_dir, "launcher_pid"), (str(process.pid) + "\n").encode("ascii"), 0o440)
     return {"run_id": run_id, "state": "accepted", "accepted_at": _timestamp()}
+
+
+def _lookup_submission(config, submission_sha256):
+    if (
+        not isinstance(submission_sha256, str)
+        or len(submission_sha256) != 64
+        or any(character not in "0123456789abcdef" for character in submission_sha256)
+    ):
+        raise ValueError("submission digest is invalid")
+    run_id = "run_" + submission_sha256[:32]
+    run_dir = os.path.join(config["result_root"], run_id)
+    if not os.path.isdir(run_dir):
+        return {"found": False}
+    return dict({"found": True}, **_status(config, run_id))
 
 
 def _status(config, run_id):

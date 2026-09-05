@@ -6,7 +6,7 @@
 
 - 带 systemd 的 Linux 或 WSL2
 - Python 3.10 及以上，并带有 `pip`、`setuptools>=68`、`packaging`、
-  `pydantic>=2,<3` 和 `PyYAML>=6,<7`
+  `pydantic>=2,<3` 和 `jsonschema>=4,<5`
 - Codex CLI
 - `poppler-utils`：受限 PDF 文本提取
 - `bubblewrap`：Worker 隔离分析
@@ -29,7 +29,7 @@ Python 环境。第三方依赖必须在部署前准备好。使用 Conda base �
 
 ```bash
 conda install -n base -c conda-forge \
-  'pydantic>=2,<3' 'pyyaml>=6,<7' 'setuptools>=68' packaging pip
+  'pydantic>=2,<3' 'jsonschema>=4,<5' 'setuptools>=68' packaging pip
 ```
 
 正式安装会显示每个执行阶段，并且先完成本地包构建，再停止已有服务。激活过程是
@@ -46,12 +46,12 @@ SCID_WORKSPACE="$PWD/workspace/<project-name>" \
   deploy/reinstall.sh reinstall
 ```
 
-`reinstall.sh` 默认安装通用插件 `tcad_artifact,curve_score`；通过
-`SCID_PLUGINS` 选择额外插件，通过 `SCID_TCAD_COMMAND_CONFIG` 选择外部适配器。
+`reinstall.sh` 默认不安装领域插件；通过 `SCID_PLUGINS` 显式选择
+`tcad_artifact,curve_score` 等插件，通过 `SCID_TCAD_COMMAND_CONFIG` 选择外部适配器。
 `install` 和 `reinstall` 使用同一个事务化流程；无参数等价于 `install`。
 
 对于仓库附带的 InGaAs/Fig.4 配置，专用 profile 脚本只补充 workspace、
-`ingaas_fig4` 插件和 command-adapter 默认值，然后委托通用入口：
+`curve_figure_evidence`、`ingaas_fig4` 插件和 command-adapter 默认值，然后委托通用入口：
 
 ```bash
 deploy/apply_ingaas_fig4_profile.sh --dry-run
@@ -106,6 +106,7 @@ sudo SCID_PYTHON="$PYTHON" \
   SCID_SERVICE_USER="$USER" \
   SCID_SERVICE_GROUP="$(id -gn)" \
   SCID_PLATFORM=codex \
+  SCID_WORKER_BACKEND=local \
   deploy/install.sh install
 ```
 
@@ -116,10 +117,9 @@ sudo SCID_PYTHON="$PYTHON" \
 - `/var/lib/scidiscovery-tcad`：本地执行状态；
 - `/etc/scidiscovery`：服务密钥和执行策略；
 - `/run/scidiscovery/control.sock`：Root MCP；
-- `/run/scidiscovery-worker/worker.sock`：Worker MCP；
 - `scidiscovery-control.service`；
-- `scidiscovery-worker.service`；
 - `scidiscovery-approval-ui.service`；
+- Codex 为受支持的 Agent Operation 生成按 Operation 隔离的本地 stdio MCP；不安装中央 Worker 服务；
 - 仅本地适配器模式启用的 `tcad-control.service`。
 
 审批网页只监听 <http://127.0.0.1:8765>。
@@ -271,7 +271,6 @@ deploy/install.sh status
 
 systemctl is-active \
   scidiscovery-control.service \
-  scidiscovery-worker.service \
   scidiscovery-approval-ui.service
 
 curl -fsS http://127.0.0.1:8765/ >/dev/null
@@ -290,13 +289,16 @@ Sentaurus 许可证或任何科学模型已经通过。
 | `SCID_SERVICE_USER` | `SUDO_USER` 或当前用户 | 服务账户 |
 | `SCID_SERVICE_GROUP` | 服务用户主组 | socket 和文件组 |
 | `SCID_PLATFORM` | `codex` | Codex 平台选择器；其他值会被拒绝 |
-| `SCID_PLUGINS` | `tcad_artifact,curve_score` | 逗号分隔的本地插件目录名；例如 `tcad_artifact,curve_score,ingaas_fig4` |
+| `SCID_WORKER_BACKEND` | `local` | `local` 为可信本地原生工具路径；`hardened` 为纯 MCP 文件后端，值同时驱动 daemon、systemd、Codex profile 和安装验证 |
+| `SCID_PLUGINS` | 空 | 逗号分隔的本地插件目录名；例如 `tcad_artifact,curve_score,ingaas_fig4` |
 | `SCID_INSTALL_ROOT` | `/opt/scidiscovery` | 应用安装目录 |
 | `SCID_STATE_ROOT` | `/var/lib/scidiscovery` | 控制面状态 |
 | `SCID_CONFIG_ROOT` | `/etc/scidiscovery` | 密钥和策略 |
 | `SCID_APPROVAL_PORT` | `8765` | 本机审批端口 |
-| `SCID_WEB_FETCH_ALLOW_FAKE_IP` | `0` | 设为 `1` 时允许 Worker 将 `198.18.0.0/15` 用作受信任 TUN/Fake-IP 映射；其他非公网地址仍拒绝 |
 | `SCID_TCAD_COMMAND_CONFIG` | 未设置 | 外部 command adapter 配置 |
+
+`hardened` 当前拒绝要求 shell、代码或 `view_image` 的 Operation，因此 TCAD Deck 作者第一版必须使用
+`local`；这不会降低 Effect 的独立审批和 adapter 边界。
 
 Runner 安装脚本还支持 `SCID_SSH_*`、`SCID_VMRUN_*` 和 `SCID_REMOTE_*` 变量。
 
@@ -328,50 +330,13 @@ sudo deploy/cleanup_legacy_services.sh clean
 清理脚本不会删除 `/opt/scidiscovery`、`/etc/scidiscovery`、
 `/var/lib/scidiscovery` 或 `/var/lib/scidiscovery-tcad`。
 
-### 清理无实例归属的控制状态
-
-升级或删除旧实例后，可由服务账户预览 `/var/lib/scidiscovery` 中没有实例归属的
-任务、审批、执行、Artifact 注册和终态运行目录。该命令不会触及项目 workspace：
-
-```bash
-scid \
-  --project-root "$SCID_WORKSPACE" \
-  --state-root /var/lib/scidiscovery \
-  --task-secret-file /etc/scidiscovery/task-token.key \
-  --approval-secret-file /etc/scidiscovery/approval-receipt.key \
-  --shared-group \
-  state-orphans-cleanup
-```
-
-执行删除前停止 control、worker、approval UI 和 TCAD control 服务并备份状态；确认
-预览没有 blocker 后，以同一服务账户执行一次显式确认：
-
-```bash
-scid \
-  --project-root "$SCID_WORKSPACE" \
-  --state-root /var/lib/scidiscovery \
-  --task-secret-file /etc/scidiscovery/task-token.key \
-  --approval-secret-file /etc/scidiscovery/approval-receipt.key \
-  --shared-group \
-  state-orphans-cleanup --confirm delete-orphan-state
-```
-
-该命令保留所有实例绑定对象和其来源链，拒绝删除活动任务、活动执行或无法识别的
-运行目录，并在结束时报告 SQLite、Artifact/CAS 完整性结果。不要以 `rm` 或手工
-SQL 代替此命令。
-
-同一能力也位于 loopback 控制页首页的“系统维护”区域。页面显示聚合预览，不展示
-内部对象标识；输入 `delete-orphan-state` 后执行一次管理员清理并显示完整性回执。
-网页清理和实例删除持有独占维护锁，Root、Worker 和普通审批写入持有共享锁；如果
-仍有调用正在执行，页面返回冲突且不进行部分删除。CLI 保留用于离线恢复。
-
 ## 9. 常见问题
 
 - **base Python 缺少依赖**：按照错误提示在选定的 Conda 或系统 Python 环境中
   安装依赖，再重新运行。部署过程本身不会联网解析第三方依赖。
 - **MCP socket 不存在**：查看
   `journalctl -u scidiscovery-control.service -n 100`。
-- **Worker 超时**：重试前先读取 `task_status` 的 phase 时间；不能覆盖仍活动的尝试。
+- **Agent Run 超时**：先读取 `run_status`；失败后创建新 Run，不覆盖旧结果或 current。
 - **审批返回 403**：必须在同一主机打开精确 URL，并确认当前进程已绑定正确实例。
 - **VM IP 变化**：只更新私有 transport 配置或使用 resolver，不要把新地址写进源码。
 - **TCAD 作业似乎卡住**：使用短状态调用，不得用长连接 SSH 等待 Solver。

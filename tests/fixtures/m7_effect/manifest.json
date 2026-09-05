@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "fixture_id": "m7-installed-effect-v1",
+  "operation": {
+    "plugin_id": "m7_effect_fixture",
+    "plugin_version": "0.0.1",
+    "operation_id": "m7.fixture.frozen-copy.v1",
+    "operation_version": "1",
+    "operation_digest": "8f685138cacdf07c3228b1b705a8e293b268b3370cfeab0dfb5547e0899400da",
+    "runtime_binding": "m7_effect_fixture:adapter"
+  },
+  "plugin_files": [
+    {
+      "path": "tests/fixtures/plugins/m7_effect_operation_plugin/pyproject.toml",
+      "sha256": "24589ac2f287d5ad89b15f17777768f6dde212eec4058815273714b6e03e361d"
+    },
+    {
+      "path": "tests/fixtures/plugins/m7_effect_operation_plugin/m7_effect_operation_plugin/__init__.py",
+      "sha256": "5520f4527045a578460e0ad1127599f78efd18f8f4a48f8130ec67c63217dde9"
+    },
+    {
+      "path": "tests/fixtures/plugins/m7_effect_operation_plugin/m7_effect_operation_plugin/plugin.py",
+      "sha256": "a0a9b726c567f72b1cb7023b95660856df5e9714d788d3ea0ece2abdfc49bc0a"
+    }
+  ],
+  "request": {
+    "path": "tests/fixtures/m7_effect/request.json",
+    "sha256": "0f1fe49ac235fbd6f23e559f8c3ee19c5605710c4ef9deec8d55bc0337ff43b6",
+    "size_bytes": 59
+  },
+  "output": {
+    "logical_name": "receipt.txt",
+    "media_type": "text/plain; charset=utf-8",
+    "path": "tests/fixtures/m7_effect/frozen-output.txt",
+    "sha256": "702f1be3326ee07765cc21c46c881eef9fd0a2c0095f70107d503c847a85708b",
+    "size_bytes": 61
+  },
+  "forbidden_claim": "This fixture copies one frozen file and does not run a solver or create scientific evidence."
+}

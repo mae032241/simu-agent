@@ -12,7 +12,6 @@ readonly CURRENT_BACKUP_ROOT="/var/backups/scidiscovery"
 
 readonly -a CURRENT_UNITS=(
     scidiscovery-control.service
-    scidiscovery-worker.service
     scidiscovery-approval-ui.service
 )
 
@@ -22,6 +21,7 @@ readonly -a RETIRED_UNITS=(
     artifact-agent-approval-ui.service
     tcad-artifact-execution.service
     tcad-artifact-runner.service
+    scidiscovery-worker.service
 )
 
 readonly -a LEGACY_ROOTS=(

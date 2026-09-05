@@ -1,0 +1,101 @@
+{
+  "figure_key": "yin-2025-fig4-zinc-depth",
+  "panel_key": "fig4",
+  "figure": "Fig. 4",
+  "citation": "Fig. 4, PDF page 6 (article page 123103-5)",
+  "plot_bbox": [166, 36, 975, 686],
+  "axis_calibration": {
+    "x": {
+      "scale": "linear",
+      "unit": "um",
+      "pixel_min": 166.0,
+      "pixel_max": 974.0,
+      "value_min": 0.0,
+      "value_max": 0.8,
+      "reprojection_error_px": 1.0
+    },
+    "y": {
+      "scale": "log10",
+      "unit": "cm^-3",
+      "pixel_min": 685.0,
+      "pixel_max": 36.0,
+      "value_min": 1000000000000000.0,
+      "value_max": 100000000000000000000.0,
+      "reprojection_error_px": 1.0
+    }
+  },
+  "exclusion_regions": [
+    [640, 45, 970, 244],
+    [187, 228, 334, 475],
+    [349, 228, 497, 475]
+  ],
+  "series": [
+    {
+      "series_key": "measured_in083al017as",
+      "label": "In0.83Al0.17As measured concentration-depth profile",
+      "primitive_kind": "line",
+      "color": "#000000",
+      "color_tolerance": 45.0,
+      "line_style": "solid",
+      "binding_source": "legend",
+      "visible_label": "In0.83Al0.17As",
+      "binding_bbox": [654, 67, 745, 78],
+      "min_color_pixels": 100,
+      "seeds": [[170.0, 125.0], [220.0, 75.0], [300.0, 75.0], [420.0, 95.0], [480.0, 115.0], [535.0, 142.0], [580.0, 177.0], [600.0, 218.0], [610.0, 294.0], [620.0, 430.0], [630.0, 520.0], [650.0, 525.0], [700.0, 590.0], [750.0, 590.0], [800.0, 620.0], [850.0, 620.0], [900.0, 620.0], [950.0, 620.0], [970.0, 620.0]],
+      "tracking": {
+        "max_vertical_step_px": 90.0,
+        "max_gap_px": 18,
+        "max_gap_vertical_displacement_px": 120.0,
+        "max_guide_distance_px": 45.0,
+        "ambiguity_margin_px": 0.25,
+        "guide_weight": 0.9,
+        "min_visible_fraction": 0.45,
+        "max_ambiguous_fraction": 0.15,
+        "skip_penalty": 30.0,
+        "min_points": 3,
+        "seed_radius_px": 4,
+        "plot_border_exclusion_px": 4,
+        "overdraw_candidate_endpoint_distance_px": 8.0
+      },
+      "eligibility": {"default_eligible": true}
+    },
+    {
+      "series_key": "measured_in083ga017as",
+      "label": "In0.83Ga0.17As measured concentration-depth profile",
+      "primitive_kind": "line",
+      "color": "#ff0000",
+      "color_tolerance": 45.0,
+      "line_style": "solid",
+      "binding_source": "legend",
+      "visible_label": "In0.83Ga0.17As",
+      "binding_bbox": [654, 120, 745, 132],
+      "min_color_pixels": 100,
+      "seeds": [[170.0, 111.0], [220.0, 80.0], [280.0, 69.0], [340.0, 80.0], [400.0, 98.0], [460.0, 123.0], [500.0, 160.0], [520.0, 240.0], [530.0, 350.0], [540.0, 445.0], [550.0, 510.0], [560.0, 550.0], [600.0, 570.0], [650.0, 550.0], [700.0, 552.0], [750.0, 560.0], [800.0, 575.0], [850.0, 590.0], [900.0, 590.0], [950.0, 565.0], [970.0, 592.0]],
+      "tracking": {
+        "max_vertical_step_px": 90.0,
+        "max_gap_px": 18,
+        "max_gap_vertical_displacement_px": 120.0,
+        "max_guide_distance_px": 45.0,
+        "ambiguity_margin_px": 0.25,
+        "guide_weight": 0.9,
+        "min_visible_fraction": 0.45,
+        "max_ambiguous_fraction": 0.15,
+        "skip_penalty": 50.0,
+        "min_points": 3,
+        "seed_radius_px": 4,
+        "plot_border_exclusion_px": 4,
+        "overdraw_candidate_endpoint_distance_px": 8.0
+      },
+      "eligibility": {
+        "default_eligible": true,
+        "ineligible_pixel_regions": [
+          {
+            "pixel_range": [537, 541],
+            "reason": "same_color_annotation_overlap"
+          }
+        ]
+      }
+    }
+  ],
+  "shared_support": []
+}

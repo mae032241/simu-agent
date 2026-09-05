@@ -7,7 +7,6 @@ import threading
 from typing import Any, Mapping
 
 from ..execution_bridge import ExecutionAdapter, ExecutionBridge
-from ..transforms import ArtifactTransformAdapter, ScientificStateTransformAdapter
 from ..runtime import open_runtime, read_secret_file
 from ..schema.common import canonical_json
 from .mcp_root import RootMCPRouter, RootToolFacade
@@ -69,30 +68,32 @@ def build_root_router(
     *,
     project_root: Path,
     state_root: Path,
-    task_secret_file: Path,
     approval_secret_file: Path,
     approval_base_url: str | None = "http://127.0.0.1:8765",
     shared_group: bool = False,
     execution_adapters: Mapping[str, ExecutionAdapter] | None = None,
-    transform_adapters: tuple[ArtifactTransformAdapter, ...] = (),
     scheduler_instance: str | None = None,
     scheduler_session_key: str | None = None,
     scheduler_creation_lock: threading.RLock | None = None,
+    worker_backend: str = "local",
+    local_workspace_root: Path | None = None,
 ) -> MCPRouter:
+    approval_secret = read_secret_file(
+        approval_secret_file, label="approval receipt"
+    )
     runtime = open_runtime(
         project_root=project_root,
         state_root=state_root,
-        task_token_secret=read_secret_file(task_secret_file, label="task token"),
-        approval_receipt_secret=read_secret_file(
-            approval_secret_file, label="approval receipt"
-        ),
+        approval_receipt_secret=approval_secret,
         actor_id="root_orchestrator",
         shared_group=shared_group,
+        worker_backend=worker_backend,
+        local_workspace_root=local_workspace_root,
     )
     facade = RootToolFacade(
         runtime.artifacts,
         runtime.intake,
-        tasks=runtime.tasks,
+        runs=runtime.runs,
         approvals=runtime.approvals,
         executions=runtime.executions,
         bindings=runtime.scheduler_bindings,
@@ -112,8 +113,9 @@ def build_root_router(
         execution_bridge=ExecutionBridge(
             runtime.executions, adapters=execution_adapters or {}
         ),
-        transform_adapters=(ScientificStateTransformAdapter(), *transform_adapters),
         approval_base_url=approval_base_url,
+        instance_management_secret=approval_secret,
+        operation_catalog=runtime.operation_catalog,
     )
     return MCPRouter(
         RootMCPRouter(facade),

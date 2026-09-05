@@ -9,7 +9,7 @@ import math
 from dataclasses import dataclass
 from typing import Mapping
 
-from scidiscovery.artifact_agent.schema.curve_score import (
+from .schema import (
     CurveAvailability,
     CurveAxis,
     CurveBundle,
@@ -17,7 +17,7 @@ from scidiscovery.artifact_agent.schema.curve_score import (
     CurvePoint,
     CurveSeries,
 )
-from scidiscovery.artifact_agent.schema.figure_evidence import (
+from .figure_evidence import (
     FigureAxisCalibration,
     FigureEvidenceManifest,
     FigureEvidencePanel,

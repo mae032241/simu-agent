@@ -13,14 +13,14 @@ WorkingDirectory=@PROJECT_ROOT@
 Environment="PYTHONPATH=@PYTHONPATH@"
 Environment=PYTHONNOUSERSITE=1
 ExecStartPre="@PYTHON@" -m scidiscovery.runtime_identity verify --manifest "@RUNTIME_IDENTITY@"
-ExecStart="@PYTHON@" -m scidiscovery.artifact_agent.interfaces.cli --project-root "@PROJECT_ROOT@" --state-root "@STATE_ROOT@" --task-secret-file "@TASK_SECRET@" --approval-secret-file "@APPROVAL_SECRET@" --shared-group serve-approval-ui --host 127.0.0.1 --port @APPROVAL_PORT@ --identity-id @LOCAL_IDENTITY@ --display-name @LOCAL_DISPLAY_NAME@
+ExecStart="@PYTHON@" -m scidiscovery.artifact_agent.interfaces.cli --project-root "@PROJECT_ROOT@" --state-root "@STATE_ROOT@" --approval-secret-file "@APPROVAL_SECRET@" --shared-group serve-approval-ui --host 127.0.0.1 --port @APPROVAL_PORT@ --identity-id @LOCAL_IDENTITY@ --display-name @LOCAL_DISPLAY_NAME@ --worker-backend "@WORKER_BACKEND@"
 Restart=on-failure
 RestartSec=2s
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths="@STATE_ROOT@"
+ReadWritePaths="@STATE_ROOT@" @LOCAL_WORKSPACE_ACCESS@
 ProtectControlGroups=true
 ProtectKernelModules=true
 ProtectKernelTunables=true

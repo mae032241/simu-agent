@@ -6,8 +6,14 @@ from typing import Annotated, Literal
 
 from pydantic import Field
 
+from .approval import CompiledApprovalIdentity
 from .artifact import MediaType, UtcRfc3339
-from .common import Identifier, SchemaModel, Sha256
+from .common import (
+    Identifier,
+    SchemaModel,
+    Sha256,
+    canonical_json as encode_canonical_json,
+)
 from .refs import ArtifactRef
 
 
@@ -17,6 +23,18 @@ class ExecutionRequest(SchemaModel):
     preparation_profile: Identifier
     payload_ref: ArtifactRef
     created_at: UtcRfc3339
+    compiled_identity: CompiledApprovalIdentity | None = None
+
+    def canonical_json(self) -> bytes:
+        if self.compiled_identity is not None:
+            return encode_canonical_json(self)
+        return encode_canonical_json(
+            {
+                field_name: getattr(self, field_name)
+                for field_name in type(self).model_fields
+                if field_name != "compiled_identity"
+            }
+        )
 
 
 class LocalFileDescriptor(SchemaModel):

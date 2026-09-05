@@ -6,7 +6,7 @@
 
 - Linux or WSL2 with systemd
 - Python 3.10 or newer with `pip`, `setuptools>=68`, `packaging`,
-  `pydantic>=2,<3`, and `PyYAML>=6,<7`
+  `pydantic>=2,<3`, and `jsonschema>=4,<5`
 - Codex CLI
 - `poppler-utils` for bounded PDF extraction
 - `bubblewrap` for isolated worker analysis
@@ -31,7 +31,7 @@ Conda base environment:
 
 ```bash
 conda install -n base -c conda-forge \
-  'pydantic>=2,<3' 'pyyaml>=6,<7' 'setuptools>=68' packaging pip
+  'pydantic>=2,<3' 'jsonschema>=4,<5' 'setuptools>=68' packaging pip
 ```
 
 The install prints each phase and performs the local package build before it
@@ -50,13 +50,13 @@ SCID_WORKSPACE="$PWD/workspace/<project-name>" \
   deploy/reinstall.sh reinstall
 ```
 
-`reinstall.sh` defaults to the generic `tcad_artifact,curve_score` plugins.
-Select additions with `SCID_PLUGINS` and an external adapter with
+`reinstall.sh` installs no domain plugin by default. Select
+`tcad_artifact,curve_score` or other plugins explicitly with `SCID_PLUGINS`, and an external adapter with
 `SCID_TCAD_COMMAND_CONFIG`. `install` and `reinstall` use the same
 transactional flow; no argument is equivalent to `install`.
 
 For the bundled InGaAs/Fig.4 configuration, the project profile supplies only
-the workspace, `ingaas_fig4` plugin, and command-adapter defaults before it
+the workspace, `curve_figure_evidence` and `ingaas_fig4` plugins, and command-adapter defaults before it
 delegates to the generic entrypoint:
 
 ```bash
@@ -116,6 +116,7 @@ sudo SCID_PYTHON="$PYTHON" \
   SCID_SERVICE_USER="$USER" \
   SCID_SERVICE_GROUP="$(id -gn)" \
   SCID_PLATFORM=codex \
+  SCID_WORKER_BACKEND=local \
   deploy/install.sh install
 ```
 
@@ -126,10 +127,9 @@ The installation creates:
 - `/var/lib/scidiscovery-tcad`: local execution state when used;
 - `/etc/scidiscovery`: generated secrets and execution policy;
 - `/run/scidiscovery/control.sock`: Root MCP socket;
-- `/run/scidiscovery-worker/worker.sock`: worker MCP socket;
 - `scidiscovery-control.service`;
-- `scidiscovery-worker.service`;
 - `scidiscovery-approval-ui.service`;
+- per-Operation local stdio MCP profiles for supported Agent Operations; no central worker service;
 - `tcad-control.service` only for local-adapter mode.
 
 The approval UI listens only on <http://127.0.0.1:8765>.
@@ -290,7 +290,6 @@ deploy/install.sh status
 
 systemctl is-active \
   scidiscovery-control.service \
-  scidiscovery-worker.service \
   scidiscovery-approval-ui.service
 
 curl -fsS http://127.0.0.1:8765/ >/dev/null
@@ -310,13 +309,17 @@ scientific model or a Sentaurus license.
 | `SCID_SERVICE_USER` | `SUDO_USER` or current user | Service account |
 | `SCID_SERVICE_GROUP` | primary group of service user | Socket/file group |
 | `SCID_PLATFORM` | `codex` | Codex platform selector; other values are rejected |
-| `SCID_PLUGINS` | `tcad_artifact,curve_score` | Comma-separated local plugin directory names, for example `tcad_artifact,curve_score,ingaas_fig4` |
+| `SCID_WORKER_BACKEND` | `local` | `local` is the trusted native-tool path; `hardened` is the MCP-only file backend, and the value drives daemon, systemd, Codex profiles, and install verification together |
+| `SCID_PLUGINS` | empty | Comma-separated local plugin directory names, for example `tcad_artifact,curve_score,ingaas_fig4` |
 | `SCID_INSTALL_ROOT` | `/opt/scidiscovery` | Installed package root |
 | `SCID_STATE_ROOT` | `/var/lib/scidiscovery` | Control-plane state |
 | `SCID_CONFIG_ROOT` | `/etc/scidiscovery` | Secrets and policy |
 | `SCID_APPROVAL_PORT` | `8765` | Loopback approval UI port |
-| `SCID_WEB_FETCH_ALLOW_FAKE_IP` | `0` | Set to `1` to let the worker accept `198.18.0.0/15` as a trusted TUN/Fake-IP mapping; other non-public addresses remain blocked |
 | `SCID_TCAD_COMMAND_CONFIG` | unset | External command adapter configuration |
+
+`hardened` currently rejects Operations requiring shell, code, or `view_image`,
+so TCAD Deck authoring v1 uses `local`. Effect approval and adapter boundaries
+remain independent of that choice.
 
 The remote-runner script documents additional `SCID_SSH_*`, `SCID_VMRUN_*`,
 and `SCID_REMOTE_*` variables through `--dry-run` output and its source header.
@@ -353,49 +356,6 @@ sudo deploy/cleanup_legacy_services.sh clean
 The cleanup script never removes `/opt/scidiscovery`, `/etc/scidiscovery`,
 `/var/lib/scidiscovery`, or `/var/lib/scidiscovery-tcad`.
 
-### Clean control state without instance ownership
-
-After an upgrade or old-instance deletion, run the administrative CLI as the
-service account to preview tasks, approvals, executions, Artifact registrations,
-and terminal runtime directories that no instance owns. Project workspace files
-are outside this command's scope:
-
-```bash
-scid \
-  --project-root "$SCID_WORKSPACE" \
-  --state-root /var/lib/scidiscovery \
-  --task-secret-file /etc/scidiscovery/task-token.key \
-  --approval-secret-file /etc/scidiscovery/approval-receipt.key \
-  --shared-group \
-  state-orphans-cleanup
-```
-
-Before deletion, stop the control, worker, approval UI, and TCAD control
-services and back up the state root. If the preview has no blockers, run one
-explicit confirmation as the same service account:
-
-```bash
-scid \
-  --project-root "$SCID_WORKSPACE" \
-  --state-root /var/lib/scidiscovery \
-  --task-secret-file /etc/scidiscovery/task-token.key \
-  --approval-secret-file /etc/scidiscovery/approval-receipt.key \
-  --shared-group \
-  state-orphans-cleanup --confirm delete-orphan-state
-```
-
-The command preserves instance-bound objects and their provenance, blocks on
-active work or unrecognized runtime entries, and reports SQLite and Artifact/CAS
-integrity after deletion. Do not substitute manual SQL or recursive removal.
-
-The same capability is available in the loopback dashboard's **System
-maintenance** section. It shows aggregate counts without internal identities,
-requires one `delete-orphan-state` confirmation, and displays the integrity
-receipt. Web cleanup and instance deletion take the exclusive maintenance lock;
-Root, Worker, and ordinary approval writes take the shared lock. An in-flight
-operation therefore returns a conflict instead of permitting a partial cleanup.
-The CLI remains available for offline recovery.
-
 ## 9. Troubleshooting
 
 - **A base Python dependency is missing**: install the reported dependency in
@@ -403,8 +363,8 @@ The CLI remains available for offline recovery.
   Deployment itself is offline and does not resolve third-party packages.
 - **MCP socket missing**: inspect
   `journalctl -u scidiscovery-control.service -n 100`.
-- **Worker timeouts**: inspect `task_status` phase timestamps before retrying;
-  do not overwrite an active worker attempt.
+- **Agent Run timeouts**: inspect `run_status`; create a new Run after failure
+  rather than overwriting the old result or current binding.
 - **Approval returns 403**: open the exact URL on the same host and verify the
   process is bound to the intended ResearchInstance.
 - **VM address changed**: use a resolver or update only the private transport

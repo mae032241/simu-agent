@@ -1,28 +1,13 @@
-"""Compact scientific experiment intent and deterministic plan materialization."""
+"""Compact domain-neutral experiment intent and deterministic materialization."""
 
 from __future__ import annotations
 
 import hashlib
-from decimal import Decimal, InvalidOperation
 from typing import Annotated, Literal
 
-from pydantic import Field, model_validator
+from pydantic import Field, ValidationError, model_validator
 
 from .common import Identifier, SchemaModel, Sha256, canonical_json, canonical_sha256
-from .curve_score import (
-    CurveAxis,
-    CurveComparison,
-    CurveComparisonPurpose,
-    CurveComparisonSpec,
-    CurveDomain,
-    CurveFloorMask,
-    CurveMetricProfile,
-    CurveOperatorSpec,
-    CurveReferenceDisposition,
-    CurveSeriesDeclaration,
-    CurveThreshold,
-)
-from .device_parameters import DeviceParameterSet
 from .experiment import (
     CaseExpectation,
     ComparisonContract,
@@ -34,18 +19,18 @@ from .experiment import (
     ExperimentValueAssessment,
     FactorSetting,
     IdentifiabilityClaim,
+    MetricThreshold,
     PredictionTest,
     ResourceEstimate,
-    MetricThreshold,
     ValidationCheck,
     ValidationDimensionPlan,
     ValidationPlan,
-    experiment_value_score,
     validate_experiment_design_task_output,
     validate_experiment_portfolio,
 )
+from .research_objective import ResearchObjectiveContract
 from .scientific_foundation import ScalarValue
-from .scientific_objective import ResearchObjectiveContract
+from ...operation_contract import SemanticRuleViolation
 
 
 Level = Literal["low", "medium", "high"]
@@ -56,8 +41,6 @@ def _values_equal(left: ScalarValue, right: ScalarValue) -> bool:
 
 
 class IntentCase(SchemaModel):
-    """One scientifically meaningful case without repeated control values."""
-
     case_key: Identifier
     scientific_role: Literal[
         "baseline", "control", "perturbation", "convergence"
@@ -66,15 +49,11 @@ class IntentCase(SchemaModel):
 
 
 class IntentCaseOverride(SchemaModel):
-    """A value that differs from a variable's baseline value for one case."""
-
     case_key: Identifier
     value: ScalarValue
 
 
 class IntentComparisonVariable(SchemaModel):
-    """One control variable expressed once plus sparse per-case overrides."""
-
     variable_key: Identifier
     scientific_path: Annotated[str, Field(min_length=1, max_length=4096)]
     factor_type: Literal["physical", "numerical", "implementation"]
@@ -107,160 +86,8 @@ class IntentComparisonVariable(SchemaModel):
 
 
 class IntentResourceEstimate(SchemaModel):
-    """Agent-owned cost judgment; case count is derived by control."""
-
     relative_cost: Level
     runtime_basis: Annotated[str, Field(min_length=1, max_length=4096)]
-
-
-IntentNumber = int | float
-
-
-class IntentCurveDomain(SchemaModel):
-    start: IntentNumber
-    stop: IntentNumber
-    unit: Annotated[str, Field(min_length=1, max_length=128)]
-    min_points: Annotated[int, Field(ge=2, le=1_000_000)] = 2
-
-    @model_validator(mode="after")
-    def _ordered(self) -> IntentCurveDomain:
-        if float(self.stop) <= float(self.start):
-            raise ValueError("curve intent domain stop must exceed start")
-        return self
-
-
-class IntentCurveThreshold(SchemaModel):
-    comparison: Literal["le", "ge", "abs_le"]
-    value: IntentNumber
-    unit: Annotated[str, Field(min_length=1, max_length=128)]
-    basis: Annotated[str, Field(min_length=1, max_length=4096)]
-
-    @model_validator(mode="after")
-    def _absolute_limit_is_nonnegative(self) -> IntentCurveThreshold:
-        if self.comparison == "abs_le" and float(self.value) < 0:
-            raise ValueError("absolute curve threshold must be nonnegative")
-        return self
-
-
-class IntentCurveFloorMask(SchemaModel):
-    reference_at_or_below: IntentNumber
-    candidate_at_or_below: IntentNumber
-    unit: Annotated[str, Field(min_length=1, max_length=128)]
-    rationale: Annotated[str, Field(min_length=1, max_length=4096)]
-
-    @model_validator(mode="after")
-    def _floors_are_nonnegative(self) -> IntentCurveFloorMask:
-        if min(float(self.reference_at_or_below), float(self.candidate_at_or_below)) < 0:
-            raise ValueError("curve intent floor values must be nonnegative")
-        return self
-
-
-class IntentCurveSeries(SchemaModel):
-    """Scientific series identity; control derives execution-only role fields."""
-
-    series_key: Identifier
-    case_key: Identifier
-    role: Identifier
-    source: Literal["solver_output", "reference_input"] = "solver_output"
-    x_axis: CurveAxis
-    y_axis: CurveAxis
-    min_points: Annotated[int, Field(ge=2, le=1_000_000)] = 2
-    max_points: Annotated[int, Field(ge=2, le=1_000_000)] = 1_000_000
-
-    @model_validator(mode="after")
-    def _point_bounds_are_ordered(self) -> IntentCurveSeries:
-        if self.max_points < self.min_points:
-            raise ValueError("curve intent max_points must not be below min_points")
-        return self
-
-
-class IntentCurveOperator(SchemaModel):
-    operator_key: Identifier
-    kind: Literal[
-        "point_difference",
-        "residual_rms",
-        "residual_max_abs",
-        "mean_signed_difference",
-        "crossing_shift",
-        "width_shift",
-    ]
-    value_space: Literal["linear", "log10"] | None = None
-    level: IntentNumber | None = None
-    second_level: IntentNumber | None = None
-    crossing_direction: Literal["increasing", "decreasing", "either"] = "either"
-    x: IntentNumber | None = None
-    threshold: IntentCurveThreshold | None = None
-
-    @model_validator(mode="after")
-    def _parameters_match_operator(self) -> IntentCurveOperator:
-        front = self.kind in {"crossing_shift", "width_shift"}
-        if front != (self.level is not None):
-            raise ValueError("crossing and width intent operators require a level")
-        if (self.kind == "width_shift") != (self.second_level is not None):
-            raise ValueError("width intent operator requires a second level")
-        if front and self.value_space not in {None, "linear"}:
-            raise ValueError("crossing levels are always linear curve values")
-        if (self.kind == "point_difference") != (self.x is not None):
-            raise ValueError("point-difference intent operator requires one x value")
-        return self
-
-
-class IntentCurveComparison(SchemaModel):
-    comparison_key: Identifier
-    reference_series: Identifier
-    candidate_series: Identifier
-    observable: Annotated[str, Field(min_length=1, max_length=4096)]
-    domain: IntentCurveDomain
-    interpolation: Literal["linear_y", "log10_y"]
-    evaluation_points: Annotated[int, Field(ge=2, le=1_000_000)] = 257
-    operators: Annotated[
-        tuple[IntentCurveOperator, ...], Field(min_length=1, max_length=256)
-    ]
-    required: bool = True
-    purpose: CurveComparisonPurpose
-    metric_profile: CurveMetricProfile
-    floor_mask: IntentCurveFloorMask | None = None
-
-    @model_validator(mode="after")
-    def _operators_are_unique(self) -> IntentCurveComparison:
-        keys = tuple(item.operator_key for item in self.operators)
-        if len(keys) != len(set(keys)):
-            raise ValueError("curve intent operator keys must be unique")
-        if self.purpose == "target_fit" and not self.required:
-            raise ValueError("target-fit comparison cannot be optional")
-        if self.purpose == "exploratory_diagnostic" and self.required:
-            raise ValueError("exploratory comparison cannot be required")
-        return self
-
-
-class IntentCurveComparisonSpec(SchemaModel):
-    spec_key: Identifier
-    series: Annotated[
-        tuple[IntentCurveSeries, ...], Field(min_length=2, max_length=10000)
-    ]
-    comparisons: Annotated[
-        tuple[IntentCurveComparison, ...], Field(min_length=1, max_length=10000)
-    ]
-    reference_dispositions: Annotated[
-        tuple[CurveReferenceDisposition, ...], Field(default=(), max_length=10000)
-    ] = ()
-
-    @model_validator(mode="after")
-    def _references_are_declared(self) -> IntentCurveComparisonSpec:
-        series_keys = tuple(item.series_key for item in self.series)
-        identities = tuple((item.case_key, item.role) for item in self.series)
-        comparison_keys = tuple(item.comparison_key for item in self.comparisons)
-        if len(series_keys) != len(set(series_keys)) or len(identities) != len(set(identities)):
-            raise ValueError("curve intent series identities must be unique")
-        if len(comparison_keys) != len(set(comparison_keys)):
-            raise ValueError("curve intent comparison keys must be unique")
-        declared = set(series_keys)
-        if any(
-            item.reference_series not in declared or item.candidate_series not in declared
-            for item in self.comparisons
-        ):
-            raise ValueError("curve intent comparison references an undeclared series")
-        return self
 
 
 class IntentReviewedValidationCheck(SchemaModel):
@@ -271,11 +98,33 @@ class IntentReviewedValidationCheck(SchemaModel):
     basis: Annotated[str, Field(min_length=1, max_length=4096)]
 
 
+class IntentDeterministicValidationCheck(SchemaModel):
+    check_key: Identifier
+    observable: Annotated[str, Field(min_length=1, max_length=4096)]
+    metric: Annotated[str, Field(min_length=1, max_length=4096)]
+    evaluator_profile: Identifier
+    evaluator_metric: Identifier
+    threshold: MetricThreshold
+    acceptance_condition: Annotated[str, Field(min_length=1, max_length=4096)]
+    failure_action: Annotated[str, Field(min_length=1, max_length=4096)]
+    basis: Annotated[str, Field(min_length=1, max_length=4096)]
+
+
 class IntentValidationDimension(SchemaModel):
     rationale: Annotated[str, Field(min_length=1, max_length=4096)]
+    deterministic_checks: Annotated[
+        tuple[IntentDeterministicValidationCheck, ...], Field(max_length=128)
+    ] = ()
     reviewed_checks: Annotated[
         tuple[IntentReviewedValidationCheck, ...], Field(max_length=128)
     ] = ()
+
+    @model_validator(mode="after")
+    def _deterministic_keys_are_unique(self) -> IntentValidationDimension:
+        keys = tuple(item.check_key for item in self.deterministic_checks)
+        if len(keys) != len(set(keys)):
+            raise ValueError("deterministic validation check keys must be unique")
+        return self
 
 
 class IntentValidationPlan(SchemaModel):
@@ -285,7 +134,7 @@ class IntentValidationPlan(SchemaModel):
 
 
 class ExperimentProposalIntent(SchemaModel):
-    """Scientific choices for one experiment without mechanical expansion."""
+    """Scientific choices for one experiment without domain execution payloads."""
 
     experiment_key: Identifier
     hypothesis_keys: Annotated[tuple[Identifier, ...], Field(max_length=12)] = ()
@@ -301,8 +150,6 @@ class ExperimentProposalIntent(SchemaModel):
     identifiability_claims: Annotated[
         tuple[IdentifiabilityClaim, ...], Field(max_length=128)
     ] = ()
-    curve_comparison_spec: CurveComparisonSpec | None = None
-    curve_comparison_intent: IntentCurveComparisonSpec | None = None
     prediction_tests: Annotated[
         tuple[PredictionTest, ...], Field(max_length=128)
     ] = ()
@@ -326,31 +173,13 @@ class ExperimentProposalIntent(SchemaModel):
                 raise ValueError(f"{label} must be unique")
         if (self.validation_plan is None) == (self.validation_intent is None):
             raise ValueError(
-                "intent requires exactly one legacy validation_plan or compact "
-                "validation_intent"
+                "intent requires exactly one complete validation_plan or compact validation_intent"
             )
-        if self.validation_plan is not None:
-            if self.validation_plan.experiment_key != self.experiment_key:
-                raise ValueError("intent validation plan experiment_key differs")
-            if self.curve_comparison_intent is not None:
-                raise ValueError(
-                    "compact curve intent requires compact validation_intent"
-                )
-        else:
-            if self.curve_comparison_spec is not None:
-                raise ValueError(
-                    "legacy curve comparison spec requires legacy validation_plan"
-                )
-        if self.curve_comparison_spec is not None and self.curve_comparison_intent is not None:
-            raise ValueError("intent cannot declare both complete and compact curve specs")
-        if self.curve_comparison_intent is not None:
-            unknown_observables = {
-                item.observable for item in self.curve_comparison_intent.comparisons
-            } - set(self.required_observables)
-            if unknown_observables:
-                raise ValueError(
-                    "curve intent comparison references an unrequired observable"
-                )
+        if (
+            self.validation_plan is not None
+            and self.validation_plan.experiment_key != self.experiment_key
+        ):
+            raise ValueError("intent validation plan experiment_key differs")
         known_cases = set(case_keys)
         if self.baseline_case_key is None:
             if len(self.cases) != 1 or self.variables:
@@ -371,8 +200,7 @@ class ExperimentProposalIntent(SchemaModel):
             overrides = {item.case_key: item.value for item in variable.case_overrides}
             if self.baseline_case_key in overrides:
                 raise ValueError("intent baseline value cannot also be overridden")
-            unknown = set(overrides) - known_cases
-            if unknown:
+            if set(overrides) - known_cases:
                 raise ValueError("intent variable override references an unknown case")
             values = tuple(
                 overrides.get(case_key, variable.baseline_value)
@@ -387,7 +215,7 @@ class ExperimentProposalIntent(SchemaModel):
 
 
 class ExperimentDesignIntent(SchemaModel):
-    """Worker-authored scientific intent that control expands deterministically."""
+    """Worker-authored scientific intent expanded by deterministic control."""
 
     study_kind: Literal["scientific", "engineering"] = "scientific"
     objective_key: Identifier | None = None
@@ -408,15 +236,6 @@ class ExperimentDesignIntent(SchemaModel):
     @model_validator(mode="after")
     def _portfolio_intent_is_complete(self) -> ExperimentDesignIntent:
         proposal_keys = tuple(item.experiment_key for item in self.proposals)
-        curve_spec_count = sum(
-            item.curve_comparison_spec is not None
-            or item.curve_comparison_intent is not None
-            for item in self.proposals
-        )
-        if curve_spec_count > 1:
-            raise ValueError(
-                "experiment intent supports exactly one executable curve comparison spec"
-            )
         if len(proposal_keys) != len(set(proposal_keys)):
             raise ValueError("intent experiment_key values must be unique")
         if len(self.selected_hypothesis_keys) != len(set(self.selected_hypothesis_keys)):
@@ -481,7 +300,6 @@ class ExperimentPlanMaterializationReport(SchemaModel):
     intent_sha256: Sha256
     objective_sha256: Sha256 | None = None
     hypothesis_portfolio_sha256: Sha256 | None = None
-    candidate_eligibility_sha256: Sha256 | None = None
     experiment_plan_sha256: Sha256
     proposal_count: Annotated[int, Field(ge=1, le=16)]
     case_count: Annotated[int, Field(ge=1, le=10000)]
@@ -491,11 +309,7 @@ class ExperimentPlanMaterializationReport(SchemaModel):
     def _source_hashes_are_all_present_or_absent(
         self,
     ) -> ExperimentPlanMaterializationReport:
-        values = (
-            self.objective_sha256,
-            self.hypothesis_portfolio_sha256,
-            self.candidate_eligibility_sha256,
-        )
+        values = (self.objective_sha256, self.hypothesis_portfolio_sha256)
         if any(item is None for item in values) and any(
             item is not None for item in values
         ):
@@ -507,8 +321,6 @@ def materialize_experiment_design_intent(
     intent: ExperimentDesignIntent,
     objective: ResearchObjectiveContract | None,
 ) -> ExperimentPortfolio:
-    """Expand sparse intent into the existing strict complete portfolio schema."""
-
     if intent.study_kind == "scientific":
         if objective is None:
             raise ValueError("scientific experiment intent requires research objective")
@@ -581,9 +393,15 @@ def materialize_experiment_design_intent(
                 identifiability_claims=proposal_intent.identifiability_claims,
             )
         )
-        curve_spec, validation_plan = _materialize_curve_and_validation_intent(
-            proposal_intent
+        validation_plan = (
+            proposal_intent.validation_plan
+            if proposal_intent.validation_plan is not None
+            else _materialize_validation_plan(
+                proposal_intent.experiment_key,
+                proposal_intent.validation_intent,
+            )
         )
+        assert validation_plan is not None
         proposals.append(
             ExperimentProposal(
                 experiment_key=proposal_intent.experiment_key,
@@ -594,7 +412,6 @@ def materialize_experiment_design_intent(
                 cases=cases,
                 required_observables=proposal_intent.required_observables,
                 comparison_contract=contract,
-                curve_comparison_spec=curve_spec,
                 prediction_tests=proposal_intent.prediction_tests,
                 resource_estimate=ResourceEstimate(
                     case_count=len(cases),
@@ -617,16 +434,6 @@ def materialize_experiment_design_intent(
         priority_rationale=intent.priority_rationale,
     )
     validate_experiment_portfolio(portfolio.model_dump(mode="json"))
-    expected_order = tuple(
-        item.experiment_key
-        for item in sorted(
-            proposals,
-            key=lambda item: (-experiment_value_score(item), item.experiment_key),
-        )
-    )
-    scores = tuple(experiment_value_score(item) for item in proposals)
-    if len(set(scores)) == len(scores) and portfolio.priority_order != expected_order:
-        raise ValueError("intent priority order contradicts deterministic value scores")
     return portfolio
 
 
@@ -644,120 +451,37 @@ def validate_experiment_design_intent_task_output(
         canonical_json(value), strict=True
     )
     if any(proposal.validation_plan is not None for proposal in intent.proposals):
-        raise ValueError(
+        raise SemanticRuleViolation(
             "new experiment design output must use compact validation_intent"
         )
-    if any(
-        proposal.curve_comparison_spec is not None for proposal in intent.proposals
-    ):
-        raise ValueError(
-            "new experiment design output must use compact curve_comparison_intent"
+    objective = None
+    if intent.study_kind == "scientific":
+        raw_objective = inputs.get("research_objective")
+        if raw_objective is None:
+            raise SemanticRuleViolation("experiment design intent requires research_objective")
+        objective = ResearchObjectiveContract.model_validate_json(
+            raw_objective, strict=True
         )
-    if intent.study_kind == "engineering":
-        portfolio = materialize_experiment_design_intent(intent, None)
-        validate_experiment_design_task_output(
-            portfolio.model_dump(mode="json"), inputs, handoff
-        )
-        return
-    raw_objective = inputs.get("research_objective")
-    if raw_objective is None:
-        raise ValueError("experiment design intent requires research_objective")
-    objective = ResearchObjectiveContract.model_validate_json(
-        raw_objective, strict=True
-    )
-    raw_parameters = inputs.get("device_parameters")
-    if raw_parameters is not None:
-        _validate_tunable_parameter_mapping(
-            intent,
-            DeviceParameterSet.model_validate_json(raw_parameters, strict=True),
-        )
-    portfolio = materialize_experiment_design_intent(intent, objective)
+        if intent.objective_key != objective.objective_key:
+            raise SemanticRuleViolation(
+                "experiment intent objective_key differs from research objective"
+            )
+    try:
+        portfolio = materialize_experiment_design_intent(intent, objective)
+    except ValidationError as error:
+        # Only derived-model constraints reject Worker content here. Immutable
+        # input parsing and unexpected materializer exceptions remain failures.
+        raise SemanticRuleViolation(str(error)) from error
     validate_experiment_design_task_output(
         portfolio.model_dump(mode="json"), inputs, handoff
     )
-
-
-def _validate_tunable_parameter_mapping(
-    intent: ExperimentDesignIntent,
-    parameters: DeviceParameterSet,
-) -> None:
-    tunable_claims = tuple(
-        item for item in parameters.claims if item.tuning is not None
-    )
-    for proposal in intent.proposals:
-        variables = {item.variable_key: item for item in proposal.variables}
-        case_keys = tuple(item.case_key for item in proposal.cases)
-        for claim in tunable_claims:
-            variable = variables.get(claim.parameter_key)
-            if variable is None:
-                raise ValueError(
-                    f"tunable parameter {claim.parameter_key} is omitted from "
-                    f"experiment {proposal.experiment_key}"
-                )
-            if variable.unit != claim.unit:
-                raise ValueError(
-                    f"tunable parameter {claim.parameter_key} unit differs from "
-                    "the approved parameter set"
-                )
-            baseline = _intent_parameter_decimal(
-                variable.baseline_value, claim.parameter_key
-            )
-            if baseline != Decimal(claim.selected_value):
-                raise ValueError(
-                    f"tunable parameter {claim.parameter_key} baseline differs from "
-                    "the approved selected value"
-                )
-            if variable.comparison_role == "frozen":
-                continue
-            if variable.comparison_role != "intended_change":
-                raise ValueError(
-                    f"tunable parameter {claim.parameter_key} must be explicitly "
-                    "scanned or frozen"
-                )
-            overrides = {
-                item.case_key: item.value for item in variable.case_overrides
-            }
-            actual = {
-                _intent_parameter_decimal(
-                    overrides.get(case_key, variable.baseline_value),
-                    claim.parameter_key,
-                )
-                for case_key in case_keys
-            }
-            assert claim.tuning is not None
-            approved = {Decimal(item) for item in claim.tuning.candidate_values}
-            if actual != approved:
-                raise ValueError(
-                    f"tunable parameter {claim.parameter_key} must use exactly "
-                    "the approved candidate values"
-                )
-
-
-def _intent_parameter_decimal(value: ScalarValue, parameter_key: str) -> Decimal:
-    if type(value) is not str:
-        raise ValueError(
-            f"tunable parameter {parameter_key} values must use "
-            "scientific-notation strings"
-        )
-    try:
-        parsed = Decimal(value)
-    except InvalidOperation as error:
-        raise ValueError(
-            f"tunable parameter {parameter_key} value is not numeric"
-        ) from error
-    if not parsed.is_finite():
-        raise ValueError(f"tunable parameter {parameter_key} value must be finite")
-    return parsed
 
 
 def materialize_experiment_design_inputs(
     inputs: dict[str, bytes],
 ) -> tuple[ExperimentPortfolio, ExperimentPlanMaterializationReport]:
     if "experiment_design_intent" not in inputs:
-        raise ValueError(
-            "experiment plan materialization requires intent, objective, "
-            "hypothesis portfolio, and candidate eligibility"
-        )
+        raise ValueError("experiment plan materialization requires intent")
     intent = ExperimentDesignIntent.model_validate_json(
         inputs["experiment_design_intent"], strict=True
     )
@@ -770,12 +494,10 @@ def materialize_experiment_design_inputs(
             "experiment_design_intent",
             "research_objective",
             "hypothesis_portfolio",
-            "candidate_eligibility",
         }
         if set(inputs) != required:
             raise ValueError(
-                "scientific plan materialization requires intent, objective, "
-                "hypothesis portfolio, and candidate eligibility"
+                "scientific plan materialization requires intent, objective, and hypothesis portfolio"
             )
         objective = ResearchObjectiveContract.model_validate_json(
             inputs["research_objective"], strict=True
@@ -797,11 +519,6 @@ def materialize_experiment_design_inputs(
             if "hypothesis_portfolio" in inputs
             else None
         ),
-        candidate_eligibility_sha256=(
-            hashlib.sha256(inputs["candidate_eligibility"]).hexdigest()
-            if "candidate_eligibility" in inputs
-            else None
-        ),
         experiment_plan_sha256=canonical_sha256(portfolio),
         proposal_count=len(portfolio.proposals),
         case_count=sum(len(item.cases) for item in portfolio.proposals),
@@ -814,226 +531,30 @@ def materialize_experiment_design_inputs(
     return portfolio, report
 
 
-def _materialize_curve_and_validation_intent(
-    proposal: ExperimentProposalIntent,
-) -> tuple[CurveComparisonSpec | None, ValidationPlan]:
-    if proposal.validation_plan is not None:
-        return proposal.curve_comparison_spec, proposal.validation_plan
-    validation_intent = proposal.validation_intent
-    assert validation_intent is not None
-    curve_intent = proposal.curve_comparison_intent
-    if curve_intent is None:
-        return None, _materialize_validation_plan(
-            proposal.experiment_key,
-            validation_intent,
-            generated={"numerical": [], "physical": [], "experimental": []},
-        )
-
-    comparisons: list[CurveComparison] = []
-    generated: dict[str, list[ValidationCheck]] = {
-        "numerical": [],
-        "physical": [],
-        "experimental": [],
-    }
-    for comparison in curve_intent.comparisons:
-        gate_scope = {
-            "target_fit": "objective",
-            "numerical_convergence": "numerical_qualification",
-            "mechanism_separation": "mechanism",
-            "implementation_sanity": "numerical_qualification",
-            "exploratory_diagnostic": "diagnostic_only",
-            "unspecified_legacy": "unspecified_legacy",
-        }[comparison.purpose]
-        operators: list[CurveOperatorSpec] = []
-        for operator in comparison.operators:
-            check_key = None
-            threshold = None
-            if operator.threshold is not None:
-                check_key = _bounded_identifier(
-                    "curve", comparison.comparison_key, operator.operator_key
-                )
-                threshold = CurveThreshold(
-                    comparison=operator.threshold.comparison,
-                    value=float(operator.threshold.value),
-                    unit=operator.threshold.unit,
-                )
-                dimension = {
-                    "objective": "experimental",
-                    "numerical_qualification": "numerical",
-                    "mechanism": "physical",
-                    "diagnostic_only": "physical",
-                    "unspecified_legacy": "numerical",
-                }[gate_scope]
-                metric_threshold = MetricThreshold(
-                    operator=(
-                        "le"
-                        if operator.threshold.comparison == "abs_le"
-                        else operator.threshold.comparison
-                    ),
-                    value=float(operator.threshold.value),
-                    unit=operator.threshold.unit,
-                )
-                generated[dimension].append(
-                    ValidationCheck(
-                        check_key=check_key,
-                        observable=comparison.observable,
-                        metric=operator.kind,
-                        evaluation_mode="deterministic_threshold",
-                        evaluator_profile="scidiscovery.curve-score.v1",
-                        evaluator_metric=operator.kind,
-                        threshold=metric_threshold,
-                        acceptance_condition=(
-                            f"{operator.kind} satisfies the declared "
-                            f"{operator.threshold.comparison} "
-                            f"{float(operator.threshold.value):g} "
-                            f"{operator.threshold.unit} threshold."
-                        ),
-                        failure_action=(
-                            "Fail the comparison's declared qualification gate."
-                        ),
-                        basis=operator.threshold.basis,
-                    )
-                )
-            value_space = operator.value_space
-            if value_space is None:
-                value_space = (
-                    "log10"
-                    if operator.kind
-                    in {
-                        "residual_rms",
-                        "residual_max_abs",
-                        "mean_signed_difference",
-                    }
-                    and comparison.interpolation == "log10_y"
-                    else "linear"
-                )
-            operators.append(
-                CurveOperatorSpec(
-                    operator_key=operator.operator_key,
-                    validation_check_key=check_key,
-                    kind=operator.kind,
-                    value_space=value_space,
-                    level=(float(operator.level) if operator.level is not None else None),
-                    second_level=(
-                        float(operator.second_level)
-                        if operator.second_level is not None
-                        else None
-                    ),
-                    crossing_direction=operator.crossing_direction,
-                    x=float(operator.x) if operator.x is not None else None,
-                    threshold=threshold,
-                )
-            )
-        comparisons.append(
-            CurveComparison(
-                comparison_key=comparison.comparison_key,
-                reference_series=comparison.reference_series,
-                candidate_series=comparison.candidate_series,
-                domain=CurveDomain(
-                    start=float(comparison.domain.start),
-                    stop=float(comparison.domain.stop),
-                    unit=comparison.domain.unit,
-                    min_points=comparison.domain.min_points,
-                ),
-                interpolation=comparison.interpolation,
-                evaluation_points=comparison.evaluation_points,
-                operators=tuple(operators),
-                required=comparison.required,
-                purpose=comparison.purpose,
-                gate_scope=gate_scope,
-                metric_profile=comparison.metric_profile,
-                floor_mask=(
-                    CurveFloorMask(
-                        reference_at_or_below=float(
-                            comparison.floor_mask.reference_at_or_below
-                        ),
-                        candidate_at_or_below=float(
-                            comparison.floor_mask.candidate_at_or_below
-                        ),
-                        unit=comparison.floor_mask.unit,
-                        rationale=comparison.floor_mask.rationale,
-                    )
-                    if comparison.floor_mask is not None
-                    else None
-                ),
-            )
-        )
-    roles = _derive_curve_series_roles(curve_intent)
-    spec = CurveComparisonSpec(
-        spec_key=curve_intent.spec_key,
-        series_declarations=tuple(
-            CurveSeriesDeclaration(
-                series_key=item.series_key,
-                case_key=item.case_key,
-                role=item.role,
-                scientific_role=roles[item.series_key],
-                source=item.source,
-                x_axis=item.x_axis,
-                y_axis=item.y_axis,
-                min_points=item.min_points,
-                max_points=item.max_points,
-            )
-            for item in curve_intent.series
-        ),
-        comparisons=tuple(comparisons),
-        reference_dispositions=curve_intent.reference_dispositions,
-    )
-    return spec, _materialize_validation_plan(
-        proposal.experiment_key, validation_intent, generated=generated
-    )
-
-
-def _derive_curve_series_roles(
-    intent: IntentCurveComparisonSpec,
-) -> dict[str, str]:
-    roles: dict[str, str] = {}
-    for series in intent.series:
-        uses = tuple(
-            (comparison, side)
-            for comparison in intent.comparisons
-            for side, key in (
-                ("reference", comparison.reference_series),
-                ("candidate", comparison.candidate_series),
-            )
-            if key == series.series_key
-        )
-        if series.source == "reference_input":
-            roles[series.series_key] = "experimental_target"
-        elif any(
-            item.purpose in {"target_fit", "mechanism_separation"}
-            for item, _ in uses
-        ):
-            roles[series.series_key] = "simulation_candidate"
-        elif any(item.purpose == "numerical_convergence" for item, _ in uses):
-            numerical_sides = {
-                side
-                for item, side in uses
-                if item.purpose == "numerical_convergence"
-            }
-            roles[series.series_key] = (
-                "simulation_candidate"
-                if len(numerical_sides) > 1
-                else (
-                    "numerical_reference"
-                    if "reference" in numerical_sides
-                    else "numerical_variant"
-                )
-            )
-        else:
-            roles[series.series_key] = "diagnostic_series"
-    return roles
-
-
 def _materialize_validation_plan(
     experiment_key: str,
-    intent: IntentValidationPlan,
-    *,
-    generated: dict[str, list[ValidationCheck]],
+    intent: IntentValidationPlan | None,
 ) -> ValidationPlan:
-    dimensions = {}
+    if intent is None:
+        raise ValueError("compact experiment intent requires validation_intent")
+    dimensions: dict[str, ValidationDimensionPlan] = {}
     for dimension_name in ("numerical", "physical", "experimental"):
         dimension_intent = getattr(intent, dimension_name)
-        checks = list(generated[dimension_name])
+        checks = [
+            ValidationCheck(
+                check_key=item.check_key,
+                observable=item.observable,
+                metric=item.metric,
+                evaluation_mode="deterministic_threshold",
+                evaluator_profile=item.evaluator_profile,
+                evaluator_metric=item.evaluator_metric,
+                threshold=item.threshold,
+                acceptance_condition=item.acceptance_condition,
+                failure_action=item.failure_action,
+                basis=item.basis,
+            )
+            for item in dimension_intent.deterministic_checks
+        ]
         checks.extend(
             ValidationCheck(
                 check_key=_bounded_identifier(
@@ -1106,19 +627,14 @@ __all__ = [
     "ExperimentDesignIntent",
     "ExperimentPlanMaterializationReport",
     "ExperimentProposalIntent",
-    "IntentCurveComparison",
-    "IntentCurveComparisonSpec",
-    "IntentCurveDomain",
-    "IntentCurveOperator",
-    "IntentCurveSeries",
-    "IntentCurveThreshold",
-    "IntentReviewedValidationCheck",
-    "IntentValidationDimension",
-    "IntentValidationPlan",
     "IntentCase",
     "IntentCaseOverride",
     "IntentComparisonVariable",
+    "IntentDeterministicValidationCheck",
     "IntentResourceEstimate",
+    "IntentReviewedValidationCheck",
+    "IntentValidationDimension",
+    "IntentValidationPlan",
     "materialize_experiment_design_inputs",
     "materialize_experiment_design_intent",
     "validate_experiment_design_intent",

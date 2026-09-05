@@ -18,7 +18,7 @@ SciDiscovery 是面向 Codex 的科学发现编排服务。它将科学推理、
 2. **科学角色**分别负责假设、批判、证据审计、实验设计和结果诊断。
 3. **领域作者与审查者**生成并独立审查可执行工程。
 4. **确定性代码**负责 Schema 校验、补丁应用、工程 diff、打包和结果注册。
-5. **控制面**负责上下文隔离、不可变记录、任务状态以及精确的人工审批。
+5. **控制面**负责上下文隔离、不可变记录、最小 Run 生命周期以及精确的人工审批。
 6. **执行适配器**只执行已经授权的外部副作用。
 
 主 Agent 只负责调度。科学内容来自具有明确边界的角色 Worker；身份和生命周期状态
@@ -29,11 +29,11 @@ SciDiscovery 是面向 Codex 的科学发现编排服务。它将科学推理、
 | 目录 | 职责 |
 | --- | --- |
 | `src/scidiscovery/` | 通用 Artifact、调度、审批、MCP、Worker 协议、Schema、平台生成器和执行桥 |
-| `roles/` | 通用科学角色定义 |
+| `roles/` | 交互式根调度器提示；科学 Worker 角色由插件中的 OperationSpec 编译生成 |
 | `plugins/tcad_artifact/` | TCAD 工程 Schema、作者/审查角色、确定性打包器、执行策略、SSH 通道和 VM Runner |
-| `plugins/curve_score/` | 确定性solver输出规范化与通用曲线一致性评分 |
+| `plugins/curve_score/` | 曲线契约、规范曲线、确定性校验、一致性评分与诊断 |
+| `plugins/curve_figure_evidence/` | 可选论文曲线图证据提取/审查入口；复用曲线插件的确定性算法 |
 | `skills/sentaurus-tcad-code/` | SProcess/SDevice 代码规范、精确版本用户手册 reference、有界检索与静态校验 |
-| `skills/scientific-paper-evidence/` | 带显式身份绑定和审计叠图的可追溯、经校准栅格曲线数字化 |
 | `plugins/ingaas_fig4/` | 可选领域示例；通用控制面不依赖它 |
 | `deploy/` | Linux/WSL systemd 安装和远端 Runner 部署 |
 | `tests/` | 单元、故障注入、并发、平台、MCP 和闭环测试 |
@@ -53,10 +53,10 @@ Codex 主调度 Agent
 SciDiscovery 控制面
   |-- 不可变 Artifact 与来源关系
   |-- ResearchInstance 绑定
-  |-- 任务租约与受限 Worker 上下文
+  |-- Run、current 与受限 Operation 上下文
   |-- 审批与执行状态
   |
-  +--> Worker MCP --> 科学角色 Agent --> 校验后的 JSON 结果
+  +--> 编译 Operation --> 科学角色 Agent --> 校验并封存的文件结果
   |
   +--> 确定性变换 --> 审查包 / diff / 指标
   |
@@ -99,7 +99,7 @@ sudo SCID_PYTHON="$(command -v python3)" \
 codex -C "$PWD"
 ```
 
-安装器会创建三个 SciDiscovery 服务，并在
+安装器会创建控制服务和审批 UI 服务，并在
 <http://127.0.0.1:8765> 启动仅监听本机的审批页面。未配置 TCAD command
 adapter 时，只会安装 `/bin/true` 部署冒烟配置，不代表真实 Solver 可用。
 

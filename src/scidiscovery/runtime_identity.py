@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Sequence
 
 
-TRACKED_DISTRIBUTIONS = ("pydantic", "PyYAML", "setuptools")
+TRACKED_DISTRIBUTIONS = ("pydantic", "setuptools")
 
 
 def current_runtime_identity() -> dict[str, object]:

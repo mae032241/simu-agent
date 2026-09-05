@@ -1,59 +1,46 @@
-# 角色结果 JSON 协议 v1
+# 角色结果 JSON 协议 v1（Run 主干）
 
-## 目的
+更新日期：2026-09-03
+状态：当前规范
 
-所有科学 Worker 使用同一种文件通信方式。角色只填写科学内容和一个小型交接表；
-控制面负责身份、状态、校验、不可变登记和调度信号，不要求角色抄写任何 ID 或哈希。
+## 1. 目的
 
-## 固定文件
+所有 Agent Operation 使用同一种文件交接方式。专业 Agent 只填写科学内容和有界交接信号；控制面
+负责 Run 身份、状态、合同校验、不可变 Artifact 登记、current CAS 和编译 review edge。Agent
+不得抄写或接收内部 Artifact、Run、Approval、token、session、摘要或外部执行身份。
 
-每个任务的控制面工作目录为：
+## 2. Run 工作区
+
+每个 Run 的私有工作区至少包含：
 
 ```text
-task-workspace/
+workspace/
 ├── assignment.json
-├── inputs/
-├── schema/output.schema.json
-└── output/result.json
+├── inputs/                 # 精确绑定、只读
+├── schema/result.schema.json
+└── output/result.json      # 唯一正式 Agent 输出
 ```
 
-角色必须先读取 `assignment.json` 和 `schema/output.schema.json`，并使用原生只读
-文件/检索能力查看其中明确声明的任务路径；不得从共享 workspace 根目录递归搜索。
-所有变更通过当前 worker session 绑定的 `worker_file_*` 接口写入
-`output/result.json`。该暂存文件必须使用稳定的两空格缩进、多行 JSON，禁止把非平凡
-结果压缩成单行；控制面拒绝任何超过 24576 bytes 的 JSON 物理行。嵌套 JSON 的局部
-修订优先使用 `worker_file_json_patch`：只支持有界 `test/add/replace/remove` JSON Pointer，
-以当前内容摘要或精确 `test` 作为 CAS 前提，并在一次调用内 parse、全部应用、大小检查和
-原子替换；任一 operation 失败时文件字节不变。JSON 数值类型在 round-trip 中保持为
-integer 或 float，显式浮点不会变成 strict integer。文本/solver 文件继续使用标准 unified diff；短 diff 直接 apply，长 diff
-通过 `operation=patch` 分块上传后应用。只有尚不存在的文件可用
-`operation=create` 分块新建，已有文件不能全文覆盖。PDF、曲线、日志、图片和表格保存在
-`inputs/` 中，不嵌入结果 JSON；结果只使用任务内的 `source_name` 和精确定位信息
-引用它们。
+Agent 必须先调用 `worker_open_assignment`，再读取 assignment、结果 Schema 和其中明确列出的输入；
+不得从共享项目目录递归发现额外上下文。需要长时间运行时可以调用 `worker_heartbeat` 报告存活，但它
+不能延长绝对预算。完成后调用 `worker_submit_result`；只有该调用返回 completed 且 Root 的
+`run_status` 为 completed，封存结果才是科学输出。聊天回复不是科学结果。
 
-只有 assignment 显式声明附件 collection profile 的角色可以通过 `worker_file_*`
-或受控 analysis output mount 另外写入：
+默认 `LocalTrustedBackend` 允许可信本地 Codex 在该工作区内使用编译 Operation 声明的原生工具和
+领域工具。它不提供技术级原生文件隔离，因此只适用于本地开发、可逆文件和无生产凭证场景。
 
-```text
-output/bundle.json
-output/collections/<collection>/<item>
-```
+显式 `HardenedWorkerBackend` 不允许原生 shell、代码工具或 `view_image`；文本创建、补丁、JSON
+补丁、移动和删除由该后端注册的 `worker_file_*` 工具完成。它与 Local 使用同一个 OperationSpec、
+CompiledCatalog、preflight、RunService 和 Artifact/current 权威，不是第二套结果协议。
 
-`bundle.json` 只声明任务内的 collection、item、media type 和相对路径。文件数量、
-单项大小、总大小、允许的 media type 和必需项都由 assignment 给出的严格 Schema 与
-collection 规格限定。未启用 profile 的角色仍只能写 `output/result.json`；启用 profile
-时，未声明文件、路径穿越、符号链接、重复项、错误类型和任何越界均使整个提交失败，
-不会登记部分附件。
+Run v1 只支持一个主输出 `output/result.json`。声明 Agent collection 输出的 Operation 会在目录中
+标记为当前后端不可用，并在 preflight 失败关闭；不得写 `bundle.json` 或附件后假装已登记。确定性
+Transform 仍可按自身编译端口生成多个 Artifact。集合输出若以后实现，必须扩展同一 Run 提交原语，
+不能恢复旧 Task/finalize 状态机。
 
-启用 collection 的 `worker_run_analysis` 将完整输出目录挂载为 `/outputs`，将已安装的
-确定性论文图工具只读挂载为 `/tools/digitize_plot.py`，CSV/证据包校验器只读挂载为
-`/tools/validate_evidence_bundle.py`。分析代码可写
-`/outputs/result.json`、`/outputs/bundle.json` 和 `/outputs/collections/...`；分析阶段
-立即执行上限检查，必需项和精确集合在 validate/finalize 时检查。
+## 3. 统一信封
 
-## 统一信封
-
-每个角色都填写相同的外层结构：
+`output/result.json` 使用严格信封：
 
 ```json
 {
@@ -64,79 +51,57 @@ collection 规格限定。未启用 profile 的角色仍只能写 `output/result
     "assumptions": [],
     "missing_inputs": [],
     "next_actions": [],
+    "next_action_kind": null,
     "evidence_bundle_fingerprint_sha256": null
   },
   "payload": {}
 }
 ```
 
-- `handoff` 只供调度使用，不承载详细科学报告。
-- `payload` 是角色专用严格表单，其完整 JSON Schema 随任务提供。
-- `schema_version`、`handoff` 和 `payload` 都必须显式填写。
-- 裸 payload、额外字段、错误字段类型和未声明的证据来源均在登记前被拒绝。
-- `evidence_bundle_fingerprint_sha256` 通常为 `null`；启用
-  `scientific-paper-evidence` collection profile 时必须填写为对最终 staged
-  collections 重新运行确定性 validator 得到的精确 bundle fingerprint。
+- `payload` 由 Operation 输出端口绑定的严格 Schema、codec 和 validator 决定；
+- `handoff` 只生成有界 `SchedulerSignal`，不替代详细科学内容；
+- `next_actions` 是给调度 Agent 和人阅读的非约束性建议；Worker 不输出具有控制权威的后继
+  Operation 名称，调度 Agent 必须根据封存科学结果与唯一编译目录自主选择行为；
+- `next_action_kind` 是暂时保留的废弃兼容字段；可以缺失、为空或与实际选择不同，控制面和调度器
+  均不得用它匹配、准入或选择 Operation；
+- 裸 payload、额外字段、非规范 JSON、未声明来源、机器路径、秘密模式、未声明二进制和超限内容
+  均在 Artifact 登记前拒绝；
+- 校验失败时 Run 保持 running，Agent 可以修正同一候选；首次完整通过的候选摘要被唯一接受，后续
+  提交不能换成不同字节；
+- revision 是新的完整 Run 输出，不继承旧审查、人工决定或资格。
 
-## 角色 Payload
+## 4. 角色 Payload
 
-| 角色 | Payload | 主要内容 |
-|---|---|---|
-| `evidence_extractor` | `ScientificIntake` | 问题框架和有来源的基础资料 |
-| `ideator` | `HypothesisProposal` | 互相区分、可证伪的假设及预测 |
-| `critic` | `CriticReview` | 物理合理性、可证伪性和可识别性审查 |
-| `evidence_auditor` | `EvidenceAudit` | 参数、结构、结果和结论的证据核验 |
-| `experiment_designer` | `ExperimentDesignIntent` | 最小判别实验的科学选择；控制层展开完整计划和机械验收字段 |
-| `diagnostician` | `LayeredDiagnosisReport` | 数值、实现、物理和观测层诊断 |
-| `tcad_deck_author` | `DeckProjectDraft` | 完整可运行工程及实现清单 |
-| `tcad_deck_reviewer` | `DeckReviewReport` | 物理实现和代码一致性独立复核 |
-| `tcad_deck_author`（revision profile） | `DeckProjectDraft` | 在任务私有文件沙箱中直接修订后的完整有效项目；控制面生成规范对象与差异 |
+通用角色可以使用不同 payload，因为职责不同；统一的是文件生命周期、来源绑定和最小上下文，而
+不是一个宽松科学对象。当前常用角色包括证据提取/审查、idea 提出/批评、实验设计、结果诊断、
+TCAD Deck 作者和独立审查者。具体类型只来自已安装插件的 OperationSpec，角色表不是第二注册表。
 
-`evidence_extractor` 遇到支撑定量陈述的论文图时必须使用
-`$scientific-paper-evidence`。主 `ScientificIntake` 继续只保存问题框架和来源化科学
-基础；像素级证据保存为受限附件：恰好一个
-`scidiscovery.figure-evidence-manifest.v1` manifest，以及 assignment 允许的源图/面板
-PNG、JPEG 或 WebP、PNG 审计叠加图和逐系列 CSV。每个系列必须显式绑定可见图例、
-图内标注或 caption，并记录绑定来源、可见文字、置信度、备选项和
-`matched|unresolved` 状态。无法唯一绑定、坐标无法标定或遮挡无法量化时必须记录为
-`unresolved`，不得猜测身份或据此给出已合格的定量结论。
+论文图数字化等需要多文件证据的能力，在 Agent collection 尚未进入 Run v1 前不得通过 Agent
+主输出冒充完成。插件可以把机械多文件处理实现为确定性工具或 Transform，并让 Agent 只输出科学
+判断；任何正式附件仍须由同一编译合同、明确端口和不可变登记覆盖。
 
-角色专用表单可以不同，因为科学职责不同；统一的是外层交接方式、来源引用规则和
-文件传输边界，而不是把所有科学内容压成同一个宽松对象。
+## 5. 控制面处理顺序
 
-## 控制面处理
+```text
+worker_submit_result
+→ 后端 seal 工作区
+→ 校验唯一文件集与 RoleResultEnvelope
+→ 执行端口 codec、validator 和上下文 validator
+→ CAS 接受候选摘要
+→ 幂等登记主 Artifact
+→ 在控制事务中完成 Run 并写入唯一完成收据
+```
 
-1. 按 assignment 中的精确 Schema 校验整个信封。
-2. 按角色的专用 Schema 再校验 `payload`。
-3. 校验 payload 中的任务内来源引用和冻结网页证据。
-4. 若启用了 collection profile，校验完整 `bundle.json`、所有声明文件及整体上限；figure
-   manifest 的 provenance 还必须逐项匹配所有 sibling 的 SHA-256、字节数和 media type。
-   对论文图证据，控制面还会打开逐系列 CSV，重算行数、标定值、资格标志和共享像素，
-   并登记控制面生成的 `validation_reports/validation_report.json`；Worker 文本中的计数
-   不参与此判定。figure handoff 的 fingerprint 必须匹配该报告，且
-   `assumptions`/`missing_inputs`/`next_actions` 必须为空；科学假设保留在
-   payload/manifest，控制面从最终 manifest 和固定 audit 动作投影调度字段，防止早期
-   提取轮次的结论污染最终调度信号。
-5. 原子完成规范化后的 `payload`、附件和归一化 bundle 映射；任一失败都不产生可枚举的部分结果。
-6. 从 `handoff` 确定性生成有界调度信号；figure evidence 的摘要、missing inputs 和
-   audit 动作以最终注册 manifest/report 为准。
-7. 下游角色只获得控制面按输入画像选择的 Artifact，不获得上游任务身份。
+后端、领域工具和 Agent 均不能登记正式 Artifact、写 Run 终态、更新 current 或创建 reviewer。
+Run 完成不会自动推进 current，也不会自动创建 reviewer Run。current 只由后续显式 Root CAS 命令
+更新；父调度器依据编译 review edge 另行选择并调用 reviewer Operation。下游 Agent 只获得控制面按
+输入端口重新物化的精确文件，不获得上游 Run 身份或聊天。
 
-## Clean Break
+## 6. 验收
 
-本协议不读取旧认知角色格式，不接收裸 `HypothesisPortfolio`、`ScientificReview`
-或 `DecisionPacket`，也不根据旧字段猜测新字段。部署新版后，未完成的旧任务应丢弃
-并在新实例中重新派发；历史数据库不是新科学任务的输入。
-
-## 验收
-
-1. 所有 Worker 角色的 assignment 都暴露 `RoleResultEnvelope[专用类型]`。
-2. 裸 payload 必须失败。
-3. Worker 不提交独立 scheduler signal。
-4. 控制面登记的科学 Artifact 不含 `handoff`。
-5. 所有来源引用在登记前完成绑定校验。
-6. 启用附件的角色继续通过 `worker_validate_output_file` 和
-   `worker_finalize_file` 完成同一文件生命周期；不建立第二套完成状态机。
-7. 公共 Worker MCP 不再暴露主结果的 begin/append/commit 文本上传工具；旧调用仅在
-   兼容路由中保留，不进入新生成的 Agent 配置。
-8. 全量自动化测试通过后才部署。
+1. Agent Operation 恰有一个严格主输出，所有输出 validator 在启动编译时闭合；
+2. 生命周期只有 `worker_open_assignment`、`worker_heartbeat`、`worker_submit_result`；
+3. Local/Hardened 对同一 Operation 的可用性在目录、preflight、Codex profile 和 Run 创建处一致；
+4. 裸 payload、额外文件、路径逃逸、符号链接、秘密和超限输出失败关闭；
+5. Artifact 不包含 handoff，调度信号不由 Agent 另行写入；
+6. 旧 Task、worker session、materialize/validate/finalize 协议没有兼容路由。

@@ -129,6 +129,19 @@ class TCADExecutorAdapter:
         )
         return str(value["run_id"]), str(value["state"])
 
+    def lookup_submission(
+        self, submission: LocalFileDescriptor
+    ) -> tuple[str, str] | None:
+        value = self._call(
+            "tcad_lookup_submission",
+            {"submission_sha256": submission.sha256},
+        )
+        if value.get("found") is False:
+            return None
+        if value.get("found") is not True:
+            raise RuntimeError("TCAD submission lookup returned no authority")
+        return str(value["run_id"]), str(value["state"])
+
     def status(self, external_run_id: str) -> str:
         return str(self._call("tcad_status", {"run_id": external_run_id})["state"])
 

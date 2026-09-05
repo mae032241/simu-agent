@@ -22,6 +22,22 @@ quote_posix_shell() {
         'import shlex,sys; print(shlex.quote(sys.argv[1]))' "$1"
 }
 
+validate_runner_syntax() {
+    "$PYTHON" - "$RUNNER_SOURCE" <<'PY'
+from pathlib import Path
+import py_compile
+import sys
+import tempfile
+
+with tempfile.TemporaryDirectory(prefix="scid-tcad-runner-compile-") as directory:
+    py_compile.compile(
+        sys.argv[1],
+        cfile=str(Path(directory) / "remote_runner.pyc"),
+        doraise=True,
+    )
+PY
+}
+
 validate_local() {
     [[ -n "$PYTHON" && -x "$PYTHON" ]] || {
         printf 'Local Python is unavailable: %s\n' "$PYTHON" >&2
@@ -39,7 +55,7 @@ validate_local() {
         printf 'Remote runner root is not a safe absolute path: %s\n' "$REMOTE_ROOT" >&2
         exit 66
     }
-    "$PYTHON" -m py_compile "$RUNNER_SOURCE"
+    validate_runner_syntax
     "$PYTHON" - "$CONFIG_SOURCE" <<'PY'
 from pathlib import Path
 import json
@@ -85,7 +101,7 @@ validate_code_upgrade() {
         printf 'Runner source or local Python is unavailable.\n' >&2
         exit 66
     }
-    "$PYTHON" -m py_compile "$RUNNER_SOURCE"
+    validate_runner_syntax
     PYTHONNOUSERSITE=1 \
         PYTHONPATH="${PROJECT_ROOT}/src:${PROJECT_ROOT}/plugins/tcad_artifact" \
         "$PYTHON" - "$TRANSPORT_CONFIG" <<'PY'

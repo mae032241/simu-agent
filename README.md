@@ -24,7 +24,7 @@ own results. SciDiscovery divides those responsibilities:
 4. **Deterministic code** validates schemas, applies patches, compares projects,
    packages reviewed inputs, and registers outputs.
 5. **The control plane** isolates contexts, preserves immutable records, owns
-   task state, and presents exact human approvals.
+   the minimal Run lifecycle, and presents exact human approvals.
 6. **Execution adapters** perform only approved side effects.
 
 The root Agent remains a scheduler. Scientific content comes from bounded role
@@ -35,11 +35,11 @@ workers; identities and lifecycle state remain in the control plane.
 | Component | Responsibility |
 | --- | --- |
 | `src/scidiscovery/` | Generic Artifact store, scheduler, approvals, MCP servers, worker protocol, schemas, platform generators, and execution bridge |
-| `roles/` | Generic scientific role definitions |
+| `roles/` | Interactive root-scheduler prompt; scientific Worker roles are compiled from plugin OperationSpecs |
 | `plugins/tcad_artifact/` | TCAD project schemas, author/reviewer roles, deterministic packager, execution policy, SSH transport, and detached VM runner |
-| `plugins/curve_score/` | Deterministic solver-output normalization and generic curve-consistency scoring |
+| `plugins/curve_score/` | Curve contracts, canonical curves, deterministic validation, consistency scoring, and diagnosis |
+| `plugins/curve_figure_evidence/` | Optional paper-figure extraction/review entry point reusing deterministic curve algorithms |
 | `skills/sentaurus-tcad-code/` | Solver-code guidance, exact-release SProcess/SDevice manual references, bounded lookup, and static validation |
-| `skills/scientific-paper-evidence/` | Traceable, calibrated raster-plot digitization with explicit identity bindings and audit overlays |
 | `plugins/ingaas_fig4/` | Optional domain example; not required by the generic control plane |
 | `deploy/` | Linux/WSL systemd installation and remote-runner deployment |
 | `tests/` | Unit, fault-injection, concurrency, platform, MCP, and closed-loop tests |
@@ -60,10 +60,10 @@ Codex root scheduler
 SciDiscovery control plane
   |-- immutable Artifacts and provenance
   |-- ResearchInstance bindings
-  |-- task leases and bounded worker contexts
+  |-- Runs, current bindings, and bounded Operation contexts
   |-- approval and execution lifecycle
   |
-  +--> role worker MCP --> scientific role Agent --> validated JSON payload
+  +--> compiled Operation --> scientific role Agent --> sealed file result
   |
   +--> deterministic transform --> reviewed package / diff / score
   |
@@ -106,7 +106,7 @@ sudo SCID_PYTHON="$(command -v python3)" \
 codex -C "$PWD"
 ```
 
-The installer creates three SciDiscovery services and a loopback-only approval
+The installer creates the control and approval-UI services and a loopback-only approval
 UI at <http://127.0.0.1:8765>. Without a TCAD command-adapter configuration it
 installs a local `/bin/true` deployment-smoke profile only.
 

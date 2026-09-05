@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Sequence
 from typing import Annotated, Literal
 
 from pydantic import Field, model_validator
@@ -21,17 +20,9 @@ HypothesisAssessmentOutcome = Literal[
     "invalid_study",
     "not_tested",
 ]
-RecommendedTaskMode = Literal[
-    "evidence_intake",
-    "baseline_replay",
-    "baseline_provenance",
-    "deck_revision",
-    "new_mechanism",
-    "result_diagnosis",
-    "stop",
-]
-
-
+# Deprecated compatibility metadata. Scientific reports may retain it, but
+# neither control admission nor the scheduler selects an Operation from it.
+RecommendedTaskMode = str
 class HypothesisAssessment(SchemaModel):
     """A diagnostician's evidence-bound judgment about one tested hypothesis."""
 
@@ -142,9 +133,6 @@ class ValidationReport(SchemaModel):
     claim_allowed: bool
     deviations: Annotated[tuple[str, ...], Field(max_length=128)] = ()
     next_action: Annotated[str, Field(min_length=1, max_length=4096)]
-    knowledge_update_applicability: Literal["required", "not_applicable"] = (
-        "not_applicable"
-    )
     hypothesis_assessments: Annotated[
         tuple[HypothesisAssessment, ...], Field(max_length=32)
     ] = ()
@@ -210,45 +198,21 @@ class ValidationReport(SchemaModel):
                 raise ValueError(
                     "invalid_study assessment requires failed or inconclusive numerics"
                 )
-        if self.knowledge_update_applicability == "required":
-            if not self.hypothesis_assessments:
-                raise ValueError(
-                    "required knowledge update needs hypothesis_assessments"
-                )
+        if self.hypothesis_assessments:
             if all(
                 item.outcome == "not_tested"
                 for item in self.hypothesis_assessments
             ):
                 raise ValueError(
-                    "required knowledge update needs at least one tested hypothesis"
+                    "hypothesis assessment needs at least one tested hypothesis"
                 )
             if self.remaining_contradiction is None:
-                raise ValueError(
-                    "required knowledge update needs remaining_contradiction"
-                )
-            if self.recommended_task_mode is None:
-                raise ValueError(
-                    "required knowledge update needs recommended_task_mode"
-                )
-        elif (
-            self.hypothesis_assessments
-            or self.remaining_contradiction is not None
-            or self.recommended_task_mode is not None
-        ):
+                raise ValueError("hypothesis assessment needs remaining_contradiction")
+        elif self.remaining_contradiction is not None:
             raise ValueError(
-                "not_applicable knowledge update cannot contain transition fields"
+                "hypothesis assessment context requires hypothesis_assessments"
             )
         return self
-
-
-class CurveMetricSummary(SchemaModel):
-    points: Annotated[int, Field(ge=2)]
-    rmse: Annotated[float, Field(ge=0)]
-    normalized_rmse: Annotated[float, Field(ge=0)]
-    mean_absolute_error: Annotated[float, Field(ge=0)]
-    max_absolute_error: Annotated[float, Field(ge=0)]
-    mean_absolute_percentage_error: Annotated[float, Field(ge=0)] | None = None
-    slope_rmse: Annotated[float, Field(ge=0)]
 
 
 def evaluate_threshold(
@@ -278,45 +242,6 @@ def evaluate_threshold(
         assert threshold.upper_value is not None
         return threshold.value <= converted <= threshold.upper_value
     return math.isclose(converted, threshold.value, rel_tol=1e-12, abs_tol=1e-15)
-
-
-def paired_curve_metrics(
-    reference: Sequence[float], candidate: Sequence[float]
-) -> CurveMetricSummary:
-    if len(reference) != len(candidate) or len(reference) < 2:
-        raise ValueError("paired curves require equal lengths of at least two points")
-    ref = tuple(float(value) for value in reference)
-    cand = tuple(float(value) for value in candidate)
-    if not all(math.isfinite(value) for value in (*ref, *cand)):
-        raise ValueError("paired curves must contain finite values")
-    errors = tuple(right - left for left, right in zip(ref, cand, strict=True))
-    absolute = tuple(abs(value) for value in errors)
-    rmse = math.sqrt(sum(value * value for value in errors) / len(errors))
-    scale = max(ref) - min(ref)
-    if scale == 0:
-        scale = max(max(abs(value) for value in ref), 1.0)
-    percentages = [
-        abs(error / target)
-        for target, error in zip(ref, errors, strict=True)
-        if target != 0
-    ]
-    slope_errors = tuple(
-        (cand[index + 1] - cand[index]) - (ref[index + 1] - ref[index])
-        for index in range(len(ref) - 1)
-    )
-    return CurveMetricSummary(
-        points=len(ref),
-        rmse=rmse,
-        normalized_rmse=rmse / scale,
-        mean_absolute_error=sum(absolute) / len(absolute),
-        max_absolute_error=max(absolute),
-        mean_absolute_percentage_error=(
-            sum(percentages) / len(percentages) if percentages else None
-        ),
-        slope_rmse=math.sqrt(
-            sum(value * value for value in slope_errors) / len(slope_errors)
-        ),
-    )
 
 
 def relative_conservation_error(
@@ -373,7 +298,6 @@ def validate_validation_report(value: dict[str, object]) -> dict[str, object]:
 
 
 __all__ = [
-    "CurveMetricSummary",
     "HypothesisAssessment",
     "HypothesisAssessmentOutcome",
     "RecommendedTaskMode",
@@ -382,7 +306,6 @@ __all__ = [
     "ValidationEvidence",
     "ValidationReport",
     "evaluate_threshold",
-    "paired_curve_metrics",
     "relative_conservation_error",
     "validate_report_against_plan",
     "validate_validation_report",

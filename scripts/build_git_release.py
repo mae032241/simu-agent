@@ -32,12 +32,11 @@ ROOT_FILES = (
 SOURCE_TREES = (
     ".github",
     "deploy",
-    "docs/plans",
     "plugins/tcad_artifact",
     "plugins/curve_score",
+    "plugins/curve_figure_evidence",
     "plugins/ingaas_fig4",
     "roles",
-    "skills/scientific-paper-evidence",
     "skills/sentaurus-tcad-code",
     "src/scidiscovery",
     "tests/BASELINE_8765_TEST_SCOPE.zh-CN.md",
@@ -60,6 +59,12 @@ DOCUMENTS = (
     "docs/role-result-json-protocol-v1.md",
     "docs/scientific_discovery_layer.md",
     "docs/tcad_transport_contract.md",
+    "docs/architecture/SCIENTIFIC_AGENT_DESIGN_CHARTER.zh-CN.md",
+    "docs/architecture/SCIENTIFIC_AGENT_CONSTRAINTS.yaml",
+    "docs/plans/OPERATION_SPEC_MINIMAL_REFACTOR_PLAN.zh-CN.md",
+    "docs/plans/R5_H_MINIMAL_CLOSURE_IMPLEMENTATION.zh-CN.md",
+    "docs/plans/R5_S_PRODUCTION_CODE_SIMPLIFICATION_PLAN.zh-CN.md",
+    "docs/plans/reviews/R5_S1_PRODUCTION_BOUNDARY_INDEPENDENT_REVIEW.zh-CN.md",
 )
 
 TOOLS = (
@@ -212,13 +217,10 @@ def _normalize_modes(root: Path) -> None:
             continue
         executable = path.suffix == ".sh" or path.name in {
             "build_git_release.py",
-            "digitize_plot.py",
             "evaluate_tcad_skill_ab.py",
             "evaluate_tcad_skill_ab_holdout.py",
             "manual_extract.py",
             "manual_search.py",
-            "render_curve_support.py",
-            "validate_evidence_bundle.py",
             "validate_deck_project.py",
         }
         path.chmod(0o755 if executable else 0o644)

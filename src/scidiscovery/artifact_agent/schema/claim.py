@@ -5,7 +5,6 @@ from __future__ import annotations
 from typing import Literal
 
 from .common import Identifier, SchemaModel
-from .layered_diagnosis import LayeredDiagnosisReport
 from .validation import ValidationReport
 
 
@@ -21,14 +20,18 @@ class ClaimDecision(SchemaModel):
 
 
 def project_claim_decision(
-    report: ValidationReport | LayeredDiagnosisReport,
+    report: SchemaModel,
 ) -> ClaimDecision:
-    if isinstance(report, LayeredDiagnosisReport):
-        report_kind = "layered_diagnosis"
-        numerical_verdict = report.gates.numerical_validity.status
-    else:
+    if isinstance(report, ValidationReport):
         report_kind = "validation_report"
         numerical_verdict = report.numerical.status
+    else:
+        gates = getattr(report, "gates", None)
+        numerical = getattr(gates, "numerical_validity", None)
+        numerical_verdict = getattr(numerical, "status", None)
+        if numerical_verdict is None:
+            raise TypeError("claim projection requires a supported report contract")
+        report_kind = "layered_diagnosis"
     return ClaimDecision(
         report_kind=report_kind,
         experiment_key=report.experiment_key,

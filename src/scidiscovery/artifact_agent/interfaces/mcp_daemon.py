@@ -14,8 +14,14 @@ from scidiscovery.interfaces.daemon import UnixSocketDaemon
 
 from .mcp import build_root_router
 from .mcp_proxy import SCHEDULER_PROXY_FIELD
-from ..transforms import load_transform_adapters
 from ..service import StateMaintenanceLock
+from scidiscovery.operations.catalog import compile_installed_catalog
+from ..runtime_plugin_bindings import (
+    load_runtime_plugin_contributions,
+    parse_plugin_config_assignments,
+    runtime_process_summary,
+    write_runtime_process_summary,
+)
 
 
 _PROXY = re.compile(r"^sch_[0-9a-f]{32}$")
@@ -86,30 +92,35 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--project-root", type=Path, required=True)
     parser.add_argument("--state-root", type=Path, required=True)
     parser.add_argument("--socket", type=Path, required=True)
-    parser.add_argument("--task-secret-file", type=Path, required=True)
     parser.add_argument("--approval-secret-file", type=Path, required=True)
     parser.add_argument("--approval-base-url", default="http://127.0.0.1:8765")
-    parser.add_argument("--tcad-socket", type=Path)
-    parser.add_argument("--tcad-command-config", type=Path)
+    parser.add_argument(
+        "--worker-backend", choices=("local", "hardened"), default="local"
+    )
+    parser.add_argument("--local-workspace-root", type=Path)
+    parser.add_argument("--plugin-config", action="append", default=[])
+    parser.add_argument("--runtime-summary", type=Path, required=True)
     parser.add_argument("--max-connections", type=int, default=16)
     args = parser.parse_args(argv)
-    adapters = {}
-    transform_adapters = load_transform_adapters()
-    if args.tcad_socket is not None and args.tcad_command_config is not None:
-        parser.error("choose either --tcad-socket or --tcad-command-config")
-    if args.tcad_command_config is not None:
-        from tcad_artifact.command_adapter import CommandTCADExecutorAdapter
-
-        adapters["tcad"] = CommandTCADExecutorAdapter.from_file(
-            args.tcad_command_config,
-            local_result_root=args.state_root / "executor-results",
-        )
-    elif args.tcad_socket is not None:
-        from tcad_artifact.execution_adapter import TCADExecutorAdapter
-
-        adapters["tcad"] = TCADExecutorAdapter(args.tcad_socket)
     project_root = args.project_root.expanduser().resolve()
     state_root = args.state_root.expanduser().absolute()
+    if args.worker_backend == "local" and args.local_workspace_root is None:
+        parser.error("--local-workspace-root is required for the local backend")
+    try:
+        plugin_configs = parse_plugin_config_assignments(tuple(args.plugin_config))
+        catalog = compile_installed_catalog()
+        contributions = load_runtime_plugin_contributions(
+            catalog,
+            plugin_configs,
+            mode="control",
+            state_root=state_root,
+        )
+        write_runtime_process_summary(
+            args.runtime_summary,
+            runtime_process_summary(catalog, contributions, mode="control"),
+        )
+    except ValueError as error:
+        parser.error(str(error))
     creation_lock = threading.RLock()
     maintenance = StateMaintenanceLock(
         state_root / "maintenance.lock", shared_group=True
@@ -118,14 +129,14 @@ def main(argv: list[str] | None = None) -> int:
         lambda proxy_id: build_root_router(
             project_root=project_root,
             state_root=state_root,
-            task_secret_file=args.task_secret_file,
             approval_secret_file=args.approval_secret_file,
             approval_base_url=args.approval_base_url,
             shared_group=True,
-            execution_adapters=adapters,
-            transform_adapters=transform_adapters,
+            execution_adapters=contributions.execution_adapters,
             scheduler_session_key=proxy_id,
             scheduler_creation_lock=creation_lock,
+            worker_backend=args.worker_backend,
+            local_workspace_root=args.local_workspace_root,
         ),
         maintenance=maintenance,
     )

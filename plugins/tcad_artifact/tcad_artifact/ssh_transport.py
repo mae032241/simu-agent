@@ -225,6 +225,21 @@ class SSHTCADTransport:
             }
         if operation == "prepare":
             return self._prepare(payload)
+        if operation == "lookup_submission":
+            marker = self._read_marker(payload["submission"])
+            value = self._rpc(
+                "tcad_lookup_submission",
+                {
+                    "submission_sha256": marker["remote_submission"]["sha256"]
+                },
+            )
+            if value.get("found") is False:
+                return {"found": False}
+            return {
+                "found": True,
+                "run_id": value["run_id"],
+                "state": value["state"],
+            }
         if operation == "submit":
             marker = self._read_marker(payload["submission"])
             value = self._rpc("tcad_submit", {"submission": marker["remote_submission"]})

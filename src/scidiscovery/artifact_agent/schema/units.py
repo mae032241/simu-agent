@@ -147,6 +147,12 @@ def unit_definition(value: str, *, label: str) -> UnitDefinition:
         raise ValueError(f"unsupported {label}: {value}") from error
 
 
+def supported_unit_spellings() -> tuple[str, ...]:
+    """Return the exact finite vocabulary accepted by ``unit_definition``."""
+
+    return tuple(sorted((*_CANONICAL_UNITS, *_ALIASES)))
+
+
 def convert_value(value: float, *, source_unit: str, target_unit: str) -> float:
     source = unit_definition(source_unit, label="observed unit")
     target = unit_definition(target_unit, label="threshold unit")
@@ -172,5 +178,6 @@ __all__ = [
     "UnitDefinition",
     "convert_value",
     "unit_definition",
+    "supported_unit_spellings",
     "units_equivalent",
 ]

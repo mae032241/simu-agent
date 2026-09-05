@@ -24,6 +24,8 @@ class RoleHandoff(FormModel):
     assumptions: Annotated[tuple[str, ...], Field(max_length=16)] = ()
     missing_inputs: Annotated[tuple[str, ...], Field(max_length=16)] = ()
     next_actions: Annotated[tuple[str, ...], Field(max_length=8)] = ()
+    # Deprecated compatibility metadata. It has no routing authority.
+    next_action_kind: str | None = None
     evidence_bundle_fingerprint_sha256: Sha256 | None = None
 
 

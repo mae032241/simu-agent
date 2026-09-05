@@ -1,4 +1,4 @@
-"""Development-only direct-solver bridge for task-bound deck debugging."""
+"""Development-only direct-solver bridge for one Operation Run."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from pathlib import Path
 
 from scidiscovery.artifact_agent.execution_bridge import ExecutionAdapter
 from scidiscovery.artifact_agent.schema.execution import LocalFileDescriptor
-from scidiscovery.artifact_agent.service.tcad_debug import (
+from .debug_contract import (
     CollectedTCADDebugFile,
     CollectedTCADDebugRun,
     PreparedTCADDebugRun,
@@ -69,11 +69,16 @@ def _development_arguments(
         and mode == "initialization"
     ):
         return (entrypoint,)
+    if (
+        release == _MANUAL_BACKED_RELEASE
+        and solver_kind == "sdevice"
+        and mode == "initialization"
+    ):
+        return "-i", entrypoint
     option = {
         (_MANUAL_BACKED_RELEASE, "sprocess", "preflight"): "-s",
         (_MANUAL_BACKED_RELEASE, "sprocess", "smoke"): "-f",
         (_MANUAL_BACKED_RELEASE, "sdevice", "preflight"): "-P",
-        (_MANUAL_BACKED_RELEASE, "sdevice", "smoke"): "-i",
     }.get((release, solver_kind, mode))
     if option is None:
         raise ValueError("development debug mode is unsupported for the solver")
@@ -101,7 +106,7 @@ def _development_mode(job: TCADJobSpec) -> str:
     if job.solver_kind == "sprocess":
         modes = {"-s": "preflight", "-f": "smoke"}
     elif job.solver_kind == "sdevice":
-        modes = {"-P": "preflight", "-i": "smoke"}
+        modes = {"-P": "preflight", "-i": "initialization"}
     else:
         modes = {}
     try:
@@ -169,7 +174,7 @@ class TCADDevelopmentDebugBridge:
             ) from error
         source_map = {item.source_name: item for item in sources}
         if len(source_map) != len(sources):
-            raise ValueError("development debug task sources are not unique")
+            raise ValueError("development debug Run sources are not unique")
         if mode == "initialization":
             if draft.development_initialization_entrypoint is None:
                 raise ValueError(

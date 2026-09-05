@@ -1,195 +1,218 @@
-# 架构说明
+# 当前架构
 
 简体中文 | [English](ARCHITECTURE.md)
 
-## 核心原则
+本文描述 R5-L Run v1 上经 R5-M 裁剪、并由 R5-N 收敛调度权威后的当前架构。历史设计与失败审查
+保留在 `docs/plans/`；当前实施权威是
+`docs/plans/R5_N_SCHEDULER_ACTION_AUTHORITY_SIMPLIFICATION.zh-CN.md`，R5-L 与 R5-M 计划保留为
+已通过的历史基线。
+设计宪章和33项当前
+行为约束分别位于 `docs/architecture/SCIENTIFIC_AGENT_DESIGN_CHARTER.zh-CN.md` 与
+`docs/architecture/SCIENTIFIC_AGENT_CONSTRAINTS.yaml`。
 
-SciDiscovery 将科学创意、状态权威和外部副作用分离。主 Agent 负责选择任务，但
-不能代替已配置角色生成科学输出；Worker 负责科学内容；确定性代码负责机械变换；
-控制面负责身份和生命周期。
+## 1. 设计原则
 
-## 分层结构
+SciDiscovery 的基本行为原子是 `OperationSpec`。它是一份不可变、可编译的行为闭包声明，而不是
+包含全部实现的巨型类：声明输入/输出端口、执行种类、组件引用、资源上限、工作区、工具、网络、
+独立审查、人工审批与副作用要求；具体 codec、validator、guard、projector、workspace hook、
+Worker tool 和 runtime factory 由插件内的窄组件实现。
 
-### 1. 交互式主调度器
+当前 Operation ABI 15 要求 Agent 输出引用结构化语义合同。每条不能由 JSON Schema 表达的规则
+具有稳定 `rule_id`、说明、输出路径和所需输入；编译器拒绝未知输入以及把可选端口暗中声明为必需
+输入的规则。每个 Python 内容或上下文校验器必须绑定其中一个已声明 `rule_id`，否则目录编译失败。
+编译器把这份合同和从端口、校验器绑定及修订形状机械派生的校验合同嵌入同一份
+`result.schema.json`。提交路径先执行这同一份 JSON Schema，再执行少量已绑定语义规则；诊断只能
+引用 Worker 已见的 `rule_id` 和字段路径，不得维护提示词专用或提交专用的第二套规则。
 
-Codex 主进程理解用户目标、读取受限的 readiness 信号、选择最短且可
-辩护的角色拓扑，并派发就绪任务。它只使用语义名称，不接触内部 Artifact、任务、
-审批、会话、执行或远端运行 ID。
+科学判断属于调度 Agent 和专业 Worker；控制面只拥有身份、不可变记录、最小上下文投影、生命周期、
+资格与副作用门禁；确定性代码只做可重放的机械变换；领域 adapter 只做外部副作用。
 
-### 2. SciDiscovery 控制面
+## 2. 注册、编译与三种视图
 
-控制服务负责：
+系统只有一个 entry-point group `scidiscovery.plugins`；每个入口返回一个 `PluginDefinition`，
+同一发行包当前可以发布多个插件定义。一个插件同时声明冻结组件元组和由这些组件组成的
+Operations。组件没有独立 entry point，插件私有实现也不能由 Root 或 Worker 按 Python 路径二次
+发现。
 
-- 内容寻址、不可变 Artifact 及来源关系；
-- ResearchInstance 范围内的语义名称绑定；
-- 任务创建、Assignment Instance、尝试次数、租约和终态；
-- 上下文 profile 与 `full`、`on_demand`、`handoff_only` 暴露级别；
-- 精确人工审批和进程到实例的绑定；
-- 执行请求和返回结果的注册。
+启动时 `compile_installed_catalog()` 一次性完成：
 
-控制面不判断科学真伪，也不编写仿真 Deck。
+1. 插件协议、编号、版本与依赖校验；
+2. 组件引用闭包、类型协议、静态资源摘要和运行时工厂校验；
+3. Operation 端口、结构化语义规则、资源、权限、review/provider 图与审批合同校验；
+4. 生成包含 operation id、version、digest 和冻结实现引用的唯一 `CompiledCatalog`。
 
-#### 科学资格内核 v2
+`public`、`support`、`internal` 和诊断用 `all` 是同一目录的只读投影，不是四套注册表：
 
-新建 ResearchInstance 使用一套 fail-closed 的唯一权威模型：
+- `public`：调度 Agent 可选择的科学行为；
+- `support`：公开行为依赖的确定性辅助操作；
+- `internal`：仅框架测试和自检；
+- `all`：诊断联合视图。
 
-- 工作开始前由 `OperationIntent` 准入精确、不可变的请求；
-  `OperationReceipt` 发布完整可消费结果，永久失败或取消则由
-  `OperationTerminalRecord` 闭合。
-- `ScientificReviewIntent` 冻结一组精确、可见的审批对象；本地 UI 决定被解释为
-  `ScientificReviewOutcome`。只有 accepted outcome 才能签发实例级
-  `QualificationReceipt`，撤销采用 append-only 记录。
-- `ActiveHead` 是 current 对象的唯一权威。revision 顺序、完成时间、label、parent
-  关系和历史审批都不能隐式把对象变成 current。
-- 外部执行使用持久 effect outbox 和明确的 unknown 状态；提交结果不确定时只能
-  reconciliation，不能自动重提。
-- readiness 与真正授权共用同一合同 preflight，检查精确 Receipt、Qualification、
-  head snapshot、参数 uncertainty 和 adapter 可用性。
+领域产物种类使用格式受限的插件标识，不是核心维护的领域枚举。Worker 的结构化结论和后续建议是
+封存科学结果，不是调度命令；具体行为只由调度 Agent 从编译目录选择，并经统一 preflight 决定能否执行。
 
-每次语义发布都能由不可变请求 fingerprint 恢复。维护可达性覆盖 Intent、Receipt、
-Review、Qualification、ActiveHead、reservation 和 effect outbox。v2 实例存在任一
-未闭合、可恢复操作时，关闭动作会在同一个数据库事务内被拒绝。
+## 3. 调度 Agent 与 Operation
 
-控制协议版本属于 ResearchInstance。迁移得到的 v1 实例只读并拒绝新的科学变更；
-需要在新建 v2 实例中重新资格化，不能静默继承旧权威。
+交互式 Root Agent 读取当前实例的不可变科学输入、编译目录和有界 readiness 建议，从真实科学
+矛盾中选择一个最短可辩护的 public Operation。依赖只表达准入条件，不定义固定阶段 DAG。
+创建前由 Root 绑定实例内语义 Artifact 名称并调用同一 `operation_preflight`；真正身份、资格、
+审查、预算和副作用门仍由控制面执行。
 
-### 3. 科学 Worker
+Worker 不输出具有控制权威的后继 Operation 名称。调度 Agent 可以利用封存的 verdict、领域处置、
+缺失输入和建议进行判断，但仍须独立选择目录中的 Operation。`change_request` 与 `review_signal` 只
+证明精确独立审查和来源关系，不预先指定下一阶段或后继操作。
+旧 `next_action_kind`、`accepts_actions` 与 `recommended_task_mode` 字段暂时保留为可解析兼容数据，
+所有控制路径均忽略其值；它们不是第二行动目录，也不能导致调用被接受或拒绝。
+单个完成 Run 的 `run_status` 返回已校验、已封存的科学载荷，供调度 Agent 做这项判断；运行中 Run
+和批量 `run_list` 不暴露科学载荷。若 Run 保存的 Operation 版本或摘要不再匹配当前编译目录，状态
+只报告 `contract_retired`，旧载荷和旧交接摘要均不冒充当前合同。当前结构化对象位于
+`sealed_output`，有界 verdict/缺失输入/建议位于同一响应的 `scheduler_signal`。两类审查来源只接受
+非通过 verdict，`pass` 不能被当作修订理由；每个信号还必须精确绑定同次调用中的被审查对象。
+生产者的公开目录条目同时给出最小 `review_edge`（审查 Operation、输入端口、被审查输出和可接受
+verdict），因此独立审查也只从同一编译目录调度，不查角色表或第二套路由配置。public 生产者只可
+引用 public reviewer；reviewer 当前不可用时，生产者同步从公开可用集合移除并在 preflight 失败。
+Root 调用入口拒绝 internal Operation；support 只保留给已选择 public 行为所需的确定性辅助变换。
 
-每个角色只接收一份去身份化 Assignment，其中包含任务本地输入别名、资源限制和
-精确 JSON Schema。Worker 只能读取被分配的文件和工具，并返回统一的
-`RoleResultEnvelope`：
+行为都通过 `operation_invoke` 创建。设备参数 Schema、提取/审查 Agent、覆盖与不确定性
+变换以及资格审批均由 TCAD 插件一次注册；通用核心不再导入该 Schema 或编译参数 Operation。
+旧角色/变换入口以及直接创建任务、变换、审批和执行的工具不再是产品权威。
 
-```json
-{
-  "schema_version": 1,
-  "handoff": {
-    "verdict": "pass",
-    "summary": "受限调度信号",
-    "assumptions": [],
-    "missing_inputs": [],
-    "next_actions": []
-  },
-  "payload": {}
-}
-```
+## 4. 四类执行闭包
 
-`payload` 使用角色专用 Schema。控制面校验并注册 payload，再从 `handoff` 生成
-供主调度器使用的受限信号。对于 scientific-paper-evidence bundle，handoff 必须绑定
-最终 staged collection 字节的确定性 fingerprint；控制面从已验证的最终
-manifest/report 投影 figure 摘要、ambiguity 和固定 audit 动作，不再信任可滞后的提取
-过程文字。
+### Agent Operation
 
-`worker_materialize_assignment` 返回明确的本地路径，Worker 使用原生文件和检索
-能力只读查看。所有变更通过当前 session 绑定的 MCP 文件服务完成：局部修订应用
-带上下文校验的 unified diff，新建文件采用有上限的分块写入，并且只能命中角色声明
-的任务相对路径。随后由 validate/finalize 冻结受控文件树。
+编译器把 Agent Operation 投影为 Run 的精确输出合同、输入 exposure、工作区、工具、资源和
+review 要求。父调度器用 Codex `spawn_agent` 拉起无父历史的专业 Agent；子 Agent 使用任务工作区的
+原生能力、该 Operation 编译出的领域 Worker MCP 和静态专家资源，通过统一 submit 产生结果。
+聊天完成只是不可信传输信号，控制面封存的 Run 输出才是科学结果。
 
-通用角色包括信息提取、假设生成、批判、证据审计、实验设计和诊断。TCAD 插件
-增加一个同时承担初始编写与受限修订的 Deck author，以及独立代码 reviewer。
+Worker 的 `assignment.json` 指向 `result.schema.json` 内同源的结构合同、语义合同和校验阶段。
+JSON Schema 拥有必填、类型、枚举、范围和基础嵌套形状；语义合同只补充不能由 Schema 表达的跨字段
+或输入绑定规则；context validator 只能使用 OperationSpec 明列的来源，并且不能把缺失的可选端口
+重新解释为 Worker 输出错误；这种访问属于插件契约故障。内容与上下文校验器只有显式抛出
+`SemanticRuleViolation`，才能按输出端口绑定的 `rule_id` 报告 Worker 可修订错误；该异常自身不携带
+规则编号，其他异常均属于插件契约故障。文件集合、大小、路径、不可变父链和权限属于封存安全门，科学质量由声明的
+独立审查 Operation 判断，而不是由控制面增加隐藏内容规则。
 
-对带精确 SProcess capability 和 experiment plan 的新任务，author 只可修改
-`deck/files/**` 与简短 handoff。`deck/project.json`、case/global bindings、单位、源码
-locator、realization manifest、raw-output 合同、capability identity、arguments 和资源策略
-均为控制层只读投影。版本化 TCAD materializer 从 exact plan、capability 和当前源码生成
-规范工程，并在 validate/debug 前返回带 case、变量、文件和行号的 reason-code finding。
-完整注释不能充当可执行 binding，scorer/diagnosis 控制量不会进入 deck 合同。
+当前默认 Local 路径采用软隔离：控制面把 assignment、输出 Schema、显式输入、可选恢复草稿和领域
+工作文件物化到一个 Run 工作区，Agent 可以直接使用 Codex 原生文件与代码能力完成任务。普通任务内
+读写不是逐文件注册能力，OperationSpec 只声明领域工具、网络或外部副作用等额外能力。输入源
+Artifact 不会因工作区副本被修改而改变，只有声明位置的完整输出通过 Schema、父链和提交校验后才
+能登记为正式 Artifact。该边界控制科学上下文和正式结果，不承诺操作系统级文件不可见性。
+部署时，正式 Artifact 与控制面数据库仍位于状态根；可信本地 Run 工作区单独放入 Codex 可写的项目目录，
+控制服务与 Worker 必须使用同一个编译路径。Run 工作区不是第二套状态权威。
 
-### 4. 确定性变换
+直接修订是普通 Agent Operation：它声明一个 `revision_base` 输入和一个完整输出；两者使用
+相同 Schema、媒体类型、codec 和 Schema 资源，并声明独立审查合同。基线可以是必需输入，也可以
+与唯一 `change_request` 组成一个无审批、全有或全无的可选输入组。后一种声明使同一 Operation 在
+未绑定该组时创建对象，在绑定该组时修订对象，不增加模式字段或平行修订 Operation。编译器静态判断
+Operation 是否具备修订能力，运行时只从冻结输入派生本次调用是否激活修订。运行时采用写时复制：普通
+JSON 对象把基对象 payload 预置为可编辑的 `output/result.json`，同时声明物化器和最终器的领域工作区
+对象（当前为 TCAD 工程）由插件展开精确旧文件并组装结果。Worker 只增量编辑审查涉及的内容，提交时仍接受完整 Schema、
+上下文和父链校验，并发布完整不可变新对象；未修改 payload 会被拒绝。该机制复用原生产者的 Agent、
+工作区、工具和校验，不建立万能修订管理器，也不创建补丁科研实体。旧对象保持不可变，新对象不继承
+旧评审或资格。可选修订必须声明有界次数和问题指纹；目录编译会拒绝畸形 `revision_base` 声明。
+原结构化补丁 Artifact、补丁应用 Operation、
+差异收据、旧 Task 投影和 Root 递归生产者族仍保持删除。
 
-以下工作不应依赖 Agent 判断，因此由代码完成：
+当前 Codex 原型的工具可见性仍有明确限制：父会话可见的 Worker MCP 可能暴露给子 Agent；编译提示
+会显式列出允许和禁止的领域工具，服务端会拒绝未声明的领域工具，但原生文件能力只受软隔离约束。
+文档和资格报告不得把提示约束夸大为沙箱事实。
+当前唯一接入的派发路径是 `spawn_agent`。未启用的独立进程基座及专项测试已移至
+`experiments/worker_process_v2/`，不进入产品包；其实验结果不能作为当前生产隔离证明。
 
-- 拆分已审批的信息提取结果；
-- 生成候选资格和知识更新记录；
-- 将 worker 编写的紧凑 `ExperimentDesignIntent`（基准值与少量 case override）
-  确定性展开为完整严格的 `ExperimentPortfolio`，统一生成 case settings、比较
-  expectations、factor 清单、case 数量和绑定输入哈希的物化报告；
-- 冻结 author 的受控工程文件树并比较完整修订；
-- 从 exact TCAD 源码物化 case bindings、单位、manifest、locator、raw-output 合同和
-  source digest；
-- 比较完整工程并生成不可变 diff；
-- 校验审查结果是否对应 exact project；
-- 记录 source-bound bounded preflight attestation；reviewer 不复制 capability digest、
-  不逐行重填 manifest，也不自行声明 syntax qualification；
-- 生成同时绑定 `SolverCapability` 摘要和精确实验计划的
-  `tcad.reviewed-deck-package.v2`，并在执行前拒绝缺失科学case控制绑定的工程；
-- 从 reviewed package 物化可信 realization snapshot，并比较控制等价性；
-- 校验类型化 `StudyExecutionPlan` 的 case 覆盖和 SProcess→SDevice DAG；
-- 按 ArtifactRef 校验、暂存二进制输入，并生成分层 runtime attestation；
-- 执行领域评分器。
+### Transform Operation
 
-确定性变换不能调用仿真器，也不能发明物理参数。
-Intent 只是临时科学对象，不能被选择为 current experiment plan。只有物化后的
-完整 portfolio 才能进入 deck 编写、评分、打包或诊断。历史完整 portfolio 继续
-兼容；新 experiment designer 任务默认使用紧凑合同。
+Transform 是无 Agent 判断、可重放的确定性函数，例如 intake 拆分、实验意图物化、TCAD 工程
+打包、运行证明、曲线 bundle 和评分。它消费精确 Artifact，输出内容寻址 Artifact 并保留父链。
+Transform 不能调用求解器或生成科学结论。
 
-直接 SProcess/SDevice deck 的职责止于 solver 代码和原始 TDR/PLX/PLT/log 输出，
-不得重采样曲线、应用证据 mask、计算派生指标、判断阈值或生成科学结论。执行桥只
-校验生命周期和原始输出的不可变完整性；版本化领域 scorer 负责执行后确定性计算；
-diagnostician 负责解释。上下文 finalization validator 会把 deck author/reviewer 输出
-与其 exact project 输入交叉校验，含 unsupported 或后处理职责的 deck 不能先获得正式
-pass、再拖到 package 阶段才失败。Package 会对 exact source/plan/capability 重跑
-materializer，并要求同一 source digest 的 preflight pass 与独立代码/物理 review pass。
+普通消费者可以只读取某个 Transform 的一个输出。只有确实需要一次调用全部结果的消费者，才在
+自己的 OperationSpec 中声明一个可选 `complete_transform_family`：列出与生产者同名的输出端口和
+输入端口。Root 仅从冻结的 Operation 摘要、调用指纹、实例绑定和父链恢复该次调用的完整成员，按
+端口机械比对，不读取领域 payload。该声明目前只支持一个生产族；它不建立 family 注册表，也不让
+生产者预判下游用途。
 
-### 5. 执行桥与领域适配器
+### Approval Operation
 
-一个经过审查的精确 payload 会生成一个 `ExecutionRequest`，人工授权与该请求
-绑定。执行桥调用已配置适配器，并把外部状态映射到控制面生命周期。TCAD 适配器
-可以本地运行，也可以使用 SSH transport，但不能修改科学对象或审批。
+Approval Operation 的插件 projector 只把精确 subjects 投影成核心固定
+`ReviewDocument`。Root 不应解释领域 Schema，审批 UI 只渲染固定安全节点、转义文本并提供受限
+原始附件视图。人工决定只由回环 UI 写入，绑定精确 subjects、operation identity 和合同摘要；
+对话不能代替点击。生产者族由编译端口、调用指纹、Run 完成合同和精确父链派生。直接修订按完整
+新输出族重新审查，审批不再递归恢复补丁链。
 
-生产 TCAD adapter 只接受 reviewed package v2。package、JobSpec 和 runner policy
-绑定同一 capability 摘要；executable、固定参数、环境、solver kind 或发行版证据
-发生漂移时，runner 在启动求解器前失败关闭。SDevice 的 TDR 等二进制输入只通过
-内容寻址 ArtifactRef 和精确 slot 暂存，不内嵌进 Worker JSON。
+### Effect Operation
 
-远端 Runner 使用无第三方依赖的 Python，只提供受限文件传输、后台提交、短状态/
-取消和终态收集。SSH 不承担长连接作业调度。
+Effect Operation 的 `operation_invoke` 在创建精确副作用请求后，直接按同一编译审批合同建立待人工
+决定的请求并返回精确回环 UI 地址；它不会写决定或启动副作用。UI 决定后，调度器显式调用
+`execution_start`，再做有界 `execution_sync`。唯一 Execution 生命周期负责幂等、状态映射、未知
+提交恢复和原始输出登记；已编译 runtime factory 提供的领域 adapter 不能修改科学对象或批准自己。
 
-## 人工交互
+## 5. 控制面与数据面
 
-本地审批网页展示精确冻结对象。决定直接写入控制服务；对话 Agent 不能伪造决定，
-也不能把聊天文本转换为审批。目前审批对象包括实例绑定、科学基础资料和执行授权。
+默认控制面只有四类相互独立的事实：
 
-网页不是由 AI 动态生成。Agent/Worker 只产生经过 Schema 校验的结构化 Artifact；
-`approval_ui/render.py` 中的固定 Python 渲染器按白名单 Schema 选择视图、转义内容并
-生成 HTML。未知结构只能进入受限的通用树/下载视图，不能提交 HTML、JavaScript 或
-模板代码。
+- Artifact/CAS：不可变字节、内容摘要、父链和实例语义绑定；
+- Run：精确 Operation、输入、后端、`queued/running/completed/failed` 和完成收据；
+- Approval：仅在 Operation 明确要求时保存精确 subjects、选项和人工决定；
+- Execution：副作用请求、授权、提交、同步、收集和不确定状态恢复。
 
-定量证据提取、修订和独立审计属于一个临时证据链，中间版本不逐项要求人工审批。
-只有审计接受、修订关闭后的最终 ScientificFoundation、提取结果、全部附件和最终
-审计报告组成一次科学证据审批。会触发外部副作用的执行授权仍独立审批。
+由 Operation 创建的 Run、Artifact、Approval、Execution 记录当前编译 operation id、version
+和 digest；用户直接摄入的原始来源 Artifact 可以没有生产 Operation。Worker 只获得 Run 本地别名，
+不获得内部 Artifact、Approval、current 写接口或外部执行身份。主 Agent 不制造 Worker 科学输出，
+Worker 也不直接写控制元数据。默认 `LocalTrustedBackend` 只管理 Run 目录。已有
+`HardenedWorkerBackend` 作为非默认实验/可选实现保留，但强隔离不属于当前阶段的产品完成门，也不
+得反向增加默认 Operation、插件或 Worker 的协议成本。其当前没有受控读取预置结果的工具，因此会
+明确拒绝直接修订 Operation，而不是宣称一个真实 Agent 无法完成的能力。
 
-审批首页同时列出 ResearchInstance。实例详情展示该实例全部历史审批状态、最终选项、
-理由和决定时间。删除实例需要打开详情页预览影响范围、输入完整实例名并提交一次性
-令牌；运行中的任务/执行会阻止删除。删除会撤销会话并清理实例绑定、专属任务、审批、
-执行及专属 Artifact 注册；其他实例仍引用的对象保留。Artifact 注册与删除共用跨
-进程文件锁；只有没有任何保留注册引用同一摘要时，专属 CAS 字节才会被解除链接。
-异常中断留下的孤儿字节仍可由离线 orphan 扫描发现。
+## 6. 通用与领域边界
 
-## 通用与专用边界
-
-| 通用核心 | 领域扩展 |
+| 通用核心 | 插件负责 |
 | --- | --- |
-| Artifact、审批、任务、实例和执行服务 | 仿真工程 Schema |
-| Root/Worker MCP 协议 | 合并后的 Deck 编写/修订角色与独立代码审查角色 |
-| 通用角色 Envelope 与科学 Schema | solver 工程与 reviewed-package 校验 |
-| Codex 配置生成 | 工具白名单与传输通道 |
-| 上下文隔离与网页证据冻结 | 领域评分器或基线变换 |
+| OperationSpec ABI 与一次性编译 | Operation 与窄组件声明 |
+| Artifact、Run、Approval、Execution 生命周期 | 领域 Schema、validator、guard、projector |
+| Root MCP、Run 生命周期和工作区后端 | 专业 prompt、工作区 hook 和领域工具 |
+| 固定安全审批文档与 UI | 审批内容投影，不提供 HTML/脚本 |
+| 通用 preflight/invoke | 确定性变换、runtime factory 和副作用 adapter |
 
-领域插件不得复制控制面的身份或生命周期状态。
+TCAD 插件目前注册 deck author/reviewer、工程工作区与调试工具、打包/运行证明/控制等价变换和
+求解器执行 Effect；curve-score 插件注册曲线合同、规范曲线、评分与诊断；可选
+curve-figure-evidence 插件注册论文曲线图证据提取/独立审查及其工具，并复用曲线插件的确定性
+算法；InGaAs Fig.4 项目插件只注册项目冻结评分能力。核心
+不识别曲线 manifest、固定脚本名或图证据集合；原生工具和领域工具均由编译 Operation 投影。
+插件不得复制控制面的身份或生命周期。
 
-## 持久化与迁移
+确定性 Transform 组件从按端口分组的精确输入字节一次性产生全部输出；涉及多个输出之间关系的
+约束，由拥有算法的可信插件组件在返回前闭合。通用调用器只执行编译端口的 Schema、媒体类型、
+基数和逐项 validator 校验，再以同一输入父链登记不可变 Artifact；它不解释领域字节，也不按插件、
+Operation 或 Schema 分支。Agent 主输出的 context validator 则获得其 OperationSpec 显式声明的
+输入来源和工具收据，用于提交边界重放。这不是新的注册表、状态或科学判断入口。Agent collection
+声明虽可编译，但 Run v1 不调用它们作为正式提交；依赖集合提交的可选能力不会进入当前后端的
+`public` 调度视图，只在 `all` 诊断视图中给出不可用原因。
 
-运行数据位于源码目录之外，默认在 `/var/lib/scidiscovery`。SQLite 保存注册表和
-生命周期，CAS 保存不可变内容；服务密钥位于 `/etc/scidiscovery`。生成的平台配置
-包含机器绝对路径，因此每台设备必须重新生成。
+## 7. 当前明确限制
 
-源码迁移与科学状态迁移相互独立。可选的 ActiveResearchBundle 只导出显式选择、
-去身份化的科学 Artifact，不恢复任务、审批、会话或执行状态。
+- 默认 Local 后端有意采用软隔离，Codex 原生文件可见性不是技术沙箱，`SEC-002` 保持 known_issue，
+  但不阻断当前可信本地原型完成；
+- Run v1 只接受一个 Agent 主结果；声明 collection 输出的 Agent Operation 统一显示为当前后端
+  unavailable，preflight 失败关闭；Transform 多输出不受此限制；
+- Hardened v1 的历史实现只支持纯 MCP Operation；当前阶段不扩展、不补齐，也不以其通过作为完成
+  条件；
+- 审批 UI 的安全合同已经自动化覆盖，但信息层级和视觉可读性仍是产品缺陷；
+- 当前测试证明工程边界和 TCAD 最小纵向路径，不证明论文图数字化精度、Solver 科学正确性、三领域
+  通用性或相对单 Agent 的统计优势。
 
-## 信任边界
+R5-L 不增加科学图、插件生命周期系统、第二注册表、第二 current 或固定科研流程。
 
-- Worker prompt 和 JSON 校验提高正确性，但不是安全边界。
-- 控制面绑定身份、不可变输入和状态变更。
-- 本地审批网页将人工决定绑定到精确对象。
-- 领域执行策略限制 executable、arguments、environment、资源和输入目录。
-- 科学接受仍然需要证据、预注册检查以及独立结果诊断。
+## 8. 持久化和信任边界
+
+运行状态位于源码和临时目录之外；SQLite 保存控制生命周期，CAS 保存不可变 payload，服务密钥
+单独存放。ResearchInstance 与语义绑定是唯一运行时 current；安装器不读取独立 YAML current。
+孤立旧 binding 原始行不会被启动过程合成为 `legacy.*` ResearchInstance，也不会进入实例列表、
+会话 current 或会话绑定候选；系统不为其增加在线迁移或兼容入口。
+生成的平台配置含机器绝对路径，每台设备必须重新生成。
+
+Worker prompt、任务目录和 JSON 校验提供上下文软隔离，不是完整系统沙箱。当前强制边界是精确输入
+绑定、输出封存与校验、Artifact 登记、独立审查、人工审批和外部执行授权；不是对每次任务内文件
+读取建立控制面记录。外部执行策略仍限制 executable、arguments、环境、资源和输入目录。科学接受
+仍依赖来源、独立审查、确定性报告和结果诊断。

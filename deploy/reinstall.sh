@@ -7,9 +7,16 @@ readonly PYTHON="${SCID_PYTHON:-$(command -v python3 || true)}"
 readonly SERVICE_USER="${SCID_SERVICE_USER:-$(id -un)}"
 readonly SERVICE_GROUP="${SCID_SERVICE_GROUP:-$(id -gn)}"
 readonly PLATFORM="${SCID_PLATFORM:-codex}"
-readonly PLUGINS="${SCID_PLUGINS:-tcad_artifact,curve_score}"
+readonly WORKER_BACKEND="${SCID_WORKER_BACKEND:-local}"
+readonly PLUGINS="${SCID_PLUGINS:-}"
 readonly COMMAND_CONFIG="${SCID_TCAD_COMMAND_CONFIG:-}"
-readonly WEB_FETCH_ALLOW_FAKE_IP="${SCID_WEB_FETCH_ALLOW_FAKE_IP:-0}"
+readonly INSTALL_ROOT="${SCID_INSTALL_ROOT:-/opt/scidiscovery}"
+readonly STATE_ROOT="${SCID_STATE_ROOT:-/var/lib/scidiscovery}"
+readonly TCAD_STATE_ROOT_VALUE="${TCAD_STATE_ROOT:-/var/lib/scidiscovery-tcad}"
+readonly CONFIG_ROOT="${SCID_CONFIG_ROOT:-/etc/scidiscovery}"
+readonly BACKUP_ROOT="${SCID_BACKUP_ROOT:-/var/backups/scidiscovery}"
+readonly APPROVAL_PORT="${SCID_APPROVAL_PORT:-8765}"
+readonly CODEX_SKILL_ROOT="${SCID_CODEX_SKILL_ROOT:-}"
 readonly MODE="${1:-install}"
 
 die() {
@@ -48,8 +55,8 @@ printf '%s\n' \
     "Workspace: ${WORKSPACE}" \
     "Python: ${PYTHON}" \
     "Platform: ${PLATFORM}" \
+    "Worker backend: ${WORKER_BACKEND}" \
     "Plugins: ${PLUGINS}" \
-    "Web fetch Fake-IP: ${WEB_FETCH_ALLOW_FAKE_IP}" \
     "TCAD adapter: ${COMMAND_CONFIG:-local socket}"
 
 declare -a INSTALL_ENV=(
@@ -58,11 +65,20 @@ declare -a INSTALL_ENV=(
     "SCID_SERVICE_USER=${SERVICE_USER}"
     "SCID_SERVICE_GROUP=${SERVICE_GROUP}"
     "SCID_PLATFORM=${PLATFORM}"
+    "SCID_WORKER_BACKEND=${WORKER_BACKEND}"
     "SCID_PLUGINS=${PLUGINS}"
-    "SCID_WEB_FETCH_ALLOW_FAKE_IP=${WEB_FETCH_ALLOW_FAKE_IP}"
+    "SCID_INSTALL_ROOT=${INSTALL_ROOT}"
+    "SCID_STATE_ROOT=${STATE_ROOT}"
+    "TCAD_STATE_ROOT=${TCAD_STATE_ROOT_VALUE}"
+    "SCID_CONFIG_ROOT=${CONFIG_ROOT}"
+    "SCID_BACKUP_ROOT=${BACKUP_ROOT}"
+    "SCID_APPROVAL_PORT=${APPROVAL_PORT}"
 )
 if [[ -n "$COMMAND_CONFIG" ]]; then
     INSTALL_ENV+=("SCID_TCAD_COMMAND_CONFIG=${COMMAND_CONFIG}")
+fi
+if [[ -n "$CODEX_SKILL_ROOT" ]]; then
+    INSTALL_ENV+=("SCID_CODEX_SKILL_ROOT=${CODEX_SKILL_ROOT}")
 fi
 readonly -a INSTALL_ENV
 

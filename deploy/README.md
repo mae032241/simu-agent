@@ -5,7 +5,7 @@
 - `install.sh`: installs, verifies, reports, or removes the Linux/WSL services.
 - `reinstall.sh`: generic, transactional, maintained reinstall entrypoint.
 - `apply_ingaas_fig4_profile.sh`: supplies only the InGaAs/Fig.4 workspace,
-  plugin, and adapter defaults before delegating to `reinstall.sh`.
+  paper-figure and domain plugins, and adapter defaults before delegating to `reinstall.sh`.
 - `install_ssh_tcad_runner.sh`: installs the dependency-free runner through an
   existing SSH connection; it can also reuse the active transport for a full
   runner/config update or a current-schema code-only upgrade.

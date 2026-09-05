@@ -1,5 +1,12 @@
 # 科研论文曲线证据能力资格记录
 
+> 所有权迁移说明（2026-08-30）：本文件封存的是旧
+> `scientific-paper-evidence` 技能的历史资格数据，不是当前运行入口。R5-H H2b 已把曲线图
+> Schema、bundle validator 和确定性数字化/校验实现迁入 `curve_score`，提取/审查 Operation
+> 现由可选 `curve_figure_evidence` 插件通过同一注册入口提供；通用核心和默认 TCAD 安装均不再
+> 挂载论文图 Agent。下述冻结来源和结果未被重写，也不能
+> 自动证明迁移后实现通过资格，迁移后的生产路径以新的 Operation 回归与独立审查为准。
+
 ## 结论
 
 截至 2026-08-09，`scientific-paper-evidence` 已对论文原始 PDF 中的 Fig.7(a)、Fig.13、
@@ -61,8 +68,8 @@ identity/fidelity overlays 已逐图查看，生产 `FigureEvidenceManifest` val
 
 1. 普通 `line` 原先不支持只在部分横轴区间存在的真实曲线，排除的前导空白会被错误计入
    `max_gap_px`。现在 `pixel_range` 对 line、marker 和 fit segment 统一定义搜索与计量域。
-2. `worker_run_analysis` 原先没有把技能脚本挂入隔离环境。现在安装包中的脚本以只读方式出现在
-   `/tools/digitize_plot.py`，并有真实 sandbox 调用回归测试。
+2. 旧的通用 `worker_run_analysis` 已退出生产工具目录。图像证据提取由曲线证据插件声明专用能力；
+   Worker 通过操作规约获得所需的原生只读能力和领域工具，不再由核心注入一个任意代码执行工具。
 3. 分步分析原先会因尚未写齐必需附件而过早失败。分析阶段现在立即执行上限检查，最小数量只在
    validate/finalize 阶段执行。
 4. manifest 的 provenance 原先只做内部 schema 校验，没有与 sibling bytes 交叉核对。现在控制面

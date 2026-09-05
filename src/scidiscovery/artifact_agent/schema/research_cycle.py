@@ -100,6 +100,8 @@ class ScientificReview(SchemaModel):
         "problem_frame",
         "hypothesis_portfolio",
         "experiment_portfolio",
+        "domain_contract",
+        "observation",
         "realization",
         "diagnosis",
     ]
@@ -145,113 +147,8 @@ class ScientificReview(SchemaModel):
         return self
 
 
-ArtifactKind = Literal[
-    "scientific_intake",
-    "problem_frame",
-    "scientific_foundation",
-    "research_objective",
-    "objective_coverage",
-    "hypothesis_portfolio",
-    "scientific_review",
-    "evidence_audit",
-    "candidate_eligibility",
-    "experiment_design_intent",
-    "experiment_portfolio",
-    "tcad_project",
-    "deck_review",
-    "packaged_project",
-    "execution_result",
-    "runtime_attestation",
-    "control_equivalence_report",
-    "metric_report",
-    "validation_report",
-    "layered_diagnosis",
-    "knowledge_state",
-]
-ClaimEvaluability = Literal["not_evaluable", "evaluable", "accepted"]
-ExecutionReadiness = Literal["not_ready", "ready", "authorized", "completed"]
-ObjectiveReadiness = Literal["not_declared", "blocked", "evaluable", "satisfied"]
-
-
-class ScientificReadiness(SchemaModel):
-    """Scientific inventory and unresolved needs; deliberately not a workflow graph."""
-
-    current_contradiction: Annotated[str, Field(min_length=1, max_length=8192)]
-    available_artifacts: Annotated[
-        tuple[ArtifactKind, ...], Field(max_length=32)
-    ] = ()
-    unresolved_needs: Annotated[tuple[str, ...], Field(max_length=128)] = ()
-    blockers: Annotated[tuple[str, ...], Field(max_length=128)] = ()
-    claim_evaluability: ClaimEvaluability
-    execution_readiness: ExecutionReadiness
-    objective_status: ObjectiveReadiness = "not_declared"
-    mandatory_target_gaps: Annotated[
-        tuple[str, ...], Field(max_length=128)
-    ] = ()
-    suggested_capabilities: Annotated[
-        tuple[Identifier, ...], Field(max_length=32)
-    ] = ()
-    rationale: Annotated[str, Field(min_length=1, max_length=4096)]
-
-    @model_validator(mode="after")
-    def _inventory_is_unique_and_coherent(self) -> ScientificReadiness:
-        if len(self.available_artifacts) != len(set(self.available_artifacts)):
-            raise ValueError("available_artifacts must be unique")
-        if len(self.suggested_capabilities) != len(set(self.suggested_capabilities)):
-            raise ValueError("suggested_capabilities must be unique")
-        if self.objective_status == "blocked" and not self.mandatory_target_gaps:
-            raise ValueError("blocked objective requires a mandatory target gap")
-        if self.objective_status != "blocked" and self.mandatory_target_gaps:
-            raise ValueError("mandatory target gaps are valid only for a blocked objective")
-        if self.objective_status in {"evaluable", "satisfied"} and (
-            "research_objective" not in set(self.available_artifacts)
-        ):
-            raise ValueError("evaluable objective requires a research_objective")
-        if self.objective_status == "satisfied" and (
-            "objective_coverage" not in set(self.available_artifacts)
-        ):
-            raise ValueError("satisfied objective requires objective_coverage")
-        if self.claim_evaluability == "accepted" and not {
-            "validation_report",
-            "layered_diagnosis",
-        }.intersection(self.available_artifacts):
-            raise ValueError("accepted claim requires a qualified diagnosis report")
-        if self.execution_readiness == "completed" and "execution_result" not in set(
-            self.available_artifacts
-        ):
-            raise ValueError("completed execution requires an execution_result")
-        return self
-
-
-class ScientificObjectStatus(SchemaModel):
-    """One semantic scientific object without storage identity."""
-
-    semantic_name: Annotated[str, Field(min_length=1, max_length=256)]
-    kind: ArtifactKind
-    schema_id: Annotated[str, Field(min_length=1, max_length=512)]
-    revision: int = Field(ge=1)
-    qualification: Literal[
-        "qualified",
-        "human_review_required",
-        "revision_required",
-        "blocked",
-    ] = "qualified"
-
-
-class ScientificClosureStatus(SchemaModel):
-    """Read-only projection used by a scheduler to choose the next action."""
-
-    readiness: ScientificReadiness
-    objects: Annotated[tuple[ScientificObjectStatus, ...], Field(max_length=256)] = ()
-    available_actions: Annotated[tuple[Identifier, ...], Field(max_length=64)] = ()
-
-    @model_validator(mode="after")
-    def _actions_match_readiness(self) -> ScientificClosureStatus:
-        if len(self.available_actions) != len(set(self.available_actions)):
-            raise ValueError("available_actions must be unique")
-        if self.available_actions != self.readiness.suggested_capabilities:
-            raise ValueError("available_actions must match suggested_capabilities")
-        return self
+# Plugin-defined kinds remain stable identifiers rather than a core-owned enum.
+ArtifactKind = Identifier
 
 
 class ScientificIntake(SchemaModel):
@@ -299,16 +196,11 @@ def validate_scientific_intake(value: dict[str, object]) -> dict[str, object]:
 __all__ = [
     "ArtifactKind",
     "ClaimBoundary",
-    "ClaimEvaluability",
-    "ExecutionReadiness",
     "HypothesisReview",
     "ProblemFrame",
     "ResearchObservable",
     "ReviewStatus",
     "ReviewVerdict",
-    "ScientificReadiness",
-    "ScientificObjectStatus",
-    "ScientificClosureStatus",
     "ScientificReview",
     "ScientificIntake",
     "validate_problem_frame",

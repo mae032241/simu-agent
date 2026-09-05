@@ -37,7 +37,6 @@ _CONTROL_LABELS = {
     "proxy_id",
     "run_id",
     "session_id",
-    "task_id",
 }
 
 
@@ -101,7 +100,6 @@ class ActiveBundleEntry(SchemaModel):
     omitted_parent_refs: tuple[ActiveBundleContentRef, ...] = ()
     supersedes_key: Identifier | None = None
     omitted_supersedes_ref: ActiveBundleContentRef | None = None
-    task_context_omitted: bool = False
 
     @model_validator(mode="after")
     def _validate_entry(self) -> ActiveBundleEntry:
@@ -297,7 +295,6 @@ def export_active_research_bundle(
                         and envelope.supersedes_ref.artifact_id not in keys
                         else None
                     ),
-                    task_context_omitted=envelope.task_ref is not None,
                 )
             )
 

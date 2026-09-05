@@ -9,6 +9,7 @@ description = "Execution-only detached TCAD dispatcher"
 requires-python = ">=3.10"
 dependencies = [
   "scidiscovery>=0.1.0",
+  "scidiscovery-curve-score>=0.2.1",
 ]
 
 [project.scripts]
@@ -16,14 +17,8 @@ tcad-control-daemon = "tcad_artifact.execution_daemon:main"
 tcad-control-mcp = "tcad_artifact.execution_mcp:main"
 scidiscovery-tcad-transport = "tcad_artifact.ssh_transport:main"
 
-[project.entry-points."scidiscovery.agent_role_packs"]
-tcad_artifact = "tcad_artifact.role_pack:role_directory"
-
-[project.entry-points."scidiscovery.transform_adapters"]
-tcad_artifact = "tcad_artifact.transform_adapter:TCADProjectTransformAdapter"
-
-[project.entry-points."scidiscovery.operation_specs"]
-tcad_artifact = "tcad_artifact.operation_specs:SCIENTIFIC_OPERATION_SPECS"
+[project.entry-points."scidiscovery.plugins"]
+tcad_artifact = "tcad_artifact.plugin:PLUGIN"
 
 [tool.setuptools.packages.find]
 where = ["."]

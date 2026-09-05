@@ -3,10 +3,12 @@
 [简体中文](README.zh-CN.md) | English
 
 `tcad_control` is the execution adapter for prepared TCAD jobs. It exposes
-five operations: capability discovery, submit, status, cancel, and collect.
+six operations: capability discovery, authoritative submission lookup, submit,
+status, cancel, and collect. Submission is idempotent for an exact frozen
+descriptor; an unavailable lookup fails before any retry side effect.
 
 It owns only operational run directories and detached process state. Artifact
-identity, task identity, approval, execution identity, and result registration
+identity, Run identity, approval, execution identity, and result registration
 remain in SciDiscovery.
 
 The accepted payload is a canonical JSON `TCADJobSpec` containing a local
@@ -46,8 +48,13 @@ inside the simulator host.
 The plugin also supplies one TCAD deck author role for initial authoring and
 bounded revision, plus an independent code reviewer. Deterministic project
 comparison, exact review validation, reviewed packaging, runtime attestation,
-and legacy patch compatibility remain control-owned. These components do
-not distribute or replace Synopsys software or licensing.
+and control-equivalence checks remain control-owned. These components do not
+distribute or replace Synopsys software or licensing.
+
+Authors and reviewers obtain Run-local read-only input paths through the
+generic assignment materializer and inspect complete source with Codex native
+read-only tools. The plugin does not register a second TCAD input-read
+protocol; author debugging remains an exact Operation-registered capability.
 
 The new direct-solver author flow uses a solver-neutral declaration materializer.
 A worker writes the complete solver project plus explicit case anchors and raw

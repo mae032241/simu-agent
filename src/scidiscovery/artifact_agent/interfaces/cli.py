@@ -11,20 +11,11 @@ from pathlib import Path
 from typing import Any, Sequence
 
 from ..approval_ui import ApprovalUI
-from ..portable_bundle import (
-    export_active_research_bundle,
-    import_active_research_bundle,
-    load_active_bundle_selection,
-    verify_active_research_bundle,
-)
 from .mcp_root import RootToolFacade
 from ..runtime import open_runtime, read_secret_file
 from ..schema.approval import LocalIdentityRef
 from ..schema.common import canonical_json
 from ..service import (
-    CONFIRM_ORPHAN_CLEANUP,
-    InstanceAdministrationService,
-    OrphanAdministrationService,
     StateMaintenanceLock,
 )
 
@@ -35,7 +26,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--state-root", type=Path, default=Path(".scidiscovery-state")
     )
-    parser.add_argument("--task-secret-file", type=Path)
     parser.add_argument("--approval-secret-file", type=Path)
     parser.add_argument("--shared-group", action="store_true")
     parser.add_argument("--instance")
@@ -45,8 +35,11 @@ def build_parser() -> argparse.ArgumentParser:
     initialize.add_argument("platform", choices=("codex",))
     initialize.add_argument("--python", type=Path, default=Path(sys.executable))
     initialize.add_argument("--control-socket", type=Path, required=True)
-    initialize.add_argument("--worker-socket", type=Path, required=True)
+    initialize.add_argument(
+        "--worker-backend", choices=("local", "hardened"), default="local"
+    )
     initialize.add_argument("--dry-run", action="store_true")
+    initialize.add_argument("--plugin-config", action="append", default=[])
 
     ingest = commands.add_parser("ingest-file")
     ingest.add_argument("name")
@@ -83,14 +76,14 @@ def build_parser() -> argparse.ArgumentParser:
     bundle_import = commands.add_parser("active-bundle-import")
     bundle_import.add_argument("bundle", type=Path)
 
-    orphan_cleanup = commands.add_parser("state-orphans-cleanup")
-    orphan_cleanup.add_argument("--confirm")
-
     serve_ui = commands.add_parser("serve-approval-ui")
     serve_ui.add_argument("--host", default="127.0.0.1")
     serve_ui.add_argument("--port", type=int, default=0)
     serve_ui.add_argument("--identity-id", default="local_user")
     serve_ui.add_argument("--display-name", default="Local user")
+    serve_ui.add_argument(
+        "--worker-backend", choices=("local", "hardened"), default="local"
+    )
     return parser
 
 
@@ -109,14 +102,18 @@ def _run(args: argparse.Namespace) -> Any:
     state = args.state_root.expanduser().absolute()
     if args.command == "init":
         from scidiscovery.platforms import initialize_platform
+        from ..runtime_plugin_bindings import parse_plugin_config_assignments
 
         report = initialize_platform(
             args.platform,
             args.project_root,
             python_executable=args.python,
             control_socket=args.control_socket,
-            worker_socket=args.worker_socket,
-            worker_workspace_root=state / "workspaces",
+            state_root=state,
+            worker_backend=args.worker_backend,
+            runtime_plugin_configs=parse_plugin_config_assignments(
+                tuple(args.plugin_config)
+            ),
             dry_run=args.dry_run,
         )
         return {
@@ -125,6 +122,11 @@ def _run(args: argparse.Namespace) -> Any:
             "unchanged": [str(path) for path in report.unchanged],
         }
     if args.command == "active-bundle-export":
+        from ..portable_bundle import (
+            export_active_research_bundle,
+            load_active_bundle_selection,
+        )
+
         maintenance = StateMaintenanceLock(
             state / "maintenance.lock", shared_group=args.shared_group
         )
@@ -135,6 +137,8 @@ def _run(args: argparse.Namespace) -> Any:
                 output=args.output,
             )
     if args.command == "active-bundle-verify":
+        from ..portable_bundle import verify_active_research_bundle
+
         manifest = verify_active_research_bundle(args.bundle)
         return {
             "bundle_name": manifest.bundle_name,
@@ -146,19 +150,17 @@ def _run(args: argparse.Namespace) -> Any:
             "status": "verified",
         }
 
+    approval_secret = read_secret_file(
+        args.approval_secret_file or state / "secrets" / "approval-receipt.key",
+        label="approval receipt",
+    )
     runtime = open_runtime(
         project_root=args.project_root,
         state_root=state,
-        task_token_secret=read_secret_file(
-            args.task_secret_file or state / "secrets" / "task-token.key",
-            label="task token",
-        ),
-        approval_receipt_secret=read_secret_file(
-            args.approval_secret_file or state / "secrets" / "approval-receipt.key",
-            label="approval receipt",
-        ),
+        approval_receipt_secret=approval_secret,
         actor_id="admin_cli",
         shared_group=args.shared_group,
+        worker_backend=getattr(args, "worker_backend", "local"),
     )
     if args.command == "instance-create":
         with runtime.maintenance.shared():
@@ -183,13 +185,16 @@ def _run(args: argparse.Namespace) -> Any:
             return RootToolFacade(
                 runtime.artifacts,
                 runtime.intake,
-                tasks=runtime.tasks,
+                runs=runtime.runs,
                 approvals=runtime.approvals,
                 executions=runtime.executions,
                 bindings=runtime.scheduler_bindings,
                 instance=instance.instance_id,
+                operation_catalog=runtime.operation_catalog,
             ).instance_close()
     if args.command == "active-bundle-import":
+        from ..portable_bundle import import_active_research_bundle
+
         if args.instance is None:
             raise ValueError("--instance is required for active bundle import")
         with runtime.maintenance.shared():
@@ -198,34 +203,6 @@ def _run(args: argparse.Namespace) -> Any:
                 instance_name=args.instance,
                 bundle_path=args.bundle,
             )
-    if args.command == "state-orphans-cleanup":
-        assert runtime.approvals is not None
-        assert runtime.executions is not None
-        admin = _orphan_admin(runtime)
-        if args.confirm is None:
-            with runtime.maintenance.shared():
-                return _orphan_plan_value(admin.plan())
-        with runtime.maintenance.exclusive():
-            receipt = admin.delete(confirmation=args.confirm)
-        return {
-            "status": "deleted",
-            "confirmation": CONFIRM_ORPHAN_CLEANUP,
-            "deleted": {
-                "tasks": receipt.deleted_tasks,
-                "approvals": receipt.deleted_approvals,
-                "executions": receipt.deleted_executions,
-                "artifact_registrations": receipt.deleted_artifact_registrations,
-                "runtime_workspaces": receipt.deleted_workspaces,
-                "execution_exchange_directories": receipt.deleted_exchange_directories,
-                "executor_result_directories": receipt.deleted_executor_runs,
-                "submission_markers": receipt.deleted_submission_markers,
-            },
-            "verification": {
-                "database_integrity_ok": receipt.database_integrity_ok,
-                "artifact_integrity_ok": receipt.artifact_integrity_ok,
-                "remaining_cas_orphans": receipt.remaining_cas_orphans,
-            },
-        }
     if args.command in {"ingest-file", "artifact-catalog", "approval-status"}:
         if args.instance is None:
             raise ValueError("--instance is required for instance-scoped commands")
@@ -234,11 +211,12 @@ def _run(args: argparse.Namespace) -> Any:
             facade = RootToolFacade(
                 runtime.artifacts,
                 runtime.intake,
-                tasks=runtime.tasks,
+                runs=runtime.runs,
                 approvals=runtime.approvals,
                 executions=runtime.executions,
                 bindings=runtime.scheduler_bindings,
                 instance=instance.instance_id,
+                operation_catalog=runtime.operation_catalog,
             )
             if args.command == "ingest-file":
                 return facade.artifact_ingest_file(
@@ -257,14 +235,7 @@ def _run(args: argparse.Namespace) -> Any:
             host=args.host,
             port=args.port,
             bindings=runtime.scheduler_bindings,
-            instance_admin=InstanceAdministrationService(
-                artifacts=runtime.artifacts,
-                approvals=runtime.approvals,
-                bindings=runtime.scheduler_bindings,
-                tasks=runtime.tasks,
-                executions=runtime.executions,
-            ),
-            orphan_admin=_orphan_admin(runtime),
+            instance_management_secret=approval_secret,
             maintenance=runtime.maintenance,
             local_identity=LocalIdentityRef(
                 identity_id=args.identity_id,
@@ -294,40 +265,6 @@ def _instance_value(value: Any) -> dict[str, Any]:
         "state": value.state,
         "created_at": value.created_at,
         "closed_at": value.closed_at,
-    }
-
-
-def _orphan_admin(runtime: Any) -> OrphanAdministrationService:
-    return OrphanAdministrationService(
-        artifacts=runtime.artifacts,
-        approvals=runtime.approvals,
-        bindings=runtime.scheduler_bindings,
-        tasks=runtime.tasks,
-        executions=runtime.executions,
-        executor_result_root=runtime.state_root / "executor-results",
-    )
-
-
-def _orphan_plan_value(value: Any) -> dict[str, Any]:
-    return {
-        "status": "preview",
-        "confirmation_required": CONFIRM_ORPHAN_CLEANUP,
-        "delete": {
-            "tasks": len(value.orphan_task_ids),
-            "approvals": len(value.orphan_approval_ids),
-            "executions": len(value.orphan_execution_ids),
-            "artifact_registrations": len(value.artifact_refs),
-            "runtime_workspaces": len(value.stale_workspace_names),
-            "execution_exchange_directories": len(value.stale_exchange_names),
-            "executor_result_directories": len(value.stale_executor_run_names),
-            "submission_markers": len(value.stale_submission_names),
-        },
-        "blockers": list(value.blockers),
-        "preserves": [
-            "research instances and instance-bound control objects",
-            "project workspace",
-            "database files and runtime lock files",
-        ],
     }
 
 

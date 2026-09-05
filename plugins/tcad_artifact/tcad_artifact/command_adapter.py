@@ -173,6 +173,18 @@ class CommandTCADExecutorAdapter:
         value = self._call("submit", {"submission": _without_schema(submission)})
         return str(value["run_id"]), str(value["state"])
 
+    def lookup_submission(
+        self, submission: LocalFileDescriptor
+    ) -> tuple[str, str] | None:
+        value = self._call(
+            "lookup_submission", {"submission": _without_schema(submission)}
+        )
+        if value.get("found") is False:
+            return None
+        if value.get("found") is not True:
+            raise RuntimeError("TCAD transport lookup returned no authority")
+        return str(value["run_id"]), str(value["state"])
+
     def status(self, external_run_id: str) -> str:
         value = self._call("status", {"run_id": external_run_id})
         return str(value["state"])

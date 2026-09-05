@@ -7,7 +7,7 @@ from typing import Annotated, Literal
 from pydantic import Field, model_validator
 
 from .common import Identifier, SchemaModel, canonical_json
-from .scientific_objective import ResearchObjectiveContract
+from .research_objective import ResearchObjectiveContract
 
 
 ScalarValue = str | int | float | bool

@@ -266,7 +266,7 @@ def evaluate_control_equivalence(
                 classification = "expected_change"
                 status = "pass"
                 rationale = (
-                    "The exact passing deck review satisfies the reviewed equivalence "
+                    "The exact accepted independent review satisfies the reviewed equivalence "
                     "rule and the realized path and unit match the contract."
                     if reviewed_match
                     else "The intended variable change matches the contract."
@@ -275,7 +275,7 @@ def evaluate_control_equivalence(
                 classification = "verified_invariant"
                 status = "pass"
                 rationale = (
-                    "The exact passing deck review satisfies the reviewed equivalence "
+                    "The exact accepted independent review satisfies the reviewed equivalence "
                     "rule and the realized path and unit match the contract."
                     if reviewed_match
                     else "The declared invariant is identical and matches the contract."
@@ -284,7 +284,7 @@ def evaluate_control_equivalence(
                 classification = "permitted_difference"
                 status = "pass"
                 rationale = (
-                    "The exact passing deck review satisfies the reviewed equivalence "
+                    "The exact accepted independent review satisfies the reviewed equivalence "
                     "rule and the realized path and unit match the contract."
                     if reviewed_match
                     else "The declared permitted difference matches the contract."

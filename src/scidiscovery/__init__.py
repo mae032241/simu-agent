@@ -1,6 +1,7 @@
-"""Portable scientific orchestration control plane."""
+"""SciDiscovery package.
 
-from .artifact_agent import *
-from .artifact_agent import __all__ as _artifact_exports
+Import concrete services and schemas from their owning modules.  The package
+root deliberately performs no eager discovery or compatibility re-export.
+"""
 
-__all__ = [*_artifact_exports]
+__all__: tuple[str, ...] = ()

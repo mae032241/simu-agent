@@ -5,15 +5,17 @@ from __future__ import annotations
 import re
 import sqlite3
 import uuid
-import json
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+
+from ..schema.refs import ArtifactRef
 
 
 _NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,255}$")
 _FINGERPRINT = re.compile(r"^[0-9a-f]{64}$")
-_NAMESPACES = {"artifact", "task", "approval", "execution"}
+_NAMESPACES = {"artifact", "run", "approval", "execution"}
+_EXPECTED_REF_UNSET = object()
 
 
 class SchedulerBindingError(RuntimeError):
@@ -52,44 +54,6 @@ class SchedulerInstance:
 
 
 @dataclass(frozen=True)
-class SchedulerInstanceProposal:
-    proposal_id: str
-    name: str
-    title: str
-    objective: str
-    approval_id: str
-    session_key: str
-    state: str
-    selected_option: str | None
-    instance_id: str | None
-    application_state: str
-    application_error: str | None
-    created_at: str
-    resolved_at: str | None
-
-
-@dataclass(frozen=True)
-class SchedulerSessionBindingRequest:
-    request_id: str
-    approval_id: str
-    session_key: str
-    state: str
-    selected_option: str | None
-    instance_id: str | None
-    application_state: str
-    application_error: str | None
-    created_at: str
-    resolved_at: str | None
-
-
-@dataclass(frozen=True)
-class SchedulerSessionBindingCandidate:
-    option_id: str
-    instance: SchedulerInstance
-    position: int
-
-
-@dataclass(frozen=True)
 class SchedulerBinding:
     namespace: str
     name: str
@@ -113,22 +77,8 @@ class SchedulerStateChange:
 class SchedulerScientificSelection:
     kind: str
     logical_name: str
+    artifact_ref: ArtifactRef | None
     selected_at: str
-
-
-@dataclass(frozen=True)
-class SchedulerInstanceDeletion:
-    instance_id: str
-    instance_name: str
-    fingerprint: str
-    state: str
-    stage: str
-    owned_ref_json: tuple[str, ...]
-    receipt_json: str | None
-    error: str | None
-    started_at: str
-    updated_at: str
-    completed_at: str | None
 
 
 class SchedulerBindingService:
@@ -145,54 +95,69 @@ class SchedulerBindingService:
         self._validate_name(name, label="research instance name")
         _bounded_text(title, label="research instance title", maximum=512)
         _bounded_text(objective, label="research instance objective", maximum=8192)
-        created_at = _timestamp()
-        instance_id = f"ins_{uuid.uuid4().hex}"
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
-            deleted = connection.execute(
-                """
-                SELECT state FROM scheduler_instance_deletions
-                WHERE instance_name = ?
-                """,
-                (name,),
-            ).fetchone()
-            if deleted is not None:
-                raise SchedulerInstanceConflict(
-                    f"research instance name is reserved by deletion history: {name}"
-                )
+            value = self._create_instance_in_connection(
+                connection, name=name, title=title, objective=objective
+            )
+            connection.execute("COMMIT")
+        return value
+
+    def create_instance_and_bind_session(
+        self,
+        *,
+        session_key: str,
+        name: str,
+        title: str,
+        objective: str,
+    ) -> SchedulerInstance:
+        """Atomically create one active instance and bind the exact UI session."""
+
+        self._validate_session_key(session_key)
+        self._validate_name(name, label="research instance name")
+        _bounded_text(title, label="research instance title", maximum=512)
+        _bounded_text(objective, label="research instance objective", maximum=8192)
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            value = self._create_instance_in_connection(
+                connection, name=name, title=title, objective=objective
+            )
+            self._bind_session_in_connection(
+                connection,
+                session_key=session_key,
+                instance_id=value.instance_id,
+            )
+            connection.execute("COMMIT")
+        return value
+
+    def bind_session_by_name(
+        self, *, session_key: str, name: str
+    ) -> SchedulerInstance:
+        """Atomically bind the exact UI session to one named active instance."""
+
+        self._validate_session_key(session_key)
+        self._validate_name(name, label="research instance name")
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
             row = connection.execute(
                 "SELECT * FROM scheduler_instances WHERE name = ?", (name,)
             ).fetchone()
-            if row is not None:
-                existing = _instance(row)
-                if existing.title != title or existing.objective != objective:
-                    raise SchedulerInstanceConflict(
-                        f"research instance already exists with different metadata: {name}"
-                    )
-                if existing.state != "active":
-                    raise SchedulerInstanceClosed(
-                        f"research instance is closed: {name}"
-                    )
-                connection.execute("ROLLBACK")
-                return existing
-            connection.execute(
-                """
-                INSERT INTO scheduler_instances (
-                    instance_id, name, title, objective, state, created_at, closed_at
-                ) VALUES (?, ?, ?, ?, 'active', ?, NULL)
-                """,
-                (instance_id, name, title, objective, created_at),
+            if row is None:
+                raise SchedulerInstanceNotFound(
+                    f"unknown research instance: {name}"
+                )
+            value = _instance(row)
+            if value.state != "active":
+                raise SchedulerInstanceClosed(
+                    f"research instance is closed: {name}"
+                )
+            self._bind_session_in_connection(
+                connection,
+                session_key=session_key,
+                instance_id=value.instance_id,
             )
             connection.execute("COMMIT")
-        return SchedulerInstance(
-            instance_id=instance_id,
-            name=name,
-            title=title,
-            objective=objective,
-            state="active",
-            created_at=created_at,
-            closed_at=None,
-        )
+        return value
 
     def select_instance(self, *, name: str) -> SchedulerInstance:
         self._validate_name(name, label="research instance name")
@@ -203,7 +168,7 @@ class SchedulerBindingService:
         if row is None:
             raise SchedulerInstanceNotFound(f"unknown research instance: {name}")
         value = _instance(row)
-        if value.state != "active" or self.instance_deletion(instance_id=value.instance_id):
+        if value.state != "active":
             raise SchedulerInstanceClosed(f"research instance is closed: {name}")
         return value
 
@@ -217,14 +182,10 @@ class SchedulerBindingService:
             ).fetchone()
         if row is None:
             raise SchedulerInstanceNotFound("unknown research instance")
-        value = _instance(row)
-        deletion = self.instance_deletion(instance_id=value.instance_id)
-        if deletion is not None and deletion.state != "deleted":
-            return replace(value, state="deleting")
-        return value
+        return _instance(row)
 
     def list_instances(self, *, state: str | None = None) -> tuple[SchedulerInstance, ...]:
-        if state not in {None, "active", "closed", "deleting"}:
+        if state not in {None, "active", "closed"}:
             raise ValueError("research instance state is invalid")
         query = "SELECT * FROM scheduler_instances"
         parameters: tuple[str, ...] = ()
@@ -238,185 +199,6 @@ class SchedulerBindingService:
             self.get_instance(instance_id=str(row["instance_id"])) for row in rows
         )
         return tuple(value for value in values if state is None or value.state == state)
-
-    def prepare_instance_proposal(
-        self,
-        *,
-        name: str,
-        title: str,
-        objective: str,
-        session_key: str,
-    ) -> SchedulerInstanceProposal:
-        """Freeze an instance proposal without creating the instance."""
-
-        self._validate_name(name, label="research instance name")
-        _bounded_text(title, label="research instance title", maximum=512)
-        _bounded_text(objective, label="research instance objective", maximum=8192)
-        if not isinstance(session_key, str) or not session_key:
-            raise ValueError("scheduler session key is invalid")
-        with self._connect() as connection:
-            connection.execute("BEGIN IMMEDIATE")
-            instance = connection.execute(
-                "SELECT state FROM scheduler_instances WHERE name = ?", (name,)
-            ).fetchone()
-            if instance is not None:
-                raise SchedulerInstanceConflict(
-                    f"research instance already exists; select it explicitly: {name}"
-                )
-            row = connection.execute(
-                """
-                SELECT * FROM scheduler_instance_proposals
-                WHERE name = ?
-                ORDER BY created_at DESC
-                LIMIT 1
-                """,
-                (name,),
-            ).fetchone()
-            if row is not None and row["state"] == "pending":
-                existing = _instance_proposal(row)
-                if existing.title != title or existing.objective != objective:
-                    raise SchedulerInstanceConflict(
-                        f"research instance proposal is pending with different metadata: {name}"
-                    )
-                connection.execute("ROLLBACK")
-                return existing
-            proposal_id = f"ipr_{uuid.uuid4().hex}"
-            approval_id = f"apr_{uuid.uuid4().hex}"
-            created_at = _timestamp()
-            connection.execute(
-                """
-                INSERT INTO scheduler_instance_proposals (
-                    proposal_id, name, title, objective, approval_id, session_key,
-                    state, selected_option, instance_id, created_at, resolved_at
-                ) VALUES (?, ?, ?, ?, ?, ?, 'pending', NULL, NULL, ?, NULL)
-                """,
-                (
-                    proposal_id,
-                    name,
-                    title,
-                    objective,
-                    approval_id,
-                    session_key,
-                    created_at,
-                ),
-            )
-            connection.execute("COMMIT")
-        return SchedulerInstanceProposal(
-            proposal_id=proposal_id,
-            name=name,
-            title=title,
-            objective=objective,
-            approval_id=approval_id,
-            session_key=session_key,
-            state="pending",
-            selected_option=None,
-            instance_id=None,
-            application_state="pending",
-            application_error=None,
-            created_at=created_at,
-            resolved_at=None,
-        )
-
-    def get_instance_proposal(self, *, name: str) -> SchedulerInstanceProposal:
-        self._validate_name(name, label="research instance name")
-        with self._connect() as connection:
-            row = connection.execute(
-                """
-                SELECT * FROM scheduler_instance_proposals
-                WHERE name = ?
-                ORDER BY created_at DESC
-                LIMIT 1
-                """,
-                (name,),
-            ).fetchone()
-        if row is None:
-            raise SchedulerInstanceNotFound(
-                f"unknown research instance proposal: {name}"
-            )
-        return _instance_proposal(row)
-
-    def find_instance_proposal_by_approval(
-        self, *, approval_id: str
-    ) -> SchedulerInstanceProposal | None:
-        if not isinstance(approval_id, str) or not approval_id:
-            raise ValueError("approval identity is invalid")
-        with self._connect() as connection:
-            row = connection.execute(
-                "SELECT * FROM scheduler_instance_proposals WHERE approval_id = ?",
-                (approval_id,),
-            ).fetchone()
-        return _instance_proposal(row) if row is not None else None
-
-    def apply_instance_proposal_decision(
-        self, *, approval_id: str, selected_option: str
-    ) -> SchedulerInstanceProposal | None:
-        """Apply one already-validated local UI decision idempotently."""
-
-        proposal = self.find_instance_proposal_by_approval(approval_id=approval_id)
-        if proposal is None:
-            return None
-        if proposal.state != "pending":
-            if proposal.selected_option != selected_option:
-                raise SchedulerInstanceConflict(
-                    "research instance proposal already has a different decision"
-                )
-            return proposal
-        if selected_option == "create_instance":
-            instance = self.create_instance(
-                name=proposal.name,
-                title=proposal.title,
-                objective=proposal.objective,
-            )
-            self.bind_session(
-                session_key=proposal.session_key,
-                instance_id=instance.instance_id,
-            )
-            state = "activated"
-            instance_id = instance.instance_id
-        elif selected_option == "revise_instance":
-            state = "revision_requested"
-            instance_id = None
-        elif selected_option == "cancel_instance":
-            state = "cancelled"
-            instance_id = None
-        else:
-            raise SchedulerInstanceConflict(
-                "approval option is not valid for an instance proposal"
-            )
-        resolved_at = _timestamp()
-        with self._connect() as connection:
-            connection.execute("BEGIN IMMEDIATE")
-            row = connection.execute(
-                "SELECT * FROM scheduler_instance_proposals WHERE proposal_id = ?",
-                (proposal.proposal_id,),
-            ).fetchone()
-            if row is None:
-                raise SchedulerInstanceNotFound("research instance proposal disappeared")
-            if row["state"] != "pending":
-                current = _instance_proposal(row)
-                if current.selected_option != selected_option:
-                    raise SchedulerInstanceConflict(
-                        "research instance proposal decision raced with another decision"
-                    )
-                connection.execute("ROLLBACK")
-                return current
-            connection.execute(
-                """
-                UPDATE scheduler_instance_proposals
-                SET state = ?, selected_option = ?, instance_id = ?, resolved_at = ?,
-                    application_state = 'applied', application_error = NULL
-                WHERE proposal_id = ?
-                """,
-                (
-                    state,
-                    selected_option,
-                    instance_id,
-                    resolved_at,
-                    proposal.proposal_id,
-                ),
-            )
-            connection.execute("COMMIT")
-        return self.get_instance_proposal(name=proposal.name)
 
     def close_instance(self, *, instance_id: str) -> SchedulerInstance:
         closed_at = _timestamp()
@@ -448,15 +230,14 @@ class SchedulerBindingService:
 
     def require_active_instance(self, *, instance_id: str) -> SchedulerInstance:
         value = self.get_instance(instance_id=instance_id)
-        if value.state != "active" or self.instance_deletion(instance_id=instance_id):
+        if value.state != "active":
             raise SchedulerInstanceClosed(
-                f"research instance is closed or being deleted: {value.name}"
+                f"research instance is closed: {value.name}"
             )
         return value
 
     def bind_session(self, *, session_key: str, instance_id: str) -> None:
-        if not isinstance(session_key, str) or not session_key:
-            raise ValueError("scheduler session binding is invalid")
+        self._validate_session_key(session_key)
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             self._bind_session_in_connection(
@@ -465,8 +246,7 @@ class SchedulerBindingService:
             connection.execute("COMMIT")
 
     def session_instance(self, *, session_key: str) -> str | None:
-        if not isinstance(session_key, str) or not session_key:
-            raise ValueError("scheduler session binding is invalid")
+        self._validate_session_key(session_key)
         with self._connect() as connection:
             row = connection.execute(
                 """
@@ -474,306 +254,52 @@ class SchedulerBindingService:
                 FROM scheduler_sessions AS session
                 JOIN scheduler_instances AS instance
                   ON instance.instance_id = session.instance_id
-                LEFT JOIN scheduler_instance_deletions AS deletion
-                  ON deletion.instance_id = session.instance_id
                 WHERE session.session_key = ? AND instance.state = 'active'
-                  AND deletion.instance_id IS NULL
                 """,
                 (session_key,),
             ).fetchone()
         return str(row["instance_id"]) if row is not None else None
 
-    def clear_session(self, *, session_key: str) -> None:
-        if not isinstance(session_key, str) or not session_key:
-            raise ValueError("scheduler session binding is invalid")
-        with self._connect() as connection:
-            connection.execute(
-                "DELETE FROM scheduler_sessions WHERE session_key = ?",
-                (session_key,),
-            )
-
-    def prepare_session_binding_request(
-        self, *, session_key: str, preferred_name: str | None = None
-    ) -> tuple[
-        SchedulerSessionBindingRequest,
-        tuple[SchedulerSessionBindingCandidate, ...],
-    ]:
-        """Freeze one local-review request for an unbound scheduler session."""
-
-        if not isinstance(session_key, str) or not session_key:
-            raise ValueError("scheduler session binding is invalid")
-        if preferred_name is not None:
-            self._validate_name(preferred_name, label="research instance name")
-        with self._connect() as connection:
-            connection.execute("BEGIN IMMEDIATE")
-            row = connection.execute(
-                """
-                SELECT * FROM scheduler_session_binding_requests
-                WHERE session_key = ? AND state = 'pending'
-                ORDER BY created_at DESC
-                LIMIT 1
-                """,
-                (session_key,),
-            ).fetchone()
-            if row is not None:
-                request = _session_binding_request(row)
-                candidates = self._session_binding_candidates(
-                    connection, request_id=request.request_id
-                )
-                if preferred_name is not None and (
-                    len(candidates) != 1
-                    or candidates[0].instance.name != preferred_name
-                ):
-                    raise SchedulerInstanceConflict(
-                        "a broader or different session-binding review is already pending"
-                    )
-                connection.execute("COMMIT")
-                return request, candidates
-
-            query = """
-                SELECT instance.* FROM scheduler_instances AS instance
-                LEFT JOIN scheduler_instance_deletions AS deletion
-                  ON deletion.instance_id = instance.instance_id
-                WHERE instance.state = 'active' AND deletion.instance_id IS NULL
-            """
-            parameters: tuple[str, ...] = ()
-            if preferred_name is not None:
-                query += " AND name = ?"
-                parameters = (preferred_name,)
-            query += " ORDER BY created_at DESC, name"
-            rows = connection.execute(query, parameters).fetchall()
-            if not rows:
-                connection.execute("ROLLBACK")
-                if preferred_name is not None:
-                    raise SchedulerInstanceNotFound(
-                        f"unknown active research instance: {preferred_name}"
-                    )
-                raise SchedulerInstanceNotFound(
-                    "no active research instance exists; prepare a new instance first"
-                )
-            if len(rows) > 31:
-                connection.execute("ROLLBACK")
+    @staticmethod
+    def _create_instance_in_connection(
+        connection: sqlite3.Connection,
+        *,
+        name: str,
+        title: str,
+        objective: str,
+    ) -> SchedulerInstance:
+        row = connection.execute(
+            "SELECT * FROM scheduler_instances WHERE name = ?", (name,)
+        ).fetchone()
+        if row is not None:
+            existing = _instance(row)
+            if existing.title != title or existing.objective != objective:
                 raise SchedulerInstanceConflict(
-                    "too many active research instances for one bounded review"
+                    f"research instance already exists with different metadata: {name}"
                 )
-
-            request_id = f"sbr_{uuid.uuid4().hex}"
-            approval_id = f"apr_{uuid.uuid4().hex}"
-            created_at = _timestamp()
-            connection.execute(
-                """
-                INSERT INTO scheduler_session_binding_requests (
-                    request_id, approval_id, session_key, state, selected_option,
-                    instance_id, created_at, resolved_at
-                ) VALUES (?, ?, ?, 'pending', NULL, NULL, ?, NULL)
-                """,
-                (request_id, approval_id, session_key, created_at),
-            )
-            for position, candidate_row in enumerate(rows, start=1):
-                connection.execute(
-                    """
-                    INSERT INTO scheduler_session_binding_candidates (
-                        request_id, option_id, instance_id, position
-                    ) VALUES (?, ?, ?, ?)
-                    """,
-                    (
-                        request_id,
-                        f"bind_instance_{position:02d}",
-                        str(candidate_row["instance_id"]),
-                        position,
-                    ),
+            if existing.state != "active":
+                raise SchedulerInstanceClosed(
+                    f"research instance is closed: {name}"
                 )
-            request_row = connection.execute(
-                "SELECT * FROM scheduler_session_binding_requests WHERE request_id = ?",
-                (request_id,),
-            ).fetchone()
-            candidates = self._session_binding_candidates(
-                connection, request_id=request_id
-            )
-            connection.execute("COMMIT")
-        if request_row is None:
-            raise SchedulerInstanceNotFound("session-binding request disappeared")
-        return _session_binding_request(request_row), candidates
-
-    def find_session_binding_request_by_approval(
-        self, *, approval_id: str
-    ) -> SchedulerSessionBindingRequest | None:
-        if not isinstance(approval_id, str) or not approval_id:
-            raise ValueError("approval identity is invalid")
-        with self._connect() as connection:
-            row = connection.execute(
-                "SELECT * FROM scheduler_session_binding_requests WHERE approval_id = ?",
-                (approval_id,),
-            ).fetchone()
-        return _session_binding_request(row) if row is not None else None
-
-    def session_binding_candidates(
-        self, *, request_id: str
-    ) -> tuple[SchedulerSessionBindingCandidate, ...]:
-        if not isinstance(request_id, str) or not request_id:
-            raise ValueError("session-binding request identity is invalid")
-        with self._connect() as connection:
-            return self._session_binding_candidates(
-                connection, request_id=request_id
-            )
-
-    def apply_session_binding_decision(
-        self, *, approval_id: str, selected_option: str
-    ) -> SchedulerSessionBindingRequest | None:
-        """Apply a UI-validated binding decision and revoke the old owner."""
-
-        request = self.find_session_binding_request_by_approval(
-            approval_id=approval_id
-        )
-        if request is None:
-            return None
-        if request.state != "pending":
-            if request.selected_option != selected_option:
-                raise SchedulerInstanceConflict(
-                    "session-binding request already has a different decision"
-                )
-            return request
-        with self._connect() as connection:
-            connection.execute("BEGIN IMMEDIATE")
-            row = connection.execute(
-                "SELECT * FROM scheduler_session_binding_requests WHERE request_id = ?",
-                (request.request_id,),
-            ).fetchone()
-            if row is None:
-                raise SchedulerInstanceNotFound("session-binding request disappeared")
-            current = _session_binding_request(row)
-            if current.state != "pending":
-                if current.selected_option != selected_option:
-                    raise SchedulerInstanceConflict(
-                        "session-binding decision raced with another decision"
-                    )
-                connection.execute("ROLLBACK")
-                return current
-            if selected_option == "cancel_binding":
-                state = "cancelled"
-                instance_id = None
-            else:
-                candidate = connection.execute(
-                    """
-                    SELECT instance_id FROM scheduler_session_binding_candidates
-                    WHERE request_id = ? AND option_id = ?
-                    """,
-                    (request.request_id, selected_option),
-                ).fetchone()
-                if candidate is None:
-                    raise SchedulerInstanceConflict(
-                        "approval option is not valid for this session-binding request"
-                    )
-                instance_id = str(candidate["instance_id"])
-                self._bind_session_in_connection(
-                    connection,
-                    session_key=request.session_key,
-                    instance_id=instance_id,
-                )
-                state = "activated"
-            resolved_at = _timestamp()
-            connection.execute(
-                """
-                UPDATE scheduler_session_binding_requests
-                SET state = ?, selected_option = ?, instance_id = ?, resolved_at = ?,
-                    application_state = 'applied', application_error = NULL
-                WHERE request_id = ?
-                """,
-                (
-                    state,
-                    selected_option,
-                    instance_id,
-                    resolved_at,
-                    request.request_id,
-                ),
-            )
-            updated = connection.execute(
-                "SELECT * FROM scheduler_session_binding_requests WHERE request_id = ?",
-                (request.request_id,),
-            ).fetchone()
-            connection.execute("COMMIT")
-        if updated is None:
-            raise SchedulerInstanceNotFound("session-binding request disappeared")
-        return _session_binding_request(updated)
-
-    def record_decision_application_failure(
-        self, *, approval_id: str, error: str
-    ) -> None:
-        """Persist a visible failure after an immutable HumanDecision was stored."""
-
-        if not isinstance(approval_id, str) or not approval_id:
-            raise ValueError("approval identity is invalid")
-        detail = error.strip()
-        if not detail:
-            raise ValueError("decision application failure is empty")
-        detail = detail[:2048]
-        with self._connect() as connection:
-            connection.execute("BEGIN IMMEDIATE")
-            for table in (
-                "scheduler_instance_proposals",
-                "scheduler_session_binding_requests",
-            ):
-                connection.execute(
-                    f"""
-                    UPDATE {table}
-                    SET application_state = 'failed', application_error = ?
-                    WHERE approval_id = ? AND state = 'pending'
-                    """,
-                    (detail, approval_id),
-                )
-            connection.execute("COMMIT")
-
-    def decision_application_failures(self) -> tuple[tuple[str, str, str], ...]:
-        """Return bounded global failures for the loopback recovery dashboard."""
-
-        with self._connect() as connection:
-            proposal_rows = connection.execute(
-                """
-                SELECT approval_id, application_error
-                FROM scheduler_instance_proposals
-                WHERE application_state = 'failed'
-                ORDER BY created_at DESC LIMIT 100
-                """
-            ).fetchall()
-            binding_rows = connection.execute(
-                """
-                SELECT approval_id, application_error
-                FROM scheduler_session_binding_requests
-                WHERE application_state = 'failed'
-                ORDER BY created_at DESC LIMIT 100
-                """
-            ).fetchall()
-        values = [
-            (str(row["approval_id"]), object_type, str(row["application_error"]))
-            for object_type, rows in (
-                ("instance_proposal", proposal_rows),
-                ("session_binding", binding_rows),
-            )
-            for row in rows
-            if row["application_error"] is not None
-        ]
-        return tuple(values[:100])
-
-    def _session_binding_candidates(
-        self, connection: sqlite3.Connection, *, request_id: str
-    ) -> tuple[SchedulerSessionBindingCandidate, ...]:
-        rows = connection.execute(
+            return existing
+        created_at = _timestamp()
+        instance_id = f"ins_{uuid.uuid4().hex}"
+        connection.execute(
             """
-            SELECT c.option_id, c.position, i.*
-            FROM scheduler_session_binding_candidates AS c
-            JOIN scheduler_instances AS i ON i.instance_id = c.instance_id
-            WHERE c.request_id = ?
-            ORDER BY c.position
+            INSERT INTO scheduler_instances (
+                instance_id, name, title, objective, state, created_at, closed_at
+            ) VALUES (?, ?, ?, ?, 'active', ?, NULL)
             """,
-            (request_id,),
-        ).fetchall()
-        return tuple(
-            SchedulerSessionBindingCandidate(
-                option_id=str(row["option_id"]),
-                instance=_instance(row),
-                position=int(row["position"]),
-            )
-            for row in rows
+            (instance_id, name, title, objective, created_at),
+        )
+        return SchedulerInstance(
+            instance_id=instance_id,
+            name=name,
+            title=title,
+            objective=objective,
+            state="active",
+            created_at=created_at,
+            closed_at=None,
         )
 
     @staticmethod
@@ -782,18 +308,16 @@ class SchedulerBindingService:
     ) -> None:
         row = connection.execute(
             """
-            SELECT instance.state, deletion.instance_id AS deletion_id
+            SELECT instance.state
             FROM scheduler_instances AS instance
-            LEFT JOIN scheduler_instance_deletions AS deletion
-              ON deletion.instance_id = instance.instance_id
             WHERE instance.instance_id = ?
             """,
             (instance_id,),
         ).fetchone()
         if row is None:
             raise SchedulerInstanceNotFound("unknown research instance")
-        if row["state"] != "active" or row["deletion_id"] is not None:
-            raise SchedulerInstanceClosed("research instance is closed or being deleted")
+        if row["state"] != "active":
+            raise SchedulerInstanceClosed("research instance is closed")
         connection.execute(
             "DELETE FROM scheduler_sessions WHERE instance_id = ? AND session_key <> ?",
             (instance_id, session_key),
@@ -809,6 +333,11 @@ class SchedulerBindingService:
             (session_key, instance_id, _timestamp()),
         )
 
+    @staticmethod
+    def _validate_session_key(session_key: str) -> None:
+        if not isinstance(session_key, str) or not 1 <= len(session_key) <= 256:
+            raise ValueError("scheduler session binding is invalid")
+
     def bind(
         self,
         *,
@@ -820,6 +349,42 @@ class SchedulerBindingService:
         revision: int = 1,
         request_fingerprint: str | None = None,
     ) -> SchedulerBinding:
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            value = self.bind_in_connection(
+                connection,
+                instance=instance,
+                namespace=namespace,
+                name=name,
+                object_id=object_id,
+                logical_name=logical_name,
+                revision=revision,
+                request_fingerprint=request_fingerprint,
+            )
+            connection.execute("COMMIT")
+        return value
+
+    def bind_in_connection(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        instance: str,
+        namespace: str,
+        name: str,
+        object_id: str,
+        logical_name: str | None = None,
+        revision: int = 1,
+        request_fingerprint: str | None = None,
+        attached: bool = False,
+    ) -> SchedulerBinding:
+        """Bind through an existing control transaction.
+
+        `attached=True` is reserved for Run completion, where the scheduler
+        database is attached as ``scheduler_control``.  This keeps binding
+        validation and idempotency in one authority without opening a nested
+        transaction.
+        """
+
         logical = logical_name or name
         self._validate_binding(
             instance,
@@ -830,54 +395,45 @@ class SchedulerBindingService:
             object_id,
             request_fingerprint,
         )
+        prefix = "scheduler_control." if attached else ""
+        row = connection.execute(
+            f"""
+            SELECT * FROM {prefix}scheduler_bindings
+            WHERE instance = ? AND namespace = ? AND name = ?
+            """,
+            (instance, namespace, name),
+        ).fetchone()
+        if row is not None:
+            existing = _binding(row)
+            if (
+                existing.object_id != object_id
+                or existing.logical_name != logical
+                or existing.revision != revision
+                or existing.request_fingerprint != request_fingerprint
+            ):
+                raise SchedulerNameConflict(
+                    f"{namespace} name is already bound: {name}"
+                )
+            return existing
         created_at = _timestamp()
-        with self._connect() as connection:
-            connection.execute("BEGIN IMMEDIATE")
-            deletion = connection.execute(
-                "SELECT 1 FROM scheduler_instance_deletions WHERE instance_id = ?",
-                (instance,),
-            ).fetchone()
-            if deletion is not None:
-                raise SchedulerInstanceClosed("research instance is being deleted")
-            row = connection.execute(
-                """
-                SELECT * FROM scheduler_bindings
-                WHERE instance = ? AND namespace = ? AND name = ?
-                """,
-                (instance, namespace, name),
-            ).fetchone()
-            if row is not None:
-                existing = _binding(row)
-                if (
-                    existing.object_id != object_id
-                    or existing.logical_name != logical
-                    or existing.revision != revision
-                    or existing.request_fingerprint != request_fingerprint
-                ):
-                    raise SchedulerNameConflict(
-                        f"{namespace} name is already bound: {name}"
-                    )
-                connection.execute("ROLLBACK")
-                return existing
-            connection.execute(
-                """
-                INSERT INTO scheduler_bindings (
-                    instance, namespace, name, logical_name, revision,
-                    object_id, request_fingerprint, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    instance,
-                    namespace,
-                    name,
-                    logical,
-                    revision,
-                    object_id,
-                    request_fingerprint,
-                    created_at,
-                ),
-            )
-            connection.execute("COMMIT")
+        connection.execute(
+            f"""
+            INSERT INTO {prefix}scheduler_bindings (
+                instance, namespace, name, logical_name, revision,
+                object_id, request_fingerprint, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                instance,
+                namespace,
+                name,
+                logical,
+                revision,
+                object_id,
+                request_fingerprint,
+                created_at,
+            ),
+        )
         return SchedulerBinding(
             namespace=namespace,
             name=name,
@@ -1028,7 +584,13 @@ class SchedulerBindingService:
         return tuple(_binding(row) for row in rows)
 
     def select_scientific_object(
-        self, *, instance: str, kind: str, logical_name: str
+        self,
+        *,
+        instance: str,
+        kind: str,
+        logical_name: str,
+        artifact_ref: ArtifactRef | None = None,
+        expected_ref: ArtifactRef | None | object = _EXPECTED_REF_UNSET,
     ) -> SchedulerScientificSelection:
         """Select one semantic lineage as current for a scientific object kind."""
 
@@ -1039,21 +601,46 @@ class SchedulerBindingService:
         selected_at = _timestamp()
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
+            current = connection.execute(
+                """
+                SELECT artifact_ref_json FROM scheduler_scientific_selections
+                WHERE instance = ? AND kind = ?
+                """,
+                (instance, kind),
+            ).fetchone()
+            current_ref = (
+                None
+                if current is None or current["artifact_ref_json"] is None
+                else ArtifactRef.model_validate_json(
+                    current["artifact_ref_json"], strict=True
+                )
+            )
+            if expected_ref is not _EXPECTED_REF_UNSET and current_ref != expected_ref:
+                connection.execute("ROLLBACK")
+                raise SchedulerNameConflict("scientific current compare-and-set failed")
             connection.execute(
                 """
                 INSERT INTO scheduler_scientific_selections (
-                    instance, kind, logical_name, selected_at
-                ) VALUES (?, ?, ?, ?)
+                    instance, kind, logical_name, artifact_ref_json, selected_at
+                ) VALUES (?, ?, ?, ?, ?)
                 ON CONFLICT(instance, kind) DO UPDATE SET
                     logical_name = excluded.logical_name,
+                    artifact_ref_json = excluded.artifact_ref_json,
                     selected_at = excluded.selected_at
                 """,
-                (instance, kind, logical_name, selected_at),
+                (
+                    instance,
+                    kind,
+                    logical_name,
+                    None if artifact_ref is None else artifact_ref.canonical_json(),
+                    selected_at,
+                ),
             )
             connection.execute("COMMIT")
         return SchedulerScientificSelection(
             kind=kind,
             logical_name=logical_name,
+            artifact_ref=artifact_ref,
             selected_at=selected_at,
         )
 
@@ -1065,7 +652,7 @@ class SchedulerBindingService:
         with self._connect() as connection:
             rows = connection.execute(
                 """
-                SELECT kind, logical_name, selected_at
+                SELECT kind, logical_name, artifact_ref_json, selected_at
                 FROM scheduler_scientific_selections
                 WHERE instance = ?
                 ORDER BY kind
@@ -1076,6 +663,13 @@ class SchedulerBindingService:
             SchedulerScientificSelection(
                 kind=str(row["kind"]),
                 logical_name=str(row["logical_name"]),
+                artifact_ref=(
+                    None
+                    if row["artifact_ref_json"] is None
+                    else ArtifactRef.model_validate_json(
+                        row["artifact_ref_json"], strict=True
+                    )
+                ),
                 selected_at=str(row["selected_at"]),
             )
             for row in rows
@@ -1124,290 +718,8 @@ class SchedulerBindingService:
                 """,
                 (instance,),
             ).fetchall()
-            proposed = connection.execute(
-                """
-                SELECT approval_id FROM scheduler_instance_proposals
-                WHERE instance_id = ?
-                """,
-                (instance,),
-            ).fetchall()
-            session_reviews = connection.execute(
-                """
-                SELECT approval_id
-                FROM scheduler_session_binding_requests
-                WHERE instance_id = ?
-                """,
-                (instance,),
-            ).fetchall()
-        values = [
-            str(row["approval_id"])
-            for rows in (bound, proposed, session_reviews)
-            for row in rows
-        ]
+        values = [str(row["approval_id"]) for row in bound]
         return tuple(dict.fromkeys(values))
-
-    def instance_invalidation_approval_ids(self, *, instance: str) -> tuple[str, ...]:
-        """Return approvals whose scheduler relation changes with this instance."""
-
-        self.get_instance(instance_id=instance)
-        with self._connect() as connection:
-            bound = connection.execute(
-                """
-                SELECT object_id AS approval_id FROM scheduler_bindings
-                WHERE instance = ? AND namespace = 'approval'
-                """,
-                (instance,),
-            ).fetchall()
-            proposed = connection.execute(
-                """
-                SELECT approval_id FROM scheduler_instance_proposals
-                WHERE instance_id = ?
-                """,
-                (instance,),
-            ).fetchall()
-            session_reviews = connection.execute(
-                """
-                SELECT DISTINCT request.approval_id
-                FROM scheduler_session_binding_requests AS request
-                LEFT JOIN scheduler_session_binding_candidates AS candidate
-                  ON candidate.request_id = request.request_id
-                WHERE request.instance_id = ? OR candidate.instance_id = ?
-                """,
-                (instance, instance),
-            ).fetchall()
-        values = [
-            str(row["approval_id"])
-            for rows in (bound, proposed, session_reviews)
-            for row in rows
-        ]
-        return tuple(dict.fromkeys(values))
-
-    def instance_pending_binding_approval_ids(
-        self, *, instance: str
-    ) -> tuple[str, ...]:
-        """Return pending multi-instance reviews that still name this candidate."""
-
-        self.get_instance(instance_id=instance)
-        with self._connect() as connection:
-            rows = connection.execute(
-                """
-                SELECT DISTINCT request.approval_id
-                FROM scheduler_session_binding_requests AS request
-                JOIN scheduler_session_binding_candidates AS candidate
-                  ON candidate.request_id = request.request_id
-                WHERE request.state = 'pending' AND candidate.instance_id = ?
-                ORDER BY request.created_at, request.approval_id
-                """,
-                (instance,),
-            ).fetchall()
-        return tuple(str(row["approval_id"]) for row in rows)
-
-    def begin_instance_deletion(
-        self, *, instance: str, fingerprint: str
-    ) -> SchedulerInstanceDeletion:
-        value = self.get_instance(instance_id=instance)
-        if not _FINGERPRINT.fullmatch(fingerprint):
-            raise ValueError("instance deletion fingerprint is invalid")
-        now = _timestamp()
-        with self._connect() as connection:
-            connection.execute("BEGIN IMMEDIATE")
-            row = connection.execute(
-                "SELECT * FROM scheduler_instance_deletions WHERE instance_id = ?",
-                (instance,),
-            ).fetchone()
-            if row is not None:
-                existing = _instance_deletion(row)
-                if existing.fingerprint != fingerprint:
-                    raise SchedulerInstanceConflict(
-                        "research instance changed after deletion began"
-                    )
-                if existing.state == "deleted":
-                    raise SchedulerInstanceNotFound("research instance is already deleted")
-                connection.execute(
-                    """
-                    UPDATE scheduler_instance_deletions
-                    SET state = 'deleting', error = NULL, updated_at = ?
-                    WHERE instance_id = ?
-                    """,
-                    (now, instance),
-                )
-            else:
-                connection.execute(
-                    """
-                    INSERT INTO scheduler_instance_deletions (
-                        instance_id, instance_name, fingerprint, state, stage,
-                        owned_refs_json, receipt_json, error,
-                        started_at, updated_at, completed_at
-                    ) VALUES (?, ?, ?, 'deleting', 'planned', '[]', NULL, NULL, ?, ?, NULL)
-                    """,
-                    (instance, value.name, fingerprint, now, now),
-                )
-            connection.execute(
-                "DELETE FROM scheduler_sessions WHERE instance_id = ?", (instance,)
-            )
-            updated = connection.execute(
-                "SELECT * FROM scheduler_instance_deletions WHERE instance_id = ?",
-                (instance,),
-            ).fetchone()
-            connection.execute("COMMIT")
-        if updated is None:
-            raise SchedulerInstanceNotFound("instance deletion record disappeared")
-        return _instance_deletion(updated)
-
-    def advance_instance_deletion(
-        self,
-        *,
-        instance: str,
-        stage: str,
-        owned_ref_json: tuple[str, ...],
-    ) -> SchedulerInstanceDeletion:
-        if stage not in {
-            "planned",
-            "tasks_deleted",
-            "executions_deleted",
-            "approvals_deleted",
-            "artifacts_purged",
-            "bindings_deleted",
-        }:
-            raise ValueError("instance deletion stage is invalid")
-        if len(owned_ref_json) != len(set(owned_ref_json)):
-            raise ValueError("instance deletion Artifact references must be unique")
-        now = _timestamp()
-        with self._connect() as connection:
-            connection.execute("BEGIN IMMEDIATE")
-            connection.execute(
-                """
-                UPDATE scheduler_instance_deletions
-                SET stage = ?, owned_refs_json = ?, updated_at = ?
-                WHERE instance_id = ? AND state = 'deleting'
-                """,
-                (stage, json.dumps(owned_ref_json), now, instance),
-            )
-            row = connection.execute(
-                "SELECT * FROM scheduler_instance_deletions WHERE instance_id = ?",
-                (instance,),
-            ).fetchone()
-            connection.execute("COMMIT")
-        if row is None:
-            raise SchedulerInstanceNotFound("instance deletion record disappeared")
-        return _instance_deletion(row)
-
-    def fail_instance_deletion(self, *, instance: str, error: str) -> None:
-        with self._connect() as connection:
-            connection.execute(
-                """
-                UPDATE scheduler_instance_deletions
-                SET state = 'failed', error = ?, updated_at = ?
-                WHERE instance_id = ? AND state <> 'deleted'
-                """,
-                (error.strip()[:2048] or "unknown deletion failure", _timestamp(), instance),
-            )
-
-    def complete_instance_deletion(
-        self, *, instance: str, receipt_json: str
-    ) -> SchedulerInstanceDeletion:
-        now = _timestamp()
-        with self._connect() as connection:
-            connection.execute("BEGIN IMMEDIATE")
-            connection.execute(
-                """
-                UPDATE scheduler_instance_deletions
-                SET state = 'deleted', stage = 'bindings_deleted',
-                    receipt_json = ?, error = NULL, updated_at = ?, completed_at = ?
-                WHERE instance_id = ?
-                """,
-                (receipt_json, now, now, instance),
-            )
-            row = connection.execute(
-                "SELECT * FROM scheduler_instance_deletions WHERE instance_id = ?",
-                (instance,),
-            ).fetchone()
-            connection.execute("COMMIT")
-        if row is None:
-            raise SchedulerInstanceNotFound("instance deletion record disappeared")
-        return _instance_deletion(row)
-
-    def instance_deletion(
-        self, *, instance_id: str
-    ) -> SchedulerInstanceDeletion | None:
-        with self._connect() as connection:
-            row = connection.execute(
-                "SELECT * FROM scheduler_instance_deletions WHERE instance_id = ?",
-                (instance_id,),
-            ).fetchone()
-        return _instance_deletion(row) if row is not None else None
-
-    def instance_related_approval_ids(self, *, instance: str) -> tuple[str, ...]:
-        """Backward-compatible alias for deletion/invalidation relations."""
-
-        return self.instance_invalidation_approval_ids(instance=instance)
-
-    def delete_instance_records(self, *, instance: str) -> None:
-        """Delete one instance's scheduler-owned rows after external cleanup."""
-
-        self.get_instance(instance_id=instance)
-        with self._connect() as connection:
-            connection.execute("BEGIN IMMEDIATE")
-            pending = connection.execute(
-                """
-                SELECT request.approval_id
-                FROM scheduler_session_binding_requests AS request
-                JOIN scheduler_session_binding_candidates AS candidate
-                  ON candidate.request_id = request.request_id
-                WHERE request.state = 'pending' AND candidate.instance_id = ?
-                LIMIT 1
-                """,
-                (instance,),
-            ).fetchone()
-            if pending is not None:
-                raise SchedulerInstanceConflict(
-                    "research instance is still named by a pending session-binding review"
-                )
-            request_rows = connection.execute(
-                """
-                SELECT request_id
-                FROM scheduler_session_binding_requests
-                WHERE instance_id = ?
-                """,
-                (instance,),
-            ).fetchall()
-            request_ids = tuple(str(row["request_id"]) for row in request_rows)
-            connection.executemany(
-                "DELETE FROM scheduler_session_binding_candidates WHERE request_id = ?",
-                ((value,) for value in request_ids),
-            )
-            connection.executemany(
-                "DELETE FROM scheduler_session_binding_requests WHERE request_id = ?",
-                ((value,) for value in request_ids),
-            )
-            connection.execute(
-                """
-                DELETE FROM scheduler_session_binding_candidates
-                WHERE instance_id = ?
-                """,
-                (instance,),
-            )
-            connection.execute(
-                "DELETE FROM scheduler_instance_proposals WHERE instance_id = ?",
-                (instance,),
-            )
-            connection.execute(
-                "DELETE FROM scheduler_sessions WHERE instance_id = ?", (instance,)
-            )
-            connection.execute(
-                "DELETE FROM scheduler_observations WHERE instance = ?", (instance,)
-            )
-            connection.execute(
-                "DELETE FROM scheduler_scientific_selections WHERE instance = ?",
-                (instance,),
-            )
-            connection.execute(
-                "DELETE FROM scheduler_bindings WHERE instance = ?", (instance,)
-            )
-            connection.execute(
-                "DELETE FROM scheduler_instances WHERE instance_id = ?", (instance,)
-            )
-            connection.execute("COMMIT")
 
     def observe_state_changes(
         self,
@@ -1420,7 +732,7 @@ class SchedulerBindingService:
 
         if not isinstance(observer_key, str) or not observer_key:
             raise ValueError("scheduler observer key is invalid")
-        allowed = {"task", "approval", "execution"}
+        allowed = {"run", "approval", "execution"}
         normalized: list[tuple[str, str, str]] = []
         for object_type, name, state in states:
             if object_type not in allowed:
@@ -1515,7 +827,15 @@ class SchedulerBindingService:
 
     def _initialize(self) -> None:
         with self._connect() as connection:
-            connection.execute("PRAGMA journal_mode = WAL")
+            # Run completion attaches this database to runs.sqlite3 so that the
+            # output binding and terminal receipt commit as one SQLite unit.
+            # SQLite only guarantees crash-atomic multi-file transactions when
+            # no participating database uses WAL.
+            mode = connection.execute("PRAGMA journal_mode = DELETE").fetchone()
+            if mode is None or str(mode[0]).lower() != "delete":
+                raise SchedulerBindingError(
+                    "scheduler database cannot provide atomic attached commits"
+                )
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS scheduler_instances (
@@ -1546,23 +866,6 @@ class SchedulerBindingService:
             )
             connection.execute(
                 """
-                CREATE TABLE IF NOT EXISTS scheduler_instance_deletions (
-                    instance_id TEXT PRIMARY KEY,
-                    instance_name TEXT NOT NULL UNIQUE,
-                    fingerprint TEXT NOT NULL,
-                    state TEXT NOT NULL CHECK (state IN ('deleting', 'failed', 'deleted')),
-                    stage TEXT NOT NULL,
-                    owned_refs_json TEXT NOT NULL,
-                    receipt_json TEXT,
-                    error TEXT,
-                    started_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL,
-                    completed_at TEXT
-                )
-                """
-            )
-            connection.execute(
-                """
                 CREATE TABLE IF NOT EXISTS scheduler_observations (
                     instance TEXT NOT NULL,
                     observer_key TEXT NOT NULL,
@@ -1580,11 +883,22 @@ class SchedulerBindingService:
                     instance TEXT NOT NULL,
                     kind TEXT NOT NULL,
                     logical_name TEXT NOT NULL,
+                    artifact_ref_json BLOB,
                     selected_at TEXT NOT NULL,
                     PRIMARY KEY (instance, kind)
                 )
                 """
             )
+            selection_columns = {
+                str(row["name"])
+                for row in connection.execute(
+                    "PRAGMA table_info(scheduler_scientific_selections)"
+                ).fetchall()
+            }
+            if "artifact_ref_json" not in selection_columns:
+                connection.execute(
+                    "ALTER TABLE scheduler_scientific_selections ADD COLUMN artifact_ref_json BLOB"
+                )
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS scheduler_sessions (
@@ -1613,111 +927,6 @@ class SchedulerBindingService:
                 ON scheduler_sessions(instance_id)
                 """
             )
-            connection.execute(
-                """
-                CREATE TABLE IF NOT EXISTS scheduler_instance_proposals (
-                    proposal_id TEXT PRIMARY KEY,
-                    name TEXT NOT NULL,
-                    title TEXT NOT NULL,
-                    objective TEXT NOT NULL,
-                    approval_id TEXT NOT NULL UNIQUE,
-                    session_key TEXT NOT NULL,
-                    state TEXT NOT NULL CHECK (
-                        state IN (
-                            'pending', 'activated', 'revision_requested', 'cancelled'
-                        )
-                    ),
-                    selected_option TEXT,
-                    instance_id TEXT,
-                    application_state TEXT NOT NULL DEFAULT 'pending' CHECK (
-                        application_state IN ('pending', 'applied', 'failed')
-                    ),
-                    application_error TEXT,
-                    created_at TEXT NOT NULL,
-                    resolved_at TEXT,
-                    FOREIGN KEY(instance_id) REFERENCES scheduler_instances(instance_id)
-                )
-                """
-            )
-            connection.execute(
-                """
-                CREATE INDEX IF NOT EXISTS scheduler_instance_proposals_by_name
-                ON scheduler_instance_proposals(name, created_at DESC)
-                """
-            )
-            connection.execute(
-                """
-                CREATE TABLE IF NOT EXISTS scheduler_session_binding_requests (
-                    request_id TEXT PRIMARY KEY,
-                    approval_id TEXT NOT NULL UNIQUE,
-                    session_key TEXT NOT NULL,
-                    state TEXT NOT NULL CHECK (
-                        state IN ('pending', 'activated', 'cancelled')
-                    ),
-                    selected_option TEXT,
-                    instance_id TEXT,
-                    application_state TEXT NOT NULL DEFAULT 'pending' CHECK (
-                        application_state IN ('pending', 'applied', 'failed')
-                    ),
-                    application_error TEXT,
-                    created_at TEXT NOT NULL,
-                    resolved_at TEXT,
-                    FOREIGN KEY(instance_id) REFERENCES scheduler_instances(instance_id)
-                )
-                """
-            )
-            connection.execute(
-                """
-                CREATE UNIQUE INDEX IF NOT EXISTS scheduler_session_binding_pending
-                ON scheduler_session_binding_requests(session_key)
-                WHERE state = 'pending'
-                """
-            )
-            connection.execute(
-                """
-                CREATE TABLE IF NOT EXISTS scheduler_session_binding_candidates (
-                    request_id TEXT NOT NULL,
-                    option_id TEXT NOT NULL,
-                    instance_id TEXT NOT NULL,
-                    position INTEGER NOT NULL,
-                    PRIMARY KEY(request_id, option_id),
-                    UNIQUE(request_id, instance_id),
-                    UNIQUE(request_id, position),
-                    FOREIGN KEY(request_id)
-                        REFERENCES scheduler_session_binding_requests(request_id),
-                    FOREIGN KEY(instance_id) REFERENCES scheduler_instances(instance_id)
-                )
-                """
-            )
-            for table in (
-                "scheduler_instance_proposals",
-                "scheduler_session_binding_requests",
-            ):
-                state_columns = {
-                    str(row["name"])
-                    for row in connection.execute(
-                        f"PRAGMA table_info({table})"
-                    ).fetchall()
-                }
-                if "application_state" not in state_columns:
-                    connection.execute(
-                        f"""
-                        ALTER TABLE {table}
-                        ADD COLUMN application_state TEXT NOT NULL DEFAULT 'pending'
-                        CHECK (application_state IN ('pending', 'applied', 'failed'))
-                        """
-                    )
-                if "application_error" not in state_columns:
-                    connection.execute(
-                        f"ALTER TABLE {table} ADD COLUMN application_error TEXT"
-                    )
-                connection.execute(
-                    f"""
-                    UPDATE {table}
-                    SET application_state = 'applied', application_error = NULL
-                    WHERE state <> 'pending' AND application_state = 'pending'
-                    """
-                )
             columns = {
                 str(row["name"])
                 for row in connection.execute(
@@ -1754,36 +963,6 @@ class SchedulerBindingService:
                 ON scheduler_bindings(instance, namespace, logical_name, revision)
                 """
             )
-            legacy_instances = connection.execute(
-                """
-                SELECT b.instance, MIN(b.created_at) AS created_at
-                FROM scheduler_bindings AS b
-                LEFT JOIN scheduler_instances AS i
-                  ON i.instance_id = b.instance
-                WHERE i.instance_id IS NULL
-                GROUP BY b.instance
-                """
-            ).fetchall()
-            for row in legacy_instances:
-                legacy_id = str(row["instance"])
-                legacy_name = f"legacy.{legacy_id}"
-                if not _NAME.fullmatch(legacy_name):
-                    legacy_name = f"legacy.{uuid.uuid5(uuid.NAMESPACE_URL, legacy_id).hex}"
-                connection.execute(
-                    """
-                    INSERT OR IGNORE INTO scheduler_instances (
-                        instance_id, name, title, objective, state, created_at, closed_at
-                    ) VALUES (?, ?, ?, ?, 'closed', ?, ?)
-                    """,
-                    (
-                        legacy_id,
-                        legacy_name,
-                        f"Migrated legacy namespace {legacy_id}",
-                        "Preserved read-only during the ResearchInstance migration.",
-                        str(row["created_at"]),
-                        _timestamp(),
-                    ),
-                )
 
 
 def _instance(row: sqlite3.Row) -> SchedulerInstance:
@@ -1814,86 +993,6 @@ def _binding(row: sqlite3.Row) -> SchedulerBinding:
     )
 
 
-def _instance_proposal(row: sqlite3.Row) -> SchedulerInstanceProposal:
-    return SchedulerInstanceProposal(
-        proposal_id=str(row["proposal_id"]),
-        name=str(row["name"]),
-        title=str(row["title"]),
-        objective=str(row["objective"]),
-        approval_id=str(row["approval_id"]),
-        session_key=str(row["session_key"]),
-        state=str(row["state"]),
-        selected_option=(
-            str(row["selected_option"])
-            if row["selected_option"] is not None
-            else None
-        ),
-        instance_id=(
-            str(row["instance_id"]) if row["instance_id"] is not None else None
-        ),
-        application_state=str(row["application_state"]),
-        application_error=(
-            str(row["application_error"])
-            if row["application_error"] is not None
-            else None
-        ),
-        created_at=str(row["created_at"]),
-        resolved_at=(
-            str(row["resolved_at"]) if row["resolved_at"] is not None else None
-        ),
-    )
-
-
-def _session_binding_request(row: sqlite3.Row) -> SchedulerSessionBindingRequest:
-    return SchedulerSessionBindingRequest(
-        request_id=str(row["request_id"]),
-        approval_id=str(row["approval_id"]),
-        session_key=str(row["session_key"]),
-        state=str(row["state"]),
-        selected_option=(
-            str(row["selected_option"])
-            if row["selected_option"] is not None
-            else None
-        ),
-        instance_id=(
-            str(row["instance_id"]) if row["instance_id"] is not None else None
-        ),
-        application_state=str(row["application_state"]),
-        application_error=(
-            str(row["application_error"])
-            if row["application_error"] is not None
-            else None
-        ),
-        created_at=str(row["created_at"]),
-        resolved_at=(
-            str(row["resolved_at"]) if row["resolved_at"] is not None else None
-        ),
-    )
-
-
-def _instance_deletion(row: sqlite3.Row) -> SchedulerInstanceDeletion:
-    raw_refs = json.loads(str(row["owned_refs_json"]))
-    if not isinstance(raw_refs, list) or any(not isinstance(item, str) for item in raw_refs):
-        raise SchedulerBindingError("stored instance deletion references are invalid")
-    return SchedulerInstanceDeletion(
-        instance_id=str(row["instance_id"]),
-        instance_name=str(row["instance_name"]),
-        fingerprint=str(row["fingerprint"]),
-        state=str(row["state"]),
-        stage=str(row["stage"]),
-        owned_ref_json=tuple(raw_refs),
-        receipt_json=(
-            str(row["receipt_json"]) if row["receipt_json"] is not None else None
-        ),
-        error=str(row["error"]) if row["error"] is not None else None,
-        started_at=str(row["started_at"]),
-        updated_at=str(row["updated_at"]),
-        completed_at=(
-            str(row["completed_at"]) if row["completed_at"] is not None else None
-        ),
-    )
-
-
 def _bounded_text(value: str, *, label: str, maximum: int) -> None:
     if not isinstance(value, str) or not value.strip() or len(value) > maximum:
         raise ValueError(f"{label} is invalid")
@@ -1914,9 +1013,7 @@ __all__ = [
     "SchedulerInstance",
     "SchedulerInstanceClosed",
     "SchedulerInstanceConflict",
-    "SchedulerInstanceDeletion",
     "SchedulerInstanceNotFound",
-    "SchedulerInstanceProposal",
     "SchedulerNameConflict",
     "SchedulerNameNotFound",
 ]

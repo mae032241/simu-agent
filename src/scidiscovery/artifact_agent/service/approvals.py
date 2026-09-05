@@ -16,13 +16,16 @@ from urllib.parse import urlparse
 from pydantic import ValidationError
 
 from ..schema.approval import (
+    CompiledApprovalIdentity,
     ApprovalOption,
     ApprovalPresentation,
     ApprovalRequest,
     HumanDecision,
     LocalIdentityRef,
     ReviewManifest,
+    ReviewDocument,
     ReviewSubject,
+    parse_json_pointer,
     subject_set_sha256,
 )
 from ..schema.artifact import ArtifactEnvelope, ArtifactRegistration
@@ -88,6 +91,7 @@ class ApprovalListItem:
     status: str
     created_at: str
     review_path: str | None
+    access_expired: bool = False
     selected_option: str | None = None
     selected_label: str | None = None
     rationale: str | None = None
@@ -142,9 +146,12 @@ class ApprovalService:
         idempotency_key: str,
         expires_at: str | None = None,
         presentation: ApprovalPresentation | None = None,
+        review_document: ReviewDocument | None = None,
+        compiled_identity: CompiledApprovalIdentity | None = None,
         now: datetime | None = None,
     ) -> ApprovalLaunch:
         self._verify_presentation(presentation, subject_refs)
+        self._verify_review_document(review_document, subject_refs)
         request_input = canonical_json(
             {
                 "operation": "approval.create",
@@ -156,6 +163,8 @@ class ApprovalService:
                 "requested_by": requested_by,
                 "expires_at": expires_at,
                 "presentation": presentation,
+                "review_document": review_document,
+                "compiled_identity": compiled_identity,
             }
         )
         request_input_sha = hashlib.sha256(request_input).hexdigest()
@@ -212,6 +221,8 @@ class ApprovalService:
                 expires_at=expires_at,
                 nonce_hash=_secret_hash(decision_nonce),
                 presentation=presentation,
+                review_document=review_document,
+                compiled_identity=compiled_identity,
             )
             request_envelope = self.artifacts.register(
                 request.canonical_json(),
@@ -261,7 +272,6 @@ class ApprovalService:
                     recorded_at,
                 ),
             )
-            self._insert_event(connection, approval_id, "created", recorded_at, None)
             connection.execute("COMMIT")
             return ApprovalLaunch(approval_id, request_envelope.ref, access_token)
         except Exception:
@@ -272,9 +282,10 @@ class ApprovalService:
             connection.close()
 
     def status(self, approval_id: str, *, now: datetime | None = None) -> ApprovalStatusView:
-        self._expire_if_needed(approval_id, _now(now))
+        current = _now(now)
         with self._connect() as connection:
             row = self._request_row(connection, approval_id)
+        effective_status = self._effective_status(row, current)
         reference = _parse_ref(row["request_ref_json"], row["request_ref_sha256"])
         decision = (
             _parse_ref(row["decision_ref_json"], row["decision_ref_sha256"])
@@ -283,10 +294,11 @@ class ApprovalService:
         )
         review_path = (
             f"/review/{approval_id}?token={row['access_token']}"
-            if row["status"] == "pending"
+            if effective_status == "pending"
+            and current < _parse_time(row["access_expires_at"])
             else None
         )
-        return ApprovalStatusView(reference, row["status"], decision, review_path)
+        return ApprovalStatusView(reference, effective_status, decision, review_path)
 
     def has_request(self, approval_id: str) -> bool:
         if not isinstance(approval_id, str) or not approval_id:
@@ -298,67 +310,26 @@ class ApprovalService:
             ).fetchone()
         return row is not None
 
-    def is_subject_approved(
-        self,
-        subject_ref: ArtifactRef,
-        *,
-        kind: str,
-        accepted_options: tuple[str, ...] = ("approve",),
-    ) -> bool:
-        """Return whether one exact immutable subject has an accepted decision."""
-
-        self.artifacts.verify(subject_ref)
-        if not kind or not accepted_options:
-            raise ValueError("approval qualification is incomplete")
-        with self._connect() as connection:
-            rows = connection.execute(
-                """
-                SELECT request_ref_json, request_ref_sha256,
-                       decision_ref_json, decision_ref_sha256
-                FROM approval_requests
-                WHERE status = 'decided' AND decision_ref_json IS NOT NULL
-                ORDER BY created_at DESC
-                """
-            ).fetchall()
-        for row in rows:
-            request_ref = _parse_ref(
-                row["request_ref_json"], row["request_ref_sha256"]
-            )
-            decision_ref = _parse_ref(
-                row["decision_ref_json"], row["decision_ref_sha256"]
-            )
-            try:
-                request = ApprovalRequest.model_validate_json(
-                    self.artifacts.read(request_ref), strict=True
-                )
-                decision = HumanDecision.model_validate_json(
-                    self.artifacts.read(decision_ref), strict=True
-                )
-            except ValidationError as error:
-                raise ApprovalError("stored approval qualification is invalid") from error
-            if (
-                request.kind == kind
-                and decision.selected_option in accepted_options
-                and subject_ref in decision.subject_refs
-            ):
-                return True
-        return False
-
-    def are_subjects_approved(
+    def are_subjects_approved_by_provider(
         self,
         subject_refs: tuple[ArtifactRef, ...],
         *,
         kind: str,
-        accepted_options: tuple[str, ...] = ("approve",),
+        accepted_options: tuple[str, ...],
+        accepted_providers: tuple[CompiledApprovalIdentity, ...],
     ) -> bool:
-        """Return whether one decision approved every exact subject together."""
+        """Return whether one exact decision came from an accepted compiled provider."""
 
-        if not subject_refs or len(subject_refs) != len(set(subject_refs)):
-            raise ValueError("approval subject set must be nonempty and unique")
+        if (
+            not subject_refs
+            or len(subject_refs) != len(set(subject_refs))
+            or not accepted_providers
+            or len(accepted_providers) != len(set(accepted_providers))
+        ):
+            raise ValueError("provider-aware approval contract is incomplete")
         for reference in subject_refs:
             self.artifacts.verify(reference)
-        if not kind or not accepted_options:
-            raise ValueError("approval qualification is incomplete")
+        accepted = set(accepted_providers)
         with self._connect() as connection:
             rows = connection.execute(
                 """
@@ -386,12 +357,13 @@ class ApprovalService:
             except ValidationError as error:
                 raise ApprovalError("stored approval qualification is invalid") from error
             if (
-                request.kind == kind
+                request.compiled_identity in accepted
+                and request.kind == kind
+                and decision.approval_request_ref == request_ref
+                and decision.subject_refs == request.subject_refs
+                and decision.subject_set_sha256 == request.subject_set_sha256
                 and decision.selected_option in accepted_options
-                and all(
-                    reference in decision.subject_refs
-                    for reference in subject_refs
-                )
+                and all(reference in decision.subject_refs for reference in subject_refs)
             ):
                 return True
         return False
@@ -402,6 +374,7 @@ class ApprovalService:
         status: str | None = None,
         limit: int = 50,
         now: datetime | None = None,
+        excluded_kinds: tuple[str, ...] = (),
     ) -> tuple[ApprovalListItem, ...]:
         """Return a bounded newest-first recovery view."""
 
@@ -411,26 +384,47 @@ class ApprovalService:
             raise ValueError("unknown approval status")
         if not 1 <= limit <= 100:
             raise ValueError("approval list limit must be between 1 and 100")
-        query = "SELECT approval_id FROM approval_requests"
-        parameters: tuple[object, ...]
-        if status is None:
-            query += " ORDER BY created_at DESC LIMIT ?"
-            parameters = (limit,)
-        else:
-            query += " WHERE status = ? ORDER BY created_at DESC LIMIT ?"
-            parameters = (status, limit)
-        with self._connect() as connection:
-            ids = tuple(
-                row["approval_id"]
-                for row in connection.execute(query, parameters).fetchall()
-            )
-        items = []
-        for approval_id in ids:
-            view = self.status(approval_id, now=current)
-            if view.status == "pending":
-                self._refresh_expired_access(approval_id, current)
+        if any(not isinstance(kind, str) or not kind for kind in excluded_kinds):
+            raise ValueError("excluded approval kind is invalid")
+        excluded = frozenset(excluded_kinds)
+        query_prefix = (
+            "SELECT approval_id, request_ref_json, request_ref_sha256, created_at "
+            "FROM approval_requests"
+        )
+        items: list[ApprovalListItem] = []
+        cursor: tuple[str, str] | None = None
+        page_size = 100
+        while len(items) < limit:
+            conditions = []
+            parameters: list[object] = []
+            if cursor is not None:
+                conditions.append(
+                    "(created_at < ? OR (created_at = ? AND approval_id < ?))"
+                )
+                parameters.extend((cursor[0], cursor[0], cursor[1]))
+            query = query_prefix
+            if conditions:
+                query += " WHERE " + " AND ".join(conditions)
+            query += " ORDER BY created_at DESC, approval_id DESC LIMIT ?"
+            parameters.append(page_size)
+            with self._connect() as connection:
+                rows = tuple(connection.execute(query, tuple(parameters)).fetchall())
+            if not rows:
+                break
+            cursor = (str(rows[-1]["created_at"]), str(rows[-1]["approval_id"]))
+            for row in rows:
+                approval_id = str(row["approval_id"])
+                request_ref = _parse_ref(
+                    row["request_ref_json"], row["request_ref_sha256"]
+                )
+                if self._load_request(request_ref).kind in excluded:
+                    continue
                 view = self.status(approval_id, now=current)
-            items.append(self.request_summary(approval_id, now=current))
+                if status is not None and view.status != status:
+                    continue
+                items.append(self.request_summary(approval_id, now=current))
+                if len(items) == limit:
+                    break
         return tuple(items)
 
     def request_summary(
@@ -438,7 +432,8 @@ class ApprovalService:
     ) -> ApprovalListItem:
         """Return one bounded request summary, including its terminal decision."""
 
-        view = self.status(approval_id, now=now)
+        current = _now(now)
+        view = self.status(approval_id, now=current)
         request = self._load_request(view.approval_request_ref)
         selected_option = None
         selected_label = None
@@ -470,86 +465,45 @@ class ApprovalService:
             status=view.status,
             created_at=row["created_at"],
             review_path=review_path,
+            access_expired=(
+                view.status == "pending"
+                and current >= _parse_time(row["access_expires_at"])
+            ),
             selected_option=selected_option,
             selected_label=selected_label,
             rationale=rationale,
             decided_at=decided_at,
         )
 
-    def delete_requests(
-        self, approval_ids: tuple[str, ...]
-    ) -> tuple[ArtifactRef, ...]:
-        """Administratively purge exact approval rows and return owned Artifacts.
+    def refresh_access(
+        self, approval_id: str, *, now: datetime | None = None
+    ) -> ApprovalLaunch:
+        """Explicitly renew an expired pending-review link."""
 
-        This is intentionally not exposed to agents. It exists only for the
-        loopback instance-management UI after an explicit destructive action.
-        Scientific subjects are not owned by an approval and are never returned.
-        """
-
-        if len(approval_ids) != len(set(approval_ids)):
-            raise ValueError("approval identities must be unique")
-        if any(not isinstance(value, str) or not value for value in approval_ids):
-            raise ValueError("approval identity is invalid")
-        owned: list[ArtifactRef] = []
-        connection = self._connect()
-        try:
-            connection.execute("BEGIN IMMEDIATE")
-            for approval_id in approval_ids:
-                row = connection.execute(
-                    "SELECT * FROM approval_requests WHERE approval_id = ?",
-                    (approval_id,),
-                ).fetchone()
-                if row is None:
-                    continue
-                request_ref = _parse_ref(
-                    row["request_ref_json"], row["request_ref_sha256"]
-                )
-                request = self._load_request(request_ref)
-                owned.extend((request.review_manifest_ref, request_ref))
-                if row["decision_ref_json"] is not None:
-                    owned.append(
-                        _parse_ref(
-                            row["decision_ref_json"], row["decision_ref_sha256"]
-                        )
-                    )
-            _drop_approval_delete_guards(connection)
-            for table in (
-                "approval_decisions",
-                "used_nonces",
-                "decision_attempts",
-                "approval_events",
-            ):
-                connection.executemany(
-                    f"DELETE FROM {table} WHERE approval_id = ?",
-                    ((value,) for value in approval_ids),
-                )
-            connection.executemany(
-                "DELETE FROM approval_requests WHERE approval_id = ?",
-                ((value,) for value in approval_ids),
-            )
-            _create_approval_delete_guards(connection)
-            connection.execute("COMMIT")
-        except Exception:
-            if connection.in_transaction:
-                connection.execute("ROLLBACK")
-            raise
-        finally:
-            connection.close()
-        return tuple(dict.fromkeys(owned))
-
-    def _refresh_expired_access(self, approval_id: str, now: datetime) -> None:
-        """Refresh stale UI access without changing the approval decision state."""
-
+        current = _now(now)
         connection = self._connect()
         try:
             connection.execute("BEGIN IMMEDIATE")
             row = self._request_row(connection, approval_id)
-            if row["status"] != "pending" or now < _parse_time(row["access_expires_at"]):
-                connection.execute("COMMIT")
-                return
+            effective_status = self._effective_status(row, current)
+            if effective_status == "expired":
+                raise ApprovalExpired("approval request has expired")
+            if effective_status != "pending":
+                raise ApprovalAlreadyDecided(
+                    f"approval request is terminal: {effective_status}"
+                )
+            request_ref = _parse_ref(
+                row["request_ref_json"], row["request_ref_sha256"]
+            )
+            if current < _parse_time(row["access_expires_at"]):
+                launch = ApprovalLaunch(
+                    approval_id, request_ref, row["access_token"]
+                )
+                connection.execute("ROLLBACK")
+                return launch
             token = secrets.token_urlsafe(32)
             csrf = secrets.token_urlsafe(32)
-            access_expires = now + timedelta(hours=1)
+            access_expires = current + timedelta(hours=1)
             if row["expires_at"] is not None:
                 access_expires = min(access_expires, _parse_time(row["expires_at"]))
             connection.execute(
@@ -568,6 +522,7 @@ class ApprovalService:
                 ),
             )
             connection.execute("COMMIT")
+            return ApprovalLaunch(approval_id, request_ref, token)
         except Exception:
             if connection.in_transaction:
                 connection.execute("ROLLBACK")
@@ -582,10 +537,17 @@ class ApprovalService:
         access_token: str,
         now: datetime | None = None,
     ) -> ApprovalReview:
-        self._expire_if_needed(approval_id, _now(now))
+        current = _now(now)
         with self._connect() as connection:
             row = self._request_row(connection, approval_id)
-        self._validate_access(row, access_token, _now(now), allow_terminal=True)
+        effective_status = self._effective_status(row, current)
+        self._validate_access(
+            row,
+            access_token,
+            current,
+            allow_terminal=True,
+            effective_status=effective_status,
+        )
         request_ref = _parse_ref(row["request_ref_json"], row["request_ref_sha256"])
         request = self._load_request(request_ref)
         manifest = self._load_manifest(request.review_manifest_ref)
@@ -604,7 +566,7 @@ class ApprovalService:
             request,
             manifest,
             subjects,
-            row["status"],
+            effective_status,
             decision_ref,
             row["csrf_token"],
             row["decision_nonce"],
@@ -759,13 +721,6 @@ class ApprovalService:
                     decision.decided_at,
                 ),
             )
-            self._insert_event(
-                connection,
-                approval_id,
-                terminal,
-                decision.decided_at,
-                decision_envelope.ref,
-            )
             connection.execute("COMMIT")
             return decision_envelope.ref
         except Exception:
@@ -861,39 +816,6 @@ class ApprovalService:
         finally:
             connection.close()
 
-    def rotate_access(
-        self, approval_id: str, *, now: datetime | None = None
-    ) -> ApprovalLaunch:
-        current = _now(now)
-        token = secrets.token_urlsafe(32)
-        csrf = secrets.token_urlsafe(32)
-        with self._connect() as connection:
-            connection.execute("BEGIN IMMEDIATE")
-            row = self._request_row(connection, approval_id)
-            if row["status"] != "pending":
-                raise ApprovalAlreadyDecided("only pending requests can rotate access")
-            connection.execute(
-                """
-                UPDATE approval_requests SET access_token = ?, access_token_hash = ?,
-                    csrf_token = ?, csrf_token_hash = ?, access_expires_at = ?
-                WHERE approval_id = ?
-                """,
-                (
-                    token,
-                    _secret_hash(token),
-                    csrf,
-                    _secret_hash(csrf),
-                    _timestamp(current + timedelta(hours=1)),
-                    approval_id,
-                ),
-            )
-            connection.execute("COMMIT")
-        return ApprovalLaunch(
-            approval_id,
-            _parse_ref(row["request_ref_json"], row["request_ref_sha256"]),
-            token,
-        )
-
     def _build_manifest(
         self, approval_id: str, refs: tuple[ArtifactRef, ...]
     ) -> ReviewManifest:
@@ -930,6 +852,7 @@ class ApprovalService:
         )
         self._verify_manifest(manifest, subjects)
         self._verify_presentation(request.presentation, request.subject_refs)
+        self._verify_review_document(request.review_document, request.subject_refs)
 
     def _verify_presentation(
         self,
@@ -959,6 +882,42 @@ class ApprovalService:
             if not isinstance(target, str):
                 raise ApprovalError(
                     "display translation target must be an existing JSON string"
+                )
+
+    def _verify_review_document(
+        self,
+        document: ReviewDocument | None,
+        subject_refs: tuple[ArtifactRef, ...],
+    ) -> None:
+        if document is None:
+            return
+        parsed_subjects: dict[int, object] = {}
+        for section in document.sections:
+            for item in section.items:
+                if item.subject_index >= len(subject_refs):
+                    raise ApprovalError("review document subject index is out of range")
+                if item.json_pointer is None:
+                    continue
+                index = item.subject_index
+                if index not in parsed_subjects:
+                    envelope = self.artifacts.catalog(subject_refs[index])
+                    if (
+                        envelope.media_type.split(";", 1)[0].strip().lower()
+                        != "application/json"
+                    ):
+                        raise ApprovalError(
+                            "review document pointer subject must be structured JSON"
+                        )
+                    try:
+                        parsed_subjects[index] = json.loads(
+                            self.artifacts.read(subject_refs[index])
+                        )
+                    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+                        raise ApprovalError(
+                            "review document pointer subject is invalid JSON"
+                        ) from error
+                _json_pointer_value(
+                    parsed_subjects[index], item.json_pointer
                 )
 
     def _verify_manifest(
@@ -1015,38 +974,27 @@ class ApprovalService:
         now: datetime,
         *,
         allow_terminal: bool,
+        effective_status: str | None = None,
     ) -> None:
         if not hmac.compare_digest(row["access_token_hash"], _secret_hash(access_token)):
             raise ApprovalAccessDenied("approval access token is invalid")
-        if allow_terminal and row["status"] != "pending":
+        status = effective_status or row["status"]
+        if allow_terminal and status != "pending":
             return
         if now >= _parse_time(row["access_expires_at"]):
             raise ApprovalAccessDenied("approval access token has expired")
-        if not allow_terminal and row["status"] != "pending":
-            raise ApprovalAlreadyDecided(f"approval request is terminal: {row['status']}")
+        if not allow_terminal and status != "pending":
+            raise ApprovalAlreadyDecided(f"approval request is terminal: {status}")
 
-    def _expire_if_needed(self, approval_id: str, now: datetime) -> None:
-        connection = self._connect()
-        try:
-            connection.execute("BEGIN IMMEDIATE")
-            row = self._request_row(connection, approval_id)
-            if (
-                row["status"] == "pending"
-                and row["expires_at"] is not None
-                and now >= _parse_time(row["expires_at"])
-            ):
-                connection.execute(
-                    "UPDATE approval_requests SET status = 'expired' WHERE approval_id = ? AND status = 'pending'",
-                    (approval_id,),
-                )
-                self._insert_event(connection, approval_id, "expired", _timestamp(now), None)
-            connection.execute("COMMIT")
-        except Exception:
-            if connection.in_transaction:
-                connection.execute("ROLLBACK")
-            raise
-        finally:
-            connection.close()
+    @staticmethod
+    def _effective_status(row: sqlite3.Row, now: datetime) -> str:
+        if (
+            row["status"] == "pending"
+            and row["expires_at"] is not None
+            and now >= _parse_time(row["expires_at"])
+        ):
+            return "expired"
+        return str(row["status"])
 
     @staticmethod
     def _request_row(connection: sqlite3.Connection, approval_id: str) -> sqlite3.Row:
@@ -1056,39 +1004,6 @@ class ApprovalService:
         if row is None:
             raise ApprovalAccessDenied("approval request does not exist")
         return row
-
-    @staticmethod
-    def _insert_event(
-        connection: sqlite3.Connection,
-        approval_id: str,
-        event_type: str,
-        recorded_at: str,
-        decision_ref: ArtifactRef | None,
-    ) -> None:
-        payload = canonical_json(
-            {
-                "approval_id": approval_id,
-                "event_type": event_type,
-                "recorded_at": recorded_at,
-                "decision_ref": decision_ref,
-            }
-        )
-        connection.execute(
-            """
-            INSERT INTO approval_events (
-                event_id, approval_id, event_type, event_json,
-                event_sha256, recorded_at
-            ) VALUES (?, ?, ?, ?, ?, ?)
-            """,
-            (
-                f"aev_{uuid.uuid4().hex}",
-                approval_id,
-                event_type,
-                payload,
-                hashlib.sha256(payload).hexdigest(),
-                recorded_at,
-            ),
-        )
 
     def _initialize(self) -> None:
         with self._connect() as connection:
@@ -1139,16 +1054,6 @@ class ApprovalService:
                     decided_at TEXT NOT NULL,
                     FOREIGN KEY (approval_id) REFERENCES approval_requests(approval_id)
                 );
-                CREATE TABLE IF NOT EXISTS approval_events (
-                    sequence INTEGER PRIMARY KEY AUTOINCREMENT,
-                    event_id TEXT NOT NULL UNIQUE,
-                    approval_id TEXT NOT NULL,
-                    event_type TEXT NOT NULL,
-                    event_json BLOB NOT NULL,
-                    event_sha256 TEXT NOT NULL CHECK(length(event_sha256)=64),
-                    recorded_at TEXT NOT NULL,
-                    FOREIGN KEY (approval_id) REFERENCES approval_requests(approval_id)
-                );
                 CREATE TRIGGER IF NOT EXISTS approval_decisions_deny_update
                 BEFORE UPDATE ON approval_decisions BEGIN
                     SELECT RAISE(ABORT, 'approval_decisions is append-only');
@@ -1173,14 +1078,6 @@ class ApprovalService:
                 BEFORE DELETE ON decision_attempts BEGIN
                     SELECT RAISE(ABORT, 'decision_attempts is append-only');
                 END;
-                CREATE TRIGGER IF NOT EXISTS approval_events_deny_update
-                BEFORE UPDATE ON approval_events BEGIN
-                    SELECT RAISE(ABORT, 'approval_events is append-only');
-                END;
-                CREATE TRIGGER IF NOT EXISTS approval_events_deny_delete
-                BEFORE DELETE ON approval_events BEGIN
-                    SELECT RAISE(ABORT, 'approval_events is append-only');
-                END;
                 """
             )
             connection.execute("PRAGMA foreign_keys = ON")
@@ -1191,33 +1088,6 @@ class ApprovalService:
         connection.execute("PRAGMA foreign_keys = ON")
         connection.execute("PRAGMA busy_timeout = 5000")
         return connection
-
-
-def _drop_approval_delete_guards(connection: sqlite3.Connection) -> None:
-    for name in (
-        "approval_decisions_deny_delete",
-        "used_nonces_deny_delete",
-        "decision_attempts_deny_delete",
-        "approval_events_deny_delete",
-    ):
-        connection.execute(f"DROP TRIGGER IF EXISTS {name}")
-
-
-def _create_approval_delete_guards(connection: sqlite3.Connection) -> None:
-    for table in (
-        "approval_decisions",
-        "used_nonces",
-        "decision_attempts",
-        "approval_events",
-    ):
-        connection.execute(
-            f"""
-            CREATE TRIGGER IF NOT EXISTS {table}_deny_delete
-            BEFORE DELETE ON {table} BEGIN
-                SELECT RAISE(ABORT, '{table} is append-only');
-            END
-            """
-        )
 
 
 def _json_pointers(value: object, pointer: str = "") -> list[str]:
@@ -1241,12 +1111,20 @@ def _json_pointers(value: object, pointer: str = "") -> list[str]:
 
 def _json_pointer_value(value: object, pointer: str) -> object:
     current = value
-    for raw_part in pointer.split("/")[1:]:
-        part = raw_part.replace("~1", "/").replace("~0", "~")
+    try:
+        parts = parse_json_pointer(pointer)
+    except ValueError as error:
+        raise ApprovalError("JSON pointer is invalid") from error
+    for part in parts:
         if isinstance(current, dict) and part in current:
             current = current[part]
             continue
-        if isinstance(current, list) and part.isdigit():
+        valid_index = part == "0" or (
+            bool(part)
+            and part[0] in "123456789"
+            and all(character in "0123456789" for character in part[1:])
+        )
+        if isinstance(current, list) and valid_index:
             index = int(part)
             if index < len(current):
                 current = current[index]

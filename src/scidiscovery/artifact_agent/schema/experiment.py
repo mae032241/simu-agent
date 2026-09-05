@@ -8,12 +8,8 @@ from pydantic import Field, field_validator, model_validator
 
 from .common import Identifier, SchemaModel, canonical_json, canonical_sha256
 from .scientific_foundation import ScalarValue
-from .curve_score import (
-    CurveComparisonSpec,
-    CurveOperatorSpec,
-    validate_curve_comparison_declaration_contract,
-)
-from .units import unit_definition
+from .units import supported_unit_spellings, unit_definition
+from ...operation_contract import SemanticRuleViolation
 
 
 Level = Literal["low", "medium", "high"]
@@ -29,7 +25,14 @@ class MetricThreshold(SchemaModel):
     operator: Literal["lt", "le", "gt", "ge", "between", "equal"]
     value: float
     upper_value: float | None = None
-    unit: Annotated[str, Field(min_length=1, max_length=128)]
+    unit: Annotated[
+        str,
+        Field(
+            min_length=1,
+            max_length=128,
+            json_schema_extra={"enum": list(supported_unit_spellings())},
+        ),
+    ]
 
     @field_validator("unit")
     @classmethod
@@ -213,7 +216,6 @@ class ExperimentProposal(SchemaModel):
         tuple[str, ...], Field(min_length=1, max_length=128)
     ]
     comparison_contract: ComparisonContract | None = None
-    curve_comparison_spec: CurveComparisonSpec | None = None
     prediction_tests: Annotated[
         tuple[PredictionTest, ...], Field(max_length=128)
     ] = ()
@@ -223,13 +225,6 @@ class ExperimentProposal(SchemaModel):
 
     @model_validator(mode="after")
     def _proposal_is_bounded(self) -> ExperimentProposal:
-        if (
-            self.curve_comparison_spec is not None
-            and not self.curve_comparison_spec.series_declarations
-        ):
-            raise ValueError(
-                "embedded curve comparison spec requires source series declarations"
-            )
         for values, label in (
             (self.hypothesis_keys, "hypothesis_keys"),
             (
@@ -274,47 +269,6 @@ class ExperimentProposal(SchemaModel):
             raise ValueError("prediction test references an undeclared hypothesis")
         case_by_key = {item.case_key: item for item in self.cases}
         contract = self.comparison_contract
-        curve_spec = self.curve_comparison_spec
-        if curve_spec is not None:
-            declarations = {
-                item.series_key: item for item in curve_spec.series_declarations
-            }
-            for comparison in curve_spec.comparisons:
-                if comparison.purpose != "target_fit":
-                    continue
-                candidate = declarations[comparison.candidate_series]
-                candidate_case = case_by_key.get(candidate.case_key)
-                if candidate_case is None:
-                    raise ValueError(
-                        "target-fit solver candidate must name a declared experiment case"
-                    )
-                if candidate_case.scientific_role == "convergence":
-                    raise ValueError(
-                        "target-fit candidate cannot use a convergence-only case"
-                    )
-                if contract is None:
-                    raise ValueError(
-                        "target-fit candidate requires a comparison contract"
-                    )
-                expectation_by_variable = {
-                    variable.variable_key: {
-                        item.case_key: item.value
-                        for item in variable.expectations
-                    }
-                    for variable in contract.variables
-                    if variable.factor_type in {"numerical", "implementation"}
-                }
-                for variable_key, expected in expectation_by_variable.items():
-                    baseline_value = expected[contract.baseline_case_key]
-                    candidate_value = expected[candidate.case_key]
-                    if (
-                        type(candidate_value) is not type(baseline_value)
-                        or candidate_value != baseline_value
-                    ):
-                        raise ValueError(
-                            "target-fit candidate must preserve baseline numerical "
-                            f"and implementation factors: {variable_key}"
-                        )
         if contract is None:
             if len(self.cases) != 1:
                 raise ValueError(
@@ -471,14 +425,6 @@ class ExperimentPortfolio(SchemaModel):
     def _portfolio_is_complete_and_ranked(self) -> ExperimentPortfolio:
         proposal_keys = tuple(item.experiment_key for item in self.proposals)
         plan_keys = tuple(item.plan_key for item in self.validation_plans)
-        curve_spec_count = sum(
-            item.curve_comparison_spec is not None for item in self.proposals
-        )
-        if curve_spec_count > 1:
-            raise ValueError(
-                "experiment portfolio supports exactly one executable curve "
-                "comparison spec"
-            )
         if len(proposal_keys) != len(set(proposal_keys)):
             raise ValueError("experiment_key values must be unique")
         if len(plan_keys) != len(set(plan_keys)):
@@ -489,25 +435,12 @@ class ExperimentPortfolio(SchemaModel):
             self.priority_order
         ) != len(set(self.priority_order)):
             raise ValueError("priority_order must contain every experiment exactly once")
-        proposal_by_key = {item.experiment_key: item for item in self.proposals}
         selected = set(self.selected_hypothesis_keys)
         for proposal in self.proposals:
             if not set(proposal.hypothesis_keys).issubset(selected):
                 raise ValueError("proposal references an unselected hypothesis")
         if {item.experiment_key for item in self.validation_plans} != set(proposal_keys):
             raise ValueError("every experiment requires exactly one validation plan")
-        plan_by_experiment = {
-            item.experiment_key: item for item in self.validation_plans
-        }
-        for proposal in self.proposals:
-            if proposal.curve_comparison_spec is not None:
-                curve_validation_check_keys(
-                    proposal,
-                    plan_by_experiment[proposal.experiment_key],
-                )
-        scores = [experiment_value_score(proposal_by_key[key]) for key in self.priority_order]
-        if scores != sorted(scores, reverse=True):
-            raise ValueError("priority_order must be non-increasing by deterministic value score")
         if self.study_kind == "scientific":
             if not selected:
                 raise ValueError("scientific portfolio requires selected hypotheses")
@@ -563,111 +496,10 @@ def deterministic_validation_check_keys(plan: ValidationPlan) -> tuple[Identifie
     )
 
 
-def curve_validation_check_keys(
-    proposal: ExperimentProposal,
-    plan: ValidationPlan,
-) -> tuple[Identifier, ...]:
-    """Validate exact one-to-one coverage of a plan by its curve-score spec."""
-
-    spec = proposal.curve_comparison_spec
-    if spec is None:
-        raise ValueError("proposal does not declare a curve comparison spec")
-    if plan.experiment_key != proposal.experiment_key:
-        raise ValueError("curve comparison spec and validation plan experiment mismatch")
-
-    checks = {
-        check.check_key: check
-        for dimension in (plan.numerical, plan.physical, plan.experimental)
-        for check in dimension.checks
-        if check.evaluation_mode == "deterministic_threshold"
-    }
-    bound: dict[str, CurveOperatorSpec] = {}
-    for comparison in spec.comparisons:
-        bound_in_comparison = 0
-        for operator in comparison.operators:
-            key = operator.validation_check_key
-            if operator.threshold is not None and key is None:
-                raise ValueError(
-                    "thresholded curve operator requires validation_check_key"
-                )
-            if key is not None and operator.threshold is None:
-                raise ValueError(
-                    "curve validation_check_key requires an operator threshold"
-                )
-            if key is None:
-                continue
-            if key in bound:
-                raise ValueError(
-                    "each deterministic validation check must bind exactly one curve operator"
-                )
-            bound[key] = operator
-            bound_in_comparison += 1
-        if (
-            comparison.required
-            and comparison.gate_scope == "numerical_qualification"
-            and bound_in_comparison == 0
-        ):
-            raise ValueError(
-                "required numerical-qualification curve comparison needs a "
-                "thresholded validation-check binding"
-            )
-
-    expected = set(checks)
-    actual = set(bound)
-    if actual != expected:
-        missing = sorted(expected - actual)
-        unexpected = sorted(actual - expected)
-        raise ValueError(
-            "curve comparison spec must cover the exact deterministic validation "
-            f"checks; missing={missing}, unexpected={unexpected}"
-        )
-    for key, operator in bound.items():
-        threshold = operator.threshold
-        planned_check = checks[key]
-        planned = planned_check.threshold
-        assert threshold is not None and planned is not None
-        if planned_check.evaluator_metric != operator.kind:
-            raise ValueError(
-                f"curve operator kind does not match validation evaluator for {key}"
-            )
-        expected_operator = (
-            "le" if threshold.comparison == "abs_le" else threshold.comparison
-        )
-        if (
-            planned.operator != expected_operator
-            or planned.value != threshold.value
-            or planned.upper_value is not None
-            or planned.unit != threshold.unit
-        ):
-            raise ValueError(
-                f"curve operator threshold does not match validation check {key}"
-            )
-    return deterministic_validation_check_keys(plan)
-
-
-_LEVEL_SCORE = {"low": 1, "medium": 2, "high": 3}
-
-
-def experiment_value_score(proposal: ExperimentProposal) -> int:
-    value = proposal.value_assessment
-    return (
-        _LEVEL_SCORE[value.evidence_support]
-        + _LEVEL_SCORE[value.discrimination_power]
-        + _LEVEL_SCORE[value.information_gain]
-        - _LEVEL_SCORE[value.cost]
-        - value.added_free_parameters
-    )
-
-
 def validate_experiment_portfolio(value: dict[str, object]) -> dict[str, object]:
     portfolio = ExperimentPortfolio.model_validate_json(
         canonical_json(value), strict=True
     )
-    for proposal in portfolio.proposals:
-        if proposal.curve_comparison_spec is not None:
-            validate_curve_comparison_declaration_contract(
-                proposal.curve_comparison_spec
-            )
     return portfolio.model_dump(mode="json")
 
 
@@ -682,83 +514,51 @@ def validate_experiment_design_task_output(
     portfolio = ExperimentPortfolio.model_validate_json(
         canonical_json(value), strict=True
     )
-    for proposal in portfolio.proposals:
-        if proposal.curve_comparison_spec is not None:
-            validate_curve_comparison_declaration_contract(
-                proposal.curve_comparison_spec
-            )
     if portfolio.study_kind == "engineering":
         return
     raw_objective = inputs.get("research_objective")
     raw_hypotheses = inputs.get("hypothesis_portfolio")
-    raw_eligibility = inputs.get("candidate_eligibility")
     if raw_objective is None:
-        raise ValueError("scientific experiment design requires research_objective")
+        raise SemanticRuleViolation("scientific experiment design requires research_objective")
     if raw_hypotheses is None:
-        raise ValueError("scientific experiment design requires hypothesis_portfolio")
-    if raw_eligibility is None:
-        raise ValueError("scientific experiment design requires candidate_eligibility")
+        raise SemanticRuleViolation("scientific experiment design requires hypothesis_portfolio")
     from .cognitive import HypothesisProposal
-    from .eligibility import CandidateEligibility
-    from .scientific_objective import ResearchObjectiveContract
+    from .research_objective import ResearchObjectiveContract
 
     objective = ResearchObjectiveContract.model_validate_json(
         raw_objective, strict=True
     )
     hypotheses = HypothesisProposal.model_validate_json(raw_hypotheses, strict=True)
-    eligibility = CandidateEligibility.model_validate_json(
-        raw_eligibility, strict=True
-    )
     hypothesis_keys = {item.hypothesis_key for item in hypotheses.hypotheses}
     selected = set(portfolio.selected_hypothesis_keys)
     if not selected.issubset(hypothesis_keys):
-        raise ValueError(
+        raise SemanticRuleViolation(
             "experiment portfolio selects a hypothesis absent from the supplied portfolio"
         )
-    if not selected.issubset(set(eligibility.eligible_hypothesis_keys)):
-        raise ValueError(
-            "experiment portfolio selects a hypothesis that is not eligible"
-        )
-    if eligibility.status != "ready":
-        raise ValueError("scientific experiment design requires ready eligibility")
-    if eligibility.objective != hypotheses.objective:
-        raise ValueError(
-            "candidate eligibility objective differs from hypothesis portfolio"
-        )
-    if eligibility.hypothesis_portfolio_sha256 != canonical_sha256(
-        hypotheses.model_dump(mode="json")
-    ):
-        raise ValueError(
-            "candidate eligibility does not bind the exact hypothesis portfolio"
-        )
-    if portfolio.objective != hypotheses.objective:
-        raise ValueError(
-            "experiment portfolio objective differs from hypothesis portfolio"
+    if hypotheses.research_objective_key != objective.objective_key:
+        raise SemanticRuleViolation(
+            "hypothesis portfolio research_objective_key differs from research objective"
         )
     if portfolio.objective_key != objective.objective_key:
-        raise ValueError(
+        raise SemanticRuleViolation(
             "experiment portfolio objective_key differs from research objective"
         )
     if portfolio.objective != objective.statement:
-        raise ValueError(
+        raise SemanticRuleViolation(
             "experiment portfolio objective statement differs from research objective"
         )
-    target_references = {
-        comparison.reference_series
+    declared_observables = {
+        observable
         for proposal in portfolio.proposals
-        if proposal.curve_comparison_spec is not None
-        for comparison in proposal.curve_comparison_spec.comparisons
-        if comparison.purpose == "target_fit"
-        and comparison.gate_scope == "objective"
-        and comparison.required
+        for observable in proposal.required_observables
     }
     missing_targets = tuple(
         target.target_key
         for target in objective.mandatory_targets
-        if target.reference_series_key not in target_references
+        if target.observable not in declared_observables
     )
     if missing_targets:
-        raise ValueError(
+        raise SemanticRuleViolation(
             "experiment portfolio omits mandatory objective targets: "
             + ", ".join(missing_targets)
         )
@@ -781,9 +581,7 @@ __all__ = [
     "ValidationCheck",
     "ValidationDimensionPlan",
     "ValidationPlan",
-    "curve_validation_check_keys",
     "deterministic_validation_check_keys",
-    "experiment_value_score",
     "validate_experiment_portfolio",
     "validate_experiment_design_task_output",
 ]

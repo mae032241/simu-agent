@@ -1,36 +1,6 @@
-"""Deterministic curve-score transform plugin."""
-
-from .normalizer import SProcessLogSourceSpec, SProcessSeriesSpec
-from .plx_normalizer import SProcessPLXSourceSpec
+"""Domain-neutral deterministic curve analysis plugin."""
 from .plotter import CURVE_COMPARISON_PLOT_PROFILE
-from .transform_adapter import (
-    CURVE_CONSISTENCY_PROFILE,
-    CURVE_REFERENCE_COVERAGE_PROFILE,
-    CURVE_SCORE_PROFILE,
-    CURVE_SCORE_SPROCESS_PROFILE,
-    PLX_NORMALIZER_PROFILE,
-    SPROCESS_PLX_BUNDLE_PROFILE,
-    SPROCESS_NORMALIZE_PROFILE,
-    CurveScoreTransformAdapter,
-    FIGURE_EVIDENCE_BUNDLE_PROFILE,
-    FIGURE_EVIDENCE_BUNDLE_PROFILE_V2,
-    OBJECTIVE_COVERAGE_PROFILE,
-)
 
 __all__ = [
-    "CURVE_CONSISTENCY_PROFILE",
     "CURVE_COMPARISON_PLOT_PROFILE",
-    "CURVE_REFERENCE_COVERAGE_PROFILE",
-    "CURVE_SCORE_PROFILE",
-    "CURVE_SCORE_SPROCESS_PROFILE",
-    "FIGURE_EVIDENCE_BUNDLE_PROFILE",
-    "FIGURE_EVIDENCE_BUNDLE_PROFILE_V2",
-    "OBJECTIVE_COVERAGE_PROFILE",
-    "PLX_NORMALIZER_PROFILE",
-    "SPROCESS_NORMALIZE_PROFILE",
-    "SPROCESS_PLX_BUNDLE_PROFILE",
-    "CurveScoreTransformAdapter",
-    "SProcessLogSourceSpec",
-    "SProcessPLXSourceSpec",
-    "SProcessSeriesSpec",
 ]

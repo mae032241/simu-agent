@@ -4,16 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "scidiscovery-curve-score"
-version = "0.1.0"
-description = "Deterministic solver-output normalization and curve comparison transforms"
+version = "0.2.1"
+description = "Compiled deterministic curve operations for SciDiscovery"
 requires-python = ">=3.10"
-dependencies = ["scidiscovery>=0.1.0", "tcad-artifact>=0.1.0"]
+dependencies = ["scidiscovery>=0.1.0"]
 
-[project.entry-points."scidiscovery.transform_adapters"]
-curve_score = "curve_score.transform_adapter:CurveScoreTransformAdapter"
-
-[project.entry-points."scidiscovery.operation_specs"]
-curve_score = "curve_score.operation_specs:SCIENTIFIC_OPERATION_SPECS"
+[project.entry-points."scidiscovery.plugins"]
+curve_score = "curve_score.plugin:PLUGIN"
 
 [tool.setuptools.packages.find]
 where = ["."]

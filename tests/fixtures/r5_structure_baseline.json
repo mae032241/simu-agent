@@ -1,0 +1,77 @@
+{
+  "schema_version": 2,
+  "captured_on": "2026-08-29",
+  "baseline_commit": "404aeb14c6ebc4b08bac599db91eaee54c103f48",
+  "r0_core": {
+    "baseline_total_lines": 13657,
+    "r5_0_total_lines": 11297,
+    "paths": {
+      "src/scidiscovery/scheduler_topology.py": 68,
+      "src/scidiscovery/platforms/roles.py": 342,
+      "src/scidiscovery/artifact_agent/runtime.py": 200,
+      "src/scidiscovery/artifact_agent/interfaces/mcp_root.py": 3531,
+      "src/scidiscovery/artifact_agent/service/tasks.py": 6786,
+      "src/scidiscovery/artifact_agent/approval_ui/render.py": 370
+    }
+  },
+  "operations_package": {
+    "python_files": 7,
+    "lines": 2060
+  },
+  "production_python": {
+    "python_files": 126,
+    "lines": 62533
+  },
+  "deployment": {
+    "deploy_install_sh_lines": 1026,
+    "included_in_r0_python_denominator": false
+  },
+  "selected_responsibilities": {
+    "src/scidiscovery/artifact_agent/interfaces/mcp_worker.py": 1387,
+    "src/scidiscovery/general_science_plugin.py": 2470,
+    "src/scidiscovery/general_transform_operations.py": 1095,
+    "src/scidiscovery/operations/catalog.py": 636
+  },
+  "catalogs": {
+    "core": {
+      "operations": 32,
+      "public": 18,
+      "support": 14,
+      "internal": 0,
+      "operation_digest_set_sha256": "a8257982ea105fe888be7af2869ebb0d620b55c5bb6d5fcf4616ee01ab7f5a11"
+    },
+    "full": {
+      "operations": 49,
+      "public": 23,
+      "support": 26,
+      "internal": 0,
+      "operation_digest_set_sha256": "f1dec7d2a31d1ac1b375b5bb63ddebe47ef7a135d9029906c576fa6f643fc4a1"
+    },
+    "full_ingaas": {
+      "operations": 50,
+      "public": 23,
+      "support": 27,
+      "internal": 0,
+      "operation_digest_set_sha256": "3312dc08e6d792748258c812aa3851bdd72c6a9c2d7e295397329f57d6bdd1ba"
+    }
+  },
+  "structure_inventory": {
+    "path": "tests/fixtures/r5_structure_inventory.json",
+    "sha256_at_capture": "1b397e2dfea1bc579b2597caf5d3a37f5ef44e40d66b92f509b349b51b77983a"
+  },
+  "legacy_occurrence_counts": {
+    "legacy_role_entry_point": 1,
+    "legacy_transform_entry_point": 2,
+    "broken_operation_entry_point": 0,
+    "load_roles": 9,
+    "load_transform_adapters": 6,
+    "task_schedule": 4,
+    "artifact_transform": 5,
+    "approval_request_create": 3,
+    "execution_request_create": 4
+  },
+  "generator": {
+    "path": "scripts/r5_baseline_metrics.py",
+    "sha256_at_capture": "718eac8e17569cdbb7adeefe7e0e8cc12efab20cae96b614e4fdc77db40e51f5"
+  }
+}

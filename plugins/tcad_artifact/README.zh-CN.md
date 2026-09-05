@@ -3,7 +3,8 @@
 简体中文 | [English](README.md)
 
 `tcad_control` 是已准备 TCAD 作业的执行适配器，只提供 capability discovery、
-submit、status、cancel、collect 五项操作。它只管理运行目录和后台进程状态；Artifact、任务、审批、执行
+submission lookup、submit、status、cancel、collect 六项操作。lookup 按冻结提交摘要权威查回，
+submit 对同一描述符幂等；查询不可用时不得盲目重提。它只管理运行目录和后台进程状态；Artifact、Run、审批、执行
 身份和结果注册均由 SciDiscovery 控制面负责。
 
 输入为规范化 `TCADJobSpec`，其中包含本地归档描述、成员清单、部署方白名单工具
@@ -20,8 +21,10 @@ Capability discovery 只产生 `tcad.solver-capability.v2`。私有固定参数�
 `public_arguments`，并设置受限的 `public_release_label`；默认不公开任何参数，标签
 由安全 profile 名派生。未公开值只以计数和摘要绑定，v1 snapshot 一律拒绝。
 
-插件还提供统一的 TCAD Deck 作者/修订角色及独立代码审查者，以及兼容性补丁应用、完整工程比较、
-精确审查校验、reviewed package 和 runtime attestation 等确定性变换。
+插件还提供统一的 TCAD Deck 作者/修订角色及独立代码审查者，以及完整工程比较、精确审查校验、
+reviewed package、runtime attestation 和控制等价等确定性变换。
+作者和审查者先通过 `worker_open_assignment` 获得 Run 内只读输入路径，再用 Codex 原生只读能力查看
+完整源码；插件不注册第二个 TCAD 输入读取协议。作者的调试能力仍由精确 Operation 单独注册。
 
 新的 direct-solver author 流程使用 solver-neutral declaration materializer：Worker 写完整
 solver 工程、显式 case anchor 和原始 solver 输出路径，不填写 capability identity、资源策略、

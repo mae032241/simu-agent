@@ -11,53 +11,27 @@ from bisect import bisect_right
 from typing import Mapping
 
 from scidiscovery.artifact_agent.schema.common import canonical_json
-from scidiscovery.artifact_agent.transforms import TransformOutput
 from tcad_artifact.project_packager import DeckProjectDraft
 
 
-FIG4_BASELINE_RECOVERY_PROFILE = "ingaas.fig4-baseline-recovery.v2"
+FIG4_BASELINE_RECOVERY_OPERATION = "ingaas.fig4-baseline-recovery.v2"
+INTERPRETATION_BOUNDARY = (
+    "This deterministic report localizes and reproduces the discrepancy; "
+    "it does not attribute causality or accept a physical model."
+)
 FLOOR = 1.0e10
 LEVELS = (1.0e19, 1.0e18, 1.0e17)
 
 
-class InGaAsFig4TransformAdapter:
-    @staticmethod
-    def supports_transform_profile(profile: str) -> bool:
-        return profile == FIG4_BASELINE_RECOVERY_PROFILE
-
-    @staticmethod
-    def required_input_parentage(profile: str) -> tuple[tuple[str, str], ...]:
-        return ()
-
-    @staticmethod
-    def transform(
-        *, profile: str, inputs: Mapping[str, bytes]
-    ) -> tuple[TransformOutput, ...]:
-        if profile != FIG4_BASELINE_RECOVERY_PROFILE:
-            raise ValueError("unsupported InGaAs Fig.4 transform profile")
-        expected = {
-            "scorer_project",
-            "curve_bundle",
-            "target_metrics",
-            "historical_baseline",
-            "candidate_profile",
-        }
-        if set(inputs) != expected:
-            raise ValueError("Fig.4 baseline scorer input set is incomplete")
-        result = score_baseline_recovery(inputs)
-        return (
-            TransformOutput(
-                label="primary",
-                content=canonical_json(result),
-                kind="metric_report",
-                schema="ingaas.fig4-baseline-recovery.v2",
-                payload_schema_version=1,
-                media_type="application/json",
-            ),
-        )
-
-
 def score_baseline_recovery(inputs: Mapping[str, bytes]) -> dict[str, object]:
+    if set(inputs) != {
+        "scorer_project",
+        "curve_bundle",
+        "target_metrics",
+        "historical_baseline",
+        "candidate_profile",
+    }:
+        raise ValueError("Fig.4 baseline scorer input set is incomplete")
     project = DeckProjectDraft.model_validate_json(inputs["scorer_project"], strict=True)
     files = {item.relative_path: item.content for item in project.files}
     try:
@@ -181,10 +155,7 @@ def score_baseline_recovery(inputs: Mapping[str, bytes]) -> dict[str, object]:
         "residual_regions_above_0p02_decade": _contiguous_regions(
             depths, residuals, 0.02
         ),
-        "interpretation_boundary": (
-            "This deterministic report localizes and reproduces the discrepancy; "
-            "it does not attribute causality or accept a physical model."
-        ),
+        "interpretation_boundary": INTERPRETATION_BOUNDARY,
     }
 
 
@@ -330,7 +301,7 @@ def _contiguous_regions(
 
 
 __all__ = [
-    "FIG4_BASELINE_RECOVERY_PROFILE",
-    "InGaAsFig4TransformAdapter",
+    "FIG4_BASELINE_RECOVERY_OPERATION",
+    "INTERPRETATION_BOUNDARY",
     "score_baseline_recovery",
 ]
