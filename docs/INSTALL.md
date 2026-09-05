@@ -147,9 +147,17 @@ MCP and Subagent configuration:
 codex -C "$SCID_WORKSPACE"
 ```
 
-When `SCID_WORKSPACE` points outside the source tree, the installer emits an
+When Codex is actually launched outside both the source root and workspace, set
+that existing absolute directory as `SCID_CODEX_LAUNCH_ROOT`. The installer
+generates, backs up, and verifies its `.codex` and `AGENTS.md` in the same
+transaction so the launch directory cannot retain stale MCP definitions. When
+`SCID_WORKSPACE` points outside the source tree, the installer emits an
 equivalent project-local runtime profile there because it cannot inherit the
 framework root. This does not duplicate research data or control-plane state.
+
+```bash
+export SCID_CODEX_LAUNCH_ROOT=/absolute/directory/where/codex/is/started
+```
 
 Do not rerun the installer for every Codex session. Reinstall only for the
 initial deployment, an installation-configuration change, or an installed-code
@@ -305,6 +313,7 @@ scientific model or a Sentaurus license.
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `SCID_WORKSPACE` | `<source-root>/workspace/default` | Existing project workspace; must differ from the source root |
+| `SCID_CODEX_LAUNCH_ROOT` | unset | Optional actual Codex launch directory; receives the same-generation project profile when distinct from source and workspace |
 | `SCID_PYTHON` | first `python3` on `PATH` | Base interpreter |
 | `SCID_SERVICE_USER` | `SUDO_USER` or current user | Service account |
 | `SCID_SERVICE_GROUP` | primary group of service user | Socket/file group |

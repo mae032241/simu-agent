@@ -3,6 +3,7 @@ set -Eeuo pipefail
 
 readonly SOURCE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly WORKSPACE="${SCID_WORKSPACE:-${SOURCE_ROOT}/workspace/default}"
+readonly CODEX_LAUNCH_ROOT="${SCID_CODEX_LAUNCH_ROOT:-}"
 readonly PYTHON="${SCID_PYTHON:-$(command -v python3 || true)}"
 readonly SERVICE_USER="${SCID_SERVICE_USER:-${SUDO_USER:-$(id -un)}}"
 readonly SERVICE_GROUP="${SCID_SERVICE_GROUP:-$(id -gn "$SERVICE_USER")}"
@@ -43,6 +44,12 @@ validate_systemd_value() {
        "$value" != *'%'* && "$value" != *'$'* && "$value" != *'@'* && \
        "$value" != *'\\'* ]] || \
         die "${name} contains a character unsafe for systemd templates"
+}
+
+codex_launch_root_is_distinct() {
+    [[ -n "$CODEX_LAUNCH_ROOT" ]] || return 1
+    [[ "$(realpath -e -- "$CODEX_LAUNCH_ROOT")" != "$(realpath -e -- "$SOURCE_ROOT")" && \
+       "$(realpath -e -- "$CODEX_LAUNCH_ROOT")" != "$(realpath -e -- "$WORKSPACE")" ]]
 }
 
 validate_local_workspace_root() {
@@ -91,6 +98,10 @@ PY
 
 require_sources() {
     local path plugin_ids plugin_distributions
+    local -a deployment_paths=(
+        "$WORKSPACE" "$PYTHON" "$INSTALL_ROOT" "$SCID_STATE"
+        "$LOCAL_WORKSPACE_ROOT" "$CONFIG_ROOT" "$BACKUP_ROOT"
+    )
     for path in \
         pyproject.toml \
         deploy/plugin_selection.py \
@@ -103,11 +114,12 @@ require_sources() {
         die "SCID_WORKSPACE must name an existing absolute project directory"
     [[ "$WORKSPACE" != "$SOURCE_ROOT" ]] || \
         die "SCID_WORKSPACE must be separate from the source repository"
-    for path in \
-        "$WORKSPACE" "$PYTHON" "$INSTALL_ROOT" "$SCID_STATE" \
-        "$LOCAL_WORKSPACE_ROOT" \
-        "$CONFIG_ROOT" "$BACKUP_ROOT"
-    do
+    if [[ -n "$CODEX_LAUNCH_ROOT" ]]; then
+        [[ "$CODEX_LAUNCH_ROOT" = /* && -d "$CODEX_LAUNCH_ROOT" && \
+           ! -L "$CODEX_LAUNCH_ROOT" ]] || \
+            die "SCID_CODEX_LAUNCH_ROOT must name an existing absolute directory"
+    fi
+    for path in "${deployment_paths[@]}"; do
         [[ "$path" = /* ]] || die "deployment paths must be absolute: ${path}"
         validate_systemd_value "deployment path" "$path"
     done
@@ -321,17 +333,23 @@ render_units() {
 }
 
 preview() {
-    local stage plugin pythonpath="${SOURCE_ROOT}/src"
+    local stage plugin pythonpath="${SOURCE_ROOT}/src" launch_is_distinct=0
     for plugin in "${SELECTED_PLUGINS[@]}"; do
         pythonpath+=":${SOURCE_ROOT}/plugins/${plugin}"
     done
     stage="$(mktemp -d)"
+    if codex_launch_root_is_distinct; then
+        launch_is_distinct=1
+    fi
     render_units "$stage"
     printf 'Rendered services: %s\n' "$(cd "$stage" && printf '%s ' *.service)"
     systemd-analyze verify "$stage"/*.service
     (
         cd "$SOURCE_ROOT"
+        SCID_INSTALL_CODEX_LAUNCH_ROOT="$CODEX_LAUNCH_ROOT" \
+        SCID_INSTALL_CODEX_LAUNCH_DISTINCT="$launch_is_distinct" \
         PYTHONPATH="$pythonpath" "$PYTHON" - <<PY
+import os
 from pathlib import Path
 from scidiscovery.platforms import initialize_platform
 from scidiscovery.operations.catalog import compile_installed_catalog
@@ -363,6 +381,11 @@ except ValueError:
     initialize_platform(
         'codex', Path('$WORKSPACE'),
         codex_config_root=Path('$stage/external-workspace-codex'), **common,
+    )
+if int(os.environ['SCID_INSTALL_CODEX_LAUNCH_DISTINCT']):
+    initialize_platform(
+        'codex', Path(os.environ['SCID_INSTALL_CODEX_LAUNCH_ROOT']),
+        codex_config_root=Path('$stage/launch-root-codex'), **common,
     )
 print('deployment preview: pass')
 PY
@@ -652,10 +675,13 @@ install_platform_skills() {
 
 prepare_managed_platform_paths() {
     local path link
-    for path in \
-        "$SOURCE_ROOT/.codex" \
-        "$WORKSPACE/.codex"
-    do
+    local -a directories=("$SOURCE_ROOT/.codex" "$WORKSPACE/.codex")
+    local -a files=("$SOURCE_ROOT/AGENTS.md" "$WORKSPACE/AGENTS.md")
+    if codex_launch_root_is_distinct; then
+        directories+=("$CODEX_LAUNCH_ROOT/.codex")
+        files+=("$CODEX_LAUNCH_ROOT/AGENTS.md")
+    fi
+    for path in "${directories[@]}"; do
         [[ -e "$path" ]] || continue
         [[ -d "$path" && ! -L "$path" ]] || die "unsafe managed platform directory: ${path}"
         link="$(find "$path" -type l -print -quit)"
@@ -663,10 +689,7 @@ prepare_managed_platform_paths() {
         chown -R "$SERVICE_USER:$SERVICE_GROUP" "$path"
         chmod -R u+rwX "$path"
     done
-    for path in \
-        "$SOURCE_ROOT/AGENTS.md" \
-        "$WORKSPACE/AGENTS.md"
-    do
+    for path in "${files[@]}"; do
         [[ -e "$path" ]] || continue
         [[ -f "$path" && ! -L "$path" ]] || die "unsafe managed platform file: ${path}"
         chown "$SERVICE_USER:$SERVICE_GROUP" "$path"
@@ -675,7 +698,7 @@ prepare_managed_platform_paths() {
 }
 
 configure_platform() {
-    local timestamp backup workspace_is_nested=0
+    local timestamp backup workspace_is_nested=0 launch_is_distinct=0
     timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
     backup="${BACKUP_ROOT}/${timestamp}"
     install -d -o root -g root -m 0755 "$BACKUP_ROOT" "$backup"
@@ -683,8 +706,16 @@ configure_platform() {
     [[ ! -e "$SOURCE_ROOT/AGENTS.md" ]] || cp -a "$SOURCE_ROOT/AGENTS.md" "$backup/framework-AGENTS.md"
     [[ ! -e "$WORKSPACE/.codex" ]] || cp -a "$WORKSPACE/.codex" "$backup/workspace-codex"
     [[ ! -e "$WORKSPACE/AGENTS.md" ]] || cp -a "$WORKSPACE/AGENTS.md" "$backup/AGENTS.md"
+    if codex_launch_root_is_distinct; then
+        launch_is_distinct=1
+        [[ ! -e "$CODEX_LAUNCH_ROOT/.codex" ]] || \
+            cp -a "$CODEX_LAUNCH_ROOT/.codex" "$backup/launch-codex"
+        [[ ! -e "$CODEX_LAUNCH_ROOT/AGENTS.md" ]] || \
+            cp -a "$CODEX_LAUNCH_ROOT/AGENTS.md" "$backup/launch-AGENTS.md"
+    fi
     backup_legacy_user_entrypoints "$backup"
     install_platform_skills "$backup"
+    prepare_managed_platform_paths
     if [[ "$(realpath -e "$WORKSPACE")" == "$SOURCE_ROOT/"* ]]; then
         workspace_is_nested=1
         rm -rf "$WORKSPACE/.codex"
@@ -692,8 +723,15 @@ configure_platform() {
         install -d -o "$SERVICE_USER" -g "$SERVICE_GROUP" -m 0755 "$WORKSPACE/.codex"
     fi
     install -d -o "$SERVICE_USER" -g "$SERVICE_GROUP" -m 0755 "$SOURCE_ROOT/.codex"
-    prepare_managed_platform_paths
-    runuser -u "$SERVICE_USER" -- env PYTHONNOUSERSITE=1 PYTHONPATH="$SITE_ROOT" "$PYTHON" - <<PY
+    if [[ "$launch_is_distinct" -eq 1 ]]; then
+        install -d -o "$SERVICE_USER" -g "$SERVICE_GROUP" -m 0755 \
+            "$CODEX_LAUNCH_ROOT/.codex"
+    fi
+    runuser -u "$SERVICE_USER" -- env PYTHONNOUSERSITE=1 PYTHONPATH="$SITE_ROOT" \
+        SCID_INSTALL_CODEX_LAUNCH_ROOT="$CODEX_LAUNCH_ROOT" \
+        SCID_INSTALL_CODEX_LAUNCH_DISTINCT="$launch_is_distinct" \
+        "$PYTHON" - <<PY
+import os
 from pathlib import Path
 from scidiscovery.platforms import initialize_platform
 
@@ -742,11 +780,21 @@ if not workspace_is_nested:
         'codex', workspace,
         codex_config_root=workspace / '.codex', **common,
     )
+if int(os.environ['SCID_INSTALL_CODEX_LAUNCH_DISTINCT']):
+    launch_root = Path(os.environ['SCID_INSTALL_CODEX_LAUNCH_ROOT'])
+    initialize_platform(
+        'codex', launch_root,
+        codex_config_root=launch_root / '.codex', **common,
+    )
 PY
     [[ ! -e "$SOURCE_ROOT/.codex" ]] || chown -R "$SERVICE_USER:$SERVICE_GROUP" "$SOURCE_ROOT/.codex"
     [[ ! -e "$SOURCE_ROOT/AGENTS.md" ]] || chown "$SERVICE_USER:$SERVICE_GROUP" "$SOURCE_ROOT/AGENTS.md"
     [[ ! -e "$WORKSPACE/.codex" ]] || chown -R "$SERVICE_USER:$SERVICE_GROUP" "$WORKSPACE/.codex"
     [[ ! -e "$WORKSPACE/AGENTS.md" ]] || chown "$SERVICE_USER:$SERVICE_GROUP" "$WORKSPACE/AGENTS.md"
+    if [[ "$launch_is_distinct" -eq 1 ]]; then
+        chown -R "$SERVICE_USER:$SERVICE_GROUP" "$CODEX_LAUNCH_ROOT/.codex"
+        chown "$SERVICE_USER:$SERVICE_GROUP" "$CODEX_LAUNCH_ROOT/AGENTS.md"
+    fi
     printf 'Platform configuration backup: %s\n' "$backup"
 }
 
@@ -827,9 +875,10 @@ verify_installation() {
     PYTHONNOUSERSITE=1 PYTHONPATH="$SITE_ROOT" "$PYTHON" - \
         "$SOURCE_ROOT" "$WORKSPACE" "$SITE_ROOT" "$PLATFORM" \
         "$SCID_STATE" "$LOCAL_WORKSPACE_ROOT" "$WORKER_BACKEND" "$TCAD_ENABLED" \
-        "${CONFIG_ROOT}/tcad-plugin.json" <<'PY'
+        "${CONFIG_ROOT}/tcad-plugin.json" "$CODEX_LAUNCH_ROOT" <<'PY'
 from pathlib import Path
 import sys
+from scidiscovery.platforms import initialize_platform
 from scidiscovery.platforms.codex import validate_installation_profile
 source_root = Path(sys.argv[1])
 workspace = Path(sys.argv[2])
@@ -854,6 +903,24 @@ if platform == 'codex':
         f'Codex framework profile probe: pass '
         f'({mcp_count} MCP, {agent_count} agents)'
     )
+    if sys.argv[10]:
+        launch_root = Path(sys.argv[10])
+        if launch_root.resolve() not in {source_root.resolve(), workspace.resolve()}:
+            report = initialize_platform(
+                'codex', launch_root,
+                python_executable=Path(sys.executable),
+                python_path=Path(site),
+                control_socket=Path('/run/scidiscovery/control.sock'),
+                state_root=state_root,
+                local_workspace_root=local_workspace_root,
+                worker_backend=worker_backend,
+                codex_config_root=launch_root / '.codex',
+                runtime_plugin_configs=runtime_plugin_configs,
+                dry_run=True,
+            )
+            if report.changed:
+                raise RuntimeError('Codex launch-root profile differs from compiled catalog')
+            print('Codex launch-root profile probe: pass')
 PY
 }
 
@@ -877,6 +944,12 @@ begin_install_transaction() {
         --target "workspace-codex=${WORKSPACE}/.codex"
         --target "workspace-agents=${WORKSPACE}/AGENTS.md"
     )
+    if codex_launch_root_is_distinct; then
+        command+=(
+            --target "launch-codex=${CODEX_LAUNCH_ROOT}/.codex"
+            --target "launch-agents=${CODEX_LAUNCH_ROOT}/AGENTS.md"
+        )
+    fi
     command+=(
         --target "tcad-transport-cli=/usr/local/bin/scidiscovery-tcad-transport"
     )

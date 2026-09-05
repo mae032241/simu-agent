@@ -854,6 +854,7 @@ def test_installer_separates_source_repository_from_project_workspace() -> None:
     script = (project_root / "deploy/install.sh").read_text(encoding="utf-8")
     assert 'readonly SOURCE_ROOT=' in script
     assert 'readonly WORKSPACE="${SCID_WORKSPACE:-${SOURCE_ROOT}/workspace/default}"' in script
+    assert 'readonly CODEX_LAUNCH_ROOT="${SCID_CODEX_LAUNCH_ROOT:-}"' in script
     assert 'readonly LOCAL_WORKSPACE_ROOT="${WORKSPACE}/.scidiscovery-runs"' in script
     assert '[[ "$WORKSPACE" != "$SOURCE_ROOT" ]]' in script
     assert '"${SOURCE_ROOT}/deploy/systemd/scidiscovery-control.service.in"' in script
@@ -867,6 +868,58 @@ def test_installer_separates_source_repository_from_project_workspace() -> None:
     assert "codex_config_root=source_root / '.codex'" in script
     assert "'claude'" not in script
     assert 'rm -rf "$WORKSPACE/.codex"' in script
+
+
+def test_installer_previews_an_explicit_codex_launch_root(tmp_path: Path) -> None:
+    project_root = Path(__file__).resolve().parents[2]
+    workspace = tmp_path / "workspace"
+    launch_root = tmp_path / "launch"
+    workspace.mkdir()
+    launch_root.mkdir()
+    completed = subprocess.run(
+        [str(project_root / "deploy/install.sh"), "--dry-run"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env={
+            **os.environ,
+            "SCID_WORKSPACE": str(workspace),
+            "SCID_CODEX_LAUNCH_ROOT": str(launch_root),
+            "SCID_PYTHON": sys.executable,
+            "SCID_INSTALL_ROOT": str(tmp_path / "install"),
+            "SCID_STATE_ROOT": str(tmp_path / "state"),
+            "SCID_CONFIG_ROOT": str(tmp_path / "config"),
+            "SCID_BACKUP_ROOT": str(tmp_path / "backups"),
+        },
+        timeout=30,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert "deployment preview: pass" in completed.stdout
+    assert not (launch_root / ".codex").exists()
+    assert not (launch_root / "AGENTS.md").exists()
+
+
+def test_installer_rejects_a_missing_codex_launch_root(tmp_path: Path) -> None:
+    project_root = Path(__file__).resolve().parents[2]
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    completed = subprocess.run(
+        [str(project_root / "deploy/install.sh"), "--dry-run"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env={
+            **os.environ,
+            "SCID_WORKSPACE": str(workspace),
+            "SCID_CODEX_LAUNCH_ROOT": str(tmp_path / "missing"),
+            "SCID_PYTHON": sys.executable,
+        },
+        timeout=10,
+        check=False,
+    )
+    assert completed.returncode != 0
+    assert "SCID_CODEX_LAUNCH_ROOT must name an existing absolute directory" in completed.stderr
 
 
 def test_installer_rejects_unsafe_local_workspace_roots(tmp_path: Path) -> None:
@@ -962,15 +1015,26 @@ def test_platform_configuration_repairs_only_managed_path_permissions() -> None:
     for managed_path in (
         '"$SOURCE_ROOT/.codex"',
         '"$WORKSPACE/.codex"',
+        '"$CODEX_LAUNCH_ROOT/.codex"',
         '"$SOURCE_ROOT/AGENTS.md"',
         '"$WORKSPACE/AGENTS.md"',
+        '"$CODEX_LAUNCH_ROOT/AGENTS.md"',
     ):
         assert managed_path in script
     assert ".claude" not in script
     assert "CLAUDE.md" not in script
     assert 'chown -R "$SERVICE_USER:$SERVICE_GROUP" "$WORKSPACE"' not in script
     assert 'managed platform directory contains a symlink' in script
-    assert "    prepare_managed_platform_paths\n    runuser" in script
+    configure = script.index("configure_platform() {")
+    prepare = script.index("    prepare_managed_platform_paths", configure)
+    create_source = script.index(
+        '    install -d -o "$SERVICE_USER" -g "$SERVICE_GROUP" -m 0755 "$SOURCE_ROOT/.codex"',
+        configure,
+    )
+    create_launch = script.index(
+        '            "$CODEX_LAUNCH_ROOT/.codex"', create_source
+    )
+    assert prepare < create_source < create_launch
 
 
 def test_installer_recompiles_and_validates_codex_profile_around_service_start() -> None:
@@ -1067,6 +1131,8 @@ def test_installer_transaction_covers_every_mutated_release_surface() -> None:
         "framework-codex=${SOURCE_ROOT}/.codex",
         "framework-agents=${SOURCE_ROOT}/AGENTS.md",
         "workspace-codex=${WORKSPACE}/.codex",
+        "launch-codex=${CODEX_LAUNCH_ROOT}/.codex",
+        "launch-agents=${CODEX_LAUNCH_ROOT}/AGENTS.md",
         "codex-skill-${skill}=",
         "unit-${unit%.service}",
         "artifact_agent runs approvals executions scheduler-bindings",
@@ -1147,6 +1213,8 @@ def test_generic_reinstaller_passes_resolved_configuration(tmp_path: Path) -> No
     config_root = tmp_path / "config"
     backup_root = tmp_path / "backups"
     skill_root = tmp_path / "skills"
+    launch_root = tmp_path / "launch"
+    launch_root.mkdir()
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
     fake_sudo = fake_bin / "sudo"
@@ -1175,6 +1243,7 @@ def test_generic_reinstaller_passes_resolved_configuration(tmp_path: Path) -> No
             "SCID_BACKUP_ROOT": str(backup_root),
             "SCID_APPROVAL_PORT": "18765",
             "SCID_CODEX_SKILL_ROOT": str(skill_root),
+            "SCID_CODEX_LAUNCH_ROOT": str(launch_root),
         },
         timeout=10,
         check=False,
@@ -1196,6 +1265,7 @@ def test_generic_reinstaller_passes_resolved_configuration(tmp_path: Path) -> No
     assert f"SCID_BACKUP_ROOT={backup_root}" in output
     assert "SCID_APPROVAL_PORT=18765" in output
     assert f"SCID_CODEX_SKILL_ROOT={skill_root}" in output
+    assert f"SCID_CODEX_LAUNCH_ROOT={launch_root}" in output
     assert str(project_root / "deploy/install.sh") in output
     assert output[-1] == "install"
 

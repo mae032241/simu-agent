@@ -3,6 +3,7 @@ set -Eeuo pipefail
 
 readonly SOURCE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly WORKSPACE="${SCID_WORKSPACE:-${SOURCE_ROOT}/workspace/default}"
+readonly CODEX_LAUNCH_ROOT="${SCID_CODEX_LAUNCH_ROOT:-}"
 readonly PYTHON="${SCID_PYTHON:-$(command -v python3 || true)}"
 readonly SERVICE_USER="${SCID_SERVICE_USER:-$(id -un)}"
 readonly SERVICE_GROUP="${SCID_SERVICE_GROUP:-$(id -gn)}"
@@ -53,6 +54,7 @@ fi
 printf '%s\n' \
     "Source: ${SOURCE_ROOT}" \
     "Workspace: ${WORKSPACE}" \
+    "Codex launch root: ${CODEX_LAUNCH_ROOT:-source/workspace only}" \
     "Python: ${PYTHON}" \
     "Platform: ${PLATFORM}" \
     "Worker backend: ${WORKER_BACKEND}" \
@@ -79,6 +81,9 @@ if [[ -n "$COMMAND_CONFIG" ]]; then
 fi
 if [[ -n "$CODEX_SKILL_ROOT" ]]; then
     INSTALL_ENV+=("SCID_CODEX_SKILL_ROOT=${CODEX_SKILL_ROOT}")
+fi
+if [[ -n "$CODEX_LAUNCH_ROOT" ]]; then
+    INSTALL_ENV+=("SCID_CODEX_LAUNCH_ROOT=${CODEX_LAUNCH_ROOT}")
 fi
 readonly -a INSTALL_ENV
 

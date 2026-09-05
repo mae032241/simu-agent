@@ -136,9 +136,15 @@ codex -C "$PWD"
 codex -C "$SCID_WORKSPACE"
 ```
 
-若通过 `SCID_WORKSPACE` 使用源码树之外的 workspace，安装器会在该 workspace
+若实际从源码根和 workspace 之外的目录启动 Codex，请将该已有绝对目录设置为
+`SCID_CODEX_LAUNCH_ROOT`。安装器会在同一事务中为它生成、备份和校验 `.codex`
+与 `AGENTS.md`，避免启动目录继续加载旧 MCP 定义。若通过 `SCID_WORKSPACE` 使用源码树之外的 workspace，安装器会在该 workspace
 生成等价的项目级运行时配置，因为它无法继承框架根目录；这不会复制研究数据或
 控制面状态。
+
+```bash
+export SCID_CODEX_LAUNCH_ROOT=/实际启动/codex/的绝对目录
+```
 
 不要在每次启动 Codex 时重复执行安装脚本。只有首次部署、切换安装配置或更新已
 安装代码时才需要重新安装。
@@ -285,6 +291,7 @@ Sentaurus 许可证或任何科学模型已经通过。
 | 变量 | 默认值 | 作用 |
 | --- | --- | --- |
 | `SCID_WORKSPACE` | `<源码根>/workspace/default` | 已创建的独立项目工作区；不能是源码根 |
+| `SCID_CODEX_LAUNCH_ROOT` | 未设置 | 可选的 Codex 实际启动目录；与源码根和 workspace 不同时生成同代项目配置 |
 | `SCID_PYTHON` | `PATH` 中第一个 `python3` | base 解释器 |
 | `SCID_SERVICE_USER` | `SUDO_USER` 或当前用户 | 服务账户 |
 | `SCID_SERVICE_GROUP` | 服务用户主组 | socket 和文件组 |
