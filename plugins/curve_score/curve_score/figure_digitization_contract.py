@@ -25,6 +25,10 @@ ShortText = Annotated[str, Field(min_length=1, max_length=4096)]
 PixelRange = tuple[int, int]
 PixelBox = tuple[int, int, int, int]
 PixelSeed = tuple[float, float]
+PANEL_SELECTION_DESCRIPTION = (
+    "Set panel to null for the whole figure or when no panel label is visible; "
+    "otherwise copy the exact visible panel label."
+)
 
 
 class _DigitizationModel(BaseModel):
@@ -55,7 +59,7 @@ class FigureExtractionIntent(_DigitizationModel):
     schema_version: Literal["scidiscovery.figure-extraction-intent.v1"]
     source_sha256: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
     figure: ShortText
-    panel: ShortText
+    panel: Annotated[ShortText | None, Field(description=PANEL_SELECTION_DESCRIPTION)]
     series_labels: Annotated[
         tuple[ShortText, ...], Field(max_length=32, json_schema_extra={"uniqueItems": True})
     ] = ()

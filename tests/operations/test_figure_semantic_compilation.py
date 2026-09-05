@@ -13,7 +13,7 @@ from jsonschema.validators import validator_for
 from curve_score.figure_digitization_contract import (
     FigureExtractionIntent, calibration_from_tick_pairs,
 )
-from curve_score.figure_science_operations import FIGURE_INTENT_SCHEMA, FIGURE_REQUEST_CONTEXT
+from curve_score.figure_science_operations import FIGURE_INTENT_SCHEMA, FIGURE_REQUEST_CONTEXT, REQUEST_PROMPT
 from curve_score.operation_transforms import materialize_figure_evidence
 from ingaas_fig4.figure_compilation import GEOMETRY, OPERATION, compile_figure_request
 from ingaas_fig4.plugin import PLUGIN as FIG4_PLUGIN
@@ -35,7 +35,7 @@ def _intent():
     return {
         "schema_version": "scidiscovery.figure-extraction-intent.v1",
         "source_sha256": geometry["source_sha256"], "figure": "Fig. 4",
-        "panel": "whole figure", "series_labels": ["In0.83Al0.17As", "In0.83Ga0.17As"],
+        "panel": None, "series_labels": ["In0.83Al0.17As", "In0.83Ga0.17As"],
     }
 
 
@@ -81,6 +81,9 @@ def test_worker_schema_and_formal_submit_agree_on_intent_structure(tmp_path, lab
                "series_labels": labels, "unresolved_reasons": reasons}
     compiled = catalog.operation("science.figure.request.prepare.v1")
     schema = operation_port_json_schema(compiled, compiled.spec.outputs[0])
+    assert schema["properties"]["panel"]["description"] in REQUEST_PROMPT
+    assert {item["type"] for item in schema["properties"]["panel"]["anyOf"]} == {"string", "null"}
+    assert "panel" in schema["required"]
     validator = validator_for(schema)(schema)
     assert validator.is_valid(payload) is valid
     call = {"name": "intent_structure", "operation_id": compiled.spec.operation_id,
@@ -129,6 +132,14 @@ def test_compiler_rejects_unbound_source_before_image_recovery():
         compile_figure_request({"paper_source": (b"wrong",), "figure_intent": (canonical_json(_intent()),)})
 
 
+@pytest.mark.parametrize("panel", ["a", "single panel (no panel label)"])
+def test_compiler_rejects_unsupported_panel_but_legacy_intent_is_readable(frozen_source, panel):
+    intent = canonical_json({**_intent(), "panel": panel})
+    assert FigureExtractionIntent.model_validate_json(intent, strict=True).panel == panel
+    with pytest.raises(ValueError, match="figure/panel selection"):
+        compile_figure_request({"paper_source": (frozen_source,), "figure_intent": (intent,)})
+
+
 def test_frozen_source_compiles_and_marks_detection_limit_locally(frozen_source):
     intent = _intent()
     inputs = {"paper_source": (frozen_source,), "figure_intent": (canonical_json(intent),)}
@@ -149,13 +160,14 @@ def test_frozen_source_compiles_and_marks_detection_limit_locally(frozen_source)
             compile_figure_request({"paper_source": (frozen_source,), "figure_intent": (canonical_json(bad),)})
 
 
-def test_semantic_agent_and_compiler_preserve_exact_parent_chain(tmp_path, frozen_source):
+@pytest.mark.parametrize("panel", [None, "whole figure"], ids=["unlabelled", "legacy_canonical"])
+def test_semantic_agent_and_compiler_preserve_exact_parent_chain(tmp_path, frozen_source, panel):
     catalog = compile_catalog((CORE_PLUGIN, GENERAL_PLUGIN, CURVE_PLUGIN, FIGURE_PLUGIN, TCAD_PLUGIN, FIG4_PLUGIN))
     _, runtime, instance, root = _system(tmp_path, catalog=catalog)
     source = _register(runtime, instance, name="paper_source", content=frozen_source,
                        kind="paper_source", schema_id="opaque", media_type="application/pdf")
     intent_name = _complete_agent(catalog, runtime, root, operation_id="science.figure.request.prepare.v1",
-                                  name="figure_selection", inputs=[{"port": "paper_source", "artifact_names": ["paper_source"]}], payload=_intent())
+                                  name="figure_selection", inputs=[{"port": "paper_source", "artifact_names": ["paper_source"]}], payload={**_intent(), "panel": panel})
     call = {"name": "compiled_figure_geometry", "operation_id": OPERATION.operation_id,
             "inputs": [{"port": "paper_source", "artifact_names": ["paper_source"]},
                        {"port": "figure_intent", "artifact_names": [intent_name]}]}

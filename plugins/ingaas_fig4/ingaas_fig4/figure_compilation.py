@@ -36,7 +36,9 @@ def compile_figure_request(values):
     geometry = json.loads(GEOMETRY)
     if hashlib.sha256(source).hexdigest() != intent.source_sha256 or intent.source_sha256 != geometry["source_sha256"]:
         raise ValueError("Fig.4 geometry is not bound to this frozen source")
-    if intent.figure != geometry["figure"] or intent.panel != geometry["panel"]:
+    # This resource covers the whole unlabelled figure. Preserve only its exact
+    # legacy canonical string; arbitrary prose is not a panel-label alias.
+    if intent.figure != geometry["figure"] or intent.panel not in (None, geometry["panel"]):
         raise ValueError("Fig.4 compiler does not support this figure/panel selection")
     labels = {series["visible_label"] for series in geometry["series"]}
     if not set(intent.series_labels).issubset(labels):
