@@ -163,7 +163,9 @@ def test_current_metrics_count_general_declaration_successors_once() -> None:
     assert transform["total_lines"] == sum(transform["lines_by_path"].values())
     # These are complexity ceilings, not compatibility identities: later
     # evidence-backed deletion must remain allowed.
-    assert plugin["total_lines"] <= 1130
+    # E5.2 clarifies the existing audit contract's fidelity boundary without
+    # adding a declaration surface or another owner.
+    assert plugin["total_lines"] <= 1140
     # ABI 14 adds explicit Worker-visible checker identities and descriptions;
     # these contract declarations are not new control branches or registries.
     assert transform["total_lines"] <= 1180

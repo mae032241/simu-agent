@@ -22,6 +22,7 @@ from scidiscovery.artifact_agent.schema.common import canonical_json
 from scidiscovery.artifact_agent.schema.refs import ArtifactRef
 from scidiscovery.builtin_plugin import CORE_PLUGIN
 from scidiscovery.general_science_plugin import PLUGIN as GENERAL_PLUGIN
+from scidiscovery.operations import catalog as catalog_module
 from scidiscovery.operations.catalog import compile_catalog
 from scidiscovery.operations.tooling import (
     operation_agent_type,
@@ -174,6 +175,129 @@ def _worker(catalog, runtime) -> LocalWorkerMCPRouter:
         operation_id=compiled.spec.operation_id,
         operation_digest=compiled.digest,
     )
+
+
+def _audit_envelope(source_name: str = "source_material") -> bytes:
+    return canonical_json(
+        {
+            "schema_version": 1,
+            "handoff": {
+                "verdict": "pass",
+                "summary": "The bounded statement is faithful to the exact source.",
+            },
+            "payload": {
+                "schema_version": 1,
+                "checks": [
+                    {
+                        "check_key": "source_fidelity",
+                        "subject": "The statement is bounded to the supplied line.",
+                        "status": "pass",
+                        "basis": "The exact frozen line is available.",
+                        "evidence_keys": [source_name],
+                    }
+                ],
+                "evidence": [
+                    {
+                        "source_key": source_name,
+                        "source_type": "frozen_input",
+                        "locator": f"{source_name}:line-1",
+                    }
+                ],
+            },
+        }
+    )
+
+
+def _audit_runtime(tmp_path: Path, catalog):
+    project = tmp_path / "project"
+    project.mkdir()
+    runtime = open_runtime(
+        project_root=project,
+        state_root=tmp_path / "state",
+        worker_backend="local",
+        local_workspace_root=project / ".scidiscovery-runs",
+    )
+    runtime.runs.operation_catalog = catalog
+    instance = runtime.scheduler_bindings.create_instance(
+        name="projection_retirement",
+        title="Projection retirement probe",
+        objective="Keep source projection generations separate.",
+    )
+    foundation = canonical_json(
+        {
+            "title": "Bounded foundation",
+            "objective": "Audit one bounded premise.",
+            "summary": "The premise is explicitly marked as an assumption.",
+            "items": [
+                {
+                    "item_key": "premise",
+                    "item_type": "assumption",
+                    "epistemic_status": "assumption",
+                    "statement": "The supplied line is the bounded context.",
+                    "scope": "Projection retirement fixture only.",
+                    "rationale": "The audit remains tied to one frozen input.",
+                }
+            ],
+        }
+    )
+    for name, content, kind, schema_id, media_type in (
+        (
+            "foundation",
+            foundation,
+            "scientific_foundation",
+            "scidiscovery.scientific-foundation.v1",
+            "application/json",
+        ),
+        ("source", b"bounded source\n", "paper_source", "opaque", "text/plain"),
+    ):
+        artifact = runtime.artifacts.register(
+            content,
+            ArtifactRegistration(
+                kind=kind,
+                schema_id=schema_id,
+                payload_schema_version=1,
+                media_type=media_type,
+                creator=runtime.actor,
+            ),
+            idempotency_key=f"projection-retirement:{name}",
+        )
+        runtime.scheduler_bindings.bind(
+            instance=instance.instance_id,
+            namespace="artifact",
+            name=name,
+            object_id=artifact.artifact_id,
+        )
+    return runtime, instance, _root_for_catalog(runtime, instance, catalog)
+
+
+def _root_for_catalog(runtime, instance, catalog) -> RootMCPRouter:
+    return RootMCPRouter(
+        RootToolFacade(
+            runtime.artifacts,
+            runtime.intake,
+            runs=runtime.runs,
+            approvals=runtime.approvals,
+            executions=runtime.executions,
+            bindings=runtime.scheduler_bindings,
+            instance=instance.instance_id,
+            operation_catalog=catalog,
+        )
+    )
+
+
+def _invoke_audit(root: RootMCPRouter, name: str, *, resume_from=None):
+    request = {
+        "name": name,
+        "operation_id": "science.evidence.audit.v1",
+        "inputs": [
+            {"port": "scientific_foundation", "artifact_names": ["foundation"]},
+            {"port": "source_material", "artifact_names": ["source"]},
+        ],
+        "instruction": "Audit only the exact bound source.",
+    }
+    if resume_from is not None:
+        request["resume_from"] = resume_from
+    return root.call_tool("operation_invoke", request)
 
 
 def _subprocess_plugin_environment(root: Path) -> dict[str, str]:
@@ -498,6 +622,187 @@ def test_status_is_pure_and_failure_recovery_is_explicit(tmp_path: Path) -> None
             namespace="run",
             name="third_invoke_from_resumed",
         )
+
+
+@pytest.mark.parametrize(
+    "old_state", ("queued", "running", "expired", "failed", "completed")
+)
+def test_source_projection_generation_retires_old_run_without_mutating_it(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    old_state: str,
+) -> None:
+    selector = catalog_module._evidence_source_projection_version
+    audit_operation = next(
+        item
+        for item in GENERAL_PLUGIN.operations
+        if item.operation_id == "science.evidence.audit.v1"
+    )
+    assert audit_operation.limits is not None
+    recovery_operation = audit_operation.model_copy(
+        update={
+            "limits": audit_operation.limits.model_copy(
+                update={"max_attempts": 2}
+            )
+        }
+    )
+    recovery_plugin = GENERAL_PLUGIN.model_copy(
+        update={
+            "operations": tuple(
+                recovery_operation
+                if item.operation_id == recovery_operation.operation_id
+                else item
+                for item in GENERAL_PLUGIN.operations
+            )
+        }
+    )
+
+    def prior_projection(spec, port):
+        return "evidence-source-enum.prior" if selector(spec, port) else None
+
+    monkeypatch.setattr(
+        catalog_module, "_evidence_source_projection_version", prior_projection
+    )
+    old_catalog = compile_catalog((CORE_PLUGIN, recovery_plugin))
+    monkeypatch.setattr(
+        catalog_module, "_evidence_source_projection_version", selector
+    )
+    new_catalog = compile_catalog((CORE_PLUGIN, recovery_plugin))
+    operation_id = "science.evidence.audit.v1"
+    old_compiled = old_catalog.operation(operation_id)
+    new_compiled = new_catalog.operation(operation_id)
+    assert old_compiled.spec.version == new_compiled.spec.version
+    assert old_compiled.digest != new_compiled.digest
+    assert (
+        old_catalog.operation("science.experiment.design.v1").digest
+        == new_catalog.operation("science.experiment.design.v1").digest
+    )
+
+    runtime, instance, old_root = _audit_runtime(tmp_path, old_catalog)
+    name = f"old_{old_state}"
+    _invoke_audit(old_root, name)
+    old_worker = LocalWorkerMCPRouter(
+        runtime.runs,
+        operation_id=operation_id,
+        operation_digest=old_compiled.digest,
+    )
+    if old_state != "queued":
+        opened = old_worker.call_tool("worker_open_assignment", {})
+        Path(opened["output_directory"], "result.json").write_bytes(
+            _audit_envelope()
+        )
+        if old_state == "failed":
+            status = old_root.call_tool("run_status", {"name": name})
+            failed = old_root.call_tool(
+                "run_record_failure",
+                {
+                    "name": name,
+                    "reason": "Create one exact recovery draft.",
+                    "expected_state": "running",
+                    "expected_last_activity_at": status["last_activity_at"],
+                },
+            )
+            assert failed["state"] == "failed"
+            assert failed["recovery_available"] is True
+        elif old_state == "completed":
+            assert old_worker.call_tool("worker_submit_result", {})[
+                "state"
+            ] == "completed"
+
+    run_id = runtime.scheduler_bindings.resolve(
+        instance=instance.instance_id,
+        namespace="run",
+        name=name,
+    )
+    if old_state == "expired":
+        with sqlite3.connect(runtime.runs.database_path) as connection:
+            connection.execute(
+                "UPDATE runs SET deadline_at = ? WHERE run_id = ?",
+                ("2000-01-01T00:00:00.000000Z", run_id),
+            )
+    before = runtime.runs.status(run_id)
+    artifact_count = len(runtime.artifacts.list_artifacts(limit=1000))
+
+    restarted = open_runtime(
+        project_root=tmp_path / "project",
+        state_root=tmp_path / "state",
+        worker_backend="local",
+        local_workspace_root=tmp_path / "project" / ".scidiscovery-runs",
+    )
+    restarted.runs.operation_catalog = new_catalog
+    new_root = _root_for_catalog(restarted, instance, new_catalog)
+    current_worker = LocalWorkerMCPRouter(
+        restarted.runs,
+        operation_id=operation_id,
+        operation_digest=new_compiled.digest,
+    )
+
+    if old_state in {"queued", "running", "expired"}:
+        with pytest.raises(Exception, match="no exact queued Run"):
+            current_worker.call_tool("worker_open_assignment", {})
+        with pytest.raises(ValueError, match="operation identity is invalid"):
+            LocalWorkerMCPRouter(
+                restarted.runs,
+                operation_id=operation_id,
+                operation_digest=old_compiled.digest,
+            )
+        if old_state == "queued":
+            with pytest.raises(Exception, match="Run is not running: queued"):
+                restarted.runs.submit(run_id)
+        elif old_state == "expired":
+            with pytest.raises(Exception, match="Run deadline expired"):
+                restarted.runs.submit(run_id)
+        else:
+            with pytest.raises(Exception, match="Run operation contract changed"):
+                restarted.runs.submit(run_id)
+        status = new_root.call_tool("run_status", {"name": name})
+        with pytest.raises(Exception, match="Run operation contract changed"):
+            new_root.call_tool(
+                "run_record_failure",
+                {
+                    "name": name,
+                    "reason": "A new contract cannot close an old active Run.",
+                    "expected_state": "queued" if old_state == "queued" else "running",
+                    "expected_last_activity_at": status["last_activity_at"],
+                    "timed_out": old_state == "expired",
+                },
+            )
+    elif old_state == "failed":
+        retired = new_root.call_tool("run_status", {"name": name})
+        assert retired["recovery_available"] is False
+        before_runs = new_root.call_tool("run_list", {})
+        rejected = new_root.call_tool(
+            "operation_preflight",
+            {
+                "name": "retired_resume",
+                "operation_id": operation_id,
+                "inputs": [
+                    {
+                        "port": "scientific_foundation",
+                        "artifact_names": ["foundation"],
+                    },
+                    {"port": "source_material", "artifact_names": ["source"]},
+                ],
+                "instruction": "Do not resume across a contract generation.",
+                "resume_from": name,
+            },
+        )
+        assert rejected["admissible"] is False
+        assert rejected["reason_code"] == "recovery_source_unavailable"
+        assert new_root.call_tool("run_list", {}) == before_runs
+    else:
+        retired = new_root.call_tool("run_status", {"name": name})
+        assert retired["sealed_output_status"] == "contract_retired"
+        assert retired["sealed_output"] is None
+        assert retired["scheduler_signal"] is None
+        assert restarted.runs.submit(run_id) == ("completed", ())
+
+    after = restarted.runs.status(run_id)
+    assert after == before
+    assert len(restarted.artifacts.list_artifacts(limit=1000)) == artifact_count
+    assert _invoke_audit(new_root, f"new_after_{old_state}")["result"][
+        "state"
+    ] == "queued"
 
 
 def test_timeout_reconcile_uses_activity_compare_and_set(tmp_path: Path) -> None:

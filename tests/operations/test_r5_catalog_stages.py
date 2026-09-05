@@ -146,7 +146,7 @@ def test_catalog_stage_refactor_matches_current_core_digest_summary() -> None:
     compiled = catalog_module.compile_catalog((CORE_PLUGIN, SCIENCE_PLUGIN))
     assert len(compiled.operation_ids()) == 15
     assert _digest_map(compiled) == (
-        "7e4dd32ff8d3d22db307d085fa7c37f9934ce370a07e7d06f22c185272f440a3"
+        "052bda8151ea633a62c02ac9c4ee87f6c0fece9383bdb8ffb3a1d0fb9054251e"
     )
 
 
@@ -178,11 +178,16 @@ def test_catalog_stages_add_no_second_registry_or_complexity_escape() -> None:
     ]
     # The catalog remains the sole compiled authority. Later simplification may
     # remove code, but must not grow a second file, registry, or projection.
-    assert catalog["total_lines"] <= 765
+    # E5.2 keeps source-enum projection identity and evidence-path validation
+    # inside this sole compiler authority.  The allowance does not permit a
+    # second registry or successor file.
+    assert catalog["total_lines"] <= 825
     # Local tool availability and workspace policy remain in the same immutable
     # catalog package. Removing the runtime convenience projection may shrink it.
     assert metrics["operations_package"]["files"] == 8
-    assert metrics["operations_package"]["lines"] <= 2150
+    # The same E5.2 projection adds one bounded schema walker to the existing
+    # operation-contract module; it does not add package files or authorities.
+    assert metrics["operations_package"]["lines"] <= 2280
     # H5 established these upper bounds.  Later evidence-backed deletions must
     # not fail merely because the production tree became smaller.
     # L2 replaces the default central controller with deliberately separated

@@ -95,6 +95,248 @@ print("installed contracts aligned")
     assert output.strip() == "installed contracts aligned"
 
 
+def test_installed_e52_core_and_tcad_contracts_are_packaged(installed_probe) -> None:
+    output = installed_probe("full", r'''
+import json
+from jsonschema.validators import validator_for
+
+from scidiscovery.artifact_agent.schema.research_objective import (
+    ObjectiveClosureRequirement,
+)
+from scidiscovery.operations.catalog import compile_installed_catalog
+
+schema = ObjectiveClosureRequirement.model_json_schema(mode="validation")
+validator_type = validator_for(schema)
+validator_type.check_schema(schema)
+validator = validator_type(schema)
+valid = {
+    "requirement_key": "comparison",
+    "description": "Require one exact comparison.",
+    "requirement_type": "comparison_present",
+    "comparison_purposes": ["target_fit"],
+}
+invalid = {
+    "requirement_key": "comparison",
+    "description": "Require one exact comparison.",
+    "requirement_type": "comparison_present",
+}
+assert not tuple(validator.iter_errors(valid))
+assert tuple(validator.iter_errors(invalid))
+assert schema["properties"]["target_keys"]["uniqueItems"] is True
+assert schema["properties"]["comparison_purposes"]["uniqueItems"] is True
+assert schema["properties"]["validation_check_keys"]["uniqueItems"] is True
+
+catalog = compile_installed_catalog()
+audit = catalog.operation("science.evidence.audit.v1")
+rules = json.loads(
+    audit.implementations["general_science:evidence_audit_semantic_contract"]
+)["rules"]
+descriptions = "\n".join(rule["description"] for rule in rules)
+assert "faithful to the exact sources" in descriptions
+assert "not whether those sources are sufficient" in descriptions
+
+extraction = catalog.operation("tcad.parameter.evidence.extract.v1")
+usages = {port.name: port.usage for port in extraction.spec.inputs}
+assert usages["required_parameter_checklist"] == "prior_signal"
+assert usages["source_material"] == "evidence_inventory"
+for operation_id in (
+    "science.parameters.qualify.pass.v1",
+    "science.parameters.qualify.exception.v1",
+):
+    assert catalog.operation(operation_id).spec.version == "2"
+print("installed E5.2 core and TCAD contracts present")
+''')
+    assert output.strip() == "installed E5.2 core and TCAD contracts present"
+
+
+def test_installed_e52_curve_contracts_are_packaged(installed_probe) -> None:
+    output = installed_probe("figure", r'''
+from curve_score.figure_digitization_contract import FigureLineTracking
+from curve_score.figure_evidence_validation import VALIDATOR_VERSION
+from scidiscovery.operations.catalog import compile_installed_catalog
+
+assert VALIDATOR_VERSION == "5"
+tracking = FigureLineTracking.model_json_schema(mode="validation")
+legacy = tracking["properties"]["overdraw_candidate_endpoint_distance_px"]
+assert legacy["default"] == 8.0
+assert "deprecated" in legacy["description"].lower()
+
+catalog = compile_installed_catalog()
+audit = catalog.operation("science.figure.evidence.audit.v1")
+prompt = audit.implementations["curve_figure_evidence:figure_audit_prompt"]
+assert "not whether that family is sufficient" in prompt
+assert "shared dependency" in prompt
+print("installed E5.2 curve contracts present")
+''')
+    assert output.strip() == "installed E5.2 curve contracts present"
+
+
+def test_installed_evidence_alias_schema_matches_local_worker_submit(
+    installed_probe,
+) -> None:
+    installed_probe(
+        "core",
+        r'''
+import json
+import tempfile
+from pathlib import Path
+
+from scidiscovery.artifact_agent.interfaces.mcp_local_worker import (
+    LocalWorkerMCPRouter,
+)
+from scidiscovery.artifact_agent.interfaces.mcp_root import (
+    RootMCPRouter,
+    RootToolFacade,
+)
+from scidiscovery.artifact_agent.runtime import open_runtime
+from scidiscovery.artifact_agent.schema.artifact import ArtifactRegistration
+from scidiscovery.artifact_agent.schema.common import canonical_json
+
+root_dir = Path(tempfile.mkdtemp(prefix="installed-e52-alias-"))
+project = root_dir / "project"
+project.mkdir()
+(project / "AGENTS.md").write_text("# Installed E5.2 alias probe\n", encoding="utf-8")
+runtime = open_runtime(
+    project_root=project,
+    state_root=root_dir / "state",
+    worker_backend="local",
+)
+catalog = runtime.operation_catalog
+instance = runtime.scheduler_bindings.create_instance(
+    name="installed_e52_alias",
+    title="Installed E5.2 source alias probe",
+    objective="Prove one compiled source alias is visible and executable.",
+)
+
+foundation = canonical_json({
+    "title": "Bounded foundation",
+    "objective": "Audit one bounded premise.",
+    "summary": "The premise is explicitly marked as an assumption.",
+    "items": [{
+        "item_key": "premise",
+        "item_type": "assumption",
+        "epistemic_status": "assumption",
+        "statement": "The supplied line is the bounded context.",
+        "scope": "Installed probe only.",
+        "rationale": "The audit must remain tied to its frozen input.",
+    }],
+})
+
+def register(name, content, *, kind, schema_id, media_type):
+    artifact = runtime.artifacts.register(
+        content,
+        ArtifactRegistration(
+            kind=kind,
+            schema_id=schema_id,
+            payload_schema_version=1,
+            media_type=media_type,
+            creator=runtime.actor,
+        ),
+        idempotency_key=f"installed-e52:{name}",
+    )
+    runtime.scheduler_bindings.bind(
+        instance=instance.instance_id,
+        namespace="artifact",
+        name=name,
+        object_id=artifact.artifact_id,
+    )
+
+register(
+    "foundation",
+    foundation,
+    kind="scientific_foundation",
+    schema_id="scidiscovery.scientific-foundation.v1",
+    media_type="application/json",
+)
+register(
+    "paper_001",
+    b"one bounded source line\n",
+    kind="paper_source",
+    schema_id="opaque",
+    media_type="text/plain",
+)
+router = RootMCPRouter(
+    RootToolFacade(
+        runtime.artifacts,
+        runtime.intake,
+        runs=runtime.runs,
+        approvals=runtime.approvals,
+        executions=runtime.executions,
+        bindings=runtime.scheduler_bindings,
+        instance=instance.instance_id,
+        operation_catalog=catalog,
+    )
+)
+request = {
+    "name": "audit",
+    "operation_id": "science.evidence.audit.v1",
+    "inputs": [
+        {"port": "scientific_foundation", "artifact_names": ["foundation"]},
+        {"port": "source_material", "artifact_names": ["paper_001"]},
+    ],
+    "instruction": "Audit only the exact bound source.",
+}
+assert router.call_tool("operation_preflight", request)["admissible"] is True
+assert router.call_tool("operation_invoke", request)["result"]["state"] == "queued"
+compiled = catalog.operation("science.evidence.audit.v1")
+worker = LocalWorkerMCPRouter(
+    runtime.runs,
+    operation_id=compiled.spec.operation_id,
+    operation_digest=compiled.digest,
+)
+opened = worker.call_tool("worker_open_assignment", {})
+result_schema = json.loads(
+    Path(opened["workspace_path"], "schema", "result.schema.json").read_text("utf-8")
+)
+source_key = result_schema["properties"]["payload"]["properties"]["evidence"][
+    "items"
+]["allOf"][-1]["properties"]["source_key"]
+assert source_key["enum"] == ["source_material"]
+# The workspace copy is only a Worker aid.  Expanding it must not expand the
+# authoritative schema rebuilt by submit from the frozen Run binding.
+source_key["enum"].append("invented_source")
+schema_path = Path(opened["workspace_path"], "schema", "result.schema.json")
+schema_path.chmod(0o600)
+schema_path.write_bytes(canonical_json(result_schema))
+
+def result(source_name):
+    return canonical_json({
+        "schema_version": 1,
+        "handoff": {
+            "verdict": "pass",
+            "summary": "The bounded statement is faithful to the exact source.",
+        },
+        "payload": {
+            "schema_version": 1,
+            "checks": [{
+                "check_key": "source_fidelity",
+                "subject": "The statement remains bounded to the supplied line.",
+                "status": "pass",
+                "basis": "The exact frozen line is available.",
+                "evidence_keys": [source_name],
+            }],
+            "evidence": [{
+                "source_key": source_name,
+                "source_type": "frozen_input",
+                "locator": f"{source_name}:line-1",
+            }],
+        },
+    })
+
+output = Path(opened["output_directory"], "result.json")
+output.write_bytes(result("invented_source"))
+rejected = worker.call_tool("worker_submit_result", {})
+assert rejected["state"] == "rejected"
+assert {item["rule_id"] for item in rejected["diagnostics"]} == {"runtime.schema"}
+assert router.call_tool("run_status", {"name": "audit"})["state"] == "running"
+
+output.write_bytes(result("source_material"))
+completed = worker.call_tool("worker_submit_result", {})
+assert completed["state"] == "completed"
+''',
+    )
+
+
 _INSTALLED_CURVE_TOOL_PROBE = r'''
 import hashlib
 import io
