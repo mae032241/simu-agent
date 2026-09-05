@@ -116,7 +116,11 @@ def validate_run_output(
             ),
         )
     _validate_payload_schema(
-        result.payload, compiled, port, declared_rule_ids
+        result.payload,
+        compiled,
+        port,
+        declared_rule_ids,
+        input_source_ports=input_source_ports,
     )
     raw = canonical_json(result.payload)
     codec_key = f"{port.codec.plugin_id or compiled.plugin_id}:{port.codec.component_id}"
@@ -245,10 +249,14 @@ def _validate_payload_schema(
     compiled: CompiledOperation,
     port: Any,
     declared_rule_ids: frozenset[str],
+    *,
+    input_source_ports: Mapping[str, str],
 ) -> None:
     try:
         from jsonschema.validators import validator_for
-        schema = operation_port_json_schema(compiled, port)
+        schema = operation_port_json_schema(
+            compiled, port, input_source_ports=input_source_ports
+        )
         validator_type = validator_for(schema)
         validator_type.check_schema(schema)
         errors = sorted(
@@ -261,7 +269,7 @@ def _validate_payload_schema(
         module = type(error).__module__
         if module.startswith("jsonschema"):
             raise RunCheckerError("compiled output schema is invalid") from error
-        raise
+        raise RunCheckerError("compiled output schema projection failed") from error
     if not errors:
         return
     details = tuple(

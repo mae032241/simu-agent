@@ -142,10 +142,16 @@ def _revision_assignment(
     }
 
 
-def result_schema_json(compiled: Any) -> bytes:
+def result_schema_json(
+    compiled: Any,
+    *,
+    input_source_ports: dict[str, str] | None = None,
+) -> bytes:
     port = operation_primary_output(compiled)
     envelope = RoleResultEnvelope[Any].model_json_schema(mode="validation")
-    envelope["properties"]["payload"] = operation_port_json_schema(compiled, port)
+    envelope["properties"]["payload"] = operation_port_json_schema(
+        compiled, port, input_source_ports=input_source_ports
+    )
     envelope["$id"] = f"{port.schema_id}.run-envelope"
     return canonical_json(envelope)
 

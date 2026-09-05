@@ -6,7 +6,11 @@ from importlib import import_module
 from importlib.metadata import entry_points
 from types import MappingProxyType
 from typing import Any, Iterable, Mapping
-from ..operation_contract import output_checker_contract_issue
+from ..operation_contract import (
+    _evidence_source_projection_version,
+    _project_evidence_source_schema,
+    output_checker_contract_issue,
+)
 from .spec import (
     OPERATION_ABI_VERSION, PLUGIN_PROTOCOL_VERSION, CallableComponent,
     ApprovalProviderIdentity, CompiledComponent, CompiledDigestEnvelope,
@@ -347,6 +351,20 @@ def _validate_operation_contracts(plugin_map: dict[str, PluginDefinition], compo
                         _fail("output_context_input_hidden", plugin.plugin_id, op_id, port.name)
                     if port.collection is not None and port.evidence_paths:
                         _fail("output_evidence_path_invalid", plugin.plugin_id, op_id, port.name)
+                    if _evidence_source_projection_version(operation, port) is not None:
+                        try:
+                            _project_evidence_source_schema(
+                                schema,
+                                port.evidence_paths,
+                                allowed_sources=None,
+                            )
+                        except (KeyError, TypeError, ValueError):
+                            _fail(
+                                "output_evidence_path_invalid",
+                                plugin.plugin_id,
+                                op_id,
+                                port.name,
+                            )
             admission = operation.input_admission
             if admission is not None:
                 issue = admission.issue()
@@ -703,12 +721,28 @@ def _build_compiled_catalog(plugin_map: Mapping[str, PluginDefinition], componen
             for provider_id in approval_provider_ids.get(op_id, ())
         )
         try:
-            digest = canonical_digest(
-                CompiledDigestEnvelope(
-                    OPERATION_ABI_VERSION, plugin_id, plugin_map[plugin_id].version,
-                    operation, component_specs, permission, reviewer_digest,
-                    provider_identities,
+            envelope = CompiledDigestEnvelope(
+                OPERATION_ABI_VERSION, plugin_id, plugin_map[plugin_id].version,
+                operation, component_specs, permission, reviewer_digest,
+                provider_identities,
+            )
+            projections = tuple(
+                (port.name, projection)
+                for port in sorted(operation.outputs, key=lambda item: item.name)
+                if (
+                    projection := _evidence_source_projection_version(
+                        operation, port
+                    )
                 )
+                is not None
+            )
+            digest = canonical_digest(
+                envelope
+                if not projections
+                else {
+                    "compiled": envelope,
+                    "output_schema_projection": projections,
+                }
             )
         except Exception: _fail("operation_digest_invalid", plugin_id, op_id, "digest")
         finally:

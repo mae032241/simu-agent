@@ -8,6 +8,7 @@ from typing import Any, Mapping
 
 from .operations.spec import (
     CompiledOperation,
+    OperationSpec,
     OutputPortSpec,
     SemanticContractSpec,
     SemanticRuleSpec,
@@ -191,8 +192,17 @@ def operation_output_validation_contract(
     compiled: CompiledOperation, port: OutputPortSpec
 ) -> dict[str, Any]:
     inputs = {item.name: item for item in compiled.spec.inputs}
+    source_projection = _evidence_source_projection_version(compiled.spec, port)
     context_sources = tuple(
-        {"port": name, "required": inputs[name].min_items > 0}
+        {
+            "port": name,
+            "required": inputs[name].min_items > 0,
+            **(
+                {"usage": inputs[name].usage}
+                if source_projection is not None
+                else {}
+            ),
+        }
         for name in port.context_sources
     )
     rules = [
@@ -262,13 +272,35 @@ def operation_output_validation_contract(
 
 
 def operation_port_json_schema(
-    compiled: CompiledOperation, port: OutputPortSpec
+    compiled: CompiledOperation,
+    port: OutputPortSpec,
+    *,
+    input_source_ports: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
     """Return the exact Worker-visible schema and its derived contracts."""
 
     reference = port.schema_resource
     key = f"{reference.plugin_id or compiled.plugin_id}:{reference.component_id}"
     schema = json.loads(compiled.implementations[key])
+    projection = _evidence_source_projection_version(compiled.spec, port)
+    if projection is not None:
+        inputs = {item.name: item for item in compiled.spec.inputs}
+        allowed_sources: tuple[str, ...] | None = None
+        if input_source_ports is not None:
+            unknown = set(input_source_ports.values()) - set(inputs)
+            if unknown:
+                raise ValueError("source binding references an unknown input port")
+            allowed_sources = tuple(
+                sorted(
+                    source_name
+                    for source_name, port_name in input_source_ports.items()
+                    if inputs[port_name].usage == "evidence_inventory"
+                    and inputs[port_name].exposure != "handoff_only"
+                )
+            )
+        _project_evidence_source_schema(
+            schema, port.evidence_paths, allowed_sources=allowed_sources
+        )
     if port.semantic_contract is not None:
         reference = port.semantic_contract
         key = f"{reference.plugin_id or compiled.plugin_id}:{reference.component_id}"
@@ -280,6 +312,96 @@ def operation_port_json_schema(
         operation_output_validation_contract(compiled, port)
     )
     return schema
+
+
+def _evidence_source_projection_version(
+    spec: OperationSpec, port: OutputPortSpec
+) -> str | None:
+    """Select the one source-enum projection from declarative port semantics."""
+
+    if (
+        spec.executor.kind == "agent"
+        and port.collection is None
+        and port.evidence_paths
+        and any(
+            item.usage == "evidence_inventory"
+            and item.exposure != "handoff_only"
+            for item in spec.inputs
+        )
+    ):
+        return "evidence-source-enum.v1"
+    return None
+
+
+def _project_evidence_source_schema(
+    schema: dict[str, Any],
+    evidence_paths: tuple[str, ...],
+    *,
+    allowed_sources: tuple[str, ...] | None,
+) -> None:
+    """Validate evidence paths and optionally bind their source-key domain."""
+
+    def pointer_tokens(pointer: str) -> tuple[str, ...]:
+        return tuple(
+            token.replace("~1", "/").replace("~0", "~")
+            for token in pointer.removeprefix("/").split("/")
+        )
+
+    def resolve(node: Any, seen: frozenset[str] = frozenset()) -> dict[str, Any]:
+        if not isinstance(node, dict):
+            raise ValueError("evidence schema node is not an object")
+        reference = node.get("$ref")
+        if reference is None:
+            return node
+        if (
+            not isinstance(reference, str)
+            or not reference.startswith("#/$defs/")
+            or reference in seen
+        ):
+            raise ValueError("evidence schema reference is invalid")
+        current: Any = schema
+        for token in pointer_tokens(reference.removeprefix("#")):
+            if not isinstance(current, dict) or token not in current:
+                raise ValueError("evidence schema reference is unresolved")
+            current = current[token]
+        return resolve(current, seen | {reference})
+
+    for pointer in evidence_paths:
+        current: Any = schema
+        for token in pointer_tokens(pointer):
+            resolved = resolve(current)
+            properties = resolved.get("properties")
+            if not isinstance(properties, dict) or token not in properties:
+                raise ValueError("evidence path is absent from the output schema")
+            current = properties[token]
+        evidence = resolve(current)
+        items = evidence.get("items")
+        if evidence.get("type") != "array" or not isinstance(items, dict):
+            raise ValueError("evidence path must identify an object array")
+        item_schema = resolve(items)
+        properties = item_schema.get("properties")
+        if not isinstance(properties, dict) or "source_key" not in properties:
+            raise ValueError("evidence items must declare source_key")
+        source_key = resolve(properties["source_key"])
+        if source_key.get("type") != "string":
+            raise ValueError("evidence source_key must be a string")
+        if allowed_sources is None:
+            continue
+        if not allowed_sources:
+            evidence["maxItems"] = 0
+            continue
+        evidence["items"] = {
+            "allOf": [
+                items,
+                {
+                    "properties": {
+                        "source_key": {"enum": list(allowed_sources)},
+                    },
+                    "required": ["source_key"],
+                    "type": "object",
+                },
+            ]
+        }
 
 
 def _rule(

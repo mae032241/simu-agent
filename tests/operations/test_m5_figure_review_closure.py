@@ -119,12 +119,63 @@ def _complete_agent(catalog, runtime, root, *, operation_id: str, name: str,
         operation_digest=compiled.digest,
     )
     opened = worker.call_tool("worker_open_assignment", {})
+    primary = next(port for port in compiled.spec.outputs if port.collection is None)
+    if primary.evidence_paths and any(
+        port.usage == "evidence_inventory" and port.exposure != "handoff_only"
+        for port in compiled.spec.inputs
+    ):
+        assignment = json.loads(Path(opened["assignment_path"]).read_text("utf-8"))
+        expected_sources = sorted(
+            item["source_name"]
+            for item in assignment["inputs"]
+            if item["usage"] == "evidence_inventory"
+        )
+        envelope_schema = json.loads(
+            Path(
+                opened["workspace_path"], "schema", "result.schema.json"
+            ).read_text("utf-8")
+        )
+        payload_schema = envelope_schema["properties"]["payload"]
+        for evidence_path in primary.evidence_paths:
+            assert _source_key_enum(payload_schema, evidence_path) == expected_sources
     Path(opened["output_directory"], "result.json").write_bytes(
         _envelope(payload, verdict=verdict)
     )
     submitted = worker.call_tool("worker_submit_result", {})
     assert submitted["state"] == "completed", submitted
     return root.call_tool("run_status", {"name": name})["output_artifact_name"]
+
+
+def _source_key_enum(schema: dict[str, object], pointer: str) -> list[str]:
+    def resolve(value: object) -> dict[str, object]:
+        assert isinstance(value, dict)
+        reference = value.get("$ref")
+        if reference is None:
+            return value
+        assert isinstance(reference, str) and reference.startswith("#/$defs/")
+        target = schema["$defs"]
+        assert isinstance(target, dict)
+        resolved = target[reference.removeprefix("#/$defs/")]
+        return resolve(resolved)
+
+    current: object = schema
+    for token in pointer.removeprefix("/").split("/"):
+        properties = resolve(current)["properties"]
+        assert isinstance(properties, dict)
+        current = properties[token]
+    items = resolve(current)["items"]
+    assert isinstance(items, dict)
+    all_of = items["allOf"]
+    assert isinstance(all_of, list)
+    projection = all_of[-1]
+    assert isinstance(projection, dict)
+    properties = projection["properties"]
+    assert isinstance(properties, dict)
+    source_key = properties["source_key"]
+    assert isinstance(source_key, dict)
+    values = source_key["enum"]
+    assert isinstance(values, list)
+    return values
 
 
 def _intake_payload() -> dict[str, object]:

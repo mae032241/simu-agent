@@ -6,6 +6,7 @@ import json
 import pytest
 from unittest.mock import Mock
 from pydantic import BaseModel
+from curve_score.plugin import PLUGIN as CURVE_PLUGIN
 
 from architecture_operation_test_plugin.plugin import ARCHITECTURE_TEST_PLUGIN as PLUGIN
 from scidiscovery.operations.spec import (
@@ -23,6 +24,10 @@ def replace(instance, **changes):
     assert isinstance(instance, BaseModel)
     return instance.model_copy(update=changes)
 from scidiscovery.operations.catalog import CatalogCompileError, compile_catalog
+from scidiscovery.builtin_plugin import CORE_PLUGIN
+from scidiscovery.general_science_plugin import PLUGIN as GENERAL_PLUGIN
+from tcad_artifact.plugin import PLUGIN as TCAD_PLUGIN
+from tcad_artifact import parameter_operations as parameter_module
 
 
 def test_builtin_catalog_compiles_exactly_three_architecture_test_operations() -> None:
@@ -169,6 +174,64 @@ def test_output_evidence_paths_are_valid_unique_json_pointers(path: str) -> None
 
     with pytest.raises(CatalogCompileError) as caught:
         compile_catalog((plugin,))
+    assert caught.value.reason_code == "output_evidence_path_invalid"
+
+
+def test_output_evidence_path_must_reach_a_source_key_array() -> None:
+    extraction = next(
+        operation
+        for operation in TCAD_PLUGIN.operations
+        if operation.operation_id == "tcad.parameter.evidence.extract.v1"
+    )
+    output = extraction.outputs[0].model_copy(
+        update={"evidence_paths": ("/scientific_intake/missing_evidence",)}
+    )
+    replacement = extraction.model_copy(update={"outputs": (output,)})
+    tcad = TCAD_PLUGIN.model_copy(
+        update={
+            "operations": tuple(
+                replacement if item.operation_id == replacement.operation_id else item
+                for item in TCAD_PLUGIN.operations
+            )
+        }
+    )
+
+    with pytest.raises(CatalogCompileError) as caught:
+        compile_catalog((CORE_PLUGIN, GENERAL_PLUGIN, CURVE_PLUGIN, tcad))
+    assert caught.value.reason_code == "output_evidence_path_invalid"
+
+
+@pytest.mark.parametrize(
+    "damage", ("non_array", "missing_source_key", "missing_ref", "ref_cycle")
+)
+def test_output_evidence_path_schema_shape_fails_closed(
+    monkeypatch, damage: str,
+) -> None:
+    schema = json.loads(parameter_module.PARAMETER_PACKAGE_SCHEMA)
+    intake_ref = schema["properties"]["scientific_intake"]["$ref"]
+    intake = schema["$defs"][intake_ref.removeprefix("#/$defs/")]
+    foundation_ref = intake["properties"]["scientific_foundation"]["$ref"]
+    foundation = schema["$defs"][foundation_ref.removeprefix("#/$defs/")]
+    evidence = foundation["properties"]["evidence"]
+    if damage == "non_array":
+        evidence["type"] = "object"
+    elif damage == "missing_source_key":
+        source_ref = evidence["items"]["$ref"]
+        source = schema["$defs"][source_ref.removeprefix("#/$defs/")]
+        del source["properties"]["source_key"]
+    elif damage == "missing_ref":
+        evidence["items"] = {"$ref": "#/$defs/AbsentEvidence"}
+    else:
+        schema["$defs"]["CyclicEvidence"] = {"$ref": "#/$defs/CyclicEvidence"}
+        evidence["items"] = {"$ref": "#/$defs/CyclicEvidence"}
+    monkeypatch.setattr(
+        parameter_module,
+        "PARAMETER_PACKAGE_SCHEMA",
+        json.dumps(schema, separators=(",", ":"), sort_keys=True),
+    )
+
+    with pytest.raises(CatalogCompileError) as caught:
+        compile_catalog((CORE_PLUGIN, GENERAL_PLUGIN, CURVE_PLUGIN, TCAD_PLUGIN))
     assert caught.value.reason_code == "output_evidence_path_invalid"
 
 

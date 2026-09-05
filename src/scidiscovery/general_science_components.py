@@ -143,17 +143,10 @@ def _hypothesis_objective_context(
 
 def _validate_audit_handoff_and_sources(
     audit: EvidenceAudit,
-    sources: dict[str, bytes],
     handoff: dict[str, Any],
-    *,
-    excluded_sources: frozenset[str],
 ) -> None:
     if not audit.checks:
         raise SemanticRuleViolation("evidence audit must contain at least one exact check")
-    declared = {item.source_key for item in audit.evidence}
-    available = set(sources) - set(excluded_sources)
-    if not declared.issubset(available):
-        raise SemanticRuleViolation("evidence audit cites a source outside the bound inputs")
     for check in audit.checks:
         if check.status in {"pass", "fail"} and not check.evidence_keys:
             raise SemanticRuleViolation("decisive evidence checks require exact evidence keys")
@@ -172,11 +165,9 @@ def _validate_audit_handoff_and_sources(
 def _evidence_audit_context(
     payload: dict[str, Any], sources: dict[str, bytes], handoff: dict[str, Any]
 ) -> None:
+    del sources
     audit = EvidenceAudit.model_validate_json(canonical_json(payload), strict=True)
-    targets = frozenset({"scientific_foundation", "scientific_intake"})
-    if not targets.intersection(sources):
-        raise SemanticRuleViolation("evidence audit target is absent")
-    _validate_audit_handoff_and_sources(audit, sources, handoff, excluded_sources=targets)
+    _validate_audit_handoff_and_sources(audit, handoff)
 
 
 def _agent_marker() -> None:

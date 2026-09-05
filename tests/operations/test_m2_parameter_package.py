@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 
@@ -275,8 +276,9 @@ def test_parameter_catalog_and_preflight_share_local_capability(tmp_path) -> Non
     assert runtime.runs.list(instance_id=instance.instance_id) == ()
 
 
+@pytest.mark.parametrize("with_checklist", (False, True), ids=("no-checklist", "checklist"))
 def test_real_parameter_run_reaches_expansion_audit_and_qualification(
-    tmp_path,
+    tmp_path, with_checklist: bool,
 ) -> None:
     catalog, runtime, instance, root = _root(tmp_path)
     source = runtime.artifacts.register(
@@ -296,17 +298,43 @@ def test_real_parameter_run_reaches_expansion_audit_and_qualification(
         name="parameter_source",
         object_id=source.artifact_id,
     )
+    checklist_name = None
+    if with_checklist:
+        checklist_name = "required_parameter_checklist"
+        checklist = runtime.artifacts.register(
+            _package().parameter_requirements.canonical_json(),
+            ArtifactRegistration(
+                kind="device_parameter_requirements",
+                schema_id="scidiscovery.device-parameter-requirements.v1",
+                payload_schema_version=1,
+                media_type="application/json",
+                creator=runtime.actor,
+            ),
+            idempotency_key="m2:required-parameter-checklist",
+        )
+        runtime.scheduler_bindings.bind(
+            instance=instance.instance_id,
+            namespace="artifact",
+            name=checklist_name,
+            object_id=checklist.artifact_id,
+        )
+    extraction_inputs = [
+        {"port": "source_material", "artifact_names": ["parameter_source"]}
+    ]
+    if checklist_name is not None:
+        extraction_inputs.insert(
+            0,
+            {
+                "port": "required_parameter_checklist",
+                "artifact_names": [checklist_name],
+            },
+        )
     root.call_tool(
         "operation_invoke",
         {
             "name": "extract_parameters",
             "operation_id": "tcad.parameter.evidence.extract.v1",
-            "inputs": [
-                {
-                    "port": "source_material",
-                    "artifact_names": ["parameter_source"],
-                }
-            ],
+            "inputs": extraction_inputs,
             "instruction": "Extract the exact frozen parameter declaration.",
         },
     )
@@ -374,6 +402,14 @@ def test_real_parameter_run_reaches_expansion_audit_and_qualification(
         {"port": "parameter_coverage", "artifact_names": [coverage_name]},
         {"port": "source_material", "artifact_names": ["parameter_source"]},
     ]
+    if checklist_name is not None:
+        audit_inputs.insert(
+            2,
+            {
+                "port": "required_parameter_checklist",
+                "artifact_names": [checklist_name],
+            },
+        )
     audit_request = {
         "name": "parameter_audit",
         "operation_id": AUDIT_OPERATION,
@@ -423,42 +459,103 @@ def test_real_parameter_run_reaches_expansion_audit_and_qualification(
         },
     )["result"]["outputs"]
     split_names = {item["output_label"]: item["artifact_name"] for item in split}
+    approval_inputs = [
+        {
+            "port": "scientific_foundation",
+            "artifact_names": [split_names["scientific_foundation"]],
+        },
+        {
+            "port": "parameter_evidence_package",
+            "artifact_names": [package_name],
+        },
+        {
+            "port": "extraction_primary",
+            "artifact_names": [expanded_names["primary"]],
+        },
+        {
+            "port": "parameter_requirements",
+            "artifact_names": [expanded_names["parameter_requirements"]],
+        },
+        {
+            "port": "device_parameters",
+            "artifact_names": [expanded_names["device_parameters"]],
+        },
+        {
+            "port": "source_catalog",
+            "artifact_names": [expanded_names["source_catalog"]],
+        },
+        {"port": "parameter_coverage", "artifact_names": [coverage_name]},
+        {"port": "parameter_audit", "artifact_names": [audit_name]},
+        {"port": "frozen_sources", "artifact_names": ["parameter_source"]},
+    ]
+    if checklist_name is not None:
+        approval_inputs.insert(
+            3,
+            {
+                "port": "required_parameter_checklist",
+                "artifact_names": [checklist_name],
+            },
+        )
     approval_request = {
         "name": "qualify_parameters",
         "operation_id": PASS_APPROVAL_OPERATION,
-        "inputs": [
-            {
-                "port": "scientific_foundation",
-                "artifact_names": [split_names["scientific_foundation"]],
-            },
-            {
-                "port": "parameter_evidence_package",
-                "artifact_names": [package_name],
-            },
-            {
-                "port": "extraction_primary",
-                "artifact_names": [expanded_names["primary"]],
-            },
-            {
-                "port": "parameter_requirements",
-                "artifact_names": [expanded_names["parameter_requirements"]],
-            },
-            {
-                "port": "device_parameters",
-                "artifact_names": [expanded_names["device_parameters"]],
-            },
-            {
-                "port": "source_catalog",
-                "artifact_names": [expanded_names["source_catalog"]],
-            },
-            {"port": "parameter_coverage", "artifact_names": [coverage_name]},
-            {"port": "parameter_audit", "artifact_names": [audit_name]},
-            {"port": "frozen_sources", "artifact_names": ["parameter_source"]},
-        ],
+        "inputs": approval_inputs,
     }
     assert root.call_tool("operation_preflight", approval_request)["admissible"] is True
     approval = root.call_tool("operation_invoke", approval_request)
     assert approval["result"]["status"] == "pending"
+
+    alternate_requirements = _package().parameter_requirements.model_copy(deep=True)
+    alternate_payload = alternate_requirements.model_dump(mode="json")
+    alternate_payload["parameters"][0]["display_name"] = "Alternate display label"
+    alternate_checklist = runtime.artifacts.register(
+        canonical_json(alternate_payload),
+        ArtifactRegistration(
+            kind="device_parameter_requirements",
+            schema_id="scidiscovery.device-parameter-requirements.v1",
+            payload_schema_version=1,
+            media_type="application/json",
+            creator=runtime.actor,
+        ),
+        idempotency_key=f"m2:alternate-checklist:{with_checklist}",
+    )
+    runtime.scheduler_bindings.bind(
+        instance=instance.instance_id,
+        namespace="artifact",
+        name="alternate_parameter_checklist",
+        object_id=alternate_checklist.artifact_id,
+    )
+    wrong_checklist_inputs = [
+        (
+            {
+                **item,
+                "artifact_names": ["alternate_parameter_checklist"],
+            }
+            if item["port"] == "required_parameter_checklist"
+            else item
+        )
+        for item in approval_request["inputs"]
+    ]
+    if not with_checklist:
+        wrong_checklist_inputs.insert(
+            3,
+            {
+                "port": "required_parameter_checklist",
+                "artifact_names": ["alternate_parameter_checklist"],
+            },
+        )
+    approval_count = len(runtime.approvals.list_requests(limit=100))
+    wrong_checklist = root.call_tool(
+        "operation_preflight",
+        {
+            **approval_request,
+            "name": "qualify_with_wrong_checklist",
+            "inputs": wrong_checklist_inputs,
+        },
+    )
+    assert wrong_checklist["admissible"] is False
+    assert wrong_checklist["reason_code"] == "approval_projector_failed"
+    assert len(runtime.approvals.list_requests(limit=100)) == approval_count
 
     missing_source_request = {
         **approval_request,
@@ -703,13 +800,49 @@ def test_parameter_run_rejects_package_with_invented_source_alias(tmp_path) -> N
         operation_digest=compiled.digest,
     )
     opened = worker.call_tool("worker_open_assignment", {})
+    result_schema = json.loads(
+        Path(opened["workspace_path"], "schema", "result.schema.json").read_text(
+            "utf-8"
+        )
+    )
+    package_schema = result_schema["properties"]["payload"]
+    intake_ref = package_schema["properties"]["scientific_intake"]["$ref"]
+    intake_schema = package_schema["$defs"][intake_ref.removeprefix("#/$defs/")]
+    foundation_ref = intake_schema["properties"]["scientific_foundation"]["$ref"]
+    foundation_schema = package_schema["$defs"][
+        foundation_ref.removeprefix("#/$defs/")
+    ]
+    projected_source = foundation_schema["properties"]["evidence"]["items"][
+        "allOf"
+    ][-1]["properties"]["source_key"]
+    assert projected_source["enum"] == ["source_material"]
     Path(opened["output_directory"], "result.json").write_bytes(
         _envelope(_package("invented_source").model_dump(mode="json"))
     )
 
     rejected = worker.call_tool("worker_submit_result", {})
     assert rejected["state"] == "rejected"
-    assert "exact Run input aliases" in str(rejected["diagnostics"])
+    assert rejected["diagnostics"] == [
+        {
+            "path": (
+                "$.payload.scientific_intake.scientific_foundation."
+                "evidence[0].source_key"
+            ),
+            "message": "'invented_source' is not one of ['source_material']",
+            "type": "json_schema.enum",
+            "rule_id": "runtime.schema",
+        }
+    ]
+    active = tuple(
+        item
+        for item in runtime.runs.list(instance_id=instance.instance_id)
+        if item.operation_id == "tcad.parameter.evidence.extract.v1"
+    )
+    assert len(active) == 1 and active[0].state == "running"
+    Path(opened["output_directory"], "result.json").write_bytes(
+        _envelope(_package("source_material").model_dump(mode="json"))
+    )
+    assert worker.call_tool("worker_submit_result", {})["state"] == "completed"
 
 
 def test_parameter_package_expands_deterministically_and_idempotently(tmp_path) -> None:

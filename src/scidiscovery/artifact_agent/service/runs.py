@@ -271,7 +271,12 @@ class RunService:
                     ),
                     revision_workspace_mode=revision_workspace_mode,
                 ),
-                result_schema=result_schema_json(compiled),
+                result_schema=result_schema_json(
+                    compiled,
+                    input_source_ports={
+                        item.source_name: item.port_name for item in frozen_inputs
+                    },
+                ),
                 recovery_digest=recovery_digest,
                 initial_output=initial_output,
             )

@@ -19,6 +19,7 @@ from scidiscovery.builtin_plugin import CORE_PLUGIN
 from scidiscovery.general_science_experiment_components import _experiment_context
 from scidiscovery.general_science_plugin import PLUGIN as GENERAL_PLUGIN
 from scidiscovery.operation_contract import SemanticRuleViolation
+from scidiscovery.operations import catalog as catalog_module
 from scidiscovery.operations.catalog import compile_catalog
 from scidiscovery.operations.invoke import (
     InvocationArtifact,
@@ -403,6 +404,25 @@ def test_context_sources_do_not_include_a_different_port_with_the_same_prefix(
     assert observed == [{"critic_review", "research_objective", "hypothesis_portfolio"}]
 
 
+def test_schema_projection_program_errors_remain_system_failures(
+    tmp_path, monkeypatch, experiment_case,
+) -> None:
+    from scidiscovery.artifact_agent.service import run_outputs
+
+    intent, sources = experiment_case
+    intent["objective_key"] = "objective_expected"
+
+    def broken_projection(*_args, **_kwargs):
+        raise ValueError("projection programming defect")
+
+    monkeypatch.setattr(run_outputs, "operation_port_json_schema", broken_projection)
+    with pytest.raises(
+        RunCheckerError, match="compiled output schema projection failed"
+    ) as error:
+        _validate_experiment_submission(tmp_path, intent, sources)
+    assert type(error.value.__cause__) is ValueError
+
+
 def _experiment_envelope(intent):
     return canonical_json({
         "schema_version": 1,
@@ -477,3 +497,71 @@ def test_threshold_unit_vocabulary_is_visible_in_the_json_schema() -> None:
     assert requirement_unit["enum"] == claim_unit["enum"]
     assert "1" in requirement_unit["enum"]
     assert "probability" not in requirement_unit["enum"]
+
+
+def test_evidence_source_projection_uses_only_exact_bound_inventory_aliases() -> None:
+    compiled = _catalog().operation("tcad.parameter.evidence.extract.v1")
+    port = operation_primary_output(compiled)
+    schema = operation_port_json_schema(
+        compiled,
+        port,
+        input_source_ports={
+            "required_parameter_checklist": "required_parameter_checklist",
+            "source_material_001": "source_material",
+            "source_material_002": "source_material",
+        },
+    )
+    evidence = schema["properties"]["scientific_intake"]["$ref"]
+    intake = schema["$defs"][evidence.removeprefix("#/$defs/")]
+    foundation_ref = intake["properties"]["scientific_foundation"]["$ref"]
+    foundation = schema["$defs"][foundation_ref.removeprefix("#/$defs/")]
+    item_projection = foundation["properties"]["evidence"]["items"]["allOf"][-1]
+    assert item_projection["properties"]["source_key"]["enum"] == [
+        "source_material_001",
+        "source_material_002",
+    ]
+    validation = schema["x-scidiscovery-validation-contract"]
+    usages = {
+        item["port"]: item["usage"] for item in validation["context_sources"]
+    }
+    assert usages == {
+        "required_parameter_checklist": "prior_signal",
+        "source_material": "evidence_inventory",
+    }
+
+
+def test_empty_optional_evidence_inventory_forbids_nonempty_evidence() -> None:
+    compiled = _catalog().operation("science.evidence.audit.v1")
+    port = operation_primary_output(compiled)
+    static_schema = operation_port_json_schema(compiled, port)
+    assert static_schema["properties"]["evidence"].get("maxItems") == 32
+
+    bound_schema = operation_port_json_schema(
+        compiled,
+        port,
+        input_source_ports={"scientific_foundation": "scientific_foundation"},
+    )
+    assert bound_schema["properties"]["evidence"]["maxItems"] == 0
+
+
+def test_evidence_source_projection_version_changes_only_applicable_digest(
+    monkeypatch,
+) -> None:
+    first = _catalog()
+    selector = catalog_module._evidence_source_projection_version
+
+    def next_projection(spec, port):
+        return "evidence-source-enum.test-next" if selector(spec, port) else None
+
+    monkeypatch.setattr(
+        catalog_module, "_evidence_source_projection_version", next_projection
+    )
+    second = _catalog()
+    assert (
+        first.operation("tcad.parameter.evidence.extract.v1").digest
+        != second.operation("tcad.parameter.evidence.extract.v1").digest
+    )
+    assert (
+        first.operation("science.experiment.design.v1").digest
+        == second.operation("science.experiment.design.v1").digest
+    )

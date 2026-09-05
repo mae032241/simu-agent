@@ -380,11 +380,7 @@ def validate_extract_context(
     package = ParameterEvidencePackage.model_validate_json(
         canonical_json(payload), strict=True
     )
-    source_aliases = {
-        name
-        for name in sources
-        if name == "source_material" or name.startswith("source_material_")
-    }
+    source_aliases = set(sources) - {"required_parameter_checklist"}
     catalog_keys = {item.source_key for item in package.source_catalog.sources}
     if not source_aliases or catalog_keys != source_aliases:
         raise SemanticRuleViolation(
@@ -536,20 +532,6 @@ def _parameter_qualification_document(
     ):
         if subject.parent_refs != (package_subject.ref,):
             raise ValueError(f"{name} is not an exact deterministic expansion")
-    checklist_sources = tuple(
-        source
-        for source in extraction_family.evidence_sources
-        if source.source_name == "required_parameter_checklist"
-    )
-    if len(checklist_sources) > 1 or (
-        (required_checklist_subject is None) != (not checklist_sources)
-    ):
-        raise ValueError("parameter approval does not bind the extraction checklist")
-    if (
-        required_checklist_subject is not None
-        and checklist_sources[0].ref != required_checklist_subject.ref
-    ):
-        raise ValueError("parameter approval binds a different extraction checklist")
     unexpected_source_kinds = {
         source.source_kind
         for source in extraction_family.evidence_sources
@@ -557,11 +539,7 @@ def _parameter_qualification_document(
     }
     if unexpected_source_kinds:
         raise ValueError("parameter extraction has an unsupported evidence-source kind")
-    frozen_sources = tuple(
-        source
-        for source in extraction_family.evidence_sources
-        if source.source_name != "required_parameter_checklist"
-    )
+    frozen_sources = extraction_family.evidence_sources
     frozen_refs = tuple(source.ref for source in frozen_sources)
     expected_source_keys = {source.source_name for source in frozen_sources}
     if (
@@ -571,6 +549,15 @@ def _parameter_qualification_document(
         raise ValueError("parameter extraction source identities must be unique")
     if tuple(item.ref for item in grouped.get("frozen_sources", ())) != frozen_refs:
         raise ValueError("parameter approval omits or adds a frozen source")
+    checklist_refs = (
+        ()
+        if required_checklist_subject is None
+        else (required_checklist_subject.ref,)
+    )
+    if package_subject.parent_refs != (*checklist_refs, *frozen_refs):
+        raise ValueError(
+            "parameter package does not preserve its exact extraction inputs"
+        )
 
     package = ParameterEvidencePackage.model_validate_json(
         package_subject.content, strict=True
@@ -974,7 +961,7 @@ EXTRACT_INPUTS = (
         "scidiscovery.device-parameter-requirements.v1",
         "parameter_requirements_schema",
         min_items=0,
-        usage="evidence_inventory",
+        usage="prior_signal",
     ),
     _input(
         "source_material",
@@ -1166,7 +1153,7 @@ def _approval_operation(
 ) -> OperationSpec:
     return OperationSpec(
         operation_id=operation_id,
-        version="1",
+        version="2",
         catalog_scope="public",
         description=description,
         executor=ExecutorRef(kind="approval", component=_ref(projector)),
