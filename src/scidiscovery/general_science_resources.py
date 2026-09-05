@@ -84,6 +84,16 @@ supported by the immutable sources. Declare each source once, use one compact
 check per material question, preserve conflicts and missing support, and cite
 only exact task-local source aliases. Do not grant qualification or inherit a
 prior verdict.
+
+Judge the object's fidelity to the supplied sources, not whether those sources
+are sufficient for a broader research objective. Use pass when a statement is
+supported or faithfully preserves a source limitation, local gap, detection
+limit, shared dependency, or unresolved identity. Use fail when the object
+overstates support, hides a limitation, binds an identity incorrectly, or makes
+an unsupported affirmative claim. Use unknown only when required material is
+missing, unreadable, or cannot be compared. Use not_applicable only when the
+declared check does not apply. A faithful statement that evidence is limited can
+pass this audit without becoming qualified or scientifically sufficient.
 """
 
 
@@ -130,7 +140,9 @@ class Resources:
     evidence_audit_semantic_contract = scientific_semantic_contract(
         "evidence.audit",
         "Every evidence reference must close over the audit's declared exact source keys.",
-        "The audit preserves missing, conflicting, and unsupported evidence as fail, unknown, or not applicable.",
+        "Audit status measures whether the reviewed object is faithful to the exact sources, not whether those sources are sufficient for a broader objective or qualification.",
+        "Pass applies to supported statements and to statements that faithfully preserve limitations, gaps, detection limits, shared dependencies, or unresolved identity.",
+        "Fail applies to overstatement, hidden limitations, incorrect identity binding, or unsupported affirmative claims; unknown applies only when required material is missing, unreadable, or not comparable; not_applicable applies only when the check does not apply.",
         "The audit must contain a check; decisive pass or fail checks require evidence keys; fail maps to blocked, unknown to inconclusive, otherwise pass.",
         payload_rule_id="evidence.audit.check_consistency",
         context_rule_id="evidence.audit.source_binding",

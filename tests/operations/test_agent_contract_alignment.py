@@ -18,6 +18,7 @@ from scidiscovery.artifact_agent.service.run_outputs import (
 from scidiscovery.builtin_plugin import CORE_PLUGIN
 from scidiscovery.general_science_experiment_components import _experiment_context
 from scidiscovery.general_science_plugin import PLUGIN as GENERAL_PLUGIN
+from scidiscovery.general_science_resources import Resources
 from scidiscovery.operation_contract import SemanticRuleViolation
 from scidiscovery.operations import catalog as catalog_module
 from scidiscovery.operations.catalog import compile_catalog
@@ -29,6 +30,7 @@ from scidiscovery.operations.invoke import (
 )
 from tcad_artifact.plugin import PLUGIN as TCAD_PLUGIN
 from tcad_artifact.parameter_operations import ParameterEvidencePackage
+from curve_score.figure_science_operations import AUDIT_PROMPT as FIGURE_AUDIT_PROMPT
 
 
 def _catalog():
@@ -67,6 +69,18 @@ def test_every_public_agent_exposes_one_compiled_output_contract() -> None:
         assert set(checkers.values()) <= {
             item["rule_id"] for item in semantic["rules"]
         }
+
+
+def test_audit_contracts_distinguish_fidelity_from_evidence_sufficiency() -> None:
+    general = Resources.auditor_prompt
+    semantic = Resources.evidence_audit_semantic_contract
+    for text in (general, semantic, FIGURE_AUDIT_PROMPT):
+        assert "忠实" in text or "faithful" in text
+        assert "pass" in text
+        assert "fail" in text
+        assert "unknown" in text
+        assert "not_applicable" in text
+        assert "充分" in text or "sufficient" in text
 
 
 def test_experiment_revision_has_only_its_true_behavioral_inputs() -> None:

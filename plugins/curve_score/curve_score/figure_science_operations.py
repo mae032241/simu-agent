@@ -122,7 +122,16 @@ occlusion, per-series status, and whether the Intake overstates digitized data.
 
 Use exact assignment source names in evidence keys. Do not redigitize, mutate
 the Intake or attachments, grant qualification, or hide an unresolved series
-to make the bundle pass.
+to make the bundle pass. Judge whether the Intake is faithful to the exact
+figure family, not whether that family is sufficient for a broader scientific
+objective. Use pass when a statement is supported or faithfully preserves a
+limitation, local gap, detection limit, shared dependency, or unresolved
+identity. Use fail when the Intake treats an ineligible point as eligible,
+hides a source limitation, binds identity incorrectly, or makes an unsupported
+affirmative claim. Use unknown only when required material is missing,
+unreadable, or cannot be compared, and not_applicable only when the check does
+not apply. A faithful statement of limited evidence can pass this audit without
+granting quantitative qualification.
 """
 
 

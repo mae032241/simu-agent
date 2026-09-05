@@ -606,6 +606,19 @@ def test_five_operation_figure_family_requires_exact_review(tmp_path: Path) -> N
         ),
         verdict="blocked",
     )
+    failed_split = root.call_tool(
+        "operation_preflight",
+        {
+            "name": "overstated_intake_split",
+            "operation_id": "science.intake.split.v1",
+            "inputs": [
+                {"port": "scientific_intake", "artifact_names": [intake_name]},
+                {"port": "evidence_audit", "artifact_names": [change_request_name]},
+            ],
+        },
+    )
+    assert failed_split["admissible"] is False
+    assert failed_split["reason_code"] == "input_independent_review_missing"
 
     generic_revision = root.call_tool(
         "operation_preflight",
@@ -776,6 +789,37 @@ def test_five_operation_figure_family_requires_exact_review(tmp_path: Path) -> N
         root.call_tool("operation_invoke", over_limit_request)
     assert _binding_counts(runtime, instance) == before
 
+    unknown_audit_name = _complete_agent(
+        catalog,
+        runtime,
+        root,
+        operation_id=AUDIT,
+        name="figure_audit_missing_comparison",
+        inputs=_bindings(names, include_intake=revised_intake_name_2),
+        payload=_audit_payload(
+            status="unknown",
+            check_key="figure_comparison_unavailable",
+            basis="A required comparison is unavailable in the exact bound material.",
+        ),
+        verdict="inconclusive",
+    )
+    unknown_split = root.call_tool(
+        "operation_preflight",
+        {
+            "name": "inconclusive_intake_split",
+            "operation_id": "science.intake.split.v1",
+            "inputs": [
+                {
+                    "port": "scientific_intake",
+                    "artifact_names": [revised_intake_name_2],
+                },
+                {"port": "evidence_audit", "artifact_names": [unknown_audit_name]},
+            ],
+        },
+    )
+    assert unknown_split["admissible"] is False
+    assert unknown_split["reason_code"] == "input_independent_review_missing"
+
     audit_name = _complete_agent(
         catalog,
         runtime,
@@ -829,6 +873,15 @@ def test_five_operation_figure_family_requires_exact_review(tmp_path: Path) -> N
         for item in split
         if item["output_label"] == "scientific_foundation"
     )
+    foundation_id = runtime.scheduler_bindings.resolve(
+        instance=instance.instance_id,
+        namespace="artifact",
+        name=foundation_name,
+    )
+    faithful_foundation = json.loads(
+        runtime.artifacts.read(runtime.artifacts.get_by_id(foundation_id).ref)
+    )
+    assert "Digitization limits remain explicit" in faithful_foundation["summary"]
     problem_frame_name = next(
         item["artifact_name"]
         for item in split
