@@ -185,8 +185,9 @@ def test_catalog_stages_add_no_second_registry_or_complexity_escape() -> None:
     # Local tool availability and workspace policy remain in the same immutable
     # catalog package. Removing the runtime convenience projection may shrink it.
     assert metrics["operations_package"]["files"] == 8
-    # The same E5.2 projection adds one bounded schema walker to the existing
-    # operation-contract module; it does not add package files or authorities.
+    # The selective E5.2 digest projection stays in the existing catalog file;
+    # it adds no package file, registry, or authority.  The schema walker lives
+    # in operation_contract.py, which this operations-package metric excludes.
     assert metrics["operations_package"]["lines"] <= 2280
     # H5 established these upper bounds.  Later evidence-backed deletions must
     # not fail merely because the production tree became smaller.

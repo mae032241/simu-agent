@@ -1,7 +1,7 @@
 # R5 E5.2：当前 Fig.4 阻断的最小修复计划
 
 日期：2026-09-05
-状态：最终独立计划复审 PASS；四项补丁均已实现并通过独立复审；基线 `a6742b7`；P1 `322d281`；P2 `c7c692a`；P3 `e2af10c`；P4 `036a544`。源码态、安装态和代际负测已完成，集成结果及 10 项基线遗留红项见 [集成报告](evidence/R5_E5_2_INTEGRATION_REPORT.zh-CN.md)；等待 GPT-6 集成独立复审，尚未部署或进入真实端到端。
+状态：集成门 PASS。四项补丁均已实现并分别通过独立复审；基线 `a6742b7`；P1 `322d281`；P2 `c7c692a`；P3 `e2af10c`；P4 `036a544`。GPT-6 首轮指出的既定安装态证据缺口已补齐，第二轮独立复审 PASS、剩余阻断项 0；详见[集成报告](evidence/R5_E5_2_INTEGRATION_REPORT.zh-CN.md)与[第二轮审查](reviews/R5_E5_2_INTEGRATION_GPT6_SECOND_REVIEW.zh-CN.md)。尚未部署或进入真实端到端。
 
 本文是 [真实缺陷账本](R5_NEXT_ITERATION_LIVE_DEFECTS.zh-CN.md) 的 E5 有界返工计划。
 采用 [当前架构](../ARCHITECTURE.zh-CN.md)、
