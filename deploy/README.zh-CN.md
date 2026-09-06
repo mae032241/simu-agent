@@ -16,7 +16,8 @@
 示例的私有副本提供。完整步骤见[中文安装教程](../docs/INSTALL.zh-CN.md)。
 
 自动图提取须显式选择 `tcad_artifact,curve_score,curve_figure_evidence`，按该教程离线
-供应工具／模型合同。dry-run 和安装均在事务前以服务身份核验，不安装论文专用
+预装工具和默认 `eng` 数据。dry-run 和安装均在事务前以服务身份自动记录版本并验证
+真实能力，不要求 figure 身份输入，不安装论文专用
 wrapper 或人工几何技能。
 
 部署命令不会安装 Sentaurus、许可证、虚拟机或 SSH key。

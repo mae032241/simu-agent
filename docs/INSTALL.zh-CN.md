@@ -50,39 +50,37 @@ SCID_WORKSPACE="$PWD/workspace/<project-name>" \
 `tcad_artifact,curve_score` 等插件，通过 `SCID_TCAD_COMMAND_CONFIG` 选择外部适配器。
 `install` 和 `reinstall` 使用同一个事务化流程；无参数等价于 `install`。
 
-自动图提取使用三个通用领域插件。离线供应 Pillow **12.1.1**、Poppler
-**22.02.0**（`pdfinfo`、`pdfimages`、`pdftoppm`）、Tesseract，以及已有且可读的
-`eng.traineddata`。Tesseract 的精确可执行版本和模型经核验的 SHA-256 是显式安装
-输入，不猜测工具版本或模型摘要。以下两个占位符必须替换为离线供应核验所得值：
+自动图提取使用三个通用领域插件。部署前离线预装符合插件声明包版本范围的
+Pillow、Poppler（`pdfinfo`、`pdfimages`、`pdftoppm`），以及带默认 `eng`
+语言数据的 Tesseract。安装器自动发现可执行文件并记录实际版本，不要求任何
+figure 专属身份变量；三个 Poppler 工具须报告相同版本。
 
 ```bash
 export SCID_PYTHON=/absolute/path/to/service/python
-"$SCID_PYTHON" -m pip install --no-index --find-links /srv/scid-offline/wheels 'Pillow==12.1.1'
+"$SCID_PYTHON" -m pip install --no-index --find-links /srv/scid-offline/wheels 'Pillow>=10.0,<13.0'
 export SCID_PLUGINS=tcad_artifact,curve_score,curve_figure_evidence
 export SCID_PLATFORM=codex SCID_WORKER_BACKEND=local
 export SCID_WORKSPACE=/srv/scid-project
 export SCID_CODEX_LAUNCH_ROOT=/srv/scid-codex
 export SCID_SERVICE_USER="$(id -un)" SCID_SERVICE_GROUP="$(id -gn)"
-export SCID_FIGURE_TESSERACT_VERSION='<供应的精确版本>'
-export SCID_FIGURE_OCR_MODEL_PATH=/srv/scid-offline/tessdata/eng.traineddata
-export SCID_FIGURE_OCR_MODEL_SHA256='<核验过的64位SHA-256>'
 deploy/reinstall.sh --dry-run
 # 安装与审查门通过后才执行：
 deploy/reinstall.sh reinstall
 ```
 
-workspace 与启动目录须已有且独立于 checkout。通用 wrapper 由服务用户运行，
-负责将三个供应变量显式转发给 `sudo`。安装器在创建安装事务前，以真实服务身份
-和 systemd 有效默认 PATH 执行 Python import、版本调用、PDF 恢复／渲染及 OCR；
+workspace 与启动目录须已有且独立于 checkout。通用 wrapper 由服务用户运行。
+安装器在创建安装事务前，以真实服务身份和 systemd 有效默认 PATH 执行 Python
+import、版本调用、`tesseract --list-langs`（要求 `eng`）、PDF 恢复／渲染及 OCR；
 操作者 shell 的 PATH 不充当服务依赖检查。
 
 核验结果只写入暂存安装包的
 `site/curve_figure_evidence/figure_dependencies.json`，切换前和安装后再用服务
 Python 复验。现有 detector 资源将该记录纳入 request/materialize Operation
 digest，激活时将安装前缀设为只读；独立的 Python runtime identity 检查并不哈希
-应用文件。运行时使用记录中的绝对可执行文件／模型
-路径，复核实际版本和模型字节；修改环境变量不会改变已装合同，更换模型须重新安装。
-不复制或下载模型。未供应该记录的普通 wheel 可以编译，但明确不能进行已核验 OCR，
+应用文件。运行时使用记录中的绝对可执行文件路径，在实际调用前复核版本和
+`eng` 可用性。Tesseract 使用自身默认数据路径；安装器不记录模型路径或模型摘要，
+不复制模型或下载依赖。工具版本变化须重新生成安装记录。
+未供应该记录的普通 wheel 可以编译，但明确不能进行已核验 OCR，
 不能通过 figure 安装预检。
 
 当前可信 Local 后端采用软隔离，不是操作系统沙箱。生产包、运行资源、默认配置和
@@ -328,9 +326,6 @@ Sentaurus 许可证或任何科学模型已经通过。
 | `SCID_PLATFORM` | `codex` | Codex 平台选择器；其他值会被拒绝 |
 | `SCID_WORKER_BACKEND` | `local` | `local` 为可信本地原生工具路径；`hardened` 为纯 MCP 文件后端，值同时驱动 daemon、systemd、Codex profile 和安装验证 |
 | `SCID_PLUGINS` | 空 | 逗号分隔的本地插件目录名；例如 `tcad_artifact,curve_score,curve_figure_evidence` |
-| `SCID_FIGURE_TESSERACT_VERSION` | 未设置 | 选择 figure 时必需：离线可执行文件的精确版本 |
-| `SCID_FIGURE_OCR_MODEL_PATH` | 未设置 | 必需：已有且服务可读的绝对 `eng.traineddata` 路径 |
-| `SCID_FIGURE_OCR_MODEL_SHA256` | 未设置 | 必需：供应模型经核验的 SHA-256；冻结到已装 detector 资源 |
 | `SCID_INSTALL_ROOT` | `/opt/scidiscovery` | 应用安装目录 |
 | `SCID_STATE_ROOT` | `/var/lib/scidiscovery` | 控制面状态 |
 | `SCID_CONFIG_ROOT` | `/etc/scidiscovery` | 密钥和策略 |

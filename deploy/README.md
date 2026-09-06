@@ -22,8 +22,9 @@ are supplied through `SCID_*` environment variables and private copies of the
 JSON examples. See [the complete installation guide](../docs/INSTALL.md).
 
 For automatic figures, explicitly select `tcad_artifact,curve_score,curve_figure_evidence`
-and supply the offline tool/model contract described in that guide. Both dry-run
-and installation validate it under the service identity before any transaction.
+and preinstall the offline tools and default `eng` data described in that guide.
+Both dry-run and installation discover versions and validate actual capabilities
+under the service identity before any transaction; no figure identity inputs are needed.
 No paper-specific installation wrapper or manual geometry skill is installed.
 
 No deployment command installs Sentaurus, a license, a VM, or an SSH key.

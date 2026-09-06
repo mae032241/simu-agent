@@ -87,10 +87,10 @@ variant = figure.model_copy(update={"components": tuple(
 ),)})
 assert sum(component.component_id in consumers for component in variant.components) == 2
 variants = tuple(variant if plugin is figure else plugin for plugin in plugins)
-contract = {"detector_version": "probe-v1", "ocr_model_sha256": "a" * 64}
+contract = {"detector_version": "probe-v1", "ocr_version": "4.1.1"}
 catalogs = []
 for payload in (contract, {**contract, "detector_version": "probe-v2"},
-                {**contract, "ocr_model_sha256": "b" * 64}):
+                {**contract, "ocr_version": "5.4.0"}):
     content = json.dumps(payload, sort_keys=True).encode()
     # Only the in-memory resource bytes change; compiler and callables stay intact.
     with patch.object(figure_contracts, "DETECTOR_CONTRACT_PROBE", content, create=True):
@@ -129,7 +129,6 @@ assert {plugin.plugin_id for plugin in plugins} == {
 
 def test_installed_supply_bytes_change_only_existing_figure_resource_consumers(installed_probe) -> None:
     installed_probe("all_domains", r'''
-import hashlib
 import importlib
 import json
 from pathlib import Path
@@ -140,15 +139,14 @@ from scidiscovery.operations.catalog import compile_installed_catalog
 
 assert dependencies.RUNTIME_CONTRACT["ocr"]["supply_status"] == "unavailable"
 assert Path(dependencies.__file__).is_relative_to(Path(sys.prefix))
-model = Path.cwd() / "eng.traineddata"
 contract = json.loads(json.dumps(dependencies.UNSUPPLIED_CONTRACT))
+contract.update(pillow_version="observed-pillow", poppler_version="observed-poppler")
 contract["executables"] = {name: "/offline/bin/" + name for name in (*dependencies.PDF_COMMANDS, "tesseract")}
-contract["ocr"].update(version="5.3.0", model_path=str(model), supply_status="verified")
+contract["ocr"].update(supply_status="verified")
 catalogs = [compile_installed_catalog()]
 try:
-    for content in (b"synthetic model A", b"synthetic model B"):
-        model.write_bytes(content)
-        contract["ocr"]["model_sha256"] = hashlib.sha256(model.read_bytes()).hexdigest()
+    for version in ("4.1.1", "5.4.0"):
+        contract["ocr"]["version"] = version
         dependencies.CONTRACT_PATH.write_text(json.dumps(contract))
         importlib.reload(dependencies)
         importlib.reload(detector)
@@ -165,7 +163,6 @@ try:
         assert changed == {"science.figure.request.prepare.v1", "science.figure.evidence.materialize.v1"}, changed
 finally:
     dependencies.CONTRACT_PATH.unlink(missing_ok=True)
-    model.unlink(missing_ok=True)
 ''')
 
 
@@ -458,17 +455,31 @@ assert completed["state"] == "completed"
 _INSTALLED_CURVE_TOOL_PROBE = r'''
 import hashlib
 import io
+import os
+import shutil
 import sys
 import tempfile
 from pathlib import Path
 
 from PIL import Image, ImageDraw
 import curve_score
+from curve_figure_evidence import figure_dependencies
+from curve_figure_evidence.figure_detection import _ocr
 from scidiscovery.artifact_agent.schema.refs import ArtifactRef
 from scidiscovery.operations.catalog import compile_installed_catalog
 from scidiscovery.operations.tooling import operation_worker_tools
 
 assert Path(curve_score.__file__).resolve().is_relative_to(Path(sys.prefix).resolve())
+# An unbound wheel must not use an available host OCR executable.
+assert figure_dependencies.RUNTIME_CONTRACT["ocr"]["supply_status"] == "unavailable"
+assert figure_dependencies.RUNTIME_CONTRACT["pillow_version"] is None
+assert figure_dependencies.RUNTIME_CONTRACT["poppler_version"] is None
+host_bin = Path(tempfile.mkdtemp(prefix="installed-unbound-ocr-"))
+(host_bin / "tesseract").write_text("#!/bin/sh\nexit 99\n")
+(host_bin / "tesseract").chmod(0o755)
+os.environ["PATH"] = str(host_bin) + os.pathsep + os.environ["PATH"]
+assert shutil.which("tesseract") == str(host_bin / "tesseract")
+assert _ocr(b"unused") == ((), ("ocr_dependency_unavailable:tesseract",), "tesseract unavailable")
 image = Image.new("RGB", (12, 12), "white")
 ImageDraw.Draw(image).line([(1, 9), (9, 1)], fill="#ff0000", width=1)
 stream = io.BytesIO()

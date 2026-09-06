@@ -165,7 +165,6 @@ def test_vector_page_render_rotation_and_transform(monkeypatch, angle, expected)
 
 def test_ocr_missing_and_environment_failure_are_distinct(monkeypatch):
     content,_ = drawing()
-    monkeypatch.setattr(figure_detection.shutil,"which",lambda _:None)
     first = detect_source(content)
     assert "ocr_dependency_unavailable:tesseract" in first.unresolved
     assert first == detect_source(content)
@@ -187,15 +186,16 @@ def test_ocr_missing_and_environment_failure_are_distinct(monkeypatch):
 
 def test_ocr_cli_adapter_is_structured_and_restricted(monkeypatch):
     from curve_figure_evidence import figure_dependencies
+    monkeypatch.setenv("TESSDATA_PREFIX", "/wrong-tessdata")
     content,_ = drawing()
-    monkeypatch.setattr(figure_detection.shutil,"which",lambda _:"/synthetic/tesseract")
     monkeypatch.setattr(figure_dependencies, "RUNTIME_CONTRACT", {
         "executables": {"tesseract": "/synthetic/tesseract"},
-        "ocr": {"model_path": "/synthetic/model/eng.traineddata"},
+        "ocr": {"language": "eng"},
     })
     monkeypatch.setattr(figure_dependencies, "verify_ocr", lambda _: "synthetic tesseract version")
     calls=[]
     def run(argv, **kwargs):
+        assert "TESSDATA_PREFIX" not in kwargs["env"]
         calls.append(argv)
         output = b"synthetic tesseract version" if "--version" in argv else b"left\ttop\twidth\theight\ttext\n10\t20\t8\t12\t-5\n"
         return subprocess.CompletedProcess(argv,0,output,b"")
@@ -203,7 +203,7 @@ def test_ocr_cli_adapter_is_structured_and_restricted(monkeypatch):
     tokens,reasons,version = figure_detection._ocr(content)
     assert tokens == (OCRToken("-5", (10.,20.,18.,32.), "synthetic tesseract version"),)
     assert not reasons
-    assert calls[-1][-8:] == ["--tessdata-dir", "/synthetic/model", "-l", "eng", "--psm", "11", "-c", "tessedit_create_tsv=1"]
+    assert calls[-1][-6:] == ["-l", "eng", "--psm", "11", "-c", "tessedit_create_tsv=1"]
 
 
 def test_unrecoverable_input_and_generic_byte_budget():

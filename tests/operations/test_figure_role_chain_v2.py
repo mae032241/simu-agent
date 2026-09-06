@@ -244,7 +244,7 @@ def test_real_detector_resource_bytes_control_only_declared_consumers(monkeypatc
     assert len(baseline.operation_ids()) == 48
     original = json.loads(contract.DETECTOR_CONTRACT)
     for changed in ({**original, "detector_version": "changed-test-contract"},
-                    {**original, "ocr": {**original["ocr"], "model_sha256": "a" * 64}}):
+                    {**original, "ocr": {**original["ocr"], "version": "5.4.0"}}):
         monkeypatch.setattr(contract, "DETECTOR_CONTRACT", json.dumps(changed, sort_keys=True).encode())
         catalog = _catalog()
         assert catalog.operation_ids() == baseline.operation_ids()
@@ -257,9 +257,8 @@ def test_real_detector_resource_bytes_control_only_declared_consumers(monkeypatc
 
 def test_no_tesseract_never_invents_axes(monkeypatch):
     raw, intent = measured_source(monkeypatch)
-    # Restore the actual adapter and exercise its missing-executable branch.
+    # Restore the actual adapter and exercise its unbound-executable branch.
     monkeypatch.undo()
-    monkeypatch.setattr("curve_figure_evidence.figure_detection.shutil.which", lambda _: None)
     detected = detect_source(raw)
     assert "ocr_dependency_unavailable:tesseract" in detected.unresolved
     intent.update(detector_receipt=detected.receipt, plot_candidate_id=None, bindings=[],
@@ -419,11 +418,17 @@ def test_semantic_selection_order_does_not_break_table_binding(monkeypatch):
 
 @pytest.mark.parametrize("dependency", ["Pillow", "OCR"])
 def test_runtime_dependency_identity_is_verified(monkeypatch, dependency):
+    from curve_figure_evidence import figure_digitization_contract as contract
     from curve_figure_evidence.figure_digitization_contract import replay_detection
+    installed = json.loads(contract.DETECTOR_CONTRACT)
     if dependency == "Pillow":
+        installed["pillow_version"] = contract.PILLOW_VERSION
         monkeypatch.setattr("curve_figure_evidence.figure_digitization_contract.PILLOW_VERSION", "different")
     else:
-        monkeypatch.setattr("curve_figure_evidence.figure_digitization_contract.shutil.which", lambda _: "/unverified/tesseract")
+        installed["executables"]["tesseract"] = "/recorded/tesseract"
+        installed["ocr"].update(supply_status="verified", version="4.1.1")
+        monkeypatch.setattr("curve_figure_evidence.figure_dependencies._tool_version", lambda *_: "different")
+    monkeypatch.setattr(contract, "DETECTOR_CONTRACT", json.dumps(installed).encode())
     with pytest.raises(RuntimeError, match="version differs|not been supplied"):
         replay_detection(source_bytes())
 

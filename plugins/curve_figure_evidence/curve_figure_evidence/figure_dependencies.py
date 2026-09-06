@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import os
 from pathlib import Path
@@ -17,10 +16,10 @@ import tempfile
 CONTRACT_PATH = Path(__file__).with_name("figure_dependencies.json")
 PDF_COMMANDS = ("pdfinfo", "pdfimages", "pdftoppm")
 UNSUPPLIED_CONTRACT = {
-    "pillow_version": "12.1.1", "poppler_version": "22.02.0",
+    "pillow_version": None, "poppler_version": None,
     "executables": {},
     "ocr": {"adapter": "tesseract --psm 11 -c tessedit_create_tsv=1", "version": None,
-            "model_path": None, "model_sha256": None, "language": "eng",
+            "language": "eng",
             "supply_status": "unavailable"},
 }
 
@@ -30,28 +29,18 @@ def load_contract() -> dict:
         return json.loads(json.dumps(UNSUPPLIED_CONTRACT))
     contract = json.loads(CONTRACT_PATH.read_bytes())
     if (set(contract) != set(UNSUPPLIED_CONTRACT)
-            or contract["pillow_version"] != "12.1.1"
-            or contract["poppler_version"] != "22.02.0"
+            or not all(isinstance(contract[key], str) and contract[key]
+                       for key in ("pillow_version", "poppler_version"))
             or set(contract["executables"]) != {*PDF_COMMANDS, "tesseract"}
             or set(contract["ocr"]) != set(UNSUPPLIED_CONTRACT["ocr"])
+            or not isinstance(contract["ocr"]["version"], str) or not contract["ocr"]["version"]
             or contract["ocr"]["supply_status"] != "verified"
             or contract["ocr"]["language"] != "eng"
             or contract["ocr"]["adapter"] != UNSUPPLIED_CONTRACT["ocr"]["adapter"]):
         raise RuntimeError("invalid installed figure dependency contract")
-    _validate_model_binding(contract["ocr"])
     if not all(Path(value).is_absolute() for value in contract["executables"].values()):
         raise RuntimeError("figure executable paths must be absolute")
     return contract
-
-
-def _validate_model_binding(ocr: dict) -> None:
-    if not isinstance(ocr["version"], str) or not re.fullmatch(r"[0-9]+(?:\.[0-9]+){1,3}", ocr["version"]):
-        raise RuntimeError("SCID_FIGURE_TESSERACT_VERSION must specify an exact executable version")
-    path = Path(ocr["model_path"] or "")
-    if not path.is_absolute() or path.name != "eng.traineddata":
-        raise RuntimeError("SCID_FIGURE_OCR_MODEL_PATH must be an absolute eng.traineddata path")
-    if not isinstance(ocr["model_sha256"], str) or not re.fullmatch(r"[0-9a-f]{64}", ocr["model_sha256"]):
-        raise RuntimeError("SCID_FIGURE_OCR_MODEL_SHA256 must specify the supplied model SHA-256")
 
 
 def command_path(name: str) -> str:
@@ -59,41 +48,48 @@ def command_path(name: str) -> str:
 
 
 def _run(argv: list[str]) -> subprocess.CompletedProcess:
+    environment = {**os.environ, "OMP_NUM_THREADS": "1", "OMP_THREAD_LIMIT": "1"}
+    environment.pop("TESSDATA_PREFIX", None)
     try:
         return subprocess.run(argv, check=True, capture_output=True, timeout=60,
-                              env={**os.environ, "OMP_NUM_THREADS": "1", "OMP_THREAD_LIMIT": "1"})
+                              env=environment)
     except (OSError, subprocess.SubprocessError) as error:
         raise RuntimeError(f"figure dependency call failed: {argv[0]}") from error
+
+
+def _tool_version(name: str, executable: str) -> str:
+    result = _run([executable, "--version" if name == "tesseract" else "-v"])
+    lines = (result.stdout + result.stderr).decode().splitlines()
+    fields = lines[0].split() if lines else []
+    prefix = [name] if name == "tesseract" else [name, "version"]
+    if len(fields) != len(prefix) + 1 or fields[:-1] != prefix:
+        raise RuntimeError(f"cannot read {name} version")
+    return fields[-1]
 
 
 def verify_ocr(contract: dict) -> str:
     ocr = contract["ocr"]
     if ocr["supply_status"] != "verified":
-        raise RuntimeError("OCR model identity has not been supplied and verified")
-    _validate_model_binding(ocr)
-    model = Path(ocr["model_path"])
-    try:
-        if not model.is_file():
-            raise OSError("model is not a regular file")
-        with model.open("rb") as stream:
-            checksum = hashlib.sha256()
-            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-                checksum.update(chunk)
-            digest = checksum.hexdigest()
-    except OSError as error:
-        raise RuntimeError("OCR model file is missing or unreadable") from error
-    if digest != ocr["model_sha256"]:
-        raise RuntimeError("OCR model SHA-256 differs from figure dependency contract")
-    result = _run([contract["executables"]["tesseract"], "--version"])
-    first_line = (result.stdout + result.stderr).decode().splitlines()[0]
-    if first_line.split() != ["tesseract", ocr["version"]]:
+        raise RuntimeError("OCR dependencies have not been supplied and verified")
+    executable = contract["executables"]["tesseract"]
+    version = _tool_version("tesseract", executable)
+    if version != ocr["version"]:
         raise RuntimeError("Tesseract version differs from figure dependency contract")
-    return f"{first_line}; eng sha256={digest}"
+    result = _run([executable, "--list-langs"])
+    lines = [line.strip() for line in (result.stdout + result.stderr).decode().splitlines() if line.strip()]
+    header = re.fullmatch(r'List of available languages(?: in ".*")? \(([0-9]+)\):', lines[0]) if lines else None
+    languages = lines[1:]
+    if (header is None or len(languages) != int(header[1])
+            or len(set(languages)) != len(languages)
+            or any(line.startswith("List of available languages") for line in languages)):
+        raise RuntimeError("ambiguous OCR language list")
+    if "eng" not in languages:
+        raise RuntimeError("OCR language eng is unavailable")
+    return f"tesseract {version}"
 
 
 def ocr_command(contract: dict, image: Path) -> list[str]:
     return [contract["executables"]["tesseract"], str(image), "stdout",
-            "--tessdata-dir", str(Path(contract["ocr"]["model_path"]).parent),
             "-l", "eng", "--psm", "11", "-c", "tessedit_create_tsv=1"]
 
 
@@ -103,16 +99,15 @@ def verify_runtime(contract: dict, *, exercise: bool = False) -> None:
     if __version__ != contract["pillow_version"]:
         raise RuntimeError("Pillow version differs from figure dependency contract")
     for name in PDF_COMMANDS:
-        result = _run([contract["executables"][name], "-v"])
-        first_line = (result.stdout + result.stderr).decode().splitlines()[0].split()
-        if first_line[:3] != [name, "version", contract["poppler_version"]]:
+        if _tool_version(name, contract["executables"][name]) != contract["poppler_version"]:
             raise RuntimeError(f"{name} version differs from figure dependency contract")
     verify_ocr(contract)
     if exercise:
         with tempfile.TemporaryDirectory(prefix="scid-figure-preflight-") as directory:
             root = Path(directory)
-            image = Image.new("RGB", (400, 100), "white")
-            ImageDraw.Draw(image).text((20, 20), "12345", fill="black", font=ImageFont.load_default(size=42))
+            with Image.new("RGB", (100, 25), "white") as small:
+                ImageDraw.Draw(small).text((5, 5), "12345", fill="black", font=ImageFont.load_default())
+                image = small.resize((400, 100), Image.Resampling.LANCZOS)
             image.save(root / "probe.png")
             image.save(root / "probe.pdf", "PDF")
             image.close()
@@ -131,21 +126,25 @@ def verify_runtime(contract: dict, *, exercise: bool = False) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--installed", action="store_true")
-    parser.add_argument("--version")
-    parser.add_argument("--model-path")
-    parser.add_argument("--model-sha256")
     args = parser.parse_args()
     if args.installed:
         contract = load_contract()
     else:
+        from PIL import __version__
+
         contract = json.loads(json.dumps(UNSUPPLIED_CONTRACT))
+        contract["pillow_version"] = __version__
         for name in (*PDF_COMMANDS, "tesseract"):
             executable = shutil.which(name)
             if executable is None:
                 raise RuntimeError(f"figure dependency unavailable in service PATH: {name}")
             contract["executables"][name] = str(Path(executable).resolve(strict=True))
-        contract["ocr"].update(version=args.version, model_path=args.model_path,
-                               model_sha256=args.model_sha256, supply_status="verified")
+        versions = {_tool_version(name, contract["executables"][name]) for name in PDF_COMMANDS}
+        if len(versions) != 1:
+            raise RuntimeError("Poppler tool versions differ")
+        contract["poppler_version"] = versions.pop()
+        contract["ocr"].update(version=_tool_version("tesseract", contract["executables"]["tesseract"]),
+                               supply_status="verified")
     verify_runtime(contract, exercise=True)
     print(f"figure dependency preflight: pass; uid={os.geteuid()}; python={sys.executable}", file=sys.stderr)
     print(json.dumps(contract, sort_keys=True, separators=(",", ":")))

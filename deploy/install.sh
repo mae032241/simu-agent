@@ -278,10 +278,7 @@ validate_figure_dependencies() {
         [[ "$observed" == "$FIGURE_DEPENDENCY_CONTRACT" ]] || die "installed figure dependency contract changed"
     else
         FIGURE_DEPENDENCY_CONTRACT="$(service_python "${SOURCE_ROOT}/plugins/curve_figure_evidence" \
-            "$SOURCE_ROOT/plugins/curve_figure_evidence/curve_figure_evidence/figure_dependencies.py" \
-            --version "${SCID_FIGURE_TESSERACT_VERSION:-}" \
-            --model-path "${SCID_FIGURE_OCR_MODEL_PATH:-}" \
-            --model-sha256 "${SCID_FIGURE_OCR_MODEL_SHA256:-}")" || \
+            "$SOURCE_ROOT/plugins/curve_figure_evidence/curve_figure_evidence/figure_dependencies.py")" || \
             die "figure dependency preflight failed before installation transaction"
         printf 'Verified figure dependencies: %s\n' "$FIGURE_DEPENDENCY_CONTRACT"
     fi

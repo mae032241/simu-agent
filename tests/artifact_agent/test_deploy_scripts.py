@@ -175,21 +175,26 @@ def test_installer_previews_core_only_and_explicit_tcad_paths(tmp_path: Path) ->
     assert "Selected plugins: tcad_artifact,curve_score,curve_figure_evidence" in all_domains
 
 
-def _figure_supply(root: Path) -> dict[str, str]:
+def _figure_supply(root: Path, *, version: str = "5.3.0", language_output: str | None = None) -> dict[str, str]:
     """Simulated OCR supply; Poppler and Pillow calls still execute real libraries."""
+    language_output = language_output or "List of available languages (2):\neng\nosd"
     binary = root / "figure-bin"
     binary.mkdir()
     model = root / "model/eng.traineddata"
     model.parent.mkdir()
-    model.write_bytes(b"test-only model bytes, not a real OCR model")
+    model.write_bytes(b"test-only OCR data, not a real model")
     for name in ("pdfinfo", "pdfimages", "pdftoppm"):
         (binary / name).symlink_to(shutil.which(name))
     ocr = binary / "tesseract"
     ocr.write_text(
-        f"#!{sys.executable}\nimport sys\n"
-        "if '--version' in sys.argv: print('tesseract 5.3.0')\n"
+        f"#!{sys.executable}\nimport os\nimport sys\nfrom pathlib import Path\n"
+        "assert 'TESSDATA_PREFIX' not in os.environ\n"
+        f"if '--version' in sys.argv: print('tesseract {version}')\n"
+        "elif '--list-langs' in sys.argv:\n"
+        f" print({language_output!r} "
+        f"if Path({str(model)!r}).exists() else 'List of available languages (1):\\nosd')\n"
         "else:\n"
-        " assert '--tessdata-dir' in sys.argv and '-l' in sys.argv\n"
+        " assert '--tessdata-dir' not in sys.argv and '-l' in sys.argv\n"
         " print('left\\ttop\\twidth\\theight\\ttext\\n20\\t20\\t150\\t42\\t12345')\n",
         encoding="utf-8",
     )
@@ -201,16 +206,27 @@ def _figure_supply(root: Path) -> dict[str, str]:
         command = binary / name
         command.write_text("#!/bin/sh\n" + body, encoding="utf-8")
         command.chmod(0o755)
-    return {
-        "PATH": f"{binary}:{os.environ['PATH']}",
-        "SCID_FIGURE_TESSERACT_VERSION": "5.3.0",
-        "SCID_FIGURE_OCR_MODEL_PATH": str(model),
-        "SCID_FIGURE_OCR_MODEL_SHA256": hashlib.sha256(model.read_bytes()).hexdigest(),
-    }
+    return {"PATH": f"{binary}:{os.environ['PATH']}"}
+
+
+def test_figure_preflight_uses_default_data_and_baseline_font_api(tmp_path: Path, monkeypatch) -> None:
+    import runpy
+    from PIL import ImageFont
+
+    project = Path(__file__).resolve().parents[2]
+    monkeypatch.setenv("PATH", _figure_supply(tmp_path)["PATH"])
+    monkeypatch.setenv("TESSDATA_PREFIX", str(tmp_path / "wrong-tessdata"))
+    monkeypatch.setattr(sys, "argv", ["figure_dependencies.py"])
+    load_default = ImageFont.load_default
+    # Pillow 10.0 supports load_default(), not the later size keyword.
+    monkeypatch.setattr(ImageFont, "load_default", lambda: load_default())
+    runpy.run_path(str(project / "plugins/curve_figure_evidence/curve_figure_evidence/figure_dependencies.py"),
+                   run_name="__main__")
 
 
 @pytest.mark.parametrize("failure", [
-    "missing_ocr", "missing_model", "wrong_hash", "service_path", "service_python",
+    "missing_ocr", "missing_model", "ambiguous_languages", "ocr_failure", "poppler_versions",
+    "service_path", "service_python",
     "manager_ansi_quoted", "manager_double_quoted", "manager_backslash",
     "manager_whitespace", "manager_control", "manager_relative",
     "manager_empty_segment", "manager_leading_empty", "manager_trailing_empty",
@@ -228,11 +244,23 @@ def test_figure_dependency_failure_precedes_install_transaction(tmp_path: Path, 
         (binary / "tesseract").unlink()
         expected = "unavailable in service PATH: tesseract"
     elif failure == "missing_model":
-        Path(environment["SCID_FIGURE_OCR_MODEL_PATH"]).unlink()
-        expected = "model file is missing or unreadable"
-    elif failure == "wrong_hash":
-        environment["SCID_FIGURE_OCR_MODEL_SHA256"] = "0" * 64
-        expected = "model SHA-256 differs"
+        (tmp_path / "model/eng.traineddata").unlink()
+        expected = "OCR language eng is unavailable"
+    elif failure == "ambiguous_languages":
+        script = binary / "tesseract"
+        script.write_text(script.read_text().replace(
+            "List of available languages (2):", "List of available languages (2):\\nList of available languages (2):"))
+        expected = "ambiguous OCR language list"
+    elif failure == "ocr_failure":
+        script = binary / "tesseract"
+        script.write_text(script.read_text().replace("12345", "unrecognized"))
+        expected = "OCR preflight did not recognize"
+    elif failure == "poppler_versions":
+        script = binary / "pdftoppm"
+        script.unlink()  # Remove only the fixture symlink, never its system target.
+        script.write_text("#!/bin/sh\nprintf 'pdftoppm version different\\n'\n")
+        script.chmod(0o755)
+        expected = "Poppler tool versions differ"
     elif failure == "service_path":
         # The operator still resolves pdfinfo from /usr/bin, the service cannot.
         (binary / "pdfinfo").unlink()
@@ -255,8 +283,8 @@ def test_figure_dependency_failure_precedes_install_transaction(tmp_path: Path, 
             f"#!{sys.executable}\nprint({'PATH=' + manager_path!r})\n", encoding="utf-8")
         expected = "unsafe systemd service PATH"
     else:
-        from PIL import __version__
-        assert __version__ == "12.1.1"  # Only the operator environment supplies Pillow.
+        from PIL import Image  # Only the operator environment supplies Pillow.
+        assert Image
         venv.EnvBuilder(with_pip=False).create(tmp_path / "service-python")
         environment["SCID_PYTHON"] = str(tmp_path / "service-python/bin/python")
         expected = "No module named 'PIL'"
@@ -294,7 +322,11 @@ def test_service_python_accepts_plain_systemd_manager_path(tmp_path: Path) -> No
     assert completed.stdout.strip() == service_path
 
 
-def test_figure_installed_preflight_rechecks_the_frozen_contract(tmp_path: Path) -> None:
+@pytest.mark.parametrize("change,expected", [
+    ("version", "Tesseract version differs"),
+    ("language", "OCR language eng is unavailable"),
+])
+def test_figure_installed_preflight_rechecks_the_frozen_contract(tmp_path: Path, change: str, expected: str) -> None:
     project = Path(__file__).resolve().parents[2]
     environment = {**os.environ, **_figure_supply(tmp_path),
         "SCID_WORKSPACE": str(tmp_path), "SCID_PYTHON": sys.executable}
@@ -305,18 +337,41 @@ def test_figure_installed_preflight_rechecks_the_frozen_contract(tmp_path: Path)
 SELECTED_PLUGINS=(curve_figure_evidence)
 validate_figure_dependencies
 printf '%s\\n' "$FIGURE_DEPENDENCY_CONTRACT" > "$2/curve_figure_evidence/figure_dependencies.json"
-SCID_FIGURE_OCR_MODEL_SHA256=unused_after_freeze
 validate_figure_dependencies "$2"
-printf tampered >> "$SCID_FIGURE_OCR_MODEL_PATH"
+"$PYTHON" -c 'from pathlib import Path; import sys; p=Path(sys.argv[1]); p.write_text(p.read_text().replace(sys.argv[2], sys.argv[3]))' "$3" "$4" "$5"
 validate_figure_dependencies "$2"
-''', "bash", str(project / "deploy/install.sh"), str(site)],
+''', "bash", str(project / "deploy/install.sh"), str(site), str(tmp_path / "figure-bin/tesseract"),
+        *( ("tesseract 5.3.0", "tesseract 5.4.0") if change == "version" else ("eng", "fra") )],
         cwd=tmp_path, env=environment, capture_output=True, text=True, timeout=60)
     assert completed.returncode != 0
     assert completed.stderr.count("figure dependency preflight: pass") == 2
-    assert "model SHA-256 differs" in completed.stderr
+    assert expected in completed.stderr
     contract = json.loads((site / "curve_figure_evidence/figure_dependencies.json").read_bytes())
-    assert contract["ocr"]["model_sha256"] == environment["SCID_FIGURE_OCR_MODEL_SHA256"]
+    assert contract["ocr"]["version"] == "5.3.0"
+    assert set(contract["ocr"]) == {"version", "language", "adapter", "supply_status"}
     assert all(Path(path).is_absolute() for path in contract["executables"].values())
+
+
+@pytest.mark.parametrize("version,language_output", [
+    ("4.1.1", "List of available languages (2):\neng\nosd"),
+    ("5.4.0", 'List of available languages in "/system/default/tessdata" (1):\neng'),
+])
+def test_figure_preflight_observes_dependencies_without_identity_inputs(tmp_path: Path, version: str, language_output: str) -> None:
+    project = Path(__file__).resolve().parents[2]
+    environment = {key: value for key, value in os.environ.items() if not key.startswith("SCID_FIGURE_")}
+    environment.update(_figure_supply(tmp_path, version=version, language_output=language_output))
+    environment.update(SCID_WORKSPACE=str(tmp_path), SCID_PYTHON=sys.executable)
+    completed = subprocess.run([
+        "bash", "-c", 'source "$1"; SELECTED_PLUGINS=(curve_figure_evidence); validate_figure_dependencies',
+        "bash", str(project / "deploy/install.sh")],
+        cwd=tmp_path, env=environment, capture_output=True, text=True, timeout=60)
+    assert completed.returncode == 0, completed.stderr
+    contract = json.loads(completed.stdout.removeprefix("Verified figure dependencies: "))
+    from PIL import __version__
+    assert contract["pillow_version"] == __version__
+    assert contract["ocr"]["version"] == version
+    assert contract["ocr"]["language"] == "eng"
+    assert set(contract["ocr"]) == {"version", "language", "adapter", "supply_status"}
 
 
 def test_installer_rejects_removed_case_plugin_before_installation(tmp_path: Path) -> None:
@@ -1412,9 +1467,6 @@ def test_generic_reinstaller_passes_resolved_configuration(tmp_path: Path) -> No
             "SCID_APPROVAL_PORT": "18765",
             "SCID_CODEX_SKILL_ROOT": str(skill_root),
             "SCID_CODEX_LAUNCH_ROOT": str(launch_root),
-            "SCID_FIGURE_TESSERACT_VERSION": "5.3.0",
-            "SCID_FIGURE_OCR_MODEL_PATH": str(tmp_path / "eng.traineddata"),
-            "SCID_FIGURE_OCR_MODEL_SHA256": "a" * 64,
         },
         timeout=10,
         check=False,
@@ -1437,9 +1489,6 @@ def test_generic_reinstaller_passes_resolved_configuration(tmp_path: Path) -> No
     assert "SCID_APPROVAL_PORT=18765" in output
     assert f"SCID_CODEX_SKILL_ROOT={skill_root}" in output
     assert f"SCID_CODEX_LAUNCH_ROOT={launch_root}" in output
-    assert "SCID_FIGURE_TESSERACT_VERSION=5.3.0" in output
-    assert f"SCID_FIGURE_OCR_MODEL_PATH={tmp_path / 'eng.traineddata'}" in output
-    assert f"SCID_FIGURE_OCR_MODEL_SHA256={'a' * 64}" in output
     assert str(project_root / "deploy/install.sh") in output
     assert output[-1] == "install"
 

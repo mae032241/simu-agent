@@ -2,6 +2,15 @@
 
 日期：2026-09-06。状态：修订计划已获[独立 GPT-6 复审 PASS](reviews/R5_E5_4_GENERIC_AUTOMATIC_FIGURE_EXTRACTION_AND_CASE_PLUGIN_REMOVAL_PLAN_GPT6_REVIEW.zh-CN.md#6-修订计划复审最终-pass)；P0/G0 已完成；P1/G1 通用归属迁移与案例插件删除已完成；[P2 底层自动候选](evidence/R5_E5_4_P2_AUTOMATIC_DETECTION.zh-CN.md)已完成，并获[G2 独立 GPT-6 复审 PASS](reviews/R5_E5_4_P2_G2_GPT6_REVIEW.zh-CN.md#有界返工复审)，首轮 FAIL 历史保留。[P3 现有角色链接入](evidence/R5_E5_4_P3_ROLE_CHAIN_INTEGRATION.zh-CN.md)首轮聚焦 176 passed 后获[G3 首轮 FAIL](reviews/R5_E5_4_P3_G3_GPT6_REVIEW.zh-CN.md)；G3-1/2/3 有界返工完成并经[G3 独立复审 PASS](reviews/R5_E5_4_P3_G3_GPT6_REVIEW.zh-CN.md#有界返工复审)，聚焦 181 passed，首轮 FAIL 历史保留。[P4 干净发行与离线依赖预检](evidence/R5_E5_4_P4_CLEAN_RELEASE_AND_DEPENDENCY_PREFLIGHT.zh-CN.md)工程复审 PASS：PATH 缺陷关闭，部署聚焦 56 passed，首轮完整两目录 549 passed、9 项既有失败，真实 Tesseract／模型／PDF 预检 PASS。首轮 G4 按本文过度强隔离条款仍判 FAIL；现将验收口径恢复为架构总章已冻结的可信本地软隔离，不伪称宿主文件技术上不可读；该最小计划更正已获独立复审 PASS，修正后的 G4 部署前置门 PASS。P5–P6 尚未实施，未通过真实验收，不产生科学结果，不授权历史证据晋级。
 
+当前后续状态：P4 已提交为 `86d4e85cff22db9dbd82fa35501a19a121deeb21`，
+[P5 现场检查](evidence/R5_E5_4_LIVE_ACCEPTANCE.zh-CN.md)已开始但尚未安装。
+用户要求移除派生依赖身份输入与本机版本固定值；P4 依赖合同正做有界收简，
+本次差异首轮独立 GPT-6 复审 FAIL，发行路径／OCR 环境／字体 API 三项有界
+返工完成，部署与 OCR 聚焦 63 passed、真实错误环境预检及运行 OCR 通过，
+同一审查者复审 PASS、阻断项为 0；历史 G4 PASS 不自动覆盖新候选。允许提交
+本次依赖收简；P5 安装仍须绑定收简后的精确提交与发行，
+P6 及真实科学验收未完成。
+
 本轮以最小改动优先，只关闭既定方案不能编译、不能表示结果、不能安装或不能可信验收的缺口。禁止改调度器、Run 生命周期、资格／审批机制或编译器，禁止新增中央字段、Operation、Agent、插件、注册表、状态机，禁止重写 curve_score/tcad_artifact 或扩展图型范围。下文领域 guard 的调整只实现现有入口对新结果形状的拒绝／接纳，不更改资格机制。
 
 | 本轮新增修改 | 必要条件及边界 |
@@ -81,7 +90,7 @@ materialize 从同一 `paper_source` 和 intent 重放检测器，重新确认�
 
 新版 intent 的 bindings 仅允许 `candidate_id`、已有身份锚点 ID、可见标签文字、科学语义身份及有界拒绝理由；detector receipt 是工具返回的只读身份字段，不是模型自报统计。source、receipt、ID 的跨输入校验与 schema 同时进 compiled components。context_sources 明确列出实际绑定来源，不能把 prior_signal 当论文证据。
 
-P0 冻结 detector/OCR 合同资源的合法可达边：request 输出的现有 context validator 组件通过 `ComponentSpec.resources` 引用该资源，materialize transform 组件引用同一资源。资源包含检测算法版本、固定策略、PDF/OCR/图像依赖版本与模型数据摘要。不得挂在 Agent worker_tool 的资源边而触发 `agent_resources_unsupported`；不修改 catalog 编译器或放宽资源限制。最小编译测试证明仅改变 detector 版本或 OCR 模型摘要时，request 与 materialize 的 compiled digest 都变化、无关 curve Operation digest 不变，且整个目录正常编译。运行时核对实际依赖版本与模型摘要吻合该资源，provenance 不能只抄声明。
+P0 冻结 detector/OCR 合同资源的合法可达边：request 输出的现有 context validator 组件通过 `ComponentSpec.resources` 引用该资源，materialize transform 组件引用同一资源。资源包含检测算法版本、固定策略、安装时自动观察的 PDF/OCR/图像依赖版本与可执行路径，以及默认 `eng` 语言和固定 OCR adapter。不得挂在 Agent worker_tool 的资源边而触发 `agent_resources_unsupported`；不修改 catalog 编译器或放宽资源限制。最小编译测试证明仅改变 detector 版本或 OCR 工具版本记录时，request 与 materialize 的 compiled digest 都变化、无关 curve Operation digest 不变，且整个目录正常编译。运行时核对实际依赖版本吻合该资源及默认 `eng` 可用，provenance 不能只抄声明。不记录模型路径／摘要，不要求操作者提供派生身份。
 
 新增候选记录 schema 和确定性测量记录版本属于插件私有数据合同。几何字段可以出现在代码产出的记录中供审查，不能出现在 Agent 可写 intent 中；已封存历史 request 保持可浏览，但新 materialize 不接收旧 geometry。完整族声明需同时更改输入／输出 port 集及 parentage，禁止混用两个运行的 panel、CSV 或 overlay。
 
@@ -193,9 +202,9 @@ P0 进度（2026-09-06）：[合同冻结与编译证据](evidence/R5_E5_4_P0_CO
 
 P4 先运行通用 wrapper `--dry-run`，检查系统依赖、渲染服务和路径；真实安装按既有事务执行。dry-run 的源码导入不证明 wheel entry point 正确。安装后必须从实际服务 Python 读取 distribution、compiled catalog、Operation digest、生成 Codex profile 与 Worker 工具；确认旧包和旧 profile 项消失、自动提取依赖版本一致。检查是否安装或暴露 `scientific-paper-evidence` 手工几何技能：本自动 Operation 不绑定该人工技能，避免模型遵循其要求索要坐标。
 
-`deploy/install.sh` 当前通过 `--no-index --no-deps` 安装本地包，增加 pyproject 依赖不等于已供应依赖。P2 确定最小 PDF/OCR/图像工具及模型版本后，P4 在部署说明列出离线前置供应：由既有包管理／离线 wheel 库将 Python 依赖装入 `SCID_PYTHON` 可见环境，系统 PDF/OCR 可执行文件与校验过的模型数据预先供应；不新增下载服务、不在运行时联网拉模型。安装器在事务切换前，以真实服务身份及渲染服务 PATH 校验命令位置、实际版本、模型可读性／hash、Python import 与最小 OCR/渲染调用，安装后用服务 Python 重验。缺 OCR、缺模型、错误模型摘要、服务 PATH 找不到命令、仅操作者 Python 有依赖五类负测均须在切换前明确失败并保持原安装；继续沿用既有事务回滚。
+`deploy/install.sh` 当前通过 `--no-index --no-deps` 安装本地包，增加 pyproject 依赖不等于已供应依赖。P4 在部署说明列出离线前置供应：由既有包管理／离线 wheel 库将 Python 依赖装入 `SCID_PYTHON` 可见环境，预装系统 PDF/OCR 工具和 Tesseract 默认 `eng` 数据；不新增下载服务、不在运行时联网拉模型。安装器在事务切换前，以真实服务身份及渲染服务 PATH 自动发现命令位置、读取实际版本和默认语言列表，执行 Python import 与最小 OCR/渲染调用，安装后用服务 Python 重验同一内部 JSON。Pillow 遵守现有包范围，Poppler 三工具版本一致，不固定当前机器版本。缺 OCR、缺 `eng`、歧义语言列表、服务 PATH 找不到命令、仅操作者 Python 有依赖均须在切换前明确失败并保持原安装；安装后工具版本变化同样拒绝。删除 figure 版本／模型路径／摘要用户输入与模型指纹合同，继续沿用既有事务回滚。
 
-依赖工具版本（PDF 恢复／渲染、OCR 与模型数据、图像库）进入 figure 插件确定性资源合同和结果 provenance；不能只改普通 callable 就声称 compiled digest 会变化。安装前识别仍在 queued/running 的旧合同 Run，禁止无依据承诺可以迁移／恢复；沿用现有生命周期限制，不为本计划修改中央恢复机制。
+依赖工具实际版本（PDF 恢复／渲染、OCR、图像库）进入 figure 插件确定性资源合同和结果 provenance；不能只改普通 callable 就声称 compiled digest 会变化。未供应 JSON 的源码／wheel 可以编译，但不会借用 PATH 中的未绑定 OCR 工具。安装前识别仍在 queued/running 的旧合同 Run，禁止无依据承诺可以迁移／恢复；沿用现有生命周期限制，不为本计划修改中央恢复机制。
 
 ## 8. 真实 PDF + 真实 spawn Agent 端到端
 

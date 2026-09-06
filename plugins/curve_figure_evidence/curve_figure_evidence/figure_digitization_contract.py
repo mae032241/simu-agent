@@ -5,7 +5,6 @@ from __future__ import annotations
 import hashlib
 import math
 import json
-import shutil
 import subprocess
 from dataclasses import asdict
 from typing import Annotated, Literal
@@ -40,15 +39,15 @@ DETECTOR_CONTRACT = json.dumps({
 def replay_detection(content: bytes) -> SourceDetection:
     """Verify the declared runtime boundary before replaying raw-source detection."""
     contract = json.loads(DETECTOR_CONTRACT)
-    if PILLOW_VERSION != contract["pillow_version"]:
+    if contract["pillow_version"] is not None and PILLOW_VERSION != contract["pillow_version"]:
         raise RuntimeError("Pillow version differs from detector contract")
-    if content.startswith(b"%PDF-"):
+    if content.startswith(b"%PDF-") and contract["poppler_version"] is not None:
         for command in ("pdfinfo", "pdfimages", "pdftoppm"):
             result = subprocess.run([command_path(command), "-v"], capture_output=True, check=True, timeout=15)
             first_line = (result.stdout + result.stderr).decode().splitlines()[0].split()
             if len(first_line) < 3 or first_line[2] != contract["poppler_version"]:
                 raise RuntimeError("Poppler version differs from detector contract")
-    if contract["ocr"]["supply_status"] == "verified" or shutil.which("tesseract") is not None:
+    if contract["ocr"]["supply_status"] == "verified":
         verify_ocr(contract)
     return detect_source(content)
 
