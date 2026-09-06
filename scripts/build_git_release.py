@@ -35,7 +35,6 @@ SOURCE_TREES = (
     "plugins/tcad_artifact",
     "plugins/curve_score",
     "plugins/curve_figure_evidence",
-    "plugins/ingaas_fig4",
     "roles",
     "skills/sentaurus-tcad-code",
     "src/scidiscovery",

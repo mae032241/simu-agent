@@ -41,7 +41,7 @@ where = ["src"]
 "share/scidiscovery/deploy/systemd" = ["deploy/systemd/*.in"]
 
 [tool.pytest.ini_options]
-pythonpath = ["src", ".", "plugins/tcad_artifact", "plugins/ingaas_fig4", "plugins/curve_score", "plugins/curve_figure_evidence", "tests/fixtures/plugins/architecture_operation_plugin", "tests/fixtures/plugins/table_observation_plugin", "tests/fixtures/plugins/blind_csv_operation_plugin"]
+pythonpath = ["src", ".", "plugins/tcad_artifact", "plugins/curve_score", "plugins/curve_figure_evidence", "tests/fixtures/plugins/architecture_operation_plugin", "tests/fixtures/plugins/table_observation_plugin", "tests/fixtures/plugins/blind_csv_operation_plugin"]
 testpaths = ["tests"]
 norecursedirs = ["portable_delivery"]
 markers = [

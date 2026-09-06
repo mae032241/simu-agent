@@ -1,32 +1,25 @@
-"""One public semantic contract and one source-bound deterministic compiler."""
+"""The existing public figure intent and deterministic resource bindings."""
 
-import csv
 import hashlib
 import json
-import os
 from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
 from jsonschema.validators import validator_for
 
-from curve_score.figure_digitization_contract import (
+from curve_figure_evidence.figure_digitization_contract import (
     FigureExtractionIntent, calibration_from_tick_pairs,
 )
-from curve_score.figure_science_operations import FIGURE_INTENT_SCHEMA, FIGURE_REQUEST_CONTEXT, REQUEST_PROMPT
-from curve_score.operation_transforms import materialize_figure_evidence
-from ingaas_fig4.figure_compilation import GEOMETRY, OPERATION, compile_figure_request
-from ingaas_fig4.plugin import PLUGIN as FIG4_PLUGIN
-from tcad_artifact.plugin import PLUGIN as TCAD_PLUGIN
+from curve_figure_evidence.figure_science_operations import FIGURE_INTENT_SCHEMA, FIGURE_REQUEST_CONTEXT, REQUEST_PROMPT
 from scidiscovery.artifact_agent.schema.common import canonical_json
 from scidiscovery.operation_contract import SemanticRuleViolation
 from scidiscovery.operation_contract import operation_port_json_schema
 from scidiscovery.artifact_agent.interfaces.mcp_local_worker import LocalWorkerMCPRouter
-from scidiscovery.operations.catalog import compile_catalog
 from tests.operations.test_catalog_installed_entrypoint import _DETECTOR_RESOURCE_PROBE
 from tests.operations.test_m5_figure_review_closure import (
     CORE_PLUGIN, GENERAL_PLUGIN, CURVE_PLUGIN, FIGURE_PLUGIN,
-    _system, _register, _complete_agent,
+    _system, _register,
     _envelope,
 )
 
@@ -38,20 +31,11 @@ def test_detector_resource_uses_existing_compilation_edges():
 
 
 def _intent():
-    geometry = json.loads(GEOMETRY)
     return {
         "schema_version": "scidiscovery.figure-extraction-intent.v1",
-        "source_sha256": geometry["source_sha256"], "figure": "Fig. 4",
-        "panel": None, "series_labels": ["In0.83Al0.17As", "In0.83Ga0.17As"],
+        "source_sha256": hashlib.sha256(b"synthetic source").hexdigest(), "figure": "Example line plot",
+        "panel": None, "series_labels": ["Reference", "Candidate"],
     }
-
-
-@pytest.fixture
-def frozen_source():
-    path = os.environ.get("SCID_FIG4_FROZEN_SOURCE")
-    if not path:
-        pytest.skip("set SCID_FIG4_FROZEN_SOURCE to run the exact frozen-PDF replay")
-    return Path(path).read_bytes()
 
 
 def test_public_intent_contains_only_scientific_selections():
@@ -120,73 +104,3 @@ def test_tick_normalization_preserves_pixel_value_pairs(ticks):
 def test_invalid_tick_pairs_fail_closed(ticks):
     with pytest.raises(ValidationError):
         calibration_from_tick_pairs(scale="log10", unit="cm^-3", ticks=ticks, uncertainty_px=1.0)
-
-
-def test_domain_compiler_is_registered_only_as_support():
-    catalog = compile_catalog((CORE_PLUGIN, GENERAL_PLUGIN, CURVE_PLUGIN, FIGURE_PLUGIN, TCAD_PLUGIN, FIG4_PLUGIN))
-    compiled = catalog.operation(OPERATION.operation_id)
-    assert compiled.spec.catalog_scope == "support"
-    assert compiled.plugin_id == "ingaas_fig4"
-    assert compiled.spec.executor.kind == "transform"
-    assert [port.name for port in compiled.spec.outputs] == ["figure_request"]
-    request = catalog.operation("science.figure.request.prepare.v1")
-    assert [port.name for port in request.spec.outputs] == ["figure_intent"]
-    assert request.spec.outputs[0].schema_id == "scidiscovery.figure-extraction-intent.v1"
-
-
-def test_compiler_rejects_unbound_source_before_image_recovery():
-    with pytest.raises(ValueError, match="frozen source"):
-        compile_figure_request({"paper_source": (b"wrong",), "figure_intent": (canonical_json(_intent()),)})
-
-
-@pytest.mark.parametrize("panel", ["a", "single panel (no panel label)"])
-def test_compiler_rejects_unsupported_panel_but_legacy_intent_is_readable(frozen_source, panel):
-    intent = canonical_json({**_intent(), "panel": panel})
-    assert FigureExtractionIntent.model_validate_json(intent, strict=True).panel == panel
-    with pytest.raises(ValueError, match="figure/panel selection"):
-        compile_figure_request({"paper_source": (frozen_source,), "figure_intent": (intent,)})
-
-
-def test_frozen_source_compiles_and_marks_detection_limit_locally(frozen_source):
-    intent = _intent()
-    inputs = {"paper_source": (frozen_source,), "figure_intent": (canonical_json(intent),)}
-    request = compile_figure_request(inputs)["figure_request"]
-    assert compile_figure_request(inputs)["figure_request"] == request
-    payload = json.loads(request[0])
-    assert payload["axis_calibration"]["y"]["pixel_min"] > payload["axis_calibration"]["y"]["pixel_max"]
-    outputs = materialize_figure_evidence({"paper_source": (frozen_source,), "figure_request": request})
-    rows = [row for raw in outputs["curve_tables"] for row in csv.DictReader(raw.decode().splitlines())]
-    low = [row for row in rows if float(row["y_value"]) < 3e15]
-    assert low and all(row["below_sims_detection_limit"] == "1" and row["quantitative_measurement_claim_eligible"] == "0" for row in low)
-    for key in {row["series_key"] for row in rows}:
-        assert any(row["series_key"] == key and row["quantitative_measurement_claim_eligible"] == "1" for row in rows)
-    assert len(outputs["curve_tables"]) == 2
-    assert outputs["audit_overlays"][0].startswith(b"\x89PNG")
-    for bad in ({**intent, "figure": "Fig. 5"}, {**intent, "series_labels": ["unknown"]}):
-        with pytest.raises(ValueError, match="does not support"):
-            compile_figure_request({"paper_source": (frozen_source,), "figure_intent": (canonical_json(bad),)})
-
-
-@pytest.mark.parametrize("panel", [None, "whole figure"], ids=["unlabelled", "legacy_canonical"])
-def test_semantic_agent_and_compiler_preserve_exact_parent_chain(tmp_path, frozen_source, panel):
-    catalog = compile_catalog((CORE_PLUGIN, GENERAL_PLUGIN, CURVE_PLUGIN, FIGURE_PLUGIN, TCAD_PLUGIN, FIG4_PLUGIN))
-    _, runtime, instance, root = _system(tmp_path, catalog=catalog)
-    source = _register(runtime, instance, name="paper_source", content=frozen_source,
-                       kind="paper_source", schema_id="opaque", media_type="application/pdf")
-    intent_name = _complete_agent(catalog, runtime, root, operation_id="science.figure.request.prepare.v1",
-                                  name="figure_selection", inputs=[{"port": "paper_source", "artifact_names": ["paper_source"]}], payload={**_intent(), "panel": panel})
-    call = {"name": "compiled_figure_geometry", "operation_id": OPERATION.operation_id,
-            "inputs": [{"port": "paper_source", "artifact_names": ["paper_source"]},
-                       {"port": "figure_intent", "artifact_names": [intent_name]}]}
-    assert root.call_tool("operation_preflight", call)["admissible"] is True
-    output = root.call_tool("operation_invoke", call)["result"]["outputs"][0]
-    artifact = runtime.artifacts.get_by_id(runtime.scheduler_bindings.resolve(instance=instance.instance_id, namespace="artifact", name=output["artifact_name"]))
-    intent_id = runtime.scheduler_bindings.resolve(instance=instance.instance_id, namespace="artifact", name=intent_name)
-    intent_artifact = runtime.artifacts.get_by_id(intent_id)
-    assert intent_artifact.parent_refs == (source.ref,)
-    assert artifact.parent_refs == (source.ref, intent_artifact.ref)
-    materialized = root.call_tool("operation_invoke", {"name": "measured_figure", "operation_id": "science.figure.evidence.materialize.v1",
-        "inputs": [{"port": "paper_source", "artifact_names": ["paper_source"]}, {"port": "figure_request", "artifact_names": [output["artifact_name"]]}]})
-    for item in materialized["result"]["outputs"]:
-        child = runtime.artifacts.get_by_id(runtime.scheduler_bindings.resolve(instance=instance.instance_id, namespace="artifact", name=item["artifact_name"]))
-        assert child.parent_refs == (source.ref, artifact.ref)

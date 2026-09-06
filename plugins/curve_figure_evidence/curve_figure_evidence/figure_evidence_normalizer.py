@@ -9,7 +9,7 @@ import math
 from dataclasses import dataclass
 from typing import Mapping
 
-from .schema import (
+from curve_score.schema import (
     CurveAvailability,
     CurveAxis,
     CurveBundle,

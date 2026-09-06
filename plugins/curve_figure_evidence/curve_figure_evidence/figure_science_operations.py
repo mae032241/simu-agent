@@ -236,61 +236,61 @@ FIGURE_AUDIT_PROGRESS_FINGERPRINT = CallableComponent(
 COMPONENT_SPECS = (
     ComponentSpec(
         "figure_intent_schema", "resource",
-        "curve_score.figure_science_operations:FIGURE_INTENT_SCHEMA",
+        "curve_figure_evidence.figure_science_operations:FIGURE_INTENT_SCHEMA",
         public=True,
     ),
     ComponentSpec(
         "figure_source_inspection_tool",
         "worker_tool",
-        "curve_score.figure_worker_tool:FIGURE_SOURCE_INSPECTION_TOOL",
+        "curve_figure_evidence.figure_worker_tool:FIGURE_SOURCE_INSPECTION_TOOL",
     ),
     ComponentSpec(
         "figure_request_schema",
         "resource",
-        "curve_score.figure_science_operations:FIGURE_REQUEST_SCHEMA",
+        "curve_figure_evidence.figure_science_operations:FIGURE_REQUEST_SCHEMA",
         public=True,
     ),
     ComponentSpec(
         "figure_request_semantic_contract",
         "resource",
-        "curve_score.figure_science_operations:FIGURE_REQUEST_SEMANTIC_CONTRACT",
+        "curve_figure_evidence.figure_science_operations:FIGURE_REQUEST_SEMANTIC_CONTRACT",
     ),
     ComponentSpec(
         "figure_request_validator",
         "validator",
-        "curve_score.figure_science_operations:FIGURE_REQUEST_VALIDATOR",
+        "curve_figure_evidence.figure_science_operations:FIGURE_REQUEST_VALIDATOR",
         resources=(ComponentRef("figure_request_semantic_contract"),),
     ),
     ComponentSpec(
         "figure_request_context",
         "validator",
-        "curve_score.figure_science_operations:FIGURE_REQUEST_CONTEXT",
+        "curve_figure_evidence.figure_science_operations:FIGURE_REQUEST_CONTEXT",
         resources=(ComponentRef("figure_request_semantic_contract"),),
     ),
     ComponentSpec(
         "figure_revision_parentage",
         "guard",
-        "curve_score.figure_science_operations:FIGURE_REVISION_PARENTAGE",
+        "curve_figure_evidence.figure_science_operations:FIGURE_REVISION_PARENTAGE",
     ),
     ComponentSpec(
         "figure_audit_progress_fingerprint",
         "transform",
-        "curve_score.figure_science_operations:FIGURE_AUDIT_PROGRESS_FINGERPRINT",
+        "curve_figure_evidence.figure_science_operations:FIGURE_AUDIT_PROGRESS_FINGERPRINT",
     ),
     ComponentSpec(
         "figure_request_prompt",
         "resource",
-        "curve_score.figure_science_operations:REQUEST_PROMPT",
+        "curve_figure_evidence.figure_science_operations:REQUEST_PROMPT",
     ),
     ComponentSpec(
         "figure_intake_prompt",
         "resource",
-        "curve_score.figure_science_operations:INTAKE_PROMPT",
+        "curve_figure_evidence.figure_science_operations:INTAKE_PROMPT",
     ),
     ComponentSpec(
         "figure_audit_prompt",
         "resource",
-        "curve_score.figure_science_operations:AUDIT_PROMPT",
+        "curve_figure_evidence.figure_science_operations:AUDIT_PROMPT",
     ),
 )
 
@@ -617,3 +617,13 @@ OPERATIONS = (
 
 
 __all__ = ["COMPONENT_SPECS", "FIGURE_REQUEST_SCHEMA", "OPERATIONS"]
+
+
+FIGURE_SEMANTIC_CONTRACT = scientific_semantic_contract(
+    "curve.figure",
+    "Curve-analysis images are deterministic supporting outputs, not evidence by themselves.",
+    "Figure manifests, attachments, media types, hashes, and deterministic reports must bind exactly.",
+    "Series identity, calibration, and missing visual support must never be inferred silently.",
+    payload_rule_id="curve.figure.manifest_consistency",
+    context_rule_id="curve.figure.evidence_binding",
+)

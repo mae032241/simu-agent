@@ -1,10 +1,10 @@
 """Single registration entry for optional paper-figure evidence Operations."""
 
-from curve_score.figure_science_operations import (
+from .figure_science_operations import (
     COMPONENT_SPECS as FIGURE_AGENT_COMPONENT_SPECS,
     OPERATIONS as FIGURE_AGENT_OPERATIONS,
 )
-from curve_score.operation_transforms import (
+from .operation_transforms import (
     FIGURE_COMPONENT_SPECS as FIGURE_NORMALIZATION_COMPONENT_SPECS,
     FIGURE_OPERATIONS as FIGURE_NORMALIZATION_OPERATIONS,
 )
@@ -21,7 +21,7 @@ SHARED_IMPLEMENTATION_COMPONENTS = (
     ComponentSpec(
         "figure_semantic_contract",
         "resource",
-        "curve_score.science_operations:Resources.figure_semantic_contract",
+        "curve_figure_evidence.figure_science_operations:FIGURE_SEMANTIC_CONTRACT",
     ),
     ComponentSpec(
         "nonempty_validator",

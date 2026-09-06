@@ -1,5 +1,7 @@
 {
   "schema_version": 2,
+  "status": "historical_only_not_current_qualification",
+  "retirement_reason": "E5.4 P1 removed the production case scorer. The frozen operation digests, scorer bindings, and evaluation results below are historical records, not a runnable current qualification manifest.",
   "fixture_id": "r5-e2e-fig4-baseline-recovery-v1",
   "purpose": "Bounded regression of scientific-agent reasoning and exact historical replay; not a new solver result or a universality benchmark.",
   "task": {
@@ -30,7 +32,7 @@
       "The historical deck diff reports a mesh difference; it may motivate a test but is not causal evidence."
     ]
   },
-  "operation_contract": {
+  "historical_operation_contract": {
     "selection_rule": "The scheduler still selects one next public action from the current contradiction. This fixture freezes the allowed shortest topology and bindings, not a global stage DAG.",
     "mandatory_agent_steps": [
       {
@@ -226,7 +228,7 @@
       "generic_curve_diagnosis_operation": "not_run_because_the_exact_domain_metric_is_not_a_scidiscovery.curve-consistency-report.v1; scientific diagnosis is evaluated in the sealed intake_hypothesis_experiment outputs and independent rubric, without schema impersonation"
     }
   },
-  "replay_adapter": {
+  "historical_replay_adapter": {
     "adapter_id": "r5_e2e_fixture:replay",
     "version": "1",
     "preparation_profile": "r5.fig4-historical-replay.v1",
@@ -242,7 +244,7 @@
     },
     "boundary": "Copies only four exact historical output files after hash verification; performs no solver or scientific transformation."
   },
-  "replay_plugin_closure": {
+  "historical_replay_plugin_closure": {
     "plugin_id": "r5_e2e_fixture",
     "plugin_version": "0.0.1",
     "entry_point_group": "scidiscovery.plugins",
@@ -257,7 +259,7 @@
     ],
     "forbidden_installations": ["core", "full", "full_ingaas"]
   },
-  "scorer": {
+  "historical_scorer": {
     "operation_id": "ingaas.fig4-baseline-recovery.v2",
     "implementation_path": "workspace/ingaas_inalas_photodetector/results/scientific_loops/fig4-baseline-provenance-20260805/score_baseline_provenance.py",
     "implementation_sha256": "a99ccbcdfc7bd961eb2b8707085f3f7c8c07b7a7b808f680fe1d6dc259a01d94",

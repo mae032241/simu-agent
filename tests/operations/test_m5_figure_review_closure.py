@@ -19,8 +19,7 @@ from scidiscovery.artifact_agent.schema.common import canonical_json
 from scidiscovery.builtin_plugin import CORE_PLUGIN
 from scidiscovery.general_science_plugin import PLUGIN as GENERAL_PLUGIN
 from scidiscovery.operations.catalog import compile_catalog
-from scidiscovery.operations.spec import CallableComponent, ComponentRef, ComponentSpec, ExecutorRef, PluginDefinition, PluginDependency, PLUGIN_PROTOCOL_VERSION
-from ingaas_fig4.figure_compilation import OPERATION as DOMAIN_COMPILE_OPERATION
+from scidiscovery.operations.spec import CallableComponent, ComponentRef, ComponentSpec, ExecutorRef, LimitsSpec, OperationDescription, OperationSpec, OutputPortSpec, PluginDefinition, PluginDependency, PLUGIN_PROTOCOL_VERSION
 
 from tests.operations.test_curve_figure_digitization_tool import _request
 from tests.operations.test_general_transform_operations import _intake
@@ -59,11 +58,25 @@ SYNTHETIC_PLUGIN = PluginDefinition(
     plugin_id="figure_fixture", version="0.1.0", protocol_version=PLUGIN_PROTOCOL_VERSION,
     dependencies=(PluginDependency("general_science", "0.1.0"), PluginDependency("curve_figure_evidence", "0.1.0")),
     components=(ComponentSpec("compile", "transform", "tests.operations.test_m5_figure_review_closure:SYNTHETIC_COMPILE"),),
-    operations=(DOMAIN_COMPILE_OPERATION.model_copy(update={
-        "operation_id": "test.figure.compile.v1",
-        "executor": ExecutorRef(kind="transform", component=ComponentRef("compile")),
-        "inputs": (DOMAIN_COMPILE_OPERATION.inputs[0].model_copy(update={"media_types": ("image/png",)}),),
-    }),),
+    # A synthetic measurement producer for lifecycle regression only; no detector claim.
+    operations=(OperationSpec(
+        operation_id="test.figure.compile.v1", version="1", catalog_scope="support",
+        description=OperationDescription(
+            purpose="Supply an exact synthetic measurement request for family tests.",
+            applies_when="The test supplies its generated raster.",
+            not_for="Automatic detection or scientific evidence.",
+        ),
+        executor=ExecutorRef(kind="transform", component=ComponentRef("compile")),
+        inputs=(next(op for op in FIGURE_PLUGIN.operations if op.operation_id == MATERIALIZE).inputs[0].model_copy(update={"media_types": ("image/png",)}),),
+        outputs=(OutputPortSpec(
+            name="figure_request", description="Exact synthetic measurement request.",
+            schema="scidiscovery.curve-figure-digitization-request.v2",
+            media_types=("application/json",), kind="figure_digitization_request",
+            codec=ComponentRef("json_codec", plugin_id="general_science"),
+            schema_resource=ComponentRef("figure_request_schema", plugin_id="curve_figure_evidence"),
+        ),), consequence="scientific",
+        limits=LimitsSpec(timeout_seconds=30, max_input_bytes=32 * 1024 * 1024, max_output_bytes=1024 * 1024, max_files=1),
+    ),),
 )
 
 

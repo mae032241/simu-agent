@@ -71,7 +71,6 @@ def installed_environments(
         release_source / "plugins/tcad_artifact",
         release_source / "plugins/curve_score",
         release_source / "plugins/curve_figure_evidence",
-        release_source / "plugins/ingaas_fig4",
         fixture_plugins / "table_observation_plugin",
         fixture_plugins / "blind_csv_operation_plugin",
         fixture_plugins / "architecture_operation_plugin",
@@ -111,9 +110,6 @@ def installed_environments(
         path
         for name, path in wheels.items()
         if name.startswith("scidiscovery_curve_figure_evidence-")
-    )
-    ingaas = next(
-        path for name, path in wheels.items() if name.startswith("scidiscovery_ingaas_fig4-")
     )
     table = next(
         path for name, path in wheels.items()
@@ -155,7 +151,7 @@ def installed_environments(
         "architecture": (core, architecture),
         "m7_effect": (core, m7_effect),
         "full": (core, tcad, curve),
-        "ingaas": (core, tcad, curve, figure, ingaas),
+        "all_domains": (core, tcad, curve, figure),
         "producer_family": (core, producer_family),
         "broken": (core, broken),
         "invalid_unicode": (core, invalid_unicode),

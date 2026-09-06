@@ -165,6 +165,23 @@ def test_installer_previews_core_only_and_explicit_tcad_paths(tmp_path: Path) ->
     assert (
         "Selected plugins: curve_score,curve_figure_evidence" in figure
     )
+    all_domains = preview("all-domains", "tcad_artifact,curve_score,curve_figure_evidence")
+    assert "Selected plugins: tcad_artifact,curve_score,curve_figure_evidence" in all_domains
+
+
+def test_installer_rejects_removed_case_plugin_before_installation(tmp_path: Path) -> None:
+    project_root = Path(__file__).resolve().parents[2]
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    completed = subprocess.run(
+        [str(project_root / "deploy/install.sh"), "--dry-run"],
+        cwd=project_root,
+        env={**os.environ, "SCID_PLUGINS": "tcad_artifact,curve_score,curve_figure_evidence,ingaas_fig4",
+             "SCID_WORKSPACE": str(workspace), "SCID_PYTHON": sys.executable},
+        capture_output=True, text=True, timeout=30, check=False,
+    )
+    assert completed.returncode != 0
+    assert "unknown local plugin: ingaas_fig4" in completed.stderr
 
 
 def test_tcad_runtime_configuration_is_owned_and_executed_by_plugin(
@@ -1158,7 +1175,7 @@ def test_curve_figure_capability_is_plugin_owned_not_a_platform_skill() -> None:
     assert "scientific-paper-evidence" not in metadata
     assert (
         project_root
-        / "plugins/curve_score/curve_score/figure_worker_tool.py"
+        / "plugins/curve_figure_evidence/curve_figure_evidence/figure_worker_tool.py"
     ).is_file()
     optional_metadata = (
         project_root / "plugins/curve_figure_evidence/pyproject.toml"
@@ -1270,9 +1287,9 @@ def test_generic_reinstaller_passes_resolved_configuration(tmp_path: Path) -> No
     assert output[-1] == "install"
 
 
-def test_ingaas_profile_delegates_to_generic_reinstaller(tmp_path: Path) -> None:
+def test_three_domain_plugins_delegate_to_generic_reinstaller(tmp_path: Path) -> None:
     project_root = Path(__file__).resolve().parents[2]
-    wrapper = project_root / "deploy/apply_ingaas_fig4_profile.sh"
+    wrapper = project_root / "deploy/reinstall.sh"
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     command_config = tmp_path / "command-adapter.json"
@@ -1295,6 +1312,7 @@ def test_ingaas_profile_delegates_to_generic_reinstaller(tmp_path: Path) -> None
             "SCID_SERVICE_USER": "test-user",
             "SCID_SERVICE_GROUP": "test-group",
             "SCID_PLATFORM": "codex",
+            "SCID_PLUGINS": "tcad_artifact,curve_score,curve_figure_evidence",
             "SCID_TCAD_COMMAND_CONFIG": str(command_config),
         },
         timeout=10,
@@ -1303,7 +1321,7 @@ def test_ingaas_profile_delegates_to_generic_reinstaller(tmp_path: Path) -> None
     assert completed.returncode == 0, completed.stderr
     output = completed.stdout.splitlines()
     assert (
-        "SCID_PLUGINS=tcad_artifact,curve_score,curve_figure_evidence,ingaas_fig4"
+        "SCID_PLUGINS=tcad_artifact,curve_score,curve_figure_evidence"
         in output
     )
     assert f"SCID_TCAD_COMMAND_CONFIG={command_config}" in output
@@ -1460,6 +1478,11 @@ def test_git_release_builder_emits_clean_manifested_source(tmp_path: Path) -> No
     assert (output / "docs/INSTALL.zh-CN.md").is_file()
     assert (output / "docs/TCAD_QUALIFICATION_STATUS.md").is_file()
     assert not (output / "plugins/table_observation").exists()
+    assert {path.name for path in (output / "plugins").iterdir() if path.is_dir()} == {
+        "curve_score", "curve_figure_evidence", "tcad_artifact",
+    }
+    assert not (output / "deploy/apply_ingaas_fig4_profile.sh").exists()
+    assert not tuple(output.rglob("figure_geometry.json"))
     assert not (
         output / "src/scidiscovery/artifact_agent/service/agent_dispatch.py"
     ).exists()
@@ -1492,7 +1515,7 @@ def test_git_release_builder_emits_clean_manifested_source(tmp_path: Path) -> No
     assert (output / "deploy/install_transaction.py").is_file()
     assert (output / "deploy/init_workspace.sh").is_file()
     assert (
-        output / "plugins/curve_score/curve_score/figure_worker_tool.py"
+        output / "plugins/curve_figure_evidence/curve_figure_evidence/figure_worker_tool.py"
     ).is_file()
     assert (
         output

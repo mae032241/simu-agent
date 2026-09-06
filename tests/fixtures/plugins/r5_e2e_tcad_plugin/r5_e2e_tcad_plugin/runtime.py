@@ -10,7 +10,8 @@ from typing import Literal, Mapping, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from ingaas_fig4.plugin import CURVE_TABLE_SCHEMA, RESULT_SCHEMA
+from curve_score.schema import CurveBundle, CurveConsistencyReport
+from scidiscovery.operation_declaration import schema_resource
 from scidiscovery.artifact_agent.execution_bridge import AdapterCapability
 from scidiscovery.artifact_agent.schema.approval import (
     ReviewDocument,
@@ -357,14 +358,15 @@ def validate_replay_profile(raw: bytes) -> None:
 
 
 def validate_metric_source(raw: bytes) -> None:
-    value = json.loads(raw)
-    if not isinstance(value, dict) or value.get("schema_version") != 1:
-        raise ValueError("Fig.4 metric source view must be one versioned JSON object")
+    CurveConsistencyReport.model_validate_json(raw, strict=True)
 
 
 def validate_curve_source(raw: bytes) -> None:
-    if not raw or b"," not in raw or b"\n" not in raw:
-        raise ValueError("Fig.4 curve source view must be a non-empty CSV table")
+    CurveBundle.model_validate_json(raw, strict=True)
+
+
+RESULT_SCHEMA = schema_resource(CurveConsistencyReport, "scidiscovery.curve-consistency-report.v1")
+CURVE_TABLE_SCHEMA = schema_resource(CurveBundle, "scidiscovery.curve-bundle.v1")
 
 
 _request_schema = ReplayRequest.model_json_schema(mode="validation")
@@ -391,12 +393,6 @@ OPAQUE_SCHEMA = json.dumps(
     separators=(",", ":"),
     sort_keys=True,
 )
-PLX_SCHEMA = json.dumps(
-    {"$id": "ingaas.fig4-zinc-profile-plx.v1", "type": "string"},
-    ensure_ascii=True,
-    separators=(",", ":"),
-    sort_keys=True,
-)
 JSON_CODEC = CallableComponent("codec", json_codec)
 OPAQUE_CODEC = CallableComponent("codec", opaque_codec)
 QUALIFY_REPLAY_PROFILE = CallableComponent("transform", qualify_replay_profile)
@@ -419,7 +415,6 @@ __all__ = [
     "JSON_CODEC",
     "OPAQUE_CODEC",
     "OPAQUE_SCHEMA",
-    "PLX_SCHEMA",
     "PREPARATION_PROFILE",
     "QUALIFY_REPLAY_PROFILE",
     "REPLAY_PROFILE_SHA256",

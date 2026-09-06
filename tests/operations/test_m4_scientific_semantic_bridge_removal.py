@@ -4,7 +4,6 @@ from pathlib import Path
 
 from curve_score.plugin import PLUGIN as CURVE_PLUGIN
 from curve_figure_evidence.plugin import PLUGIN as FIGURE_PLUGIN
-from ingaas_fig4.plugin import PLUGIN as INGAAS_PLUGIN
 from scidiscovery.builtin_plugin import CORE_PLUGIN
 from scidiscovery.artifact_agent.schema.validation import ValidationReport
 from scidiscovery.general_science_plugin import PLUGIN as GENERAL_PLUGIN
@@ -33,7 +32,7 @@ REMOVED_COMPONENTS = {
 
 def _catalog():
     return compile_catalog(
-        (CORE_PLUGIN, GENERAL_PLUGIN, CURVE_PLUGIN, TCAD_PLUGIN, FIGURE_PLUGIN, INGAAS_PLUGIN)
+        (CORE_PLUGIN, GENERAL_PLUGIN, CURVE_PLUGIN, TCAD_PLUGIN, FIGURE_PLUGIN)
     )
 
 
@@ -52,7 +51,6 @@ def test_unconsumed_scientific_state_reducer_is_absent_from_the_catalog() -> Non
             GENERAL_PLUGIN,
             CURVE_PLUGIN,
             TCAD_PLUGIN,
-            INGAAS_PLUGIN,
         )
         for component in plugin.components
     )

@@ -30,10 +30,6 @@ from .objective import (
     ResearchObjectiveContract,
     evaluate_objective_coverage,
 )
-from .figure_evidence_normalizer import (
-    FIGURE_EVIDENCE_BUNDLE_PROFILE_V2,
-    normalize_figure_evidence,
-)
 from .plotter import render_curve_comparison_overview
 
 
@@ -61,41 +57,6 @@ def _merge_curve_inputs(
         ),
         series=tuple(series for bundle in bundles for series in bundle.series),
     )
-
-
-def bundle_figure_evidence_outputs(
-    inputs: Mapping[str, bytes],
-) -> dict[str, tuple[bytes, ...]]:
-    fixed = {"figure_manifest", "validation_report"}
-    table_inputs = {name for name in inputs if name.startswith("curve_table__")}
-    if (
-        not fixed.issubset(inputs)
-        or not table_inputs
-        or "curve_table__" in table_inputs
-        or set(inputs) != fixed | table_inputs
-    ):
-        raise ValueError(
-            "figure evidence bundling requires figure_manifest, validation_report, "
-            "and curve_table__<panel_key>__<series_key> inputs"
-        )
-    bundle, audits = normalize_figure_evidence(
-        manifest_content=inputs["figure_manifest"],
-        validation_report_content=inputs["validation_report"],
-        curve_tables={name: inputs[name] for name in table_inputs},
-        profile=FIGURE_EVIDENCE_BUNDLE_PROFILE_V2,
-    )
-    return {
-        "curve_bundle": (bundle.canonical_json(),),
-        "normalization_audit": (
-            canonical_json(
-                {
-                    "schema_version": 1,
-                    "profile": FIGURE_EVIDENCE_BUNDLE_PROFILE_V2,
-                    "series": [item.as_dict() for item in audits],
-                }
-            ),
-        ),
-    }
 
 
 def score_curve_bundle_outputs(
@@ -567,7 +528,6 @@ def _comparison_spec(
 
 __all__ = [
     "CURVE_SCORE_OPERATION",
-    "bundle_figure_evidence_outputs",
     "curve_reference_coverage_outputs",
     "objective_coverage_outputs",
     "score_curve_bundle_outputs",

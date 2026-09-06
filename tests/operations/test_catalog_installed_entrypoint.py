@@ -58,7 +58,7 @@ import json
 from importlib.metadata import entry_points
 from unittest.mock import patch
 
-import curve_score.figure_science_operations as figure_contracts
+import curve_figure_evidence.figure_science_operations as figure_contracts
 from scidiscovery.operations.catalog import PLUGIN_ENTRY_POINT_GROUP, compile_catalog
 from scidiscovery.operations.spec import ComponentRef, ComponentSpec
 
@@ -83,7 +83,7 @@ variant = figure.model_copy(update={"components": tuple(
     for component in figure.components
 ) + (ComponentSpec(
     resource.component_id, "resource",
-    "curve_score.figure_science_operations:DETECTOR_CONTRACT_PROBE",
+    "curve_figure_evidence.figure_science_operations:DETECTOR_CONTRACT_PROBE",
 ),)})
 assert sum(component.component_id in consumers for component in variant.components) == 2
 variants = tuple(variant if plugin is figure else plugin for plugin in plugins)
@@ -225,8 +225,8 @@ print("installed E5.2 core and TCAD contracts present")
 
 def test_installed_e52_curve_contracts_are_packaged(installed_probe) -> None:
     output = installed_probe("figure", r'''
-from curve_score.figure_digitization_contract import FigureLineTracking
-from curve_score.figure_evidence_validation import VALIDATOR_VERSION
+from curve_figure_evidence.figure_digitization_contract import FigureLineTracking
+from curve_figure_evidence.figure_evidence_validation import VALIDATOR_VERSION
 from scidiscovery.operations.catalog import compile_installed_catalog
 
 assert VALIDATOR_VERSION == "6"
@@ -245,23 +245,6 @@ print("installed E5.2 curve contracts present")
     assert output.strip() == "installed E5.2 curve contracts present"
 
 
-def test_installed_semantic_figure_compiler_includes_frozen_geometry(installed_probe) -> None:
-    output = installed_probe("ingaas", r'''
-import json
-from importlib.resources import files
-from ingaas_fig4.figure_compilation import GEOMETRY, OPERATION
-from scidiscovery.operations.catalog import compile_installed_catalog
-geometry_path = files("ingaas_fig4").joinpath("figure_geometry.json")
-assert json.loads(geometry_path.read_text()) == json.loads(GEOMETRY)
-assert json.loads(GEOMETRY)["source_sha256"] == "750c8cb5944ed9fe25c5072db084bb0194ed682d5e1ea40f25103f4aa89c05c3"
-catalog = compile_installed_catalog()
-assert catalog.operation(OPERATION.operation_id).spec.catalog_scope == "support"
-selection = catalog.operation("science.figure.request.prepare.v1")
-assert selection.spec.outputs[0].schema_id == "scidiscovery.figure-extraction-intent.v1"
-assert selection.spec.outputs[0].name == "figure_intent"
-print("installed semantic figure compiler and frozen geometry present")
-''')
-    assert output.strip() == "installed semantic figure compiler and frozen geometry present"
 
 
 def test_installed_evidence_alias_schema_matches_local_worker_submit(
@@ -734,6 +717,79 @@ print("\n".join(catalog.operation_ids()))
     assert tcad[0] == "builtin,curve_score,general_science,tcad_artifact"
     assert "science.evidence.extract.figure.v1" not in tcad[1:]
     assert "tcad.curve-bundle.sprocess-plx.v1" in tcad[1:]
+    full = installed_probe("full", source).splitlines()
+    assert tcad == full
+    assert set(tcad[1:]) == {
+        *_EXPECTED_OPERATION_IDS, *_EXPECTED_CURVE_OPERATION_IDS,
+        *_EXPECTED_CURVE_SCIENCE_OPERATION_IDS, *_EXPECTED_TCAD_PARAMETER_OPERATION_IDS,
+        "tcad.control-equivalence.v1", "tcad.curve-bundle.sprocess-log.v1",
+        "tcad.curve-bundle.sprocess-plx.v1", "tcad.deck-project-compare.v1",
+        "tcad.deck-review-validate.v1", "tcad.deck.author.initial.v1",
+        "tcad.deck.author.revise.v1", "tcad.deck.author.runtime-failure.v1",
+        "tcad.deck.review.v1", "tcad.parameter.evidence.audit.v1",
+        "tcad.parameter.evidence.expand.v1", "tcad.parameter.evidence.extract.v1",
+        "tcad.realization-snapshot-materialize.v1", "tcad.reviewed-deck-package.v2",
+        "tcad.runtime-attestation.v1", "tcad.study.execute",
+    }
+    core = installed_probe("core", source).splitlines()
+    assert core[0] == "builtin,general_science"
+    assert set(core[1:]) == set(_EXPECTED_OPERATION_IDS)
+    all_domains = installed_probe("all_domains", source).splitlines()
+    assert all_domains[0] == "builtin,curve_figure_evidence,curve_score,general_science,tcad_artifact"
+    assert set(all_domains[1:]) == set(tcad[1:]) | set(_EXPECTED_FIGURE_OPERATION_IDS)
+
+
+@pytest.mark.parametrize("environment", ("core", "curve", "figure", "full", "all_domains"))
+def test_installed_case_distribution_and_import_are_absent(installed_probe, environment):
+    installed_probe(environment, r'''
+from importlib.metadata import distribution, entry_points, PackageNotFoundError
+from importlib.util import find_spec
+from pathlib import Path
+import importlib
+import sys
+assert find_spec("ingaas_fig4") is None
+try:
+    distribution("scidiscovery-ingaas-fig4")
+except PackageNotFoundError:
+    pass
+else:
+    raise AssertionError("removed case distribution remains installed")
+for entry in entry_points(group="scidiscovery.plugins"):
+    assert entry.name != "ingaas_fig4"
+    module = importlib.import_module(entry.value.split(":")[0])
+    assert Path(module.__file__).resolve().is_relative_to(Path(sys.prefix).resolve())
+''')
+
+
+def test_curve_wheel_scores_without_installing_figure(installed_probe):
+    from tests.operations.test_m2_curve_analysis_boundary import _inputs
+
+    payloads = {key: value.decode() for key, value in _inputs().items()
+                if key in {"curve_bundle", "curve_contract", "experiment_plan"}}
+    installed_probe("curve", "payloads = " + repr(payloads) + r'''
+from importlib.metadata import distribution, PackageNotFoundError
+from importlib.util import find_spec
+from pathlib import Path
+import json
+import sys
+import curve_score
+import curve_score.transform_adapter as adapter
+assert find_spec("curve_figure_evidence") is None
+assert find_spec("curve_score.figure_evidence_normalizer") is None
+assert not tuple(Path(curve_score.__file__).parent.glob("figure*.py"))
+try:
+    distribution("scidiscovery-curve-figure-evidence")
+except PackageNotFoundError:
+    pass
+else:
+    raise AssertionError("figure wheel must not be installed for this smoke")
+outputs = adapter.score_curve_bundle_outputs({key: value.encode() for key, value in payloads.items()})
+assert set(outputs) == {"metric_report", "merged_curve_bundle", "score_audit", "comparison_plot"}
+assert json.loads(outputs["metric_report"][0])["aggregate_status"] == "fail"
+assert outputs["comparison_plot"][0].startswith(b"\x89PNG")
+assert not any(name.startswith("curve_figure_evidence") for name in sys.modules)
+assert Path(adapter.__file__).resolve().is_relative_to(Path(sys.prefix).resolve())
+''')
 
 
 def test_clean_installed_domain_tools_execute_the_packaged_implementations(

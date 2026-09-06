@@ -1,8 +1,7 @@
-"""Run the frozen M3 transform corpus through one isolated source tree.
+"""Exercise the retained generic transform and guard corpus in a subprocess.
 
-This file is a subprocess runner, not a production compatibility layer.  The
-pytest wrapper extracts the sealed M2 source oracle and starts this runner once
-for M2 and once for M3, then compares the emitted manifests byte for byte.
+The historical M2 case scorer is retired. Dedicated figure family tests cover
+the two figure transforms; the expected catalog still accounts for every entry.
 """
 
 from __future__ import annotations
@@ -22,13 +21,12 @@ from typing import Iterable
 
 from PIL import Image, __version__ as PILLOW_VERSION
 
-from curve_score.figure_digitization import (
+from curve_figure_evidence.figure_digitization import (
     FigureDigitizationRequest,
     build_digitized_figure_bundle,
 )
 from curve_score.schema import CurveExperimentContract
 from curve_figure_evidence.plugin import PLUGIN as FIGURE_PLUGIN
-from ingaas_fig4.plugin import PLUGIN as INGAAS_PLUGIN
 from scidiscovery.artifact_agent.interfaces.mcp_root import (
     RootMCPRouter,
     RootToolError,
@@ -330,89 +328,6 @@ def _figure_payloads() -> tuple[bytes, bytes, bytes]:
         files["validation_reports/validation_report.json"][0],
         next(content for name, (content, _) in files.items() if name.startswith("curve_tables/")),
     )
-
-
-def _ingaas_payloads() -> dict[str, bytes]:
-    output = io.StringIO(newline="")
-    writer = csv.writer(output, lineterminator="\n")
-    writer.writerow(("material", "depth_um", "target", "baseline", "candidate"))
-    rows = tuple((index / 10.0, target_log) for index, target_log in enumerate((20.0, 19.0, 18.0, 17.0, 16.0)))
-    for depth, target_log in rows:
-        target = 10.0**target_log
-        writer.writerow(("ingaas", depth, target, target, 10.0 ** (target_log + 0.01)))
-    curve_table = output.getvalue().encode()
-    target_metrics = json.dumps(
-        {
-            "materials": {
-                "ingaas": {
-                    "baseline": {"front_ge_1e17_RMS_decade": 0.0, "full_RMS_decade": 0.0},
-                    "candidate": {"front_ge_1e17_RMS_decade": 0.01, "full_RMS_decade": 0.01},
-                }
-            }
-        },
-        separators=(",", ":"),
-    ).encode()
-    contract = {
-        "scorer_version": "2.0.0",
-        "immutable_input_identity": {
-            "curve_bundle": {
-                "required_columns_in_order": ["material", "depth_um", "target", "baseline", "candidate"],
-                "supplied_sha256": hashlib.sha256(curve_table).hexdigest(),
-                "ingaas_row_count": 5,
-            },
-            "target_metrics": {"supplied_sha256": hashlib.sha256(target_metrics).hexdigest()},
-            "identity_reproduction": {"maximum_absolute_difference_decade": 1.0e-8},
-        },
-        "runtime_artifact_requirements": {
-            "required_plx_fields": [
-                "ZnTotal",
-                "Zinc",
-                "ZincConcentration",
-                "ZincActiveConcentration",
-                "xMoleFraction",
-                "Potential",
-            ]
-        },
-        "score_definitions": {
-            "baseline_recovery": {
-                "full_rms_max_decade": 0.005,
-                "full_max_abs_residual_max_decade": 0.02,
-                "each_crossing_absolute_error_max_nm": 0.05,
-                "width_1e18_to_1e17_absolute_error_max_nm": 0.05,
-                "target_front_rms_absolute_difference_max_decade": 0.005,
-                "target_full_rms_absolute_difference_max_decade": 0.005,
-            }
-        },
-    }
-    project = DeckProjectDraft(
-        tool_profile="deterministic-scorer",
-        solver_kind="deterministic_tool",
-        files=(DeckFile(relative_path="scoring/SCORER_CONTRACT.v2.json", content=json.dumps(contract, separators=(",", ":"))),),
-        entrypoint="scoring/SCORER_CONTRACT.v2.json",
-        expected_outputs=(),
-        resource_limits={
-            "wall_time_seconds": 30,
-            "cpu_time_seconds": 30,
-            "max_memory_bytes": 64 * 1024 * 1024,
-            "max_output_bytes": 1024 * 1024,
-            "max_processes": 1,
-        },
-    )
-
-    def plx(offset: float) -> bytes:
-        blocks: list[str] = []
-        for field in ("ZnTotal", "Zinc", "ZincConcentration", "ZincActiveConcentration", "xMoleFraction", "Potential"):
-            blocks.append(f'"{field}"')
-            blocks.extend(f"{depth:.17g} {10.0 ** (target_log + offset):.17g}" for depth, target_log in rows)
-        return ("\n".join(blocks) + "\n").encode()
-
-    return {
-        "scorer_project": project.model_dump_json().encode(),
-        "curve_bundle": curve_table,
-        "target_metrics": target_metrics,
-        "historical_baseline": plx(0.0),
-        "candidate_profile": plx(0.01),
-    }
 
 
 def _runtime_attestation(*, solver_outputs: int) -> bytes:
@@ -760,7 +675,6 @@ def _scenarios(catalog) -> tuple[Scenario, ...]:
     )
     tcad = _tcad_payloads()
     tcad_curve = _tcad_curve_payloads()
-    ingaas = _ingaas_payloads()
     reference_bundle = _curve_bundle().canonical_json()
     scenarios = [
         Scenario(
@@ -972,17 +886,6 @@ def _scenarios(catalog) -> tuple[Scenario, ...]:
             "plx_attestation",
             ("plx_attestation", "plx_reference"),
         ),
-        Scenario(
-            "ingaas.fig4-baseline-recovery.v2",
-            (
-                Datum("scorer_project", "ingaas_project", ingaas["scorer_project"]),
-                Datum("curve_bundle", "ingaas_curve", ingaas["curve_bundle"], media_type="text/csv"),
-                Datum("target_metrics", "ingaas_metrics", ingaas["target_metrics"]),
-                Datum("historical_baseline", "ingaas_history", ingaas["historical_baseline"], media_type="application/x-synopsys-plx"),
-                Datum("candidate_profile", "ingaas_candidate", ingaas["candidate_profile"], media_type="application/x-synopsys-plx"),
-            ),
-            "ingaas_candidate",
-        ),
     ]
     return tuple(scenarios)
 
@@ -1035,7 +938,6 @@ def _catalog():
             GENERAL_PLUGIN,
             CURVE_PLUGIN,
             TCAD_PLUGIN,
-            INGAAS_PLUGIN,
             FIGURE_PLUGIN,
         )
     )
@@ -1500,7 +1402,6 @@ def _loaded_production_modules(root: Path) -> dict[str, str]:
         "scidiscovery.general_science_experiment_components",
         "curve_score.operation_transforms",
         "tcad_artifact.operation_transforms",
-        "ingaas_fig4.plugin",
     )
     resolved: dict[str, str] = {}
     for name in names:
@@ -1530,20 +1431,16 @@ def main() -> None:
         for operation_id in catalog.operation_ids()
         if catalog.operation(operation_id).spec.executor.kind == "transform"
     }
-    # This corpus seals behavior retained unchanged from M2. The E1 figure
-    # topology has dedicated source-binding, review, guard, and determinism tests.
-    actual.discard("science.figure.evidence.materialize.v1")
-    actual.discard("scidiscovery.curve-bundle.figure-evidence.v2")
-    declared = {scenario.operation_id for scenario in scenarios}
-    removed_scientific_state = {
-        "science.knowledge.update.diagnosis.v1",
-        "science.knowledge.update.validation.v1",
+    # Figure transforms have dedicated family/review tests; all catalog entries
+    # still belong to an explicit expected set (no unknown-entry filtering).
+    figure_transforms = {
+        "science.figure.evidence.materialize.v1",
+        "scidiscovery.curve-bundle.figure-evidence.v2",
     }
-    if actual not in (declared, declared | removed_scientific_state):
+    declared = {scenario.operation_id for scenario in scenarios}
+    if actual != declared | figure_transforms:
         raise AssertionError(
-            "retained transform corpus differs from catalog: "
-            f"missing={sorted(declared-actual)}, "
-            f"unexpected={sorted(actual-declared-removed_scientific_state)}"
+            f"transform corpus differs from catalog: {actual ^ (declared | figure_transforms)}"
         )
     guarded = {
         item.operation_id

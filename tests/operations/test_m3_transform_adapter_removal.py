@@ -16,11 +16,11 @@ REMOVED_ADAPTERS = {
 TRANSFORM_MODULES = (
     REPOSITORY / "src/scidiscovery/artifact_agent/transforms.py",
     REPOSITORY / "plugins/curve_score/curve_score/transform_adapter.py",
-    REPOSITORY / "plugins/ingaas_fig4/ingaas_fig4/transform_adapter.py",
     REPOSITORY / "plugins/tcad_artifact/tcad_artifact/transform_adapter.py",
 )
 OPERATION_COMPONENT_MODULES = (
     REPOSITORY / "plugins/curve_score/curve_score/operation_transforms.py",
+    REPOSITORY / "plugins/curve_figure_evidence/curve_figure_evidence/operation_transforms.py",
     REPOSITORY / "plugins/tcad_artifact/tcad_artifact/operation_transforms.py",
 )
 

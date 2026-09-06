@@ -28,7 +28,7 @@ PLUGIN = PluginDefinition(
     plugin_id="r5_e2e_fixture",
     version="0.0.1",
     protocol_version=PLUGIN_PROTOCOL_VERSION,
-    dependencies=(PluginDependency("ingaas_fig4", "0.2.0"),),
+    dependencies=(PluginDependency("curve_score", "0.2.1"),),
     configuration_schema=_ref("configuration_schema"),
     runtime_factory=_ref("runtime_factory"),
     components=(
@@ -77,11 +77,6 @@ PLUGIN = PluginDefinition(
             "opaque_schema",
             "resource",
             "r5_e2e_tcad_plugin.runtime:OPAQUE_SCHEMA",
-        ),
-        ComponentSpec(
-            "plx_schema",
-            "resource",
-            "r5_e2e_tcad_plugin.runtime:PLX_SCHEMA",
         ),
         ComponentSpec(
             "qualify_replay_profile",
@@ -231,10 +226,10 @@ PLUGIN = PluginDefinition(
                         "The byte-identical frozen replay PLX after exact domain "
                         "identity validation."
                     ),
-                    schema="ingaas.fig4-zinc-profile-plx.v1",
+                    schema="opaque",
                     media_types=("application/x-synopsys-plx",),
                     codec=_ref("opaque_codec"),
-                    schema_resource=_ref("plx_schema"),
+                    schema_resource=_ref("opaque_schema"),
                     max_item_bytes=128 * 1024,
                     kind="solver_output",
                     validator=_ref("replay_profile_validator"),
@@ -254,7 +249,7 @@ PLUGIN = PluginDefinition(
             catalog_scope="support",
             description=OperationDescription(
                 purpose=(
-                    "Expose the exact typed Fig.4 metric and frozen curve table "
+                    "Expose the exact typed generic metric and curve bundle "
                     "as byte-identical evidence-intake source views."
                 ),
                 applies_when=(
@@ -272,8 +267,8 @@ PLUGIN = PluginDefinition(
             inputs=(
                 InputPortSpec(
                     name="metric_report",
-                    description="Exact deterministic Fig.4 baseline-recovery report.",
-                    schema="ingaas.fig4-baseline-recovery.v2",
+                    description="Exact generic curve consistency report.",
+                    schema="scidiscovery.curve-consistency-report.v1",
                     media_types=("application/json",),
                     codec=_ref("json_codec"),
                     schema_resource=_ref("metric_report_schema"),
@@ -283,9 +278,9 @@ PLUGIN = PluginDefinition(
                 ),
                 InputPortSpec(
                     name="curve_bundle",
-                    description="Exact frozen Fig.4 curve comparison table.",
-                    schema="ingaas.fig4-frozen-curve-table.v1",
-                    media_types=("text/csv",),
+                    description="Exact canonical curve bundle.",
+                    schema="scidiscovery.curve-bundle.v1",
+                    media_types=("application/json",),
                     codec=_ref("opaque_codec"),
                     schema_resource=_ref("curve_table_schema"),
                     max_item_bytes=64 * 1024 * 1024,
@@ -307,9 +302,9 @@ PLUGIN = PluginDefinition(
                 ),
                 OutputPortSpec(
                     name="curve_source",
-                    description="Byte-identical opaque CSV view of the curve table.",
+                    description="Byte-identical opaque JSON view of the curve bundle.",
                     schema="opaque",
-                    media_types=("text/csv",),
+                    media_types=("application/json",),
                     codec=_ref("opaque_codec"),
                     schema_resource=_ref("opaque_schema"),
                     max_item_bytes=64 * 1024 * 1024,

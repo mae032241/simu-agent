@@ -9,7 +9,6 @@ from pathlib import Path
 
 from curve_figure_evidence.plugin import PLUGIN as FIGURE_PLUGIN
 from curve_score.plugin import PLUGIN as CURVE_PLUGIN
-from ingaas_fig4.plugin import PLUGIN as INGAAS_PLUGIN
 from scidiscovery.builtin_plugin import CORE_PLUGIN
 from scidiscovery.general_science_plugin import PLUGIN as GENERAL_PLUGIN
 from scidiscovery.operations.catalog import compile_catalog
@@ -26,7 +25,6 @@ PLUGINS = (
     GENERAL_PLUGIN,
     CURVE_PLUGIN,
     TCAD_PLUGIN,
-    INGAAS_PLUGIN,
     FIGURE_PLUGIN,
 )
 FILE_TOOLS = {

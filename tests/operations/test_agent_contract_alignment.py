@@ -34,7 +34,7 @@ from scidiscovery.operations.invoke import (
 )
 from tcad_artifact.plugin import PLUGIN as TCAD_PLUGIN
 from tcad_artifact.parameter_operations import ParameterEvidencePackage
-from curve_score.figure_science_operations import AUDIT_PROMPT as FIGURE_AUDIT_PROMPT
+from curve_figure_evidence.figure_science_operations import AUDIT_PROMPT as FIGURE_AUDIT_PROMPT
 
 
 def _catalog():

@@ -241,9 +241,6 @@ def _output(
         "diagnosis_semantic_contract": (
             "curve.diagnosis.report_consistency", "curve.diagnosis.input_binding"
         ),
-        "figure_semantic_contract": (
-            "curve.figure.manifest_consistency", "curve.figure.evidence_binding"
-        ),
         "curve_contract_semantic_contract": (
             "curve.contract.case_metric_closure", "curve.contract.objective_binding"
         ),
@@ -721,14 +718,6 @@ class Resources:
         "Interpret deterministic results without recomputing metrics.",
         payload_rule_id="curve.diagnosis.report_consistency",
         context_rule_id="curve.diagnosis.input_binding",
-    )
-    figure_semantic_contract = scientific_semantic_contract(
-        "curve.figure",
-        "Curve-analysis images are deterministic supporting outputs, not evidence by themselves.",
-        "Figure manifests, attachments, media types, hashes, and deterministic reports must bind exactly.",
-        "Series identity, calibration, and missing visual support must never be inferred silently.",
-        payload_rule_id="curve.figure.manifest_consistency",
-        context_rule_id="curve.figure.evidence_binding",
     )
     curve_contract_semantic_contract = scientific_semantic_contract(
         "curve.contract",

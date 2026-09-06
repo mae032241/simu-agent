@@ -8,8 +8,8 @@ import pytest
 from PIL import Image
 
 from scidiscovery.artifact_agent.schema.common import canonical_json
-from curve_score.operation_transforms import materialize_figure_evidence
-from curve_score.operation_transforms import bundle_figure_evidence
+from curve_figure_evidence.operation_transforms import materialize_figure_evidence
+from curve_figure_evidence.operation_transforms import bundle_figure_evidence
 from tests.operations.test_curve_figure_digitization_tool import (
     _bundle_from_materialized,
     _coincident_overlap_request,

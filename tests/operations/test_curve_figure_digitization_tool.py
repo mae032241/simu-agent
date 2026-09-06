@@ -4,30 +4,29 @@ import csv
 import hashlib
 import io
 import json
-import os
 from pathlib import Path
 
 import pytest
 from PIL import Image
 from pydantic import ValidationError
 
-from curve_score.figure_digitization import (
+from curve_figure_evidence.figure_digitization import (
     FigureDigitizationRequest,
     build_digitized_figure_bundle,
 )
-from curve_score.figure_evidence import FigureEvidenceValidationReport
-from curve_score.operation_transforms import bundle_figure_evidence
+from curve_figure_evidence.figure_evidence import FigureEvidenceValidationReport
+from curve_figure_evidence.operation_transforms import bundle_figure_evidence
 from curve_score.schema import CurveBundle, CurveDomain, curve_series_domain_reason
-from curve_score.figure_evidence_validation import (
+from curve_figure_evidence.figure_evidence_validation import (
     FigureEvidenceBundleError,
     build_figure_evidence_validation_report,
 )
-from curve_score.figure_source import inspect_figure_source, inspect_figure_source_bytes
-from curve_score.figure_worker_tool import (
+from curve_figure_evidence.figure_source import inspect_figure_source, inspect_figure_source_bytes
+from curve_figure_evidence.figure_worker_tool import (
     FIGURE_SOURCE_INSPECTION_TOOL,
     FigureSourceInspectionInput,
 )
-from curve_score.operation_transforms import materialize_figure_evidence
+from curve_figure_evidence.operation_transforms import materialize_figure_evidence
 from scidiscovery.artifact_agent.schema.common import canonical_json
 from scidiscovery.artifact_agent.schema.refs import ArtifactRef
 
@@ -117,45 +116,6 @@ def _request(source: bytes, *, recovered=None) -> bytes:
 
 def _valid_source() -> bytes:
     return _png_with_points(tuple((x, 10 - x) for x in range(1, 10)))
-
-
-def _frozen_fig4_request(pdf: Path) -> tuple[bytes, bytes]:
-    source = pdf.read_bytes()
-    recovered = next(
-        item
-        for item in inspect_figure_source(
-            pdf, media_type="application/pdf", page=6
-        )
-        if item.pdf_object_id == 241
-    )
-    geometry = json.loads(
-        (
-            Path(__file__).resolve().parents[1]
-            / "fixtures"
-            / "fig4_measured_continuous_lines.json"
-        ).read_text(encoding="utf-8")
-    )
-    request = {
-        "schema_version": "scidiscovery.curve-figure-digitization-request.v2",
-        "request_status": "ready",
-        **geometry,
-        "source": {
-            "source_kind": "pdf_embedded_image",
-            "media_type": "application/pdf",
-            "source_sha256": hashlib.sha256(source).hexdigest(),
-            "page": recovered.page,
-            "document_image_index": recovered.document_image_index,
-            "page_image_index": recovered.page_image_index,
-            "pdf_object_id": recovered.pdf_object_id,
-            "pdf_object_generation": recovered.pdf_object_generation,
-            "recovered_image_sha256": recovered.image_sha256,
-            "width": recovered.width,
-            "height": recovered.height,
-            "recovery_tool": recovered.recovery_tool,
-            "recovery_tool_version": recovered.recovery_tool_version,
-        },
-    }
-    return source, canonical_json(request)
 
 
 def _bundle_from_materialized(outputs: dict[str, tuple[bytes, ...]]) -> CurveBundle:
@@ -1015,88 +975,6 @@ def test_pdf_request_is_replayed_by_the_formal_materializer(tmp_path: Path) -> N
     assert manifest["source"]["pdf_sha256"] == hashlib.sha256(source).hexdigest()
     assert manifest["source"]["pdf_page"] == 1
     assert manifest["source"]["pdf_object"] == "1 0"
-
-
-def test_frozen_fig4_preserves_direct_evidence_and_local_gaps() -> None:
-    pdf = Path(os.environ["SCID_FIG4_FROZEN_SOURCE"]) if os.environ.get("SCID_FIG4_FROZEN_SOURCE") else (
-        Path(__file__).resolve().parents[2]
-        / "deliverables"
-        / "m7-full-science-gpt56-20260903"
-        / "state-resumed-m7-test0"
-        / "artifacts"
-        / "sha256"
-        / "75"
-        / "0c8cb5944ed9fe25c5072db084bb0194ed682d5e1ea40f25103f4aa89c05c3"
-    )
-    if not pdf.is_file():
-        pytest.skip("frozen local Fig.4 PDF is not present")
-    source, request = _frozen_fig4_request(pdf)
-    first = materialize_figure_evidence(
-        {"paper_source": (source,), "figure_request": (request,)}
-    )
-    second = materialize_figure_evidence(
-        {"paper_source": (source,), "figure_request": (request,)}
-    )
-    assert first == second
-
-    manifest = json.loads(first["figure_manifest"][0])
-    by_key = {
-        item["series_key"]: item for item in manifest["panels"][0]["series"]
-    }
-    assert manifest["status"] == "qualified"
-    assert manifest["metrics"]["qualified_series_count"] == 2
-    assert by_key["measured_in083al017as"]["point_count"] == 565
-    assert by_key["measured_in083al017as"]["max_gap_px"] == 56
-    assert by_key["measured_in083ga017as"]["point_count"] == 805
-    assert by_key["measured_in083ga017as"]["max_gap_px"] == 2
-    assert manifest["provenance"]["recovery_tool"] == "pdfimages+Pillow"
-
-    bundle = _bundle_from_materialized(first)
-    normalized = {item.series_key: item for item in bundle.series}
-    assert normalized["measured_in083al017as"].availability.status == "available"
-    assert normalized["measured_in083ga017as"].availability.status == "available"
-    report = json.loads(first["validation_report"][0])
-    counts = {item["series_key"]: item for item in report["series"]}
-    assert counts["measured_in083al017as"]["eligible_row_count"] == 563
-    assert counts["measured_in083ga017as"]["eligible_row_count"] == 800
-    ambiguous_columns = {
-        rows[0]["series_key"]: {
-            int(row["pixel_x_raw"])
-            for row in rows
-            if row["eligibility_reason"] == "ambiguous_path"
-        }
-        for table in first["curve_tables"]
-        if (rows := tuple(csv.DictReader(io.StringIO(table.decode("utf-8")))))
-    }
-    assert ambiguous_columns == {
-        "measured_in083al017as": {459, 538},
-        "measured_in083ga017as": {633},
-    }
-    red_table = next(
-        item
-        for item in first["curve_tables"]
-        if b"measured_in083ga017as" in item
-    )
-    red_rows = tuple(csv.DictReader(io.StringIO(red_table.decode("utf-8"))))
-    annotation_rows = tuple(
-        row for row in red_rows if 537 <= int(row["pixel_x_raw"]) < 541
-    )
-    assert len(annotation_rows) == 4
-    assert all(row["observed"] == "1" for row in annotation_rows)
-    assert all(
-        row["quantitative_measurement_claim_eligible"] == "0"
-        for row in annotation_rows
-    )
-    assert {
-        row["eligibility_reason"] for row in annotation_rows
-    } == {"same_color_annotation_overlap"}
-    red_intervals = normalized["measured_in083ga017as"].valid_intervals
-    annotation_left = (537.0 - 166.0) * 0.8 / (974.0 - 166.0)
-    annotation_right = (541.0 - 166.0) * 0.8 / (974.0 - 166.0)
-    assert all(
-        interval.stop <= annotation_left or interval.start >= annotation_right
-        for interval in red_intervals
-    )
 
 
 class _ToolContext:
