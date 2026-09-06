@@ -53,6 +53,80 @@ _EXPECTED_TCAD_PARAMETER_OPERATION_IDS = [
 ]
 
 
+_DETECTOR_RESOURCE_PROBE = r'''
+import json
+from importlib.metadata import entry_points
+from unittest.mock import patch
+
+import curve_score.figure_science_operations as figure_contracts
+from scidiscovery.operations.catalog import PLUGIN_ENTRY_POINT_GROUP, compile_catalog
+from scidiscovery.operations.spec import ComponentRef, ComponentSpec
+
+plugins = globals().get("plugins") or tuple(entry.load() for entry in sorted(
+    entry_points(group=PLUGIN_ENTRY_POINT_GROUP), key=lambda entry: entry.name,
+))
+figure = next(plugin for plugin in plugins if plugin.plugin_id == "curve_figure_evidence")
+request_id = "science.figure.request.prepare.v1"
+materialize_id = "science.figure.evidence.materialize.v1"
+request = next(op for op in figure.operations if op.operation_id == request_id)
+materialize = next(op for op in figure.operations if op.operation_id == materialize_id)
+context = request.outputs[0].context_validator
+transform = materialize.executor.component
+assert context is not None
+assert context.plugin_id in (None, figure.plugin_id)
+assert transform.plugin_id in (None, figure.plugin_id)
+resource = ComponentRef("detector_contract_probe")
+consumers = {context.component_id, transform.component_id}
+variant = figure.model_copy(update={"components": tuple(
+    component.model_copy(update={"resources": (*component.resources, resource)})
+    if component.component_id in consumers else component
+    for component in figure.components
+) + (ComponentSpec(
+    resource.component_id, "resource",
+    "curve_score.figure_science_operations:DETECTOR_CONTRACT_PROBE",
+),)})
+assert sum(component.component_id in consumers for component in variant.components) == 2
+variants = tuple(variant if plugin is figure else plugin for plugin in plugins)
+contract = {"detector_version": "probe-v1", "ocr_model_sha256": "a" * 64}
+catalogs = []
+for payload in (contract, {**contract, "detector_version": "probe-v2"},
+                {**contract, "ocr_model_sha256": "b" * 64}):
+    content = json.dumps(payload, sort_keys=True).encode()
+    # Only the in-memory resource bytes change; compiler and callables stay intact.
+    with patch.object(figure_contracts, "DETECTOR_CONTRACT_PROBE", content, create=True):
+        catalog = compile_catalog(variants)
+        assert compile_catalog(variants).digest() == catalog.digest()
+    for operation_id in (request_id, materialize_id):
+        compiled = catalog.operation(operation_id)
+        key = f"{figure.plugin_id}:{resource.component_id}"
+        assert key in compiled.component_ids
+        assert compiled.implementations[key] == content
+    catalogs.append(catalog)
+baseline = catalogs[0]
+curve_ids = [op_id for op_id in baseline.operation_ids()
+             if baseline.operation(op_id).plugin_id == "curve_score"]
+assert curve_ids
+for changed in catalogs[1:]:
+    assert changed.operation_ids() == baseline.operation_ids()
+    for operation_id in (request_id, materialize_id):
+        assert changed.operation(operation_id).digest != baseline.operation(operation_id).digest
+    for operation_id in curve_ids:
+        assert changed.operation(operation_id).digest == baseline.operation(operation_id).digest
+assert not hasattr(figure_contracts, "DETECTOR_CONTRACT_PROBE")
+'''
+
+
+def test_installed_detector_resource_uses_existing_compilation_edges(installed_probe) -> None:
+    installed_probe("figure", _DETECTOR_RESOURCE_PROBE + r'''
+import sys
+from pathlib import Path
+assert Path(figure_contracts.__file__).resolve().is_relative_to(Path(sys.prefix).resolve())
+assert {plugin.plugin_id for plugin in plugins} == {
+    "builtin", "general_science", "curve_score", "curve_figure_evidence",
+}
+''')
+
+
 @pytest.mark.parametrize("environment", ("full", "figure"))
 def test_installed_agent_input_and_checker_contracts_align(installed_probe, environment) -> None:
     output = installed_probe(environment, r'''

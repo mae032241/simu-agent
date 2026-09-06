@@ -23,11 +23,18 @@ from scidiscovery.operation_contract import SemanticRuleViolation
 from scidiscovery.operation_contract import operation_port_json_schema
 from scidiscovery.artifact_agent.interfaces.mcp_local_worker import LocalWorkerMCPRouter
 from scidiscovery.operations.catalog import compile_catalog
+from tests.operations.test_catalog_installed_entrypoint import _DETECTOR_RESOURCE_PROBE
 from tests.operations.test_m5_figure_review_closure import (
     CORE_PLUGIN, GENERAL_PLUGIN, CURVE_PLUGIN, FIGURE_PLUGIN,
     _system, _register, _complete_agent,
     _envelope,
 )
+
+
+def test_detector_resource_uses_existing_compilation_edges():
+    exec(_DETECTOR_RESOURCE_PROBE, {
+        "plugins": (CORE_PLUGIN, GENERAL_PLUGIN, CURVE_PLUGIN, FIGURE_PLUGIN),
+    })
 
 
 def _intent():
