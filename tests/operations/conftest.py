@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+import csv
+import io
 import shutil
 import subprocess
 import sys
@@ -25,13 +27,31 @@ def _copy_runtime_distribution(name: str, destination: Path) -> None:
 
     package = distribution(name)
     root = destination.resolve()
-    for relative in package.files or ():
+    record = package.read_text("RECORD")
+    assert record is not None, f"offline dependency has no wheel RECORD: {name}"
+    for row in csv.reader(io.StringIO(record)):
+        relative = Path(row[0])
+        if "__pycache__" in relative.parts or relative.suffix in {".pyc", ".pyo"}:
+            continue
         source = Path(package.locate_file(relative))
         target = (destination / relative).resolve()
         if not target.is_relative_to(root) or not source.is_file():
             continue
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source, target)
+
+
+def _supply_runtime_dependencies(environment_root: Path) -> None:
+    site_packages = environment_root / "lib" / f"python{sys.version_info.major}.{sys.version_info.minor}" / "site-packages"
+    for package_name in (
+        "annotated-types", "Pillow", "attrs", "jsonschema",
+        "jsonschema-specifications", "pydantic", "pydantic_core",
+        "referencing", "rpds-py", "typing-extensions", "typing-inspection",
+        "cryptography", "cffi", "pycparser",
+    ):
+        _copy_runtime_distribution(package_name, site_packages)
+    if sys.version_info < (3, 11):
+        _copy_runtime_distribution("tomli", site_packages)
 
 
 @pytest.fixture(scope="session")
@@ -157,7 +177,8 @@ def installed_environments(
         "invalid_unicode": (core, invalid_unicode),
     }.items():
         environment_root = root / name
-        venv.EnvBuilder(with_pip=True, system_site_packages=True).create(environment_root)
+        venv.EnvBuilder(with_pip=True, system_site_packages=False).create(environment_root)
+        _supply_runtime_dependencies(environment_root)
         python = environment_root / "bin/python"
         subprocess.run(
             [
@@ -165,6 +186,7 @@ def installed_environments(
                 "-m",
                 "pip",
                 "install",
+                "--no-index",
                 "--no-deps",
                 *map(str, selected),
             ],
@@ -184,33 +206,14 @@ def installed_environments(
     venv.EnvBuilder(with_pip=True, system_site_packages=False).create(environment_root)
     python = environment_root / "bin/python"
     subprocess.run(
-        [str(python), "-m", "pip", "install", "--no-deps", str(core)],
+        [str(python), "-m", "pip", "install", "--no-index", "--no-deps", str(core)],
         cwd=root,
         check=True,
         capture_output=True,
         text=True,
         timeout=180,
     )
-    site_packages = (
-        environment_root
-        / "lib"
-        / f"python{sys.version_info.major}.{sys.version_info.minor}"
-        / "site-packages"
-    )
-    for package_name in (
-        "annotated-types",
-        "Pillow",
-        "attrs",
-        "jsonschema",
-        "jsonschema-specifications",
-        "pydantic",
-        "pydantic_core",
-        "referencing",
-        "rpds-py",
-        "typing-extensions",
-        "typing-inspection",
-    ):
-        _copy_runtime_distribution(package_name, site_packages)
+    _supply_runtime_dependencies(environment_root)
     workdir = root / "core_no_yaml-workdir"
     workdir.mkdir()
     environments["core_no_yaml"] = InstalledEnvironment(
@@ -218,30 +221,17 @@ def installed_environments(
     )
 
     environment_root = root / "tcad_resolved"
-    venv.EnvBuilder(with_pip=True, system_site_packages=True).create(environment_root)
+    venv.EnvBuilder(with_pip=True, system_site_packages=False).create(environment_root)
+    _supply_runtime_dependencies(environment_root)
     python = environment_root / "bin/python"
     subprocess.run(
-        [str(python), "-m", "pip", "install", "--no-deps", str(core)],
+        [str(python), "-m", "pip", "install", "--no-index", "--no-deps", str(core)],
         cwd=root,
         check=True,
         capture_output=True,
         text=True,
         timeout=180,
     )
-    site_packages = (
-        environment_root
-        / "lib"
-        / f"python{sys.version_info.major}.{sys.version_info.minor}"
-        / "site-packages"
-    )
-    for package_name in (
-        "attrs",
-        "jsonschema",
-        "jsonschema-specifications",
-        "referencing",
-        "rpds-py",
-    ):
-        _copy_runtime_distribution(package_name, site_packages)
     subprocess.run(
         [
             str(python), "-m", "pip", "install", "--no-index",
@@ -278,6 +268,9 @@ import sys as _r0_sys
 assert _R0Path(_r0_scidiscovery.__file__).resolve().is_relative_to(
     _R0Path(_r0_sys.prefix).resolve()
 ), _r0_scidiscovery.__file__
+assert 'include-system-site-packages = false' in (_R0Path(_r0_sys.prefix) / 'pyvenv.cfg').read_text()
+import PIL as _r0_pil
+assert _R0Path(_r0_pil.__file__).resolve().is_relative_to(_R0Path(_r0_sys.prefix).resolve())
 """
         completed = subprocess.run(
             [str(environment.python), "-c", textwrap.dedent(prefix + source)],

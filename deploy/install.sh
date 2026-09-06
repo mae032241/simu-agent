@@ -27,6 +27,7 @@ TRANSACTION_ROOT=""
 ROLLBACK_ARMED=0
 TCAD_ENABLED=0
 TCAD_LOCAL_SERVICE=0
+FIGURE_DEPENDENCY_CONTRACT=""
 declare -a SELECTED_PLUGINS=()
 declare -a SELECTED_PLUGIN_DISTRIBUTIONS=()
 
@@ -182,10 +183,6 @@ require_sources() {
     printf 'Selected plugins: %s\n' "${PLUGIN_SPECIFICATION:-none}"
     printf 'Worker backend: %s\n' "$WORKER_BACKEND"
     command -v pdftotext >/dev/null || die "pdftotext is required for task PDF inputs"
-    if [[ " ${SELECTED_PLUGINS[*]} " == *" curve_figure_evidence "* ]]; then
-        command -v pdfimages >/dev/null || die "pdfimages is required for paper figure extraction"
-        command -v pdftoppm >/dev/null || die "pdftoppm is required for paper figure inspection"
-    fi
     command -v systemd-analyze >/dev/null || die "systemd-analyze is required to validate service units"
     if [[ "$TCAD_ENABLED" -eq 1 && -n "$TCAD_COMMAND_CONFIG" ]]; then
         [[ "$TCAD_COMMAND_CONFIG" = /* && -f "$TCAD_COMMAND_CONFIG" && ! -L "$TCAD_COMMAND_CONFIG" ]] || \
@@ -240,6 +237,54 @@ if sys.version_info < (3, 11):
     parsed_version("tomli")
 print("base Python dependency check: pass")
 PY
+}
+
+service_python() {
+    local pythonpath="$1" service_path service_home manager_environment
+    shift
+    service_path="$(systemd-path search-binaries-default)" || die "cannot resolve systemd service PATH"
+    # Rendered units do not override PATH; honor a manager-level PATH if supplied.
+    manager_environment="$(systemctl show-environment)" || die "cannot inspect systemd service environment"
+    while IFS= read -r assignment; do
+        [[ "$assignment" != PATH=* ]] || service_path="${assignment#PATH=}"
+    done <<<"$manager_environment"
+    # systemctl can emit shell quoting. Do not interpret it or accept partial paths.
+    [[ "$service_path" =~ ^/[A-Za-z0-9_./+-]*(:/[A-Za-z0-9_./+-]*)*$ ]] || \
+        die "unsafe systemd service PATH; require unquoted absolute entries without empty segments"
+    service_home="$(getent passwd "$SERVICE_USER" | cut -d: -f6)"
+    [[ -n "$service_path" && -n "$service_home" ]] || die "cannot resolve service environment"
+    local -a command=(env -i "PATH=$service_path" "HOME=$service_home"
+        "USER=$SERVICE_USER" "LOGNAME=$SERVICE_USER" PYTHONNOUSERSITE=1
+        "PYTHONPATH=$pythonpath" OMP_NUM_THREADS=1 OMP_THREAD_LIMIT=1
+        OPENBLAS_NUM_THREADS=1 MALLOC_ARENA_MAX=2 "$PYTHON" "$@")
+    (
+        cd "$WORKSPACE"
+        if [[ "$(id -un)" == "$SERVICE_USER" && "$(id -gn)" == "$SERVICE_GROUP" ]]; then
+            "${command[@]}"
+        elif [[ "$(id -u)" -eq 0 ]]; then
+            runuser -u "$SERVICE_USER" -g "$SERVICE_GROUP" -- "${command[@]}"
+        else
+            sudo -n -u "$SERVICE_USER" -g "$SERVICE_GROUP" -- "${command[@]}"
+        fi
+    )
+}
+
+validate_figure_dependencies() {
+    [[ " ${SELECTED_PLUGINS[*]} " == *" curve_figure_evidence "* ]] || return 0
+    local prefix="${1:-}" observed
+    if [[ -n "$prefix" ]]; then
+        observed="$(service_python "$prefix" "$prefix/curve_figure_evidence/figure_dependencies.py" --installed)" || \
+            die "installed figure dependency preflight failed"
+        [[ "$observed" == "$FIGURE_DEPENDENCY_CONTRACT" ]] || die "installed figure dependency contract changed"
+    else
+        FIGURE_DEPENDENCY_CONTRACT="$(service_python "${SOURCE_ROOT}/plugins/curve_figure_evidence" \
+            "$SOURCE_ROOT/plugins/curve_figure_evidence/curve_figure_evidence/figure_dependencies.py" \
+            --version "${SCID_FIGURE_TESSERACT_VERSION:-}" \
+            --model-path "${SCID_FIGURE_OCR_MODEL_PATH:-}" \
+            --model-sha256 "${SCID_FIGURE_OCR_MODEL_SHA256:-}")" || \
+            die "figure dependency preflight failed before installation transaction"
+        printf 'Verified figure dependencies: %s\n' "$FIGURE_DEPENDENCY_CONTRACT"
+    fi
 }
 
 require_root() {
@@ -460,6 +505,16 @@ install_packages() {
         --progress-bar off --upgrade \
         --target "$stage" "${package_roots[@]}"
     rm -rf "$source_stage"
+    if [[ -n "$FIGURE_DEPENDENCY_CONTRACT" ]]; then
+        # This is the sole runtime binding, read by the compiled detector resource.
+        "$PYTHON" - "$stage/curve_figure_evidence/figure_dependencies.json" \
+            "$FIGURE_DEPENDENCY_CONTRACT" <<'PY'
+from pathlib import Path
+import sys
+Path(sys.argv[1]).write_text(sys.argv[2] + '\n', encoding='utf-8')
+PY
+        validate_figure_dependencies "$stage"
+    fi
     selected_distributions="$(IFS=,; printf '%s' "${SELECTED_PLUGIN_DISTRIBUTIONS[*]}")"
     SCID_SELECTED_DISTRIBUTIONS="$selected_distributions" \
         PYTHONNOUSERSITE=1 PYTHONPATH="$stage" "$PYTHON" - <<'PY'
@@ -852,6 +907,7 @@ print(f"MCP tool probe: pass ({mode}, {len(names)})")
 }
 
 verify_installation() {
+    validate_figure_dependencies "$SITE_ROOT"
     local unit
     local units=(
         scidiscovery-control.service \
@@ -1060,6 +1116,7 @@ install_all() {
     printf '[1/6] Validating source and selected base Python...\n'
     validate_source
     validate_base_python
+    validate_figure_dependencies
     printf '[2/6] Building and validating local application packages...\n'
     install_packages
     begin_install_transaction
@@ -1133,7 +1190,7 @@ uninstall_services() {
 
 main() {
     case "${1:---dry-run}" in
-        --dry-run) require_sources; validate_source; validate_base_python; preview ;;
+        --dry-run) require_sources; validate_source; validate_base_python; validate_figure_dependencies; preview ;;
         install) require_sources; install_all ;;
         status) status ;;
         uninstall) uninstall_services ;;

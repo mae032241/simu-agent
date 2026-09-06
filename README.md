@@ -40,7 +40,6 @@ workers; identities and lifecycle state remain in the control plane.
 | `plugins/curve_score/` | Curve contracts, canonical curves, deterministic validation, consistency scoring, and diagnosis |
 | `plugins/curve_figure_evidence/` | Optional paper-figure extraction/review entry point reusing deterministic curve algorithms |
 | `skills/sentaurus-tcad-code/` | Solver-code guidance, exact-release SProcess/SDevice manual references, bounded lookup, and static validation |
-| `plugins/ingaas_fig4/` | Optional domain example; not required by the generic control plane |
 | `deploy/` | Linux/WSL systemd installation and remote-runner deployment |
 | `tests/` | Unit, fault-injection, concurrency, platform, MCP, and closed-loop tests |
 
@@ -138,7 +137,7 @@ service secrets.
 python3 -m pip install -e '.[test]'
 python3 -m pip install -e plugins/tcad_artifact
 python3 -m pip install -e plugins/curve_score
-python3 -m pip install -e plugins/ingaas_fig4  # optional example
+python3 -m pip install -e plugins/curve_figure_evidence  # optional automatic figures; see INSTALL for offline dependencies
 pytest -q
 ```
 

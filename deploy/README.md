@@ -4,8 +4,6 @@
 
 - `install.sh`: installs, verifies, reports, or removes the Linux/WSL services.
 - `reinstall.sh`: generic, transactional, maintained reinstall entrypoint.
-- `apply_ingaas_fig4_profile.sh`: supplies only the InGaAs/Fig.4 workspace,
-  paper-figure and domain plugins, and adapter defaults before delegating to `reinstall.sh`.
 - `install_ssh_tcad_runner.sh`: installs the dependency-free runner through an
   existing SSH connection; it can also reuse the active transport for a full
   runner/config update or a current-schema code-only upgrade.
@@ -22,6 +20,11 @@ previous files, databases, and service state. The installer infers the
 repository root from its own location. Machine values
 are supplied through `SCID_*` environment variables and private copies of the
 JSON examples. See [the complete installation guide](../docs/INSTALL.md).
+
+For automatic figures, explicitly select `tcad_artifact,curve_score,curve_figure_evidence`
+and supply the offline tool/model contract described in that guide. Both dry-run
+and installation validate it under the service identity before any transaction.
+No paper-specific installation wrapper or manual geometry skill is installed.
 
 No deployment command installs Sentaurus, a license, a VM, or an SSH key.
 The installer passes the same selected TCAD socket or command-adapter

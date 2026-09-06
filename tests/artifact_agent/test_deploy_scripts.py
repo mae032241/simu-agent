@@ -4,9 +4,13 @@ import json
 import hashlib
 import os
 import re
+import shutil
 import subprocess
 import sys
+import venv
 from pathlib import Path
+
+import pytest
 
 from deploy.install_transaction import (
     begin_transaction,
@@ -134,6 +138,8 @@ def test_installer_previews_core_only_and_explicit_tcad_paths(tmp_path: Path) ->
             "SCID_CONFIG_ROOT": str(root / "config"),
             "SCID_BACKUP_ROOT": str(root / "backups"),
         }
+        if "curve_figure_evidence" in plugins:
+            environment.update(_figure_supply(root))
         completed = subprocess.run(
             [str(script), "--dry-run"],
             cwd=project_root,
@@ -167,6 +173,150 @@ def test_installer_previews_core_only_and_explicit_tcad_paths(tmp_path: Path) ->
     )
     all_domains = preview("all-domains", "tcad_artifact,curve_score,curve_figure_evidence")
     assert "Selected plugins: tcad_artifact,curve_score,curve_figure_evidence" in all_domains
+
+
+def _figure_supply(root: Path) -> dict[str, str]:
+    """Simulated OCR supply; Poppler and Pillow calls still execute real libraries."""
+    binary = root / "figure-bin"
+    binary.mkdir()
+    model = root / "model/eng.traineddata"
+    model.parent.mkdir()
+    model.write_bytes(b"test-only model bytes, not a real OCR model")
+    for name in ("pdfinfo", "pdfimages", "pdftoppm"):
+        (binary / name).symlink_to(shutil.which(name))
+    ocr = binary / "tesseract"
+    ocr.write_text(
+        f"#!{sys.executable}\nimport sys\n"
+        "if '--version' in sys.argv: print('tesseract 5.3.0')\n"
+        "else:\n"
+        " assert '--tessdata-dir' in sys.argv and '-l' in sys.argv\n"
+        " print('left\\ttop\\twidth\\theight\\ttext\\n20\\t20\\t150\\t42\\t12345')\n",
+        encoding="utf-8",
+    )
+    ocr.chmod(0o755)
+    for name, body in {
+        "systemd-path": f"printf '%s\\n' '{binary}'\n",
+        "systemctl": "exit 0\n",
+    }.items():
+        command = binary / name
+        command.write_text("#!/bin/sh\n" + body, encoding="utf-8")
+        command.chmod(0o755)
+    return {
+        "PATH": f"{binary}:{os.environ['PATH']}",
+        "SCID_FIGURE_TESSERACT_VERSION": "5.3.0",
+        "SCID_FIGURE_OCR_MODEL_PATH": str(model),
+        "SCID_FIGURE_OCR_MODEL_SHA256": hashlib.sha256(model.read_bytes()).hexdigest(),
+    }
+
+
+@pytest.mark.parametrize("failure", [
+    "missing_ocr", "missing_model", "wrong_hash", "service_path", "service_python",
+    "manager_ansi_quoted", "manager_double_quoted", "manager_backslash",
+    "manager_whitespace", "manager_control", "manager_relative",
+    "manager_empty_segment", "manager_leading_empty", "manager_trailing_empty",
+    "manager_empty",
+])
+def test_figure_dependency_failure_precedes_install_transaction(tmp_path: Path, failure: str) -> None:
+    project = Path(__file__).resolve().parents[2]
+    environment = {**os.environ, **_figure_supply(tmp_path),
+        "SCID_WORKSPACE": str(tmp_path), "SCID_PYTHON": sys.executable,
+        "SCID_SERVICE_USER": subprocess.check_output(["id", "-un"], text=True).strip(),
+        "SCID_SERVICE_GROUP": subprocess.check_output(["id", "-gn"], text=True).strip()}
+    binary = tmp_path / "figure-bin"
+    expected = ""
+    if failure == "missing_ocr":
+        (binary / "tesseract").unlink()
+        expected = "unavailable in service PATH: tesseract"
+    elif failure == "missing_model":
+        Path(environment["SCID_FIGURE_OCR_MODEL_PATH"]).unlink()
+        expected = "model file is missing or unreadable"
+    elif failure == "wrong_hash":
+        environment["SCID_FIGURE_OCR_MODEL_SHA256"] = "0" * 64
+        expected = "model SHA-256 differs"
+    elif failure == "service_path":
+        # The operator still resolves pdfinfo from /usr/bin, the service cannot.
+        (binary / "pdfinfo").unlink()
+        assert shutil.which("pdfinfo", path=environment["PATH"])
+        expected = "unavailable in service PATH: pdfinfo"
+    elif failure.startswith("manager_"):
+        manager_path = {
+            "manager_ansi_quoted": "$'/g4/service tools:/usr/bin:/bin'",
+            "manager_double_quoted": '"/usr/bin:/bin"',
+            "manager_backslash": r"/g4/service\ tools:/usr/bin:/bin",
+            "manager_whitespace": "/g4/service tools:/usr/bin:/bin",
+            "manager_control": "/usr/bin:\t/bin",
+            "manager_relative": "/usr/bin:relative:/bin",
+            "manager_empty_segment": "/usr/bin::/bin",
+            "manager_leading_empty": ":/usr/bin:/bin",
+            "manager_trailing_empty": "/usr/bin:/bin:",
+            "manager_empty": "",
+        }[failure]
+        (binary / "systemctl").write_text(
+            f"#!{sys.executable}\nprint({'PATH=' + manager_path!r})\n", encoding="utf-8")
+        expected = "unsafe systemd service PATH"
+    else:
+        from PIL import __version__
+        assert __version__ == "12.1.1"  # Only the operator environment supplies Pillow.
+        venv.EnvBuilder(with_pip=False).create(tmp_path / "service-python")
+        environment["SCID_PYTHON"] = str(tmp_path / "service-python/bin/python")
+        expected = "No module named 'PIL'"
+    completed = subprocess.run([
+        "bash", "-c", '''source "$1"
+SELECTED_PLUGINS=(curve_figure_evidence)
+require_root() { :; }
+validate_source() { :; }
+validate_base_python() { :; }
+install_packages() { touch "$WORKSPACE/build-entered"; }
+begin_install_transaction() { touch "$WORKSPACE/transaction-entered"; }
+rollback_install() { touch "$WORKSPACE/rollback-entered"; }
+install_all
+''', "bash", str(project / "deploy/install.sh")],
+        cwd=tmp_path, env=environment, capture_output=True, text=True, timeout=60)
+    assert completed.returncode != 0
+    assert expected in completed.stderr
+    assert "before installation transaction" in completed.stderr
+    assert not any((tmp_path / name).exists() for name in (
+        "build-entered", "transaction-entered", "rollback-entered"))
+
+
+def test_service_python_accepts_plain_systemd_manager_path(tmp_path: Path) -> None:
+    project = Path(__file__).resolve().parents[2]
+    service_path = subprocess.check_output(["systemd-path", "search-binaries-default"], text=True).strip()
+    environment = {**os.environ, **_figure_supply(tmp_path),
+        "SCID_WORKSPACE": str(tmp_path), "SCID_PYTHON": sys.executable}
+    (tmp_path / "figure-bin/systemctl").write_text(
+        f"#!{sys.executable}\nprint({'PATH=' + service_path!r})\n", encoding="utf-8")
+    completed = subprocess.run([
+        "bash", "-c", 'source "$1"; service_python "" -c \'import os; print(os.environ["PATH"])\'',
+        "bash", str(project / "deploy/install.sh")],
+        cwd=tmp_path, env=environment, capture_output=True, text=True, timeout=30)
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.strip() == service_path
+
+
+def test_figure_installed_preflight_rechecks_the_frozen_contract(tmp_path: Path) -> None:
+    project = Path(__file__).resolve().parents[2]
+    environment = {**os.environ, **_figure_supply(tmp_path),
+        "SCID_WORKSPACE": str(tmp_path), "SCID_PYTHON": sys.executable}
+    site = tmp_path / "site"
+    shutil.copytree(project / "plugins/curve_figure_evidence/curve_figure_evidence", site / "curve_figure_evidence",
+                    ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+    completed = subprocess.run(["bash", "-c", '''source "$1"
+SELECTED_PLUGINS=(curve_figure_evidence)
+validate_figure_dependencies
+printf '%s\\n' "$FIGURE_DEPENDENCY_CONTRACT" > "$2/curve_figure_evidence/figure_dependencies.json"
+SCID_FIGURE_OCR_MODEL_SHA256=unused_after_freeze
+validate_figure_dependencies "$2"
+printf tampered >> "$SCID_FIGURE_OCR_MODEL_PATH"
+validate_figure_dependencies "$2"
+''', "bash", str(project / "deploy/install.sh"), str(site)],
+        cwd=tmp_path, env=environment, capture_output=True, text=True, timeout=60)
+    assert completed.returncode != 0
+    assert completed.stderr.count("figure dependency preflight: pass") == 2
+    assert "model SHA-256 differs" in completed.stderr
+    contract = json.loads((site / "curve_figure_evidence/figure_dependencies.json").read_bytes())
+    assert contract["ocr"]["model_sha256"] == environment["SCID_FIGURE_OCR_MODEL_SHA256"]
+    assert all(Path(path).is_absolute() for path in contract["executables"].values())
 
 
 def test_installer_rejects_removed_case_plugin_before_installation(tmp_path: Path) -> None:
@@ -1188,8 +1338,9 @@ def test_curve_figure_capability_is_plugin_owned_not_a_platform_skill() -> None:
         '[[ " ${SELECTED_PLUGINS[*]} " == *" curve_figure_evidence "* ]]'
         in script
     )
-    assert 'command -v pdfimages' in script
-    assert 'command -v pdftoppm' in script
+    assert 'validate_figure_dependencies' in script
+    assert 'command -v pdfimages' not in script
+    assert 'command -v pdftoppm' not in script
     assert '"Pillow>=10,<13"' in metadata
     assert '"jsonschema>=4,<5"' in metadata
 
@@ -1261,6 +1412,9 @@ def test_generic_reinstaller_passes_resolved_configuration(tmp_path: Path) -> No
             "SCID_APPROVAL_PORT": "18765",
             "SCID_CODEX_SKILL_ROOT": str(skill_root),
             "SCID_CODEX_LAUNCH_ROOT": str(launch_root),
+            "SCID_FIGURE_TESSERACT_VERSION": "5.3.0",
+            "SCID_FIGURE_OCR_MODEL_PATH": str(tmp_path / "eng.traineddata"),
+            "SCID_FIGURE_OCR_MODEL_SHA256": "a" * 64,
         },
         timeout=10,
         check=False,
@@ -1283,6 +1437,9 @@ def test_generic_reinstaller_passes_resolved_configuration(tmp_path: Path) -> No
     assert "SCID_APPROVAL_PORT=18765" in output
     assert f"SCID_CODEX_SKILL_ROOT={skill_root}" in output
     assert f"SCID_CODEX_LAUNCH_ROOT={launch_root}" in output
+    assert "SCID_FIGURE_TESSERACT_VERSION=5.3.0" in output
+    assert f"SCID_FIGURE_OCR_MODEL_PATH={tmp_path / 'eng.traineddata'}" in output
+    assert f"SCID_FIGURE_OCR_MODEL_SHA256={'a' * 64}" in output
     assert str(project_root / "deploy/install.sh") in output
     assert output[-1] == "install"
 
@@ -1492,6 +1649,7 @@ def test_git_release_builder_emits_clean_manifested_source(tmp_path: Path) -> No
         "OPERATION_SPEC_MINIMAL_REFACTOR_PLAN.zh-CN.md",
         "R5_H_MINIMAL_CLOSURE_IMPLEMENTATION.zh-CN.md",
         "R5_S_PRODUCTION_CODE_SIMPLIFICATION_PLAN.zh-CN.md",
+        "R5_E5_4_GENERIC_AUTOMATIC_FIGURE_EXTRACTION_AND_CASE_PLUGIN_REMOVAL_PLAN.zh-CN.md",
     }
     assert {
         path.name for path in (output / "docs/plans").glob("*.md")
@@ -1499,7 +1657,12 @@ def test_git_release_builder_emits_clean_manifested_source(tmp_path: Path) -> No
     assert {
         path.name for path in (output / "docs/plans/reviews").glob("*.md")
     } == {
-        "R5_S1_PRODUCTION_BOUNDARY_INDEPENDENT_REVIEW.zh-CN.md"
+        "R5_S1_PRODUCTION_BOUNDARY_INDEPENDENT_REVIEW.zh-CN.md",
+        "R5_E5_4_GENERIC_AUTOMATIC_FIGURE_EXTRACTION_AND_CASE_PLUGIN_REMOVAL_PLAN_GPT6_REVIEW.zh-CN.md",
+        "R5_E5_4_P0_G0_GPT6_REVIEW.zh-CN.md",
+        "R5_E5_4_P1_G1_GPT6_REVIEW.zh-CN.md",
+        "R5_E5_4_P2_G2_GPT6_REVIEW.zh-CN.md",
+        "R5_E5_4_P3_G3_GPT6_REVIEW.zh-CN.md",
     }
     assert (
         output

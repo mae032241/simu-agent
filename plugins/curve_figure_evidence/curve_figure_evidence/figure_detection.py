@@ -12,6 +12,7 @@ import io
 import itertools
 import json
 import math
+import os
 import re
 import shutil
 import subprocess
@@ -487,16 +488,18 @@ def detect_raster(content: bytes, tokens: tuple[OCRToken,...]) -> RasterDetectio
 
 
 def _ocr(content: bytes) -> tuple[tuple[OCRToken,...], tuple[str,...], str]:
-    executable = shutil.which("tesseract")
+    from .figure_dependencies import RUNTIME_CONTRACT, ocr_command, verify_ocr
+    executable = RUNTIME_CONTRACT["executables"].get("tesseract") or shutil.which("tesseract")
     if executable is None:
         return (), ("ocr_dependency_unavailable:tesseract",), "tesseract unavailable"
-    # No download, service, caller flags, language/model selection or environment mutation.
+    version = verify_ocr(RUNTIME_CONTRACT)
+    # The installed, compiled contract fixes the executable and model; no caller flags.
     with tempfile.TemporaryDirectory(prefix="scid-ocr-") as directory:
         path = Path(directory)/"image.png"
         path.write_bytes(content)
         try:
-            version = subprocess.run([executable,"--version"],capture_output=True,check=True,timeout=15).stdout.decode().splitlines()[0]
-            result = subprocess.run([executable,str(path),"stdout","--psm","11","tsv"],capture_output=True,check=True,timeout=60)
+            result = subprocess.run(ocr_command(RUNTIME_CONTRACT, path),capture_output=True,check=True,timeout=60,
+                env={**os.environ, "OMP_NUM_THREADS": "1", "OMP_THREAD_LIMIT": "1"})
         except (OSError,subprocess.SubprocessError) as error:
             raise RuntimeError("OCR executable failed") from error
     tokens = []

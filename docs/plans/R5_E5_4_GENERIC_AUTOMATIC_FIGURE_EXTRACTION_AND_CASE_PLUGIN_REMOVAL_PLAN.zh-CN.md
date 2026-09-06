@@ -1,6 +1,6 @@
 # R5 E5.4：通用自动图证据与生产案例插件删除计划
 
-日期：2026-09-06。状态：修订计划已获[独立 GPT-6 复审 PASS](reviews/R5_E5_4_GENERIC_AUTOMATIC_FIGURE_EXTRACTION_AND_CASE_PLUGIN_REMOVAL_PLAN_GPT6_REVIEW.zh-CN.md#6-修订计划复审最终-pass)；P0/G0 已完成；P1/G1 通用归属迁移与案例插件删除已完成；[P2 底层自动候选](evidence/R5_E5_4_P2_AUTOMATIC_DETECTION.zh-CN.md)已完成，并获[G2 独立 GPT-6 复审 PASS](reviews/R5_E5_4_P2_G2_GPT6_REVIEW.zh-CN.md#有界返工复审)，首轮 FAIL 历史保留。[P3 现有角色链接入](evidence/R5_E5_4_P3_ROLE_CHAIN_INTEGRATION.zh-CN.md)首轮聚焦 176 passed 后获[G3 首轮 FAIL](reviews/R5_E5_4_P3_G3_GPT6_REVIEW.zh-CN.md)；G3-1/2/3 有界返工完成并经[G3 独立复审 PASS](reviews/R5_E5_4_P3_G3_GPT6_REVIEW.zh-CN.md#有界返工复审)，聚焦 181 passed，首轮 FAIL 历史保留。真实轴因缺 OCR 未决，不能称真实定量提取成功。P4–P6 尚未实施，未通过真实验收，不产生科学结果，不授权历史证据晋级。
+日期：2026-09-06。状态：修订计划已获[独立 GPT-6 复审 PASS](reviews/R5_E5_4_GENERIC_AUTOMATIC_FIGURE_EXTRACTION_AND_CASE_PLUGIN_REMOVAL_PLAN_GPT6_REVIEW.zh-CN.md#6-修订计划复审最终-pass)；P0/G0 已完成；P1/G1 通用归属迁移与案例插件删除已完成；[P2 底层自动候选](evidence/R5_E5_4_P2_AUTOMATIC_DETECTION.zh-CN.md)已完成，并获[G2 独立 GPT-6 复审 PASS](reviews/R5_E5_4_P2_G2_GPT6_REVIEW.zh-CN.md#有界返工复审)，首轮 FAIL 历史保留。[P3 现有角色链接入](evidence/R5_E5_4_P3_ROLE_CHAIN_INTEGRATION.zh-CN.md)首轮聚焦 176 passed 后获[G3 首轮 FAIL](reviews/R5_E5_4_P3_G3_GPT6_REVIEW.zh-CN.md)；G3-1/2/3 有界返工完成并经[G3 独立复审 PASS](reviews/R5_E5_4_P3_G3_GPT6_REVIEW.zh-CN.md#有界返工复审)，聚焦 181 passed，首轮 FAIL 历史保留。[P4 干净发行与离线依赖预检](evidence/R5_E5_4_P4_CLEAN_RELEASE_AND_DEPENDENCY_PREFLIGHT.zh-CN.md)工程复审 PASS：PATH 缺陷关闭，部署聚焦 56 passed，首轮完整两目录 549 passed、9 项既有失败，真实 Tesseract／模型／PDF 预检 PASS。首轮 G4 按本文过度强隔离条款仍判 FAIL；现将验收口径恢复为架构总章已冻结的可信本地软隔离，不伪称宿主文件技术上不可读；该最小计划更正已获独立复审 PASS，修正后的 G4 部署前置门 PASS。P5–P6 尚未实施，未通过真实验收，不产生科学结果，不授权历史证据晋级。
 
 本轮以最小改动优先，只关闭既定方案不能编译、不能表示结果、不能安装或不能可信验收的缺口。禁止改调度器、Run 生命周期、资格／审批机制或编译器，禁止新增中央字段、Operation、Agent、插件、注册表、状态机，禁止重写 curve_score/tcad_artifact 或扩展图型范围。下文领域 guard 的调整只实现现有入口对新结果形状的拒绝／接纳，不更改资格机制。
 
@@ -8,7 +8,7 @@
 |---|---|
 | B1：迁移函数、删除 normalizer 直接依赖、纯 curve smoke | 否则未安装 figure 时 curve 不能导入；只切出既有 figure 函数，不改通用评分 |
 | B2：三种结果 schema、附件基数、领域 validator／修订 guard 与零表拒绝测试 | 否则未决结果不能表示或修订；使用现有完整族和生命周期，不新增中央表示 |
-| B3／S2：独立精度与覆盖门、两个验收负例、实际读失败探针及证据措辞 | 否则扩大误差、缩小范围或可读答案可伪装验收成功；只修改测试验收，不进入科学算法参数或控制协议 |
+| B3／S2：独立精度与覆盖门、两个验收负例、软隔离输入／访问审计及证据措辞 | 否则扩大误差、缩小范围或隐式提供答案可伪装验收成功；只修改测试验收，不进入科学算法参数或控制协议 |
 | B4：合法资源边、摘要编译测试、离线供应与安装依赖负测 | 否则资源编译拒绝或安装后不可执行；只用现有组件边与安装预检，不修改编译器 |
 
 S1 的 P0a 最小真实图探针作为风险建议记录：来源恢复、三刻度轴解和一条无 seed 路径可从既定 P2 验证前置，失败停止迁移，但本轮不新增强制阶段、提交或审查门，不改生产 Operation。红测试提交策略只是澄清已有阶段须保持可检验，不新增实现范围。S3 删除文件数事前审批，由已有 diff 审查覆盖内部拆分。
@@ -136,7 +136,7 @@ P0 进度（2026-09-06）：[合同冻结与编译证据](evidence/R5_E5_4_P0_CO
 | P1 通用归属与生产案例删除 | 第 2 节全部生产删除和关联安装测试；第 3.3 节 figure 模块迁移；figure／curve pyproject、plugin.py、现有 imports；切出 figure transforms 及 `curve_score.transform_adapter::bundle_figure_evidence_outputs` 到 figure 包 `operation_transforms.py`，移除 normalizer 直接依赖／export | 构建目录与各组合可编译；未安装 figure wheel 的 curve 导入／评分 smoke 通过；旧案例入口不存在。G1 审查单一实现与依赖无环；不部署 |
 | P2 检测与测量合同 | figure 包 `figure_detection.py`、`figure_source.py`、`figure_digitization_contract.py`、`figure_line_tracker.py`；新增 `tests/operations/test_figure_automatic_detection.py` | 从原始像素自动产生可重放候选、轴解、路径与未决；黑线／文字／共享／方向反例通过。G2 审查算法有效性和无案例数字，不能以 synthetic-only 完成最终验收 |
 | P3 接入现有角色链 | figure 包 `figure_worker_tool.py`、`figure_science_operations.py`、`operation_transforms.py`、`figure_digitization.py`、`figure_evidence.py`（三形状 schema）、`figure_evidence_validation.py`、`figure_evidence_normalizer.py`；`test_curve_figure_digitization_tool.py`、`test_m5_figure_review_closure.py`、`test_figure_local_observations.py` | Agent 禁几何；materialize 重放；两种零表的初稿／audit／一次修订通过，normalization 领域拒绝；丢应有附件、混族、旧 digest 拒绝。G3 审查完整路径，不改中央生命周期 |
-| P4 干净发行与部署预检 | `deploy/install.sh` 离线依赖预检、`scripts/build_git_release.py`、`tests/operations/conftest.py`、`test_catalog_installed_entrypoint.py`、`tests/artifact_agent/test_deploy_scripts.py`；双语安装说明中的前置依赖供应 | 串行完整目录／干净 wheel、服务 Python/PATH/模型验证及缺依赖负测通过；实际读取负探针支持不可读声明；G4 审查安装矩阵及 digest 合同后才允许切换 |
+| P4 干净发行与部署预检 | `deploy/install.sh` 离线依赖预检、`scripts/build_git_release.py`、`tests/operations/conftest.py`、`test_catalog_installed_entrypoint.py`、`tests/artifact_agent/test_deploy_scripts.py`；双语安装说明中的前置依赖供应 | 串行完整目录／干净 wheel、服务 Python/PATH/模型验证及缺依赖负测通过；发行、显式输入、提示与工具清单不携带案例答案；G4 审查安装矩阵及 digest 合同后才允许切换 |
 | P5 真实安装／真实 PDF／真实 spawn | 新增 `docs/plans/evidence/R5_E5_4_LIVE_ACCEPTANCE.zh-CN.md` 和独立 `docs/plans/reviews/R5_E5_4_LIVE_GPT6_REVIEW.zh-CN.md`（实施时创建） | 两张真实图、真实 Agent 完整族与独立 audit；记录 sealed 结果和未决区域，不手写结果。G5 审查干净运行无预填几何和答案泄漏；未 PASS 不宣称 E5.4 关闭 |
 | P6 结案文档 | 受影响 README、INSTALL、deploy 双语；活动缺陷账本、计划索引和本文状态；不重写历史 evidence | G6 对精确最终差异及资格边界复审，明确能力、限制、版本和回滚。只有全部门通过才能关闭 |
 
@@ -163,15 +163,15 @@ P0 进度（2026-09-06）：[合同冻结与编译证据](evidence/R5_E5_4_P0_CO
 
 ### 6.3 干净 wheel 反作弊
 
-从精确提交构建 release，再构建 core、curve_score、curve_figure_evidence、tcad_artifact wheels；新 venv、仓外空 cwd、清空 PYTHONPATH，不 editable 安装。核对模块 `__file__` 全在安装前缀，entry_points 只有声明组合。运行期间 checkout、案例 workspace、旧 geometry、历史 CSV、目标指标文件对该进程不可读；仅绑定原始 PDF／问题 Artifact。记录允许路径和文件访问审计，拒绝从系统用户技能目录加载人工几何脚本。
+从精确提交构建 release，再构建 core、curve_score、curve_figure_evidence、tcad_artifact wheels；新 venv、仓外空 cwd、清空 PYTHONPATH，不 editable 安装。核对模块 `__file__` 全在安装前缀，entry_points 只有声明组合。静态核验生产代码与包内运行资源、默认配置、Worker 显式输入、提示、Schema 与工具清单均不携带案例 workspace、旧 geometry、历史 CSV、目标指标文件或可作为答案发现入口的路径；只绑定原始 PDF／问题 Artifact，不绑定系统用户技能目录中的人工几何技能。发行中保留的历史计划／审计文档可包含追溯定位符，但它们不是包内运行资源，运行端不得将其用作发现或提示入口。
 
-“不可读”必须由 P4 在实际服务／Worker 运行身份及其子进程环境执行文件打开负探针证明，覆盖 checkout、旧 workspace、用户技能与答案目录；通过现成运行身份／环境隔离实现，不新增 hardened backend 或权限协议。Local 后端、仓外 cwd、清空 PYTHONPATH 和访问日志均不单独构成隔离。若负探针未证明读失败，只能记录“未观察到读取”，不能声称“不可读取”或通过强反作弊门；停止该验收门，保留已完成的其他证据。
+本阶段沿用架构总章已冻结的 Local 可信本地软隔离：上述宿主文件可能因同一操作系统用户而技术上可读，所以验收只可声明“未向 Worker 提供且未观察到访问”，不得声称强隔离。`SEC-002` 继续保持 `known_issue`；不为 E5.4 新增 hardened backend、权限协议、逐文件读取收据或阻断部署的“不可读”门。如实记录读取探针的可读结果，用于证明未伪称安全边界。
 
 静态检查生产发行包不存在 `ingaas_fig4` 包、Fig.4 geometry、固定 source hash、标签映射、旧 scorer；动态检查单一 installed catalog、真实 Worker schema 和实际工具集合一致。改变 PDF 元数据／重新渲染或缩放同一图后应重新计算候选，来源身份正确变化且科学测量在估计误差内，不得依赖源 hash 查答案。CSV 的每行能追溯到实际图像支持。
 
 ### 6.4 第二张盲测图
 
-在算法提交和通用阈值冻结后，由独立 GPT-6 审查者选择另一论文的真实二维图，材料、配色／轴比例／版式至少两项不同；交给运行端的只有 PDF 和科学选择问题。两张真实图各自在看运行输出前，由独立测试端封存目标系列、应覆盖的可见范围、检查点取样与比较方法、有限允许误差、允许不确定性宽度上限、每系列最低 eligible coverage 和最大可接受缺口、未决计分规则。数值按图分辨率及科学问题预注册，不能只引用被测算法自报误差范围；科学目标系列可在问题表达，离线几何／阈值／真值不可进入 detector、Agent、可读目录或生产配置。
+在算法提交和通用阈值冻结后，由独立 GPT-6 审查者选择另一论文的真实二维图，材料、配色／轴比例／版式至少两项不同；交给运行端的只有 PDF 和科学选择问题。两张真实图各自在看运行输出前，由独立测试端封存目标系列、应覆盖的可见范围、检查点取样与比较方法、有限允许误差、允许不确定性宽度上限、每系列最低 eligible coverage 和最大可接受缺口、未决计分规则。数值按图分辨率及科学问题预注册，不能只引用被测算法自报误差范围；科学目标系列可在问题表达，离线几何／阈值／真值不可进入 detector、Agent、运行端提供／物化的目录或生产配置。
 
 每个预定目标系列均须达到封存覆盖门；未决、拒绝及遗漏部分计入未覆盖，不得从分母删除。真实预先确认的不可见区间可按封存规则排除，不能运行后改范围。数值误差同时满足独立有限误差门和可信不确定性包络，包络宽度不得超过预设上限。审查忠实 pass 不抵消覆盖或精度失败。加入两个验收器负例：扩大输出不确定性包络令其包住真值仍被上限拒绝；只保留容易局部、把其余目标标未决仍因覆盖不足失败。两图均满足独立门才能称真实自动提取成功。
 
@@ -201,13 +201,13 @@ P4 先运行通用 wrapper `--dry-run`，检查系统依赖、渲染服务和路
 
 验收必须由真实交互父调度器执行，先 `instance_current`，仅在用户明确继续的实例或管理 UI 新建／选定实例中导入不可变原始 PDF 与问题。不能恢复共享默认实例，也不能从聊天代写批准。
 
-1. 冻结真实安装版本、两张真实 PDF、输入 Artifact、实际读取负探针及第 6.4 节各图独立验收门；确认无旧 geometry、预提取 CSV、scorer_project 或历史目标答案作为输入。科学图名可在问题中声明，数值几何不可以。
+1. 冻结真实安装版本、两张真实 PDF、输入 Artifact、软隔离输入／访问审计及第 6.4 节各图独立验收门；确认无旧 geometry、预提取 CSV、scorer_project 或历史目标答案作为输入。科学图名可在问题中声明，数值几何不可以。
 2. 从 startup compiled catalog 选择 request public Operation，绑定 exact inputs，preflight 成功后以相同请求 invoke。严格使用控制返回的 agent_type，真实 `spawn_agent`、`fork_turns="none"`，只要求完成队列 assignment，不传运行元数据或答案。
 3. Worker 打开 assignment，调用通用 inspect，实际查看候选叠图，输出 candidate ID 与语义绑定，走文件 begin/chunk/commit 或 apply_patch 及 `worker_submit_result`。不接受固定 responder、模拟 completion 或预写 envelope。
 4. 父调度器在 `run_status` 为 completed 后读取 sealed output 与 scheduler_signal；孩子聊天只作为返回通知。调用现有 materialize support，核对它在无先前 Worker 工具目录时可重放并生成完整族。
 5. 以完整族分别真实 spawn 既有 figure Intake Agent 和独立 figure audit Agent；不传父历史，依同一文件生命周期提交。检查包含黑线、彩线、共享和局部缺失的真实观察及明确限制，不用 audit pass 替代数值支持判断。
 6. 新证据若要进入通用 curve normalization／qualification，走现有 review edge、完整父链和现行资格合同。需要人类决定或外部执行时只给控制返回的 exact loopback URL，并只读 approval_status；本图提取验收不额外启动 TCAD 求解。
-7. 复查实际读取负探针、访问日志、Worker assignment、schema、工具调用参数、sealed intent 与 materialize provenance；证据仅为日志时只报告“未观察读取”。确认无人工 geometry 输入，并按第 6.4 节独立精度／不确定性／覆盖门计分；在仓外独立路径重放。第二图同样跑完整真实链，不以单元图代替。
+7. 复查 Worker 显式输入、可用访问日志、assignment、schema、工具调用参数、sealed intent 与 materialize provenance；只能据实报告“未提供且未观察到读取”，并同时保留 `SEC-002`。确认无人工 geometry 输入，并按第 6.4 节独立精度／不确定性／覆盖门计分；在仓外独立路径重放。第二图同样跑完整真实链，不以单元图代替。
 
 报告区分工程执行完成、候选身份可信、数值提取有效、科学审查忠实、下游资格获得；逐项附精确 Artifact/版本证据。失败／超时必须记录，重试创建新 Run，不续接隐藏模型会话。没有真实 spawn 或第二图时，结论只能是“集成未完成”，不能标 E5.4 PASS。
 

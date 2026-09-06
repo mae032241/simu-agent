@@ -24,17 +24,16 @@ from .figure_source import AUTOMATIC_SOURCE_POLICY
 from .figure_detection import (DETECTOR_VERSION, POLICY, SourceDetection, detect_source,
     MAX_TOKENS, MAX_AXIS_COMBINATIONS, MAX_LINE_SEGMENTS)
 from PIL import __version__ as PILLOW_VERSION
+from .figure_dependencies import RUNTIME_CONTRACT, command_path, verify_ocr
 
 
-# P4 supplies the actual OCR executable/model identity. No guessed model digest.
+# The installed dependency record is serialized through the existing resource edge.
 DETECTOR_CONTRACT = json.dumps({
     "detector_version": DETECTOR_VERSION, "policy": POLICY,
     "source_policy": AUTOMATIC_SOURCE_POLICY,
     "limits": {"ocr_tokens": MAX_TOKENS, "axis_combinations": MAX_AXIS_COMBINATIONS,
                "line_segments": MAX_LINE_SEGMENTS},
-    "pillow_version": "12.1.1", "poppler_version": "22.02.0",
-    "ocr": {"adapter": "tesseract --psm 11 tsv", "version": None,
-            "model_sha256": None, "supply_status": "awaiting_P4"},
+    **RUNTIME_CONTRACT,
 }, sort_keys=True, separators=(",", ":")).encode()
 
 
@@ -45,12 +44,12 @@ def replay_detection(content: bytes) -> SourceDetection:
         raise RuntimeError("Pillow version differs from detector contract")
     if content.startswith(b"%PDF-"):
         for command in ("pdfinfo", "pdfimages", "pdftoppm"):
-            result = subprocess.run([command, "-v"], capture_output=True, check=True, timeout=15)
+            result = subprocess.run([command_path(command), "-v"], capture_output=True, check=True, timeout=15)
             first_line = (result.stdout + result.stderr).decode().splitlines()[0].split()
             if len(first_line) < 3 or first_line[2] != contract["poppler_version"]:
                 raise RuntimeError("Poppler version differs from detector contract")
-    if shutil.which("tesseract") is not None:
-        raise RuntimeError("OCR model identity has not been supplied and verified by P4")
+    if contract["ocr"]["supply_status"] == "verified" or shutil.which("tesseract") is not None:
+        verify_ocr(contract)
     return detect_source(content)
 
 

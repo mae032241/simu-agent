@@ -127,6 +127,48 @@ assert {plugin.plugin_id for plugin in plugins} == {
 ''')
 
 
+def test_installed_supply_bytes_change_only_existing_figure_resource_consumers(installed_probe) -> None:
+    installed_probe("all_domains", r'''
+import hashlib
+import importlib
+import json
+from pathlib import Path
+import sys
+from curve_figure_evidence import figure_dependencies as dependencies
+from curve_figure_evidence import figure_digitization_contract as detector
+from scidiscovery.operations.catalog import compile_installed_catalog
+
+assert dependencies.RUNTIME_CONTRACT["ocr"]["supply_status"] == "unavailable"
+assert Path(dependencies.__file__).is_relative_to(Path(sys.prefix))
+model = Path.cwd() / "eng.traineddata"
+contract = json.loads(json.dumps(dependencies.UNSUPPLIED_CONTRACT))
+contract["executables"] = {name: "/offline/bin/" + name for name in (*dependencies.PDF_COMMANDS, "tesseract")}
+contract["ocr"].update(version="5.3.0", model_path=str(model), supply_status="verified")
+catalogs = [compile_installed_catalog()]
+try:
+    for content in (b"synthetic model A", b"synthetic model B"):
+        model.write_bytes(content)
+        contract["ocr"]["model_sha256"] = hashlib.sha256(model.read_bytes()).hexdigest()
+        dependencies.CONTRACT_PATH.write_text(json.dumps(contract))
+        importlib.reload(dependencies)
+        importlib.reload(detector)
+        compile_installed_catalog.cache_clear()  # Model a new service startup.
+        catalog = compile_installed_catalog()
+        catalogs.append(catalog)
+        assert len(catalog.operation_ids()) == 48
+        for operation_id in ("science.figure.request.prepare.v1", "science.figure.evidence.materialize.v1"):
+            resource = json.loads(catalog.operation(operation_id).implementations["curve_figure_evidence:detector_contract"])
+            assert resource["ocr"] == contract["ocr"]
+            assert resource["executables"] == contract["executables"]
+    for before, after in zip(catalogs, catalogs[1:]):
+        changed = {key for key in before.operation_ids() if before.operation(key).digest != after.operation(key).digest}
+        assert changed == {"science.figure.request.prepare.v1", "science.figure.evidence.materialize.v1"}, changed
+finally:
+    dependencies.CONTRACT_PATH.unlink(missing_ok=True)
+    model.unlink(missing_ok=True)
+''')
+
+
 @pytest.mark.parametrize("environment", ("full", "figure"))
 def test_installed_agent_input_and_checker_contracts_align(installed_probe, environment) -> None:
     output = installed_probe(environment, r'''

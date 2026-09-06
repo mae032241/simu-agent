@@ -186,8 +186,14 @@ def test_ocr_missing_and_environment_failure_are_distinct(monkeypatch):
 
 
 def test_ocr_cli_adapter_is_structured_and_restricted(monkeypatch):
+    from curve_figure_evidence import figure_dependencies
     content,_ = drawing()
     monkeypatch.setattr(figure_detection.shutil,"which",lambda _:"/synthetic/tesseract")
+    monkeypatch.setattr(figure_dependencies, "RUNTIME_CONTRACT", {
+        "executables": {"tesseract": "/synthetic/tesseract"},
+        "ocr": {"model_path": "/synthetic/model/eng.traineddata"},
+    })
+    monkeypatch.setattr(figure_dependencies, "verify_ocr", lambda _: "synthetic tesseract version")
     calls=[]
     def run(argv, **kwargs):
         calls.append(argv)
@@ -197,7 +203,7 @@ def test_ocr_cli_adapter_is_structured_and_restricted(monkeypatch):
     tokens,reasons,version = figure_detection._ocr(content)
     assert tokens == (OCRToken("-5", (10.,20.,18.,32.), "synthetic tesseract version"),)
     assert not reasons
-    assert calls[-1][-4:] == ["stdout", "--psm", "11", "tsv"]
+    assert calls[-1][-8:] == ["--tessdata-dir", "/synthetic/model", "-l", "eng", "--psm", "11", "-c", "tessedit_create_tsv=1"]
 
 
 def test_unrecoverable_input_and_generic_byte_budget():

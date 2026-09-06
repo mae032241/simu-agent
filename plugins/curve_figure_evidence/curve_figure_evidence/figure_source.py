@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from PIL import Image, __version__ as PILLOW_VERSION
+from .figure_dependencies import command_path
 
 
 MAX_IMAGE_PIXELS = 25_000_000
@@ -59,6 +60,7 @@ class AutomaticRecovery:
 
 def _automatic_run(command: list[str]) -> subprocess.CompletedProcess[bytes]:
     """Environment/process failures are errors, never scientific no-figure results."""
+    command = [command_path(command[0]), *command[1:]]
     try:
         result = subprocess.run(command, capture_output=True, timeout=60, check=False)
     except (OSError, subprocess.TimeoutExpired) as error:
@@ -257,6 +259,7 @@ def _canonical_raster(path: Path) -> tuple[bytes, int, int]:
 
 
 def _run(command: list[str], *, timeout_seconds: int) -> subprocess.CompletedProcess[bytes]:
+    command = [command_path(command[0]), *command[1:]]
     try:
         completed = subprocess.run(
             command,

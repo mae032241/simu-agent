@@ -50,17 +50,47 @@ SCID_WORKSPACE="$PWD/workspace/<project-name>" \
 `tcad_artifact,curve_score` 等插件，通过 `SCID_TCAD_COMMAND_CONFIG` 选择外部适配器。
 `install` 和 `reinstall` 使用同一个事务化流程；无参数等价于 `install`。
 
-对于仓库附带的 InGaAs/Fig.4 配置，专用 profile 脚本只补充 workspace、
-`curve_figure_evidence`、`ingaas_fig4` 插件和 command-adapter 默认值，然后委托通用入口：
+自动图提取使用三个通用领域插件。离线供应 Pillow **12.1.1**、Poppler
+**22.02.0**（`pdfinfo`、`pdfimages`、`pdftoppm`）、Tesseract，以及已有且可读的
+`eng.traineddata`。Tesseract 的精确可执行版本和模型经核验的 SHA-256 是显式安装
+输入，不猜测工具版本或模型摘要。以下两个占位符必须替换为离线供应核验所得值：
 
 ```bash
-deploy/apply_ingaas_fig4_profile.sh --dry-run
-deploy/apply_ingaas_fig4_profile.sh reinstall
-deploy/apply_ingaas_fig4_profile.sh status
+export SCID_PYTHON=/absolute/path/to/service/python
+"$SCID_PYTHON" -m pip install --no-index --find-links /srv/scid-offline/wheels 'Pillow==12.1.1'
+export SCID_PLUGINS=tcad_artifact,curve_score,curve_figure_evidence
+export SCID_PLATFORM=codex SCID_WORKER_BACKEND=local
+export SCID_WORKSPACE=/srv/scid-project
+export SCID_CODEX_LAUNCH_ROOT=/srv/scid-codex
+export SCID_SERVICE_USER="$(id -un)" SCID_SERVICE_GROUP="$(id -gn)"
+export SCID_FIGURE_TESSERACT_VERSION='<供应的精确版本>'
+export SCID_FIGURE_OCR_MODEL_PATH=/srv/scid-offline/tessdata/eng.traineddata
+export SCID_FIGURE_OCR_MODEL_SHA256='<核验过的64位SHA-256>'
+deploy/reinstall.sh --dry-run
+# 安装与审查门通过后才执行：
+deploy/reinstall.sh reinstall
 ```
 
-两个入口都应以普通服务用户运行，并由通用入口自行调用 `sudo`。后续通用安装行为
-只维护 `reinstall.sh`；论文/项目专用差异只维护对应 profile 脚本和插件。
+workspace 与启动目录须已有且独立于 checkout。通用 wrapper 由服务用户运行，
+负责将三个供应变量显式转发给 `sudo`。安装器在创建安装事务前，以真实服务身份
+和 systemd 有效默认 PATH 执行 Python import、版本调用、PDF 恢复／渲染及 OCR；
+操作者 shell 的 PATH 不充当服务依赖检查。
+
+核验结果只写入暂存安装包的
+`site/curve_figure_evidence/figure_dependencies.json`，切换前和安装后再用服务
+Python 复验。现有 detector 资源将该记录纳入 request/materialize Operation
+digest，激活时将安装前缀设为只读；独立的 Python runtime identity 检查并不哈希
+应用文件。运行时使用记录中的绝对可执行文件／模型
+路径，复核实际版本和模型字节；修改环境变量不会改变已装合同，更换模型须重新安装。
+不复制或下载模型。未供应该记录的普通 wheel 可以编译，但明确不能进行已核验 OCR，
+不能通过 figure 安装预检。
+
+当前可信 Local 后端采用软隔离，不是操作系统沙箱。生产包、运行资源、默认配置和
+Worker 显式上下文不得携带案例几何、历史答案或可作为答案发现入口的路径。历史审计文档
+可保留定位符，但运行端不得消费它们。宿主读取探针若显示可读，必须如实记录，只能声明这些文件
+未向 Worker 提供或未观察到被使用；`SEC-002` 继续保持已知问题。获准切换前检查旧合同
+queued/running Run，不承诺跨 digest 恢复。自动 Operation 不绑定人工
+`scientific-paper-evidence` 技能。
 
 ## 2. 获取源码
 
@@ -297,7 +327,10 @@ Sentaurus 许可证或任何科学模型已经通过。
 | `SCID_SERVICE_GROUP` | 服务用户主组 | socket 和文件组 |
 | `SCID_PLATFORM` | `codex` | Codex 平台选择器；其他值会被拒绝 |
 | `SCID_WORKER_BACKEND` | `local` | `local` 为可信本地原生工具路径；`hardened` 为纯 MCP 文件后端，值同时驱动 daemon、systemd、Codex profile 和安装验证 |
-| `SCID_PLUGINS` | 空 | 逗号分隔的本地插件目录名；例如 `tcad_artifact,curve_score,ingaas_fig4` |
+| `SCID_PLUGINS` | 空 | 逗号分隔的本地插件目录名；例如 `tcad_artifact,curve_score,curve_figure_evidence` |
+| `SCID_FIGURE_TESSERACT_VERSION` | 未设置 | 选择 figure 时必需：离线可执行文件的精确版本 |
+| `SCID_FIGURE_OCR_MODEL_PATH` | 未设置 | 必需：已有且服务可读的绝对 `eng.traineddata` 路径 |
+| `SCID_FIGURE_OCR_MODEL_SHA256` | 未设置 | 必需：供应模型经核验的 SHA-256；冻结到已装 detector 资源 |
 | `SCID_INSTALL_ROOT` | `/opt/scidiscovery` | 应用安装目录 |
 | `SCID_STATE_ROOT` | `/var/lib/scidiscovery` | 控制面状态 |
 | `SCID_CONFIG_ROOT` | `/etc/scidiscovery` | 密钥和策略 |

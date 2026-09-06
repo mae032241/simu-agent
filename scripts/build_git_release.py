@@ -64,6 +64,17 @@ DOCUMENTS = (
     "docs/plans/R5_H_MINIMAL_CLOSURE_IMPLEMENTATION.zh-CN.md",
     "docs/plans/R5_S_PRODUCTION_CODE_SIMPLIFICATION_PLAN.zh-CN.md",
     "docs/plans/reviews/R5_S1_PRODUCTION_BOUNDARY_INDEPENDENT_REVIEW.zh-CN.md",
+    "docs/plans/R5_E5_4_GENERIC_AUTOMATIC_FIGURE_EXTRACTION_AND_CASE_PLUGIN_REMOVAL_PLAN.zh-CN.md",
+    "docs/plans/evidence/R5_E5_4_P0_CONTRACT_FREEZE.zh-CN.md",
+    "docs/plans/evidence/R5_E5_4_P1_PLUGIN_OWNERSHIP_AND_CASE_REMOVAL.zh-CN.md",
+    "docs/plans/evidence/R5_E5_4_P2_AUTOMATIC_DETECTION.zh-CN.md",
+    "docs/plans/evidence/R5_E5_4_P3_ROLE_CHAIN_INTEGRATION.zh-CN.md",
+    "docs/plans/evidence/R5_E5_4_P4_CLEAN_RELEASE_AND_DEPENDENCY_PREFLIGHT.zh-CN.md",
+    "docs/plans/reviews/R5_E5_4_GENERIC_AUTOMATIC_FIGURE_EXTRACTION_AND_CASE_PLUGIN_REMOVAL_PLAN_GPT6_REVIEW.zh-CN.md",
+    "docs/plans/reviews/R5_E5_4_P0_G0_GPT6_REVIEW.zh-CN.md",
+    "docs/plans/reviews/R5_E5_4_P1_G1_GPT6_REVIEW.zh-CN.md",
+    "docs/plans/reviews/R5_E5_4_P2_G2_GPT6_REVIEW.zh-CN.md",
+    "docs/plans/reviews/R5_E5_4_P3_G3_GPT6_REVIEW.zh-CN.md",
 )
 
 TOOLS = (

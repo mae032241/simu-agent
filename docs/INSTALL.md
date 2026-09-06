@@ -55,19 +55,57 @@ SCID_WORKSPACE="$PWD/workspace/<project-name>" \
 `SCID_TCAD_COMMAND_CONFIG`. `install` and `reinstall` use the same
 transactional flow; no argument is equivalent to `install`.
 
-For the bundled InGaAs/Fig.4 configuration, the project profile supplies only
-the workspace, `curve_figure_evidence` and `ingaas_fig4` plugins, and command-adapter defaults before it
-delegates to the generic entrypoint:
+Automatic figure extraction uses the three generic domain plugins. Supply
+Pillow **12.1.1**, Poppler **22.02.0** (`pdfinfo`, `pdfimages`, `pdftoppm`),
+Tesseract and an existing, readable `eng.traineddata` model offline. Tesseract's
+exact supplied executable version and the model's verified SHA-256 are explicit
+installation inputs; no executable or model version is guessed. Replace the two
+placeholders below with values verified against your offline supply:
 
 ```bash
-deploy/apply_ingaas_fig4_profile.sh --dry-run
-deploy/apply_ingaas_fig4_profile.sh reinstall
-deploy/apply_ingaas_fig4_profile.sh status
+export SCID_PYTHON=/absolute/path/to/service/python
+"$SCID_PYTHON" -m pip install --no-index --find-links /srv/scid-offline/wheels 'Pillow==12.1.1'
+export SCID_PLUGINS=tcad_artifact,curve_score,curve_figure_evidence
+export SCID_PLATFORM=codex SCID_WORKER_BACKEND=local
+export SCID_WORKSPACE=/srv/scid-project
+export SCID_CODEX_LAUNCH_ROOT=/srv/scid-codex
+export SCID_SERVICE_USER="$(id -un)" SCID_SERVICE_GROUP="$(id -gn)"
+export SCID_FIGURE_TESSERACT_VERSION='<exact supplied version>'
+export SCID_FIGURE_OCR_MODEL_PATH=/srv/scid-offline/tessdata/eng.traineddata
+export SCID_FIGURE_OCR_MODEL_SHA256='<verified 64-character SHA-256>'
+deploy/reinstall.sh --dry-run
+# After the installation/review gates have passed:
+deploy/reinstall.sh reinstall
 ```
 
-Run both entrypoints as the normal service user; the generic wrapper invokes
-`sudo`. Maintain common installation behavior only in `reinstall.sh`, and keep
-paper/project differences in their profile scripts and plugins.
+The workspace and launch directories must already exist and be separate from
+the checkout. Run the generic wrapper as the service user; it forwards these
+three supply variables through `sudo`. The installer executes real Python
+imports, version calls, PDF extraction/rendering and OCR under that service
+identity and systemd's effective default PATH before creating the installation
+transaction. The operator's shell PATH is not the dependency check.
+
+The verified binding is written once to
+`site/curve_figure_evidence/figure_dependencies.json` in the staged installation,
+then checked again with the selected service Python before switching and after
+installation. The existing detector resource includes these bytes in the
+request/materialize Operation digests. Activation makes the installation prefix
+read-only. The separate Python runtime identity check does not hash application files.
+Runtime uses the recorded absolute executable/model paths and rechecks model
+bytes and versions. Changing an environment variable does not change this
+installed contract: supply a new installation for a new model. The model itself
+is not copied or downloaded. An ordinary wheel without this supplied record can
+compile but is unavailable for verified OCR and cannot pass figure installation.
+
+The current trusted Local backend provides soft isolation, not an OS sandbox.
+The production package, runtime resources, default configuration and explicit
+Worker context must not include case geometry, historical answers or paths that
+act as answer-discovery inputs. Historical audit documents may retain locators,
+but the runtime must not consume them. Record readable host probes honestly and
+claim only that those files were not supplied or observed in use; `SEC-002`
+remains a known issue. Check for queued or running old-contract Runs before any
+approved switch; cross-digest recovery is not promised. The automatic Operation
+does not bind the manual `scientific-paper-evidence` skill.
 
 ## 2. Obtain the Source
 
@@ -319,7 +357,10 @@ scientific model or a Sentaurus license.
 | `SCID_SERVICE_GROUP` | primary group of service user | Socket/file group |
 | `SCID_PLATFORM` | `codex` | Codex platform selector; other values are rejected |
 | `SCID_WORKER_BACKEND` | `local` | `local` is the trusted native-tool path; `hardened` is the MCP-only file backend, and the value drives daemon, systemd, Codex profiles, and install verification together |
-| `SCID_PLUGINS` | empty | Comma-separated local plugin directory names, for example `tcad_artifact,curve_score,ingaas_fig4` |
+| `SCID_PLUGINS` | empty | Comma-separated local plugin directory names, for example `tcad_artifact,curve_score,curve_figure_evidence` |
+| `SCID_FIGURE_TESSERACT_VERSION` | unset | Required exact offline executable version when figure is selected |
+| `SCID_FIGURE_OCR_MODEL_PATH` | unset | Required existing absolute `eng.traineddata` path, readable by the service |
+| `SCID_FIGURE_OCR_MODEL_SHA256` | unset | Required verified SHA-256 of the supplied model; frozen into the installed detector resource |
 | `SCID_INSTALL_ROOT` | `/opt/scidiscovery` | Installed package root |
 | `SCID_STATE_ROOT` | `/var/lib/scidiscovery` | Control-plane state |
 | `SCID_CONFIG_ROOT` | `/etc/scidiscovery` | Secrets and policy |

@@ -34,7 +34,6 @@ SciDiscovery 是面向 Codex 的科学发现编排服务。它将科学推理、
 | `plugins/curve_score/` | 曲线契约、规范曲线、确定性校验、一致性评分与诊断 |
 | `plugins/curve_figure_evidence/` | 可选论文曲线图证据提取/审查入口；复用曲线插件的确定性算法 |
 | `skills/sentaurus-tcad-code/` | SProcess/SDevice 代码规范、精确版本用户手册 reference、有界检索与静态校验 |
-| `plugins/ingaas_fig4/` | 可选领域示例；通用控制面不依赖它 |
 | `deploy/` | Linux/WSL systemd 安装和远端 Runner 部署 |
 | `tests/` | 单元、故障注入、并发、平台、MCP 和闭环测试 |
 
@@ -127,7 +126,7 @@ Codex 的 MCP、角色和通用 scheduler 生成在框架根目录；项目 work
 python3 -m pip install -e '.[test]'
 python3 -m pip install -e plugins/tcad_artifact
 python3 -m pip install -e plugins/curve_score
-python3 -m pip install -e plugins/ingaas_fig4  # 可选示例
+python3 -m pip install -e plugins/curve_figure_evidence  # 可选自动图提取；离线依赖见安装教程
 pytest -q
 ```
 
