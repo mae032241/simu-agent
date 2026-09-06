@@ -18,12 +18,14 @@ MAX_IMAGE_PIXELS = 25_000_000
 MAX_PDF_IMAGES_PER_PAGE = 32
 
 # Automatic source contract. Callers cannot override these budgets.
+AUTOMATIC_MAX_PAGES = 8
 AUTOMATIC_MAX_TOTAL_PIXELS = 24_000_000
 AUTOMATIC_MAX_SIDE = 1600
 AUTOMATIC_DPI = 120
 AUTOMATIC_MAX_SOURCE_BYTES = 64_000_000
 AUTOMATIC_SOURCE_POLICY = (
-    "automatic-source-v3", "pages=all_until_total_pixel_budget", "total_pixels=24000000",
+    "automatic-source-v3", "default_pages=8", "reference_page=agent_selected_or_unresolved",
+    "total_pixels=24000000",
     "canonical_max_side=1600", "requested_render_dpi=120", "source_bytes=64000000",
     "per_image_pixels=25000000", "embedded_per_page=32", "command_timeout_seconds=60",
 )
@@ -93,19 +95,43 @@ def _automatic_image(content: bytes, *, kind: str, page: int | None,
                               media_box, crop_box)
 
 
+_DEFAULT_PAGES = object()
+
+
 def recover_automatic_source(content: bytes) -> AutomaticRecovery:
-    """Sequential bounded recovery from a raw document, without page/object hints."""
+    """Legacy bounded recovery without a semantic page reference."""
+    return _recover_automatic_source(content, _DEFAULT_PAGES)
+
+
+def recover_reference_source(
+    content: bytes, reference_page: int | None
+) -> AutomaticRecovery:
+    """Recover one Agent-located PDF page, or an explicit unresolved reference."""
+    if reference_page is not None and reference_page < 1:
+        raise ValueError("reference page must be positive")
+    return _recover_automatic_source(content, reference_page)
+
+
+def _recover_automatic_source(
+    content: bytes, reference_page: int | None | object
+) -> AutomaticRecovery:
     source_hash = _sha256(content)
+    is_pdf = content.startswith(b"%PDF-")
+    provenance = AUTOMATIC_SOURCE_POLICY
+    if is_pdf and reference_page is not _DEFAULT_PAGES:
+        provenance += (f"reference_page={reference_page or 'unresolved'}",)
     if len(content) > AUTOMATIC_MAX_SOURCE_BYTES:
-        return AutomaticRecovery(source_hash, (), ("source_byte_budget",))
-    if not content.startswith(b"%PDF-"):
+        return AutomaticRecovery(source_hash, (), ("source_byte_budget",), provenance)
+    if not is_pdf:
+        if reference_page not in (_DEFAULT_PAGES, None):
+            raise ValueError("reference page applies only to PDF sources")
         try:
             frame = _automatic_image(content, kind="raster", page=None,
                 transform=(1., 0., 0., 0., 1., 0.), coordinate_space="original_raster_pixels",
                 rotation=0, tool="Pillow", tool_version=PILLOW_VERSION)
         except (OSError, ValueError, Image.DecompressionBombError):
             return AutomaticRecovery(source_hash, (), ("raster_unrecoverable_or_pixel_budget",))
-        return AutomaticRecovery(source_hash, (frame,), ())
+        return AutomaticRecovery(source_hash, (frame,), (), provenance)
     images: list[AutomaticImage] = []
     unresolved: list[str] = []
     pixels = 0
@@ -118,11 +144,22 @@ def recover_automatic_source(content: bytes) -> AutomaticRecovery:
         if not match:
             raise RuntimeError("pdfinfo returned no page count")
         pages = int(match[1])
+        if reference_page is None:
+            return AutomaticRecovery(
+                source_hash, (), ("reference_page_unresolved",), provenance)
+        if reference_page is _DEFAULT_PAGES:
+            if pages > AUTOMATIC_MAX_PAGES:
+                unresolved.append("source_page_budget")
+            selected_pages = range(1, min(pages, AUTOMATIC_MAX_PAGES) + 1)
+        else:
+            if reference_page > pages:
+                raise ValueError("reference page exceeds PDF page count")
+            selected_pages = (reference_page,)
         versions = {}
         for tool in ("pdfimages", "pdftoppm"):
             result = _automatic_run([tool, "-v"])
             versions[tool] = (result.stdout + result.stderr).decode("utf8").splitlines()[0] + f"; Pillow {PILLOW_VERSION}"
-        for page in range(1, pages + 1):
+        for page in selected_pages:
             metadata = _automatic_run(["pdfinfo", "-f", str(page), "-l", str(page), "-box", str(path)]).stdout.decode("utf8")
             boxes = {}
             for name in ("MediaBox", "CropBox"):
@@ -176,9 +213,9 @@ def recover_automatic_source(content: bytes) -> AutomaticRecovery:
             for frame in page_frames:
                 pixels += frame.width * frame.height
                 if pixels > AUTOMATIC_MAX_TOTAL_PIXELS:
-                    return AutomaticRecovery(source_hash, tuple(images), tuple(sorted(set(unresolved + ["source_pixel_budget"]))))
+                    return AutomaticRecovery(source_hash, tuple(images), tuple(sorted(set(unresolved + ["source_pixel_budget"]))), provenance)
                 images.append(frame)
-    return AutomaticRecovery(source_hash, tuple(images), tuple(sorted(set(unresolved))))
+    return AutomaticRecovery(source_hash, tuple(images), tuple(sorted(set(unresolved))), provenance)
 
 
 @dataclass(frozen=True, slots=True)

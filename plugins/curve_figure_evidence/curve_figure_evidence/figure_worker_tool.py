@@ -10,13 +10,19 @@ from pydantic import BaseModel, ConfigDict, Field
 from scidiscovery.artifact_agent.operation_tool_context import OperationToolContext
 from scidiscovery.operations.tooling import WorkerToolDefinition
 
-from .figure_digitization_contract import replay_detection, identity_anchor_id
+from .figure_digitization_contract import (
+    identity_anchor_id, replay_reference_detection,
+)
 
 
 class FigureSourceInspectionInput(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     name: str = Field(default="paper_source", min_length=1, max_length=256)
+    source_page: int | None = Field(
+        default=None, ge=1,
+        description="One-based PDF page index located from the exact source text.",
+    )
 
 
 def _publish_read_only(path: Path, content: bytes) -> None:
@@ -46,7 +52,8 @@ def _inspect(
     media_type = context.input_media_type(request.name)
     if media_type not in {"application/pdf", "image/png", "image/jpeg", "image/webp"}:
         raise ValueError("inspection requires a bound paper or raster source")
-    detected = replay_detection(context.input_path(request.name).read_bytes())
+    detected = replay_reference_detection(
+        context.input_path(request.name).read_bytes(), request.source_page)
     directory = context.workspace / ".operation-tools" / "figures"
     directory.mkdir(parents=True, exist_ok=True, mode=0o700)
     if directory.resolve() != context.workspace.resolve() / ".operation-tools" / "figures":
@@ -73,6 +80,7 @@ def _inspect(
     context.record_activity("deterministic_analysis_completed")
     return {
         "name": request.name,
+        "source_page": request.source_page,
         "source_media_type": media_type,
         "source_sha256": detected.source_sha256,
         "detector_version": detected.detector_version,
@@ -85,8 +93,8 @@ def _inspect(
 FIGURE_SOURCE_INSPECTION_TOOL = WorkerToolDefinition(
     name="worker_curve_figure_inspect_source",
     description=(
-        "Automatically inspect one exact bound source and return read-only original "
-        "and candidate-overlay paths, candidate IDs and visible text for selection. "
+        "Inspect one Agent-located PDF source_page, or one exact raster source, and return "
+        "read-only original and candidate-overlay paths, candidate IDs and visible text. "
         "The Agent returns semantic selections, not pixel measurements."
     ),
     input_model=FigureSourceInspectionInput,

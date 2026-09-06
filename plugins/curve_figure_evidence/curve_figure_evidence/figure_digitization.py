@@ -32,7 +32,7 @@ from .figure_digitization_contract import (
     axis_uncertainty as _axis_uncertainty,
     axis_value as _axis_value,
     recover_requested_image,
-    FigureExtractionIntent, FigureMeasurementRequest, replay_detection,
+    FigureExtractionIntent, FigureMeasurementRequest, replay_reference_detection,
     validate_intent_candidates, calibration_from_tick_pairs,
 )
 
@@ -40,7 +40,7 @@ from .figure_digitization_contract import (
 def build_automatic_figure_bundle(source_content: bytes, intent_content: bytes):
     """Replay raw bytes, validate semantic choices, and measure only detector pixels."""
     intent = FigureExtractionIntent.model_validate_json(intent_content, strict=True)
-    detected = replay_detection(source_content)
+    detected = replay_reference_detection(source_content, intent.source_page)
     selection = validate_intent_candidates(intent, detected)
     image, detection, plot = selection if selection else (
         (detected.images[0], detected.detections[0], None) if detected.images else (None, None, None))

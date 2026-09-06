@@ -6,6 +6,7 @@ import pytest
 from PIL import Image, ImageDraw
 from pydantic import ValidationError
 
+from curve_figure_evidence import figure_detection
 from curve_figure_evidence.figure_detection import detect_source, OCRToken
 from curve_figure_evidence.figure_digitization_contract import FigureExtractionIntent
 from curve_figure_evidence.figure_worker_tool import FigureSourceInspectionInput
@@ -19,12 +20,13 @@ def source_bytes():
 
 
 def intent_for(raw):
-    detected = detect_source(raw)
+    source_page = 1 if raw.startswith(b"%PDF-") else None
+    detected = figure_detection.detect_reference_source(raw, source_page)
     return {
         "schema_version": "scidiscovery.figure-extraction-intent.v2",
         "source_sha256": detected.source_sha256,
         "detector_receipt": detected.receipt,
-        "figure": "Unresolved figure", "panel": None,
+        "figure": "Unresolved figure", "panel": None, "source_page": source_page,
         "plot_candidate_id": None, "bindings": [],
         "unresolved_reasons": ["No visible quantitative plot"],
         "rejected_candidates": [],
@@ -86,10 +88,45 @@ def test_real_materializer_measures_detector_pixels(monkeypatch, reverse, gap):
             assert all(not 150 <= int(r["pixel_x_raw"]) < 170 for r in rows)
 
 
-@pytest.mark.parametrize("field", ["page", "bbox", "seeds", "ticks", "coverage", "max_gap", "points", "parameters"])
+@pytest.mark.parametrize("field", ["bbox", "seeds", "ticks", "coverage", "max_gap", "points", "parameters"])
 def test_inspection_rejects_mechanical_parameters(field):
     with pytest.raises(ValidationError):
         FigureSourceInspectionInput.model_validate({"name": "paper_source", field: 1})
+
+
+def test_reference_page_is_semantic_but_not_geometry():
+    assert FigureSourceInspectionInput(source_page=12).source_page == 12
+    with pytest.raises(ValidationError):
+        FigureSourceInspectionInput(source_page=0)
+
+
+def test_request_prompt_locates_fixed_target_before_inspection():
+    from curve_figure_evidence.figure_science_operations import REQUEST_PROMPT
+    assert REQUEST_PROMPT.index("worker_extract_pdf_text") < REQUEST_PROMPT.index(
+        "worker_curve_figure_inspect_source")
+    assert "do not substitute another figure" in REQUEST_PROMPT
+
+
+def test_materializer_replays_the_exact_reference_page():
+    images = [Image.new("RGB", (20, 20), "white") for _ in range(12)]
+    stream = io.BytesIO()
+    images[0].save(stream, format="PDF", save_all=True, append_images=images[1:])
+    raw = stream.getvalue()
+    detected = figure_detection.detect_reference_source(raw, 12)
+    intent = {
+        "schema_version": "scidiscovery.figure-extraction-intent.v2",
+        "source_sha256": detected.source_sha256,
+        "detector_receipt": detected.receipt,
+        "figure": "Requested figure", "panel": None, "source_page": 12,
+        "plot_candidate_id": None, "bindings": [],
+        "unresolved_reasons": ["No visibly anchored series"],
+        "rejected_candidates": [],
+    }
+    from curve_figure_evidence.figure_science_operations import FIGURE_REQUEST_CONTEXT
+    FIGURE_REQUEST_CONTEXT.implementation(intent, {"paper_source": raw}, {})
+    result = materialize_figure_evidence({
+        "paper_source": (raw,), "figure_intent": (json.dumps(intent).encode(),)})
+    assert json.loads(result["figure_request"][0])["source"]["page"] == 12
 
 
 @pytest.mark.parametrize("raw, counts", [(source_bytes(), (1, 1, 0)), (b"unrecoverable", (0, 0, 0))])
@@ -172,13 +209,15 @@ def test_nested_intent_cannot_write_measurements(monkeypatch, field):
         materialize_figure_evidence({"paper_source": (raw,), "figure_intent": (json.dumps(intent).encode(),)})
 
 
-@pytest.mark.parametrize("defect", ["source", "receipt", "plot", "path", "anchor", "cross_source", "cross_plot"])
+@pytest.mark.parametrize("defect", ["source", "receipt", "page", "plot", "path", "anchor", "cross_source", "cross_plot"])
 def test_intent_replay_rejects_forged_or_cross_bound_candidates(monkeypatch, defect):
     from curve_figure_evidence.figure_science_operations import FIGURE_REQUEST_CONTEXT
     from scidiscovery.operation_contract import SemanticRuleViolation
     raw, intent = measured_source(monkeypatch)
     if defect in {"source", "receipt", "plot"}:
         intent[{"source": "source_sha256", "receipt": "detector_receipt", "plot": "plot_candidate_id"}[defect]] = "0" * 64
+    elif defect == "page":
+        intent["source_page"] = 1
     elif defect in {"path", "anchor"}:
         intent["bindings"][0]["candidate_id" if defect == "path" else "identity_anchor_id"] = "0" * 64
     elif defect == "cross_source":

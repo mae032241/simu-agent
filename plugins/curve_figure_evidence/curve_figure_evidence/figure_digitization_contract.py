@@ -20,8 +20,10 @@ from .figure_evidence import (
 )
 from .figure_source import RecoveredFigureImage, inspect_figure_source_bytes
 from .figure_source import AUTOMATIC_SOURCE_POLICY
-from .figure_detection import (DETECTOR_VERSION, POLICY, SourceDetection, detect_source,
-    MAX_TOKENS, MAX_AXIS_COMBINATIONS, MAX_LINE_SEGMENTS)
+from .figure_detection import (
+    DETECTOR_VERSION, POLICY, SourceDetection, detect_reference_source, detect_source,
+    MAX_TOKENS, MAX_AXIS_COMBINATIONS, MAX_LINE_SEGMENTS,
+)
 from PIL import __version__ as PILLOW_VERSION
 from .figure_dependencies import RUNTIME_CONTRACT, command_path, verify_ocr
 
@@ -36,8 +38,7 @@ DETECTOR_CONTRACT = json.dumps({
 }, sort_keys=True, separators=(",", ":")).encode()
 
 
-def replay_detection(content: bytes) -> SourceDetection:
-    """Verify the declared runtime boundary before replaying raw-source detection."""
+def _verify_detection_runtime(content: bytes) -> None:
     contract = json.loads(DETECTOR_CONTRACT)
     if contract["pillow_version"] is not None and PILLOW_VERSION != contract["pillow_version"]:
         raise RuntimeError("Pillow version differs from detector contract")
@@ -49,7 +50,20 @@ def replay_detection(content: bytes) -> SourceDetection:
                 raise RuntimeError("Poppler version differs from detector contract")
     if contract["ocr"]["supply_status"] == "verified":
         verify_ocr(contract)
+
+
+def replay_detection(content: bytes) -> SourceDetection:
+    """Verify the runtime boundary before legacy raw-source detection."""
+    _verify_detection_runtime(content)
     return detect_source(content)
+
+
+def replay_reference_detection(
+    content: bytes, source_page: int | None
+) -> SourceDetection:
+    """Replay the exact Agent-selected page or explicit unresolved reference."""
+    _verify_detection_runtime(content)
+    return detect_reference_source(content, source_page)
 
 
 def identity_anchor_id(source_sha256: str, image_sha256: str, token: object) -> str:
@@ -106,6 +120,7 @@ class FigureExtractionIntent(_DigitizationModel):
     detector_receipt: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
     figure: ShortText
     panel: Annotated[ShortText | None, Field(description=PANEL_SELECTION_DESCRIPTION)]
+    source_page: Annotated[int | None, Field(ge=1)] = None
     plot_candidate_id: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")] | None
     bindings: Annotated[tuple[FigureCandidateBinding, ...], Field(max_length=32, json_schema_extra={"uniqueItems": True})]
     unresolved_reasons: Annotated[tuple[ShortText, ...], Field(max_length=32)] = ()

@@ -512,6 +512,7 @@ tool = {
         compile_installed_catalog().operation("science.figure.request.prepare.v1")
     )
 }["worker_curve_figure_inspect_source"]
+assert set(tool.input_model.model_json_schema()["properties"]) == {"name", "source_page"}
 context = Context()
 result = tool.contextual_handler(
     tool.input_model(),

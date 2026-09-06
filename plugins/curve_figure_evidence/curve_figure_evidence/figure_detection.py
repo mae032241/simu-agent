@@ -22,7 +22,8 @@ from pathlib import Path
 from PIL import Image, ImageDraw, __version__ as PILLOW_VERSION
 
 from .figure_source import (
-    AUTOMATIC_SOURCE_POLICY, AutomaticImage, recover_automatic_source, _png_bytes,
+    AUTOMATIC_SOURCE_POLICY, AutomaticImage, AutomaticRecovery,
+    recover_automatic_source, recover_reference_source, _png_bytes,
 )
 
 DETECTOR_VERSION = "cartesian-candidates-v2"
@@ -513,7 +514,17 @@ def _ocr(content: bytes) -> tuple[tuple[OCRToken,...], tuple[str,...], str]:
 
 def detect_source(content: bytes) -> SourceDetection:
     """Raw source only: no page, object, scientific labels, geometry or tuning."""
-    recovery = recover_automatic_source(content)
+    return _detect_recovery(recover_automatic_source(content))
+
+
+def detect_reference_source(
+    content: bytes, reference_page: int | None
+) -> SourceDetection:
+    """Detect one semantic PDF page reference, or an explicit unresolved one."""
+    return _detect_recovery(recover_reference_source(content, reference_page))
+
+
+def _detect_recovery(recovery: AutomaticRecovery) -> SourceDetection:
     detections = []
     unresolved = list(recovery.unresolved)
     for frame in recovery.images:

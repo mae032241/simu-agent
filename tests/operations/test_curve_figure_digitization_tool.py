@@ -1025,9 +1025,15 @@ def test_registered_inspection_tool_publishes_only_run_local_read_only_preview(
     context = _ToolContext(workspace, pdf)
     handler = FIGURE_SOURCE_INSPECTION_TOOL.contextual_handler
     assert handler is not None
-    response = handler(FigureSourceInspectionInput(), context)
+    unresolved = handler(FigureSourceInspectionInput(), context)
+    assert unresolved["source_page"] is None
+    assert not unresolved["images"]
+    assert unresolved["unresolved"] == ("reference_page_unresolved",)
+    response = handler(FigureSourceInspectionInput(source_page=1), context)
+    assert response["source_page"] == 1
     preview = Path(response["images"][0]["source_preview"])
     assert preview.is_relative_to(workspace)
     assert preview.read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
     assert preview.stat().st_mode & 0o222 == 0
-    assert context.activities == ["deterministic_analysis_completed"]
+    assert context.activities == [
+        "deterministic_analysis_completed", "deterministic_analysis_completed"]

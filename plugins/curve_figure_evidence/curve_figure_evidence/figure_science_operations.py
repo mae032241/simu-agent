@@ -31,7 +31,7 @@ from scidiscovery.operations.spec import (
 
 from .figure_digitization_contract import (
     FigureMeasurementRequest, FigureExtractionIntent, PANEL_SELECTION_DESCRIPTION,
-    replay_detection, validate_intent_candidates,
+    replay_reference_detection, validate_intent_candidates,
 )
 
 
@@ -57,14 +57,18 @@ PDF_TOOL = _general("pdf_extract_tool")
 REQUEST_PROMPT = OPERATION_AGENT_PREAMBLE + """Return exactly one
 RoleResultEnvelope whose payload is the FigureExtractionIntent required by
 output.schema.json. Inspect the bound paper_source and optional research_objective.
-Call worker_curve_figure_inspect_source with only the bound source name and view
-the read-only original pages/images and candidate overlays. The detector supplies
-pages and representation identities. For PDFs use worker_extract_pdf_text to
-compare visible captions and the original text with these candidates.
+If the research objective or assignment instruction identifies an exact figure,
+that target is fixed: do not substitute another figure. For PDFs first call
+worker_extract_pdf_text to locate the target's PDF page from original text and
+captions. Then call worker_curve_figure_inspect_source with the bound source name
+and that source_page, and view its read-only original image and candidate overlay. If the
+PDF page cannot be located, call the inspection tool with source_page null and submit its
+explicit zero-candidate unresolved receipt. For a raster source use page null.
+The detector supplies representation and candidate identities for that exact scope.
 
 Select the figure, panel, and exact visible series labels needed for the
 scientific question. """ + PANEL_SELECTION_DESCRIPTION + """
-Copy the source hash and detector receipt returned by inspection. Select an existing
+Copy source_page, the source hash and detector receipt returned by inspection. Select an existing
 plot candidate ID and path candidate IDs; bind each to its exact visible label,
 scientific semantic identity and optionally an existing visible-text anchor ID.
 Each candidate_id may appear at most once across bindings and rejected_candidates,
@@ -147,6 +151,7 @@ FIGURE_REQUEST_SEMANTIC_CONTRACT = scientific_semantic_contract(
     "curve.figure.request",
     "The intent selects a figure, panel and visible series labels from one exact bound source; it never creates curve evidence.",
     "The source hash must equal the frozen paper_source bytes.",
+    "The source page and detector receipt must identify the exact inspection scope.",
     "Pixel measurements, calibration, extraction hints, local ranges and all numeric tables are produced by a deterministic domain compiler and materializer, never by this Agent.",
     payload_constraint=(
         "Every candidate_id must occur at most once across bindings and "
@@ -173,7 +178,10 @@ def _validate_request_context(
     try:
         encoded = canonical_json(payload)
         intent = FigureExtractionIntent.model_validate_json(encoded, strict=True)
-        validate_intent_candidates(intent, replay_detection(sources["paper_source"]))
+        validate_intent_candidates(
+            intent,
+            replay_reference_detection(sources["paper_source"], intent.source_page),
+        )
     except (ValidationError, ValueError) as error:
         raise SemanticRuleViolation(str(error)) from error
 

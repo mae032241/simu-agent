@@ -163,7 +163,7 @@ def test_vector_page_render_rotation_and_transform(monkeypatch, angle, expected)
     assert all(argv[argv.index("-f")+1] == "1" for argv in commands if "-f" in argv)
 
 
-def test_pdf_recovery_is_not_truncated_at_eight_pages(monkeypatch):
+def test_pdf_reference_page_is_detected_without_full_document_scan(monkeypatch):
     commands = []
     def command(argv):
         commands.append(argv)
@@ -185,18 +185,25 @@ def test_pdf_recovery_is_not_truncated_at_eight_pages(monkeypatch):
         lambda *args, **kwargs: (_ for _ in ()).throw(
             ValueError("PDF page contains no recoverable embedded image")))
 
-    result = figure_source.recover_automatic_source(b"%PDF-synthetic twelve pages")
+    result = figure_detection.detect_reference_source(
+        b"%PDF-synthetic twelve pages", 12)
 
-    assert tuple(frame.page for frame in result.images) == tuple(range(1, 13))
-    assert "source_page_budget" not in result.unresolved
+    assert tuple(frame.page for frame in result.images) == (12,)
     rendered_pages = [argv[argv.index("-f") + 1] for argv in commands
                       if argv[0] == "pdftoppm" and "-f" in argv]
-    assert rendered_pages == [str(page) for page in range(1, 13)]
+    assert rendered_pages == ["12"]
 
-    monkeypatch.setattr(figure_source, "AUTOMATIC_MAX_TOTAL_PIXELS", 800)
-    bounded = figure_source.recover_automatic_source(b"%PDF-synthetic twelve pages")
-    assert tuple(frame.page for frame in bounded.images) == (1, 2)
-    assert bounded.unresolved == ("source_pixel_budget",)
+    unresolved = figure_detection.detect_reference_source(
+        b"%PDF-synthetic twelve pages", None)
+    assert not unresolved.images and not unresolved.detections
+    assert unresolved.unresolved == ("reference_page_unresolved",)
+    assert unresolved == figure_detection.detect_reference_source(
+        b"%PDF-synthetic twelve pages", None)
+
+    legacy = figure_source.recover_automatic_source(
+        b"%PDF-synthetic twelve pages")
+    assert tuple(frame.page for frame in legacy.images) == tuple(range(1, 9))
+    assert legacy.unresolved == ("source_page_budget",)
 
 
 def test_ocr_missing_and_environment_failure_are_distinct(monkeypatch):
