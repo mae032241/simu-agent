@@ -17,14 +17,13 @@ from .figure_dependencies import command_path
 MAX_IMAGE_PIXELS = 25_000_000
 MAX_PDF_IMAGES_PER_PAGE = 32
 
-# Automatic source contract v1. Callers cannot override these budgets.
-AUTOMATIC_MAX_PAGES = 8
+# Automatic source contract. Callers cannot override these budgets.
 AUTOMATIC_MAX_TOTAL_PIXELS = 24_000_000
 AUTOMATIC_MAX_SIDE = 1600
 AUTOMATIC_DPI = 120
 AUTOMATIC_MAX_SOURCE_BYTES = 64_000_000
 AUTOMATIC_SOURCE_POLICY = (
-    "automatic-source-v2", "pages=8", "total_pixels=24000000",
+    "automatic-source-v3", "pages=all_until_total_pixel_budget", "total_pixels=24000000",
     "canonical_max_side=1600", "requested_render_dpi=120", "source_bytes=64000000",
     "per_image_pixels=25000000", "embedded_per_page=32", "command_timeout_seconds=60",
 )
@@ -119,13 +118,11 @@ def recover_automatic_source(content: bytes) -> AutomaticRecovery:
         if not match:
             raise RuntimeError("pdfinfo returned no page count")
         pages = int(match[1])
-        if pages > AUTOMATIC_MAX_PAGES:
-            unresolved.append("source_page_budget")
         versions = {}
         for tool in ("pdfimages", "pdftoppm"):
             result = _automatic_run([tool, "-v"])
             versions[tool] = (result.stdout + result.stderr).decode("utf8").splitlines()[0] + f"; Pillow {PILLOW_VERSION}"
-        for page in range(1, min(pages, AUTOMATIC_MAX_PAGES) + 1):
+        for page in range(1, pages + 1):
             metadata = _automatic_run(["pdfinfo", "-f", str(page), "-l", str(page), "-box", str(path)]).stdout.decode("utf8")
             boxes = {}
             for name in ("MediaBox", "CropBox"):

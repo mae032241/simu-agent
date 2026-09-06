@@ -1,14 +1,15 @@
 # R5 E5.4 P5：真实安装与科学链验收
 
-日期：2026-09-06。状态：进行中。P4 精确提交为
-`86d4e85cff22db9dbd82fa35501a19a121deeb21`；本文只记录 P5 现场事实，
-不提前声称安装、真实图提取、科学审查或资格已通过。
+日期：2026-09-06。状态：进行中，真实链在通用候选检测页覆盖处阻断。P4 精确
+提交为 `86d4e85cff22db9dbd82fa35501a19a121deeb21`，依赖收简与当前安装提交为
+`8fed358e75b3bda698a7ccc651661f8822c61f0b`；本文只记录 P5 现场事实，不提前
+声称真实图提取、科学审查或资格已通过。
 
-当前安装暂停：用户要求删除 P4 中派生的依赖身份输入及模型路径／摘要合同。
+用户要求删除 P4 中派生的依赖身份输入及模型路径／摘要合同。
 [有界后续修复](R5_E5_4_P4_CLEAN_RELEASE_AND_DEPENDENCY_PREFLIGHT.zh-CN.md#用户要求的依赖自动发现后续修复独立复审-pass)
 首轮独立 GPT-6 复审 FAIL，三项有界返工完成后由同一审查者复审 PASS，阻断项
-为 0；当前等待形成收简后的精确提交与发行。下列精确提交发行与模型位置／摘要
-均为先前现场历史，不是新安装输入或新候选发行证明；不得据此安装旧合同版本。
+为 0。收简提交已形成并安装；下列旧 P4 发行与模型位置／摘要均为先前现场历史，
+不是新安装输入，安装过程没有接受三个旧 `SCID_FIGURE_*` 变量。
 
 ## 1. 精确提交发行
 
@@ -47,10 +48,9 @@ Local 后端仍是可信本地软隔离，`SEC-002` 保持已知问题。后续�
 
 ## 3. 待完成
 
-1. 使用既有事务安装入 P4 精确提交，并完成安装后同服务身份复验。
-2. 核对安装态插件、单一编译目录、Operation 摘要、Codex 配置和工具。
-3. 在两张真实图上完成真实 Agent request → materialize → Intake → audit 链。
-4. 由独立 GPT-6 按预先冻结的精度、覆盖、不确定性和防泄漏门审查。
+1. 修复通用候选检测无法覆盖论文后部目标页的问题，不增加案例图号或手工像素输入。
+2. 在两张真实图上完成真实 Agent request → materialize → Intake → audit 链。
+3. 由独立 GPT-6 按预先冻结的精度、覆盖、不确定性和防泄漏门审查。
 
 ## 4. 无依赖身份输入的实机预检
 
@@ -65,3 +65,53 @@ wrapper `--dry-run`；三个旧 figure 身份输入全部清除，仍通过实�
 环境中分别清除；无 `size` 参数的默认字体探针以确定性放大生成，真实识字通过。
 同服务身份无旧变量的 wrapper dry-run 再次 PASS（0.92s、峰值 61,296 KiB），
 仍无安装事务。依赖收简的首轮 FAIL 保留；三项返工复审 PASS 不更新科学状态。
+
+## 5. 收简提交安装态
+
+用户从干净提交 `8fed358e75b3bda698a7ccc651661f8822c61f0b` 完成事务安装并重启。
+父调度会话随后实测：`scidiscovery-control.service` 与
+`scidiscovery-approval-ui.service` 均为 `active`，两个 runtime identity
+预启动检查退出 0，控制 socket 可用，审批 UI 的 GET 返回 HTTP 200。安装态公开
+目录包含通用 `science.figure.request.prepare.v1`、
+`science.evidence.extract.figure.v2` 和 `science.figure.evidence.audit.v1`；
+support 视图包含确定性 `science.figure.evidence.materialize.v1`。旧 InGaAs
+案例编译 Operation 不在公开或 support 目录。TCAD 使用已配置的外部 command
+adapter，故本机 `tcad-control.service`／socket 不存在不是本阶段安装失败。
+
+## 6. 第一张真实论文的自动选择阻断
+
+会话重新绑定既有实例 `M7-test0`。首次公开动作只绑定冻结论文，不提供图号、
+像素范围或点数；`science.figure.request.prepare.v1` 的预检、领取、提交、Schema
+校验和封存均通过，但封存结果选择了论文 FIG. 5(a) 的材料扩散系数曲线，不能
+直接检验当前器件级仿真与实测矛盾。该结果保留，不伪装为目标图。
+
+同一 Operation 做一次有意修订：仍不提供图号，只明确要求选择与器件仿真输出
+在相同自变量／因变量上直接比较的实验测量曲线，并排除纯材料参数拟合图。修订
+同样一次提交即封存，没有格式拒绝；结果将器件级目标定位为 FIG. 10(a)，但返回
+`inconclusive`：检测收据的页预算只产生到 PDF 第 8 页的候选，目标页没有
+`plot_candidate_id`、路径候选或可绑定的可见系列身份。
+
+这是通用候选生成覆盖不足，不是 Worker 输出格式、共享像素、点数统计或图号
+选择错误。当前目录没有公开 Operation 能补生成后续页面候选，故停止该修订环，
+不把早期 FIG. 5 结果送入物化，不手填 FIG. 10 像素边界，也不反复要求智能体
+改写文本。P5 尚未通过，未产生曲线表、Intake、独立图证据审查或科学资格。
+
+## 7. 固定八页截断的最小修复
+
+独立 GPT-6 首先只读复核本节阻断，结论 PASS：安装及两次 Run 记录自洽，固定
+八页上限有直接代码证据，停止修订和不物化错误图正确，修复可限制在既有候选
+生成函数及直接测试内。审查明确禁止提出新 Operation、Schema、配置、注册表、
+状态机、控制面或算法重构。
+
+实现只删除 `recover_automatic_source` 的固定八页截断，按 PDF 实际页数顺序恢复，
+仍由原有 2400 万总像素预算提前停止；源文件 64 MB、单图 2500 万像素、每页
+32 个嵌入图和单命令 60 秒边界均未修改。没有增加操作者或 Agent 输入。内部
+provenance 从 `automatic-source-v2/pages=8` 更新为
+`automatic-source-v3/pages=all_until_total_pixel_budget`，公开 Schema 不变。
+
+新直接回归在旧代码上先得到预期失败（只返回 1–8 页）；修复后确认十二页全部
+恢复，并将测试总像素预算降低至 800 验证仍只保留前两页并返回
+`source_pixel_budget`。自动检测与现有角色链串行聚焦 **85 passed**，峰值
+**134,968 KiB**；`git diff --check` 通过。相同独立 GPT-6 复审最终 PASS：固定
+八页根因关闭、原资源止损有效、未新增合同面、测试直接。尚未提交或重新部署；
+因此本节 PASS 不改变上节真实 Run 的 `inconclusive`，安装态仍是 `8fed358`。

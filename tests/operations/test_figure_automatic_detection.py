@@ -163,6 +163,42 @@ def test_vector_page_render_rotation_and_transform(monkeypatch, angle, expected)
     assert all(argv[argv.index("-f")+1] == "1" for argv in commands if "-f" in argv)
 
 
+def test_pdf_recovery_is_not_truncated_at_eight_pages(monkeypatch):
+    commands = []
+    def command(argv):
+        commands.append(argv)
+        if argv[0] == "pdfinfo" and "-f" not in argv:
+            value = "Pages: 12\n"
+        elif argv[0] == "pdfinfo":
+            page = argv[argv.index("-f") + 1]
+            value = (f"Page {page} size: 20 x 20 pts\nPage {page} rot: 0\n"
+                     f"Page {page} MediaBox: 0 0 20 20\nPage {page} CropBox: 0 0 20 20\n")
+        elif "-v" in argv:
+            value = "synthetic Poppler version"
+        else:
+            Image.new("RGB", (20, 20), "white").save(argv[-1] + ".png")
+            value = ""
+        return subprocess.CompletedProcess(argv, 0, value.encode(), b"")
+    monkeypatch.setattr(figure_source, "_automatic_run", command)
+    monkeypatch.setattr(
+        figure_source, "inspect_pdf_images",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            ValueError("PDF page contains no recoverable embedded image")))
+
+    result = figure_source.recover_automatic_source(b"%PDF-synthetic twelve pages")
+
+    assert tuple(frame.page for frame in result.images) == tuple(range(1, 13))
+    assert "source_page_budget" not in result.unresolved
+    rendered_pages = [argv[argv.index("-f") + 1] for argv in commands
+                      if argv[0] == "pdftoppm" and "-f" in argv]
+    assert rendered_pages == [str(page) for page in range(1, 13)]
+
+    monkeypatch.setattr(figure_source, "AUTOMATIC_MAX_TOTAL_PIXELS", 800)
+    bounded = figure_source.recover_automatic_source(b"%PDF-synthetic twelve pages")
+    assert tuple(frame.page for frame in bounded.images) == (1, 2)
+    assert bounded.unresolved == ("source_pixel_budget",)
+
+
 def test_ocr_missing_and_environment_failure_are_distinct(monkeypatch):
     content,_ = drawing()
     first = detect_source(content)
