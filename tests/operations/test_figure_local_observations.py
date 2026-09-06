@@ -8,7 +8,7 @@ import pytest
 from PIL import Image
 
 from scidiscovery.artifact_agent.schema.common import canonical_json
-from curve_figure_evidence.operation_transforms import materialize_figure_evidence
+from tests.operations.test_curve_figure_digitization_tool import _legacy_algorithm_bundle
 from curve_figure_evidence.operation_transforms import bundle_figure_evidence
 from tests.operations.test_curve_figure_digitization_tool import (
     _bundle_from_materialized,
@@ -25,7 +25,7 @@ def test_gap_bad_seed_and_tracking_thresholds_preserve_other_direct_points():
     request["series"][0]["tracking"].update(
         min_points=100, min_visible_fraction=1.0, max_gap_px=0,
     )
-    outputs = materialize_figure_evidence(
+    outputs = _legacy_algorithm_bundle(
         {"paper_source": (source,), "figure_request": (canonical_json(request),)}
     )
     rows = list(csv.DictReader(outputs["curve_tables"][0].decode().splitlines()))
@@ -41,7 +41,7 @@ def test_gap_bad_seed_and_tracking_thresholds_preserve_other_direct_points():
 def test_shared_direct_pixels_survive_member_tracking_diagnostics():
     source, request = _coincident_overlap_request()
     request["series"][0]["tracking"]["min_points"] = 100
-    outputs = materialize_figure_evidence(
+    outputs = _legacy_algorithm_bundle(
         {"paper_source": (source,), "figure_request": (canonical_json(request),)}
     )
     bundle = _bundle_from_materialized(outputs)
@@ -60,7 +60,7 @@ def test_single_direct_pixel_is_preserved_without_fabricating_an_interval():
     source = _png_with_points(((2, 5),))
     request = json.loads(_request(source))
     request["series"][0]["seeds"] = [[2.0, 5.0]]
-    outputs = materialize_figure_evidence({"paper_source": (source,), "figure_request": (canonical_json(request),)})
+    outputs = _legacy_algorithm_bundle({"paper_source": (source,), "figure_request": (canonical_json(request),)})
     rows = list(csv.DictReader(outputs["curve_tables"][0].decode().splitlines()))
     assert len(rows) == 1 and rows[0]["quantitative_measurement_claim_eligible"] == "1"
     series = _bundle_from_materialized(outputs).series[0]
@@ -70,7 +70,7 @@ def test_single_direct_pixel_is_preserved_without_fabricating_an_interval():
 
 def test_overlay_distinguishes_each_series_and_shared_source():
     source, request = _coincident_overlap_request()
-    outputs = materialize_figure_evidence(
+    outputs = _legacy_algorithm_bundle(
         {"paper_source": (source,), "figure_request": (canonical_json(request),)}
     )
     overlay = Image.open(io.BytesIO(outputs["audit_overlays"][0])).convert("RGB")
@@ -83,7 +83,7 @@ def test_overlay_distinguishes_each_series_and_shared_source():
 
 def test_shared_gap_preserves_real_pixels_without_inventing_a_source():
     source, request = _coincident_overlap_request(black_overlap=(4,), red_overlap=(6,))
-    outputs = materialize_figure_evidence(
+    outputs = _legacy_algorithm_bundle(
         {"paper_source": (source,), "figure_request": (canonical_json(request),)}
     )
     for raw in outputs["curve_tables"]:
@@ -105,11 +105,9 @@ def test_shared_gap_preserves_real_pixels_without_inventing_a_source():
     ],
     ids=("parallel_tie", "local_branch", "unique_nearby_path"),
 )
-def test_root_materialization_keeps_path_ambiguity_local(
+def test_historical_tracker_keeps_path_ambiguity_local(
     tmp_path, monkeypatch, branch_columns, guide_y, ambiguous_columns, interval_count,
 ):
-    from tests.operations import test_m5_figure_review_closure as fixture
-
     source = _png_with_points(tuple(
         (x, y) for x in range(1, 10)
         for y in ((3, 7) if x in branch_columns else (5,))
@@ -119,33 +117,7 @@ def test_root_materialization_keeps_path_ambiguity_local(
     request["series"][0]["tracking"].update(
         seed_radius_px=2, guide_weight=1.0, max_guide_distance_px=4.0,
     )
-    # Only the test-domain compiler supplies geometry; all publication and
-    # extraction below use the real Root and production materializer.
-    monkeypatch.setattr(fixture, "_two_series_source_and_request", lambda **_: (source, request))
-    _, runtime, instance, root = fixture._system(tmp_path)
-    fixture._register(runtime, instance, name="paper_source", content=source,
-                      kind="paper_source", schema_id="opaque", media_type="image/png")
-    compiled = root.call_tool("operation_invoke", {
-        "name": "figure_request", "operation_id": "test.figure.compile.v1",
-        "inputs": [{"port": "paper_source", "artifact_names": ["paper_source"]}],
-    })["result"]["outputs"][0]["artifact_name"]
-    call = {
-        "name": "ambiguous_materialization", "operation_id": "science.figure.evidence.materialize.v1",
-        "inputs": [{"port": "paper_source", "artifact_names": ["paper_source"]},
-                   {"port": "figure_request", "artifact_names": [compiled]}],
-    }
-    assert root.call_tool("operation_preflight", call)["admissible"] is True
-    published = root.call_tool("operation_invoke", call)["result"]["outputs"]
-    by_kind = {}
-    for item in published:
-        artifact = runtime.artifacts.get_by_id(runtime.scheduler_bindings.resolve(
-            instance=instance.instance_id, namespace="artifact", name=item["artifact_name"],
-        ))
-        by_kind.setdefault(item["kind"], []).append(runtime.artifacts.read(artifact.ref))
-    outputs = {name: tuple(by_kind[kind]) for name, kind in (
-        ("curve_tables", "digitized_curve_table"), ("figure_manifest", "figure_evidence_manifest"),
-        ("validation_report", "figure_evidence_validation_report"), ("audit_overlays", "figure_audit_overlay"),
-    )}
+    outputs = _legacy_algorithm_bundle({"paper_source": (source,), "figure_request": (canonical_json(request),)})
     rows = list(csv.DictReader(outputs["curve_tables"][0].decode().splitlines()))
     assert len(rows) == 9 and all(row["observed"] == "1" for row in rows)
     assert {int(row["pixel_x_raw"]) for row in rows if row["quantitative_measurement_claim_eligible"] == "0"} == ambiguous_columns

@@ -69,7 +69,7 @@ class FigureEvidenceSource(_FigureEvidenceModel):
 
 class FigureAxisCalibration(_FigureEvidenceModel):
     scale: Literal["linear", "log10"]
-    unit: Annotated[str, Field(min_length=1, max_length=256)]
+    unit: Annotated[str, Field(max_length=256)]
     pixel_min: Annotated[float, Field(ge=0.0, le=1_000_000.0)]
     pixel_max: Annotated[float, Field(ge=0.0, le=1_000_000.0)]
     value_min: float
@@ -192,9 +192,9 @@ FigureSharedSupport = Annotated[
 class FigureEvidencePanel(_FigureEvidenceModel):
     panel_key: FigureKey
     citation: ShortText
-    axis_calibration: FigurePanelAxisCalibration
+    axis_calibration: FigurePanelAxisCalibration | None = None
     series: Annotated[
-        tuple[FigureEvidenceSeries, ...], Field(min_length=1, max_length=10000)
+        tuple[FigureEvidenceSeries, ...], Field(max_length=10000)
     ]
     shared_support: Annotated[
         tuple[FigureSharedSupport, ...], Field(max_length=10000)
@@ -202,6 +202,8 @@ class FigureEvidencePanel(_FigureEvidenceModel):
 
     @model_validator(mode="after")
     def _series_keys_are_unique(self) -> FigureEvidencePanel:
+        if self.series and self.axis_calibration is None:
+            raise ValueError("measured series require calibrated axes")
         keys = tuple(item.series_key for item in self.series)
         if len(keys) != len(set(keys)):
             raise ValueError("series keys must be unique within a panel")
@@ -240,8 +242,8 @@ class FigureEvidenceAmbiguity(_FigureEvidenceModel):
 
 
 class FigureEvidenceMetrics(_FigureEvidenceModel):
-    panel_count: Annotated[int, Field(ge=1, le=10000)]
-    series_count: Annotated[int, Field(ge=1, le=100_000_000)]
+    panel_count: Annotated[int, Field(ge=0, le=10000)]
+    series_count: Annotated[int, Field(ge=0, le=100_000_000)]
     qualified_series_count: Annotated[int, Field(ge=0, le=100_000_000)]
     total_point_count: Annotated[int, Field(ge=0, le=100_000_000)]
     minimum_visible_fraction: Fraction
@@ -283,7 +285,7 @@ class FigureEvidenceProvenance(_FigureEvidenceModel):
     recovery_tool: Annotated[str, Field(min_length=1, max_length=128)] | None = None
     recovery_tool_version: Annotated[str, Field(min_length=1, max_length=256)] | None = None
     output_artifacts: Annotated[
-        tuple[FigureEvidenceArtifact, ...], Field(min_length=1, max_length=100000)
+        tuple[FigureEvidenceArtifact, ...], Field(max_length=100000)
     ]
 
     @model_validator(mode="after")
@@ -300,13 +302,55 @@ class FigureEvidenceProvenance(_FigureEvidenceModel):
         return self
 
 
+class UnrecoveredFigureSource(_FigureEvidenceModel):
+    source_kind: Literal["unrecovered"]
+    source_sha256: Sha256
+
+
+class AutomaticRasterSource(_FigureEvidenceModel):
+    source_kind: Literal["raster"]
+    source_sha256: Sha256
+    image_sha256: Sha256
+    width: Annotated[int, Field(gt=0)]
+    height: Annotated[int, Field(gt=0)]
+    transform: tuple[float, float, float, float, float, float]
+    coordinate_space: ShortText
+    recovery_tool: ShortText
+    recovery_tool_version: ShortText
+
+
+class AutomaticPageSource(AutomaticRasterSource):
+    source_kind: Literal["page_render"]
+    page: Annotated[int, Field(gt=0)]
+    rotation: int
+    requested_dpi: int
+    media_box: tuple[float, float, float, float]
+    crop_box: tuple[float, float, float, float]
+
+
+class AutomaticEmbeddedSource(AutomaticRasterSource):
+    source_kind: Literal["embedded"]
+    page: Annotated[int, Field(gt=0)]
+    pdf_object: tuple[int, int]
+
+
+AutomaticFigureSource = Annotated[
+    AutomaticRasterSource | AutomaticPageSource | AutomaticEmbeddedSource | UnrecoveredFigureSource,
+    Field(discriminator="source_kind"),
+]
+FigureResultShape = Literal["measured", "unresolved_image", "unrecovered"]
+
+
 class FigureEvidenceManifest(_FigureEvidenceModel):
-    schema_version: Literal["scidiscovery.figure-evidence-manifest.v1"]
+    schema_version: Literal["scidiscovery.figure-evidence-manifest.v1", "scidiscovery.figure-evidence-manifest.v2"]
+    result_shape: FigureResultShape | None = None
+    detector_receipt: Sha256 | None = None
+    unresolved_reasons: Annotated[tuple[ShortText, ...], Field(max_length=256)] = ()
     figure_key: FigureKey
     status: Literal["qualified", "unresolved"]
-    source: FigureEvidenceSource
+    source: FigureEvidenceSource | AutomaticFigureSource
     panels: Annotated[
-        tuple[FigureEvidencePanel, ...], Field(min_length=1, max_length=10000)
+        tuple[FigureEvidencePanel, ...], Field(max_length=10000)
     ]
     metrics: FigureEvidenceMetrics
     ambiguities: Annotated[
@@ -316,6 +360,24 @@ class FigureEvidenceManifest(_FigureEvidenceModel):
 
     @model_validator(mode="after")
     def _manifest_is_internally_consistent(self) -> FigureEvidenceManifest:
+        if self.schema_version.endswith(".v2"):
+            if self.result_shape is None or self.detector_receipt is None or isinstance(self.source, FigureEvidenceSource):
+                raise ValueError("manifest v2 requires automatic source, shape and receipt")
+            counts = {name: sum(a.collection == name for a in self.provenance.output_artifacts)
+                      for name in ("source_panels", "audit_overlays", "curve_tables")}
+            measured = sum(len(p.series) for p in self.panels)
+            expected = ((1, 1, measured) if self.result_shape == "measured" else
+                        (1, 1, 0) if self.result_shape == "unresolved_image" else (0, 0, 0))
+            if tuple(counts.values()) != expected or len(self.panels) != (0 if self.result_shape == "unrecovered" else 1):
+                raise ValueError("figure attachments differ from declared result shape")
+            if (self.result_shape == "measured") != bool(measured):
+                raise ValueError("measured shape requires actual series")
+            if (self.result_shape == "unrecovered") != isinstance(self.source, UnrecoveredFigureSource):
+                raise ValueError("source representation differs from result shape")
+            if self.result_shape != "measured" and (self.status != "unresolved" or not self.unresolved_reasons):
+                raise ValueError("zero-table shape requires unresolved status and reasons")
+        elif not self.panels or not any(p.series for p in self.panels):
+            raise ValueError("historical manifest requires panels and series")
         panel_keys = tuple(panel.panel_key for panel in self.panels)
         if len(panel_keys) != len(set(panel_keys)):
             raise ValueError("panel keys must be unique")
@@ -345,6 +407,8 @@ class FigureEvidenceManifest(_FigureEvidenceModel):
                 raise ValueError("qualified manifest requires matched bindings")
 
         for panel in self.panels:
+            if panel.axis_calibration is None:
+                continue
             x_axis = panel.axis_calibration.x
             y_axis = panel.axis_calibration.y
             if max(x_axis.pixel_min, x_axis.pixel_max) >= self.source.width:
@@ -357,9 +421,7 @@ class FigureEvidenceManifest(_FigureEvidenceModel):
             series.binding.status == "matched" and key not in ambiguous_series
             for key, series in by_series.items()
         )
-        visible_minimum = min(
-            series.visible_fraction for series in by_series.values()
-        )
+        visible_minimum = min((series.visible_fraction for series in by_series.values()), default=0.0)
         expected_metrics = {
             "panel_count": len(self.panels),
             "series_count": series_count,
@@ -384,7 +446,7 @@ class FigureEvidenceManifest(_FigureEvidenceModel):
         }
         if not set(data_items).issubset(artifact_items):
             raise ValueError("every curve data_item requires provenance")
-        if not any(
+        if not isinstance(self.source, UnrecoveredFigureSource) and not any(
             item.collection == "source_panels"
             and item.sha256 == self.source.image_sha256
             for item in self.provenance.output_artifacts
@@ -473,7 +535,7 @@ class FigureEvidenceScientificRoleCount(_FigureEvidenceModel):
 
 
 class FigureEvidenceValidationMetrics(_FigureEvidenceModel):
-    curve_table_count: Annotated[int, Field(ge=1, le=100_000_000)]
+    curve_table_count: Annotated[int, Field(ge=0, le=100_000_000)]
     total_curve_rows: Annotated[int, Field(ge=0, le=100_000_000)]
     observed_curve_rows: Annotated[int, Field(ge=0, le=100_000_000)]
     eligibility_flagged_table_count: Annotated[int, Field(ge=0, le=100_000_000)]
@@ -495,18 +557,21 @@ class FigureEvidenceValidationMetrics(_FigureEvidenceModel):
 
 class FigureEvidenceValidationReport(_FigureEvidenceModel):
     schema_version: Literal[
-        "scidiscovery.figure-evidence-validation-report.v1"
+        "scidiscovery.figure-evidence-validation-report.v1", "scidiscovery.figure-evidence-validation-report.v2"
     ]
+    result_shape: FigureResultShape | None = None
+    unresolved_reasons: Annotated[tuple[ShortText, ...], Field(max_length=256)] = ()
+    validated_artifacts: tuple[FigureEvidenceArtifact, ...] | None = None
     validator_version: Literal["2", "3", "4", "5", "6"]
     integrity_status: Literal["valid"]
     figure_key: FigureKey
     source_status: Literal["qualified", "unresolved"]
     manifest_sha256: Sha256
     bundle_fingerprint_sha256: Sha256
-    validated_artifact_count: Annotated[int, Field(ge=2, le=100_001)]
+    validated_artifact_count: Annotated[int, Field(ge=1, le=100_001)]
     series: Annotated[
         tuple[FigureEvidenceValidationSeries, ...],
-        Field(min_length=1, max_length=10000),
+        Field(max_length=10000),
     ]
     supporting_tables: Annotated[
         tuple[FigureEvidenceSupportingTable, ...], Field(max_length=10000)
@@ -518,6 +583,21 @@ class FigureEvidenceValidationReport(_FigureEvidenceModel):
 
     @model_validator(mode="after")
     def _derived_counts_are_consistent(self) -> FigureEvidenceValidationReport:
+        if self.schema_version.endswith(".v2"):
+            if self.result_shape is None or self.validated_artifacts is None:
+                raise ValueError("report v2 requires declared shape and artifact collection")
+            counts = tuple(sum(a.collection == n for a in self.validated_artifacts)
+                           for n in ("source_panels", "audit_overlays", "curve_tables"))
+            expected = ((1, 1, len(self.series)) if self.result_shape == "measured" else
+                        (1, 1, 0) if self.result_shape == "unresolved_image" else (0, 0, 0))
+            if counts != expected or self.validated_artifact_count != 1 + len(self.validated_artifacts):
+                raise ValueError("report artifact count differs from shape")
+            if (self.result_shape == "measured") != bool(self.series):
+                raise ValueError("report series differ from shape")
+            if not self.series and (self.source_status != "unresolved" or not self.unresolved_reasons):
+                raise ValueError("zero-table report requires unresolved reasons")
+        elif not self.series:
+            raise ValueError("historical report requires measured series")
         series_keys = tuple(
             (item.panel_key, item.series_key) for item in self.series
         )
@@ -585,6 +665,19 @@ class FigureEvidenceValidationReport(_FigureEvidenceModel):
         ):
             raise ValueError("shared pixel count exceeds unique pixel count")
         return self
+
+
+class AutomaticFigureEvidenceManifest(FigureEvidenceManifest):
+    schema_version: Literal["scidiscovery.figure-evidence-manifest.v2"]
+    result_shape: FigureResultShape
+    detector_receipt: Sha256
+    source: AutomaticFigureSource
+
+
+class AutomaticFigureEvidenceValidationReport(FigureEvidenceValidationReport):
+    schema_version: Literal["scidiscovery.figure-evidence-validation-report.v2"]
+    result_shape: FigureResultShape
+    validated_artifacts: tuple[FigureEvidenceArtifact, ...]
 
 
 def validate_figure_evidence_manifest(

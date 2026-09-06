@@ -104,6 +104,8 @@ def normalize_figure_evidence(
     report = FigureEvidenceValidationReport.model_validate_json(
         validation_report_content, strict=True
     )
+    if not report.series or not any(panel.series for panel in manifest.panels):
+        raise ValueError("figure normalization requires measured curve tables; unresolved zero-table evidence is not quantitative")
     manifest_sha256 = _sha256(manifest_content)
     if report.manifest_sha256 != manifest_sha256:
         raise ValueError("validation report does not bind the exact figure manifest")

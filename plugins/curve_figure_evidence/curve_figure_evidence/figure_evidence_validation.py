@@ -66,7 +66,34 @@ def build_figure_evidence_validation_report(
     """Validate exact bundle bytes and return their canonical derived metrics."""
 
     manifest = _json_object(manifest_content, manifest_data_item)
-    if manifest.get("schema_version") != MANIFEST_SCHEMA_VERSION:
+    automatic = manifest.get("schema_version") == "scidiscovery.figure-evidence-manifest.v2"
+    if automatic:
+        from .figure_evidence import FigureEvidenceManifest, FigureEvidenceValidationMetrics
+        FigureEvidenceManifest.model_validate_json(manifest_content, strict=True)
+        if manifest["result_shape"] != "measured":
+            declared = _declared_artifacts(manifest)
+            if set(declared) != set(sibling_files):
+                raise FigureEvidenceBundleError("unresolved family attachments differ from manifest")
+            for name, (content, media_type) in sibling_files.items():
+                record = declared[name]
+                if (record["sha256"], record["bytes"], record["media_type"]) != (_sha256(content), len(content), media_type):
+                    raise FigureEvidenceBundleError("unresolved attachment identity differs")
+                with Image.open(io.BytesIO(content)) as image:
+                    if image.size != (manifest["source"]["width"], manifest["source"]["height"]):
+                        raise FigureEvidenceBundleError("unresolved image dimensions differ")
+            return {
+                "schema_version": "scidiscovery.figure-evidence-validation-report.v2",
+                "validator_version": VALIDATOR_VERSION, "integrity_status": "valid",
+                "result_shape": manifest["result_shape"], "unresolved_reasons": manifest["unresolved_reasons"],
+                "validated_artifacts": list(declared.values()),
+                "figure_key": manifest["figure_key"], "source_status": "unresolved",
+                "manifest_sha256": _sha256(manifest_content),
+                "bundle_fingerprint_sha256": _sha256(canonical_json([_sha256(manifest_content), *sorted((n, _sha256(c)) for n, (c, _) in sibling_files.items())])),
+                "validated_artifact_count": 1 + len(sibling_files), "series": [],
+                "supporting_tables": [], "scientific_role_counts": [],
+                "metrics": {name: 0 for name in FigureEvidenceValidationMetrics.model_fields},
+            }
+    elif manifest.get("schema_version") != MANIFEST_SCHEMA_VERSION:
         raise FigureEvidenceBundleError("unsupported figure evidence manifest version")
     figure_key = _required_string(manifest, "figure_key", manifest_data_item)
     source_status = manifest.get("status")
@@ -306,6 +333,7 @@ def build_figure_evidence_validation_report(
             axes=axes,
             width=width,
             height=height,
+            scientific_order=automatic,
         )
         binding = series.get("binding")
         binding_unresolved = (
@@ -423,7 +451,9 @@ def build_figure_evidence_validation_report(
         ],
     ]
     return {
-        "schema_version": REPORT_SCHEMA_VERSION,
+        "schema_version": "scidiscovery.figure-evidence-validation-report.v2" if automatic else REPORT_SCHEMA_VERSION,
+        **({"result_shape": "measured", "unresolved_reasons": manifest["unresolved_reasons"],
+            "validated_artifacts": list(declared.values())} if automatic else {}),
         "validator_version": VALIDATOR_VERSION,
         "integrity_status": "valid",
         "figure_key": figure_key,
@@ -501,6 +531,7 @@ def _validate_curve_csv(
     axes: Mapping[str, Any],
     width: int,
     height: int,
+    scientific_order: bool = False,
 ) -> dict[str, Any]:
     fieldnames, rows = _csv_rows(data_item, content)
     standard = all(name in fieldnames for name in STANDARD_CURVE_COLUMNS)
@@ -723,7 +754,8 @@ def _validate_curve_csv(
             direct_points[raw_x] = pixel
         if standard:
             if primitive_kind in {"line", "fit_segment"} and previous_raw_x is not None:
-                raw_delta = raw_x - previous_raw_x
+                direction = -1 if scientific_order and _axis_value(axes["x"], 1) < _axis_value(axes["x"], 0) else 1
+                raw_delta = (raw_x - previous_raw_x) * direction
                 index_delta = point_index - int(previous_point_index)
                 if raw_delta <= 0:
                     raise FigureEvidenceBundleError(
@@ -1036,7 +1068,7 @@ def _csv_rows(data_item: str, content: bytes) -> tuple[list[str], list[dict[str,
 def _declared_artifacts(manifest: Mapping[str, Any]) -> dict[str, Mapping[str, Any]]:
     provenance = _required_mapping(manifest, "provenance", "manifest")
     values = provenance.get("output_artifacts")
-    if not isinstance(values, list) or not values:
+    if not isinstance(values, list) or (not values and manifest.get("result_shape") != "unrecovered"):
         raise FigureEvidenceBundleError("manifest provenance has no output artifacts")
     result: dict[str, Mapping[str, Any]] = {}
     for value in values:

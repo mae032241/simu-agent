@@ -6,13 +6,16 @@ import hashlib
 from typing import Any, Mapping
 
 from scidiscovery.artifact_agent.schema.common import canonical_json
-from scidiscovery.operations.spec import CallableComponent, ComponentSpec
+from scidiscovery.operations.spec import CallableComponent, ComponentSpec, ComponentRef
 from curve_score.operation_transforms import (
     _group, _input, _model_validator, _object_schema, _one, _operation,
     _output, _png, _ref, _schema,
 )
-from .figure_evidence import FigureEvidenceManifest, FigureEvidenceValidationReport
-from .figure_digitization import build_digitized_figure_bundle
+from .figure_evidence import (FigureEvidenceManifest, FigureEvidenceValidationReport,
+    AutomaticFigureEvidenceManifest, AutomaticFigureEvidenceValidationReport)
+from .figure_digitization import build_automatic_figure_bundle
+from .figure_digitization_contract import FigureMeasurementRequest
+from .figure_science_operations import FIGURE_FAMILY_REQUIREMENT
 from .figure_evidence_normalizer import (
     FIGURE_EVIDENCE_BUNDLE_PROFILE_V2, normalize_figure_evidence,
 )
@@ -85,10 +88,10 @@ def bundle_figure_evidence(
 def materialize_figure_evidence(
     values: Mapping[str, tuple[bytes, ...]],
 ) -> dict[str, tuple[bytes, ...]]:
-    if set(values) != {"paper_source", "figure_request"}:
-        raise ValueError("figure materialization requires one source and one request")
-    files, _ = build_digitized_figure_bundle(
-        _one(values, "paper_source"), _one(values, "figure_request")
+    if set(values) != {"paper_source", "figure_intent"}:
+        raise ValueError("figure materialization requires one source and one intent")
+    files = build_automatic_figure_bundle(
+        _one(values, "paper_source"), _one(values, "figure_intent")
     )
 
     def items(prefix: str) -> tuple[bytes, ...]:
@@ -99,6 +102,7 @@ def materialize_figure_evidence(
         )
 
     result = {
+        "figure_request": items("figure_request"),
         "figure_manifest": items("figure_manifest"),
         "source_panels": items("source_panels"),
         "audit_overlays": items("audit_overlays"),
@@ -113,25 +117,30 @@ def materialize_figure_evidence(
 def figure_parentage(inputs: tuple[Any, ...], parameters: Mapping[str, Any]) -> bool:
     del parameters
     grouped = _group(inputs)
+    if not grouped.get("curve_tables"):
+        # Faithful unresolved Intake/audit results do not create a quantitative library.
+        return False
     required = {
-        "paper_source", "figure_request", "scientific_intake", "evidence_audit",
+        "paper_source", "figure_intent", "figure_request", "scientific_intake", "evidence_audit",
         "figure_manifest", "validation_report", "source_panels",
         "audit_overlays", "curve_tables",
     }
     if not required <= set(grouped) or any(
         len(grouped[name]) != 1
         for name in (
-            "paper_source", "figure_request", "scientific_intake",
+            "paper_source", "figure_intent", "figure_request", "scientific_intake",
             "evidence_audit", "figure_manifest", "validation_report",
             "source_panels", "audit_overlays",
         )
     ):
         return False
     source = grouped["paper_source"][0]
+    intent = grouped["figure_intent"][0]
     request = grouped["figure_request"][0]
     intake = grouped["scientific_intake"][0]
     audit = grouped["evidence_audit"][0]
     family = (
+        request,
         grouped["figure_manifest"][0],
         grouped["validation_report"][0],
         *grouped["source_panels"],
@@ -140,7 +149,7 @@ def figure_parentage(inputs: tuple[Any, ...], parameters: Mapping[str, Any]) -> 
     )
     request_labels = dict(request.artifact.labels)
     if (
-        source.artifact.ref not in request.artifact.parent_refs
+        set(request.artifact.parent_refs) != {source.artifact.ref, intent.artifact.ref}
         or not request_labels.get("operation_invocation_fingerprint")
         or request_labels.get("operation_output_port") != "figure_request"
     ):
@@ -154,13 +163,13 @@ def figure_parentage(inputs: tuple[Any, ...], parameters: Mapping[str, Any]) -> 
     if any(
         dict(item.artifact.labels).get("operation_id")
         != "science.figure.evidence.materialize.v1"
-        or item.artifact.parent_refs != (source.artifact.ref, request.artifact.ref)
+        or set(item.artifact.parent_refs) != {source.artifact.ref, intent.artifact.ref}
         for item in family
     ):
         return False
     family_refs = tuple(item.artifact.ref for item in family)
     expected_intake_parents = {
-        source.artifact.ref, request.artifact.ref, *family_refs
+        source.artifact.ref, intent.artifact.ref, *family_refs
     }
     intake_labels = dict(intake.artifact.labels)
     audit_labels = dict(audit.artifact.labels)
@@ -184,15 +193,16 @@ MATERIALIZE_FIGURE_EVIDENCE = CallableComponent(
 
 
 FIGURE_PARENTAGE = CallableComponent("guard", figure_parentage)
+FIGURE_MEASUREMENT_VALIDATOR = CallableComponent("validator", _model_validator(FigureMeasurementRequest))
 
 
 FIGURE_MANIFEST_VALIDATOR = CallableComponent(
-    "validator", _model_validator(FigureEvidenceManifest)
+    "validator", _model_validator(AutomaticFigureEvidenceManifest)
 )
 
 
 FIGURE_REPORT_VALIDATOR = CallableComponent(
-    "validator", _model_validator(FigureEvidenceValidationReport)
+    "validator", _model_validator(AutomaticFigureEvidenceValidationReport)
 )
 
 
@@ -200,13 +210,13 @@ PNG_VALIDATOR = CallableComponent("validator", _png)
 
 
 FIGURE_MANIFEST_SCHEMA = _schema(
-    FigureEvidenceManifest, "scidiscovery.figure-evidence-manifest.v1"
+    AutomaticFigureEvidenceManifest, "scidiscovery.figure-evidence-manifest.v2"
 )
 
 
 FIGURE_REPORT_SCHEMA = _schema(
-    FigureEvidenceValidationReport,
-    "scidiscovery.figure-evidence-validation-report.v1",
+    AutomaticFigureEvidenceValidationReport,
+    "scidiscovery.figure-evidence-validation-report.v2",
 )
 
 
@@ -216,10 +226,13 @@ FIGURE_AUDIT_SCHEMA = _object_schema(
 
 
 FIGURE_COMPONENT_SPECS = (
+    ComponentSpec("figure_measurement_validator", "validator",
+        "curve_figure_evidence.operation_transforms:FIGURE_MEASUREMENT_VALIDATOR"),
     ComponentSpec(
         "materialize_figure_evidence",
         "transform",
         "curve_figure_evidence.operation_transforms:MATERIALIZE_FIGURE_EVIDENCE",
+        resources=(ComponentRef("detector_contract"),),
     ),
     ComponentSpec(
         "bundle_figure_evidence",
@@ -279,18 +292,21 @@ FIGURE_OPERATIONS = (
                 media_types=("application/pdf", "image/png", "image/jpeg", "image/webp"),
             ),
             _input(
-                "figure_request",
-                "scidiscovery.curve-figure-digitization-request.v2",
-                "figure_request_schema",
+                "figure_intent",
+                "scidiscovery.figure-extraction-intent.v2",
+                "figure_intent_schema",
                 max_bytes=1024 * 1024,
                 usage="evidence_inventory",
             ),
         ),
         (
+            _output("figure_request", "figure_measurement_request",
+                "scidiscovery.curve-figure-digitization-request.v3", "figure_request_schema",
+                "figure_measurement_validator", max_bytes=1024 * 1024),
             _output(
                 "figure_manifest",
                 "figure_evidence_manifest",
-                "scidiscovery.figure-evidence-manifest.v1",
+                "scidiscovery.figure-evidence-manifest.v2",
                 "figure_manifest_schema",
                 "figure_manifest_validator",
                 max_bytes=1024 * 1024,
@@ -301,6 +317,7 @@ FIGURE_OPERATIONS = (
                 "opaque",
                 _ref("opaque_schema", plugin_id="general_science"),
                 "figure_png_validator",
+                min_items=0,
                 max_bytes=16 * 1024 * 1024,
                 media_type="image/png",
             ),
@@ -310,6 +327,7 @@ FIGURE_OPERATIONS = (
                 "opaque",
                 _ref("opaque_schema", plugin_id="general_science"),
                 "figure_png_validator",
+                min_items=0,
                 max_bytes=16 * 1024 * 1024,
                 media_type="image/png",
             ),
@@ -319,7 +337,7 @@ FIGURE_OPERATIONS = (
                 "opaque",
                 _ref("opaque_schema", plugin_id="general_science"),
                 _ref("nonempty_validator"),
-                min_items=1,
+                min_items=0,
                 max_items=32,
                 max_bytes=8 * 1024 * 1024,
                 media_type="text/csv",
@@ -327,14 +345,14 @@ FIGURE_OPERATIONS = (
             _output(
                 "validation_report",
                 "figure_evidence_validation_report",
-                "scidiscovery.figure-evidence-validation-report.v1",
+                "scidiscovery.figure-evidence-validation-report.v2",
                 "figure_report_schema",
                 "figure_report_validator",
                 max_bytes=1024 * 1024,
             ),
         ),
         max_input_bytes=33 * 1024 * 1024,
-        max_output_bytes=290 * 1024 * 1024,
+        max_output_bytes=291 * 1024 * 1024,
     ),
     _operation(
         FIGURE_EVIDENCE_BUNDLE_PROFILE_V2,
@@ -342,19 +360,20 @@ FIGURE_OPERATIONS = (
         "Normalize exact validated figure tables into one canonical evidence library.",
         (
             _input("paper_source", "opaque", _ref("opaque_schema", plugin_id="general_science"), max_bytes=32 * 1024 * 1024, usage="evidence_inventory", media_types=("application/pdf", "image/png", "image/jpeg", "image/webp")),
-            _input("figure_request", "scidiscovery.curve-figure-digitization-request.v2", "figure_request_schema", max_bytes=1024 * 1024, usage="evidence_inventory"),
+            _input("figure_intent", "scidiscovery.figure-extraction-intent.v2", "figure_intent_schema", max_bytes=1024 * 1024, usage="evidence_inventory"),
+            _input("figure_request", "scidiscovery.curve-figure-digitization-request.v3", "figure_request_schema", max_bytes=1024 * 1024, usage="evidence_inventory"),
             _input("scientific_intake", "scidiscovery.scientific-intake.v1", _ref("scientific_intake_schema", plugin_id="general_science"), usage="prior_signal", max_bytes=64 * 1024),
             _input("evidence_audit", "scidiscovery.evidence-audit.v1", _ref("evidence_audit_schema", plugin_id="general_science"), usage="prior_signal", max_bytes=32 * 1024),
-            _input("figure_manifest", "scidiscovery.figure-evidence-manifest.v1", "figure_manifest_schema", usage="evidence_inventory"),
-            _input("validation_report", "scidiscovery.figure-evidence-validation-report.v1", "figure_report_schema", usage="evidence_inventory"),
-            _input("source_panels", "opaque", _ref("opaque_schema", plugin_id="general_science"), max_bytes=16 * 1024 * 1024, usage="evidence_inventory", media_types=("image/png",)),
-            _input("audit_overlays", "opaque", _ref("opaque_schema", plugin_id="general_science"), max_bytes=16 * 1024 * 1024, usage="evidence_inventory", media_types=("image/png",)),
-            _input("curve_tables", "opaque", _ref("opaque_schema", plugin_id="general_science"), min_items=1, max_items=32, usage="evidence_inventory", media_types=("text/csv",)),
+            _input("figure_manifest", "scidiscovery.figure-evidence-manifest.v2", "figure_manifest_schema", usage="evidence_inventory"),
+            _input("validation_report", "scidiscovery.figure-evidence-validation-report.v2", "figure_report_schema", usage="evidence_inventory"),
+            _input("source_panels", "opaque", _ref("opaque_schema", plugin_id="general_science"), min_items=0, max_bytes=16 * 1024 * 1024, usage="evidence_inventory", media_types=("image/png",)),
+            _input("audit_overlays", "opaque", _ref("opaque_schema", plugin_id="general_science"), min_items=0, max_bytes=16 * 1024 * 1024, usage="evidence_inventory", media_types=("image/png",)),
+            _input("curve_tables", "opaque", _ref("opaque_schema", plugin_id="general_science"), min_items=0, max_items=32, usage="evidence_inventory", media_types=("text/csv",)),
         ),
         (
             _output("curve_bundle", "curve_bundle", "scidiscovery.curve-bundle.v1", _ref("curve_bundle_schema", plugin_id="curve_score"), _ref("curve_bundle_validator", plugin_id="curve_score"), max_bytes=256 * 1024 * 1024),
             _output("normalization_audit", "figure_evidence_curve_normalization_audit", "scidiscovery.figure-evidence-curve-normalization-audit.v1", "figure_audit_schema", _ref("audit_validator", plugin_id="curve_score"), max_bytes=16 * 1024 * 1024),
         ),
         guards=("figure_parentage",),
-    ),
+    ).model_copy(update={"complete_transform_family": FIGURE_FAMILY_REQUIREMENT}),
 )

@@ -19,9 +19,7 @@ from scidiscovery.artifact_agent.schema.common import canonical_json
 from scidiscovery.builtin_plugin import CORE_PLUGIN
 from scidiscovery.general_science_plugin import PLUGIN as GENERAL_PLUGIN
 from scidiscovery.operations.catalog import compile_catalog
-from scidiscovery.operations.spec import CallableComponent, ComponentRef, ComponentSpec, ExecutorRef, LimitsSpec, OperationDescription, OperationSpec, OutputPortSpec, PluginDefinition, PluginDependency, PLUGIN_PROTOCOL_VERSION
 
-from tests.operations.test_curve_figure_digitization_tool import _request
 from tests.operations.test_general_transform_operations import _intake
 
 
@@ -45,43 +43,8 @@ def _envelope(payload: object, *, verdict: str = "pass") -> bytes:
     )
 
 
-def _compile_synthetic_request(values):
-    source = values["paper_source"][0]
-    marker = Image.open(io.BytesIO(source)).getpixel((0, 0))[0]
-    expected, request = _two_series_source_and_request(marker=marker)
-    assert source == expected
-    return {"figure_request": (canonical_json(request),)}
-
-
-SYNTHETIC_COMPILE = CallableComponent("transform", _compile_synthetic_request)
-SYNTHETIC_PLUGIN = PluginDefinition(
-    plugin_id="figure_fixture", version="0.1.0", protocol_version=PLUGIN_PROTOCOL_VERSION,
-    dependencies=(PluginDependency("general_science", "0.1.0"), PluginDependency("curve_figure_evidence", "0.1.0")),
-    components=(ComponentSpec("compile", "transform", "tests.operations.test_m5_figure_review_closure:SYNTHETIC_COMPILE"),),
-    # A synthetic measurement producer for lifecycle regression only; no detector claim.
-    operations=(OperationSpec(
-        operation_id="test.figure.compile.v1", version="1", catalog_scope="support",
-        description=OperationDescription(
-            purpose="Supply an exact synthetic measurement request for family tests.",
-            applies_when="The test supplies its generated raster.",
-            not_for="Automatic detection or scientific evidence.",
-        ),
-        executor=ExecutorRef(kind="transform", component=ComponentRef("compile")),
-        inputs=(next(op for op in FIGURE_PLUGIN.operations if op.operation_id == MATERIALIZE).inputs[0].model_copy(update={"media_types": ("image/png",)}),),
-        outputs=(OutputPortSpec(
-            name="figure_request", description="Exact synthetic measurement request.",
-            schema="scidiscovery.curve-figure-digitization-request.v2",
-            media_types=("application/json",), kind="figure_digitization_request",
-            codec=ComponentRef("json_codec", plugin_id="general_science"),
-            schema_resource=ComponentRef("figure_request_schema", plugin_id="curve_figure_evidence"),
-        ),), consequence="scientific",
-        limits=LimitsSpec(timeout_seconds=30, max_input_bytes=32 * 1024 * 1024, max_output_bytes=1024 * 1024, max_files=1),
-    ),),
-)
-
-
 def _system(tmp_path: Path, *, catalog=None):
-    catalog = catalog or compile_catalog((CORE_PLUGIN, GENERAL_PLUGIN, CURVE_PLUGIN, FIGURE_PLUGIN, SYNTHETIC_PLUGIN))
+    catalog = catalog or compile_catalog((CORE_PLUGIN, GENERAL_PLUGIN, CURVE_PLUGIN, FIGURE_PLUGIN))
     project = tmp_path / "project"
     project.mkdir()
     runtime = open_runtime(
@@ -281,31 +244,6 @@ def _revision_bindings(
     ]
 
 
-def _two_series_source_and_request(
-    *, marker: int = 255
-) -> tuple[bytes, dict[str, object]]:
-    image = Image.new("RGB", (12, 12), "white")
-    image.putpixel((0, 0), (marker, marker, marker))
-    for x in range(1, 10):
-        image.putpixel((x, 10 - x), (255, 0, 0))
-    for x in range(1, 9):
-        image.putpixel((x, 9 - x), (0, 0, 255))
-    stream = io.BytesIO()
-    image.save(stream, format="PNG")
-    source = stream.getvalue()
-    request = json.loads(_request(source))
-    second = json.loads(json.dumps(request["series"][0]))
-    second.update(
-        series_key="second",
-        label="Second",
-        color="#0000ff",
-        visible_label="Second",
-        seeds=[[1.0, 8.0], [8.0, 1.0]],
-    )
-    request["series"].append(second)
-    return source, request
-
-
 def _binding_counts(runtime, instance) -> tuple[int, int]:
     return tuple(
         len(
@@ -338,12 +276,8 @@ def test_intent_submit_rejects_source_hash_mismatch(
         schema_id="opaque",
         media_type="image/png",
     )
-    payload = {
-        "schema_version": "scidiscovery.figure-extraction-intent.v1",
-        "source_sha256": "0" * 64,
-        "figure": "Fig. 1", "panel": "whole figure",
-        "series_labels": ["Covered", "Visible"],
-    }
+    from tests.operations.test_figure_role_chain_v2 import intent_for
+    payload = {**intent_for(source_raw), "source_sha256": "0" * 64}
     request = {
         "name": "invalid_request",
         "operation_id": REQUEST,
@@ -373,9 +307,10 @@ def test_intent_submit_rejects_source_hash_mismatch(
     )
 
 
-def test_five_operation_figure_family_requires_exact_review(tmp_path: Path) -> None:
+def test_five_operation_figure_family_requires_exact_review(tmp_path: Path, monkeypatch) -> None:
     catalog, runtime, instance, root = _system(tmp_path)
-    source_raw, request_payload = _two_series_source_and_request()
+    from tests.operations.test_figure_role_chain_v2 import measured_source
+    source_raw, request_payload = measured_source(monkeypatch)
     source = _register(
         runtime,
         instance,
@@ -386,20 +321,9 @@ def test_five_operation_figure_family_requires_exact_review(tmp_path: Path) -> N
         media_type="image/png",
     )
 
-    # This synthetic family fixture begins at the deterministic compiler output;
-    # the public intent/real domain compiler path has its own integration test.
-    request_name = root.call_tool("operation_invoke", {
-        "name": "figure_request", "operation_id": "test.figure.compile.v1",
-        "inputs": [{"port": "paper_source", "artifact_names": ["paper_source"]}],
-    })["result"]["outputs"][0]["artifact_name"]
-    request_artifact = runtime.artifacts.get_by_id(
-        runtime.scheduler_bindings.resolve(
-            instance=instance.instance_id,
-            namespace="artifact",
-            name=request_name,
-        )
-    )
-    assert request_artifact.parent_refs == (source.ref,)
+    request_name = _complete_agent(catalog, runtime, root, operation_id=REQUEST,
+        name="figure_intent", inputs=[{"port": "paper_source", "artifact_names": ["paper_source"]}],
+        payload=request_payload)
 
     materialized = root.call_tool(
         "operation_invoke",
@@ -408,7 +332,7 @@ def test_five_operation_figure_family_requires_exact_review(tmp_path: Path) -> N
             "operation_id": MATERIALIZE,
             "inputs": [
                 {"port": "paper_source", "artifact_names": ["paper_source"]},
-                {"port": "figure_request", "artifact_names": [request_name]},
+                {"port": "figure_intent", "artifact_names": [request_name]},
             ],
         },
     )
@@ -417,7 +341,8 @@ def test_five_operation_figure_family_requires_exact_review(tmp_path: Path) -> N
         by_port.setdefault(output["kind"], []).append(output["artifact_name"])
     names = {
         "paper_source": ["paper_source"],
-        "figure_request": [request_name],
+        "figure_intent": [request_name],
+        "figure_request": by_port["figure_measurement_request"],
         "figure_manifest": by_port["figure_evidence_manifest"],
         "validation_report": by_port["figure_evidence_validation_report"],
         "source_panels": by_port["figure_source_panel"],
@@ -426,6 +351,7 @@ def test_five_operation_figure_family_requires_exact_review(tmp_path: Path) -> N
     }
     assert {key: len(value) for key, value in names.items()} == {
         "paper_source": 1,
+        "figure_intent": 1,
         "figure_request": 1,
         "figure_manifest": 1,
         "validation_report": 1,
@@ -474,9 +400,7 @@ def test_five_operation_figure_family_requires_exact_review(tmp_path: Path) -> N
         },
     )["admissible"] is True
 
-    second_source_raw, second_request_payload = _two_series_source_and_request(
-        marker=254
-    )
+    second_source_raw, second_request_payload = measured_source(monkeypatch, marker=254)
     second_source = _register(
         runtime,
         instance,
@@ -486,10 +410,9 @@ def test_five_operation_figure_family_requires_exact_review(tmp_path: Path) -> N
         schema_id="opaque",
         media_type="image/png",
     )
-    second_request_name = root.call_tool("operation_invoke", {
-        "name": "second_figure_request", "operation_id": "test.figure.compile.v1",
-        "inputs": [{"port": "paper_source", "artifact_names": ["second_paper_source"]}],
-    })["result"]["outputs"][0]["artifact_name"]
+    second_request_name = _complete_agent(catalog, runtime, root, operation_id=REQUEST,
+        name="second_figure_intent", inputs=[{"port": "paper_source", "artifact_names": ["second_paper_source"]}],
+        payload=second_request_payload)
     second_materialized = root.call_tool(
         "operation_invoke",
         {
@@ -501,7 +424,7 @@ def test_five_operation_figure_family_requires_exact_review(tmp_path: Path) -> N
                     "artifact_names": ["second_paper_source"],
                 },
                 {
-                    "port": "figure_request",
+                    "port": "figure_intent",
                     "artifact_names": [second_request_name],
                 },
             ],
@@ -514,7 +437,8 @@ def test_five_operation_figure_family_requires_exact_review(tmp_path: Path) -> N
         )
     second_names = {
         "paper_source": ["second_paper_source"],
-        "figure_request": [second_request_name],
+        "figure_intent": [second_request_name],
+        "figure_request": second_by_port["figure_measurement_request"],
         "figure_manifest": second_by_port["figure_evidence_manifest"],
         "validation_report": second_by_port["figure_evidence_validation_report"],
         "source_panels": second_by_port["figure_source_panel"],
@@ -534,7 +458,7 @@ def test_five_operation_figure_family_requires_exact_review(tmp_path: Path) -> N
         "wrong_request": [
             (
                 {**item, "artifact_names": [second_request_name]}
-                if item["port"] == "figure_request"
+                if item["port"] == "figure_intent"
                 else item
             )
             for item in complete_inputs
@@ -929,6 +853,7 @@ def test_five_operation_figure_family_requires_exact_review(tmp_path: Path) -> N
     )
     frozen_family = [
         *names["paper_source"],
+        *names["figure_intent"],
         *names["figure_request"],
         *names["figure_manifest"],
         *names["validation_report"],

@@ -51,7 +51,7 @@ def test_optional_plugin_adds_the_complete_figure_vertical_slice() -> None:
     assert "science.evidence.extract.figure.v1" not in optional.operation_ids()
     request = optional.operation("science.figure.request.prepare.v1")
     assert request.spec.outputs[0].schema_id == (
-        "scidiscovery.figure-extraction-intent.v1"
+        "scidiscovery.figure-extraction-intent.v2"
     )
     assert {
         item.name for item in operation_worker_tools(request)
@@ -65,6 +65,7 @@ def test_optional_plugin_adds_the_complete_figure_vertical_slice() -> None:
     assert intake_output.context_rule_id == "intake.source_binding"
     assert intake_output.context_sources == (
         "paper_source",
+        "figure_intent",
         "figure_request",
         "figure_manifest",
         "validation_report",
@@ -164,13 +165,14 @@ def test_public_and_support_views_expose_one_runnable_figure_topology(
         "complete_transform_family"
     ] == {
         "output_ports": [
+            "figure_request",
             "figure_manifest",
             "validation_report",
             "source_panels",
             "audit_overlays",
             "curve_tables",
         ],
-        "input_ports": ["paper_source", "figure_request"],
+        "input_ports": ["paper_source", "figure_intent"],
     }
     assert all(
         all_items[operation_id].get("runtime_binding", {}).get(

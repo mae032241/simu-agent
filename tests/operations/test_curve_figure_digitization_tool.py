@@ -31,6 +31,14 @@ from scidiscovery.artifact_agent.schema.common import canonical_json
 from scidiscovery.artifact_agent.schema.refs import ArtifactRef
 
 
+def _legacy_algorithm_bundle(values):
+    """Historical synthetic tracker unit fixture; never an Operation input."""
+    files, _ = build_digitized_figure_bundle(values["paper_source"][0], values["figure_request"][0])
+    return {port: tuple(raw for name, (raw, _) in sorted(files.items()) if name.startswith(prefix + "/"))
+            for port, prefix in (("figure_manifest", "figure_manifest"), ("validation_report", "validation_reports"),
+                ("source_panels", "source_panels"), ("audit_overlays", "audit_overlays"), ("curve_tables", "curve_tables"))}
+
+
 def _png_with_points(points: tuple[tuple[int, int], ...]) -> bytes:
     image = Image.new("RGB", (12, 12), "white")
     for point in points:
@@ -140,13 +148,13 @@ def test_typed_request_is_bound_to_the_exact_raster_source() -> None:
         build_digitized_figure_bundle(source, canonical_json(changed))
 
 
-def test_materialization_is_deterministic_and_uses_transform_ports() -> None:
+def test_historical_tracker_bundle_is_deterministic() -> None:
     source = _valid_source()
     request = _request(source)
-    first = materialize_figure_evidence(
+    first = _legacy_algorithm_bundle(
         {"paper_source": (source,), "figure_request": (request,)}
     )
-    second = materialize_figure_evidence(
+    second = _legacy_algorithm_bundle(
         {"paper_source": (source,), "figure_request": (request,)}
     )
     assert first == second
@@ -217,7 +225,7 @@ def test_undeclared_visible_gap_and_bad_seed_are_local_diagnostics() -> None:
     request = json.loads(_request(source))
     request["series"][0]["seeds"] = [[1.0, 1.0], [9.0, 1.0]]
     request["series"][0]["tracking"]["plot_border_exclusion_px"] = 1
-    outputs = materialize_figure_evidence(
+    outputs = _legacy_algorithm_bundle(
         {
             "paper_source": (source,),
             "figure_request": (canonical_json(request),),
@@ -239,7 +247,7 @@ def test_ineligible_internal_interval_cannot_be_scored_across() -> None:
     source = _valid_source()
     request = json.loads(_request(source))
     request["series"][0]["eligibility"]["ineligible_pixel_ranges"] = [[4, 6]]
-    outputs = materialize_figure_evidence(
+    outputs = _legacy_algorithm_bundle(
         {
             "paper_source": (source,),
             "figure_request": (canonical_json(request),),
@@ -311,7 +319,7 @@ def test_unresolved_series_cannot_forge_eligible_rows() -> None:
 
 
 def test_old_curve_table_without_source_and_request_cannot_materialize() -> None:
-    with pytest.raises(ValueError, match="one source and one request"):
+    with pytest.raises(ValueError, match="one source and one intent"):
         materialize_figure_evidence({"curve_tables": (b"old,csv\n",)})
 
 
@@ -357,7 +365,7 @@ def test_deprecated_covered_eligibility_remains_parseable_but_is_not_granted() -
             "max_endpoint_distance_px": 2.0,
         }
     ]
-    outputs = materialize_figure_evidence(
+    outputs = _legacy_algorithm_bundle(
         {
             "paper_source": (source,),
             "figure_request": (canonical_json(request),),
@@ -522,7 +530,7 @@ def _coincident_overlap_request(
 
 def test_coincident_overlap_uses_one_real_source_per_column() -> None:
     source, request = _coincident_overlap_request()
-    outputs = materialize_figure_evidence(
+    outputs = _legacy_algorithm_bundle(
         {
             "paper_source": (source,),
             "figure_request": (canonical_json(request),),
@@ -569,7 +577,7 @@ def test_coincident_overlap_preserves_each_simultaneously_visible_source() -> No
         red_overlap=(4, 5, 6),
         red_overlap_y=6,
     )
-    outputs = materialize_figure_evidence(
+    outputs = _legacy_algorithm_bundle(
         {
             "paper_source": (source,),
             "figure_request": (canonical_json(request),),
@@ -635,7 +643,7 @@ def test_coincident_overlap_preserves_member_local_detection_limit() -> None:
         "default_eligible": True,
         "below_detection_limit_pixel_ranges": [[5, 6]],
     }
-    outputs = materialize_figure_evidence(
+    outputs = _legacy_algorithm_bundle(
         {
             "paper_source": (source,),
             "figure_request": (canonical_json(request),),
@@ -690,7 +698,7 @@ def test_local_possible_overdraw_does_not_make_whole_series_unresolved() -> None
             "seeds": [[1.0, 5.0], [9.0, 5.0]],
         },
     ]
-    outputs = materialize_figure_evidence(
+    outputs = _legacy_algorithm_bundle(
         {
             "paper_source": (source,),
             "figure_request": (canonical_json(request),),
@@ -915,7 +923,7 @@ def test_pdf_embedded_image_selection_has_exact_object_identity(tmp_path: Path) 
     assert (recovered[0].width, recovered[0].height) == (12, 12)
 
 
-def test_pdf_request_is_replayed_by_the_formal_materializer(tmp_path: Path) -> None:
+def test_historical_pdf_request_is_replayed_by_algorithm(tmp_path: Path) -> None:
     image = Image.new("RGB", (20, 20), "white")
     for x in range(2, 18):
         for offset in (-1, 0, 1):
@@ -965,7 +973,7 @@ def test_pdf_request_is_replayed_by_the_formal_materializer(tmp_path: Path) -> N
             "min_visible_fraction": 0.4,
         }
     )
-    outputs = materialize_figure_evidence(
+    outputs = _legacy_algorithm_bundle(
         {
             "paper_source": (source,),
             "figure_request": (canonical_json(request),),
@@ -1017,8 +1025,8 @@ def test_registered_inspection_tool_publishes_only_run_local_read_only_preview(
     context = _ToolContext(workspace, pdf)
     handler = FIGURE_SOURCE_INSPECTION_TOOL.contextual_handler
     assert handler is not None
-    response = handler(FigureSourceInspectionInput(page=1), context)
-    preview = Path(response["images"][0]["local_path"])
+    response = handler(FigureSourceInspectionInput(), context)
+    preview = Path(response["images"][0]["source_preview"])
     assert preview.is_relative_to(workspace)
     assert preview.read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
     assert preview.stat().st_mode & 0o222 == 0

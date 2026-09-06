@@ -12,6 +12,7 @@ from PIL import Image, ImageDraw
 from scidiscovery.artifact_agent.schema.common import canonical_json
 
 from .figure_evidence import validate_figure_evidence_manifest
+from .figure_evidence import FigurePanelAxisCalibration, FigureEvidenceValidationReport
 from .figure_evidence_validation import build_figure_evidence_validation_report
 from .figure_line_tracker import (
     LineFinding,
@@ -31,7 +32,160 @@ from .figure_digitization_contract import (
     axis_uncertainty as _axis_uncertainty,
     axis_value as _axis_value,
     recover_requested_image,
+    FigureExtractionIntent, FigureMeasurementRequest, replay_detection,
+    validate_intent_candidates, calibration_from_tick_pairs,
 )
+
+
+def build_automatic_figure_bundle(source_content: bytes, intent_content: bytes):
+    """Replay raw bytes, validate semantic choices, and measure only detector pixels."""
+    intent = FigureExtractionIntent.model_validate_json(intent_content, strict=True)
+    detected = replay_detection(source_content)
+    selection = validate_intent_candidates(intent, detected)
+    image, detection, plot = selection if selection else (
+        (detected.images[0], detected.detections[0], None) if detected.images else (None, None, None))
+    reasons = set(detected.unresolved) | set(intent.unresolved_reasons)
+    reasons.update(item.reason for item in intent.rejected_candidates)
+    axes = None
+    selected_paths = []
+    if detection:
+        reasons.update(detection.unresolved)
+    if plot:
+        reasons.update(reason for axis in plot.axes for reason in axis.unresolved)
+        if all(axis.resolved for axis in plot.axes):
+            calibrations = {}
+            for axis in plot.axes:
+                solution = axis.solutions[0]
+                ticks = sorted(solution.ticks)
+                # Residual is measured in fitted scientific space; convert to pixels.
+                span = abs(solution.slope) * abs(ticks[-1][0] - ticks[0][0])
+                error_px = solution.residual * span / abs(solution.slope)
+                calibrations[axis.axis] = calibration_from_tick_pairs(
+                    scale=solution.scale, unit=solution.unit,
+                    ticks=(ticks[0], ticks[-1]), uncertainty_px=max(.5, error_px))
+            axes = FigurePanelAxisCalibration(**calibrations)
+        paths = {p.candidate_id: p for p in detection.paths}
+        for binding in intent.bindings:
+            path = paths[binding.candidate_id]
+            # Semantic labels belong to the Agent and independent audit. Optional
+            # explicit OCR anchors were already checked against this exact frame.
+            reasons.update(r for r in path.unresolved if r not in {"identity_unbound", "axes_unresolved"})
+            if axes and path.pixels:
+                selected_paths.append((binding, path))
+    if not selected_paths:
+        reasons.add("no_trustworthy_measurement")
+    selected_paths.sort(key=lambda item: item[1].candidate_id)
+    shape = "measured" if selected_paths else "unresolved_image" if image else "unrecovered"
+    source = {"source_kind": "unrecovered", "source_sha256": detected.source_sha256}
+    if image:
+        source = {
+            "source_kind": "embedded" if image.kind == "embedded_image" else image.kind,
+            "source_sha256": detected.source_sha256, "image_sha256": image.image_sha256,
+            "width": image.width, "height": image.height, "transform": image.transform,
+            "coordinate_space": image.coordinate_space, "recovery_tool": image.tool,
+            "recovery_tool_version": image.tool_version,
+        }
+        if image.page is not None:
+            source["page"] = image.page
+        if image.pdf_object is not None:
+            source["pdf_object"] = image.pdf_object
+        if image.kind == "page_render":
+            source.update(rotation=image.rotation, requested_dpi=image.requested_dpi,
+                          media_box=image.media_box, crop_box=image.crop_box)
+    request = FigureMeasurementRequest.model_validate_json(canonical_json({
+        "schema_version": "scidiscovery.curve-figure-digitization-request.v3",
+        "result_shape": shape, "request_status": "ready" if selected_paths else "unresolved",
+        "source": source, "detector_receipt": detected.receipt, "detector_version": detected.detector_version,
+        "figure": intent.figure, "panel": intent.panel if image else None, "plot_candidate_id": intent.plot_candidate_id,
+        "plot_bbox": plot.bbox if plot else None,
+        "axis_calibration": axes.model_dump(mode="json") if axes else None,
+        "series": [b.model_dump(mode="json") for b, _ in selected_paths],
+        "unresolved_reasons": sorted(reasons),
+        "rejected_candidates": [r.model_dump(mode="json") for r in intent.rejected_candidates],
+    }), strict=True)
+    request_raw = canonical_json(request.model_dump(mode="json"))
+    panel_key = "panel-" + (plot.candidate_id[:20] if plot else detected.receipt[:20])
+    siblings = {} if image is None else {
+        f"source_panels/{panel_key}.png": (image.content, "image/png"),
+        f"audit_overlays/{panel_key}.png": (detection.overlay, "image/png"),
+    }
+    series_records = []
+    if selected_paths:
+        with Image.open(io.BytesIO(image.content)) as raw_image:
+            pixels = raw_image.convert("RGB")
+        owners = {}
+        for _, path in selected_paths:
+            for pixel in path.pixels:
+                owners[pixel.pixel_id] = owners.get(pixel.pixel_id, 0) + 1
+        for binding, path in selected_paths:
+            series_key = "path-" + path.candidate_id[:20]
+            data_item = f"curve_tables/{panel_key}--{series_key}.csv"
+            ordered = sorted(path.pixels, key=lambda p: (_axis_value(axes.x, p.x), p.y))
+            stream = io.StringIO(newline="")
+            rows = []
+            for pixel in ordered:
+                shared = owners[pixel.pixel_id] > 1 or bool(pixel.shared_group)
+                # Multiple selected series may use the same observed coordinate.
+                # This does not resolve their exclusive branches or create another
+                # independent physical sample (report statistics deduplicate pixels).
+                shared_observation = owners[pixel.pixel_id] > 1
+                ambiguous = "path_junction_ambiguous" in path.unresolved and not shared_observation
+                rows.append({
+                    "panel_key": panel_key, "series_key": series_key,
+                    "point_index": abs(pixel.x - ordered[0].x),
+                    "pixel_id": pixel.pixel_id, "path_candidate_id": path.candidate_id,
+                    "pixel_x_raw": pixel.x, "pixel_y_raw": pixel.y,
+                    "pixel_x_subpixel": pixel.x, "pixel_y_subpixel": pixel.y,
+                    "x_value": _axis_value(axes.x, pixel.x), "y_value": _axis_value(axes.y, pixel.y),
+                    "uncertainty_px": .5,
+                    "x_uncertainty": _axis_uncertainty(axes.x, pixel.x, .5),
+                    "y_uncertainty": _axis_uncertainty(axes.y, pixel.y, .5),
+                    "observed": 1, "quantitative_measurement_claim_eligible": int(not ambiguous),
+                    "eligibility_reason": "ambiguous_path" if ambiguous else "",
+                    "coordinate_ownership": "shared" if shared else "exclusive",
+                    "shared_group": pixel.pixel_id if shared else "",
+                })
+            writer = csv.DictWriter(stream, fieldnames=tuple(rows[0]), lineterminator="\n")
+            writer.writeheader()
+            writer.writerows(rows)
+            siblings[data_item] = (stream.getvalue().encode(), "text/csv")
+            xs = sorted({p.x for p in ordered})
+            left, _, right, _ = plot.bbox
+            gaps = [xs[0] - left, right - xs[-1], *(b-a-1 for a,b in zip(xs,xs[1:]))]
+            color = pixels.getpixel((ordered[0].x, ordered[0].y))
+            series_records.append({
+                "series_key": series_key, "label": binding.semantic_identity, "primitive_kind": "line",
+                "descriptor": {"color": "#%02x%02x%02x" % color, "color_tolerance": 0.0, "line_style": "solid"},
+                "data_item": data_item,
+                "binding": {"source": "annotation", "visible_label": binding.visible_label,
+                            "status": "matched", "confidence": 1.0, "alternatives": []},
+                "point_count": len(rows), "visible_fraction": len(xs) / (right-left+1),
+                "max_gap_px": max(gaps), "uncertainty_px": .5,
+                "tracking_diagnostics": sorted(set(path.unresolved) - {"identity_unbound", "axes_unresolved"}),
+            })
+    manifest = {
+        "schema_version": "scidiscovery.figure-evidence-manifest.v2", "result_shape": shape,
+        "detector_receipt": detected.receipt, "unresolved_reasons": sorted(reasons),
+        "figure_key": "figure-" + detected.receipt[:20], "status": "unresolved" if reasons else "qualified",
+        "source": source,
+        "panels": [] if image is None else [{"panel_key": panel_key, "citation": intent.figure,
+            "axis_calibration": axes.model_dump(mode="json") if axes else None,
+            "series": series_records, "shared_support": []}],
+        "metrics": {"panel_count": int(image is not None), "series_count": len(series_records),
+            "qualified_series_count": len(series_records), "total_point_count": sum(s["point_count"] for s in series_records),
+            "minimum_visible_fraction": min((s["visible_fraction"] for s in series_records), default=0.0)},
+        "ambiguities": [],
+        "provenance": {"spec_sha256": _sha256(request_raw), "output_artifacts": [
+            {"collection": name.split("/")[0], "data_item": name, "sha256": _sha256(raw),
+             "bytes": len(raw), "media_type": media} for name,(raw,media) in sorted(siblings.items())]},
+    }
+    manifest_raw = canonical_json(validate_figure_evidence_manifest(manifest))
+    report = build_figure_evidence_validation_report(manifest_data_item="figure_manifest/evidence.json",
+        manifest_content=manifest_raw, sibling_files=siblings)
+    FigureEvidenceValidationReport.model_validate_json(canonical_json(report), strict=True)
+    return {"figure_request/evidence.json": (request_raw, "application/json"),
+        "figure_manifest/evidence.json": (manifest_raw, "application/json"),
+        "validation_reports/validation_report.json": (canonical_json(report), "application/json"), **siblings}
 
 
 def _rgb(color: str) -> tuple[int, int, int]:

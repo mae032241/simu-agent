@@ -4,6 +4,10 @@ from __future__ import annotations
 
 import hashlib
 import math
+import json
+import shutil
+import subprocess
+from dataclasses import asdict
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -13,8 +17,46 @@ from .figure_evidence import (
     FigurePanelAxisCalibration,
     FigureSharedSupport,
     MAX_FORMAL_RGB_DISTANCE,
+    AutomaticFigureSource, FigureResultShape, UnrecoveredFigureSource,
 )
 from .figure_source import RecoveredFigureImage, inspect_figure_source_bytes
+from .figure_source import AUTOMATIC_SOURCE_POLICY
+from .figure_detection import (DETECTOR_VERSION, POLICY, SourceDetection, detect_source,
+    MAX_TOKENS, MAX_AXIS_COMBINATIONS, MAX_LINE_SEGMENTS)
+from PIL import __version__ as PILLOW_VERSION
+
+
+# P4 supplies the actual OCR executable/model identity. No guessed model digest.
+DETECTOR_CONTRACT = json.dumps({
+    "detector_version": DETECTOR_VERSION, "policy": POLICY,
+    "source_policy": AUTOMATIC_SOURCE_POLICY,
+    "limits": {"ocr_tokens": MAX_TOKENS, "axis_combinations": MAX_AXIS_COMBINATIONS,
+               "line_segments": MAX_LINE_SEGMENTS},
+    "pillow_version": "12.1.1", "poppler_version": "22.02.0",
+    "ocr": {"adapter": "tesseract --psm 11 tsv", "version": None,
+            "model_sha256": None, "supply_status": "awaiting_P4"},
+}, sort_keys=True, separators=(",", ":")).encode()
+
+
+def replay_detection(content: bytes) -> SourceDetection:
+    """Verify the declared runtime boundary before replaying raw-source detection."""
+    contract = json.loads(DETECTOR_CONTRACT)
+    if PILLOW_VERSION != contract["pillow_version"]:
+        raise RuntimeError("Pillow version differs from detector contract")
+    if content.startswith(b"%PDF-"):
+        for command in ("pdfinfo", "pdfimages", "pdftoppm"):
+            result = subprocess.run([command, "-v"], capture_output=True, check=True, timeout=15)
+            first_line = (result.stdout + result.stderr).decode().splitlines()[0].split()
+            if len(first_line) < 3 or first_line[2] != contract["poppler_version"]:
+                raise RuntimeError("Poppler version differs from detector contract")
+    if shutil.which("tesseract") is not None:
+        raise RuntimeError("OCR model identity has not been supplied and verified by P4")
+    return detect_source(content)
+
+
+def identity_anchor_id(source_sha256: str, image_sha256: str, token: object) -> str:
+    return hashlib.sha256(json.dumps((source_sha256, image_sha256, asdict(token)),
+        sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
 FigureKey = Annotated[
@@ -40,37 +82,108 @@ class _DigitizationModel(BaseModel):
     )
 
 
+class FigureCandidateBinding(_DigitizationModel):
+    candidate_id: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
+    visible_label: ShortText
+    semantic_identity: ShortText
+    identity_anchor_id: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")] | None = None
+
+
+class FigureCandidateRejection(_DigitizationModel):
+    candidate_id: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
+    reason: ShortText
+
+
 class FigureExtractionIntent(_DigitizationModel):
-    """Public scientific selection; all pixel measurements belong to tools."""
+    """Agent choices and semantic text only; no mechanically writable values."""
 
-    model_config = ConfigDict(json_schema_extra={
-        "oneOf": [
-            {"required": ["series_labels"], "properties": {
-                "series_labels": {"minItems": 1},
-                "unresolved_reasons": {"maxItems": 0},
-            }},
-            {"required": ["unresolved_reasons"], "properties": {
-                "series_labels": {"maxItems": 0},
-                "unresolved_reasons": {"minItems": 1},
-            }},
-        ],
-    })
+    model_config = ConfigDict(json_schema_extra={"anyOf": [
+        {"properties": {"bindings": {"minItems": 1}, "plot_candidate_id": {"type": "string"}}},
+        {"required": ["unresolved_reasons"], "properties": {"bindings": {"maxItems": 0}, "unresolved_reasons": {"minItems": 1}}},
+        {"required": ["rejected_candidates"], "properties": {"bindings": {"maxItems": 0}, "rejected_candidates": {"minItems": 1}}},
+    ]})
 
-    schema_version: Literal["scidiscovery.figure-extraction-intent.v1"]
+    schema_version: Literal["scidiscovery.figure-extraction-intent.v2"]
     source_sha256: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
+    detector_receipt: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
     figure: ShortText
     panel: Annotated[ShortText | None, Field(description=PANEL_SELECTION_DESCRIPTION)]
-    series_labels: Annotated[
-        tuple[ShortText, ...], Field(max_length=32, json_schema_extra={"uniqueItems": True})
-    ] = ()
+    plot_candidate_id: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")] | None
+    bindings: Annotated[tuple[FigureCandidateBinding, ...], Field(max_length=32, json_schema_extra={"uniqueItems": True})]
     unresolved_reasons: Annotated[tuple[ShortText, ...], Field(max_length=32)] = ()
+    rejected_candidates: Annotated[tuple[FigureCandidateRejection, ...], Field(max_length=64, json_schema_extra={"uniqueItems": True})] = ()
 
     @model_validator(mode="after")
     def _unique_labels(self) -> FigureExtractionIntent:
-        if len(set(self.series_labels)) != len(self.series_labels):
-            raise ValueError("selected visible series labels must be unique")
-        if bool(self.series_labels) == bool(self.unresolved_reasons):
-            raise ValueError("select visible series or report unresolved reasons, never both")
+        selected = [item.candidate_id for item in self.bindings]
+        rejected = [item.candidate_id for item in self.rejected_candidates]
+        if len(set(selected + rejected)) != len(selected + rejected):
+            raise ValueError("candidate selections and rejections must be disjoint and unique")
+        if self.bindings and self.plot_candidate_id is None:
+            raise ValueError("bindings require a selected plot candidate")
+        if not self.bindings and not (self.unresolved_reasons or self.rejected_candidates):
+            raise ValueError("empty selection requires bounded unresolved or rejected reasons")
+        return self
+
+
+def validate_intent_candidates(intent: FigureExtractionIntent, detected: SourceDetection):
+    if intent.source_sha256 != detected.source_sha256:
+        raise ValueError("figure source hash differs from intent")
+    if intent.detector_receipt != detected.receipt:
+        raise ValueError("detector receipt differs from replay")
+    selected = None
+    known = {p.candidate_id for d in detected.detections for p in (*d.plots, *d.paths)}
+    for image, detection in zip(detected.images, detected.detections, strict=True):
+        for plot in detection.plots:
+            if plot.candidate_id == intent.plot_candidate_id:
+                selected = image, detection, plot
+    if intent.plot_candidate_id is not None and selected is None:
+        raise ValueError("unknown plot candidate")
+    if any(item.candidate_id not in known for item in intent.rejected_candidates):
+        raise ValueError("unknown rejected candidate")
+    if selected:
+        image, detection, plot = selected
+        paths = {p.candidate_id: p for p in detection.paths if p.plot_id == plot.candidate_id}
+        anchors = {identity_anchor_id(detected.source_sha256, image.image_sha256, t): t for t in detection.tokens}
+        for binding in intent.bindings:
+            if binding.candidate_id not in paths:
+                raise ValueError("path candidate does not belong to selected plot/source")
+            if binding.identity_anchor_id is not None:
+                token = anchors.get(binding.identity_anchor_id)
+                if token is None or token.text != binding.visible_label:
+                    raise ValueError("visible identity anchor differs from selected source")
+    return selected
+
+
+class FigureMeasurementRequest(_DigitizationModel):
+    """Deterministic measurement record; never a materialize input."""
+    schema_version: Literal["scidiscovery.curve-figure-digitization-request.v3"]
+    result_shape: FigureResultShape
+    request_status: Literal["ready", "unresolved"]
+    source: AutomaticFigureSource
+    detector_receipt: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
+    detector_version: ShortText
+    figure: ShortText
+    panel: ShortText | None
+    plot_candidate_id: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")] | None
+    plot_bbox: PixelBox | None
+    axis_calibration: FigurePanelAxisCalibration | None
+    series: Annotated[tuple[FigureCandidateBinding, ...], Field(max_length=32)]
+    unresolved_reasons: Annotated[tuple[ShortText, ...], Field(max_length=256)]
+    rejected_candidates: Annotated[tuple[FigureCandidateRejection, ...], Field(max_length=64)]
+
+    @model_validator(mode="after")
+    def _shape(self):
+        if self.result_shape == "measured":
+            if self.request_status != "ready" or not self.series or self.axis_calibration is None or self.plot_bbox is None:
+                raise ValueError("measurement requires axes, plot and selected series")
+        elif self.request_status != "unresolved" or self.series or not self.unresolved_reasons:
+            raise ValueError("unresolved measurement requires reasons and no measured series")
+        if self.result_shape == "unrecovered":
+            if not isinstance(self.source, UnrecoveredFigureSource) or self.panel is not None or self.plot_bbox is not None or self.axis_calibration is not None or self.plot_candidate_id is not None:
+                raise ValueError("unrecovered request must not invent image geometry")
+        elif isinstance(self.source, UnrecoveredFigureSource):
+            raise ValueError("recovered request requires real source representation")
         return self
 
 

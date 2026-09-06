@@ -1,6 +1,6 @@
 # R5 E5.4：通用自动图证据与生产案例插件删除计划
 
-日期：2026-09-06。状态：修订计划已获[独立 GPT-6 复审 PASS](reviews/R5_E5_4_GENERIC_AUTOMATIC_FIGURE_EXTRACTION_AND_CASE_PLUGIN_REMOVAL_PLAN_GPT6_REVIEW.zh-CN.md#6-修订计划复审最终-pass)；P0/G0 已完成；P1/G1 通用归属迁移与案例插件删除已完成；[P2 底层自动候选](evidence/R5_E5_4_P2_AUTOMATIC_DETECTION.zh-CN.md)已完成，并获[G2 独立 GPT-6 复审 PASS](reviews/R5_E5_4_P2_G2_GPT6_REVIEW.zh-CN.md#有界返工复审)，首轮 FAIL 历史保留。真实轴因缺 OCR 未决，不能称定量提取成功。P3–P6 尚未实施，未通过真实验收，不产生科学结果，不授权历史证据晋级。
+日期：2026-09-06。状态：修订计划已获[独立 GPT-6 复审 PASS](reviews/R5_E5_4_GENERIC_AUTOMATIC_FIGURE_EXTRACTION_AND_CASE_PLUGIN_REMOVAL_PLAN_GPT6_REVIEW.zh-CN.md#6-修订计划复审最终-pass)；P0/G0 已完成；P1/G1 通用归属迁移与案例插件删除已完成；[P2 底层自动候选](evidence/R5_E5_4_P2_AUTOMATIC_DETECTION.zh-CN.md)已完成，并获[G2 独立 GPT-6 复审 PASS](reviews/R5_E5_4_P2_G2_GPT6_REVIEW.zh-CN.md#有界返工复审)，首轮 FAIL 历史保留。[P3 现有角色链接入](evidence/R5_E5_4_P3_ROLE_CHAIN_INTEGRATION.zh-CN.md)首轮聚焦 176 passed 后获[G3 首轮 FAIL](reviews/R5_E5_4_P3_G3_GPT6_REVIEW.zh-CN.md)；G3-1/2/3 有界返工完成并经[G3 独立复审 PASS](reviews/R5_E5_4_P3_G3_GPT6_REVIEW.zh-CN.md#有界返工复审)，聚焦 181 passed，首轮 FAIL 历史保留。真实轴因缺 OCR 未决，不能称真实定量提取成功。P4–P6 尚未实施，未通过真实验收，不产生科学结果，不授权历史证据晋级。
 
 本轮以最小改动优先，只关闭既定方案不能编译、不能表示结果、不能安装或不能可信验收的缺口。禁止改调度器、Run 生命周期、资格／审批机制或编译器，禁止新增中央字段、Operation、Agent、插件、注册表、状态机，禁止重写 curve_score/tcad_artifact 或扩展图型范围。下文领域 guard 的调整只实现现有入口对新结果形状的拒绝／接纳，不更改资格机制。
 

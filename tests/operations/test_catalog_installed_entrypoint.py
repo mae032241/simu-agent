@@ -465,8 +465,10 @@ result = tool.contextual_handler(
     context,
 )
 assert len(result["images"]) == 1
-assert Path(result["images"][0]["local_path"]).is_file()
-assert result["images"][0]["access"] == "read_only"
+assert Path(result["images"][0]["source_preview"]).is_file()
+assert Path(result["images"][0]["candidate_overlay"]).is_file()
+assert Path(result["images"][0]["source_preview"]).stat().st_mode & 0o222 == 0
+assert Path(result["images"][0]["candidate_overlay"]).stat().st_mode & 0o222 == 0
 assert context.events == ["deterministic_analysis_completed"]
 '''
 
