@@ -1,0 +1,12 @@
+{
+  "missing_finished_records": [
+    {
+      "record": "3a63107349214015a9157e39741f4647",
+      "stderr_bytes": 0,
+      "technical_errors": [],
+      "ended_record_present": false
+    }
+  ],
+  "processes_with_cwd_in_preserved_workspace": [],
+  "scope": "Technical observation only; absence of such processes does not authorize cleanup or establish full writer quiescence."
+}

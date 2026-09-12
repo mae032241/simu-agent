@@ -9,6 +9,8 @@ import sys
 import uuid
 from pathlib import Path
 
+from .mcp import parse_rpc_line, rpc_error
+
 
 MAX_RESPONSE_BYTES = 16 * 1024 * 1024
 SCHEDULER_PROXY_FIELD = "_scidiscovery_scheduler_proxy"
@@ -25,9 +27,7 @@ def main(argv: list[str] | None = None) -> int:
     for line in sys.stdin.buffer:
         request_id = None
         try:
-            request = json.loads(line)
-            if not isinstance(request, dict):
-                raise ValueError("request must be a JSON object")
+            request = parse_rpc_line(line)
             request_id = request.get("id")
             response = forward_request(
                 args.socket,
@@ -35,11 +35,7 @@ def main(argv: list[str] | None = None) -> int:
                 timeout=args.timeout,
             )
         except Exception as error:
-            response = {
-                "jsonrpc": "2.0",
-                "id": request_id,
-                "error": {"code": -32000, "message": str(error)},
-            }
+            response = rpc_error(request_id, error)
         if response is not None:
             print(
                 json.dumps(response, separators=(",", ":"), sort_keys=True),

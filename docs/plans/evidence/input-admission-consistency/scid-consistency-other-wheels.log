@@ -1,0 +1,41 @@
+WARNING: The directory '/home/da/.cache/pip' or its parent directory is not owned or is not writable by the current user. The cache has been disabled. Check the permissions and owner of that directory. If executing pip with sudo, you should use sudo's -H flag.
+Looking in indexes: https://mirrors.aliyun.com/pypi/simple/
+Processing ./plugins/curve_score
+  Preparing metadata (pyproject.toml): started
+  Preparing metadata (pyproject.toml): finished with status 'done'
+Processing ./plugins/curve_figure_evidence
+  Preparing metadata (pyproject.toml): started
+  Preparing metadata (pyproject.toml): finished with status 'done'
+Building wheels for collected packages: scidiscovery-curve-score, scidiscovery-curve-figure-evidence
+  Building wheel for scidiscovery-curve-score (pyproject.toml): started
+  Building wheel for scidiscovery-curve-score (pyproject.toml): finished with status 'done'
+  Created wheel for scidiscovery-curve-score: filename=scidiscovery_curve_score-0.2.1-py3-none-any.whl size=56420 sha256=78de1c4e6d818c0f38a42d5e9799785962e03dfa137b73c5d0671e94ff81f81c
+  Stored in directory: /tmp/pip-ephem-wheel-cache-bget3fsm/wheels/0c/9d/82/61e1a51a833713a96e516793766214389800ce7d5dd8b70b0c
+  Building wheel for scidiscovery-curve-figure-evidence (pyproject.toml): started
+  Building wheel for scidiscovery-curve-figure-evidence (pyproject.toml): finished with status 'done'
+  Created wheel for scidiscovery-curve-figure-evidence: filename=scidiscovery_curve_figure_evidence-0.1.0-py3-none-any.whl size=53383 sha256=aaea0813c009dcfd853997670d014851323fec9c96c12e2209d5461606abb101
+  Stored in directory: /tmp/pip-ephem-wheel-cache-bget3fsm/wheels/e8/5c/57/a5e89af389202cf59e2f9546cb58e84abf38601db17b5e3c6d
+Successfully built scidiscovery-curve-score scidiscovery-curve-figure-evidence
+	Command being timed: "timeout 120 /home/da/miniconda3/bin/python -m pip wheel --no-deps --no-build-isolation --wheel-dir /tmp/scid-consistency-wheels ./plugins/curve_score ./plugins/curve_figure_evidence"
+	User time (seconds): 0.98
+	System time (seconds): 0.12
+	Percent of CPU this job got: 70%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:01.55
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 49108
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 559
+	Minor (reclaiming a frame) page faults: 40796
+	Voluntary context switches: 1297
+	Involuntary context switches: 22
+	Swaps: 0
+	File system inputs: 127776
+	File system outputs: 3040
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0

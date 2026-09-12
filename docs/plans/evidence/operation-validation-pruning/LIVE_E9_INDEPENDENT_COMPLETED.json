@@ -1,0 +1,1030 @@
+{
+  "agent_type": "op_tcad_result_analyze_v1_8314f7794897",
+  "backend": "local_trusted",
+  "candidate_accepted": true,
+  "completed_at": "2026-09-11T14:29:32.191571Z",
+  "created_at": "2026-09-11T14:24:27.518547Z",
+  "deadline_at": "2026-09-11T14:39:27.518547Z",
+  "diagnostic_summary": {
+    "failure": null,
+    "latest_rejection": null,
+    "latest_tool_error": null,
+    "recent_errors": [],
+    "rejection_count": 0
+  },
+  "draft_from": null,
+  "evidence_outputs": [
+    {
+      "artifact_name": "fig4_continuation_execution_analysis_independent_2.output.recovery_manifest",
+      "schema": "scidiscovery.tool-evidence-manifest.v1"
+    }
+  ],
+  "head_advance": "not_requested",
+  "last_activity_at": "2026-09-11T14:29:32.191571Z",
+  "logical_name": "fig4_continuation_execution_analysis_independent_2",
+  "name": "fig4_continuation_execution_analysis_independent_2",
+  "operation_id": "tcad.result.analyze.v1",
+  "output_artifact_name": "fig4_continuation_execution_analysis_independent_2.output",
+  "reason": null,
+  "recovery": {
+    "delivery_preserved": false,
+    "draft_available": false,
+    "recovery_pending": false,
+    "resume_available": false
+  },
+  "recovery_available": false,
+  "revision": 1,
+  "scheduler_signal": {
+    "assumptions": [
+      "共享依赖组在所选两材料行中总权重为 1、组内等分；材料级 WRMSE 以等权 RMS 合成 J。",
+      "在正浓度 log10 空间对 PLX 作分段线性插值；观测深度单位为 µm，浓度单位为 cm^-3。"
+    ],
+    "missing_inputs": [
+      "成功终态且与实际 _fps.tdr 文件名一致的完整受控输出收据。",
+      "用于更强尾部结论的检测状态与不确定度合格原始 SIMS 行。"
+    ],
+    "next_action_kind": null,
+    "next_actions": [
+      "将 reviewed_package 的六个 TDR 声明路径改为 SProcess 实际生成的 *_fps.tdr，独立审查后再执行。",
+      "保留本次冻结家族不充分的结果，另行设计并审查结构性模型反事实；不要事后调参覆盖该失败。"
+    ],
+    "schema_version": 1,
+    "summary": "独立复算确认既往分析的掩码计数、收敛量、充分性失败、描述性增益和中心 T 数值；但外部执行仍为 failed，且日志证明实际 TDR 名称带 _fps 后缀而声明路径不带该后缀。现有六条 PLX 支持有限负结论，不支持研究收尾或机制判别。",
+    "verdict": "inconclusive"
+  },
+  "scheduler_signal_status": "available",
+  "sealed_output": {
+    "artifact_name": "fig4_continuation_execution_analysis_independent_2.output",
+    "kind": "layered_diagnosis",
+    "payload": {
+      "analysis_method": "仅使用当前绑定输入做单进程确定性复算。CSV 掩码按 experiment_plan 的 M0-M2/S0-S2 谓词逐行重建；T 只累加 point_index 连续且相邻两端 y<5.4e16 cm^-3 的 x 增量，绝不跨缺口。PLX 数据集必须为 ZnPhen，x 以 µm、y 以 cm^-3 解释；只在正有限浓度上于 log10(y) 空间分段线性插值。每个共享组在当前两材料所选行中的总权重设为 1 并组内等分，其他行权重 1；材料 WRMSE 后以等材料 RMS 合成 J。另以无权重 WRMSE 检查 0.15-decade 失败对权重选择不敏感。本 Run 原生后处理峰值 RSS 约 16 MiB；它不是注册 calculation_record。本 Run 注册曲线工具以 257 点连续域复核 check.fig4.normalized_shape_convergence，两材料均通过；它不弥补 failed 执行。",
+      "calculation_records": [
+        {
+          "algorithm_version": "analysis-curve-operators.v1",
+          "attempt": {
+            "attempt_key": "attempt_001",
+            "manifest_alias": "tool_recovery_manifest"
+          },
+          "diagnostics": [],
+          "input_digests": {
+            "solver_outputs_002": "a591edf7c3bdd95a2065d964a62526e3748fcd78b042c861aefc214d38e4409e",
+            "solver_outputs_006": "f27bf8feda2b2929ace3a6dbf7311203741e9a285eb8eaba0c38bbd4df742b2c"
+          },
+          "reason_code": null,
+          "record_key": "independent.al_normalized_shape_convergence_257",
+          "request": {
+            "comparison_spec": {
+              "comparisons": [
+                {
+                  "candidate_series": "al_primary",
+                  "comparison_key": "al_primary_vs_tight",
+                  "domain": {
+                    "min_points": 2,
+                    "start": 0,
+                    "stop": 0.7900990099009901,
+                    "unit": "um"
+                  },
+                  "evaluation_points": 257,
+                  "gate_scope": "numerical_qualification",
+                  "interpolation": "log10_y",
+                  "metric_profile": "smooth_curve",
+                  "operators": [
+                    {
+                      "kind": "residual_max_abs",
+                      "operator_key": "al_max_normalized_log_difference",
+                      "threshold": {
+                        "comparison": "le",
+                        "unit": "decade",
+                        "value": 0.05
+                      },
+                      "validation_check_key": "check.fig4.normalized_shape_convergence",
+                      "value_space": "log10"
+                    }
+                  ],
+                  "purpose": "numerical_convergence",
+                  "reference_series": "al_tight",
+                  "required": true
+                }
+              ],
+              "spec_key": "independent.al_normalized_shape_convergence_257"
+            },
+            "sources": [
+              {
+                "case_key": "case.fig4.al_own_anchor_primary",
+                "case_mapping_basis": {
+                  "evidence_refs": [
+                    {
+                      "input_alias": "experiment_plan",
+                      "locator": "experiment_plan"
+                    },
+                    {
+                      "input_alias": "reviewed_package",
+                      "locator": "reviewed_package"
+                    },
+                    {
+                      "input_alias": "solver_outputs_001",
+                      "locator": "solver_outputs_001"
+                    }
+                  ],
+                  "kind": "evidence",
+                  "rationale": "The bound plan declares case.fig4.al_own_anchor_primary; reviewed_package binds that case to the corresponding outputStem and solver_outputs_001 records its BEGIN_CASE, WritePlx and END_CASE."
+                },
+                "dataset_name": "ZnPhen",
+                "experiment_key": "experiment.fig4.raw_boundary_counterfactual",
+                "format": "sprocess_plx",
+                "input_alias": "solver_outputs_002",
+                "output_name": "fig4_al_own_anchor_primary_plx",
+                "role": "candidate",
+                "series_key": "al_primary",
+                "x_axis": {
+                  "name": "depth",
+                  "scale": "linear",
+                  "unit": "um"
+                },
+                "y_axis": {
+                  "name": "concentration",
+                  "scale": "log10",
+                  "unit": "cm^-3"
+                }
+              },
+              {
+                "case_key": "case.fig4.al_own_anchor_tight",
+                "case_mapping_basis": {
+                  "evidence_refs": [
+                    {
+                      "input_alias": "experiment_plan",
+                      "locator": "experiment_plan"
+                    },
+                    {
+                      "input_alias": "reviewed_package",
+                      "locator": "reviewed_package"
+                    },
+                    {
+                      "input_alias": "solver_outputs_001",
+                      "locator": "solver_outputs_001"
+                    }
+                  ],
+                  "kind": "evidence",
+                  "rationale": "The bound plan declares case.fig4.al_own_anchor_tight; reviewed_package binds that case to the corresponding outputStem and solver_outputs_001 records its BEGIN_CASE, WritePlx and END_CASE."
+                },
+                "dataset_name": "ZnPhen",
+                "experiment_key": "experiment.fig4.raw_boundary_counterfactual",
+                "format": "sprocess_plx",
+                "input_alias": "solver_outputs_006",
+                "output_name": "fig4_al_own_anchor_tight_plx",
+                "role": "reference",
+                "series_key": "al_tight",
+                "x_axis": {
+                  "name": "depth",
+                  "scale": "linear",
+                  "unit": "um"
+                },
+                "y_axis": {
+                  "name": "concentration",
+                  "scale": "log10",
+                  "unit": "cm^-3"
+                }
+              }
+            ]
+          },
+          "result": {
+            "aggregate_status": "pass",
+            "comparison_spec_sha256": "ee402fd62ae87562dff1b5d82b1908c01c2c7e36f2368153cb91a4cd1ae8dff7",
+            "comparisons": [
+              {
+                "checks": [
+                  {
+                    "comparison_key": "al_primary_vs_tight",
+                    "observed_value": 0.000005783536437320436,
+                    "operator_key": "al_max_normalized_log_difference",
+                    "reason_code": null,
+                    "schema_version": 1,
+                    "status": "pass",
+                    "threshold": {
+                      "comparison": "le",
+                      "schema_version": 1,
+                      "unit": "decade",
+                      "value": 0.05
+                    }
+                  }
+                ],
+                "comparison_key": "al_primary_vs_tight",
+                "gate_scope": "numerical_qualification",
+                "metric_profile": "smooth_curve",
+                "metrics": [
+                  {
+                    "comparison_key": "al_primary_vs_tight",
+                    "kind": "residual_max_abs",
+                    "operator_key": "al_max_normalized_log_difference",
+                    "rationale": "The metric was computed from the declared continuous domain.",
+                    "reason_code": null,
+                    "schema_version": 1,
+                    "status": "available",
+                    "unit": "decade",
+                    "value": 0.000005783536437320436
+                  }
+                ],
+                "purpose": "numerical_convergence",
+                "rationale": "All available deterministic curve checks passed.",
+                "required": true,
+                "schema_version": 1,
+                "status": "pass"
+              }
+            ],
+            "covered_validation_check_keys": [],
+            "curve_bundle_sha256": "38d1973a87bcf4b3375268f9f567681c37f17f62c82ca9524fc64474c328c46a",
+            "interpretation_boundary": "deterministic_metrics_only_no_physical_interpretation",
+            "normalizer_profile": "tcad.analysis.raw.v1",
+            "operator_version": "analysis-curve-operators.v1",
+            "schema_version": 1,
+            "validation_plan_sha256": null,
+            "validation_scope": "standalone"
+          },
+          "schema_version": 1,
+          "status": "computed"
+        },
+        {
+          "algorithm_version": "analysis-curve-operators.v1",
+          "attempt": {
+            "attempt_key": "attempt_002",
+            "manifest_alias": "tool_recovery_manifest"
+          },
+          "diagnostics": [],
+          "input_digests": {
+            "solver_outputs_004": "2b013eb4e7dc411f3237d93b6e30de72fbf86a25f848f490ed22c9c15e07187c",
+            "solver_outputs_007": "22693b3c16f1f23d672d207c657beaefcdfc7f9abc29f7f97a63ecfa35119af5"
+          },
+          "reason_code": null,
+          "record_key": "independent.ga_normalized_shape_convergence_257",
+          "request": {
+            "comparison_spec": {
+              "comparisons": [
+                {
+                  "candidate_series": "ga_primary",
+                  "comparison_key": "ga_primary_vs_tight",
+                  "domain": {
+                    "min_points": 2,
+                    "start": 0,
+                    "stop": 0.7900990099009901,
+                    "unit": "um"
+                  },
+                  "evaluation_points": 257,
+                  "gate_scope": "numerical_qualification",
+                  "interpolation": "log10_y",
+                  "metric_profile": "smooth_curve",
+                  "operators": [
+                    {
+                      "kind": "residual_max_abs",
+                      "operator_key": "ga_max_normalized_log_difference",
+                      "threshold": {
+                        "comparison": "le",
+                        "unit": "decade",
+                        "value": 0.05
+                      },
+                      "validation_check_key": "check.fig4.normalized_shape_convergence",
+                      "value_space": "log10"
+                    }
+                  ],
+                  "purpose": "numerical_convergence",
+                  "reference_series": "ga_tight",
+                  "required": true
+                }
+              ],
+              "spec_key": "independent.ga_normalized_shape_convergence_257"
+            },
+            "sources": [
+              {
+                "case_key": "case.fig4.ga_own_anchor_primary",
+                "case_mapping_basis": {
+                  "evidence_refs": [
+                    {
+                      "input_alias": "experiment_plan",
+                      "locator": "experiment_plan"
+                    },
+                    {
+                      "input_alias": "reviewed_package",
+                      "locator": "reviewed_package"
+                    },
+                    {
+                      "input_alias": "solver_outputs_001",
+                      "locator": "solver_outputs_001"
+                    }
+                  ],
+                  "kind": "evidence",
+                  "rationale": "The bound plan declares case.fig4.ga_own_anchor_primary; reviewed_package binds that case to the corresponding outputStem and solver_outputs_001 records its BEGIN_CASE, WritePlx and END_CASE."
+                },
+                "dataset_name": "ZnPhen",
+                "experiment_key": "experiment.fig4.raw_boundary_counterfactual",
+                "format": "sprocess_plx",
+                "input_alias": "solver_outputs_004",
+                "output_name": "fig4_ga_own_anchor_primary_plx",
+                "role": "candidate",
+                "series_key": "ga_primary",
+                "x_axis": {
+                  "name": "depth",
+                  "scale": "linear",
+                  "unit": "um"
+                },
+                "y_axis": {
+                  "name": "concentration",
+                  "scale": "log10",
+                  "unit": "cm^-3"
+                }
+              },
+              {
+                "case_key": "case.fig4.ga_own_anchor_tight",
+                "case_mapping_basis": {
+                  "evidence_refs": [
+                    {
+                      "input_alias": "experiment_plan",
+                      "locator": "experiment_plan"
+                    },
+                    {
+                      "input_alias": "reviewed_package",
+                      "locator": "reviewed_package"
+                    },
+                    {
+                      "input_alias": "solver_outputs_001",
+                      "locator": "solver_outputs_001"
+                    }
+                  ],
+                  "kind": "evidence",
+                  "rationale": "The bound plan declares case.fig4.ga_own_anchor_tight; reviewed_package binds that case to the corresponding outputStem and solver_outputs_001 records its BEGIN_CASE, WritePlx and END_CASE."
+                },
+                "dataset_name": "ZnPhen",
+                "experiment_key": "experiment.fig4.raw_boundary_counterfactual",
+                "format": "sprocess_plx",
+                "input_alias": "solver_outputs_007",
+                "output_name": "fig4_ga_own_anchor_tight_plx",
+                "role": "reference",
+                "series_key": "ga_tight",
+                "x_axis": {
+                  "name": "depth",
+                  "scale": "linear",
+                  "unit": "um"
+                },
+                "y_axis": {
+                  "name": "concentration",
+                  "scale": "log10",
+                  "unit": "cm^-3"
+                }
+              }
+            ]
+          },
+          "result": {
+            "aggregate_status": "pass",
+            "comparison_spec_sha256": "499b9911cab4891695547f4285668851140e9e4bff4dd8a1914a9ca7da2bdc75",
+            "comparisons": [
+              {
+                "checks": [
+                  {
+                    "comparison_key": "ga_primary_vs_tight",
+                    "observed_value": 0.000005350693264460915,
+                    "operator_key": "ga_max_normalized_log_difference",
+                    "reason_code": null,
+                    "schema_version": 1,
+                    "status": "pass",
+                    "threshold": {
+                      "comparison": "le",
+                      "schema_version": 1,
+                      "unit": "decade",
+                      "value": 0.05
+                    }
+                  }
+                ],
+                "comparison_key": "ga_primary_vs_tight",
+                "gate_scope": "numerical_qualification",
+                "metric_profile": "smooth_curve",
+                "metrics": [
+                  {
+                    "comparison_key": "ga_primary_vs_tight",
+                    "kind": "residual_max_abs",
+                    "operator_key": "ga_max_normalized_log_difference",
+                    "rationale": "The metric was computed from the declared continuous domain.",
+                    "reason_code": null,
+                    "schema_version": 1,
+                    "status": "available",
+                    "unit": "decade",
+                    "value": 0.000005350693264460915
+                  }
+                ],
+                "purpose": "numerical_convergence",
+                "rationale": "All available deterministic curve checks passed.",
+                "required": true,
+                "schema_version": 1,
+                "status": "pass"
+              }
+            ],
+            "covered_validation_check_keys": [],
+            "curve_bundle_sha256": "273a751f22aa5b2e77755ec143c664b1473d4879017ef37443e1e64134d0c55a",
+            "interpretation_boundary": "deterministic_metrics_only_no_physical_interpretation",
+            "normalizer_profile": "tcad.analysis.raw.v1",
+            "operator_version": "analysis-curve-operators.v1",
+            "schema_version": 1,
+            "validation_plan_sha256": null,
+            "validation_scope": "standalone"
+          },
+          "schema_version": 1,
+          "status": "computed"
+        }
+      ],
+      "claim_allowed": false,
+      "evidence": [
+        {
+          "locator": "experiment_plan",
+          "schema_version": 1,
+          "source_key": "plan",
+          "source_type": "frozen_input",
+          "title": "绑定计划与检查键"
+        },
+        {
+          "locator": "experiment_review",
+          "schema_version": 1,
+          "source_key": "review",
+          "source_type": "frozen_input",
+          "title": "匹配独立审查"
+        },
+        {
+          "locator": "reviewed_package",
+          "schema_version": 1,
+          "source_key": "project",
+          "source_type": "frozen_input",
+          "title": "受审源码与输出声明"
+        },
+        {
+          "locator": "execution_result",
+          "schema_version": 1,
+          "source_key": "execution",
+          "source_type": "runtime_output",
+          "title": "failed 执行终态"
+        },
+        {
+          "locator": "runtime_manifest",
+          "schema_version": 1,
+          "source_key": "manifest",
+          "source_type": "runtime_output",
+          "title": "exit 97 与缺失 TDR"
+        },
+        {
+          "locator": "diagnostics",
+          "schema_version": 1,
+          "source_key": "diagnostic",
+          "source_type": "runtime_output",
+          "title": "实际 *_fps.tdr 写出日志"
+        },
+        {
+          "locator": "recovery_manifest",
+          "schema_version": 1,
+          "source_key": "recovery",
+          "source_type": "runtime_output",
+          "title": "恢复 PLX 的受控收据"
+        },
+        {
+          "locator": "prior_analysis",
+          "schema_version": 1,
+          "source_key": "prior",
+          "source_type": "frozen_input",
+          "title": "待独立核验的既往分析"
+        },
+        {
+          "locator": "reference_material_002",
+          "schema_version": 1,
+          "source_key": "ref_al",
+          "source_type": "frozen_input",
+          "title": "InAlAs 原始参考行"
+        },
+        {
+          "locator": "reference_material_003",
+          "schema_version": 1,
+          "source_key": "ref_ga",
+          "source_type": "frozen_input",
+          "title": "InGaAs 原始参考行"
+        },
+        {
+          "locator": "solver_outputs_001",
+          "schema_version": 1,
+          "source_key": "log",
+          "source_type": "runtime_output",
+          "title": "六案例 SProcess 日志"
+        },
+        {
+          "locator": "solver_outputs_002",
+          "schema_version": 1,
+          "source_key": "al_own",
+          "source_type": "runtime_output",
+          "title": "InAlAs own primary PLX"
+        },
+        {
+          "locator": "solver_outputs_003",
+          "schema_version": 1,
+          "source_key": "al_high",
+          "source_type": "runtime_output",
+          "title": "InAlAs high primary PLX"
+        },
+        {
+          "locator": "solver_outputs_004",
+          "schema_version": 1,
+          "source_key": "ga_own",
+          "source_type": "runtime_output",
+          "title": "InGaAs own primary PLX"
+        },
+        {
+          "locator": "solver_outputs_005",
+          "schema_version": 1,
+          "source_key": "ga_low",
+          "source_type": "runtime_output",
+          "title": "InGaAs low primary PLX"
+        },
+        {
+          "locator": "solver_outputs_006",
+          "schema_version": 1,
+          "source_key": "al_tight",
+          "source_type": "runtime_output",
+          "title": "InAlAs tight PLX"
+        },
+        {
+          "locator": "solver_outputs_007",
+          "schema_version": 1,
+          "source_key": "ga_tight",
+          "source_type": "runtime_output",
+          "title": "InGaAs tight PLX"
+        },
+        {
+          "locator": "calculation_records:independent.al_normalized_shape_convergence_257",
+          "schema_version": 1,
+          "source_key": "independent.al_normalized_shape_convergence_257",
+          "source_type": "runtime_output",
+          "title": "本 Run 注册 InAlAs 收敛计算"
+        },
+        {
+          "locator": "calculation_records:independent.ga_normalized_shape_convergence_257",
+          "schema_version": 1,
+          "source_key": "independent.ga_normalized_shape_convergence_257",
+          "source_type": "runtime_output",
+          "title": "本 Run 注册 InGaAs 收敛计算"
+        }
+      ],
+      "experiment_key": "experiment.fig4.raw_boundary_counterfactual",
+      "gates": {
+        "control_equivalence": {
+          "evidence_keys": [
+            "plan",
+            "al_own",
+            "al_high",
+            "ga_own",
+            "ga_low",
+            "al_tight",
+            "ga_tight"
+          ],
+          "findings": [
+            "own/high 与 own/low 归一化最大差分别约 3.00e-7 和 2.65e-7 decade。",
+            "通过只适用于可读 PLX，不覆盖执行终态。"
+          ],
+          "schema_version": 1,
+          "status": "pass",
+          "summary": "在已有 PLX 上，边界幅度归一化和数值紧化均不改变冻结线性家族的形状结论。"
+        },
+        "evidence_identity": {
+          "evidence_keys": [
+            "plan",
+            "project",
+            "recovery",
+            "log",
+            "al_own",
+            "al_high",
+            "ga_own",
+            "ga_low",
+            "al_tight",
+            "ga_tight"
+          ],
+          "findings": [
+            "未从文件名或相同字节单独推断案例。",
+            "diagnostics 仅用于执行诊断，未表示为注册求解产品。"
+          ],
+          "schema_version": 1,
+          "status": "pass",
+          "summary": "所有原始证据均来自当前别名；五条恢复 PLX 由 recovery_manifest 固定到同一原执行，案例由计划、受审源码与日志三方映射。"
+        },
+        "implementation_fidelity": {
+          "evidence_keys": [
+            "project",
+            "execution",
+            "manifest",
+            "diagnostic",
+            "log"
+          ],
+          "findings": [
+            "最早开放缺陷在原始输出合同层。",
+            "解析、初始化、扩散和六个 WritePlx 均已到达；这不等于执行成功。"
+          ],
+          "schema_version": 1,
+          "status": "fail",
+          "summary": "PDE 案例块均运行到输出，但项目声明的 *.tdr 与 SProcess 实际写出的 *_fps.tdr 不一致，导致受控执行 failed。"
+        },
+        "numerical_validity": {
+          "evidence_keys": [
+            "plan",
+            "execution",
+            "manifest",
+            "log",
+            "al_own",
+            "al_high",
+            "ga_own",
+            "ga_low",
+            "al_tight",
+            "ga_tight",
+            "independent.al_normalized_shape_convergence_257",
+            "independent.ga_normalized_shape_convergence_257"
+          ],
+          "findings": [
+            "M0 所需预测均正且有限。",
+            "InAlAs/InGaAs 最大归一化差约 5.78e-6/5.44e-6 decade，低于 0.05；本 Run 注册 257 点连续域结果为 5.7835364e-6/5.3506933e-6 decade。",
+            "check.fig4.complete_raw_outputs 不能判为通过。"
+          ],
+          "schema_version": 1,
+          "status": "inconclusive",
+          "summary": "现有六条 PLX 的正有限性与主/紧化形状检查通过，但完整输出检查和成功终态未满足。"
+        },
+        "observation": {
+          "evidence_keys": [
+            "plan",
+            "ref_al",
+            "ref_ga",
+            "al_own",
+            "al_high",
+            "ga_own",
+            "ga_low"
+          ],
+          "findings": [
+            "自锚 M0 WRMSE=2.24454/2.01275 decade；权重替代检查不改变失败。",
+            "描述性 G=-0.01409，不能在家族不充分时用于反驳。",
+            "中心 T 相对变化同时包含 <=0.10、0.10-0.50 和 >=0.50 情形。"
+          ],
+          "schema_version": 1,
+          "status": "fail",
+          "summary": "十二个掩码计数复现，但两个自锚 WRMSE 严重失败于 0.15 decade，且中心 T 对掩码敏感。"
+        },
+        "physical_interpretation": {
+          "evidence_keys": [
+            "plan",
+            "review",
+            "ref_al",
+            "ref_ga",
+            "al_own",
+            "ga_own"
+          ],
+          "findings": [
+            "材料标签仍与 D 配对。",
+            "连续响应与两区 kick-out/VCD 比较尚未执行，微观机制目标仍未覆盖。"
+          ],
+          "schema_version": 1,
+          "status": "inconclusive",
+          "summary": "冻结常数 D 家族不充分且尾部结论掩码依赖；两个机制假设均不能被支持或反驳。"
+        },
+        "schema_version": 1
+      },
+      "hypothesis_assessments": [
+        {
+          "evidence_keys": [
+            "plan",
+            "al_own",
+            "al_high",
+            "ga_own",
+            "ga_low",
+            "al_tight",
+            "ga_tight",
+            "ref_al",
+            "ref_ga"
+          ],
+          "falsifiers_triggered": [],
+          "hypothesis_key": "hypothesis.surface_boundary_control",
+          "outcome": "inconclusive",
+          "predictions_checked": [
+            "prediction.boundary.supported_row_gain"
+          ],
+          "rationale": "收敛通过但两材料自锚 WRMSE 约 2.24/2.01 decade，远超 0.15；计划规定家族不充分时不得用负 G 反驳。",
+          "schema_version": 1
+        },
+        {
+          "evidence_keys": [
+            "plan",
+            "ref_al",
+            "ref_ga"
+          ],
+          "falsifiers_triggered": [],
+          "hypothesis_key": "hypothesis.tail_support_artifact",
+          "outcome": "inconclusive",
+          "predictions_checked": [
+            "prediction.artifact.resolved_length_sensitivity"
+          ],
+          "rationale": "中心 M0-M2/S0-S2 的相对 T 变化跨预注册阈值区间，既不满足稳定支持也不满足稳定排除；本轮未把未复算的不确定度区间作为证据。",
+          "schema_version": 1
+        }
+      ],
+      "method_changes": [
+        "相对既往分析，独立从当前 solver_outputs_002 至 solver_outputs_007 与 reference_material_002/003 重算；prior_analysis 仅作为待核验对象。",
+        "把外部 failed 终态和实际 *_fps.tdr 与声明 *.tdr 的路径不一致纳入实现门，而不以六个 END_CASE 推断受控执行成功。",
+        "本 Run 以 257 点注册连续域评分复核数值收敛；结果与 M0 深度原生复算一致通过，结论仍受完整输出门限制。恢复草稿中的 1024 点工作量错误仅是前一失败 Run 的工程记录，不作为当前数值证据。",
+        "尾部处分仅使用足以判定歧义的中心 M0-M2/S0-S2；未独立复算既往一组一次不确定度区间，因此不把那些区间作为本轮核实结论。"
+      ],
+      "next_action": "先由作者仅修正六个 TDR 输出声明为实际 *_fps.tdr 路径并作匹配独立审查；若需要正式完整执行记录，再运行同一冻结案例而不改物理。科学上保留本次家族不充分的不可覆盖结果，另行设计并审查一个有限结构性反事实；更强尾部判断需合格原始 SIMS 检测与不确定度行。",
+      "objective_assessment": {
+        "comparison_keys": [],
+        "evidence_keys": [
+          "plan",
+          "review",
+          "execution",
+          "manifest",
+          "diagnostic",
+          "log",
+          "al_own",
+          "al_high",
+          "ga_own",
+          "ga_low",
+          "al_tight",
+          "ga_tight",
+          "ref_al",
+          "ref_ga"
+        ],
+        "objective_key": "objective.fig4_mechanism_discrimination",
+        "schema_version": 1,
+        "status": "inconclusive",
+        "summary": "有限复算确认冻结家族不充分和尾部掩码依赖；failed 执行与未覆盖的微观比较均阻止总体目标收尾。"
+      },
+      "overall_verdict": "inconclusive",
+      "plan_key": "experiment.fig4.raw_boundary_counterfactual/validation",
+      "recommended_task_mode": null,
+      "remaining_contradiction": "现有 PLX 足以确认冻结常数 D/固定边界家族对两材料参考剖面均严重不充分，但不能说明偏差来自何种结构性物理，也不能把负 G 解释为表面边界控制的反证。尾部 T 对证据掩码的响应跨越预注册类别，检测状态与不确定度仍不足。执行本身还因 TDR 声明路径与实际 *_fps.tdr 不一致而 failed。材料标签与 D 仍配对，连续材料响应和两区 kick-out/VCD 微观比较尚未完成。",
+      "schema_version": 1,
+      "source_references": [
+        {
+          "input_alias": "experiment_plan",
+          "schema_version": 1,
+          "source_key": "plan"
+        },
+        {
+          "input_alias": "experiment_review",
+          "schema_version": 1,
+          "source_key": "review"
+        },
+        {
+          "input_alias": "reviewed_package",
+          "schema_version": 1,
+          "source_key": "project"
+        },
+        {
+          "input_alias": "execution_result",
+          "schema_version": 1,
+          "source_key": "execution"
+        },
+        {
+          "input_alias": "runtime_manifest",
+          "schema_version": 1,
+          "source_key": "manifest"
+        },
+        {
+          "input_alias": "diagnostics",
+          "schema_version": 1,
+          "source_key": "diagnostic"
+        },
+        {
+          "input_alias": "recovery_manifest",
+          "schema_version": 1,
+          "source_key": "recovery"
+        },
+        {
+          "input_alias": "prior_analysis",
+          "schema_version": 1,
+          "source_key": "prior"
+        },
+        {
+          "input_alias": "reference_material_002",
+          "schema_version": 1,
+          "source_key": "ref_al"
+        },
+        {
+          "input_alias": "reference_material_003",
+          "schema_version": 1,
+          "source_key": "ref_ga"
+        },
+        {
+          "input_alias": "solver_outputs_001",
+          "output_name": "solver_log",
+          "schema_version": 1,
+          "source_key": "log"
+        },
+        {
+          "case_key": "case.fig4.al_own_anchor_primary",
+          "case_mapping_basis": {
+            "evidence_refs": [
+              {
+                "input_alias": "experiment_plan",
+                "locator": "experiment_plan",
+                "schema_version": 1
+              },
+              {
+                "input_alias": "reviewed_package",
+                "locator": "reviewed_package",
+                "schema_version": 1
+              },
+              {
+                "input_alias": "solver_outputs_001",
+                "locator": "solver_outputs_001",
+                "schema_version": 1
+              }
+            ],
+            "kind": "evidence",
+            "rationale": "计划声明该案例；受审源码将案例绑定到 outputStem，日志记录同一案例的 WritePlx 与 END_CASE。",
+            "schema_version": 1
+          },
+          "experiment_key": "experiment.fig4.raw_boundary_counterfactual",
+          "input_alias": "solver_outputs_002",
+          "output_name": "fig4_al_own_anchor_primary_plx",
+          "schema_version": 1,
+          "source_key": "al_own"
+        },
+        {
+          "case_key": "case.fig4.al_high_anchor_primary",
+          "case_mapping_basis": {
+            "evidence_refs": [
+              {
+                "input_alias": "recovery_manifest",
+                "locator": "recovery_manifest",
+                "schema_version": 1
+              },
+              {
+                "input_alias": "experiment_plan",
+                "locator": "experiment_plan",
+                "schema_version": 1
+              },
+              {
+                "input_alias": "reviewed_package",
+                "locator": "reviewed_package",
+                "schema_version": 1
+              },
+              {
+                "input_alias": "solver_outputs_001",
+                "locator": "solver_outputs_001",
+                "schema_version": 1
+              }
+            ],
+            "kind": "evidence",
+            "rationale": "recovery_manifest 固定原执行字节；计划、受审源码和同一日志共同建立案例对应。",
+            "schema_version": 1
+          },
+          "experiment_key": "experiment.fig4.raw_boundary_counterfactual",
+          "input_alias": "solver_outputs_003",
+          "output_name": "fig4_al_high_anchor_primary_plx",
+          "schema_version": 1,
+          "source_key": "al_high"
+        },
+        {
+          "case_key": "case.fig4.ga_own_anchor_primary",
+          "case_mapping_basis": {
+            "evidence_refs": [
+              {
+                "input_alias": "recovery_manifest",
+                "locator": "recovery_manifest",
+                "schema_version": 1
+              },
+              {
+                "input_alias": "experiment_plan",
+                "locator": "experiment_plan",
+                "schema_version": 1
+              },
+              {
+                "input_alias": "reviewed_package",
+                "locator": "reviewed_package",
+                "schema_version": 1
+              },
+              {
+                "input_alias": "solver_outputs_001",
+                "locator": "solver_outputs_001",
+                "schema_version": 1
+              }
+            ],
+            "kind": "evidence",
+            "rationale": "recovery_manifest 固定原执行字节；计划、受审源码和同一日志共同建立案例对应。",
+            "schema_version": 1
+          },
+          "experiment_key": "experiment.fig4.raw_boundary_counterfactual",
+          "input_alias": "solver_outputs_004",
+          "output_name": "fig4_ga_own_anchor_primary_plx",
+          "schema_version": 1,
+          "source_key": "ga_own"
+        },
+        {
+          "case_key": "case.fig4.ga_low_anchor_primary",
+          "case_mapping_basis": {
+            "evidence_refs": [
+              {
+                "input_alias": "recovery_manifest",
+                "locator": "recovery_manifest",
+                "schema_version": 1
+              },
+              {
+                "input_alias": "experiment_plan",
+                "locator": "experiment_plan",
+                "schema_version": 1
+              },
+              {
+                "input_alias": "reviewed_package",
+                "locator": "reviewed_package",
+                "schema_version": 1
+              },
+              {
+                "input_alias": "solver_outputs_001",
+                "locator": "solver_outputs_001",
+                "schema_version": 1
+              }
+            ],
+            "kind": "evidence",
+            "rationale": "recovery_manifest 固定原执行字节；计划、受审源码和同一日志共同建立案例对应。",
+            "schema_version": 1
+          },
+          "experiment_key": "experiment.fig4.raw_boundary_counterfactual",
+          "input_alias": "solver_outputs_005",
+          "output_name": "fig4_ga_low_anchor_primary_plx",
+          "schema_version": 1,
+          "source_key": "ga_low"
+        },
+        {
+          "case_key": "case.fig4.al_own_anchor_tight",
+          "case_mapping_basis": {
+            "evidence_refs": [
+              {
+                "input_alias": "recovery_manifest",
+                "locator": "recovery_manifest",
+                "schema_version": 1
+              },
+              {
+                "input_alias": "experiment_plan",
+                "locator": "experiment_plan",
+                "schema_version": 1
+              },
+              {
+                "input_alias": "reviewed_package",
+                "locator": "reviewed_package",
+                "schema_version": 1
+              },
+              {
+                "input_alias": "solver_outputs_001",
+                "locator": "solver_outputs_001",
+                "schema_version": 1
+              }
+            ],
+            "kind": "evidence",
+            "rationale": "recovery_manifest 固定原执行字节；计划、受审源码和同一日志共同建立案例对应。",
+            "schema_version": 1
+          },
+          "experiment_key": "experiment.fig4.raw_boundary_counterfactual",
+          "input_alias": "solver_outputs_006",
+          "output_name": "fig4_al_own_anchor_tight_plx",
+          "schema_version": 1,
+          "source_key": "al_tight"
+        },
+        {
+          "case_key": "case.fig4.ga_own_anchor_tight",
+          "case_mapping_basis": {
+            "evidence_refs": [
+              {
+                "input_alias": "recovery_manifest",
+                "locator": "recovery_manifest",
+                "schema_version": 1
+              },
+              {
+                "input_alias": "experiment_plan",
+                "locator": "experiment_plan",
+                "schema_version": 1
+              },
+              {
+                "input_alias": "reviewed_package",
+                "locator": "reviewed_package",
+                "schema_version": 1
+              },
+              {
+                "input_alias": "solver_outputs_001",
+                "locator": "solver_outputs_001",
+                "schema_version": 1
+              }
+            ],
+            "kind": "evidence",
+            "rationale": "recovery_manifest 固定原执行字节；计划、受审源码和同一日志共同建立案例对应。",
+            "schema_version": 1
+          },
+          "experiment_key": "experiment.fig4.raw_boundary_counterfactual",
+          "input_alias": "solver_outputs_007",
+          "output_name": "fig4_ga_own_anchor_tight_plx",
+          "schema_version": 1,
+          "source_key": "ga_tight"
+        }
+      ],
+      "study_kind": "scientific",
+      "summary": "execution_result 与 runtime_manifest 明确给出 terminal_state=failed、exit_code=97；直接错误是缺少声明的 results/fig4_al_own_anchor_primary.tdr。diagnostics 同时显示六个 struct 实际写出 results/*_fps.tdr，故这是最早的原始输出合同/声明路径缺陷，不能表述为成功执行。六个案例日志均有 BEGIN_CASE、WritePlx、END_CASE 和最终 Summary，且当前绑定及 recovery_manifest 提供六条 ZnPhen PLX，因此可作有限独立复算。严格按计划谓词重建 M0/M1/M2/S0/S1/S2，InAlAs 计数为 359/383/439/373/397/501，InGaAs 为 702/753/757/702/755/765。以正值 log10 分段线性插值到 M0 深度，主/紧化归一化最大差为 5.7835364e-6 与 5.4365550e-6 decade，远低于 0.05；257 点注册评分也分别给出 5.7835364e-6 与 5.3506933e-6 decade。按共享组总权重 1、组内等分，M0 自锚 WRMSE 为 2.2445359 与 2.0127536 decade；无权重复核为 2.3673009 与 2.0101518，均远超 0.15。J_own=2.1317972、J_low=2.1021825、J_high=2.1664976，描述性 G=-0.01408761，但充分性失败使其不能触发 0.25 反驳门。中心 T 的相对 M0 变化在 InAlAs 为 0、0.10059、0.46746、0.08284、0.18343、0.87574，在 InGaAs 为 0、0.17994、0.19764、0、0.18879、0.22714；结果跨低值、中间值和高值，不能稳定支持或排除尾部支持伪影。既往分析的关键有限科学结论可复现，但其 implementation_fidelity=pass 与 numerical_validity=pass 对当前 failed 终态和未满足的完整输出检查表述过强；本报告将二者分别修正为 fail 与 inconclusive。"
+    },
+    "schema": "scidiscovery.layered-diagnosis.v1"
+  },
+  "sealed_output_status": "available",
+  "started_at": "2026-09-11T14:24:41.694287Z",
+  "state": "completed"
+}

@@ -1,0 +1,20 @@
+{
+  "observed_at": "2026-09-08T12:40:23.527692+00:00",
+  "scope": "Parent engineering metadata check, not independent semantic verdict or scientific Run evidence. Existing manifest entries checked; new review documents/evidence are additions outside the frozen snapshot.",
+  "checks": {
+    "p4-candidate-final.json": {
+      "sha256": "b5346f442db476cd6c2afa958b847a473b67e1c8c76fcc149c2d8c15fa9d3a91",
+      "entries_checked": 33,
+      "mismatches": []
+    },
+    "p5-source-directory.json": {
+      "sha256": "6b120a2f9652f19ae99ac0c5bd38290fac1a119ef906aeb2b8efa911fa4848d5",
+      "entries_checked": 814,
+      "mismatches": []
+    }
+  },
+  "persisted_independent_log": {
+    "file": "scid-result-r3-targeted-pytest.log",
+    "sha256": "c9db688d41dddc9a519d0ee5519c1d8ff93b142566fea3c7f28b287e81a4afc6"
+  }
+}

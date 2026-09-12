@@ -1,0 +1,42 @@
+[
+  {
+    "source": "src/scidiscovery/operations/tooling.py",
+    "installed": "/opt/scidiscovery-m7/site/scidiscovery/operations/tooling.py",
+    "identical": true
+  },
+  {
+    "source": "src/scidiscovery/artifact_agent/interfaces/mcp_local_worker.py",
+    "installed": "/opt/scidiscovery-m7/site/scidiscovery/artifact_agent/interfaces/mcp_local_worker.py",
+    "identical": true
+  },
+  {
+    "source": "src/scidiscovery/artifact_agent/interfaces/mcp.py",
+    "installed": "/opt/scidiscovery-m7/site/scidiscovery/artifact_agent/interfaces/mcp.py",
+    "identical": true
+  },
+  {
+    "source": "src/scidiscovery/artifact_agent/service/run_assignment.py",
+    "installed": "/opt/scidiscovery-m7/site/scidiscovery/artifact_agent/service/run_assignment.py",
+    "identical": true
+  },
+  {
+    "source": "src/scidiscovery/operation_contract.py",
+    "installed": "/opt/scidiscovery-m7/site/scidiscovery/operation_contract.py",
+    "identical": true
+  },
+  {
+    "source": "plugins/curve_score/curve_score/analysis_tool.py",
+    "installed": "/opt/scidiscovery-m7/site/curve_score/analysis_tool.py",
+    "identical": true
+  },
+  {
+    "source": "plugins/tcad_artifact/tcad_artifact/result_analysis.py",
+    "installed": "/opt/scidiscovery-m7/site/tcad_artifact/result_analysis.py",
+    "identical": true
+  },
+  {
+    "source": "plugins/curve_figure_evidence/curve_figure_evidence/figure_worker_tool.py",
+    "installed": "/opt/scidiscovery-m7/site/curve_figure_evidence/figure_worker_tool.py",
+    "identical": true
+  }
+]

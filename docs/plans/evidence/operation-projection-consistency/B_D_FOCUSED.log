@@ -1,0 +1,493 @@
+F.F.F..                                                                  [100%]
+=================================== FAILURES ===================================
+__ test_all_backend_tool_contracts_equal_actual_mcp_schemas_and_resolve_refs ___
+
+    def test_all_backend_tool_contracts_equal_actual_mcp_schemas_and_resolve_refs():
+        from types import SimpleNamespace
+        from jsonschema import Draft202012Validator
+        from curve_figure_evidence.plugin import PLUGIN as FIGURE
+        from scidiscovery.artifact_agent.interfaces.mcp_local_worker import LocalWorkerMCPRouter
+        from scidiscovery.artifact_agent.interfaces.mcp_hardened_worker import HardenedWorkerMCPRouter
+        from scidiscovery.artifact_agent.service.local_workspace import LocalTrustedBackend
+        from scidiscovery.artifact_agent.service.hardened_workspace import HardenedWorkerBackend
+        from scidiscovery.operations.tooling import operation_tool_contracts
+        catalog = compile_catalog((CORE_PLUGIN, GENERAL_PLUGIN, CURVE_PLUGIN, TCAD_PLUGIN, FIGURE))
+        checked = set()
+        for key in catalog.operation_ids():
+            compiled = catalog.operation(key)
+            if compiled.spec.executor.kind != 'agent':
+                continue
+            for backend, router_type in ((LocalTrustedBackend, LocalWorkerMCPRouter),
+                                         (HardenedWorkerBackend, HardenedWorkerMCPRouter)):
+                router = router_type(SimpleNamespace(operation_catalog=catalog, backend=backend),
+                    operation_id=key, operation_digest=compiled.digest)
+                contracts = operation_tool_contracts(compiled, backend.assignment_tool_names(compiled))
+                assert contracts == {tool['name']: {k: tool[k] for k in ('description', 'inputSchema')}
+                                     for tool in router.list_tools()}
+                for name, contract in contracts.items():
+                    schema = contract['inputSchema']
+                    Draft202012Validator.check_schema(schema)
+                    def check_refs(node):
+                        if isinstance(node, dict):
+                            if '$ref' in node:
+                                assert node['$ref'].startswith('#/')
+                                target = schema
+                                for token in node['$ref'][2:].split('/'):
+                                    target = target[token.replace('~1', '/').replace('~0', '~')]
+                            for child in node.values(): check_refs(child)
+                        elif isinstance(node, list):
+                            for child in node: check_refs(child)
+                    check_refs(schema)
+                    checked.add(name)
+>       assert {'worker_curve_score', 'worker_tcad_curve_score', 'worker_figure_preview'} <= checked
+E       AssertionError: assert {'worker_curv..._curve_score'} <= {'worker_curv...y_patch', ...}
+E         
+E         Extra items in the left set:
+E         'worker_figure_preview'
+
+tests/operations/test_agent_contract_alignment.py:86: AssertionError
+_ test_open_delivers_frozen_contracts_and_same_identity_legacy_fallback[False-hardened] _
+
+self = <scidiscovery.artifact_agent.interfaces.mcp_root.RootToolFacade object at 0x7f51cd167530>
+values = {'on_conflict': 'reject', 'name': 'analysis', 'operation_id': 'tcad.result.analyze.v1', 'inputs': (OperationInputSelec...t_names=('reference',)), OperationInputSelection(port='solver_outputs', artifact_names=('output_A', 'output_B'))), ...}
+
+    def operation_invoke(self, **values: Any) -> dict[str, Any]:
+        with self._create_lock:
+            try:
+>               bound = self._prepare_operation_call(**values)
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py:193: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <scidiscovery.artifact_agent.interfaces.mcp_root.RootToolFacade object at 0x7f51cd167530>
+name = 'analysis', operation_id = 'tcad.result.analyze.v1'
+inputs = (OperationInputSelection(port='experiment_plan', artifact_names=('plan',)), OperationInputSelection(port='experiment_r...rtifact_names=('reference',)), OperationInputSelection(port='solver_outputs', artifact_names=('output_A', 'output_B')))
+instruction = 'Analyze the bound fixture outputs.', parameters = {}
+resume_from = None, draft_from = None
+
+    def _prepare_operation_call(
+        self,
+        *,
+        name: str,
+        operation_id: str,
+        inputs: tuple[_OperationInputSelection, ...],
+        instruction: str | None,
+        parameters: dict[str, Any],
+        on_conflict: str,
+        resume_from: str | None = None,
+        draft_from: str | None = None,
+    ) -> BoundOperationCall:
+        del on_conflict
+        if resume_from is not None and draft_from is not None:
+            raise OperationInvocationError("recovery_sources_mutually_exclusive")
+        try:
+            compiled = self._operation_catalog.operation(operation_id)
+        except KeyError as error:
+            raise OperationInvocationError("operation_unknown") from error
+        if compiled.spec.catalog_scope == "internal":
+            raise OperationInvocationError("operation_scope_forbidden")
+        review = compiled.spec.review
+        if (
+            compiled.spec.catalog_scope == "public"
+            and review is not None
+            and review.reviewer_operation is not None
+            and not self._scheduler_operation_available(review.reviewer_operation)
+        ):
+            raise OperationInvocationError("operation_runtime_unavailable")
+        ports = tuple(item.port for item in inputs)
+        if len(ports) != len(set(ports)):
+            raise OperationInvocationError("input_port_duplicate")
+        current_selections = tuple(
+            self.bindings.scientific_selections(instance=self._instance_id())
+        )
+        current_lineages = {
+            item.logical_name
+            for item in current_selections
+            if item.artifact_ref is None
+        }
+        current_refs = tuple(
+            item.artifact_ref
+            for item in current_selections
+            if item.artifact_ref is not None
+        )
+        resolved: dict[str, tuple[InvocationArtifact, ...]] = {}
+        for selection in inputs:
+            try:
+                port = next(
+                    item for item in compiled.spec.inputs if item.name == selection.port
+                )
+            except StopIteration:
+                resolved[selection.port] = ()
+                continue
+            artifacts: list[InvocationArtifact] = []
+            for artifact_name in selection.artifact_names:
+                try:
+                    self._resolve("artifact", artifact_name)
+                    artifact_id = self._resolve_input_artifact(
+                        artifact_name,
+                        allow_nonqualifying=True,
+                    )
+                    binding = self._binding("artifact", artifact_name)
+                    envelope = self.artifacts.get_by_id(artifact_id)
+                except Exception as error:
+                    raise OperationInvocationError(
+                        "input_artifact_unavailable", port=selection.port
+                    ) from error
+                # Frozen history is an input fact; current review/approval
+                # eligibility is checked separately by admission and projection.
+                signal = self.runs.signal_for_output(envelope.ref, require_current=False)
+                producer = self.runs.completed_for_output(envelope.ref)
+                artifacts.append(
+                    InvocationArtifact(
+                        artifact_name=artifact_name,
+                        ref=envelope.ref,
+                        schema_id=envelope.schema_id,
+                        media_type=envelope.media_type,
+                        size_bytes=envelope.size_bytes,
+                        current=(
+                            self.runs.input_is_current(
+                                instance_id=self._instance_id(),
+                                artifact_name=artifact_name,
+                                artifact_ref=envelope.ref,
+                            )
+                            if self.runs is not None
+                            else (
+                                binding.logical_name in current_lineages
+                                or self._artifact_descends_from(
+                                    envelope.ref, current_refs
+                                )
+                            )
+                        ),
+                        parent_refs=envelope.parent_refs,
+                        labels=tuple(sorted(envelope.labels.items())),
+                        handoff_verdict=(signal.verdict if signal is not None else None),
+                        historical=self._is_historical(envelope),
+                        producer_run_id=producer.run_id if producer else None,
+                    )
+                )
+            resolved[selection.port] = tuple(artifacts)
+        for port in compiled.spec.inputs:
+            if port.min_items == 0:
+                resolved.setdefault(port.name, ())
+        bound = preflight_operation(
+            compiled,
+            name=name,
+            artifacts_by_port=resolved,
+            instruction=instruction,
+            parameters=parameters,
+            read_artifact=self.artifacts.read,
+        )
+        if (
+            self.runs is not None
+            and compiled.spec.executor.kind == "agent"
+            and not self.runs.backend.supports_operation(compiled)
+        ):
+>           raise OperationInvocationError("runtime_backend_capability_missing")
+E           scidiscovery.operations.input_validation.OperationInvocationError: runtime_backend_capability_missing: operation
+
+src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py:1106: OperationInvocationError
+
+The above exception was the direct cause of the following exception:
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-102/test_open_delivers_frozen_cont1')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7f51cd717e90>
+backend_kind = 'hardened', legacy = False
+
+    @pytest.mark.parametrize('backend_kind', ['local', 'hardened'])
+    @pytest.mark.parametrize('legacy', [False, True])
+    def test_open_delivers_frozen_contracts_and_same_identity_legacy_fallback(tmp_path, monkeypatch, backend_kind, legacy):
+        from scidiscovery.artifact_agent.interfaces.mcp_local_worker import LocalWorkerMCPRouter
+        from scidiscovery.artifact_agent.interfaces.mcp_hardened_worker import HardenedWorkerMCPRouter
+        from scidiscovery.artifact_agent.service.hardened_workspace import HardenedWorkerBackend
+        from scidiscovery.artifact_agent.service import runs as runs_module
+        from scidiscovery.operations.tooling import operation_tool_contracts
+        from tests.operations.test_tcad_result_analysis import analysis_system
+        catalog, runtime, root, request, _, _ = analysis_system(tmp_path)
+        router_type = LocalWorkerMCPRouter
+        if backend_kind == 'hardened':
+            runtime.runs.backend = HardenedWorkerBackend(tmp_path / 'hardened')
+            router_type = HardenedWorkerMCPRouter
+        if legacy:
+            original = runs_module.assignment_json
+            def old_assignment(*args, **kwargs):
+                value = json.loads(original(*args, **kwargs))
+                del value['tool_contracts']
+                return canonical_json(value)
+            monkeypatch.setattr(runs_module, 'assignment_json', old_assignment)
+>       root.call_tool('operation_invoke', request)
+
+tests/operations/test_agent_contract_alignment.py:110: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/scidiscovery/artifact_agent/interfaces/mcp_root.py:403: in call_tool
+    return getattr(self.facade, name)(**values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <scidiscovery.artifact_agent.interfaces.mcp_root.RootToolFacade object at 0x7f51cd167530>
+values = {'on_conflict': 'reject', 'name': 'analysis', 'operation_id': 'tcad.result.analyze.v1', 'inputs': (OperationInputSelec...t_names=('reference',)), OperationInputSelection(port='solver_outputs', artifact_names=('output_A', 'output_B'))), ...}
+
+    def operation_invoke(self, **values: Any) -> dict[str, Any]:
+        with self._create_lock:
+            try:
+                bound = self._prepare_operation_call(**values)
+                kind = bound.compiled.spec.executor.kind
+                if kind == "agent":
+                    result = self._invoke_agent_operation(
+                        bound,
+                        values["on_conflict"],
+                        resume_from=values.get("resume_from"),
+                        draft_from=values.get("draft_from"),
+                    )
+                elif kind == "transform":
+                    result = self._invoke_compiled_transform(
+                        bound, values["on_conflict"]
+                    )
+                elif kind == "effect":
+                    plan = self._effect_operation_plan(bound)
+                    payloads = tuple(
+                        item for item in bound.inputs if item.port_name == plan.payload_port
+                    )
+                    if len(payloads) != 1 or len(bound.inputs) != 1:
+                        raise OperationInvocationError("effect_payload_not_singular")
+                    result = self._invoke_compiled_effect(
+                        bound, plan, values["on_conflict"]
+                    )
+                elif kind == "approval":
+                    result = self._invoke_approval_operation(
+                        bound, values["on_conflict"]
+                    )
+                else:
+                    raise OperationInvocationError("executor_kind_unknown")
+            except OperationInvocationError as error:
+>               raise RootToolError(
+                    f"operation invocation rejected [{error.reason_code}]", details=error.details
+                ) from error
+E               scidiscovery.artifact_agent.interfaces.mcp_root_shared.RootToolError: operation invocation rejected [runtime_backend_capability_missing]
+
+src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py:223: RootToolError
+_ test_open_delivers_frozen_contracts_and_same_identity_legacy_fallback[True-hardened] _
+
+self = <scidiscovery.artifact_agent.interfaces.mcp_root.RootToolFacade object at 0x7f51cd29f260>
+values = {'on_conflict': 'reject', 'name': 'analysis', 'operation_id': 'tcad.result.analyze.v1', 'inputs': (OperationInputSelec...t_names=('reference',)), OperationInputSelection(port='solver_outputs', artifact_names=('output_A', 'output_B'))), ...}
+
+    def operation_invoke(self, **values: Any) -> dict[str, Any]:
+        with self._create_lock:
+            try:
+>               bound = self._prepare_operation_call(**values)
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py:193: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <scidiscovery.artifact_agent.interfaces.mcp_root.RootToolFacade object at 0x7f51cd29f260>
+name = 'analysis', operation_id = 'tcad.result.analyze.v1'
+inputs = (OperationInputSelection(port='experiment_plan', artifact_names=('plan',)), OperationInputSelection(port='experiment_r...rtifact_names=('reference',)), OperationInputSelection(port='solver_outputs', artifact_names=('output_A', 'output_B')))
+instruction = 'Analyze the bound fixture outputs.', parameters = {}
+resume_from = None, draft_from = None
+
+    def _prepare_operation_call(
+        self,
+        *,
+        name: str,
+        operation_id: str,
+        inputs: tuple[_OperationInputSelection, ...],
+        instruction: str | None,
+        parameters: dict[str, Any],
+        on_conflict: str,
+        resume_from: str | None = None,
+        draft_from: str | None = None,
+    ) -> BoundOperationCall:
+        del on_conflict
+        if resume_from is not None and draft_from is not None:
+            raise OperationInvocationError("recovery_sources_mutually_exclusive")
+        try:
+            compiled = self._operation_catalog.operation(operation_id)
+        except KeyError as error:
+            raise OperationInvocationError("operation_unknown") from error
+        if compiled.spec.catalog_scope == "internal":
+            raise OperationInvocationError("operation_scope_forbidden")
+        review = compiled.spec.review
+        if (
+            compiled.spec.catalog_scope == "public"
+            and review is not None
+            and review.reviewer_operation is not None
+            and not self._scheduler_operation_available(review.reviewer_operation)
+        ):
+            raise OperationInvocationError("operation_runtime_unavailable")
+        ports = tuple(item.port for item in inputs)
+        if len(ports) != len(set(ports)):
+            raise OperationInvocationError("input_port_duplicate")
+        current_selections = tuple(
+            self.bindings.scientific_selections(instance=self._instance_id())
+        )
+        current_lineages = {
+            item.logical_name
+            for item in current_selections
+            if item.artifact_ref is None
+        }
+        current_refs = tuple(
+            item.artifact_ref
+            for item in current_selections
+            if item.artifact_ref is not None
+        )
+        resolved: dict[str, tuple[InvocationArtifact, ...]] = {}
+        for selection in inputs:
+            try:
+                port = next(
+                    item for item in compiled.spec.inputs if item.name == selection.port
+                )
+            except StopIteration:
+                resolved[selection.port] = ()
+                continue
+            artifacts: list[InvocationArtifact] = []
+            for artifact_name in selection.artifact_names:
+                try:
+                    self._resolve("artifact", artifact_name)
+                    artifact_id = self._resolve_input_artifact(
+                        artifact_name,
+                        allow_nonqualifying=True,
+                    )
+                    binding = self._binding("artifact", artifact_name)
+                    envelope = self.artifacts.get_by_id(artifact_id)
+                except Exception as error:
+                    raise OperationInvocationError(
+                        "input_artifact_unavailable", port=selection.port
+                    ) from error
+                # Frozen history is an input fact; current review/approval
+                # eligibility is checked separately by admission and projection.
+                signal = self.runs.signal_for_output(envelope.ref, require_current=False)
+                producer = self.runs.completed_for_output(envelope.ref)
+                artifacts.append(
+                    InvocationArtifact(
+                        artifact_name=artifact_name,
+                        ref=envelope.ref,
+                        schema_id=envelope.schema_id,
+                        media_type=envelope.media_type,
+                        size_bytes=envelope.size_bytes,
+                        current=(
+                            self.runs.input_is_current(
+                                instance_id=self._instance_id(),
+                                artifact_name=artifact_name,
+                                artifact_ref=envelope.ref,
+                            )
+                            if self.runs is not None
+                            else (
+                                binding.logical_name in current_lineages
+                                or self._artifact_descends_from(
+                                    envelope.ref, current_refs
+                                )
+                            )
+                        ),
+                        parent_refs=envelope.parent_refs,
+                        labels=tuple(sorted(envelope.labels.items())),
+                        handoff_verdict=(signal.verdict if signal is not None else None),
+                        historical=self._is_historical(envelope),
+                        producer_run_id=producer.run_id if producer else None,
+                    )
+                )
+            resolved[selection.port] = tuple(artifacts)
+        for port in compiled.spec.inputs:
+            if port.min_items == 0:
+                resolved.setdefault(port.name, ())
+        bound = preflight_operation(
+            compiled,
+            name=name,
+            artifacts_by_port=resolved,
+            instruction=instruction,
+            parameters=parameters,
+            read_artifact=self.artifacts.read,
+        )
+        if (
+            self.runs is not None
+            and compiled.spec.executor.kind == "agent"
+            and not self.runs.backend.supports_operation(compiled)
+        ):
+>           raise OperationInvocationError("runtime_backend_capability_missing")
+E           scidiscovery.operations.input_validation.OperationInvocationError: runtime_backend_capability_missing: operation
+
+src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py:1106: OperationInvocationError
+
+The above exception was the direct cause of the following exception:
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-102/test_open_delivers_frozen_cont3')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7f51cc833c80>
+backend_kind = 'hardened', legacy = True
+
+    @pytest.mark.parametrize('backend_kind', ['local', 'hardened'])
+    @pytest.mark.parametrize('legacy', [False, True])
+    def test_open_delivers_frozen_contracts_and_same_identity_legacy_fallback(tmp_path, monkeypatch, backend_kind, legacy):
+        from scidiscovery.artifact_agent.interfaces.mcp_local_worker import LocalWorkerMCPRouter
+        from scidiscovery.artifact_agent.interfaces.mcp_hardened_worker import HardenedWorkerMCPRouter
+        from scidiscovery.artifact_agent.service.hardened_workspace import HardenedWorkerBackend
+        from scidiscovery.artifact_agent.service import runs as runs_module
+        from scidiscovery.operations.tooling import operation_tool_contracts
+        from tests.operations.test_tcad_result_analysis import analysis_system
+        catalog, runtime, root, request, _, _ = analysis_system(tmp_path)
+        router_type = LocalWorkerMCPRouter
+        if backend_kind == 'hardened':
+            runtime.runs.backend = HardenedWorkerBackend(tmp_path / 'hardened')
+            router_type = HardenedWorkerMCPRouter
+        if legacy:
+            original = runs_module.assignment_json
+            def old_assignment(*args, **kwargs):
+                value = json.loads(original(*args, **kwargs))
+                del value['tool_contracts']
+                return canonical_json(value)
+            monkeypatch.setattr(runs_module, 'assignment_json', old_assignment)
+>       root.call_tool('operation_invoke', request)
+
+tests/operations/test_agent_contract_alignment.py:110: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/scidiscovery/artifact_agent/interfaces/mcp_root.py:403: in call_tool
+    return getattr(self.facade, name)(**values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <scidiscovery.artifact_agent.interfaces.mcp_root.RootToolFacade object at 0x7f51cd29f260>
+values = {'on_conflict': 'reject', 'name': 'analysis', 'operation_id': 'tcad.result.analyze.v1', 'inputs': (OperationInputSelec...t_names=('reference',)), OperationInputSelection(port='solver_outputs', artifact_names=('output_A', 'output_B'))), ...}
+
+    def operation_invoke(self, **values: Any) -> dict[str, Any]:
+        with self._create_lock:
+            try:
+                bound = self._prepare_operation_call(**values)
+                kind = bound.compiled.spec.executor.kind
+                if kind == "agent":
+                    result = self._invoke_agent_operation(
+                        bound,
+                        values["on_conflict"],
+                        resume_from=values.get("resume_from"),
+                        draft_from=values.get("draft_from"),
+                    )
+                elif kind == "transform":
+                    result = self._invoke_compiled_transform(
+                        bound, values["on_conflict"]
+                    )
+                elif kind == "effect":
+                    plan = self._effect_operation_plan(bound)
+                    payloads = tuple(
+                        item for item in bound.inputs if item.port_name == plan.payload_port
+                    )
+                    if len(payloads) != 1 or len(bound.inputs) != 1:
+                        raise OperationInvocationError("effect_payload_not_singular")
+                    result = self._invoke_compiled_effect(
+                        bound, plan, values["on_conflict"]
+                    )
+                elif kind == "approval":
+                    result = self._invoke_approval_operation(
+                        bound, values["on_conflict"]
+                    )
+                else:
+                    raise OperationInvocationError("executor_kind_unknown")
+            except OperationInvocationError as error:
+>               raise RootToolError(
+                    f"operation invocation rejected [{error.reason_code}]", details=error.details
+                ) from error
+E               scidiscovery.artifact_agent.interfaces.mcp_root_shared.RootToolError: operation invocation rejected [runtime_backend_capability_missing]
+
+src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py:223: RootToolError
+=========================== short test summary info ============================
+FAILED tests/operations/test_agent_contract_alignment.py::test_all_backend_tool_contracts_equal_actual_mcp_schemas_and_resolve_refs
+FAILED tests/operations/test_agent_contract_alignment.py::test_open_delivers_frozen_contracts_and_same_identity_legacy_fallback[False-hardened]
+FAILED tests/operations/test_agent_contract_alignment.py::test_open_delivers_frozen_contracts_and_same_identity_legacy_fallback[True-hardened]
+3 failed, 4 passed, 111 deselected in 4.39s

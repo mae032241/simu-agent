@@ -1,0 +1,120 @@
+F
+=================================== FAILURES ===================================
+_ test_saved_calculation_survives_failed_run_without_manual_receipt_rewriting __
+
+request = TCADScoreInput(record_key='before_interruption', request=TCADScoreRequest(sources=(SProcessPLXSource(input_alias='tool...cation', metric_profile='smooth_curve', floor_mask=None),), reference_dispositions=(), aggregate_rule='all_required')))
+context = OperationToolContext(services=mappingproxy({}), state={}, workspace=PosixPath('/tmp/pytest-of-da/pytest-144/test_saved... 0x7f9cf116f3b0>>, _prior_source_bindings=<function LocalWorkerMCPRouter._context.<locals>.<lambda> at 0x7f9cf0fa3ba0>)
+
+    def _check_score_sources(request: TCADScoreInput, context: OperationToolContext) -> None:
+        from scidiscovery.operation_contract import DiagnosticError, contract_diagnostic
+        plan = parse_bound_json(ExperimentPortfolio, context.read_input("experiment_plan"))
+        package = parse_bound_json(ReviewedDeckPackage, context.read_input("reviewed_package"))
+        for index, source in enumerate(request.request.sources):
+            aliases = [source.input_alias]
+            basis = source.case_mapping_basis
+            try:
+                if basis:
+                    for item in basis.evidence_refs:
+                        # A locator is a scientific claim; this read proves availability.
+                        context.read_evidence(item.input_alias)
+                        aliases.append(item.input_alias)
+                descriptors = {alias:context.source_descriptor(alias) for alias in aliases}
+            except ValueError as error:
+                raise DiagnosticError("mapping source is unavailable", details=(contract_diagnostic(
+                    "source_unavailable", phase="tool_execution", affected_action="tool_call",
+                    repairable=True, path=f"$.request.sources[{index}]",
+                    message="The source or mapping evidence alias is not available in this Run."),)) from error
+            try:
+>               resolve_case_mapping(plan, package, descriptors, source)
+
+plugins/tcad_artifact/tcad_artifact/result_analysis.py:236: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+plan = ExperimentPortfolio(schema_version=1, study_kind='engineering', objective_key=None, objective='Check one bounded imple...ed_checks_pass'),), priority_order=('implementation_check',), priority_rationale='Only one bounded experiment exists.')
+package = ReviewedDeckPackage(schema_version=2, project=DeckProjectDraft(schema_version=1, tool_profile='review_fixture', solver...cc4cff39d5', capability_sha256='fbe7a54693ec5c36b6d4908babaa6b5c770d65fc123334fc4392764195186e86'), resolved_inputs=())
+descriptors = {'tool_evidence_002': InputBindingDescriptor(source_name='tool_evidence_002', port_name='tool_evidence', artifact_ref=...worker_analysis_publish_files'), ('tool_producer_run', 'run_fbcd4b2d086f4689b81c0a46791c6693')), producer_run_id=None)}
+reference = SProcessPLXSource(input_alias='tool_evidence_002', output_name='A', experiment_key='implementation_check', case_mappin...'carrier', unit='cm^-3', scale='log10'), min_points=2, max_points=65536, format='sprocess_plx', dataset_name='carrier')
+
+    def resolve_case_mapping(plan, package, descriptors, reference):
+        """Check source identity and explicit scientific mapping, without inventing it."""
+        alias = reference.input_alias if hasattr(reference, "input_alias") else reference["input_alias"]
+        values = reference.model_dump(mode="json") if hasattr(reference, "model_dump") else reference
+        if alias not in descriptors:
+            raise declared_violation("analysis source is not a bound input")
+        descriptor = descriptors[alias]
+        if descriptor.port_name not in {"solver_outputs", "tool_evidence"} or descriptor.output_name is None:
+            if values.get("output_name") is not None:
+>               raise declared_violation("non-solver evidence cannot claim a registered solver output identity")
+E               scidiscovery.operation_contract.SemanticRuleViolation: non-solver evidence cannot claim a registered solver output identity
+
+plugins/tcad_artifact/tcad_artifact/result_analysis.py:350: SemanticRuleViolation
+
+The above exception was the direct cause of the following exception:
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-144/test_saved_calculation_survive0')
+
+    def test_saved_calculation_survives_failed_run_without_manual_receipt_rewriting(tmp_path):
+        from tests.operations.test_tcad_result_analysis import write_analysis
+        system = analysis_system(tmp_path)
+        catalog, runtime, root, request, _, _ = system
+        worker, opened = open_analysis(system)
+        scratch = Path(opened["output_directory"]).parent / "scratch"
+        scratch.mkdir(exist_ok=True)
+        raw = runtime.artifacts.read(system[4]["reference"].ref)
+        (scratch / "analysis.py").write_text("# Identity-copy fixture; publication makes no execution claim.\n")
+        (scratch / "derived.csv").write_bytes(raw)
+        published = worker.call_tool("worker_analysis_publish_files", dict(source_aliases=["reference_material"],
+            script_path="scratch/analysis.py", files=[dict(path="scratch/derived.csv", media_type="text/csv")],
+            method="Identity copy to exercise retained script/data dependencies."))
+        score_request = raw_request()
+        score_request["sources"][0]["input_alias"] = published["files"][0]["evidence_alias"]
+>       result = worker.call_tool("worker_tcad_curve_score", dict(record_key="before_interruption", request=score_request))
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/operations/test_analysis_artifact_references.py:170: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/scidiscovery/artifact_agent/interfaces/mcp_local_worker.py:101: in call_tool
+    result = self._call_tool(name, arguments)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/scidiscovery/artifact_agent/interfaces/mcp_local_worker.py:191: in _call_tool
+    result = registered.contextual_handler(
+plugins/tcad_artifact/tcad_artifact/result_analysis.py:245: in tcad_score_tool
+    _check_score_sources(request, context)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+request = TCADScoreInput(record_key='before_interruption', request=TCADScoreRequest(sources=(SProcessPLXSource(input_alias='tool...cation', metric_profile='smooth_curve', floor_mask=None),), reference_dispositions=(), aggregate_rule='all_required')))
+context = OperationToolContext(services=mappingproxy({}), state={}, workspace=PosixPath('/tmp/pytest-of-da/pytest-144/test_saved... 0x7f9cf116f3b0>>, _prior_source_bindings=<function LocalWorkerMCPRouter._context.<locals>.<lambda> at 0x7f9cf0fa3ba0>)
+
+    def _check_score_sources(request: TCADScoreInput, context: OperationToolContext) -> None:
+        from scidiscovery.operation_contract import DiagnosticError, contract_diagnostic
+        plan = parse_bound_json(ExperimentPortfolio, context.read_input("experiment_plan"))
+        package = parse_bound_json(ReviewedDeckPackage, context.read_input("reviewed_package"))
+        for index, source in enumerate(request.request.sources):
+            aliases = [source.input_alias]
+            basis = source.case_mapping_basis
+            try:
+                if basis:
+                    for item in basis.evidence_refs:
+                        # A locator is a scientific claim; this read proves availability.
+                        context.read_evidence(item.input_alias)
+                        aliases.append(item.input_alias)
+                descriptors = {alias:context.source_descriptor(alias) for alias in aliases}
+            except ValueError as error:
+                raise DiagnosticError("mapping source is unavailable", details=(contract_diagnostic(
+                    "source_unavailable", phase="tool_execution", affected_action="tool_call",
+                    repairable=True, path=f"$.request.sources[{index}]",
+                    message="The source or mapping evidence alias is not available in this Run."),)) from error
+            try:
+                resolve_case_mapping(plan, package, descriptors, source)
+            except SemanticRuleViolation as error:
+>               raise DiagnosticError("case mapping is not established", details=(contract_diagnostic(
+                    "case_mapping_invalid", phase="tool_execution", affected_action="tool_call",
+                    repairable=True, path=f"$.request.sources[{index}].case_mapping_basis",
+                    message=str(error)),)) from error
+E               scidiscovery.operation_contract.DiagnosticError: case mapping is not established
+
+plugins/tcad_artifact/tcad_artifact/result_analysis.py:238: DiagnosticError
+=========================== short test summary info ============================
+FAILED tests/operations/test_analysis_artifact_references.py::test_saved_calculation_survives_failed_run_without_manual_receipt_rewriting
+!!!!!!!!!!!!!!!!!!!!!!!!!! stopping after 1 failures !!!!!!!!!!!!!!!!!!!!!!!!!!!
+1 failed in 1.52s

@@ -1,0 +1,6 @@
+{
+  "scope": "Frozen baseline only; pure engineering fixture, no Runtime or scientific operation.",
+  "expected": "Local design rejected by global target coverage",
+  "type": "SemanticRuleViolation",
+  "message": "experiment portfolio omits mandatory objective targets: future_target"
+}

@@ -15,6 +15,8 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from scidiscovery.artifact_agent.execution_bridge import AdapterCapability
 from scidiscovery.artifact_agent.schema.execution import LocalFileDescriptor
 
+from .transport_logs import preserve_log
+
 from .execution_control import FileDescriptor, SolverCapabilitySnapshot, TCADJobSpec
 from .project_packager import (
     PackagerError,
@@ -193,6 +195,15 @@ class CommandTCADExecutorAdapter:
         value = self._call("cancel", {"run_id": external_run_id})
         return str(value["state"])
 
+    def inspect_outputs(self, external_run_id: str, relative_path: str | None = None, max_bytes: int = 32*1024*1024) -> dict[str, Any]:
+        value = self._call("inspect_outputs", {"run_id": external_run_id, "relative_path": relative_path, "max_bytes": max_bytes})
+        if value.get("status") == "available" and "file" in value:
+            descriptor = LocalFileDescriptor.model_validate(value["file"], strict=True)
+            path = Path(descriptor.local_path)
+            if not _within(path.resolve(), self.local_result_root.resolve()) or path.is_symlink() or descriptor.size_bytes > max_bytes:
+                raise RuntimeError("inspection output is outside its bounds")
+        return value
+
     def collect(self, external_run_id: str) -> tuple[LocalFileDescriptor, ...]:
         value = self._call(
             "collect",
@@ -246,15 +257,24 @@ class CommandTCADExecutorAdapter:
                 check=False,
             )
         except subprocess.TimeoutExpired as error:
-            raise RuntimeError("TCAD transport operation exceeded its short bound") from error
+            log = preserve_log(self.local_result_root, "stderr", error.stderr or b"")
+            preserve_log(self.local_result_root, "stdout", error.stdout or b"")
+            raise RuntimeError(f"TCAD transport operation exceeded its short bound; stderr log: {log}") from error
+        stderr_log = preserve_log(self.local_result_root, "stderr", completed.stderr) if completed.stderr else None
         if completed.returncode != 0:
-            raise RuntimeError("TCAD transport operation failed")
+            preserve_log(self.local_result_root, "stdout", completed.stdout)
+            raise RuntimeError(f"TCAD transport operation failed; stderr log: {stderr_log}")
         if len(completed.stdout) > 8 * 1024 * 1024:
             raise RuntimeError("TCAD transport response exceeds its byte limit")
         try:
             response = json.loads(completed.stdout)
         except json.JSONDecodeError as error:
-            raise RuntimeError("TCAD transport returned invalid JSON") from error
+            log = preserve_log(self.local_result_root, "stdout", completed.stdout)
+            raise RuntimeError(f"TCAD transport returned invalid JSON; stdout log: {log}") from error
+        if (not isinstance(response, dict) or response.get("schema_version") != 1
+                or response.get("operation") != operation or response.get("ok") is not True
+                or not isinstance(response.get("payload"), dict)):
+            preserve_log(self.local_result_root, "stdout", completed.stdout)
         if not isinstance(response, dict) or response.get("schema_version") != 1:
             raise RuntimeError("TCAD transport response has an invalid envelope")
         if response.get("operation") != operation:

@@ -1,0 +1,21 @@
+{
+  "command": [
+    "python",
+    "-m",
+    "pytest",
+    "-q",
+    "tests/operations/test_analysis_evidence_recovery.py",
+    "tests/operations/test_collector_analysis_handoff.py",
+    "tests/operations/test_catalog_compile.py",
+    "tests/operations/test_catalog_negative_cases.py",
+    "tests/operations/test_h2b_domain_boundaries.py",
+    "tests/operations/test_m2_parameter_package.py",
+    "tests/operations/test_minimal_figure_extraction.py"
+  ],
+  "exit_code": 1,
+  "seconds": 45.765,
+  "peak_tree_rss_bytes": 253931520,
+  "budget_bytes": 536870912,
+  "early_stop_bytes": 469762048,
+  "memory_terminated": false
+}

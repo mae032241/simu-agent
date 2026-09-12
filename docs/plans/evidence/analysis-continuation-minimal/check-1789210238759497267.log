@@ -1,0 +1,134 @@
+............F..                                                          [100%]
+=================================== FAILURES ===================================
+__________ test_installed_generic_no_score_worker_seals_failed_result __________
+
+installed_probe = <function installed_probe.<locals>.run at 0x7fe135374860>
+
+    def test_installed_generic_no_score_worker_seals_failed_result(installed_probe):
+        from tests.operations.test_m2_curve_analysis_boundary import _plan
+        from tests.operations.test_result_analysis_tool import limited_report
+    
+>       installed_probe("curve", "plan_bytes = " + repr(_plan().canonical_json()) +
+                        "\nreport = " + repr(limited_report()) + r'''
+    import tempfile
+    from pathlib import Path
+    from scidiscovery.artifact_agent.interfaces.mcp_local_worker import LocalWorkerMCPRouter
+    from scidiscovery.artifact_agent.interfaces.mcp_root import RootMCPRouter, RootToolFacade
+    from scidiscovery.artifact_agent.runtime import open_runtime
+    from scidiscovery.artifact_agent.schema.artifact import ArtifactRegistration
+    from scidiscovery.artifact_agent.schema.common import canonical_json
+    from scidiscovery.operations.catalog import compile_installed_catalog
+    scratch = Path(tempfile.mkdtemp(prefix="installed-generic-analysis-"))
+    project = scratch / "project"
+    project.mkdir()
+    (project / "AGENTS.md").write_text("# Installed generic analysis fixture\n")
+    runtime = open_runtime(project_root=project, state_root=scratch / "state", worker_backend="local")
+    catalog = compile_installed_catalog()
+    instance = runtime.scheduler_bindings.create_instance(
+        name="analysis", title="Installed no-score analysis", objective="Check bounded failed-result analysis.",
+    )
+    root = RootMCPRouter(RootToolFacade(
+        runtime.artifacts, runtime.intake, runs=runtime.runs, approvals=runtime.approvals,
+        executions=runtime.executions, bindings=runtime.scheduler_bindings,
+        instance=instance.instance_id, operation_catalog=catalog,
+    ))
+    def register(name, schema, raw, parents=()):
+        artifact = runtime.artifacts.register(raw, ArtifactRegistration(
+            kind="fixture", schema_id=schema, payload_schema_version=1,
+            media_type="application/json", creator=runtime.actor, parent_refs=parents,
+            labels={"scientific_claim_admissible": "true"},
+        ), idempotency_key="installed-analysis:" + name)
+        runtime.scheduler_bindings.bind(instance=instance.instance_id, namespace="artifact", name=name, object_id=artifact.artifact_id)
+        return artifact
+    
+    def invoke(name, operation_id, inputs):
+        request = {"name": name, "operation_id": operation_id, "inputs": [
+            {"port": key, "artifact_names": [value]} for key, value in inputs.items()
+        ], "instruction": "Analyze only exact bound fixture results."}
+        assert root.call_tool("operation_preflight", request)["admissible"] is True
+        assert root.call_tool("operation_invoke", request)["result"]["state"] == "queued"
+        compiled = catalog.operation(operation_id)
+        worker = LocalWorkerMCPRouter(runtime.runs, operation_id=operation_id, operation_digest=compiled.digest)
+        opened = worker.call_tool("worker_open_assignment", {})
+        assert 'tool_contracts' not in opened and Path(opened['start_here_path']).is_file()
+        assert json.loads(Path(opened['tool_contracts_path']).read_bytes())['tool_contracts'] == {tool['name']: {k: tool[k] for k in ('description', 'inputSchema')}
+                                          for tool in worker.list_tools()}
+        return worker, opened
+    
+    def submit(worker, opened, payload, verdict):
+        Path(opened["output_directory"], "result.json").write_bytes(canonical_json({
+            "schema_version": 1, "handoff": {"verdict": verdict, "summary": "Bounded fixture analysis."}, "payload": payload,
+        }))
+        result = worker.call_tool("worker_submit_result", {})
+        assert result["state"] == "completed", result
+    
+    plan = register("plan", "scidiscovery.experiment-portfolio.v1", plan_bytes)
+    worker, opened = invoke("review", "science.object.review.v1", {"experiment_plan": "plan"})
+    submit(worker, opened, {"review_target": "experiment_portfolio", "verdict": "pass", "summary": "Bounded fixture plan is coherent."}, "pass")
+    review = root.call_tool("run_status", {"name": "review"})
+    register("actual_result", "opaque", b"Execution failed before observable output.", (plan.ref,))
+    worker, opened = invoke("analysis", "science.result.diagnose.v1", {
+        "experiment_plan": "plan", "experiment_review": review["output_artifact_name"], "experiment_results": "actual_result",
+    })
+    assert "worker_curve_score" in {item["name"] for item in worker.list_tools()}
+    submit(worker, opened, report, "blocked")
+    status = root.call_tool("run_status", {"name": "analysis"})
+    assert status["state"] == "completed"
+    assert status["sealed_output"]["payload"]["overall_verdict"] == "invalid_study"
+    assert not status["sealed_output"]["payload"]["calculation_records"]
+    print("installed generic failed-result analysis sealed without scoring")
+    ''')
+
+tests/operations/test_analysis_tool_installed.py:274: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+environment_name = 'curve'
+source = 'plan_bytes = b\'{"objective":"Check one bounded implementation curve.","objective_key":null,"priority_order":["implem...output"]["payload"]["calculation_records"]\nprint("installed generic failed-result analysis sealed without scoring")\n'
+
+        def run(environment_name: str, source: str) -> str:
+            environment = installed_environments[environment_name]
+            clean_environment = dict(os.environ)
+            clean_environment.pop("PYTHONPATH", None)
+            clean_environment.pop("SCIDISCOVERY_ROLE_DIR", None)
+            clean_environment["PYTHONNOUSERSITE"] = "1"
+            prefix = """
+    from pathlib import Path as _R0Path
+    import scidiscovery as _r0_scidiscovery
+    import sys as _r0_sys
+    assert _R0Path(_r0_scidiscovery.__file__).resolve().is_relative_to(
+        _R0Path(_r0_sys.prefix).resolve()
+    ), _r0_scidiscovery.__file__
+    assert 'include-system-site-packages = false' in (_R0Path(_r0_sys.prefix) / 'pyvenv.cfg').read_text()
+    import PIL as _r0_pil
+    assert _R0Path(_r0_pil.__file__).resolve().is_relative_to(_R0Path(_r0_sys.prefix).resolve())
+    """
+            completed = subprocess.run(
+                [str(environment.python), "-c", textwrap.dedent(prefix + source)],
+                cwd=environment.workdir,
+                env=clean_environment,
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+>           assert completed.returncode == 0, (
+                f"installed probe failed ({environment_name})\n"
+                f"stdout:\n{completed.stdout}\n"
+                f"stderr:\n{completed.stderr}"
+            )
+E           AssertionError: installed probe failed (curve)
+E             stdout:
+E             
+E             stderr:
+E             Traceback (most recent call last):
+E               File "<string>", line 66, in <module>
+E               File "<string>", line 53, in invoke
+E             AssertionError
+E             
+E           assert 1 == 0
+E            +  where 1 = CompletedProcess(args=['/tmp/pytest-of-da/pytest-213/r0-installed0/curve/bin/python', '-c', '\nfrom pathlib import Pat... recent call last):\n  File "<string>", line 66, in <module>\n  File "<string>", line 53, in invoke\nAssertionError\n').returncode
+
+tests/operations/conftest.py:284: AssertionError
+=========================== short test summary info ============================
+FAILED tests/operations/test_analysis_tool_installed.py::test_installed_generic_no_score_worker_seals_failed_result
+1 failed, 14 passed in 48.78s

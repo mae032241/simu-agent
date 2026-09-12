@@ -1,0 +1,25 @@
+........                                                                 [100%]
+8 passed in 5.76s
+	Command being timed: "timeout 120 /home/da/miniconda3/bin/python -c import resource,pytest; resource.setrlimit(resource.RLIMIT_AS,(3*1024**3,3*1024**3)); raise SystemExit(pytest.main(["-q","tests/operations/test_l4_local_tcad.py::test_local_tcad_budget_covers_pending_failure_cache_and_exhaustion","tests/operations/test_l4_local_tcad.py::test_local_tcad_retry_discards_control_proofs_before_debug","tests/operations/test_l4_local_tcad.py::test_raw_tcad_retry_clears_proofs_and_keeps_author_rejection","tests/operations/test_l4_local_tcad.py::test_materialized_sprocess_binds_declarations_and_seals_initialization","tests/operations/test_l4_local_tcad.py::test_local_tcad_debug_rejects_a_preflight_parent_symlink","tests/operations/test_l4_local_tcad.py::test_domain_snapshot_rejects_symlinked_deck_root","tests/operations/test_l2_local_run.py::test_local_run_uses_native_files_one_domain_tool_and_one_terminal_authority","tests/artifact_agent/test_platform_configuration.py::test_codex_profile_contains_root_and_compiled_operation_boundaries"]))"
+	User time (seconds): 4.32
+	System time (seconds): 0.33
+	Percent of CPU this job got: 60%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:07.70
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 101080
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 271
+	Minor (reclaiming a frame) page faults: 27000
+	Voluntary context switches: 3032
+	Involuntary context switches: 56
+	Swaps: 0
+	File system inputs: 73400
+	File system outputs: 23440
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0

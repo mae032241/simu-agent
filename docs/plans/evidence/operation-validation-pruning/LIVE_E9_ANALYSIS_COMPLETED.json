@@ -1,0 +1,706 @@
+{
+  "agent_type": "op_tcad_result_analyze_v1_8314f7794897",
+  "backend": "local_trusted",
+  "candidate_accepted": true,
+  "completed_at": "2026-09-11T14:05:41.316694Z",
+  "created_at": "2026-09-11T13:56:53.350307Z",
+  "deadline_at": "2026-09-11T14:11:53.350307Z",
+  "diagnostic_summary": {
+    "failure": null,
+    "latest_rejection": {
+      "category": "output_rejected",
+      "code": "output_rejected",
+      "details": [
+        {
+          "affected_action": "submit",
+          "code": "output_invalid",
+          "message": "objective assessment references an unknown comparison",
+          "path": "$.payload.objective_assessment",
+          "phase": "output_context",
+          "repairable": true,
+          "rule_id": "tcad.result_analysis.context_binding",
+          "schema_version": 1,
+          "type": "value_error"
+        }
+      ],
+      "repairable_by_output": true
+    },
+    "latest_tool_error": null,
+    "recent_errors": [
+      {
+        "category": "output_rejected",
+        "code": "output_rejected",
+        "details": [
+          {
+            "affected_action": "submit",
+            "code": "output_invalid",
+            "message": "objective assessment references an unknown comparison",
+            "path": "$.payload.objective_assessment",
+            "phase": "output_context",
+            "repairable": true,
+            "rule_id": "tcad.result_analysis.context_binding",
+            "schema_version": 1,
+            "type": "value_error"
+          }
+        ],
+        "repairable_by_output": true
+      }
+    ],
+    "rejection_count": 1
+  },
+  "draft_from": null,
+  "evidence_outputs": [
+    {
+      "artifact_name": "fig4_continuation_execution_analysis_8.output.recovery_manifest",
+      "schema": "scidiscovery.tool-evidence-manifest.v1"
+    }
+  ],
+  "head_advance": "not_requested",
+  "last_activity_at": "2026-09-11T14:05:41.316694Z",
+  "logical_name": "fig4_continuation_execution_analysis_8",
+  "name": "fig4_continuation_execution_analysis_8",
+  "operation_id": "tcad.result.analyze.v1",
+  "output_artifact_name": "fig4_continuation_execution_analysis_8.output",
+  "reason": null,
+  "recovery": {
+    "delivery_preserved": false,
+    "draft_available": false,
+    "recovery_pending": false,
+    "resume_available": false
+  },
+  "recovery_available": false,
+  "revision": 1,
+  "scheduler_signal": {
+    "assumptions": [
+      "对每个已选择的 shared_group，将该组总权重固定为 1，并在组内所选行间等分；无 shared_group 的行各自权重为 1。绑定计划要求共享依赖权重，但未给出唯一公式，因此同时报告无权重结果核对充分性结论。",
+      "两个材料 WRMSE 以等材料权重的平方均值平方根组成 J；由于充分性门已先失败，描述性 G 不用于假设支持或反驳。",
+      "PLX 在 log10 浓度空间线性插值到精确参考 x_value；同材料 tight 的共同锚点响应按冻结线性齐次 PDE 的 Cs 比例缩放。",
+      "一组一次敏感性以 shared_group 为依赖组，分别施加绑定 x 或 y 不确定度的正负扰动；该有限诊断不是注册工具回执，也不替代未在计划中唯一规定的概率模型。"
+    ],
+    "missing_inputs": [],
+    "next_action_kind": null,
+    "next_actions": [
+      "以本轮已证实的自锚充分性失败为输入，设计并独立审查一个不通过事后调参改写当前结论、但能检验冻结常数 D 家族为何偏离参考剖面的有限后续实验；在基础家族充分前，不进入微观机制归因。",
+      "任何未来重执行前，将六个 TDR expected_outputs 修订为 SProcess 实际生成的 _fps.tdr 路径并取得匹配实现审查。",
+      "若要把尾部支持敏感性提升为更强经验结论，获取检测状态、独立不确定度和系列身份明确的作者原始 SIMS 行。"
+    ],
+    "schema_version": 1,
+    "summary": "本轮在受控工作区内直接读取六条绑定 PLX、两张参考 CSV 和当前 solver 日志，完成了计划要求的掩码、权重、WRMSE、J、G 与 T 归约。十二个掩码计数全部复现，六案例在 M0 深度的预测均正且有限，主/紧化归一化形状差通过 0.05 decade 门槛；但 InAlAs/InGaAs 的 M0 自锚 WRMSE 为 2.24454/2.01275 decade，均远超 0.15 decade，故冻结常数 D 家族不充分，表面边界假设按计划保持不确定。T 的掩码相对变化从 0 到 0.876，且有多个中间或跨阈值场景，尾部支持假设同样不确定。执行记录仍是 failed/97，原因仍为声明 TDR 路径与实际 _fps.tdr 名称不符。",
+    "verdict": "inconclusive"
+  },
+  "scheduler_signal_status": "available",
+  "sealed_output": {
+    "artifact_name": "fig4_continuation_execution_analysis_8.output",
+    "kind": "layered_diagnosis",
+    "payload": {
+      "analysis_method": "只对本轮绑定输入做单进程、标准库确定性后处理。CSV 掩码严格实现计划谓词：M0=observed且eligible且direct_pixel且y>3e15且y>dy；M1 允许 shared_occlusion；M2 再取消 3e15 截止；S0-S2 与对应 M 掩码相同但取消 y>dy。每个掩码保存 series_key:point_index 有序行身份摘要并只把相邻 point_index 计入 T。联合权重令每个所选 shared_group 总权重为 1、组内等分，其他行权重为 1；每材料 WRMSE=sqrt(sum(w*(log10 Csim-log10 Cobs)^2)/sum(w))，J=sqrt((WRMSE_Al^2+WRMSE_Ga^2)/2)，G=1-J_own/min(J_low,J_high)。PLX 去除远端 Silicon/Oxide 同 x 的第二个接口值后，在正值 log10 空间插值到绑定 x_value；参考区间远离该接口。tight 共同锚点按线性齐次 PDE 的 Cs 比例缩放。T 仅累加所选行中 point_index 连续且两端 y<5.4e16 的 x 增量，绝不跨缺口。一组一次诊断对同一 shared_group 分别施加 ±x_uncertainty 或 ±y_uncertainty。所有本轮数值均为受权原生后处理，calculation_records 保持空数组，不伪装注册评分收据。",
+      "calculation_records": [],
+      "claim_allowed": false,
+      "evidence": [
+        {
+          "locator": "experiment_plan",
+          "schema_version": 1,
+          "source_key": "experiment_plan",
+          "source_type": "frozen_input",
+          "title": "绑定实验计划与精确检查键"
+        },
+        {
+          "locator": "experiment_review",
+          "schema_version": 1,
+          "source_key": "experiment_review",
+          "source_type": "frozen_input",
+          "title": "匹配独立实验审查"
+        },
+        {
+          "locator": "reviewed_package",
+          "schema_version": 1,
+          "source_key": "reviewed_package",
+          "source_type": "frozen_input",
+          "title": "受审 SProcess 项目、案例参数与输出声明"
+        },
+        {
+          "locator": "execution_result",
+          "schema_version": 1,
+          "source_key": "execution_result",
+          "source_type": "runtime_output",
+          "title": "绑定执行 failed 终态"
+        },
+        {
+          "locator": "runtime_manifest",
+          "schema_version": 1,
+          "source_key": "runtime_manifest",
+          "source_type": "runtime_output",
+          "title": "exit_code 97 与缺失声明 TDR"
+        },
+        {
+          "locator": "recovery_manifest",
+          "schema_version": 1,
+          "source_key": "recovery_manifest",
+          "source_type": "runtime_output",
+          "title": "恢复 PLX 的受控收据、字节与原执行绑定"
+        },
+        {
+          "locator": "prior_analysis",
+          "schema_version": 1,
+          "source_key": "prior_analysis",
+          "source_type": "frozen_input",
+          "title": "既往封存分析，仅用于区分旧观察与本轮归约"
+        },
+        {
+          "locator": "reference_material_002",
+          "schema_version": 1,
+          "source_key": "reference.al_rows",
+          "source_type": "frozen_input",
+          "title": "InAlAs 参考原始行表"
+        },
+        {
+          "locator": "reference_material_003",
+          "schema_version": 1,
+          "source_key": "reference.ga_rows",
+          "source_type": "frozen_input",
+          "title": "InGaAs 参考原始行表"
+        },
+        {
+          "locator": "solver_outputs_001",
+          "schema_version": 1,
+          "source_key": "raw.solver_log",
+          "source_type": "runtime_output",
+          "title": "六案例当前 SProcess 日志"
+        },
+        {
+          "locator": "solver_outputs_002",
+          "schema_version": 1,
+          "source_key": "raw.al_own_primary",
+          "source_type": "runtime_output",
+          "title": "InAlAs own-anchor primary PLX"
+        },
+        {
+          "locator": "solver_outputs_003",
+          "schema_version": 1,
+          "source_key": "raw.al_high_primary",
+          "source_type": "runtime_output",
+          "title": "InAlAs high-anchor primary PLX"
+        },
+        {
+          "locator": "solver_outputs_004",
+          "schema_version": 1,
+          "source_key": "raw.ga_own_primary",
+          "source_type": "runtime_output",
+          "title": "InGaAs own-anchor primary PLX"
+        },
+        {
+          "locator": "solver_outputs_005",
+          "schema_version": 1,
+          "source_key": "raw.ga_low_primary",
+          "source_type": "runtime_output",
+          "title": "InGaAs low-anchor primary PLX"
+        },
+        {
+          "locator": "solver_outputs_006",
+          "schema_version": 1,
+          "source_key": "raw.al_own_tight",
+          "source_type": "runtime_output",
+          "title": "InAlAs own-anchor tight PLX"
+        },
+        {
+          "locator": "solver_outputs_007",
+          "schema_version": 1,
+          "source_key": "raw.ga_own_tight",
+          "source_type": "runtime_output",
+          "title": "InGaAs own-anchor tight PLX"
+        }
+      ],
+      "experiment_key": "experiment.fig4.raw_boundary_counterfactual",
+      "gates": {
+        "control_equivalence": {
+          "evidence_keys": [
+            "experiment_plan",
+            "raw.al_own_primary",
+            "raw.ga_own_primary",
+            "raw.al_own_tight",
+            "raw.ga_own_tight",
+            "reference.al_rows",
+            "reference.ga_rows"
+          ],
+          "findings": [
+            "同一材料 primary/tight 使用相同 Cs，因此 log10 浓度差等于计划要求的归一化对数差。",
+            "M0 G_primary=-0.0140876104，G_tight=-0.0140875960；二者都因基础家族不充分而不进入支持/反驳门。"
+          ],
+          "schema_version": 1,
+          "status": "pass",
+          "summary": "数值紧化不改变归一化剖面或描述性边界类别；六掩码的 primary 与 tight G 差均约 1.5e-8。"
+        },
+        "evidence_identity": {
+          "evidence_keys": [
+            "reviewed_package",
+            "recovery_manifest",
+            "raw.solver_log",
+            "raw.al_own_primary",
+            "raw.al_high_primary",
+            "raw.ga_own_primary",
+            "raw.ga_low_primary",
+            "raw.al_own_tight",
+            "raw.ga_own_tight",
+            "reference.al_rows",
+            "reference.ga_rows"
+          ],
+          "findings": [
+            "solver_outputs_002 是当前 manifest 注册的 InAlAs own-primary PLX；solver_outputs_003 至 007 由 recovery_manifest 固定到同一原执行的其余五条 PLX。",
+            "案例身份同时由 reviewed_package 的 case/outputStem 源码绑定及 solver_outputs_001 的 WritePlx/END_CASE 区块支持，不依靠文件名或相同字节单独推断。",
+            "参考 CSV 的有序行身份摘要已按每个掩码生成；十二个计数与计划和独立审查完全一致。"
+          ],
+          "schema_version": 1,
+          "status": "pass",
+          "summary": "六条 PLX、两张参考表和日志均由当前绑定或绑定 recovery_manifest 的收据固定；案例映射由受审源码和同一日志案例块建立。"
+        },
+        "implementation_fidelity": {
+          "evidence_keys": [
+            "experiment_plan",
+            "experiment_review",
+            "reviewed_package",
+            "execution_result",
+            "runtime_manifest",
+            "raw.solver_log"
+          ],
+          "findings": [
+            "experiment_review 和 reviewed_package 对精确计划与源码给出匹配通过结论。",
+            "solver_outputs_001 记录六个 BEGIN_CASE/END_CASE、六次 WritePlx、六次 struct 和最终 Summary，没有解析、初始化或方程求解中止证据。",
+            "execution_result 仍为 failed，不能把实现分项通过表述为外部执行成功。"
+          ],
+          "schema_version": 1,
+          "status": "pass",
+          "summary": "当前日志支持受审冻结 PDE、六案例参数、独立重建和全部案例结束；观察到的失败位于 TDR 声明/收集层。"
+        },
+        "numerical_validity": {
+          "evidence_keys": [
+            "experiment_plan",
+            "raw.solver_log",
+            "raw.al_own_primary",
+            "raw.al_high_primary",
+            "raw.ga_own_primary",
+            "raw.ga_low_primary",
+            "raw.al_own_tight",
+            "raw.ga_own_tight",
+            "reference.al_rows",
+            "reference.ga_rows"
+          ],
+          "findings": [
+            "InAlAs 的 359 个 M0 深度和 InGaAs 的 702 个 M0 深度上，own/high/low/tight 所需预测全部正且有限。",
+            "InAlAs 最大 |log10(Cprimary/Cs)-log10(Ctight/Cs)|=5.783536437320436e-6 decade。",
+            "InGaAs 对应最大差=5.436555024829204e-6 decade。",
+            "该分项通过不改变 runtime_manifest 的 failed/97 包装终态。"
+          ],
+          "schema_version": 1,
+          "status": "pass",
+          "summary": "六个案例均有可映射 PLX，所有对应 M0 采样预测正且有限，两个材料的主/紧化归一化形状差均远低于 0.05 decade。"
+        },
+        "observation": {
+          "evidence_keys": [
+            "experiment_plan",
+            "reference.al_rows",
+            "reference.ga_rows",
+            "raw.al_own_primary",
+            "raw.al_high_primary",
+            "raw.ga_own_primary",
+            "raw.ga_low_primary",
+            "raw.al_own_tight",
+            "raw.ga_own_tight"
+          ],
+          "findings": [
+            "check.fig4.reference_mask_reproduction 的十二个计数均匹配；M0-M2/S0-S2 的有序身份、共享组权重和无缺口邻接均在本轮重建。",
+            "M0 group-weighted own-anchor WRMSE 为 InAlAs 2.2445359473、InGaAs 2.0127535639 decade，均失败于 0.15 decade；无权重结果 2.3673009491/2.0101518480 同样失败。",
+            "M0 的 J_own=2.1317971911、J_low=2.1021824636、J_high=2.1664976371，描述性 G=-0.0140876104；由于充分性失败，不能按 0.25 门反驳边界假设。",
+            "中心 T(M0) 为 InAlAs 0.1673267327 um、InGaAs 0.3356435644 um；相对变化跨越 0、低值、0.10-0.50 中间区及 InAlAs S2 的 0.8757396450。",
+            "保守的一组一次相对变化区间中，InAlAs S2 为 [0.462963,1.300912]，跨越 0.50；其余多个场景也跨越 0.10 或处于中间区，故不满足稳定支持或稳定反驳规则。"
+          ],
+          "schema_version": 1,
+          "status": "fail",
+          "summary": "参考掩码复现通过，但两个材料的自锚充分性均严重失败；T 变化呈掩码依赖和跨阈值。"
+        },
+        "physical_interpretation": {
+          "evidence_keys": [
+            "experiment_plan",
+            "experiment_review",
+            "reference.al_rows",
+            "reference.ga_rows",
+            "raw.al_own_primary",
+            "raw.ga_own_primary"
+          ],
+          "findings": [
+            "自锚充分性失败按计划使表面边界结果不确定，而不是假设被拒绝。",
+            "T 的掩码依赖结果使尾部支持伪影既不能稳定支持也不能稳定排除。",
+            "材料标签与 D 配对，连续响应及两区 kick-out/VCD 比较尚未执行，微观机制目标仍未覆盖。"
+          ],
+          "schema_version": 1,
+          "status": "inconclusive",
+          "summary": "冻结常数 D 家族不充分且尾部证据敏感，不能支持或反驳两个机制假设，更不能作微观缺陷归因。"
+        },
+        "schema_version": 1
+      },
+      "hypothesis_assessments": [
+        {
+          "evidence_keys": [
+            "experiment_plan",
+            "raw.al_own_primary",
+            "raw.al_high_primary",
+            "raw.ga_own_primary",
+            "raw.ga_low_primary",
+            "raw.al_own_tight",
+            "raw.ga_own_tight",
+            "reference.al_rows",
+            "reference.ga_rows"
+          ],
+          "falsifiers_triggered": [],
+          "hypothesis_key": "hypothesis.surface_boundary_control",
+          "outcome": "inconclusive",
+          "predictions_checked": [
+            "prediction.boundary.supported_row_gain"
+          ],
+          "rationale": "数值收敛和完整 M0 正值检查通过，但两个 own-anchor WRMSE 分别为 2.24454 和 2.01275 decade，远超 0.15 decade。计划明确规定基础家族不充分时边界处分为不确定；因此 G 约 -0.014 不能触发 G<=0.25 的反驳规则。",
+          "schema_version": 1
+        },
+        {
+          "evidence_keys": [
+            "experiment_plan",
+            "reference.al_rows",
+            "reference.ga_rows",
+            "raw.al_own_primary",
+            "raw.ga_own_primary"
+          ],
+          "falsifiers_triggered": [],
+          "hypothesis_key": "hypothesis.tail_support_artifact",
+          "outcome": "inconclusive",
+          "predictions_checked": [
+            "prediction.artifact.resolved_length_sensitivity"
+          ],
+          "rationale": "M0-M2/S0-S2 账本和无缺口 T 已计算。相对 M0 的中心变化从 0 到 0.8757，多个材料/掩码位于 0.10-0.50 中间区，一组一次区间又跨过 0.10 或 0.50。按预定规则，这是掩码依赖的歧义结果，既不稳定支持也不稳定排除尾部支持伪影。",
+          "schema_version": 1
+        }
+      ],
+      "method_changes": [
+        "相对 prior_analysis，本轮依据当前 assignment 的原生后处理授权直接完成参考账本与剖面归约，不继承旧报告关于注册工具覆盖面的限制。",
+        "重新从当前别名 solver_outputs_002 至 solver_outputs_007 和 reference_material_002/003 计算；prior_analysis 仅用于区分既往观察，不作为本轮数值替代物。",
+        "绑定计划没有唯一规定 shared_group 权重和两个材料 WRMSE 的 J 聚合公式，因此采用明确的组总权重 1 与等材料 RMS，并用无权重 WRMSE 检查充分性失败的稳健性；描述性 G 不作门槛处分。",
+        "一组一次不确定度结果作为有限诊断报告，不称为注册敏感性；中心掩码结果自身已呈现中间和掩码依赖结局。",
+        "原执行的 TDR 声明/收集缺陷保持不变；本轮没有修改项目、证据或执行状态，也没有启动求解器。"
+      ],
+      "next_action": "保留当前六条 PLX 和本轮有限负结论，不重跑同一未改变家族。下一项科学工作应是一个单独设计、独立审查的有限实验，用来检验冻结常数 D/固定边界家族的结构性不充分来源，同时保持当前失败结果不可被事后调参覆盖。任何外部执行前另行修订并审查 _fps.tdr 声明路径；更强尾部结论还需要检测状态和不确定度合格的原始 SIMS 行。",
+      "objective_assessment": {
+        "comparison_keys": [],
+        "evidence_keys": [
+          "experiment_plan",
+          "experiment_review",
+          "execution_result",
+          "runtime_manifest",
+          "raw.solver_log",
+          "raw.al_own_primary",
+          "raw.al_high_primary",
+          "raw.ga_own_primary",
+          "raw.ga_low_primary",
+          "raw.al_own_tight",
+          "raw.ga_own_tight",
+          "reference.al_rows",
+          "reference.ga_rows"
+        ],
+        "objective_key": "objective.fig4_mechanism_discrimination",
+        "schema_version": 1,
+        "status": "inconclusive",
+        "summary": "掩码、数值收敛、WRMSE、G 和 T 均已完成当前有界归约；冻结家族明确未通过充分性门，尾部敏感性呈掩码依赖，因此两个机制方向都不能获得支持或反驳，微观分离仍是条件未满足的后续目标。"
+      },
+      "overall_verdict": "inconclusive",
+      "plan_key": "experiment.fig4.raw_boundary_counterfactual/validation",
+      "recommended_task_mode": null,
+      "remaining_contradiction": "本轮已回答冻结常数 D 家族的当前充分性：两个材料的自锚 M0 WRMSE 均超过阈值一个数量级以上，因此该家族不能承载表面锚点机制判别。它没有回答为何该家族严重偏离参考剖面，也不能把负 G 解释为对表面边界控制的反证。尾部 T 对 M0-M2/S0-S2 的响应同时包含低、居中和高变化，有限不确定度区间又跨阈值，仍无法区分真实低浓度支持与提取/检测伪影。材料标签仍与 D 配对，连续材料响应和两区 kick-out/VCD 比较尚未执行；计划规定的后续微观比较以基础家族充分和尾部稳定为条件，当前条件未满足。",
+      "schema_version": 1,
+      "source_references": [
+        {
+          "input_alias": "experiment_plan",
+          "schema_version": 1,
+          "source_key": "experiment_plan"
+        },
+        {
+          "input_alias": "experiment_review",
+          "schema_version": 1,
+          "source_key": "experiment_review"
+        },
+        {
+          "input_alias": "reviewed_package",
+          "schema_version": 1,
+          "source_key": "reviewed_package"
+        },
+        {
+          "input_alias": "execution_result",
+          "schema_version": 1,
+          "source_key": "execution_result"
+        },
+        {
+          "input_alias": "runtime_manifest",
+          "schema_version": 1,
+          "source_key": "runtime_manifest"
+        },
+        {
+          "input_alias": "recovery_manifest",
+          "schema_version": 1,
+          "source_key": "recovery_manifest"
+        },
+        {
+          "input_alias": "prior_analysis",
+          "schema_version": 1,
+          "source_key": "prior_analysis"
+        },
+        {
+          "input_alias": "reference_material_002",
+          "schema_version": 1,
+          "source_key": "reference.al_rows"
+        },
+        {
+          "input_alias": "reference_material_003",
+          "schema_version": 1,
+          "source_key": "reference.ga_rows"
+        },
+        {
+          "input_alias": "solver_outputs_001",
+          "output_name": "solver_log",
+          "schema_version": 1,
+          "source_key": "raw.solver_log"
+        },
+        {
+          "case_key": "case.fig4.al_own_anchor_primary",
+          "case_mapping_basis": {
+            "evidence_refs": [
+              {
+                "input_alias": "solver_outputs_002",
+                "locator": "solver_outputs_002",
+                "schema_version": 1
+              },
+              {
+                "input_alias": "solver_outputs_001",
+                "locator": "solver_outputs_001",
+                "schema_version": 1
+              },
+              {
+                "input_alias": "reviewed_package",
+                "locator": "reviewed_package",
+                "schema_version": 1
+              }
+            ],
+            "kind": "evidence",
+            "rationale": "当前原始别名提供字节；受审源码将案例绑定到 outputStem，当前日志记录同一案例的 WritePlx 与 END_CASE。",
+            "schema_version": 1
+          },
+          "experiment_key": "experiment.fig4.raw_boundary_counterfactual",
+          "input_alias": "solver_outputs_002",
+          "output_name": "fig4_al_own_anchor_primary_plx",
+          "schema_version": 1,
+          "source_key": "raw.al_own_primary"
+        },
+        {
+          "case_key": "case.fig4.al_high_anchor_primary",
+          "case_mapping_basis": {
+            "evidence_refs": [
+              {
+                "input_alias": "solver_outputs_003",
+                "locator": "solver_outputs_003",
+                "schema_version": 1
+              },
+              {
+                "input_alias": "recovery_manifest",
+                "locator": "recovery_manifest",
+                "schema_version": 1
+              },
+              {
+                "input_alias": "execution_result",
+                "locator": "execution_result",
+                "schema_version": 1
+              },
+              {
+                "input_alias": "solver_outputs_001",
+                "locator": "solver_outputs_001",
+                "schema_version": 1
+              },
+              {
+                "input_alias": "reviewed_package",
+                "locator": "reviewed_package",
+                "schema_version": 1
+              }
+            ],
+            "kind": "evidence",
+            "rationale": "当前恢复别名由 recovery_manifest 固定到原执行字节；受审源码和同一执行日志建立案例与 outputStem 对应。",
+            "schema_version": 1
+          },
+          "experiment_key": "experiment.fig4.raw_boundary_counterfactual",
+          "input_alias": "solver_outputs_003",
+          "output_name": "fig4_al_high_anchor_primary_plx",
+          "schema_version": 1,
+          "source_key": "raw.al_high_primary"
+        },
+        {
+          "case_key": "case.fig4.ga_own_anchor_primary",
+          "case_mapping_basis": {
+            "evidence_refs": [
+              {
+                "input_alias": "solver_outputs_004",
+                "locator": "solver_outputs_004",
+                "schema_version": 1
+              },
+              {
+                "input_alias": "recovery_manifest",
+                "locator": "recovery_manifest",
+                "schema_version": 1
+              },
+              {
+                "input_alias": "execution_result",
+                "locator": "execution_result",
+                "schema_version": 1
+              },
+              {
+                "input_alias": "solver_outputs_001",
+                "locator": "solver_outputs_001",
+                "schema_version": 1
+              },
+              {
+                "input_alias": "reviewed_package",
+                "locator": "reviewed_package",
+                "schema_version": 1
+              }
+            ],
+            "kind": "evidence",
+            "rationale": "当前恢复别名由 recovery_manifest 固定到原执行字节；受审源码和同一执行日志建立案例与 outputStem 对应。",
+            "schema_version": 1
+          },
+          "experiment_key": "experiment.fig4.raw_boundary_counterfactual",
+          "input_alias": "solver_outputs_004",
+          "output_name": "fig4_ga_own_anchor_primary_plx",
+          "schema_version": 1,
+          "source_key": "raw.ga_own_primary"
+        },
+        {
+          "case_key": "case.fig4.ga_low_anchor_primary",
+          "case_mapping_basis": {
+            "evidence_refs": [
+              {
+                "input_alias": "solver_outputs_005",
+                "locator": "solver_outputs_005",
+                "schema_version": 1
+              },
+              {
+                "input_alias": "recovery_manifest",
+                "locator": "recovery_manifest",
+                "schema_version": 1
+              },
+              {
+                "input_alias": "execution_result",
+                "locator": "execution_result",
+                "schema_version": 1
+              },
+              {
+                "input_alias": "solver_outputs_001",
+                "locator": "solver_outputs_001",
+                "schema_version": 1
+              },
+              {
+                "input_alias": "reviewed_package",
+                "locator": "reviewed_package",
+                "schema_version": 1
+              }
+            ],
+            "kind": "evidence",
+            "rationale": "当前恢复别名由 recovery_manifest 固定到原执行字节；受审源码和同一执行日志建立案例与 outputStem 对应。",
+            "schema_version": 1
+          },
+          "experiment_key": "experiment.fig4.raw_boundary_counterfactual",
+          "input_alias": "solver_outputs_005",
+          "output_name": "fig4_ga_low_anchor_primary_plx",
+          "schema_version": 1,
+          "source_key": "raw.ga_low_primary"
+        },
+        {
+          "case_key": "case.fig4.al_own_anchor_tight",
+          "case_mapping_basis": {
+            "evidence_refs": [
+              {
+                "input_alias": "solver_outputs_006",
+                "locator": "solver_outputs_006",
+                "schema_version": 1
+              },
+              {
+                "input_alias": "recovery_manifest",
+                "locator": "recovery_manifest",
+                "schema_version": 1
+              },
+              {
+                "input_alias": "execution_result",
+                "locator": "execution_result",
+                "schema_version": 1
+              },
+              {
+                "input_alias": "solver_outputs_001",
+                "locator": "solver_outputs_001",
+                "schema_version": 1
+              },
+              {
+                "input_alias": "reviewed_package",
+                "locator": "reviewed_package",
+                "schema_version": 1
+              }
+            ],
+            "kind": "evidence",
+            "rationale": "当前恢复别名由 recovery_manifest 固定到原执行字节；受审源码和同一执行日志建立案例与 outputStem 对应。",
+            "schema_version": 1
+          },
+          "experiment_key": "experiment.fig4.raw_boundary_counterfactual",
+          "input_alias": "solver_outputs_006",
+          "output_name": "fig4_al_own_anchor_tight_plx",
+          "schema_version": 1,
+          "source_key": "raw.al_own_tight"
+        },
+        {
+          "case_key": "case.fig4.ga_own_anchor_tight",
+          "case_mapping_basis": {
+            "evidence_refs": [
+              {
+                "input_alias": "solver_outputs_007",
+                "locator": "solver_outputs_007",
+                "schema_version": 1
+              },
+              {
+                "input_alias": "recovery_manifest",
+                "locator": "recovery_manifest",
+                "schema_version": 1
+              },
+              {
+                "input_alias": "execution_result",
+                "locator": "execution_result",
+                "schema_version": 1
+              },
+              {
+                "input_alias": "solver_outputs_001",
+                "locator": "solver_outputs_001",
+                "schema_version": 1
+              },
+              {
+                "input_alias": "reviewed_package",
+                "locator": "reviewed_package",
+                "schema_version": 1
+              }
+            ],
+            "kind": "evidence",
+            "rationale": "当前恢复别名由 recovery_manifest 固定到原执行字节；受审源码和同一执行日志建立案例与 outputStem 对应。",
+            "schema_version": 1
+          },
+          "experiment_key": "experiment.fig4.raw_boundary_counterfactual",
+          "input_alias": "solver_outputs_007",
+          "output_name": "fig4_ga_own_anchor_tight_plx",
+          "schema_version": 1,
+          "source_key": "raw.ga_own_tight"
+        }
+      ],
+      "study_kind": "scientific",
+      "summary": "execution_result 和 runtime_manifest 仍明确给出 terminal_state=failed、exit_code=97，直接错误是缺少声明的 results/fig4_al_own_anchor_primary.tdr；本报告不把它改写为求解器成功。与此同时，solver_outputs_001 的六个 BEGIN_CASE/END_CASE、六次 WritePlx、六次 struct 和最终 Summary，加上 recovery_manifest 绑定的其余五条 PLX，使现有六案例原始剖面可作有限分析。本轮按计划谓词从两张 CSV 复现 M0/M1/M2/S0/S1/S2 计数：InAlAs 为 359/383/439/373/397/501，InGaAs 为 702/753/757/702/755/765，十二项全部匹配。六条 PLX 在对应 M0 深度的样本均正且有限；主/紧化 log10(C/Cs) 最大差为 InAlAs 5.7835364e-6、InGaAs 5.4365550e-6 decade，均通过 0.05 decade。按共享依赖组总权重为 1、组内等分并在材料间等权形成 J，M0 自锚 WRMSE 为 InAlAs 2.2445359、InGaAs 2.0127536 decade，远高于 0.15 decade；无权重核对同样为 2.3673009/2.0101518 decade。冻结家族因此不充分，M0 的描述性 G=-0.0140876 及六掩码 G 范围 [-0.0142574,-0.0120459] 不能触发边界假设的 0.50/0.25 门。M0 的 T 为 0.1673267/0.3356436 um；相对 M0 的中心值变化在 InAlAs 为 M1 0.1006、M2 0.4675、S0 0.08284、S1 0.1834、S2 0.8757，在 InGaAs 为 0.1799、0.1976、0、0.1888、0.2271。低、居中和高敏感度并存，且有限一组一次区间跨越判别阈值，所以尾部支持结论是掩码依赖的不确定。"
+    },
+    "schema": "scidiscovery.layered-diagnosis.v1"
+  },
+  "sealed_output_status": "available",
+  "started_at": "2026-09-11T13:57:11.599811Z",
+  "state": "completed"
+}

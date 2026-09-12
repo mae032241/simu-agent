@@ -1,0 +1,7 @@
+Installed isolated curve
+Installed isolated full
+PASS installed tools and image-permission projection: curve
+PASS installed tools and image-permission projection: full
+PASS installed generic scoring, residual localization and readable PNG without TCAD
+PASS installed full catalog identity equals exact source
+ARTIFACT_ROOT /tmp/scid-diagnostic-install-0e7okrfg

@@ -14,7 +14,7 @@ from .general_science_control_operations import (
     _output as _transform_output,
     _transform,
 )
-from .operations.spec import InputAdmissionSpec, ReviewSpec
+from .operations.spec import ComponentRef, InputAdmissionSpec, InputValidationSpec, ReviewSpec
 
 
 _OPTIONAL_SCIENCE_CONTEXT_ADMISSION = InputAdmissionSpec(
@@ -32,14 +32,35 @@ _OPTIONAL_SCIENCE_CONTEXT_ADMISSION = InputAdmissionSpec(
 )
 
 
+_FEEDBACK_INPUTS = tuple(
+    _agent_input(
+        name,
+        description,
+        "*",
+        media_types=("*/*",),
+        min_items=0,
+        max_items=4,
+        max_item_bytes=8 * 1024 * 1024,
+        exposure="on_demand",
+        usage="evidence_inventory",
+    )
+    for name, description in (
+        ("current_progress", "Optional exact prior plans, reviews, and bounded progress records."),
+        ("experiment_results", "Optional exact experiment outputs, failures, and deterministic metrics."),
+        ("result_analysis", "Optional exact analyses supporting the current objective selection."),
+    )
+)
+
+
 AGENT_OPERATIONS = (
     _agent(
         "science.experiment.design.v1",
         "Design the smallest bounded experiment that discriminates reviewed hypotheses.",
         "A research objective, hypothesis portfolio, and independent critic review are available.",
         "Expanding the complete execution plan or implementing domain code.",
+        input_validation=InputValidationSpec(ComponentRef("experiment_inputs"), "science.experiment.design.v1.inputs", "The hypothesis portfolio must match the exact research objective; critic disposition must support design; optional execution context must be structurally valid."),
         agent="experiment_agent",
-        prompt="experiment_prompt",
+        prompt="experiment_design_prompt",
         inputs=(
             _agent_input(
                 "scientific_foundation",
@@ -69,6 +90,15 @@ AGENT_OPERATIONS = (
                 max_item_bytes=64 * 1024,
                 usage="prior_signal",
             ),
+            _agent_input(
+                "execution_context",
+                "Optional immutable execution capabilities, model coverage, and implementation limits.",
+                "scidiscovery.execution-context.v1",
+                min_items=0,
+                max_item_bytes=64 * 1024,
+                usage="prior_signal",
+            ),
+            *_FEEDBACK_INPUTS,
         ),
         outputs=(
             _agent_output(
@@ -83,11 +113,15 @@ AGENT_OPERATIONS = (
                     "research_objective",
                     "hypothesis_portfolio",
                     "critic_review",
+                    "execution_context",
+                    "current_progress",
+                    "experiment_results",
+                    "result_analysis",
                 ),
             ),
         ),
         timeout=900,
-        max_input_bytes=2 * 1024 * 1024,
+        max_input_bytes=32 * 1024 * 1024,
         max_output_bytes=64 * 1024,
         max_files=1,
         input_admission=_FOUNDATION_ADMISSION,
@@ -102,6 +136,7 @@ AGENT_OPERATIONS = (
         "Review one complete materialized experiment plan without changing it.",
         "A complete experiment portfolio needs independent scientific review.",
         "Reviewing an unmaterialized intent or granting human approval.",
+        input_validation=InputValidationSpec(ComponentRef("object_review_inputs"), "science.object.review.v1.inputs", "The bound plan and optional original research objective must have matching identity and statement."),
         agent="critic_agent",
         prompt="object_review_prompt",
         inputs=(
@@ -112,6 +147,23 @@ AGENT_OPERATIONS = (
                 max_item_bytes=2 * 1024 * 1024,
                 usage="prior_signal",
             ),
+            _agent_input(
+                "research_objective",
+                "Optional exact original research objective for independent coverage review.",
+                "scidiscovery.research-objective.v1",
+                min_items=0,
+                max_item_bytes=512 * 1024,
+                usage="prior_signal",
+            ),
+            _agent_input(
+                "execution_context",
+                "Optional immutable execution capabilities and implementation limits.",
+                "scidiscovery.execution-context.v1",
+                min_items=0,
+                max_item_bytes=64 * 1024,
+                usage="prior_signal",
+            ),
+            *_FEEDBACK_INPUTS,
         ),
         outputs=(
             _agent_output(
@@ -122,11 +174,15 @@ AGENT_OPERATIONS = (
                 "review_validator",
                 max_item_bytes=64 * 1024,
                 context_validator="object_review_context",
-                context_sources=("experiment_plan",),
+                context_sources=(
+                    "experiment_plan", "research_objective", "execution_context",
+                    "current_progress", "experiment_results", "result_analysis",
+                ),
+                evidence_paths=(),
             ),
         ),
         timeout=600,
-        max_input_bytes=2 * 1024 * 1024,
+        max_input_bytes=32 * 1024 * 1024,
         max_output_bytes=64 * 1024,
         max_files=1,
     ),
@@ -135,6 +191,7 @@ AGENT_OPERATIONS = (
         "Revise one complete immutable experiment plan.",
         "An exact prior experiment and independent review are available.",
         "Producing a patch, inheriting review qualification, or changing unsupported science.",
+        input_validation=InputValidationSpec(ComponentRef("experiment_revision_inputs"), "science.experiment.revise.v1.inputs", "The change request must review the experiment portfolio."),
         agent="experiment_agent",
         prompt="experiment_prompt",
         inputs=(
@@ -152,6 +209,7 @@ AGENT_OPERATIONS = (
                 max_item_bytes=512 * 1024,
                 usage="change_request",
             ),
+            _FEEDBACK_INPUTS[0].model_copy(update={"max_item_bytes": 2 * 1024 * 1024}),
         ),
         outputs=(
             _agent_output(
@@ -162,7 +220,7 @@ AGENT_OPERATIONS = (
                 "experiment_portfolio_validator",
                 max_item_bytes=2 * 1024 * 1024,
                 context_validator="experiment_revision_context",
-                context_sources=("prior_draft", "change_request"),
+                context_sources=("prior_draft", "change_request", "current_progress"),
             ),
         ),
         timeout=900,
@@ -174,7 +232,7 @@ AGENT_OPERATIONS = (
             reviewer_input_port="experiment_plan",
             subject_outputs=("experiment_plan",),
         ),
-    ),
+    ).model_copy(update={"version": "2"}),
 )
 
 

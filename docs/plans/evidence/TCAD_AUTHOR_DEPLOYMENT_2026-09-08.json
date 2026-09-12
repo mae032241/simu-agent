@@ -1,0 +1,104 @@
+{
+  "schema_version": 1,
+  "observed_on": "2026-09-08",
+  "scope": "Deployment verification after the user reported installation and system restart; engineering observations, not scientific results.",
+  "instance": "M7-test0",
+  "services": {
+    "control": "active",
+    "approval_ui": "active",
+    "active_since_local": "2026-09-08 14:24:36 CST",
+    "user": "da",
+    "group": "da",
+    "approval_http_status": 200
+  },
+  "runtime_identity_verified": true,
+  "catalog": {
+    "digest": "c5861a6180f86c8e506cb48e5f261e36d418f42c1e89c07019ef7ba566f8786a",
+    "operation_count": 49,
+    "expected_four_tcad_operation_digests_match": true
+  },
+  "profiles": {
+    "framework_and_external_workspace_valid": true,
+    "launch_root_dry_run_changed": false,
+    "mcp_count": 25,
+    "agent_count": 24,
+    "author_prompt_matches": true,
+    "budget_description_visible": true
+  },
+  "skill": {
+    "file_count": 17,
+    "missing": [],
+    "different": []
+  },
+  "installed_source_sha256": {
+    "debug_adapter.py": "258cfb5b2574eccdd1f0869518f25fffb90b42281fb131ef794a7f1d8d29a91c",
+    "local_debug_service.py": "2beaee82bf72fa63785f6fb2021e3509a7d775a0c6ec75aa9a4394dc3695ba9c",
+    "operation_workspace.py": "f44f41d5be5a62d6edb4b42e84787ead93acc4964884406f45842106e2b74888",
+    "plugin.py": "485410d461f04ebc702803576acf23ef823ad1396bc053446e4928abba672041",
+    "roles/tcad_deck_author.md": "df4dd858925c1ce1d5548f4a42976dff9131ab5f2fa80f45db61c81821108234"
+  },
+  "transaction": {
+    "archive_directory": "/var/backups/scidiscovery/transactions/20260908T062017Z-70115",
+    "archive_exists": true,
+    "manifest_directly_read": false,
+    "manifest_read_limitation": "Permission denied",
+    "seal_evidence": "Inferred from the existing seal_transaction implementation: it writes state=complete before atomically moving the transaction to this completed destination. The manifest itself was not read."
+  },
+  "restart": {
+    "session_was_unbound": true,
+    "user_selected_existing_instance": true,
+    "controlled_binding_verified": true,
+    "queued_runs_before_author": 0,
+    "running_runs_before_author": 0,
+    "external_executions_before_author": 0,
+    "pending_approvals_before_author": 0
+  },
+  "evidence_limitations": [
+    "Earlier /tmp engineering reports and test logs were lost across the restart. Their previous results remain historical conversation/plan records; they were not recreated or represented as freshly rerun tests.",
+    "Root run_status exposes Run start/activity/completion, not an exact first-source-write timestamp. The 120-second first-complete-candidate timing must not be marked independently verified from those timestamps alone."
+  ],
+  "author_request": {
+    "name": "fig4_r4_tcad_author_1",
+    "operation_id": "tcad.deck.author.initial.v1",
+    "inputs": [
+      {
+        "port": "execution_capability",
+        "artifact_names": [
+          "fig4_e55_sprocess_capability_1"
+        ]
+      },
+      {
+        "port": "experiment_plan",
+        "artifact_names": [
+          "fig4_e55_experiment_plan_revision_5.output"
+        ]
+      },
+      {
+        "port": "curve_contract",
+        "artifact_names": [
+          "fig4_e55_curve_contract_7.output"
+        ]
+      },
+      {
+        "port": "experiment_review",
+        "artifact_names": [
+          "fig4_e55_experiment_review_9.output"
+        ]
+      },
+      {
+        "port": "curve_contract_review",
+        "artifact_names": [
+          "fig4_e55_curve_contract_review_4.output"
+        ]
+      }
+    ],
+    "instruction": "依据精确绑定的已审查实验计划、曲线合同和执行能力，编写全新 TCAD 工程。按当前作者合同和已安装 Skill 尽早形成最小完整候选，安排调试预算，取得同一最终项目的当前 preflight 和 initialization 证明后受控提交。在现有 handoff 中说明最小初始化入口对生产关键逻辑的覆盖及未覆盖边界。仅实现求解器源码与原始输出。"
+  },
+  "author_preflight": {
+    "admissible": true,
+    "executor_kind": "agent",
+    "port": null,
+    "reason_code": null
+  },
+  "author_started_at": "2026-09-08T06:33:33.940660Z"
+}

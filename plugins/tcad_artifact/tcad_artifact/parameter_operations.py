@@ -7,6 +7,11 @@ and approval projection that give those primitives their TCAD meaning.
 
 from __future__ import annotations
 
+from scidiscovery.operations.input_validation import parse_bound_json
+
+from scidiscovery.operations.input_validation import OperationInvocationError
+from scidiscovery.operations.spec import InputValidationSpec
+
 import json
 from pathlib import Path
 from typing import Any, Callable, Mapping
@@ -169,6 +174,28 @@ class ParameterEvidencePackage(SchemaModel):
         return self
 
 
+def _finalize_parameter_result(request):
+    from scidiscovery.artifact_agent.service.result_materialization import (
+        finalize_result, materialize_general_result, materialize_intake,
+    )
+    def project(value):
+        materialize_general_result(value, request.output_schema_id)
+        if request.output_schema_id != "scidiscovery.parameter-evidence-package.v1":
+            return
+        payload = value["payload"]
+        if isinstance(payload.get("scientific_intake"), dict):
+            materialize_intake(payload["scientific_intake"])
+        catalog = payload.get("source_catalog")
+        if isinstance(catalog, dict) and isinstance(catalog.get("sources"), list):
+            for source in catalog["sources"]:
+                if isinstance(source, dict) and isinstance(source.get("doi"), str):
+                    source["work_key"] = "doi:" + source["doi"].lower().removeprefix("https://doi.org/")
+    return finalize_result(request, project)
+
+
+PARAMETER_RESULT_FINALIZER = CallableComponent("workspace_finalizer", _finalize_parameter_result)
+
+
 PARAMETER_PACKAGE_SCHEMA = _schema(
     ParameterEvidencePackage, "scidiscovery.parameter-evidence-package.v1"
 )
@@ -199,9 +226,7 @@ def _payload(
     return validate
 
 
-def _audit_context(
-    payload: dict[str, Any], sources: dict[str, bytes], handoff: dict[str, Any]
-) -> None:
+def _audit_inputs(sources: dict[str, bytes]) -> None:
     required_family = {
         "parameter_evidence_package",
         "scientific_intake",
@@ -210,10 +235,9 @@ def _audit_context(
         "source_catalog",
     }
     if not required_family.issubset(sources):
-        raise SemanticRuleViolation("parameter evidence audit family is incomplete")
-    package = ParameterEvidencePackage.model_validate_json(
-        sources["parameter_evidence_package"], strict=True
-    )
+        raise OperationInvocationError("input_parameter_family_incomplete", port="parameter_evidence_package")
+    package = parse_bound_json(ParameterEvidencePackage, sources["parameter_evidence_package"],
+                              admission_port="parameter_evidence_package")
     expanded = {
         "scientific_intake": package.scientific_intake.canonical_json(),
         "parameter_requirements": package.parameter_requirements.canonical_json(),
@@ -221,16 +245,19 @@ def _audit_context(
         "source_catalog": package.source_catalog.canonical_json(),
     }
     if any(sources[name] != raw for name, raw in expanded.items()):
-        raise SemanticRuleViolation(
-            "parameter evidence expansion differs from its package"
-        )
+        raise OperationInvocationError("input_parameter_expansion_mismatch", port="parameter_evidence_package")
+
+
+def _audit_context(
+    payload: dict[str, Any], sources: dict[str, bytes], handoff: dict[str, Any]
+) -> None:
     audit = EvidenceAudit.model_validate_json(canonical_json(payload), strict=True)
     if not audit.checks:
         raise SemanticRuleViolation(
             "parameter evidence audit requires at least one check"
         )
     declared = {item.source_key for item in audit.evidence}
-    if not declared.issubset(set(sources) - required_family):
+    if not declared.issubset(sources):
         raise SemanticRuleViolation(
             "parameter evidence audit cites an unbound source"
         )
@@ -347,14 +374,12 @@ def _validate_parameter_family(
     }
     if not observed_keys.issubset(catalog_by_key):
         raise ValueError("a parameter observation references an undeclared source")
-    foundation_by_key = {
-        item.source_key: item for item in intake.scientific_foundation.evidence
-    }
-    if not set(catalog_by_key).issubset(foundation_by_key):
+    foundation_evidence = intake.scientific_foundation.evidence
+    if not set(catalog_by_key).issubset(item.source_key for item in foundation_evidence):
         raise ValueError("the source catalog is not closed over the intake foundation")
     if any(
-        foundation_by_key[key].source_type != source.source_type
-        for key, source in catalog_by_key.items()
+        item.source_type != catalog_by_key[item.source_key].source_type
+        for item in foundation_evidence if item.source_key in catalog_by_key
     ):
         raise ValueError("parameter source type differs from the intake foundation")
 
@@ -389,7 +414,7 @@ def validate_extract_context(
     raw = sources.get("required_parameter_checklist")
     if raw is None:
         return
-    required = DeviceParameterRequirementSet.model_validate_json(raw, strict=True)
+    required = parse_bound_json(DeviceParameterRequirementSet, raw)
     if _scientific_requirement_fields(package.parameter_requirements) != (
         _scientific_requirement_fields(required)
     ):
@@ -403,7 +428,7 @@ def _subjects_by_port(
 ) -> dict[str, tuple[ApprovalSubjectSnapshot, ...]]:
     grouped: dict[str, list[ApprovalSubjectSnapshot]] = {}
     if len({item.ref for item in context.subjects}) != len(context.subjects):
-        raise ValueError("approval subjects must be distinct exact artifacts")
+        raise OperationInvocationError("approval_subject_invalid", message="approval subjects must be distinct exact artifacts")
     for item in context.subjects:
         grouped.setdefault(item.port_name, []).append(item)
     return {name: tuple(values) for name, values in grouped.items()}
@@ -414,7 +439,7 @@ def _one_subject(
 ) -> ApprovalSubjectSnapshot:
     values = grouped.get(name, ())
     if len(values) != 1:
-        raise ValueError(f"approval port {name} requires exactly one subject")
+        raise OperationInvocationError("approval_subject_invalid", message=f"approval port {name} requires exactly one subject")
     return values[0]
 
 
@@ -423,7 +448,7 @@ def _optional_subject(
 ) -> ApprovalSubjectSnapshot | None:
     values = grouped.get(name, ())
     if len(values) > 1:
-        raise ValueError(f"approval port {name} accepts at most one subject")
+        raise OperationInvocationError("approval_subject_invalid", message=f"approval port {name} accepts at most one subject")
     return values[0] if values else None
 
 
@@ -459,7 +484,7 @@ def _require_transform_output(
         or labels.get("operation_output_port") != port_name
         or subject.parent_refs != parent_refs
     ):
-        raise ValueError("approval subject has invalid deterministic lineage")
+        raise OperationInvocationError("approval_subject_invalid", message="approval subject has invalid deterministic lineage")
 
 
 _AUDIT_CHECKS = frozenset(
@@ -472,9 +497,9 @@ _AUDIT_CHECKS = frozenset(
 )
 
 
-def _parameter_qualification_document(
+def _validate_parameter_qualification(
     context: ApprovalProjectorContext, expected_status: str
-) -> ReviewDocument:
+) -> tuple:
     grouped = _subjects_by_port(context)
     foundation_subject = _one_subject(grouped, "scientific_foundation")
     package_subject = _one_subject(grouped, "parameter_evidence_package")
@@ -500,20 +525,20 @@ def _parameter_qualification_document(
         and item.operation_id == EXTRACT_OPERATION
     )
     if len(expanded_families) != 1 or len(extraction_families) != 1:
-        raise ValueError("parameter approval requires exact extraction and expansion families")
+        raise OperationInvocationError("approval_subject_invalid", message="parameter approval requires exact extraction and expansion families")
     family = expanded_families[0]
     extraction_family = extraction_families[0]
     if (
         family.reviewer_operation != AUDIT_OPERATION
         or family.review_subject_outputs != ("scientific_intake",)
     ):
-        raise ValueError("parameter expansion has an invalid review contract")
+        raise OperationInvocationError("approval_subject_invalid", message="parameter expansion has an invalid review contract")
     if (
         len(extraction_family.members) != 1
         or extraction_family.members[0].port_name != "parameter_evidence_package"
         or extraction_family.members[0].ref != package_subject.ref
     ):
-        raise ValueError("parameter package does not belong to the extraction Run")
+        raise OperationInvocationError("approval_subject_invalid", message="parameter package does not belong to the extraction Run")
     expected_members = {
         "parameter_requirements": requirements_subject.ref,
         "device_parameters": parameters_subject.ref,
@@ -523,7 +548,7 @@ def _parameter_qualification_document(
     if set(member_by_port) != set(expected_members) or any(
         member_by_port[name].ref != ref for name, ref in expected_members.items()
     ):
-        raise ValueError("parameter approval does not bind the complete output family")
+        raise OperationInvocationError("approval_subject_invalid", message="parameter approval does not bind the complete output family")
     for name, subject in (
         ("scientific_intake", primary_subject),
         ("parameter_requirements", requirements_subject),
@@ -531,14 +556,14 @@ def _parameter_qualification_document(
         ("source_catalog", catalog_subject),
     ):
         if subject.parent_refs != (package_subject.ref,):
-            raise ValueError(f"{name} is not an exact deterministic expansion")
+            raise OperationInvocationError("approval_subject_invalid", message=f"{name} is not an exact deterministic expansion")
     unexpected_source_kinds = {
         source.source_kind
         for source in extraction_family.evidence_sources
         if source.source_kind != "run_input"
     }
     if unexpected_source_kinds:
-        raise ValueError("parameter extraction has an unsupported evidence-source kind")
+        raise OperationInvocationError("approval_subject_invalid", message="parameter extraction has an unsupported evidence-source kind")
     frozen_sources = extraction_family.evidence_sources
     frozen_refs = tuple(source.ref for source in frozen_sources)
     expected_source_keys = {source.source_name for source in frozen_sources}
@@ -546,55 +571,41 @@ def _parameter_qualification_document(
         len(expected_source_keys) != len(frozen_sources)
         or len(set(frozen_refs)) != len(frozen_refs)
     ):
-        raise ValueError("parameter extraction source identities must be unique")
+        raise OperationInvocationError("approval_subject_invalid", message="parameter extraction source identities must be unique")
     if tuple(item.ref for item in grouped.get("frozen_sources", ())) != frozen_refs:
-        raise ValueError("parameter approval omits or adds a frozen source")
+        raise OperationInvocationError("approval_subject_invalid", message="parameter approval omits or adds a frozen source")
     checklist_refs = (
         ()
         if required_checklist_subject is None
         else (required_checklist_subject.ref,)
     )
     if package_subject.parent_refs != (*checklist_refs, *frozen_refs):
-        raise ValueError(
-            "parameter package does not preserve its exact extraction inputs"
-        )
+        raise OperationInvocationError("approval_subject_invalid", message="parameter package does not preserve its exact extraction inputs")
 
-    package = ParameterEvidencePackage.model_validate_json(
-        package_subject.content, strict=True
-    )
-    intake = ScientificIntake.model_validate_json(primary_subject.content, strict=True)
-    foundation = ScientificFoundation.model_validate_json(
-        foundation_subject.content, strict=True
-    )
-    requirements = DeviceParameterRequirementSet.model_validate_json(
-        requirements_subject.content, strict=True
-    )
+    package = parse_bound_json(ParameterEvidencePackage, package_subject.content, admission_port=package_subject.port_name)
+    intake = parse_bound_json(ScientificIntake, primary_subject.content, admission_port=primary_subject.port_name)
+    foundation = parse_bound_json(ScientificFoundation, foundation_subject.content, admission_port=foundation_subject.port_name)
+    requirements = parse_bound_json(DeviceParameterRequirementSet, requirements_subject.content, admission_port=requirements_subject.port_name)
     if required_checklist_subject is not None:
-        required_checklist = DeviceParameterRequirementSet.model_validate_json(
-            required_checklist_subject.content, strict=True
-        )
+        required_checklist = parse_bound_json(DeviceParameterRequirementSet, required_checklist_subject.content, admission_port=required_checklist_subject.port_name)
         if _scientific_requirement_fields(required_checklist) != (
             _scientific_requirement_fields(requirements)
         ):
-            raise ValueError(
-                "extracted parameter requirements differ from the supplied checklist"
-            )
-    selected = DeviceParameterSet.model_validate_json(parameters_subject.content, strict=True)
-    catalog = EvidenceSourceCatalog.model_validate_json(catalog_subject.content, strict=True)
+            raise OperationInvocationError("approval_subject_invalid", message="extracted parameter requirements differ from the supplied checklist")
+    selected = parse_bound_json(DeviceParameterSet, parameters_subject.content, admission_port=parameters_subject.port_name)
+    catalog = parse_bound_json(EvidenceSourceCatalog, catalog_subject.content, admission_port=catalog_subject.port_name)
     if {item.source_key for item in catalog.sources} != expected_source_keys:
-        raise ValueError("parameter source catalog differs from frozen Run inputs")
-    supplied_coverage = DeviceParameterCoverageReport.model_validate_json(
-        coverage_subject.content, strict=True
-    )
+        raise OperationInvocationError("approval_subject_invalid", message="parameter source catalog differs from frozen Run inputs")
+    supplied_coverage = parse_bound_json(DeviceParameterCoverageReport, coverage_subject.content, admission_port=coverage_subject.port_name)
     if (
         package.scientific_intake != intake
         or package.parameter_requirements != requirements
         or package.device_parameters != selected
         or package.source_catalog != catalog
     ):
-        raise ValueError("expanded parameter objects differ from the Agent package")
+        raise OperationInvocationError("approval_subject_invalid", message="expanded parameter objects differ from the Agent package")
     if foundation != intake.scientific_foundation:
-        raise ValueError("parameter foundation differs from extraction primary")
+        raise OperationInvocationError("approval_subject_invalid", message="parameter foundation differs from extraction primary")
     _require_transform_output(
         foundation_subject,
         operation_id="science.intake.split.v1",
@@ -602,7 +613,7 @@ def _parameter_qualification_document(
         parent_refs=(primary_subject.ref, audit_subject.ref),
     )
     if not (foundation.objective == requirements.objective == selected.objective):
-        raise ValueError("parameter review subjects have different objectives")
+        raise OperationInvocationError("approval_subject_invalid", message="parameter review subjects have different objectives")
     _require_transform_output(
         coverage_subject,
         operation_id=COVERAGE_OPERATION,
@@ -611,15 +622,15 @@ def _parameter_qualification_document(
     )
     recomputed = evaluate_device_parameter_coverage(requirements, selected, catalog)
     if supplied_coverage != recomputed or coverage_subject.content != recomputed.canonical_json():
-        raise ValueError("parameter coverage differs from deterministic recomputation")
+        raise OperationInvocationError("approval_subject_invalid", message="parameter coverage differs from deterministic recomputation")
     if recomputed.status != expected_status:
-        raise ValueError("parameter coverage does not match this approval Operation")
+        raise OperationInvocationError("approval_subject_invalid", message="parameter coverage does not match this approval Operation")
     audit_labels = _labels(audit_subject)
     if (
         audit_labels.get("operation_id") != AUDIT_OPERATION
         or audit_subject.handoff_verdict != "pass"
     ):
-        raise ValueError("parameter audit is not an independent passing Operation result")
+        raise OperationInvocationError("approval_subject_invalid", message="parameter audit is not an independent passing Operation result")
     expected_audit_inputs = (
         package_subject.ref,
         primary_subject.ref,
@@ -631,19 +642,30 @@ def _parameter_qualification_document(
         *frozen_refs,
     )
     if audit_subject.parent_refs != expected_audit_inputs:
-        raise ValueError("parameter audit does not bind the exact ordered review set")
-    audit = EvidenceAudit.model_validate_json(audit_subject.content, strict=True)
+        raise OperationInvocationError("approval_subject_invalid", message="parameter audit does not bind the exact ordered review set")
+    audit = parse_bound_json(EvidenceAudit, audit_subject.content, admission_port=audit_subject.port_name)
     source_keys = {item.source_key for item in catalog.sources}
     audited_source_keys = {item.source_key for item in audit.evidence}
     if not source_keys.issubset(audited_source_keys):
-        raise ValueError("parameter audit does not cover every catalog source")
+        raise OperationInvocationError("approval_subject_invalid", message="parameter audit does not cover every catalog source")
     if not expected_source_keys.issubset(audited_source_keys):
-        raise ValueError("parameter audit does not cover every frozen source")
+        raise OperationInvocationError("approval_subject_invalid", message="parameter audit does not cover every frozen source")
     checks = {item.check_key: item for item in audit.checks}
     if not _AUDIT_CHECKS.issubset(checks) or any(
         checks[name].status != "pass" for name in _AUDIT_CHECKS
     ):
-        raise ValueError("parameter audit lacks a required passing check")
+        raise OperationInvocationError("approval_subject_invalid", message="parameter audit lacks a required passing check")
+    return (foundation_subject, parameters_subject, catalog_subject, coverage_subject,
+            audit_subject, selected, catalog, recomputed, audit)
+
+
+def _parameter_qualification_document(context: ApprovalProjectorContext, expected_status: str) -> ReviewDocument:
+    facts = _validate_parameter_qualification(context, expected_status)
+    return _render_parameter_qualification(expected_status, *facts)
+
+
+def _render_parameter_qualification(expected_status, foundation_subject, parameters_subject,
+        catalog_subject, coverage_subject, audit_subject, selected, catalog, recomputed, audit):
     if len(selected.claims) > _REVIEW_DETAIL_LIMIT:
         claim_items = (
             _review_item(
@@ -911,6 +933,7 @@ def _agent(
     max_output_bytes: int,
     max_files: int,
     review: ReviewSpec | None = None,
+    input_validation: InputValidationSpec | None = None,
 ) -> OperationSpec:
     return OperationSpec(
         operation_id=operation_id,
@@ -920,7 +943,7 @@ def _agent(
         executor=ExecutorRef(
             kind="agent",
             component=_ref(agent),
-            workspace=_ref("workspace", "general_science"),
+            workspace=_ref("parameter_workspace"),
             tools=_PARAMETER_TOOLS,
             prompt=_ref(prompt),
             model="gpt-5.6-sol",
@@ -930,6 +953,7 @@ def _agent(
         outputs=outputs,
         consequence="scientific",
         review=review,
+        input_validation=input_validation,
         limits=LimitsSpec(
             timeout_seconds=timeout,
             max_input_bytes=max_input_bytes,
@@ -1178,7 +1202,13 @@ def _approval_operation(
     )
 
 
+AUDIT_INPUT_VALIDATOR = CallableComponent("validator", _audit_inputs)
+
 COMPONENT_SPECS = (
+    ComponentSpec("parameter_result_finalizer", "workspace_finalizer", "tcad_artifact.parameter_operations:PARAMETER_RESULT_FINALIZER"),
+    ComponentSpec("parameter_workspace", "workspace", "scidiscovery.general_science_components:WORKSPACE",
+                  resources=(_ref("parameter_result_finalizer"),)),
+    ComponentSpec("parameter_audit_inputs", "validator", "tcad_artifact.parameter_operations:AUDIT_INPUT_VALIDATOR"),
     ComponentSpec("parameter_extract_agent", "agent", "tcad_artifact.parameter_operations:EXTRACT_AGENT"),
     ComponentSpec("parameter_audit_agent", "agent", "tcad_artifact.parameter_operations:AUDIT_AGENT"),
     ComponentSpec("parameter_extract_prompt", "resource", "tcad_artifact.parameter_operations:EXTRACT_PROMPT"),
@@ -1188,13 +1218,13 @@ COMPONENT_SPECS = (
     ComponentSpec("intake_validator", "validator", "tcad_artifact.parameter_operations:INTAKE_VALIDATOR", resources=(_ref("parameter_semantic_contract"),)),
     ComponentSpec("parameter_package_validator", "validator", "tcad_artifact.parameter_operations:PACKAGE_VALIDATOR", resources=(_ref("parameter_semantic_contract"),)),
     ComponentSpec("audit_validator", "validator", "tcad_artifact.parameter_operations:AUDIT_VALIDATOR", resources=(_ref("parameter_semantic_contract"),)),
-    ComponentSpec("evidence_audit_context", "validator", "tcad_artifact.parameter_operations:AUDIT_CONTEXT_VALIDATOR", resources=(_ref("parameter_semantic_contract"),)),
+    ComponentSpec("evidence_audit_context", "validator", "tcad_artifact.parameter_operations:AUDIT_CONTEXT_VALIDATOR", configuration_identity="input-boundary-r4:v1", resources=(_ref("parameter_semantic_contract"),)),
     ComponentSpec("parameter_requirements_validator", "validator", "tcad_artifact.parameter_operations:REQUIREMENTS_VALIDATOR", resources=(_ref("parameter_semantic_contract"),)),
     ComponentSpec("device_parameters_validator", "validator", "tcad_artifact.parameter_operations:PARAMETERS_VALIDATOR", resources=(_ref("parameter_semantic_contract"),)),
     ComponentSpec("source_catalog_validator", "validator", "tcad_artifact.parameter_operations:CATALOG_VALIDATOR", resources=(_ref("parameter_semantic_contract"),)),
     ComponentSpec("parameter_coverage_validator", "validator", "tcad_artifact.parameter_operations:COVERAGE_VALIDATOR", resources=(_ref("parameter_semantic_contract"),)),
     ComponentSpec("parameter_uncertainty_validator", "validator", "tcad_artifact.parameter_operations:UNCERTAINTY_VALIDATOR", resources=(_ref("parameter_semantic_contract"),)),
-    ComponentSpec("parameter_extract_context", "validator", "tcad_artifact.parameter_operations:EXTRACT_CONTEXT_VALIDATOR", resources=(_ref("parameter_semantic_contract"),)),
+    ComponentSpec("parameter_extract_context", "validator", "tcad_artifact.parameter_operations:EXTRACT_CONTEXT_VALIDATOR", configuration_identity="input-boundary-r4:v1", resources=(_ref("parameter_semantic_contract"),)),
     ComponentSpec("parameter_expand", "transform", "tcad_artifact.parameter_operations:EXPAND_TRANSFORM"),
     ComponentSpec("parameter_coverage", "transform", "tcad_artifact.parameter_operations:COVERAGE_TRANSFORM"),
     ComponentSpec("parameter_uncertainty", "transform", "tcad_artifact.parameter_operations:UNCERTAINTY_TRANSFORM"),
@@ -1242,6 +1272,7 @@ OPERATIONS = (
             applies_when="Extraction and deterministic coverage are complete.",
             not_for="Extracting, repairing, qualifying, or averaging parameter evidence.",
         ),
+        input_validation=InputValidationSpec(_ref("parameter_audit_inputs"), "tcad.parameter.audit.inputs", "The exact parameter package must equal every bound expanded family member."),
         agent="parameter_audit_agent",
         prompt="parameter_audit_prompt",
         inputs=AUDIT_INPUTS,

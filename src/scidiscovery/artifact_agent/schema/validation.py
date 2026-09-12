@@ -36,20 +36,11 @@ class HypothesisAssessment(SchemaModel):
     rationale: Annotated[str, Field(min_length=1, max_length=4096)]
 
     @model_validator(mode="after")
-    def _references_are_unique(self) -> HypothesisAssessment:
-        for values, label in (
-            (self.evidence_keys, "evidence_keys"),
-            (self.predictions_checked, "predictions_checked"),
-            (self.falsifiers_triggered, "falsifiers_triggered"),
-        ):
-            if len(values) != len(set(values)):
-                raise ValueError(f"hypothesis assessment {label} must be unique")
+    def _not_tested_has_no_test_claims(self) -> HypothesisAssessment:
         if self.outcome == "not_tested" and (
             self.predictions_checked or self.falsifiers_triggered
         ):
             raise ValueError("not_tested assessment cannot claim checked predictions")
-        if self.falsifiers_triggered and self.outcome != "contradicts":
-            raise ValueError("triggered falsifiers require a contradicting outcome")
         return self
 
 

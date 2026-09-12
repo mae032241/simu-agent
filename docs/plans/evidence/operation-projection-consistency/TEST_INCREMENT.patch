@@ -1,0 +1,542 @@
+--- a/tests/operations/test_agent_contract_alignment.py
++++ b/tests/operations/test_agent_contract_alignment.py
+@@ -44,6 +44,210 @@
+     return compile_catalog(
+         (CORE_PLUGIN, GENERAL_PLUGIN, CURVE_PLUGIN, TCAD_PLUGIN)
+     )
++
++
++def test_all_backend_tool_contracts_equal_actual_mcp_schemas_and_resolve_refs():
++    from types import SimpleNamespace
++    from jsonschema import Draft202012Validator
++    from curve_figure_evidence.plugin import PLUGIN as FIGURE
++    from scidiscovery.artifact_agent.interfaces.mcp_local_worker import LocalWorkerMCPRouter
++    from scidiscovery.artifact_agent.interfaces.mcp_hardened_worker import HardenedWorkerMCPRouter
++    from scidiscovery.artifact_agent.service.local_workspace import LocalTrustedBackend
++    from scidiscovery.artifact_agent.service.hardened_workspace import HardenedWorkerBackend
++    from scidiscovery.operations.tooling import operation_tool_contracts
++    catalog = compile_catalog((CORE_PLUGIN, GENERAL_PLUGIN, CURVE_PLUGIN, TCAD_PLUGIN, FIGURE))
++    checked = set()
++    for key in catalog.operation_ids():
++        compiled = catalog.operation(key)
++        if compiled.spec.executor.kind != 'agent':
++            continue
++        for backend, router_type in ((LocalTrustedBackend, LocalWorkerMCPRouter),
++                                     (HardenedWorkerBackend, HardenedWorkerMCPRouter)):
++            router = router_type(SimpleNamespace(operation_catalog=catalog, backend=backend),
++                operation_id=key, operation_digest=compiled.digest)
++            contracts = operation_tool_contracts(compiled, backend.assignment_tool_names(compiled))
++            assert contracts == {tool['name']: {k: tool[k] for k in ('description', 'inputSchema')}
++                                 for tool in router.list_tools()}
++            for name, contract in contracts.items():
++                schema = contract['inputSchema']
++                Draft202012Validator.check_schema(schema)
++                def check_refs(node):
++                    if isinstance(node, dict):
++                        if '$ref' in node:
++                            assert node['$ref'].startswith('#/')
++                            target = schema
++                            for token in node['$ref'][2:].split('/'):
++                                target = target[token.replace('~1', '/').replace('~0', '~')]
++                        for child in node.values(): check_refs(child)
++                    elif isinstance(node, list):
++                        for child in node: check_refs(child)
++                check_refs(schema)
++                checked.add(name)
++    assert {'worker_curve_score', 'worker_tcad_curve_score', 'worker_curve_figure_preview'} <= checked
++
++
++@pytest.mark.parametrize('backend_kind', ['local', 'hardened'])
++@pytest.mark.parametrize('legacy', [False, True])
++def test_open_delivers_frozen_contracts_and_same_identity_legacy_fallback(tmp_path, monkeypatch, backend_kind, legacy):
++    from scidiscovery.artifact_agent.interfaces.mcp_local_worker import LocalWorkerMCPRouter
++    from scidiscovery.artifact_agent.interfaces.mcp_hardened_worker import HardenedWorkerMCPRouter
++    from scidiscovery.artifact_agent.service import runs as runs_module
++    from scidiscovery.operations.tooling import operation_tool_contracts
++    from tests.operations.test_tcad_result_analysis import analysis_system
++    router_type = LocalWorkerMCPRouter
++    if backend_kind == 'hardened':
++        # TCAD analysis has collection outputs and is Local-only. Exercise the
++        # file-tool transport with no scientific review chain in this fixture.
++        # The original CSV review requires native reading and remains unsupported.
++        from tests.operations.test_l5_hardened_run_backend import _system
++        from blind_csv_plugin.plugin import PLUGIN as BLIND
++        author, reviewer = BLIND.operations
++        transport_fixture = BLIND.model_copy(update={'operations': (
++            author.model_copy(update={'review': None}), reviewer)})
++        catalog, runtime, _, root = _system(tmp_path, blind_plugin=transport_fixture)
++        request = dict(name='contracts', operation_id='blind.csv.observe.v1',
++            inputs=[dict(port='source_table', artifact_names=['source_csv'])], instruction='Read the declared contract.')
++        router_type = HardenedWorkerMCPRouter
++    else:
++        catalog, runtime, root, request, _, _ = analysis_system(tmp_path)
++    if legacy:
++        original = runs_module.assignment_json
++        def old_assignment(*args, **kwargs):
++            value = json.loads(original(*args, **kwargs))
++            del value['tool_contracts']
++            return canonical_json(value)
++        monkeypatch.setattr(runs_module, 'assignment_json', old_assignment)
++    root.call_tool('operation_invoke', request)
++    compiled = catalog.operation(request['operation_id'])
++    worker = router_type(runtime.runs, operation_id=compiled.spec.operation_id, operation_digest=compiled.digest)
++    opened = worker.call_tool('worker_open_assignment', {})
++    path = Path(opened['assignment_path'])
++    frozen = path.read_bytes()
++    assignment = json.loads(frozen)
++    contracts = opened['tool_contracts']
++    assert contracts == operation_tool_contracts(compiled, runtime.runs.backend.assignment_tool_names(compiled))
++    assert set(contracts) == set(assignment['tools'])
++    if legacy:
++        assert 'tool_contracts' not in assignment
++    else:
++        assert assignment['tool_contracts'] == contracts
++    if backend_kind == 'local':
++        request_schema = contracts['worker_tcad_curve_score']['inputSchema']
++        assert request_schema['$defs']['AnalysisCurveComparison']['properties']['evaluation_points']['maximum'] == 4096
++        assert '12288' in request_schema['$defs']['TCADScoreRequest']['description']
++    else:
++        assert 'worker_file_write_chunk' in contracts
++    assert worker.call_tool('worker_open_assignment', {})['tool_contracts'] == contracts
++    assert path.read_bytes() == frozen
++    if backend_kind == 'hardened' and not legacy:
++        from scidiscovery.artifact_agent.interfaces.mcp import MCPRouter
++        from scidiscovery.operation_contract import DiagnosticError, contract_diagnostic
++        detail = contract_diagnostic('declared_edit_failure', phase='tool_execution', affected_action='tool_call',
++            message='The declared edit cannot be completed.')
++        def failed_edit(*args):
++            raise DiagnosticError('typed edit failure', details=(detail,))
++        monkeypatch.setattr(worker._editor, 'chunk', failed_edit)
++        reply = MCPRouter(worker, name='hardened').handle(dict(jsonrpc='2.0', id=1, method='tools/call',
++            params=dict(name='worker_file_write_chunk', arguments=dict(content='{}'))))
++        assert reply['error']['data']['diagnostics'] == [detail]
++    if backend_kind == 'local' and legacy:
++        from scidiscovery.artifact_agent.interfaces.mcp_worker_protocol import WorkerToolError
++        original_operation = type(catalog).operation
++        def new_contract(self, name):
++            item = original_operation(self, name)
++            return replace(item, digest='f' * 64) if name == compiled.spec.operation_id else item
++        monkeypatch.setattr(type(catalog), 'operation', new_contract)
++        with pytest.raises(WorkerToolError):
++            worker.call_tool('worker_open_assignment', {})
++        assert path.read_bytes() == frozen
++
++
++def test_one_tool_field_change_reaches_compiled_mcp_assignment_and_execution(tmp_path, monkeypatch):
++    from pydantic import Field, create_model
++    import tcad_artifact.result_analysis as analysis
++    from scidiscovery.artifact_agent.interfaces.mcp import MCPRouter
++    from scidiscovery.operations.tooling import operation_agent_type
++    from tests.operations.test_tcad_result_analysis import analysis_system, open_analysis, raw_request
++
++    original = analysis.TOOL
++    identities = []
++    for limit in (4, 8):
++        # One provider declaration changes; every consumer must see the new
++        # field bound and the real Worker must enforce it before computation.
++        model = create_model('ChangedScoreInput', __base__=analysis.TCADScoreInput,
++                             record_key=(str, Field(min_length=1, max_length=limit)))
++        monkeypatch.setattr(analysis, 'TOOL', replace(original, input_model=model))
++        directory = tmp_path / str(limit)
++        directory.mkdir()
++        system = analysis_system(directory)
++        worker, opened = open_analysis(system)
++        compiled = system[0].operation('tcad.result.analyze.v1')
++        identities.append((compiled.digest, operation_agent_type(compiled)))
++        declared = next(tool for tool in compiled.worker_tools if tool.name == original.name).schema()
++        actual = next(tool for tool in worker.list_tools() if tool['name'] == original.name)
++        assert actual == declared
++        contract = {key: actual[key] for key in ('description', 'inputSchema')}
++        assert opened['tool_contracts'][original.name] == contract
++        assert json.loads(Path(opened['assignment_path']).read_bytes())['tool_contracts'][original.name] == contract
++        assert contract['inputSchema']['properties']['record_key']['maxLength'] == limit
++        router = MCPRouter(worker, name='declaration-change')
++        call = dict(jsonrpc='2.0', id=1, method='tools/call', params=dict(
++            name=original.name, arguments=dict(record_key='probe', request=raw_request())))
++        reply = router.handle(call)
++        if limit == 4:
++            detail = reply['error']['data']['diagnostics'][0]
++            assert detail['path'] == '$.record_key' and '4' in detail['message']
++            call['params']['arguments']['record_key'] = 'ok'
++            reply = router.handle(call)
++        assert json.loads(reply['result']['content'][0]['text'])['status'] == 'computed'
++    assert identities[0][0] != identities[1][0]
++    assert identities[0][1] != identities[1][1]
++
++
++def test_root_parameters_and_catalog_inputs_share_declared_constraints():
++    from types import MappingProxyType
++    from jsonschema import Draft202012Validator
++    from scidiscovery.artifact_agent.interfaces.mcp_root import OperationCallInput
++    from scidiscovery.operations.invoke import OperationInvocationError
++    from scidiscovery.operations.spec import scheduler_operation_view
++    schema = OperationCallInput.model_json_schema()
++    validator = Draft202012Validator(schema)
++    compiled = _catalog().operation('science.result.diagnose.v1')
++    payload = dict(name='parameters', operation_id=compiled.spec.operation_id, inputs=[], instruction='Check parameters.')
++    for parameters in (None, {}, {'unexpected': 1}):
++        request = payload if parameters is None else {**payload, 'parameters': parameters}
++        if parameters:
++            assert list(validator.iter_errors(request))
++            with pytest.raises(ValidationError):
++                OperationCallInput.model_validate_json(canonical_json(request))
++        else:
++            validator.validate(request)
++            assert OperationCallInput.model_validate_json(canonical_json(request)).parameters == {}
++    with pytest.raises(OperationInvocationError) as caught:
++        preflight_operation(compiled, name='parameters', instruction='Check parameters.',
++            artifacts_by_port={p.name: () for p in compiled.spec.inputs}, parameters=MappingProxyType({'unexpected': 1}))
++    assert caught.value.reason_code == 'parameters_not_declared'
++    view = scheduler_operation_view(compiled.spec).model_dump(mode='json', by_alias=True)
++    keys = ('usage', 'exposure', 'require_current', 'media_types', 'max_item_bytes')
++    for port, projected in zip(compiled.spec.inputs, view['inputs']):
++        expected = port.model_dump(mode='json')
++        assert {k: projected[k] for k in keys} == {k: expected[k] for k in keys}
++    assert all(not set(keys).intersection(port) for port in view['outputs'])
++
++
++def test_declared_output_relationship_reports_the_visible_rule_and_missing_field():
++    from scidiscovery.artifact_agent.schema.layered_diagnosis import AnalysisSourceReference, CalculationRecord
++    from scidiscovery.operation_contract import validation_diagnostics
++    for model, raw, field in (
++        (AnalysisSourceReference, dict(source_key='source', input_alias='raw', experiment_key='experiment'), 'case_key'),
++        (CalculationRecord, dict(record_key='calculation', input_digests={}, request={}, algorithm_version='v1', status='computed'), 'result'),
++    ):
++        schema = model.model_json_schema()
++        with pytest.raises(ValidationError) as caught:
++            model.model_validate_json(canonical_json(raw))
++        details = validation_diagnostics(caught.value, schema=schema, phase='output_payload', action='submit')
++        assert details[0]['path'] == '$.' + field
++        assert details[0]['message'] in json.dumps(schema)
+ 
+ 
+ def test_every_public_agent_exposes_one_compiled_output_contract() -> None:
+--- a/tests/operations/test_analysis_tool_installed.py
++++ b/tests/operations/test_analysis_tool_installed.py
+@@ -143,6 +143,7 @@
+         (operation_agent_type(compiled) + ".toml")).read_text())
+     server = profile["mcp_servers"][operation_worker_server_name(compiled)]
+     assert set(server["enabled_tools"]) == set(operation_local_worker_tool_names(compiled))
++    assert 'tool_contracts' in profile['developer_instructions']
+ print("installed analysis projection verified")
+ ''')
+ 
+@@ -181,6 +182,60 @@
+ replay_calculation(CalculationRecord.model_validate(record), {"curve_bundle": bundle_bytes})
+ assert not any(name.startswith("tcad_artifact") for name in sys.modules)
+ print("installed generic computation replayed without TCAD")
++''')
++
++
++def test_installed_hardened_open_contract_and_typed_edit_error(installed_probe):
++    installed_probe('blind_csv', r'''
++import json
++import tempfile
++from pathlib import Path
++from blind_csv_plugin.plugin import PLUGIN as BLIND
++from scidiscovery.builtin_plugin import CORE_PLUGIN
++from scidiscovery.general_science_plugin import PLUGIN as GENERAL
++from scidiscovery.operations.catalog import compile_catalog
++from scidiscovery.artifact_agent.runtime import open_runtime
++from scidiscovery.artifact_agent.interfaces.mcp import MCPRouter
++from scidiscovery.artifact_agent.interfaces.mcp_root import RootMCPRouter, RootToolFacade
++from scidiscovery.artifact_agent.interfaces.mcp_hardened_worker import HardenedWorkerMCPRouter
++from scidiscovery.artifact_agent.schema.artifact import ArtifactRegistration
++from scidiscovery.operation_contract import DiagnosticError, contract_diagnostic
++scratch = Path(tempfile.mkdtemp(prefix='installed-hardened-contract-'))
++project = scratch / 'project'
++project.mkdir()
++runtime = open_runtime(project_root=project, state_root=scratch / 'state', worker_backend='hardened')
++# Isolate the existing file-tool transport from the CSV review's native read
++# requirement. This fixture does not claim that review runs on Hardened.
++author, reviewer = BLIND.operations
++fixture = BLIND.model_copy(update={'operations': (author.model_copy(update={'review': None}), reviewer)})
++catalog = compile_catalog((CORE_PLUGIN, GENERAL, fixture))
++runtime.runs.operation_catalog = catalog
++instance = runtime.scheduler_bindings.create_instance(name='transport', title='Transport fixture', objective='Verify installed contract delivery.')
++root = RootMCPRouter(RootToolFacade(runtime.artifacts, runtime.intake, runs=runtime.runs,
++    approvals=runtime.approvals, executions=runtime.executions, bindings=runtime.scheduler_bindings,
++    instance=instance.instance_id, operation_catalog=catalog))
++source = runtime.artifacts.register(b'sample,value\na,1\nb,3\n', ArtifactRegistration(kind='fixture',
++    schema_id='blind.opaque.v1', payload_schema_version=1, media_type='text/csv', creator=runtime.actor), idempotency_key='source')
++runtime.scheduler_bindings.bind(instance=instance.instance_id, namespace='artifact', name='source', object_id=source.artifact_id)
++request = dict(name='transport', operation_id=author.operation_id, instruction='Read the exact file tool contracts.',
++    inputs=[dict(port='source_table', artifact_names=['source'])])
++assert root.call_tool('operation_preflight', request)['admissible']
++root.call_tool('operation_invoke', request)
++compiled = catalog.operation(author.operation_id)
++worker = HardenedWorkerMCPRouter(runtime.runs, operation_id=author.operation_id, operation_digest=compiled.digest)
++rpc = MCPRouter(worker, name='installed-hardened')
++def call(name, arguments):
++    return rpc.handle(dict(jsonrpc='2.0', id=1, method='tools/call', params=dict(name=name, arguments=arguments)))
++opened = call('worker_open_assignment', {})['result']['structuredContent']
++contracts = opened['tool_contracts']
++assert contracts == json.loads(Path(opened['assignment_path']).read_bytes())['tool_contracts']
++assert contracts == {tool['name']: {k: tool[k] for k in ('description', 'inputSchema')} for tool in worker.list_tools()}
++detail = contract_diagnostic('declared_edit_failure', phase='tool_execution', affected_action='tool_call', message='The declared edit cannot be completed.')
++def failed_edit(*args):
++    raise DiagnosticError('typed edit error', details=(detail,))
++worker._editor.chunk = failed_edit
++assert call('worker_file_write_chunk', dict(content='{}'))['error']['data']['diagnostics'] == [detail]
++print('installed Hardened contract and typed error verified')
+ ''')
+ 
+ 
+@@ -229,7 +284,10 @@
+     assert root.call_tool("operation_invoke", request)["result"]["state"] == "queued"
+     compiled = catalog.operation(operation_id)
+     worker = LocalWorkerMCPRouter(runtime.runs, operation_id=operation_id, operation_digest=compiled.digest)
+-    return worker, worker.call_tool("worker_open_assignment", {})
++    opened = worker.call_tool("worker_open_assignment", {})
++    assert opened['tool_contracts'] == {tool['name']: {k: tool[k] for k in ('description', 'inputSchema')}
++                                      for tool in worker.list_tools()}
++    return worker, opened
+ 
+ def submit(worker, opened, payload, verdict):
+     Path(opened["output_directory"], "result.json").write_bytes(canonical_json({
+@@ -281,6 +339,11 @@
+             text = text.replace("compile_catalog((CORE_PLUGIN, GENERAL_PLUGIN, CURVE_PLUGIN, TCAD_PLUGIN))", "compile_installed_catalog()")
+             text = text.replace("_CURVE['_diagnosis']().model_dump(mode='json')", "deepcopy(report_fixture)")
+             text = text.replace("_CURVE['_contract']().comparison_spec.model_dump(mode='json')", "deepcopy(spec_fixture)")
++            if node.name == 'open_analysis':
++                text = text.replace('return worker,opened',
++                    "assert opened['tool_contracts'] == json.loads(Path(opened['assignment_path']).read_bytes())['tool_contracts']\n"
++                    "    assert opened['tool_contracts'] == {tool['name']: {k: tool[k] for k in ('description', 'inputSchema')} for tool in worker.list_tools()}\n"
++                    "    return worker,opened")
+             functions.append(text)
+     assert len(functions) == len(selected)
+     preamble = r'''
+--- a/tests/operations/test_contract_attempts.py
++++ b/tests/operations/test_contract_attempts.py
+@@ -9,6 +9,133 @@
+ from scidiscovery.artifact_agent.service.tool_evidence import ToolEvidenceManifest, ToolAttemptLimit
+ from scidiscovery.artifact_agent.service.run_records import RunStateConflict
+ from tests.operations.test_tcad_result_analysis import analysis_system, open_analysis, analysis_report, write_analysis
++
++
++def test_receipt_budget_finalizes_reply_log_and_history_before_correction(tmp_path):
++    from dataclasses import replace
++    from curve_score.analysis_tool import ALGORITHM_VERSION
++    from scidiscovery.artifact_agent.interfaces.mcp_worker_protocol import WorkerToolError
++    from scidiscovery.operation_contract import contract_diagnostic
++    from tests.operations.test_tcad_result_analysis import raw_request
++    system = analysis_system(tmp_path)
++    worker, opened = open_analysis(system)
++    name = 'worker_tcad_curve_score'
++    original = worker._registered[name]
++    diagnostics = tuple(contract_diagnostic('invalid_arguments', phase='tool_arguments',
++        affected_action='tool_call', repairable=True, path='$.request.comparison_spec.comparisons[0].evaluation_points',
++        message=f'Declared constraint {i}: ' + 'x' * 440, error_type='value_error') for i in range(8))
++    def reject(*args):
++        raise WorkerToolError('controlled diagnostic budget probe', details=diagnostics)
++    worker._registered[name] = replace(original, contextual_handler=reject)
++    request = raw_request()
++    reply = MCPRouter(worker, name='budget').handle(dict(jsonrpc='2.0', id=1, method='tools/call',
++        params=dict(name=name, arguments=dict(record_key='failed', request=request))))
++    data = reply['error']['data']
++    runs = system[1].runs
++    receipt = ToolEvidenceManifest.model_validate_json(runs._evidence_snapshot(worker._run_id)).attempts[0]
++    assert 0 < len(data['diagnostics']) < 8
++    assert data['diagnostics'] == [item.model_dump(mode='json', exclude_none=True) for item in receipt.diagnostics]
++    assert len(canonical_json(receipt)) <= 4096
++    log = runs.diagnostic_summary(runs.status(worker._run_id))['latest_tool_error']['details']
++    assert log == data['diagnostics']
++    worker._registered[name] = original
++    good = worker.call_tool(name, dict(record_key='corrected', request=request))
++    assert good['status'] == 'computed'
++    failed = dict(record_key='failed', request=request, input_digests={}, algorithm_version=ALGORITHM_VERSION,
++        status='unavailable', reason_code='invalid_arguments', attempt=data['attempt'], diagnostics=data['diagnostics'])
++    report = analysis_report(alias='solver_outputs_001', output_name='A', mapped=True)
++    report['calculation_records'] = [failed, good]
++    write_analysis(opened, report)
++    submitted = worker.call_tool('worker_submit_result', {})
++    assert submitted['state'] == 'completed', submitted
++    catalog, runtime, root, base, artifacts, register = system
++    following = {**base, 'name': 'bounded_history', 'inputs': [*base['inputs'],
++        dict(port='prior_analysis', artifact_names=['analysis.output']),
++        dict(port='prior_analysis_manifest', artifact_names=['analysis.output.recovery_manifest'])]}
++    next_worker, next_opened = open_analysis((catalog, runtime, root, following, artifacts, register))
++    for record in report['calculation_records']:
++        record['attempt']['manifest_alias'] = 'prior_analysis_manifest'
++    write_analysis(next_opened, report)
++    result = next_worker.call_tool('worker_submit_result', {})
++    assert result['state'] == 'completed', result
++
++
++@pytest.mark.parametrize('direct', [False, True])
++def test_domain_candidate_rejection_is_logged_once_with_returned_details(tmp_path, direct):
++    from dataclasses import replace
++    from scidiscovery.artifact_agent.service.local_workspace import WorkspaceError
++    from tests.operations.test_tcad_result_analysis import raw_request
++    system = analysis_system(tmp_path)
++    worker, opened = open_analysis(system)
++    write_analysis(opened, {})
++    def validate(request, context):
++        if direct:
++            raise WorkspaceError('PRIVATE_WORKSPACE_DETAIL')
++        context.validate_outputs()
++    name = 'worker_tcad_curve_score'
++    worker._registered[name] = replace(worker._registered[name], contextual_handler=validate, record_attempts=False)
++    reply = worker.call_tool(name, dict(record_key='candidate', request=raw_request()))
++    assert reply['state'] == 'rejected' and reply['diagnostics']
++    runs = system[1].runs
++    with runs._connect() as connection:
++        rows = connection.execute("SELECT diagnostic_json FROM run_activity WHERE run_id=? AND activity='output_rejected'",
++            (worker._run_id,)).fetchall()
++    assert len(rows) == 1
++    assert json.loads(rows[0][0])['details'] == reply['diagnostics']
++    assert 'PRIVATE_WORKSPACE_DETAIL' not in json.dumps(reply)
++
++
++@pytest.mark.parametrize('category', ['checker_failure', 'integrity_failure', 'admission_defect'])
++def test_domain_checker_preserves_its_specific_terminal_category(tmp_path, category):
++    from dataclasses import replace
++    from scidiscovery.artifact_agent.service.run_outputs import RunCheckerError
++    from tests.operations.test_tcad_result_analysis import raw_request
++    system = analysis_system(tmp_path)
++    worker, _ = open_analysis(system)
++    def fail(*args):
++        raise RunCheckerError('controlled framework failure', category=category)
++    name = 'worker_tcad_curve_score'
++    worker._registered[name] = replace(worker._registered[name], contextual_handler=fail, record_attempts=False)
++    assert worker.call_tool(name, dict(record_key='failure', request=raw_request()))['state'] == 'failed'
++    runs = system[1].runs
++    assert runs.diagnostic_summary(runs.status(worker._run_id))['failure']['category'] == category
++
++
++def test_unclassified_run_failure_is_runtime_failure_and_timeout_keeps_deadline_gate(tmp_path):
++    system = analysis_system(tmp_path)
++    worker, _ = open_analysis(system)
++    runs = system[1].runs
++    status = runs.status(worker._run_id)
++    with pytest.raises(RunStateConflict, match='deadline has not expired'):
++        runs.record_failure(status.run_id, reason='premature timeout', expected_state='running',
++            expected_last_activity_at=status.last_activity_at, timed_out=True)
++    assert runs.status(status.run_id).state == 'running'
++    failed = runs.fail(status.run_id, reason='external Worker stopped')
++    assert failed.reason == 'external Worker stopped'
++    assert runs.diagnostic_summary(failed)['failure']['category'] == 'runtime_failure'
++
++
++def test_unretainable_receipt_is_explicit_unknown_without_false_terminal_proof(tmp_path):
++    from dataclasses import replace
++    from scidiscovery.artifact_agent.interfaces.mcp_worker_protocol import WorkerToolError
++    from scidiscovery.operation_contract import contract_diagnostic
++    from tests.operations.test_tcad_result_analysis import raw_request
++    system = analysis_system(tmp_path)
++    worker, _ = open_analysis(system)
++    name = 'worker_tcad_curve_score'
++    def oversized_metadata(*args):
++        # Inject an over-budget control metadata set; no raw source is read.
++        worker._attempt_sources = {f'source_{i:03d}_' + 'x' * 110: {} for i in range(48)}
++        raise WorkerToolError('bounded failure', details=(contract_diagnostic('invalid_arguments',
++            phase='tool_arguments', affected_action='tool_call', message='A declared argument needs correction.'),))
++    worker._registered[name] = replace(worker._registered[name], contextual_handler=oversized_metadata)
++    reply = MCPRouter(worker, name='budget').handle(dict(jsonrpc='2.0', id=1, method='tools/call',
++        params=dict(name=name, arguments=dict(record_key='unknown', request=raw_request()))))
++    data = reply['error']['data']
++    assert data['diagnostics'][0]['code'] == 'attempt_recording_failed'
++    assert 'attempt' not in data
++    attempts = system[1].runs.tool_attempts(worker._run_id)
++    assert len(attempts) == 1 and attempts[0]['state'] == 'interrupted'
+ 
+ 
+ def test_argument_rejection_is_receipted_before_read_and_sealed_without_raw_files(tmp_path):
+--- a/tests/operations/test_l2_run_invariants.py
++++ b/tests/operations/test_l2_run_invariants.py
+@@ -963,6 +963,9 @@
+     )
+     assert failed["state"] == "failed"
+ 
++    status = runtime.runs.status(run_id)
++    assert runtime.runs.diagnostic_summary(status)['failure']['category'] == 'run_timeout'
++
+ 
+ def test_tool_projection_identity_independent_path_and_publication_gate(
+     tmp_path: Path,
+--- a/tests/operations/test_score_request_contract.py
++++ b/tests/operations/test_score_request_contract.py
+@@ -31,7 +31,7 @@
+ def test_tcad_schema_reuses_axes_and_comparisons_with_discriminated_sources():
+     schema = TCADScoreInput.model_json_schema()
+     request = schema['$defs']['TCADScoreRequest']['properties']
+-    assert request['comparison_spec']['$ref'] == '#/$defs/CurveComparisonSpec'
++    assert request['comparison_spec']['$ref'] == '#/$defs/AnalysisCurveComparisonSpec'
+     assert set(request['sources']['items']['discriminator']['mapping']) == {
+         'csv', 'sprocess_plx', 'sprocess_log',
+     }
+@@ -40,6 +40,74 @@
+     assert plx['properties']['y_axis'] == {'$ref': '#/$defs/CurveAxis'}
+     assert {'dataset_name', 'case_key', 'series_key'} <= set(plx['required'])
+     assert plx['additionalProperties'] is False
++
++
++@pytest.mark.parametrize('model,make_request', [(AnalysisScoreInput, lambda: score_inputs()[1]),
++                                                (TCADScoreInput, raw_request)])
++@pytest.mark.parametrize('bound', ['comparisons', 'operators', 'evaluation_points'])
++def test_analysis_schema_and_model_share_actual_bounds(model, make_request, bound):
++    from jsonschema import Draft202012Validator
++    from pydantic import ValidationError
++    from scidiscovery.operation_contract import validation_diagnostics
++    schema = model.model_json_schema()
++    validator = Draft202012Validator(schema)
++    limit = 4096 if bound == 'evaluation_points' else 16
++    for count in (limit, limit + 1):
++        request = make_request()
++        comparison = request['comparison_spec']['comparisons'][0]
++        # Isolate each field bound from the separate canonical request byte budget.
++        comparison = {key: comparison[key] for key in (
++            'comparison_key', 'reference_series', 'candidate_series', 'domain', 'interpolation')}
++        comparison['operators'] = [dict(operator_key='metric', kind='residual_max_abs')]
++        request['comparison_spec']['comparisons'] = [comparison]
++        if bound == 'evaluation_points':
++            comparison[bound] = count
++        elif bound == 'operators':
++            comparison[bound] = [{**comparison['operators'][0], 'operator_key': f'op_{i}'} for i in range(count)]
++        else:
++            request['comparison_spec'][bound] = [{**comparison, 'comparison_key': f'comparison_{i}'} for i in range(count)]
++        payload = dict(record_key='boundary', request=request)
++        if count == limit:
++            validator.validate(payload)
++            assert model.model_validate_json(canonical_json(payload)).request.raw_request == request
++        else:
++            assert list(validator.iter_errors(payload))
++            with pytest.raises(ValidationError) as caught:
++                model.model_validate_json(canonical_json(payload))
++            details = validation_diagnostics(caught.value, schema=schema)
++            assert any(item['path'].endswith('.' + bound) and str(limit) in item['message'] for item in details), details
++
++
++def test_5000_samples_reject_before_source_reads_with_the_visible_bound(tmp_path, monkeypatch):
++    worker, _ = open_analysis(analysis_system(tmp_path))
++    request = raw_request()
++    request['comparison_spec']['comparisons'][0]['evaluation_points'] = 5000
++    monkeypatch.setattr(OperationToolContext, 'read_evidence', lambda *a: pytest.fail('read before argument correction'))
++    reply = call_score(worker, request)
++    diagnostic = reply['error']['data']['diagnostics'][0]
++    assert diagnostic['path'] == '$.request.comparison_spec.comparisons[0].evaluation_points'
++    assert diagnostic['message'] == 'Value must be at most 4096.'
++
++
++def test_supported_log_and_linear_metrics_have_independent_known_values():
++    sources, request = score_inputs()
++    bundle = json.loads(sources['curve_bundle'])
++    for series in bundle['series']:
++        values = [10, 100] if series['series_key'] == 'reference' else [100, 1000]
++        series['points'] = [dict(x=float(x), y=float(y)) for x, y in enumerate(values)]
++    sources['curve_bundle'] = canonical_json(bundle)
++    comparison = request['comparison_spec']['comparisons'][0]
++    request['comparison_spec']['comparisons'] = [dict(
++        comparison_key='known', reference_series='reference', candidate_series='candidate',
++        domain={**comparison['domain'], 'min_points': 2}, interpolation='linear_y', evaluation_points=2,
++        operators=[dict(operator_key=space, kind='residual_max_abs', value_space=space)
++                   for space in ('linear', 'log10')])]
++    parsed = AnalysisScoreInput.model_validate_json(canonical_json(dict(record_key='known', request=request)))
++    record = score_tool(parsed, SimpleNamespace(remaining_seconds=30,
++        read_evidence=sources.__getitem__, finish_attempt=lambda **kwargs: None))
++    assert record['status'] == 'computed', record
++    metrics = record['result']['comparisons'][0]['metrics']
++    assert {item['operator_key']: item['value'] for item in metrics} == {'linear': 900.0, 'log10': 1.0}
+ 
+ 
+ def test_string_axes_and_wrong_comparison_shape_reject_at_mcp_before_reads(tmp_path, monkeypatch):

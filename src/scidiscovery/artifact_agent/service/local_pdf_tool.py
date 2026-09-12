@@ -5,7 +5,18 @@ from __future__ import annotations
 import hashlib
 import os
 import subprocess
+from pathlib import Path
 from typing import Any
+
+from .local_workspace import write_control_workspace_file
+
+
+def _stderr_record(context: Any, raw: bytes) -> str:
+    if len(raw) > 1024 * 1024:
+        raise ValueError("PDF stderr exceeds its 1 MiB capture limit")
+    path = Path(".operation-tools/pdf") / ("stderr_" + hashlib.sha256(raw).hexdigest() + ".log")
+    write_control_workspace_file(context.workspace, path, raw, replace=True, mode=0o400, create_parents=True)
+    return str(context.workspace / path)
 
 
 def extract_pdf_text_local(parsed: Any, context: Any) -> dict[str, Any]:
@@ -25,10 +36,12 @@ def extract_pdf_text_local(parsed: Any, context: Any) -> dict[str, Any]:
     except FileNotFoundError as error:
         raise ValueError("pdftotext is not installed") from error
     except subprocess.TimeoutExpired as error:
-        raise ValueError("PDF text extraction timed out") from error
+        log = _stderr_record(context, error.stderr or b"")
+        raise ValueError(f"PDF text extraction timed out; stderr log: {log}") from error
+    stderr_log = _stderr_record(context, completed.stderr) if completed.stderr else None
     if completed.returncode != 0:
         detail = completed.stderr.decode("utf-8", errors="replace")[-2048:]
-        raise ValueError(f"PDF text extraction failed: {detail}")
+        raise ValueError(f"PDF text extraction failed; stderr log: {stderr_log}; excerpt: {detail}")
     text = completed.stdout.decode("utf-8", errors="replace")
     if len(text.encode("utf-8")) > 64 * 1024 * 1024:
         raise ValueError("PDF text extraction exceeds its byte limit")
@@ -79,6 +92,7 @@ def extract_pdf_text_local(parsed: Any, context: Any) -> dict[str, Any]:
         "available_page_count": len(pages),
         "truncated": len(selected) > parsed.max_chars,
         "cache": "run_local",
+        "stderr_log": stderr_log,
     }
 
 

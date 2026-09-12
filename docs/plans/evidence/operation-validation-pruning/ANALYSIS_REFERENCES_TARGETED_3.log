@@ -1,0 +1,30 @@
+F
+=================================== FAILURES ===================================
+_ test_reference_only_report_resolves_saved_score_without_copy_or_recalculation[generic] _
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-140/test_reference_only_report_res0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7f5321e8fcb0>
+domain = 'generic'
+
+    @pytest.mark.parametrize("domain", ["generic", "tcad"])
+    def test_reference_only_report_resolves_saved_score_without_copy_or_recalculation(tmp_path, monkeypatch, domain):
+        if domain == "generic":
+            worker, opened = generic_worker(tmp_path)
+            request, name, report = score_inputs()[1], "worker_curve_score", limited_report()
+        else:
+            worker, opened = open_analysis(analysis_system(tmp_path))
+            request, name, report = raw_request(), "worker_tcad_curve_score", analysis_report()
+        reply = worker.call_tool(name, dict(record_key="saved", request=request))
+        assert reply["status"] == "computed", reply
+        alias = reply["calculation_ref"]
+        saved = json.loads(worker.runs.read_tool_evidence(worker.runs.status(worker._run_id), alias))
+        assert saved["request"] == request
+        assert saved["attempt"] == CalculationRecord.model_validate_json(canonical_json(reply)).attempt.model_dump(mode="json")
+>       assert "calculation_ref" not in saved
+E       AssertionError: assert 'calculation_ref' not in {'algorithm_version': 'analysis-curve-operators.v1', 'attempt': {'attempt_key': 'attempt_001', 'manifest_alias': 'tool_recovery_manifest', 'proof_kind': 'current', 'schema_version': 1}, 'calculation_ref': None, 'diagnostics': [], ...}
+
+tests/operations/test_analysis_artifact_references.py:42: AssertionError
+=========================== short test summary info ============================
+FAILED tests/operations/test_analysis_artifact_references.py::test_reference_only_report_resolves_saved_score_without_copy_or_recalculation[generic]
+!!!!!!!!!!!!!!!!!!!!!!!!!! stopping after 1 failures !!!!!!!!!!!!!!!!!!!!!!!!!!!
+1 failed in 1.31s

@@ -1,0 +1,2382 @@
+--- a/docs/ARCHITECTURE.md
++++ b/docs/ARCHITECTURE.md
+@@ -396,3 +396,5 @@
+ arguments, environment, resources, and inputs. Scientific acceptance still
+ depends on provenance, independent review, deterministic reports, and result
+ diagnosis.
++
++TCAD analysis may optionally inspect files from its bound terminal execution and accept explicit output mappings. Registered tools preserve the original bytes and durable receipts in Run-owned Artifact collections; frozen inputs remain unchanged. The report and exact evidence snapshot complete together. Root exposes ancillary semantic names only after completion; a later Run binds the recovery manifest and raw files explicitly and can replay original calculation aliases. Missing inspection services or old runners allow limited analysis. Solver exit status and collection errors remain separate; recovery never rewrites the old execution or grants scientific success.
+--- a/docs/ARCHITECTURE.zh-CN.md
++++ b/docs/ARCHITECTURE.zh-CN.md
+@@ -263,3 +263,5 @@
+ 绑定、输出封存与校验、Artifact 登记、独立审查、人工审批和外部执行授权；不是对每次任务内文件
+ 读取建立控制面记录。外部执行策略仍限制 executable、arguments、环境、资源和输入目录。科学接受
+ 仍依赖来源、独立审查、确定性报告和结果诊断。
++
++TCAD 分析可选择检查所绑定终态执行的原文件并接收明确的输出映射。注册工具将原始字节及持久回执保存在本 Run 的 Artifact 集合中，冻结输入不变。报告和精确证据快照一起完成；Root 仅在 completed 后公开附属语义名称。后轮显式绑定恢复清单及原始文件，可重放原计算别名。检查服务缺失或旧 runner 不支持时仍可交付有限分析。求解器退出结果和收集错误分别保留；恢复不重写原执行，也不授予科学成功。
+--- a/docs/INSTALL.md
++++ b/docs/INSTALL.md
+@@ -425,3 +425,5 @@
+   configuration; never hard-code a discovered address in source.
+ - **TCAD job appears stuck**: use short status calls. Never hold SSH open while
+   the solver runs.
++
++Controlled analysis evidence recovery requires matching control/Worker packages and the VM helper. After reinstalling locally, use `SCID_PYTHON=/absolute/path/to/python deploy/install_ssh_tcad_runner.sh upgrade-code` to update only helper code using the existing transport configuration. Keep the original result directories and remote configuration. Restart the Codex session before scheduling a new analysis Run. Old helpers return unsupported inspection; ordinary offline analysis remains available. Never resubmit the old execution merely to refresh collection.
+--- a/docs/INSTALL.zh-CN.md
++++ b/docs/INSTALL.zh-CN.md
+@@ -382,3 +382,5 @@
+ - **审批返回 403**：必须在同一主机打开精确 URL，并确认当前进程已绑定正确实例。
+ - **VM IP 变化**：只更新私有 transport 配置或使用 resolver，不要把新地址写进源码。
+ - **TCAD 作业似乎卡住**：使用短状态调用，不得用长连接 SSH 等待 Solver。
++
++分析内受控补收集需要控制端、Worker 和 VM helper 匹配更新。本地重装后，执行 `SCID_PYTHON=/absolute/path/to/python deploy/install_ssh_tcad_runner.sh upgrade-code`，沿用现有传输配置只更新 helper 代码。保留原结果目录和远端配置；重启 Codex 会话后再创建新分析 Run。旧 helper 不支持检查时返回不可用，普通离线分析仍可进行。不要为了重新收集而重提原执行。
+--- a/docs/plans/README.md
++++ b/docs/plans/README.md
+@@ -5,7 +5,7 @@
+ 
+ ## 当前执行链
+ 
+-- [分析角色内受控检查与补收集修订计划](ANALYSIS_CONTROLLED_EVIDENCE_RECOVERY_PLAN.zh-CN.md)：2026-09-10 R1 已获[独立计划审查 PASS](reviews/ANALYSIS_CONTROLLED_EVIDENCE_RECOVERY_PLAN_REVIEW_R1.zh-CN.md)，无阻断；三项非阻断建议纳入 P0 合同冻结清单，尚未实施或部署。取消独立产物恢复角色；仅为现有 TCAD 分析角色增加可选检查/接收工具，补齐同 Run 工具证据保存、评分、封存与跨轮读取。保留既有输入/输出职责边界、历史资格规则和原执行记录；不启动新求解或扩展所有角色权限。
++- [分析角色内受控检查与补收集修订计划](ANALYSIS_CONTROLLED_EVIDENCE_RECOVERY_PLAN.zh-CN.md)：2026-09-10 R1 已获[独立计划审查 PASS](reviews/ANALYSIS_CONTROLLED_EVIDENCE_RECOVERY_PLAN_REVIEW_R1.zh-CN.md)，无阻断；三项建议已落实；[实施及验收记录](evidence/analysis-evidence-recovery/REPORT.zh-CN.md)表明 P0–P3 与 P4 本地安装包验收完成，正式部署、VM helper 同步和原案例现场验收待完成。取消独立产物恢复角色；仅为现有 TCAD 分析角色增加可选检查/接收工具，补齐同 Run 工具证据保存、评分、封存与跨轮读取。保留既有输入/输出职责边界、历史资格规则和原执行记录；不启动新求解或扩展所有角色权限。
+ - [曲线评分移入结果分析的最小修复计划](CURVE_SCORING_AS_ANALYSIS_TOOL_PLAN.zh-CN.md)：2026-09-09 R3 经[独立复审 PASS（工程计划）](reviews/CURVE_SCORING_AS_ANALYSIS_TOOL_PLAN_REVIEW_R3.zh-CN.md)，用户已授权实施。计划原文冻结，当前阶段见[实施记录](evidence/analysis-tool-implementation/EXECUTION_RECORD.zh-CN.md)。本次按既有工作树基线计算增量，评分保持分析内可选工具，不新增研究阶段或实验前评分检查。历史审查及输入保留。[独立实现审查 R1](reviews/CURVE_SCORING_AS_ANALYSIS_TOOL_IMPLEMENTATION_REVIEW_R1.zh-CN.md)已 PASS，相关源码回归及隔离安装包验证已通过；服务部署与真实续研验收尚未执行。不宣称全量测试或科学目标完成。
+ - [校验纠错与跨轮续研最小实施计划](RESEARCH_CORRECTION_AND_CONTINUATION_PATHS.zh-CN.md)：
+   2026-09-08 [R2 计划复审](reviews/RESEARCH_CORRECTION_MINIMAL_PLAN_REVIEW_R2.zh-CN.md)及 [R3 单文件增量复审](reviews/RESEARCH_CORRECTION_MINIMAL_PLAN_REVIEW_R3.zh-CN.md)均 **PASS（计划）**，范围 14 个现有生产文件。主计划及各审查输入保留审查时原文，当前状态以本索引和[执行记录](evidence/research-correction-continuation/EXECUTION_RECORD.zh-CN.md)为准。未覆盖目标是否影响继续由科学 Agent 判断，不新增阶段实体。P1—P4 已完成，[实现 R2](reviews/RESEARCH_CORRECTION_IMPLEMENTATION_REVIEW_R2.zh-CN.md) **PASS，仅限冻结的 Local 工程候选**；676 项测试通过、10 项保留失败的归因与范围处置均已独立复核，不称全套通过。全新独立[结果审查 R3](reviews/RESEARCH_CORRECTION_RESULT_CORRECTNESS_REVIEW_R3.zh-CN.md)也 **PASS（Local 首版工程候选）**，独立复验 36 项通过；明确原目标绑定仍依赖调度者，不新增硬门禁。[P5 安装后核验](evidence/research-correction-continuation/p5-installed-after-restart.json)已通过，ABI 17 的 49 项目录及生成配置与候选一致；[受控接续](evidence/research-correction-continuation/p5-resume-controlled-records.json)已恢复确切原目标，旧合同资格退役后已从原论文重建必需图证，并通过既有审查/修订路径补齐正式目标合同。修订版独立审查已通过，[新证据资格审批](evidence/research-correction-continuation/p5-revised-intake-pass-and-qualification-pending.json)原 pending 快照保留；9 月 9 日已读到[封存批准并派发新假设提案](evidence/research-correction-continuation/p5-approved-and-hypothesis-start-2026-09-09.json)。目标字段阻断已消除，新证据基础已获资格；新假设经修订通过独立审查，实验设计已利用历史进展与逐行参考表改选可计算端点。后续最小修订已获[独立实验计划 PASS](evidence/research-correction-continuation/plan-pass-and-curve-contract-start-2026-09-09.json)，仅对实际枚举的敏感性测试集合下结论。领域合同任务随后[受控提交失败](evidence/research-correction-continuation/curve-contract-controlled-submission-failed-2026-09-09.json)，未产生封存合同或诊断，当前暂停该科学推进路径，待诊断提交失败。尚无新 author 或求解器执行，两轮真实验收未完成；原部署交接保留为历史快照。
+--- a/plugins/curve_score/curve_score/analysis_tool.py
++++ b/plugins/curve_score/curve_score/analysis_tool.py
+@@ -230,7 +230,7 @@
+         for name in aliases:
+             check_deadline(deadline)
+             try:
+-                sources[name] = context.read_input(name)
++                sources[name] = context.read_evidence(name)
+             except (KeyError, ValueError):
+                 continue
+         check_deadline(deadline)
+--- a/plugins/tcad_artifact/tcad_artifact/command_adapter.py
++++ b/plugins/tcad_artifact/tcad_artifact/command_adapter.py
+@@ -194,6 +194,15 @@
+     def cancel(self, external_run_id: str) -> str:
+         value = self._call("cancel", {"run_id": external_run_id})
+         return str(value["state"])
++
++    def inspect_outputs(self, external_run_id: str, relative_path: str | None = None, max_bytes: int = 32*1024*1024) -> dict[str, Any]:
++        value = self._call("inspect_outputs", {"run_id": external_run_id, "relative_path": relative_path, "max_bytes": max_bytes})
++        if value.get("status") == "available" and "file" in value:
++            descriptor = LocalFileDescriptor.model_validate(value["file"], strict=True)
++            path = Path(descriptor.local_path)
++            if not _within(path.resolve(), self.local_result_root.resolve()) or path.is_symlink() or descriptor.size_bytes > max_bytes:
++                raise RuntimeError("inspection output is outside its bounds")
++        return value
+ 
+     def collect(self, external_run_id: str) -> tuple[LocalFileDescriptor, ...]:
+         value = self._call(
+--- a/plugins/tcad_artifact/tcad_artifact/execution_adapter.py
++++ b/plugins/tcad_artifact/tcad_artifact/execution_adapter.py
+@@ -147,6 +147,9 @@
+ 
+     def cancel(self, external_run_id: str) -> str:
+         return str(self._call("tcad_cancel", {"run_id": external_run_id})["state"])
++
++    def inspect_outputs(self, external_run_id: str, relative_path: str | None = None, max_bytes: int = 32*1024*1024) -> dict[str, Any]:
++        return self._call("tcad_inspect_outputs", {"run_id": external_run_id, "relative_path": relative_path, "max_bytes": max_bytes})
+ 
+     def collect(self, external_run_id: str) -> tuple[LocalFileDescriptor, ...]:
+         value = self._call("tcad_collect", {"run_id": external_run_id})
+--- a/plugins/tcad_artifact/tcad_artifact/execution_control.py
++++ b/plugins/tcad_artifact/tcad_artifact/execution_control.py
+@@ -339,6 +339,11 @@
+     run_id: str = Field(min_length=1, max_length=256)
+ 
+ 
++class InspectOutputsInput(RunIdInput):
++    max_bytes: int = Field(default=32*1024*1024, ge=0, le=32*1024*1024)
++    relative_path: str | None = Field(default=None, max_length=1024)
++
++
+ class SubmissionDigestInput(ExecutionToolInput):
+     submission_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+ 
+@@ -371,6 +376,7 @@
+     ExecutionTool("tcad_submit", "Submit one prepared TCAD job and return immediately.", SubmitInput),
+     ExecutionTool("tcad_status", "Read one short durable TCAD job status.", RunIdInput),
+     ExecutionTool("tcad_cancel", "Request cancellation of one TCAD job.", RunIdInput),
++    ExecutionTool("tcad_inspect_outputs", "Read bounded terminal files without execution or mutation.", InspectOutputsInput),
+     ExecutionTool("tcad_collect", "Return local descriptors for terminal TCAD outputs.", RunIdInput),
+ )
+ 
+@@ -697,6 +703,11 @@
+                 continue
+         return {**status, "state": "cancelling"}
+ 
++    def tcad_inspect_outputs(self, *, run_id: str, relative_path: str | None = None, max_bytes: int = 32*1024*1024) -> dict[str, Any]:
++        from .remote_runner_py36 import _inspect_directory
++        self.tcad_status(run_id=run_id)
++        return _inspect_directory(str(self._run_dir(run_id)), relative_path, max_bytes)
++
+     def tcad_collect(self, *, run_id: str) -> dict[str, Any]:
+         status = self.tcad_status(run_id=run_id)
+         if not status["done"]:
+--- /dev/null
++++ b/plugins/tcad_artifact/tcad_artifact/output_recovery.py
+@@ -0,0 +1,144 @@
++"""Optional inspection and acceptance of original terminal execution products."""
++from __future__ import annotations
++import copy
++import hashlib
++import json
++import time
++from pathlib import Path
++from typing import Literal
++from pydantic import BaseModel, ConfigDict, Field
++from scidiscovery.operations.tooling import WorkerToolDefinition
++from scidiscovery.operation_declaration import schema_resource
++from scidiscovery.artifact_agent.schema.common import canonical_json
++from scidiscovery.artifact_agent.schema.refs import ArtifactRef
++from scidiscovery.artifact_agent.service.run_outputs import RunCheckerError
++from scidiscovery.artifact_agent.service.local_workspace import write_control_workspace_file
++from .project_packager import ReviewedDeckPackage
++
++class InspectRequest(BaseModel):
++    model_config=ConfigDict(extra='forbid')
++    execution_result: str = 'execution_result'
++    relative_path: str | None = Field(default=None,max_length=1024)
++
++class AcceptRequest(BaseModel):
++    model_config=ConfigDict(extra='forbid')
++    evidence_alias: str = Field(min_length=1,max_length=128)
++    output_name: str = Field(min_length=1,max_length=256)
++    rationale: str = Field(min_length=1,max_length=4096)
++    evidence_aliases: list[str] = Field(min_length=1,max_length=16)
++
++class RecoveryManifest(BaseModel):
++    model_config=ConfigDict(extra='forbid')
++    schema_version: Literal[1] = 1
++    records: list[dict] = Field(max_length=32)
++
++RECOVERY_SCHEMA=schema_resource(RecoveryManifest,'scidiscovery.tool-evidence-manifest.v1')
++EXECUTION_SCHEMA=canonical_json({'$id':'scidiscovery.execution-result','type':'object'}).decode()
++
++class OutputInspectionService:
++    def __init__(self, adapter): self.adapter=adapter
++
++    def inspect(self, scope, relative_path, *, max_bytes, timeout):
++        if scope['executor'] != 'tcad_artifact:tcad':
++            return {'status':'unsupported','reason':'execution_adapter'}
++        adapter=copy.copy(self.adapter)
++        if hasattr(adapter, 'timeout'):
++            adapter.timeout=min(adapter.timeout,timeout)
++        if hasattr(adapter,'config') and hasattr(adapter.config,'operation_timeout_seconds'):
++            adapter.config=adapter.config.model_copy(update={'operation_timeout_seconds':max(1,min(adapter.config.operation_timeout_seconds,int(timeout)))})
++        return adapter.inspect_outputs(scope['external_run_id'],relative_path,max_bytes=max_bytes)
++
++
++def _file(raw, context, alias):
++    relative=Path('scratch/controlled-evidence')/alias
++    write_control_workspace_file(context.workspace,relative,raw,replace=(context.workspace/relative).exists(),mode=0o400,create_parents=True)
++    return str(context.workspace/relative)
++
++
++def _inspect(context, source_alias, path):
++    service=context.services.get('tcad.output_inspection')
++    if service is None:
++        return {'status':'unavailable','reason':'inspection_service_unavailable'}
++    scope=context.execution_scope(source_alias)
++    if scope['payload_ref'] != context.input_ref('reviewed_package'):
++        return {'status':'unavailable','reason':'execution_project_mismatch'}
++    package=ReviewedDeckPackage.model_validate_json(context.read_input('reviewed_package'),strict=True)
++    budget=context.io_budget(reserve=True)
++    timeout=min(budget['remaining_seconds'],context.remaining_seconds)
++    if timeout < 1 or budget['remaining_bytes'] < 1:
++        return {'status':'limit_exceeded','reason':'inspection_budget','budget':budget}
++    project_remaining=max(0,package.project.resource_limits.max_output_bytes-(256*1024*1024-budget['remaining_bytes']))
++    limit=min(32*1024*1024,budget['remaining_bytes'],project_remaining)
++    if limit < 1:
++        context.io_budget(used_bytes=-budget['remaining_bytes'],used_seconds=-budget['remaining_seconds'])
++        return {'status':'limit_exceeded','reason':'project_output_budget'}
++    started=time.monotonic(); transferred=limit if path is not None else 0
++    try:
++        response=service.inspect(scope,path,max_bytes=limit,timeout=timeout)
++        transferred=response.get('file',{}).get('size_bytes',0)
++        if path is None and response.get('status')=='available':
++            listed={item['relative_path'] for item in response.get('files',())}
++            declarations=[]
++            for output in package.project.expected_outputs:
++                item={'output_name':output.name,'declared_path':output.relative_path,'listed':output.relative_path in listed}
++                if len(declarations)>=256 or len(canonical_json({**response,'declared_outputs':declarations+[item]}))>60*1024:
++                    break
++                declarations.append(item)
++            response.update(declared_outputs=declarations,declarations_truncated=len(declarations)<len(package.project.expected_outputs))
++    finally:
++        budget=context.io_budget(used_bytes=transferred-budget['remaining_bytes'],used_seconds=time.monotonic()-started-budget['remaining_seconds'])
++    return {**response,'budget':budget}
++
++
++def inspect_tool(request,context):
++    try:
++        reply=_inspect(context,request.execution_result,request.relative_path)
++        if reply.get('status')!='available' or 'file' not in reply:
++            return reply
++        descriptor=reply['file']; path=Path(descriptor['local_path'])
++        if path.is_symlink() or descriptor['size_bytes']>32*1024*1024:
++            return {'status':'unavailable','reason':'file_scope_or_size'}
++        with path.open('rb') as stream:raw=stream.read(32*1024*1024+1)
++        if len(raw)!=descriptor['size_bytes'] or hashlib.sha256(raw).hexdigest()!=descriptor['sha256']:
++            return {'status':'changed_since_inspection','reason':'file_changed'}
++        record=context.accept_evidence(raw=raw,media_type=descriptor['media_type'],source_alias=request.execution_result,
++            metadata={'relative_path':reply['relative_path'],'output_name':None,'historical_integrity':'not_attested'})
++        return {'status':'available','evidence_alias':record['alias'],'relative_path':reply['relative_path'],
++                'sha256':descriptor['sha256'],'size_bytes':len(raw),'local_path':_file(raw,context,record['alias']),'budget':reply['budget']}
++    except RunCheckerError:
++        raise
++    except Exception as error:
++        return {'status':'unsupported' if 'unknown runner tool' in str(error) or 'unsupported TCAD transport' in str(error) else 'unavailable','reason':type(error).__name__,'detail':str(error)[:1024]}
++
++
++def accept_tool(request,context):
++    try:
++        prior=next((r for r in context.evidence() if r['alias']==request.evidence_alias),None)
++        if prior is None:
++            return {'status':'not_found','reason':'candidate_not_inspected'}
++        package=ReviewedDeckPackage.model_validate_json(context.read_input('reviewed_package'),strict=True)
++        expected=next((e for e in package.project.expected_outputs if e.name==request.output_name),None)
++        if expected is None:
++            return {'status':'not_found','reason':'output_not_declared'}
++        for alias in request.evidence_aliases:context.read_evidence(alias)
++        raw=context.read_evidence(prior['alias'])
++        if len(raw)>expected.max_bytes:
++            return {'status':'limit_exceeded','reason':'project_output_bytes'}
++        reply=_inspect(context,'execution_result',prior['metadata']['relative_path'])
++        if reply.get('status')!='available':return reply
++        if reply['file']['sha256']!=prior['artifact_ref']['sha256'] or reply['file']['size_bytes']!=len(raw):
++            return {'status':'changed_since_inspection','reason':'candidate_changed'}
++        record=context.accept_evidence(raw=raw,media_type=expected.media_type,metadata={**prior['metadata'],
++            'output_name':expected.name,'declared_path':expected.relative_path,'rationale':request.rationale,
++            'evidence_aliases':request.evidence_aliases,'experiment_key':expected.experiment_key,'case_key':expected.case_key})
++        return {'status':'accepted','evidence_alias':record['alias'],'output_name':expected.name,
++                'local_path':_file(raw,context,record['alias']),'size_bytes':len(raw),'budget':reply['budget']}
++    except ValueError as error:
++        return {'status':'ambiguous_mapping' if 'ambiguous_mapping' in str(error) else ('limit_exceeded' if str(error) in {'file_bytes','metadata_bytes','evidence_budget'} else 'unavailable'),'reason':str(error)[:1024]}
++    except RunCheckerError:
++        raise
++    except Exception as error:
++        return {'status':'unsupported' if 'unknown runner tool' in str(error) or 'unsupported TCAD transport' in str(error) else 'unavailable','reason':type(error).__name__,'detail':str(error)[:1024]}
++
++INSPECT_TOOL=WorkerToolDefinition(name='worker_tcad_inspect_outputs',description='Optionally list or inspect original files of the bound terminal execution_result. No solver, editing or renaming. A selected file yields a controlled evidence alias and read-only copy; unavailable inspection permits limited analysis.',input_model=InspectRequest,capability='tcad.analysis.inspect_outputs',contextual_handler=inspect_tool,optional_services=('tcad.output_inspection',),evidence_ports=('tool_evidence','recovery_manifest_output'))
++ACCEPT_TOOL=WorkerToolDefinition(name='worker_tcad_accept_output',description='Accept a previously inspected file as one declared output using an explicit evidence-backed mapping. Rechecks bytes; preserves source path and old execution. Read returned evidence alias for scoring and report references. No scientific success is granted.',input_model=AcceptRequest,capability='tcad.analysis.accept_output',contextual_handler=accept_tool,optional_services=('tcad.output_inspection',),evidence_ports=('tool_evidence','recovery_manifest_output'))
+--- a/plugins/tcad_artifact/tcad_artifact/project_packager.py
++++ b/plugins/tcad_artifact/tcad_artifact/project_packager.py
+@@ -871,6 +871,8 @@
+ 
+ 
+ class TCADRuntimeManifest(StrictModel):
++    solver_exit_code: int | None = None
++    collection_errors: tuple[str, ...] = Field(default=(), max_length=4096)
+     started_at: str | None = Field(min_length=1, max_length=128)
+     completed_at: str = Field(min_length=1, max_length=128)
+     terminal_state: Literal["succeeded", "failed", "cancelled"]
+--- a/plugins/tcad_artifact/tcad_artifact/remote_runner_py36.py
++++ b/plugins/tcad_artifact/tcad_artifact/remote_runner_py36.py
+@@ -142,6 +142,8 @@
+     if operation == "put":
+         _put(config, payload, input_stream)
+         _write_response(output_stream, operation, {"stored": True})
++    elif operation == "get" and "max_bytes" in payload:
++        _stream_get(config, payload, output_stream)
+     elif operation == "get":
+         raw = _get(config, payload)
+         _write_response(
+@@ -172,6 +174,32 @@
+     _write_immutable(destination, raw)
+ 
+ 
++def _stream_get(config, payload, output_stream):
++    path = os.path.abspath(payload.get("local_path", ""))
++    _require_within(path, config["result_root"])
++    limit = min(int(payload["max_bytes"]), config["max_transfer_bytes"], 32 * 1024 * 1024)
++    metadata = os.lstat(path)
++    if not stat.S_ISREG(metadata.st_mode) or metadata.st_size > limit:
++        raise ValueError("inspection download exceeds file bounds")
++    digest = hashlib.sha256()
++    size = 0
++    with open(path, "rb") as stream:
++        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
++            size += len(chunk)
++            if size > limit:
++                raise ValueError("inspection download exceeds file bounds")
++            digest.update(chunk)
++        _write_response(output_stream, "get", {"sha256": digest.hexdigest(), "size_bytes": size})
++        stream.seek(0)
++        sent = 0
++        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
++            sent += len(chunk)
++            if sent > limit:
++                raise ValueError("inspection download changed")
++            output_stream.write(chunk)
++    output_stream.flush()
++
++
+ def _get(config, payload):
+     path = os.path.abspath(payload.get("local_path", ""))
+     _require_within(path, config["result_root"])
+@@ -205,6 +233,8 @@
+             result = _status(config, arguments.get("run_id"))
+         elif name == "tcad_collect":
+             result = _collect(config, arguments.get("run_id"))
++        elif name == "tcad_inspect_outputs":
++            result = _inspect_directory(_run_dir(config, arguments.get("run_id")), arguments.get("relative_path"), arguments.get("max_bytes", 32 * 1024 * 1024))
+         elif name == "tcad_cancel":
+             result = _cancel(config, arguments.get("run_id"))
+         else:
+@@ -417,6 +447,8 @@
+     _write_new(os.path.join(run_dir, "pid"), (str(os.getpid()) + "\n").encode("ascii"), 0o440)
+     _write_new(os.path.join(run_dir, "running"), b"", 0o440)
+     exit_code = 99
++    solver_exit_code = None
++    collection_errors = []
+     terminal = "failed"
+     error = ""
+     outputs = []
+@@ -440,12 +472,17 @@
+             )
+             _write_new(os.path.join(run_dir, "solver_pid"), (str(process.pid) + "\n").encode("ascii"), 0o440)
+             exit_code = _wait(process, runtime["limits"], run_dir)
++        solver_exit_code = exit_code
+         _collect_expected(
+             os.path.join(run_dir, "work"),
+             runtime["expected_outputs"],
+             runtime["limits"],
+-            outputs,
++            outputs, collection_errors,
+         )
++        if collection_errors:
++            error = "; ".join(collection_errors)[:8192]
++            if exit_code == 0:
++                exit_code = 97
+         terminal = "succeeded" if exit_code == 0 else "failed"
+     except _Cancelled as failure:
+         exit_code = 130
+@@ -477,6 +514,8 @@
+         "error": error,
+         "exit_code": exit_code,
+         "outputs": outputs,
++        "solver_exit_code": solver_exit_code,
++        "collection_errors": collection_errors,
+         "started_at": started_at,
+         "terminal_state": terminal,
+     }
+@@ -557,36 +596,47 @@
+         raise ValueError("archive is missing declared members")
+ 
+ 
+-def _collect_expected(root, expected, limits, records=None):
++def _collect_expected(root, expected, limits, records=None, errors=None):
+     records = [] if records is None else records
+     total = sum(int(item["size_bytes"]) for item in records)
+-    for item in expected:
+-        relative = _safe_relative(item["relative_path"])
+-        capture = item.get("capture", "workspace_file")
+-        if capture == "workspace_file":
+-            path = os.path.join(root, *relative.split("/"))
+-        elif capture == "process_log":
+-            path = os.path.join(os.path.dirname(root), "worker.log")
+-        else:
+-            raise RuntimeError("unsupported output capture mode")
+-        if not os.path.isfile(path):
+-            if item["required"]:
+-                raise RuntimeError("required output missing: %s" % relative)
+-            continue
+-        raw = _read_regular(path)
+-        if len(raw) > item["max_bytes"]:
+-            raise RuntimeError("output exceeds declared bound")
+-        total += len(raw)
+-        if total > limits["max_output_bytes"]:
+-            raise RuntimeError("total output exceeds job limit")
+-        if capture == "process_log":
+-            target = os.path.join(root, *relative.split("/"))
+-            parent = os.path.dirname(target)
+-            if parent and not os.path.isdir(parent):
+-                os.makedirs(parent, 0o750)
+-            _atomic_write(target, raw, 0o440)
+-        os.chmod(path, 0o440)
+-        records.append({"name": item["name"], "relative_path": relative, "media_type": item["media_type"], "sha256": _sha(raw), "size_bytes": len(raw)})
++    failures = [] if errors is None else errors
++    for index, item in enumerate(expected):
++        try:
++            relative = _safe_relative(item["relative_path"])
++            capture = item.get("capture", "workspace_file")
++            if capture == "workspace_file":
++                path = os.path.join(root, *relative.split("/"))
++            elif capture == "process_log":
++                path = os.path.join(os.path.dirname(root), "worker.log")
++            else:
++                raise RuntimeError("unsupported output capture mode")
++            if not os.path.isfile(path):
++                if item["required"]:
++                    raise RuntimeError("required output missing: %s" % relative)
++                continue
++            if os.lstat(path).st_size > item["max_bytes"]:
++                raise RuntimeError("output exceeds declared bound")
++            raw = _read_regular(path)
++            if len(raw) > item["max_bytes"]:
++                raise RuntimeError("output exceeds declared bound")
++            total += len(raw)
++            if total > limits["max_output_bytes"]:
++                raise RuntimeError("total output exceeds job limit")
++            if capture == "process_log":
++                target = os.path.join(root, *relative.split("/"))
++                parent = os.path.dirname(target)
++                if parent and not os.path.isdir(parent):
++                    os.makedirs(parent, 0o750)
++                _atomic_write(target, raw, 0o440)
++            os.chmod(path, 0o440)
++            records.append({"name": item["name"], "relative_path": relative, "media_type": item["media_type"], "sha256": _sha(raw), "size_bytes": len(raw)})
++        except (OSError, RuntimeError, ValueError) as failure:
++            failures.append(str(failure)[:1024])
++            if "total output" in str(failure):
++                failures[-1] += "; %d later outputs not inspected" % (len(expected)-index-1)
++                break
++    if errors is None and failures:
++        raise RuntimeError("; ".join(failures)[:8192])
+     return records
+ 
+ 
+@@ -832,5 +882,67 @@
+     stream.flush()
+ 
+ 
++
++def _inspect_directory(run_dir, relative_path=None, max_bytes=32 * 1024 * 1024):
++    """Read bounded terminal execution products; Python 3.6/local shared logic."""
++    if type(max_bytes) is not int or not 0 <= max_bytes <= 32 * 1024 * 1024:
++        raise ValueError("inspection byte budget invalid")
++    if not os.path.isfile(os.path.join(run_dir, "done")):
++        return {"status": "unavailable", "reason": "execution_not_terminal"}
++    root = os.path.join(run_dir, "work")
++    if os.path.islink(run_dir) or os.path.islink(root):
++        return {"status": "unavailable", "reason": "execution_directory_link"}
++    if relative_path is None:
++        entries = []
++        pending = [root]
++        visited = 0
++        deadline = time.monotonic() + 10
++        while pending:
++            directory = pending.pop()
++            with os.scandir(directory) as scan:
++                for item in scan:
++                    visited += 1
++                    if visited > 256 or time.monotonic() > deadline:
++                        return {"status": "limit_exceeded", "files": entries, "reason": "inventory_limit"}
++                    if item.is_symlink():
++                        continue
++                    if item.is_dir(follow_symlinks=False):
++                        pending.append(item.path)
++                    elif item.is_file(follow_symlinks=False):
++                        entry = {"relative_path": os.path.relpath(item.path, root).replace(os.sep, "/"), "size_bytes": item.stat(follow_symlinks=False).st_size}
++                        if len(_canonical(entries + [entry])) > 60 * 1024:
++                            return {"status": "limit_exceeded", "files": entries, "reason": "inventory_bytes"}
++                        entries.append(entry)
++        if len(_canonical(entries)) > 60 * 1024:
++            return {"status": "limit_exceeded", "reason": "inventory_bytes"}
++        return {"status": "available", "files": entries}
++    relative = _safe_relative(relative_path)
++    path = root
++    try:
++        for part in relative.split("/"):
++            path = os.path.join(path, part)
++            if stat.S_ISLNK(os.lstat(path).st_mode):
++                return {"status": "unavailable", "reason": "symlink_forbidden"}
++        metadata = os.lstat(path)
++    except FileNotFoundError:
++        return {"status": "not_found", "reason": "file_missing"}
++    if not stat.S_ISREG(metadata.st_mode):
++        return {"status": "unavailable", "reason": "not_regular_file"}
++    if metadata.st_size > max_bytes:
++        return {"status": "limit_exceeded", "reason": "file_bytes"}
++    digest = hashlib.sha256()
++    size = 0
++    with open(path, "rb") as stream:
++        before = os.fstat(stream.fileno())
++        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
++            size += len(chunk)
++            if size > max_bytes:
++                return {"status": "limit_exceeded", "reason": "file_bytes"}
++            digest.update(chunk)
++        after = os.fstat(stream.fileno())
++    if (before.st_ino, before.st_size, before.st_mtime_ns) != (after.st_ino, after.st_size, after.st_mtime_ns) or before.st_ino != metadata.st_ino:
++        return {"status": "changed_since_inspection", "reason": "file_changed"}
++    return {"status": "available", "relative_path": relative, "file": {"name": "candidate", "local_path": path, "media_type": "application/octet-stream", "sha256": digest.hexdigest(), "size_bytes": size}}
++
+ if __name__ == "__main__":
+     raise SystemExit(main())
+--- a/plugins/tcad_artifact/tcad_artifact/result_analysis.py
++++ b/plugins/tcad_artifact/tcad_artifact/result_analysis.py
+@@ -3,6 +3,7 @@
+ 
+ from scidiscovery.operations.input_validation import BoundSourceError, parse_bound_json
+ 
++import json
+ import hashlib
+ import csv
+ from typing import Any, Mapping
+@@ -28,7 +29,7 @@
+     OPERATION_AGENT_PREAMBLE, scientific_agent_operation, scientific_semantic_contract,
+ )
+ from scidiscovery.operations.spec import (
+-    CallableComponent, ComponentRef, ComponentSpec, InputPortSpec, OutputPortSpec, InputValidationSpec,
++    CallableComponent, ComponentRef, ComponentSpec, InputPortSpec, OutputPortSpec, InputValidationSpec, CollectionSpec,
+ )
+ from scidiscovery.operations.tooling import WorkerToolDefinition
+ 
+@@ -69,11 +70,23 @@
+     ):
+         return False
+     outputs = grouped.get("solver_outputs", ())
+-    if any(output.parent_refs != manifest.parent_refs for output in outputs):
+-        return False
++    recovered = grouped.get('recovery_manifest', ())
++    execution = grouped.get('execution_result', ())
++    if execution and (package.ref not in execution[0].parent_refs or manifest.ref not in execution[0].parent_refs):
++        return False
++    if recovered and (not execution or recovered[0].handoff_verdict is None
++            or execution[0].ref not in recovered[0].parent_refs or package.ref not in recovered[0].parent_refs
++            or dict(recovered[0].labels).get('operation_output_port') != 'recovery_manifest_output'):
++        return False
++    direct = [output for output in outputs if output.parent_refs == manifest.parent_refs]
++    for output in outputs:
++        if output in direct:
++            continue
++        if not recovered or output.ref not in recovered[0].parent_refs or dict(output.labels).get('tool_producer_run') != dict(recovered[0].labels).get('tool_producer_run'):
++            return False
+     return all(
+         package.ref in audit.parent_refs and manifest.ref in audit.parent_refs
+-        and all(output.ref in audit.parent_refs for output in outputs)
++        and all(output.ref in audit.parent_refs for output in direct)
+         for audit in grouped.get("runtime_attestation", ())
+     )
+ 
+@@ -182,8 +195,23 @@
+     manifest = parse_bound_json(TCADRuntimeManifest, sources["runtime_manifest"])
+     expected = {output.name: output for output in package.project.expected_outputs}
+     known = {alias: expected.get(descriptor.output_name) for alias, descriptor in descriptors.items()
+-             if descriptor.port_name == "solver_outputs"}
++             if descriptor.port_name in {"solver_outputs", "tool_evidence"} and descriptor.output_name}
+     return plan, package, manifest, descriptors, known
++
++
++def _recovery_records(sources):
++    records = []
++    for alias in ('recovery_manifest', 'tool_recovery_manifest'):
++        if alias in sources:
++            value = json.loads(sources[alias])
++            if value.get('schema_version') != 1 or not isinstance(value.get('records'), list) or len(value['records']) > 32:
++                raise ValueError('recovery manifest shape')
++            records.extend(value['records'])
++    return records
++
++
++def _recovered_record(descriptor, sources):
++    return next((r for r in _recovery_records(sources) if r['artifact_ref'] == descriptor.artifact_ref.model_dump(mode='json')), None)
+ 
+ 
+ def validate_analysis_inputs(sources: Mapping[str, bytes]) -> None:
+@@ -206,7 +234,22 @@
+         if output.case_key is not None and (output.experiment_key, output.case_key) not in cases:
+             raise OperationInvocationError("input_package_case_unknown", port="reviewed_package", field="expected_outputs")
+     for descriptor in descriptors.values():
+-        if descriptor.port_name != "solver_outputs":
++        if descriptor.port_name not in {"solver_outputs", "tool_evidence"}:
++            continue
++        recovered = _recovered_record(descriptor, sources)
++        if recovered is not None:
++            original = descriptors.get('execution_result')
++            declaration = expected.get(recovered['metadata'].get('output_name'))
++            if recovered['metadata'].get('output_name') is None:
++                if (original is None or recovered['source_ref'] != original.artifact_ref.model_dump(mode='json')
++                        or descriptor.output_name is not None or recovered['size_bytes'] != descriptor.size_bytes
++                        or recovered['media_type'] != descriptor.media_type):
++                    raise OperationInvocationError('input_recovery_origin_mismatch', port='recovery_manifest')
++                continue
++            if original is None or recovered['source_ref'] != original.artifact_ref.model_dump(mode='json') or declaration is None:
++                raise OperationInvocationError('input_recovery_origin_mismatch', port='recovery_manifest')
++            if declaration.relative_path != recovered['metadata'].get('declared_path') or declaration.name != descriptor.output_name or recovered['size_bytes'] != descriptor.size_bytes or recovered['media_type'] != descriptor.media_type or (declaration.experiment_key, declaration.case_key) != (recovered['metadata'].get('experiment_key'), recovered['metadata'].get('case_key')):
++                raise OperationInvocationError('input_recovery_output_mismatch', port='recovery_manifest')
+             continue
+         record = records.get(descriptor.output_name)
+         if record is None or (record.media_type, record.size_bytes, record.sha256) != (
+@@ -225,7 +268,7 @@
+     if alias not in descriptors:
+         raise SemanticRuleViolation("analysis source is not a bound input")
+     descriptor = descriptors[alias]
+-    if descriptor.port_name != "solver_outputs":
++    if descriptor.port_name not in {"solver_outputs", "tool_evidence"} or descriptor.output_name is None:
+         if values.get("output_name") is not None:
+             raise SemanticRuleViolation("non-solver evidence cannot claim a registered solver output identity")
+         return
+@@ -282,12 +325,12 @@
+             if alias not in descriptors and record.status != "computed":
+                 continue
+             _check_source_identity(mapping, descriptors, known)
+-            if descriptors[alias].port_name == "solver_outputs" and record.status == "computed":
++            if descriptors[alias].port_name in {"solver_outputs", "tool_evidence"} and descriptors[alias].output_name and record.status == "computed":
+                 if any(mapping.get(key) is None for key in ("output_name", "experiment_key", "case_key")):
+                     raise SemanticRuleViolation("computed solver mapping requires explicit output and case identity")
+             kind = mapping.get("format")
+             media = descriptors[alias].media_type
+-            if kind == "sprocess_plx" and media != "application/x-synopsys-plx":
++            if kind == "sprocess_plx" and media.split(";", 1)[0] not in {"application/x-synopsys-plx", "text/plain"}:
+                 raise SemanticRuleViolation("PLX mapping differs from registered media type")
+             if kind == "sprocess_log" and media.split(";", 1)[0] != "text/plain":
+                 raise SemanticRuleViolation("log mapping differs from registered media type")
+@@ -307,9 +350,11 @@
+         audit = parse_bound_json(RuntimeAttestation, sources["runtime_attestation"])
+         audit_failed = audit.verdict != "pass"
+     incomplete = any(output.required and output.name not in {
+-        descriptor.output_name for descriptor in descriptors.values() if descriptor.port_name == "solver_outputs"
++        descriptor.output_name for descriptor in descriptors.values() if descriptor.port_name in {"solver_outputs", "tool_evidence"} and descriptor.output_name
+     } for output in package.project.expected_outputs)
+-    if manifest.terminal_state != "succeeded" or manifest.exit_code != 0 or audit_failed:
++    solver_failed = (manifest.solver_exit_code is not None and manifest.solver_exit_code != 0)
++    legacy_solver_failed = manifest.solver_exit_code is None and manifest.exit_code not in {0, 97}
++    if solver_failed or legacy_solver_failed or manifest.terminal_state == 'cancelled' or audit_failed:
+         if report.gates.numerical_validity.status == "pass" or report.claim_allowed:
+             raise SemanticRuleViolation("failed execution cannot be reported as numerical success")
+     unmapped = any(descriptor.port_name == "solver_outputs" and (known.get(alias) is None or known[alias].case_key is None)
+@@ -320,6 +365,7 @@
+ 
+ 
+ PROMPT = OPERATION_AGENT_PREAMBLE + """Analyze this exact TCAD execution in one Run.
++Optionally use worker_tcad_inspect_outputs and worker_tcad_accept_output with the bound execution_result to inspect and collect original terminal products. These tools cannot run a solver or edit files. Missing services or ambiguous correspondence permit a limited report. State mapping reasons; a successful collection is not scientific success. Tool-returned evidence aliases and the updated schema/result.schema.json may be used in source_references and scoring in this same Run. Tool evidence is acquired runtime evidence, not a changed startup input. Up to 32 evidence files, 32 MiB each, 256 MiB total, 120s I/O within the Run budget. A declaration/source correction goes back to author; do not alter the scientific task. Old aggregate 97 does not establish solver success: use explicit solver status when present and cite actual step evidence and uncertainty when absent.
+ Return LayeredDiagnosisReport in the declared RoleResultEnvelope. Read bound raw
+ files and logs; scoring is optional. The diagnostics port contains controlled runner
+ logs; solver_outputs contains manifest-declared products. Diagnostics may support
+@@ -379,6 +425,8 @@
+ 
+ 
+ INPUTS = (
++    _input("execution_result", "scidiscovery.execution-result", _ref("analysis_execution_schema"), optional=True, max_bytes=2*1024*1024).model_copy(update={"usage":"evidence_inventory"}),
++    _input("recovery_manifest", "scidiscovery.tool-evidence-manifest.v1", _ref("analysis_recovery_schema"), optional=True, max_bytes=1024*1024).model_copy(update={"usage":"evidence_inventory"}),
+     _input("experiment_plan", "scidiscovery.experiment-portfolio.v1", _ref("experiment_portfolio_schema", "general_science"), max_bytes=2*1024*1024).model_copy(update={"usage": "evidence_inventory"}),
+     _input("experiment_review", "scidiscovery.scientific-review.v1", _ref("scientific_review_schema", "general_science"), max_bytes=64*1024, exposure="on_demand").model_copy(update={"usage": "evidence_inventory"}),
+     _input("reviewed_package", "tcad.reviewed-deck-package.v2", _ref("reviewed_package_schema"), max_bytes=64*1024*1024),
+@@ -390,13 +438,17 @@
+     _input("current_progress", "*", _ref("opaque_schema", "general_science"), optional=True, count=4, max_bytes=2*1024*1024, inventory=True, exposure="on_demand"),
+ )
+ COMPONENT_SPECS = (
++    ComponentSpec("analysis_execution_schema", "resource", "tcad_artifact.output_recovery:EXECUTION_SCHEMA"),
++    ComponentSpec("analysis_recovery_schema", "resource", "tcad_artifact.output_recovery:RECOVERY_SCHEMA"),
++    ComponentSpec("analysis_inspect_tool", "worker_tool", "tcad_artifact.output_recovery:INSPECT_TOOL", configuration_identity="tcad.analysis.inspect.v1"),
++    ComponentSpec("analysis_accept_tool", "worker_tool", "tcad_artifact.output_recovery:ACCEPT_TOOL", configuration_identity="tcad.analysis.accept.v1"),
+     ComponentSpec("result_analysis_agent", "agent", "tcad_artifact.result_analysis:DIAGNOSIS_AGENT"),
+     ComponentSpec("result_analysis_validator", "validator", "tcad_artifact.result_analysis:DIAGNOSIS_VALIDATOR", resources=(_ref("result_analysis_semantic"),)),
+     ComponentSpec("result_analysis_prompt", "resource", "tcad_artifact.result_analysis:PROMPT"),
+     ComponentSpec("result_analysis_semantic", "resource", "tcad_artifact.result_analysis:SEMANTIC_CONTRACT"),
+-    ComponentSpec("result_analysis_parentage", "guard", "tcad_artifact.result_analysis:GUARD", configuration_identity="tcad.analysis.exact-parentage.v3"),
+-    ComponentSpec("result_analysis_input", "validator", "tcad_artifact.result_analysis:INPUT_VALIDATOR", configuration_identity="tcad.analysis.input-binding.v2"),
+-    ComponentSpec("result_analysis_context", "validator", "tcad_artifact.result_analysis:CONTEXT", resources=(_ref("result_analysis_semantic"),), configuration_identity="tcad.analysis.raw-replay.v2"),
++    ComponentSpec("result_analysis_parentage", "guard", "tcad_artifact.result_analysis:GUARD", configuration_identity="tcad.analysis.exact-parentage.v4"),
++    ComponentSpec("result_analysis_input", "validator", "tcad_artifact.result_analysis:INPUT_VALIDATOR", configuration_identity="tcad.analysis.input-binding.v3"),
++    ComponentSpec("result_analysis_context", "validator", "tcad_artifact.result_analysis:CONTEXT", resources=(_ref("result_analysis_semantic"),), configuration_identity="tcad.analysis.raw-replay.v3"),
+     ComponentSpec("result_analysis_score_tool", "worker_tool", "tcad_artifact.result_analysis:TOOL", configuration_identity="tcad.analysis.raw-score.v1"),
+ )
+ OPERATIONS = (scientific_agent_operation(
+@@ -404,20 +456,21 @@
+     "An exact reviewed plan, package and terminal execution manifest exist, including failed runs.",
+     "Solver execution, mandatory pre-experiment curve contracts, or changing raw evidence.",
+     agent=_ref("result_analysis_agent"), workspace=_ref("workspace", "general_science"),
+-    prompt=_ref("result_analysis_prompt"), tools=(*BASE_TOOLS, _ref("result_analysis_score_tool")),
++    prompt=_ref("result_analysis_prompt"), tools=(*BASE_TOOLS, _ref("result_analysis_score_tool"), _ref("analysis_inspect_tool"), _ref("analysis_accept_tool")),
+     input_validation=InputValidationSpec(validator=_ref("result_analysis_input"),
+         rule_id="tcad.result_analysis.input_binding",
+-        description="Before creating a Run, bind a structurally valid historical plan and its exact completed science.object.review.v1 scientific_review output, with matching plan parent and passing experiment_portfolio verdict; history grants no current authoring or execution authority. Solver outputs must match manifest names/media/bytes and declared project paths/cases. Bind the additional controlled tcad_log to diagnostics, not solver_outputs; diagnostics must share the exact execution lineage. Missing execution products permit limited analysis."),
++        description="Before creating a Run, bind a structurally valid historical plan and its exact completed science.object.review.v1 scientific_review output, with matching plan parent and passing experiment_portfolio verdict; history grants no current authoring or execution authority. Original solver outputs must match manifest names/media/bytes and declared project paths/cases. Recovered solver outputs instead require the explicitly bound sealed recovery_manifest and execution_result, with exact receipt membership, original execution/project, declared output/case, actual path and byte identity. Same-Run registered tool evidence is admitted by the tool, not by submission. Bind the additional controlled tcad_log to diagnostics, not solver_outputs; diagnostics must share the exact execution lineage. Missing execution products permit limited analysis."),
+     inputs=INPUTS, outputs=(OutputPortSpec(
+         name="layered_diagnosis", description="Sealed bounded result analysis and optional replayable calculations.",
+         schema="scidiscovery.layered-diagnosis.v1", media_types=("application/json",),
+         codec=_ref("json_codec", "general_science"), schema_resource=_ref("diagnosis_schema", "curve_score"),
+         kind="layered_diagnosis", validator=_ref("result_analysis_validator"),
+         context_validator=_ref("result_analysis_context"),
+-        context_sources=tuple(port.name for port in INPUTS if port.exposure != "handoff_only"),
++        context_sources=tuple(port.name for port in INPUTS if port.exposure != "handoff_only") + ("tool_evidence",),
+         max_item_bytes=128*1024, semantic_contract=_ref("result_analysis_semantic"),
+         validator_rule_id="tcad.result_analysis.payload_consistency",
+         context_rule_id="tcad.result_analysis.context_binding",
+-    ),), guards=(_ref("result_analysis_parentage"),), timeout=900,
+-    max_input_bytes=512*1024*1024, max_output_bytes=128*1024, max_files=1,
++    ), OutputPortSpec(name='tool_evidence', description='Original runtime bytes accepted by registered tools only.', schema='opaque', media_types=('*/*',), codec=_ref('opaque_codec','general_science'), schema_resource=_ref('opaque_schema','general_science'), kind='tool_evidence', min_items=0, max_items=32, max_item_bytes=32*1024*1024, collection=CollectionSpec(max_total_bytes=256*1024*1024)),
++    OutputPortSpec(name='recovery_manifest_output', description='Service-generated immutable evidence receipts and source mappings.', schema='scidiscovery.tool-evidence-manifest.v1',media_types=('application/json',),codec=_ref('json_codec','general_science'),schema_resource=_ref('analysis_recovery_schema'),kind='tool_evidence_manifest',min_items=0,max_items=1,max_item_bytes=1024*1024,collection=CollectionSpec(max_total_bytes=1024*1024))), guards=(_ref("result_analysis_parentage"),), timeout=900, max_attempts=2,
++    max_input_bytes=512*1024*1024, max_output_bytes=257*1024*1024+128*1024, max_files=34,
+ ),)
+--- a/plugins/tcad_artifact/tcad_artifact/roles/tcad_deck_author.md
++++ b/plugins/tcad_artifact/tcad_artifact/roles/tcad_deck_author.md
+@@ -59,7 +59,10 @@
+ 
+ In create mode, write the smallest complete solver-only source first, then add
+ unique case locators and raw solver outputs to `declarations.json`. No
+-control-generated `.cmd` scaffold exists.
++control-generated `.cmd` scaffold exists. Match declarations to the filenames actually
++produced by the solver, checking permitted development diagnostics when available.
++A historical analysis mapping does not change these declarations; source changes
++require the existing controlled revision task.
+ 
+ In revision mode, inspect the expanded exact `prior_project` and supplied
+ change request. Preserve unaffected physics, cases, outputs, and capability.
+--- a/plugins/tcad_artifact/tcad_artifact/runtime_plugin.py
++++ b/plugins/tcad_artifact/tcad_artifact/runtime_plugin.py
+@@ -86,8 +86,10 @@
+         return RuntimePluginContribution(execution_adapters={"tcad": adapter})
+     if context.mode != "local_worker":
+         raise ValueError("TCAD runtime mode is unsupported")
++    from .output_recovery import OutputInspectionService
+     return RuntimePluginContribution(
+         tool_services={
++            "tcad.output_inspection": OutputInspectionService(adapter),
+             "tcad.development_debug": LocalTCADDebugService(
+                 adapter=TCADDevelopmentDebugBridge(adapter),
+                 exchange_root=context.state_root / "local-tcad-debug",
+--- a/plugins/tcad_artifact/tcad_artifact/ssh_transport.py
++++ b/plugins/tcad_artifact/tcad_artifact/ssh_transport.py
+@@ -56,6 +56,7 @@
+     def put(self, relative_path: str, raw: bytes) -> None: ...
+     def rpc(self, request: dict[str, Any]) -> dict[str, Any]: ...
+     def get(self, local_path: str) -> bytes: ...
++    def get_to(self, local_path: str, destination: Path, max_bytes: int) -> None: ...
+ 
+ 
+ class SSHRemoteClient:
+@@ -113,11 +114,25 @@
+             raise RuntimeError("VM download differs from response descriptor")
+         return raw
+ 
++    def get_to(self, local_path: str, destination: Path, max_bytes: int) -> None:
++        response, _ = self._call("get", {"local_path": local_path, "max_bytes": max_bytes}, b"",
++                                 download_to=destination, download_limit=max_bytes)
++        payload = _require_ok(response, "get")
++        digest = hashlib.sha256()
++        size = 0
++        with destination.open("rb") as stream:
++            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
++                size += len(chunk)
++                digest.update(chunk)
++        if payload.get("size_bytes") != size or payload.get("sha256") != digest.hexdigest():
++            raise RuntimeError("VM download differs from response descriptor")
++
+     def _call(
+         self,
+         operation: str,
+         payload: dict[str, Any],
+         body: bytes,
++        *, download_to: Path | None = None, download_limit: int = 0,
+     ) -> tuple[dict[str, Any], bytes]:
+         request = _canonical(
+             {"schema_version": 1, "operation": operation, "payload": payload}
+@@ -147,15 +162,35 @@
+                 f"{self.config.remote_helper} --config {self.config.remote_config}",
+             )
+         )
+-        completed = self._run(
+-            command,
+-            input=request,
+-            stdout=subprocess.PIPE,
+-            stderr=subprocess.PIPE,
+-            env=_transport_environment(self.config.ssh_executable),
+-            timeout=self.config.operation_timeout_seconds,
+-            check=False,
+-        )
++        download_stream = tempfile.TemporaryFile() if download_to is not None else None
++        try:
++            completed = self._run(
++                command,
++                input=request,
++                stdout=download_stream if download_stream is not None else subprocess.PIPE,
++                stderr=subprocess.PIPE,
++                env=_transport_environment(self.config.ssh_executable),
++                timeout=self.config.operation_timeout_seconds,
++                check=False,
++            )
++            if download_stream is not None:
++                download_stream.seek(0)
++                header = download_stream.readline(1024 * 1024 + 1)
++                if not header.endswith(b"\n") or len(header) > 1024 * 1024:
++                    raise RuntimeError("VM download returned no bounded header")
++                response = json.loads(header)
++                size = 0
++                with download_to.open("wb") as stream:
++                    for chunk in iter(lambda: download_stream.read(1024 * 1024), b""):
++                        size += len(chunk)
++                        if size > download_limit:
++                            raise RuntimeError("VM download exceeds inspection bound")
++                        stream.write(chunk)
++                completed = subprocess.CompletedProcess(completed.args, completed.returncode,
++                                                         stdout=header, stderr=completed.stderr)
++        finally:
++            if download_stream is not None:
++                download_stream.close()
+         if completed.stderr and self.diagnostic_root is not None:
+             preserve_log(self.diagnostic_root, "ssh-stderr", completed.stderr)
+         if completed.returncode != 0:
+@@ -270,6 +305,8 @@
+         if operation == "cancel":
+             value = self._rpc("tcad_cancel", {"run_id": payload["run_id"]})
+             return {"state": value["state"]}
++        if operation == "inspect_outputs":
++            return self._inspect_outputs(str(payload["run_id"]), payload.get("relative_path"), payload.get("max_bytes", 32*1024*1024))
+         if operation == "collect":
+             return self._collect(str(payload["run_id"]))
+         raise ValueError("unsupported TCAD transport operation")
+@@ -324,6 +361,32 @@
+             raise ValueError("transport submission marker is invalid")
+         FileDescriptor.model_validate(marker.get("remote_submission"), strict=True)
+         return marker
++
++    def _inspect_outputs(self, run_id: str, relative_path: str | None, max_bytes: int) -> dict[str, Any]:
++        if not re.fullmatch(r"run_[0-9a-f]{32}", run_id):
++            raise ValueError("invalid TCAD run identity")
++        value = self._rpc("tcad_inspect_outputs", {"run_id": run_id, "relative_path": relative_path, "max_bytes": max_bytes})
++        if value.get("status") != "available" or "file" not in value:
++            return value
++        descriptor = FileDescriptor.model_validate(value["file"], strict=True)
++        if descriptor.size_bytes > min(max_bytes, 32 * 1024 * 1024):
++            raise ValueError("inspection file exceeds limit")
++        path = self.local_result_root / "inspection" / run_id / descriptor.sha256
++        path.parent.mkdir(parents=True, exist_ok=True)
++        with tempfile.TemporaryDirectory(dir=path.parent) as directory:
++            temporary = Path(directory) / "download"
++            self.remote.get_to(descriptor.local_path, temporary, min(max_bytes, 32 * 1024 * 1024))
++            observed = _local_descriptor("candidate", temporary, descriptor.media_type)
++            if observed.size_bytes != descriptor.size_bytes or observed.sha256 != descriptor.sha256:
++                return {"status": "changed_since_inspection", "reason": "download_changed"}
++            os.chmod(temporary, 0o400)
++            if path.exists():
++                existing = _local_descriptor("candidate", path, descriptor.media_type)
++                if existing.sha256 != descriptor.sha256:
++                    raise RuntimeError("immutable inspection copy changed")
++            else:
++                os.link(temporary, path)
++        return {**value, "file": _local_descriptor("candidate", path, descriptor.media_type).model_dump(mode="json")}
+ 
+     def _collect(self, run_id: str) -> dict[str, Any]:
+         if not re.fullmatch(r"run_[0-9a-f]{32}", run_id):
+@@ -420,12 +483,17 @@
+ 
+ 
+ def _local_descriptor(name: str, path: Path, media_type: str) -> LocalFileDescriptor:
+-    raw = path.read_bytes()
++    digest = hashlib.sha256()
++    size = 0
++    with path.open("rb") as stream:
++        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
++            size += len(chunk)
++            digest.update(chunk)
+     return LocalFileDescriptor(
+         name=name,
+         local_path=str(path),
+-        sha256=hashlib.sha256(raw).hexdigest(),
+-        size_bytes=len(raw),
++        sha256=digest.hexdigest(),
++        size_bytes=size,
+         media_type=media_type,
+     )
+ 
+--- a/plugins/tcad_artifact/tcad_artifact/worker.py
++++ b/plugins/tcad_artifact/tcad_artifact/worker.py
+@@ -40,6 +40,8 @@
+     (run_dir / "running").touch(exist_ok=False)
+     started_at = _timestamp()
+     exit_code = 99
++    solver_exit_code = None
++    collection_errors = []
+     terminal = "failed"
+     error = ""
+     outputs: list[dict[str, object]] = []
+@@ -71,12 +73,17 @@
+             )
+             _atomic_text(run_dir / "solver_pid", f"{process.pid}\n")
+             exit_code = _wait_with_job_limits(process, job["limits"])
++        solver_exit_code = exit_code
+         _collect_outputs(
+             run_dir / "work",
+             job["expected_outputs"],
+             job["limits"],
+-            records=outputs,
++            records=outputs, errors=collection_errors,
+         )
++        if collection_errors:
++            error = "; ".join(collection_errors)[:8192]
++            if exit_code == 0:
++                exit_code = 97
+         terminal = "succeeded" if exit_code == 0 else "failed"
+     except _RuntimeLimitExceeded as failure:
+         if process is not None:
+@@ -102,6 +109,8 @@
+         "error": error,
+         "exit_code": exit_code,
+         "outputs": outputs,
++        "solver_exit_code": solver_exit_code,
++        "collection_errors": collection_errors,
+         "started_at": started_at,
+         "terminal_state": terminal,
+     }
+@@ -118,44 +127,56 @@
+     limits: dict,
+     *,
+     records: list[dict[str, object]] | None = None,
++    errors: list[str] | None = None,
+ ) -> list[dict[str, object]]:
+     records = [] if records is None else records
+     total = sum(int(item["size_bytes"]) for item in records)
+-    for item in expected:
+-        capture = item.get("capture", "workspace_file")
+-        if capture == "workspace_file":
+-            path = root.joinpath(*item["relative_path"].split("/"))
+-        elif capture == "process_log":
+-            path = root.parent / "worker.log"
+-        else:
+-            raise RuntimeError("unsupported output capture mode")
++    failures = [] if errors is None else errors
++    for index, item in enumerate(expected):
+         try:
+-            metadata = os.lstat(path)
+-        except FileNotFoundError:
+-            if item["required"]:
+-                raise RuntimeError(f"required output missing: {item['relative_path']}")
+-            continue
+-        if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
+-            raise RuntimeError(f"output is not a regular file: {item['relative_path']}")
+-        content = path.read_bytes()
+-        if len(content) > item["max_bytes"]:
+-            raise RuntimeError(f"output exceeds contract: {item['relative_path']}")
+-        total += len(content)
+-        if total > limits["max_output_bytes"]:
+-            raise RuntimeError("total output exceeds job limit")
+-        if capture == "process_log":
+-            target = root.joinpath(*item["relative_path"].split("/"))
+-            target.parent.mkdir(parents=True, exist_ok=True)
+-            _atomic_bytes(target, content)
+-        records.append(
+-            {
+-                "name": item["name"],
+-                "media_type": item["media_type"],
+-                "relative_path": item["relative_path"],
+-                "sha256": hashlib.sha256(content).hexdigest(),
+-                "size_bytes": len(content),
+-            }
+-        )
++            capture = item.get("capture", "workspace_file")
++            if capture == "workspace_file":
++                path = root.joinpath(*item["relative_path"].split("/"))
++            elif capture == "process_log":
++                path = root.parent / "worker.log"
++            else:
++                raise RuntimeError("unsupported output capture mode")
++            try:
++                metadata = os.lstat(path)
++            except FileNotFoundError:
++                if item["required"]:
++                    raise RuntimeError(f"required output missing: {item['relative_path']}")
++                continue
++            if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
++                raise RuntimeError(f"output is not a regular file: {item['relative_path']}")
++            if metadata.st_size > item["max_bytes"]:
++                raise RuntimeError(f"output exceeds contract: {item['relative_path']}")
++            content = path.read_bytes()
++            if len(content) > item["max_bytes"]:
++                raise RuntimeError(f"output exceeds contract: {item['relative_path']}")
++            total += len(content)
++            if total > limits["max_output_bytes"]:
++                raise RuntimeError("total output exceeds job limit")
++            if capture == "process_log":
++                target = root.joinpath(*item["relative_path"].split("/"))
++                target.parent.mkdir(parents=True, exist_ok=True)
++                _atomic_bytes(target, content)
++            records.append(
++                {
++                    "name": item["name"],
++                    "media_type": item["media_type"],
++                    "relative_path": item["relative_path"],
++                    "sha256": hashlib.sha256(content).hexdigest(),
++                    "size_bytes": len(content),
++                }
++            )
++        except (OSError, RuntimeError) as failure:
++            failures.append(str(failure)[:1024])
++            if "total output" in str(failure):
++                failures[-1] += "; %d later outputs not inspected" % (len(expected)-index-1)
++                break
++    if errors is None and failures:
++        raise RuntimeError("; ".join(failures)[:8192])
+     return records
+ 
+ 
+--- a/roles/scheduler.md
++++ b/roles/scheduler.md
+@@ -97,7 +97,10 @@
+ result registration, exact current heads, and any explicitly enabled review,
+ approval, promotion, or side-effect policy. Workers own scientific content.
+ Domain adapters own declared side effects. Agents communicate only through
+-their explicitly bound input files and sealed output files; never relay a
++their explicitly bound input files and sealed output files. An Operation may explicitly
++declare trusted tools that read original execution files and seal ancillary evidence;
++this does not expand default permissions or change frozen inputs. Bind the completed
++recovery manifest and exact evidence files for later analysis; never relay a
+ child's chat, hidden context, workspace path, control identity, token, hash, or
+ draft to another Agent.
+ 
+--- a/src/scidiscovery/artifact_agent/interfaces/mcp_local_worker.py
++++ b/src/scidiscovery/artifact_agent/interfaces/mcp_local_worker.py
+@@ -154,7 +154,10 @@
+             except RunStateConflict as error:
+                 if terminal:
+                     return {"state": self.runs.status(self._run_id).state}
+-                raise WorkerToolError(str(error)) from error
++                from ...operations.tooling import tool_evidence_ports
++                if not tool_evidence_ports(self.compiled) or str(error) != "no exact queued Run is available":
++                    raise WorkerToolError(str(error)) from error
++                status, workspace = self.runs.reopen(operation_id=self.operation_id, operation_digest=self.operation_digest)
+             self._run_id = status.run_id
+             self._workspace = workspace
+             self._completed = False
+@@ -227,10 +230,23 @@
+             )
+             return tuple(item.relative_path for item in sealed.files)
+ 
++        def read_evidence(alias):
++            if alias in inputs:
++                return read_input(alias)
++            return self.runs.read_tool_evidence(status, alias)
++
++        def execution_scope(alias):
++            from ..service.executions import ExecutionService
++            item = input_binding(alias)
++            if not tool.evidence_ports or item.port_name != 'execution_result':
++                raise ValueError('tool has no execution scope')
++            return ExecutionService.resolve_result_scope(artifacts=self.runs.artifacts,
++                database_path=self.runs.database_path.parent/'executions.sqlite3', result_ref=item.artifact_ref)
++
+         return OperationToolContext(
+             services={
+                 key.partition(":")[2]: self.tool_services[key]
+-                for key in tool.required_services
++                for key in (*tool.required_services, *tool.optional_services)
+                 if key in self.tool_services
+             },
+             state=self._tool_state.setdefault(name, {}),
+@@ -240,6 +256,11 @@
+                 item.name for item in self.compiled.spec.outputs if item.collection is not None
+             ),
+             remaining_seconds=_remaining(status.deadline_at),
++            _io_budget=(lambda **values: self.runs.tool_io_budget(self._run_id, **values)) if tool.evidence_ports else None,
++            _read_evidence=read_evidence,
++            _list_evidence=lambda: self.runs.tool_evidence(self._run_id),
++            _execution_scope=execution_scope if tool.evidence_ports else None,
++            _accept_evidence=(lambda **values: self.runs.accept_tool_evidence(self._run_id, tool_name=tool.name, allowed_ports=tool.evidence_ports, **values)) if tool.evidence_ports else None,
+             _read_input=read_input,
+             _input_path=input_path,
+             _input_media_type=lambda source_name: input_binding(source_name).media_type,
+@@ -290,6 +311,27 @@
+     )
+ 
+ 
++def _load_operation_services(catalog, operation_id, assignments, state_root):
++    tools = operation_local_worker_tools(catalog.operation(operation_id))
++    required = {name.partition(':')[0] for tool in tools for name in tool.required_services}
++    optional = {name.partition(':')[0] for tool in tools for name in tool.optional_services}
++    services = {}
++    for plugin_id, path in assignments.items():
++        try:
++            loaded = load_runtime_plugin_contributions(catalog, {plugin_id: path},
++                mode='local_worker', state_root=state_root)
++        except Exception:
++            if plugin_id not in optional or plugin_id in required:
++                raise
++            # Preserve the concrete configuration/adapter error in MCP stderr;
++            # unavailable optional tooling must not prevent opening the analysis.
++            import logging
++            logging.getLogger(__name__).exception('Optional Worker service unavailable: %s', plugin_id)
++        else:
++            services.update(loaded.tool_services)
++    return services
++
++
+ def main(argv: list[str] | None = None) -> int:
+     parser = argparse.ArgumentParser(prog="scidiscovery-local-worker-mcp")
+     parser.add_argument("--state-root", type=Path, required=True)
+@@ -301,13 +343,9 @@
+     catalog = compile_installed_catalog()
+     services: dict[str, object] = {}
+     if args.plugin_config:
+-        loaded = load_runtime_plugin_contributions(
+-            catalog,
++        services.update(_load_operation_services(catalog, args.operation_id,
+             parse_plugin_config_assignments(tuple(args.plugin_config)),
+-            mode="local_worker",
+-            state_root=args.state_root.expanduser().absolute(),
+-        )
+-        services.update(loaded.tool_services)
++            args.state_root.expanduser().absolute()))
+     router = build_local_worker_router(
+         state_root=args.state_root,
+         operation_id=args.operation_id,
+--- a/src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py
++++ b/src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py
+@@ -127,6 +127,9 @@
+                     "required": services,
+                     "status": "verified_on_worker_claim",
+                 }
++            optional = sorted({service for tool in operation_worker_tools(compiled) for service in tool.optional_services})
++            if optional:
++                value["optional_runtime_services"] = optional
+         return value
+ 
+     def _scheduler_operation_available(
+--- a/src/scidiscovery/artifact_agent/interfaces/mcp_root_run_routes.py
++++ b/src/scidiscovery/artifact_agent/interfaces/mcp_root_run_routes.py
+@@ -36,6 +36,9 @@
+             if output_status in {"available", "historical"} and value.signal is not None
+             else None
+         )
++        evidence = self.runs.evidence_output_refs(value)
++        if evidence:
++            result["evidence_outputs"] = [{"artifact_name": value.output_binding_name+"."+alias, "schema": ref.schema_id} for alias, ref in evidence]
+         return result
+ 
+     def run_record_failure(
+--- a/src/scidiscovery/artifact_agent/operation_tool_context.py
++++ b/src/scidiscovery/artifact_agent/operation_tool_context.py
+@@ -25,6 +25,33 @@
+     _validate_outputs: Callable[[], None]
+     _record_activity: Callable[[str], None]
+     _candidate_snapshot: Callable[[], tuple[str, ...]]
++
++    _read_evidence: Callable[[str], bytes] | None = None
++    _accept_evidence: Callable[..., dict] | None = None
++    _list_evidence: Callable[[], list[dict]] | None = None
++    _execution_scope: Callable[[str], dict] | None = None
++    _io_budget: Callable[..., dict] | None = None
++
++    def io_budget(self, **values):
++        if self._io_budget is None:
++            raise ValueError("tool has no evidence budget")
++        return self._io_budget(**values)
++
++    def evidence(self) -> list[dict]:
++        return self._list_evidence() if self._list_evidence else []
++
++    def read_evidence(self, name: str) -> bytes:
++        return self._read_evidence(name) if self._read_evidence else self.read_input(name)
++
++    def accept_evidence(self, **values) -> dict:
++        if self._accept_evidence is None:
++            raise ValueError("tool has no evidence collection permission")
++        return self._accept_evidence(**values)
++
++    def execution_scope(self, alias: str) -> dict:
++        if self._execution_scope is None:
++            raise ValueError("tool has no execution inspection permission")
++        return self._execution_scope(alias)
+ 
+     def __post_init__(self) -> None:
+         object.__setattr__(self, "services", MappingProxyType(dict(self.services)))
+--- a/src/scidiscovery/artifact_agent/service/executions.py
++++ b/src/scidiscovery/artifact_agent/service/executions.py
+@@ -85,6 +85,18 @@
+         self.exchange_root.mkdir(parents=True, exist_ok=True, mode=0o770)
+         self.service_actor = service_actor
+         self._initialize()
++
++    @staticmethod
++    def resolve_result_scope(*, artifacts, database_path, result_ref):
++        """Trusted read-only lookup from an already bound immutable result."""
++        result = ExecutionResultManifest.model_validate_json(artifacts.read(result_ref), strict=True)
++        with sqlite3.connect(database_path) as connection:
++            connection.row_factory = sqlite3.Row
++            row = connection.execute('SELECT * FROM executions WHERE execution_id=?', (result.execution_id,)).fetchone()
++        if row is None or row['state'] != 'collected' or row['external_run_id'] != result.external_run_id or _parse_ref(row['result_ref_json']) != result_ref:
++            raise ExecutionStateConflict('bound result does not identify a collected execution')
++        return {'executor':row['executor'], 'external_run_id':result.external_run_id,
++                'payload_ref':_parse_ref(row['payload_ref_json']), 'result_ref':result_ref}
+ 
+     def create(
+         self,
+--- a/src/scidiscovery/artifact_agent/service/local_workspace.py
++++ b/src/scidiscovery/artifact_agent/service/local_workspace.py
+@@ -106,6 +106,9 @@
+ 
+     @staticmethod
+     def unsupported_requirements(compiled: object) -> tuple[str, ...]:
++        from ...operations.tooling import tool_evidence_ports
++        if tool_evidence_ports(compiled):
++            return ()
+         return (
+             ("agent_collection_outputs",)
+             if any(port.collection is not None for port in compiled.spec.outputs)
+--- a/src/scidiscovery/artifact_agent/service/run_outputs.py
++++ b/src/scidiscovery/artifact_agent/service/run_outputs.py
+@@ -60,6 +60,7 @@
+     input_bytes: Mapping[str, bytes],
+     input_binding_descriptors: Mapping[str, InputBindingDescriptor] | None = None,
+     validation_deadline: float | None = None,
++    tool_snapshot: bytes | None = None,
+ ) -> ValidatedRunOutput:
+     """Validate the one primary result without changing control state."""
+ 
+@@ -82,7 +83,8 @@
+         item["rule_id"] for item in contract["rules"] + contract["checkers"]
+     )
+     paths = {item.relative_path for item in sealed.files}
+-    if paths != {"result.json"}:
++    expected_paths = {"result.json"} | ({"tool-evidence.json"} if tool_snapshot is not None else set())
++    if paths != expected_paths:
+         raise RunOutputError(
+             "this minimal Run accepts exactly output/result.json",
+             details=_with_rule(
+@@ -91,7 +93,9 @@
+                 declared_rule_ids,
+             ),
+         )
+-    descriptor = sealed.files[0]
++    if tool_snapshot is not None and (sealed.root / "tool-evidence.json").read_bytes() != tool_snapshot:
++        raise RunCheckerError("tool evidence snapshot differs", category="integrity_failure")
++    descriptor = next(item for item in sealed.files if item.relative_path == "result.json")
+     path = sealed.root / descriptor.relative_path
+     try:
+         raw_envelope = path.read_bytes()
+--- a/src/scidiscovery/artifact_agent/service/runs.py
++++ b/src/scidiscovery/artifact_agent/service/runs.py
+@@ -20,7 +20,7 @@
+     operation_primary_output,
+     active_direct_revision_ports,
+ )
+-from ...operations.tooling import operation_agent_type
++from ...operations.tooling import operation_agent_type, tool_evidence_ports
+ from ...operations.workspace import (
+     WorkspaceFinalizationRequest,
+     WorkspaceMaterializationRequest,
+@@ -68,7 +68,10 @@
+ from .scheduler_bindings import SchedulerBindingService
+ 
+ 
+-class RunService:
++from .tool_evidence import ToolEvidenceMixin
++
++
++class RunService(ToolEvidenceMixin):
+     """The only service allowed to publish an Agent result as scientific data."""
+ 
+     def __init__(
+@@ -117,7 +120,7 @@
+             raise ValueError("RunService accepts Agent operations only")
+         if not self.backend.supports_operation(compiled):
+             raise RunError("runtime backend does not support the compiled Operation")
+-        if any(port.collection is not None for port in compiled.spec.outputs):
++        if any(port.collection is not None for port in compiled.spec.outputs) and not tool_evidence_ports(compiled):
+             raise RunError("minimal local Run does not yet support output collections")
+         if compiled.spec.limits is None:
+             raise ValueError("compiled operation has no limits")
+@@ -480,6 +483,16 @@
+                 expected_last_activity_at=value.last_activity_at,
+             )
+             raise RunStateConflict("prepared workspace is unavailable") from error
++        try:
++            self.adopt_tool_evidence(run_id)
++            if tool_evidence_ports(self._compiled(self.status(run_id))):
++                self._refresh_evidence_schema(run_id)
++        except RunCheckerError as error:
++            value = self.status(run_id)
++            self.record_failure(run_id, reason=f"preserved tool evidence cannot be opened: {error}",
++                category=error.category, expected_state="running",
++                expected_last_activity_at=value.last_activity_at)
++            raise RunStateConflict("preserved tool evidence integrity failure") from error
+         return self.status(run_id), workspace
+ 
+     def heartbeat(self, run_id: str) -> RunStatus:
+@@ -710,7 +723,17 @@
+             ).fetchall()
+         if len(rows) > 1:
+             raise RunStateConflict("multiple Runs claim the same exact output")
+-        return None if not rows else status_from_row(rows[0])
++        if rows:
++            return status_from_row(rows[0])
++        producer = self.artifacts.catalog(artifact_ref).labels.get('tool_producer_run')
++        if producer:
++            try:
++                value = self.status(producer)
++            except RunNotFound:
++                return None
++            if any(ref == artifact_ref for _, ref in self.evidence_output_refs(value)):
++                return value
++        return None
+ 
+     def record_activity(self, run_id: str, activity: str, *,
+                         diagnostic: dict[str, Any] | None = None) -> None:
+@@ -803,17 +826,9 @@
+         return tuple(sorted({str(row["activity"]).partition(":")[2] for row in rows}))
+ 
+     def signal_for_output(self, artifact_ref: ArtifactRef, *, require_current: bool = True) -> SchedulerSignal | None:
+-        with self._connect() as connection:
+-            row = connection.execute(
+-                """
+-                SELECT * FROM runs
+-                WHERE state = 'completed' AND output_ref_json = ?
+-                """,
+-                (artifact_ref.canonical_json(),),
+-            ).fetchone()
+-        if row is None:
++        status = self.completed_for_output(artifact_ref)
++        if status is None:
+             return None
+-        status = status_from_row(row)
+         if require_current:
+             try:
+                 self._compiled(status)
+@@ -862,6 +877,7 @@
+         try:
+             if value.accepted_candidate_digest is None:
+                 self._finalize_workspace(compiled, value.run_id, final_submission=final_submission)
++                self._prepare_evidence_snapshot(value.run_id)
+             sealed = self.backend.seal(
+                 value.run_id,
+                 max_files=compiled.spec.limits.max_files,
+@@ -888,10 +904,11 @@
+             validated = validate_run_output(
+                 compiled,
+                 sealed,
+-                input_source_ports={item.source_name: item.port_name for item in value.inputs},
++                input_source_ports=self.validation_source_ports(value),
+                 input_bytes=input_bytes,
+                 input_binding_descriptors=descriptors,
+                 validation_deadline=validation_deadline,
++                tool_snapshot=self._evidence_snapshot(value.run_id) if tool_evidence_ports(compiled) else None,
+             )
+         except WorkspaceError as error:
+             failure = RunCheckerError("sealed candidate integrity failed", category="integrity_failure")
+@@ -932,6 +949,25 @@
+                 sha256=envelope.sha256,
+                 output_name=envelope.labels.get("logical_name"),
+             )
++        if 'recovery_manifest' in contents:
++            from dataclasses import replace
++            manifest = json.loads(contents['recovery_manifest'])
++            original = dict(descriptors)
++            for record in manifest.get('records', ()):
++                match = next((d for d in original.values() if d.port_name == 'solver_outputs' and d.artifact_ref.model_dump(mode='json') == record['artifact_ref']), None)
++                if match is None:
++                    continue
++                alias = record['alias']
++                if alias in descriptors and descriptors[alias].artifact_ref != match.artifact_ref:
++                    raise RunCheckerError('replay alias conflicts with bound source', category='integrity_failure')
++                descriptors[alias] = replace(match, source_name=alias)
++                contents[alias] = contents[match.source_name]
++        acquired, acquired_descriptors = self.evidence_sources(value.run_id)
++        contents.update(acquired); descriptors.update(acquired_descriptors)
++        if acquired:
++            manifest_raw = self._evidence_snapshot(value.run_id)
++            contents["tool_recovery_manifest"] = manifest_raw
++            descriptors["tool_recovery_manifest"] = InputBindingDescriptor(source_name="tool_recovery_manifest", port_name="tool_evidence", artifact_ref=self._evidence_manifest(value), media_type="application/json", size_bytes=len(manifest_raw), sha256=hashlib.sha256(manifest_raw).hexdigest())
+         return contents, descriptors
+ 
+     def _materialize_workspace(
+@@ -1005,6 +1041,11 @@
+             if row["state"] != "running":
+                 connection.execute("ROLLBACK")
+                 raise RunStateConflict("Run is no longer running")
++            compiled = self._compiled(self.status(run_id))
++            if tool_evidence_ports(compiled):
++                snapshot = self.backend.seal(run_id, max_files=compiled.spec.limits.max_files, max_bytes=compiled.spec.limits.max_output_bytes, expected_digest=digest)
++                if (snapshot.root / 'tool-evidence.json').read_bytes() != self._evidence_snapshot(run_id):
++                    raise RunCheckerError('tool evidence snapshot changed before acceptance', category='integrity_failure')
+             accepted = row["accepted_candidate_digest"]
+             if accepted is not None and str(accepted) != digest:
+                 connection.execute("ROLLBACK")
+@@ -1025,6 +1066,8 @@
+         candidate_digest: str,
+     ) -> ArtifactRef:
+         compiled = self._compiled(value)
++        manifest = self._evidence_manifest(value)
++        extra_parents = (manifest,) if manifest is not None else ()
+         return self.artifacts.register(
+             validated.content,
+             ArtifactRegistration(
+@@ -1033,7 +1076,7 @@
+                 payload_schema_version=validated.payload_schema_version,
+                 media_type=validated.media_type,
+                 creator=ActorRef(actor_id=value.agent_type, actor_type="agent_worker"),
+-                parent_refs=tuple(item.artifact_ref for item in value.inputs),
++                parent_refs=tuple(item.artifact_ref for item in value.inputs) + extra_parents,
+                 labels={
+                     "operation_id": value.operation_id,
+                     "operation_version": value.operation_version,
+@@ -1105,6 +1148,13 @@
+                 request_fingerprint=value.output_binding_fingerprint,
+                 attached=True,
+             )
++            evidence = [(r['alias'], ArtifactRef.model_validate(r['artifact_ref'])) for r in self.tool_evidence(run_id)]
++            evidence += [('recovery_manifest', ref) for ref in self.artifacts.catalog(output).parent_refs if ref.schema_id == 'scidiscovery.tool-evidence-manifest.v1' and self.artifacts.catalog(ref).labels.get('tool_producer_run') == run_id]
++            for alias, ref in evidence:
++                self.scheduler_bindings.bind_in_connection(connection, instance=value.instance_id, namespace='artifact',
++                    name=value.output_binding_name+'.'+alias, logical_name=value.output_logical_name+'.'+alias,
++                    revision=value.output_revision, object_id=ref.artifact_id,
++                    request_fingerprint=hashlib.sha256((candidate_digest+alias).encode()).hexdigest(), attached=True)
+             cursor = connection.execute(
+                 """
+                 UPDATE runs SET state = 'completed', output_ref_json = ?,
+@@ -1360,6 +1410,7 @@
+                 )
+             connection.executescript(
+                 """
++                CREATE TABLE IF NOT EXISTS run_tool_evidence (run_id TEXT NOT NULL, ordinal INTEGER NOT NULL, evidence_key TEXT NOT NULL, record_json BLOB NOT NULL, alias TEXT NOT NULL, PRIMARY KEY(run_id, ordinal), UNIQUE(run_id,evidence_key));
+                 CREATE TABLE IF NOT EXISTS runs (
+                     run_id TEXT PRIMARY KEY,
+                     instance_id TEXT NOT NULL,
+--- /dev/null
++++ b/src/scidiscovery/artifact_agent/service/tool_evidence.py
+@@ -0,0 +1,225 @@
++"""Run-owned, opt-in evidence obtained by registered tools (never mutable inputs)."""
++from __future__ import annotations
++import hashlib
++import json
++from pathlib import Path
++from ...operations.tooling import tool_evidence_ports
++from ..schema.artifact import ArtifactRegistration
++from ..schema.common import canonical_json
++from ..schema.refs import ArtifactRef
++from .run_outputs import InputBindingDescriptor, RunCheckerError
++from .run_records import RunStateConflict
++
++
++class ToolEvidenceMixin:
++    def tool_evidence(self, run_id: str) -> list[dict]:
++        with self._connect() as connection:
++            rows = connection.execute("SELECT record_json FROM run_tool_evidence WHERE run_id=? ORDER BY ordinal", (run_id,)).fetchall()
++        return [json.loads(row[0]) for row in rows]
++
++    def evidence_sources(self, run_id: str, only_alias: str | None = None):
++        contents = {}; descriptors = {}
++        for record in self.tool_evidence(run_id):
++            if only_alias is not None and record['alias'] != only_alias:
++                continue
++            ref = ArtifactRef.model_validate(record['artifact_ref'])
++            try:
++                raw = self.artifacts.read(ref)
++                envelope = self.artifacts.catalog(ref)
++            except Exception as error:
++                raise RunCheckerError('tool evidence is unavailable', category='integrity_failure') from error
++            alias = record['alias']
++            if hashlib.sha256(raw).hexdigest() != ref.sha256:
++                raise RunCheckerError('tool evidence changed', category='integrity_failure')
++            contents[alias] = raw
++            descriptors[alias] = InputBindingDescriptor(source_name=alias, port_name='tool_evidence', artifact_ref=ref,
++                media_type=envelope.media_type, size_bytes=len(raw), sha256=ref.sha256,
++                output_name=record['metadata'].get('output_name'))
++        return contents, descriptors
++
++    def read_tool_evidence(self, value, alias):
++        contents, _ = self.evidence_sources(value.run_id, only_alias=alias)
++        if alias in contents:
++            return contents[alias]
++        # A historical alias is usable only for the same explicitly bound raw Artifact.
++        for item in value.inputs:
++            if item.port_name != 'recovery_manifest':
++                continue
++            manifest = json.loads(self.artifacts.read(item.artifact_ref))
++            for record in manifest.get('records', ()):
++                if record['alias'] != alias:
++                    continue
++                match = next((i for i in value.inputs if i.port_name == 'solver_outputs'
++                              and i.artifact_ref.model_dump(mode='json') == record['artifact_ref']), None)
++                if match is not None:
++                    raw = self.artifacts.read(match.artifact_ref)
++                    if hashlib.sha256(raw).hexdigest() != match.artifact_ref.sha256:
++                        raise RunCheckerError('historical evidence changed', category='integrity_failure')
++                    return raw
++        raise ValueError('unknown controlled evidence alias')
++
++    def accept_tool_evidence(self, run_id: str, *, tool_name: str, allowed_ports: tuple[str, ...],
++                             raw: bytes, media_type: str, metadata: dict, source_alias: str = 'execution_result') -> dict:
++        value = self._require_running(run_id)
++        compiled = self._compiled(value)
++        ports = tool_evidence_ports(compiled)
++        if 'tool_evidence' not in allowed_ports or 'tool_evidence' not in ports:
++            raise ValueError('tool evidence capability is not declared')
++        source = next((item for item in value.inputs if item.source_name == source_alias), None)
++        if source is None or source.artifact_ref.schema_id != 'scidiscovery.execution-result':
++            raise ValueError('tool evidence needs the bound execution result')
++        port = ports['tool_evidence']
++        if len(raw) > min(port.max_item_bytes, 32 * 1024 * 1024):
++            raise ValueError('file_bytes')
++        if len(canonical_json(metadata)) > 8192:
++            raise ValueError('metadata_bytes')
++        key = hashlib.sha256(canonical_json({'sha256':hashlib.sha256(raw).hexdigest(), 'metadata':metadata, 'source':source.artifact_ref.model_dump(mode='json')})).hexdigest()
++        with self._connect() as connection:
++            connection.execute('BEGIN IMMEDIATE')
++            row = self._row(connection, run_id)
++            if row['state'] != 'running' or row['accepted_candidate_digest'] is not None:
++                raise RunStateConflict('Run no longer accepts tool evidence')
++            existing = connection.execute('SELECT record_json FROM run_tool_evidence WHERE run_id=? AND evidence_key=?',(run_id,key)).fetchone()
++            if existing:
++                return json.loads(existing[0])
++            records = [json.loads(r[0]) for r in connection.execute('SELECT record_json FROM run_tool_evidence WHERE run_id=?',(run_id,))]
++            if len(records) >= min(port.max_items,32) or sum(r['size_bytes'] for r in records)+len(raw) > min(port.collection.max_total_bytes,256*1024*1024):
++                raise ValueError('evidence_budget')
++            if metadata.get('output_name') and any(r['metadata'].get('output_name')==metadata['output_name'] for r in records):
++                raise ValueError('ambiguous_mapping')
++            reserved = {r['alias'] for r in records}
++            for item in value.inputs:
++                if item.port_name == 'recovery_manifest':
++                    reserved.update(r['alias'] for r in json.loads(self.artifacts.read(item.artifact_ref)).get('records', ()))
++            ordinal=len(records)+1
++            number=ordinal
++            while f'tool_evidence_{number:03d}' in reserved:
++                number+=1
++            alias=f'tool_evidence_{number:03d}'
++            artifact=self.artifacts.register(raw,ArtifactRegistration(kind=port.kind,schema_id=port.schema_id,
++                payload_schema_version=1,media_type=media_type,creator=self.service_actor,
++                parent_refs=tuple(item.artifact_ref for item in value.inputs),
++                labels={'operation_id':value.operation_id,'operation_digest':value.operation_digest,'operation_version':value.operation_version,
++                        'operation_output_port':'tool_evidence','tool_name':tool_name,'tool_producer_run':run_id,
++                        **({'logical_name':metadata['output_name']} if metadata.get('output_name') else {})},confidentiality='run_private'),
++                idempotency_key=f'run:{run_id}:tool:{key}').ref
++            record={'alias':alias,'artifact_ref':artifact.model_dump(mode='json'),'source_ref':source.artifact_ref.model_dump(mode='json'),
++                    'media_type':media_type,'size_bytes':len(raw),'metadata':metadata,'tool_name':tool_name}
++            connection.execute('INSERT INTO run_tool_evidence VALUES (?,?,?,?,?)',(run_id,ordinal,key,canonical_json(record),alias))
++        self._refresh_evidence_schema(run_id)
++        return record
++
++    def _refresh_evidence_schema(self, run_id):
++        from .run_assignment import result_schema_json
++        value=self.status(run_id); compiled=self._compiled(value)
++        workspace=self.backend.open(run_id)
++        # The schema is a generated projection, never a replacement for the input bindings.
++        mapping = self.validation_source_ports(value)
++        schema=result_schema_json(compiled,input_source_ports=mapping)
++        from .local_workspace import write_control_workspace_file
++        write_control_workspace_file(workspace.root, Path('schema/result.schema.json'), schema, replace=True, mode=0o400)
++
++    def _evidence_snapshot(self, run_id):
++        return canonical_json({'schema_version':1,'records':self.tool_evidence(run_id)})
++
++    def _prepare_evidence_snapshot(self, run_id):
++        value=self.status(run_id)
++        if not tool_evidence_ports(self._compiled(value)):
++            return
++        workspace=self.backend.open(run_id)
++        raw=self._evidence_snapshot(run_id)
++        if len(raw)>1024*1024:
++            raise RunCheckerError('tool evidence manifest exceeds limit')
++        from .local_workspace import write_control_workspace_file
++        path=Path('output/tool-evidence.json')
++        write_control_workspace_file(workspace.root, path, raw, replace=(workspace.root/path).exists(), mode=0o400)
++
++    def _evidence_manifest(self, value):
++        records=self.tool_evidence(value.run_id)
++        if not records:
++            return None
++        compiled=self._compiled(value); port=tool_evidence_ports(compiled)['recovery_manifest_output']
++        return self.artifacts.register(self._evidence_snapshot(value.run_id),ArtifactRegistration(
++            kind=port.kind,schema_id=port.schema_id,payload_schema_version=1,media_type='application/json',creator=self.service_actor,
++            parent_refs=tuple(item.artifact_ref for item in value.inputs)+tuple(ArtifactRef.model_validate(r['artifact_ref']) for r in records),
++            labels={'operation_id':value.operation_id,'operation_digest':value.operation_digest,'operation_version':value.operation_version,
++                    'operation_output_port':'recovery_manifest_output','tool_producer_run':value.run_id},confidentiality='run_private'),
++            idempotency_key=f'run:{value.run_id}:tool-manifest:{hashlib.sha256(self._evidence_snapshot(value.run_id)).hexdigest()}').ref
++
++    def evidence_output_refs(self, value):
++        if value.state!='completed' or value.output_ref is None:
++            return []
++        refs=[(r['alias'],ArtifactRef.model_validate(r['artifact_ref'])) for r in self.tool_evidence(value.run_id)]
++        # Read the registered parent rather than rebuilding it with a new installed contract.
++        for ref in self.artifacts.catalog(value.output_ref).parent_refs:
++            if (ref.schema_id=='scidiscovery.tool-evidence-manifest.v1'
++                    and self.artifacts.catalog(ref).labels.get('tool_producer_run') == value.run_id):
++                refs.append(('recovery_manifest',ref))
++        return refs
++
++    def tool_io_budget(self, run_id, *, used_bytes=0, used_seconds=0.0, reserve=False):
++        from datetime import datetime, timezone
++        self._require_running(run_id)
++        with self._connect() as connection:
++            connection.execute('BEGIN IMMEDIATE')
++            rows = connection.execute("SELECT activity FROM run_activity WHERE run_id=? AND activity LIKE 'evidence_io:%'", (run_id,)).fetchall()
++            consumed_bytes = sum(int(r[0].split(':')[1]) for r in rows)
++            consumed_ms = sum(int(r[0].split(':')[2]) for r in rows)
++            remaining = {'remaining_bytes': max(0, 256*1024*1024-consumed_bytes),
++                         'remaining_seconds': max(0, 120-consumed_ms/1000)}
++            if reserve:
++                # Reserve before remote I/O. A crashed call conservatively spends its
++                # reservation; another process cannot concurrently borrow that budget.
++                used_bytes = remaining['remaining_bytes']
++                used_seconds = remaining['remaining_seconds']
++            if used_bytes or used_seconds:
++                connection.execute('INSERT INTO run_activity(run_id,activity,recorded_at,diagnostic_json) VALUES (?,?,?,?)',
++                    (run_id, 'evidence_io:%d:%d' % (used_bytes, round(used_seconds*1000)),
++                     datetime.now(timezone.utc).isoformat(), None))
++        return remaining if reserve else {
++            'remaining_bytes': max(0, remaining['remaining_bytes']-used_bytes),
++            'remaining_seconds': max(0, remaining['remaining_seconds']-used_seconds)}
++
++    def adopt_tool_evidence(self, run_id):
++        value=self.status(run_id)
++        if not tool_evidence_ports(self._compiled(value)):
++            return
++        with self._connect() as connection:
++            source_id=value.draft_from_run_id or self._row(connection,run_id)["resume_from_run_id"]
++        if not source_id:
++            return
++        source=self.status(source_id)
++        previous=self.tool_evidence(source_id)
++        if not previous:
++            return
++        original=next((i.artifact_ref for i in source.inputs if i.port_name=='execution_result'),None)
++        current=next((i.artifact_ref for i in value.inputs if i.port_name=='execution_result'),None)
++        if original is None or original!=current or source.instance_id!=value.instance_id:
++            raise RunCheckerError('preserved tool evidence belongs to another execution',category='integrity_failure')
++        for record in previous:
++            ref=ArtifactRef.model_validate(record['artifact_ref'])
++            try:
++                raw=self.artifacts.read(ref)
++            except Exception as error:
++                raise RunCheckerError('preserved evidence bytes unavailable', category='integrity_failure') from error
++            if hashlib.sha256(raw).hexdigest()!=ref.sha256:
++                raise RunCheckerError('preserved evidence bytes changed',category='integrity_failure')
++            self.accept_tool_evidence(run_id,tool_name=record['tool_name'],allowed_ports=('tool_evidence',),
++                raw=raw,media_type=record['media_type'],metadata=record['metadata'])
++
++    def validation_source_ports(self, value):
++        """Expected source wiring comes from bindings/receipts, never descriptors."""
++        ports={item.source_name:item.port_name for item in value.inputs}
++        records=self.tool_evidence(value.run_id)
++        ports.update({r['alias']:'tool_evidence' for r in records})
++        if records:
++            ports['tool_recovery_manifest']='tool_evidence'
++        for item in value.inputs:
++            if item.port_name!='recovery_manifest':
++                continue
++            manifest=json.loads(self.artifacts.read(item.artifact_ref))
++            for record in manifest.get('records',()):
++                match=next((i for i in value.inputs if i.port_name=='solver_outputs' and i.artifact_ref.model_dump(mode='json')==record['artifact_ref']),None)
++                if match is not None:
++                    ports[record['alias']]=match.port_name
++        return ports
+--- a/src/scidiscovery/operation_contract.py
++++ b/src/scidiscovery/operation_contract.py
+@@ -205,9 +205,9 @@
+     context_sources = tuple(
+         {
+             "port": name,
+-            "required": inputs[name].min_items > 0,
++            "required": inputs[name].min_items > 0 if name in inputs else False,
+             **(
+-                {"usage": inputs[name].usage}
++                {"usage": inputs[name].usage if name in inputs else "tool_evidence"}
+                 if source_projection is not None
+                 else {}
+             ),
+@@ -215,7 +215,7 @@
+         for name in port.context_sources
+     )
+     rules = [
+-        _rule("runtime.files", "Submit exactly output/result.json."),
++        _rule("runtime.files", "Submit output/result.json; declared tool evidence is added only by the runtime." if any(p.collection is not None for p in compiled.spec.outputs) else "Submit exactly output/result.json."),
+         _rule(
+             "runtime.envelope",
+             "The result file must be a valid RoleResultEnvelope JSON object.",
+@@ -291,20 +291,31 @@
+     reference = port.schema_resource
+     key = f"{reference.plugin_id or compiled.plugin_id}:{reference.component_id}"
+     schema = json.loads(compiled.implementations[key])
++    if port.collection is not None:
++        from .operations.tooling import tool_evidence_ports
++        if port.name in tool_evidence_ports(compiled):
++            schema["x-scidiscovery-produced-by"] = "registered_tool"
++    from .operations.tooling import tool_evidence_ports
++    evidence_ports = tool_evidence_ports(compiled)
++    if evidence_ports and input_source_ports is not None:
++        schema['x-scidiscovery-readable-evidence'] = [
++            {'alias': name, 'port': source_port,
++             'origin': 'registered_tool' if source_port in evidence_ports else 'bound_artifact'}
++            for name, source_port in sorted(input_source_ports.items())]
+     projection = _evidence_source_projection_version(compiled.spec, port)
+     if projection is not None:
+         inputs = {item.name: item for item in compiled.spec.inputs}
+         allowed_sources: tuple[str, ...] | None = None
+         if input_source_ports is not None:
+-            unknown = set(input_source_ports.values()) - set(inputs)
++            unknown = set(input_source_ports.values()) - set(inputs) - set(evidence_ports)
+             if unknown:
+                 raise ValueError("source binding references an unknown input port")
+             allowed_sources = tuple(
+                 sorted(
+                     source_name
+                     for source_name, port_name in input_source_ports.items()
+-                    if inputs[port_name].usage == "evidence_inventory"
+-                    and inputs[port_name].exposure != "handoff_only"
++                    if port_name in evidence_ports or (inputs[port_name].usage == "evidence_inventory"
++                    and inputs[port_name].exposure != "handoff_only")
+                 )
+             )
+         _project_evidence_source_schema(
+--- a/src/scidiscovery/operations/catalog.py
++++ b/src/scidiscovery/operations/catalog.py
+@@ -338,14 +338,17 @@
+                         contract = _resolve_component(plugin_map, components, used, plugin.plugin_id, port.semantic_contract,
+                                            "resource", reachable)
+                         contract_implementation = contract.implementation
++                    tool_ports = {name for ref in operation.executor.tools for name in getattr(getattr(components.get(_qualified(plugin.plugin_id, ref)), "implementation", None), "evidence_ports", ())}
+                     checker_issue = output_checker_contract_issue(
+                         contract_implementation, port,
+                         {item.name: item.min_items for item in operation.inputs},
+-                        agent_output=operation.executor.kind == "agent",
++                        agent_output=operation.executor.kind == "agent" and not (port.collection is not None and port.name in tool_ports),
+                     )
+                     if checker_issue: _fail(checker_issue[0], plugin.plugin_id, op_id,
+                                             checker_issue[1] or port.name)
+                     input_names = {item.name for item in operation.inputs}
++                    tool_ports = {name for ref in operation.executor.tools for name in getattr(getattr(components.get(_qualified(plugin.plugin_id, ref)), "implementation", None), "evidence_ports", ())}
++                    input_names |= {item.name for item in operation.outputs if item.collection is not None and item.name in tool_ports}
+                     if ((port.context_sources and not port.context_validator)
+                             or not set(port.context_sources) <= input_names):
+                         _fail("output_context_invalid", plugin.plugin_id, op_id, port.name)
+@@ -460,16 +463,21 @@
+             permission: PermissionTemplate | None = None
+             if executor.kind == "agent":
+                 if not executor.workspace or not executor.prompt or not executor.model: _fail("agent_authority_incomplete", plugin.plugin_id, op_id)
++                tool_ports = {name for ref in executor.tools for name in getattr(getattr(components.get(_qualified(plugin.plugin_id, ref)), "implementation", None), "evidence_ports", ())}
++                if tool_ports and (tool_ports != {'tool_evidence', 'recovery_manifest_output'}
++                        or tool_ports != {port.name for port in operation.outputs if port.collection is not None}):
++                    _fail("agent_tool_evidence_contract_invalid", plugin.plugin_id, op_id)
++                agent_outputs = tuple(port for port in operation.outputs if not (port.collection is not None and port.name in tool_ports))
+                 primary = tuple(port for port in operation.outputs if port.collection is None)
+                 if (len(primary) != 1 or primary[0].min_items != 1
+                         or primary[0].max_items != 1
+                         or primary[0].media_types != ("application/json",)
+-                        or any(port.validator is None for port in operation.outputs)):
++                        or any(port.validator is None for port in agent_outputs)):
+                     _fail("agent_output_contract_invalid", plugin.plugin_id, op_id)
+-                if any(port.semantic_contract is None for port in operation.outputs):
++                if any(port.semantic_contract is None for port in agent_outputs):
+                     _fail("agent_semantic_contract_missing", plugin.plugin_id,
+                           op_id, "outputs")
+-                for port in operation.outputs:
++                for port in agent_outputs:
+                     contract_key = _qualified(plugin.plugin_id, port.semantic_contract)
+                     for validator in (port.validator, port.context_validator,
+                                       port.collection.bundle_validator if port.collection else None):
+--- a/src/scidiscovery/operations/tooling.py
++++ b/src/scidiscovery/operations/tooling.py
+@@ -40,6 +40,8 @@
+     contextual_handler: Callable[[BaseModel, OperationToolContext], Any] | None = None
+     local_contextual_handler: Callable[[BaseModel, OperationToolContext], Any] | None = None
+     required_services: tuple[str, ...] = ()
++    optional_services: tuple[str, ...] = ()
++    evidence_ports: tuple[str, ...] = ()
+     network_access: bool = False
+ 
+     def issue(self) -> str | None:
+@@ -61,6 +63,11 @@
+             and self.contextual_handler is not None
+             or self.handler is not None
+             and self.local_contextual_handler is not None
++            or len(self.evidence_ports) != len(set(self.evidence_ports))
++            or (self.evidence_ports or self.optional_services) and self.contextual_handler is None
++            or len(self.optional_services) != len(set(self.optional_services))
++            or set(self.optional_services) & set(self.required_services)
++            or any(not _LOCAL_SERVICE.fullmatch(name) for name in (*self.optional_services, *self.evidence_ports))
+             or len(self.required_services) != len(set(self.required_services))
+             or any(
+                 _LOCAL_SERVICE.fullmatch(name) is None
+@@ -110,6 +117,7 @@
+         values.append(
+             replace(
+                 value,
++                optional_services=tuple(f"{provider}:{name}" for name in value.optional_services),
+                 required_services=tuple(
+                     f"{provider}:{name}" for name in value.required_services
+                 ),
+@@ -252,3 +260,10 @@
+     "operation_worker_tool_names",
+     "operation_worker_tools",
+ ]
++
++
++def tool_evidence_ports(compiled):
++    """Only registered trusted tools may produce declared ancillary collections."""
++    ports = {p.name: p for p in compiled.spec.outputs if p.collection is not None}
++    enabled = {name for tool in operation_local_worker_tools(compiled) for name in tool.evidence_ports}
++    return ports if enabled == set(ports) == {'tool_evidence', 'recovery_manifest_output'} else {}
+--- a/src/scidiscovery/platforms/codex.py
++++ b/src/scidiscovery/platforms/codex.py
+@@ -752,7 +752,7 @@
+     providers = {
+         service.partition(":")[0]
+         for tool in operation_local_worker_tools(compiled)
+-        for service in tool.required_services
++        for service in (*tool.required_services, *tool.optional_services)
+     }
+     return tuple(
+         (plugin_id, values[plugin_id])
+--- /dev/null
++++ b/tests/operations/test_analysis_evidence_recovery.py
+@@ -0,0 +1,478 @@
++"""Bounded production evidence recovery paths; no solver is launched."""
++import hashlib
++from pathlib import Path
++import pytest
++
++@pytest.mark.parametrize('remote',[False,True])
++def test_collection_keeps_later_products(tmp_path, remote):
++    from tcad_artifact.worker import _collect_outputs
++    from tcad_artifact.remote_runner_py36 import _collect_expected
++    (tmp_path/'later.plx').write_bytes(b'raw data\n')
++    expected=[dict(name=n,relative_path=p,required=True,max_bytes=1024,media_type='text/plain') for n,p in [('missing','missing.tdr'),('later','later.plx')]]
++    records=[]; errors=[]
++    if remote:
++        _collect_expected(str(tmp_path),expected,{'max_output_bytes':4096},records,errors)
++    else:
++        _collect_outputs(tmp_path,expected,{'max_output_bytes':4096},records=records,errors=errors)
++    assert [x['name'] for x in records]==['later']
++    assert len(errors)==1 and 'missing.tdr' in errors[0]
++
++
++def recovery_system(tmp_path):
++    from tests.operations.test_collector_analysis_handoff import _analysis_system,_collect_execution,_bind_collected
++    from scidiscovery.artifact_agent.interfaces.mcp_local_worker import LocalWorkerMCPRouter
++    from tcad_artifact.output_recovery import OutputInspectionService
++    from tcad_artifact.remote_runner_py36 import _inspect_directory
++    system=_analysis_system(tmp_path)
++    outputs=_collect_execution(system,tmp_path/'collector',name='collected',output_names=())
++    _bind_collected(system,outputs)
++    catalog,runtime,root,request,artifacts,_=system
++    result=root.facade._publish_execution_result(name='collected')
++    request['inputs'].append(dict(port='execution_result',artifact_names=[result]))
++    directory=tmp_path/'collector/runs/terminal_collected'
++    raw=runtime.artifacts.read(artifacts['output_A'].ref)
++    (directory/'work/A_actual.plx').write_bytes(raw)
++    class Adapter:
++        def inspect_outputs(self, external_run_id, relative_path, max_bytes=32*1024*1024):
++            assert external_run_id=='terminal_collected'
++            return _inspect_directory(str(directory),relative_path,max_bytes)
++    root.call_tool('operation_invoke',request)
++    op=catalog.operation('tcad.result.analyze.v1')
++    worker=LocalWorkerMCPRouter(runtime.runs,operation_id=op.spec.operation_id,operation_digest=op.digest,
++        tool_services={'tcad_artifact:tcad.output_inspection':OutputInspectionService(Adapter())})
++    opened=worker.call_tool('worker_open_assignment',{})
++    return system,worker,opened,directory
++
++
++def test_recovered_bytes_score_and_seal_in_same_run(tmp_path):
++    from tests.operations.test_tcad_result_analysis import raw_request,analysis_report,write_analysis
++    system,worker,opened,directory=recovery_system(tmp_path)
++    inspected=worker.call_tool('worker_tcad_inspect_outputs',{'relative_path':'A_actual.plx'})
++    assert inspected['status']=='available',inspected
++    accepted=worker.call_tool('worker_tcad_accept_output',dict(evidence_alias=inspected['evidence_alias'],output_name='A',rationale='Fixture content and exact case declaration match.',evidence_aliases=[inspected['evidence_alias']]))
++    assert accepted['status']=='accepted',accepted
++    alias=accepted['evidence_alias']
++    record=worker.call_tool('worker_tcad_curve_score',dict(record_key='recovered_score',request=raw_request(alias=alias)))
++    assert record['status']=='computed',record
++    report=analysis_report(alias=alias,output_name='A',mapped=True)
++    report['calculation_records']=[record]
++    write_analysis(opened,report)
++    submitted=worker.call_tool('worker_submit_result',{})
++    assert submitted['state']=='completed',submitted
++    status=system[2].call_tool('run_status',{'name':'analysis'})
++    assert len(status['evidence_outputs'])==3
++    assert status['sealed_output']['payload']['calculation_records']==[record]
++    assert (directory/'work/A_actual.plx').exists()
++
++
++def test_new_run_replays_original_record_from_sealed_evidence(tmp_path):
++    from copy import deepcopy
++    from tests.operations.test_tcad_result_analysis import raw_request,analysis_report,write_analysis,open_analysis
++    system,worker,opened,_=recovery_system(tmp_path)
++    inspected=worker.call_tool('worker_tcad_inspect_outputs',{'relative_path':'A_actual.plx'})
++    accepted=worker.call_tool('worker_tcad_accept_output',dict(evidence_alias=inspected['evidence_alias'],output_name='A',rationale='Exact fixture mapping.',evidence_aliases=[inspected['evidence_alias']]))
++    alias=accepted['evidence_alias']
++    calculation=worker.call_tool('worker_tcad_curve_score',dict(record_key='original',request=raw_request(alias=alias)))
++    report=analysis_report(alias=alias,output_name='A',mapped=True); report['calculation_records']=[calculation]
++    write_analysis(opened,report)
++    assert worker.call_tool('worker_submit_result',{})['state']=='completed'
++    catalog,runtime,root,request,artifacts,register=system
++    request=deepcopy(request);request['name']='next_analysis'
++    request['inputs'].extend([dict(port='recovery_manifest',artifact_names=['analysis.output.recovery_manifest']),dict(port='solver_outputs',artifact_names=['analysis.output.'+alias])])
++    # An old audit covers only original products, not evidence obtained later.
++    from scidiscovery.artifact_agent.schema.common import canonical_json
++    original_inputs = runtime.runs.status(worker._run_id).inputs
++    manifest_ref = next(i.artifact_ref for i in original_inputs if i.port_name == 'runtime_manifest')
++    audit = dict(schema_version=1, verdict='pass', terminal_state='succeeded', exit_code=0,
++        checks=[dict(check_key='fixture', status='pass', rationale='Original execution scope only.')],
++        solver_native_output_count=0, transport_derived_output_count=0, parser_derived_output_count=0,
++        rationale='Does not attest subsequently recovered bytes.')
++    register('old_audit', canonical_json(audit), 'tcad.runtime-attestation.v1',
++             parents=(artifacts['package'].ref, manifest_ref))
++    request['inputs'].append(dict(port='runtime_attestation', artifact_names=['old_audit']))
++    from tests.operations.test_collector_analysis_handoff import _collect_execution
++    foreign = _collect_execution(system, tmp_path/'foreign', name='foreign', output_names=('A',))
++    wrong = deepcopy(request)
++    next(i for i in wrong['inputs'] if i['port']=='solver_outputs')['artifact_names'] = [foreign['A']]
++    assert not root.call_tool('operation_preflight', wrong)['admissible']
++    preflight=root.call_tool('operation_preflight',request)
++    assert preflight['admissible'],preflight
++    next_worker,next_opened=open_analysis((catalog,runtime,root,request,artifacts,register))
++    assert alias in (Path(next_opened['workspace_path'])/'schema/result.schema.json').read_text()
++    replay=next_worker.call_tool('worker_tcad_curve_score',dict(record_key='original',request=calculation['request']))
++    assert replay==calculation
++    write_analysis(next_opened,report)
++    submitted=next_worker.call_tool('worker_submit_result',{})
++    assert submitted['state']=='completed',submitted
++    assert not root.call_tool('run_status', {'name':'next_analysis'}).get('evidence_outputs')
++
++
++@pytest.mark.parametrize('failure',['changed','symlink','budget','missing'])
++def test_inspection_failures_remain_bounded(tmp_path,failure):
++    system,worker,opened,directory=recovery_system(tmp_path)
++    if failure=='missing':
++        reply=worker.call_tool('worker_tcad_inspect_outputs',{'relative_path':'absent.plx'})
++        assert reply['status']=='not_found'
++    elif failure=='symlink':
++        (directory/'work/foreign.plx').symlink_to(tmp_path/'outside')
++        reply=worker.call_tool('worker_tcad_inspect_outputs',{'relative_path':'foreign.plx'})
++        assert reply['status']=='unavailable'
++    elif failure=='budget':
++        system[1].runs.tool_io_budget(worker._run_id,used_bytes=256*1024*1024)
++        reply=worker.call_tool('worker_tcad_inspect_outputs',{'relative_path':'A_actual.plx'})
++        assert reply['status']=='limit_exceeded'
++    else:
++        reply=worker.call_tool('worker_tcad_inspect_outputs',{'relative_path':'A_actual.plx'})
++        (directory/'work/A_actual.plx').write_bytes(b'changed')
++        reply=worker.call_tool('worker_tcad_accept_output',dict(evidence_alias=reply['evidence_alias'],output_name='A',rationale='fixture mapping',evidence_aliases=['runtime_manifest']))
++        assert reply['status']=='changed_since_inspection'
++    from tests.operations.test_tcad_result_analysis import analysis_report,write_analysis
++    write_analysis(opened,analysis_report())
++    assert worker.call_tool('worker_submit_result',{})['state']=='completed'
++
++
++def test_offline_tools_do_not_prevent_open_or_limited_submit(tmp_path):
++    from tests.operations.test_tcad_result_analysis import analysis_system,open_analysis,analysis_report,write_analysis
++    worker,opened=open_analysis(analysis_system(tmp_path))
++    assert worker.call_tool('worker_tcad_inspect_outputs',{})['status']=='unavailable'
++    write_analysis(opened,analysis_report())
++    assert worker.call_tool('worker_submit_result',{})['state']=='completed'
++
++
++def test_reopen_keeps_receipts_and_duplicate_accept_is_idempotent(tmp_path):
++    from scidiscovery.artifact_agent.interfaces.mcp_local_worker import LocalWorkerMCPRouter
++    system,worker,opened,_=recovery_system(tmp_path)
++    inspected=worker.call_tool('worker_tcad_inspect_outputs',{'relative_path':'A_actual.plx'})
++    args=dict(evidence_alias=inspected['evidence_alias'],output_name='A',rationale='Exact mapping',evidence_aliases=[inspected['evidence_alias']])
++    accepted=worker.call_tool('worker_tcad_accept_output',args)
++    op=system[0].operation('tcad.result.analyze.v1')
++    restarted=LocalWorkerMCPRouter(system[1].runs,operation_id=op.spec.operation_id,operation_digest=op.digest,tool_services=worker.tool_services)
++    restarted.call_tool('worker_open_assignment',{})
++    assert restarted.call_tool('worker_tcad_accept_output',args)['evidence_alias']==accepted['evidence_alias']
++    assert len(system[1].runs.tool_evidence(restarted._run_id))==2
++
++
++def test_failed_run_preserves_tool_evidence_for_new_bound_run(tmp_path):
++    from copy import deepcopy
++    from tests.operations.test_tcad_result_analysis import analysis_report,write_analysis,open_analysis
++    system,worker,opened,directory=recovery_system(tmp_path)
++    inspected=worker.call_tool('worker_tcad_inspect_outputs',{'relative_path':'A_actual.plx'})
++    accepted=worker.call_tool('worker_tcad_accept_output',dict(evidence_alias=inspected['evidence_alias'],output_name='A',rationale='Exact mapping',evidence_aliases=[inspected['evidence_alias']]))
++    report=analysis_report(alias=accepted['evidence_alias'],output_name='A',mapped=True)
++    write_analysis(opened,report)
++    catalog,runtime,root,request,artifacts,register=system
++    status=root.call_tool('run_status',{'name':'analysis'})
++    failed=root.call_tool('run_record_failure',dict(name='analysis',reason='fixture transport interruption',expected_state='running',expected_last_activity_at=status['last_activity_at']))
++    assert failed['recovery']['draft_available'], (failed['recovery'], runtime.runs.status(worker._run_id).recovery_draft)
++    assert not failed.get('evidence_outputs')
++    # Remote bytes are no longer needed to use the already accepted, preserved copy.
++    (directory/'work/A_actual.plx').unlink()
++    request=deepcopy(request);request.update(name='resumed',draft_from='analysis')
++    next_worker,next_opened=open_analysis((catalog,runtime,root,request,artifacts,register))
++    assert len(runtime.runs.tool_evidence(next_worker._run_id))==2
++    write_analysis(next_opened,report)
++    submitted=next_worker.call_tool('worker_submit_result',{})
++    assert submitted['state']=='completed',submitted
++
++
++def test_tool_evidence_cannot_change_after_candidate_acceptance(tmp_path):
++    from tests.operations.test_tcad_result_analysis import analysis_report,write_analysis
++    from scidiscovery.artifact_agent.service.run_records import RunStateConflict
++    system,worker,opened,_=recovery_system(tmp_path)
++    reply=worker.call_tool('worker_tcad_inspect_outputs',{'relative_path':'A_actual.plx'})
++    runs=system[1].runs
++    write_analysis(opened,analysis_report())
++    value=runs.status(worker._run_id)
++    sealed,validated=runs._validated_candidate(value)
++    runs._accept_candidate(value.run_id,sealed.digest)
++    with pytest.raises(RunStateConflict):
++        runs.accept_tool_evidence(value.run_id,tool_name='worker_tcad_inspect_outputs',allowed_ports=('tool_evidence',),raw=b'late',media_type='text/plain',metadata={'relative_path':'late'})
++    assert worker.call_tool('worker_submit_result',{})['state']=='completed'
++
++@pytest.mark.parametrize('remote', [False, True])
++def test_worker_preserves_solver_success_and_collection_failure(tmp_path, remote):
++    import json
++    import subprocess
++    import sys
++    from tcad_artifact import worker, remote_runner_py36
++    work = tmp_path / 'work'
++    work.mkdir()
++    (work / 'main.cmd').write_text('echo raw > later.plx\nexit 0\n')
++    expected = [dict(name=n, relative_path=p, required=True, max_bytes=1024, media_type='text/plain')
++                for n, p in [('missing', 'missing.tdr'), ('later', 'later.plx')]]
++    job = dict(executable='/bin/sh', arguments=['main.cmd'], environment={},
++               execution_purpose='production', expected_outputs=expected,
++               limits=dict(cpu_time_seconds=5, wall_time_seconds=5,
++                           max_memory_bytes=128*1024*1024, max_output_bytes=1024*1024))
++    (tmp_path / ('runtime.json' if remote else 'job.json')).write_text(json.dumps(job))
++    command = ([sys.executable, '-c', "import runpy,sys; raise SystemExit(runpy.run_path(sys.argv[1])['_run_worker']({},sys.argv[2]))", remote_runner_py36.__file__, str(tmp_path)]
++               if remote else [sys.executable, worker.__file__, str(tmp_path)])
++    result = subprocess.run(command, capture_output=True, timeout=15)
++    assert result.returncode == 97, result.stderr
++    manifest = json.loads((tmp_path / 'output_manifest.json').read_bytes())
++    assert manifest['solver_exit_code'] == 0 and manifest['exit_code'] == 97
++    assert [item['name'] for item in manifest['outputs']] == ['later']
++    assert len(manifest['collection_errors']) == 1
++
++
++def test_command_ssh_remote_inspection_roundtrip(tmp_path):
++    import json
++    import os
++    import sys
++    from tcad_artifact.command_adapter import CommandAdapterConfig, CommandTCADExecutorAdapter
++    run_id = 'run_' + 'a'*32
++    directory = tmp_path / 'remote' / run_id
++    (directory / 'work').mkdir(parents=True)
++    (directory / 'done').touch()
++    (directory / 'work/actual.plx').write_bytes(b'original bytes')
++    script = tmp_path / 'transport.py'
++    script.write_text('''import json,sys
++from pathlib import Path
++from tcad_artifact.ssh_transport import SSHTCADTransport
++from tcad_artifact.remote_runner_py36 import _rpc
++root=Path(sys.argv[1])
++class Remote:
++    def rpc(self,request): return _rpc({'result_root':str(root/'remote')},{'request':request})
++    def get_to(self,path,destination,max_bytes):
++        raw=Path(path).read_bytes()
++        assert len(raw)<=max_bytes
++        destination.write_bytes(raw)
++transport=SSHTCADTransport(Remote(),local_result_root=root/'local')
++request=json.load(sys.stdin)
++value=transport.handle(request['operation'],request['payload'])
++print(json.dumps(dict(schema_version=1,operation=request['operation'],ok=True,payload=value)))
++''')
++    adapter = CommandTCADExecutorAdapter(CommandAdapterConfig(executable=sys.executable,
++        arguments=(str(script), str(tmp_path)), environment={'PYTHONPATH':os.pathsep.join(sys.path)}),
++        local_result_root=tmp_path/'local')
++    listed = adapter.inspect_outputs(run_id)
++    assert listed['status'] == 'available' and listed['files'][0]['relative_path'] == 'actual.plx'
++    value = adapter.inspect_outputs(run_id, 'actual.plx')
++    assert value['status'] == 'available'
++    assert Path(value['file']['local_path']).read_bytes() == b'original bytes'
++    assert adapter.inspect_outputs(run_id, 'actual.plx', max_bytes=1)['status'] == 'limit_exceeded'
++    assert (directory/'work/actual.plx').read_bytes() == b'original bytes'
++
++
++def test_forged_workspace_receipt_cannot_publish_evidence(tmp_path):
++    from tests.operations.test_tcad_result_analysis import analysis_report,write_analysis
++    system, worker, opened, _ = recovery_system(tmp_path)
++    output = Path(opened['workspace_path'])/'output'
++    (output/'tool-evidence.json').write_text('{"schema_version":1,"records":[{"alias":"forged"}]}')
++    write_analysis(opened, analysis_report())
++    assert worker.call_tool('worker_submit_result', {})['state'] == 'completed'
++    assert not system[2].call_tool('run_status', {'name':'analysis'}).get('evidence_outputs')
++
++
++def test_ssh_inspection_download_streams_through_remote_protocol(tmp_path, monkeypatch):
++    import json
++    import subprocess
++    import sys
++    from tcad_artifact.ssh_transport import SSHRemoteClient, SSHTCADTransportConfig
++    from tcad_artifact import remote_runner_py36
++    raw = b'0123456789' * 220000
++    source = tmp_path/'source'
++    source.write_bytes(raw)
++    client = SSHRemoteClient(SSHTCADTransportConfig(ssh_executable=sys.executable,
++        destination='a@fixture',remote_helper='/fixture/helper',remote_config='/fixture/config',remote_exchange_root='/fixture/exchange'))
++    def run(command, **kwargs):
++        assert kwargs['stdout'] != subprocess.PIPE
++        code = "import runpy,sys,json; m=runpy.run_path(sys.argv[1]); m['_handle'](json.loads(sys.argv[2]),json.loads(sys.stdin.buffer.readline()),sys.stdin.buffer,sys.stdout.buffer)"
++        return subprocess.run([sys.executable,'-c',code,remote_runner_py36.__file__,
++                               json.dumps({'result_root':str(tmp_path),'max_transfer_bytes':4*1024*1024})], **kwargs)
++    monkeypatch.setattr(client, '_run', run)
++    target = tmp_path/'download'
++    client.get_to(str(source), target, len(raw))
++    assert target.read_bytes() == raw
++
++
++def test_socket_inspection_uses_existing_execution_router(tmp_path):
++    import json
++    import multiprocessing
++    import time
++    from scidiscovery.interfaces.daemon import UnixSocketDaemon
++    from tcad_artifact.execution_control import TCADExecutionFacade,TCADExecutionPolicy,TCADExecutionRouter,ToolProfile
++    from tcad_artifact.execution_adapter import TCADExecutorAdapter
++    facade = TCADExecutionFacade(policy=TCADExecutionPolicy(allowed_input_roots=(str(tmp_path),),
++        tools=(ToolProfile(profile_id='fixture',solver_kind='deterministic_tool',executable='/bin/true',release_evidence='fixture'),)), state_root=tmp_path/'state')
++    directory = facade.runs_root/'terminal_fixture'
++    (directory/'work').mkdir(parents=True)
++    (directory/'work/actual').write_bytes(b'raw')
++    (directory/'done').touch()
++    (directory/'output_manifest.json').write_text(json.dumps({'terminal_state':'succeeded','exit_code':0}))
++    import sqlite3
++    with sqlite3.connect(facade.database_path) as connection:
++        connection.execute('INSERT INTO submissions VALUES (?,?,?,?)', ('a'*64,'terminal_fixture','2026-09-09T00:00:00Z','terminal'))
++    socket = tmp_path/'control.sock'
++    from scidiscovery.artifact_agent.interfaces.mcp import MCPRouter
++    process = multiprocessing.get_context('fork').Process(target=UnixSocketDaemon(socket,MCPRouter(TCADExecutionRouter(facade),name='tcad-control')).serve_forever)
++    process.start()
++    try:
++        deadline=time.monotonic()+5
++        while not socket.exists() and time.monotonic()<deadline:
++            time.sleep(.02)
++        result=TCADExecutorAdapter(socket).inspect_outputs('terminal_fixture','actual')
++        assert result['status']=='available' and result['file']['size_bytes']==3
++    finally:
++        process.terminate()
++        process.join(5)
++        assert not process.is_alive()
++
++
++def test_reserved_io_budget_cannot_be_spent_by_another_router(tmp_path):
++    system, worker, _, _ = recovery_system(tmp_path)
++    service = system[1].runs
++    reserved = service.tool_io_budget(worker._run_id, reserve=True)
++    assert reserved['remaining_seconds'] == 120
++    assert service.tool_io_budget(worker._run_id, reserve=True)['remaining_seconds'] == 0
++    service.tool_io_budget(worker._run_id, used_bytes=-reserved['remaining_bytes']+10, used_seconds=-119)
++    assert service.tool_io_budget(worker._run_id)['remaining_seconds'] == 119
++
++
++def test_optional_service_startup_failure_does_not_relax_author_requirement(tmp_path, monkeypatch):
++    from tests.operations.test_tcad_result_analysis import analysis_system
++    import scidiscovery.artifact_agent.interfaces.mcp_local_worker as module
++    catalog = analysis_system(tmp_path)[0]
++    def broken(*args, **kwargs):
++        raise FileNotFoundError('missing transport configuration')
++    monkeypatch.setattr(module, 'load_runtime_plugin_contributions', broken)
++    assert module._load_operation_services(catalog, 'tcad.result.analyze.v1',
++        {'tcad_artifact':tmp_path/'absent'}, tmp_path) == {}
++    with pytest.raises(FileNotFoundError):
++        module._load_operation_services(catalog, 'tcad.deck.author.initial.v1',
++            {'tcad_artifact':tmp_path/'absent'}, tmp_path)
++
++
++def test_collection_declaration_without_trusted_tool_is_rejected_at_both_gates(tmp_path, monkeypatch):
++    from dataclasses import replace
++    from types import SimpleNamespace
++    from tests.operations.test_tcad_result_analysis import analysis_system
++    from scidiscovery.artifact_agent.service.local_workspace import LocalTrustedBackend
++    from scidiscovery.artifact_agent.service.runs import RunError
++    catalog, runtime, *_ = analysis_system(tmp_path)
++    operation = catalog.operation('tcad.result.analyze.v1')
++    executor = operation.spec.executor.model_copy(update={'tools':()})
++    undeclared = replace(operation,spec=operation.spec.model_copy(update={'executor':executor}))
++    assert LocalTrustedBackend.unsupported_requirements(undeclared) == ('agent_collection_outputs',)
++    monkeypatch.setattr(runtime.runs.backend, 'supports_operation', lambda _: True)
++    with pytest.raises(RunError, match='output collections'):
++        runtime.runs.schedule(SimpleNamespace(compiled=undeclared), instance_id='unused',
++            output_binding_name='unused',output_logical_name='unused',output_revision=1,
++            output_binding_fingerprint='unused')
++
++
++def test_corrupt_retained_evidence_is_engineering_failure(tmp_path, monkeypatch):
++    from tests.operations.test_tcad_result_analysis import analysis_report,write_analysis
++    system, worker, opened, _ = recovery_system(tmp_path)
++    inspected = worker.call_tool('worker_tcad_inspect_outputs', {'relative_path':'A_actual.plx'})
++    record = system[1].runs.tool_evidence(worker._run_id)[0]
++    original_read = system[1].artifacts.read
++    def read(ref):
++        return b'corrupted' if ref.model_dump(mode='json') == record['artifact_ref'] else original_read(ref)
++    write_analysis(opened, analysis_report(alias=inspected['evidence_alias']))
++    monkeypatch.setattr(system[1].artifacts, 'read', read)
++    assert worker.call_tool('worker_submit_result', {})['state'] == 'failed'
++    assert system[2].call_tool('run_status', {'name':'analysis'})['recovery']['delivery_preserved']
++
++
++def test_old_runner_tool_error_allows_limited_report(tmp_path):
++    from tcad_artifact.output_recovery import OutputInspectionService
++    from tests.operations.test_tcad_result_analysis import analysis_report,write_analysis
++    system, worker, opened, _ = recovery_system(tmp_path)
++    class OldAdapter:
++        def inspect_outputs(self, *args, **kwargs):
++            raise RuntimeError('unknown runner tool')
++    worker.tool_services['tcad_artifact:tcad.output_inspection'] = OutputInspectionService(OldAdapter())
++    assert worker.call_tool('worker_tcad_inspect_outputs', {})['status'] == 'unsupported'
++    write_analysis(opened, analysis_report())
++    assert worker.call_tool('worker_submit_result', {})['state'] == 'completed'
++
++
++def test_unmapped_inspection_remains_readable_as_next_run_background(tmp_path):
++    from copy import deepcopy
++    from tests.operations.test_tcad_result_analysis import analysis_report,write_analysis,open_analysis
++    system, worker, opened, _ = recovery_system(tmp_path)
++    inspected = worker.call_tool('worker_tcad_inspect_outputs', {'relative_path':'A_actual.plx'})
++    alias = inspected['evidence_alias']
++    write_analysis(opened, analysis_report(alias=alias))
++    assert worker.call_tool('worker_submit_result', {})['state'] == 'completed'
++    catalog,runtime,root,request,artifacts,register = system
++    request = deepcopy(request)
++    request['name'] = 'background_analysis'
++    request['inputs'].extend([dict(port='recovery_manifest',artifact_names=['analysis.output.recovery_manifest']),
++                              dict(port='solver_outputs',artifact_names=['analysis.output.'+alias])])
++    next_worker,next_opened = open_analysis((catalog,runtime,root,request,artifacts,register))
++    write_analysis(next_opened, analysis_report(alias=alias))
++    assert next_worker.call_tool('worker_submit_result', {})['state'] == 'completed'
++
++@pytest.mark.parametrize('solver_code,terminal,admitted', [(None,'failed',True),(0,'failed',True),(1,'failed',False),(0,'cancelled',False)])
++def test_collection_97_does_not_override_solver_facts(tmp_path, solver_code, terminal, admitted):
++    import json
++    from scidiscovery.artifact_agent.schema.common import canonical_json
++    from tcad_artifact.project_packager import TCADRuntimeManifest
++    from tests.operations.test_tcad_result_analysis import analysis_system,analysis_report,open_analysis,write_analysis
++    system=analysis_system(tmp_path)
++    catalog,runtime,root,request,artifacts,register=system
++    manifest=json.loads(runtime.artifacts.read(artifacts['manifest'].ref))
++    manifest.update(exit_code=97,terminal_state=terminal,error='fixture collection failure')
++    if solver_code is not None:
++        manifest['solver_exit_code']=solver_code
++    raw=canonical_json(manifest)
++    assert TCADRuntimeManifest.model_validate_json(raw).solver_exit_code==solver_code
++    register('collection_manifest',raw,'opaque',parents=artifacts['manifest'].parent_refs)
++    next(i for i in request['inputs'] if i['port']=='runtime_manifest')['artifact_names']=['collection_manifest']
++    worker,opened=open_analysis(system)
++    report=analysis_report(alias='solver_outputs_001',output_name='A',mapped=True)
++    report['gates']['numerical_validity']['status']='pass'
++    report['gates']['numerical_validity']['summary']='Fixture local numerical condition is supported by the raw product; no overall success claimed.'
++    report['gates']['control_equivalence']=dict(status='fail',summary='Control mismatch remains.',evidence_keys=['raw_evidence'])
++    write_analysis(opened,report)
++    result=worker.call_tool('worker_submit_result',{})
++    assert result['state']==('completed' if admitted else 'rejected'),result
++
++
++def test_native_plx_declared_as_text_plain_scores_without_relabeling(tmp_path):
++    import json
++    from scidiscovery.artifact_agent.schema.common import canonical_json
++    from tests.operations.test_tcad_result_analysis import analysis_system,analysis_report,open_analysis,write_analysis,raw_request
++    system=analysis_system(tmp_path)
++    catalog,runtime,root,request,artifacts,register=system
++    package=json.loads(runtime.artifacts.read(artifacts['package'].ref))
++    for output in package['project']['expected_outputs']:
++        output['media_type']='text/plain'
++    new_package=register('text_package',canonical_json(package),'tcad.reviewed-deck-package.v2',parents=artifacts['package'].parent_refs)
++    manifest=json.loads(runtime.artifacts.read(artifacts['manifest'].ref))
++    for output in manifest['outputs']:
++        output['media_type']='text/plain'
++    new_manifest=register('text_manifest',canonical_json(manifest),'opaque',parents=(new_package.ref,))
++    register('text_output',runtime.artifacts.read(artifacts['output_A'].ref),'opaque',parents=new_manifest.parent_refs,media='text/plain',output_name='A')
++    replacements={'reviewed_package':'text_package','runtime_manifest':'text_manifest','solver_outputs':'text_output'}
++    for item in request['inputs']:
++        if item['port'] in replacements:
++            item['artifact_names']=[replacements[item['port']]]
++    worker,opened=open_analysis(system)
++    record=worker.call_tool('worker_tcad_curve_score',dict(record_key='plain',request=raw_request(alias='solver_outputs')))
++    assert record['status']=='computed',record
++    report=analysis_report(alias='solver_outputs',output_name='A',mapped=True)
++    report['calculation_records']=[record]
++    write_analysis(opened,report)
++    assert worker.call_tool('worker_submit_result',{})['state']=='completed'
++
++
++def test_corrupt_preserved_receipt_fails_successor_open_explicitly(tmp_path, monkeypatch):
++    from copy import deepcopy
++    from tests.operations.test_tcad_result_analysis import analysis_report,write_analysis,open_analysis
++    system,worker,opened,_=recovery_system(tmp_path)
++    worker.call_tool('worker_tcad_inspect_outputs',{'relative_path':'A_actual.plx'})
++    catalog,runtime,root,request,artifacts,register=system
++    record=runtime.runs.tool_evidence(worker._run_id)[0]
++    write_analysis(opened,analysis_report())
++    status=root.call_tool('run_status',{'name':'analysis'})
++    root.call_tool('run_record_failure',dict(name='analysis',reason='fixture interruption',expected_state='running',expected_last_activity_at=status['last_activity_at']))
++    original_read=runtime.artifacts.read
++    monkeypatch.setattr(runtime.artifacts,'read',lambda ref: b'corrupt' if ref.model_dump(mode='json')==record['artifact_ref'] else original_read(ref))
++    request=deepcopy(request)
++    request.update(name='corrupt_successor',draft_from='analysis')
++    with pytest.raises(Exception,match='preserved tool evidence integrity failure'):
++        open_analysis((catalog,runtime,root,request,artifacts,register))
++    assert root.call_tool('run_status',{'name':'corrupt_successor'})['state']=='failed'
+--- a/tests/operations/test_analysis_tool_installed.py
++++ b/tests/operations/test_analysis_tool_installed.py
+@@ -48,6 +48,10 @@
+     assert domain_ports["solver_outputs"].max_items == 32
+     assert "curve_bundle" not in domain_ports and "metric_report" not in domain_ports
+     assert "worker_tcad_curve_score" in operation_local_worker_tool_names(domain)
++    from scidiscovery.platforms.codex import _operation_runtime_plugin_configs
++    configured = {"tcad_artifact": Path("/fixture/tcad.json")}
++    assert _operation_runtime_plugin_configs(domain, configured) == tuple(configured.items())
++    assert {"worker_tcad_inspect_outputs", "worker_tcad_accept_output"} <= set(operation_local_worker_tool_names(domain))
+     operations.append(domain)
+     from scidiscovery.operation_declaration import RESEARCH_WORK_CONTEXT
+     from scidiscovery.operations.invoke import operation_port_json_schema
+@@ -105,7 +109,7 @@
+ tool = next(t for t in operation_worker_tools(compiled) if t.name == "worker_curve_score")
+ class Context:
+     remaining_seconds = 120
+-    def read_input(self, alias):
++    def read_evidence(self, alias):
+         assert alias == "curve_bundle"
+         return bundle_bytes
+ record = tool.contextual_handler(tool.input_model(record_key="installed", request=request), Context())
+--- a/tests/operations/test_catalog_installed_entrypoint.py
++++ b/tests/operations/test_catalog_installed_entrypoint.py
+@@ -77,10 +77,15 @@
+     for port in compiled.spec.outputs:
+         schema = operation_port_json_schema(compiled, port)
+         contract = schema["x-scidiscovery-validation-contract"]
++        from scidiscovery.operations.tooling import tool_evidence_ports
++        evidence_ports = tool_evidence_ports(compiled)
++        if port.collection is not None and port.name in evidence_ports:
++            assert schema["x-scidiscovery-produced-by"] == "registered_tool"
++            continue
+         semantic = schema["x-scidiscovery-semantic-constraints"]
+         rule_ids = {rule["rule_id"] for rule in semantic["rules"]}
+-        assert set(port.context_sources) <= inputs.keys()
+-        assert all(inputs[name].exposure in {"full", "on_demand"} for name in port.context_sources)
++        assert set(port.context_sources) <= inputs.keys() | evidence_ports.keys()
++        assert all(name in evidence_ports or inputs[name].exposure in {"full", "on_demand"} for name in port.context_sources)
+         for checker in contract["checkers"]:
+             assert checker["rule_id"] in rule_ids
+         assert {item["port"] for item in contract["context_sources"]} == set(port.context_sources)
+@@ -1430,3 +1435,33 @@
+ print("installed historical analysis completed; current author authority not inherited")
+ ''')
+     assert output.strip() == "installed historical analysis completed; current author authority not inherited"
++
++
++def test_installed_analysis_evidence_recovery(installed_environments, installed_probe):
++    import sys
++    from pathlib import Path
++    from tests.operations.conftest import _copy_runtime_distribution
++    environment=installed_environments['all_domains']
++    site=environment.python.parent.parent/'lib'/f'python{sys.version_info.major}.{sys.version_info.minor}'/'site-packages'
++    for distribution in ('pytest','pluggy','iniconfig','packaging','pygments'):
++        _copy_runtime_distribution(distribution,site)
++    repository=str(Path(__file__).resolve().parents[2])
++    output=installed_probe('all_domains', '''
++import sys,tempfile
++from pathlib import Path
++import scidiscovery.artifact_agent.service.tool_evidence as core
++import tcad_artifact.output_recovery as tcad
++for module in (core,tcad):
++    assert Path(module.__file__).resolve().is_relative_to(Path(sys.prefix).resolve())
++sys.path.append('''+repr(repository)+''')
++from tests.operations.test_analysis_evidence_recovery import test_new_run_replays_original_record_from_sealed_evidence,test_offline_tools_do_not_prevent_open_or_limited_submit,test_failed_run_preserves_tool_evidence_for_new_bound_run
++for test in (test_new_run_replays_original_record_from_sealed_evidence,test_offline_tools_do_not_prevent_open_or_limited_submit,test_failed_run_preserves_tool_evidence_for_new_bound_run):
++    with tempfile.TemporaryDirectory() as directory:
++        test(Path(directory))
++import pytest
++from tests.operations.test_analysis_evidence_recovery import test_corrupt_preserved_receipt_fails_successor_open_explicitly
++with tempfile.TemporaryDirectory() as directory, pytest.MonkeyPatch.context() as patch:
++    test_corrupt_preserved_receipt_fails_successor_open_explicitly(Path(directory), patch)
++print('installed recovery, replay, offline and failure handoff passed')
++''')
++    assert output.strip()=='installed recovery, replay, offline and failure handoff passed'
+--- a/tests/operations/test_result_analysis_tool.py
++++ b/tests/operations/test_result_analysis_tool.py
+@@ -297,7 +297,7 @@
+         clock[0] = 6.0
+         return sources['curve_bundle']
+     raw = tool.score_tool(AnalysisScoreInput(record_key='timed', request=request),
+-        SimpleNamespace(remaining_seconds=10, read_input=read))
++        SimpleNamespace(remaining_seconds=10, read_evidence=read))
+     record = CalculationRecord.model_validate_json(canonical_json(raw))
+     assert record.status == 'error' and record.result is None
+     assert reads == ['curve_bundle']

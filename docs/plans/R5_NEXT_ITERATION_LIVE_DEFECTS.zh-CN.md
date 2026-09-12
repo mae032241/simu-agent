@@ -1,5 +1,7 @@
 # R5 端到端科学实验前最小闭合计划
 
+当前入口说明（2026-09-08）：以下保留原 Figure 阶段的事实、计划和审查历史，其中“当前”“唯一活动入口”均受该阶段范围限制。本轮 author 失败修复及重新验收由 [TCAD author 失败最小修复与重新验收计划](TCAD_AUTHOR_FAILURE_MINIMAL_REPAIR_PLAN.zh-CN.md)接管；[原 Skill/execution_context 计划](SKILL_VISIBILITY_COMPATIBILITY_AND_EXECUTION_CONTEXT_REPAIR_PLAN.zh-CN.md)保留已部署修复、S5 及 S6 的状态更新。历史 Figure 阻断不能单独作为要求重跑已有科学上游的依据。
+
 日期：2026-09-04
 
 状态：**E5.3 源码实现及 GPT-6 独立复审已通过，已提交 `979a118`；2026-09-06

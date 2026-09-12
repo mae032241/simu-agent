@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from ...operation_contract import DiagnosticError
+
 from dataclasses import dataclass
 from typing import Any
 
@@ -17,7 +19,7 @@ APPROVAL_OPTION_IDS = {
 }
 
 
-class RootToolError(RuntimeError):
+class RootToolError(DiagnosticError):
     pass
 
 

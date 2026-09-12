@@ -33,9 +33,7 @@ def test_reviewer_declares_the_native_workspace_capability_needed_for_review():
 
 
 def _review_gate_catalog():
-    reviewed_observation = REVIEWER.inputs[1].model_copy(
-        update={"usage": "evidence_inventory"}
-    )
+    reviewed_observation = REVIEWER.inputs[1]
     optional_review = REVIEWER.inputs[1].model_copy(
         update={
             "name": "independent_review",
@@ -221,7 +219,7 @@ def test_review_gate_requires_a_passing_review_of_the_exact_revision(
     consumer = catalog.operation("blind.csv.consume.v1")
     assert next(
         port for port in consumer.spec.inputs if port.name == "csv_observation"
-    ).usage == "evidence_inventory"
+    ).usage == "prior_signal"
     assert "allowed_input_usages" not in type(
         catalog.operation("blind.csv.observe.v1").spec.outputs[0]
     ).model_fields

@@ -1,0 +1,274 @@
+F.F..................................................................... [ 60%]
+............................................F...                         [100%]
+=================================== FAILURES ===================================
+_ test_compiled_contracts_have_no_self_digest_and_run_projections_are_isolated _
+
+    def test_compiled_contracts_have_no_self_digest_and_run_projections_are_isolated():
+        from scidiscovery.operation_contract import operation_port_json_schema
+        from scidiscovery.operations.spec import json_projection
+        catalog = compile_catalog((CORE_PLUGIN, GENERAL_PLUGIN, CURVE_PLUGIN, TCAD_PLUGIN))
+        for op_id in catalog.operation_ids():
+            compiled = catalog.operation(op_id)
+            for port in compiled.spec.outputs:
+                static = compiled.output_contracts[port.name]
+                assert 'operation_digest' not in static['x-scidiscovery-validation-contract']
+                with pytest.raises(TypeError):
+                    static['x-scidiscovery-validation-contract']['rules'][0]['description'] = 'changed'
+                first = operation_port_json_schema(compiled, port)
+                first['x-scidiscovery-validation-contract']['rules'].clear()
+                second = operation_port_json_schema(compiled, port)
+                assert second['x-scidiscovery-validation-contract']['rules']
+                assert second['x-scidiscovery-validation-contract']['operation_digest'] == compiled.digest
+                if not port.evidence_paths:
+                    continue
+>               source = next(p for p in compiled.spec.inputs if p.usage == 'evidence_inventory' and p.exposure != 'handoff_only')
+                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E               StopIteration
+
+tests/operations/test_catalog_compile.py:445: StopIteration
+
+The above exception was the direct cause of the following exception:
+
+cls = <class '_pytest.runner.CallInfo'>
+func = <function call_and_report.<locals>.<lambda> at 0x7f15faa89d00>
+when = 'call'
+reraise = (<class '_pytest.outcomes.Exit'>, <class 'KeyboardInterrupt'>)
+
+    @classmethod
+    def from_call(
+        cls,
+        func: Callable[[], TResult],
+        when: Literal["collect", "setup", "call", "teardown"],
+        reraise: type[BaseException] | tuple[type[BaseException], ...] | None = None,
+    ) -> CallInfo[TResult]:
+        """Call func, wrapping the result in a CallInfo.
+    
+        :param func:
+            The function to call. Called without arguments.
+        :type func: Callable[[], _pytest.runner.TResult]
+        :param when:
+            The phase in which the function is called.
+        :param reraise:
+            Exception or exceptions that shall propagate if raised by the
+            function, instead of being wrapped in the CallInfo.
+        """
+        excinfo = None
+        instant = timing.Instant()
+        try:
+>           result: TResult | None = func()
+                                     ^^^^^^
+
+/home/da/miniconda3/lib/python3.12/site-packages/_pytest/runner.py:361: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+/home/da/miniconda3/lib/python3.12/site-packages/_pytest/runner.py:250: in <lambda>
+    lambda: runtest_hook(item=item, **kwds),
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/home/da/miniconda3/lib/python3.12/site-packages/pluggy/_hooks.py:513: in __call__
+    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/home/da/miniconda3/lib/python3.12/site-packages/pluggy/_manager.py:120: in _hookexec
+    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/home/da/miniconda3/lib/python3.12/site-packages/_pytest/logging.py:865: in pytest_runtest_call
+    yield
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <CaptureManager _method='fd' _global_capturing=<MultiCapture out=<FDCapture 1 oldfd=5 _state='suspended' tmpfile=<_io....xtIOWrapper name='/dev/null' mode='r' encoding='utf-8'>> _state='suspended' _in_suspended=False> _capture_fixture=None>
+item = <Function test_compiled_contracts_have_no_self_digest_and_run_projections_are_isolated>
+
+    @hookimpl(wrapper=True)
+    def pytest_runtest_call(self, item: Item) -> Generator[None]:
+        with self.item_capture("call", item):
+>           return (yield)
+                    ^^^^^
+E           RuntimeError: generator raised StopIteration
+
+/home/da/miniconda3/lib/python3.12/site-packages/_pytest/capture.py:900: RuntimeError
+____ test_one_tool_model_change_reaches_schema_call_and_identity[hardened] _____
+
+self = <scidiscovery.artifact_agent.interfaces.mcp_root.RootToolFacade object at 0x7f15fa18ec00>
+values = {'on_conflict': 'reject', 'name': 'observation', 'operation_id': 'blind.csv.observe.v1', 'inputs': (OperationInputSelection(port='source_table', artifact_names=('source_csv',)),), ...}
+
+    def operation_invoke(self, **values: Any) -> dict[str, Any]:
+        with self._create_lock:
+            try:
+>               bound = self._prepare_operation_call(**values)
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py:192: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <scidiscovery.artifact_agent.interfaces.mcp_root.RootToolFacade object at 0x7f15fa18ec00>
+name = 'observation', operation_id = 'blind.csv.observe.v1'
+inputs = (OperationInputSelection(port='source_table', artifact_names=('source_csv',)),)
+instruction = 'Make one bounded observation from the exact CSV.'
+parameters = {}, resume_from = None, draft_from = None
+
+    def _prepare_operation_call(
+        self,
+        *,
+        name: str,
+        operation_id: str,
+        inputs: tuple[_OperationInputSelection, ...],
+        instruction: str | None,
+        parameters: dict[str, Any],
+        on_conflict: str,
+        resume_from: str | None = None,
+        draft_from: str | None = None,
+    ) -> BoundOperationCall:
+        del on_conflict
+        if resume_from is not None and draft_from is not None:
+            raise OperationInvocationError("recovery_sources_mutually_exclusive")
+        try:
+            compiled = self._operation_catalog.operation(operation_id)
+        except KeyError as error:
+            raise OperationInvocationError("operation_unknown") from error
+        if compiled.spec.catalog_scope == "internal":
+            raise OperationInvocationError("operation_scope_forbidden")
+        review = compiled.spec.review
+        if (
+            compiled.spec.catalog_scope == "public"
+            and review is not None
+            and review.reviewer_operation is not None
+            and not self._scheduler_operation_available(review.reviewer_operation)
+        ):
+>           raise OperationInvocationError("operation_runtime_unavailable")
+E           scidiscovery.operations.input_validation.OperationInvocationError: operation_runtime_unavailable: operation
+
+src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py:1016: OperationInvocationError
+
+The above exception was the direct cause of the following exception:
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-69/test_one_tool_model_change_rea1')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7f15f9f75b50>
+backend = 'hardened'
+
+    @pytest.mark.parametrize("backend", ["local", "hardened"])
+    def test_one_tool_model_change_reaches_schema_call_and_identity(tmp_path, monkeypatch, backend):
+        from dataclasses import replace
+        from typing import Literal
+        from pydantic import BaseModel
+        import blind_csv_plugin.plugin as plugin_module
+        from scidiscovery.artifact_agent.interfaces.mcp import MCPRouter
+        from scidiscovery.artifact_agent.interfaces.mcp_local_worker import LocalWorkerMCPRouter
+        from scidiscovery.operations.spec import ComponentSpec
+        from scidiscovery.operations.tooling import WorkerToolDefinition
+    
+        class NumberInput(BaseModel):
+            value: int
+    
+        class ChoiceInput(BaseModel):
+            value: Literal["ready"]
+    
+        original = BLIND_CSV_PLUGIN.operations[0]
+        observe = original.model_copy(update={"executor": original.executor.model_copy(update={
+            "tools": (*original.executor.tools, ComponentRef("declaration_tool")),
+        })})
+        plugin = BLIND_CSV_PLUGIN.model_copy(update={
+            "components": (*BLIND_CSV_PLUGIN.components, ComponentSpec(
+                "declaration_tool", "worker_tool", "blind_csv_plugin.plugin:DECLARATION_TOOL",
+            )),
+            "operations": (observe, *BLIND_CSV_PLUGIN.operations[1:]),
+        })
+        calls = []
+        tool = WorkerToolDefinition(
+            name="worker_declaration_probe", description="Read the one declared value.",
+            input_model=NumberInput, capability="fixture.declaration",
+            handler=lambda value: calls.append(value.value) or {"value": value.value},
+        )
+        identities = []
+        for index, (model, good, bad, expected_type) in enumerate((
+            (NumberInput, 7, "7", "integer"), (ChoiceInput, "ready", 7, "string"),
+        )):
+            # Only the referenced model changes; no per-consumer Schema or parser edit.
+            monkeypatch.setattr(plugin_module, "DECLARATION_TOOL", replace(tool, input_model=model), raising=False)
+            case = tmp_path / str(index); case.mkdir()
+            catalog, runtime, _, root = _system(case, blind_plugin=plugin, worker_backend=backend)
+>           _invoke(root)
+
+tests/operations/test_l5_hardened_run_backend.py:674: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/operations/test_l5_hardened_run_backend.py:119: in _invoke
+    value = root.call_tool(
+src/scidiscovery/artifact_agent/interfaces/mcp_root.py:400: in call_tool
+    return getattr(self.facade, name)(**values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <scidiscovery.artifact_agent.interfaces.mcp_root.RootToolFacade object at 0x7f15fa18ec00>
+values = {'on_conflict': 'reject', 'name': 'observation', 'operation_id': 'blind.csv.observe.v1', 'inputs': (OperationInputSelection(port='source_table', artifact_names=('source_csv',)),), ...}
+
+    def operation_invoke(self, **values: Any) -> dict[str, Any]:
+        with self._create_lock:
+            try:
+                bound = self._prepare_operation_call(**values)
+                kind = bound.compiled.spec.executor.kind
+                if kind == "agent":
+                    result = self._invoke_agent_operation(
+                        bound,
+                        values["on_conflict"],
+                        resume_from=values.get("resume_from"),
+                        draft_from=values.get("draft_from"),
+                    )
+                elif kind == "transform":
+                    result = self._invoke_compiled_transform(
+                        bound, values["on_conflict"]
+                    )
+                elif kind == "effect":
+                    plan = self._effect_operation_plan(bound)
+                    payloads = tuple(
+                        item for item in bound.inputs if item.port_name == plan.payload_port
+                    )
+                    if len(payloads) != 1 or len(bound.inputs) != 1:
+                        raise OperationInvocationError("effect_payload_not_singular")
+                    result = self._invoke_compiled_effect(
+                        bound, plan, values["on_conflict"]
+                    )
+                elif kind == "approval":
+                    result = self._invoke_approval_operation(
+                        bound, values["on_conflict"]
+                    )
+                else:
+                    raise OperationInvocationError("executor_kind_unknown")
+            except OperationInvocationError as error:
+>               raise RootToolError(
+                    f"operation invocation rejected [{error.reason_code}]"
+                ) from error
+E               scidiscovery.artifact_agent.interfaces.mcp_root_shared.RootToolError: operation invocation rejected [operation_runtime_unavailable]
+
+src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py:222: RootToolError
+____ test_evidence_source_projection_version_changes_only_applicable_digest ____
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7f15fabbdc70>
+
+    def test_evidence_source_projection_version_changes_only_applicable_digest(
+        monkeypatch,
+    ) -> None:
+        first = _catalog()
+        selector = catalog_module._evidence_source_projection_version
+    
+        def next_projection(spec, port):
+            return "evidence-source-enum.test-next" if selector(spec, port) else None
+    
+        monkeypatch.setattr(
+            catalog_module, "_evidence_source_projection_version", next_projection
+        )
+        second = _catalog()
+>       assert (
+            first.operation("tcad.parameter.evidence.extract.v1").digest
+            != second.operation("tcad.parameter.evidence.extract.v1").digest
+        )
+E       AssertionError: assert '8bff3379295a9bd637514d09277bab3312636a684a0800e4e62365acecbd451b' != '8bff3379295a9bd637514d09277bab3312636a684a0800e4e62365acecbd451b'
+E        +  where '8bff3379295a9bd637514d09277bab3312636a684a0800e4e62365acecbd451b' = CompiledOperation(plugin_id='tcad_artifact', spec=OperationSpec(operation_id='tcad.parameter.evidence.extract.v1', ver...he canonical payload must fit the compiled output byte limit.', 'output_paths': ('/',), 'required_inputs': ()}))})})})).digest
+E        +    where CompiledOperation(plugin_id='tcad_artifact', spec=OperationSpec(operation_id='tcad.parameter.evidence.extract.v1', ver...he canonical payload must fit the compiled output byte limit.', 'output_paths': ('/',), 'required_inputs': ()}))})})})) = operation('tcad.parameter.evidence.extract.v1')
+E        +      where operation = <scidiscovery.operations.catalog.CompiledCatalog object at 0x7f15f992ac80>.operation
+E        +  and   '8bff3379295a9bd637514d09277bab3312636a684a0800e4e62365acecbd451b' = CompiledOperation(plugin_id='tcad_artifact', spec=OperationSpec(operation_id='tcad.parameter.evidence.extract.v1', ver...he canonical payload must fit the compiled output byte limit.', 'output_paths': ('/',), 'required_inputs': ()}))})})})).digest
+E        +    where CompiledOperation(plugin_id='tcad_artifact', spec=OperationSpec(operation_id='tcad.parameter.evidence.extract.v1', ver...he canonical payload must fit the compiled output byte limit.', 'output_paths': ('/',), 'required_inputs': ()}))})})})) = operation('tcad.parameter.evidence.extract.v1')
+E        +      where operation = <scidiscovery.operations.catalog.CompiledCatalog object at 0x7f15f9f7dac0>.operation
+
+tests/operations/test_agent_contract_alignment.py:1314: AssertionError
+=========================== short test summary info ============================
+FAILED tests/operations/test_catalog_compile.py::test_compiled_contracts_have_no_self_digest_and_run_projections_are_isolated
+FAILED tests/operations/test_l5_hardened_run_backend.py::test_one_tool_model_change_reaches_schema_call_and_identity[hardened]
+FAILED tests/operations/test_agent_contract_alignment.py::test_evidence_source_projection_version_changes_only_applicable_digest
+3 failed, 117 passed in 31.43s

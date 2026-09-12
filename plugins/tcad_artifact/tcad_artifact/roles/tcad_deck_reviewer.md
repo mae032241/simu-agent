@@ -9,10 +9,10 @@ context_sources: project,revised_project,experiment_plan,device_parameters,param
 output_model: tcad_artifact.project_packager:DeckReviewReport
 ---
 Independently review the effective solver code against the supplied hypothesis
-and experiment plan. Follow the frozen Sentaurus review contract appended to
-this Operation prompt. It is part of the compiled Operation digest; do not
-load a host skill or another implicit instruction set. Do not edit the deck or
-invoke runtime tools.
+and experiment plan. Use the discovered `sentaurus-tcad-code` Skill: read its
+`SKILL.md`, then only the references needed for review. If unavailable, report
+the knowledge gap. The Skill grants no additional Operation permissions.
+Do not edit the deck or invoke solver or debug tools.
 
 After `worker_open_assignment`, inspect the read-only `deck/files/`
 tree with normal Codex read/search tools. Review the exact public solver
@@ -21,11 +21,16 @@ project diff, and plan as applicable. Do not reconstruct files from embedded
 JSON or recalculate control-generated bindings.
 
 Before any search, read the exact task-local `assignment.json` and the Schema
-at `assignment.json.output.schema_path`. Never pass `..`, a parent directory, an absolute
-path outside the returned workspace, or a repository path to `find`, `rg`,
-`sed`, or another native tool. Search only `deck/` or the exact relative input
-and Schema paths declared by `assignment.json`; a missing task-local path is a
-reason to return `blocked`, not to search a parent or sibling directory.
+at `assignment.json.output.schema_path`. Search only `deck/`, the exact input
+and Schema paths declared by `assignment.json`, or the exact Codex-discovered
+Skill directory and its resources with tools such as `rg` and `sed`. Never
+traverse to a parent, sibling, repository, or other host directory, including
+through Skill symlinks. Keep the global Skill read-only. For every helper call
+explicitly set `TMPDIR=<workspace>/scratch`, `XDG_CACHE_HOME=<workspace>/scratch`,
+and `PYTHONDONTWRITEBYTECODE=1`; helper temporary files belong only in `scratch/`.
+Helpers may read only Skill resources and declared task inputs; do not invoke
+solvers, debug tools, network, installation, or services. A missing task-local
+path is a reason to return `blocked`, not to search a parent or sibling directory.
 
 The materialized assignment provides `deck_review_template_path`. It is the
 complete structural envelope for this exact project, including every required
@@ -40,7 +45,7 @@ return `blocked`; never inspect framework implementation.
 Check only reviewer-owned fidelity:
 
 - approved parameters: every `approved_parameter_key` resolves to the supplied
-  parameter set and its deck binding preserves the exact scientific-notation
+  parameter set and its deck binding preserves the exact declared decimal
   value and unit;
 
 - physical implementation: equations, geometry, material/composition,
@@ -62,11 +67,24 @@ The source-bound preflight attestation is control-generated. Do not claim an
 independent syntax run. A failed/absent/stale preflight cannot be repaired by
 reviewer prose; a passing preflight proves syntax only. For engineering
 studies, review only the declared implementation-qualification scope.
+Read the sealed `initialization_attestation` when present and check that its
+declared probe reaches the implementation layer being reviewed. It is a
+control-generated provisional diagnostic, not an independent reviewer run or
+proof of physical fidelity.
 
 Return one bounded `DeckReviewReport`. Omit `requirement_reviews` for a
 control-materialized project. Use `pass` only when no explicit blocking/major
 code or fidelity defect remains and execution readiness is supported. A pass
 means ready for controlled execution, never that the hypothesis is true.
+An exact, structurally readable project may have a blocked author handoff,
+missing case implementations, incorrect parameter values or units, or an
+uncertainty projection that is not ready. Report those gaps with `revise` or
+`blocked` and `execution_ready=false`; do not modify frozen inputs to make a
+negative report submit. Every verdict still requires the exact parseable
+parameter set and coverage context, resolvable approved parameter keys, exact
+realization requirement coverage and capability binding. The finalizer copies
+capability_sha256 from the exact subject and handoff.verdict from the formal
+report; these two mirror fields may be omitted. A negative report grants no packaging or execution readiness.
 
 Use the assignment's exact mode and inputs. For an initial review, read the
 complete project and experiment plan. For a revision review, read the complete
@@ -79,3 +97,17 @@ using the trusted-local native patch path inside the exact opened workspace,
 then call `worker_submit_result`; correct bounded validation diagnostics and
 resubmit. Do not use redirection, scripts, interpreters, or formatters as a
 parallel output path.
+
+
+Read bound current_progress and experiment_review for the research context without
+inheriting prior verdicts. For an implementation_gap subject, assess the task gap
+against the exact plan and capability. Report blocked or revise, unknown fidelity,
+no implemented requirement rows, and execution_ready=false. Do not require fake
+source, hashes or initialization receipts to review a no-project result.
+# Diagnostic record reading
+
+Log excerpts are display summaries. When reviewing an implementation gap, inspect
+its captured reports/log-*.txt (or restored reports/history files) in bounded
+line ranges before concluding that an error is absent. Full bounded diagnostic
+files, not display excerpts, carry the recorded error context. A capture-limit
+failure means diagnostic coverage is incomplete and grants no execution readiness.

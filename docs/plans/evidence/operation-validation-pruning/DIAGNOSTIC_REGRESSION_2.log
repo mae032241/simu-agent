@@ -1,0 +1,29 @@
+.......................................F
+=================================== FAILURES ===================================
+____ test_curve_analysis_transform_and_single_file_agent_complete_real_run _____
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-136/test_curve_analysis_transform_0')
+
+    def test_curve_analysis_transform_and_single_file_agent_complete_real_run(
+        tmp_path: Path,
+    ) -> None:
+        catalog, runtime, instance, root = _root(tmp_path)
+        _register_inputs(runtime, instance, _inputs())
+        transform = catalog.operation(ANALYZE_OPERATION)
+        agent = catalog.operation(DIAGNOSE_OPERATION)
+    
+        assert transform.spec.catalog_scope == "support"
+        assert transform.spec.executor.kind == "transform"
+>       assert tuple(port.name for port in agent.spec.inputs) == (
+            "curve_analysis_package",
+        )
+E       AssertionError: assert ('curve_analy...alysis_plots') == ('curve_analysis_package',)
+E         
+E         Left contains one more item: 'curve_analysis_plots'
+E         Use -v to get more diff
+
+tests/operations/test_m2_curve_analysis_boundary.py:1135: AssertionError
+=========================== short test summary info ============================
+FAILED tests/operations/test_m2_curve_analysis_boundary.py::test_curve_analysis_transform_and_single_file_agent_complete_real_run
+!!!!!!!!!!!!!!!!!!!!!!!!!! stopping after 1 failures !!!!!!!!!!!!!!!!!!!!!!!!!!!
+1 failed, 39 passed in 29.34s

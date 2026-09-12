@@ -1,0 +1,76 @@
+--- a/tests/operations/test_l4_local_tcad.py
++++ b/tests/operations/test_l4_local_tcad.py
+@@ -1797,3 +1797,73 @@
+     assert status["sealed_output"]["payload"]["execution_ready"] is False
+     assert project_path.read_bytes() == frozen_project
+ 
++
++@pytest.mark.parametrize("comparison", (False, True))
++def test_materialized_sprocess_author_review_package_preserves_case_anchors(tmp_path, comparison):
++    catalog, runtime, root, capability = _system(tmp_path, solver_kind="sprocess")
++    plan_name = "experiment_plan"
++    if comparison:
++        _, sources, _ = _review_context_fixture("case")
++        artifact = runtime.artifacts.register(sources["experiment_plan"], ArtifactRegistration(
++            kind="experiment_portfolio", schema_id="scidiscovery.experiment-portfolio.v1",
++            payload_schema_version=1, media_type="application/json", creator=runtime.actor,
++        ), idempotency_key="p1:comparison-plan")
++        plan_name = "comparison_plan"
++        runtime.scheduler_bindings.bind(
++            instance=runtime.scheduler_bindings.list_instances()[0].instance_id,
++            namespace="artifact", name=plan_name, object_id=artifact.artifact_id,
++        )
++    _invoke(root, "process", "tcad.deck.author.initial.v1", [
++        {"port": "execution_capability", "artifact_names": ["execution_capability"]},
++        {"port": "experiment_plan", "artifact_names": [plan_name]},
++    ])
++    worker = _debug_worker(catalog, runtime, _ImmediateDebugAdapter(), tmp_path / "debug")
++    opened = worker.call_tool("worker_open_assignment", {})
++    _write_sprocess_workspace(opened)
++    if comparison:
++        workspace = Path(str(opened["workspace_path"]))
++        (workspace / "deck/files/main.cmd").write_text("set bias_smoke 0.0\nset bias_comparison 1.0\n")
++        path = workspace / "deck/declarations.json"
++        declarations = json.loads(path.read_bytes())
++        declarations["case_anchors"] = [
++            {"experiment_key": "entrypoint_smoke", "case_key": key,
++             "relative_path": "main.cmd", "locator": f"set bias_{key} {value}"}
++            for key, value in (("smoke", "0.0"), ("comparison", "1.0"))
++        ]
++        path.write_bytes(canonical_json(declarations))
++    for mode in ("preflight", "initialization"):
++        assert worker.call_tool("worker_tcad_debug_run", {"run_name": mode, "mode": mode})["state"] == "succeeded"
++    assert worker.call_tool("worker_submit_result", {})["state"] == "completed"
++    project_name = root.call_tool("run_status", {"name": "process"})["output_artifact_name"]
++    _invoke(root, "process_review", "tcad.deck.review.v1", [
++        {"port": "project", "artifact_names": [project_name]},
++        {"port": "execution_capability", "artifact_names": ["execution_capability"]},
++        {"port": "experiment_plan", "artifact_names": [plan_name]},
++    ])
++    compiled = catalog.operation("tcad.deck.review.v1")
++    reviewer = LocalWorkerMCPRouter(runtime.runs, operation_id=compiled.spec.operation_id,
++                                    operation_digest=compiled.digest)
++    review_open = reviewer.call_tool("worker_open_assignment", {})
++    review = DeckReviewReport(
++        verdict="pass", capability_sha256=capability.canonical_sha256(),
++        summary="The materialized fixture is ready.", rationale="Its bounded requirements are realized.",
++        physical_fidelity="pass", implementation_fidelity="pass", syntax_fidelity="pass",
++        numerical_protocol_fidelity="pass", execution_ready=True,
++    )
++    Path(str(review_open["output_directory"]), "result.json").write_bytes(canonical_json({
++        "schema_version": 1, "handoff": {"verdict": "pass", "summary": "Ready for packaging."},
++        "payload": review.model_dump(mode="json"),
++    }))
++    assert reviewer.call_tool("worker_submit_result", {})["state"] == "completed"
++    review_name = root.call_tool("run_status", {"name": "process_review"})["output_artifact_name"]
++    package_request = {
++        "name": "process_package", "operation_id": "tcad.reviewed-deck-package.v2",
++        "inputs": [
++            {"port": "project", "artifact_names": [project_name]},
++            {"port": "review", "artifact_names": [review_name]},
++            {"port": "capability", "artifact_names": ["execution_capability"]},
++            {"port": "experiment_plan", "artifact_names": [plan_name]},
++        ],
++    }
++    assert root.call_tool("operation_preflight", package_request)["admissible"] is True
++    assert root.call_tool("operation_invoke", package_request)["state"] == "completed"

@@ -41,10 +41,12 @@ where = ["src"]
 "share/scidiscovery/deploy/systemd" = ["deploy/systemd/*.in"]
 
 [tool.pytest.ini_options]
+addopts = "-m 'not stress'"
 pythonpath = ["src", ".", "plugins/tcad_artifact", "plugins/curve_score", "plugins/curve_figure_evidence", "tests/fixtures/plugins/architecture_operation_plugin", "tests/fixtures/plugins/table_observation_plugin", "tests/fixtures/plugins/blind_csv_operation_plugin"]
 testpaths = ["tests"]
 norecursedirs = ["portable_delivery"]
 markers = [
+  "stress: large-input and resource-bound checks; run separately with -m stress",
   "process_e2e: launches real daemon and stdio proxy processes across Unix sockets",
   "live_platform: requires a running Codex platform and is not part of hermetic pytest",
 ]

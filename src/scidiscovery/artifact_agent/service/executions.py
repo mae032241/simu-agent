@@ -86,6 +86,18 @@ class ExecutionService:
         self.service_actor = service_actor
         self._initialize()
 
+    @staticmethod
+    def resolve_result_scope(*, artifacts, database_path, result_ref):
+        """Trusted read-only lookup from an already bound immutable result."""
+        result = ExecutionResultManifest.model_validate_json(artifacts.read(result_ref), strict=True)
+        with sqlite3.connect(database_path) as connection:
+            connection.row_factory = sqlite3.Row
+            row = connection.execute('SELECT * FROM executions WHERE execution_id=?', (result.execution_id,)).fetchone()
+        if row is None or row['state'] != 'collected' or row['external_run_id'] != result.external_run_id or _parse_ref(row['result_ref_json']) != result_ref:
+            raise ExecutionStateConflict('bound result does not identify a collected execution')
+        return {'executor':row['executor'], 'external_run_id':result.external_run_id,
+                'payload_ref':_parse_ref(row['payload_ref_json']), 'result_ref':result_ref}
+
     def create(
         self,
         *,

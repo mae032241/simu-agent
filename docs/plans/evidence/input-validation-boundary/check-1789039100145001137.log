@@ -1,0 +1,11 @@
+F
+=================================== FAILURES ===================================
+_ test_historical_review_reaches_new_analysis_without_current_authority[tcad.result.analyze.v1] _
+tests/operations/test_collector_analysis_handoff.py:222: in test_historical_review_reaches_new_analysis_without_current_authority
+    assert preflight["admissible"], preflight
+E   AssertionError: {'admissible': False, 'reason_code': 'guard_rejected', 'port': 'result_analysis_parentage', 'executor_kind': None}
+E   assert False
+=========================== short test summary info ============================
+FAILED tests/operations/test_collector_analysis_handoff.py::test_historical_review_reaches_new_analysis_without_current_authority[tcad.result.analyze.v1]
+!!!!!!!!!!!!!!!!!!!!!!!!!! stopping after 1 failures !!!!!!!!!!!!!!!!!!!!!!!!!!!
+1 failed in 1.43s

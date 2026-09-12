@@ -1,0 +1,228 @@
+FFFFFFF                                                                  [100%]
+=================================== FAILURES ===================================
+_____ test_exact_prior_proof_maps_identity_without_alias_collision[False] ______
+
+fallback = False
+
+    @pytest.mark.parametrize("fallback", [False, True])
+    def test_exact_prior_proof_maps_identity_without_alias_collision(fallback):
+>       contents, descriptors = bindings(fallback=fallback)
+                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/operations/test_prior_analysis_sources.py:42: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/operations/test_prior_analysis_sources.py:20: in bindings
+    original = ref("artifact_original", raw)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+name = 'artifact_original', raw = b'same bytes, distinct identity is possible'
+schema = 'opaque'
+
+    def ref(name, raw, schema="opaque"):
+>       return ArtifactRef(artifact_id=name, schema_id=schema, payload_schema_version=1,
+                           sha256=hashlib.sha256(raw).hexdigest())
+E       pydantic_core._pydantic_core.ValidationError: 2 validation errors for ArtifactRef
+E       kind
+E         Field required [type=missing, input_value={'artifact_id': 'artifact...00e8d82fddaf85c9f94832'}, input_type=dict]
+E           For further information visit https://errors.pydantic.dev/2.11/v/missing
+E       payload_schema_version
+E         Extra inputs are not permitted [type=extra_forbidden, input_value=1, input_type=int]
+E           For further information visit https://errors.pydantic.dev/2.11/v/extra_forbidden
+
+tests/operations/test_prior_analysis_sources.py:17: ValidationError
+______ test_exact_prior_proof_maps_identity_without_alias_collision[True] ______
+
+fallback = True
+
+    @pytest.mark.parametrize("fallback", [False, True])
+    def test_exact_prior_proof_maps_identity_without_alias_collision(fallback):
+>       contents, descriptors = bindings(fallback=fallback)
+                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/operations/test_prior_analysis_sources.py:42: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/operations/test_prior_analysis_sources.py:20: in bindings
+    original = ref("artifact_original", raw)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+name = 'artifact_original', raw = b'same bytes, distinct identity is possible'
+schema = 'opaque'
+
+    def ref(name, raw, schema="opaque"):
+>       return ArtifactRef(artifact_id=name, schema_id=schema, payload_schema_version=1,
+                           sha256=hashlib.sha256(raw).hexdigest())
+E       pydantic_core._pydantic_core.ValidationError: 2 validation errors for ArtifactRef
+E       kind
+E         Field required [type=missing, input_value={'artifact_id': 'artifact...00e8d82fddaf85c9f94832'}, input_type=dict]
+E           For further information visit https://errors.pydantic.dev/2.11/v/missing
+E       payload_schema_version
+E         Extra inputs are not permitted [type=extra_forbidden, input_value=1, input_type=int]
+E           For further information visit https://errors.pydantic.dev/2.11/v/extra_forbidden
+
+tests/operations/test_prior_analysis_sources.py:17: ValidationError
+______ test_wrong_pair_never_falls_back_or_matches_only_digest[producer] _______
+
+defect = 'producer'
+
+    @pytest.mark.parametrize("defect", ["producer", "parent", "missing_prior", "unproven_binding", "explicit_mismatch"])
+    def test_wrong_pair_never_falls_back_or_matches_only_digest(defect):
+>       contents, descriptors = bindings()
+                                ^^^^^^^^^^
+
+tests/operations/test_prior_analysis_sources.py:55: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/operations/test_prior_analysis_sources.py:20: in bindings
+    original = ref("artifact_original", raw)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+name = 'artifact_original', raw = b'same bytes, distinct identity is possible'
+schema = 'opaque'
+
+    def ref(name, raw, schema="opaque"):
+>       return ArtifactRef(artifact_id=name, schema_id=schema, payload_schema_version=1,
+                           sha256=hashlib.sha256(raw).hexdigest())
+E       pydantic_core._pydantic_core.ValidationError: 2 validation errors for ArtifactRef
+E       kind
+E         Field required [type=missing, input_value={'artifact_id': 'artifact...00e8d82fddaf85c9f94832'}, input_type=dict]
+E           For further information visit https://errors.pydantic.dev/2.11/v/missing
+E       payload_schema_version
+E         Extra inputs are not permitted [type=extra_forbidden, input_value=1, input_type=int]
+E           For further information visit https://errors.pydantic.dev/2.11/v/extra_forbidden
+
+tests/operations/test_prior_analysis_sources.py:17: ValidationError
+_______ test_wrong_pair_never_falls_back_or_matches_only_digest[parent] ________
+
+defect = 'parent'
+
+    @pytest.mark.parametrize("defect", ["producer", "parent", "missing_prior", "unproven_binding", "explicit_mismatch"])
+    def test_wrong_pair_never_falls_back_or_matches_only_digest(defect):
+>       contents, descriptors = bindings()
+                                ^^^^^^^^^^
+
+tests/operations/test_prior_analysis_sources.py:55: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/operations/test_prior_analysis_sources.py:20: in bindings
+    original = ref("artifact_original", raw)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+name = 'artifact_original', raw = b'same bytes, distinct identity is possible'
+schema = 'opaque'
+
+    def ref(name, raw, schema="opaque"):
+>       return ArtifactRef(artifact_id=name, schema_id=schema, payload_schema_version=1,
+                           sha256=hashlib.sha256(raw).hexdigest())
+E       pydantic_core._pydantic_core.ValidationError: 2 validation errors for ArtifactRef
+E       kind
+E         Field required [type=missing, input_value={'artifact_id': 'artifact...00e8d82fddaf85c9f94832'}, input_type=dict]
+E           For further information visit https://errors.pydantic.dev/2.11/v/missing
+E       payload_schema_version
+E         Extra inputs are not permitted [type=extra_forbidden, input_value=1, input_type=int]
+E           For further information visit https://errors.pydantic.dev/2.11/v/extra_forbidden
+
+tests/operations/test_prior_analysis_sources.py:17: ValidationError
+____ test_wrong_pair_never_falls_back_or_matches_only_digest[missing_prior] ____
+
+defect = 'missing_prior'
+
+    @pytest.mark.parametrize("defect", ["producer", "parent", "missing_prior", "unproven_binding", "explicit_mismatch"])
+    def test_wrong_pair_never_falls_back_or_matches_only_digest(defect):
+>       contents, descriptors = bindings()
+                                ^^^^^^^^^^
+
+tests/operations/test_prior_analysis_sources.py:55: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/operations/test_prior_analysis_sources.py:20: in bindings
+    original = ref("artifact_original", raw)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+name = 'artifact_original', raw = b'same bytes, distinct identity is possible'
+schema = 'opaque'
+
+    def ref(name, raw, schema="opaque"):
+>       return ArtifactRef(artifact_id=name, schema_id=schema, payload_schema_version=1,
+                           sha256=hashlib.sha256(raw).hexdigest())
+E       pydantic_core._pydantic_core.ValidationError: 2 validation errors for ArtifactRef
+E       kind
+E         Field required [type=missing, input_value={'artifact_id': 'artifact...00e8d82fddaf85c9f94832'}, input_type=dict]
+E           For further information visit https://errors.pydantic.dev/2.11/v/missing
+E       payload_schema_version
+E         Extra inputs are not permitted [type=extra_forbidden, input_value=1, input_type=int]
+E           For further information visit https://errors.pydantic.dev/2.11/v/extra_forbidden
+
+tests/operations/test_prior_analysis_sources.py:17: ValidationError
+__ test_wrong_pair_never_falls_back_or_matches_only_digest[unproven_binding] ___
+
+defect = 'unproven_binding'
+
+    @pytest.mark.parametrize("defect", ["producer", "parent", "missing_prior", "unproven_binding", "explicit_mismatch"])
+    def test_wrong_pair_never_falls_back_or_matches_only_digest(defect):
+>       contents, descriptors = bindings()
+                                ^^^^^^^^^^
+
+tests/operations/test_prior_analysis_sources.py:55: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/operations/test_prior_analysis_sources.py:20: in bindings
+    original = ref("artifact_original", raw)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+name = 'artifact_original', raw = b'same bytes, distinct identity is possible'
+schema = 'opaque'
+
+    def ref(name, raw, schema="opaque"):
+>       return ArtifactRef(artifact_id=name, schema_id=schema, payload_schema_version=1,
+                           sha256=hashlib.sha256(raw).hexdigest())
+E       pydantic_core._pydantic_core.ValidationError: 2 validation errors for ArtifactRef
+E       kind
+E         Field required [type=missing, input_value={'artifact_id': 'artifact...00e8d82fddaf85c9f94832'}, input_type=dict]
+E           For further information visit https://errors.pydantic.dev/2.11/v/missing
+E       payload_schema_version
+E         Extra inputs are not permitted [type=extra_forbidden, input_value=1, input_type=int]
+E           For further information visit https://errors.pydantic.dev/2.11/v/extra_forbidden
+
+tests/operations/test_prior_analysis_sources.py:17: ValidationError
+__ test_wrong_pair_never_falls_back_or_matches_only_digest[explicit_mismatch] __
+
+defect = 'explicit_mismatch'
+
+    @pytest.mark.parametrize("defect", ["producer", "parent", "missing_prior", "unproven_binding", "explicit_mismatch"])
+    def test_wrong_pair_never_falls_back_or_matches_only_digest(defect):
+>       contents, descriptors = bindings()
+                                ^^^^^^^^^^
+
+tests/operations/test_prior_analysis_sources.py:55: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/operations/test_prior_analysis_sources.py:20: in bindings
+    original = ref("artifact_original", raw)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+name = 'artifact_original', raw = b'same bytes, distinct identity is possible'
+schema = 'opaque'
+
+    def ref(name, raw, schema="opaque"):
+>       return ArtifactRef(artifact_id=name, schema_id=schema, payload_schema_version=1,
+                           sha256=hashlib.sha256(raw).hexdigest())
+E       pydantic_core._pydantic_core.ValidationError: 2 validation errors for ArtifactRef
+E       kind
+E         Field required [type=missing, input_value={'artifact_id': 'artifact...00e8d82fddaf85c9f94832'}, input_type=dict]
+E           For further information visit https://errors.pydantic.dev/2.11/v/missing
+E       payload_schema_version
+E         Extra inputs are not permitted [type=extra_forbidden, input_value=1, input_type=int]
+E           For further information visit https://errors.pydantic.dev/2.11/v/extra_forbidden
+
+tests/operations/test_prior_analysis_sources.py:17: ValidationError
+=========================== short test summary info ============================
+FAILED tests/operations/test_prior_analysis_sources.py::test_exact_prior_proof_maps_identity_without_alias_collision[False]
+FAILED tests/operations/test_prior_analysis_sources.py::test_exact_prior_proof_maps_identity_without_alias_collision[True]
+FAILED tests/operations/test_prior_analysis_sources.py::test_wrong_pair_never_falls_back_or_matches_only_digest[producer]
+FAILED tests/operations/test_prior_analysis_sources.py::test_wrong_pair_never_falls_back_or_matches_only_digest[parent]
+FAILED tests/operations/test_prior_analysis_sources.py::test_wrong_pair_never_falls_back_or_matches_only_digest[missing_prior]
+FAILED tests/operations/test_prior_analysis_sources.py::test_wrong_pair_never_falls_back_or_matches_only_digest[unproven_binding]
+FAILED tests/operations/test_prior_analysis_sources.py::test_wrong_pair_never_falls_back_or_matches_only_digest[explicit_mismatch]
+7 failed in 0.06s

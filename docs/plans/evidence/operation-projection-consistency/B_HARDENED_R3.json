@@ -1,0 +1,17 @@
+{
+  "command": [
+    "python",
+    "-m",
+    "pytest",
+    "-q",
+    "tests/operations/test_agent_contract_alignment.py",
+    "-k",
+    "open_delivers_frozen_contracts and hardened"
+  ],
+  "exit_code": 0,
+  "seconds": 2.485,
+  "peak_tree_rss_bytes": 128708608,
+  "budget_bytes": 536870912,
+  "early_stop_bytes": 469762048,
+  "memory_terminated": false
+}

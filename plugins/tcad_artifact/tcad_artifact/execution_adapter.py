@@ -148,6 +148,9 @@ class TCADExecutorAdapter:
     def cancel(self, external_run_id: str) -> str:
         return str(self._call("tcad_cancel", {"run_id": external_run_id})["state"])
 
+    def inspect_outputs(self, external_run_id: str, relative_path: str | None = None, max_bytes: int = 32*1024*1024) -> dict[str, Any]:
+        return self._call("tcad_inspect_outputs", {"run_id": external_run_id, "relative_path": relative_path, "max_bytes": max_bytes})
+
     def collect(self, external_run_id: str) -> tuple[LocalFileDescriptor, ...]:
         value = self._call("tcad_collect", {"run_id": external_run_id})
         return tuple(

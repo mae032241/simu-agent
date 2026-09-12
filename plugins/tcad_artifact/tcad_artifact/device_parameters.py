@@ -48,12 +48,12 @@ def _validate_scientific_decimal(value: str) -> str:
 ScientificDecimal = Annotated[
     str,
     Field(
-        min_length=4,
+        min_length=1,
         max_length=256,
-        pattern=r"^-?(?:0|[1-9])(?:\.[0-9]+)?e[+-](?:0|[1-9][0-9]*)$",
+        pattern=r"^-?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?$",
         description=(
-            "Finite scientific-notation decimal string; trailing mantissa "
-            "zeros are permitted."
+            "Finite decimal string in ordinary or scientific notation. "
+            "The original spelling and decimal precision are preserved."
         ),
     ),
     AfterValidator(_validate_scientific_decimal),
@@ -137,10 +137,6 @@ class DeviceParameterRequirement(SchemaModel):
     @model_validator(mode="after")
     def _requirement_is_valid(self) -> DeviceParameterRequirement:
         unit_definition(self.canonical_unit, label="parameter canonical unit")
-        if len(self.required_condition_names) != len(
-            set(self.required_condition_names)
-        ):
-            raise ValueError("parameter required condition names must be unique")
         return self
 
 
@@ -212,8 +208,6 @@ class EvidenceSourceCatalogEntry(SchemaModel):
                 raise ValueError(
                     f"source {label} URL must be an authenticated-free HTTPS URL"
                 )
-        if len(self.authors) != len(set(self.authors)):
-            raise ValueError("source authors must be unique")
         return self
 
 

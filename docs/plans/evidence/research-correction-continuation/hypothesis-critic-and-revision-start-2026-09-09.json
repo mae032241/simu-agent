@@ -1,0 +1,182 @@
+{
+  "recorded_at": "2026-09-09 02:58:39 UTC",
+  "scope": "Exact critic requests two bounded hypothesis claim-scope corrections; existing hypothesis revision admitted and dispatched.",
+  "critic_completed": {
+    "agent_type": "op_science_hypothesis_criticize_v1_c4677759f83e",
+    "backend": "local_trusted",
+    "candidate_accepted": true,
+    "completed_at": "2026-09-09T02:57:37.118357Z",
+    "created_at": "2026-09-09T02:55:15.100324Z",
+    "deadline_at": "2026-09-09T03:05:15.100324Z",
+    "head_advance": "not_requested",
+    "last_activity_at": "2026-09-09T02:57:37.118357Z",
+    "logical_name": "fig4_continuation_hypothesis_critic_1",
+    "name": "fig4_continuation_hypothesis_critic_1",
+    "operation_id": "science.hypothesis.criticize.v1",
+    "output_artifact_name": "fig4_continuation_hypothesis_critic_1.output",
+    "reason": null,
+    "recovery_available": false,
+    "revision": 1,
+    "scheduler_signal": {
+      "assumptions": [
+        "The review treats paper-reported VCD attribution as an author interpretation and the digitized curve family as profile evidence, consistent with the supplied scientific foundation."
+      ],
+      "missing_inputs": [],
+      "next_action_kind": null,
+      "next_actions": [],
+      "schema_version": 1,
+      "summary": "Two candidates need narrowly scoped mechanism-statement revisions so that their claims match their finite rejection conditions. The continuous-response and evidence-artifact candidates are physically plausible, logically falsifiable, and finitely discriminable in principle within the qualified foundation.",
+      "verdict": "revise"
+    },
+    "sealed_output": {
+      "artifact_name": "fig4_continuation_hypothesis_critic_1.output",
+      "kind": "scientific_review",
+      "payload": {
+        "disposition": "revise_hypothesis",
+        "evidence": [
+          {
+            "locator": "Supplied paper, Fig. 4 discussion and Table I",
+            "source_key": "paper_source",
+            "source_type": "frozen_input"
+          },
+          {
+            "locator": "Recovered Fig. 4 source panel",
+            "source_key": "source_panels",
+            "source_type": "frozen_input"
+          },
+          {
+            "locator": "Deterministic figure evidence manifest for bundle 8702fefaceacecad92c32296f775ba8892cb75a826693a92b9cf6184e093a496",
+            "source_key": "figure_manifest",
+            "source_type": "frozen_input"
+          },
+          {
+            "locator": "Deterministic validation report for the supplied figure family",
+            "source_key": "validation_report",
+            "source_type": "frozen_input"
+          },
+          {
+            "locator": "Digitized solid-black In0.83Al0.17As curve table",
+            "source_key": "curve_tables_001",
+            "source_type": "frozen_input"
+          },
+          {
+            "locator": "Digitized solid-red In0.83Ga0.17As curve table",
+            "source_key": "curve_tables_002",
+            "source_type": "frozen_input"
+          },
+          {
+            "locator": "Identity and fidelity audit overlay",
+            "source_key": "audit_overlays_001",
+            "source_type": "frozen_input"
+          },
+          {
+            "locator": "Numeric redraw audit overlay",
+            "source_key": "audit_overlays_002",
+            "source_type": "frozen_input"
+          }
+        ],
+        "global_issues": [],
+        "reviews": [
+          {
+            "falsifiability": "fail",
+            "finite_discriminability": "pass",
+            "hypothesis_key": "hypothesis.two_regime_kickout_vcd",
+            "issues": [
+              "The stated VCD-related microscopic identity is stronger than the supplied profile evidence and is not rejected by either listed falsifier: both falsifiers can reject a material-selective second profile component, but neither distinguishes VCD from another low-concentration process."
+            ],
+            "physical_plausibility": "pass",
+            "smallest_resolving_action": "Revise the mechanism and statement to call the low-concentration contribution a material-selective second component consistent with the authors' VCD interpretation, unless a separate finite species-sensitive prediction and rejection condition is added."
+          },
+          {
+            "falsifiability": "pass",
+            "finite_discriminability": "pass",
+            "hypothesis_key": "hypothesis.continuous_material_response",
+            "issues": [],
+            "physical_plausibility": "pass",
+            "smallest_resolving_action": null
+          },
+          {
+            "falsifiability": "fail",
+            "finite_discriminability": "pass",
+            "hypothesis_key": "hypothesis.surface_boundary_control",
+            "issues": [
+              "The statement includes unrestricted boundary histories, while the predictions and rejection conditions test only one constant effective surface value per material; failure of that bounded form therefore cannot reject the full stated alternative."
+            ],
+            "physical_plausibility": "pass",
+            "smallest_resolving_action": "Narrow the mechanism and statement to the declared constant-effective-surface-concentration counterfactual for the 480 degrees C, 8 min profiles, leaving actual time-dependent histories explicitly outside the hypothesis."
+          },
+          {
+            "falsifiability": "pass",
+            "finite_discriminability": "pass",
+            "hypothesis_key": "hypothesis.tail_support_artifact",
+            "issues": [],
+            "physical_plausibility": "pass",
+            "smallest_resolving_action": null
+          }
+        ],
+        "schema_version": 2
+      },
+      "schema": "scidiscovery.critic-review.v2"
+    },
+    "sealed_output_status": "available",
+    "started_at": "2026-09-09T02:55:39.752811Z",
+    "state": "completed"
+  },
+  "revision_request": {
+    "name": "fig4_continuation_hypothesis_revision_1",
+    "operation_id": "science.hypothesis.revise.v1",
+    "inputs": [
+      {
+        "port": "prior_draft",
+        "artifact_names": [
+          "fig4_continuation_hypothesis_1.output"
+        ]
+      },
+      {
+        "port": "change_request",
+        "artifact_names": [
+          "fig4_continuation_hypothesis_critic_1.output"
+        ]
+      },
+      {
+        "port": "scientific_foundation",
+        "artifact_names": [
+          "fig4_continuation_intake_split_2.scientific_foundation"
+        ]
+      }
+    ],
+    "instruction": "依据精确绑定的独立审查完成最小范围修订。只修正审查指出的假设主张与有限拒绝条件不匹配之处，保持已通过候选、总体目标、证据来源和所有既有限制。选择收窄到已有检验实际能判断的范围，避免为保留更强主张而新增证据或设计额外实验。提交完整修订后的假设组合，旧版本及旧审查不被覆盖，最终结论仍须新独立审查。"
+  },
+  "revision_preflight": {
+    "admissible": true,
+    "executor_kind": "agent",
+    "port": null,
+    "reason_code": null
+  },
+  "revision_invocation": {
+    "executor_kind": "agent",
+    "operation_id": "science.hypothesis.revise.v1",
+    "result": {
+      "agent_type": "op_science_hypothesis_revise_v1_10c5b2edfa1d",
+      "backend": "local_trusted",
+      "candidate_accepted": false,
+      "completed_at": null,
+      "created_at": "2026-09-09T02:58:13.181455Z",
+      "deadline_at": "2026-09-09T03:13:13.181455Z",
+      "head_advance": null,
+      "last_activity_at": null,
+      "logical_name": "fig4_continuation_hypothesis_revision_1",
+      "name": "fig4_continuation_hypothesis_revision_1",
+      "operation_id": "science.hypothesis.revise.v1",
+      "output_artifact_name": null,
+      "reason": null,
+      "recovery_available": false,
+      "revision": 1,
+      "scheduler_signal": null,
+      "sealed_output": null,
+      "sealed_output_status": "unavailable",
+      "started_at": null,
+      "state": "queued"
+    }
+  }
+}

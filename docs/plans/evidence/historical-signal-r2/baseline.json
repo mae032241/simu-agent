@@ -1,0 +1,8 @@
+{
+  "head": "2edac5d317a74056869a567bd0daa7f556ecbc85",
+  "files": {
+    "src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py": "e622a1f266f7a4a7f52ea01d19fda35a6e52557aa3ad18a37fb90904c57d810f",
+    "plugins/tcad_artifact/tcad_artifact/result_analysis.py": "31197c53675f773e2a0dca4bc6131d35e77e6c316cac3ebce584befb958c6921",
+    "plugins/curve_score/curve_score/science_operations.py": "72ece7e0ed6017bdef208cd37ca01fc69aee76c5c85f3d0a99ce17c58aa34f2a"
+  }
+}

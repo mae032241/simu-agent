@@ -1,0 +1,135 @@
+{
+  "purpose": "Continue the scientific iteration using exact existing execution evidence; complete analysis and feed sealed results into bounded design and independent plan review.",
+  "request": {
+    "name": "fig4_continuation_execution_analysis_8",
+    "operation_id": "tcad.result.analyze.v1",
+    "inputs": [
+      {
+        "port": "execution_result",
+        "artifact_names": [
+          "fig4_continuation_execution_1.result"
+        ]
+      },
+      {
+        "port": "recovery_manifest",
+        "artifact_names": [
+          "fig4_continuation_execution_analysis_7.output.recovery_manifest"
+        ]
+      },
+      {
+        "port": "prior_analysis",
+        "artifact_names": [
+          "fig4_continuation_execution_analysis_7.output"
+        ]
+      },
+      {
+        "port": "experiment_plan",
+        "artifact_names": [
+          "fig4_continuation_experiment_plan_3"
+        ]
+      },
+      {
+        "port": "experiment_review",
+        "artifact_names": [
+          "fig4_continuation_experiment_review_6.output"
+        ]
+      },
+      {
+        "port": "reviewed_package",
+        "artifact_names": [
+          "fig4_continuation_reviewed_package_2"
+        ]
+      },
+      {
+        "port": "runtime_manifest",
+        "artifact_names": [
+          "fig4_continuation_execution_1.output.tcad_manifest"
+        ]
+      },
+      {
+        "port": "runtime_attestation",
+        "artifact_names": []
+      },
+      {
+        "port": "solver_outputs",
+        "artifact_names": [
+          "fig4_continuation_execution_1.output.solver_log",
+          "fig4_continuation_execution_1.output.fig4_al_own_anchor_primary_plx",
+          "fig4_continuation_execution_analysis_7.output.tool_evidence_028",
+          "fig4_continuation_execution_analysis_7.output.tool_evidence_029",
+          "fig4_continuation_execution_analysis_7.output.tool_evidence_030",
+          "fig4_continuation_execution_analysis_7.output.tool_evidence_031",
+          "fig4_continuation_execution_analysis_7.output.tool_evidence_032"
+        ]
+      },
+      {
+        "port": "diagnostics",
+        "artifact_names": [
+          "fig4_continuation_execution_1.output.tcad_log"
+        ]
+      },
+      {
+        "port": "reference_material",
+        "artifact_names": [
+          "fig4_continuation_reference_bundle_1",
+          "fig4_continuation_figure_materialized_1.curve_tables_001",
+          "fig4_continuation_figure_materialized_1.curve_tables_002"
+        ]
+      },
+      {
+        "port": "current_progress",
+        "artifact_names": [
+          "fig4_continuation_objective_2"
+        ]
+      }
+    ],
+    "instruction": "继续完成精确绑定计划所要求的本轮结果分析，使用原始目标、既往封存分析和已有原始执行证据，自主判断并完成尚缺的定量归约和结论。先核对本轮合同授予的全部能力；不要仅因注册评分工具缺少某个指标，就断言整个分析无法完成。若合同允许，可在受控工作区内用有界的原生代码/辅助程序对绑定输入进行确定性后处理，保留可复核的方法、数据依据与计算局限，并依照输出合同表达结果；不得把原生计算伪装成注册工具回执，也不得编造 calculation_records 的证明。区分既往计算、历史错误与本轮新观察；不沿用旧报告中未经本轮核实的工具限制。不要修改原始证据、计划或执行状态。若仍无法完成，说明实际缺失的输入或明确的权限/合同限制及其影响，而非重复笼统的工具不可用结论。报告当前目标的完成程度、有限或否定结论，以及尚未完成目标的必要后续条件。仅使用已有执行结果，不启动求解器、不访问网络、不安装依赖。资源约束：一次一个计算进程树，含子进程累计 RSS 不超过 512 MiB，达到 448 MiB 时提前停止；不运行全量测试、并行批次或大规模压力测试。"
+  },
+  "preflight": {
+    "admissible": true,
+    "executor_kind": "agent",
+    "port": null,
+    "reason_code": null
+  },
+  "invocation": {
+    "executor_kind": "agent",
+    "operation_id": "tcad.result.analyze.v1",
+    "result": {
+      "agent_type": "op_tcad_result_analyze_v1_8314f7794897",
+      "backend": "local_trusted",
+      "candidate_accepted": false,
+      "completed_at": null,
+      "created_at": "2026-09-11T13:56:53.350307Z",
+      "deadline_at": "2026-09-11T14:11:53.350307Z",
+      "diagnostic_summary": {
+        "failure": null,
+        "latest_rejection": null,
+        "latest_tool_error": null,
+        "recent_errors": [],
+        "rejection_count": 0
+      },
+      "draft_from": null,
+      "head_advance": null,
+      "last_activity_at": null,
+      "logical_name": "fig4_continuation_execution_analysis_8",
+      "name": "fig4_continuation_execution_analysis_8",
+      "operation_id": "tcad.result.analyze.v1",
+      "output_artifact_name": null,
+      "reason": null,
+      "recovery": {
+        "delivery_preserved": false,
+        "draft_available": false,
+        "recovery_pending": false,
+        "resume_available": false
+      },
+      "recovery_available": false,
+      "revision": 1,
+      "scheduler_signal": null,
+      "scheduler_signal_status": "unavailable",
+      "sealed_output": null,
+      "sealed_output_status": "unavailable",
+      "started_at": null,
+      "state": "queued"
+    }
+  }
+}

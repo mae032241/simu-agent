@@ -40,6 +40,8 @@ def main(argv: list[str] | None = None) -> int:
     (run_dir / "running").touch(exist_ok=False)
     started_at = _timestamp()
     exit_code = 99
+    solver_exit_code = None
+    collection_errors = []
     terminal = "failed"
     error = ""
     outputs: list[dict[str, object]] = []
@@ -71,12 +73,17 @@ def main(argv: list[str] | None = None) -> int:
             )
             _atomic_text(run_dir / "solver_pid", f"{process.pid}\n")
             exit_code = _wait_with_job_limits(process, job["limits"])
+        solver_exit_code = exit_code
         _collect_outputs(
             run_dir / "work",
             job["expected_outputs"],
             job["limits"],
-            records=outputs,
+            records=outputs, errors=collection_errors,
         )
+        if collection_errors:
+            error = "; ".join(collection_errors)[:8192]
+            if exit_code == 0:
+                exit_code = 97
         terminal = "succeeded" if exit_code == 0 else "failed"
     except _RuntimeLimitExceeded as failure:
         if process is not None:
@@ -95,13 +102,15 @@ def main(argv: list[str] | None = None) -> int:
             exit_code = 97
     try:
         _augment_development_debug_log(run_dir, job)
-    except Exception:
-        pass
+    except Exception as failure:
+        error = f"{error}; diagnostic collection failed: {failure}".lstrip("; ")
     manifest = {
         "completed_at": _timestamp(),
         "error": error,
         "exit_code": exit_code,
         "outputs": outputs,
+        "solver_exit_code": solver_exit_code,
+        "collection_errors": collection_errors,
         "started_at": started_at,
         "terminal_state": terminal,
     }
@@ -118,50 +127,60 @@ def _collect_outputs(
     limits: dict,
     *,
     records: list[dict[str, object]] | None = None,
+    errors: list[str] | None = None,
 ) -> list[dict[str, object]]:
     records = [] if records is None else records
     total = sum(int(item["size_bytes"]) for item in records)
-    for item in expected:
-        capture = item.get("capture", "workspace_file")
-        if capture == "workspace_file":
-            path = root.joinpath(*item["relative_path"].split("/"))
-        elif capture == "process_log":
-            path = root.parent / "worker.log"
-        else:
-            raise RuntimeError("unsupported output capture mode")
+    failures = [] if errors is None else errors
+    for index, item in enumerate(expected):
         try:
-            metadata = os.lstat(path)
-        except FileNotFoundError:
-            if item["required"]:
-                raise RuntimeError(f"required output missing: {item['relative_path']}")
-            continue
-        if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
-            raise RuntimeError(f"output is not a regular file: {item['relative_path']}")
-        content = path.read_bytes()
-        if len(content) > item["max_bytes"]:
-            raise RuntimeError(f"output exceeds contract: {item['relative_path']}")
-        total += len(content)
-        if total > limits["max_output_bytes"]:
-            raise RuntimeError("total output exceeds job limit")
-        if capture == "process_log":
-            target = root.joinpath(*item["relative_path"].split("/"))
-            target.parent.mkdir(parents=True, exist_ok=True)
-            _atomic_bytes(target, content)
-        records.append(
-            {
-                "name": item["name"],
-                "media_type": item["media_type"],
-                "relative_path": item["relative_path"],
-                "sha256": hashlib.sha256(content).hexdigest(),
-                "size_bytes": len(content),
-            }
-        )
+            capture = item.get("capture", "workspace_file")
+            if capture == "workspace_file":
+                path = root.joinpath(*item["relative_path"].split("/"))
+            elif capture == "process_log":
+                path = root.parent / "worker.log"
+            else:
+                raise RuntimeError("unsupported output capture mode")
+            try:
+                metadata = os.lstat(path)
+            except FileNotFoundError:
+                if item["required"]:
+                    raise RuntimeError(f"required output missing: {item['relative_path']}")
+                continue
+            if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
+                raise RuntimeError(f"output is not a regular file: {item['relative_path']}")
+            if metadata.st_size > item["max_bytes"]:
+                raise RuntimeError(f"output exceeds contract: {item['relative_path']}")
+            content = path.read_bytes()
+            if len(content) > item["max_bytes"]:
+                raise RuntimeError(f"output exceeds contract: {item['relative_path']}")
+            total += len(content)
+            if total > limits["max_output_bytes"]:
+                raise RuntimeError("total output exceeds job limit")
+            if capture == "process_log":
+                target = root.joinpath(*item["relative_path"].split("/"))
+                target.parent.mkdir(parents=True, exist_ok=True)
+                _atomic_bytes(target, content)
+            records.append(
+                {
+                    "name": item["name"],
+                    "media_type": item["media_type"],
+                    "relative_path": item["relative_path"],
+                    "sha256": hashlib.sha256(content).hexdigest(),
+                    "size_bytes": len(content),
+                }
+            )
+        except (OSError, RuntimeError) as failure:
+            failures.append(str(failure)[:1024])
+            if "total output" in str(failure):
+                failures[-1] += "; %d later outputs not inspected" % (len(expected)-index-1)
+                break
+    if errors is None and failures:
+        raise RuntimeError("; ".join(failures)[:8192])
     return records
 
 
 def _augment_development_debug_log(run_dir: Path, job: dict) -> None:
-    if job.get("execution_purpose") != "development_debug":
-        return
     arguments = job.get("arguments")
     if not isinstance(arguments, list) or not arguments:
         return
@@ -176,36 +195,32 @@ def _augment_development_debug_log(run_dir: Path, job: dict) -> None:
         for path in sorted(work_dir.glob("*.log"))
         if path.name != preferred
     )
-    solver_log = next(
-        (
-            work_dir / name
-            for name in names[:32]
-            if (work_dir / name).is_file() and not (work_dir / name).is_symlink()
-        ),
-        None,
-    )
-    if solver_log is None:
+    names.extend(path.name for path in sorted(work_dir.glob("*.err")))
+    if len(names) > 33:
+        raise ValueError("solver diagnostic file count exceeds 32; original files retained")
+    parts = []
+    total = 0
+    for name in names:
+        path = work_dir / name
+        if not path.exists():
+            continue
+        raw = _read_diagnostic_log(path, _DEBUG_SOLVER_LOG_BYTES - total)
+        total += len(raw)
+        parts.append(b"\n--- scidiscovery solver diagnostic: " + name.encode("utf-8") + b" ---\n" + raw)
+    if not parts:
         return
-    stdout = _bounded_excerpt(run_dir / "worker.log", _DEBUG_STDOUT_BYTES)
-    solver = _bounded_excerpt(solver_log, _DEBUG_SOLVER_LOG_BYTES)
-    _atomic_bytes(
-        run_dir / "worker.log",
-        stdout + b"\n--- scidiscovery solver diagnostic ---\n" + solver,
-    )
+    stdout = _read_diagnostic_log(run_dir / "worker.log", _DEBUG_STDOUT_BYTES)
+    _atomic_bytes(run_dir / "diagnostic.log", stdout + b"".join(parts))
 
 
-def _bounded_excerpt(path: Path, limit: int) -> bytes:
+def _read_diagnostic_log(path: Path, limit: int) -> bytes:
     metadata = path.lstat()
     if path.is_symlink() or not stat.S_ISREG(metadata.st_mode):
         raise ValueError("debug log is not a regular file")
     with path.open("rb") as stream:
         if metadata.st_size <= limit:
             return stream.read(limit + 1)
-        half = limit // 2
-        head = stream.read(half)
-        stream.seek(-half, os.SEEK_END)
-        tail = stream.read(half)
-    return head + b"\n--- bounded log omission ---\n" + tail
+        raise ValueError("diagnostic log exceeds its capture limit; original file retained")
 
 
 def _limits(limits: dict) -> None:

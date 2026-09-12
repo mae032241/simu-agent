@@ -1,0 +1,51 @@
+{
+  "date": "2026-09-12",
+  "source_status": "implemented",
+  "production_files": 6,
+  "test_files": 2,
+  "patch_sha256": "f9dab09a8d5313cf6341b605292523a24918e2113c5a01c1406a9b2ea8b19c48",
+  "distinct_focused_tests_passed": 242,
+  "baseline_failures": 4,
+  "stress_tests_deselected": 1,
+  "all_suite_run": false,
+  "peak_tree_rss_bytes": 300875776,
+  "watchdog_stops": [],
+  "isolated_installed_smoke": {
+    "installed_catalog_operations": 45,
+    "stdio_recovery": true,
+    "compact_open": true,
+    "writable_recovery": true,
+    "fresh_runtime_observations": true,
+    "prior_mapping_reused": true,
+    "raw_request_unchanged": true,
+    "numerical_calls": 1,
+    "numerical_bytes_preserved": true,
+    "limited_submit": "completed",
+    "original_retained": true,
+    "real_agent": false,
+    "optional_paths_match": true,
+    "argv_native_error_survives_success": true,
+    "out_of_scope_evidence_does_not_block_recovery": true,
+    "packaged_source_sha256": {
+      "plugins/curve_score/curve_score/analysis_workspace.py": "b4952e7b1f8208370abb8fa18c07eb9a597e670250e9506053f5f8193b12e3c7",
+      "src/scidiscovery/artifact_agent/service/local_process_observation.py": "14dee17d9a76cd1fb7f8516e76133f310a4568921ddafeb91a4cbf66ffab84e0",
+      "src/scidiscovery/artifact_agent/interfaces/mcp_root_run_routes.py": "5c742c562c775cdd4ceced4729a83fc62d06c140019d216984ae65c403562562",
+      "src/scidiscovery/artifact_agent/service/tool_evidence.py": "094e0985094b290a41f96846430d880ab841efcda48f8043c81aa62811ac150e",
+      "src/scidiscovery/artifact_agent/service/runs.py": "fc58697872810138cd9d50d6b9f53fc798170857a09981741b32869d94bd027a",
+      "src/scidiscovery/artifact_agent/interfaces/mcp_local_worker.py": "89ce55563a1f39341fae6732341339a7db40f4fd41354258120ffc88451bb724"
+    }
+  },
+  "real_curve_run": "fig4_curve_diagnostic_verification_1",
+  "real_curve_state": "completed",
+  "real_curve_registered_calculations": 2,
+  "real_curve_submission_rejections": 0,
+  "real_recovery_state": "failed_before_open_on_old_installed_source",
+  "new_source_deployed": false,
+  "remaining_acceptance": "Install/restart, then create a new bounded recovery Run to verify the source fix in the actual instance.",
+  "claims": [
+    "Launcher coverage does not imply all platform command coverage.",
+    "Compact response byte reduction does not prove total Agent reading or latency improvement.",
+    "Four baseline failures remain; full suite was not run.",
+    "Real curve evidence and isolated new-source recovery are different verification scopes."
+  ]
+}

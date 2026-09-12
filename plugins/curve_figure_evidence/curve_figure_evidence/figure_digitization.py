@@ -12,180 +12,27 @@ from PIL import Image, ImageDraw
 from scidiscovery.artifact_agent.schema.common import canonical_json
 
 from .figure_evidence import validate_figure_evidence_manifest
-from .figure_evidence import FigurePanelAxisCalibration, FigureEvidenceValidationReport
 from .figure_evidence_validation import build_figure_evidence_validation_report
 from .figure_line_tracker import (
     LineFinding,
-    LineTrackingConfig,
     TracePoint,
+    guide_y,
     mark_shared,
     trace_continuous_line,
 )
+from .figure_numeric_redraw import render_numeric_redraw
 from .figure_digitization_contract import (
     FigureDigitizationRequest,
     FigureDigitizationSeries,
-    FigureEligibility,
-    FigureLineTracking,
     PdfFigureSource,
-    PixelRange,
     RasterFigureSource,
     axis_uncertainty as _axis_uncertainty,
     axis_value as _axis_value,
     recover_requested_image,
-    FigureExtractionIntent, FigureMeasurementRequest, replay_reference_detection,
-    validate_intent_candidates, calibration_from_tick_pairs,
 )
 
 
-def build_automatic_figure_bundle(source_content: bytes, intent_content: bytes):
-    """Replay raw bytes, validate semantic choices, and measure only detector pixels."""
-    intent = FigureExtractionIntent.model_validate_json(intent_content, strict=True)
-    detected = replay_reference_detection(source_content, intent.source_page)
-    selection = validate_intent_candidates(intent, detected)
-    image, detection, plot = selection if selection else (
-        (detected.images[0], detected.detections[0], None) if detected.images else (None, None, None))
-    reasons = set(detected.unresolved) | set(intent.unresolved_reasons)
-    reasons.update(item.reason for item in intent.rejected_candidates)
-    axes = None
-    selected_paths = []
-    if detection:
-        reasons.update(detection.unresolved)
-    if plot:
-        reasons.update(reason for axis in plot.axes for reason in axis.unresolved)
-        if all(axis.resolved for axis in plot.axes):
-            calibrations = {}
-            for axis in plot.axes:
-                solution = axis.solutions[0]
-                ticks = sorted(solution.ticks)
-                # Residual is measured in fitted scientific space; convert to pixels.
-                span = abs(solution.slope) * abs(ticks[-1][0] - ticks[0][0])
-                error_px = solution.residual * span / abs(solution.slope)
-                calibrations[axis.axis] = calibration_from_tick_pairs(
-                    scale=solution.scale, unit=solution.unit,
-                    ticks=(ticks[0], ticks[-1]), uncertainty_px=max(.5, error_px))
-            axes = FigurePanelAxisCalibration(**calibrations)
-        paths = {p.candidate_id: p for p in detection.paths}
-        for binding in intent.bindings:
-            path = paths[binding.candidate_id]
-            # Semantic labels belong to the Agent and independent audit. Optional
-            # explicit OCR anchors were already checked against this exact frame.
-            reasons.update(r for r in path.unresolved if r not in {"identity_unbound", "axes_unresolved"})
-            if axes and path.pixels:
-                selected_paths.append((binding, path))
-    if not selected_paths:
-        reasons.add("no_trustworthy_measurement")
-    selected_paths.sort(key=lambda item: item[1].candidate_id)
-    shape = "measured" if selected_paths else "unresolved_image" if image else "unrecovered"
-    source = {"source_kind": "unrecovered", "source_sha256": detected.source_sha256}
-    if image:
-        source = {
-            "source_kind": "embedded" if image.kind == "embedded_image" else image.kind,
-            "source_sha256": detected.source_sha256, "image_sha256": image.image_sha256,
-            "width": image.width, "height": image.height, "transform": image.transform,
-            "coordinate_space": image.coordinate_space, "recovery_tool": image.tool,
-            "recovery_tool_version": image.tool_version,
-        }
-        if image.page is not None:
-            source["page"] = image.page
-        if image.pdf_object is not None:
-            source["pdf_object"] = image.pdf_object
-        if image.kind == "page_render":
-            source.update(rotation=image.rotation, requested_dpi=image.requested_dpi,
-                          media_box=image.media_box, crop_box=image.crop_box)
-    request = FigureMeasurementRequest.model_validate_json(canonical_json({
-        "schema_version": "scidiscovery.curve-figure-digitization-request.v3",
-        "result_shape": shape, "request_status": "ready" if selected_paths else "unresolved",
-        "source": source, "detector_receipt": detected.receipt, "detector_version": detected.detector_version,
-        "figure": intent.figure, "panel": intent.panel if image else None, "plot_candidate_id": intent.plot_candidate_id,
-        "plot_bbox": plot.bbox if plot else None,
-        "axis_calibration": axes.model_dump(mode="json") if axes else None,
-        "series": [b.model_dump(mode="json") for b, _ in selected_paths],
-        "unresolved_reasons": sorted(reasons),
-        "rejected_candidates": [r.model_dump(mode="json") for r in intent.rejected_candidates],
-    }), strict=True)
-    request_raw = canonical_json(request.model_dump(mode="json"))
-    panel_key = "panel-" + (plot.candidate_id[:20] if plot else detected.receipt[:20])
-    siblings = {} if image is None else {
-        f"source_panels/{panel_key}.png": (image.content, "image/png"),
-        f"audit_overlays/{panel_key}.png": (detection.overlay, "image/png"),
-    }
-    series_records = []
-    if selected_paths:
-        with Image.open(io.BytesIO(image.content)) as raw_image:
-            pixels = raw_image.convert("RGB")
-        owners = {}
-        for _, path in selected_paths:
-            for pixel in path.pixels:
-                owners[pixel.pixel_id] = owners.get(pixel.pixel_id, 0) + 1
-        for binding, path in selected_paths:
-            series_key = "path-" + path.candidate_id[:20]
-            data_item = f"curve_tables/{panel_key}--{series_key}.csv"
-            ordered = sorted(path.pixels, key=lambda p: (_axis_value(axes.x, p.x), p.y))
-            stream = io.StringIO(newline="")
-            rows = []
-            for pixel in ordered:
-                shared = owners[pixel.pixel_id] > 1 or bool(pixel.shared_group)
-                # Multiple selected series may use the same observed coordinate.
-                # This does not resolve their exclusive branches or create another
-                # independent physical sample (report statistics deduplicate pixels).
-                shared_observation = owners[pixel.pixel_id] > 1
-                ambiguous = "path_junction_ambiguous" in path.unresolved and not shared_observation
-                rows.append({
-                    "panel_key": panel_key, "series_key": series_key,
-                    "point_index": abs(pixel.x - ordered[0].x),
-                    "pixel_id": pixel.pixel_id, "path_candidate_id": path.candidate_id,
-                    "pixel_x_raw": pixel.x, "pixel_y_raw": pixel.y,
-                    "pixel_x_subpixel": pixel.x, "pixel_y_subpixel": pixel.y,
-                    "x_value": _axis_value(axes.x, pixel.x), "y_value": _axis_value(axes.y, pixel.y),
-                    "uncertainty_px": .5,
-                    "x_uncertainty": _axis_uncertainty(axes.x, pixel.x, .5),
-                    "y_uncertainty": _axis_uncertainty(axes.y, pixel.y, .5),
-                    "observed": 1, "quantitative_measurement_claim_eligible": int(not ambiguous),
-                    "eligibility_reason": "ambiguous_path" if ambiguous else "",
-                    "coordinate_ownership": "shared" if shared else "exclusive",
-                    "shared_group": pixel.pixel_id if shared else "",
-                })
-            writer = csv.DictWriter(stream, fieldnames=tuple(rows[0]), lineterminator="\n")
-            writer.writeheader()
-            writer.writerows(rows)
-            siblings[data_item] = (stream.getvalue().encode(), "text/csv")
-            xs = sorted({p.x for p in ordered})
-            left, _, right, _ = plot.bbox
-            gaps = [xs[0] - left, right - xs[-1], *(b-a-1 for a,b in zip(xs,xs[1:]))]
-            color = pixels.getpixel((ordered[0].x, ordered[0].y))
-            series_records.append({
-                "series_key": series_key, "label": binding.semantic_identity, "primitive_kind": "line",
-                "descriptor": {"color": "#%02x%02x%02x" % color, "color_tolerance": 0.0, "line_style": "solid"},
-                "data_item": data_item,
-                "binding": {"source": "annotation", "visible_label": binding.visible_label,
-                            "status": "matched", "confidence": 1.0, "alternatives": []},
-                "point_count": len(rows), "visible_fraction": len(xs) / (right-left+1),
-                "max_gap_px": max(gaps), "uncertainty_px": .5,
-                "tracking_diagnostics": sorted(set(path.unresolved) - {"identity_unbound", "axes_unresolved"}),
-            })
-    manifest = {
-        "schema_version": "scidiscovery.figure-evidence-manifest.v2", "result_shape": shape,
-        "detector_receipt": detected.receipt, "unresolved_reasons": sorted(reasons),
-        "figure_key": "figure-" + detected.receipt[:20], "status": "unresolved" if reasons else "qualified",
-        "source": source,
-        "panels": [] if image is None else [{"panel_key": panel_key, "citation": intent.figure,
-            "axis_calibration": axes.model_dump(mode="json") if axes else None,
-            "series": series_records, "shared_support": []}],
-        "metrics": {"panel_count": int(image is not None), "series_count": len(series_records),
-            "qualified_series_count": len(series_records), "total_point_count": sum(s["point_count"] for s in series_records),
-            "minimum_visible_fraction": min((s["visible_fraction"] for s in series_records), default=0.0)},
-        "ambiguities": [],
-        "provenance": {"spec_sha256": _sha256(request_raw), "output_artifacts": [
-            {"collection": name.split("/")[0], "data_item": name, "sha256": _sha256(raw),
-             "bytes": len(raw), "media_type": media} for name,(raw,media) in sorted(siblings.items())]},
-    }
-    manifest_raw = canonical_json(validate_figure_evidence_manifest(manifest))
-    report = build_figure_evidence_validation_report(manifest_data_item="figure_manifest/evidence.json",
-        manifest_content=manifest_raw, sibling_files=siblings)
-    FigureEvidenceValidationReport.model_validate_json(canonical_json(report), strict=True)
-    return {"figure_request/evidence.json": (request_raw, "application/json"),
-        "figure_manifest/evidence.json": (manifest_raw, "application/json"),
-        "validation_reports/validation_report.json": (canonical_json(report), "application/json"), **siblings}
+COLOR_MATCH_TOLERANCE = 24.0
 
 
 def _rgb(color: str) -> tuple[int, int, int]:
@@ -194,21 +41,12 @@ def _rgb(color: str) -> tuple[int, int, int]:
     )  # type: ignore[return-value]
 
 
-def _tracking(series: FigureDigitizationSeries) -> LineTrackingConfig:
-    return LineTrackingConfig(
-        **{
-            name: getattr(series.tracking, name)
-            for name in LineTrackingConfig.__dataclass_fields__
-        }
-    )
-
-
 def _binding(
     image: Image.Image, series: FigureDigitizationSeries
 ) -> tuple[dict[str, object], LineFinding | None]:
     left, top, right, bottom = series.binding_bbox
     target = _rgb(series.color)
-    threshold = series.color_tolerance**2
+    threshold = COLOR_MATCH_TOLERANCE**2
     pixels = image.load()
     count = sum(
         sum((pixels[x, y][index] - target[index]) ** 2 for index in range(3))
@@ -216,12 +54,12 @@ def _binding(
         for x in range(left, right)
         for y in range(top, bottom)
     )
-    matched = count >= series.min_color_pixels
+    matched = count > 0
     value: dict[str, object] = {
         "source": series.binding_source,
         "visible_label": series.visible_label,
         "status": "matched" if matched else "unresolved",
-        "confidence": min(1.0, count / series.min_color_pixels),
+        "confidence": 1.0 if matched else 0.0,
         "alternatives": [],
     }
     return value, (
@@ -234,134 +72,117 @@ def _binding(
     )
 
 
-def _declared_gaps(
-    request: FigureDigitizationRequest, series: FigureDigitizationSeries
-) -> tuple[PixelRange, ...]:
-    shared = tuple(
-        interval
-        for support in request.shared_support
-        if (
-            series.series_key in support.covered_series
-            if support.mode == "overdraw"
-            else series.series_key in support.member_series
-        )
-        for interval in support.pixel_ranges
-    )
-    return tuple(sorted({*series.declared_gap_ranges, *shared}))
-
-
-def _materialize_shared_support(
+def _derive_shared_support(
     request: FigureDigitizationRequest,
     direct: dict[str, tuple[TracePoint, ...]],
-) -> dict[str, tuple[TracePoint, ...]]:
+) -> tuple[dict[str, tuple[TracePoint, ...]], list[dict[str, object]]]:
+    """Share only directly observed pixel clusters whose supports intersect."""
+
     definitions = {item.series_key: item for item in request.series}
     direct_by_x = {
         key: {point.pixel_x_raw: point for point in points}
         for key, points in direct.items()
     }
     by_x = {key: dict(points) for key, points in direct_by_x.items()}
-    for support in request.shared_support:
-        if support.mode == "overdraw":
-            donor = direct_by_x[support.visible_series]
-            donor_result = by_x[support.visible_series]
-            for left, right in support.pixel_ranges:
-                required = set(range(left, right)) & donor.keys()
-                for covered_key in support.covered_series:
-                    covered_direct = direct_by_x[covered_key]
-                    covered_result = by_x[covered_key]
-                    endpoint_distance = max((
-                        abs(
-                            covered_direct[endpoint].pixel_y_subpixel
-                            - donor[endpoint].pixel_y_subpixel
-                        )
-                        for endpoint in (left - 1, right)
-                        if endpoint in covered_direct and endpoint in donor
-                    ), default=0.0)
-                    if endpoint_distance > support.max_endpoint_distance_px:
-                        continue
-                    domain = definitions[covered_key].pixel_range or (
-                        request.plot_bbox[0],
-                        request.plot_bbox[2],
-                    )
-                    for pixel_x in sorted(required - covered_direct.keys()):
-                        donor_point = donor[pixel_x]
-                        covered_result[pixel_x] = replace(
-                            mark_shared(
-                                donor_point,
-                                group=support.group_key,
-                                source_series=support.visible_series,
-                                support_kind="shared_occlusion",
-                                uncertainty_px=max(
-                                    donor_point.uncertainty_px,
-                                    endpoint_distance + 0.5,
-                                ),
-                            ),
-                            point_index=pixel_x - domain[0],
-                        )
-                        donor_result[pixel_x] = mark_shared(
-                            donor[pixel_x],
-                            group=support.group_key,
-                            source_series=support.visible_series,
-                            support_kind="direct_pixel",
-                        )
-            continue
+    memberships: dict[tuple[str, ...], list[int]] = {}
+    all_x = sorted(
+        {pixel_x for points in direct_by_x.values() for pixel_x in points}
+    )
+    for pixel_x in all_x:
+        available = sorted(
+            (key, points[pixel_x])
+            for key, points in direct_by_x.items()
+            if pixel_x in points
+        )
+        candidates = set()
+        for source_key, source_point in available:
+            low = source_point.pixel_y_subpixel - source_point.uncertainty_px
+            high = source_point.pixel_y_subpixel + source_point.uncertainty_px
+            members = []
+            for key, definition in definitions.items():
+                domain = (request.plot_bbox[0], request.plot_bbox[2])
+                if not domain[0] <= pixel_x < domain[1]:
+                    continue
+                location = guide_y(
+                    definition.seeds,
+                    pixel_x,
+                    (request.plot_bbox[1] + request.plot_bbox[3] - 1) / 2.0,
+                )
+                if key == source_key or low < location < high:
+                    members.append(key)
+            candidates.add(tuple(sorted(members)))
+        used: set[str] = set()
+        for members in sorted(candidates, key=lambda value: (-len(value), value)):
+            selected = tuple(key for key in members if key not in used)
+            if len(selected) < 2:
+                continue
+            memberships.setdefault(selected, []).append(pixel_x)
+            used.update(selected)
 
-        members = support.member_series
-        for left, right in support.pixel_ranges:
+    records: list[dict[str, object]] = []
+    for members, columns in sorted(memberships.items()):
+        runs: list[tuple[int, int]] = []
+        start = previous = columns[0]
+        for pixel_x in columns[1:]:
+            if pixel_x != previous + 1:
+                runs.append((start, previous + 1))
+                start = pixel_x
+            previous = pixel_x
+        runs.append((start, previous + 1))
+        for left, right in runs:
+            group = f"shared_{_sha256(canonical_json((members, left, right)))[:20]}"
             sources = _coincident_sources(
                 members=members,
                 left=left,
                 right=right,
                 direct_by_x=direct_by_x,
             )
+            max_spread = 0.0
             for pixel_x in range(left, right):
-                available = tuple(
-                    member for member in members if pixel_x in direct_by_x[member]
+                original = [
+                    direct_by_x[key][pixel_x]
+                    for key in members
+                    if pixel_x in direct_by_x[key]
+                ]
+                max_spread = max(
+                    max_spread,
+                    max(point.pixel_y_subpixel for point in original)
+                    - min(point.pixel_y_subpixel for point in original),
                 )
-                if not available:
-                    continue
-                visible_points = tuple(
-                    direct_by_x[member][pixel_x] for member in available
-                )
-                visible_y = tuple(point.pixel_y_subpixel for point in visible_points)
-                if max(visible_y) - min(visible_y) > support.max_member_distance_px:
-                    continue
-                source_member = sources[pixel_x]
-                source_point = direct_by_x[source_member][pixel_x]
-                spread = max(visible_y) - min(visible_y)
-                for member in members:
-                    domain = definitions[member].pixel_range or (
-                        request.plot_bbox[0],
-                        request.plot_bbox[2],
-                    )
-                    by_x[member][pixel_x] = replace(
+                source_key = sources[pixel_x]
+                source_point = direct_by_x[source_key][pixel_x]
+                for key in members:
+                    domain = (request.plot_bbox[0], request.plot_bbox[2])
+                    by_x[key][pixel_x] = replace(
                         mark_shared(
                             source_point,
-                            group=support.group_key,
-                            source_series=source_member,
+                            group=group,
+                            source_series=source_key,
                             support_kind=(
                                 "direct_pixel"
-                                if member == source_member
+                                if key == source_key
                                 else "shared_occlusion"
-                            ),
-                            uncertainty_px=max(
-                                source_point.uncertainty_px,
-                                spread + 0.5,
                             ),
                             shared_eligible=True,
                         ),
                         point_index=pixel_x - domain[0],
-                        identity_ambiguous=(
-                            source_point.identity_ambiguous
-                            or (
-                                pixel_x in direct_by_x[member]
-                                and direct_by_x[member][pixel_x].identity_ambiguous
-                            )
+                        identity_ambiguous=any(
+                            point.identity_ambiguous for point in original
                         ),
                     )
-    return {
-        key: tuple(value[x] for x in sorted(value)) for key, value in by_x.items()
-    }
+            records.append(
+                {
+                    "group_key": group,
+                    "member_series": list(members),
+                    "pixel_ranges": [[left, right]],
+                    "mode": "coincident_overlap",
+                    "max_member_distance_px": max_spread,
+                }
+            )
+    return (
+        {key: tuple(points[x] for x in sorted(points)) for key, points in by_x.items()},
+        records,
+    )
 
 
 def _coincident_sources(
@@ -404,10 +225,6 @@ def _coincident_sources(
     }
 
 
-def _inside(pixel_x: int, ranges: tuple[PixelRange, ...]) -> bool:
-    return any(left <= pixel_x < right for left, right in ranges)
-
-
 def _curve_csv(
     request: FigureDigitizationRequest,
     series: FigureDigitizationSeries,
@@ -442,52 +259,14 @@ def _curve_csv(
     writer = csv.DictWriter(stream, fieldnames=fields, lineterminator="\n")
     writer.writeheader()
     for point in points:
-        below_limit = _inside(
-            point.pixel_x_raw,
-            series.eligibility.below_detection_limit_pixel_ranges,
-        ) or (
-            series.eligibility.below_detection_limit_value is not None
-            and _axis_value(axes.y, point.pixel_y_subpixel)
-            < series.eligibility.below_detection_limit_value
-        )
-        plain_ineligible = _inside(
-            point.pixel_x_raw, series.eligibility.ineligible_pixel_ranges
-        )
-        region_reason = next(
-            (
-                region.reason
-                for region in series.eligibility.ineligible_pixel_regions
-                if region.pixel_range[0] <= point.pixel_x_raw < region.pixel_range[1]
-            ),
-            "",
-        )
-        shared_ineligible = (
-            point.support_kind == "shared_occlusion" and not point.shared_eligible
-        )
         eligible = bool(
-            series.eligibility.default_eligible
-            and not series_unresolved
-            and not below_limit
-            and not plain_ineligible
-            and not region_reason
-            and not shared_ineligible
-            and not point.identity_ambiguous
+            not series_unresolved and not point.identity_ambiguous
         )
         reason = (
-            "below_detection_limit"
-            if below_limit
-            else region_reason
-            if region_reason
-            else "ineligible_range"
-            if plain_ineligible
-            else "ambiguous_path"
+            "ambiguous_path"
             if point.identity_ambiguous
-            else "shared_occlusion"
-            if shared_ineligible
             else "series_unresolved"
             if series_unresolved
-            else "series_default_ineligible"
-            if not series.eligibility.default_eligible
             else ""
         )
         writer.writerow(
@@ -520,7 +299,7 @@ def _curve_csv(
                 ),
                 "observed": 1,
                 "quantitative_measurement_claim_eligible": int(eligible),
-                "below_sims_detection_limit": int(below_limit),
+                "below_sims_detection_limit": 0,
                 "eligibility_reason": reason,
                 "support_kind": point.support_kind,
                 "coordinate_ownership": point.coordinate_ownership,
@@ -556,7 +335,7 @@ def _audit_overlay(
         for x, y in series.seeds:
             draw.line((x - 3, y + offset, x + 3, y + offset), fill="#888888", width=1)
             draw.line((x, y + offset - 3, x, y + offset + 3), fill="#888888", width=1)
-        domain = series.pixel_range or (plot[0], plot[2])
+        domain = (plot[0], plot[2])
         strip_y = offset + image.height + 3
         draw.rectangle((domain[0], strip_y, domain[1] - 1, strip_y + 4), fill="#aaaaaa")
         for point in traces[series.series_key]:
@@ -569,15 +348,6 @@ def _audit_overlay(
             local_limit = (
                 series.series_key in unresolved
                 or point.identity_ambiguous
-                or not series.eligibility.default_eligible
-                or _inside(x, series.eligibility.ineligible_pixel_ranges)
-                or _inside(x, series.eligibility.below_detection_limit_pixel_ranges)
-                or (series.eligibility.below_detection_limit_value is not None
-                    and _axis_value(axes.y, point.pixel_y_subpixel)
-                    < series.eligibility.below_detection_limit_value)
-                or any(region.pixel_range[0] <= x < region.pixel_range[1]
-                       for region in series.eligibility.ineligible_pixel_regions)
-                or (point.support_kind == "shared_occlusion" and not point.shared_eligible)
             )
             point_color = "#ff4000" if local_limit else color
             draw.point((x, y + offset), fill=point_color)
@@ -613,29 +383,19 @@ def build_digitized_figure_bundle(
         binding, binding_finding = _binding(image, series)
         bindings[series.series_key] = binding
         local = [] if binding_finding is None else [binding_finding]
-        domain = series.pixel_range or (plot[0], plot[2])
+        domain = (plot[0], plot[2])
         trace = trace_continuous_line(
             image,
             rgb=_rgb(series.color),
-            tolerance=series.color_tolerance,
+            tolerance=COLOR_MATCH_TOLERANCE,
             seeds=series.seeds,
             bounds=(domain[0], plot[1], domain[1], plot[3]),
             exclusions=(*request.exclusion_regions, *series.exclusion_regions),
-            declared_gaps=_declared_gaps(request, series),
-            config=_tracking(series),
         )
         local.extend(trace.findings)
         direct[series.series_key] = trace.points
         findings[series.series_key] = local
-    for support in request.shared_support:
-        if support.mode == "coincident_overlap" and any(
-            bindings[member]["status"] != "matched"
-            for member in support.member_series
-        ):
-            raise ValueError(
-                "coincident overlap requires independently matched member bindings"
-            )
-    traces = _materialize_shared_support(request, direct)
+    traces, shared_support = _derive_shared_support(request, direct)
 
     siblings: dict[str, tuple[bytes, str]] = {
         f"source_panels/{request.panel_key}.png": (recovered.content, "image/png"),
@@ -669,7 +429,7 @@ def build_digitized_figure_bundle(
             ),
             "text/csv",
         )
-        domain = series.pixel_range or (plot[0], plot[2])
+        domain = (plot[0], plot[2])
         observed_x = sorted({point.pixel_x_raw for point in points})
         visible_fraction = len(observed_x) / max(1, domain[1] - domain[0])
         max_gap = max(
@@ -703,7 +463,7 @@ def build_digitized_figure_bundle(
                 "primitive_kind": "line",
                 "descriptor": {
                     "color": series.color,
-                    "color_tolerance": series.color_tolerance,
+                    "color_tolerance": COLOR_MATCH_TOLERANCE,
                     "line_style": "solid",
                 },
                 "data_item": item,
@@ -714,8 +474,7 @@ def build_digitized_figure_bundle(
                 "tracking_diagnostics": [
                     finding.message for finding in local_findings
                     if finding.code != "binding_pixels_missing"
-                ] + ([series.eligibility.detection_limit_note]
-                     if series.eligibility.detection_limit_note else []),
+                ],
                 "uncertainty_px": round(
                     max(
                         (
@@ -735,6 +494,18 @@ def build_digitized_figure_bundle(
                 ),
             }
         )
+    siblings[f"audit_overlays/{request.panel_key}--numeric-redraw.png"] = (
+        render_numeric_redraw(
+            request,
+            {
+                series.series_key: siblings[
+                    f"curve_tables/{request.panel_key}--{series.series_key}.csv"
+                ][0]
+                for series in series_values
+            },
+        ),
+        "image/png",
+    )
     manifest = {
         "schema_version": "scidiscovery.figure-evidence-manifest.v1",
         "figure_key": request.figure_key,
@@ -769,10 +540,7 @@ def build_digitized_figure_bundle(
                 "citation": request.citation,
                 "axis_calibration": axes.model_dump(mode="json"),
                 "series": manifest_series,
-                "shared_support": [
-                    support.model_dump(mode="json")
-                    for support in request.shared_support
-                ],
+                "shared_support": shared_support,
             }
         ],
         "metrics": {
@@ -821,8 +589,6 @@ def build_digitized_figure_bundle(
 __all__ = [
     "FigureDigitizationRequest",
     "FigureDigitizationSeries",
-    "FigureEligibility",
-    "FigureLineTracking",
     "PdfFigureSource",
     "RasterFigureSource",
     "build_digitized_figure_bundle",

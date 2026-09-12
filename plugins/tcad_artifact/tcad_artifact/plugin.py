@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
+from scidiscovery.operations.input_validation import parse_bound_json
+
 import json
-from pathlib import Path
 from typing import Any, Callable
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from scidiscovery.artifact_agent.schema.common import canonical_json
+from scidiscovery.artifact_agent.service.local_workspace import WorkspaceError
+from scidiscovery.artifact_agent.service.run_outputs import RunOutputError
 from scidiscovery.operation_contract import SemanticRuleViolation
+from scidiscovery.operations.input_validation import OperationInvocationError
 from scidiscovery.operation_declaration import semantic_contract
 from .device_parameters import (
     DeviceParameterCoverageReport,
@@ -28,6 +32,7 @@ from scidiscovery.operations.spec import (
     ComponentSpec,
     ExecutorRef,
     InputAdmissionSpec,
+    InputValidationSpec,
     InputPortSpec,
     LimitsSpec,
     NativeToolPolicy,
@@ -44,9 +49,12 @@ from scidiscovery.operations.tooling import WorkerToolDefinition
 from scidiscovery.artifact_agent.operation_tool_context import OperationToolContext
 
 from .execution_control import SolverCapabilitySnapshot
+from .role_pack import role_prompt
 from .debug_contract import TCADDebugError
+from .local_debug_service import debug_response, debug_tool_description
 from .project_packager import (
     DeckProjectDraft,
+    DeckAuthorResult,
     DeckReviewReport,
     RuntimeAttestation,
     validate_deck_author_task_output,
@@ -60,6 +68,8 @@ from .parameter_operations import COMPONENT_SPECS as PARAMETER_COMPONENT_SPECS
 from .parameter_operations import OPERATIONS as PARAMETER_OPERATIONS
 from .curve_operations import COMPONENT_SPECS as CURVE_COMPONENT_SPECS
 from .curve_operations import OPERATIONS as CURVE_OPERATIONS
+from .result_analysis import COMPONENT_SPECS as RESULT_ANALYSIS_COMPONENT_SPECS
+from .result_analysis import OPERATIONS as RESULT_ANALYSIS_OPERATIONS
 
 
 def _schema(model: type[BaseModel], schema_id: str) -> str:
@@ -84,28 +94,39 @@ def _payload_validator(function: Callable[[dict[str, object]], Any]) -> Callable
 def _author_context(
     payload: dict[str, object], sources: dict[str, bytes], handoff: dict[str, object]
 ) -> None:
-    _validate_parameter_uncertainty(sources)
     validate_deck_author_task_output(payload, sources, handoff)
+
+
+def _parameter_inputs(sources: dict[str, bytes]) -> None:
+    parameter_raw = sources.get("device_parameters")
+    coverage_raw = sources.get("parameter_coverage")
+    if parameter_raw is None and coverage_raw is None:
+        return
+    if parameter_raw is None or coverage_raw is None:
+        raise OperationInvocationError("input_parameter_cohort_incomplete", port="parameter_coverage")
+    parameters = parse_bound_json(DeviceParameterSet, parameter_raw, admission_port="device_parameters")
+    coverage = parse_bound_json(DeviceParameterCoverageReport, coverage_raw, admission_port="parameter_coverage")
+    if coverage.parameter_set_key != parameters.parameter_set_key:
+        raise OperationInvocationError("input_parameter_coverage_mismatch", port="parameter_coverage")
+
+
+def _runtime_author_inputs(sources: dict[str, bytes]) -> None:
+    _parameter_inputs(sources)
+    attestation = parse_bound_json(RuntimeAttestation, sources["runtime_attestation"],
+                                  admission_port="runtime_attestation")
+    if attestation.verdict != "fail":
+        raise OperationInvocationError("input_runtime_attestation_not_failed", port="runtime_attestation", field="/verdict")
 
 
 def _runtime_author_context(
     payload: dict[str, object], sources: dict[str, bytes], handoff: dict[str, object]
 ) -> None:
-    attestation = RuntimeAttestation.model_validate_json(
-        sources["runtime_attestation"], strict=True
-    )
-    if attestation.verdict != "fail":
-        raise SemanticRuleViolation(
-            "runtime-failure revision requires a failing attestation"
-        )
-    _validate_parameter_uncertainty(sources)
     validate_deck_author_task_output(payload, sources, handoff)
 
 
 def _review_context(
     payload: dict[str, object], sources: dict[str, bytes], handoff: dict[str, object]
 ) -> None:
-    _validate_parameter_uncertainty(sources)
     validate_deck_review_task_output(payload, sources, handoff)
 
 
@@ -121,17 +142,6 @@ class TCADDebugInput(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
     run_name: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
     mode: str = Field(pattern=r"^(preflight|smoke|initialization)$")
-
-
-def _validate_parameter_uncertainty(sources: dict[str, bytes]) -> None:
-    raw = sources.get("parameter_uncertainty")
-    if raw is None:
-        return
-    projection = ParameterUncertaintyProjection.model_validate_json(raw, strict=True)
-    if projection.status != "ready":
-        raise SemanticRuleViolation(
-            "blocking-unbounded parameters cannot enter TCAD authoring"
-        )
 
 
 def _parameter_cohort_guard(inputs: tuple[Any, ...], parameters: dict[str, object]) -> bool:
@@ -178,9 +188,17 @@ def _debug_tool(
     if not callable(run):
         raise RuntimeError("TCAD development debug service has no run method")
     try:
-        return run(context, run_name=request.run_name, mode=request.mode)
+        try:
+            response = run(context, run_name=request.run_name, mode=request.mode)
+        except (RunOutputError, WorkspaceError) as error:
+            details = getattr(error, "details", ()) or (
+                {"path": "$", "message": str(error), "type": "value_error"},
+            )
+            context.record_activity("output_rejected")
+            response = {"state": "rejected", "diagnostics": list(details)}
+        return debug_response(context, request.run_name, response)
     except TCADDebugError as error:
-        return {
+        return debug_response(context, request.run_name, {
             "state": "rejected",
             "diagnostics": [
                 {
@@ -190,26 +208,11 @@ def _debug_tool(
                 }
             ],
             "scientific_claim_admissible": False,
-        }
+        })
 
 
-_ROLE_ROOT = Path(__file__).with_name("roles")
-AUTHOR_PROMPT = "\n\n".join(
-    (_ROLE_ROOT / name).read_text(encoding="utf-8")
-    for name in (
-        "tcad_deck_author.md",
-        "sentaurus_author_contract.md",
-        "sentaurus_sdevice_contract.md",
-    )
-)
-REVIEWER_PROMPT = "\n\n".join(
-    (_ROLE_ROOT / name).read_text(encoding="utf-8")
-    for name in (
-        "tcad_deck_reviewer.md",
-        "sentaurus_review_contract.md",
-        "sentaurus_sdevice_contract.md",
-    )
-)
+AUTHOR_PROMPT = role_prompt("author")
+REVIEWER_PROMPT = role_prompt("reviewer")
 SEMANTIC_CONTRACT = semantic_contract(
     SemanticRuleSpec(
         rule_id="tcad.deck.contract_consistency",
@@ -222,7 +225,13 @@ SEMANTIC_CONTRACT = semantic_contract(
         rule_id="tcad.deck.input_binding",
         description=(
             "Every contextual claim must remain consistent with the explicitly "
-            "bound inputs."
+            "bound inputs. Every deck review verdict requires parseable exact "
+            "project, plan and parameter inputs, matching approved parameter "
+            "context, and consistent report subject and handoff. Outputs must preserve "
+            "case realization and approved parameter values and units. Submission "
+            "does not recheck bound parameter uncertainty readiness. "
+            "A revise or blocked review may report implementation gaps with "
+            "execution_ready=false without editing its inputs."
         ),
     ),
     SemanticRuleSpec(
@@ -241,6 +250,8 @@ PROJECT_VALIDATOR_COMPONENT = CallableComponent(
     "validator", _payload_validator(validate_deck_project_output)
 )
 AUTHOR_CONTEXT_COMPONENT = CallableComponent("validator", _author_context)
+PARAMETER_INPUT_COMPONENT = CallableComponent("validator", _parameter_inputs)
+RUNTIME_AUTHOR_INPUT_COMPONENT = CallableComponent("validator", _runtime_author_inputs)
 RUNTIME_AUTHOR_CONTEXT_COMPONENT = CallableComponent(
     "validator", _runtime_author_context
 )
@@ -250,10 +261,7 @@ REVIEW_VALIDATOR_COMPONENT = CallableComponent(
 REVIEW_CONTEXT_COMPONENT = CallableComponent("validator", _review_context)
 DEBUG_TOOL = WorkerToolDefinition(
     name="worker_tcad_debug_run",
-    description=(
-        "Submit or poll one bounded control-selected TCAD development diagnostic; "
-        "the result is never scientific evidence."
-    ),
+    description=debug_tool_description(),
     input_model=TCADDebugInput,
     capability="tcad.development_debug",
     contextual_handler=_debug_tool,
@@ -347,11 +355,13 @@ def _author_operation(
     description: OperationDescription,
     inputs: tuple[InputPortSpec, ...],
     context_validator: str,
+    *,
+    input_validation: InputValidationSpec | None = None,
 ) -> OperationSpec:
     names = tuple(item.name for item in inputs if item.exposure != "handoff_only")
     return OperationSpec(
         operation_id=operation_id,
-        version="1",
+        version="2",
         catalog_scope="public",
         description=description,
         executor=ExecutorRef(
@@ -373,11 +383,12 @@ def _author_operation(
                 "project_validator",
                 context_validator,
                 names,
-                max_bytes=512 * 1024,
+                max_bytes=8 * 1024 * 1024,
             ),
         ),
         consequence="scientific",
         input_admission=DECK_PARAMETER_ADMISSION,
+        input_validation=input_validation or InputValidationSpec(_ref("parameter_inputs"), "tcad.author.parameter_inputs", "Bound parameter set and coverage must be paired and identify the same set; scientific deficiencies remain reviewable."),
         review=ReviewSpec(
             reviewer_operation="tcad.deck.review.v1",
             reviewer_input_port="project",
@@ -387,7 +398,7 @@ def _author_operation(
         limits=LimitsSpec(
             timeout_seconds=1200,
             max_input_bytes=64 * 1024 * 1024,
-            max_output_bytes=512 * 1024,
+            max_output_bytes=8 * 1024 * 1024,
             max_files=1,
             max_attempts=2,
         ),
@@ -434,11 +445,21 @@ DEVICE_GRID_INPUT = _input(
 )
 
 
+CURRENT_PROGRESS_INPUT = InputPortSpec(
+    name="current_progress", description="Exact overall objective and relevant sealed progress; background only.",
+    schema="*", schema_resource=_ref("wildcard_schema", "general_science"),
+    codec=_ref("opaque_codec", "general_science"), media_types=("*/*",),
+    min_items=0, max_items=4, max_item_bytes=2 * 1024 * 1024,
+    exposure="on_demand", usage="evidence_inventory",
+)
+
+
 INITIAL_INPUTS = (
+    CURRENT_PROGRESS_INPUT,
     _input("execution_capability", "tcad.solver-capability.v2", "capability_schema", max_bytes=64 * 1024),
     _input("experiment_plan", "scidiscovery.experiment-portfolio.v1", "experiment_portfolio_schema", schema_plugin="general_science", max_bytes=2 * 1024 * 1024),
     _input("curve_contract", "scidiscovery.curve-experiment-contract.v1", "curve_contract_schema", schema_plugin="curve_score", usage="prior_signal", max_bytes=2 * 1024 * 1024, min_items=0),
-    _input("experiment_review", "scidiscovery.scientific-review.v1", "scientific_review_schema", schema_plugin="general_science", usage="prior_signal", exposure="handoff_only", max_bytes=512 * 1024, min_items=0),
+    _input("experiment_review", "scidiscovery.scientific-review.v1", "scientific_review_schema", schema_plugin="general_science", usage="prior_signal", exposure="on_demand", max_bytes=512 * 1024, min_items=0),
     _input("curve_contract_review", "scidiscovery.scientific-review.v1", "scientific_review_schema", schema_plugin="general_science", usage="prior_signal", exposure="handoff_only", max_bytes=512 * 1024, min_items=0),
     _input("scientific_foundation", "scidiscovery.scientific-foundation.v1", "scientific_foundation_schema", schema_plugin="general_science", exposure="on_demand", max_bytes=1024 * 1024, min_items=0),
     _input("parameter_requirements", "scidiscovery.device-parameter-requirements.v1", "parameter_requirements_schema", exposure="on_demand", max_bytes=2 * 1024 * 1024, min_items=0),
@@ -461,7 +482,7 @@ RUNTIME_INPUTS = (
     *INITIAL_INPUTS,
 )
 REVIEW_INPUTS = (
-    _input("project", "tcad.deck-project.v1", "project_schema"),
+    _input("project", "tcad.deck-project.v1", "project_schema", usage="prior_signal"),
     *INITIAL_INPUTS,
 )
 
@@ -493,14 +514,17 @@ PLUGIN = PluginDefinition(
         ComponentSpec("parameter_coverage_schema", "resource", "tcad_artifact.plugin:PARAMETER_COVERAGE_SCHEMA"),
         ComponentSpec("parameter_uncertainty_schema", "resource", "tcad_artifact.plugin:PARAMETER_UNCERTAINTY_SCHEMA"),
         ComponentSpec("project_validator", "validator", "tcad_artifact.plugin:PROJECT_VALIDATOR_COMPONENT", resources=(_ref("semantic_contract"),)),
-        ComponentSpec("author_context", "validator", "tcad_artifact.plugin:AUTHOR_CONTEXT_COMPONENT", resources=(_ref("semantic_contract"),)),
-        ComponentSpec("runtime_author_context", "validator", "tcad_artifact.plugin:RUNTIME_AUTHOR_CONTEXT_COMPONENT", resources=(_ref("semantic_contract"),)),
+        ComponentSpec("author_context", "validator", "tcad_artifact.plugin:AUTHOR_CONTEXT_COMPONENT", configuration_identity="output-responsibility:v1", resources=(_ref("semantic_contract"),)),
+        ComponentSpec("parameter_inputs", "validator", "tcad_artifact.plugin:PARAMETER_INPUT_COMPONENT"),
+        ComponentSpec("runtime_author_inputs", "validator", "tcad_artifact.plugin:RUNTIME_AUTHOR_INPUT_COMPONENT"),
+        ComponentSpec("runtime_author_context", "validator", "tcad_artifact.plugin:RUNTIME_AUTHOR_CONTEXT_COMPONENT", configuration_identity="output-responsibility:v1", resources=(_ref("semantic_contract"),)),
         ComponentSpec("review_validator", "validator", "tcad_artifact.plugin:REVIEW_VALIDATOR_COMPONENT", resources=(_ref("semantic_contract"),)),
-        ComponentSpec("review_context", "validator", "tcad_artifact.plugin:REVIEW_CONTEXT_COMPONENT", resources=(_ref("semantic_contract"),)),
+        ComponentSpec("review_context", "validator", "tcad_artifact.plugin:REVIEW_CONTEXT_COMPONENT", configuration_identity="output-responsibility:v1", resources=(_ref("semantic_contract"),)),
         ComponentSpec("parameter_cohort_guard", "guard", "tcad_artifact.plugin:PARAMETER_COHORT_GUARD", configuration_identity="tcad.approved-parameter-cohort.v1"),
-        ComponentSpec("workspace_materializer", "workspace_materializer", "tcad_artifact.operation_workspace:MATERIALIZER_COMPONENT", configuration_identity="tcad.workspace-materializer.v2"),
+        ComponentSpec("workspace_materializer", "workspace_materializer", "tcad_artifact.operation_workspace:MATERIALIZER_COMPONENT", configuration_identity="tcad.workspace-materializer.v4"),
         ComponentSpec("workspace_file_policy", "workspace_file_policy", "tcad_artifact.operation_workspace:FILE_POLICY_COMPONENT", configuration_identity="tcad.workspace-file-policy.v1"),
-        ComponentSpec("workspace_finalizer", "workspace_finalizer", "tcad_artifact.operation_workspace:FINALIZER_COMPONENT", configuration_identity="tcad.workspace-finalizer.v2"),
+        ComponentSpec("review_result_finalizer", "workspace_finalizer", "tcad_artifact.operation_workspace:REVIEW_FINALIZER_COMPONENT"),
+        ComponentSpec("workspace_finalizer", "workspace_finalizer", "tcad_artifact.operation_workspace:FINALIZER_COMPONENT", configuration_identity="tcad.workspace-finalizer.v3"),
         ComponentSpec("workspace_snapshotter", "workspace_snapshotter", "tcad_artifact.operation_workspace:SNAPSHOTTER_COMPONENT", configuration_identity="tcad.workspace-snapshotter.v2"),
         ComponentSpec(
             "deck_workspace",
@@ -518,10 +542,10 @@ PLUGIN = PluginDefinition(
             "review_workspace",
             "workspace",
             "tcad_artifact.plugin:TCAD_WORKSPACE",
-            resources=(_ref("workspace_materializer"),),
+            resources=(_ref("workspace_materializer"), _ref("review_result_finalizer")),
             configuration_identity="tcad.deck-review-workspace.v2",
         ),
-        ComponentSpec("debug_tool", "worker_tool", "tcad_artifact.plugin:DEBUG_TOOL", configuration_identity="tcad.debug-tool.v2:service=tcad.development_debug"),
+        ComponentSpec("debug_tool", "worker_tool", "tcad_artifact.plugin:DEBUG_TOOL", configuration_identity="tcad.debug-tool.v4:service=tcad.development_debug"),
         ComponentSpec("runtime_configuration_schema", "resource", "tcad_artifact.runtime_plugin:CONFIGURATION_SCHEMA"),
         ComponentSpec("runtime_factory", "runtime_factory", "tcad_artifact.runtime_plugin:RUNTIME_FACTORY", configuration_identity="tcad.runtime-factory.v3:run-local-tool-service"),
         ComponentSpec("study_execute", "effect", "tcad_artifact.runtime_plugin:EXECUTE_EFFECT", configuration_identity="tcad.execution-adapter:tcad:reviewed-deck-package.v2"),
@@ -530,10 +554,12 @@ PLUGIN = PluginDefinition(
         *PARAMETER_COMPONENT_SPECS,
         *TRANSFORM_COMPONENT_SPECS,
         *CURVE_COMPONENT_SPECS,
+        *RESULT_ANALYSIS_COMPONENT_SPECS,
     ),
     operations=(
         *PARAMETER_OPERATIONS,
         *CURVE_OPERATIONS,
+        *RESULT_ANALYSIS_OPERATIONS,
         _author_operation(
             "tcad.deck.author.initial.v1",
             OperationDescription(
@@ -563,14 +589,15 @@ PLUGIN = PluginDefinition(
             ),
             RUNTIME_INPUTS,
             "runtime_author_context",
+            input_validation=InputValidationSpec(_ref("runtime_author_inputs"), "tcad.author.runtime_failure.inputs", "The bound runtime attestation must report failure."),
         ),
         OperationSpec(
             operation_id="tcad.deck.review.v1",
-            version="1",
+            version="2",
             catalog_scope="public",
             description=OperationDescription(
                 purpose="Independently review an exact TCAD project for physical and code fidelity.",
-                applies_when="A complete author project, plan, and capability are available.",
+                applies_when="A structurally readable exact author project, plan, and capability are available, including a blocked project or implementation gaps.",
                 not_for="Editing the project or running a solver.",
             ),
             executor=ExecutorRef(
@@ -597,6 +624,7 @@ PLUGIN = PluginDefinition(
             ),
             consequence="scientific",
             input_admission=DECK_PARAMETER_ADMISSION,
+            input_validation=InputValidationSpec(_ref("parameter_inputs"), "tcad.review.parameter_inputs", "Bound parameter set and coverage must be paired and identify the same set; failed coverage remains independently reviewable."),
             guards=(_ref("parameter_cohort_guard"),),
             limits=LimitsSpec(
                 timeout_seconds=600,
@@ -660,7 +688,7 @@ PLUGIN = PluginDefinition(
 )
 
 
-PROJECT_SCHEMA = _schema(DeckProjectDraft, "tcad.deck-project.v1")
+PROJECT_SCHEMA = _schema(DeckAuthorResult, "tcad.deck-project.v1")
 REVIEW_SCHEMA = _schema(DeckReviewReport, "tcad.deck-review-report.v1")
 CAPABILITY_SCHEMA = _schema(SolverCapabilitySnapshot, "tcad.solver-capability.v2")
 RUNTIME_ATTESTATION_SCHEMA = _schema(RuntimeAttestation, "tcad.runtime-attestation.v1")

@@ -1,0 +1,1269 @@
+{
+  "run_status": {
+    "agent_type": "op_tcad_result_analyze_v1_e9b8e0695619",
+    "backend": "local_trusted",
+    "bound_inputs": [
+      {
+        "artifact_names": [
+          "fig4_continuation_execution_1.result"
+        ],
+        "port": "execution_result"
+      },
+      {
+        "artifact_names": [
+          "fig4_continuation_execution_analysis_3.output.recovery_manifest"
+        ],
+        "port": "recovery_manifest"
+      },
+      {
+        "artifact_names": [
+          "fig4_morphology_closure_2.output"
+        ],
+        "port": "prior_analysis"
+      },
+      {
+        "artifact_names": [
+          "fig4_morphology_closure_2.output.recovery_manifest"
+        ],
+        "port": "prior_analysis_manifest"
+      },
+      {
+        "artifact_names": [
+          "fig4_continuation_experiment_plan_3"
+        ],
+        "port": "experiment_plan"
+      },
+      {
+        "artifact_names": [
+          "fig4_continuation_experiment_review_6.output"
+        ],
+        "port": "experiment_review"
+      },
+      {
+        "artifact_names": [
+          "fig4_continuation_reviewed_package_2"
+        ],
+        "port": "reviewed_package"
+      },
+      {
+        "artifact_names": [
+          "fig4_continuation_execution_1.output.tcad_manifest"
+        ],
+        "port": "runtime_manifest"
+      },
+      {
+        "artifact_names": [
+          "fig4_continuation_execution_1.output.solver_log",
+          "fig4_continuation_execution_1.output.fig4_al_own_anchor_primary_plx",
+          "fig4_continuation_execution_analysis_3.output.tool_evidence_008",
+          "fig4_continuation_execution_analysis_3.output.tool_evidence_010",
+          "fig4_continuation_execution_analysis_3.output.tool_evidence_011"
+        ],
+        "port": "solver_outputs"
+      },
+      {
+        "artifact_names": [
+          "fig4_continuation_execution_1.output.tcad_log"
+        ],
+        "port": "diagnostics"
+      },
+      {
+        "artifact_names": [
+          "fig4_continuation_figure_materialized_1.curve_tables_001",
+          "fig4_continuation_figure_materialized_1.curve_tables_002",
+          "fig4_continuation_figure_materialized_1.source_panels",
+          "fig4_morphology_closure_2.output.tool_evidence_029",
+          "fig4_morphology_closure_2.output.tool_evidence_030",
+          "fig4_morphology_closure_2.output.tool_evidence_031",
+          "fig4_morphology_closure_2.output.tool_evidence_032",
+          "fig4_morphology_closure_2.output.tool_evidence_036"
+        ],
+        "port": "reference_material"
+      },
+      {
+        "artifact_names": [
+          "fig4_continuation_objective_2",
+          "fig4_morphology_objective_revision_4.output",
+          "fig4_morphology_objective_review_2.output"
+        ],
+        "port": "current_progress"
+      }
+    ],
+    "candidate_accepted": true,
+    "completed_at": "2026-09-12T11:21:51.825703Z",
+    "created_at": "2026-09-12T11:16:29.014228Z",
+    "deadline_at": "2026-09-12T11:31:29.014228Z",
+    "diagnostic_summary": {
+      "failure": null,
+      "latest_rejection": null,
+      "latest_tool_error": null,
+      "recent_errors": [],
+      "rejection_count": 0
+    },
+    "draft_from": null,
+    "evidence_outputs": [
+      {
+        "artifact_name": "fig4_uncertainty_diagnosis_1.output.tool_evidence_023",
+        "schema": "opaque"
+      },
+      {
+        "artifact_name": "fig4_uncertainty_diagnosis_1.output.tool_evidence_024",
+        "schema": "opaque"
+      },
+      {
+        "artifact_name": "fig4_uncertainty_diagnosis_1.output.tool_evidence_025",
+        "schema": "opaque"
+      },
+      {
+        "artifact_name": "fig4_uncertainty_diagnosis_1.output.recovery_manifest",
+        "schema": "scidiscovery.tool-evidence-manifest.v1"
+      }
+    ],
+    "head_advance": "not_requested",
+    "last_activity_at": "2026-09-12T11:21:51.825703Z",
+    "logical_name": "fig4_uncertainty_diagnosis_1",
+    "name": "fig4_uncertainty_diagnosis_1",
+    "native_execution": {
+      "coverage": "unobserved",
+      "scientific_evidence": false
+    },
+    "operation_id": "tcad.result.analyze.v1",
+    "output_artifact_name": "fig4_uncertainty_diagnosis_1.output",
+    "reason": null,
+    "recovery": {
+      "attempt_budget": {
+        "limit": 1,
+        "used": 1
+      },
+      "delivery_preserved": false,
+      "draft_available": false,
+      "recovery_pending": false,
+      "resume_available": false
+    },
+    "recovery_available": false,
+    "revision": 1,
+    "scheduler_signal": {
+      "assumptions": [
+        "The sealed prior morphology result and its manifest are the authoritative completed numerical work for this continuation; no fitting unit was rerun.",
+        "Candidate-platform means only that the reviewed minimum independent-support rule is met; no physical flatness or reproduction tolerance is inferred."
+      ],
+      "missing_inputs": [
+        "A qualified joint digitization-uncertainty representation that preserves point_index order, gaps, shared-group identity, positive concentration, and strictly increasing x within every retained block, or qualified author raw SIMS rows sufficient to define one.",
+        "A separately reviewed finite shape-changing structural counterfactual family for microscopic mechanism separation."
+      ],
+      "next_action_kind": null,
+      "next_actions": [
+        "If digitization-range compatibility is required, revise and independently review only the uncertainty-propagation contract or obtain qualified raw SIMS uncertainty, then recompute only the affected four corner ranges from the sealed central work.",
+        "If the bounded morphology delivery is sufficient, retain the six material-by-objective not-determinable compatibility dispositions together with the supported central values and mask/numerical sensitivity.",
+        "Return the historical manifest/TDR declaration-path mismatch to the project author as an engineering correction without treating recovered postprocessing as a successful execution receipt."
+      ],
+      "schema_version": 1,
+      "summary": "The reviewed central and mask-sensitivity morphology results remain supported, but the requested digitization-range propagation is not determinable. An independent row-level audit reproduced all 48 sealed corner failures exactly: 38 violate strict within-block x order and 10 contain nonpositive y-minus concentrations. This is a bounded evidence/uncertainty-contract limitation rather than a fitting defect; the microscopic mechanism objective also remains unresolved.",
+      "verdict": "inconclusive"
+    },
+    "scheduler_signal_status": "available",
+    "sealed_output": {
+      "artifact_name": "fig4_uncertainty_diagnosis_1.output",
+      "kind": "layered_diagnosis",
+      "payload": {
+        "analysis_method": "Read the immutable execution state, original plan/review, reviewed retrospective plan/review, sealed prior analysis and its manifest, the two bound reference CSVs, the sealed 60-unit morphology JSON, metrics CSV, decision CSV, and prior analysis source. No solver, fitting unit, curve-score call, or curve-diagnostic call was run. A bounded native audit reapplied the reviewed M0-M2/S0-S2 row masks and each of the four global x/y sign corners directly to the reference rows. It counted y<=0/nonfinite rows and non-strict transformed x for consecutive point_index pairs, without sorting, deleting rows, bridging gaps, changing weights, or fitting. Its 48 issue labels were compared with the sealed unit ledger and had zero mismatches. Curve tooling was unnecessary because the unresolved quantity is a pre-fit corner qualification failure rather than a local residual question.",
+        "calculation_records": [],
+        "claim_allowed": false,
+        "evidence": [
+          {
+            "locator": "execution_result",
+            "source_key": "execution_state",
+            "source_type": "frozen_input",
+            "title": "Immutable terminal execution result"
+          },
+          {
+            "locator": "runtime_manifest",
+            "source_key": "runtime_failure",
+            "source_type": "frozen_input",
+            "title": "Immutable failed/97 runtime manifest and missing declared TDR path"
+          },
+          {
+            "locator": "experiment_plan",
+            "source_key": "original_plan",
+            "source_type": "frozen_input",
+            "title": "Original execution plan and exact experiment identity"
+          },
+          {
+            "locator": "experiment_review",
+            "source_key": "original_review",
+            "source_type": "frozen_input",
+            "title": "Independent review of the original execution plan"
+          },
+          {
+            "locator": "current_progress_002:/proposals/0/comparison_contract/required_observables/3",
+            "source_key": "retrospective_plan",
+            "source_type": "frozen_input",
+            "title": "Reviewed retrospective morphology and uncertainty method"
+          },
+          {
+            "locator": "current_progress_003:/summary",
+            "source_key": "retrospective_review",
+            "source_type": "frozen_input",
+            "title": "Independent passing review of the retrospective method"
+          },
+          {
+            "locator": "prior_analysis:/summary",
+            "source_key": "prior_analysis",
+            "source_type": "frozen_input",
+            "title": "Sealed completed morphology analysis and bounded conclusion"
+          },
+          {
+            "locator": "prior_analysis_manifest",
+            "source_key": "prior_manifest",
+            "source_type": "frozen_input",
+            "title": "Manifest for the sealed prior analysis products"
+          },
+          {
+            "locator": "reference_material_001",
+            "source_key": "al_reference_rows",
+            "source_type": "frozen_input",
+            "title": "Bound InAlAs reference rows with point identity and uncertainties"
+          },
+          {
+            "locator": "reference_material_002",
+            "source_key": "ga_reference_rows",
+            "source_type": "frozen_input",
+            "title": "Bound InGaAs reference rows with point identity and uncertainties"
+          },
+          {
+            "locator": "reference_material_005:/units",
+            "source_key": "sealed_units",
+            "source_type": "frozen_input",
+            "title": "Sealed 60-unit morphology result and per-corner issue ledger"
+          },
+          {
+            "locator": "reference_material_006",
+            "source_key": "sealed_metrics",
+            "source_type": "frozen_input",
+            "title": "Sealed material-mask central values, numerical sensitivity, and empty corner ranges"
+          },
+          {
+            "locator": "reference_material_007",
+            "source_key": "sealed_decisions",
+            "source_type": "frozen_input",
+            "title": "Six material-by-objective not-determinable compatibility dispositions"
+          },
+          {
+            "locator": "tool_evidence_023",
+            "source_key": "uncertainty_audit_code",
+            "source_type": "runtime_output",
+            "title": "Published bounded uncertainty-failure audit script"
+          },
+          {
+            "locator": "tool_evidence_024",
+            "source_key": "uncertainty_audit",
+            "source_type": "runtime_output",
+            "title": "Published row-level audit reproducing 38 non-strict-x and 10 nonpositive-y failures with zero ledger mismatches"
+          }
+        ],
+        "experiment_key": "experiment.fig4.raw_boundary_counterfactual",
+        "gates": {
+          "control_equivalence": {
+            "evidence_keys": [
+              "sealed_metrics",
+              "retrospective_plan",
+              "retrospective_review"
+            ],
+            "findings": [
+              "Position and width differences are exactly zero at the saved precision.",
+              "Small slope/level differences remain descriptive numerical sensitivity only."
+            ],
+            "status": "inconclusive",
+            "summary": "Primary and tightened central morphology are extremely close for all reported metrics, but the reviewed plan provides no threshold that authorizes a convergence or equivalence claim for these new morphology quantities."
+          },
+          "evidence_identity": {
+            "evidence_keys": [
+              "execution_state",
+              "prior_manifest",
+              "al_reference_rows",
+              "ga_reference_rows",
+              "sealed_units",
+              "uncertainty_audit"
+            ],
+            "findings": [
+              "The new audit produced 48 records and zero issue-label mismatches against the sealed 60-unit result.",
+              "No filename- or byte-similarity case inference was used."
+            ],
+            "status": "pass",
+            "summary": "The prior analysis, its manifest, both original reference tables, sealed morphology products, original execution identity, and reviewed retrospective method are directly bound in this Run. The new audit uses only current aliases and reproduces every sealed corner label."
+          },
+          "implementation_fidelity": {
+            "evidence_keys": [
+              "execution_state",
+              "runtime_failure",
+              "prior_analysis"
+            ],
+            "findings": [
+              "Original solver status is failed/97.",
+              "The uncertainty audit did not access or change solver products."
+            ],
+            "status": "fail",
+            "summary": "The immutable external execution remains failed/97 because the declared no-_fps TDR path was absent. Recovered readable outputs support bounded postprocessing but do not repair the execution receipt. This engineering defect is separate from the reference-corner failures."
+          },
+          "numerical_validity": {
+            "evidence_keys": [
+              "sealed_units",
+              "sealed_metrics",
+              "uncertainty_audit_code",
+              "uncertainty_audit"
+            ],
+            "findings": [
+              "Across all masks, every position and width primary-minus-tight difference is zero.",
+              "The maximum absolute primary-minus-tight slope or level difference is below 1.75e-5.",
+              "The audit reproduced 38 non-strict-x and 10 nonpositive-y issue labels with zero mismatches."
+            ],
+            "status": "pass",
+            "summary": "The sealed central/mask reductions contain 60/60 completed units and finite primary/tight results. The audit independently confirms that corner failures occur before fitting and match the reviewed fail-closed rules, so they are not evidence of QR, interpolation, or aggregation failure."
+          },
+          "observation": {
+            "evidence_keys": [
+              "prior_analysis",
+              "sealed_units",
+              "sealed_metrics",
+              "sealed_decisions",
+              "uncertainty_audit"
+            ],
+            "findings": [
+              "M0 endpoint differences are +0.143564 um for InAlAs and +0.147525 um for InGaAs.",
+              "M0 width differences are +0.121782 um for InAlAs and +0.208911 um for InGaAs.",
+              "M0 tail-center differences are +3.04143 and +2.54056 decades.",
+              "All six material-by-objective compatibility dispositions remain not_determinable."
+            ],
+            "status": "inconclusive",
+            "summary": "Central and mask-specific descriptive morphology is supported, including deeper own-anchor endpoints, wider transitions, and higher tail centers. Supplied digitization ranges and compatibility/outside classifications are unavailable because every preregistered global corner is ineligible before fitting."
+          },
+          "physical_interpretation": {
+            "evidence_keys": [
+              "retrospective_plan",
+              "prior_analysis",
+              "sealed_units",
+              "sealed_metrics"
+            ],
+            "findings": [
+              "Front and tail regions satisfy only the preregistered minimum independent-support rule.",
+              "Repairing uncertainty propagation would address compatibility bounds but would not by itself separate microscopic mechanisms."
+            ],
+            "status": "inconclusive",
+            "summary": "The qualified central segments permit candidate-region levels and slopes, but do not establish physical plateaus or reproduction within digitization uncertainty. Material identity remains paired with the frozen D choice and no kick-out, VCD, or other shape-changing structural counterfactual was tested, so microscopic mechanism is not identifiable."
+          },
+          "schema_version": 1
+        },
+        "hypothesis_assessments": [
+          {
+            "evidence_keys": [
+              "prior_analysis",
+              "sealed_metrics",
+              "sealed_decisions",
+              "uncertainty_audit"
+            ],
+            "falsifiers_triggered": [],
+            "hypothesis_key": "hypothesis.surface_boundary_control",
+            "outcome": "inconclusive",
+            "predictions_checked": [
+              "prediction.fig4.central_morphology",
+              "prediction.fig4.mask_morphology_sensitivity"
+            ],
+            "rationale": "The central own-anchor constant-D family differs strongly from the reference morphology, but digitization-range compatibility is unavailable and the existing material/D pairings do not isolate surface-boundary control. The new audit diagnoses the uncertainty boundary and does not alter the sealed inconclusive hypothesis disposition."
+          },
+          {
+            "evidence_keys": [
+              "prior_analysis",
+              "sealed_units",
+              "sealed_metrics",
+              "uncertainty_audit"
+            ],
+            "falsifiers_triggered": [],
+            "hypothesis_key": "hypothesis.tail_support_artifact",
+            "outcome": "inconclusive",
+            "predictions_checked": [
+              "prediction.fig4.mask_morphology_sensitivity",
+              "prediction.fig4.candidate_platform_qualification"
+            ],
+            "rationale": "A high simulated tail persists across central support masks with very small numerical sensitivity, but shared/detection-limited support and a valid joint digitization range are unresolved. Nonpositive y-minus rows in S masks and non-strict transformed x prevent the required compatibility test, so neither support nor contradiction is licensed."
+          }
+        ],
+        "method_changes": [
+          "Added only an exploratory row-level eligibility audit to localize the sealed corner failures; it did not modify the independently reviewed fit or aligned-trace method and is not used as a replacement uncertainty statistic.",
+          "The optional recovery-draft path named by domain-workspace.json was absent in this Run and a direct read returned No such file or directory. No recovery computation was attempted; the explicitly bound prior_analysis, prior_analysis_manifest, and published prior products were used instead.",
+          "The historical failed/97 solver/manifest error, earlier plotting and launcher errors, and earlier submit rejections remain historical records from prior_analysis; this Run encountered no solver, calculation-tool, publication-tool, timeout, or submission error before its first submit attempt."
+        ],
+        "next_action": "Do not rerun the 60 sealed morphology fits or the solver. If digitization compatibility is necessary, the minimum next input is either (a) a revised, independently reviewed joint uncertainty-propagation contract that preserves the existing point_index order, gaps, shared groups, positive concentration and strict within-block x order without sorting or dropping rows, or (b) qualified author raw SIMS rows with detection status and a scientifically justified joint uncertainty representation. Then recompute only the four affected corner ranges and the six material-by-objective compatibility rows from the saved central products. If mechanism separation remains the objective, separately design and review a finite shape-changing structural counterfactual family; an uncertainty repair alone cannot identify the mechanism. Return the no-_fps TDR declaration-path mismatch to the project author as a separate engineering correction.",
+        "objective_assessment": {
+          "comparison_keys": [],
+          "evidence_keys": [
+            "retrospective_plan",
+            "retrospective_review",
+            "prior_analysis",
+            "sealed_metrics",
+            "sealed_decisions",
+            "uncertainty_audit"
+          ],
+          "objective_key": "objective.fig4_mechanism_discrimination",
+          "status": "inconclusive",
+          "summary": "The three retrospective morphology objectives have supported central and mask-sensitivity values and explicit material-specific limits. Their required digitization ranges and compatibility classifications remain not evaluable under the reviewed global-corner construction, and the later mechanism-separation objective remains uncovered."
+        },
+        "overall_verdict": "inconclusive",
+        "plan_key": "experiment.fig4.raw_boundary_counterfactual/validation",
+        "recommended_task_mode": null,
+        "remaining_contradiction": "For both materials, the sealed central and mask-specific reductions consistently show that the frozen constant-D own-anchor curves have later operational endpoints, wider transitions, and substantially higher tail-center levels than the bound reference. Numerical tightening changes these reported quantities negligibly. Yet every preregistered global digitization corner violates a qualification rule before fitting: variable per-row x uncertainty creates non-strict consecutive positions in 38 corners, and y-minus creates a nonpositive value in 10 S-mask corners. Consequently no min-max digitization range, compatible/outside classification, uncertainty-qualified shape comparison, or platform consistency conclusion is available. This is a limitation of the supplied marginal uncertainties combined with the reviewed global-corner construction; it is not an unfinished batch or fitting failure. Even after an uncertainty revision, the current material/D confounding and absence of a finite shape-changing structural counterfactual would still prevent kick-out, VCD, or unique material-mechanism identification. The external execution also remains independently failed/97.",
+        "schema_version": 1,
+        "source_references": [],
+        "study_kind": "scientific",
+        "summary": "This continuation diagnoses the uncertainty boundary of the sealed retrospective Fig. 4 morphology analysis without rerunning its 60 fitting units or any solver. The completed central reductions support material-specific descriptive morphology: for M0, the own-anchor operational endpoint b2 is 0.618317 versus 0.474752 um for In0.83Al0.17As and 0.535149 versus 0.387624 um for In0.83Ga0.17As; transition widths are 0.176238 versus 0.054455 um and 0.262376 versus 0.053465 um. The own-anchor tail-center excess is 3.04143 and 2.54056 decades, respectively. Across M0-M2/S0-S2, own-anchor b2 spans 0.554950-0.618317 um for InAlAs and 0.535149-0.536139 um for InGaAs, while width spans 0.167327-0.226733 and 0.259406-0.262376 um. All position/width primary-minus-tight differences are zero, and the largest absolute slope/level difference is below 1.75e-5, although no reviewed threshold turns this into a convergence claim. Front and tail candidate regions meet the minimum support rule, but their physical plateau status and digitization-range consistency remain unqualified. The independent audit exactly reproduced the sealed corner ledger: all 48 global corners fail before fitting, with 38 non-strict-x failures and 10 y-minus nonpositive failures. Variable per-row x uncertainties make a common sign shift tie or reverse many consecutive point_index pairs; S masks omit the y>y_uncertainty requirement and therefore admit rows whose y-minus corner is nonpositive. The implementation follows the reviewed rules by failing closed, so the missing ranges are caused by the supplied marginal uncertainty plus the global-corner contract, not by QR fitting, interpolation, numerical sensitivity, or the constant-D scientific model. Separately, the immutable external execution remains failed/97 because of the declared TDR-path mismatch, and the available material/D pairings plus absence of shape-changing structural counterfactuals still prevent microscopic mechanism identification."
+      },
+      "schema": "scidiscovery.layered-diagnosis.v1"
+    },
+    "sealed_output_status": "available",
+    "started_at": "2026-09-12T11:16:48.915818Z",
+    "state": "completed"
+  },
+  "observations": [
+    {
+      "agent_type": "op_tcad_result_analyze_v1_e9b8e0695619",
+      "backend": "local_trusted",
+      "bound_inputs": [
+        {
+          "artifact_names": [
+            "fig4_continuation_execution_1.result"
+          ],
+          "port": "execution_result"
+        },
+        {
+          "artifact_names": [
+            "fig4_continuation_execution_analysis_3.output.recovery_manifest"
+          ],
+          "port": "recovery_manifest"
+        },
+        {
+          "artifact_names": [
+            "fig4_morphology_closure_2.output"
+          ],
+          "port": "prior_analysis"
+        },
+        {
+          "artifact_names": [
+            "fig4_morphology_closure_2.output.recovery_manifest"
+          ],
+          "port": "prior_analysis_manifest"
+        },
+        {
+          "artifact_names": [
+            "fig4_continuation_experiment_plan_3"
+          ],
+          "port": "experiment_plan"
+        },
+        {
+          "artifact_names": [
+            "fig4_continuation_experiment_review_6.output"
+          ],
+          "port": "experiment_review"
+        },
+        {
+          "artifact_names": [
+            "fig4_continuation_reviewed_package_2"
+          ],
+          "port": "reviewed_package"
+        },
+        {
+          "artifact_names": [
+            "fig4_continuation_execution_1.output.tcad_manifest"
+          ],
+          "port": "runtime_manifest"
+        },
+        {
+          "artifact_names": [
+            "fig4_continuation_execution_1.output.solver_log",
+            "fig4_continuation_execution_1.output.fig4_al_own_anchor_primary_plx",
+            "fig4_continuation_execution_analysis_3.output.tool_evidence_008",
+            "fig4_continuation_execution_analysis_3.output.tool_evidence_010",
+            "fig4_continuation_execution_analysis_3.output.tool_evidence_011"
+          ],
+          "port": "solver_outputs"
+        },
+        {
+          "artifact_names": [
+            "fig4_continuation_execution_1.output.tcad_log"
+          ],
+          "port": "diagnostics"
+        },
+        {
+          "artifact_names": [
+            "fig4_continuation_figure_materialized_1.curve_tables_001",
+            "fig4_continuation_figure_materialized_1.curve_tables_002",
+            "fig4_continuation_figure_materialized_1.source_panels",
+            "fig4_morphology_closure_2.output.tool_evidence_029",
+            "fig4_morphology_closure_2.output.tool_evidence_030",
+            "fig4_morphology_closure_2.output.tool_evidence_031",
+            "fig4_morphology_closure_2.output.tool_evidence_032",
+            "fig4_morphology_closure_2.output.tool_evidence_036"
+          ],
+          "port": "reference_material"
+        },
+        {
+          "artifact_names": [
+            "fig4_continuation_objective_2",
+            "fig4_morphology_objective_revision_4.output",
+            "fig4_morphology_objective_review_2.output"
+          ],
+          "port": "current_progress"
+        }
+      ],
+      "candidate_accepted": false,
+      "completed_at": null,
+      "created_at": "2026-09-12T11:16:29.014228Z",
+      "deadline_at": "2026-09-12T11:31:29.014228Z",
+      "diagnostic_summary": {
+        "failure": null,
+        "latest_rejection": null,
+        "latest_tool_error": null,
+        "recent_errors": [],
+        "rejection_count": 0
+      },
+      "draft_from": null,
+      "head_advance": null,
+      "last_activity_at": "2026-09-12T11:16:48.915818Z",
+      "logical_name": "fig4_uncertainty_diagnosis_1",
+      "name": "fig4_uncertainty_diagnosis_1",
+      "native_execution": {
+        "coverage": "unobserved",
+        "scientific_evidence": false
+      },
+      "operation_id": "tcad.result.analyze.v1",
+      "output_artifact_name": null,
+      "reason": null,
+      "recovery": {
+        "attempt_budget": {
+          "limit": 1,
+          "used": 1
+        },
+        "delivery_preserved": false,
+        "draft_available": false,
+        "recovery_pending": false,
+        "resume_available": false
+      },
+      "recovery_available": false,
+      "revision": 1,
+      "scheduler_signal": null,
+      "scheduler_signal_status": "unavailable",
+      "sealed_output": null,
+      "sealed_output_status": "unavailable",
+      "started_at": "2026-09-12T11:16:48.915818Z",
+      "state": "running"
+    },
+    {
+      "agent_type": "op_tcad_result_analyze_v1_e9b8e0695619",
+      "backend": "local_trusted",
+      "bound_inputs": [
+        {
+          "artifact_names": [
+            "fig4_continuation_execution_1.result"
+          ],
+          "port": "execution_result"
+        },
+        {
+          "artifact_names": [
+            "fig4_continuation_execution_analysis_3.output.recovery_manifest"
+          ],
+          "port": "recovery_manifest"
+        },
+        {
+          "artifact_names": [
+            "fig4_morphology_closure_2.output"
+          ],
+          "port": "prior_analysis"
+        },
+        {
+          "artifact_names": [
+            "fig4_morphology_closure_2.output.recovery_manifest"
+          ],
+          "port": "prior_analysis_manifest"
+        },
+        {
+          "artifact_names": [
+            "fig4_continuation_experiment_plan_3"
+          ],
+          "port": "experiment_plan"
+        },
+        {
+          "artifact_names": [
+            "fig4_continuation_experiment_review_6.output"
+          ],
+          "port": "experiment_review"
+        },
+        {
+          "artifact_names": [
+            "fig4_continuation_reviewed_package_2"
+          ],
+          "port": "reviewed_package"
+        },
+        {
+          "artifact_names": [
+            "fig4_continuation_execution_1.output.tcad_manifest"
+          ],
+          "port": "runtime_manifest"
+        },
+        {
+          "artifact_names": [
+            "fig4_continuation_execution_1.output.solver_log",
+            "fig4_continuation_execution_1.output.fig4_al_own_anchor_primary_plx",
+            "fig4_continuation_execution_analysis_3.output.tool_evidence_008",
+            "fig4_continuation_execution_analysis_3.output.tool_evidence_010",
+            "fig4_continuation_execution_analysis_3.output.tool_evidence_011"
+          ],
+          "port": "solver_outputs"
+        },
+        {
+          "artifact_names": [
+            "fig4_continuation_execution_1.output.tcad_log"
+          ],
+          "port": "diagnostics"
+        },
+        {
+          "artifact_names": [
+            "fig4_continuation_figure_materialized_1.curve_tables_001",
+            "fig4_continuation_figure_materialized_1.curve_tables_002",
+            "fig4_continuation_figure_materialized_1.source_panels",
+            "fig4_morphology_closure_2.output.tool_evidence_029",
+            "fig4_morphology_closure_2.output.tool_evidence_030",
+            "fig4_morphology_closure_2.output.tool_evidence_031",
+            "fig4_morphology_closure_2.output.tool_evidence_032",
+            "fig4_morphology_closure_2.output.tool_evidence_036"
+          ],
+          "port": "reference_material"
+        },
+        {
+          "artifact_names": [
+            "fig4_continuation_objective_2",
+            "fig4_morphology_objective_revision_4.output",
+            "fig4_morphology_objective_review_2.output"
+          ],
+          "port": "current_progress"
+        }
+      ],
+      "candidate_accepted": false,
+      "completed_at": null,
+      "created_at": "2026-09-12T11:16:29.014228Z",
+      "deadline_at": "2026-09-12T11:31:29.014228Z",
+      "diagnostic_summary": {
+        "failure": null,
+        "latest_rejection": null,
+        "latest_tool_error": null,
+        "recent_errors": [],
+        "rejection_count": 0
+      },
+      "draft_from": null,
+      "head_advance": null,
+      "last_activity_at": "2026-09-12T11:19:08.577767Z",
+      "logical_name": "fig4_uncertainty_diagnosis_1",
+      "name": "fig4_uncertainty_diagnosis_1",
+      "native_execution": {
+        "coverage": "unobserved",
+        "scientific_evidence": false
+      },
+      "operation_id": "tcad.result.analyze.v1",
+      "output_artifact_name": null,
+      "reason": null,
+      "recovery": {
+        "attempt_budget": {
+          "limit": 1,
+          "used": 1
+        },
+        "delivery_preserved": false,
+        "draft_available": false,
+        "recovery_pending": false,
+        "resume_available": false
+      },
+      "recovery_available": false,
+      "revision": 1,
+      "scheduler_signal": null,
+      "scheduler_signal_status": "unavailable",
+      "sealed_output": null,
+      "sealed_output_status": "unavailable",
+      "started_at": "2026-09-12T11:16:48.915818Z",
+      "state": "running"
+    },
+    {
+      "agent_type": "op_tcad_result_analyze_v1_e9b8e0695619",
+      "backend": "local_trusted",
+      "bound_inputs": [
+        {
+          "artifact_names": [
+            "fig4_continuation_execution_1.result"
+          ],
+          "port": "execution_result"
+        },
+        {
+          "artifact_names": [
+            "fig4_continuation_execution_analysis_3.output.recovery_manifest"
+          ],
+          "port": "recovery_manifest"
+        },
+        {
+          "artifact_names": [
+            "fig4_morphology_closure_2.output"
+          ],
+          "port": "prior_analysis"
+        },
+        {
+          "artifact_names": [
+            "fig4_morphology_closure_2.output.recovery_manifest"
+          ],
+          "port": "prior_analysis_manifest"
+        },
+        {
+          "artifact_names": [
+            "fig4_continuation_experiment_plan_3"
+          ],
+          "port": "experiment_plan"
+        },
+        {
+          "artifact_names": [
+            "fig4_continuation_experiment_review_6.output"
+          ],
+          "port": "experiment_review"
+        },
+        {
+          "artifact_names": [
+            "fig4_continuation_reviewed_package_2"
+          ],
+          "port": "reviewed_package"
+        },
+        {
+          "artifact_names": [
+            "fig4_continuation_execution_1.output.tcad_manifest"
+          ],
+          "port": "runtime_manifest"
+        },
+        {
+          "artifact_names": [
+            "fig4_continuation_execution_1.output.solver_log",
+            "fig4_continuation_execution_1.output.fig4_al_own_anchor_primary_plx",
+            "fig4_continuation_execution_analysis_3.output.tool_evidence_008",
+            "fig4_continuation_execution_analysis_3.output.tool_evidence_010",
+            "fig4_continuation_execution_analysis_3.output.tool_evidence_011"
+          ],
+          "port": "solver_outputs"
+        },
+        {
+          "artifact_names": [
+            "fig4_continuation_execution_1.output.tcad_log"
+          ],
+          "port": "diagnostics"
+        },
+        {
+          "artifact_names": [
+            "fig4_continuation_figure_materialized_1.curve_tables_001",
+            "fig4_continuation_figure_materialized_1.curve_tables_002",
+            "fig4_continuation_figure_materialized_1.source_panels",
+            "fig4_morphology_closure_2.output.tool_evidence_029",
+            "fig4_morphology_closure_2.output.tool_evidence_030",
+            "fig4_morphology_closure_2.output.tool_evidence_031",
+            "fig4_morphology_closure_2.output.tool_evidence_032",
+            "fig4_morphology_closure_2.output.tool_evidence_036"
+          ],
+          "port": "reference_material"
+        },
+        {
+          "artifact_names": [
+            "fig4_continuation_objective_2",
+            "fig4_morphology_objective_revision_4.output",
+            "fig4_morphology_objective_review_2.output"
+          ],
+          "port": "current_progress"
+        }
+      ],
+      "candidate_accepted": false,
+      "completed_at": null,
+      "created_at": "2026-09-12T11:16:29.014228Z",
+      "deadline_at": "2026-09-12T11:31:29.014228Z",
+      "diagnostic_summary": {
+        "failure": null,
+        "latest_rejection": null,
+        "latest_tool_error": null,
+        "recent_errors": [],
+        "rejection_count": 0
+      },
+      "draft_from": null,
+      "head_advance": null,
+      "last_activity_at": "2026-09-12T11:19:08.577767Z",
+      "logical_name": "fig4_uncertainty_diagnosis_1",
+      "name": "fig4_uncertainty_diagnosis_1",
+      "native_execution": {
+        "coverage": "unobserved",
+        "scientific_evidence": false
+      },
+      "operation_id": "tcad.result.analyze.v1",
+      "output_artifact_name": null,
+      "reason": null,
+      "recovery": {
+        "attempt_budget": {
+          "limit": 1,
+          "used": 1
+        },
+        "delivery_preserved": false,
+        "draft_available": false,
+        "recovery_pending": false,
+        "resume_available": false
+      },
+      "recovery_available": false,
+      "revision": 1,
+      "scheduler_signal": null,
+      "scheduler_signal_status": "unavailable",
+      "sealed_output": null,
+      "sealed_output_status": "unavailable",
+      "started_at": "2026-09-12T11:16:48.915818Z",
+      "state": "running"
+    },
+    {
+      "agent_type": "op_tcad_result_analyze_v1_e9b8e0695619",
+      "backend": "local_trusted",
+      "bound_inputs": [
+        {
+          "artifact_names": [
+            "fig4_continuation_execution_1.result"
+          ],
+          "port": "execution_result"
+        },
+        {
+          "artifact_names": [
+            "fig4_continuation_execution_analysis_3.output.recovery_manifest"
+          ],
+          "port": "recovery_manifest"
+        },
+        {
+          "artifact_names": [
+            "fig4_morphology_closure_2.output"
+          ],
+          "port": "prior_analysis"
+        },
+        {
+          "artifact_names": [
+            "fig4_morphology_closure_2.output.recovery_manifest"
+          ],
+          "port": "prior_analysis_manifest"
+        },
+        {
+          "artifact_names": [
+            "fig4_continuation_experiment_plan_3"
+          ],
+          "port": "experiment_plan"
+        },
+        {
+          "artifact_names": [
+            "fig4_continuation_experiment_review_6.output"
+          ],
+          "port": "experiment_review"
+        },
+        {
+          "artifact_names": [
+            "fig4_continuation_reviewed_package_2"
+          ],
+          "port": "reviewed_package"
+        },
+        {
+          "artifact_names": [
+            "fig4_continuation_execution_1.output.tcad_manifest"
+          ],
+          "port": "runtime_manifest"
+        },
+        {
+          "artifact_names": [
+            "fig4_continuation_execution_1.output.solver_log",
+            "fig4_continuation_execution_1.output.fig4_al_own_anchor_primary_plx",
+            "fig4_continuation_execution_analysis_3.output.tool_evidence_008",
+            "fig4_continuation_execution_analysis_3.output.tool_evidence_010",
+            "fig4_continuation_execution_analysis_3.output.tool_evidence_011"
+          ],
+          "port": "solver_outputs"
+        },
+        {
+          "artifact_names": [
+            "fig4_continuation_execution_1.output.tcad_log"
+          ],
+          "port": "diagnostics"
+        },
+        {
+          "artifact_names": [
+            "fig4_continuation_figure_materialized_1.curve_tables_001",
+            "fig4_continuation_figure_materialized_1.curve_tables_002",
+            "fig4_continuation_figure_materialized_1.source_panels",
+            "fig4_morphology_closure_2.output.tool_evidence_029",
+            "fig4_morphology_closure_2.output.tool_evidence_030",
+            "fig4_morphology_closure_2.output.tool_evidence_031",
+            "fig4_morphology_closure_2.output.tool_evidence_032",
+            "fig4_morphology_closure_2.output.tool_evidence_036"
+          ],
+          "port": "reference_material"
+        },
+        {
+          "artifact_names": [
+            "fig4_continuation_objective_2",
+            "fig4_morphology_objective_revision_4.output",
+            "fig4_morphology_objective_review_2.output"
+          ],
+          "port": "current_progress"
+        }
+      ],
+      "candidate_accepted": true,
+      "completed_at": "2026-09-12T11:21:51.825703Z",
+      "created_at": "2026-09-12T11:16:29.014228Z",
+      "deadline_at": "2026-09-12T11:31:29.014228Z",
+      "diagnostic_summary": {
+        "failure": null,
+        "latest_rejection": null,
+        "latest_tool_error": null,
+        "recent_errors": [],
+        "rejection_count": 0
+      },
+      "draft_from": null,
+      "evidence_outputs": [
+        {
+          "artifact_name": "fig4_uncertainty_diagnosis_1.output.tool_evidence_023",
+          "schema": "opaque"
+        },
+        {
+          "artifact_name": "fig4_uncertainty_diagnosis_1.output.tool_evidence_024",
+          "schema": "opaque"
+        },
+        {
+          "artifact_name": "fig4_uncertainty_diagnosis_1.output.tool_evidence_025",
+          "schema": "opaque"
+        },
+        {
+          "artifact_name": "fig4_uncertainty_diagnosis_1.output.recovery_manifest",
+          "schema": "scidiscovery.tool-evidence-manifest.v1"
+        }
+      ],
+      "head_advance": "not_requested",
+      "last_activity_at": "2026-09-12T11:21:51.825703Z",
+      "logical_name": "fig4_uncertainty_diagnosis_1",
+      "name": "fig4_uncertainty_diagnosis_1",
+      "native_execution": {
+        "coverage": "unobserved",
+        "scientific_evidence": false
+      },
+      "operation_id": "tcad.result.analyze.v1",
+      "output_artifact_name": "fig4_uncertainty_diagnosis_1.output",
+      "reason": null,
+      "recovery": {
+        "attempt_budget": {
+          "limit": 1,
+          "used": 1
+        },
+        "delivery_preserved": false,
+        "draft_available": false,
+        "recovery_pending": false,
+        "resume_available": false
+      },
+      "recovery_available": false,
+      "revision": 1,
+      "scheduler_signal": {
+        "assumptions": [
+          "The sealed prior morphology result and its manifest are the authoritative completed numerical work for this continuation; no fitting unit was rerun.",
+          "Candidate-platform means only that the reviewed minimum independent-support rule is met; no physical flatness or reproduction tolerance is inferred."
+        ],
+        "missing_inputs": [
+          "A qualified joint digitization-uncertainty representation that preserves point_index order, gaps, shared-group identity, positive concentration, and strictly increasing x within every retained block, or qualified author raw SIMS rows sufficient to define one.",
+          "A separately reviewed finite shape-changing structural counterfactual family for microscopic mechanism separation."
+        ],
+        "next_action_kind": null,
+        "next_actions": [
+          "If digitization-range compatibility is required, revise and independently review only the uncertainty-propagation contract or obtain qualified raw SIMS uncertainty, then recompute only the affected four corner ranges from the sealed central work.",
+          "If the bounded morphology delivery is sufficient, retain the six material-by-objective not-determinable compatibility dispositions together with the supported central values and mask/numerical sensitivity.",
+          "Return the historical manifest/TDR declaration-path mismatch to the project author as an engineering correction without treating recovered postprocessing as a successful execution receipt."
+        ],
+        "schema_version": 1,
+        "summary": "The reviewed central and mask-sensitivity morphology results remain supported, but the requested digitization-range propagation is not determinable. An independent row-level audit reproduced all 48 sealed corner failures exactly: 38 violate strict within-block x order and 10 contain nonpositive y-minus concentrations. This is a bounded evidence/uncertainty-contract limitation rather than a fitting defect; the microscopic mechanism objective also remains unresolved.",
+        "verdict": "inconclusive"
+      },
+      "scheduler_signal_status": "available",
+      "sealed_output": {
+        "artifact_name": "fig4_uncertainty_diagnosis_1.output",
+        "kind": "layered_diagnosis",
+        "payload": {
+          "analysis_method": "Read the immutable execution state, original plan/review, reviewed retrospective plan/review, sealed prior analysis and its manifest, the two bound reference CSVs, the sealed 60-unit morphology JSON, metrics CSV, decision CSV, and prior analysis source. No solver, fitting unit, curve-score call, or curve-diagnostic call was run. A bounded native audit reapplied the reviewed M0-M2/S0-S2 row masks and each of the four global x/y sign corners directly to the reference rows. It counted y<=0/nonfinite rows and non-strict transformed x for consecutive point_index pairs, without sorting, deleting rows, bridging gaps, changing weights, or fitting. Its 48 issue labels were compared with the sealed unit ledger and had zero mismatches. Curve tooling was unnecessary because the unresolved quantity is a pre-fit corner qualification failure rather than a local residual question.",
+          "calculation_records": [],
+          "claim_allowed": false,
+          "evidence": [
+            {
+              "locator": "execution_result",
+              "source_key": "execution_state",
+              "source_type": "frozen_input",
+              "title": "Immutable terminal execution result"
+            },
+            {
+              "locator": "runtime_manifest",
+              "source_key": "runtime_failure",
+              "source_type": "frozen_input",
+              "title": "Immutable failed/97 runtime manifest and missing declared TDR path"
+            },
+            {
+              "locator": "experiment_plan",
+              "source_key": "original_plan",
+              "source_type": "frozen_input",
+              "title": "Original execution plan and exact experiment identity"
+            },
+            {
+              "locator": "experiment_review",
+              "source_key": "original_review",
+              "source_type": "frozen_input",
+              "title": "Independent review of the original execution plan"
+            },
+            {
+              "locator": "current_progress_002:/proposals/0/comparison_contract/required_observables/3",
+              "source_key": "retrospective_plan",
+              "source_type": "frozen_input",
+              "title": "Reviewed retrospective morphology and uncertainty method"
+            },
+            {
+              "locator": "current_progress_003:/summary",
+              "source_key": "retrospective_review",
+              "source_type": "frozen_input",
+              "title": "Independent passing review of the retrospective method"
+            },
+            {
+              "locator": "prior_analysis:/summary",
+              "source_key": "prior_analysis",
+              "source_type": "frozen_input",
+              "title": "Sealed completed morphology analysis and bounded conclusion"
+            },
+            {
+              "locator": "prior_analysis_manifest",
+              "source_key": "prior_manifest",
+              "source_type": "frozen_input",
+              "title": "Manifest for the sealed prior analysis products"
+            },
+            {
+              "locator": "reference_material_001",
+              "source_key": "al_reference_rows",
+              "source_type": "frozen_input",
+              "title": "Bound InAlAs reference rows with point identity and uncertainties"
+            },
+            {
+              "locator": "reference_material_002",
+              "source_key": "ga_reference_rows",
+              "source_type": "frozen_input",
+              "title": "Bound InGaAs reference rows with point identity and uncertainties"
+            },
+            {
+              "locator": "reference_material_005:/units",
+              "source_key": "sealed_units",
+              "source_type": "frozen_input",
+              "title": "Sealed 60-unit morphology result and per-corner issue ledger"
+            },
+            {
+              "locator": "reference_material_006",
+              "source_key": "sealed_metrics",
+              "source_type": "frozen_input",
+              "title": "Sealed material-mask central values, numerical sensitivity, and empty corner ranges"
+            },
+            {
+              "locator": "reference_material_007",
+              "source_key": "sealed_decisions",
+              "source_type": "frozen_input",
+              "title": "Six material-by-objective not-determinable compatibility dispositions"
+            },
+            {
+              "locator": "tool_evidence_023",
+              "source_key": "uncertainty_audit_code",
+              "source_type": "runtime_output",
+              "title": "Published bounded uncertainty-failure audit script"
+            },
+            {
+              "locator": "tool_evidence_024",
+              "source_key": "uncertainty_audit",
+              "source_type": "runtime_output",
+              "title": "Published row-level audit reproducing 38 non-strict-x and 10 nonpositive-y failures with zero ledger mismatches"
+            }
+          ],
+          "experiment_key": "experiment.fig4.raw_boundary_counterfactual",
+          "gates": {
+            "control_equivalence": {
+              "evidence_keys": [
+                "sealed_metrics",
+                "retrospective_plan",
+                "retrospective_review"
+              ],
+              "findings": [
+                "Position and width differences are exactly zero at the saved precision.",
+                "Small slope/level differences remain descriptive numerical sensitivity only."
+              ],
+              "status": "inconclusive",
+              "summary": "Primary and tightened central morphology are extremely close for all reported metrics, but the reviewed plan provides no threshold that authorizes a convergence or equivalence claim for these new morphology quantities."
+            },
+            "evidence_identity": {
+              "evidence_keys": [
+                "execution_state",
+                "prior_manifest",
+                "al_reference_rows",
+                "ga_reference_rows",
+                "sealed_units",
+                "uncertainty_audit"
+              ],
+              "findings": [
+                "The new audit produced 48 records and zero issue-label mismatches against the sealed 60-unit result.",
+                "No filename- or byte-similarity case inference was used."
+              ],
+              "status": "pass",
+              "summary": "The prior analysis, its manifest, both original reference tables, sealed morphology products, original execution identity, and reviewed retrospective method are directly bound in this Run. The new audit uses only current aliases and reproduces every sealed corner label."
+            },
+            "implementation_fidelity": {
+              "evidence_keys": [
+                "execution_state",
+                "runtime_failure",
+                "prior_analysis"
+              ],
+              "findings": [
+                "Original solver status is failed/97.",
+                "The uncertainty audit did not access or change solver products."
+              ],
+              "status": "fail",
+              "summary": "The immutable external execution remains failed/97 because the declared no-_fps TDR path was absent. Recovered readable outputs support bounded postprocessing but do not repair the execution receipt. This engineering defect is separate from the reference-corner failures."
+            },
+            "numerical_validity": {
+              "evidence_keys": [
+                "sealed_units",
+                "sealed_metrics",
+                "uncertainty_audit_code",
+                "uncertainty_audit"
+              ],
+              "findings": [
+                "Across all masks, every position and width primary-minus-tight difference is zero.",
+                "The maximum absolute primary-minus-tight slope or level difference is below 1.75e-5.",
+                "The audit reproduced 38 non-strict-x and 10 nonpositive-y issue labels with zero mismatches."
+              ],
+              "status": "pass",
+              "summary": "The sealed central/mask reductions contain 60/60 completed units and finite primary/tight results. The audit independently confirms that corner failures occur before fitting and match the reviewed fail-closed rules, so they are not evidence of QR, interpolation, or aggregation failure."
+            },
+            "observation": {
+              "evidence_keys": [
+                "prior_analysis",
+                "sealed_units",
+                "sealed_metrics",
+                "sealed_decisions",
+                "uncertainty_audit"
+              ],
+              "findings": [
+                "M0 endpoint differences are +0.143564 um for InAlAs and +0.147525 um for InGaAs.",
+                "M0 width differences are +0.121782 um for InAlAs and +0.208911 um for InGaAs.",
+                "M0 tail-center differences are +3.04143 and +2.54056 decades.",
+                "All six material-by-objective compatibility dispositions remain not_determinable."
+              ],
+              "status": "inconclusive",
+              "summary": "Central and mask-specific descriptive morphology is supported, including deeper own-anchor endpoints, wider transitions, and higher tail centers. Supplied digitization ranges and compatibility/outside classifications are unavailable because every preregistered global corner is ineligible before fitting."
+            },
+            "physical_interpretation": {
+              "evidence_keys": [
+                "retrospective_plan",
+                "prior_analysis",
+                "sealed_units",
+                "sealed_metrics"
+              ],
+              "findings": [
+                "Front and tail regions satisfy only the preregistered minimum independent-support rule.",
+                "Repairing uncertainty propagation would address compatibility bounds but would not by itself separate microscopic mechanisms."
+              ],
+              "status": "inconclusive",
+              "summary": "The qualified central segments permit candidate-region levels and slopes, but do not establish physical plateaus or reproduction within digitization uncertainty. Material identity remains paired with the frozen D choice and no kick-out, VCD, or other shape-changing structural counterfactual was tested, so microscopic mechanism is not identifiable."
+            },
+            "schema_version": 1
+          },
+          "hypothesis_assessments": [
+            {
+              "evidence_keys": [
+                "prior_analysis",
+                "sealed_metrics",
+                "sealed_decisions",
+                "uncertainty_audit"
+              ],
+              "falsifiers_triggered": [],
+              "hypothesis_key": "hypothesis.surface_boundary_control",
+              "outcome": "inconclusive",
+              "predictions_checked": [
+                "prediction.fig4.central_morphology",
+                "prediction.fig4.mask_morphology_sensitivity"
+              ],
+              "rationale": "The central own-anchor constant-D family differs strongly from the reference morphology, but digitization-range compatibility is unavailable and the existing material/D pairings do not isolate surface-boundary control. The new audit diagnoses the uncertainty boundary and does not alter the sealed inconclusive hypothesis disposition."
+            },
+            {
+              "evidence_keys": [
+                "prior_analysis",
+                "sealed_units",
+                "sealed_metrics",
+                "uncertainty_audit"
+              ],
+              "falsifiers_triggered": [],
+              "hypothesis_key": "hypothesis.tail_support_artifact",
+              "outcome": "inconclusive",
+              "predictions_checked": [
+                "prediction.fig4.mask_morphology_sensitivity",
+                "prediction.fig4.candidate_platform_qualification"
+              ],
+              "rationale": "A high simulated tail persists across central support masks with very small numerical sensitivity, but shared/detection-limited support and a valid joint digitization range are unresolved. Nonpositive y-minus rows in S masks and non-strict transformed x prevent the required compatibility test, so neither support nor contradiction is licensed."
+            }
+          ],
+          "method_changes": [
+            "Added only an exploratory row-level eligibility audit to localize the sealed corner failures; it did not modify the independently reviewed fit or aligned-trace method and is not used as a replacement uncertainty statistic.",
+            "The optional recovery-draft path named by domain-workspace.json was absent in this Run and a direct read returned No such file or directory. No recovery computation was attempted; the explicitly bound prior_analysis, prior_analysis_manifest, and published prior products were used instead.",
+            "The historical failed/97 solver/manifest error, earlier plotting and launcher errors, and earlier submit rejections remain historical records from prior_analysis; this Run encountered no solver, calculation-tool, publication-tool, timeout, or submission error before its first submit attempt."
+          ],
+          "next_action": "Do not rerun the 60 sealed morphology fits or the solver. If digitization compatibility is necessary, the minimum next input is either (a) a revised, independently reviewed joint uncertainty-propagation contract that preserves the existing point_index order, gaps, shared groups, positive concentration and strict within-block x order without sorting or dropping rows, or (b) qualified author raw SIMS rows with detection status and a scientifically justified joint uncertainty representation. Then recompute only the four affected corner ranges and the six material-by-objective compatibility rows from the saved central products. If mechanism separation remains the objective, separately design and review a finite shape-changing structural counterfactual family; an uncertainty repair alone cannot identify the mechanism. Return the no-_fps TDR declaration-path mismatch to the project author as a separate engineering correction.",
+          "objective_assessment": {
+            "comparison_keys": [],
+            "evidence_keys": [
+              "retrospective_plan",
+              "retrospective_review",
+              "prior_analysis",
+              "sealed_metrics",
+              "sealed_decisions",
+              "uncertainty_audit"
+            ],
+            "objective_key": "objective.fig4_mechanism_discrimination",
+            "status": "inconclusive",
+            "summary": "The three retrospective morphology objectives have supported central and mask-sensitivity values and explicit material-specific limits. Their required digitization ranges and compatibility classifications remain not evaluable under the reviewed global-corner construction, and the later mechanism-separation objective remains uncovered."
+          },
+          "overall_verdict": "inconclusive",
+          "plan_key": "experiment.fig4.raw_boundary_counterfactual/validation",
+          "recommended_task_mode": null,
+          "remaining_contradiction": "For both materials, the sealed central and mask-specific reductions consistently show that the frozen constant-D own-anchor curves have later operational endpoints, wider transitions, and substantially higher tail-center levels than the bound reference. Numerical tightening changes these reported quantities negligibly. Yet every preregistered global digitization corner violates a qualification rule before fitting: variable per-row x uncertainty creates non-strict consecutive positions in 38 corners, and y-minus creates a nonpositive value in 10 S-mask corners. Consequently no min-max digitization range, compatible/outside classification, uncertainty-qualified shape comparison, or platform consistency conclusion is available. This is a limitation of the supplied marginal uncertainties combined with the reviewed global-corner construction; it is not an unfinished batch or fitting failure. Even after an uncertainty revision, the current material/D confounding and absence of a finite shape-changing structural counterfactual would still prevent kick-out, VCD, or unique material-mechanism identification. The external execution also remains independently failed/97.",
+          "schema_version": 1,
+          "source_references": [],
+          "study_kind": "scientific",
+          "summary": "This continuation diagnoses the uncertainty boundary of the sealed retrospective Fig. 4 morphology analysis without rerunning its 60 fitting units or any solver. The completed central reductions support material-specific descriptive morphology: for M0, the own-anchor operational endpoint b2 is 0.618317 versus 0.474752 um for In0.83Al0.17As and 0.535149 versus 0.387624 um for In0.83Ga0.17As; transition widths are 0.176238 versus 0.054455 um and 0.262376 versus 0.053465 um. The own-anchor tail-center excess is 3.04143 and 2.54056 decades, respectively. Across M0-M2/S0-S2, own-anchor b2 spans 0.554950-0.618317 um for InAlAs and 0.535149-0.536139 um for InGaAs, while width spans 0.167327-0.226733 and 0.259406-0.262376 um. All position/width primary-minus-tight differences are zero, and the largest absolute slope/level difference is below 1.75e-5, although no reviewed threshold turns this into a convergence claim. Front and tail candidate regions meet the minimum support rule, but their physical plateau status and digitization-range consistency remain unqualified. The independent audit exactly reproduced the sealed corner ledger: all 48 global corners fail before fitting, with 38 non-strict-x failures and 10 y-minus nonpositive failures. Variable per-row x uncertainties make a common sign shift tie or reverse many consecutive point_index pairs; S masks omit the y>y_uncertainty requirement and therefore admit rows whose y-minus corner is nonpositive. The implementation follows the reviewed rules by failing closed, so the missing ranges are caused by the supplied marginal uncertainty plus the global-corner contract, not by QR fitting, interpolation, numerical sensitivity, or the constant-D scientific model. Separately, the immutable external execution remains failed/97 because of the declared TDR-path mismatch, and the available material/D pairings plus absence of shape-changing structural counterfactuals still prevent microscopic mechanism identification."
+        },
+        "schema": "scidiscovery.layered-diagnosis.v1"
+      },
+      "sealed_output_status": "available",
+      "started_at": "2026-09-12T11:16:48.915818Z",
+      "state": "completed"
+    }
+  ],
+  "acceptance_scope": {
+    "fresh_agent": true,
+    "no_solver_run": true,
+    "no_fitting_rerun": true,
+    "created_to_completed_seconds": 322.811,
+    "opened_to_completed_seconds": 302.91,
+    "control_reported_rejections": 0,
+    "worker_reported_native_errors": [
+      "Optional recovery manifest advertised for a fresh Run was absent; direct read returned No such file or directory. Worker continued using explicitly bound sealed prior records."
+    ],
+    "native_observation": {
+      "coverage": "unobserved",
+      "scientific_evidence": false
+    },
+    "live_case_tool_mapping_exercised": false,
+    "live_source_reference_autofill_exercised": false,
+    "live_editable_recovery_exercised": false,
+    "measurement_limits": [
+      "No first-computation timestamp or read-byte/truncation measurements are exposed in Root status for this Run.",
+      "Elapsed duration is for a smaller diagnostic task and is not causal proof of a performance improvement.",
+      "Zero control-summary errors does not imply no native command error; sealed method_changes explicitly records one."
+    ]
+  }
+}

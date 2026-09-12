@@ -26,8 +26,12 @@ from scidiscovery.artifact_agent.schema.experiment import (
 from .execution_control import SolverCapabilitySnapshot
 from .project_packager import (
     DeckProjectDraft,
+    ImplementationGap,
+    parse_author_result,
+    validate_gap_review,
     DeckReviewReport,
     ReviewedDeckPackage,
+    validate_reviewed_deck_eligibility,
     TCADRuntimeManifest,
     attest_runtime_contract,
     deck_project_diff,
@@ -88,8 +92,11 @@ def validate_review_payload(
 ) -> dict[str, tuple[bytes, ...]]:
     if set(inputs) != {"project", "review"}:
         raise ValueError("TCAD deck review validation requires project and review")
-    project = DeckProjectDraft.model_validate_json(inputs["project"], strict=True)
+    project = parse_author_result(inputs["project"])
     review = DeckReviewReport.model_validate_json(inputs["review"], strict=True)
+    if isinstance(project, ImplementationGap):
+        validate_gap_review(project, review)
+        return {"review_attestation": (canonical_json({"schema_version": 1, "valid": True, "verdict": review.verdict, "execution_ready": False, "review_scope": "implementation_gap"}),)}
     validate_deck_review_against_project(project, review)
     result = {
         "schema_version": 1,
@@ -192,6 +199,15 @@ def package_reviewed_project(
             execution_capability=inputs["capability"],
             preflight_attestation=preflight,
         )
+        rebuilt_value = rematerialized.model_dump(mode="json")
+        rebuilt_value["initialization_attestation"] = (
+            project.initialization_attestation.model_dump(mode="json")
+            if project.initialization_attestation is not None
+            else None
+        )
+        rematerialized = DeckProjectDraft.model_validate_json(
+            canonical_json(rebuilt_value), strict=True
+        )
         if rematerialized != project and not _process_log_capture_migration(
             project, rematerialized
         ):
@@ -210,6 +226,7 @@ def package_reviewed_project(
             inputs["capability"], strict=True
         ),
     )
+    validate_reviewed_deck_eligibility(package)
     return {
         "reviewed_package": (canonical_json(package.model_dump(mode="json")),)
     }

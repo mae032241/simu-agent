@@ -1,0 +1,4 @@
+Traceback (most recent call last):
+  File "/home/da/project/ai4s/tcad/git_release/scidiscovery-agent/123/scidiscovery-e5.2/docs/plans/evidence/input-validation-boundary/catalog_snapshot.py", line 9, in <module>
+    from scidiscovery.builtin_plugin import CORE_PLUGIN
+ModuleNotFoundError: No module named 'scidiscovery'

@@ -1,0 +1,17 @@
+{
+  "command": [
+    "python",
+    "-m",
+    "pytest",
+    "-q",
+    "-x",
+    "tests/operations/test_analysis_artifact_references.py",
+    "tests/operations/test_analysis_diagnostic_tool.py"
+  ],
+  "exit_code": 1,
+  "seconds": 1.723,
+  "peak_tree_rss_bytes": 128712704,
+  "budget_bytes": 536870912,
+  "early_stop_bytes": 469762048,
+  "memory_terminated": false
+}

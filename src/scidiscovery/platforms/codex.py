@@ -38,7 +38,13 @@ PROMPT_END = "<!-- END SCIDISCOVERY SCHEDULER -->"
 SCHEDULER_TOOLS = tuple(tool.name for tool in root_tools_for_backend("local"))
 CODEX_DISPATCH_INSTRUCTIONS = """
 
-On Codex, dispatch every queued Run with `spawn_agent`. Use the `agent_type`
+On Codex, normally dispatch each queued Run with `spawn_agent`. An idle existing
+local_trusted Agent may instead receive a follow-up task only when its compiled agent_type
+exactly matches the newly queued Run and this is not an independent review of
+its own work. Different compiled Operations require a new Agent. Reuse never
+reopens the old Run: the Agent must call worker_open_assignment again and use
+the new workspace, immutable inputs and budget. No queued Run means no work.
+Use the `agent_type`
 returned by `operation_invoke`, explicitly disable parent-history inheritance with
 `fork_context=false` (or `fork_turns="none"` when that is the exposed field),
 and ask the child to complete the assignment already queued for its Operation. Do not pass Run metadata in
@@ -53,9 +59,11 @@ reading the controlled status and sealed output through Root.
 
 Codex 0.150.1 makes the operation Worker MCP servers visible to this parent
 session so spawned Agents can inherit them. The Root scheduler must never call
-any `worker_*` tool. A spawned Agent must use only the Worker MCP server and
-skills belonging to its selected OperationSpec, even if inherited configuration
-exposes servers for other installed operations. The compiled child prompt names
+any `worker_*` tool. A spawned Agent must use only the Worker MCP server
+belonging to its selected OperationSpec, even if inherited configuration
+exposes servers for other installed operations. Local Workers may read discovered
+platform Skills on demand under their backend's read-only reference rules;
+Skills do not grant additional Operation permissions. The compiled child prompt names
 visible but forbidden tools explicitly; visibility is not authorization. This
 prototype boundary does not authorize cross-operation tool use.
 
@@ -66,11 +74,15 @@ approval write operation on the user's behalf.
 """.strip()
 OPERATION_COMPLETION_INSTRUCTIONS = """
 
-After `worker_submit_result` reports completion, the only permitted chat
+For each assignment, after `worker_submit_result` reports completion, the only permitted chat
 completion is exactly: `已完成受控提交。` Do not include a scientific summary,
 verdict, file name, filesystem path, task/session/artifact identity, hash, or
 payload. Chat is only a bounded lifecycle signal; the sealed Worker result is
-the sole scientific output.
+the sole scientific output. A later explicit task message starts by calling
+worker_open_assignment again on the same compiled Worker server. If it returns
+a new opened assignment, reread all current inputs and discard old workspace
+paths, tool handles and budget assumptions. Memory is not evidence or authority.
+If no new assignment is available, stop without repeating an old submission.
 """
 
 
@@ -428,20 +440,27 @@ def _local_native_tool_instruction(compiled: Any) -> str:
         + ", ".join(LocalTrustedBackend.assignment_tool_names(compiled)),
         "Codex file and code tools inside the opened Run workspace",
         "native view_image for task-local images",
+        "read-only references in exact Codex-discovered Skill directories",
+        "helper temporary files and caches in workspace/scratch",
     ]
     forbidden = [
         "native network access",
         "Root/control-plane MCP tools",
         "delegation and undeclared Operation tools",
-        "reading or writing outside the opened Run workspace",
+        "outside-workspace access except exact discovered Skill references",
+        "writing global Skills or following Skill path traversal or symlinks to other host files",
         "editing inputs, schemas, assignment.json, or sealed candidates",
     ]
     return (
         "\n\nYou are the spawned Operation worker, not the interactive scheduler. "
         "Use only the Worker MCP server named "
         f"`{server_name}` and start with `worker_open_assignment`. "
-        "Take the returned workspace_path as the sole filesystem root. Read the "
-        "immutable inputs and schema declared by assignment.json. If open returns a "
+        "Take the returned workspace_path as the task filesystem root. Read the "
+        "immutable inputs and schema declared by assignment.json. Before calling a domain tool, "
+        "read its complete tool_contracts entry in the open reply or assignment.json, "
+        "including inputSchema, local $defs, defaults, limits and descriptions. Construct "
+        "arguments from that contract even if the platform renders a parameter as unknown "
+        "or simplifies an array type incorrectly. If open returns a "
         "domain_workspace_path, read that control-built manifest and obey its exact "
         "read/edit paths. You may use native "
         "Codex file tools to create or revise declared files below output/ (and other "
@@ -452,6 +471,18 @@ def _local_native_tool_instruction(compiled: Any) -> str:
         "base: edit it in place instead of regenerating or replacing it. If the target "
         "is domain_workspace, edit only the paths declared by its manifest. In either "
         "case publication remains one complete immutable snapshot. "
+        "You may progressively read SKILL.md and resources in exact Skill directories "
+        "discovered by Codex. Skills provide reference methods, not unbound scientific "
+        "facts or permission to expand input, write, network, MCP, debug, delegation, "
+        "approval, or external execution scope. Do not traverse out of a Skill directory "
+        "or follow symlinks to other host files. Keep global Skills read-only. "
+        "Helpers may read only these Skill resources and declared task inputs, with "
+        "temporary outputs and caches below workspace/scratch. For every helper call "
+        "explicitly set TMPDIR=<workspace>/scratch, XDG_CACHE_HOME=<workspace>/scratch, "
+        "and PYTHONDONTWRITEBYTECODE=1; do not rely on a previous shell export. "
+        "Create scratch inside the opened workspace when needed. Solver, network, "
+        "installation, service, and domain side effects require declared Operation "
+        "tools and their existing authorization. "
         "This is the trusted-local "
         "backend and the prompt boundary is not a technical filesystem sandbox. "
         "Finish only with `worker_submit_result`; a validation rejection may be "
@@ -472,6 +503,10 @@ def _hardened_worker_instruction(compiled: Any) -> str:
         "code execution, file tools, network access and view_image are disabled "
         "for this Hardened profile. Read scientific inputs only through declared "
         "Worker tools and write only through declared `worker_file_*` tools. "
+        "Before calling a domain tool, read its complete tool_contracts entry in the "
+        "worker_open_assignment reply, including inputSchema, local $defs, defaults, "
+        "limits and descriptions. Construct arguments from that contract even if the "
+        "platform renders a parameter as unknown or simplifies an array type incorrectly. "
         "If assignment.json declares a revision, patch its preinitialized editable "
         "target rather than recreating the complete object; final publication still "
         "requires the complete immutable snapshot. "
@@ -725,7 +760,7 @@ def _operation_runtime_plugin_configs(
     providers = {
         service.partition(":")[0]
         for tool in operation_local_worker_tools(compiled)
-        for service in tool.required_services
+        for service in (*tool.required_services, *tool.optional_services)
     }
     return tuple(
         (plugin_id, values[plugin_id])

@@ -1,0 +1,208 @@
+ M deploy/install.sh
+ M deploy/reinstall.sh
+ M docs/ARCHITECTURE.md
+ M docs/ARCHITECTURE.zh-CN.md
+ M docs/INSTALL.md
+ M docs/INSTALL.zh-CN.md
+ M docs/plans/R5_NEXT_ITERATION_LIVE_DEFECTS.zh-CN.md
+ M docs/plans/README.md
+ M plugins/curve_figure_evidence/README.md
+ M plugins/curve_figure_evidence/README.zh-CN.md
+ M plugins/curve_figure_evidence/curve_figure_evidence/figure_dependencies.py
+ D plugins/curve_figure_evidence/curve_figure_evidence/figure_detection.py
+ M plugins/curve_figure_evidence/curve_figure_evidence/figure_digitization.py
+ M plugins/curve_figure_evidence/curve_figure_evidence/figure_digitization_contract.py
+ M plugins/curve_figure_evidence/curve_figure_evidence/figure_evidence.py
+ M plugins/curve_figure_evidence/curve_figure_evidence/figure_evidence_validation.py
+ M plugins/curve_figure_evidence/curve_figure_evidence/figure_line_tracker.py
+ M plugins/curve_figure_evidence/curve_figure_evidence/figure_science_operations.py
+ M plugins/curve_figure_evidence/curve_figure_evidence/figure_source.py
+ M plugins/curve_figure_evidence/curve_figure_evidence/figure_worker_tool.py
+ M plugins/curve_figure_evidence/curve_figure_evidence/operation_transforms.py
+ M plugins/curve_score/curve_score/schema.py
+ M plugins/curve_score/curve_score/science_operations.py
+ M plugins/tcad_artifact/tcad_artifact/command_adapter.py
+ M plugins/tcad_artifact/tcad_artifact/debug_adapter.py
+ M plugins/tcad_artifact/tcad_artifact/execution_adapter.py
+ M plugins/tcad_artifact/tcad_artifact/execution_control.py
+ M plugins/tcad_artifact/tcad_artifact/local_debug_service.py
+ M plugins/tcad_artifact/tcad_artifact/operation_transforms.py
+ M plugins/tcad_artifact/tcad_artifact/operation_workspace.py
+ M plugins/tcad_artifact/tcad_artifact/parameter_operations.py
+ M plugins/tcad_artifact/tcad_artifact/plugin.py
+ M plugins/tcad_artifact/tcad_artifact/project_packager.py
+ M plugins/tcad_artifact/tcad_artifact/remote_runner_py36.py
+ M plugins/tcad_artifact/tcad_artifact/role_pack.py
+ M plugins/tcad_artifact/tcad_artifact/roles/tcad_deck_author.md
+ M plugins/tcad_artifact/tcad_artifact/roles/tcad_deck_reviewer.md
+ M plugins/tcad_artifact/tcad_artifact/runtime_plugin.py
+ M plugins/tcad_artifact/tcad_artifact/ssh_transport.py
+ M plugins/tcad_artifact/tcad_artifact/transform_adapter.py
+ M plugins/tcad_artifact/tcad_artifact/worker.py
+ M pyproject.toml
+ M roles/scheduler.md
+ M scripts/l4_live_tcad_agent_probe.py
+ M skills/sentaurus-tcad-code/SKILL.md
+ M skills/sentaurus-tcad-code/references/control-materialization.md
+ M skills/sentaurus-tcad-code/references/manuals/topics.json
+ M skills/sentaurus-tcad-code/references/sprocess-r2020.09-recipes.md
+ M src/scidiscovery/artifact_agent/interfaces/mcp_local_worker.py
+ M src/scidiscovery/artifact_agent/interfaces/mcp_root.py
+ M src/scidiscovery/artifact_agent/interfaces/mcp_root_instance_routes.py
+ M src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py
+ M src/scidiscovery/artifact_agent/interfaces/mcp_root_run_routes.py
+ M src/scidiscovery/artifact_agent/operation_tool_context.py
+ M src/scidiscovery/artifact_agent/schema/experiment.py
+ M src/scidiscovery/artifact_agent/schema/experiment_intent.py
+ M src/scidiscovery/artifact_agent/schema/layered_diagnosis.py
+ M src/scidiscovery/artifact_agent/service/executions.py
+ M src/scidiscovery/artifact_agent/service/local_pdf_tool.py
+ M src/scidiscovery/artifact_agent/service/local_workspace.py
+ M src/scidiscovery/artifact_agent/service/run_assignment.py
+ M src/scidiscovery/artifact_agent/service/run_outputs.py
+ M src/scidiscovery/artifact_agent/service/run_records.py
+ M src/scidiscovery/artifact_agent/service/runs.py
+ M src/scidiscovery/general_science_agent_operations.py
+ M src/scidiscovery/general_science_components.py
+ M src/scidiscovery/general_science_experiment_components.py
+ M src/scidiscovery/general_science_experiment_operations.py
+ M src/scidiscovery/operation_contract.py
+ M src/scidiscovery/operation_declaration.py
+ M src/scidiscovery/operations/catalog.py
+ M src/scidiscovery/operations/invoke.py
+ M src/scidiscovery/operations/spec.py
+ M src/scidiscovery/operations/tooling.py
+ M src/scidiscovery/operations/workspace.py
+ M src/scidiscovery/platforms/codex.py
+ M tests/artifact_agent/test_deploy_scripts.py
+ M tests/artifact_agent/test_platform_configuration.py
+ M tests/fixtures/e52_installed_generation_probe.py
+ M tests/operations/m3_transform_equivalence_runner.py
+ M tests/operations/test_agent_contract_alignment.py
+ M tests/operations/test_baseline_role_contracts.py
+ D tests/operations/test_baseline_structure_metrics.py
+ M tests/operations/test_catalog_compile.py
+ M tests/operations/test_catalog_installed_entrypoint.py
+ M tests/operations/test_catalog_negative_cases.py
+ D tests/operations/test_curve_figure_digitization_tool.py
+ D tests/operations/test_figure_automatic_detection.py
+ D tests/operations/test_figure_local_observations.py
+ D tests/operations/test_figure_role_chain_v2.py
+ M tests/operations/test_figure_semantic_compilation.py
+ M tests/operations/test_general_transform_operations.py
+ M tests/operations/test_h2b_domain_boundaries.py
+ M tests/operations/test_hypothesis_objective_boundary.py
+ M tests/operations/test_hypothesis_review_routing.py
+ M tests/operations/test_invoke_preflight.py
+ M tests/operations/test_l2_local_run.py
+ M tests/operations/test_l2_run_invariants.py
+ M tests/operations/test_l3_review_and_human_policy.py
+ M tests/operations/test_l4_local_tcad.py
+ M tests/operations/test_m2_curve_analysis_boundary.py
+ M tests/operations/test_m2_optional_figure_plugin.py
+ M tests/operations/test_m2_parameter_package.py
+ M tests/operations/test_m3_transform_equivalence.py
+ D tests/operations/test_m5_figure_review_closure.py
+ M tests/operations/test_m5_plugin_ownership_and_default_surface.py
+ M tests/operations/test_m6a_direct_instance_management.py
+ M tests/operations/test_m6c_producer_topology_removal.py
+ D tests/operations/test_r1_no_storage_change.py
+ D tests/operations/test_r5_catalog_stages.py
+ M tests/operations/test_r5_general_plugin_split.py
+ M tests/operations/test_spec.py
+?? docs/plans/ANALYSIS_CONTROLLED_EVIDENCE_RECOVERY_PLAN.zh-CN.md
+?? docs/plans/CURVE_SCORING_AS_ANALYSIS_TOOL_PLAN.zh-CN.md
+?? docs/plans/CURVE_SCORING_AS_ANALYSIS_TOOL_PLAN_R2_INPUT.zh-CN.md
+?? docs/plans/EXPERIMENT_DESIGN_GOALS_AND_FEEDBACK_MINIMAL_PLAN.zh-CN.md
+?? docs/plans/HISTORICAL_COMPATIBILITY_REPAIR_PLAN_R2.zh-CN.md
+?? docs/plans/HISTORICAL_SIGNAL_ADMISSION_MINIMAL_REPAIR_PLAN.zh-CN.md
+?? docs/plans/INPUT_VALIDATION_PHASE_REPAIR_PLAN.zh-CN.md
+?? docs/plans/OPERATION_INPUT_ADMISSION_IMPLEMENTATION_CONSISTENCY_PLAN.zh-CN.md
+?? docs/plans/OPERATION_RESPONSIBILITY_HANDOFF_REPAIR_PLAN.zh-CN.md
+?? docs/plans/OPERATION_TOOL_CONTRACT_COHERENCE_REPAIR_PLAN.zh-CN.md
+?? docs/plans/R5_E5_5_MINIMAL_FIGURE_EXTRACTION_REUSE_DESIGN.zh-CN.md
+?? docs/plans/RESEARCH_CORRECTION_AND_CONTINUATION_PATHS.zh-CN.md
+?? docs/plans/SKILL_VISIBILITY_COMPATIBILITY_AND_EXECUTION_CONTEXT_REPAIR_PLAN.zh-CN.md
+?? docs/plans/TCAD_AUTHOR_FAILURE_MINIMAL_REPAIR_PLAN.zh-CN.md
+?? docs/plans/WEEKLY_AGENT_DEVELOPMENT_SUMMARY_2026-09-06.zh-CN.md
+?? docs/plans/evidence/TCAD_AUTHOR_DEPLOYMENT_2026-09-08.json
+?? docs/plans/evidence/TCAD_AUTHOR_R4_R5_2026-09-08.json
+?? docs/plans/evidence/analysis-evidence-recovery/
+?? docs/plans/evidence/analysis-tool-implementation/
+?? docs/plans/evidence/gap-continuation-repair/
+?? docs/plans/evidence/gap-continuation-validation/
+?? docs/plans/evidence/historical-signal-r2/
+?? docs/plans/evidence/history-compatibility-r2/
+?? docs/plans/evidence/history-contract-compatibility-audit/
+?? docs/plans/evidence/history-contract-compatibility/
+?? docs/plans/evidence/input-admission-consistency/
+?? docs/plans/evidence/input-validation-boundary/
+?? docs/plans/evidence/log-preservation/
+?? docs/plans/evidence/operation-handoff-implementation/
+?? docs/plans/evidence/research-correction-continuation/
+?? docs/plans/reviews/ANALYSIS_CONTROLLED_EVIDENCE_RECOVERY_PLAN_REVIEW_R1.zh-CN.md
+?? docs/plans/reviews/CURVE_SCORING_AS_ANALYSIS_TOOL_IMPLEMENTATION_REVIEW_R1.zh-CN.md
+?? docs/plans/reviews/CURVE_SCORING_AS_ANALYSIS_TOOL_PLAN_R1_INPUT.zh-CN.md
+?? docs/plans/reviews/CURVE_SCORING_AS_ANALYSIS_TOOL_PLAN_REVIEW_R1.zh-CN.md
+?? docs/plans/reviews/CURVE_SCORING_AS_ANALYSIS_TOOL_PLAN_REVIEW_R2.zh-CN.md
+?? docs/plans/reviews/CURVE_SCORING_AS_ANALYSIS_TOOL_PLAN_REVIEW_R3.zh-CN.md
+?? docs/plans/reviews/EXPERIMENT_DESIGN_GOALS_AND_FEEDBACK_FEASIBILITY_REVIEW.zh-CN.md
+?? docs/plans/reviews/FRAMEWORK_REPEATED_CONTRACT_FAILURE_ROOT_CAUSE.zh-CN.md
+?? docs/plans/reviews/HISTORICAL_COMPATIBILITY_FULL_PATH_AUDIT_R1.zh-CN.md
+?? docs/plans/reviews/INPUT_VALIDATION_PHASE_INDEPENDENT_REVIEW.zh-CN.md
+?? docs/plans/reviews/INPUT_VALIDATION_PHASE_REPAIR_PLAN_R1_SUPERSEDED.zh-CN.md
+?? docs/plans/reviews/INPUT_VALIDATION_PHASE_REPAIR_PLAN_R2_INDEPENDENT_REVIEW.zh-CN.md
+?? docs/plans/reviews/INPUT_VALIDATION_PHASE_REPAIR_PLAN_R2_REVIEWED_SNAPSHOT.zh-CN.md
+?? docs/plans/reviews/INPUT_VALIDATION_PHASE_REPAIR_PLAN_R3_INDEPENDENT_REVIEW.zh-CN.md
+?? docs/plans/reviews/INPUT_VALIDATION_PHASE_REPAIR_PLAN_R3_REVIEWED_SNAPSHOT.zh-CN.md
+?? docs/plans/reviews/INPUT_VALIDATION_PHASE_REPAIR_PLAN_R4_INDEPENDENT_REVIEW.zh-CN.md
+?? docs/plans/reviews/OPERATION_CONSISTENCY_FRESH_FINAL_REVIEW.zh-CN.md
+?? docs/plans/reviews/OPERATION_CONSISTENCY_PLAN_REVIEW.zh-CN.md
+?? docs/plans/reviews/OPERATION_HANDOFF_IMPLEMENTATION_REVIEW_R1.zh-CN.md
+?? docs/plans/reviews/OPERATION_RESPONSIBILITY_HANDOFF_REPAIR_PLAN_REVIEW_R1.zh-CN.md
+?? docs/plans/reviews/OPERATION_RESPONSIBILITY_HANDOFF_REPAIR_PLAN_REVIEW_R3.zh-CN.md
+?? docs/plans/reviews/OPERATION_TOOL_CONTRACT_COHERENCE_PLAN_R0_REVIEWED_SNAPSHOT.zh-CN.md
+?? docs/plans/reviews/OPERATION_TOOL_CONTRACT_COHERENCE_PLAN_R1_REVIEWED_SNAPSHOT.zh-CN.md
+?? docs/plans/reviews/OPERATION_TOOL_CONTRACT_COHERENCE_PLAN_R2_REVIEWED_SNAPSHOT.zh-CN.md
+?? docs/plans/reviews/OPERATION_TOOL_CONTRACT_COHERENCE_PLAN_R3_REVIEWED_SNAPSHOT.zh-CN.md
+?? docs/plans/reviews/OPERATION_TOOL_CONTRACT_COHERENCE_PLAN_REVIEW_R0.zh-CN.md
+?? docs/plans/reviews/OPERATION_TOOL_CONTRACT_COHERENCE_PLAN_REVIEW_R1.zh-CN.md
+?? docs/plans/reviews/OPERATION_TOOL_CONTRACT_COHERENCE_PLAN_REVIEW_R2.zh-CN.md
+?? docs/plans/reviews/OPERATION_TOOL_CONTRACT_COHERENCE_PLAN_REVIEW_R3.zh-CN.md
+?? docs/plans/reviews/OPERATION_TOOL_CONTRACT_COHERENCE_PLAN_REVIEW_R4.zh-CN.md
+?? docs/plans/reviews/RESEARCH_CORRECTION_CONTINUATION_IMPLEMENTABILITY_AND_GOAL_FIT_REVIEW.zh-CN.md
+?? docs/plans/reviews/RESEARCH_CORRECTION_IMPLEMENTATION_REVIEW_R1.zh-CN.md
+?? docs/plans/reviews/RESEARCH_CORRECTION_IMPLEMENTATION_REVIEW_R2.zh-CN.md
+?? docs/plans/reviews/RESEARCH_CORRECTION_MINIMAL_PLAN_REVIEW_R1.zh-CN.md
+?? docs/plans/reviews/RESEARCH_CORRECTION_MINIMAL_PLAN_REVIEW_R2.zh-CN.md
+?? docs/plans/reviews/RESEARCH_CORRECTION_MINIMAL_PLAN_REVIEW_R3.zh-CN.md
+?? docs/plans/reviews/RESEARCH_CORRECTION_P1_PACKAGE_SCOPE_REVIEW.zh-CN.md
+?? docs/plans/reviews/RESEARCH_CORRECTION_RESULT_CORRECTNESS_REVIEW_R3.zh-CN.md
+?? docs/plans/reviews/TCAD_ANALYSIS_3_BLOCKER_ROOT_CAUSE.zh-CN.md
+?? plugins/curve_figure_evidence/curve_figure_evidence/figure_numeric_redraw.py
+?? plugins/curve_score/curve_score/analysis_tool.py
+?? plugins/curve_score/curve_score/curve_contract_compiler.py
+?? plugins/tcad_artifact/tcad_artifact/output_recovery.py
+?? plugins/tcad_artifact/tcad_artifact/result_analysis.py
+?? plugins/tcad_artifact/tcad_artifact/transport_logs.py
+?? src/scidiscovery/artifact_agent/schema/execution_context.py
+?? src/scidiscovery/artifact_agent/service/tool_evidence.py
+?? src/scidiscovery/operations/input_validation.py
+?? src/scidiscovery/operations/review_admission.py
+?? tests/README.md
+?? tests/operations/test_analysis_evidence_recovery.py
+?? tests/operations/test_analysis_input_descriptors.py
+?? tests/operations/test_analysis_tool_installed.py
+?? tests/operations/test_collector_analysis_handoff.py
+?? tests/operations/test_historical_compatibility_paths.py
+?? tests/operations/test_log_preservation.py
+?? tests/operations/test_minimal_figure_extraction.py
+?? tests/operations/test_r4_author_recovery.py
+?? tests/operations/test_result_analysis_tool.py
+?? tests/operations/test_review_admission.py
+?? tests/operations/test_review_admission_integration.py
+?? tests/operations/test_root_draft_routes.py
+?? tests/operations/test_skill_policy_producer_compatibility.py
+?? tests/operations/test_tcad_gap_continuation.py
+?? tests/operations/test_tcad_knowledge_closure.py
+?? tests/operations/test_tcad_result_analysis.py

@@ -1,0 +1,1274 @@
+{
+  "observed_at": {
+    "current_time": "2026-09-08 12:16:46 UTC"
+  },
+  "scope": "Read-only deployment preparation; no scientific Operation invoked, deployment or qualification granted.",
+  "engineering_candidate_digest": "27da282cee930c816f32a0f070153de8516cd8f2b3179429f73bb433984d3bc9",
+  "implementation_review": "RESEARCH_CORRECTION_IMPLEMENTATION_REVIEW_R2.zh-CN.md: PASS for Local engineering candidate only",
+  "instance": {
+    "closed_at": null,
+    "created_at": "2026-09-02T23:51:07.737872Z",
+    "name": "M7-test0",
+    "objective": "仅依据 inputs/papers/123103_1_5.0242861.pdf 中可定位的证据，提取目标曲线和器件条件，提出可证伪假设，设计最小 TCAD\r\n    实验，在已启动虚拟机中运行真实 Sentaurus，将仿真与论文实验曲线定量比较，并经独立审查给出结论或下一轮修订；不得引入论文未\r\n    包含的 800°C、900°C 曲线或未经证实的参数。",
+    "state": "active",
+    "title": "M7 完整科学闭环：InGaAs/InAlAs Fig.4 TCAD 复现实验 "
+  },
+  "control_activity": {
+    "queued": {
+      "runs": []
+    },
+    "running": {
+      "runs": []
+    },
+    "pending_approvals": {
+      "approvals": []
+    },
+    "executions": {
+      "executions": []
+    }
+  },
+  "artifacts": {
+    "ingaas_inalas_fig4_source_paper": {
+      "created_at": "2026-09-03T00:01:00.986297Z",
+      "kind": "source_file",
+      "labels": {
+        "source_path": "inputs/papers/123103_1_5.0242861.pdf"
+      },
+      "logical_name": "ingaas_inalas_fig4_source_paper",
+      "media_type": "application/pdf",
+      "name": "ingaas_inalas_fig4_source_paper",
+      "payload_schema_version": 1,
+      "revision": 1,
+      "schema": "opaque",
+      "size_bytes": 4714974
+    },
+    "fig4_e55_sprocess_capability_1": {
+      "created_at": "2026-09-06T23:14:26.416113Z",
+      "kind": "solver_capability",
+      "labels": {
+        "capability_profile": "sentaurus-sprocess-r2020.09",
+        "execution_operation": "tcad.study.execute",
+        "source": "active_adapter"
+      },
+      "logical_name": "fig4_e55_sprocess_capability_1",
+      "media_type": "application/json",
+      "name": "fig4_e55_sprocess_capability_1",
+      "payload_schema_version": 2,
+      "revision": 1,
+      "schema": "tcad.solver-capability.v2",
+      "size_bytes": 538
+    },
+    "fig4_e55_intake_split_1.scientific_foundation": {
+      "created_at": "2026-09-06T10:20:50.357943Z",
+      "kind": "scientific_foundation",
+      "labels": {
+        "operation_digest": "c3a2c057030e58e5dfb4f991b6bf80bff378120dba49e612fb3a545a39e51a17",
+        "operation_invocation_fingerprint": "2c4444211b46e308f4d4c6815b79fb1464c8c42759b2f4b5006ee5ce6d919170",
+        "operation_output_port": "scientific_foundation",
+        "operation_version": "1",
+        "output_label": "scientific_foundation",
+        "transform_profile": "science.intake.split.v1"
+      },
+      "logical_name": "fig4_e55_intake_split_1.scientific_foundation",
+      "media_type": "application/json",
+      "name": "fig4_e55_intake_split_1.scientific_foundation",
+      "payload_schema_version": 1,
+      "revision": 1,
+      "schema": "scidiscovery.scientific-foundation.v1",
+      "size_bytes": 22761
+    },
+    "fig4_e55_research_objective_1": {
+      "created_at": "2026-09-06T10:24:51.666160Z",
+      "kind": "research_objective",
+      "labels": {
+        "operation_digest": "e72e1e0d88d75111ba8f65e66ed17f136e13f392ca0392ce82c223ae70f11860",
+        "operation_invocation_fingerprint": "ab72867c2567a214ae185e4e735a11bdbface8628e64ce5698052dd2b1ee4682",
+        "operation_output_port": "research_objective",
+        "operation_version": "1",
+        "output_label": "primary",
+        "transform_profile": "science.objective.project.v1"
+      },
+      "logical_name": "fig4_e55_research_objective_1",
+      "media_type": "application/json",
+      "name": "fig4_e55_research_objective_1",
+      "payload_schema_version": 1,
+      "revision": 1,
+      "schema": "scidiscovery.research-objective.v1",
+      "size_bytes": 2313
+    },
+    "fig4_e55_experiment_plan_revision_5.output": {
+      "created_at": "2026-09-07T00:00:19.118969Z",
+      "kind": "experiment_portfolio",
+      "labels": {
+        "operation_consequence": "scientific",
+        "operation_digest": "6ed26ebf74a9d3c7844f034a83e03429a28a11823f9a5f48f15fc28a1be3f25b",
+        "operation_output_port": "experiment_plan",
+        "operation_version": "1"
+      },
+      "logical_name": "fig4_e55_experiment_plan_revision_5.output",
+      "media_type": "application/json",
+      "name": "fig4_e55_experiment_plan_revision_5.output",
+      "payload_schema_version": 1,
+      "revision": 1,
+      "schema": "scidiscovery.experiment-portfolio.v1",
+      "size_bytes": 90853
+    },
+    "fig4_r4_tcad_author_1.output": {
+      "created_at": "2026-09-08T06:49:55.052708Z",
+      "kind": "tcad_project",
+      "labels": {
+        "operation_consequence": "scientific",
+        "operation_digest": "bb3808b8f6a86e4c305ac1ea2e4aa718986f5d7c826220523598a762e5c34298",
+        "operation_output_port": "project",
+        "operation_version": "1"
+      },
+      "logical_name": "fig4_r4_tcad_author_1.output",
+      "media_type": "application/json",
+      "name": "fig4_r4_tcad_author_1.output",
+      "payload_schema_version": 1,
+      "revision": 1,
+      "schema": "tcad.deck-project.v1",
+      "size_bytes": 86262
+    },
+    "fig4_s5_execution_context_1": {
+      "created_at": "2026-09-08T02:55:01.858123Z",
+      "kind": "execution_context",
+      "labels": {
+        "operation_digest": "f1522f59c5106464f9c995ba5ad13b444cc5678bd520af3ddc7db0699523cb21",
+        "operation_invocation_fingerprint": "71043280f7f55b872d4bc2dc675b7a224a588b7527d2bafa821ef08d48d2af28",
+        "operation_output_port": "execution_context",
+        "operation_version": "1",
+        "output_label": "primary",
+        "transform_profile": "tcad.execution-context.project.v1"
+      },
+      "logical_name": "fig4_s5_execution_context_1",
+      "media_type": "application/json",
+      "name": "fig4_s5_execution_context_1",
+      "payload_schema_version": 1,
+      "revision": 1,
+      "schema": "scidiscovery.execution-context.v1",
+      "size_bytes": 213
+    },
+    "fig4_e55_reference_bundle_2": {
+      "created_at": "2026-09-06T14:28:05.772281Z",
+      "kind": "curve_bundle",
+      "labels": {
+        "operation_digest": "296e5d7627c321b44b84d1ef7496ebba8f66a769b2c2d3274487bb9dd249ef04",
+        "operation_invocation_fingerprint": "1dc47c43d8b0e13aef5b145284d672cea90ec5ee48208664bb09c98897609783",
+        "operation_output_port": "curve_bundle",
+        "operation_version": "1",
+        "output_label": "primary",
+        "transform_profile": "scidiscovery.curve-bundle.figure-evidence.v2"
+      },
+      "logical_name": "fig4_e55_reference_bundle_2",
+      "media_type": "application/json",
+      "name": "fig4_e55_reference_bundle_2",
+      "payload_schema_version": 1,
+      "revision": 1,
+      "schema": "scidiscovery.curve-bundle.v1",
+      "size_bytes": 107844
+    },
+    "fig4_e55_hypothesis_portfolio_1.output": {
+      "created_at": "2026-09-06T10:30:30.328196Z",
+      "kind": "hypothesis_portfolio",
+      "labels": {
+        "operation_consequence": "scientific",
+        "operation_digest": "05f72ea295f79def233fd16d73ef9de453812c7fd00111b56a2c951799560535",
+        "operation_output_port": "hypothesis_portfolio",
+        "operation_version": "1"
+      },
+      "logical_name": "fig4_e55_hypothesis_portfolio_1.output",
+      "media_type": "application/json",
+      "name": "fig4_e55_hypothesis_portfolio_1.output",
+      "payload_schema_version": 1,
+      "revision": 1,
+      "schema": "scidiscovery.hypothesis-proposal.v2",
+      "size_bytes": 15701
+    },
+    "fig4_e55_hypothesis_critic_1.output": {
+      "created_at": "2026-09-06T10:33:09.482893Z",
+      "kind": "scientific_review",
+      "labels": {
+        "operation_consequence": "scientific",
+        "operation_digest": "a640d6c5c06bdc3683cf9d1fa78ca608dee2b7fa5c6bd18d24d23bd8518d328c",
+        "operation_output_port": "scientific_review",
+        "operation_version": "1"
+      },
+      "logical_name": "fig4_e55_hypothesis_critic_1.output",
+      "media_type": "application/json",
+      "name": "fig4_e55_hypothesis_critic_1.output",
+      "payload_schema_version": 1,
+      "revision": 1,
+      "schema": "scidiscovery.critic-review.v2",
+      "size_bytes": 914
+    }
+  },
+  "installed_predeployment_operation_contracts": [
+    {
+      "accepts_actions": [],
+      "applies_when": "The exact declared immutable curve inputs are available.",
+      "catalog_scope": "support",
+      "complete_transform_family": {
+        "input_ports": [
+          "paper_source",
+          "figure_request"
+        ],
+        "output_ports": [
+          "figure_manifest",
+          "validation_report",
+          "source_panels",
+          "audit_overlays",
+          "curve_tables"
+        ]
+      },
+      "consequence": "scientific",
+      "executor_kind": "transform",
+      "input_admission": null,
+      "inputs": [
+        {
+          "description": "Exact immutable curve operation input: paper_source.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "paper_source",
+          "required_non_null_fields": [],
+          "schema": "opaque"
+        },
+        {
+          "description": "Exact immutable curve operation input: figure_request.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "figure_request",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.curve-figure-digitization-request.v2"
+        },
+        {
+          "description": "Exact immutable curve operation input: scientific_intake.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "scientific_intake",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.scientific-intake.v1"
+        },
+        {
+          "description": "Exact immutable curve operation input: evidence_audit.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "evidence_audit",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.evidence-audit.v1"
+        },
+        {
+          "description": "Exact immutable curve operation input: figure_manifest.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "figure_manifest",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.figure-evidence-manifest.v1"
+        },
+        {
+          "description": "Exact immutable curve operation input: validation_report.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "validation_report",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.figure-evidence-validation-report.v1"
+        },
+        {
+          "description": "Exact immutable curve operation input: source_panels.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "source_panels",
+          "required_non_null_fields": [],
+          "schema": "opaque"
+        },
+        {
+          "description": "Exact immutable curve operation input: audit_overlays.",
+          "max_items": 2,
+          "min_items": 1,
+          "name": "audit_overlays",
+          "required_non_null_fields": [],
+          "schema": "opaque"
+        },
+        {
+          "description": "Exact immutable curve operation input: curve_tables.",
+          "max_items": 32,
+          "min_items": 1,
+          "name": "curve_tables",
+          "required_non_null_fields": [],
+          "schema": "opaque"
+        }
+      ],
+      "max_files": 2,
+      "max_input_bytes": 1073741824,
+      "max_network_requests": 0,
+      "max_output_bytes": 536870912,
+      "native_shell": "none",
+      "native_view_image": false,
+      "network_mode": "none",
+      "not_for": "Selecting scientific targets, interpreting mechanisms, or executing a solver.",
+      "operation_id": "scidiscovery.curve-bundle.figure-evidence.v2",
+      "outputs": [
+        {
+          "description": "Deterministic curve operation output: curve_bundle.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "curve_bundle",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.curve-bundle.v1"
+        },
+        {
+          "description": "Deterministic curve operation output: normalization_audit.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "normalization_audit",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.figure-evidence-curve-normalization-audit.v1"
+        }
+      ],
+      "purpose": "Normalize exact validated figure tables into one canonical evidence library.",
+      "requires_human_approval": false,
+      "requires_independent_review": false,
+      "review_edge": null,
+      "timeout_seconds": 300,
+      "version": "1"
+    },
+    {
+      "accepts_actions": [],
+      "applies_when": "A complete figure family is available, optionally with its exact Intake and non-passing audit.",
+      "catalog_scope": "public",
+      "complete_transform_family": {
+        "input_ports": [
+          "paper_source",
+          "figure_request"
+        ],
+        "output_ports": [
+          "figure_manifest",
+          "validation_report",
+          "source_panels",
+          "audit_overlays",
+          "curve_tables"
+        ]
+      },
+      "consequence": "scientific",
+      "executor_kind": "agent",
+      "input_admission": {
+        "accepted_options": [],
+        "accepted_provider_operations": [],
+        "approval_kind": null,
+        "approval_subject_ports": [],
+        "cohort_id": "figure_intake_revision",
+        "member_ports": [
+          "prior_draft",
+          "change_request"
+        ]
+      },
+      "inputs": [
+        {
+          "description": "Exact frozen paper PDF or supplied raster source.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "paper_source",
+          "required_non_null_fields": [],
+          "schema": "opaque"
+        },
+        {
+          "description": "Typed source selection, calibration, and visible series anchors.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "figure_request",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.curve-figure-digitization-request.v2"
+        },
+        {
+          "description": "Exact deterministic figure-evidence manifest.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "figure_manifest",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.figure-evidence-manifest.v1"
+        },
+        {
+          "description": "Exact deterministic figure-evidence validation report.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "validation_report",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.figure-evidence-validation-report.v1"
+        },
+        {
+          "description": "Canonical source-panel images recovered by the materializer.",
+          "max_items": 1,
+          "min_items": 0,
+          "name": "source_panels",
+          "required_non_null_fields": [],
+          "schema": "opaque"
+        },
+        {
+          "description": "Pixel-level deterministic audit overlays.",
+          "max_items": 2,
+          "min_items": 0,
+          "name": "audit_overlays",
+          "required_non_null_fields": [],
+          "schema": "opaque"
+        },
+        {
+          "description": "Traceable per-series curve tables.",
+          "max_items": 32,
+          "min_items": 0,
+          "name": "curve_tables",
+          "required_non_null_fields": [],
+          "schema": "opaque"
+        },
+        {
+          "description": "Exact immutable figure ScientificIntake to revise.",
+          "max_items": 1,
+          "min_items": 0,
+          "name": "prior_draft",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.scientific-intake.v1"
+        },
+        {
+          "description": "Exact non-passing independent figure audit requesting correction.",
+          "max_items": 1,
+          "min_items": 0,
+          "name": "change_request",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.evidence-audit.v1"
+        }
+      ],
+      "max_files": 1,
+      "max_input_bytes": 340787200,
+      "max_network_requests": 0,
+      "max_output_bytes": 65536,
+      "native_shell": "inherited_prototype",
+      "native_view_image": true,
+      "network_mode": "none",
+      "not_for": "Digitizing pixels, changing the source family, producing a patch, or qualifying the Intake.",
+      "operation_id": "science.evidence.extract.figure.v2",
+      "outputs": [
+        {
+          "description": "One source-bound scientific intake for the exact figure family.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "scientific_intake",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.scientific-intake.v1"
+        }
+      ],
+      "purpose": "Create or revise one ScientificIntake from a complete deterministic figure family.",
+      "requires_human_approval": false,
+      "requires_independent_review": true,
+      "review_edge": {
+        "accepted_verdicts": [
+          "pass"
+        ],
+        "reviewer_input_port": "scientific_intake",
+        "reviewer_operation": "science.figure.evidence.audit.v1",
+        "subject_outputs": [
+          "scientific_intake"
+        ]
+      },
+      "timeout_seconds": 600,
+      "version": "1"
+    },
+    {
+      "accepts_actions": [],
+      "applies_when": "Extraction, deterministic validation, and an independent audit are complete.",
+      "catalog_scope": "public",
+      "complete_transform_family": null,
+      "consequence": "scientific",
+      "executor_kind": "approval",
+      "input_admission": null,
+      "inputs": [
+        {
+          "description": "Exact foundation split from the final extraction primary.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "scientific_foundation",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.scientific-foundation.v1"
+        },
+        {
+          "description": "Exact final ScientificIntake primary under qualification.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "extraction_primary",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.scientific-intake.v1"
+        },
+        {
+          "description": "Complete non-validation sibling output family.",
+          "max_items": 177,
+          "min_items": 0,
+          "name": "producer_outputs",
+          "required_non_null_fields": [],
+          "schema": "*"
+        },
+        {
+          "description": "Complete deterministic validation result set when applicable.",
+          "max_items": 16,
+          "min_items": 0,
+          "name": "validation_results",
+          "required_non_null_fields": [],
+          "schema": "*"
+        },
+        {
+          "description": "Complete frozen producer evidence-source set.",
+          "max_items": 32,
+          "min_items": 0,
+          "name": "frozen_sources",
+          "required_non_null_fields": [],
+          "schema": "*"
+        },
+        {
+          "description": "Independent audit of the exact final evidence family.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "evidence_audit",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.evidence-audit.v1"
+        }
+      ],
+      "max_files": 1,
+      "max_input_bytes": 536870912,
+      "max_network_requests": 0,
+      "max_output_bytes": 524288,
+      "native_shell": "none",
+      "native_view_image": false,
+      "network_mode": "none",
+      "not_for": "Extracting evidence, repairing a provisional bundle, or granting execution authority.",
+      "operation_id": "science.evidence.qualify.v1",
+      "outputs": [],
+      "purpose": "Create one human qualification review for a complete evidence family.",
+      "requires_human_approval": true,
+      "requires_independent_review": false,
+      "review_edge": null,
+      "timeout_seconds": 60,
+      "version": "1"
+    },
+    {
+      "accepts_actions": [
+        "science.experiment.design",
+        "science.model-counterfactual.design"
+      ],
+      "applies_when": "A research objective, hypothesis portfolio, and independent critic review are available.",
+      "catalog_scope": "public",
+      "complete_transform_family": null,
+      "consequence": "scientific",
+      "executor_kind": "agent",
+      "input_admission": {
+        "accepted_options": [
+          "approve"
+        ],
+        "accepted_provider_operations": [
+          "science.evidence.qualify.v1"
+        ],
+        "approval_kind": "scientific_foundation",
+        "approval_subject_ports": [
+          "scientific_foundation"
+        ],
+        "cohort_id": "qualified_foundation",
+        "member_ports": [
+          "scientific_foundation"
+        ]
+      },
+      "inputs": [
+        {
+          "description": "Exact approved foundation shared by the objective, portfolio, and critic.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "scientific_foundation",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.scientific-foundation.v1"
+        },
+        {
+          "description": "Exact immutable research objective.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "research_objective",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.research-objective.v1"
+        },
+        {
+          "description": "Exact reviewed hypothesis portfolio.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "hypothesis_portfolio",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.hypothesis-proposal.v2"
+        },
+        {
+          "description": "Exact independent critic review.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "critic_review",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.critic-review.v2"
+        },
+        {
+          "description": "Optional immutable execution capabilities, model coverage, and implementation limits.",
+          "max_items": 1,
+          "min_items": 0,
+          "name": "execution_context",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.execution-context.v1"
+        }
+      ],
+      "max_files": 1,
+      "max_input_bytes": 2097152,
+      "max_network_requests": 0,
+      "max_output_bytes": 65536,
+      "native_shell": "inherited_prototype",
+      "native_view_image": false,
+      "network_mode": "none",
+      "not_for": "Expanding the complete execution plan or implementing domain code.",
+      "operation_id": "science.experiment.design.v1",
+      "outputs": [
+        {
+          "description": "Compact experiment-design intent.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "experiment_design_intent",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.experiment-design-intent.v1"
+        }
+      ],
+      "purpose": "Design the smallest bounded experiment that discriminates reviewed hypotheses.",
+      "requires_human_approval": false,
+      "requires_independent_review": false,
+      "review_edge": null,
+      "timeout_seconds": 900,
+      "version": "1"
+    },
+    {
+      "accepts_actions": [],
+      "applies_when": "A provisional figure Intake and every exact sibling attachment exist.",
+      "catalog_scope": "public",
+      "complete_transform_family": {
+        "input_ports": [
+          "paper_source",
+          "figure_request"
+        ],
+        "output_ports": [
+          "figure_manifest",
+          "validation_report",
+          "source_panels",
+          "audit_overlays",
+          "curve_tables"
+        ]
+      },
+      "consequence": "scientific",
+      "executor_kind": "agent",
+      "input_admission": null,
+      "inputs": [
+        {
+          "description": "Provisional Intake produced from the exact figure family.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "scientific_intake",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.scientific-intake.v1"
+        },
+        {
+          "description": "Exact frozen paper PDF or supplied raster source.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "paper_source",
+          "required_non_null_fields": [],
+          "schema": "opaque"
+        },
+        {
+          "description": "Typed source selection, calibration, and visible series anchors.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "figure_request",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.curve-figure-digitization-request.v2"
+        },
+        {
+          "description": "Exact deterministic figure-evidence manifest.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "figure_manifest",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.figure-evidence-manifest.v1"
+        },
+        {
+          "description": "Exact deterministic figure-evidence validation report.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "validation_report",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.figure-evidence-validation-report.v1"
+        },
+        {
+          "description": "Canonical source-panel images recovered by the materializer.",
+          "max_items": 1,
+          "min_items": 0,
+          "name": "source_panels",
+          "required_non_null_fields": [],
+          "schema": "opaque"
+        },
+        {
+          "description": "Pixel-level deterministic audit overlays.",
+          "max_items": 2,
+          "min_items": 0,
+          "name": "audit_overlays",
+          "required_non_null_fields": [],
+          "schema": "opaque"
+        },
+        {
+          "description": "Traceable per-series curve tables.",
+          "max_items": 32,
+          "min_items": 0,
+          "name": "curve_tables",
+          "required_non_null_fields": [],
+          "schema": "opaque"
+        }
+      ],
+      "max_files": 1,
+      "max_input_bytes": 340787200,
+      "max_network_requests": 0,
+      "max_output_bytes": 32768,
+      "native_shell": "inherited_prototype",
+      "native_view_image": true,
+      "network_mode": "none",
+      "not_for": "Digitizing, revising, or qualifying the figure evidence.",
+      "operation_id": "science.figure.evidence.audit.v1",
+      "outputs": [
+        {
+          "description": "Independent audit of one Intake and its complete figure family.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "evidence_audit",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.evidence-audit.v1"
+        }
+      ],
+      "purpose": "Independently audit one Intake against its complete figure family.",
+      "requires_human_approval": false,
+      "requires_independent_review": false,
+      "review_edge": null,
+      "timeout_seconds": 600,
+      "version": "1"
+    },
+    {
+      "accepts_actions": [],
+      "applies_when": "The exact declared immutable curve inputs are available.",
+      "catalog_scope": "support",
+      "complete_transform_family": null,
+      "consequence": "scientific",
+      "executor_kind": "transform",
+      "input_admission": null,
+      "inputs": [
+        {
+          "description": "Exact immutable curve operation input: paper_source.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "paper_source",
+          "required_non_null_fields": [],
+          "schema": "opaque"
+        },
+        {
+          "description": "Exact immutable curve operation input: figure_request.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "figure_request",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.curve-figure-digitization-request.v2"
+        }
+      ],
+      "max_files": 37,
+      "max_input_bytes": 34603008,
+      "max_network_requests": 0,
+      "max_output_bytes": 321912832,
+      "native_shell": "none",
+      "native_view_image": false,
+      "network_mode": "none",
+      "not_for": "Selecting scientific targets, interpreting mechanisms, or executing a solver.",
+      "operation_id": "science.figure.evidence.materialize.v1",
+      "outputs": [
+        {
+          "description": "Deterministic curve operation output: figure_manifest.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "figure_manifest",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.figure-evidence-manifest.v1"
+        },
+        {
+          "description": "Deterministic curve operation output: source_panels.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "source_panels",
+          "required_non_null_fields": [],
+          "schema": "opaque"
+        },
+        {
+          "description": "Deterministic curve operation output: audit_overlays.",
+          "max_items": 2,
+          "min_items": 1,
+          "name": "audit_overlays",
+          "required_non_null_fields": [],
+          "schema": "opaque"
+        },
+        {
+          "description": "Deterministic curve operation output: curve_tables.",
+          "max_items": 32,
+          "min_items": 1,
+          "name": "curve_tables",
+          "required_non_null_fields": [],
+          "schema": "opaque"
+        },
+        {
+          "description": "Deterministic curve operation output: validation_report.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "validation_report",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.figure-evidence-validation-report.v1"
+        }
+      ],
+      "purpose": "Deterministically recover and digitize one exact typed paper figure.",
+      "requires_human_approval": false,
+      "requires_independent_review": false,
+      "review_edge": null,
+      "timeout_seconds": 300,
+      "version": "1"
+    },
+    {
+      "accepts_actions": [],
+      "applies_when": "A frozen PDF or raster may contain a quantitative figure needed as evidence.",
+      "catalog_scope": "public",
+      "complete_transform_family": null,
+      "consequence": "scientific",
+      "executor_kind": "agent",
+      "input_admission": null,
+      "inputs": [
+        {
+          "description": "Exact frozen paper PDF or supplied raster source.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "paper_source",
+          "required_non_null_fields": [],
+          "schema": "opaque"
+        },
+        {
+          "description": "Explicit scientific objective for semantic selection.",
+          "max_items": 1,
+          "min_items": 0,
+          "name": "research_objective",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.research-objective.v1"
+        }
+      ],
+      "max_files": 1,
+      "max_input_bytes": 34603008,
+      "max_network_requests": 0,
+      "max_output_bytes": 1048576,
+      "native_shell": "inherited_prototype",
+      "native_view_image": true,
+      "network_mode": "none",
+      "not_for": "Producing curve points, qualifying evidence, or inferring an ambiguous identity.",
+      "operation_id": "science.figure.request.prepare.v1",
+      "outputs": [
+        {
+          "description": "Source-bound visible calibration and series guidance for deterministic extraction.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "figure_request",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.curve-figure-digitization-request.v2"
+        }
+      ],
+      "purpose": "Select and describe one exact, visibly anchored quantitative paper figure.",
+      "requires_human_approval": false,
+      "requires_independent_review": false,
+      "review_edge": null,
+      "timeout_seconds": 900,
+      "version": "1"
+    },
+    {
+      "accepts_actions": [],
+      "applies_when": "A hypothesis portfolio and its scientific foundation are available.",
+      "catalog_scope": "public",
+      "complete_transform_family": null,
+      "consequence": "scientific",
+      "executor_kind": "agent",
+      "input_admission": {
+        "accepted_options": [
+          "approve"
+        ],
+        "accepted_provider_operations": [
+          "science.evidence.qualify.v1"
+        ],
+        "approval_kind": "scientific_foundation",
+        "approval_subject_ports": [
+          "scientific_foundation"
+        ],
+        "cohort_id": "qualified_foundation",
+        "member_ports": [
+          "scientific_foundation"
+        ]
+      },
+      "inputs": [
+        {
+          "description": "Exact hypothesis proposal under review.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "hypothesis_portfolio",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.hypothesis-proposal.v2"
+        },
+        {
+          "description": "Exact scientific foundation used to challenge the proposal.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "scientific_foundation",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.scientific-foundation.v1"
+        }
+      ],
+      "max_files": 1,
+      "max_input_bytes": 2097152,
+      "max_network_requests": 0,
+      "max_output_bytes": 32768,
+      "native_shell": "inherited_prototype",
+      "native_view_image": false,
+      "network_mode": "none",
+      "not_for": "Generating hypotheses or deciding qualification.",
+      "operation_id": "science.hypothesis.criticize.v1",
+      "outputs": [
+        {
+          "description": "Independent hypothesis critic review.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "scientific_review",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.critic-review.v2"
+        }
+      ],
+      "purpose": "Adversarially review every proposed hypothesis.",
+      "requires_human_approval": false,
+      "requires_independent_review": false,
+      "review_edge": null,
+      "timeout_seconds": 600,
+      "version": "1"
+    },
+    {
+      "accepts_actions": [],
+      "applies_when": "A problem frame and scientific foundation expose an unresolved mechanism.",
+      "catalog_scope": "public",
+      "complete_transform_family": null,
+      "consequence": "scientific",
+      "executor_kind": "agent",
+      "input_admission": {
+        "accepted_options": [
+          "approve"
+        ],
+        "accepted_provider_operations": [
+          "science.evidence.qualify.v1"
+        ],
+        "approval_kind": "scientific_foundation",
+        "approval_subject_ports": [
+          "scientific_foundation"
+        ],
+        "cohort_id": "qualified_foundation",
+        "member_ports": [
+          "scientific_foundation"
+        ]
+      },
+      "inputs": [
+        {
+          "description": "Exact bounded problem frame.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "problem_frame",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.problem-frame.v1"
+        },
+        {
+          "description": "Exact evidence-bearing scientific foundation.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "scientific_foundation",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.scientific-foundation.v1"
+        }
+      ],
+      "max_files": 1,
+      "max_input_bytes": 2097152,
+      "max_network_requests": 0,
+      "max_output_bytes": 65536,
+      "native_shell": "inherited_prototype",
+      "native_view_image": false,
+      "network_mode": "none",
+      "not_for": "Reviewing, selecting, or qualifying hypotheses.",
+      "operation_id": "science.hypothesis.propose.v1",
+      "outputs": [
+        {
+          "description": "Distinct falsifiable hypothesis proposal bound to one global objective.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "hypothesis_portfolio",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.hypothesis-proposal.v2"
+        }
+      ],
+      "purpose": "Propose a small falsifiable portfolio for the current contradiction.",
+      "requires_human_approval": false,
+      "requires_independent_review": true,
+      "review_edge": {
+        "accepted_verdicts": [
+          "pass"
+        ],
+        "reviewer_input_port": "hypothesis_portfolio",
+        "reviewer_operation": "science.hypothesis.criticize.v1",
+        "subject_outputs": [
+          "hypothesis_portfolio"
+        ]
+      },
+      "timeout_seconds": 900,
+      "version": "1"
+    },
+    {
+      "accepts_actions": [],
+      "applies_when": "A scientific intake exists and its provisional status must be preserved.",
+      "catalog_scope": "support",
+      "complete_transform_family": null,
+      "consequence": "scientific",
+      "executor_kind": "transform",
+      "input_admission": null,
+      "inputs": [
+        {
+          "description": "Exact validated scientific intake.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "scientific_intake",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.scientific-intake.v1"
+        },
+        {
+          "description": "Exact passing independent audit of this scientific intake.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "evidence_audit",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.evidence-audit.v1"
+        }
+      ],
+      "max_files": 2,
+      "max_input_bytes": 33554432,
+      "max_network_requests": 0,
+      "max_output_bytes": 16777216,
+      "native_shell": "none",
+      "native_view_image": false,
+      "network_mode": "none",
+      "not_for": "Extracting new evidence or changing scientific content.",
+      "operation_id": "science.intake.split.v1",
+      "outputs": [
+        {
+          "description": "Problem frame projected from the intake.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "problem_frame",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.problem-frame.v1"
+        },
+        {
+          "description": "Scientific foundation projected from the intake.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "scientific_foundation",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.scientific-foundation.v1"
+        }
+      ],
+      "purpose": "Split one validated scientific intake into its immutable frame and foundation.",
+      "requires_human_approval": false,
+      "requires_independent_review": false,
+      "review_edge": null,
+      "timeout_seconds": 60,
+      "version": "1"
+    },
+    {
+      "accepts_actions": [],
+      "applies_when": "A complete experiment portfolio needs independent scientific review.",
+      "catalog_scope": "public",
+      "complete_transform_family": null,
+      "consequence": "scientific",
+      "executor_kind": "agent",
+      "input_admission": null,
+      "inputs": [
+        {
+          "description": "Complete experiment portfolio under review.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "experiment_plan",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.experiment-portfolio.v1"
+        }
+      ],
+      "max_files": 1,
+      "max_input_bytes": 2097152,
+      "max_network_requests": 0,
+      "max_output_bytes": 65536,
+      "native_shell": "inherited_prototype",
+      "native_view_image": false,
+      "network_mode": "none",
+      "not_for": "Reviewing an unmaterialized intent or granting human approval.",
+      "operation_id": "science.object.review.v1",
+      "outputs": [
+        {
+          "description": "Independent structured review.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "scientific_review",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.scientific-review.v1"
+        }
+      ],
+      "purpose": "Review one complete materialized experiment plan without changing it.",
+      "requires_human_approval": false,
+      "requires_independent_review": false,
+      "review_edge": null,
+      "timeout_seconds": 600,
+      "version": "1"
+    },
+    {
+      "accepts_actions": [],
+      "applies_when": "A qualified foundation declares an explicit objective contract.",
+      "catalog_scope": "support",
+      "complete_transform_family": null,
+      "consequence": "scientific",
+      "executor_kind": "transform",
+      "input_admission": {
+        "accepted_options": [
+          "approve"
+        ],
+        "accepted_provider_operations": [
+          "science.evidence.qualify.v1"
+        ],
+        "approval_kind": "scientific_foundation",
+        "approval_subject_ports": [
+          "scientific_foundation"
+        ],
+        "cohort_id": "qualified_foundation",
+        "member_ports": [
+          "scientific_foundation"
+        ]
+      },
+      "inputs": [
+        {
+          "description": "Qualified foundation containing the objective contract.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "scientific_foundation",
+          "required_non_null_fields": [
+            "objective_contract"
+          ],
+          "schema": "scidiscovery.scientific-foundation.v1"
+        }
+      ],
+      "max_files": 1,
+      "max_input_bytes": 33554432,
+      "max_network_requests": 0,
+      "max_output_bytes": 16777216,
+      "native_shell": "none",
+      "native_view_image": false,
+      "network_mode": "none",
+      "not_for": "Inferring a new objective or changing scientific content.",
+      "operation_id": "science.objective.project.v1",
+      "outputs": [
+        {
+          "description": "Exact research objective contract.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "research_objective",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.research-objective.v1"
+        }
+      ],
+      "purpose": "Project the exact research objective declared by a foundation.",
+      "requires_human_approval": false,
+      "requires_independent_review": false,
+      "review_edge": null,
+      "timeout_seconds": 60,
+      "version": "1"
+    },
+    {
+      "accepts_actions": [],
+      "applies_when": "All declared immutable inputs are available.",
+      "catalog_scope": "support",
+      "complete_transform_family": null,
+      "consequence": "scientific",
+      "executor_kind": "transform",
+      "input_admission": null,
+      "inputs": [
+        {
+          "description": "Exact deterministic TCAD transform input: capability.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "capability",
+          "required_non_null_fields": [],
+          "schema": "tcad.solver-capability.v2"
+        }
+      ],
+      "max_files": 1,
+      "max_input_bytes": 65536,
+      "max_network_requests": 0,
+      "max_output_bytes": 65536,
+      "native_shell": "none",
+      "native_view_image": false,
+      "network_mode": "none",
+      "not_for": "Open-ended scientific judgment or external execution.",
+      "operation_id": "tcad.execution-context.project.v1",
+      "outputs": [
+        {
+          "description": "Domain-neutral execution context projected from one TCAD capability snapshot.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "execution_context",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.execution-context.v1"
+        }
+      ],
+      "purpose": "Project one public TCAD capability snapshot into a domain-neutral execution context.",
+      "requires_human_approval": false,
+      "requires_independent_review": false,
+      "review_edge": null,
+      "timeout_seconds": 300,
+      "version": "1"
+    }
+  ],
+  "catalog_boundary": "This Root is still the old installed catalog. New ABI17 candidate has the same 49 Operation identities but changed compiled digests, as independently checked in p4-source-catalog.json and p4-installed-catalog.json. No old-runtime preflight is treated as authorization under ABI17; requery catalog and preflight exact bindings after deployment.",
+  "source_path_assessment": "The frozen original PDF has no compiled-producer labels, fits the paper input limit, and can seed the registered current figure-request/materialization/extraction/audit/qualification path. Existing produced foundation/objective/hypothesis/curve bundle/execution-context must not inherit qualification after digest retirement. Actual accepted new bindings remain a postdeployment gate.",
+  "deployment": {
+    "source_root": "/home/da/project/ai4s/tcad/git_release/scidiscovery-agent/123/scidiscovery-e5.2",
+    "workspace": "/home/da/project/ai4s/tcad/git_release/scidiscovery-agent/workspace/ingaas_inalas_photodetector",
+    "launch_root": "/home/da/project/ai4s/tcad/git_release/scidiscovery-agent",
+    "install_root": "/opt/scidiscovery-m7",
+    "state_root": "/var/lib/scidiscovery-m7",
+    "config_root": "/etc/scidiscovery-m7",
+    "backup_root": "/var/backups/scidiscovery",
+    "command_config": "/etc/scidiscovery/command-adapter.json",
+    "worker_backend": "local",
+    "dry_run": {
+      "cmd": "SCID_WORKSPACE=/home/da/project/ai4s/tcad/git_release/scidiscovery-agent/workspace/ingaas_inalas_photodetector \\\nSCID_CODEX_LAUNCH_ROOT=/home/da/project/ai4s/tcad/git_release/scidiscovery-agent \\\nSCID_PYTHON=/home/da/miniconda3/bin/python \\\nSCID_PLUGINS=tcad_artifact,curve_score,curve_figure_evidence \\\nSCID_INSTALL_ROOT=/opt/scidiscovery-m7 \\\nSCID_STATE_ROOT=/var/lib/scidiscovery-m7 \\\nSCID_CONFIG_ROOT=/etc/scidiscovery-m7 \\\nSCID_TCAD_COMMAND_CONFIG=/etc/scidiscovery/command-adapter.json \\\n/home/da/project/ai4s/tcad/git_release/scidiscovery-agent/123/scidiscovery-e5.2/deploy/reinstall.sh --dry-run",
+      "result": {
+        "chunk_id": "20da73",
+        "wall_time_seconds": 1.0009969559999998,
+        "original_token_count": 333,
+        "output": "Source: /home/da/project/ai4s/tcad/git_release/scidiscovery-agent/123/scidiscovery-e5.2\nWorkspace: /home/da/project/ai4s/tcad/git_release/scidiscovery-agent/workspace/ingaas_inalas_photodetector\nCodex launch root: /home/da/project/ai4s/tcad/git_release/scidiscovery-agent\nPython: /home/da/miniconda3/bin/python\nPlatform: codex\nWorker backend: local\nPlugins: tcad_artifact,curve_score,curve_figure_evidence\nTCAD adapter: /etc/scidiscovery/command-adapter.json\nSelected plugins: tcad_artifact,curve_score,curve_figure_evidence\nWorker backend: local\nsource imports: pass\npip 24.2 from /home/da/miniconda3/lib/python3.12/site-packages/pip (python 3.12)\nbase dependency: pydantic=2.11.5\nbase dependency: Pillow=12.1.1\nbase dependency: jsonschema=4.26.0\nbase dependency: setuptools=75.1.0\nbase Python dependency check: pass\nfigure dependency preflight: pass; uid=1000; python=/home/da/miniconda3/bin/python\nVerified figure dependencies: {\"executables\":{\"pdfimages\":\"/usr/bin/pdfimages\"},\"pillow_version\":\"12.1.1\",\"poppler_version\":\"22.02.0\"}\nRendered services: scidiscovery-approval-ui.service scidiscovery-control.service \nnetplan-ovs-cleanup.service: Failed to open /run/systemd/system/netplan-ovs-cleanup.service: Permission denied\n/lib/systemd/system/snapd.service:23: Unknown key name 'RestartMode' in section 'Service', ignoring.\ndeployment preview: pass\nNo package, state, service, or platform configuration was changed.\n",
+        "exit_code": 0
+      }
+    },
+    "command": "SCID_WORKSPACE=/home/da/project/ai4s/tcad/git_release/scidiscovery-agent/workspace/ingaas_inalas_photodetector \\\nSCID_CODEX_LAUNCH_ROOT=/home/da/project/ai4s/tcad/git_release/scidiscovery-agent \\\nSCID_PYTHON=/home/da/miniconda3/bin/python \\\nSCID_PLUGINS=tcad_artifact,curve_score,curve_figure_evidence \\\nSCID_INSTALL_ROOT=/opt/scidiscovery-m7 \\\nSCID_STATE_ROOT=/var/lib/scidiscovery-m7 \\\nSCID_CONFIG_ROOT=/etc/scidiscovery-m7 \\\nSCID_TCAD_COMMAND_CONFIG=/etc/scidiscovery/command-adapter.json \\\n/home/da/project/ai4s/tcad/git_release/scidiscovery-agent/123/scidiscovery-e5.2/deploy/reinstall.sh reinstall"
+  },
+  "remaining": [
+    "Run the reviewed deployment command from the user terminal; session filesystem authorization does not permit writing system deployment paths.",
+    "Restart Codex to load the newly compiled Worker configuration and explicitly continue M7-test0.",
+    "Query new Root catalog, validate installed candidate/profile identity, recheck source/capability preflight, and rebuild required exact scientific qualifications via registered Operations and UI decisions.",
+    "P6: actual sealed design, author, independent review, approved solver outputs and analysis, then a fresh-session second-round design and actual experimental outputs."
+  ]
+}

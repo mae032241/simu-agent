@@ -1,5 +1,15 @@
 # Curve science plugin
 
+Analysis Operations share a Local workspace that preserves bounded unpublished
+scripts and numerical results across failed Runs. Read `domain-workspace.json`
+for the optional local Python launcher and `assignment.recovery_draft` for the
+read-only saved subset. Write complete numerical units atomically before plotting;
+rendering retries read saved numbers without recomputation. Missing telemetry or
+plotting libraries do not prevent a limited report. Publish paths are relative to
+the workspace root, for example `scratch/analysis.py` and `scratch/results.csv`.
+The shared workspace is also referenced by TCAD analysis; scientific methods and
+result judgments remain owned by the analysis Agent.
+
 `scidiscovery-curve-score` owns only curve-domain semantics: reviewed curve contracts, canonical curves, deterministic metrics, coverage checks, and curve diagnosis. It does not parse TCAD-native output or know SProcess, PLX, solver attestations, or execution protocols. `tcad_artifact` owns adapters from TCAD output to canonical curves.
 
 Public scientific Operations:

@@ -1,0 +1,15 @@
+{
+  "command": [
+    "python",
+    "-m",
+    "pytest",
+    "-q",
+    "tests/operations/test_contract_attempts.py::test_receipt_budget_finalizes_reply_log_and_history_before_correction"
+  ],
+  "exit_code": 0,
+  "seconds": 2.727,
+  "peak_tree_rss_bytes": 132382720,
+  "budget_bytes": 536870912,
+  "early_stop_bytes": 469762048,
+  "memory_terminated": false
+}

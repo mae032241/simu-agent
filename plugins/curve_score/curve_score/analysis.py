@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from scidiscovery.operations.input_validation import OperationInvocationError
+
 import hashlib
 import io
 import math
 from dataclasses import dataclass
-from typing import Annotated, Literal
+from typing import Annotated, Callable, Literal
 
 from PIL import Image, ImageDraw, ImageFont
 from pydantic import Field, model_validator
@@ -181,6 +183,18 @@ class _ResidualAtom:
     support: CurveSupport
 
 
+def validate_curve_error_inputs(portfolio, contract, metric_report, bundle) -> CurveComparisonSpec:
+    """Input identity only; no metric recomputation or plot rendering."""
+    spec = _exact_comparison_spec(portfolio, contract, metric_report)
+    if canonical_sha256(bundle) != metric_report.curve_bundle_sha256:
+        raise ValueError("curve bundle digest does not match metric report")
+    return spec
+
+
+class CurveAnalysisUnavailable(ValueError):
+    """This input has no residual computation supported by this helper."""
+
+
 def analyze_curve_error(
     portfolio: ExperimentPortfolio,
     contract: CurveExperimentContract,
@@ -191,9 +205,7 @@ def analyze_curve_error(
 ) -> CurveErrorAnalysisArtifacts:
     """Localize failed residual metrics using their exact registered score grid."""
 
-    spec = _exact_comparison_spec(portfolio, contract, metric_report)
-    if canonical_sha256(bundle) != metric_report.curve_bundle_sha256:
-        raise ValueError("curve bundle digest does not match metric report")
+    spec = validate_curve_error_inputs(portfolio, contract, metric_report, bundle)
     recomputed = evaluate_curve_consistency(
         bundle,
         spec,
@@ -202,8 +214,29 @@ def analyze_curve_error(
         covered_validation_check_keys=metric_report.covered_validation_check_keys,
     )
     if canonical_json(recomputed) != canonical_json(metric_report):
-        raise ValueError("metric report does not reproduce from exact curve inputs")
+        raise OperationInvocationError("input_metric_not_reproducible", port="metric_report",
+                                       message="The metric report does not reproduce from its bound curve inputs.")
 
+    return localize_curve_error(bundle, spec, metric_report, comparison_key=comparison_key)
+
+
+def localize_curve_error(
+    bundle: CurveBundle,
+    spec: CurveComparisonSpec,
+    metric_report: CurveConsistencyReport,
+    *,
+    comparison_key: str | None = None,
+    check_budget: Callable[[], None] = lambda: None,
+) -> CurveErrorAnalysisArtifacts:
+    """Localize a freshly computed comparison without experiment-time contracts.
+
+    The legacy transform above still verifies its complete-plan inputs. Analysis
+    tools call this same localization/renderer after computing their own metrics.
+    """
+    if (canonical_sha256(bundle) != metric_report.curve_bundle_sha256
+            or canonical_sha256(spec) != metric_report.comparison_spec_sha256):
+        raise ValueError("localization inputs differ from the metric report")
+    check_budget()
     selected = _selected_residual_operators(
         spec, metric_report, comparison_key=comparison_key
     )
@@ -217,6 +250,7 @@ def analyze_curve_error(
         item.comparison_key: item for item in metric_report.comparisons
     }
     for comparison, operator in selected:
+        check_budget()
         reported_metric = next(
             item
             for item in reported_by_comparison[comparison.comparison_key].metrics
@@ -229,11 +263,11 @@ def analyze_curve_error(
             spec, by_series, comparison.candidate_series
         )
         atoms = (
-            _residual_atoms(reference, candidate, comparison, operator)
+            _residual_atoms(reference, candidate, comparison, operator, check_budget=check_budget)
             if reported_metric.status == "available"
             else _unavailable_atoms(reference, candidate, comparison)
         )
-        segments, truncated = _adaptive_segments(atoms)
+        segments, truncated = _adaptive_segments(atoms, check_budget=check_budget)
         trace = tuple(
             CurveResidualPoint(x=item.x, residual=item.residual, support=item.support)
             for item in _display_atoms(atoms)
@@ -265,6 +299,7 @@ def analyze_curve_error(
             reference=reference,
             candidate=candidate,
         )
+        check_budget()
         item = placeholder.model_copy(
             update={"plot_sha256": hashlib.sha256(image).hexdigest()}
         )
@@ -289,25 +324,19 @@ class CurveDiagnosticAnalysisPackage(SchemaModel):
     curve_bundle: CurveBundle
     curve_analysis: CurveErrorAnalysisReport
 
-    @model_validator(mode="after")
-    def _analysis_reproduces_from_exact_inputs(
-        self,
-    ) -> CurveDiagnosticAnalysisPackage:
-        validate_curve_experiment_contract(
-            self.curve_contract, self.experiment_plan
-        )
-        expected = analyze_curve_error(
-            self.experiment_plan,
-            self.curve_contract,
-            self.metric_report,
-            self.curve_bundle,
-            comparison_key=self.curve_analysis.selection_comparison_key,
-        ).report
-        if canonical_json(expected) != canonical_json(self.curve_analysis):
-            raise ValueError(
-                "curve analysis does not reproduce from the packaged exact inputs"
-            )
-        return self
+
+def validate_curve_analysis_package(package: CurveDiagnosticAnalysisPackage) -> None:
+    """Verify a package at production/admission, never as a side effect of reading it."""
+    validate_curve_experiment_contract(package.curve_contract, package.experiment_plan)
+    expected = analyze_curve_error(
+        package.experiment_plan,
+        package.curve_contract,
+        package.metric_report,
+        package.curve_bundle,
+        comparison_key=package.curve_analysis.selection_comparison_key,
+    ).report
+    if canonical_json(expected) != canonical_json(package.curve_analysis):
+        raise ValueError("curve analysis does not reproduce from the packaged exact inputs")
 
 
 def failed_residual_analysis_available(
@@ -404,7 +433,7 @@ def _selected_residual_operators(
             and (not failed_keys or item.operator_key in failed_keys)
         )
         if not operators:
-            raise ValueError("selected comparison has no analyzable residual operator")
+            raise CurveAnalysisUnavailable("selected comparison has no analyzable residual operator")
         return tuple((comparison, item) for item in operators)
 
     selected: list[tuple[CurveComparison, CurveOperatorSpec]] = []
@@ -427,7 +456,7 @@ def _selected_residual_operators(
             if item.kind in _RESIDUAL_KINDS and item.operator_key in selected_keys
         )
     if not selected:
-        raise ValueError("metric report has no failed or unavailable residual comparison")
+        raise CurveAnalysisUnavailable("metric report has no failed or unavailable residual comparison")
     return tuple(selected)
 
 
@@ -478,6 +507,8 @@ def _residual_atoms(
     candidate: CurveSeries,
     comparison: CurveComparison,
     operator: CurveOperatorSpec,
+    *,
+    check_budget: Callable[[], None] = lambda: None,
 ) -> tuple[_ResidualAtom, ...]:
     atoms: list[_ResidualAtom] = []
     reference_duplicates = _duplicate_xs(reference, comparison)
@@ -486,6 +517,7 @@ def _residual_atoms(
         sorted(set(_grid(comparison)) | reference_duplicates | candidate_duplicates)
     )
     for x in diagnostic_grid:
+        check_budget()
         reference_duplicate = x in reference_duplicates
         candidate_duplicate = x in candidate_duplicates
         if reference_duplicate or candidate_duplicate:
@@ -598,6 +630,8 @@ def _support(
 
 def _adaptive_segments(
     atoms: tuple[_ResidualAtom, ...],
+    *,
+    check_budget: Callable[[], None] = lambda: None,
 ) -> tuple[tuple[CurveErrorSegment, ...], bool]:
     ranges: list[tuple[int, int]] = []
     start = 0
@@ -616,7 +650,7 @@ def _adaptive_segments(
     while len(ranges) < _MAX_SEGMENTS:
         candidates: list[tuple[float, int, tuple[int, ...]]] = []
         for range_index, (left, right) in enumerate(ranges):
-            partition = _best_partition(atoms, left, right)
+            partition = _best_partition(atoms, left, right, check_budget=check_budget)
             if partition is not None:
                 gain, positions = partition
                 if len(ranges) + len(positions) <= _MAX_SEGMENTS:
@@ -636,7 +670,7 @@ def _adaptive_segments(
             zip(boundaries, boundaries[1:])
         )
     if len(ranges) == _MAX_SEGMENTS and any(
-        _best_partition(atoms, left, right) is not None for left, right in ranges
+        _best_partition(atoms, left, right, check_budget=check_budget) is not None for left, right in ranges
     ):
         truncated = True
 
@@ -674,7 +708,8 @@ def _adaptive_segments(
 
 
 def _best_partition(
-    atoms: tuple[_ResidualAtom, ...], left: int, right: int
+    atoms: tuple[_ResidualAtom, ...], left: int, right: int,
+    *, check_budget: Callable[[], None] = lambda: None,
 ) -> tuple[float, tuple[int, ...]] | None:
     if right - left < 6 or any(item.residual is None for item in atoms[left:right]):
         return None
@@ -688,6 +723,7 @@ def _best_partition(
     best: tuple[float, tuple[int, ...]] | None = None
     offsets = tuple(range(3, count - 2))
     for offset in offsets:
+        check_budget()
         split_cost = _partition_cost(
             residuals, magnitudes, (offset,), signed_scale, magnitude_scale
         )
@@ -698,6 +734,7 @@ def _best_partition(
     if count >= 9:
         candidate_offsets = _island_boundary_candidates(residuals, magnitudes)
         for first_index, first in enumerate(candidate_offsets):
+            check_budget()
             for second in candidate_offsets[first_index + 1 :]:
                 if first < 3 or second - first < 3 or count - second < 3:
                     continue

@@ -1,0 +1,24 @@
+........................................................................ [ 37%]
+......F................................................................. [ 75%]
+..............................................                           [100%]
+=================================== FAILURES ===================================
+_ test_review_validates_bound_original_context_and_actual_source_aliases[execution_context] _
+src/scidiscovery/operations/input_validation.py:201: in parse_bound_json
+    return model.model_validate_json(raw, strict=strict)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   pydantic_core._pydantic_core.ValidationError: 1 validation error for ExecutionContext
+E   domain
+E     Field required [type=missing, input_value={}, input_type=dict]
+E       For further information visit https://errors.pydantic.dev/2.11/v/missing
+
+The above exception was the direct cause of the following exception:
+tests/operations/test_agent_contract_alignment.py:972: in test_review_validates_bound_original_context_and_actual_source_aliases
+    _object_review_inputs(sources)
+src/scidiscovery/general_science_experiment_components.py:231: in _object_review_inputs
+    parse_bound_json(ExecutionContext, execution_context, admission_port="execution_context")
+src/scidiscovery/operations/input_validation.py:215: in parse_bound_json
+    raise failure from error
+E   scidiscovery.operations.input_validation.OperationInvocationError: input_content_incompatible: execution_context /
+=========================== short test summary info ============================
+FAILED tests/operations/test_agent_contract_alignment.py::test_review_validates_bound_original_context_and_actual_source_aliases[execution_context]
+1 failed, 189 passed, 1 deselected in 67.06s (0:01:07)

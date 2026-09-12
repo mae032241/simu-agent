@@ -333,9 +333,9 @@ def verify(paths: argparse.Namespace) -> None:
         assert root.call_tool("run_list", {}) == before_runs
     else:
         retired = root.call_tool("run_status", {"name": name})
-        assert retired["sealed_output_status"] == "contract_retired"
-        assert retired["sealed_output"] is None
-        assert retired["scheduler_signal"] is None
+        assert retired["sealed_output_status"] == "historical"
+        assert retired["sealed_output"] is not None
+        assert retired["scheduler_signal"] is not None
         assert runtime.runs.submit(record["run_id"]) == ("completed", ())
 
     assert runtime.runs.status(record["run_id"]) == before

@@ -437,12 +437,15 @@ class TCADDevelopmentDebugBridge:
                     content=content,
                 )
             )
-        log_excerpt = _sanitize_log(log_raw)
+        error = str(manifest.get("error", ""))[:4096]
+        diagnostic_raw = ("Runner diagnostic: " + error + "\n").encode("utf-8") + log_raw if error else log_raw
+        diagnostic_log = _sanitize_log(diagnostic_raw, truncate=False)
+        log_excerpt = _sanitize_log(diagnostic_raw)
         files.append(
             CollectedTCADDebugFile(
                 name="debug.log.txt",
                 media_type="text/plain; charset=utf-8",
-                content=log_excerpt.encode("utf-8"),
+                content=diagnostic_log.encode("utf-8"),
             )
         )
         terminal = str(manifest.get("terminal_state", "failed"))
@@ -453,16 +456,19 @@ class TCADDevelopmentDebugBridge:
         except (TypeError, ValueError):
             exit_code = 99
         error = str(manifest.get("error", ""))[:4096]
+        if "diagnostic collection failed:" in error:
+            # Missing diagnostic coverage must not produce a qualified debug proof.
+            terminal = "failed"
         layer, summary = _earliest_diagnostic(
             terminal=terminal,
             exit_code=exit_code,
             error=error,
-            log=log_excerpt,
+            log=diagnostic_log,
             output_count=len(by_name),
         )
         source_diagnostic = _source_diagnostic(
             error=_sanitize_log(error.encode("utf-8")),
-            log=log_excerpt,
+            log=diagnostic_log,
         )
         return CollectedTCADDebugRun(
             terminal_state=terminal,
@@ -509,6 +515,8 @@ def _earliest_diagnostic(
     *, terminal: str, exit_code: int, error: str, log: str, output_count: int
 ) -> tuple[str, str]:
     combined = (error + "\n" + log).lower()
+    if "diagnostic collection failed:" in error:
+        return "output_contract", "Diagnostic capture is incomplete; original logs retained at the runner."
     if terminal == "succeeded" and exit_code == 0:
         return (
             "complete",
@@ -516,19 +524,21 @@ def _earliest_diagnostic(
         )
     if exit_code == 124 or "wall_time_exceeded" in combined:
         return "resource_limit", "Direct-solver debug reached a fixed resource limit."
+    diagnostic = _source_diagnostic(error=error, log=log)
+    message = diagnostic.message.lower() if diagnostic is not None else ""
     layers = (
-        ("parser", ("syntax", "parse error", "parser", "unexpected token")),
+        ("parser", ("syntax error", "parse error", "unexpected token", "space required after", "failure during syntax check", "can't read", "can't use", "invalid command", "wrong # args")),
         (
             "initialization",
-            ("initialization", "initial solution", "contact", "unknown region"),
+            ("initialization failed", "initial solution failed", "unknown contact", "unknown region", "no regions specified"),
         ),
         (
             "numerical",
-            ("convergence", "diverg", "newton", "residual", "time step"),
+            ("convergence", "converge", "diverg", "newton", "residual", "time step"),
         ),
     )
     for layer, markers in layers:
-        if any(marker in combined for marker in markers):
+        if any(marker in message for marker in markers):
             return layer, f"Direct-solver debug stopped at the {layer} layer."
     if exit_code == 0 and any(
         marker in combined
@@ -550,25 +560,54 @@ def _source_diagnostic(*, error: str, log: str) -> TCADSourceDiagnostic | None:
     """Extract one bounded, public-safe locator hint from a solver diagnostic."""
 
     combined = "\n".join(value for value in (error, log) if value)
+    combined = re.sub(r"\x1b\[[0-9;]*m", "", combined)
     if not combined:
         return None
-    entrypoint_match = re.search(
+    error_markers = (
+        "can't read", "can't use", "expected ", "invalid command", "wrong # args",
+        "domain error", "syntax error", "parse error", "unexpected token",
+        "space required after", "failure during syntax check", "no regions specified",
+        "initialization failed", "initial solution failed", "unknown region", "unknown contact",
+        "failed to converge", "convergence failed", "newton failed", "divergence detected",
+        "time step too small", "required output missing", "output exceeds",
+    )
+    lines = combined.splitlines(keepends=True)
+    message_index = next((
+        index for index, line in enumerate(lines)
+        if any(marker in line.lower() for marker in error_markers)
+    ), None)
+    if message_index is None:
+        if not error.strip():
+            return None
+        # An unclassified adapter error provides no source locator in the log.
+        lines = error.splitlines(keepends=True)
+        message_index = 0
+    message = lines[message_index].strip()
+    fragment_boundary = r"(?im)^--- (?:scidiscovery solver diagnostic|bounded (?:diagnostic|log) omission)"
+    prefix = re.split(fragment_boundary, "".join(lines[:message_index]))[-1]
+    context = "".join(lines[message_index:])
+    context = re.split(fragment_boundary + r"|^Checking syntax of ", context)[0]
+    entrypoint_matches = list(re.finditer(
         r"(?im)^Checking syntax of "
         r"([A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*\.cmd)\s*:",
-        combined,
-    )
+        prefix,
+    ))
     source_relative_path = (
-        entrypoint_match.group(1) if entrypoint_match is not None else None
+        entrypoint_matches[-1].group(1) if entrypoint_matches else None
     )
-    file_line_matches = list(
-        re.finditer(r'(?i)\bfile\s+"[^"]+"\s+line\s+(\d+)', combined)
-    )
-    reported_line = (
-        int(file_line_matches[-1].group(1)) if file_line_matches else None
-    )
+    file_line = re.search(r'(?i)\bfile\s+"([^"]+)"\s+line\s+(\d+)', context)
+    reported_line = int(file_line.group(2)) if file_line is not None else None
+    if file_line is not None:
+        path = file_line.group(1)
+        source_relative_path = path if (
+            re.fullmatch(r"[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*\.cmd", path)
+            and ".." not in Path(path).parts
+        ) else None
+    if source_relative_path is not None and ".." in Path(source_relative_path).parts:
+        source_relative_path = None
     procedure_match = re.search(
         r'(?i)procedure\s+"?([A-Za-z0-9_.:-]+)"?\s+line\s+(\d+)',
-        combined,
+        context,
     )
     procedure = procedure_match.group(1) if procedure_match is not None else None
     procedure_line = (
@@ -576,34 +615,11 @@ def _source_diagnostic(*, error: str, log: str) -> TCADSourceDiagnostic | None:
     )
     command_match = re.search(
         r'(?is)\bwhile executing\s*\n?\s*"([^"\x00]{1,1024})"',
-        combined,
+        context,
     )
     command_excerpt = (
         command_match.group(1).strip() if command_match is not None else None
     )
-    error_markers = (
-        "can't read",
-        "can't use",
-        "expected ",
-        "invalid command",
-        "wrong # args",
-        "domain error",
-        "syntax error",
-        "parse error",
-    )
-    message = next(
-        (
-            line.strip()
-            for line in combined.splitlines()
-            if line.strip()
-            and any(marker in line.lower() for marker in error_markers)
-        ),
-        "",
-    )
-    if not message and error.strip():
-        message = error.strip().splitlines()[0]
-    if not message:
-        return None
     message = message[:2048]
     if command_excerpt is not None:
         command_excerpt = command_excerpt[:1024]
@@ -624,9 +640,9 @@ def _source_diagnostic(*, error: str, log: str) -> TCADSourceDiagnostic | None:
     )
 
 
-def _sanitize_log(raw: bytes) -> str:
+def _sanitize_log(raw: bytes, *, truncate: bool = True) -> str:
     text = raw.decode("utf-8", errors="replace")
-    if len(text) > _MAX_RESPONSE_LOG_CHARS:
+    if truncate and len(text) > _MAX_RESPONSE_LOG_CHARS:
         half = _MAX_RESPONSE_LOG_CHARS // 2
         text = (
             text[:half]

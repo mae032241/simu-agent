@@ -3,18 +3,20 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, replace
+import json
+from dataclasses import dataclass, field, replace
 from typing import Any, Callable
 
 from pydantic import BaseModel
 
-from .spec import CompiledOperation
-from .lifecycle import AGENT_LIFECYCLE_PROTOCOL
+from .spec import CompiledOperation, OperationSpec, freeze_json, json_projection
+from .lifecycle import AGENT_LIFECYCLE_PROTOCOL, AgentLifecycleInput
 from ..artifact_agent.operation_tool_context import OperationToolContext
 
 
 _TOOL_NAME = re.compile(r"^worker_[a-z][a-z0-9_]{0,95}$")
 _LOCAL_SERVICE = re.compile(r"^[a-z][a-z0-9_.-]{0,127}$")
+_LIFECYCLE_INPUT_SCHEMA = freeze_json(AgentLifecycleInput.model_json_schema())
 _LOCAL_NATIVE_EQUIVALENT_TOOLS = frozenset(
     {
         "worker_file_write_begin",
@@ -40,7 +42,11 @@ class WorkerToolDefinition:
     contextual_handler: Callable[[BaseModel, OperationToolContext], Any] | None = None
     local_contextual_handler: Callable[[BaseModel, OperationToolContext], Any] | None = None
     required_services: tuple[str, ...] = ()
+    optional_services: tuple[str, ...] = ()
+    evidence_ports: tuple[str, ...] = ()
     network_access: bool = False
+    record_attempts: bool = False
+    _input_schema: Any = field(default=None, repr=False, compare=False)
 
     def issue(self) -> str | None:
         if not _TOOL_NAME.fullmatch(self.name) or not self.description:
@@ -52,6 +58,7 @@ class WorkerToolDefinition:
         if (
             not self.capability
             or not isinstance(self.network_access, bool)
+            or not isinstance(self.record_attempts, bool)
             or (self.handler is not None and not callable(self.handler))
             or (
                 self.contextual_handler is not None
@@ -61,6 +68,11 @@ class WorkerToolDefinition:
             and self.contextual_handler is not None
             or self.handler is not None
             and self.local_contextual_handler is not None
+            or len(self.evidence_ports) != len(set(self.evidence_ports))
+            or (self.evidence_ports or self.optional_services) and self.contextual_handler is None
+            or len(self.optional_services) != len(set(self.optional_services))
+            or set(self.optional_services) & set(self.required_services)
+            or any(not _LOCAL_SERVICE.fullmatch(name) for name in (*self.optional_services, *self.evidence_ports))
             or len(self.required_services) != len(set(self.required_services))
             or any(
                 _LOCAL_SERVICE.fullmatch(name) is None
@@ -75,8 +87,16 @@ class WorkerToolDefinition:
         return {
             "name": self.name,
             "description": self.description,
-            "inputSchema": self.input_model.model_json_schema(),
+            "inputSchema": (json_projection(self._input_schema) if self._input_schema is not None
+                            else self.input_model.model_json_schema()),
         }
+
+
+def parse_tool_arguments(model: type[BaseModel], arguments: Any) -> BaseModel:
+    """Use JSON semantics consistently with the model-visible tool Schema."""
+    return model.model_validate_json(
+        json.dumps({} if arguments is None else arguments, allow_nan=False), strict=True
+    )
 
 
 def operation_agent_type(compiled: CompiledOperation) -> str:
@@ -93,14 +113,14 @@ def operation_worker_server_name(compiled: CompiledOperation) -> str:
     return f"scid_worker_{stem[:32]}_{compiled.digest[:12]}"
 
 
-def operation_worker_tools(
-    compiled: CompiledOperation,
+def compile_worker_tools(
+    plugin_id: str, spec: OperationSpec, implementations: dict[str, Any],
 ) -> tuple[WorkerToolDefinition, ...]:
     values: list[WorkerToolDefinition] = []
     seen: set[str] = set()
-    for reference in compiled.spec.executor.tools:
-        key = f"{reference.plugin_id or compiled.plugin_id}:{reference.component_id}"
-        value = compiled.implementations[key]
+    for reference in spec.executor.tools:
+        key = f"{reference.plugin_id or plugin_id}:{reference.component_id}"
+        value = implementations[key]
         if not isinstance(value, WorkerToolDefinition) or value.issue() is not None:
             raise ValueError("compiled worker tool definition is invalid")
         if value.name in seen:
@@ -110,12 +130,18 @@ def operation_worker_tools(
         values.append(
             replace(
                 value,
+                optional_services=tuple(f"{provider}:{name}" for name in value.optional_services),
                 required_services=tuple(
                     f"{provider}:{name}" for name in value.required_services
                 ),
             )
         )
     return tuple(values)
+
+
+def operation_worker_tools(compiled: CompiledOperation) -> tuple[WorkerToolDefinition, ...]:
+    """Read the tools resolved once by this exact catalog construction."""
+    return compiled.worker_tools
 
 
 def operation_lifecycle_protocol(compiled: CompiledOperation):
@@ -133,6 +159,21 @@ def operation_worker_tool_names(compiled: CompiledOperation) -> tuple[str, ...]:
     return tuple(item.name for item in lifecycle.tools) + tuple(
         item.name for item in operation_worker_tools(compiled)
     )
+
+
+def operation_tool_contracts(
+    compiled: CompiledOperation, tool_names: tuple[str, ...],
+) -> dict[str, dict[str, Any]]:
+    """Deliver each allowed tool's complete Schema with its own reference root."""
+    contracts = {
+        item.name: {"description": item.description,
+                    "inputSchema": json_projection(_LIFECYCLE_INPUT_SCHEMA)}
+        for item in operation_lifecycle_protocol(compiled).tools
+    }
+    for tool in operation_worker_tools(compiled):
+        schema = tool.schema()
+        contracts[tool.name] = {key: schema[key] for key in ("description", "inputSchema")}
+    return {name: contracts[name] for name in tool_names}
 
 
 def operation_local_worker_tools(
@@ -251,4 +292,19 @@ __all__ = [
     "operation_worker_server_name",
     "operation_worker_tool_names",
     "operation_worker_tools",
+    "operation_tool_contracts",
 ]
+
+
+def declared_tool_output_names(tools):
+    """Ancillary output authority is declared separately from raw-byte access."""
+    names = {name for tool in tools for name in tool.evidence_ports}
+    if any(tool.record_attempts for tool in tools):
+        names.add("recovery_manifest_output")
+    return names
+
+
+def tool_evidence_ports(compiled):
+    ports = {p.name: p for p in compiled.spec.outputs if p.collection is not None}
+    enabled = declared_tool_output_names(operation_worker_tools(compiled))
+    return ports if enabled and enabled == set(ports) and enabled <= {"tool_evidence", "recovery_manifest_output"} else {}

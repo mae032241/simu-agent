@@ -3,11 +3,17 @@
 from __future__ import annotations
 
 import json
+import re
+from pydantic import ValidationError
+from .artifact_agent.schema.common import ContractDiagnostic
 from collections.abc import Iterable
 from typing import Any, Mapping
 
 from .operations.spec import (
     CompiledOperation,
+    freeze_json,
+    json_projection,
+    input_validation_projection,
     OperationSpec,
     OutputPortSpec,
     SemanticContractSpec,
@@ -17,6 +23,155 @@ from .operations.spec import (
 
 class SemanticRuleViolation(ValueError):
     """An intentional Worker-correctable rejection by a bound semantic checker."""
+
+    def __init__(self, message: str, *, details: tuple[dict[str, Any], ...] = ()):
+        super().__init__(message)
+        self.details = details
+
+
+class DiagnosticError(RuntimeError):
+    """Transport a typed, already-safe diagnostic without stringifying it."""
+    def __init__(self, message: str, *, details: tuple[dict[str, Any], ...] = ()):
+        super().__init__(message)
+        self.details = details
+
+
+class DeclaredDiagnostic(dict):
+    """In-process marker for explicitly declared safe details; never a wire field."""
+
+
+def contract_diagnostic(code: str, *, phase: str, affected_action: str,
+                        path: str = "$", repairable: bool = False,
+                        message: str = "The declared requirement was not satisfied.",
+                        rule_id: str | None = None, error_type: str | None = None) -> dict[str, Any]:
+    return DeclaredDiagnostic(ContractDiagnostic(code=code, phase=phase, path=path, message=message,
+        repairable=repairable, affected_action=affected_action, rule_id=rule_id,
+        type=error_type).model_dump(mode="json", exclude_none=True))
+
+
+def declared_violation(message: str, *, path: str = "$") -> SemanticRuleViolation:
+    """Declare a static relationship error at its owner, without reflecting input."""
+    return SemanticRuleViolation(message, details=(contract_diagnostic("output_invalid",
+        phase="output_payload", affected_action="submit", repairable=True,
+        path=path, message=message, error_type="value_error"),))
+
+
+def schema_field_names(schema: Any) -> frozenset[str]:
+    names = set()
+    def visit(value):
+        if isinstance(value, Mapping):
+            names.update(value.get("properties", ()))
+            for child in value.values(): visit(child)
+        elif isinstance(value, (tuple, list)):
+            for child in value: visit(child)
+    visit(schema)
+    return frozenset(names)
+
+
+def diagnostic_path(parts: Iterable[Any], names: Iterable[str], *, root: str = "$") -> str:
+    allowed = set(names)
+    path = root
+    for part in tuple(parts)[:32]:
+        token = (f"[{part}]" if isinstance(part, int) and 0 <= part <= 1000000
+                 else f".{part}" if isinstance(part, str) and part in allowed
+                 and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,95}", part) else "[key]")
+        if len(path) + len(token) > 512: break
+        path += token
+    return path
+
+
+def validation_diagnostics(error: ValidationError, *, schema: Any,
+                           phase: str = "tool_arguments", action: str = "tool_call") -> tuple[dict[str, Any], ...]:
+    messages = {
+        "missing": "Required field is missing.",
+        "dict_type": "Expected a JSON object.", "model_type": "Expected a JSON object.",
+        "string_type": "Expected a string.", "int_type": "Expected an integer.",
+        "float_type": "Expected a number.", "bool_type": "Expected a boolean.",
+        "tuple_type": "Expected a JSON array.", "list_type": "Expected a JSON array.",
+        "extra_forbidden": "An undeclared field was supplied.",
+        "literal_error": "Use a value from the declared enumeration.",
+        "union_tag_invalid": "Use a source kind from the declared enumeration.",
+        "union_tag_not_found": "The declared discriminator field is missing.",
+    }
+    names = schema_field_names(schema)
+    result = []
+    for item in error.errors(include_input=False, include_context=True, include_url=False)[:32]:
+        kind = item["type"]
+        cause = item.get("ctx", {}).get("error")
+        explicit = cause.details if isinstance(cause, SemanticRuleViolation) else ()
+        if explicit and all(isinstance(detail, DeclaredDiagnostic) for detail in explicit):
+            for detail in explicit:
+                result.append(contract_diagnostic("invalid_arguments" if phase == "tool_arguments" else detail["code"],
+                    phase=phase, affected_action=action, repairable=True,
+                    path=diagnostic_path(item["loc"], names) + detail["path"].removeprefix("$"),
+                    message=detail["message"], error_type=kind))
+            continue
+        message = messages.get(kind, "Value violates the declared type, bounds, or field relationship.")
+        # These two values are generated from the declared literal/tag schema;
+        # the supplied input and arbitrary custom error context are never copied.
+        if kind in {"literal_error", "union_tag_invalid"}:
+            expected = item.get("ctx", {}).get("expected" if kind == "literal_error" else "expected_tags")
+            if isinstance(expected, str):
+                message = ("Supported values: " + expected)[:512]
+        bounds = {
+            "less_than_equal": ("le", "Value must be at most {}."),
+            "less_than": ("lt", "Value must be less than {}."),
+            "greater_than_equal": ("ge", "Value must be at least {}."),
+            "greater_than": ("gt", "Value must be greater than {}."),
+            "too_long": ("max_length", "Maximum length is {}."),
+            "too_short": ("min_length", "Minimum length is {}."),
+            "string_too_long": ("max_length", "Maximum length is {}."),
+            "string_too_short": ("min_length", "Minimum length is {}."),
+        }
+        if kind in bounds:
+            key, template = bounds[kind]
+            value = item.get("ctx", {}).get(key)
+            if type(value) in (int, float):
+                message = template.format(value)[:512]
+        result.append(contract_diagnostic(
+            "invalid_arguments" if phase == "tool_arguments" else "output_invalid",
+            phase=phase, affected_action=action, repairable=True,
+            path=diagnostic_path(item["loc"], names), error_type=kind, message=message))
+    return tuple(result)
+
+
+
+def sanitize_diagnostic_details(items: Iterable[Any], *, schema: Any,
+                                rules: Iterable[str] = (), phase: str = "output_payload",
+                                action: str = "submit", rule_phases: Mapping[str, str] | None = None) -> tuple[dict[str, Any], ...]:
+    names = schema_field_names(schema) | {"payload", "handoff", "schema_version"}
+    allowed_rules = set(rules)
+    result = []
+    for item in tuple(items)[:16]:
+        if not isinstance(item, Mapping): continue
+        rule = item.get("rule_id")
+        if rule is not None and rule not in allowed_rules: continue
+        parts = re.findall(r"\.([A-Za-z_][A-Za-z0-9_]*)|\[(\d+|key)\]", str(item.get("path", "$"))[:512])
+        # Explicit details have already bounded their schema fields at the owner;
+        # they may include a declared workspace prefix outside the payload schema.
+        path_names = names | {field for field, _ in parts} if isinstance(item, DeclaredDiagnostic) else names
+        path = diagnostic_path((int(index) if index.isdigit() else field or "[key]" for field,index in parts), path_names)
+        code = item.get("code", "output_invalid" if action == "submit" else "runtime_failure")
+        if not isinstance(code,str) or not re.fullmatch(r"[a-zA-Z0-9_.-]{1,128}",code): code="runtime_failure"
+        error_type = item.get("type")
+        if not isinstance(error_type,str) or not re.fullmatch(r"[a-zA-Z0-9_.-]{1,128}",error_type): error_type=None
+        resolved_phase = (rule_phases or {}).get(rule, phase)
+        # Only the explicit in-process constructor marks a message as safe. An
+        # arbitrary error dictionary passing the wire schema does not do so.
+        description = rules.get(rule) if isinstance(rules, Mapping) else None
+        if isinstance(item, DeclaredDiagnostic):
+            message = item["message"]
+            if description and message == "Value violates the declared type, bounds, or field relationship.":
+                message = description
+        else:
+            message = description or ("Required field is missing." if error_type == "missing" else
+                "Value violates the declared type, bounds, or field relationship." if error_type else
+                "The declared requirement was not satisfied.")
+        result.append(contract_diagnostic(code, phase=resolved_phase, affected_action=action,
+            path=path, repairable=(item.get("repairable", resolved_phase in {"input_admission","tool_arguments","output_payload","output_context"}) if isinstance(item, DeclaredDiagnostic) else
+                                  resolved_phase in {"input_admission","tool_arguments","output_payload","output_context"}),
+            message=message[:512], rule_id=rule, error_type=error_type))
+    return tuple(result)
 
 
 def semantic_contract(*rules: SemanticRuleSpec) -> str:
@@ -112,11 +267,13 @@ def output_checker_contract_issue(
 
 
 def direct_revision_ports(
-    compiled: CompiledOperation,
+    compiled: CompiledOperation | OperationSpec,
+    *, plugin_id: str | None = None,
 ) -> tuple[Any, OutputPortSpec] | None:
     """Recognize the complete-object revision shape declared by OperationSpec."""
 
-    spec = compiled.spec
+    spec = compiled if isinstance(compiled, OperationSpec) else compiled.spec
+    owner = plugin_id if isinstance(compiled, OperationSpec) else compiled.plugin_id
     bases = tuple(port for port in spec.inputs if port.usage == "revision_base")
     primary = tuple(port for port in spec.outputs if port.collection is None)
     review = spec.review
@@ -161,7 +318,7 @@ def direct_revision_ports(
             return None
 
     def component_key(reference: Any) -> str:
-        return f"{reference.plugin_id or compiled.plugin_id}:{reference.component_id}"
+        return f"{reference.plugin_id or owner}:{reference.component_id}"
 
     if (
         output.min_items != 1
@@ -188,17 +345,25 @@ def active_direct_revision_ports(
     return direct if direct[0].name in set(actual_bound_port_names) else None
 
 
-def operation_output_validation_contract(
-    compiled: CompiledOperation, port: OutputPortSpec
+def operation_input_validation_contract(
+    operation: CompiledOperation | OperationSpec,
+) -> dict[str, Any] | None:
+    """Same admission description in the scheduler catalog and frozen Worker schema."""
+    spec = operation.spec if isinstance(operation, CompiledOperation) else operation
+    return input_validation_projection(spec)
+
+
+def _static_output_validation_contract(
+    spec: OperationSpec, port: OutputPortSpec, plugin_id: str
 ) -> dict[str, Any]:
-    inputs = {item.name: item for item in compiled.spec.inputs}
-    source_projection = _evidence_source_projection_version(compiled.spec, port)
+    inputs = {item.name: item for item in spec.inputs}
+    source_projection = _evidence_source_projection_version(spec, port)
     context_sources = tuple(
         {
             "port": name,
-            "required": inputs[name].min_items > 0,
+            "required": inputs[name].min_items > 0 if name in inputs else False,
             **(
-                {"usage": inputs[name].usage}
+                {"usage": inputs[name].usage if name in inputs else "tool_evidence"}
                 if source_projection is not None
                 else {}
             ),
@@ -206,7 +371,7 @@ def operation_output_validation_contract(
         for name in port.context_sources
     )
     rules = [
-        _rule("runtime.files", "Submit exactly output/result.json."),
+        _rule("runtime.files", "Submit output/result.json; declared tool evidence is added only by the runtime." if any(p.collection is not None for p in spec.outputs) else "Submit exactly output/result.json."),
         _rule(
             "runtime.envelope",
             "The result file must be a valid RoleResultEnvelope JSON object.",
@@ -240,7 +405,7 @@ def operation_output_validation_contract(
                 ],
             }
         )
-    direct_revision = direct_revision_ports(compiled)
+    direct_revision = direct_revision_ports(spec, plugin_id=plugin_id)
     if direct_revision is not None:
         base = direct_revision[0]
         description = (
@@ -258,17 +423,51 @@ def operation_output_validation_contract(
         )
     return {
         "schema_version": 1,
-        "operation_id": compiled.spec.operation_id,
-        "operation_version": compiled.spec.version,
-        "operation_digest": compiled.digest,
+        "operation_id": spec.operation_id,
+        "operation_version": spec.version,
         "output_port": port.name,
         "max_output_bytes": min(
-            port.max_item_bytes, compiled.spec.limits.max_output_bytes
+            port.max_item_bytes, spec.limits.max_output_bytes
         ),
         "context_sources": context_sources,
         "checkers": checkers,
         "rules": rules,
     }
+
+
+def compile_output_contract(
+    spec: OperationSpec, port: OutputPortSpec, *, plugin_id: str,
+    implementations: Mapping[str, Any], evidence_ports: Iterable[str],
+) -> Mapping[str, Any]:
+    """Build static material before computing its Operation identity."""
+    def resource(reference):
+        return implementations[f"{reference.plugin_id or plugin_id}:{reference.component_id}"]
+    schema = json.loads(resource(port.schema_resource))
+    if port.collection is not None and port.name in evidence_ports:
+        schema["x-scidiscovery-produced-by"] = "registered_tool"
+    if _evidence_source_projection_version(spec, port) is not None:
+        _project_evidence_source_schema(schema, port.evidence_paths, allowed_sources=None)
+    if port.semantic_contract is not None:
+        schema["x-scidiscovery-semantic-constraints"] = parse_semantic_contract(
+            resource(port.semantic_contract)
+        ).model_dump(mode="json")
+    input_contract = operation_input_validation_contract(spec)
+    if input_contract is not None:
+        schema["x-scidiscovery-input-validation-contract"] = input_contract
+    schema["x-scidiscovery-validation-contract"] = _static_output_validation_contract(
+        spec, port, plugin_id
+    )
+    return freeze_json(schema)
+
+
+def operation_output_validation_contract(
+    compiled: CompiledOperation, port: OutputPortSpec
+) -> dict[str, Any]:
+    contract = json_projection(compiled.output_contracts[port.name][
+        "x-scidiscovery-validation-contract"
+    ])
+    contract["operation_digest"] = compiled.digest
+    return contract
 
 
 def operation_port_json_schema(
@@ -279,34 +478,32 @@ def operation_port_json_schema(
 ) -> dict[str, Any]:
     """Return the exact Worker-visible schema and its derived contracts."""
 
-    reference = port.schema_resource
-    key = f"{reference.plugin_id or compiled.plugin_id}:{reference.component_id}"
-    schema = json.loads(compiled.implementations[key])
+    schema = json_projection(compiled.output_contracts[port.name])
+    from .operations.tooling import tool_evidence_ports
+    evidence_ports = tool_evidence_ports(compiled)
+    if evidence_ports and input_source_ports is not None:
+        schema['x-scidiscovery-readable-evidence'] = [
+            {'alias': name, 'port': source_port,
+             'origin': 'registered_tool' if source_port in evidence_ports else 'bound_artifact'}
+            for name, source_port in sorted(input_source_ports.items())]
     projection = _evidence_source_projection_version(compiled.spec, port)
     if projection is not None:
         inputs = {item.name: item for item in compiled.spec.inputs}
         allowed_sources: tuple[str, ...] | None = None
         if input_source_ports is not None:
-            unknown = set(input_source_ports.values()) - set(inputs)
+            unknown = set(input_source_ports.values()) - set(inputs) - set(evidence_ports)
             if unknown:
                 raise ValueError("source binding references an unknown input port")
             allowed_sources = tuple(
                 sorted(
                     source_name
                     for source_name, port_name in input_source_ports.items()
-                    if inputs[port_name].usage == "evidence_inventory"
-                    and inputs[port_name].exposure != "handoff_only"
+                    if port_name in evidence_ports or (inputs[port_name].usage == "evidence_inventory"
+                    and inputs[port_name].exposure != "handoff_only")
                 )
             )
         _project_evidence_source_schema(
             schema, port.evidence_paths, allowed_sources=allowed_sources
-        )
-    if port.semantic_contract is not None:
-        reference = port.semantic_contract
-        key = f"{reference.plugin_id or compiled.plugin_id}:{reference.component_id}"
-        contract = parse_semantic_contract(compiled.implementations[key])
-        schema["x-scidiscovery-semantic-constraints"] = contract.model_dump(
-            mode="json"
         )
     schema["x-scidiscovery-validation-contract"] = (
         operation_output_validation_contract(compiled, port)
@@ -420,6 +617,7 @@ __all__ = [
     "active_direct_revision_ports",
     "direct_revision_ports",
     "operation_output_validation_contract",
+    "operation_input_validation_contract",
     "operation_port_json_schema",
     "output_checker_contract_issue",
     "parse_semantic_contract",

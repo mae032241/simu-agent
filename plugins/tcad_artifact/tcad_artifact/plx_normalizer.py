@@ -18,7 +18,7 @@ from curve_score.schema import (
     CurveSeries,
 )
 
-from .curve_normalizer import MAX_LOG_BYTES, SProcessSeriesSpec
+from .curve_normalizer import MAX_LOG_BYTES, SProcessPointLimitError, SProcessSeriesSpec
 
 
 PLX_NORMALIZER_PROFILE = "scidiscovery.curve-normalize.sprocess-plx.v1"
@@ -142,7 +142,9 @@ def normalize_sprocess_plx(
         seen_x.add(x)
         previous_x = x
 
-    if not spec.series.min_points <= len(records) <= spec.series.max_points:
+    if len(records) > spec.series.max_points:
+        raise SProcessPointLimitError("SProcess PLX exceeds its point limit")
+    if len(records) < spec.series.min_points:
         raise ValueError("SProcess PLX point count violates its source spec")
     _require_domain_coverage(records, spec.required_intervals)
     retained = tuple(records)

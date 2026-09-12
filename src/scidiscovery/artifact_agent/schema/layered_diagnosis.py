@@ -1,12 +1,12 @@
-"""Causally ordered study validation and physical interpretation."""
+"""Evidence-bound study validation and physical interpretation."""
 
 from __future__ import annotations
 
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import Field, model_validator
 
-from .common import Identifier, SchemaModel, canonical_json
+from .common import ContractDiagnostic, Identifier, SchemaModel, canonical_json
 from .validation import (
     HypothesisAssessment,
     RecommendedTaskMode,
@@ -29,8 +29,6 @@ class ScientificGateResult(SchemaModel):
     def _decisive_gate_has_evidence(self) -> ScientificGateResult:
         if self.status in {"pass", "fail"} and not self.evidence_keys:
             raise ValueError("passing or failing gate requires evidence_keys")
-        if len(self.evidence_keys) != len(set(self.evidence_keys)):
-            raise ValueError("gate evidence_keys must be unique")
         return self
 
 
@@ -41,29 +39,6 @@ class ScientificGateSequence(SchemaModel):
     control_equivalence: ScientificGateResult
     observation: ScientificGateResult
     physical_interpretation: ScientificGateResult
-
-    @model_validator(mode="after")
-    def _causal_order_is_respected(self) -> ScientificGateSequence:
-        prerequisites = (
-            ("evidence_identity", self.evidence_identity),
-            ("implementation_fidelity", self.implementation_fidelity),
-            ("numerical_validity", self.numerical_validity),
-            ("control_equivalence", self.control_equivalence),
-        )
-        blocked = False
-        for name, gate in prerequisites:
-            if blocked and gate.status != "not_evaluable":
-                raise ValueError("downstream prerequisite gate must be not_evaluable")
-            if gate.status in {"fail", "inconclusive", "not_evaluable"}:
-                blocked = True
-        if blocked:
-            if self.observation.status != "not_evaluable":
-                raise ValueError("observation must be not_evaluable after a failed prerequisite")
-            if self.physical_interpretation.status != "not_evaluable":
-                raise ValueError(
-                    "physical interpretation must be not_evaluable after a failed prerequisite"
-                )
-        return self
 
     @property
     def prerequisite_status(self) -> Literal["pass", "invalid"]:
@@ -99,16 +74,89 @@ class ObjectiveDiagnosisAssessment(SchemaModel):
 
     objective_key: Identifier
     status: Literal["pass", "fail", "inconclusive", "not_evaluable"]
-    comparison_keys: Annotated[tuple[Identifier, ...], Field(max_length=256)] = ()
+    comparison_keys: Annotated[tuple[Identifier, ...], Field(max_length=256,
+        description="Existing comparison keys from cited scoring records only. Leave empty for native calculations; cite their published files using evidence_keys.")] = ()
     summary: Annotated[str, Field(min_length=1, max_length=4096)]
     evidence_keys: Annotated[tuple[Identifier, ...], Field(max_length=64)] = ()
 
     @model_validator(mode="after")
-    def _references_are_unique(self) -> ObjectiveDiagnosisAssessment:
-        if len(self.comparison_keys) != len(set(self.comparison_keys)):
-            raise ValueError("objective assessment comparison_keys must be unique")
-        if len(self.evidence_keys) != len(set(self.evidence_keys)):
-            raise ValueError("objective assessment evidence_keys must be unique")
+    def _decisive_assessment_has_evidence(self) -> ObjectiveDiagnosisAssessment:
+        if self.status in {"pass", "fail"} and not self.evidence_keys:
+            from ...operation_contract import declared_violation
+            raise declared_violation("passing or failing objective assessment requires evidence_keys", path="$.evidence_keys")
+        return self
+
+
+class CalculationAttemptReference(SchemaModel):
+    manifest_alias: Identifier
+    attempt_key: Identifier
+    proof_kind: Literal["current", "recovery"] = "current"
+
+
+_COMPUTED_RECORD_RULE = "computed record requires result and no reason"
+_NONCOMPUTED_RECORD_RULE = "noncomputed record requires reason and no numeric result"
+_SOURCE_CASE_PAIR_RULE = "source experiment_key and case_key must be declared together"
+
+
+class CalculationRecord(SchemaModel):
+    """Bounded, replayable calculation evidence; never a scientific verdict."""
+
+    record_key: Identifier
+    input_digests: Annotated[dict[str, str], Field(max_length=40)]
+    request: dict[str, Any]
+    algorithm_version: Annotated[str, Field(min_length=1, max_length=128)]
+    status: Annotated[Literal["computed", "unavailable", "unsupported", "error"],
+                      Field(description=f"{_COMPUTED_RECORD_RULE}; {_NONCOMPUTED_RECORD_RULE}.")]
+    result: dict[str, Any] | None = None
+    reason_code: Identifier | None = None
+    attempt: CalculationAttemptReference | None = None
+    diagnostics: tuple[ContractDiagnostic, ...] = Field(default=(), max_length=8)
+    calculation_ref: Identifier | None = Field(default=None, exclude=True,
+        description="Tool-returned evidence alias. Cite this alias in evidence; control retains the complete record. Optional transport hint, excluded from calculation identity.")
+
+    @model_validator(mode="after")
+    def _bounded_status(self) -> CalculationRecord:
+        if len(canonical_json(self.model_dump(mode="json"))) > 32 * 1024:
+            raise ValueError("calculation record exceeds 32 KiB")
+        if self.status == "computed":
+            if self.result is None or self.reason_code is not None:
+                from ...operation_contract import declared_violation
+                raise declared_violation(_COMPUTED_RECORD_RULE,
+                    path="$.result" if self.result is None else "$.reason_code")
+        elif self.result is not None or self.reason_code is None:
+            from ...operation_contract import declared_violation
+            raise declared_violation(_NONCOMPUTED_RECORD_RULE,
+                path="$.reason_code" if self.reason_code is None else "$.result")
+        return self
+
+
+class CaseMappingEvidence(SchemaModel):
+    input_alias: Identifier
+    locator: Annotated[str, Field(min_length=1, max_length=256)]
+
+
+class CaseMappingBasis(SchemaModel):
+    kind: Literal["declared", "evidence"]
+    evidence_refs: tuple[CaseMappingEvidence, ...] = Field(default=(), max_length=8)
+    rationale: Annotated[str, Field(min_length=1, max_length=2048)]
+
+
+class AnalysisSourceReference(SchemaModel):
+    """Explicit evidence locator; bound identity is checked by the domain validator."""
+
+    source_key: Identifier
+    input_alias: Annotated[str, Field(min_length=1, max_length=256)]
+    case_mapping_basis: CaseMappingBasis | None = None
+    output_name: Annotated[str, Field(min_length=1, max_length=256)] | None = None
+    experiment_key: Identifier | None = Field(default=None, description=_SOURCE_CASE_PAIR_RULE)
+    case_key: Identifier | None = Field(default=None, description=_SOURCE_CASE_PAIR_RULE)
+
+    @model_validator(mode="after")
+    def _case_identity_is_paired(self) -> AnalysisSourceReference:
+        if (self.experiment_key is None) != (self.case_key is None):
+            from ...operation_contract import declared_violation
+            raise declared_violation(_SOURCE_CASE_PAIR_RULE,
+                path="$.experiment_key" if self.experiment_key is None else "$.case_key")
         return self
 
 
@@ -118,6 +166,7 @@ class LayeredDiagnosisReport(SchemaModel):
     plan_key: Identifier
     summary: Annotated[str, Field(min_length=1, max_length=8192)]
     evidence: Annotated[tuple[ValidationEvidence, ...], Field(max_length=256)] = ()
+    source_references: Annotated[tuple[AnalysisSourceReference, ...], Field(max_length=64)] = ()
     gates: ScientificGateSequence
     overall_verdict: Literal["pass", "fail", "inconclusive", "invalid_study"]
     claim_allowed: bool
@@ -128,110 +177,56 @@ class LayeredDiagnosisReport(SchemaModel):
     remaining_contradiction: Annotated[str, Field(min_length=1, max_length=8192)]
     next_action: Annotated[str, Field(min_length=1, max_length=4096)]
     recommended_task_mode: RecommendedTaskMode | None = None
+    calculation_records: Annotated[tuple[CalculationRecord, ...], Field(max_length=8)] = Field(default=(),
+        description="Legacy inline calculation records remain readable. For new tool results, cite calculation_ref in evidence instead; tools retain records and receipts automatically.")
+    analysis_method: Annotated[str, Field(min_length=1, max_length=4096)] | None = None
+    method_changes: Annotated[tuple[str, ...], Field(max_length=16)] = ()
 
     @model_validator(mode="after")
-    def _verdict_and_assessments_follow_the_gates(self) -> LayeredDiagnosisReport:
-        source_keys = tuple(item.source_key for item in self.evidence)
-        if len(source_keys) != len(set(source_keys)):
-            raise ValueError("diagnosis evidence source_key values must be unique")
-        known = set(source_keys)
-        gate_results = (
-            self.gates.evidence_identity,
-            self.gates.implementation_fidelity,
-            self.gates.numerical_validity,
-            self.gates.control_equivalence,
-            self.gates.observation,
-            self.gates.physical_interpretation,
-        )
-        for gate in gate_results:
-            if not set(gate.evidence_keys).issubset(known):
-                raise ValueError("diagnosis gate references undeclared evidence")
-        if self.objective_assessment is not None:
-            if not set(self.objective_assessment.evidence_keys).issubset(known):
-                raise ValueError(
-                    "objective assessment references undeclared evidence"
-                )
-            expected_objective_status = (
-                "not_evaluable"
-                if self.gates.prerequisite_status == "invalid"
-                else self.gates.observation.status
-            )
-            if self.objective_assessment.status != expected_objective_status:
-                raise ValueError(
-                    "objective assessment status must match the ordered objective gate"
-                )
-        if self.study_kind == "scientific":
-            required = (
-                self.gates.evidence_identity,
-                self.gates.implementation_fidelity,
-                self.gates.numerical_validity,
-                self.gates.control_equivalence,
-                self.gates.observation,
-                self.gates.physical_interpretation,
-            )
-            if any(item.status == "not_applicable" for item in required):
-                raise ValueError("scientific diagnosis cannot skip a required gate")
-        elif self.hypothesis_assessments:
-            raise ValueError("engineering diagnosis cannot assess physical hypotheses")
-
-        if self.gates.prerequisite_status == "invalid":
-            derived = "invalid_study"
-        else:
-            active_results = {
-                item.status
-                for item in (
-                    self.gates.observation,
-                    self.gates.physical_interpretation,
-                )
-                if item.status != "not_applicable"
-            }
-            if "fail" in active_results:
-                derived = "fail"
-            elif active_results == {"pass"}:
-                derived = "pass"
-            else:
-                derived = "inconclusive"
-        if self.overall_verdict != derived:
-            raise ValueError("overall verdict does not match the ordered scientific gates")
-        expected_claim = (
-            self.study_kind == "scientific"
-            and derived == "pass"
-            and (
-                self.objective_assessment is None
-                or self.objective_assessment.status == "pass"
-            )
-        )
-        if self.claim_allowed != expected_claim:
-            raise ValueError(
-                "claim_allowed is true only for a passing scientific study"
-            )
-
-        assessment_keys = tuple(
-            item.hypothesis_key for item in self.hypothesis_assessments
-        )
-        if len(assessment_keys) != len(set(assessment_keys)):
-            raise ValueError("a diagnosis may assess each hypothesis once")
-        for assessment in self.hypothesis_assessments:
-            if not set(assessment.evidence_keys).issubset(known):
-                raise ValueError("hypothesis assessment references undeclared evidence")
-            if derived == "invalid_study" and assessment.outcome not in {
-                "invalid_study",
-                "not_tested",
-            }:
-                raise ValueError("invalid study cannot support or contradict a hypothesis")
-            if derived != "invalid_study" and assessment.outcome == "invalid_study":
-                raise ValueError("valid study cannot be assessed as invalid_study")
-            if assessment.outcome == "supports" and (
-                derived != "pass"
-                or self.gates.physical_interpretation.status != "pass"
-            ):
-                raise ValueError("support requires a valid passing physical interpretation")
-            if assessment.outcome == "contradicts" and (
-                derived != "fail"
-                or self.gates.physical_interpretation.status != "fail"
-            ):
-                raise ValueError("contradiction requires a valid failed physical interpretation")
+    def _references_and_bounds_are_consistent(self) -> LayeredDiagnosisReport:
+        issues = diagnosis_consistency_issues(self)
+        if issues:
+            from ...operation_contract import SemanticRuleViolation, declared_violation
+            # These messages and paths are emitted only by the mechanical checks below.
+            details = tuple(detail for item in issues for detail in declared_violation(
+                item["message"], path="$" + "".join(
+                    f"[{part}]" if part.isdigit() else "." + part
+                    for part in item["path"].split("/")[1:])).details)
+            raise SemanticRuleViolation("; ".join(item["message"] for item in issues), details=details)
         return self
+
+
+def diagnosis_consistency_issues(report: LayeredDiagnosisReport) -> tuple[dict[str, Any], ...]:
+    """Return mechanical inconsistencies without deriving or rewriting science."""
+    issues = []
+    def issue(path, message, **suggestion):
+        issues.append({"path": path, "message": message, **suggestion})
+    record_keys = tuple(item.record_key for item in report.calculation_records)
+    if len(record_keys) != len(set(record_keys)):
+        issue("/calculation_records", "calculation record keys must be unique")
+    if sum(len(canonical_json(item.model_dump(mode="json"))) for item in report.calculation_records) > 96 * 1024:
+        issue("/calculation_records", "calculation records exceed report byte budget")
+    source_keys = tuple(item.source_key for item in report.evidence)
+    if len(source_keys) != len(set(source_keys)):
+        issue("/evidence", "diagnosis evidence source_key values must be unique")
+    known = set(source_keys)
+    gate_names = ("evidence_identity", "implementation_fidelity", "numerical_validity",
+                  "control_equivalence", "observation", "physical_interpretation")
+    gates = tuple(getattr(report.gates, name) for name in gate_names)
+    for name, gate in zip(gate_names, gates):
+        if not set(gate.evidence_keys).issubset(known):
+            issue("/gates/" + name, "diagnosis gate references undeclared evidence")
+    objective = report.objective_assessment
+    if objective is not None and not set(objective.evidence_keys).issubset(known):
+        issue("/objective_assessment", "objective assessment references undeclared evidence")
+    assessment_keys = tuple(item.hypothesis_key for item in report.hypothesis_assessments)
+    if len(assessment_keys) != len(set(assessment_keys)):
+        issue("/hypothesis_assessments", "a diagnosis may assess each hypothesis once")
+    for index, assessment in enumerate(report.hypothesis_assessments):
+        path = f"/hypothesis_assessments/{index}"
+        if not set(assessment.evidence_keys).issubset(known):
+            issue(path, "hypothesis assessment references undeclared evidence")
+    return tuple(issues)
 
 
 def validate_layered_diagnosis(value: dict[str, object]) -> dict[str, object]:
@@ -247,5 +242,6 @@ __all__ = [
     "ObjectiveDiagnosisAssessment",
     "ScientificGateResult",
     "ScientificGateSequence",
+    "diagnosis_consistency_issues",
     "validate_layered_diagnosis",
 ]

@@ -9,10 +9,11 @@ context_sources: prior_project,experiment_plan,device_parameters,parameter_cover
 output_model: tcad_artifact.project_packager:DeckProjectDraft
 ---
 Author or revise the solver project in the task-private deck workspace. Follow
-the frozen Sentaurus authoring contract appended to this Operation prompt. It
-is part of the compiled Operation digest; do not load a host skill or search
-for another implicit instruction set. Own physical realization and solver
-code; do not manufacture control metadata or post-execution analysis.
+the discovered `sentaurus-tcad-code` Skill: read its `SKILL.md`, then only the
+references needed for this task. If unavailable, report the knowledge gap.
+The Skill provides reference methods within this Operation's permissions.
+Own physical realization and solver code; do not manufacture control metadata
+or post-execution analysis.
 
 When approved `device_parameters` and `parameter_coverage` inputs are present,
 use their exact values and conditions. Every global parameter binding that
@@ -36,9 +37,15 @@ After `worker_open_assignment`, use normal Codex read/search tools for:
 - `deck/reports/materialization.json`: deterministic source/declaration checks.
 
 Obey the `domain_workspace.native_edit` projection returned by the assignment.
-Use Codex native read and patch tools only inside the exact opened workspace
-and only for its declared editable deck paths. Set the native tool working
-directory to that exact workspace. After a successful edit, reread the target;
+Use Codex native patch tools only for the declared editable deck paths. Native
+reads may also use the exact discovered Skill directory and its resources;
+do not traverse or follow symlinks to other host files. Keep the Skill read-only.
+For every helper invocation explicitly set `TMPDIR=<workspace>/scratch`,
+`XDG_CACHE_HOME=<workspace>/scratch`, and `PYTHONDONTWRITEBYTECODE=1`.
+Helpers may read Skill references and declared task inputs, with temporary files
+only in `scratch/`; they grant no solver, network, or other side-effect permission.
+Set the native tool working directory to that exact workspace. After a
+successful edit, reread the target;
 after a context mismatch, reread and regenerate rather than retrying the same
 diff. Do not use shell redirection or an interpreter as a parallel write path.
 
@@ -52,7 +59,10 @@ There is no separate deck-reviser role.
 
 In create mode, write the smallest complete solver-only source first, then add
 unique case locators and raw solver outputs to `declarations.json`. No
-control-generated `.cmd` scaffold exists.
+control-generated `.cmd` scaffold exists. Match declarations to the filenames actually
+produced by the solver, checking permitted development diagnostics when available.
+A historical analysis mapping does not change these declarations; source changes
+require the existing controlled revision task.
 
 In revision mode, inspect the expanded exact `prior_project` and supplied
 change request. Preserve unaffected physics, cases, outputs, and capability.
@@ -93,10 +103,27 @@ its documented omitted-physics behavior answers the open code question.
 Full-study development execution is not available. Poll only by repeating the
 same run name/mode; choose a new name only after a source correction.
 
+Before the first diagnostic, read the tool's reservation rules. Use returned
+budget, remaining run names, and the absolute Run time to reserve room for the
+final preflight, initialization, collection, and submission. A failed solver
+job still consumes its reservation; cached results report the current balance.
+If the remaining budget cannot support completion, leave a bounded failure
+handoff and stop. Do not repeatedly submit a known failure or undo a justified
+correction to match an old report.
+
+The minimal initialization entrypoint must exercise the production source's
+relevant field definitions, structure initialization, equations/callbacks,
+boundaries, and first solve. Explain its correspondence to production procedures
+and any untested case-reset paths in the existing handoff. Omit long evolution
+or the full case grid, not the critical initialization physics.
+
 The final source must always receive a qualified `preflight`. When the changed
 layer also requires `initialization`, run `preflight` first and then run
 `initialization` against the same unchanged source before submission. Neither
 successful mode substitutes for the other.
+Initial authoring always requires both modes. A revision that declares a
+development initialization entrypoint also requires its current qualified
+initialization report. Control seals both reports with the reviewed project.
 
 For a task that may approach the ten-minute lease boundary, call
 `worker_heartbeat` before the current lease expires. It may renew only within
@@ -110,8 +137,8 @@ If the tool returns `state=rejected`, correct only the returned bounded
 `diagnostics` against the task-local Schema and deck files. Never search the
 framework repository, tests, role sources, prior deliverables, or another task
 to reverse-engineer a rejected candidate.
-Any source, declaration, metadata, or handoff edit after a debug call invalidates
-that call for completion. After the correction, run the permitted mode again
+Any source, invocation, or materialized declaration edit after a debug call
+invalidates that call for completion. After the correction, run the permitted mode again
 with a new run name and obtain its final result before submitting.
 
 Complete in this order:
@@ -124,3 +151,37 @@ Complete in this order:
 
 Successful submission intentionally disables later debug. A finalized author
 output still requires an independent `tcad_deck_reviewer`.
+
+
+## Honest task gaps
+Read the bound plan, overall objective and relevant current_progress, and the
+bound experiment_review before implementation. They explain context, not authority
+to change the current plan. If necessary inputs or capability are unavailable, or
+work is assigned to the wrong role, do not generate placeholder source or a skipped
+initialization to meet the output format. Write deck/gap.json with result_kind
+implementation_gap using the exact output schema (affected_work.plan_locator is a
+JSON pointer into the bound plan), and deck/handoff.json with verdict blocked.
+Put missing_inputs in the gap payload; do not duplicate that list in the handoff.
+Missing inputs may be empty for a capability mismatch.
+The finalizer accepts this result without files or debug; the independent reviewer
+can review it, but it cannot execute. An existing gap.json takes precedence over
+source drafts. To resume a full project in the same workspace, explicitly delete
+gap.json and obtain fresh diagnostics. A prior gap can be a revision base; its
+attempt_files are captured by control, not authored in gap.json. Existing source,
+declarations and bounded diagnostic logs are preserved for independent review
+and a new Run. Record attempted modifications and observed outcomes in
+deck/attempts.md as you work. Historical reports under deck/reports/history
+are background, never current initialization or preflight qualification. If a
+legacy gap contains no source or logs, report that absence rather than guessing
+the failed implementation.
+
+
+## Diagnostic logs
+The debug response's log_excerpt is display-only. Read the complete bounded,
+redacted log at log_relative_path in chunks (for example a limited line range),
+especially when no source error appears in the excerpt. Do not rerun the solver
+merely to obtain omitted display text. These read-only logs are retained in
+implementation-gap attempt_files and restored as historical reports in a new
+Run. A capture-limit failure is explicit missing diagnostic coverage, not a
+qualified initialization. Original process streams remain at the runner; never
+use unbound paths to reach them.

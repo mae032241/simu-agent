@@ -1,0 +1,13 @@
+....F
+=================================== FAILURES ===================================
+_ test_historical_review_reaches_new_analysis_without_current_authority[tcad.result.analyze.v1] _
+tests/operations/test_collector_analysis_handoff.py:239: in test_historical_review_reaches_new_analysis_without_current_authority
+    assert not denied["admissible"] and denied["reason_code"] == "input_independent_review_missing"
+E   AssertionError: assert (not False and 'input_produc...tract_changed' == 'input_indepe...eview_missing'
+E     
+E     - input_independent_review_missing
+E     + input_producer_contract_changed)
+=========================== short test summary info ============================
+FAILED tests/operations/test_collector_analysis_handoff.py::test_historical_review_reaches_new_analysis_without_current_authority[tcad.result.analyze.v1]
+!!!!!!!!!!!!!!!!!!!!!!!!!! stopping after 1 failures !!!!!!!!!!!!!!!!!!!!!!!!!!!
+1 failed, 4 passed, 1 deselected in 3.53s

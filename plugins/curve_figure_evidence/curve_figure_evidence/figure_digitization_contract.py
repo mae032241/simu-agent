@@ -4,9 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import math
-import json
-import subprocess
-from dataclasses import asdict
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -14,61 +11,8 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from .figure_evidence import (
     FigureAxisCalibration,
     FigurePanelAxisCalibration,
-    FigureSharedSupport,
-    MAX_FORMAL_RGB_DISTANCE,
-    AutomaticFigureSource, FigureResultShape, UnrecoveredFigureSource,
 )
 from .figure_source import RecoveredFigureImage, inspect_figure_source_bytes
-from .figure_source import AUTOMATIC_SOURCE_POLICY
-from .figure_detection import (
-    DETECTOR_VERSION, POLICY, SourceDetection, detect_reference_source, detect_source,
-    MAX_TOKENS, MAX_AXIS_COMBINATIONS, MAX_LINE_SEGMENTS,
-)
-from PIL import __version__ as PILLOW_VERSION
-from .figure_dependencies import RUNTIME_CONTRACT, command_path, verify_ocr
-
-
-# The installed dependency record is serialized through the existing resource edge.
-DETECTOR_CONTRACT = json.dumps({
-    "detector_version": DETECTOR_VERSION, "policy": POLICY,
-    "source_policy": AUTOMATIC_SOURCE_POLICY,
-    "limits": {"ocr_tokens": MAX_TOKENS, "axis_combinations": MAX_AXIS_COMBINATIONS,
-               "line_segments": MAX_LINE_SEGMENTS},
-    **RUNTIME_CONTRACT,
-}, sort_keys=True, separators=(",", ":")).encode()
-
-
-def _verify_detection_runtime(content: bytes) -> None:
-    contract = json.loads(DETECTOR_CONTRACT)
-    if contract["pillow_version"] is not None and PILLOW_VERSION != contract["pillow_version"]:
-        raise RuntimeError("Pillow version differs from detector contract")
-    if content.startswith(b"%PDF-") and contract["poppler_version"] is not None:
-        for command in ("pdfinfo", "pdfimages", "pdftoppm"):
-            result = subprocess.run([command_path(command), "-v"], capture_output=True, check=True, timeout=15)
-            first_line = (result.stdout + result.stderr).decode().splitlines()[0].split()
-            if len(first_line) < 3 or first_line[2] != contract["poppler_version"]:
-                raise RuntimeError("Poppler version differs from detector contract")
-    if contract["ocr"]["supply_status"] == "verified":
-        verify_ocr(contract)
-
-
-def replay_detection(content: bytes) -> SourceDetection:
-    """Verify the runtime boundary before legacy raw-source detection."""
-    _verify_detection_runtime(content)
-    return detect_source(content)
-
-
-def replay_reference_detection(
-    content: bytes, source_page: int | None
-) -> SourceDetection:
-    """Replay the exact Agent-selected page or explicit unresolved reference."""
-    _verify_detection_runtime(content)
-    return detect_reference_source(content, source_page)
-
-
-def identity_anchor_id(source_sha256: str, image_sha256: str, token: object) -> str:
-    return hashlib.sha256(json.dumps((source_sha256, image_sha256, asdict(token)),
-        sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
 FigureKey = Annotated[
@@ -76,13 +20,9 @@ FigureKey = Annotated[
     Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$"),
 ]
 ShortText = Annotated[str, Field(min_length=1, max_length=4096)]
-PixelRange = tuple[int, int]
 PixelBox = tuple[int, int, int, int]
-PixelSeed = tuple[float, float]
-PANEL_SELECTION_DESCRIPTION = (
-    "Set panel to null for the whole figure or when no panel label is visible; "
-    "otherwise copy the exact visible panel label."
-)
+FiniteNumber = int | float
+PixelSeed = tuple[FiniteNumber, FiniteNumber]
 
 
 class _DigitizationModel(BaseModel):
@@ -94,169 +34,54 @@ class _DigitizationModel(BaseModel):
     )
 
 
-class FigureCandidateBinding(_DigitizationModel):
-    candidate_id: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
-    visible_label: ShortText
-    semantic_identity: ShortText
-    identity_anchor_id: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")] | None = None
-
-
-class FigureCandidateRejection(_DigitizationModel):
-    candidate_id: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
-    reason: ShortText
-
-
-class FigureExtractionIntent(_DigitizationModel):
-    """Agent choices and semantic text only; no mechanically writable values."""
-
-    model_config = ConfigDict(json_schema_extra={"anyOf": [
-        {"properties": {"bindings": {"minItems": 1}, "plot_candidate_id": {"type": "string"}}},
-        {"required": ["unresolved_reasons"], "properties": {"bindings": {"maxItems": 0}, "unresolved_reasons": {"minItems": 1}}},
-        {"required": ["rejected_candidates"], "properties": {"bindings": {"maxItems": 0}, "rejected_candidates": {"minItems": 1}}},
-    ]})
-
-    schema_version: Literal["scidiscovery.figure-extraction-intent.v2"]
-    source_sha256: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
-    detector_receipt: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
-    figure: ShortText
-    panel: Annotated[ShortText | None, Field(description=PANEL_SELECTION_DESCRIPTION)]
-    source_page: Annotated[int | None, Field(ge=1)] = None
-    plot_candidate_id: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")] | None
-    bindings: Annotated[tuple[FigureCandidateBinding, ...], Field(max_length=32, json_schema_extra={"uniqueItems": True})]
-    unresolved_reasons: Annotated[tuple[ShortText, ...], Field(max_length=32)] = ()
-    rejected_candidates: Annotated[tuple[FigureCandidateRejection, ...], Field(max_length=64, json_schema_extra={"uniqueItems": True})] = ()
-
-    @model_validator(mode="after")
-    def _unique_labels(self) -> FigureExtractionIntent:
-        selected = [item.candidate_id for item in self.bindings]
-        rejected = [item.candidate_id for item in self.rejected_candidates]
-        if len(set(selected + rejected)) != len(selected + rejected):
-            raise ValueError("candidate selections and rejections must be disjoint and unique")
-        if self.bindings and self.plot_candidate_id is None:
-            raise ValueError("bindings require a selected plot candidate")
-        if not self.bindings and not (self.unresolved_reasons or self.rejected_candidates):
-            raise ValueError("empty selection requires bounded unresolved or rejected reasons")
-        return self
-
-
-def validate_intent_candidates(intent: FigureExtractionIntent, detected: SourceDetection):
-    if intent.source_sha256 != detected.source_sha256:
-        raise ValueError("figure source hash differs from intent")
-    if intent.detector_receipt != detected.receipt:
-        raise ValueError("detector receipt differs from replay")
-    selected = None
-    known = {p.candidate_id for d in detected.detections for p in (*d.plots, *d.paths)}
-    for image, detection in zip(detected.images, detected.detections, strict=True):
-        for plot in detection.plots:
-            if plot.candidate_id == intent.plot_candidate_id:
-                selected = image, detection, plot
-    if intent.plot_candidate_id is not None and selected is None:
-        raise ValueError("unknown plot candidate")
-    if any(item.candidate_id not in known for item in intent.rejected_candidates):
-        raise ValueError("unknown rejected candidate")
-    if selected:
-        image, detection, plot = selected
-        paths = {p.candidate_id: p for p in detection.paths if p.plot_id == plot.candidate_id}
-        anchors = {identity_anchor_id(detected.source_sha256, image.image_sha256, t): t for t in detection.tokens}
-        for binding in intent.bindings:
-            if binding.candidate_id not in paths:
-                raise ValueError("path candidate does not belong to selected plot/source")
-            if binding.identity_anchor_id is not None:
-                token = anchors.get(binding.identity_anchor_id)
-                if token is None or token.text != binding.visible_label:
-                    raise ValueError("visible identity anchor differs from selected source")
-    return selected
-
-
-class FigureMeasurementRequest(_DigitizationModel):
-    """Deterministic measurement record; never a materialize input."""
-    schema_version: Literal["scidiscovery.curve-figure-digitization-request.v3"]
-    result_shape: FigureResultShape
-    request_status: Literal["ready", "unresolved"]
-    source: AutomaticFigureSource
-    detector_receipt: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
-    detector_version: ShortText
-    figure: ShortText
-    panel: ShortText | None
-    plot_candidate_id: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")] | None
-    plot_bbox: PixelBox | None
-    axis_calibration: FigurePanelAxisCalibration | None
-    series: Annotated[tuple[FigureCandidateBinding, ...], Field(max_length=32)]
-    unresolved_reasons: Annotated[tuple[ShortText, ...], Field(max_length=256)]
-    rejected_candidates: Annotated[tuple[FigureCandidateRejection, ...], Field(max_length=64)]
-
-    @model_validator(mode="after")
-    def _shape(self):
-        if self.result_shape == "measured":
-            if self.request_status != "ready" or not self.series or self.axis_calibration is None or self.plot_bbox is None:
-                raise ValueError("measurement requires axes, plot and selected series")
-        elif self.request_status != "unresolved" or self.series or not self.unresolved_reasons:
-            raise ValueError("unresolved measurement requires reasons and no measured series")
-        if self.result_shape == "unrecovered":
-            if not isinstance(self.source, UnrecoveredFigureSource) or self.panel is not None or self.plot_bbox is not None or self.axis_calibration is not None or self.plot_candidate_id is not None:
-                raise ValueError("unrecovered request must not invent image geometry")
-        elif isinstance(self.source, UnrecoveredFigureSource):
-            raise ValueError("recovered request requires real source representation")
-        return self
-
-
 def calibration_from_tick_pairs(
-    *, scale: str, unit: str, ticks: tuple[tuple[float, float], tuple[float, float]],
-    uncertainty_px: float,
+    *, scale: str, unit: str,
+    ticks: tuple[tuple[FiniteNumber, FiniteNumber], tuple[FiniteNumber, FiniteNumber]],
+    uncertainty_px: FiniteNumber,
 ) -> FigureAxisCalibration:
     """Normalize measured (pixel, value) pairs without breaking their pairing."""
     low, high = sorted(ticks, key=lambda tick: tick[1])
     return FigureAxisCalibration(
-        scale=scale, unit=unit, pixel_min=low[0], value_min=low[1],
-        pixel_max=high[0], value_max=high[1], reprojection_error_px=uncertainty_px,
+        scale=scale, unit=unit, pixel_min=float(low[0]), value_min=float(low[1]),
+        pixel_max=float(high[0]), value_max=float(high[1]),
+        reprojection_error_px=float(uncertainty_px),
     )
 
 
-class FigureLineTracking(_DigitizationModel):
-    max_vertical_step_px: Annotated[float, Field(gt=0.0, le=1000.0)] = 12.0
-    max_gap_px: Annotated[int, Field(ge=0, le=10000)] = 8
-    max_gap_vertical_displacement_px: Annotated[
-        float, Field(ge=0.0, le=10000.0)
-    ] = 32.0
-    max_guide_distance_px: Annotated[float, Field(gt=0.0, le=10000.0)] = 24.0
-    ambiguity_margin_px: Annotated[float, Field(ge=0.0, le=1000.0)] = 0.75
-    guide_weight: Annotated[float, Field(ge=0.0, le=1.0)] = 0.7
-    min_visible_fraction: Annotated[float, Field(gt=0.0, le=1.0)] = 0.2
-    max_ambiguous_fraction: Annotated[float, Field(ge=0.0, le=1.0)] = 0.1
-    skip_penalty: Annotated[float, Field(ge=0.0, le=10000.0)] = 16.0
-    min_points: Annotated[int, Field(ge=2, le=100000)] = 3
-    seed_radius_px: Annotated[int, Field(ge=0, le=100)] = 4
-    plot_border_exclusion_px: Annotated[int, Field(ge=0, le=100)] = 4
-    overdraw_candidate_endpoint_distance_px: Annotated[
-        float,
-        Field(
-            ge=0.0,
-            le=1000.0,
-            description=(
-                "Deprecated request-v2 compatibility field; materialization ignores it."
-            ),
-        ),
-    ] = 8.0
+class FigureAxisRequest(_DigitizationModel):
+    scale: Literal["linear", "log10"]
+    unit: Annotated[str, Field(max_length=256)]
+    ticks: tuple[tuple[FiniteNumber, FiniteNumber], tuple[FiniteNumber, FiniteNumber]]
+    uncertainty_px: Annotated[FiniteNumber, Field(ge=0.0, le=1_000_000.0)] = 1.0
+
+    @model_validator(mode="after")
+    def _ticks_define_an_axis(self) -> FigureAxisRequest:
+        if self.ticks[0][0] == self.ticks[1][0]:
+            raise ValueError("axis tick pixels must differ")
+        if self.ticks[0][1] == self.ticks[1][1]:
+            raise ValueError("axis tick values must differ")
+        if self.scale == "log10" and any(value <= 0 for _, value in self.ticks):
+            raise ValueError("log10 axis tick values must be positive")
+        return self
+
+    def normalized(self) -> FigureAxisCalibration:
+        return calibration_from_tick_pairs(
+            scale=self.scale,
+            unit=self.unit,
+            ticks=self.ticks,
+            uncertainty_px=self.uncertainty_px,
+        )
 
 
-class FigureIneligibleRegion(_DigitizationModel):
-    pixel_range: PixelRange
-    reason: FigureKey
+class FigurePanelAxisRequest(_DigitizationModel):
+    x: FigureAxisRequest
+    y: FigureAxisRequest
 
-
-class FigureEligibility(_DigitizationModel):
-    default_eligible: bool = False
-    below_detection_limit_value: Annotated[float, Field(gt=0.0)] | None = None
-    detection_limit_note: ShortText | None = None
-    ineligible_pixel_ranges: Annotated[
-        tuple[PixelRange, ...], Field(max_length=128)
-    ] = ()
-    ineligible_pixel_regions: Annotated[
-        tuple[FigureIneligibleRegion, ...], Field(max_length=128)
-    ] = ()
-    below_detection_limit_pixel_ranges: Annotated[
-        tuple[PixelRange, ...], Field(max_length=128)
-    ] = ()
+    def normalized(self) -> FigurePanelAxisCalibration:
+        return FigurePanelAxisCalibration(
+            x=self.x.normalized(),
+            y=self.y.normalized(),
+        )
 
 
 class FigureDigitizationSeries(_DigitizationModel):
@@ -264,25 +89,14 @@ class FigureDigitizationSeries(_DigitizationModel):
     label: ShortText
     primitive_kind: Literal["line"] = "line"
     color: Annotated[str, Field(pattern=r"^#[0-9a-f]{6}$")]
-    color_tolerance: Annotated[
-        float, Field(ge=0.0, le=MAX_FORMAL_RGB_DISTANCE)
-    ] = 24.0
     line_style: Literal["solid"] = "solid"
     binding_source: Literal["legend", "annotation", "caption"]
     visible_label: ShortText
     binding_bbox: PixelBox
-    min_color_pixels: Annotated[int, Field(ge=1, le=10_000_000)] = 1
     seeds: Annotated[tuple[PixelSeed, ...], Field(min_length=1, max_length=128)]
-    tracking: FigureLineTracking = FigureLineTracking()
-    pixel_range: PixelRange | None = None
     exclusion_regions: Annotated[
         tuple[PixelBox, ...], Field(max_length=128)
     ] = ()
-    declared_gap_ranges: Annotated[
-        tuple[PixelRange, ...], Field(max_length=128)
-    ] = ()
-    eligibility: FigureEligibility = FigureEligibility()
-
     @model_validator(mode="after")
     def _anchors_are_ordered(self) -> FigureDigitizationSeries:
         if any(
@@ -296,37 +110,33 @@ class PdfFigureSource(_DigitizationModel):
     source_kind: Literal["pdf_embedded_image"]
     media_type: Literal["application/pdf"]
     source_sha256: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
-    page: Annotated[int, Field(ge=1, le=100_000)]
-    document_image_index: Annotated[int, Field(ge=0, le=1_000_000)]
-    page_image_index: Annotated[int, Field(ge=0, le=10_000)]
-    pdf_object_id: Annotated[int, Field(ge=1, le=2**31 - 1)]
-    pdf_object_generation: Annotated[int, Field(ge=0, le=65_535)] = 0
-    recovered_image_sha256: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
-    width: Annotated[int, Field(ge=1, le=1_000_000)]
-    height: Annotated[int, Field(ge=1, le=1_000_000)]
-    recovery_tool: Literal["pdfimages+Pillow"]
-    recovery_tool_version: Annotated[str, Field(min_length=1, max_length=256)]
+    page: Annotated[int, Field(ge=1, le=100_000)] | None = None
+    document_image_index: Annotated[int, Field(ge=0, le=1_000_000)] | None = None
+    page_image_index: Annotated[int, Field(ge=0, le=10_000)] | None = None
+    pdf_object_id: Annotated[int, Field(ge=1, le=2**31 - 1)] | None = None
+    pdf_object_generation: Annotated[int, Field(ge=0, le=65_535)] | None = 0
+    recovered_image_sha256: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")] | None = None
+    width: Annotated[int, Field(ge=1, le=1_000_000)] | None = None
+    height: Annotated[int, Field(ge=1, le=1_000_000)] | None = None
+    recovery_tool: Literal["pdfimages+Pillow"] | None = None
+    recovery_tool_version: Annotated[str, Field(min_length=1, max_length=256)] | None = None
 
 
 class RasterFigureSource(_DigitizationModel):
     source_kind: Literal["raster_image"]
     media_type: Literal["image/png", "image/jpeg", "image/webp"]
     source_sha256: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
-    recovered_image_sha256: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
-    width: Annotated[int, Field(ge=1, le=1_000_000)]
-    height: Annotated[int, Field(ge=1, le=1_000_000)]
-    recovery_tool: Literal["Pillow"]
-    recovery_tool_version: Annotated[str, Field(min_length=1, max_length=256)]
+    recovered_image_sha256: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")] | None = None
+    width: Annotated[int, Field(ge=1, le=1_000_000)] | None = None
+    height: Annotated[int, Field(ge=1, le=1_000_000)] | None = None
+    recovery_tool: Literal["Pillow"] | None = None
+    recovery_tool_version: Annotated[str, Field(min_length=1, max_length=256)] | None = None
 
 
 FigureSource = Annotated[
     PdfFigureSource | RasterFigureSource,
     Field(discriminator="source_kind"),
 ]
-
-
-def _valid_range(value: PixelRange, *, left: int, right: int) -> bool:
-    return left <= value[0] < value[1] <= right
 
 
 def _valid_box(value: PixelBox, *, width: int, height: int) -> bool:
@@ -344,15 +154,12 @@ class FigureDigitizationRequest(_DigitizationModel):
     citation: ShortText
     source: FigureSource
     plot_bbox: PixelBox | None = None
-    axis_calibration: FigurePanelAxisCalibration | None = None
+    axis_calibration: FigurePanelAxisRequest | None = None
     exclusion_regions: Annotated[
         tuple[PixelBox, ...], Field(max_length=128)
     ] = ()
     series: Annotated[
         tuple[FigureDigitizationSeries, ...], Field(max_length=32)
-    ] = ()
-    shared_support: Annotated[
-        tuple[FigureSharedSupport, ...], Field(max_length=128)
     ] = ()
 
     @model_validator(mode="after")
@@ -360,38 +167,35 @@ class FigureDigitizationRequest(_DigitizationModel):
         if self.request_status == "unresolved":
             if not self.unresolved_reasons:
                 raise ValueError("unresolved figure request requires explicit reasons")
-            if (
-                self.plot_bbox is not None
-                or self.axis_calibration is not None
-                or self.exclusion_regions
-                or self.series
-                or self.shared_support
-            ):
-                raise ValueError(
-                    "unresolved figure request must not contain partial digitization fields"
-                )
-            return self
-        if self.unresolved_reasons:
+        elif self.unresolved_reasons:
             raise ValueError("ready figure request cannot declare unresolved reasons")
-        if self.plot_bbox is None or self.axis_calibration is None or not self.series:
+        if self.request_status == "ready" and (
+            self.plot_bbox is None or self.axis_calibration is None or not self.series
+        ):
             raise ValueError(
                 "ready figure request requires plot_bbox, axis_calibration, and series"
             )
-        if not _valid_box(
-            self.plot_bbox, width=self.source.width, height=self.source.height
+        # Unresolved requests may retain known geometry without inventing image bounds.
+        width = self.source.width if self.source.width is not None else math.inf
+        height = self.source.height if self.source.height is not None else math.inf
+        if self.plot_bbox is not None and not _valid_box(
+            self.plot_bbox, width=width, height=height
         ):
             raise ValueError("plot_bbox exceeds the recovered image")
-        plot_left, plot_top, plot_right, plot_bottom = self.plot_bbox
-        axes = self.axis_calibration
-        if not (
-            plot_left <= min(axes.x.pixel_min, axes.x.pixel_max)
-            and max(axes.x.pixel_min, axes.x.pixel_max) < plot_right
-            and plot_top <= min(axes.y.pixel_min, axes.y.pixel_max)
-            and max(axes.y.pixel_min, axes.y.pixel_max) < plot_bottom
-        ):
-            raise ValueError("axis calibration exceeds plot_bbox")
+        plot_left, plot_top, plot_right, plot_bottom = self.plot_bbox or (
+            0, 0, width, height
+        )
+        if self.axis_calibration is not None:
+            axes = self.axis_calibration.normalized()
+            if not (
+                plot_left <= min(axes.x.pixel_min, axes.x.pixel_max)
+                and max(axes.x.pixel_min, axes.x.pixel_max) < plot_right
+                and plot_top <= min(axes.y.pixel_min, axes.y.pixel_max)
+                and max(axes.y.pixel_min, axes.y.pixel_max) < plot_bottom
+            ):
+                raise ValueError("axis calibration exceeds plot_bbox or recovered image")
         if any(
-            not _valid_box(box, width=self.source.width, height=self.source.height)
+            not _valid_box(box, width=width, height=height)
             for box in self.exclusion_regions
         ):
             raise ValueError("figure exclusion region exceeds the recovered image")
@@ -401,65 +205,24 @@ class FigureDigitizationRequest(_DigitizationModel):
         for item in self.series:
             if not _valid_box(
                 item.binding_bbox,
-                width=self.source.width,
-                height=self.source.height,
+                width=width,
+                height=height,
             ):
                 raise ValueError(f"series {item.series_key} binding_bbox is out of bounds")
-            domain = item.pixel_range or (plot_left, plot_right)
-            if not _valid_range(domain, left=plot_left, right=plot_right):
-                raise ValueError(f"series {item.series_key} pixel_range is outside plot_bbox")
             boxes = (*self.exclusion_regions, *item.exclusion_regions)
             if any(
-                not _valid_box(box, width=self.source.width, height=self.source.height)
+                not _valid_box(box, width=width, height=height)
                 for box in boxes
             ):
                 raise ValueError(f"series {item.series_key} exclusion is out of bounds")
             if any(
                 not (
-                    domain[0] <= seed[0] < domain[1]
+                    plot_left <= seed[0] < plot_right
                     and plot_top <= seed[1] < plot_bottom
                 )
                 for seed in item.seeds
             ):
                 raise ValueError(f"series {item.series_key} seed is outside its trace domain")
-            ranges = (
-                *item.declared_gap_ranges,
-                *item.eligibility.ineligible_pixel_ranges,
-                *item.eligibility.below_detection_limit_pixel_ranges,
-                *(
-                    region.pixel_range
-                    for region in item.eligibility.ineligible_pixel_regions
-                ),
-            )
-            if any(
-                not _valid_range(value, left=domain[0], right=domain[1])
-                for value in ranges
-            ):
-                raise ValueError(f"series {item.series_key} range is outside its trace domain")
-        known = set(keys)
-        claims: dict[str, list[PixelRange]] = {}
-        for support in self.shared_support:
-            members = (
-                (support.visible_series, *support.covered_series)
-                if support.mode == "overdraw"
-                else support.member_series
-            )
-            if not set(members).issubset(known):
-                raise ValueError("shared support references an unknown series")
-            for interval in support.pixel_ranges:
-                for member in members:
-                    definition = next(item for item in self.series if item.series_key == member)
-                    domain = definition.pixel_range or (plot_left, plot_right)
-                    if not _valid_range(interval, left=domain[0], right=domain[1]):
-                        raise ValueError("shared support is outside a member trace domain")
-                    claims.setdefault(member, []).append(interval)
-        for intervals in claims.values():
-            ordered = sorted(intervals)
-            if any(
-                current[0] < previous[1]
-                for previous, current in zip(ordered, ordered[1:])
-            ):
-                raise ValueError("shared-support ranges overlap")
         return self
 
     def require_ready(self) -> tuple[
@@ -472,7 +235,9 @@ class FigureDigitizationRequest(_DigitizationModel):
             or not self.series
         ):
             raise ValueError("unresolved figure request cannot be materialized")
-        return self.plot_bbox, self.axis_calibration, self.series
+        if any(value is None for value in self.source.model_dump().values()):
+            raise ValueError("ready figure request requires complete recovered source metadata")
+        return self.plot_bbox, self.axis_calibration.normalized(), self.series
 
 
 def axis_value(axis: object, pixel: float) -> float:
@@ -491,6 +256,33 @@ def axis_uncertainty(axis: object, pixel: float, uncertainty_px: float) -> float
         abs(center - axis_value(axis, pixel - total)),
         abs(axis_value(axis, pixel + total) - center),
     )
+
+
+def materialize_figure_request(value: dict, source_content: bytes) -> dict:
+    """Resolve only program metadata from the original bytes and Agent image choice."""
+    value = dict(value)
+    source = dict(value.get("source", {}))
+    actual_hash = hashlib.sha256(source_content).hexdigest()
+    if source.get("source_sha256", actual_hash) != actual_hash:
+        raise ValueError("figure source hash differs from the typed request")
+    source["source_sha256"] = actual_hash
+    value["source"] = source
+    if value.get("request_status", "ready") == "unresolved":
+        return value
+    pdf = source.get("source_kind") == "pdf_embedded_image"
+    if pdf and (source.get("page") is None or source.get("document_image_index") is None):
+        raise ValueError("ready PDF request must select page and document_image_index")
+    images = inspect_figure_source_bytes(source_content, media_type=source.get("media_type"),
+                                        page=source.get("page") if pdf else None)
+    selected = [image for image in images if not pdf or image.document_image_index == source["document_image_index"]]
+    if len(selected) != 1:
+        raise ValueError("request must select one exact recovered image")
+    metadata = selected[0].public_metadata(local_path="")
+    for key in ("recovered_image_sha256", "width", "height", "recovery_tool", "recovery_tool_version",
+                "page", "document_image_index", "page_image_index", "pdf_object_id", "pdf_object_generation"):
+        if key in metadata:
+            source[key] = metadata[key]
+    return value
 
 
 def recover_requested_image(
@@ -537,10 +329,7 @@ def recover_requested_image(
 __all__ = [
     "FigureDigitizationRequest",
     "FigureDigitizationSeries",
-    "FigureEligibility",
-    "FigureLineTracking",
     "PdfFigureSource",
-    "PixelRange",
     "RasterFigureSource",
     "axis_uncertainty",
     "axis_value",

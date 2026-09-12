@@ -10,6 +10,8 @@ from ..schema.approval import ApprovalOption, CompiledApprovalIdentity, ReviewDo
 from ..schema.artifact import ArtifactRegistration
 from ..schema.common import canonical_sha256
 from ..service.scheduler_bindings import SchedulerNameConflict
+from ..service.run_records import RunAttemptLimit
+from ...operation_contract import contract_diagnostic
 from ...operations.invoke import (
     ApprovalProjectorContext,
     ApprovalSubjectSnapshot,
@@ -17,6 +19,7 @@ from ...operations.invoke import (
     EffectExecutorPlan,
     InvocationArtifact,
     OperationInvocationError,
+    OperationEngineeringError,
     ProducerEvidenceSource,
     ProducerFamilyMember,
     ProducerOutputFamily,
@@ -32,6 +35,7 @@ from ...operations.tooling import (
     operation_local_worker_missing_tools,
     operation_worker_tools,
 )
+from ...operations.review_admission import review_input_mode
 from .mcp_root_shared import (
     APPROVAL_OPTION_IDS as _APPROVAL_OPTION_IDS,
     NONQUALIFYING_HANDOFF_VERDICTS as _NONQUALIFYING_HANDOFF_VERDICTS,
@@ -51,6 +55,14 @@ class _OperationInputSelection(Protocol):
 
     port: str
     artifact_names: tuple[str, ...]
+
+
+def _attempt_limit_error(error: RunAttemptLimit) -> OperationInvocationError:
+    result = OperationInvocationError("recovery_attempt_limit_reached", message=str(error))
+    result.details = (contract_diagnostic(
+        "recovery_attempt_limit_reached", phase="input_admission", affected_action="invoke",
+        path="$.max_attempts", message=str(error), repairable=True),)
+    return result
 
 
 class RootOperationRoutes:
@@ -95,6 +107,7 @@ class RootOperationRoutes:
                 "status": "available" if available else "unavailable",
             }
         elif compiled.spec.executor.kind == "agent":
+            value["default_max_attempts"] = compiled.spec.limits.max_attempts
             if self.runs is not None:
                 if not self.runs.backend.supports_operation(compiled):
                     value["runtime_binding"] = {
@@ -126,6 +139,9 @@ class RootOperationRoutes:
                     "required": services,
                     "status": "verified_on_worker_claim",
                 }
+            optional = sorted({service for tool in operation_worker_tools(compiled) for service in tool.optional_services})
+            if optional:
+                value["optional_runtime_services"] = optional
         return value
 
     def _scheduler_operation_available(
@@ -174,6 +190,8 @@ class RootOperationRoutes:
                     bound,
                     values["on_conflict"],
                     resume_from=values.get("resume_from"),
+                    draft_from=values.get("draft_from"),
+                    max_attempts=values.get("max_attempts"),
                 )
             elif bound.compiled.spec.executor.kind == "approval":
                 self._prepare_approval_projection(bound)
@@ -191,6 +209,8 @@ class RootOperationRoutes:
                         bound,
                         values["on_conflict"],
                         resume_from=values.get("resume_from"),
+                        draft_from=values.get("draft_from"),
+                        max_attempts=values.get("max_attempts"),
                     )
                 elif kind == "transform":
                     result = self._invoke_compiled_transform(
@@ -214,7 +234,7 @@ class RootOperationRoutes:
                     raise OperationInvocationError("executor_kind_unknown")
             except OperationInvocationError as error:
                 raise RootToolError(
-                    f"operation invocation rejected [{error.reason_code}]"
+                    f"operation invocation rejected [{error.reason_code}]", details=error.details
                 ) from error
         return {
             "operation_id": bound.compiled.spec.operation_id,
@@ -228,11 +248,13 @@ class RootOperationRoutes:
         on_conflict: str,
         *,
         resume_from: str | None = None,
+        draft_from: str | None = None,
+        max_attempts: int | None = None,
     ) -> dict[str, Any]:
         if self.runs is None:
             raise OperationInvocationError("runtime_backend_unavailable")
         return self._invoke_local_run(
-            bound, on_conflict, resume_from=resume_from
+            bound, on_conflict, resume_from=resume_from, draft_from=draft_from, max_attempts=max_attempts
         )
 
     def _invoke_local_run(
@@ -241,9 +263,11 @@ class RootOperationRoutes:
         on_conflict: str,
         *,
         resume_from: str | None,
+        draft_from: str | None = None,
+        max_attempts: int | None = None,
     ) -> dict[str, Any]:
-        resume_run_id, fingerprint, target = self._prepare_local_run(
-            bound, on_conflict, resume_from=resume_from
+        resume_run_id, draft_run_id, draft_digest, fingerprint, target = self._prepare_local_run(
+            bound, on_conflict, resume_from=resume_from, draft_from=draft_from, max_attempts=max_attempts
         )
         if target.existing_object_id is not None:
             return self.run_status(name=target.name)
@@ -261,9 +285,14 @@ class RootOperationRoutes:
                 output_revision=target.revision,
                 output_binding_fingerprint=output_fingerprint,
                 resume_from=resume_run_id,
+                draft_from=draft_run_id,
+                draft_digest=draft_digest,
+                max_attempts=max_attempts,
             )
+        except RunAttemptLimit as error:
+            raise _attempt_limit_error(error) from error
         except Exception as error:
-            raise OperationInvocationError("local_run_creation_failed") from error
+            raise OperationEngineeringError("local_run_creation_failed") from error
         self._bind_target("run", target, run_id, fingerprint)
         return self.run_status(name=target.name)
 
@@ -273,12 +302,25 @@ class RootOperationRoutes:
         on_conflict: str,
         *,
         resume_from: str | None,
-    ) -> tuple[str | None, str, _CreationTarget]:
+        draft_from: str | None = None,
+        max_attempts: int | None = None,
+    ) -> tuple[str | None, str | None, str | None, str, _CreationTarget]:
         if self.runs is None:
             raise OperationInvocationError("runtime_backend_unavailable")
         resume_run_id = (
             None if resume_from is None else self._resolve("run", resume_from)
         )
+        draft_run_id = None
+        draft_digest = None
+        if draft_from is not None:
+            try:
+                draft_run_id = self._resolve("run", draft_from)
+                draft_digest = self.runs.validate_draft_source(
+                    draft_run_id, compiled=bound.compiled,
+                    instance_id=self._instance_id(), check_attempts=False,
+                )
+            except Exception as error:
+                raise OperationInvocationError("draft_source_unavailable") from error
         fingerprint = canonical_sha256(
             {
                 "operation": bound.compiled.spec.operation_id,
@@ -297,6 +339,11 @@ class RootOperationRoutes:
                     for item in bound.inputs
                 ],
                 "resume_from": resume_run_id,
+                **({"max_attempts": max_attempts} if max_attempts is not None else {}),
+                **(
+                    {"draft_from": draft_run_id, "draft_digest": draft_digest}
+                    if draft_run_id is not None else {}
+                ),
             }
         )
         try:
@@ -306,8 +353,19 @@ class RootOperationRoutes:
         except SchedulerNameConflict as error:
             raise OperationInvocationError("semantic_name_conflict") from error
         if target.existing_object_id is None:
+            try:
+                if draft_run_id is not None:
+                    self.runs.validate_draft_source(draft_run_id, compiled=bound.compiled,
+                        instance_id=self._instance_id(), scheduler_max_attempts=max_attempts)
+                if resume_run_id is not None:
+                    self.runs.validate_resume(resume_run_id, operation_digest=bound.compiled.digest,
+                        input_refs=tuple(item.artifact.ref for item in bound.inputs),
+                        max_attempts=bound.compiled.spec.limits.max_attempts,
+                        scheduler_max_attempts=max_attempts)
+            except RunAttemptLimit as error:
+                raise _attempt_limit_error(error) from error
             self._validate_revision_successor_slot(bound)
-        return resume_run_id, fingerprint, target
+        return resume_run_id, draft_run_id, draft_digest, fingerprint, target
 
     def _validate_revision_successor_slot(self, bound: BoundOperationCall) -> None:
         review = bound.compiled.spec.review
@@ -424,7 +482,11 @@ class RootOperationRoutes:
                         size_bytes=item.artifact.size_bytes,
                         parent_refs=item.artifact.parent_refs,
                         labels=item.artifact.labels,
-                        handoff_verdict=item.artifact.handoff_verdict,
+                        handoff_verdict=(
+                            signal.verdict if (signal := self._scheduler_signal_for_output(
+                                item.artifact.ref
+                            )) is not None else None
+                        ),
                         content=self.artifacts.read(item.artifact.ref),
                     )
                 )
@@ -441,10 +503,12 @@ class RootOperationRoutes:
         )
         try:
             document = bound.compiled.implementations[projector_key](context)
+        except OperationInvocationError:
+            raise
         except Exception as error:
-            raise OperationInvocationError("approval_projector_failed") from error
+            raise OperationEngineeringError("approval_projector_failed") from error
         if not isinstance(document, ReviewDocument):
-            raise OperationInvocationError("approval_projector_result_invalid")
+            raise OperationEngineeringError("approval_projector_result_invalid")
         return document, tuple(snapshots)
 
     def _producer_output_family(
@@ -510,12 +574,14 @@ class RootOperationRoutes:
             producer = self._operation_catalog.operation(status.operation_id)
         except KeyError:
             return None
-        if (
-            producer.spec.executor.kind != "agent"
-            or status.operation_version != producer.spec.version
-            or status.operation_digest != producer.digest
-        ):
+        if producer.spec.executor.kind != "agent":
             return None
+        if any(envelope.labels.get(key) != expected for key, expected in (
+            ("operation_id", status.operation_id),
+            ("operation_version", status.operation_version),
+            ("operation_digest", status.operation_digest),
+        )):
+            raise OperationInvocationError("producer_family_inconsistent")
         port_name = envelope.labels.get("operation_output_port")
         primary_port = next(
             (
@@ -542,8 +608,8 @@ class RootOperationRoutes:
         return ProducerOutputFamily(
             primary_ref=envelope.ref,
             operation_id=producer.spec.operation_id,
-            operation_version=producer.spec.version,
-            operation_digest=producer.digest,
+            operation_version=status.operation_version,
+            operation_digest=status.operation_digest,
             members=(
                 ProducerFamilyMember(
                     port_name=primary_port.name,
@@ -566,8 +632,8 @@ class RootOperationRoutes:
                 {
                     "producer": "run",
                     "operation": producer.spec.operation_id,
-                    "operation_version": producer.spec.version,
-                    "operation_digest": producer.digest,
+                    "operation_version": status.operation_version,
+                    "operation_digest": status.operation_digest,
                     "run_id": status.run_id,
                     "primary_ref": envelope.ref,
                 }
@@ -596,11 +662,7 @@ class RootOperationRoutes:
             compiled = self._operation_catalog.operation(operation_id)
         except KeyError:
             return None
-        if (
-            compiled.spec.executor.kind != "transform"
-            or operation_version != compiled.spec.version
-            or operation_digest != compiled.digest
-        ):
+        if compiled.spec.executor.kind != "transform":
             return None
         instance_bindings = self.bindings.list(
             instance=self._instance_id(), namespace="artifact"
@@ -652,8 +714,8 @@ class RootOperationRoutes:
         return ProducerOutputFamily(
             primary_ref=siblings["primary"].ref,
             operation_id=operation_id,
-            operation_version=compiled.spec.version,
-            operation_digest=compiled.digest,
+            operation_version=operation_version,
+            operation_digest=operation_digest,
             members=ordered_members,
             evidence_sources=(),
             reviewer_operation=(
@@ -670,8 +732,8 @@ class RootOperationRoutes:
                 {
                     "producer": "transform",
                     "operation": operation_id,
-                    "operation_version": compiled.spec.version,
-                    "operation_digest": compiled.digest,
+                    "operation_version": operation_version,
+                    "operation_digest": operation_digest,
                     "invocation_fingerprint": invocation_fingerprint,
                     "ordered_parents": envelope.parent_refs,
                 }
@@ -836,7 +898,8 @@ class RootOperationRoutes:
             and (
                 envelope.labels.get("scientific_claim_admissible") == "false"
                 or (
-                    (signal := self._scheduler_signal_for_output(envelope.ref))
+                    (signal := self.runs.signal_for_output(envelope.ref, require_current=False)
+                     if self.runs is not None else None)
                     is not None
                     and signal.verdict in _NONQUALIFYING_HANDOFF_VERDICTS
                 )
@@ -858,7 +921,7 @@ class RootOperationRoutes:
         try:
             outputs = execute_compiled_transform(bound, payloads)
         except Exception as error:
-            raise RootToolError(f"deterministic transform failed: {error}") from error
+            raise RootToolError("deterministic transform failed", details=getattr(error, "details", ())) from error
         labels = tuple(output.label for output in outputs)
         if not outputs or "primary" not in labels or len(labels) != len(set(labels)):
             raise RootToolError(
@@ -966,12 +1029,21 @@ class RootOperationRoutes:
         parameters: dict[str, Any],
         on_conflict: str,
         resume_from: str | None = None,
+        draft_from: str | None = None,
+        max_attempts: int | None = None,
     ) -> BoundOperationCall:
         del on_conflict
+        if resume_from is not None and draft_from is not None:
+            raise OperationInvocationError("recovery_sources_mutually_exclusive")
         try:
             compiled = self._operation_catalog.operation(operation_id)
         except KeyError as error:
             raise OperationInvocationError("operation_unknown") from error
+        if max_attempts is not None:
+            if type(max_attempts) is not int or max_attempts < 1:
+                raise OperationInvocationError("invalid_attempt_limit", message="max_attempts must be a positive integer")
+            if compiled.spec.executor.kind != "agent":
+                raise OperationInvocationError("attempt_limit_not_applicable", message="max_attempts applies only to Agent Runs")
         if compiled.spec.catalog_scope == "internal":
             raise OperationInvocationError("operation_scope_forbidden")
         review = compiled.spec.review
@@ -1021,7 +1093,10 @@ class RootOperationRoutes:
                     raise OperationInvocationError(
                         "input_artifact_unavailable", port=selection.port
                     ) from error
-                signal = self._scheduler_signal_for_output(envelope.ref)
+                # Frozen history is an input fact; current review/approval
+                # eligibility is checked separately by admission and projection.
+                signal = self.runs.signal_for_output(envelope.ref, require_current=False)
+                producer = self.runs.completed_for_output(envelope.ref)
                 artifacts.append(
                     InvocationArtifact(
                         artifact_name=artifact_name,
@@ -1046,6 +1121,8 @@ class RootOperationRoutes:
                         parent_refs=envelope.parent_refs,
                         labels=tuple(sorted(envelope.labels.items())),
                         handoff_verdict=(signal.verdict if signal is not None else None),
+                        historical=self._is_historical(envelope),
+                        producer_run_id=producer.run_id if producer else None,
                     )
                 )
             resolved[selection.port] = tuple(artifacts)
@@ -1080,10 +1157,20 @@ class RootOperationRoutes:
                     self._resolve("run", resume_from),
                     operation_digest=compiled.digest,
                     input_refs=tuple(item.artifact.ref for item in bound.inputs),
-                    max_attempts=compiled.spec.limits.max_attempts,
+                    max_attempts=compiled.spec.limits.max_attempts, check_attempts=False,
                 )
             except Exception as error:
                 raise OperationInvocationError("recovery_source_unavailable") from error
+        if draft_from is not None:
+            if compiled.spec.executor.kind != "agent" or self.runs is None:
+                raise OperationInvocationError("runtime_backend_capability_missing")
+            try:
+                self.runs.validate_draft_source(
+                    self._resolve("run", draft_from), compiled=compiled,
+                    instance_id=self._instance_id(), check_attempts=False,
+                )
+            except Exception as error:
+                raise OperationInvocationError("draft_source_unavailable") from error
         self._validate_operation_input_admission(bound)
         if compiled.spec.executor.kind == "effect":
             return replace(
@@ -1218,7 +1305,7 @@ class RootOperationRoutes:
             prior_run = self.runs.completed_for_output(current_ref)
             if (
                 prior_run is None
-                or prior_run.operation_digest != bound.compiled.digest
+                or prior_run.operation_id != bound.compiled.spec.operation_id
             ):
                 break
             bases = tuple(
@@ -1236,9 +1323,9 @@ class RootOperationRoutes:
             if revision_count == 0:
                 previous_request = prior_requests[0].artifact_ref
             revision_count += 1
+            if revision_count >= review.max_revisions:
+                raise OperationInvocationError("revision_limit_reached")
             current_ref = bases[0].artifact_ref
-        if revision_count >= review.max_revisions:
-            raise OperationInvocationError("revision_limit_reached")
         if previous_request is None:
             return
         assert review.progress_fingerprint is not None
@@ -1324,18 +1411,33 @@ class RootOperationRoutes:
         )
         consumed_review_signals: set[Any] = set()
         for item in bound.inputs:
+            mode = review_input_mode(
+                operation_id=bound.compiled.spec.operation_id,
+                port_name=item.port_name, usage=item.usage,
+                direct_base_port=direct_base_port,
+            )
+            if mode == "background":
+                continue
             artifact = item.artifact
             port_name = item.port_name
-            contract = self._operation_output_contract(artifact)
+            try:
+                contract = self._operation_output_contract(
+                    artifact,
+                    allow_historical=(
+                        item.usage in {"prior_signal", "revision_base"}
+                    ),
+                )
+            except OperationInvocationError as error:
+                raise OperationInvocationError(error.reason_code, port=port_name) from error
             if contract is None:
-                if port_name == direct_base_port:
+                if mode == "direct_revision":
                     raise OperationInvocationError(
                         "input_output_usage_forbidden", port=port_name
                     )
                 continue
             _, review = contract
             if review is None:
-                if port_name == direct_base_port:
+                if mode == "direct_revision":
                     self._validate_direct_revision_request(
                         bound,
                         base=artifact,
@@ -1343,7 +1445,7 @@ class RootOperationRoutes:
                         change_requests=change_requests,
                     )
                 continue
-            if port_name == direct_base_port:
+            if mode == "direct_revision":
                 consumed_review_signals.update(
                     self._validate_direct_revision_request(
                         bound,
@@ -1354,10 +1456,13 @@ class RootOperationRoutes:
                 )
                 continue
             required_reviewer, reviewer_input_port, accepted_verdicts = review
-            if (
-                bound.compiled.spec.operation_id == required_reviewer
-                and port_name == reviewer_input_port
-            ):
+            if review_input_mode(
+                operation_id=bound.compiled.spec.operation_id,
+                port_name=port_name, usage=item.usage,
+                direct_base_port=direct_base_port,
+                reviewer_operation=required_reviewer,
+                reviewer_input_port=reviewer_input_port,
+            ) == "review_subject":
                 continue
             reviewer_output = next(
                 (
@@ -1444,8 +1549,21 @@ class RootOperationRoutes:
             )
         return tuple(item.artifact.ref for item in change_requests)
 
+    def _is_historical(self, envelope: Any) -> bool:
+        operation_id = envelope.labels.get("operation_id")
+        if operation_id is None:
+            return False
+        try:
+            producer = self._operation_catalog.operation(operation_id)
+        except KeyError:
+            return True
+        return (
+            envelope.labels.get("operation_version") != producer.spec.version
+            or envelope.labels.get("operation_digest") != producer.digest
+        )
+
     def _operation_output_contract(
-        self, artifact: InvocationArtifact
+        self, artifact: InvocationArtifact, *, allow_historical: bool = False
     ) -> tuple[Any, tuple[str, str, tuple[str, ...]] | None] | None:
         envelope = self.artifacts.catalog(artifact.ref)
         operation_id = envelope.labels.get("operation_id")
@@ -1454,16 +1572,31 @@ class RootOperationRoutes:
         port_name = envelope.labels.get("operation_output_port")
         if operation_id is None and digest is None and port_name is None:
             return None
+        if not all(isinstance(value, str) and value for value in (
+            operation_id, version, digest, port_name,
+        )):
+            raise OperationInvocationError("input_producer_contract_unavailable")
         try:
             compiled = self._operation_catalog.operation(str(operation_id))
         except KeyError as error:
             raise OperationInvocationError("input_producer_contract_unavailable") from error
-        if compiled.spec.version != version or compiled.digest != digest:
+        if (
+            compiled.spec.version != version or compiled.digest != digest
+        ) and not allow_historical:
             raise OperationInvocationError("input_producer_contract_changed")
         try:
             port = next(value for value in compiled.spec.outputs if value.name == port_name)
         except StopIteration as error:
             raise OperationInvocationError("input_producer_port_unknown") from error
+        # Historical context can be read under the consumer's declared input
+        # contract. It still follows the installed producer's review edge; an
+        # old review never becomes a current review or execution authorization.
+        if allow_historical and (
+            port.schema_id != artifact.schema_id
+            or port.kind != artifact.ref.kind
+            or artifact.media_type not in port.media_types
+        ):
+            raise OperationInvocationError("input_producer_port_incompatible")
         declared = compiled.spec.review
         review = None
         if (

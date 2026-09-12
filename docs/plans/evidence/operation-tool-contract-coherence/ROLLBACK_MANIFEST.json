@@ -1,0 +1,89 @@
+{
+  "purpose": "Restore only this increment to the frozen prior working tree; preserve scientific state and unrelated edits.",
+  "baseline_manifest_sha256": "44aeb87f8f934c3765907ff5416001e652c64159b97cef93a74dc6ccccd937e2",
+  "archive": "ROLLBACK_BEFORE.tar.gz",
+  "archive_sha256": "49a3b5edba301f1c449c7820816cd9f0cdabde521b8b39807258298b4be8812f",
+  "restore_paths": [
+    "docs/ARCHITECTURE.md",
+    "docs/ARCHITECTURE.zh-CN.md",
+    "docs/plans/README.md",
+    "plugins/curve_score/curve_score/analysis_tool.py",
+    "plugins/curve_score/curve_score/science_operations.py",
+    "plugins/tcad_artifact/tcad_artifact/curve_normalizer.py",
+    "plugins/tcad_artifact/tcad_artifact/operation_workspace.py",
+    "plugins/tcad_artifact/tcad_artifact/output_recovery.py",
+    "plugins/tcad_artifact/tcad_artifact/parameter_operations.py",
+    "plugins/tcad_artifact/tcad_artifact/plugin.py",
+    "plugins/tcad_artifact/tcad_artifact/plx_normalizer.py",
+    "plugins/tcad_artifact/tcad_artifact/result_analysis.py",
+    "src/scidiscovery/artifact_agent/interfaces/mcp.py",
+    "src/scidiscovery/artifact_agent/interfaces/mcp_hardened_worker.py",
+    "src/scidiscovery/artifact_agent/interfaces/mcp_local_worker.py",
+    "src/scidiscovery/artifact_agent/interfaces/mcp_proxy.py",
+    "src/scidiscovery/artifact_agent/interfaces/mcp_root.py",
+    "src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py",
+    "src/scidiscovery/artifact_agent/interfaces/mcp_root_shared.py",
+    "src/scidiscovery/artifact_agent/interfaces/mcp_worker_protocol.py",
+    "src/scidiscovery/artifact_agent/operation_tool_context.py",
+    "src/scidiscovery/artifact_agent/schema/common.py",
+    "src/scidiscovery/artifact_agent/schema/experiment.py",
+    "src/scidiscovery/artifact_agent/schema/experiment_intent.py",
+    "src/scidiscovery/artifact_agent/schema/layered_diagnosis.py",
+    "src/scidiscovery/artifact_agent/service/run_assignment.py",
+    "src/scidiscovery/artifact_agent/service/run_outputs.py",
+    "src/scidiscovery/artifact_agent/service/runs.py",
+    "src/scidiscovery/artifact_agent/service/tool_evidence.py",
+    "src/scidiscovery/general_science_components.py",
+    "src/scidiscovery/general_science_experiment_components.py",
+    "src/scidiscovery/operation_contract.py",
+    "src/scidiscovery/operation_declaration.py",
+    "src/scidiscovery/operations/catalog.py",
+    "src/scidiscovery/operations/input_validation.py",
+    "src/scidiscovery/operations/invoke.py",
+    "src/scidiscovery/operations/spec.py",
+    "src/scidiscovery/operations/tooling.py",
+    "tests/operations/test_agent_contract_alignment.py",
+    "tests/operations/test_analysis_evidence_recovery.py",
+    "tests/operations/test_analysis_tool_installed.py",
+    "tests/operations/test_catalog_compile.py",
+    "tests/operations/test_catalog_installed_entrypoint.py",
+    "tests/operations/test_invoke_preflight.py",
+    "tests/operations/test_l4_local_tcad.py",
+    "tests/operations/test_l5_hardened_run_backend.py",
+    "tests/operations/test_m2_curve_analysis_boundary.py",
+    "tests/operations/test_result_analysis_tool.py",
+    "tests/operations/test_tcad_result_analysis.py"
+  ],
+  "remove_added_paths_only_if_after_hash_matches": [
+    {
+      "path": "tests/operations/test_analysis_claim_scope.py",
+      "before_sha256": null,
+      "after_sha256": "524473ea36e8085c1301ac9e9fc14ed7e15ffd0f6f59562f8333bbbe4b5db91b"
+    },
+    {
+      "path": "tests/operations/test_case_mapping_basis.py",
+      "before_sha256": null,
+      "after_sha256": "81d4eb9f5c4c75ae7ed77d78aac8fc36119b7d5b1dc8db8bd7a32347d31c969a"
+    },
+    {
+      "path": "tests/operations/test_compiled_declaration_consumers.py",
+      "before_sha256": null,
+      "after_sha256": "be73d591b433fb9d78cf8b9b51b96d9da3372c8d0e9d75028a235674902d176b"
+    },
+    {
+      "path": "tests/operations/test_contract_attempts.py",
+      "before_sha256": null,
+      "after_sha256": "276ca1aa1fd6239419d12a21e4aecaef23219019ec2f97a61a1f2928973f20ee"
+    },
+    {
+      "path": "tests/operations/test_prior_analysis_sources.py",
+      "before_sha256": null,
+      "after_sha256": "62403e4523d77ab07f726711cf60288c5dc6dce9ae515e454b27cde90a3c5d70"
+    },
+    {
+      "path": "tests/operations/test_score_request_contract.py",
+      "before_sha256": null,
+      "after_sha256": "d1758d6f645d04ac1edeb39fe395a27115e26edc46d30d615ed27657e7121e22"
+    }
+  ]
+}

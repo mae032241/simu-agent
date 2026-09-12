@@ -1,0 +1,19 @@
+{
+  "command": [
+    "python",
+    "-m",
+    "pytest",
+    "-q",
+    "tests/operations/test_score_request_contract.py",
+    "tests/operations/test_result_analysis_tool.py::test_error_has_no_numeric_result_and_is_not_required_to_recur",
+    "tests/operations/test_result_analysis_tool.py::test_record_presence_cannot_grant_quantitative_pass",
+    "tests/operations/test_result_analysis_tool.py::test_persisted_malformed_comparisons_remain_readable_as_failed_requests",
+    "tests/operations/test_case_mapping_basis.py"
+  ],
+  "exit_code": 0,
+  "seconds": 6.555,
+  "peak_tree_rss_bytes": 141754368,
+  "budget_bytes": 536870912,
+  "early_stop_bytes": 469762048,
+  "memory_terminated": false
+}

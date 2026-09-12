@@ -92,7 +92,11 @@ def _root(runtime, instance_id: str):
 def _portfolio() -> ExperimentPortfolio:
     proposal = ExperimentProposal(
         experiment_key="entrypoint_smoke",
-        objective="Verify one bounded SDevice entrypoint.",
+        objectives=(
+            "Verify the Local TCAD author-debug-review path.",
+            "Verify one bounded SDevice entrypoint.",
+        ),
+        current_objectives=("Verify one bounded SDevice entrypoint.",),
         frozen_invariants=("No physical conclusion is claimed.",),
         cases=(
             ExperimentCase(

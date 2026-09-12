@@ -1,0 +1,48 @@
+F
+=================================== FAILURES ===================================
+_ test_reference_only_report_resolves_saved_score_without_copy_or_recalculation[generic] _
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-138/test_reference_only_report_res0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7f2f6dd9eb10>
+domain = 'generic'
+
+    @pytest.mark.parametrize("domain", ["generic", "tcad"])
+    def test_reference_only_report_resolves_saved_score_without_copy_or_recalculation(tmp_path, monkeypatch, domain):
+        if domain == "generic":
+>           worker, opened = generic_worker(tmp_path)
+                             ^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/operations/test_analysis_artifact_references.py:31: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/operations/test_analysis_claim_scope.py:155: in generic_worker
+    catalog, runtime, root, _, artifacts, register = analysis_system(tmp_path)
+                                                     ^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/operations/test_tcad_result_analysis.py:79: in analysis_system
+    catalog = compile_catalog((CORE_PLUGIN, GENERAL_PLUGIN, CURVE_PLUGIN, TCAD_PLUGIN))
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/scidiscovery/operations/catalog.py:839: in compile_catalog
+    compiled_parts, runtime_factories, runtime_configuration_digests, runtime_identity_digests, used = _validate_operation_contracts(plugin_map, components)
+                                                                                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/scidiscovery/operations/catalog.py:327: in _validate_operation_contracts
+    tool_ports = declared_tool_output_names(tuple(
+src/scidiscovery/operations/catalog.py:328: in <genexpr>
+    _resolve_component(plugin_map, components, used, plugin.plugin_id,
+src/scidiscovery/operations/catalog.py:213: in _resolve_component
+    if component.plugin_id not in dependencies or not component.spec.public: _fail("component_cross_plugin_forbidden", owner, field=key)
+                                                                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+code = 'component_cross_plugin_forbidden', plugin = 'tcad_artifact'
+operation = None, field = 'curve_score:analysis_files_tool'
+
+    def _fail(
+        code: str, plugin: str | None = None, operation: str | None = None,
+        field: str | None = None) -> None:
+>       raise CatalogCompileError(code, plugin_id=plugin, operation_id=operation, field=field)
+E       scidiscovery.operations.catalog.CatalogCompileError: component_cross_plugin_forbidden: tcad_artifact/curve_score:analysis_files_tool
+
+src/scidiscovery/operations/catalog.py:108: CatalogCompileError
+=========================== short test summary info ============================
+FAILED tests/operations/test_analysis_artifact_references.py::test_reference_only_report_resolves_saved_score_without_copy_or_recalculation[generic]
+!!!!!!!!!!!!!!!!!!!!!!!!!! stopping after 1 failures !!!!!!!!!!!!!!!!!!!!!!!!!!!
+1 failed in 1.48s

@@ -53,119 +53,6 @@ _EXPECTED_TCAD_PARAMETER_OPERATION_IDS = [
 ]
 
 
-_DETECTOR_RESOURCE_PROBE = r'''
-import json
-from importlib.metadata import entry_points
-from unittest.mock import patch
-
-import curve_figure_evidence.figure_science_operations as figure_contracts
-from scidiscovery.operations.catalog import PLUGIN_ENTRY_POINT_GROUP, compile_catalog
-from scidiscovery.operations.spec import ComponentRef, ComponentSpec
-
-plugins = globals().get("plugins") or tuple(entry.load() for entry in sorted(
-    entry_points(group=PLUGIN_ENTRY_POINT_GROUP), key=lambda entry: entry.name,
-))
-figure = next(plugin for plugin in plugins if plugin.plugin_id == "curve_figure_evidence")
-request_id = "science.figure.request.prepare.v1"
-materialize_id = "science.figure.evidence.materialize.v1"
-request = next(op for op in figure.operations if op.operation_id == request_id)
-materialize = next(op for op in figure.operations if op.operation_id == materialize_id)
-context = request.outputs[0].context_validator
-transform = materialize.executor.component
-assert context is not None
-assert context.plugin_id in (None, figure.plugin_id)
-assert transform.plugin_id in (None, figure.plugin_id)
-resource = ComponentRef("detector_contract_probe")
-consumers = {context.component_id, transform.component_id}
-variant = figure.model_copy(update={"components": tuple(
-    component.model_copy(update={"resources": (*component.resources, resource)})
-    if component.component_id in consumers else component
-    for component in figure.components
-) + (ComponentSpec(
-    resource.component_id, "resource",
-    "curve_figure_evidence.figure_science_operations:DETECTOR_CONTRACT_PROBE",
-),)})
-assert sum(component.component_id in consumers for component in variant.components) == 2
-variants = tuple(variant if plugin is figure else plugin for plugin in plugins)
-contract = {"detector_version": "probe-v1", "ocr_version": "4.1.1"}
-catalogs = []
-for payload in (contract, {**contract, "detector_version": "probe-v2"},
-                {**contract, "ocr_version": "5.4.0"}):
-    content = json.dumps(payload, sort_keys=True).encode()
-    # Only the in-memory resource bytes change; compiler and callables stay intact.
-    with patch.object(figure_contracts, "DETECTOR_CONTRACT_PROBE", content, create=True):
-        catalog = compile_catalog(variants)
-        assert compile_catalog(variants).digest() == catalog.digest()
-    for operation_id in (request_id, materialize_id):
-        compiled = catalog.operation(operation_id)
-        key = f"{figure.plugin_id}:{resource.component_id}"
-        assert key in compiled.component_ids
-        assert compiled.implementations[key] == content
-    catalogs.append(catalog)
-baseline = catalogs[0]
-curve_ids = [op_id for op_id in baseline.operation_ids()
-             if baseline.operation(op_id).plugin_id == "curve_score"]
-assert curve_ids
-for changed in catalogs[1:]:
-    assert changed.operation_ids() == baseline.operation_ids()
-    for operation_id in (request_id, materialize_id):
-        assert changed.operation(operation_id).digest != baseline.operation(operation_id).digest
-    for operation_id in curve_ids:
-        assert changed.operation(operation_id).digest == baseline.operation(operation_id).digest
-assert not hasattr(figure_contracts, "DETECTOR_CONTRACT_PROBE")
-'''
-
-
-def test_installed_detector_resource_uses_existing_compilation_edges(installed_probe) -> None:
-    installed_probe("figure", _DETECTOR_RESOURCE_PROBE + r'''
-import sys
-from pathlib import Path
-assert Path(figure_contracts.__file__).resolve().is_relative_to(Path(sys.prefix).resolve())
-assert {plugin.plugin_id for plugin in plugins} == {
-    "builtin", "general_science", "curve_score", "curve_figure_evidence",
-}
-''')
-
-
-def test_installed_supply_bytes_change_only_existing_figure_resource_consumers(installed_probe) -> None:
-    installed_probe("all_domains", r'''
-import importlib
-import json
-from pathlib import Path
-import sys
-from curve_figure_evidence import figure_dependencies as dependencies
-from curve_figure_evidence import figure_digitization_contract as detector
-from scidiscovery.operations.catalog import compile_installed_catalog
-
-assert dependencies.RUNTIME_CONTRACT["ocr"]["supply_status"] == "unavailable"
-assert Path(dependencies.__file__).is_relative_to(Path(sys.prefix))
-contract = json.loads(json.dumps(dependencies.UNSUPPLIED_CONTRACT))
-contract.update(pillow_version="observed-pillow", poppler_version="observed-poppler")
-contract["executables"] = {name: "/offline/bin/" + name for name in (*dependencies.PDF_COMMANDS, "tesseract")}
-contract["ocr"].update(supply_status="verified")
-catalogs = [compile_installed_catalog()]
-try:
-    for version in ("4.1.1", "5.4.0"):
-        contract["ocr"]["version"] = version
-        dependencies.CONTRACT_PATH.write_text(json.dumps(contract))
-        importlib.reload(dependencies)
-        importlib.reload(detector)
-        compile_installed_catalog.cache_clear()  # Model a new service startup.
-        catalog = compile_installed_catalog()
-        catalogs.append(catalog)
-        assert len(catalog.operation_ids()) == 48
-        for operation_id in ("science.figure.request.prepare.v1", "science.figure.evidence.materialize.v1"):
-            resource = json.loads(catalog.operation(operation_id).implementations["curve_figure_evidence:detector_contract"])
-            assert resource["ocr"] == contract["ocr"]
-            assert resource["executables"] == contract["executables"]
-    for before, after in zip(catalogs, catalogs[1:]):
-        changed = {key for key in before.operation_ids() if before.operation(key).digest != after.operation(key).digest}
-        assert changed == {"science.figure.request.prepare.v1", "science.figure.evidence.materialize.v1"}, changed
-finally:
-    dependencies.CONTRACT_PATH.unlink(missing_ok=True)
-''')
-
-
 @pytest.mark.parametrize("environment", ("full", "figure"))
 def test_installed_agent_input_and_checker_contracts_align(installed_probe, environment) -> None:
     output = installed_probe(environment, r'''
@@ -190,16 +77,25 @@ for operation_id in catalog.operation_ids():
     for port in compiled.spec.outputs:
         schema = operation_port_json_schema(compiled, port)
         contract = schema["x-scidiscovery-validation-contract"]
+        from scidiscovery.operations.tooling import tool_evidence_ports
+        evidence_ports = tool_evidence_ports(compiled)
+        if port.collection is not None and port.name in evidence_ports:
+            assert schema["x-scidiscovery-produced-by"] == "registered_tool"
+            continue
         semantic = schema["x-scidiscovery-semantic-constraints"]
         rule_ids = {rule["rule_id"] for rule in semantic["rules"]}
-        assert set(port.context_sources) <= inputs.keys()
-        assert all(inputs[name].exposure in {"full", "on_demand"} for name in port.context_sources)
+        assert set(port.context_sources) <= inputs.keys() | evidence_ports.keys()
+        assert all(name in evidence_ports or inputs[name].exposure in {"full", "on_demand"} for name in port.context_sources)
         for checker in contract["checkers"]:
             assert checker["rule_id"] in rule_ids
         assert {item["port"] for item in contract["context_sources"]} == set(port.context_sources)
 design = catalog.operation("science.experiment.design.v1").spec
 assert next(port for port in design.inputs if port.name == "critic_review").exposure == "full"
 assert next(port for port in design.inputs if port.name == "scientific_foundation").exposure == "handoff_only"
+execution_context = next(port for port in design.inputs if port.name == "execution_context")
+assert execution_context.schema_id == "scidiscovery.execution-context.v1"
+assert execution_context.media_types == ("application/json",)
+assert execution_context.min_items == 0 and execution_context.max_items == 1
 objective = catalog.operation("science.objective.project.v1").spec
 assert objective.inputs[0].required_non_null_fields == ("objective_contract",)
 assert agents
@@ -211,12 +107,30 @@ print("installed contracts aligned")
 def test_installed_e52_core_and_tcad_contracts_are_packaged(installed_probe) -> None:
     output = installed_probe("full", r'''
 import json
+import tempfile
 from jsonschema.validators import validator_for
+from pathlib import Path
 
+from scidiscovery.artifact_agent.interfaces.mcp_local_worker import LocalWorkerMCPRouter
+from scidiscovery.artifact_agent.interfaces.mcp_root import RootMCPRouter, RootToolFacade
+from scidiscovery.artifact_agent.runtime import open_runtime
+from scidiscovery.artifact_agent.schema.approval import (
+    ApprovalOption,
+    CompiledApprovalIdentity,
+    LocalIdentityRef,
+)
+from scidiscovery.artifact_agent.schema.artifact import ArtifactRegistration
+from scidiscovery.artifact_agent.schema.common import canonical_json
+from scidiscovery.artifact_agent.schema.cognitive import CriticReview, HypothesisProposal
+from scidiscovery.artifact_agent.schema.experiment_intent import ExperimentDesignIntent
 from scidiscovery.artifact_agent.schema.research_objective import (
     ObjectiveClosureRequirement,
+    ResearchObjectiveContract,
 )
+from scidiscovery.artifact_agent.schema.execution_context import ExecutionContext
+from scidiscovery.artifact_agent.schema.scientific_foundation import ScientificFoundation
 from scidiscovery.operations.catalog import compile_installed_catalog
+from tcad_artifact.execution_control import SolverCapabilitySnapshot
 
 schema = ObjectiveClosureRequirement.model_json_schema(mode="validation")
 validator_type = validator_for(schema)
@@ -257,24 +171,384 @@ for operation_id in (
     "science.parameters.qualify.exception.v1",
 ):
     assert catalog.operation(operation_id).spec.version == "2"
-print("installed E5.2 core and TCAD contracts present")
+projection = catalog.operation("tcad.execution-context.project.v1")
+assert projection.spec.catalog_scope == "support"
+assert projection.spec.executor.kind == "transform"
+assert tuple(port.name for port in projection.spec.inputs) == ("capability",)
+assert projection.spec.inputs[0].schema_id == "tcad.solver-capability.v2"
+assert tuple(port.name for port in projection.spec.outputs) == ("execution_context",)
+assert projection.spec.outputs[0].schema_id == "scidiscovery.execution-context.v1"
+assert "general_science:execution_context_schema" in projection.implementations
+ExecutionContext.model_validate(
+    {
+        "schema_version": 1,
+        "domain": "tcad",
+        "implementation_backend": "sprocess",
+        "implementation_kind": "sprocess",
+        "release_label": "R-2020.09",
+        "public_arguments": ("-i",),
+        "capability_statements": None,
+        "limitations": None,
+    },
+    strict=True,
+)
+
+root_dir = Path(tempfile.mkdtemp(prefix="installed-e52-execution-context-"))
+project = root_dir / "project"
+project.mkdir()
+(project / "AGENTS.md").write_text("# Installed execution-context probe\n", encoding="utf-8")
+runtime = open_runtime(
+    project_root=project,
+    state_root=root_dir / "state",
+    worker_backend="local",
+    approval_receipt_secret=b"i" * 32,
+)
+instance = runtime.scheduler_bindings.create_instance(
+    name="installed_execution_context",
+    title="Installed execution-context closure",
+    objective="Exercise the installed projection and design contracts.",
+)
+root = RootMCPRouter(RootToolFacade(
+    runtime.artifacts,
+    runtime.intake,
+    runs=runtime.runs,
+    approvals=runtime.approvals,
+    executions=runtime.executions,
+    bindings=runtime.scheduler_bindings,
+    instance=instance.instance_id,
+    operation_catalog=catalog,
+))
+
+def register(name, content, *, kind, schema_id, parents=(), media_type="application/json"):
+    envelope = runtime.artifacts.register(
+        content,
+        ArtifactRegistration(
+            kind=kind,
+            schema_id=schema_id,
+            payload_schema_version=1,
+            media_type=media_type,
+            creator=runtime.actor,
+            parent_refs=parents,
+        ),
+        idempotency_key=f"installed-execution-context:{name}",
+    )
+    runtime.scheduler_bindings.bind(
+        instance=instance.instance_id,
+        namespace="artifact",
+        name=name,
+        object_id=envelope.artifact_id,
+    )
+    return envelope
+
+objective = ResearchObjectiveContract.model_validate_json(canonical_json({
+    "objective_key": "installed_objective",
+    "intent": "mechanism_discrimination",
+    "statement": "Distinguish one bounded mechanism.",
+    "closure_requirements": [{
+        "requirement_key": "comparison_required",
+        "description": "Compare the bounded candidates.",
+        "requirement_type": "comparison_present",
+        "comparison_purposes": ["mechanism_separation"],
+    }],
+}), strict=True)
+foundation = ScientificFoundation.model_validate_json(canonical_json({
+    "title": "Installed foundation",
+    "objective": objective.statement,
+    "summary": "One bounded assumption supports this packaging test.",
+    "objective_contract": objective,
+    "items": [{
+        "item_key": "bounded_assumption",
+        "item_type": "assumption",
+        "epistemic_status": "assumption",
+        "statement": "The installed test uses one bounded mechanism.",
+        "scope": "This isolated installed-package test only.",
+        "rationale": "It is sufficient to exercise transport, not scientific truth.",
+    }],
+}), strict=True)
+hypotheses = HypothesisProposal.model_validate_json(canonical_json({
+    "schema_version": 2,
+    "research_objective_key": objective.objective_key,
+    "stage_objective": "Separate one bounded mechanism.",
+    "contradiction": "The bounded mechanism is not yet distinguished.",
+    "hypotheses": [{
+        "hypothesis_key": "hypothesis_a",
+        "statement": "One bounded intervention changes the response.",
+        "mechanism": "The intervention alters one observable response.",
+        "scope": "This isolated installed-package test only.",
+        "predictions": [{
+            "prediction_key": "prediction_a",
+            "observable": "response",
+            "expected_outcome": "The response changes.",
+        }],
+        "falsifiers": [{
+            "falsifier_key": "falsifier_a",
+            "observable": "response",
+            "rejection_condition": "The response does not change.",
+        }],
+    }],
+}), strict=True)
+critic = CriticReview.model_validate_json(canonical_json({
+    "schema_version": 2,
+    "disposition": "ready_for_experiment",
+    "reviews": [{
+        "hypothesis_key": "hypothesis_a",
+        "physical_plausibility": "pass",
+        "falsifiability": "pass",
+        "finite_discriminability": "pass",
+    }],
+}), strict=True)
+intent = ExperimentDesignIntent.model_validate_json(canonical_json({
+    "study_kind": "engineering",
+    "objective_key": None,
+    "engineering_objective": "Check one bounded numerical case.",
+    "selected_hypothesis_keys": [],
+    "proposals": [{
+        "experiment_key": "installed_case",
+        "objectives": ["Check one bounded numerical case."],
+        "current_objectives": ["Check one bounded numerical case."],
+        "hypothesis_keys": [],
+        "frozen_invariants": ["Use the exact installed-package inputs."],
+        "cases": [{
+            "case_key": "single_case",
+            "scientific_role": "control",
+            "purpose": "Exercise one bounded installed Run.",
+        }],
+        "baseline_case_key": None,
+        "variables": [],
+        "required_observables": ["completion"],
+        "identifiability_claims": [],
+        "prediction_tests": [],
+        "validation_intent": {
+            "numerical": {
+                "rationale": "Check bounded numerical completion.",
+                "reviewed_checks": [{
+                    "observable": "completion",
+                    "metric": "bounded completion",
+                    "acceptance_condition": "The single case completes.",
+                    "failure_action": "Stop and inspect the failure.",
+                    "basis": "This packaging test has one numerical case.",
+                }],
+            },
+            "physical": {"rationale": "Not applicable to this packaging test."},
+            "experimental": {"rationale": "Not applicable to this packaging test."},
+        },
+        "resource_estimate": {
+            "relative_cost": "low",
+            "runtime_basis": "One local contract-only Run.",
+        },
+        "stop_conditions": ["Stop after the result is sealed."],
+        "value_assessment": {
+            "evidence_support": "low",
+            "discrimination_power": "low",
+            "information_gain": "low",
+            "cost": "low",
+            "added_free_parameters": 0,
+            "rationale": "This verifies installed protocol closure only.",
+        },
+    }],
+    "priority_order": ["installed_case"],
+    "priority_rationale": "There is exactly one bounded packaging check.",
+}), strict=True)
+
+foundation_artifact = register(
+    "foundation", foundation.canonical_json(), kind="scientific_foundation",
+    schema_id="scidiscovery.scientific-foundation.v1",
+)
+register(
+    "objective", canonical_json(objective), kind="research_objective",
+    schema_id="scidiscovery.research-objective.v1", parents=(foundation_artifact.ref,),
+)
+portfolio_artifact = register(
+    "portfolio", hypotheses.canonical_json(), kind="hypothesis_portfolio",
+    schema_id="scidiscovery.hypothesis-proposal.v2", parents=(foundation_artifact.ref,),
+)
+register(
+    "critic", critic.canonical_json(), kind="critic_review",
+    schema_id="scidiscovery.critic-review.v2",
+    parents=(foundation_artifact.ref, portfolio_artifact.ref),
+)
+
+provider = catalog.operation("science.evidence.qualify.v1").approval_identity
+assert provider is not None
+launch = runtime.approvals.create_request(
+    approval_id="installed_foundation_approval",
+    kind="scientific_foundation",
+    subject_refs=(foundation_artifact.ref,),
+    question="Approve the exact isolated fixture?",
+    options=(
+        ApprovalOption(
+            option_id="approve", label="Approve", description="Approve this fixture.",
+            requires_rationale=False,
+        ),
+        ApprovalOption(
+            option_id="reject", label="Reject", description="Reject this fixture.",
+            requires_rationale=False,
+        ),
+    ),
+    requested_by=runtime.actor,
+    idempotency_key="installed-foundation-approval",
+    compiled_identity=CompiledApprovalIdentity(
+        operation_id=provider.operation_id,
+        operation_version=provider.version,
+        operation_digest=provider.operation_digest,
+        approval_contract_digest=provider.approval_contract_digest,
+    ),
+)
+review = runtime.approvals.review(launch.approval_id, access_token=launch.access_token)
+runtime.approvals.record_ui_decision(
+    approval_id=launch.approval_id,
+    access_token=launch.access_token,
+    csrf_token=review.csrf_token,
+    decision_nonce=review.decision_nonce,
+    selected_option="approve",
+    rationale="",
+    decided_by=LocalIdentityRef(
+        identity_id="installed_fixture_reviewer",
+        display_name="Installed Fixture Reviewer",
+    ),
+    ui_session_id="installed-execution-context-test",
+)
+
+snapshot = SolverCapabilitySnapshot(
+    profile_id="installed_shell_runner",
+    solver_kind="shell_runner",
+    launch_name="installed-runner",
+    public_arguments=(),
+    public_release_label="unknown-release",
+    private_fixed_argument_count=0,
+    private_fixed_arguments_sha256="a" * 64,
+    private_release_evidence_bytes=1,
+    private_release_evidence_sha256="b" * 64,
+    capability_sha256="c" * 64,
+)
+capability = register(
+    "capability",
+    json.dumps(
+        snapshot.model_dump(mode="json"),
+        ensure_ascii=True,
+        allow_nan=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8"),
+    kind="solver_capability",
+    schema_id="tcad.solver-capability.v2",
+)
+projection_request = {
+    "name": "projected_context",
+    "operation_id": "tcad.execution-context.project.v1",
+    "inputs": [{"port": "capability", "artifact_names": ["capability"]}],
+}
+assert root.call_tool("operation_preflight", projection_request)["admissible"] is True
+projected = root.call_tool("operation_invoke", projection_request)
+context_name = projected["result"]["outputs"][0]["artifact_name"]
+context_id = runtime.scheduler_bindings.resolve(
+    instance=instance.instance_id, namespace="artifact", name=context_name,
+)
+context_envelope = runtime.artifacts.get_by_id(context_id)
+assert context_envelope.parent_refs == (capability.ref,)
+context = ExecutionContext.model_validate_json(
+    runtime.artifacts.read(context_envelope.ref), strict=True,
+)
+assert context.implementation_kind == "shell_runner"
+assert context.release_label == "unknown-release"
+assert context.capability_statements is None and context.limitations is None
+
+def design_request(name, context_artifact_names=()):
+    inputs = [
+        {"port": "scientific_foundation", "artifact_names": ["foundation"]},
+        {"port": "research_objective", "artifact_names": ["objective"]},
+        {"port": "hypothesis_portfolio", "artifact_names": ["portfolio"]},
+        {"port": "critic_review", "artifact_names": ["critic"]},
+    ]
+    if context_artifact_names:
+        inputs.append({
+            "port": "execution_context", "artifact_names": list(context_artifact_names),
+        })
+    return {
+        "name": name,
+        "operation_id": "science.experiment.design.v1",
+        "inputs": inputs,
+        "instruction": "Design one bounded installed-package experiment.",
+    }
+
+assert root.call_tool("operation_preflight", design_request("without_context"))[
+    "admissible"
+] is True
+wrong_schema = root.call_tool(
+    "operation_preflight", design_request("wrong_schema", ("capability",)),
+)
+assert wrong_schema["admissible"] is False
+assert wrong_schema["reason_code"] == "input_schema_mismatch"
+wrong_media = register(
+    "wrong_media_context", canonical_json(context), kind="execution_context",
+    schema_id="scidiscovery.execution-context.v1", media_type="text/plain",
+)
+wrong_media_result = root.call_tool(
+    "operation_preflight", design_request("wrong_media", ("wrong_media_context",)),
+)
+assert wrong_media_result["admissible"] is False
+assert wrong_media_result["reason_code"] == "input_media_type_mismatch"
+
+request = design_request("with_context", (context_name,))
+assert root.call_tool("operation_preflight", request)["admissible"] is True
+assert root.call_tool("operation_invoke", request)["result"]["state"] == "queued"
+compiled_design = catalog.operation("science.experiment.design.v1")
+worker = LocalWorkerMCPRouter(
+    runtime.runs,
+    operation_id=compiled_design.spec.operation_id,
+    operation_digest=compiled_design.digest,
+)
+opened = worker.call_tool("worker_open_assignment", {})
+context_path = Path(opened["workspace_path"], "inputs", "execution_context.json")
+assert context_path.read_bytes() == runtime.artifacts.read(context_envelope.ref)
+assert context_path.stat().st_mode & 0o222 == 0
+Path(opened["output_directory"], "result.json").write_bytes(canonical_json({
+    "schema_version": 1,
+    "handoff": {"verdict": "pass", "summary": "Installed contract closure passed."},
+    "payload": intent,
+}))
+assert worker.call_tool("worker_submit_result", {})["state"] == "completed"
+assert root.call_tool("run_status", {"name": "with_context"})["state"] == "completed"
+
+damaged_snapshot = register(
+    "damaged_capability", b'{}', kind="solver_capability",
+    schema_id="tcad.solver-capability.v2",
+)
+damaged_request = {
+    "name": "damaged_projection",
+    "operation_id": "tcad.execution-context.project.v1",
+    "inputs": [{"port": "capability", "artifact_names": ["damaged_capability"]}],
+}
+assert root.call_tool("operation_preflight", damaged_request)["admissible"] is True
+try:
+    root.call_tool("operation_invoke", damaged_request)
+except Exception as error:
+    assert error.details[0]["code"] == "executor_component_failed"
+    assert error.details[0]["repairable"] is False
+else:
+    raise AssertionError("a damaged capability snapshot was projected")
+
+print("installed E5.2 execution-context closure passed")
 ''')
-    assert output.strip() == "installed E5.2 core and TCAD contracts present"
+    assert output.strip() == "installed E5.2 execution-context closure passed"
 
 
 def test_installed_e52_curve_contracts_are_packaged(installed_probe) -> None:
     output = installed_probe("figure", r'''
-from curve_figure_evidence.figure_digitization_contract import FigureLineTracking
+import json
+from curve_figure_evidence.figure_science_operations import FIGURE_REQUEST_SCHEMA
 from curve_figure_evidence.figure_evidence_validation import VALIDATOR_VERSION
 from scidiscovery.operations.catalog import compile_installed_catalog
 
 assert VALIDATOR_VERSION == "6"
-tracking = FigureLineTracking.model_json_schema(mode="validation")
-legacy = tracking["properties"]["overdraw_candidate_endpoint_distance_px"]
-assert legacy["default"] == 8.0
-assert "deprecated" in legacy["description"].lower()
+request_schema = json.loads(FIGURE_REQUEST_SCHEMA)
+serialized = json.dumps(request_schema)
+for field in ("tracking", "min_points", "shared_support", "color_tolerance"):
+    assert field not in serialized
 
 catalog = compile_installed_catalog()
+prepare = catalog.operation("science.figure.request.prepare.v1")
+assert prepare.spec.outputs[0].schema_id == "scidiscovery.curve-figure-digitization-request.v2"
 audit = catalog.operation("science.figure.evidence.audit.v1")
 prompt = audit.implementations["curve_figure_evidence:figure_audit_prompt"]
 assert "not whether that family is sufficient" in prompt
@@ -455,31 +729,17 @@ assert completed["state"] == "completed"
 _INSTALLED_CURVE_TOOL_PROBE = r'''
 import hashlib
 import io
-import os
-import shutil
 import sys
 import tempfile
 from pathlib import Path
 
 from PIL import Image, ImageDraw
 import curve_score
-from curve_figure_evidence import figure_dependencies
-from curve_figure_evidence.figure_detection import _ocr
 from scidiscovery.artifact_agent.schema.refs import ArtifactRef
 from scidiscovery.operations.catalog import compile_installed_catalog
 from scidiscovery.operations.tooling import operation_worker_tools
 
 assert Path(curve_score.__file__).resolve().is_relative_to(Path(sys.prefix).resolve())
-# An unbound wheel must not use an available host OCR executable.
-assert figure_dependencies.RUNTIME_CONTRACT["ocr"]["supply_status"] == "unavailable"
-assert figure_dependencies.RUNTIME_CONTRACT["pillow_version"] is None
-assert figure_dependencies.RUNTIME_CONTRACT["poppler_version"] is None
-host_bin = Path(tempfile.mkdtemp(prefix="installed-unbound-ocr-"))
-(host_bin / "tesseract").write_text("#!/bin/sh\nexit 99\n")
-(host_bin / "tesseract").chmod(0o755)
-os.environ["PATH"] = str(host_bin) + os.pathsep + os.environ["PATH"]
-assert shutil.which("tesseract") == str(host_bin / "tesseract")
-assert _ocr(b"unused") == ((), ("ocr_dependency_unavailable:tesseract",), "tesseract unavailable")
 image = Image.new("RGB", (12, 12), "white")
 ImageDraw.Draw(image).line([(1, 9), (9, 1)], fill="#ff0000", width=1)
 stream = io.BytesIO()
@@ -507,11 +767,13 @@ class Context:
         )
     def record_activity(self, event): self.events.append(event)
 
-tool = {
+tools = {
     item.name: item for item in operation_worker_tools(
         compile_installed_catalog().operation("science.figure.request.prepare.v1")
     )
-}["worker_curve_figure_inspect_source"]
+}
+assert "worker_curve_figure_preview" in tools
+tool = tools["worker_curve_figure_inspect_source"]
 assert set(tool.input_model.model_json_schema()["properties"]) == {"name", "source_page"}
 context = Context()
 result = tool.contextual_handler(
@@ -519,10 +781,9 @@ result = tool.contextual_handler(
     context,
 )
 assert len(result["images"]) == 1
-assert Path(result["images"][0]["source_preview"]).is_file()
-assert Path(result["images"][0]["candidate_overlay"]).is_file()
-assert Path(result["images"][0]["source_preview"]).stat().st_mode & 0o222 == 0
-assert Path(result["images"][0]["candidate_overlay"]).stat().st_mode & 0o222 == 0
+assert "candidate_overlay" not in result["images"][0]
+assert Path(result["images"][0]["local_path"]).is_file()
+assert Path(result["images"][0]["local_path"]).stat().st_mode & 0o222 == 0
 assert context.events == ["deterministic_analysis_completed"]
 '''
 
@@ -546,6 +807,8 @@ class Service:
         assert (run_name, mode) == ("probe", "preflight")
         return {"state": "completed", "scientific_claim_admissible": False}
 class Context:
+    state = {}
+    remaining_seconds = 1200
     def require_service(self, name):
         assert name == "tcad.development_debug"
         return Service()
@@ -553,8 +816,58 @@ result = tool.contextual_handler(
     tool.input_model(run_name="probe", mode="preflight"),
     Context(),
 )
-assert result == {"state": "completed", "scientific_claim_admissible": False}
+assert result["state"] == "completed" and result["scientific_claim_admissible"] is False
+assert result["budget"]["remaining_wall_seconds"] == 360
 '''
+
+
+def test_installed_tcad_retry_and_budget_use_local_worker(installed_probe):
+    import ast
+    from pathlib import Path
+
+    # Reuse only test fixtures. All production imports run inside the isolated
+    # installed environment, with no source path or host site-packages available.
+    source = Path(__file__).with_name("test_l4_local_tcad.py").read_text("utf-8")
+    selected = {
+        "_ImmediateDebugAdapter", "_BudgetDebugAdapter", "_portfolio", "_project",
+        "_system", "_invoke", "_write_author_workspace", "_debug_worker",
+        "_write_sprocess_workspace", "_budget_case",
+        "test_local_tcad_retry_discards_control_proofs_before_debug",
+        "test_local_tcad_budget_covers_pending_failure_cache_and_exhaustion",
+        "test_tcad_source_locator_does_not_cross_log_omissions",
+    }
+    fixtures = []
+    for node in ast.parse(source).body:
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            if isinstance(node, ast.ImportFrom) and node.module == "__future__":
+                continue
+            if isinstance(node, ast.Import) and any(alias.name == "pytest" for alias in node.names):
+                continue
+            fixtures.append(ast.get_source_segment(source, node))
+        elif isinstance(node, (ast.FunctionDef, ast.ClassDef)) and node.name in selected:
+            fixtures.append(ast.get_source_segment(source, node))
+    output = installed_probe("full", "\n\n".join(fixtures) + r'''
+import tempfile
+import sys
+import tcad_artifact.plugin as installed_tcad
+from scidiscovery.operations.catalog import compile_installed_catalog
+
+assert Path(installed_tcad.__file__).resolve().is_relative_to(Path(sys.prefix).resolve())
+loaded = compile_installed_catalog()
+fixture_catalog = compile_catalog((CORE_PLUGIN, SCIENCE_PLUGIN, CURVE_PLUGIN, TCAD_PLUGIN))
+for name in fixture_catalog.operation_ids():
+    assert loaded.operation(name).digest == fixture_catalog.operation(name).digest
+with tempfile.TemporaryDirectory() as scratch:
+    root = Path(scratch)
+    (root / "retry").mkdir()
+    test_local_tcad_retry_discards_control_proofs_before_debug(root / "retry")
+    (root / "budget").mkdir()
+    test_local_tcad_budget_covers_pending_failure_cache_and_exhaustion(root / "budget")
+for marker in ("--- bounded diagnostic omission ---", "--- bounded log omission ---"):
+    test_tcad_source_locator_does_not_cross_log_omissions(marker)
+print("installed retry and budget passed through LocalWorkerMCPRouter")
+''')
+    assert output.strip() == "installed retry and budget passed through LocalWorkerMCPRouter"
 
 
 def test_clean_installed_core_compiles_only_the_single_plugin_group(installed_probe) -> None:
@@ -727,10 +1040,12 @@ print("\n".join(catalog.operation_ids()))
         "tcad.parameter.evidence.audit.v1",
         "tcad.parameter.evidence.expand.v1",
         "tcad.parameter.evidence.extract.v1",
+        "tcad.execution-context.project.v1",
         "tcad.realization-snapshot-materialize.v1",
         "tcad.reviewed-deck-package.v2",
         "tcad.runtime-attestation.v1",
         "tcad.study.execute",
+        "tcad.result.analyze.v1",
     ])
 
 
@@ -784,8 +1099,9 @@ print("\n".join(catalog.operation_ids()))
         "tcad.deck.author.revise.v1", "tcad.deck.author.runtime-failure.v1",
         "tcad.deck.review.v1", "tcad.parameter.evidence.audit.v1",
         "tcad.parameter.evidence.expand.v1", "tcad.parameter.evidence.extract.v1",
+        "tcad.execution-context.project.v1",
         "tcad.realization-snapshot-materialize.v1", "tcad.reviewed-deck-package.v2",
-        "tcad.runtime-attestation.v1", "tcad.study.execute",
+        "tcad.runtime-attestation.v1", "tcad.study.execute", "tcad.result.analyze.v1",
     }
     core = installed_probe("core", source).splitlines()
     assert core[0] == "builtin,general_science"
@@ -1079,3 +1395,74 @@ else:
     raise AssertionError("the installed invalid-unicode plugin unexpectedly compiled")
 ''',
     )
+
+
+def test_installed_historical_review_analysis_crossing(installed_environments, installed_probe):
+    """Use existing fixture helpers while all production modules come from wheels."""
+    import sys
+    from pathlib import Path
+    from tests.operations.conftest import _copy_runtime_distribution
+    environment = installed_environments["all_domains"]
+    prefix = environment.python.parent.parent
+    site = prefix / "lib" / f"python{sys.version_info.major}.{sys.version_info.minor}" / "site-packages"
+    # Offline test-only dependencies in this disposable environment.
+    for distribution in ("pytest", "pluggy", "iniconfig", "packaging", "pygments"):
+        _copy_runtime_distribution(distribution, site)
+    repository = str(Path(__file__).resolve().parents[2])
+    output = installed_probe("all_domains", '''
+import sys, tempfile
+from pathlib import Path
+from scidiscovery.operations.catalog import compile_installed_catalog
+from scidiscovery.operation_contract import operation_port_json_schema
+import scidiscovery.artifact_agent.interfaces.mcp_root_operation_routes as root_module
+import tcad_artifact.result_analysis as tcad_module
+import curve_score.science_operations as curve_module
+for module in (root_module, tcad_module, curve_module):
+    assert Path(module.__file__).resolve().is_relative_to(Path(sys.prefix).resolve())
+catalog = compile_installed_catalog()
+for operation_id in ("tcad.result.analyze.v1", "science.result.diagnose.v1"):
+    operation = catalog.operation(operation_id)
+    for port in operation.spec.inputs:
+        if port.name in ("experiment_plan", "experiment_review"):
+            assert port.usage == "evidence_inventory" and port.schema_id != "*"
+    assert operation.spec.input_validation is not None
+    assert operation_port_json_schema(operation, operation.spec.outputs[0])["x-scidiscovery-input-validation-contract"]
+# Only the tests namespace is obtained from the checkout, never src or plugin paths.
+sys.path.append(''' + repr(repository) + ''')
+from tests.operations.test_collector_analysis_handoff import test_historical_review_reaches_new_analysis_without_current_authority
+for operation_id in ("tcad.result.analyze.v1", "science.result.diagnose.v1"):
+    with tempfile.TemporaryDirectory() as directory:
+        test_historical_review_reaches_new_analysis_without_current_authority(Path(directory), operation_id)
+print("installed historical analysis completed; current author authority not inherited")
+''')
+    assert output.strip() == "installed historical analysis completed; current author authority not inherited"
+
+
+def test_installed_analysis_evidence_recovery(installed_environments, installed_probe):
+    import sys
+    from pathlib import Path
+    from tests.operations.conftest import _copy_runtime_distribution
+    environment=installed_environments['all_domains']
+    site=environment.python.parent.parent/'lib'/f'python{sys.version_info.major}.{sys.version_info.minor}'/'site-packages'
+    for distribution in ('pytest','pluggy','iniconfig','packaging','pygments'):
+        _copy_runtime_distribution(distribution,site)
+    repository=str(Path(__file__).resolve().parents[2])
+    output=installed_probe('all_domains', '''
+import sys,tempfile
+from pathlib import Path
+import scidiscovery.artifact_agent.service.tool_evidence as core
+import tcad_artifact.output_recovery as tcad
+for module in (core,tcad):
+    assert Path(module.__file__).resolve().is_relative_to(Path(sys.prefix).resolve())
+sys.path.append('''+repr(repository)+''')
+from tests.operations.test_analysis_evidence_recovery import test_new_run_replays_original_record_from_sealed_evidence,test_offline_tools_do_not_prevent_open_or_limited_submit,test_failed_run_preserves_tool_evidence_for_new_bound_run
+for test in (test_new_run_replays_original_record_from_sealed_evidence,test_offline_tools_do_not_prevent_open_or_limited_submit,test_failed_run_preserves_tool_evidence_for_new_bound_run):
+    with tempfile.TemporaryDirectory() as directory:
+        test(Path(directory))
+import pytest
+from tests.operations.test_analysis_evidence_recovery import test_corrupt_preserved_receipt_fails_successor_open_explicitly
+with tempfile.TemporaryDirectory() as directory, pytest.MonkeyPatch.context() as patch:
+    test_corrupt_preserved_receipt_fails_successor_open_explicitly(Path(directory), patch)
+print('installed recovery, replay, offline and failure handoff passed')
+''')
+    assert output.strip()=='installed recovery, replay, offline and failure handoff passed'

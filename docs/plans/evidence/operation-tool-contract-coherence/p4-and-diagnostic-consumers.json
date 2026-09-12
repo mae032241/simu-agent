@@ -1,0 +1,22 @@
+{
+  "command": [
+    "python",
+    "-m",
+    "pytest",
+    "-q",
+    "tests/operations/test_analysis_claim_scope.py",
+    "tests/operations/test_result_analysis_tool.py",
+    "tests/operations/test_m2_curve_analysis_boundary.py",
+    "tests/operations/test_contract_attempts.py",
+    "tests/operations/test_case_mapping_basis.py",
+    "tests/operations/test_agent_contract_alignment.py::test_complete_revision_corrects_missing_global_and_subset_in_same_run",
+    "tests/operations/test_agent_contract_alignment.py::test_engineering_run_submission_is_correctable_then_completes",
+    "tests/operations/test_agent_contract_alignment.py::test_experiment_submission_preserves_declared_rule_id"
+  ],
+  "exit_code": 1,
+  "seconds": 25.411,
+  "peak_tree_rss_bytes": 152326144,
+  "budget_bytes": 536870912,
+  "early_stop_bytes": 469762048,
+  "memory_terminated": false
+}

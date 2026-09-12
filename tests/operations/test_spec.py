@@ -20,6 +20,8 @@ def test_operation_spec_is_the_frozen_declarative_contract() -> None:
         "outputs",
         "consequence",
         "input_admission",
+        "input_validation",
+        "complete_transform_family",
         "review",
         "guards",
         "limits",

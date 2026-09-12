@@ -1,0 +1,10 @@
+F
+=================================== FAILURES ===================================
+_________________ test_collection_keeps_later_products[False] __________________
+tests/operations/test_analysis_evidence_recovery.py:16: in test_collection_keeps_later_products
+    _collect_outputs(tmp_path,expected,{'max_output_bytes':4096},records=records,errors=errors)
+E   TypeError: _collect_outputs() got an unexpected keyword argument 'errors'
+=========================== short test summary info ============================
+FAILED tests/operations/test_analysis_evidence_recovery.py::test_collection_keeps_later_products[False]
+!!!!!!!!!!!!!!!!!!!!!!!!!! stopping after 1 failures !!!!!!!!!!!!!!!!!!!!!!!!!!!
+1 failed in 1.29s

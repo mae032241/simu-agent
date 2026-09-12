@@ -1,0 +1,149 @@
+{
+  "purpose": "Correct the omitted recovered TDR evidence binding and revise analysis without solver re-execution.",
+  "request": {
+    "name": "fig4_continuation_execution_analysis_recovery_complete_1",
+    "operation_id": "tcad.result.analyze.v1",
+    "inputs": [
+      {
+        "port": "execution_result",
+        "artifact_names": [
+          "fig4_continuation_execution_1.result"
+        ]
+      },
+      {
+        "port": "recovery_manifest",
+        "artifact_names": [
+          "fig4_continuation_execution_analysis_3.output.recovery_manifest"
+        ]
+      },
+      {
+        "port": "prior_analysis",
+        "artifact_names": [
+          "fig4_continuation_execution_analysis_independent_2.output"
+        ]
+      },
+      {
+        "port": "experiment_plan",
+        "artifact_names": [
+          "fig4_continuation_experiment_plan_3"
+        ]
+      },
+      {
+        "port": "experiment_review",
+        "artifact_names": [
+          "fig4_continuation_experiment_review_6.output"
+        ]
+      },
+      {
+        "port": "reviewed_package",
+        "artifact_names": [
+          "fig4_continuation_reviewed_package_2"
+        ]
+      },
+      {
+        "port": "runtime_manifest",
+        "artifact_names": [
+          "fig4_continuation_execution_1.output.tcad_manifest"
+        ]
+      },
+      {
+        "port": "runtime_attestation",
+        "artifact_names": []
+      },
+      {
+        "port": "solver_outputs",
+        "artifact_names": [
+          "fig4_continuation_execution_1.output.solver_log",
+          "fig4_continuation_execution_1.output.fig4_al_own_anchor_primary_plx",
+          "fig4_continuation_execution_analysis_3.output.tool_evidence_007",
+          "fig4_continuation_execution_analysis_3.output.tool_evidence_008",
+          "fig4_continuation_execution_analysis_3.output.tool_evidence_009",
+          "fig4_continuation_execution_analysis_3.output.tool_evidence_010",
+          "fig4_continuation_execution_analysis_3.output.tool_evidence_011",
+          "fig4_continuation_execution_analysis_3.output.tool_evidence_012",
+          "fig4_continuation_execution_analysis_3.output.tool_evidence_018",
+          "fig4_continuation_execution_analysis_3.output.tool_evidence_019",
+          "fig4_continuation_execution_analysis_3.output.tool_evidence_020",
+          "fig4_continuation_execution_analysis_3.output.tool_evidence_021",
+          "fig4_continuation_execution_analysis_3.output.tool_evidence_022"
+        ]
+      },
+      {
+        "port": "diagnostics",
+        "artifact_names": [
+          "fig4_continuation_execution_1.output.tcad_log"
+        ]
+      },
+      {
+        "port": "reference_material",
+        "artifact_names": [
+          "fig4_continuation_reference_bundle_1",
+          "fig4_continuation_figure_materialized_1.curve_tables_001",
+          "fig4_continuation_figure_materialized_1.curve_tables_002"
+        ]
+      },
+      {
+        "port": "current_progress",
+        "artifact_names": [
+          "fig4_continuation_objective_2",
+          "fig4_continuation_execution_analysis_3.output",
+          "fig4_continuation_execution_analysis_8.output"
+        ]
+      },
+      {
+        "port": "prior_analysis_manifest",
+        "artifact_names": [
+          "fig4_continuation_execution_analysis_independent_2.output.recovery_manifest"
+        ]
+      }
+    ],
+    "instruction": "本轮仅补齐此前遗漏绑定的原执行恢复证据并完成相应分析修订。依据绑定计划、受审项目、原执行及日志、恢复清单和全部已恢复原始文件，自主核对：哪些计划要求的产物已经存在并被受控接纳，仍有哪些真实缺口，既往分析中关于缺少产物、完整性和必须重执行的判断是否需要修正。明确区分原执行不可变的历史终态、补收集后的当前证据可用性，以及科学模型或假设的结论；既不改写历史状态，也不只凭旧 failed 自动否定恢复证据。保留已封存独立分析的数值结论与适用边界，重点完成此次证据完整性核验，不重复已经完成的定量分析。若引用既往数值，明确其来源而非宣称本轮新算；只有满足当前合同要求的精确来源和回执时才能复用 calculation_records，不能以相同字节替代原 Artifact 身份。产出一份完整、可供下游直接绑定的修订分析，明确本轮证据补充是否完成、剩余目标与实际必要的后续动作。仅使用已绑定或本 Operation 明确授权获取的证据，不修改原始文件、项目或执行记录，不启动求解器、访问网络或安装依赖。资源约束：一次一个计算进程树，累计 RSS 不超过 512 MiB，达到 448 MiB 提前停止；不运行全量测试、并行批次或压力测试。"
+  },
+  "preflight": {
+    "admissible": true,
+    "executor_kind": "agent",
+    "port": null,
+    "reason_code": null
+  },
+  "invocation": {
+    "executor_kind": "agent",
+    "operation_id": "tcad.result.analyze.v1",
+    "result": {
+      "agent_type": "op_tcad_result_analyze_v1_8314f7794897",
+      "backend": "local_trusted",
+      "candidate_accepted": false,
+      "completed_at": null,
+      "created_at": "2026-09-11T14:36:33.268920Z",
+      "deadline_at": "2026-09-11T14:51:33.268920Z",
+      "diagnostic_summary": {
+        "failure": null,
+        "latest_rejection": null,
+        "latest_tool_error": null,
+        "recent_errors": [],
+        "rejection_count": 0
+      },
+      "draft_from": null,
+      "head_advance": null,
+      "last_activity_at": null,
+      "logical_name": "fig4_continuation_execution_analysis_recovery_complete_1",
+      "name": "fig4_continuation_execution_analysis_recovery_complete_1",
+      "operation_id": "tcad.result.analyze.v1",
+      "output_artifact_name": null,
+      "reason": null,
+      "recovery": {
+        "delivery_preserved": false,
+        "draft_available": false,
+        "recovery_pending": false,
+        "resume_available": false
+      },
+      "recovery_available": false,
+      "revision": 1,
+      "scheduler_signal": null,
+      "scheduler_signal_status": "unavailable",
+      "sealed_output": null,
+      "sealed_output_status": "unavailable",
+      "started_at": null,
+      "state": "queued"
+    }
+  }
+}

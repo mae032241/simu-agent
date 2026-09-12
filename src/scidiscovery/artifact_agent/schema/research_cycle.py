@@ -25,12 +25,6 @@ class ResearchObservable(SchemaModel):
     ]
     acceptance_relevance: Annotated[str, Field(min_length=1, max_length=4096)]
 
-    @model_validator(mode="after")
-    def _references_are_unique(self) -> ResearchObservable:
-        if len(self.foundation_item_keys) != len(set(self.foundation_item_keys)):
-            raise ValueError("observable foundation_item_keys must be unique")
-        return self
-
 
 class ClaimBoundary(SchemaModel):
     allowed_claim: Annotated[str, Field(min_length=1, max_length=8192)]
@@ -65,8 +59,6 @@ class ProblemFrame(SchemaModel):
     def _frame_is_closed(self) -> ProblemFrame:
         foundation_keys = tuple(self.foundation_item_keys)
         observable_keys = tuple(item.observable_key for item in self.observables)
-        if len(foundation_keys) != len(set(foundation_keys)):
-            raise ValueError("problem foundation_item_keys must be unique")
         if len(observable_keys) != len(set(observable_keys)):
             raise ValueError("observable_key values must be unique")
         known = set(foundation_keys)
@@ -94,7 +86,7 @@ class HypothesisReview(SchemaModel):
 
 
 class ScientificReview(SchemaModel):
-    """A critic's structured scientific review, not a control-plane decision."""
+    """A reviewer's scientific verdict; individual dimension statuses do not derive it."""
 
     review_target: Literal[
         "problem_frame",
@@ -123,27 +115,13 @@ class ScientificReview(SchemaModel):
         keys = tuple(item.hypothesis_key for item in self.hypothesis_reviews)
         if len(keys) != len(set(keys)):
             raise ValueError("a scientific review may review each hypothesis once")
-        if len(self.evidence_item_keys) != len(set(self.evidence_item_keys)):
-            raise ValueError("scientific review evidence_item_keys must be unique")
         source_keys = tuple(item.source_key for item in self.evidence)
-        if len(source_keys) != len(set(source_keys)):
-            raise ValueError("scientific review evidence source_key values must be unique")
         known_sources = set(source_keys)
         for finding in self.findings:
             if not set(finding.evidence_keys).issubset(known_sources):
                 raise ValueError("scientific review finding references undeclared evidence")
         if self.review_target == "hypothesis_portfolio" and not self.hypothesis_reviews:
             raise ValueError("hypothesis portfolio review requires hypothesis_reviews")
-        if self.verdict == "pass" and any(
-            "fail"
-            in {
-                item.physical_plausibility,
-                item.falsifiability,
-                item.identifiability,
-            }
-            for item in self.hypothesis_reviews
-        ):
-            raise ValueError("passing review cannot contain a failed hypothesis dimension")
         return self
 
 

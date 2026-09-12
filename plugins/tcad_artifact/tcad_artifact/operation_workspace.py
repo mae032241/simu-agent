@@ -11,13 +11,14 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from scidiscovery.artifact_agent.schema.common import canonical_json
+from scidiscovery.artifact_agent.schema.common import canonical_json, canonical_sha256
 from scidiscovery.artifact_agent.schema.role_result import (
     RoleHandoff,
     RoleResultEnvelope,
     parse_role_result,
 )
 from scidiscovery.operations.spec import CallableComponent
+from scidiscovery.operation_contract import contract_diagnostic, DeclaredDiagnostic, validation_diagnostics
 from scidiscovery.operations.workspace import (
     WorkspaceFileRequest,
     WorkspaceFileRule,
@@ -35,7 +36,16 @@ from .project_materializer import (
     materialize_deck_project,
     report_json,
 )
-from .project_packager import DeckProjectDraft
+from .project_packager import (
+    DeckProjectDraft,
+    DeckFile,
+    ImplementationGap,
+    parse_author_result,
+    validate_implementation_gap,
+    ProjectInitializationAttestation,
+    ProjectPreflightAttestation,
+    project_debug_sha256,
+)
 
 
 _AUTHOR_PREFIX = "tcad.deck.author."
@@ -50,17 +60,24 @@ _MAX_SOURCE_TOTAL_BYTES = 64 * 1024 * 1024
 _MAX_SOURCE_FILES = 4096
 
 
+def _deck_root(root: Path) -> Path:
+    deck = root / "deck"
+    try:
+        details = os.lstat(deck)
+    except OSError as error:
+        raise WorkspaceProtocolError("deck must be an existing task-local directory") from error
+    if stat.S_ISLNK(details.st_mode) or not stat.S_ISDIR(details.st_mode):
+        raise WorkspaceProtocolError("deck must be a real task-local directory, not a symbolic link")
+    return deck
+
+
 def _protocol_error(message: str, error: Exception | None = None) -> WorkspaceProtocolError:
-    details: tuple[dict[str, str], ...] = ()
+    details: tuple[dict[str, str], ...] = getattr(error, "details", ())
     if isinstance(error, ValidationError):
-        details = tuple(
-            {
-                "path": "$.deck." + ".".join(str(item) for item in issue["loc"]),
-                "message": issue["msg"],
-                "type": issue["type"],
-            }
-            for issue in error.errors(include_url=False)
-        )
+        schema = {"allOf": [DeckProjectDraft.model_json_schema(), ImplementationGap.model_json_schema()]}
+        details = tuple(DeclaredDiagnostic({**item, "path": "$.deck" + item["path"][1:]})
+            for item in validation_diagnostics(error, schema=schema,
+                phase="output_payload", action="submit"))
     return WorkspaceProtocolError(message, details=details)
 
 
@@ -72,10 +89,16 @@ def _read(path: Path, *, max_bytes: int) -> bytes:
     if stat.S_ISLNK(details.st_mode) or not stat.S_ISREG(details.st_mode):
         raise WorkspaceProtocolError("workspace item must be a regular non-symlink file")
     if details.st_size > max_bytes:
-        raise WorkspaceProtocolError("workspace file exceeds its byte limit")
+        raise WorkspaceProtocolError("workspace file exceeds its byte limit", details=(
+            contract_diagnostic("output_invalid", phase="output_payload", affected_action="submit",
+                path="$.deck.files", repairable=True,
+                message=f"Workspace file exceeds its byte limit ({max_bytes} bytes)."),))
     raw = path.read_bytes()
     if len(raw) > max_bytes:
-        raise WorkspaceProtocolError("workspace file exceeds its byte limit")
+        raise WorkspaceProtocolError("workspace file exceeds its byte limit", details=(
+            contract_diagnostic("output_invalid", phase="output_payload", affected_action="submit",
+                path="$.deck.files", repairable=True,
+                message=f"Workspace file exceeds its byte limit ({max_bytes} bytes)."),))
     return raw
 
 
@@ -112,7 +135,7 @@ def _input(request: WorkspaceMaterializationRequest | WorkspaceFinalizationReque
     return _read(path, max_bytes=64 * 1024 * 1024)
 
 
-def _source_files(root: Path) -> list[dict[str, str]]:
+def _source_files(root: Path, *, max_bytes: int = _MAX_SOURCE_TOTAL_BYTES, max_files: int = _MAX_SOURCE_FILES) -> list[dict[str, str]]:
     try:
         root_details = os.lstat(root)
     except OSError as error:
@@ -132,7 +155,7 @@ def _source_files(root: Path) -> list[dict[str, str]]:
             path = current_path / name
             raw = _read(path, max_bytes=_MAX_SOURCE_FILE_BYTES)
             total += len(raw)
-            if total > _MAX_SOURCE_TOTAL_BYTES or len(values) >= _MAX_SOURCE_FILES:
+            if total > max_bytes or len(values) >= max_files:
                 raise WorkspaceProtocolError("deck source tree exceeds its bound")
             try:
                 content = raw.decode("utf-8")
@@ -148,16 +171,14 @@ def _source_files(root: Path) -> list[dict[str, str]]:
     return values
 
 
-def _restore_retry(request: WorkspaceMaterializationRequest) -> tuple[DeckProjectDraft, dict[str, Any]] | None:
+def _restore_retry(request: WorkspaceMaterializationRequest) -> tuple[DeckProjectDraft | ImplementationGap, dict[str, Any]] | None:
     for root in reversed(request.provisional_roots):
         result = root / "result.json"
         if result.is_file() and not result.is_symlink():
             try:
                 envelope = parse_role_result(json.loads(result.read_text("utf-8")))
                 return (
-                    DeckProjectDraft.model_validate_json(
-                        canonical_json(envelope.payload), strict=True
-                    ),
+                    parse_author_result(canonical_json(envelope.payload)),
                     envelope.handoff.model_dump(mode="json"),
                 )
             except (OSError, UnicodeError, json.JSONDecodeError, ValidationError):
@@ -180,31 +201,78 @@ def _restore_retry(request: WorkspaceMaterializationRequest) -> tuple[DeckProjec
     return None
 
 
-def _restore_retry_tree(request: WorkspaceMaterializationRequest, deck: Path) -> bool:
+def _author_metadata(metadata: dict[str, Any], *, deterministic: bool) -> dict[str, Any]:
+    metadata = dict(metadata)
+    for field in ("materialization_report", "preflight_attestation", "initialization_attestation"):
+        metadata.pop(field, None)
+    if deterministic:
+        for field in (
+            "schema_version", "tool_profile", "solver_kind", "capability_sha256",
+            "expected_outputs", "parameter_bindings", "case_parameter_bindings",
+            "runtime_assertions", "realization_manifest",
+        ):
+            metadata.pop(field, None)
+    return metadata
+
+
+def _restore_retry_tree(
+    request: WorkspaceMaterializationRequest, deck: Path, *, deterministic: bool
+) -> bool:
     """Restore the latest bounded raw candidate, including a not-yet-valid deck."""
 
     for root in reversed(request.provisional_roots):
         source = root / "deck"
-        files = source / "files"
-        if not files.is_dir() or files.is_symlink():
+        if not source.is_dir():
             continue
-        restored = _source_files(files)
-        for name, limit in (
-            ("project.json", 8 * 1024 * 1024),
-            ("declarations.json", 8 * 1024 * 1024),
-            ("handoff.json", 64 * 1024),
-        ):
-            path = source / name
-            if path.is_file() and not path.is_symlink():
-                _write(deck / name, _read(path, max_bytes=limit), editable=True)
-        for item in restored:
-            _write(
-                deck / "files" / item["relative_path"],
-                item["content"].encode("utf-8"),
-                editable=True,
-            )
+        _deck_root(root)
+        for name in ("gap.json", "handoff.json"):
+            if (source / name).exists():
+                _write(deck / name, _read(source / name, max_bytes=64 * 1024), editable=True)
+        _restore_attempt(deck, _attempt_files(source), author=True, deterministic=deterministic)
         return True
     return False
+
+
+def _attempt_files(deck: Path) -> tuple[DeckFile, ...]:
+    """Capture bounded source and diagnostics, without granting execution readiness."""
+    values = []
+    for name in ("project.json", "declarations.json", "attempts.md"):
+        if (deck / name).exists():
+            values.append(DeckFile(
+                relative_path=name,
+                content=_read(deck / name, max_bytes=8 * 1024 * 1024).decode("utf-8"),
+            ))
+    for directory in ("files", "reports"):
+        root = deck / directory
+        if root.exists():
+            for item in _source_files(root, max_bytes=16 * 1024 * 1024, max_files=128):
+                values.append(DeckFile(relative_path=f"{directory}/{item['relative_path']}", content=item["content"]))
+    if len(values) > 128 or sum(len(item.content.encode("utf-8")) for item in values) > 16 * 1024 * 1024:
+        raise WorkspaceProtocolError("attempt record exceeds its file or byte limit")
+    return tuple(values)
+
+
+def _restore_attempt(deck: Path, files: tuple[DeckFile, ...], *, author: bool, deterministic: bool) -> None:
+    for item in files:
+        path = item.relative_path
+        content = item.content.encode("utf-8")
+        if author and path == "project.json":
+            try:
+                metadata = json.loads(content)
+            except (ValueError, UnicodeError):
+                metadata = None
+            if isinstance(metadata, dict):
+                content = _pretty(_author_metadata(metadata, deterministic=deterministic))
+            else:
+                # An unfinished metadata edit must remain diagnosable, not
+                # prevent creation of the repair workspace.
+                path = f"reports/history/{canonical_sha256(item.content)}_project.json"
+
+        if author and path.startswith("reports/") and not path.startswith("reports/history/"):
+            # Historical diagnostics remain readable; fresh completion proofs must
+            # be generated at the current reports/preflight|initialization paths.
+            path = f"reports/history/{canonical_sha256(item.content)}_{Path(path).name}"
+        _write(deck / path, content, editable=author and not path.startswith("reports/") and (path != "project.json" or not deterministic))
 
 
 def _capability_snapshot(raw: bytes) -> dict[str, Any]:
@@ -233,7 +301,7 @@ def _make_tree_read_only(root: Path) -> None:
     root.chmod(0o500)
 
 
-def _review_template(project: DeckProjectDraft) -> bytes:
+def _review_template(project: DeckProjectDraft | ImplementationGap) -> bytes:
     """Build a structural, fail-closed review template without making a verdict."""
 
     requirements = [
@@ -242,7 +310,7 @@ def _review_template(project: DeckProjectDraft) -> bytes:
             "status": "unknown",
             "rationale": "由独立审查者填写该要求的代码与物理核查结论。",
         }
-        for item in project.realization_manifest
+        for item in (() if isinstance(project, ImplementationGap) else project.realization_manifest)
     ]
     return _pretty(
         {
@@ -256,7 +324,7 @@ def _review_template(project: DeckProjectDraft) -> bytes:
             },
             "payload": {
                 "verdict": "blocked",
-                "capability_sha256": project.capability_sha256,
+                "capability_sha256": None if isinstance(project, ImplementationGap) else project.capability_sha256,
                 "summary": "结构模板；尚未形成科学审查结论。",
                 "rationale": "逐项检查任务内项目、实验计划和能力声明后填写。",
                 "physical_fidelity": "unknown",
@@ -299,30 +367,50 @@ def materialize_workspace(
     base: DeckProjectDraft | None = None
     handoff: dict[str, Any] | None = None
     if author:
-        raw_retry = _restore_retry_tree(request, deck)
+        raw_retry = _restore_retry_tree(request, deck, deterministic=deterministic)
         restored = None if raw_retry else _restore_retry(request)
         if raw_retry:
             mode = "retry"
         elif restored is not None:
             mode = "retry"
             base, handoff = restored
+            if isinstance(base, ImplementationGap):
+                _restore_attempt(deck, base.attempt_files, author=True, deterministic=deterministic)
+                _write(deck / "gap.json", _pretty(base.model_dump(mode="json", exclude={"attempt_files"})), editable=True)
+                base = None
         elif revision:
             mode = "revise"
             try:
-                base = DeckProjectDraft.model_validate_json(
-                    _input(request, "prior_project"), strict=True
-                )
+                base = parse_author_result(_input(request, "prior_project"))
             except ValidationError as error:
                 raise _protocol_error("prior_project is invalid", error) from error
         else:
             mode = "create"
     else:
         try:
-            base = DeckProjectDraft.model_validate_json(
-                _input(request, "project"), strict=True
-            )
+            base = parse_author_result(_input(request, "project"))
         except ValidationError as error:
             raise _protocol_error("review project is invalid", error) from error
+
+    if author and isinstance(base, ImplementationGap):
+        _restore_attempt(deck, base.attempt_files, author=True, deterministic=deterministic)
+        _write(deck / "gap.json", _pretty(base.model_dump(mode="json", exclude={"attempt_files"})), editable=True)
+        base = None
+
+    if not author and isinstance(base, ImplementationGap):
+        _restore_attempt(deck, base.attempt_files, author=False, deterministic=False)
+        _write(deck / "gap.json", _pretty(base.model_dump(mode="json")), editable=False)
+        _write(deck / "review-template.json", _review_template(base), editable=False)
+        _make_tree_read_only(deck)
+        return WorkspaceMaterializationResult(
+            manifest_name="domain_workspace",
+            manifest={"protocol": "scidiscovery.tcad-deck-workspace.v2", "mode": "review_gap",
+                      "access": "read_only", "root_relative_path": "deck",
+                      "gap_relative_path": "deck/gap.json", "review_template_relative_path": "deck/review-template.json"},
+            paths={"deck_workspace_path": str(deck), "deck_gap_path": str(deck / "gap.json"),
+                   "deck_review_template_path": str(deck / "review-template.json"), "deck_access": "read_only", "deck_mode": "review_gap"},
+            read_paths=("deck",),
+        )
 
     metadata_path = deck / "project.json"
     declarations_path = deck / "declarations.json"
@@ -350,25 +438,9 @@ def materialize_workspace(
         else:
             metadata = base.model_dump(mode="json")
             metadata.pop("files", None)
-            if revision:
-                # These reports attest the exact old source bytes.  A revision
-                # inherits Worker-owned project content, never stale
-                # control-owned validation facts.
-                metadata.pop("materialization_report", None)
-                metadata.pop("preflight_attestation", None)
-            if deterministic:
-                for generated in (
-                    "schema_version",
-                    "tool_profile",
-                    "solver_kind",
-                    "capability_sha256",
-                    "expected_outputs",
-                    "parameter_bindings",
-                    "case_parameter_bindings",
-                    "runtime_assertions",
-                    "realization_manifest",
-                ):
-                    metadata.pop(generated, None)
+            if author:
+                # Retry/revision inherits authored content, never old control proofs.
+                metadata = _author_metadata(metadata, deterministic=deterministic)
             for item in base.files:
                 _write(
                     files_root / item.relative_path,
@@ -460,6 +532,10 @@ def materialize_workspace(
         )
     if author:
         manifest["handoff_relative_path"] = "deck/handoff.json"
+        manifest["gap_relative_path"] = "deck/gap.json"
+        manifest["attempt_notes_relative_path"] = "deck/attempts.md"
+        manifest["historical_reports_are_completion_proofs"] = False
+        manifest["gap_schema_pointer"] = "/properties/payload"
     paths: dict[str, Any] = {
         "deck_workspace_path": str(deck),
         "deck_files_path": str(files_root),
@@ -470,6 +546,9 @@ def materialize_workspace(
     }
     if author:
         paths["deck_handoff_path"] = str(handoff_path)
+        paths["deck_gap_path"] = str(deck / "gap.json")
+        paths["deck_preflight_attestation_path"] = str(reports / "preflight.json")
+        paths["deck_initialization_attestation_path"] = str(reports / "initialization.json")
         if deterministic:
             paths.update(
                 {
@@ -477,7 +556,6 @@ def materialize_workspace(
                     "deck_contract_path": str(contract),
                     "deck_materialization_spec_path": str(contract / "materialization-spec.json"),
                     "deck_materialization_report_path": str(reports / "materialization.json"),
-                    "deck_preflight_attestation_path": str(reports / "preflight.json"),
                 }
             )
     else:
@@ -502,6 +580,10 @@ def workspace_file_policy(request: WorkspaceFileRequest) -> WorkspaceFileRule | 
         if not (request.workspace / relative).exists():
             raise WorkspaceProtocolError("deck/declarations.json is not declared")
         return WorkspaceFileRule(8 * 1024 * 1024)
+    if relative == Path("deck/attempts.md"):
+        return WorkspaceFileRule(64 * 1024)
+    if relative == Path("deck/gap.json"):
+        return WorkspaceFileRule(64 * 1024, removable=True)
     if relative == Path("deck/handoff.json"):
         return WorkspaceFileRule(64 * 1024)
     if len(relative.parts) >= 3 and relative.parts[:2] == ("deck", "files"):
@@ -511,10 +593,46 @@ def workspace_file_policy(request: WorkspaceFileRequest) -> WorkspaceFileRule | 
     return None
 
 
+def finalize_review_workspace(request: WorkspaceFinalizationRequest) -> bytes:
+    from scidiscovery.artifact_agent.service.result_materialization import finalize_result
+    def project(value):
+        payload = value["payload"]
+        project_name = next((name for name in ("project", "revised_project") if name in request.input_paths), None)
+        if project_name is not None:
+            source = json.loads(_input(request, project_name))
+            if source.get("result_kind") == "implementation_gap":
+                source = json.loads(_input(request, "execution_capability"))
+            if source.get("capability_sha256") is not None:
+                payload["capability_sha256"] = source["capability_sha256"]
+        if payload.get("verdict") in {"pass", "revise", "blocked"} and isinstance(value.get("handoff"), dict):
+            value["handoff"]["verdict"] = payload["verdict"]
+    return finalize_result(request, project)
+
+
+REVIEW_FINALIZER_COMPONENT = CallableComponent("workspace_finalizer", finalize_review_workspace)
+
+
 def finalize_workspace(request: WorkspaceFinalizationRequest) -> bytes:
     if not request.operation_id.startswith(_AUTHOR_PREFIX):
         raise WorkspaceProtocolError("this operation has no TCAD author finalizer")
-    deck = request.workspace / "deck"
+    deck = _deck_root(request.workspace)
+    if (deck / "gap.json").exists():
+        try:
+            gap = ImplementationGap.model_validate_json(_read(deck / "gap.json", max_bytes=64 * 1024), strict=True)
+            handoff_value = json.loads(_read(deck / "handoff.json", max_bytes=64 * 1024))
+            if isinstance(handoff_value, dict):
+                handoff_value["verdict"] = "blocked"
+            handoff = RoleHandoff.model_validate_json(canonical_json(handoff_value), strict=True)
+            inputs = {name: _input(request, name) for name in ("experiment_plan", "prior_project") if name in request.input_paths}
+            # The finalizer owns captured files; never trust an authored snapshot.
+            gap = gap.model_copy(update={"attempt_files": _attempt_files(deck)})
+            validate_implementation_gap(gap, inputs, handoff.model_dump(mode="json"))
+        except (ValidationError, ValueError) as error:
+            raise _protocol_error("TCAD implementation gap is invalid", error) from error
+        raw = RoleResultEnvelope[Any](schema_version=1, handoff=handoff, payload=gap).canonical_json()
+        if len(raw) > request.output_limit_bytes:
+            raise WorkspaceProtocolError("implementation gap exceeds output limit")
+        return raw
     try:
         metadata = json.loads(_read(deck / "project.json", max_bytes=8 * 1024 * 1024))
         handoff = RoleHandoff.model_validate_json(
@@ -524,26 +642,24 @@ def finalize_workspace(request: WorkspaceFinalizationRequest) -> bytes:
         raise _protocol_error("TCAD deck workspace is invalid", error) from error
     if not isinstance(metadata, dict) or "files" in metadata:
         raise WorkspaceProtocolError("deck/project.json must not embed source files")
+    for field in ("preflight_attestation", "initialization_attestation"):
+        if metadata.pop(field, None) is not None:
+            raise WorkspaceProtocolError(f"{field} is control-owned and cannot be authored")
     files = _source_files(deck / "files")
     deterministic = (deck / "declarations.json").is_file()
+    declarations_sha = None
     if deterministic:
         try:
             declarations = json.loads(
                 _read(deck / "declarations.json", max_bytes=8 * 1024 * 1024)
             )
-            preflight_path = deck / "reports/preflight.json"
-            preflight = (
-                json.loads(_read(preflight_path, max_bytes=16 * 1024))
-                if preflight_path.is_file()
-                else None
-            )
+            declarations_sha = canonical_sha256(declarations)
             project = materialize_deck_project(
                 metadata=metadata,
                 declarations=declarations,
                 files=files,
                 experiment_plan=_input(request, "experiment_plan"),
                 execution_capability=_input(request, "execution_capability"),
-                preflight_attestation=preflight,
             )
         except ProjectMaterializationError as error:
             report_path = deck / "reports/materialization.json"
@@ -559,22 +675,49 @@ def finalize_workspace(request: WorkspaceFinalizationRequest) -> bytes:
             report_path.unlink()
         _write(report_path, report_json(project.materialization_report), editable=False)
     else:
-        worker_preflight = metadata.pop("preflight_attestation", None)
-        if worker_preflight is not None:
-            raise WorkspaceProtocolError(
-                "preflight_attestation is control-owned and cannot be authored"
-            )
-        preflight_path = deck / "reports/preflight.json"
-        if preflight_path.is_file():
-            metadata["preflight_attestation"] = json.loads(
-                _read(preflight_path, max_bytes=16 * 1024)
-            )
         try:
             project = DeckProjectDraft.model_validate_json(
                 canonical_json({**metadata, "files": files}), strict=True
             )
         except (ValidationError, json.JSONDecodeError) as error:
             raise _protocol_error("TCAD deck workspace is invalid", error) from error
+    for mode, model in (
+        ("preflight", ProjectPreflightAttestation),
+        ("initialization", ProjectInitializationAttestation),
+    ):
+        required = mode == "preflight" or (
+            request.operation_id == "tcad.deck.author.initial.v1"
+            or project.development_initialization_entrypoint is not None
+        )
+        report_path = deck / f"reports/{mode}.json"
+        report = None
+        problem = "missing"
+        if report_path.is_file():
+            try:
+                report = model.model_validate_json(_read(report_path, max_bytes=16 * 1024), strict=True)
+                problem = "failed" if not report.qualified else "stale"
+                if (
+                    report.qualified
+                    and report.project_sha256 == project_debug_sha256(project)
+                    and report.declarations_sha256 == declarations_sha
+                ):
+                    # Validate both source and project bindings before exposing the report.
+                    project = DeckProjectDraft.model_validate_json(canonical_json({
+                        **project.model_dump(mode="json"),
+                        f"{mode}_attestation": report.model_dump(mode="json"),
+                    }), strict=True)
+                    continue
+            except (ValidationError, json.JSONDecodeError):
+                problem = "invalid"
+        if request.final_submission and required:
+            raise WorkspaceProtocolError(
+                f"TCAD final submission requires a current qualified {mode}",
+                details=({
+                    "path": f"$.deck.reports.{mode}",
+                    "message": f"{mode} is {problem}; run {mode} against the current source and declarations before resubmitting",
+                    "type": f"tcad_{mode}_{problem}",
+                },),
+            )
     if request.operation_id in _REVISION_OPERATIONS:
         try:
             base = DeckProjectDraft.model_validate_json(
@@ -608,30 +751,13 @@ def finalize_workspace(request: WorkspaceFinalizationRequest) -> bytes:
 
 
 def snapshot_workspace(root: Path) -> tuple[WorkspaceSnapshotFile, ...]:
-    deck = root / "deck"
+    deck = _deck_root(root)
     values: list[WorkspaceSnapshotFile] = []
-    for name, limit in (
-        ("project.json", 8 * 1024 * 1024),
-        ("declarations.json", 8 * 1024 * 1024),
-        ("handoff.json", 64 * 1024),
-    ):
-        path = deck / name
-        if path.is_file() and not path.is_symlink():
-            values.append(
-                WorkspaceSnapshotFile(
-                    relative_path=f"deck/{name}",
-                    media_type="application/json",
-                    content=_read(path, max_bytes=limit),
-                )
-            )
-    for item in _source_files(deck / "files"):
-        values.append(
-            WorkspaceSnapshotFile(
-                relative_path=f"deck/files/{item['relative_path']}",
-                media_type="text/plain",
-                content=item["content"].encode("utf-8"),
-            )
-        )
+    for name in ("gap.json", "handoff.json"):
+        if (deck / name).exists():
+            values.append(WorkspaceSnapshotFile(relative_path=f"deck/{name}", media_type="application/json", content=_read(deck / name, max_bytes=64 * 1024)))
+    for item in _attempt_files(deck):
+        values.append(WorkspaceSnapshotFile(relative_path=f"deck/{item.relative_path}", media_type="text/plain", content=item.content.encode("utf-8")))
     return tuple(values)
 
 

@@ -1,0 +1,21 @@
+{
+  "command": [
+    "python",
+    "-m",
+    "pytest",
+    "-q",
+    "tests/operations/test_result_analysis_tool.py",
+    "tests/operations/test_analysis_claim_scope.py",
+    "tests/operations/test_case_mapping_basis.py",
+    "tests/operations/test_prior_analysis_sources.py",
+    "tests/operations/test_contract_attempts.py",
+    "tests/operations/test_tcad_result_analysis.py",
+    "tests/operations/test_validation_responsibility_pruning.py"
+  ],
+  "exit_code": 0,
+  "seconds": 50.5,
+  "peak_tree_rss_bytes": 153571328,
+  "budget_bytes": 536870912,
+  "early_stop_bytes": 469762048,
+  "memory_terminated": false
+}

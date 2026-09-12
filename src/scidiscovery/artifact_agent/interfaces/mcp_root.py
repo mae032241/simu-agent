@@ -8,6 +8,11 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from ...operation_contract import validation_diagnostics, contract_diagnostic
+from ...operations.tooling import parse_tool_arguments
+from ...operations.invoke import EmptyOperationParameters
+from ...operations.spec import freeze_json, json_projection
+
 from ..execution_bridge import ExecutionBridge
 from ..service.approvals import ApprovalService
 from ..service.artifacts import ArtifactService
@@ -72,8 +77,16 @@ class OperationCallInput(NamedInput, RevisionInput):
     operation_id: str = Field(min_length=1, max_length=128)
     inputs: tuple[OperationInputSelection, ...] = Field(max_length=64)
     instruction: str | None = Field(default=None, max_length=65536)
-    parameters: dict[str, Any] = Field(default_factory=dict, max_length=32)
+    parameters: EmptyOperationParameters = Field(default_factory=dict)
+    max_attempts: int | None = Field(
+        default=None, ge=1, strict=True,
+        description="Scheduler-selected total Run budget for this recovery chain, including its first Run. An explicit value supersedes earlier attempt budgets for this new request; omission inherits the last scheduler budget or the Operation default. Other resource and identity limits are unchanged.",
+    )
     resume_from: str | None = Field(default=None, pattern=_NAME_PATTERN)
+    draft_from: str | None = Field(
+        default=None, pattern=_NAME_PATTERN,
+        description="Failed Run name in this instance whose preserved draft is starting material under the new inputs and contract; mutually exclusive with resume_from and never scientific evidence.",
+    )
 
 
 class ScientificCurrentSelectInput(NamedInput):
@@ -375,9 +388,10 @@ class RootMCPRouter:
         tools = root_tools_for_backend("local")
         self._ordered_tools = tools
         self._tools = {tool.name: tool for tool in tools}
+        self._tool_schemas = tuple(freeze_json(tool.schema()) for tool in tools)
 
     def list_tools(self) -> list[dict[str, Any]]:
-        return [tool.schema() for tool in self._ordered_tools]
+        return json_projection(self._tool_schemas)
 
     def call_tool(self, name: str, arguments: dict[str, Any] | None) -> Any:
         try:
@@ -385,9 +399,10 @@ class RootMCPRouter:
         except KeyError as error:
             raise RootToolError(f"unknown root tool: {name}") from error
         try:
-            parsed = tool.input_model.model_validate(arguments or {}, strict=False)
+            parsed = parse_tool_arguments(tool.input_model, arguments)
         except ValidationError as error:
-            raise RootToolError(f"invalid arguments for {name}: {error}") from error
+            raise RootToolError("tool arguments do not satisfy the declared model",
+                    details=validation_diagnostics(error, schema=tool.schema()["inputSchema"])) from error
         values = {field: getattr(parsed, field) for field in type(parsed).model_fields}
         return getattr(self.facade, name)(**values)
 

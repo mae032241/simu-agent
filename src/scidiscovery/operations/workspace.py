@@ -13,6 +13,7 @@ from types import MappingProxyType
 from typing import Any, Callable, Literal, Mapping
 
 from .spec import CompiledOperation
+from .input_validation import InputBindingDescriptor
 
 
 WORKSPACE_HOOK_KINDS = frozenset(
@@ -42,11 +43,13 @@ class WorkspaceMaterializationRequest:
     input_paths: Mapping[str, Path]
     provisional_roots: tuple[Path, ...]
     edit_protocol: Literal["mcp", "native"] = "mcp"
+    binding_descriptors: Mapping[str, InputBindingDescriptor] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         object.__setattr__(
             self, "input_paths", MappingProxyType(dict(self.input_paths))
         )
+        object.__setattr__(self, "binding_descriptors", MappingProxyType(dict(self.binding_descriptors)))
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,11 +88,15 @@ class WorkspaceFinalizationRequest:
     workspace: Path
     input_paths: Mapping[str, Path]
     output_limit_bytes: int
+    final_submission: bool = True
+    output_schema_id: str = ""
+    binding_descriptors: Mapping[str, InputBindingDescriptor] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         object.__setattr__(
             self, "input_paths", MappingProxyType(dict(self.input_paths))
         )
+        object.__setattr__(self, "binding_descriptors", MappingProxyType(dict(self.binding_descriptors)))
 
 
 @dataclass(frozen=True, slots=True)

@@ -10,7 +10,7 @@ from dataclasses import asdict
 from pathlib import Path
 
 from scidiscovery.artifact_agent.operation_tool_context import OperationToolContext
-from scidiscovery.artifact_agent.schema.common import canonical_json
+from scidiscovery.artifact_agent.schema.common import canonical_json, canonical_sha256
 from scidiscovery.artifact_agent.schema.role_result import parse_role_result
 from scidiscovery.artifact_agent.service.local_workspace import (
     WorkspaceError,
@@ -22,13 +22,52 @@ from scidiscovery.artifact_agent.service.run_outputs import (
 )
 
 from .debug_contract import TCADDebugError, TCADDebugSource, TCADDevelopmentDebugAdapter
-from .project_packager import DeckProjectDraft
+from .debug_adapter import _development_limits
+from .project_packager import DeckProjectDraft, project_debug_sha256
 
 
 _RUN_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
 _MODES = frozenset({"preflight", "smoke", "initialization"})
 _TERMINAL = frozenset({"succeeded", "failed", "cancelled"})
 _STATES = frozenset({"accepted", "running", "cancelling", *_TERMINAL})
+_MAX_RUNS = 6
+_TOTAL_WALL_SECONDS = 360
+_MAX_RESPONSE_BYTES = 32 * 1024
+
+
+def debug_tool_description() -> str:
+    modes = ", ".join(f"{mode} {_development_limits(mode)[0]}s" for mode in sorted(_MODES))
+    return (
+        "Submit or poll one bounded TCAD development diagnostic; never scientific evidence. "
+        f"Budget: {_TOTAL_WALL_SECONDS}s reserved wall time and {_MAX_RUNS} created run names. "
+        f"Mode caps: {modes}. Each submitted job reserves its capped wall limit once, "
+        "further clamped by project limits, remaining debug budget and Run time; "
+        "solver failure does not refund it. Repeat the same name/mode to poll without "
+        "new reservation; use a new name after source corrections, which do not reset "
+        "the budget. Responses report current budget and per-job reservation."
+    )
+
+
+def debug_response(context: OperationToolContext, run_name: str, response: dict) -> dict:
+    runs = context.state.get("runs", {})
+    used = context.state.get("reserved_wall_seconds", 0)
+    remaining = max(0, _TOTAL_WALL_SECONDS - used)
+    result = {**response, "budget": {
+        "total_wall_seconds": _TOTAL_WALL_SECONDS,
+        "reserved_wall_seconds": used,
+        "remaining_wall_seconds": remaining,
+        "max_runs": _MAX_RUNS,
+        "created_runs": len(runs),
+        "remaining_runs": max(0, _MAX_RUNS - len(runs)),
+        "run_remaining_seconds": context.remaining_seconds,
+        "effective_wall_seconds": max(0, min(remaining, context.remaining_seconds)),
+    }}
+    record = runs.get(run_name)
+    if record is not None:
+        result["reserved_wall_seconds_for_run"] = record["reserved_wall_seconds"]
+    if len(canonical_json(result)) > _MAX_RESPONSE_BYTES:
+        raise TCADDebugError("TCAD debug diagnostic response exceeds its bound")
+    return result
 
 
 class LocalTCADDebugService:
@@ -51,7 +90,7 @@ class LocalTCADDebugService:
             raise TCADDebugError("local TCAD debug state is invalid")
         record = runs.get(run_name)
         if record is None:
-            if len(runs) >= 6:
+            if len(runs) >= _MAX_RUNS:
                 raise TCADDebugError("TCAD development debug run limit is exhausted")
             record = self._start(context, run_name, mode)
             runs[run_name] = record
@@ -85,10 +124,15 @@ class LocalTCADDebugService:
         used = context.state.get("reserved_wall_seconds", 0)
         if type(used) is not int or used < 0:
             raise TCADDebugError("local TCAD debug budget is invalid")
-        remaining = min(context.remaining_seconds, 360 - used)
+        remaining = min(context.remaining_seconds, _TOTAL_WALL_SECONDS - used)
         if remaining < 1:
             raise TCADDebugError("TCAD development debug budget is exhausted")
         project, source_sha, sources = _candidate(context)
+        declarations_path = context.workspace / "deck/declarations.json"
+        declarations_sha = (
+            canonical_sha256(json.loads(declarations_path.read_bytes()))
+            if declarations_path.is_file() else None
+        )
         exchange = self.exchange_root / uuid.uuid4().hex / run_name
         exchange.mkdir(parents=True, mode=0o700)
         try:
@@ -112,9 +156,14 @@ class LocalTCADDebugService:
         context.record_activity("tcad_debug_submitted")
         return {
             "mode": mode,
+            "reserved_wall_seconds": prepared.wall_time_seconds,
             "external_run_id": external_run_id,
             "state": _state(state),
             "source_tree_sha256": source_sha,
+            "project_sha256": project_debug_sha256(
+                DeckProjectDraft.model_validate_json(project, strict=True)
+            ),
+            "declarations_sha256": declarations_sha,
         }
 
     def _finish(self, context, run_name, mode, record, collected) -> dict[str, object]:
@@ -126,6 +175,12 @@ class LocalTCADDebugService:
         outputs = []
         for item in collected.files:
             _write_private(root / item.name, item.content)
+            if item.name == "debug.log.txt":
+                write_control_workspace_file(
+                    context.workspace,
+                    Path(f"deck/reports/log-{run_name}.txt"),
+                    item.content, replace=False, mode=0o400, create_parents=True,
+                )
             if item.name != "debug.log.txt":
                 outputs.append(
                     {"name": item.name, "media_type": item.media_type, "size_bytes": len(item.content)}
@@ -140,13 +195,36 @@ class LocalTCADDebugService:
             "diagnostic_layer": collected.diagnostic_layer,
             "summary": collected.summary,
             "log_excerpt": collected.log_excerpt,
+            "log_relative_path": (
+                f"deck/reports/log-{run_name}.txt"
+                if any(item.name == "debug.log.txt" for item in collected.files) else None
+            ),
+            "log_excerpt_is_complete": any(
+                item.name == "debug.log.txt" and item.content == collected.log_excerpt.encode("utf-8")
+                for item in collected.files
+            ),
             "exit_code": collected.exit_code,
             "outputs": outputs,
         }
         if collected.source_diagnostic is not None:
             response["source_diagnostic"] = asdict(collected.source_diagnostic)
-        if len(canonical_json(response)) > 32 * 1024:
-            raise TCADDebugError("TCAD debug diagnostic response exceeds its bound")
+        # Validate the complete public response before sealing a control proof.
+        # Cache only the diagnostic; the handler refreshes budget on every call.
+        debug_response(context, run_name, response)
+        # Preserve each attempt, including failed diagnostics, as a bounded
+        # workspace record tied to the exact submitted source and declarations.
+        diagnostic = {key: value for key, value in response.items() if key != "run_name"}
+        diagnostic.update({key: record[key] for key in (
+            "source_tree_sha256", "project_sha256", "declarations_sha256"
+        )})
+        try:
+            write_control_workspace_file(
+                context.workspace,
+                Path(f"deck/reports/diagnostic-{run_name}.json"),
+                canonical_json(diagnostic), replace=False, mode=0o400, create_parents=True,
+            )
+        except WorkspaceError as error:
+            raise TCADDebugError("TCAD diagnostic record path is unsafe") from error
         if mode in {"preflight", "initialization"}:
             profile = (
                 "tcad.project-preflight.v1"
@@ -162,6 +240,8 @@ class LocalTCADDebugService:
                             "schema_version": 1,
                             "profile": profile,
                             "source_tree_sha256": record["source_tree_sha256"],
+                            "project_sha256": record["project_sha256"],
+                            "declarations_sha256": record["declarations_sha256"],
                             "mode": mode,
                             "terminal_state": collected.terminal_state,
                             "exit_code": collected.exit_code,

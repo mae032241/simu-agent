@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import io
-import re
 import subprocess
 import tempfile
 from dataclasses import dataclass
@@ -16,207 +15,6 @@ from .figure_dependencies import command_path
 
 MAX_IMAGE_PIXELS = 25_000_000
 MAX_PDF_IMAGES_PER_PAGE = 32
-
-# Automatic source contract. Callers cannot override these budgets.
-AUTOMATIC_MAX_PAGES = 8
-AUTOMATIC_MAX_TOTAL_PIXELS = 24_000_000
-AUTOMATIC_MAX_SIDE = 1600
-AUTOMATIC_DPI = 120
-AUTOMATIC_MAX_SOURCE_BYTES = 64_000_000
-AUTOMATIC_SOURCE_POLICY = (
-    "automatic-source-v3", "default_pages=8", "reference_page=agent_selected_or_unresolved",
-    "total_pixels=24000000",
-    "canonical_max_side=1600", "requested_render_dpi=120", "source_bytes=64000000",
-    "per_image_pixels=25000000", "embedded_per_page=32", "command_timeout_seconds=60",
-)
-
-
-@dataclass(frozen=True, slots=True)
-class AutomaticImage:
-    content: bytes
-    image_sha256: str
-    kind: str
-    page: int | None
-    width: int
-    height: int
-    # Affine maps original coordinates to canonical pixel coordinates.
-    transform: tuple[float, float, float, float, float, float]
-    coordinate_space: str
-    rotation: int
-    tool: str
-    tool_version: str
-    pdf_object: tuple[int, int] | None = None
-    requested_dpi: int | None = None
-    media_box: tuple[float, float, float, float] | None = None
-    crop_box: tuple[float, float, float, float] | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class AutomaticRecovery:
-    source_sha256: str
-    images: tuple[AutomaticImage, ...]
-    unresolved: tuple[str, ...]
-    provenance: tuple[str, ...] = AUTOMATIC_SOURCE_POLICY
-
-
-def _automatic_run(command: list[str]) -> subprocess.CompletedProcess[bytes]:
-    """Environment/process failures are errors, never scientific no-figure results."""
-    command = [command_path(command[0]), *command[1:]]
-    try:
-        result = subprocess.run(command, capture_output=True, timeout=60, check=False)
-    except (OSError, subprocess.TimeoutExpired) as error:
-        raise RuntimeError(f"automatic source tool failed: {command[0]}") from error
-    if result.returncode:
-        raise RuntimeError(f"automatic source tool failed: {command[0]}: {result.stderr[-512:]!r}")
-    return result
-
-
-def _automatic_image(content: bytes, *, kind: str, page: int | None,
-                     transform: tuple[float, float, float, float, float, float],
-                     coordinate_space: str, rotation: int, tool: str,
-                     tool_version: str, pdf_object: tuple[int, int] | None = None,
-                     media_box: tuple[float, float, float, float] | None = None,
-                     crop_box: tuple[float, float, float, float] | None = None) -> AutomaticImage:
-    with Image.open(io.BytesIO(content)) as raw:
-        if raw.width * raw.height > MAX_IMAGE_PIXELS:
-            raise ValueError("automatic_image_pixel_budget")
-        image = raw.convert("RGB")
-        factor = min(1., AUTOMATIC_MAX_SIDE / max(image.size))
-        size = (max(1, round(image.width * factor)), max(1, round(image.height * factor)))
-        sx, sy = size[0] / image.width, size[1] / image.height
-        if size != image.size:
-            image = image.resize(size, Image.Resampling.LANCZOS)
-        a, b, c, d, e, f = transform
-        canonical = _png_bytes(image)
-        return AutomaticImage(canonical, _sha256(canonical), kind, page, *size,
-                              (a*sx, b*sx, c*sx, d*sy, e*sy, f*sy), coordinate_space,
-                              rotation, tool, tool_version, pdf_object,
-                              AUTOMATIC_DPI if kind == "page_render" else None,
-                              media_box, crop_box)
-
-
-_DEFAULT_PAGES = object()
-
-
-def recover_automatic_source(content: bytes) -> AutomaticRecovery:
-    """Legacy bounded recovery without a semantic page reference."""
-    return _recover_automatic_source(content, _DEFAULT_PAGES)
-
-
-def recover_reference_source(
-    content: bytes, reference_page: int | None
-) -> AutomaticRecovery:
-    """Recover one Agent-located PDF page, or an explicit unresolved reference."""
-    if reference_page is not None and reference_page < 1:
-        raise ValueError("reference page must be positive")
-    return _recover_automatic_source(content, reference_page)
-
-
-def _recover_automatic_source(
-    content: bytes, reference_page: int | None | object
-) -> AutomaticRecovery:
-    source_hash = _sha256(content)
-    is_pdf = content.startswith(b"%PDF-")
-    provenance = AUTOMATIC_SOURCE_POLICY
-    if is_pdf and reference_page is not _DEFAULT_PAGES:
-        provenance += (f"reference_page={reference_page or 'unresolved'}",)
-    if len(content) > AUTOMATIC_MAX_SOURCE_BYTES:
-        return AutomaticRecovery(source_hash, (), ("source_byte_budget",), provenance)
-    if not is_pdf:
-        if reference_page not in (_DEFAULT_PAGES, None):
-            raise ValueError("reference page applies only to PDF sources")
-        try:
-            frame = _automatic_image(content, kind="raster", page=None,
-                transform=(1., 0., 0., 0., 1., 0.), coordinate_space="original_raster_pixels",
-                rotation=0, tool="Pillow", tool_version=PILLOW_VERSION)
-        except (OSError, ValueError, Image.DecompressionBombError):
-            return AutomaticRecovery(source_hash, (), ("raster_unrecoverable_or_pixel_budget",))
-        return AutomaticRecovery(source_hash, (frame,), (), provenance)
-    images: list[AutomaticImage] = []
-    unresolved: list[str] = []
-    pixels = 0
-    with tempfile.TemporaryDirectory(prefix="scid-auto-source-") as directory:
-        root = Path(directory)
-        path = root / "source.pdf"
-        path.write_bytes(content)
-        info = _automatic_run(["pdfinfo", str(path)]).stdout.decode("utf8", errors="replace")
-        match = re.search(r"Pages:\s+(\d+)", info)
-        if not match:
-            raise RuntimeError("pdfinfo returned no page count")
-        pages = int(match[1])
-        if reference_page is None:
-            return AutomaticRecovery(
-                source_hash, (), ("reference_page_unresolved",), provenance)
-        if reference_page is _DEFAULT_PAGES:
-            if pages > AUTOMATIC_MAX_PAGES:
-                unresolved.append("source_page_budget")
-            selected_pages = range(1, min(pages, AUTOMATIC_MAX_PAGES) + 1)
-        else:
-            if reference_page > pages:
-                raise ValueError("reference page exceeds PDF page count")
-            selected_pages = (reference_page,)
-        versions = {}
-        for tool in ("pdfimages", "pdftoppm"):
-            result = _automatic_run([tool, "-v"])
-            versions[tool] = (result.stdout + result.stderr).decode("utf8").splitlines()[0] + f"; Pillow {PILLOW_VERSION}"
-        for page in selected_pages:
-            metadata = _automatic_run(["pdfinfo", "-f", str(page), "-l", str(page), "-box", str(path)]).stdout.decode("utf8")
-            boxes = {}
-            for name in ("MediaBox", "CropBox"):
-                match = re.search(name + r":\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)", metadata)
-                if not match:
-                    raise RuntimeError("pdfinfo returned incomplete page boxes")
-                boxes[name] = tuple(map(float, match.groups()))
-            rotation = re.search(r"(?:Page\s+\d+\s+rot|Page rot):\s+(\d+)", metadata)
-            if not rotation:
-                raise RuntimeError("pdfinfo returned incomplete page geometry")
-            # pdftoppm without -cropbox renders MediaBox. Page size can describe
-            # CropBox and must never determine this mapping. The coordinate space
-            # is relative to this explicit MediaBox's unrotated top-left origin.
-            x0, y0, x1, y1 = boxes["MediaBox"]
-            width, height = x1-x0, y1-y0
-            if width <= 0 or height <= 0:
-                raise RuntimeError("pdfinfo returned an invalid MediaBox")
-            angle = int(rotation[1]) % 360
-            if angle not in (0, 90, 180, 270):
-                unresolved.append("unsupported_page_rotation")
-                continue
-            # Original PDF points measured from the unrotated top-left of MediaBox.
-            transforms = {0: (1.,0.,0.,0.,1.,0.), 90:(0.,-1.,height,1.,0.,0.),
-                          180:(-1.,0.,width,0.,-1.,height), 270:(0.,1.,0.,-1.,0.,width)}
-            prefix = root / "page"
-            _automatic_run(["pdftoppm", "-f", str(page), "-l", str(page), "-singlefile", "-scale-to", str(AUTOMATIC_MAX_SIDE), "-r", str(AUTOMATIC_DPI), "-png", str(path), str(prefix)])
-            rendered = (root / "page.png").read_bytes()
-            with Image.open(io.BytesIO(rendered)) as img:
-                sx = img.width / (height if angle in (90,270) else width)
-                sy = img.height / (width if angle in (90,270) else height)
-            a,b,c,d,e,f = transforms[angle]
-            page_frames = [_automatic_image(rendered, kind="page_render", page=page,
-                transform=(a*sx,b*sx,c*sx,d*sy,e*sy,f*sy), coordinate_space="unrotated_page_top_left_points",
-                rotation=angle, tool="pdftoppm", tool_version=versions["pdftoppm"],
-                media_box=boxes["MediaBox"], crop_box=boxes["CropBox"])]
-            try:
-                embedded = inspect_pdf_images(path, page=page)
-            except ValueError as error:
-                if str(error) == "PDF page contains no recoverable embedded image":
-                    embedded = ()
-                elif any(term in str(error) for term in ("limit", "budget", "masks or image forms")):
-                    unresolved.append("embedded_image_unsupported_or_budget")
-                    embedded = ()
-                else:
-                    raise RuntimeError("embedded recovery failed") from error
-            for item in embedded:
-                page_frames.append(_automatic_image(item.content, kind="embedded_image", page=page,
-                    transform=(1.,0.,0.,0.,1.,0.), coordinate_space="embedded_object_pixels",
-                    rotation=0, tool="pdfimages", tool_version=versions["pdfimages"],
-                    pdf_object=(item.pdf_object_id, item.pdf_object_generation)))
-            for frame in page_frames:
-                pixels += frame.width * frame.height
-                if pixels > AUTOMATIC_MAX_TOTAL_PIXELS:
-                    return AutomaticRecovery(source_hash, tuple(images), tuple(sorted(set(unresolved + ["source_pixel_budget"]))), provenance)
-                images.append(frame)
-    return AutomaticRecovery(source_hash, tuple(images), tuple(sorted(set(unresolved))), provenance)
-
 
 @dataclass(frozen=True, slots=True)
 class RecoveredFigureImage:
@@ -302,12 +100,12 @@ def _run(command: list[str], *, timeout_seconds: int) -> subprocess.CompletedPro
             timeout=max(1, min(60, timeout_seconds)),
         )
     except FileNotFoundError as error:
-        raise ValueError("pdfimages is not installed") from error
+        raise RuntimeError("pdfimages is not installed") from error
     except subprocess.TimeoutExpired as error:
-        raise ValueError("PDF image recovery timed out") from error
+        raise TimeoutError("PDF image recovery timed out") from error
     if completed.returncode != 0:
         detail = completed.stderr.decode("utf-8", errors="replace")[-2048:]
-        raise ValueError(f"PDF image recovery failed: {detail}")
+        raise RuntimeError(f"PDF image recovery failed: {detail}")
     return completed
 
 

@@ -1,17 +1,23 @@
 """Pure binding and narrow executor adapters for compiled operations."""
 from __future__ import annotations
+
+from ..operation_contract import DiagnosticError
 import json
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Any, Mapping
+from typing import Annotated, Any, Mapping
+from pydantic import Field, TypeAdapter, ValidationError
 from scidiscovery.artifact_agent.schema.refs import ArtifactRef
 from scidiscovery.operation_contract import (
     active_direct_revision_ports,
     direct_revision_ports,
     operation_output_validation_contract,
     operation_port_json_schema,
+)
+from .input_validation import (
+    OperationEngineeringError, OperationInvocationError, read_validation_sources, validate_operation_inputs,
 )
 from .spec import (
     CompiledOperation,
@@ -20,11 +26,9 @@ from .spec import (
 )
 from scidiscovery.artifact_agent.schema.transform_output import TransformOutput
 _RUNTIME_BINDING = re.compile(r"^[a-z][a-z0-9_.-]{0,127}$")
-class OperationInvocationError(ValueError):
-    def __init__(self, reason_code: str, *, port: str | None = None) -> None:
-        self.reason_code = reason_code
-        self.port = port
-        super().__init__(f"{reason_code}: {port or 'operation'}")
+EmptyOperationParameters = Annotated[dict[str, Any], Field(max_length=0,
+    description="This Operation interface declares no parameters; omit this field or use an empty object.")]
+_OPERATION_PARAMETERS = TypeAdapter(EmptyOperationParameters)
 @dataclass(frozen=True, slots=True)
 class InvocationArtifact:
     artifact_name: str
@@ -36,6 +40,8 @@ class InvocationArtifact:
     parent_refs: tuple[ArtifactRef, ...] = ()
     labels: tuple[tuple[str, str], ...] = ()
     handoff_verdict: str | None = None
+    historical: bool = False
+    producer_run_id: str | None = None
 @dataclass(frozen=True, slots=True)
 class BoundInput:
     port_name: str
@@ -118,6 +124,7 @@ def preflight_operation(
     instruction: str | None,
     parameters: Mapping[str, Any] | None = None,
     read_artifact: Callable[[ArtifactRef], bytes] | None = None,
+    source_name_overrides: Mapping[tuple[str, str], str] | None = None,
 ) -> BoundOperationCall:
     spec = compiled.spec
     expected = {port.name: port for port in spec.inputs}
@@ -128,9 +135,12 @@ def preflight_operation(
             "input_port_missing" if missing else "input_port_unknown",
             port=missing or extra,
         )
-    parameter_map = dict(parameters or {})
-    if parameter_map:
-        raise OperationInvocationError("parameters_not_declared")
+    try:
+        parameter_map = _OPERATION_PARAMETERS.validate_python(
+            {} if parameters is None else dict(parameters) if isinstance(parameters, Mapping) else parameters,
+            strict=True)
+    except ValidationError as error:
+        raise OperationInvocationError("parameters_not_declared") from error
     if spec.executor.kind == "agent":
         if instruction is None or not instruction.strip():
             raise OperationInvocationError("instruction_required")
@@ -150,6 +160,11 @@ def preflight_operation(
             )
     elif instruction is not None:
         raise OperationInvocationError("instruction_forbidden")
+    aliases = dict(source_name_overrides or {})
+    bound_keys = {(port, item.artifact_name) for port, items in artifacts_by_port.items() for item in items}
+    if set(aliases) - bound_keys:
+        raise OperationInvocationError("input_source_alias_unknown")
+    seen_sources: set[str] = set()
     bound: list[BoundInput] = []
     seen_refs: set[ArtifactRef] = set()
     total_bytes = 0
@@ -166,6 +181,12 @@ def preflight_operation(
                 if len(artifacts) == 1
                 else f"{port.name}_{index:03d}"
             )
+            source_name = aliases.get((port.name, artifact.artifact_name), source_name)
+            if not isinstance(source_name, str) or _RUNTIME_BINDING.fullmatch(source_name) is None:
+                raise OperationInvocationError("input_source_alias_invalid", port=port.name)
+            if source_name in seen_sources:
+                raise OperationInvocationError("input_source_alias_duplicate", port=port.name)
+            seen_sources.add(source_name)
             bound.append(
                 BoundInput(
                     port_name=port.name,
@@ -195,7 +216,16 @@ def preflight_operation(
                     "input_cohort_incomplete", port=missing
                 )
     _run_guards(compiled, bound_inputs, parameter_map)
-    _validate_input_content(compiled, bound_inputs, read_artifact)
+    if compiled.spec.input_validation is not None:
+        sources = read_validation_sources(compiled, bound_inputs, read_artifact)
+        _validate_input_content(
+            compiled, bound_inputs,
+            lambda ref: next(sources[item.source_name] for item in bound_inputs
+                             if item.artifact.ref == ref),
+        )
+        validate_operation_inputs(compiled, sources)
+    else:
+        _validate_input_content(compiled, bound_inputs, read_artifact)
     return BoundOperationCall(
         compiled=compiled,
         name=name,
@@ -212,8 +242,13 @@ def _validate_input_content(
     """Check declared top-level JSON presence on exact immutable input bytes."""
     ports = {port.name: port for port in compiled.spec.inputs}
     for item in inputs:
-        fields = ports[item.port_name].required_non_null_fields
-        if not fields:
+        port = ports[item.port_name]
+        fields = port.required_non_null_fields
+        validate_history = (
+            item.artifact.historical and item.usage in {"prior_signal", "revision_base"}
+            and item.artifact.media_type == "application/json"
+        )
+        if not fields and not validate_history:
             continue
         if read_artifact is None:
             raise OperationInvocationError("input_content_reader_missing", port=item.port_name)
@@ -225,17 +260,33 @@ def _validate_input_content(
             value = json.loads(raw)
         except (json.JSONDecodeError, UnicodeDecodeError) as error:
             raise OperationInvocationError("input_content_invalid", port=item.port_name) from error
-        if not isinstance(value, dict):
+        if fields and not isinstance(value, dict):
             raise OperationInvocationError("input_content_invalid", port=item.port_name)
         if any(value.get(field) is None for field in fields):
             raise OperationInvocationError("input_required_field_missing", port=item.port_name)
+        if validate_history:
+            from jsonschema.validators import validator_for
+
+            reference = port.schema_resource
+            key = f"{reference.plugin_id or compiled.plugin_id}:{reference.component_id}"
+            schema = json.loads(compiled.implementations[key])
+            error = next(validator_for(schema)(schema).iter_errors(value), None)
+            if error is not None:
+                path = list(error.absolute_path)
+                if error.validator == "required" and isinstance(error.instance, dict):
+                    missing = next((name for name in error.validator_value if name not in error.instance), None)
+                    if missing is not None:
+                        path.append(missing)
+                pointer = "/" + "/".join(str(part).replace("~", "~0").replace("/", "~1") for part in path)
+                raise OperationInvocationError("input_content_incompatible", port=item.port_name, field=pointer)
 
 def preflight_result(action: Any) -> dict[str, Any]:
     try:
         bound = action()
     except OperationInvocationError as error:
-        return {"admissible": False, "reason_code": error.reason_code,
-                "port": error.port, "executor_kind": None}
+        return {**({"field": error.field} if error.field is not None else {}),
+                "admissible": False, "reason_code": error.reason_code,
+                "port": error.port, "executor_kind": None, "diagnostics": list(error.details)}
     return {"admissible": True, "reason_code": None, "port": None,
             "executor_kind": bound.compiled.spec.executor.kind}
 def effect_executor_plan(bound: BoundOperationCall) -> EffectExecutorPlan:
@@ -253,11 +304,11 @@ def effect_operation_plan(compiled: CompiledOperation) -> EffectExecutorPlan:
     try:
         value = _executor_callable(compiled)()
     except Exception as error:
-        raise OperationInvocationError("executor_component_failed") from error
+        raise OperationEngineeringError("executor_component_failed") from error
     if not isinstance(value, EffectExecutorPlan):
-        raise OperationInvocationError("effect_executor_result_invalid")
+        raise OperationEngineeringError("effect_executor_result_invalid")
     if _RUNTIME_BINDING.fullmatch(value.executor) is None:
-        raise OperationInvocationError("effect_executor_result_invalid")
+        raise OperationEngineeringError("effect_executor_result_invalid")
     if value.payload_port not in {item.name for item in compiled.spec.inputs}:
         raise OperationInvocationError(
             "effect_payload_port_missing", port=value.payload_port
@@ -289,8 +340,10 @@ def execute_compiled_transform(
         value = _executor_callable(bound.compiled)(
             MappingProxyType({key: tuple(items) for key, items in grouped.items()})
         )
+    except (OperationInvocationError, DiagnosticError):
+        raise
     except Exception as error:
-        raise OperationInvocationError("executor_component_failed") from error
+        raise OperationEngineeringError("executor_component_failed") from error
     if not isinstance(value, Mapping):
         raise ValueError("transform component must return an output mapping")
     return _transform_outputs(bound.compiled, value)
@@ -318,8 +371,10 @@ def _run_guards(
         key = f"{reference.plugin_id or compiled.plugin_id}:{reference.component_id}"
         try:
             accepted = compiled.implementations[key](inputs, parameters)
+        except OperationInvocationError:
+            raise
         except Exception as error:
-            raise OperationInvocationError("guard_failed", port=reference.component_id) from error
+            raise OperationEngineeringError("guard_failed") from error
         if accepted is not True:
             raise OperationInvocationError("guard_rejected", port=reference.component_id)
 def _executor_callable(compiled: CompiledOperation) -> Any:

@@ -1,0 +1,120 @@
+{
+  "schema_version": 1,
+  "date": "2026-09-12",
+  "scope": "Technical tool-call observations for morphology analysis timeouts; not scientific result qualification",
+  "source_kind": "local Agent rollout; only selected tool records, no reasoning or chat content",
+  "source_sha256": "685e0a1cd6bb804bc67443a8b599e10dfd9768ff41e208f75b20e305bf1ff860",
+  "source_size_bytes": 3731641,
+  "duration_scope": "command invocation to terminal response observation, including polling delay; not CPU time",
+  "attempts": [
+    {
+      "label": "analysis_1_attempt_1",
+      "start": {
+        "source_line": 149,
+        "timestamp_utc": "2026-09-12T05:21:09.605Z",
+        "kind": "custom_tool_call",
+        "command_timeout_seconds": 420,
+        "script_name": "morphology_analysis.py"
+      },
+      "observed_end": {
+        "source_line": 152,
+        "timestamp_utc": "2026-09-12T05:21:09.812Z",
+        "kind": "custom_tool_call_output",
+        "exit_code": 1,
+        "exception": "ValueError: solver_outputs_002.txt: ZnPhen contains nonpositive or nonfinite values"
+      },
+      "observed_interval_seconds": 0.207
+    },
+    {
+      "label": "analysis_1_attempt_2",
+      "start": {
+        "source_line": 170,
+        "timestamp_utc": "2026-09-12T05:21:37.719Z",
+        "kind": "custom_tool_call",
+        "command_timeout_seconds": 420,
+        "script_name": "morphology_analysis.py"
+      },
+      "observed_end": {
+        "source_line": 187,
+        "timestamp_utc": "2026-09-12T05:22:46.148Z",
+        "kind": "custom_tool_call_output",
+        "exit_code": 1,
+        "exception": "TypeError: tuple indices must be integers or slices, not str"
+      },
+      "observed_interval_seconds": 68.429
+    },
+    {
+      "label": "analysis_1_attempt_3",
+      "start": {
+        "source_line": 198,
+        "timestamp_utc": "2026-09-12T05:23:02.048Z",
+        "kind": "custom_tool_call",
+        "command_timeout_seconds": 420,
+        "script_name": "morphology_analysis.py"
+      },
+      "observed_end": {
+        "source_line": 247,
+        "timestamp_utc": "2026-09-12T05:28:02.693Z",
+        "kind": "custom_tool_call_output",
+        "exit_code": 0
+      },
+      "observed_interval_seconds": 300.645
+    },
+    {
+      "label": "analysis_2_central",
+      "start": {
+        "source_line": 309,
+        "timestamp_utc": "2026-09-12T05:34:33.542Z",
+        "kind": "custom_tool_call",
+        "command_timeout_seconds": 180,
+        "script_name": "phase_morphology.py"
+      },
+      "observed_end": {
+        "source_line": 316,
+        "timestamp_utc": "2026-09-12T05:35:31.552Z",
+        "kind": "custom_tool_call_output",
+        "exit_code": 0
+      },
+      "observed_interval_seconds": 58.01
+    },
+    {
+      "label": "analysis_3_attempt_1",
+      "start": {
+        "source_line": 451,
+        "timestamp_utc": "2026-09-12T05:45:44.879Z",
+        "kind": "custom_tool_call",
+        "command_timeout_seconds": 560,
+        "script_name": "complete_morphology.py"
+      },
+      "observed_end": {
+        "source_line": 514,
+        "timestamp_utc": "2026-09-12T05:51:38.628Z",
+        "kind": "custom_tool_call_output",
+        "exit_code": 1,
+        "exception": "ModuleNotFoundError: No module named 'matplotlib'"
+      },
+      "observed_interval_seconds": 353.749
+    },
+    {
+      "label": "analysis_3_attempt_2",
+      "start": {
+        "source_line": 534,
+        "timestamp_utc": "2026-09-12T05:52:44.352Z",
+        "kind": "custom_tool_call",
+        "command_timeout_seconds": 400,
+        "script_name": "complete_morphology.py"
+      },
+      "observed_end": {
+        "source_line": 590,
+        "timestamp_utc": "2026-09-12T05:58:18.514Z",
+        "kind": "custom_tool_call_output",
+        "transport_status": "aborted"
+      },
+      "observed_interval_seconds": 334.162
+    }
+  ],
+  "new_runs_started": false,
+  "solver_executed": false,
+  "computation_replayed": false,
+  "recovery_note": "analysis_2 selected assignment print omitted recovery_draft; empty output/scratch does not establish a null recovery_draft"
+}

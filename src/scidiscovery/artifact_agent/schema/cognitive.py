@@ -87,8 +87,6 @@ class HypothesisForm(FormModel):
             (tuple(item.name for item in self.parameters), "parameter names"),
             (tuple(item.prediction_key for item in self.predictions), "prediction keys"),
             (tuple(item.falsifier_key for item in self.falsifiers), "falsifier keys"),
-            (self.competing_hypothesis_keys, "competing hypothesis keys"),
-            (self.evidence_keys, "evidence keys"),
         ):
             if len(values) != len(set(values)):
                 raise ValueError(f"{label} must be unique")
@@ -110,8 +108,6 @@ class HypothesisProposal(VersionedPayload):
             raise ValueError("hypothesis_key values must be unique")
         known_hypotheses = set(keys)
         source_keys = tuple(item.source_key for item in self.evidence)
-        if len(source_keys) != len(set(source_keys)):
-            raise ValueError("evidence source_key values must be unique")
         known_evidence = set(source_keys)
         for hypothesis in self.hypotheses:
             competitors = set(hypothesis.competing_hypothesis_keys)
@@ -134,19 +130,9 @@ class HypothesisReviewForm(FormModel):
         str, Field(min_length=1, max_length=1024)
     ] | None = None
 
-    @model_validator(mode="after")
-    def _failed_dimension_has_resolution(self) -> HypothesisReviewForm:
-        dimensions = (
-            self.physical_plausibility,
-            self.falsifiability,
-            self.finite_discriminability,
-        )
-        if any(value != "pass" for value in dimensions) and self.smallest_resolving_action is None:
-            raise ValueError("unresolved review requires smallest_resolving_action")
-        return self
-
-
 class CriticReview(VersionedPayload):
+    """The critic judges disposition; dimension statuses do not mechanically derive it."""
+
     schema_version: Literal[2] = 2
     disposition: CriticDisposition
     reviews: Annotated[tuple[HypothesisReviewForm, ...], Field(max_length=6)] = ()
@@ -156,37 +142,8 @@ class CriticReview(VersionedPayload):
     @model_validator(mode="after")
     def _keys_are_unique(self) -> CriticReview:
         review_keys = tuple(item.hypothesis_key for item in self.reviews)
-        source_keys = tuple(item.source_key for item in self.evidence)
         if len(review_keys) != len(set(review_keys)):
             raise ValueError("a critic may review each hypothesis once")
-        if len(source_keys) != len(set(source_keys)):
-            raise ValueError("evidence source_key values must be unique")
-        statuses = tuple(
-            value
-            for review in self.reviews
-            for value in (
-                review.physical_plausibility,
-                review.falsifiability,
-                review.finite_discriminability,
-            )
-        )
-        if self.disposition in {
-            "ready_for_experiment",
-            "design_model_counterfactual",
-        } and any(value != "pass" for value in statuses):
-            raise ValueError(
-                "experiment-ready critic disposition requires all review dimensions to pass"
-            )
-        if self.disposition in {
-            "revise_hypothesis",
-            "revise_evidence",
-            "inconclusive",
-        } and (not statuses or all(value == "pass" for value in statuses)):
-            raise ValueError(
-                "unresolved critic disposition requires a non-passing review dimension"
-            )
-        if self.disposition == "reject" and "fail" not in statuses:
-            raise ValueError("reject disposition requires a failed review dimension")
         return self
 
 
@@ -226,14 +183,6 @@ class EvidenceCheckForm(FormModel):
     evidence_keys: Annotated[tuple[Identifier, ...], Field(max_length=12)] = ()
     hypothesis_keys: Annotated[tuple[Identifier, ...], Field(max_length=6)] = ()
 
-    @model_validator(mode="after")
-    def _references_are_unique(self) -> EvidenceCheckForm:
-        if len(self.evidence_keys) != len(set(self.evidence_keys)):
-            raise ValueError("evidence check evidence keys must be unique")
-        if len(self.hypothesis_keys) != len(set(self.hypothesis_keys)):
-            raise ValueError("evidence check hypothesis keys must be unique")
-        return self
-
 
 class EvidenceAudit(VersionedPayload):
     checks: Annotated[tuple[EvidenceCheckForm, ...], Field(max_length=24)] = ()
@@ -245,8 +194,6 @@ class EvidenceAudit(VersionedPayload):
         source_keys = tuple(item.source_key for item in self.evidence)
         if len(check_keys) != len(set(check_keys)):
             raise ValueError("evidence check keys must be unique")
-        if len(source_keys) != len(set(source_keys)):
-            raise ValueError("evidence source_key values must be unique")
         known = set(source_keys)
         for check in self.checks:
             if not set(check.evidence_keys).issubset(known):

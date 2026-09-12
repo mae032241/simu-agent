@@ -1,0 +1,430 @@
+{
+  "recorded_at": "2026-09-08 13:46:41 UTC",
+  "scope": "Controlled P5 continuation; faithful evidence audit completed, qualification not granted.",
+  "intake_audit_completed": {
+    "agent_type": "op_science_figure_evidence_audit_v1_f8abce8f8476",
+    "backend": "local_trusted",
+    "candidate_accepted": true,
+    "completed_at": "2026-09-08T13:40:43.845286Z",
+    "created_at": "2026-09-08T13:34:10.016559Z",
+    "deadline_at": "2026-09-08T13:44:10.016559Z",
+    "head_advance": "not_requested",
+    "last_activity_at": "2026-09-08T13:40:43.845286Z",
+    "logical_name": "fig4_continuation_intake_audit_1",
+    "name": "fig4_continuation_intake_audit_1",
+    "operation_id": "science.figure.evidence.audit.v1",
+    "output_artifact_name": "fig4_continuation_intake_audit_1.output",
+    "reason": null,
+    "recovery_available": false,
+    "revision": 1,
+    "scheduler_signal": {
+      "assumptions": [],
+      "missing_inputs": [],
+      "next_action_kind": null,
+      "next_actions": [
+        "Resolve the row-level SIMS detection-limit flags before using affected tail values as securely quantified measurements.",
+        "Resolve or preserve the 235-pixel In0.83Al0.17As source-column gap before any continuous-profile comparison."
+      ],
+      "schema_version": 1,
+      "summary": "The ScientificIntake is faithful to the exact supplied Fig. 4 family. It binds the paper, figure request, manifest, panel, overlays, and both curve tables consistently; reports the axis calibration, legend identities, table counts and ranges, source-column gaps, and shared-support dependence accurately; and keeps author interpretation distinct from pixel-derived observations. It also explicitly preserves the unresolved mismatch between the paper's approximate 3 x 10^15 cm^-3 SIMS limit and the zero below-limit flags despite 114 lower digitized values. This pass confirms faithful representation of the bounded evidence and its limitations; it does not grant quantitative qualification or resolve the detection-limit flags or the In0.83Al0.17As gap.",
+      "verdict": "pass"
+    },
+    "sealed_output": {
+      "artifact_name": "fig4_continuation_intake_audit_1.output",
+      "kind": "evidence_audit",
+      "payload": {
+        "checks": [
+          {
+            "basis": "The paper SHA-256 is 750c8cb5944ed9fe25c5072db084bb0194ed682d5e1ea40f25103f4aa89c05c3; the recovered panel, both overlays, and both table hashes match the manifest provenance; the manifest hash matches validation_report; and the request and manifest agree on figure_key, panel, page, embedded object, dimensions, and recovered-image hash.",
+            "check_key": "source.object_identity",
+            "evidence_keys": [
+              "paper_source",
+              "figure_request",
+              "figure_manifest",
+              "validation_report",
+              "source_panels",
+              "audit_overlays_001",
+              "audit_overlays_002",
+              "curve_tables_001",
+              "curve_tables_002"
+            ],
+            "status": "pass",
+            "subject": "The Intake refers to the exact paper and immutable Fig. 4 family supplied for this audit."
+          },
+          {
+            "basis": "The supplied PDF identifies the article as 'Rapid zinc diffusion behaviors in lightly doped extended wavelength In0.83Ga0.17As focal plane arrays,' J. Appl. Phys. 137, 123103 (2025), DOI 10.1063/5.0242861, exactly as stated.",
+            "check_key": "paper.identity",
+            "evidence_keys": [
+              "paper_source"
+            ],
+            "status": "pass",
+            "subject": "Bibliographic identity reported by the Intake."
+          },
+          {
+            "basis": "The paper states that diffusion coefficients for single layers of In0.83Ga0.17As and In0.83Al0.17As at 480 degrees C for 8 min were extracted from SIMS measurements; the Fig. 4 caption identifies the same single-layer materials. The Intake confines the claim to that condition.",
+            "check_key": "fig4.experiment_conditions",
+            "evidence_keys": [
+              "paper_source"
+            ],
+            "status": "pass",
+            "subject": "The stated material, temperature, duration, single-layer scope, and SIMS measurement conditions."
+          },
+          {
+            "basis": "The request and manifest consistently map x pixels 166-974 to 0.0-0.8 micrometers linearly and y pixels 685-35 to 10^15-10^20 cm^-3 logarithmically, with 1 px reprojection uncertainty. These limits and scales match the visible source-panel axes.",
+            "check_key": "fig4.axis_calibration",
+            "evidence_keys": [
+              "figure_request",
+              "figure_manifest",
+              "source_panels"
+            ],
+            "status": "pass",
+            "subject": "Linear depth and log10 zinc-concentration calibration for panel main."
+          },
+          {
+            "basis": "The source legend visibly associates a solid black line with In0.83Al0.17As and a solid red line with In0.83Ga0.17As. The typed request records those descriptors and legend boxes; the manifest records both bindings as matched with no alternatives or ambiguity; the identity overlay marks the same labels.",
+            "check_key": "fig4.legend_binding",
+            "evidence_keys": [
+              "figure_request",
+              "figure_manifest",
+              "source_panels",
+              "audit_overlays_001"
+            ],
+            "status": "pass",
+            "subject": "Identity of the two digitized measured profiles."
+          },
+          {
+            "basis": "The validation report records integrity_status valid, source_status qualified, 2 tables, 1266 total/observed/eligible rows, 1179 direct-pixel rows, 87 shared-occlusion rows, and zero below-limit rows, matching the Intake. The Intake explicitly says these are deterministic report outputs rather than independent scientific qualification.",
+            "check_key": "fig4.family_integrity",
+            "evidence_keys": [
+              "figure_manifest",
+              "validation_report"
+            ],
+            "status": "pass",
+            "subject": "The Intake's transcription and interpretation of deterministic family metrics."
+          },
+          {
+            "basis": "The complete table has 501 observed rows, x = 0.009900990099009903 to 0.7900990099009901 micrometers, y = 1.7012542798525858 x 10^15 to 3.218787511821249 x 10^19 cm^-3, 477 direct-pixel and 24 shared-occlusion rows. Its point indices jump from 12 to 248, leaving 235 source columns absent, as the manifest's max_gap_px records. The Intake does not bridge that gap or claim continuous observation.",
+            "check_key": "fig4.inalas_series",
+            "evidence_keys": [
+              "curve_tables_001",
+              "figure_manifest",
+              "validation_report",
+              "audit_overlays_001",
+              "audit_overlays_002"
+            ],
+            "status": "pass",
+            "subject": "Per-series audit of the In0.83Al0.17As digitized profile."
+          },
+          {
+            "basis": "The complete table has 765 observed rows, x = 0.009900990099009903 to 0.7900990099009901 micrometers, y = 1.7012542798525858 x 10^15 to 5.549927761300058 x 10^19 cm^-3, 702 direct-pixel and 63 shared-occlusion rows. Its largest point-index jump leaves 18 source columns absent, matching max_gap_px = 18. The Intake retains gaps and shared support in the stated scope.",
+            "check_key": "fig4.ingaas_series",
+            "evidence_keys": [
+              "curve_tables_002",
+              "figure_manifest",
+              "validation_report",
+              "audit_overlays_001",
+              "audit_overlays_002"
+            ],
+            "status": "pass",
+            "subject": "Per-series audit of the In0.83Ga0.17As digitized profile."
+          },
+          {
+            "basis": "The manifest enumerates panel-level shared-support groups for both series, the report counts 87 cross-series shared pixels, and the tables distinguish direct_pixel from shared_occlusion while retaining shared ownership and source-series fields. The Intake preserves this dependency and expressly bars treating it as independent direct-pixel support.",
+            "check_key": "fig4.shared_support",
+            "evidence_keys": [
+              "figure_manifest",
+              "validation_report",
+              "curve_tables_001",
+              "curve_tables_002",
+              "audit_overlays_001",
+              "audit_overlays_002"
+            ],
+            "status": "pass",
+            "subject": "Treatment of cross-series shared pixels and occlusion-dependent rows."
+          },
+          {
+            "basis": "The source panel and numeric redraw visibly place the steep red In0.83Ga0.17As drop at shallower depth than the steep black In0.83Al0.17As drop. Both supplied tables then contain fluctuating values near the lower plotted decades. The Intake labels this as qualitative and makes no new fit or causal attribution.",
+            "check_key": "fig4.visible_profile_comparison",
+            "evidence_keys": [
+              "source_panels",
+              "audit_overlays_002",
+              "curve_tables_001",
+              "curve_tables_002"
+            ],
+            "status": "pass",
+            "subject": "Qualitative comparison of the two observed fronts and low-concentration tails."
+          },
+          {
+            "basis": "The paper says the calculated D proportional to C profile fits the high-concentration region above ni, gives ni = 5.4 x 10^16 cm^-3 for In0.83Ga0.17As at 480 degrees C, and describes the low-concentration VCD model with an erfc solution and a deeper In0.83Ga0.17As frontier. It also states that intrinsic diffusion is less obvious in In0.83Al0.17As. The Intake presents these as author interpretation rather than proof from the digitized curves.",
+            "check_key": "fig4.author_interpretation",
+            "evidence_keys": [
+              "paper_source"
+            ],
+            "status": "pass",
+            "subject": "Attribution of the D proportional to C and VCD/erfc interpretations to the paper."
+          },
+          {
+            "basis": "Table I reports In0.83Al0.17As model-A DA = 1.59 x 10^-12 cm^2/s and CA = 6.85 x 10^19 cm^-3; In0.83Ga0.17As model-A DA = 1.05 x 10^-12 cm^2/s and CA = 8.35 x 10^19 cm^-3; and model-B DB = 1.14 x 10^-11 cm^2/s and CB = 1.47 x 10^16 cm^-3. The Intake keeps them separate from the CSV rows and does not call them a complete TCAD set.",
+            "check_key": "fig4.author_fit_parameters",
+            "evidence_keys": [
+              "paper_source"
+            ],
+            "status": "pass",
+            "subject": "Table I diffusion coefficients and surface concentrations quoted by the Intake."
+          },
+          {
+            "basis": "The paper states a Zn SIMS detection limit of about 3 x 10^15 cm^-3 and the source panel draws a horizontal limit near that value. Direct comparison of all table rows finds 104 In0.83Al0.17As values and 10 In0.83Ga0.17As values below 3 x 10^15, while every below_sims_detection_limit field is 0, every row is marked eligible, and the report counts zero below-limit rows. The Intake reports the 114-row conflict exactly, leaves it unresolved, and bars secure quantitative use of affected values.",
+            "check_key": "fig4.sims_detection_limit",
+            "evidence_keys": [
+              "paper_source",
+              "source_panels",
+              "curve_tables_001",
+              "curve_tables_002",
+              "validation_report"
+            ],
+            "status": "pass",
+            "subject": "The approximate SIMS limit and the unresolved row-flag mismatch."
+          },
+          {
+            "basis": "The source panel visibly includes blue D proportional to C and erfc fits, but the request declares only the black and red measured series, the manifest contains only those two series, and the validation report contains exactly two curve tables. The Intake accurately lists the fitted curves as visible but not digitized and makes no numeric claims from them.",
+            "check_key": "fig4.fit_curves_not_digitized",
+            "evidence_keys": [
+              "source_panels",
+              "figure_request",
+              "figure_manifest",
+              "validation_report"
+            ],
+            "status": "pass",
+            "subject": "Scope of the visible blue fit curves."
+          },
+          {
+            "basis": "The Intake repeatedly identifies the CSVs as pixel-derived observations, excludes author-raw-data status, preserves gaps and calibration uncertainty, distinguishes author claims from observed traces, limits the condition to 480 degrees C for 8 min, excludes 800/900 degrees C evidence, and says neither the mechanisms nor a complete TCAD model are established by this family.",
+            "check_key": "intake.claim_boundary",
+            "evidence_keys": [
+              "paper_source",
+              "figure_request",
+              "figure_manifest",
+              "validation_report",
+              "source_panels",
+              "audit_overlays_001",
+              "audit_overlays_002",
+              "curve_tables_001",
+              "curve_tables_002"
+            ],
+            "status": "pass",
+            "subject": "Whether the Intake overstates pixel-derived data or the bounded family."
+          }
+        ],
+        "evidence": [
+          {
+            "locator": "Supplied paper PDF, pages 1-7; bibliographic header, Fig. 4 and caption, surrounding discussion, and Table I.",
+            "source_key": "paper_source",
+            "source_type": "frozen_input"
+          },
+          {
+            "locator": "Typed Fig. 4 request for panel main, including source identity, plot bounds, axis ticks, series descriptors, legend binding boxes, exclusions, and seeds.",
+            "source_key": "figure_request",
+            "source_type": "frozen_input"
+          },
+          {
+            "locator": "Manifest for figure_key fig4-zinc-diffusion-profiles, panel main, including source hashes, calibration, matched bindings, gaps, shared support, and artifact provenance.",
+            "source_key": "figure_manifest",
+            "source_type": "frozen_input"
+          },
+          {
+            "locator": "Deterministic report for bundle fingerprint 8702fefaceacecad92c32296f775ba8892cb75a826693a92b9cf6184e093a496, including family and per-series row metrics.",
+            "source_key": "validation_report",
+            "source_type": "frozen_input"
+          },
+          {
+            "locator": "Recovered 1000 x 815 Fig. 4 panel showing the two measured profiles, legend, axes, fitted curves, and horizontal SIMS Detection Limit annotation.",
+            "source_key": "source_panels",
+            "source_type": "frozen_input"
+          },
+          {
+            "locator": "Identity and fidelity overlay for both requested series, including legend boxes, observed trace samples, missing coverage, shared support, and the local limit guide.",
+            "source_key": "audit_overlays_001",
+            "source_type": "frozen_input"
+          },
+          {
+            "locator": "Numeric redraw of every supplied CSV row for both series, retaining discontinuities and shared-support markers.",
+            "source_key": "audit_overlays_002",
+            "source_type": "frozen_input"
+          },
+          {
+            "locator": "Complete main/In0.83Al0.17As CSV: 501 rows with point indices 10-798, row eligibility, detection-limit flag, support kind, ownership, and calibrated values.",
+            "source_key": "curve_tables_001",
+            "source_type": "frozen_input"
+          },
+          {
+            "locator": "Complete main/In0.83Ga0.17As CSV: 765 rows with point indices 10-798, row eligibility, detection-limit flag, support kind, ownership, and calibrated values.",
+            "source_key": "curve_tables_002",
+            "source_type": "frozen_input"
+          }
+        ],
+        "schema_version": 1
+      },
+      "schema": "scidiscovery.evidence-audit.v1"
+    },
+    "sealed_output_status": "available",
+    "started_at": "2026-09-08T13:34:39.879981Z",
+    "state": "completed"
+  },
+  "split_request": {
+    "name": "fig4_continuation_intake_split_1",
+    "operation_id": "science.intake.split.v1",
+    "inputs": [
+      {
+        "port": "scientific_intake",
+        "artifact_names": [
+          "fig4_continuation_intake_2.output"
+        ]
+      },
+      {
+        "port": "evidence_audit",
+        "artifact_names": [
+          "fig4_continuation_intake_audit_1.output"
+        ]
+      }
+    ]
+  },
+  "split_preflight": {
+    "admissible": true,
+    "executor_kind": "transform",
+    "port": null,
+    "reason_code": null
+  },
+  "split_result": {
+    "executor_kind": "transform",
+    "operation_id": "science.intake.split.v1",
+    "result": {
+      "name": "fig4_continuation_intake_split_1",
+      "outputs": [
+        {
+          "artifact_name": "fig4_continuation_intake_split_1",
+          "kind": "problem_frame",
+          "media_type": "application/json",
+          "output_label": "primary",
+          "schema": "scidiscovery.problem-frame.v1",
+          "size_bytes": 5589
+        },
+        {
+          "artifact_name": "fig4_continuation_intake_split_1.scientific_foundation",
+          "kind": "scientific_foundation",
+          "media_type": "application/json",
+          "output_label": "scientific_foundation",
+          "schema": "scidiscovery.scientific-foundation.v1",
+          "size_bytes": 11265
+        }
+      ],
+      "profile": "science.intake.split.v1"
+    }
+  },
+  "objective_projection_request": {
+    "name": "fig4_continuation_objective_1",
+    "operation_id": "science.objective.project.v1",
+    "inputs": [
+      {
+        "port": "scientific_foundation",
+        "artifact_names": [
+          "fig4_continuation_intake_split_1.scientific_foundation"
+        ]
+      }
+    ]
+  },
+  "objective_projection_preflight": {
+    "admissible": false,
+    "executor_kind": null,
+    "port": "scientific_foundation",
+    "reason_code": "input_required_field_missing"
+  },
+  "bounded_objective_audit_request": {
+    "name": "fig4_continuation_intake_objective_audit_1",
+    "operation_id": "science.figure.evidence.audit.v1",
+    "inputs": [
+      {
+        "port": "scientific_intake",
+        "artifact_names": [
+          "fig4_continuation_intake_2.output"
+        ]
+      },
+      {
+        "port": "paper_source",
+        "artifact_names": [
+          "ingaas_inalas_fig4_source_paper"
+        ]
+      },
+      {
+        "port": "figure_request",
+        "artifact_names": [
+          "fig4_continuation_figure_request_1.output"
+        ]
+      },
+      {
+        "port": "figure_manifest",
+        "artifact_names": [
+          "fig4_continuation_figure_materialized_1"
+        ]
+      },
+      {
+        "port": "validation_report",
+        "artifact_names": [
+          "fig4_continuation_figure_materialized_1.validation_report"
+        ]
+      },
+      {
+        "port": "source_panels",
+        "artifact_names": [
+          "fig4_continuation_figure_materialized_1.source_panels"
+        ]
+      },
+      {
+        "port": "audit_overlays",
+        "artifact_names": [
+          "fig4_continuation_figure_materialized_1.audit_overlays_001",
+          "fig4_continuation_figure_materialized_1.audit_overlays_002"
+        ]
+      },
+      {
+        "port": "curve_tables",
+        "artifact_names": [
+          "fig4_continuation_figure_materialized_1.curve_tables_001",
+          "fig4_continuation_figure_materialized_1.curve_tables_002"
+        ]
+      }
+    ],
+    "instruction": "对这份 ScientificIntake 作一次有界的接续完整性审查，仍以绑定的全部图证原件为唯一证据。当前研究实例的总体目的为：仅依据给定论文提取目标曲线和器件条件，提出可证伪假设，设计最小 TCAD 实验，用真实 Sentaurus 结果与论文曲线定量比较并经独立审查得到结论或下一轮修订；不得引入论文未包含的 800°C、900°C 曲线或未经证实的参数。实际目标投影预检已因科学基础中缺少 objective_contract 返回 input_required_field_missing。请独立判断这份 Intake 是否充分保留了上述研究目的及可供后续目标投影/假设阶段消费的正式目标合同，尤其区分 objective 文字和 objective_contract 结构。若存在需要修订的缺项，明确字段、影响动作和最小修改范围；不要替设计者选定本轮目标，也不要自行新增科学目标或实验参数。证据事实的忠实性与接续所需结构的完整性分别陈述，保留原件中已有缺口；不要把补齐结构等同于缺口已解决。提交一份完整的独立 EvidenceAudit，结论由原件与实际缺项决定。"
+  },
+  "bounded_objective_audit_preflight": {
+    "admissible": true,
+    "executor_kind": "agent",
+    "port": null,
+    "reason_code": null
+  },
+  "bounded_objective_audit_invocation": {
+    "executor_kind": "agent",
+    "operation_id": "science.figure.evidence.audit.v1",
+    "result": {
+      "agent_type": "op_science_figure_evidence_audit_v1_f8abce8f8476",
+      "backend": "local_trusted",
+      "candidate_accepted": false,
+      "completed_at": null,
+      "created_at": "2026-09-08T13:46:14.714264Z",
+      "deadline_at": "2026-09-08T13:56:14.714264Z",
+      "head_advance": null,
+      "last_activity_at": null,
+      "logical_name": "fig4_continuation_intake_objective_audit_1",
+      "name": "fig4_continuation_intake_objective_audit_1",
+      "operation_id": "science.figure.evidence.audit.v1",
+      "output_artifact_name": null,
+      "reason": null,
+      "recovery_available": false,
+      "revision": 1,
+      "scheduler_signal": null,
+      "sealed_output": null,
+      "sealed_output_status": "unavailable",
+      "started_at": null,
+      "state": "queued"
+    }
+  }
+}

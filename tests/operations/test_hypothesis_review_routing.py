@@ -244,12 +244,14 @@ def test_critic_progress_fingerprint_ignores_prose_but_not_open_dimensions() -> 
 
 
 def test_experiment_review_reports_a_verdict_without_selecting_an_operation() -> None:
+    from tests.operations.test_m2_curve_analysis_boundary import _plan
+
     payload = {
         "review_target": "experiment_portfolio",
         "verdict": "revise",
         "summary": "One bounded correction is required.",
     }
-    _object_review_context(payload, {"experiment_plan": b"{}"}, {"verdict": "revise"})
+    _object_review_context(payload, {"experiment_plan": canonical_json(_plan())}, {"verdict": "revise"})
     catalog = _catalog()
     assert catalog.operation("science.experiment.revise.v1").spec.accepts_actions == ()
     assert next(
@@ -505,7 +507,8 @@ def test_same_critic_problem_cannot_trigger_a_second_text_only_revision() -> Non
     first_revision = _artifact("portfolio_1", "scidiscovery.hypothesis-proposal.v2")
     repeated_review = _artifact("critic_1", "scidiscovery.critic-review.v2")
     first_status = SimpleNamespace(
-        operation_digest=operation.digest,
+        operation_id=operation.spec.operation_id,
+        operation_digest="0" * 64,
         inputs=(
             SimpleNamespace(usage="revision_base", artifact_ref=original.ref),
             SimpleNamespace(usage="change_request", artifact_ref=first_review.ref),
@@ -554,14 +557,16 @@ def test_hypothesis_review_edge_has_a_hard_two_revision_limit() -> None:
     review_2 = _artifact("limit_critic_2", "scidiscovery.critic-review.v2")
     statuses = {
         revision_2.ref: SimpleNamespace(
-            operation_digest=operation.digest,
+            operation_id=operation.spec.operation_id,
+            operation_digest="0" * 64,
             inputs=(
                 SimpleNamespace(usage="revision_base", artifact_ref=revision_1.ref),
                 SimpleNamespace(usage="change_request", artifact_ref=review_1.ref),
             ),
         ),
         revision_1.ref: SimpleNamespace(
-            operation_digest=operation.digest,
+            operation_id=operation.spec.operation_id,
+            operation_digest="0" * 64,
             inputs=(
                 SimpleNamespace(usage="revision_base", artifact_ref=original.ref),
                 SimpleNamespace(usage="change_request", artifact_ref=review_0.ref),
@@ -771,6 +776,7 @@ def test_run_transaction_rejects_a_second_revision_successor(tmp_path) -> None:
             "scientific_foundation": (foundation,),
         },
         instruction="Apply the bounded critic correction.",
+        read_artifact=runtime.artifacts.read,
     )
     runtime.runs.schedule(
         bound,
@@ -829,6 +835,7 @@ def test_run_transaction_rejects_a_second_revision_successor(tmp_path) -> None:
             "scientific_foundation": (foundation,),
         },
         instruction="Retry only after an explicit failed Run.",
+        read_artifact=runtime.artifacts.read,
     )
     failed_run = runtime.runs.schedule(
         retry_bound,
@@ -866,7 +873,7 @@ def test_nonpassing_review_signal_can_justify_scheduler_selected_remediation() -
     )
     routes = object.__new__(RootOperationRoutes)
     routes._operation_output_contract = Mock(
-        side_effect=lambda artifact: (
+        side_effect=lambda artifact, **_kwargs: (
             (object(), ("science.hypothesis.criticize.v1", "hypothesis_portfolio", ("pass",)))
             if artifact.ref == portfolio.ref
             else None

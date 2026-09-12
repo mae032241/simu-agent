@@ -1,4 +1,5 @@
 import re
+from dataclasses import replace
 import json
 from hashlib import sha256
 from functools import lru_cache
@@ -8,6 +9,7 @@ from types import MappingProxyType
 from typing import Any, Iterable, Mapping
 from ..operation_contract import (
     _evidence_source_projection_version,
+    compile_output_contract,
     _project_evidence_source_schema,
     output_checker_contract_issue,
 )
@@ -18,8 +20,8 @@ from .spec import (
     ComponentSpec, OperationSpec, OutputPortSpec,
     PermissionTemplate, PluginDefinition,
     SchedulerOperationView, WorkspaceContract, canonical_digest,
-    scheduler_operation_view)
-from .tooling import WorkerToolDefinition
+    scheduler_operation_view, freeze_json)
+from .tooling import WorkerToolDefinition, compile_worker_tools, declared_tool_output_names
 from .lifecycle import AGENT_LIFECYCLE_PROTOCOL
 from .workspace import WORKSPACE_HOOK_KINDS
 from .runtime_plugins import RuntimePluginFactory
@@ -124,7 +126,7 @@ def _load_implementation(spec: ComponentSpec, plugin_id: str) -> Any:
     if spec.kind == "worker_tool":
         if not isinstance(value, WorkerToolDefinition) or value.issue() is not None:
             _fail("component_protocol_invalid", plugin_id, field=spec.component_id)
-        return value
+        return replace(value, _input_schema=freeze_json(value.input_model.model_json_schema()))
     if spec.kind == "runtime_factory":
         if not isinstance(value, RuntimePluginFactory):
             _fail("component_protocol_invalid", plugin_id, field=spec.component_id)
@@ -134,6 +136,16 @@ def _load_implementation(spec: ComponentSpec, plugin_id: str) -> Any:
     return value.implementation
 def _resource_digest(spec: ComponentSpec, implementation: Any, plugin_id: str) -> str | None:
     try:
+        if spec.kind == "worker_tool":
+            return canonical_digest({
+                "interface": implementation.schema(),
+                "capability": implementation.capability,
+                "required_services": implementation.required_services,
+                "optional_services": implementation.optional_services,
+                "evidence_ports": implementation.evidence_ports,
+                "network_access": implementation.network_access,
+                "record_attempts": implementation.record_attempts,
+            })
         if spec.kind == "workspace":
             return canonical_digest(implementation)
         if spec.kind == "resource":
@@ -304,6 +316,19 @@ def _validate_operation_contracts(plugin_map: dict[str, PluginDefinition], compo
                 _fail("operation_ports_empty", plugin.plugin_id, op_id)
             names = [port.name for port in (*operation.inputs, *operation.outputs)]
             if len(names) != len(set(names)): _fail("operation_port_duplicate", plugin.plugin_id, op_id)
+            if operation.input_validation is not None:
+                issue = operation.input_validation.issue()
+                if issue:
+                    _fail(issue, plugin.plugin_id, op_id, "input_validation")
+                _resolve_component(
+                    plugin_map, components, used, plugin.plugin_id,
+                    operation.input_validation.validator, "validator", reachable,
+                )
+            tool_ports = declared_tool_output_names(tuple(
+                _resolve_component(plugin_map, components, used, plugin.plugin_id,
+                                   ref, "worker_tool", reachable).implementation
+                for ref in operation.executor.tools
+            ))
             for port in (*operation.inputs, *operation.outputs):
                 issue = port.issue()
                 if issue: _fail(issue, plugin.plugin_id, op_id, port.name)
@@ -333,11 +358,12 @@ def _validate_operation_contracts(plugin_map: dict[str, PluginDefinition], compo
                     checker_issue = output_checker_contract_issue(
                         contract_implementation, port,
                         {item.name: item.min_items for item in operation.inputs},
-                        agent_output=operation.executor.kind == "agent",
+                        agent_output=operation.executor.kind == "agent" and not (port.collection is not None and port.name in tool_ports),
                     )
                     if checker_issue: _fail(checker_issue[0], plugin.plugin_id, op_id,
                                             checker_issue[1] or port.name)
                     input_names = {item.name for item in operation.inputs}
+                    input_names |= {item.name for item in operation.outputs if item.collection is not None and item.name in tool_ports}
                     if ((port.context_sources and not port.context_validator)
                             or not set(port.context_sources) <= input_names):
                         _fail("output_context_invalid", plugin.plugin_id, op_id, port.name)
@@ -452,16 +478,21 @@ def _validate_operation_contracts(plugin_map: dict[str, PluginDefinition], compo
             permission: PermissionTemplate | None = None
             if executor.kind == "agent":
                 if not executor.workspace or not executor.prompt or not executor.model: _fail("agent_authority_incomplete", plugin.plugin_id, op_id)
+                tool_ports = declared_tool_output_names(tuple(components[_qualified(plugin.plugin_id, ref)].implementation for ref in executor.tools))
+                if tool_ports and (tool_ports not in ({'recovery_manifest_output'}, {'tool_evidence', 'recovery_manifest_output'})
+                        or tool_ports != {port.name for port in operation.outputs if port.collection is not None}):
+                    _fail("agent_tool_evidence_contract_invalid", plugin.plugin_id, op_id)
+                agent_outputs = tuple(port for port in operation.outputs if not (port.collection is not None and port.name in tool_ports))
                 primary = tuple(port for port in operation.outputs if port.collection is None)
                 if (len(primary) != 1 or primary[0].min_items != 1
                         or primary[0].max_items != 1
                         or primary[0].media_types != ("application/json",)
-                        or any(port.validator is None for port in operation.outputs)):
+                        or any(port.validator is None for port in agent_outputs)):
                     _fail("agent_output_contract_invalid", plugin.plugin_id, op_id)
-                if any(port.semantic_contract is None for port in operation.outputs):
+                if any(port.semantic_contract is None for port in agent_outputs):
                     _fail("agent_semantic_contract_missing", plugin.plugin_id,
                           op_id, "outputs")
-                for port in operation.outputs:
+                for port in agent_outputs:
                     contract_key = _qualified(plugin.plugin_id, port.semantic_contract)
                     for validator in (port.validator, port.context_validator,
                                       port.collection.bundle_validator if port.collection else None):
@@ -683,6 +714,19 @@ def _build_compiled_catalog(plugin_map: Mapping[str, PluginDefinition], componen
     if unused:
         plugin_id, component_id = unused[0].split(":", 1)
         _fail("component_unused", plugin_id, field=component_id)
+    tool_contracts = {}
+    output_contracts = {}
+    for op_id, (plugin_id, operation, references, _) in compiled_parts.items():
+        implementations = {key: components[key].implementation for key in references}
+        tools = compile_worker_tools(plugin_id, operation, implementations)
+        tool_contracts[op_id] = tools
+        evidence_ports = declared_tool_output_names(tools)
+        output_contracts[op_id] = MappingProxyType({
+            port.name: compile_output_contract(
+                operation, port, plugin_id=plugin_id,
+                implementations=implementations, evidence_ports=evidence_ports,
+            ) for port in operation.outputs
+        })
     digests: dict[str, str] = {}
     digest_stack: set[str] = set()
     def approval_contract_digest(op_id: str) -> str | None:
@@ -726,24 +770,14 @@ def _build_compiled_catalog(plugin_map: Mapping[str, PluginDefinition], componen
                 operation, component_specs, permission, reviewer_digest,
                 provider_identities,
             )
-            projections = tuple(
-                (port.name, projection)
-                for port in sorted(operation.outputs, key=lambda item: item.name)
-                if (
-                    projection := _evidence_source_projection_version(
-                        operation, port
-                    )
-                )
-                is not None
-            )
-            digest = canonical_digest(
-                envelope
-                if not projections
-                else {
-                    "compiled": envelope,
-                    "output_schema_projection": projections,
-                }
-            )
+            digest = canonical_digest({
+                "compiled": envelope,
+                "output_contracts": output_contracts[op_id],
+                "output_schema_projection": tuple(
+                    (port.name, version) for port in operation.outputs
+                    if (version := _evidence_source_projection_version(operation, port)) is not None
+                ),
+            })
         except Exception: _fail("operation_digest_invalid", plugin_id, op_id, "digest")
         finally:
             digest_stack.discard(op_id)
@@ -770,7 +804,8 @@ def _build_compiled_catalog(plugin_map: Mapping[str, PluginDefinition], componen
         )
         compiled[op_id] = CompiledOperation(
             plugin_id, operation, reachable, implementations, component_specs, permission,
-            operation_digest(op_id), approval_identity, approval_providers)
+            operation_digest(op_id), approval_identity, approval_providers,
+            tool_contracts[op_id], output_contracts[op_id])
         if any(port.usage == "revision_base" for port in operation.inputs):
             from .invoke import direct_revision_ports
             if direct_revision_ports(compiled[op_id]) is None:

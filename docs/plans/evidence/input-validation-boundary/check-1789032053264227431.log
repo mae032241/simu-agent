@@ -1,0 +1,18 @@
+........................................................................ [ 56%]
+....................F
+=================================== FAILURES ===================================
+____ test_negative_review_can_report_conflicting_parameter_coverage[revise] ____
+tests/operations/test_l4_local_tcad.py:2256: in test_negative_review_can_report_conflicting_parameter_coverage
+    _review_context(report, sources, {"verdict": "pass"})
+plugins/tcad_artifact/tcad_artifact/plugin.py:131: in _review_context
+    validate_deck_review_task_output(payload, sources, handoff)
+plugins/tcad_artifact/tcad_artifact/project_packager.py:1304: in validate_deck_review_task_output
+    report = DeckReviewReport.model_validate_json(_canonical(value), strict=True)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   pydantic_core._pydantic_core.ValidationError: 1 validation error for DeckReviewReport
+E     Value error, passing deck review requires complete clean coverage and execution_ready [type=value_error, input_value={'capability_sha256': 'fb...: [], 'verdict': 'pass'}, input_type=dict]
+E       For further information visit https://errors.pydantic.dev/2.11/v/value_error
+=========================== short test summary info ============================
+FAILED tests/operations/test_l4_local_tcad.py::test_negative_review_can_report_conflicting_parameter_coverage[revise]
+!!!!!!!!!!!!!!!!!!!!!!!!!! stopping after 1 failures !!!!!!!!!!!!!!!!!!!!!!!!!!!
+1 failed, 92 passed, 1 deselected in 18.63s

@@ -20,6 +20,8 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from scidiscovery.artifact_agent.schema.execution import LocalFileDescriptor
 
+from .transport_logs import preserve_log
+
 from .execution_control import FileDescriptor, SolverCapabilitySnapshot, TCADJobSpec
 
 
@@ -54,10 +56,11 @@ class RemoteClient(Protocol):
     def put(self, relative_path: str, raw: bytes) -> None: ...
     def rpc(self, request: dict[str, Any]) -> dict[str, Any]: ...
     def get(self, local_path: str) -> bytes: ...
+    def get_to(self, local_path: str, destination: Path, max_bytes: int) -> None: ...
 
 
 class SSHRemoteClient:
-    def __init__(self, config: SSHTCADTransportConfig) -> None:
+    def __init__(self, config: SSHTCADTransportConfig, *, diagnostic_root: Path | None = None) -> None:
         executable = Path(config.ssh_executable)
         if not executable.is_file():
             raise ValueError("SSH executable does not exist")
@@ -66,6 +69,16 @@ class SSHRemoteClient:
         ).is_file():
             raise ValueError("destination resolver executable does not exist")
         self.config = config
+        self.diagnostic_root = diagnostic_root
+
+    def _run(self, *args, **kwargs):
+        try:
+            return subprocess.run(*args, **kwargs)
+        except subprocess.TimeoutExpired as error:
+            if self.diagnostic_root is not None:
+                preserve_log(self.diagnostic_root, "ssh-stderr", error.stderr or b"")
+                preserve_log(self.diagnostic_root, "ssh-stdout", error.stdout or b"")
+            raise
 
     def put(self, relative_path: str, raw: bytes) -> None:
         response, trailing = self._call(
@@ -101,11 +114,25 @@ class SSHRemoteClient:
             raise RuntimeError("VM download differs from response descriptor")
         return raw
 
+    def get_to(self, local_path: str, destination: Path, max_bytes: int) -> None:
+        response, _ = self._call("get", {"local_path": local_path, "max_bytes": max_bytes}, b"",
+                                 download_to=destination, download_limit=max_bytes)
+        payload = _require_ok(response, "get")
+        digest = hashlib.sha256()
+        size = 0
+        with destination.open("rb") as stream:
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                size += len(chunk)
+                digest.update(chunk)
+        if payload.get("size_bytes") != size or payload.get("sha256") != digest.hexdigest():
+            raise RuntimeError("VM download differs from response descriptor")
+
     def _call(
         self,
         operation: str,
         payload: dict[str, Any],
         body: bytes,
+        *, download_to: Path | None = None, download_limit: int = 0,
     ) -> tuple[dict[str, Any], bytes]:
         request = _canonical(
             {"schema_version": 1, "operation": operation, "payload": payload}
@@ -135,18 +162,42 @@ class SSHRemoteClient:
                 f"{self.config.remote_helper} --config {self.config.remote_config}",
             )
         )
-        completed = subprocess.run(
-            command,
-            input=request,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            env=_transport_environment(self.config.ssh_executable),
-            timeout=self.config.operation_timeout_seconds,
-            check=False,
-        )
+        download_stream = tempfile.TemporaryFile() if download_to is not None else None
+        try:
+            completed = self._run(
+                command,
+                input=request,
+                stdout=download_stream if download_stream is not None else subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                env=_transport_environment(self.config.ssh_executable),
+                timeout=self.config.operation_timeout_seconds,
+                check=False,
+            )
+            if download_stream is not None:
+                download_stream.seek(0)
+                header = download_stream.readline(1024 * 1024 + 1)
+                if not header.endswith(b"\n") or len(header) > 1024 * 1024:
+                    raise RuntimeError("VM download returned no bounded header")
+                response = json.loads(header)
+                size = 0
+                with download_to.open("wb") as stream:
+                    for chunk in iter(lambda: download_stream.read(1024 * 1024), b""):
+                        size += len(chunk)
+                        if size > download_limit:
+                            raise RuntimeError("VM download exceeds inspection bound")
+                        stream.write(chunk)
+                completed = subprocess.CompletedProcess(completed.args, completed.returncode,
+                                                         stdout=header, stderr=completed.stderr)
+        finally:
+            if download_stream is not None:
+                download_stream.close()
+        if completed.stderr and self.diagnostic_root is not None:
+            preserve_log(self.diagnostic_root, "ssh-stderr", completed.stderr)
         if completed.returncode != 0:
+            if self.diagnostic_root is not None:
+                preserve_log(self.diagnostic_root, "ssh-stdout", completed.stdout)
             detail = completed.stderr.decode("utf-8", errors="replace").strip()
-            suffix = f": {detail[-2048:]}" if detail else ""
+            suffix = f": {detail}" if detail else ""
             raise RuntimeError(f"VM transport command failed{suffix}")
         header, separator, trailing = completed.stdout.partition(b"\n")
         if not separator or len(header) > 1024 * 1024:
@@ -159,7 +210,7 @@ class SSHRemoteClient:
     def _destination(self) -> str:
         if not self.config.destination_resolver:
             return self.config.destination
-        completed = subprocess.run(
+        completed = self._run(
             list(self.config.destination_resolver),
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
@@ -168,9 +219,13 @@ class SSHRemoteClient:
             timeout=self.config.operation_timeout_seconds,
             check=False,
         )
+        if completed.stderr and self.diagnostic_root is not None:
+            preserve_log(self.diagnostic_root, "ssh-stderr", completed.stderr)
         if completed.returncode != 0:
+            if self.diagnostic_root is not None:
+                preserve_log(self.diagnostic_root, "ssh-stdout", completed.stdout)
             detail = completed.stderr.decode("utf-8", errors="replace").strip()
-            suffix = f": {detail[-2048:]}" if detail else ""
+            suffix = f": {detail}" if detail else ""
             raise RuntimeError(
                 f"VM destination resolver failed with exit code "
                 f"{completed.returncode}{suffix}"
@@ -250,6 +305,8 @@ class SSHTCADTransport:
         if operation == "cancel":
             value = self._rpc("tcad_cancel", {"run_id": payload["run_id"]})
             return {"state": value["state"]}
+        if operation == "inspect_outputs":
+            return self._inspect_outputs(str(payload["run_id"]), payload.get("relative_path"), payload.get("max_bytes", 32*1024*1024))
         if operation == "collect":
             return self._collect(str(payload["run_id"]))
         raise ValueError("unsupported TCAD transport operation")
@@ -304,6 +361,32 @@ class SSHTCADTransport:
             raise ValueError("transport submission marker is invalid")
         FileDescriptor.model_validate(marker.get("remote_submission"), strict=True)
         return marker
+
+    def _inspect_outputs(self, run_id: str, relative_path: str | None, max_bytes: int) -> dict[str, Any]:
+        if not re.fullmatch(r"run_[0-9a-f]{32}", run_id):
+            raise ValueError("invalid TCAD run identity")
+        value = self._rpc("tcad_inspect_outputs", {"run_id": run_id, "relative_path": relative_path, "max_bytes": max_bytes})
+        if value.get("status") != "available" or "file" not in value:
+            return value
+        descriptor = FileDescriptor.model_validate(value["file"], strict=True)
+        if descriptor.size_bytes > min(max_bytes, 32 * 1024 * 1024):
+            raise ValueError("inspection file exceeds limit")
+        path = self.local_result_root / "inspection" / run_id / descriptor.sha256
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=path.parent) as directory:
+            temporary = Path(directory) / "download"
+            self.remote.get_to(descriptor.local_path, temporary, min(max_bytes, 32 * 1024 * 1024))
+            observed = _local_descriptor("candidate", temporary, descriptor.media_type)
+            if observed.size_bytes != descriptor.size_bytes or observed.sha256 != descriptor.sha256:
+                return {"status": "changed_since_inspection", "reason": "download_changed"}
+            os.chmod(temporary, 0o400)
+            if path.exists():
+                existing = _local_descriptor("candidate", path, descriptor.media_type)
+                if existing.sha256 != descriptor.sha256:
+                    raise RuntimeError("immutable inspection copy changed")
+            else:
+                os.link(temporary, path)
+        return {**value, "file": _local_descriptor("candidate", path, descriptor.media_type).model_dump(mode="json")}
 
     def _collect(self, run_id: str) -> dict[str, Any]:
         if not re.fullmatch(r"run_[0-9a-f]{32}", run_id):
@@ -400,12 +483,17 @@ def _write_immutable(path: Path, raw: bytes) -> None:
 
 
 def _local_descriptor(name: str, path: Path, media_type: str) -> LocalFileDescriptor:
-    raw = path.read_bytes()
+    digest = hashlib.sha256()
+    size = 0
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            size += len(chunk)
+            digest.update(chunk)
     return LocalFileDescriptor(
         name=name,
         local_path=str(path),
-        sha256=hashlib.sha256(raw).hexdigest(),
-        size_bytes=len(raw),
+        sha256=digest.hexdigest(),
+        size_bytes=size,
         media_type=media_type,
     )
 
@@ -477,7 +565,9 @@ def main(argv: list[str] | None = None) -> int:
         operation = str(request.get("operation"))
         config = _read_config(args.config)
         transport = SSHTCADTransport(
-            SSHRemoteClient(config),
+            SSHRemoteClient(config, diagnostic_root=Path(os.environ.get(
+                "SCIDISCOVERY_TCAD_RESULT_ROOT", "/var/lib/scidiscovery/transport-results"
+            ))),
             local_result_root=os.environ.get(
                 "SCIDISCOVERY_TCAD_RESULT_ROOT", "/var/lib/scidiscovery/transport-results"
             ),

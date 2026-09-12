@@ -1,0 +1,19 @@
+{
+  "command": [
+    "python",
+    "-m",
+    "pytest",
+    "-q",
+    "-c",
+    "/tmp/scid-submission-prune-baseline/pyproject.toml",
+    "/tmp/scid-submission-prune-baseline/tests/operations/test_agent_contract_alignment.py::test_review_validates_bound_original_context_and_actual_source_aliases",
+    "/tmp/scid-submission-prune-baseline/tests/operations/test_hypothesis_review_routing.py::test_root_preflight_rejects_replacing_the_prior_intake_source",
+    "/tmp/scid-submission-prune-baseline/tests/operations/test_tcad_knowledge_closure.py::test_role_prompts_use_only_packaged_role_resources"
+  ],
+  "exit_code": 1,
+  "seconds": 1.712,
+  "peak_tree_rss_bytes": 120541184,
+  "budget_bytes": 536870912,
+  "early_stop_bytes": 469762048,
+  "memory_terminated": false
+}

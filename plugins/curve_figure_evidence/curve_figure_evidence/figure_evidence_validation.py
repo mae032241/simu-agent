@@ -66,34 +66,7 @@ def build_figure_evidence_validation_report(
     """Validate exact bundle bytes and return their canonical derived metrics."""
 
     manifest = _json_object(manifest_content, manifest_data_item)
-    automatic = manifest.get("schema_version") == "scidiscovery.figure-evidence-manifest.v2"
-    if automatic:
-        from .figure_evidence import FigureEvidenceManifest, FigureEvidenceValidationMetrics
-        FigureEvidenceManifest.model_validate_json(manifest_content, strict=True)
-        if manifest["result_shape"] != "measured":
-            declared = _declared_artifacts(manifest)
-            if set(declared) != set(sibling_files):
-                raise FigureEvidenceBundleError("unresolved family attachments differ from manifest")
-            for name, (content, media_type) in sibling_files.items():
-                record = declared[name]
-                if (record["sha256"], record["bytes"], record["media_type"]) != (_sha256(content), len(content), media_type):
-                    raise FigureEvidenceBundleError("unresolved attachment identity differs")
-                with Image.open(io.BytesIO(content)) as image:
-                    if image.size != (manifest["source"]["width"], manifest["source"]["height"]):
-                        raise FigureEvidenceBundleError("unresolved image dimensions differ")
-            return {
-                "schema_version": "scidiscovery.figure-evidence-validation-report.v2",
-                "validator_version": VALIDATOR_VERSION, "integrity_status": "valid",
-                "result_shape": manifest["result_shape"], "unresolved_reasons": manifest["unresolved_reasons"],
-                "validated_artifacts": list(declared.values()),
-                "figure_key": manifest["figure_key"], "source_status": "unresolved",
-                "manifest_sha256": _sha256(manifest_content),
-                "bundle_fingerprint_sha256": _sha256(canonical_json([_sha256(manifest_content), *sorted((n, _sha256(c)) for n, (c, _) in sibling_files.items())])),
-                "validated_artifact_count": 1 + len(sibling_files), "series": [],
-                "supporting_tables": [], "scientific_role_counts": [],
-                "metrics": {name: 0 for name in FigureEvidenceValidationMetrics.model_fields},
-            }
-    elif manifest.get("schema_version") != MANIFEST_SCHEMA_VERSION:
+    if manifest.get("schema_version") != MANIFEST_SCHEMA_VERSION:
         raise FigureEvidenceBundleError("unsupported figure evidence manifest version")
     figure_key = _required_string(manifest, "figure_key", manifest_data_item)
     source_status = manifest.get("status")
@@ -333,7 +306,7 @@ def build_figure_evidence_validation_report(
             axes=axes,
             width=width,
             height=height,
-            scientific_order=automatic,
+            scientific_order=False,
         )
         binding = series.get("binding")
         binding_unresolved = (
@@ -451,9 +424,7 @@ def build_figure_evidence_validation_report(
         ],
     ]
     return {
-        "schema_version": "scidiscovery.figure-evidence-validation-report.v2" if automatic else REPORT_SCHEMA_VERSION,
-        **({"result_shape": "measured", "unresolved_reasons": manifest["unresolved_reasons"],
-            "validated_artifacts": list(declared.values())} if automatic else {}),
+        "schema_version": REPORT_SCHEMA_VERSION,
         "validator_version": VALIDATOR_VERSION,
         "integrity_status": "valid",
         "figure_key": figure_key,
@@ -1068,7 +1039,7 @@ def _csv_rows(data_item: str, content: bytes) -> tuple[list[str], list[dict[str,
 def _declared_artifacts(manifest: Mapping[str, Any]) -> dict[str, Mapping[str, Any]]:
     provenance = _required_mapping(manifest, "provenance", "manifest")
     values = provenance.get("output_artifacts")
-    if not isinstance(values, list) or (not values and manifest.get("result_shape") != "unrecovered"):
+    if not isinstance(values, list) or not values:
         raise FigureEvidenceBundleError("manifest provenance has no output artifacts")
     result: dict[str, Mapping[str, Any]] = {}
     for value in values:

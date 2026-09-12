@@ -1,0 +1,12 @@
+{
+  "command": [
+    "python",
+    "docs/plans/evidence/operation-validation-pruning/DIAGNOSTIC_INSTALL_SMOKE.py"
+  ],
+  "exit_code": 0,
+  "seconds": 10.864,
+  "peak_tree_rss_bytes": 188182528,
+  "budget_bytes": 536870912,
+  "early_stop_bytes": 469762048,
+  "memory_terminated": false
+}

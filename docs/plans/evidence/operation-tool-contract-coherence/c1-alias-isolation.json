@@ -1,0 +1,15 @@
+{
+  "command": [
+    "python",
+    "-m",
+    "pytest",
+    "-q",
+    "tests/operations/test_catalog_compile.py::test_compiled_contracts_have_no_self_digest_and_run_projections_are_isolated"
+  ],
+  "exit_code": 0,
+  "seconds": 1.12,
+  "peak_tree_rss_bytes": 103215104,
+  "budget_bytes": 536870912,
+  "early_stop_bytes": 469762048,
+  "memory_terminated": false
+}

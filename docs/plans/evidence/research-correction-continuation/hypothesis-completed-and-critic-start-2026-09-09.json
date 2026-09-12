@@ -1,0 +1,447 @@
+{
+  "recorded_at": "2026-09-09 02:55:35 UTC",
+  "scope": "New four-candidate hypothesis proposal completed under the approved foundation; exact compiled independent critic dispatched. No hypothesis verdict inherited and no execution performed.",
+  "hypothesis_completed": {
+    "agent_type": "op_science_hypothesis_propose_v1_1d7aef0c6b49",
+    "backend": "local_trusted",
+    "candidate_accepted": true,
+    "completed_at": "2026-09-09T02:54:34.849006Z",
+    "created_at": "2026-09-09T02:50:06.749037Z",
+    "deadline_at": "2026-09-09T03:05:06.749037Z",
+    "head_advance": "not_requested",
+    "last_activity_at": "2026-09-09T02:54:34.849006Z",
+    "logical_name": "fig4_continuation_hypothesis_1",
+    "name": "fig4_continuation_hypothesis_1",
+    "operation_id": "science.hypothesis.propose.v1",
+    "output_artifact_name": "fig4_continuation_hypothesis_1.output",
+    "reason": null,
+    "recovery_available": false,
+    "revision": 1,
+    "scheduler_signal": {
+      "assumptions": [
+        "The digitized curve values are treated as pixel-derived observations rather than author-supplied raw SIMS data.",
+        "The paper-reported coefficients and surface concentrations are comparison anchors, not a complete or independently qualified TCAD parameter set.",
+        "No concentration at or below the approximate SIMS detection limit is treated as securely quantified while the row-flag mismatch remains unresolved."
+      ],
+      "missing_inputs": [
+        "Author-supplied raw SIMS data, measurement uncertainty, and reconciled row-level detection-limit flags.",
+        "The physical or extraction origin of the 235-pixel InAlAs source-column gap.",
+        "Digitized blue fit curves and independently sourced surface-boundary histories, defect populations, and kinetic parameters needed for a TCAD realization."
+      ],
+      "next_action_kind": null,
+      "next_actions": [
+        "Reconcile the detection-limit flags against the immutable concentration rows before quantitative tail fitting.",
+        "Compare the candidates on identical qualified depth intervals with a single predeclared whole-response error metric and a complexity penalty.",
+        "Obtain source-bound boundary and defect parameters before translating any surviving candidate into TCAD."
+      ],
+      "schema_version": 1,
+      "summary": "A four-member, non-selective portfolio separates the paper's two-regime interpretation from a continuous material-dependent response, a boundary-condition explanation, and a measurement-support explanation. Each candidate is restricted to the supplied 480 degrees C, 8 min single-layer profiles and has whole-profile predictions and explicit rejection conditions that preserve the InAlAs gap, shared-pixel provenance, and unresolved SIMS-limit mismatch.",
+      "verdict": "pass"
+    },
+    "sealed_output": {
+      "artifact_name": "fig4_continuation_hypothesis_1.output",
+      "kind": "hypothesis_portfolio",
+      "payload": {
+        "contradiction": "The authors attribute the high-concentration region to concentration-dependent kick-out diffusion and the deeper low-concentration InGaAs region to VCD-related transport, whereas the supplied digitized profiles only make material-dependent fronts and tails observable; the InAlAs trace contains a large gap and 114 digitized rows are numerically below the approximate SIMS limit despite all row-level below-limit flags being zero.",
+        "evidence": [
+          {
+            "locator": "Supplied paper, Fig. 4 discussion and Table I",
+            "source_key": "paper_source",
+            "source_type": "frozen_input"
+          },
+          {
+            "locator": "Recovered Fig. 4 source panel",
+            "source_key": "source_panels",
+            "source_type": "frozen_input"
+          },
+          {
+            "locator": "Deterministic figure evidence manifest for bundle 8702fefaceacecad92c32296f775ba8892cb75a826693a92b9cf6184e093a496",
+            "source_key": "figure_manifest",
+            "source_type": "frozen_input"
+          },
+          {
+            "locator": "Deterministic validation report for the supplied figure family",
+            "source_key": "validation_report",
+            "source_type": "frozen_input"
+          },
+          {
+            "locator": "Digitized solid-black In0.83Al0.17As curve table",
+            "source_key": "curve_tables_001",
+            "source_type": "frozen_input"
+          },
+          {
+            "locator": "Digitized solid-red In0.83Ga0.17As curve table",
+            "source_key": "curve_tables_002",
+            "source_type": "frozen_input"
+          },
+          {
+            "locator": "Identity and fidelity audit overlay",
+            "source_key": "audit_overlays_001",
+            "source_type": "frozen_input"
+          },
+          {
+            "locator": "Numeric redraw audit overlay",
+            "source_key": "audit_overlays_002",
+            "source_type": "frozen_input"
+          }
+        ],
+        "hypotheses": [
+          {
+            "competing_hypothesis_keys": [
+              "hypothesis.continuous_material_response",
+              "hypothesis.surface_boundary_control",
+              "hypothesis.tail_support_artifact"
+            ],
+            "evidence_keys": [
+              "paper_source",
+              "source_panels",
+              "curve_tables_001",
+              "curve_tables_002",
+              "audit_overlays_002"
+            ],
+            "falsifiers": [
+              {
+                "falsifier_key": "falsifier.two_regime.no_qualified_gain",
+                "observable": "Complexity-penalized whole-profile error on direct-pixel, above-limit rows.",
+                "rejection_condition": "Reject this hypothesis if the fixed-breakpoint two-regime response provides no reproducible improvement over a continuous one-regime response on InGaAs, or if its apparent improvement exists only in below-limit, shared-support, or gapped intervals."
+              },
+              {
+                "falsifier_key": "falsifier.two_regime.wrong_material_signature",
+                "observable": "Material-resolved residual pattern around and below 5.4 x 10^16 cm^-3.",
+                "rejection_condition": "Reject this hypothesis if the same low-concentration component is equally required in InAlAs and InGaAs on their qualified intervals, contrary to the proposed material-selective VCD signature."
+              }
+            ],
+            "hypothesis_key": "hypothesis.two_regime_kickout_vcd",
+            "mechanism": "Above the author-calculated intrinsic carrier concentration, the effective Zn diffusivity increases with Zn concentration, producing the high-concentration front. In InGaAs, a separate low-concentration VCD-related contribution produces an additional erfc-like frontier; that contribution is weak or unresolved in InAlAs. This restates the authors' interpretation as a candidate mechanism rather than treating it as proven by the digitized curves.",
+            "parameters": [
+              {
+                "basis": "The supplied single-layer experiment condition is 480 degrees C.",
+                "name": "thermal_temperature",
+                "range_description": "Exactly 480",
+                "role": "fixed",
+                "unit": "degrees C"
+              },
+              {
+                "basis": "The supplied single-layer experiment duration is 8 min.",
+                "name": "diffusion_time",
+                "range_description": "Exactly 8",
+                "role": "fixed",
+                "unit": "min"
+              },
+              {
+                "basis": "Use 5.4 x 10^16 cm^-3 only as the paper's calculated intrinsic carrier concentration at 480 degrees C and predeclared comparison breakpoint.",
+                "name": "regime_transition_concentration",
+                "range_description": "Exactly 5.4 x 10^16 for this bounded test",
+                "role": "fixed",
+                "unit": "cm^-3"
+              },
+              {
+                "basis": "Paper-reported comparison anchors are 1.59 x 10^-12 for InAlAs and 1.05 x 10^-12 for InGaAs; they are not treated as a complete TCAD calibration.",
+                "name": "model_A_diffusion_coefficient",
+                "range_description": "Material-specific Table I values only",
+                "role": "fixed",
+                "unit": "cm^2/s"
+              },
+              {
+                "basis": "Paper-reported InGaAs model-B comparison anchor is 1.14 x 10^-11.",
+                "name": "ingaas_model_B_diffusion_coefficient",
+                "range_description": "Exactly the Table I value for the paper-form counterfactual",
+                "role": "fixed",
+                "unit": "cm^2/s"
+              }
+            ],
+            "predictions": [
+              {
+                "expected_outcome": "The two-regime response removes a reproducible concentration-structured residual in InGaAs below the fixed breakpoint without degrading its high-concentration front; the corresponding gain is smaller or absent for InAlAs.",
+                "observable": "Signed whole-profile residuals versus depth and concentration on identical qualified intervals for a one-regime response and a response with the breakpoint fixed at 5.4 x 10^16 cm^-3.",
+                "prediction_key": "prediction.two_regime.breakpoint_residual"
+              },
+              {
+                "expected_outcome": "A low-concentration component is required to reproduce the InGaAs frontier after complexity penalization, while the material-specific high-concentration components retain the observed ordering of the steep fronts.",
+                "observable": "Qualified InGaAs and InAlAs concentration-depth curves jointly scored with one predeclared log-concentration error metric and a penalty for the added regime.",
+                "prediction_key": "prediction.two_regime.material_tail"
+              }
+            ],
+            "scope": "Only the directly supported, above-detection-limit portions of the supplied single-layer 480 degrees C, 8 min profiles. Do not bridge the large InAlAs source-column gap, count shared pixels as independent observations, or infer behavior at other temperatures or in a device stack.",
+            "statement": "The qualified Fig. 4 response is generated by a concentration-dependent high-concentration kick-out regime in both materials plus a distinguishable low-concentration VCD-related regime in InGaAs."
+          },
+          {
+            "competing_hypothesis_keys": [
+              "hypothesis.two_regime_kickout_vcd",
+              "hypothesis.surface_boundary_control",
+              "hypothesis.tail_support_artifact"
+            ],
+            "evidence_keys": [
+              "paper_source",
+              "source_panels",
+              "curve_tables_001",
+              "curve_tables_002",
+              "audit_overlays_002"
+            ],
+            "falsifiers": [
+              {
+                "falsifier_key": "falsifier.continuous.stable_ingaas_structure",
+                "observable": "InGaAs residual structure across multiple direct-pixel, above-limit intervals below 5.4 x 10^16 cm^-3.",
+                "rejection_condition": "Reject this hypothesis if every admissible one-response fit leaves a stable, same-signed InGaAs frontier residual that a predeclared second component removes after complexity penalization."
+              },
+              {
+                "falsifier_key": "falsifier.continuous.front_tail_tradeoff",
+                "observable": "Joint error in the high-concentration front and qualified low-concentration portion.",
+                "rejection_condition": "Reject this hypothesis if fitting the InGaAs tail necessarily degrades its front beyond the digitization uncertainty while the two-regime response fits both with fixed conditions."
+              }
+            ],
+            "hypothesis_key": "hypothesis.continuous_material_response",
+            "mechanism": "Composition-dependent effective Zn transport changes the depth and curvature of each material's profile continuously with concentration. A flexible but single smooth response can therefore produce a shallower InGaAs front and an apparent tail without a discrete transition at the author-calculated intrinsic carrier concentration. This is a phenomenological counterfactual; it does not identify a microscopic defect species.",
+            "parameters": [
+              {
+                "basis": "The supplied comparison is restricted to 480 degrees C.",
+                "name": "thermal_temperature",
+                "range_description": "Exactly 480",
+                "role": "fixed",
+                "unit": "degrees C"
+              },
+              {
+                "basis": "The supplied comparison is restricted to 8 min.",
+                "name": "diffusion_time",
+                "range_description": "Exactly 8",
+                "role": "fixed",
+                "unit": "min"
+              },
+              {
+                "basis": "Fit one positive scale per material only on qualified observations; the Table I model-A coefficients provide reported scale anchors but not imposed truth.",
+                "name": "material_effective_diffusivity_scale",
+                "range_description": "Positive, one value per material, bounded before fitting around the supplied Table I order of magnitude",
+                "role": "calibratable",
+                "unit": "cm^2/s"
+              },
+              {
+                "basis": "At most one shared shape parameter is allowed so the counterfactual has few degrees of freedom and no free breakpoint.",
+                "name": "continuous_concentration_dependence",
+                "range_description": "One prebounded smoothness or exponent parameter shared across materials",
+                "role": "calibratable",
+                "unit": "dimensionless"
+              }
+            ],
+            "predictions": [
+              {
+                "expected_outcome": "Residuals remain structureless through the marked concentration in both materials, with no stable sign change requiring a second InGaAs regime.",
+                "observable": "Whole-profile residuals plotted against concentration, with the paper's 5.4 x 10^16 cm^-3 value marked but not fitted.",
+                "prediction_key": "prediction.continuous.no_breakpoint"
+              },
+              {
+                "expected_outcome": "The single smooth response matches the qualified front and usable tail portions at least as well after penalizing the two-regime model's added component.",
+                "observable": "Cross-validated or withheld-interval error on the same qualified rows used for the two-regime comparison.",
+                "prediction_key": "prediction.continuous.parsimony"
+              }
+            ],
+            "scope": "A model-discrimination counterfactual for the observed, above-limit, supported portions of the two 480 degrees C, 8 min profiles. It makes no claim about microscopic identity, other temperatures, or values across the InAlAs gap.",
+            "statement": "The qualified profiles can be explained by one continuous material-dependent effective transport response per material without a separately identifiable low-concentration mechanism."
+          },
+          {
+            "competing_hypothesis_keys": [
+              "hypothesis.two_regime_kickout_vcd",
+              "hypothesis.continuous_material_response",
+              "hypothesis.tail_support_artifact"
+            ],
+            "evidence_keys": [
+              "paper_source",
+              "curve_tables_001",
+              "curve_tables_002"
+            ],
+            "falsifiers": [
+              {
+                "falsifier_key": "falsifier.boundary.contrast_persists",
+                "observable": "Matched-boundary whole-profile predictions on common qualified concentration and depth intervals.",
+                "rejection_condition": "Reject this hypothesis if the material-specific front and InGaAs frontier contrast persists with essentially unchanged magnitude under all admissible matched-boundary values."
+              },
+              {
+                "falsifier_key": "falsifier.boundary.incompatible_single_value",
+                "observable": "Simultaneous fit of near-surface concentration, steep-front depth, and qualified tail using one constant surface value per material.",
+                "rejection_condition": "Reject this bounded form if no single surface value per material can improve the whole profile without mutually incompatible near-surface and front residuals."
+              }
+            ],
+            "hypothesis_key": "hypothesis.surface_boundary_control",
+            "mechanism": "Different Zn supply at the exposed surface changes the total dose and front position under the same nominal thermal condition. Because Table I reports different fitted surface concentrations across material and model components, a matched-boundary counterfactual could reduce the apparent material contrast without invoking a separate InGaAs bulk mechanism. The actual boundary histories are missing, so this remains a testable candidate rather than an asserted explanation.",
+            "parameters": [
+              {
+                "basis": "Both supplied profiles share the nominal 480 degrees C condition.",
+                "name": "thermal_temperature",
+                "range_description": "Exactly 480",
+                "role": "fixed",
+                "unit": "degrees C"
+              },
+              {
+                "basis": "Both supplied profiles share the nominal 8 min condition.",
+                "name": "diffusion_time",
+                "range_description": "Exactly 8",
+                "role": "fixed",
+                "unit": "min"
+              },
+              {
+                "basis": "Use one material-specific constant-boundary value in the minimal counterfactual; Table I values 6.85 x 10^19 and 8.35 x 10^19 are paper-reported anchors, while 1.47 x 10^16 belongs to the reported InGaAs model-B component.",
+                "name": "effective_surface_concentration",
+                "range_description": "One positive value per material, bounded around the applicable supplied Table I anchor",
+                "role": "calibratable",
+                "unit": "cm^-3"
+              },
+              {
+                "basis": "The supplied family does not provide time-resolved surface concentration, so only a constant-boundary counterfactual is currently identifiable.",
+                "name": "surface_boundary_history",
+                "range_description": null,
+                "role": "missing",
+                "unit": "cm^-3 versus s"
+              }
+            ],
+            "predictions": [
+              {
+                "expected_outcome": "A substantial fraction of the front-depth and usable-tail contrast collapses under the matched-boundary counterfactual, reducing the need for a material-selective second regime.",
+                "observable": "Whole-profile material contrast after recalculating both responses with a common effective surface concentration while holding the same thermal duration.",
+                "prediction_key": "prediction.boundary.matched_collapse"
+              },
+              {
+                "expected_outcome": "Dose and front depth shift coherently with the boundary value in both materials, and one bounded boundary change improves both portions of each whole profile.",
+                "observable": "Qualified integrated profile dose and steep-front depth under bounded changes of the constant surface concentration.",
+                "prediction_key": "prediction.boundary.dose_front_covariation"
+              }
+            ],
+            "scope": "Only a minimal boundary-sensitivity comparison for the supplied single-layer profiles. It cannot establish a real surface history or be transferred to a device stack without new source-bound boundary information.",
+            "statement": "The material-dependent front and tail contrast is driven primarily by different effective surface concentrations or boundary histories rather than by a distinct bulk low-concentration transport regime."
+          },
+          {
+            "competing_hypothesis_keys": [
+              "hypothesis.two_regime_kickout_vcd",
+              "hypothesis.continuous_material_response",
+              "hypothesis.surface_boundary_control"
+            ],
+            "evidence_keys": [
+              "paper_source",
+              "source_panels",
+              "figure_manifest",
+              "validation_report",
+              "curve_tables_001",
+              "curve_tables_002",
+              "audit_overlays_001",
+              "audit_overlays_002"
+            ],
+            "falsifiers": [
+              {
+                "falsifier_key": "falsifier.artifact.robust_above_limit_tail",
+                "observable": "Tail curvature and material contrast on contiguous direct-pixel rows securely above the reconciled SIMS limit.",
+                "rejection_condition": "Reject this hypothesis if the distinctive InGaAs low-concentration frontier remains quantitatively stable on contiguous direct-pixel, above-limit intervals under reasonable calibration uncertainty."
+              },
+              {
+                "falsifier_key": "falsifier.artifact.independent_raw_confirmation",
+                "observable": "Independently qualified author-supplied SIMS values for the same 480 degrees C, 8 min samples.",
+                "rejection_condition": "Reject this hypothesis if independent raw measurements with uncertainties confirm the same tail shape and material contrast above their measurement limit."
+              }
+            ],
+            "hypothesis_key": "hypothesis.tail_support_artifact",
+            "mechanism": "Pixel digitization near the plot floor, shared-occlusion assignments, and inconsistent below-limit flags can preserve or create apparent low-concentration structure that is not quantitatively secure. Applying the paper's approximate SIMS limit and direct-support requirements may remove most tail evidence while leaving the above-limit steep-front ordering reviewable. This concerns evidence formation and does not claim that the physical samples lack low-concentration Zn.",
+            "parameters": [
+              {
+                "basis": "The paper and source panel state an approximate limit of 3 x 10^15 cm^-3.",
+                "name": "sims_detection_limit",
+                "range_description": "Exactly 3 x 10^15 for the primary censoring test; approximation sensitivity must be reported separately",
+                "role": "fixed",
+                "unit": "cm^-3"
+              },
+              {
+                "basis": "The supplied tables and validation report distinguish direct-pixel and shared-occlusion support.",
+                "name": "support_class",
+                "range_description": "Primary test uses direct-pixel rows; shared-support rows are a sensitivity set",
+                "role": "fixed",
+                "unit": "category"
+              },
+              {
+                "basis": "The validation report records a maximum gap of 235 pixels for the InAlAs trace.",
+                "name": "inalas_max_source_column_gap",
+                "range_description": "Do not interpolate across the recorded maximum gap",
+                "role": "fixed",
+                "unit": "pixels"
+              },
+              {
+                "basis": "All flags are zero although 114 rows are numerically below the stated approximate limit; the supplied family does not resolve the mismatch.",
+                "name": "row_level_detection_flag_reconciliation",
+                "range_description": null,
+                "role": "missing",
+                "unit": "categorical audit result"
+              }
+            ],
+            "predictions": [
+              {
+                "expected_outcome": "The apparent tail extent or its material contrast shrinks markedly and is sensitive to support filtering, while the qualified steep-front ordering remains visible.",
+                "observable": "Tail extent and material-tail contrast recomputed after excluding concentrations at or below 3 x 10^15 cm^-3 and then excluding shared-support rows.",
+                "prediction_key": "prediction.artifact.censoring_sensitivity"
+              },
+              {
+                "expected_outcome": "Rows currently treated as eligible are reclassified or explicitly marked uncertain, and mechanism scores relying on those rows lose support.",
+                "observable": "Eligibility counts after deterministic reconciliation of numeric concentrations with the stated SIMS threshold.",
+                "prediction_key": "prediction.artifact.flag_reconciliation"
+              }
+            ],
+            "scope": "Evidence-quality hypothesis restricted to the supplied pixel-derived curves. It addresses whether the tails can discriminate mechanisms; it does not explain the above-limit front physics or revise immutable curve values or flags.",
+            "statement": "The apparent deep low-concentration tails, and part of their material contrast, are dominated by detection-limit censoring and digitization support rather than a securely resolved transport regime."
+          }
+        ],
+        "research_objective_key": "objective.fig4_mechanism_discrimination",
+        "schema_version": 2,
+        "stage_objective": "Form a small ordered portfolio of mutually distinguishable mechanisms for the observed front and tail contrast, with bounded whole-profile tests that preserve every stated evidence limitation and do not select a candidate."
+      },
+      "schema": "scidiscovery.hypothesis-proposal.v2"
+    },
+    "sealed_output_status": "available",
+    "started_at": "2026-09-09T02:50:28.388509Z",
+    "state": "completed"
+  },
+  "critic_request": {
+    "name": "fig4_continuation_hypothesis_critic_1",
+    "operation_id": "science.hypothesis.criticize.v1",
+    "inputs": [
+      {
+        "port": "hypothesis_portfolio",
+        "artifact_names": [
+          "fig4_continuation_hypothesis_1.output"
+        ]
+      },
+      {
+        "port": "scientific_foundation",
+        "artifact_names": [
+          "fig4_continuation_intake_split_2.scientific_foundation"
+        ]
+      }
+    ],
+    "instruction": "独立审查全部候选及其对总体目标的支持。逐项检查事实前提、机制区分、预测和拒绝条件是否可执行且有证据边界，区分机制本身的缺陷、未经支持的事实前提、以及有界观测或模型反事实；说明每个缺项影响哪些判断。对未来实验所需参数的缺失，独立判断是否阻止当前假设的有界检验，不把所有后续条件机械视为本轮前提。保留原基础中的曲线缺口、共享支持和检出限冲突，不把拟合锚点等同完整 TCAD 参数资格。通过、修订或阻断必须以确切理由支持，不能替代后续设计者选择本轮目标。"
+  },
+  "critic_preflight": {
+    "admissible": true,
+    "executor_kind": "agent",
+    "port": null,
+    "reason_code": null
+  },
+  "critic_invocation": {
+    "executor_kind": "agent",
+    "operation_id": "science.hypothesis.criticize.v1",
+    "result": {
+      "agent_type": "op_science_hypothesis_criticize_v1_c4677759f83e",
+      "backend": "local_trusted",
+      "candidate_accepted": false,
+      "completed_at": null,
+      "created_at": "2026-09-09T02:55:15.100324Z",
+      "deadline_at": "2026-09-09T03:05:15.100324Z",
+      "head_advance": null,
+      "last_activity_at": null,
+      "logical_name": "fig4_continuation_hypothesis_critic_1",
+      "name": "fig4_continuation_hypothesis_critic_1",
+      "operation_id": "science.hypothesis.criticize.v1",
+      "output_artifact_name": null,
+      "reason": null,
+      "recovery_available": false,
+      "revision": 1,
+      "scheduler_signal": null,
+      "sealed_output": null,
+      "sealed_output_status": "unavailable",
+      "started_at": null,
+      "state": "queued"
+    }
+  }
+}

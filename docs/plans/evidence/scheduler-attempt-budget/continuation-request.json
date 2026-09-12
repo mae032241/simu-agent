@@ -1,0 +1,103 @@
+{
+  "operation_id": "tcad.result.analyze.v1",
+  "name": "fig4_morphology_closure_2",
+  "inputs": [
+    {
+      "artifact_names": [
+        "fig4_continuation_execution_1.result"
+      ],
+      "port": "execution_result"
+    },
+    {
+      "artifact_names": [
+        "fig4_continuation_execution_analysis_3.output.recovery_manifest"
+      ],
+      "port": "recovery_manifest"
+    },
+    {
+      "artifact_names": [
+        "fig4_morphology_analysis_2.output"
+      ],
+      "port": "prior_analysis"
+    },
+    {
+      "artifact_names": [
+        "fig4_morphology_analysis_2.output.recovery_manifest"
+      ],
+      "port": "prior_analysis_manifest"
+    },
+    {
+      "artifact_names": [
+        "fig4_continuation_experiment_plan_3"
+      ],
+      "port": "experiment_plan"
+    },
+    {
+      "artifact_names": [
+        "fig4_continuation_experiment_review_6.output"
+      ],
+      "port": "experiment_review"
+    },
+    {
+      "artifact_names": [
+        "fig4_continuation_reviewed_package_2"
+      ],
+      "port": "reviewed_package"
+    },
+    {
+      "artifact_names": [
+        "fig4_continuation_execution_1.output.tcad_manifest"
+      ],
+      "port": "runtime_manifest"
+    },
+    {
+      "artifact_names": [
+        "fig4_continuation_execution_1.output.solver_log",
+        "fig4_continuation_execution_1.output.fig4_al_own_anchor_primary_plx",
+        "fig4_continuation_execution_analysis_3.output.tool_evidence_007",
+        "fig4_continuation_execution_analysis_3.output.tool_evidence_008",
+        "fig4_continuation_execution_analysis_3.output.tool_evidence_009",
+        "fig4_continuation_execution_analysis_3.output.tool_evidence_010",
+        "fig4_continuation_execution_analysis_3.output.tool_evidence_011",
+        "fig4_continuation_execution_analysis_3.output.tool_evidence_012",
+        "fig4_continuation_execution_analysis_3.output.tool_evidence_018",
+        "fig4_continuation_execution_analysis_3.output.tool_evidence_019",
+        "fig4_continuation_execution_analysis_3.output.tool_evidence_020",
+        "fig4_continuation_execution_analysis_3.output.tool_evidence_021",
+        "fig4_continuation_execution_analysis_3.output.tool_evidence_022"
+      ],
+      "port": "solver_outputs"
+    },
+    {
+      "artifact_names": [
+        "fig4_continuation_execution_1.output.tcad_log"
+      ],
+      "port": "diagnostics"
+    },
+    {
+      "artifact_names": [
+        "fig4_continuation_reference_bundle_1",
+        "fig4_continuation_figure_materialized_1.curve_tables_001",
+        "fig4_continuation_figure_materialized_1.curve_tables_002",
+        "fig4_continuation_figure_materialized_1.source_panels",
+        "fig4_morphology_analysis_2.output.tool_evidence_023",
+        "fig4_morphology_analysis_2.output.tool_evidence_024",
+        "fig4_morphology_analysis_2.output.tool_evidence_025",
+        "fig4_morphology_analysis_2.output.tool_evidence_026"
+      ],
+      "port": "reference_material"
+    },
+    {
+      "artifact_names": [
+        "fig4_continuation_objective_2",
+        "fig4_morphology_objective_revision_4.output",
+        "fig4_morphology_objective_review_2.output",
+        "fig4_continuation_execution_analysis_recovery_complete_1.output"
+      ],
+      "port": "current_progress"
+    }
+  ],
+  "draft_from": "fig4_morphology_closure_1",
+  "instruction": "从本任务明确交付的恢复草稿和绑定正式记录完成有界交接。优先读取 analysis-recovery.json、已保存的数值/脚本/日志及已有报告草稿，核实覆盖，定位原生执行异常与前轮未能按时提交的原因；不要原样重算已有数值。先利用已保存结果完成可验证的科学报告及证据发布，以本轮 Fig.4 深度、形状、前部/尾部平台结论为目标，并保留不能判定的确切边界。若只缺绘图，局部修复绘图；若绘图无法在预算内完成，先提交现有数值支持的判断及可恢复材料。所有材料身份、方法和科学结论以绑定计划/审查及实际可读取字节核实，不把草稿直接当合格科学证据。单进程、512 MiB 上限、BLAS/OMP 单线程，按新 assignment 剩余 Run 预算预留充分提交时间；禁止启动求解器。不得用最后几分钟重写整个报告或计算实现。将所有已有原生异常和每次运行的结束记录作为工程证据交付，具体说明脚本、异常类型和修复情况；区分原生错误、工具拒绝、提交拒绝和总预算截止。不得臆测未留下的日志。目标是尽快封存可审阅成果，必要的剩余科学工作必须明确；完整闭环最终仍须有证据支撑结论。",
+  "max_attempts": 3
+}

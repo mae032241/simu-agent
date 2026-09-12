@@ -561,16 +561,70 @@ def test_local_run_uses_native_files_one_domain_tool_and_one_terminal_authority(
     root.facade._operation_catalog = retired_catalog
     runtime.runs.operation_catalog = retired_catalog
     retired_compatible = root.call_tool("run_status", {"name": "observe"})
-    assert retired_compatible["sealed_output_status"] == "contract_retired"
-    assert retired_compatible["sealed_output"] is None
-    assert retired_compatible["scheduler_signal"] is None
+    assert retired_compatible["sealed_output_status"] == "historical"
+    assert retired_compatible["sealed_output"]["payload"] == observation.model_dump(mode="json")
+    assert retired_compatible["scheduler_signal"] is not None
     retired_inventory = root.call_tool("scientific_inventory", {})
     retired_observation = next(
         item
         for item in retired_inventory["objects"]
         if item["artifact_name"] == "observe.output"
     )
-    assert retired_observation["producer_handoff"] is None
+    assert retired_observation["producer_handoff"] == "pass"
+    assert retired_observation["historical"] is True
+    assert runtime.runs.signal_for_output(observation_ref) is None
+    # Retiring the producer must not erase its sealed result or stop a new
+    # independent review. The old bytes and Run remain immutable.
+    request = {
+        "name": "review_historical",
+        "operation_id": "blind.csv.review.v1",
+        "inputs": [
+            {"port": "source_table", "artifact_names": ["source_csv"]},
+            {"port": "csv_observation", "artifact_names": ["observe.output"]},
+        ],
+        "instruction": "Review the historical observation under the current contract.",
+    }
+    assert root.call_tool("operation_preflight", request)["admissible"] is True
+    assert root.call_tool("operation_invoke", request)["result"]["state"] == "queued"
+    historical_reviewer = LocalWorkerMCPRouter(
+        runtime.runs,
+        operation_id=review_compiled.spec.operation_id,
+        operation_digest=review_compiled.digest,
+    )
+    historical_open = historical_reviewer.call_tool("worker_open_assignment", {})
+    Path(historical_open["output_directory"], "result.json").write_bytes(
+        _envelope(review.model_dump(mode="json"))
+    )
+    assert historical_reviewer.call_tool("worker_submit_result", {})["state"] == "completed"
+    assert root.call_tool("run_status", {"name": "review_historical"})[
+        "sealed_output_status"
+    ] == "available"
+    assert root.call_tool("run_status", {"name": "observe"}) == retired_compatible
+    review_ref = runtime.runs.status(runtime.scheduler_bindings.resolve(
+        instance=instance.instance_id, namespace="run", name="review_historical"
+    )).output_ref
+    review_check = {
+        "reviewer_operation": review_compiled.spec.operation_id,
+        "reviewer_input_port": "csv_observation",
+        "accepted_verdicts": ("pass",),
+        "subject_ref": observation_ref,
+    }
+    assert runtime.runs.is_exact_reviewer_output(review_ref, **review_check)
+    retired_review_plugin = retired_plugin.model_copy(update={
+        "operations": tuple(
+            item.model_copy(update={"version": "retired-review"})
+            if item.operation_id == review_compiled.spec.operation_id else item
+            for item in retired_plugin.operations
+        ),
+    })
+    runtime.runs.operation_catalog = compile_catalog(
+        (CORE_PLUGIN, GENERAL_PLUGIN, retired_review_plugin)
+    )
+    assert not runtime.runs.is_exact_reviewer_output(review_ref, **review_check)
+    runtime.runs.operation_catalog = retired_catalog
+    root.facade._operation_catalog = compile_catalog((CORE_PLUGIN, GENERAL_PLUGIN))
+    assert root.call_tool("run_status", {"name": "observe"}) == retired_compatible
+    root.facade._operation_catalog = retired_catalog
     run_id = runtime.scheduler_bindings.resolve(
         instance=instance.instance_id,
         namespace="run",
@@ -596,9 +650,17 @@ def test_local_run_uses_native_files_one_domain_tool_and_one_terminal_authority(
         )
     retired = root.call_tool("run_status", {"name": "observe"})
     assert retired["state"] == "completed"
-    assert retired["sealed_output_status"] == "contract_retired"
-    assert retired["sealed_output"] is None
-    assert retired["scheduler_signal"] is None
+    assert retired["sealed_output_status"] == "historical"
+    assert retired["sealed_output"]["payload"] == observation.model_dump(mode="json")
+    assert retired["scheduler_signal"]["summary"] == "Legacy ABI signal."
+    with sqlite3.connect(runtime.runs.database_path) as connection:
+        connection.execute("UPDATE runs SET signal_json = ? WHERE run_id = ?",
+                           (b'{"verdict":"invalid-wire-value"}', run_id))
+    unreadable_signal = root.call_tool("run_status", {"name": "observe"})
+    assert unreadable_signal["sealed_output"] == retired["sealed_output"]
+    assert unreadable_signal["sealed_output_status"] == "historical"
+    assert unreadable_signal["scheduler_signal"] is None
+    assert unreadable_signal["scheduler_signal_status"] == "unavailable"
 
 
 def test_operation_tool_context_contains_no_control_identity() -> None:

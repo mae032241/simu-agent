@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from scidiscovery.operation_contract import declared_violation
+
 import hashlib
 import io
 import json
@@ -97,8 +99,17 @@ class ExpectedOutput(StrictModel):
     required: bool = True
     max_bytes: int = Field(ge=1, le=2**50)
     capture: Literal["workspace_file", "process_log"] = "workspace_file"
+    experiment_key: str | None = Field(default=None, min_length=1, max_length=256)
+    case_key: str | None = Field(default=None, min_length=1, max_length=256)
 
     _safe_path = field_validator("relative_path")(_validate_relative_path)
+
+    @model_validator(mode="after")
+    def _case_identity_is_paired(self) -> ExpectedOutput:
+        if (self.experiment_key is None) != (self.case_key is None):
+            raise declared_violation("output experiment_key and case_key must be declared together",
+                path="$.experiment_key" if self.experiment_key is None else "$.case_key")
+        return self
 
 
 class TCADJobSpec(StrictModel):
@@ -331,6 +342,11 @@ class RunIdInput(ExecutionToolInput):
     run_id: str = Field(min_length=1, max_length=256)
 
 
+class InspectOutputsInput(RunIdInput):
+    max_bytes: int = Field(default=32*1024*1024, ge=0, le=32*1024*1024)
+    relative_path: str | None = Field(default=None, max_length=1024)
+
+
 class SubmissionDigestInput(ExecutionToolInput):
     submission_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
 
@@ -363,6 +379,7 @@ EXECUTION_TOOLS = (
     ExecutionTool("tcad_submit", "Submit one prepared TCAD job and return immediately.", SubmitInput),
     ExecutionTool("tcad_status", "Read one short durable TCAD job status.", RunIdInput),
     ExecutionTool("tcad_cancel", "Request cancellation of one TCAD job.", RunIdInput),
+    ExecutionTool("tcad_inspect_outputs", "Read bounded terminal files without execution or mutation.", InspectOutputsInput),
     ExecutionTool("tcad_collect", "Return local descriptors for terminal TCAD outputs.", RunIdInput),
 )
 
@@ -478,14 +495,15 @@ class TCADExecutionFacade:
                         (run_id,),
                     )
                 return self.tcad_status(run_id=run_id)
-            process = subprocess.Popen(
-                [sys.executable, str(Path(__file__).with_name("worker.py")), str(run_dir)],
-                cwd=run_dir,
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                start_new_session=True,
-            )
+            with (run_dir / "launcher.log").open("xb") as launcher_log:
+                process = subprocess.Popen(
+                    [sys.executable, str(Path(__file__).with_name("worker.py")), str(run_dir)],
+                    cwd=run_dir,
+                    stdin=subprocess.DEVNULL,
+                    stdout=launcher_log,
+                    stderr=subprocess.STDOUT,
+                    start_new_session=True,
+                )
             _write_new(run_dir / "launcher_pid", f"{process.pid}\n".encode("ascii"), mode=0o440)
             identity = _process_identity(process.pid)
             if identity is None:
@@ -688,6 +706,11 @@ class TCADExecutionFacade:
                 continue
         return {**status, "state": "cancelling"}
 
+    def tcad_inspect_outputs(self, *, run_id: str, relative_path: str | None = None, max_bytes: int = 32*1024*1024) -> dict[str, Any]:
+        from .remote_runner_py36 import _inspect_directory
+        self.tcad_status(run_id=run_id)
+        return _inspect_directory(str(self._run_dir(run_id)), relative_path, max_bytes)
+
     def tcad_collect(self, *, run_id: str) -> dict[str, Any]:
         status = self.tcad_status(run_id=run_id)
         if not status["done"]:
@@ -705,7 +728,7 @@ class TCADExecutionFacade:
         outputs.append(
             _descriptor(
                 name="tcad_log",
-                path=run_dir / "worker.log",
+                path=(run_dir / "diagnostic.log") if (run_dir / "diagnostic.log").is_file() else (run_dir / "worker.log"),
                 media_type="text/plain; charset=utf-8",
             )
         )

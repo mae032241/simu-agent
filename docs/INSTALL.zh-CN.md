@@ -50,10 +50,10 @@ SCID_WORKSPACE="$PWD/workspace/<project-name>" \
 `tcad_artifact,curve_score` 等插件，通过 `SCID_TCAD_COMMAND_CONFIG` 选择外部适配器。
 `install` 和 `reinstall` 使用同一个事务化流程；无参数等价于 `install`。
 
-自动图提取使用三个通用领域插件。部署前离线预装符合插件声明包版本范围的
-Pillow、Poppler（`pdfinfo`、`pdfimages`、`pdftoppm`），以及带默认 `eng`
-语言数据的 Tesseract。安装器自动发现可执行文件并记录实际版本，不要求任何
-figure 专属身份变量；三个 Poppler 工具须报告相同版本。
+图像曲线提取使用三个通用领域插件。部署前离线预装符合插件声明范围的
+Pillow 和 Poppler `pdfimages`。坐标轴、刻度和科学身份由智能体查看原图后提供，
+运行链不使用 OCR 或 Tesseract。安装器只记录实际的 Pillow 和 `pdfimages`
+版本及可执行文件绝对路径。
 
 ```bash
 export SCID_PYTHON=/absolute/path/to/service/python
@@ -70,25 +70,28 @@ deploy/reinstall.sh reinstall
 
 workspace 与启动目录须已有且独立于 checkout。通用 wrapper 由服务用户运行。
 安装器在创建安装事务前，以真实服务身份和 systemd 有效默认 PATH 执行 Python
-import、版本调用、`tesseract --list-langs`（要求 `eng`）、PDF 恢复／渲染及 OCR；
+import、版本调用及一次真实 PDF 嵌入图恢复；
 操作者 shell 的 PATH 不充当服务依赖检查。
 
 核验结果只写入暂存安装包的
 `site/curve_figure_evidence/figure_dependencies.json`，切换前和安装后再用服务
-Python 复验。现有 detector 资源将该记录纳入 request/materialize Operation
-digest，激活时将安装前缀设为只读；独立的 Python runtime identity 检查并不哈希
-应用文件。运行时使用记录中的绝对可执行文件路径，在实际调用前复核版本和
-`eng` 可用性。Tesseract 使用自身默认数据路径；安装器不记录模型路径或模型摘要，
-不复制模型或下载依赖。工具版本变化须重新生成安装记录。
-未供应该记录的普通 wheel 可以编译，但明确不能进行已核验 OCR，
-不能通过 figure 安装预检。
+Python 复验。激活时将安装前缀设为只读；运行时使用记录中的
+`pdfimages` 绝对路径并复核版本。工具版本变化须重新生成安装记录。
+未供应该记录的普通 wheel 可以编译，但不能通过 figure 安装预检。
 
 当前可信 Local 后端采用软隔离，不是操作系统沙箱。生产包、运行资源、默认配置和
 Worker 显式上下文不得携带案例几何、历史答案或可作为答案发现入口的路径。历史审计文档
 可保留定位符，但运行端不得消费它们。宿主读取探针若显示可读，必须如实记录，只能声明这些文件
 未向 Worker 提供或未观察到被使用；`SEC-002` 继续保持已知问题。获准切换前检查旧合同
-queued/running Run，不承诺跨 digest 恢复。自动 Operation 不绑定人工
+queued/running Run，不承诺跨 digest 恢复。图像曲线 Operation 不绑定外部
 `scientific-paper-evidence` 技能。
+
+Local Worker 可以发现已安装 Skill 并按需读取参考资源，Operation 工具权限保持不变。
+独立受管的 TCAD Skill 具备部署目录完整性校验和事务回滚；其字节不绑定 Operation
+或 Run 身份，因此不承诺逐 Run 参考知识重放。安装后须在全新 compiled Agent 会话中
+验证发现与 helper 使用，生成提示测试本身不能证明此行为。
+
+曲线分析更新后，在全新会话核对编译目录：`science.result.diagnose.v1` 直接接收实验结果，曲线 bundle 与评分报告为可选输入；启用 TCAD 时另有 `tcad.result.analyze.v1`，其 Worker 提供 `worker_tcad_curve_score`，接收原始输出与参考材料。这两个入口是分析职责的替代入口，不是串行步骤。重新安装不会刷新已启动会话的 Worker 工具目录；须重启会话。旧记录保留，但变更合同后的资格应以当前预检为准。
 
 ## 2. 获取源码
 
@@ -142,7 +145,7 @@ sudo SCID_PYTHON="$PYTHON" \
 
 - `/opt/scidiscovery/site`：只读 Python 应用包；
 - `/var/lib/scidiscovery`：控制面状态；
-- `/var/lib/scidiscovery-tcad`：本地执行状态；
+- `/var/lib/scidiscovery/tcad`：仅本地适配器模式使用的执行状态；
 - `/etc/scidiscovery`：服务密钥和执行策略；
 - `/run/scidiscovery/control.sock`：Root MCP；
 - `scidiscovery-control.service`；
@@ -297,6 +300,7 @@ sudo SCID_PYTHON="$PYTHON" \
 
 外部适配器会替代本地 `tcad-control.service`。每次 SSH 操作都必须短时返回；后台
 执行和持久 `running`、`status`、`done` 记录由 VM Runner 负责。
+该模式忽略 `TCAD_STATE_ROOT`：安装器不创建本地 TCAD 状态目录、不修改其权限，也不备份其中的数据库。
 
 ## 6. 验证
 
@@ -328,9 +332,12 @@ Sentaurus 许可证或任何科学模型已经通过。
 | `SCID_PLUGINS` | 空 | 逗号分隔的本地插件目录名；例如 `tcad_artifact,curve_score,curve_figure_evidence` |
 | `SCID_INSTALL_ROOT` | `/opt/scidiscovery` | 应用安装目录 |
 | `SCID_STATE_ROOT` | `/var/lib/scidiscovery` | 控制面状态 |
+| `TCAD_STATE_ROOT` | `${SCID_STATE_ROOT}/tcad` | 本地适配器执行状态；外部 command 模式忽略此项 |
 | `SCID_CONFIG_ROOT` | `/etc/scidiscovery` | 密钥和策略 |
 | `SCID_APPROVAL_PORT` | `8765` | 本机审批端口 |
 | `SCID_TCAD_COMMAND_CONFIG` | 未设置 | 外部 command adapter 配置 |
+
+升级已使用独立状态目录的本地适配器时，显式设置 `TCAD_STATE_ROOT` 沿用原目录；安装器不自动迁移数据。
 
 `hardened` 当前拒绝要求 shell、代码或 `view_image` 的 Operation，因此 TCAD Deck 作者第一版必须使用
 `local`；这不会降低 Effect 的独立审批和 adapter 边界。
@@ -375,3 +382,5 @@ sudo deploy/cleanup_legacy_services.sh clean
 - **审批返回 403**：必须在同一主机打开精确 URL，并确认当前进程已绑定正确实例。
 - **VM IP 变化**：只更新私有 transport 配置或使用 resolver，不要把新地址写进源码。
 - **TCAD 作业似乎卡住**：使用短状态调用，不得用长连接 SSH 等待 Solver。
+
+分析内受控补收集需要控制端、Worker 和 VM helper 匹配更新。本地重装后，执行 `SCID_PYTHON=/absolute/path/to/python deploy/install_ssh_tcad_runner.sh upgrade-code`，沿用现有传输配置只更新 helper 代码。保留原结果目录和远端配置；重启 Codex 会话后再创建新分析 Run。旧 helper 不支持检查时返回不可用，普通离线分析仍可进行。不要为了重新收集而重提原执行。

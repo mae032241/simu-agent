@@ -1,0 +1,279 @@
+F....................................................................... [ 42%]
+...............F...........................................F.........F.. [ 84%]
+...........................                                              [100%]
+=================================== FAILURES ===================================
+_______ test_designer_can_choose_stage_shape_through_submit[scientific] ________
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-116/test_designer_can_choose_stage0')
+experiment_case = ({'study_kind': 'scientific', 'objective_key': 'objective_wrong', 'selected_hypothesis_keys': ['hypothesis_a'], 'propo...research_objective_key":"objective_expected","schema_version":2,"stage_objective":"Separate one bounded mechanism."}'})
+kind = 'scientific'
+
+    @pytest.mark.parametrize('kind', ['scientific', 'engineering'])
+    def test_designer_can_choose_stage_shape_through_submit(tmp_path, experiment_case, kind):
+        intent, sources = experiment_case
+        proposal = intent['proposals'][0]
+        proposal.update(identifiability_claims=[], prediction_tests=[])
+        objective = None
+        if kind == 'scientific':
+            proposal.update(baseline_case_key=None, cases=proposal['cases'][:1], variables=[])
+            objective = ResearchObjectiveContract.model_validate_json(sources['research_objective'])
+        else:
+            intent.update(study_kind='engineering', objective_key=None,
+                engineering_objective='Compare two implementation configurations.', selected_hypothesis_keys=[])
+            proposal.update(hypothesis_keys=[], objectives=[intent['engineering_objective']],
+                            current_objectives=[intent['engineering_objective']])
+        parsed = ExperimentDesignIntent.model_validate_json(canonical_json(intent))
+>       plan = materialize_experiment_design_intent(parsed, objective)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/operations/test_validation_responsibility_pruning.py:37: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+intent = ExperimentDesignIntent(schema_version=1, study_kind='scientific', objective_key='objective_wrong', engineering_objecti...s the mechanism.')),), priority_order=('experiment_a',), priority_rationale='Only one bounded experiment is required.')
+objective = ResearchObjectiveContract(schema_version=1, objective_key='objective_expected', intent='mechanism_discrimination', sta..._type='comparison_present', target_keys=(), comparison_purposes=('mechanism_separation',), validation_check_keys=()),))
+
+    def materialize_experiment_design_intent(
+        intent: ExperimentDesignIntent,
+        objective: ResearchObjectiveContract | None,
+    ) -> ExperimentPortfolio:
+        if intent.study_kind == "scientific":
+            if objective is None:
+                raise ValueError("scientific experiment intent requires research objective")
+            if intent.objective_key != objective.objective_key:
+>               raise ValueError(
+                    "experiment intent objective_key differs from research objective"
+                )
+E               ValueError: experiment intent objective_key differs from research objective
+
+src/scidiscovery/artifact_agent/schema/experiment_intent.py:313: ValueError
+_ test_review_validates_bound_original_context_and_actual_source_aliases[execution_context] _
+
+model = <class 'scidiscovery.artifact_agent.schema.execution_context.ExecutionContext'>
+raw = b'{}', strict = True, admission_port = 'execution_context'
+
+    def parse_bound_json(
+        model: Any, raw: bytes, *, strict: bool = True, admission_port: str | None = None
+    ) -> Any:
+        from pydantic import ValidationError
+        try:
+>           return model.model_validate_json(raw, strict=strict)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           pydantic_core._pydantic_core.ValidationError: 1 validation error for ExecutionContext
+E           domain
+E             Field required [type=missing, input_value={}, input_type=dict]
+E               For further information visit https://errors.pydantic.dev/2.11/v/missing
+
+src/scidiscovery/operations/input_validation.py:201: ValidationError
+
+The above exception was the direct cause of the following exception:
+
+experiment_case = ({'study_kind': 'scientific', 'objective_key': 'objective_expected', 'selected_hypothesis_keys': ['hypothesis_a'], 'pr...research_objective_key":"objective_expected","schema_version":2,"stage_objective":"Separate one bounded mechanism."}'})
+mismatch = 'execution_context'
+
+    @pytest.mark.parametrize("mismatch", ("objective_key", "statement", "execution_context", "unbound_citation"))
+    def test_review_validates_bound_original_context_and_actual_source_aliases(experiment_case, mismatch) -> None:
+        from scidiscovery.artifact_agent.transforms import materialize_experiment_plan
+        from scidiscovery.general_science_experiment_components import _object_review_context, _object_review_inputs
+        from scidiscovery.operations.input_validation import OperationInvocationError
+    
+        intent, inputs = _partial_experiment(experiment_case)
+        plan, _ = materialize_experiment_plan({
+            "experiment_design_intent": canonical_json(intent),
+            "research_objective": inputs["research_objective"],
+            "hypothesis_portfolio": inputs["hypothesis_portfolio"],
+        })
+        sources = {"experiment_plan": plan, "research_objective": inputs["research_objective"]}
+        payload = {"review_target": "experiment_portfolio", "verdict": "revise",
+                   "summary": "Assess the exact original contract."}
+        if mismatch in {"objective_key", "statement"}:
+            objective = json.loads(sources["research_objective"])
+            objective[mismatch] = "different_objective"
+            sources["research_objective"] = canonical_json(objective)
+            error, message = OperationInvocationError, "input_plan_objective_mismatch"
+        elif mismatch == "execution_context":
+            sources["execution_context"] = b"{}"
+            error, message = ValidationError, "ExecutionContext"
+        else:
+            payload["evidence"] = [{"source_key": "experiment_plan_aux", "source_type": "frozen_input",
+                                    "locator": "absent input"}]
+            error, message = SemanticRuleViolation, "actual visible input alias"
+        with pytest.raises(error, match=message):
+            if mismatch == "unbound_citation":
+                _object_review_context(payload, sources, {"verdict": "revise"})
+            else:
+>               _object_review_inputs(sources)
+
+tests/operations/test_agent_contract_alignment.py:1014: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/scidiscovery/general_science_experiment_components.py:231: in _object_review_inputs
+    parse_bound_json(ExecutionContext, execution_context, admission_port="execution_context")
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+model = <class 'scidiscovery.artifact_agent.schema.execution_context.ExecutionContext'>
+raw = b'{}', strict = True, admission_port = 'execution_context'
+
+    def parse_bound_json(
+        model: Any, raw: bytes, *, strict: bool = True, admission_port: str | None = None
+    ) -> Any:
+        from pydantic import ValidationError
+        try:
+            return model.model_validate_json(raw, strict=strict)
+        except (ValidationError, UnicodeError) as error:
+            if admission_port is None:
+                raise BoundSourceError("bound_source_schema_invalid") from error
+            failure = OperationInvocationError("input_content_incompatible", port=admission_port, field="/")
+            if isinstance(error, ValidationError):
+                from ..operation_contract import diagnostic_path, validation_diagnostics
+                root = diagnostic_path((admission_port,), (admission_port,), root="$.inputs")
+                details = validation_diagnostics(error, schema=model.model_json_schema(mode="validation"),
+                                                 phase="input_admission", action="invoke")
+                failure.details = tuple(contract_diagnostic("input_content_incompatible",
+                    phase="input_admission", affected_action="invoke", repairable=True,
+                    path=(root + detail["path"].removeprefix("$"))[:512],
+                    message=detail["message"], error_type=detail.get("type")) for detail in details)
+>           raise failure from error
+E           scidiscovery.operations.input_validation.OperationInvocationError: input_content_incompatible: execution_context /
+
+src/scidiscovery/operations/input_validation.py:215: OperationInvocationError
+________ test_root_preflight_rejects_replacing_the_prior_intake_source _________
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-116/test_root_preflight_rejects_re0')
+
+    def test_root_preflight_rejects_replacing_the_prior_intake_source(tmp_path) -> None:
+        catalog = _catalog()
+        project = tmp_path / "project"
+        project.mkdir()
+        runtime = open_runtime(project_root=project, state_root=tmp_path / "state")
+        instance = runtime.scheduler_bindings.create_instance(
+            name="source_continuity",
+            title="Source continuity",
+            objective="Reject replacement evidence sources during bounded revision.",
+        )
+    
+        def register(
+            name: str,
+            schema: str,
+            *,
+            kind: str = "scientific_object",
+            media_type: str = "application/json",
+            parents: tuple[ArtifactRef, ...] = (),
+        ):
+            envelope = runtime.artifacts.register(
+                b"source" if kind == "source_file" else b"{}",
+                ArtifactRegistration(
+                    kind=kind,
+                    schema_id=schema,
+                    payload_schema_version=1,
+                    media_type=media_type,
+                    creator=runtime.actor,
+                    parent_refs=parents,
+                ),
+                idempotency_key=f"source-continuity:{name}",
+            )
+            runtime.scheduler_bindings.bind(
+                instance=instance.instance_id,
+                namespace="artifact",
+                name=name,
+                object_id=envelope.artifact_id,
+            )
+            return envelope
+    
+        original = register(
+            "original_source", "opaque", kind="source_file", media_type="text/plain"
+        )
+        replacement = register(
+            "replacement_source", "opaque", kind="source_file", media_type="text/plain"
+        )
+        intake = register(
+            "prior_intake",
+            "scidiscovery.scientific-intake.v1",
+            parents=(original.ref,),
+        )
+        audit = register(
+            "intake_audit",
+            "scidiscovery.evidence-audit.v1",
+            parents=(intake.ref, original.ref),
+        )
+        foundation = register(
+            "foundation",
+            "scidiscovery.scientific-foundation.v1",
+            parents=(intake.ref, audit.ref),
+        )
+        portfolio = register(
+            "portfolio",
+            "scidiscovery.hypothesis-proposal.v2",
+            parents=(foundation.ref,),
+        )
+        critic = register(
+            "critic",
+            "scidiscovery.critic-review.v2",
+            parents=(portfolio.ref, foundation.ref),
+        )
+        signals = {
+            audit.ref: SchedulerSignal(verdict="pass", summary="Exact intake audit."),
+            critic.ref: SchedulerSignal(
+                verdict="inconclusive",
+                summary="One factual premise is missing.",
+            ),
+        }
+        facade = RootToolFacade(
+            runtime.artifacts,
+            runtime.intake,
+            runs=runtime.runs,
+            approvals=runtime.approvals,
+            executions=runtime.executions,
+            bindings=runtime.scheduler_bindings,
+            instance=instance.instance_id,
+            operation_catalog=catalog,
+        )
+        facade._scheduler_signal_for_output = lambda ref: signals.get(ref)
+        facade._validate_operation_input_admission = lambda bound: None
+        root = RootMCPRouter(facade)
+    
+        def request(source_name: str) -> dict[str, object]:
+            return {
+                "name": f"revise_with_{source_name}",
+                "operation_id": "science.evidence.revise-from-critic.v1",
+                "inputs": [
+                    {"port": "prior_draft", "artifact_names": ["prior_intake"]},
+                    {"port": "intake_audit", "artifact_names": ["intake_audit"]},
+                    {"port": "scientific_foundation", "artifact_names": ["foundation"]},
+                    {"port": "hypothesis_portfolio", "artifact_names": ["portfolio"]},
+                    {"port": "change_request", "artifact_names": ["critic"]},
+                    {"port": "source_material", "artifact_names": [source_name]},
+                ],
+                "instruction": "Revise only the omitted fact in the frozen source.",
+            }
+    
+>       assert root.call_tool("operation_preflight", request("original_source"))[
+            "admissible"
+        ] is True
+E       assert False is True
+
+tests/operations/test_hypothesis_review_routing.py:494: AssertionError
+______________ test_role_prompts_use_only_packaged_role_resources ______________
+
+    def test_role_prompts_use_only_packaged_role_resources():
+        assert "Read only the exact assignment, declared inputs" in OPERATION_AGENT_PREAMBLE
+        assert "Skill" not in OPERATION_AGENT_PREAMBLE
+        for role in ("author", "reviewer"):
+            prompt = role_pack.role_prompt(role)
+>           assert prompt == (role_pack.role_directory() / f"tcad_deck_{role}.md").read_text("utf-8")
+E           AssertionError: assert 'Research con...reach them.\n' == '---\nname: t...reach them.\n'
+E             
+E             + Research context and responsibilities:
+E             + Evidence establishes source-bound facts; hypotheses propose falsifiable explanations;
+E             + design selects a feasible current objective and retains later objectives and conditions.
+E             + Independent review checks scientific validity and whether the task is deliverable from
+E             + its declared inputs. Authors implement the exact plan within available capabilities;
+E             + execution requires its own authorization; analysis interprets actual results and may...
+E             
+E             ...Full output truncated (205 lines hidden), use '-vv' to show
+
+tests/operations/test_tcad_knowledge_closure.py:27: AssertionError
+=========================== short test summary info ============================
+FAILED tests/operations/test_validation_responsibility_pruning.py::test_designer_can_choose_stage_shape_through_submit[scientific]
+FAILED tests/operations/test_agent_contract_alignment.py::test_review_validates_bound_original_context_and_actual_source_aliases[execution_context]
+FAILED tests/operations/test_hypothesis_review_routing.py::test_root_preflight_rejects_replacing_the_prior_intake_source
+FAILED tests/operations/test_tcad_knowledge_closure.py::test_role_prompts_use_only_packaged_role_resources
+4 failed, 167 passed in 49.78s

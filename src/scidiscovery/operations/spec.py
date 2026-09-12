@@ -5,9 +5,10 @@ import json
 import re
 from dataclasses import dataclass, fields, is_dataclass
 from typing import Any, Literal, Mapping
+from types import MappingProxyType
 from pydantic import BaseModel, ConfigDict, Field
 PLUGIN_PROTOCOL_VERSION = "1"
-OPERATION_ABI_VERSION = "16"
+OPERATION_ABI_VERSION = "17"
 _ID = re.compile(r"^[a-z][a-z0-9_.-]{0,127}$")
 _JSON_POINTER = re.compile(r"^/(?:[^~/]|~[01])*(?:/(?:[^~/]|~[01])*)*$")
 _DOMAIN = re.compile(r"^(?:\*\.)?[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
@@ -115,7 +116,7 @@ class InputPortSpec(PortSpec):
         if wildcard and not (
             self.schema_id == "*"
             and self.media_types == ("*/*",)
-            and self.exposure == "handoff_only"
+            and self.exposure in {"handoff_only", "on_demand"}
             and self.usage == "evidence_inventory"
         ):
             return "input_wildcard_invalid"
@@ -322,6 +323,32 @@ class CompleteTransformFamilySpec(FrozenSpec):
         return None
 
 
+class InputValidationSpec(FrozenSpec):
+    """One pure checker for the exact declared input bytes, before Run creation."""
+
+    validator: ComponentRef
+    rule_id: str
+    description: str
+
+    def issue(self) -> str | None:
+        if _ID.fullmatch(self.rule_id) is None or not self.description.strip():
+            return "input_validation_invalid"
+        return None
+
+
+def input_validation_projection(spec: OperationSpec) -> dict[str, Any] | None:
+    validation = spec.input_validation
+    if validation is None:
+        return None
+    return {
+        "phase": "input_admission",
+        "rule_id": validation.rule_id,
+        "description": validation.description,
+        "required_inputs": [port.name for port in spec.inputs if port.min_items > 0],
+        "optional_inputs": [port.name for port in spec.inputs if port.min_items == 0],
+    }
+
+
 class OperationSpec(FrozenSpec):
     operation_id: str
     version: str
@@ -332,6 +359,7 @@ class OperationSpec(FrozenSpec):
     outputs: tuple[OutputPortSpec, ...]
     consequence: str
     input_admission: InputAdmissionSpec | None = None
+    input_validation: InputValidationSpec | None = None
     complete_transform_family: CompleteTransformFamilySpec | None = None
     review: ReviewSpec | None = None
     guards: tuple[ComponentRef, ...] = ()
@@ -398,6 +426,8 @@ class CompiledOperation:
     digest: str
     approval_identity: ApprovalProviderIdentity | None
     approval_providers: tuple[ApprovalProviderIdentity, ...]
+    worker_tools: tuple[Any, ...]
+    output_contracts: Mapping[str, Mapping[str, Any]]
 class ApprovalProviderIdentity(FrozenSpec):
     operation_id: str
     version: str
@@ -409,6 +439,12 @@ class SchedulerPortView(FrozenSpec):
     min_items: int
     max_items: int
     required_non_null_fields: tuple[str, ...] = ()
+class SchedulerInputPortView(SchedulerPortView):
+    usage: str
+    exposure: str
+    require_current: bool
+    media_types: tuple[str, ...]
+    max_item_bytes: int
 class SchedulerReviewEdgeView(FrozenSpec):
     reviewer_operation: str; reviewer_input_port: str
     subject_outputs: tuple[str, ...]; accepted_verdicts: tuple[Literal["pass", "inconclusive"], ...]
@@ -420,9 +456,10 @@ class SchedulerOperationView(FrozenSpec):
     purpose: str
     applies_when: str
     not_for: str
-    inputs: tuple[SchedulerPortView, ...]
+    inputs: tuple[SchedulerInputPortView, ...]
     outputs: tuple[SchedulerPortView, ...]
     input_admission: InputAdmissionSpec | None = None
+    input_validation: dict[str, Any] | None = None
     complete_transform_family: CompleteTransformFamilySpec | None = None
     consequence: str
     timeout_seconds: int
@@ -449,10 +486,12 @@ class CompiledDigestEnvelope:
 def scheduler_operation_view(spec: OperationSpec) -> SchedulerOperationView:
     if spec.limits is None:
         raise ValueError("an uncompiled operation has no limits")
-    input_port = lambda item: SchedulerPortView(
+    input_port = lambda item: SchedulerInputPortView(
         name=item.name, description=item.description, schema=item.schema_id,
         min_items=item.min_items, max_items=item.max_items,
         required_non_null_fields=item.required_non_null_fields,
+        usage=item.usage, exposure=item.exposure, require_current=item.require_current,
+        media_types=item.media_types, max_item_bytes=item.max_item_bytes,
     )
     output_port = lambda item: SchedulerPortView(
         name=item.name, description=item.description, schema=item.schema_id,
@@ -471,6 +510,7 @@ def scheduler_operation_view(spec: OperationSpec) -> SchedulerOperationView:
         inputs=tuple(input_port(item) for item in spec.inputs),
         outputs=tuple(output_port(item) for item in spec.outputs),
         input_admission=spec.input_admission,
+        input_validation=input_validation_projection(spec),
         complete_transform_family=spec.complete_transform_family,
         consequence=spec.consequence,
         timeout_seconds=spec.limits.timeout_seconds,
@@ -485,20 +525,36 @@ def scheduler_operation_view(spec: OperationSpec) -> SchedulerOperationView:
         requires_human_approval=bool(spec.review and spec.review.approval),
         accepts_actions=spec.accepts_actions,
     )
-def _canonical_value(value: Any) -> Any:
+def json_projection(value: Any) -> Any:
     if isinstance(value, BaseModel):
-        return _canonical_value(value.model_dump(mode="python", by_alias=True))
+        # Preserve every pre-existing null field; omit only the new default.
+        # Walk model objects so nested PluginDefinition operations retain this rule.
+        return {
+            (field.alias or name): json_projection(getattr(value, name))
+            for name, field in type(value).model_fields.items()
+            if not (isinstance(value, OperationSpec) and name == "input_validation"
+                    and getattr(value, name) is None)
+        }
     if is_dataclass(value) and not isinstance(value, type):
-        return {field.name: _canonical_value(getattr(value, field.name)) for field in fields(value)}
+        return {field.name: json_projection(getattr(value, field.name)) for field in fields(value)}
     if isinstance(value, Mapping):
-        return {str(key): _canonical_value(item) for key, item in value.items()}
+        return {str(key): json_projection(item) for key, item in value.items()}
     if isinstance(value, (tuple, list)):
-        return [_canonical_value(item) for item in value]
-    if value is None or isinstance(value, (bool, int, str)):
+        return [json_projection(item) for item in value]
+    if value is None or isinstance(value, (bool, int, float, str)):
         return value
     raise TypeError(f"unsupported canonical value: {type(value).__name__}")
 def canonical_json(value: Any) -> str:
-    return json.dumps(_canonical_value(value), ensure_ascii=False,
-                      separators=(",", ":"), sort_keys=True)
+    return json.dumps(json_projection(value), ensure_ascii=False,
+                      separators=(",", ":"), sort_keys=True, allow_nan=False)
 def canonical_digest(value: Any) -> str:
     return hashlib.sha256(canonical_json(value).encode("utf-8")).hexdigest()
+
+
+def freeze_json(value: Any) -> Any:
+    """Freeze generated JSON recursively; per-Run projections are detached copies."""
+    if isinstance(value, Mapping):
+        return MappingProxyType({key: freeze_json(item) for key, item in value.items()})
+    if isinstance(value, (tuple, list)):
+        return tuple(freeze_json(item) for item in value)
+    return value

@@ -1,0 +1,17 @@
+{
+  "command": [
+    "python",
+    "-m",
+    "pytest",
+    "-q",
+    "-c",
+    "/tmp/scid-submission-prune-baseline/pyproject.toml",
+    "/tmp/scid-submission-prune-baseline/tests/operations/test_hypothesis_review_routing.py::test_root_preflight_rejects_replacing_the_prior_intake_source"
+  ],
+  "exit_code": 1,
+  "seconds": 1.399,
+  "peak_tree_rss_bytes": 119234560,
+  "budget_bytes": 536870912,
+  "early_stop_bytes": 469762048,
+  "memory_terminated": false
+}

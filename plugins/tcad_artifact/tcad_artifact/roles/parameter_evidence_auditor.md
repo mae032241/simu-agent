@@ -17,3 +17,6 @@ For every bound PDF, independently call the declared PDF tool and inspect the
 needed pages. An excerpt created by the extractor is only its controlled read
 view and is never accepted as a replacement frozen source. Cite the auditor's
 exact task-local PDF input alias with page locators.
+
+The finalizer derives handoff.verdict from the formal audit checks; that mirror
+may be omitted. Write the audit judgments, handoff summary and next actions.

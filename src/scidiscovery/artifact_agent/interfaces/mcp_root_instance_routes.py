@@ -147,10 +147,11 @@ class RootInstanceRoutes:
         objects = []
         for binding in sorted(latest.values(), key=lambda item: item.logical_name):
             envelope = self.artifacts.get_by_id(binding.object_id)
-            signal = self._scheduler_signal_for_output(envelope.ref)
+            signal = self.runs.signal_for_output(envelope.ref, require_current=False) if self.runs is not None else None
             objects.append(
                 {
                     "artifact_name": binding.name,
+                    "historical": self._is_historical(envelope),
                     "kind": envelope.kind,
                     "schema": envelope.schema_id,
                     "revision": binding.revision,
@@ -246,11 +247,30 @@ class RootInstanceRoutes:
     def artifact_catalog(self, *, name: str) -> dict[str, Any]:
         binding = self._binding("artifact", name)
         envelope = self.artifacts.get_by_id(binding.object_id)
+        if len(envelope.parent_refs) > 4096:
+            raise RootToolError("artifact_catalog direct parent limit exceeded (4096)")
+        instance_id = self._instance_id()
+        parent_artifact_names = [
+            self.bindings.find_name(
+                instance=instance_id,
+                namespace="artifact",
+                object_id=parent.artifact_id,
+            )
+            for parent in envelope.parent_refs
+        ]
         labels = {
             key: value
             for key, value in envelope.labels.items()
             if not _identity_word(key)
         }
+        parents = []
+        for parent, parent_name in zip(envelope.parent_refs, parent_artifact_names):
+            metadata = self.artifacts.catalog(parent) if parent_name is not None else None
+            parents.append({"artifact_name": parent_name,
+                "schema": metadata.schema_id if metadata else None,
+                "kind": metadata.kind if metadata else None,
+                "producer": {key: metadata.labels[key] for key in
+                    ("operation_id", "operation_output_port") if key in metadata.labels} if metadata else None})
         return {
             **self._binding_value(binding),
             "kind": envelope.kind,
@@ -260,6 +280,8 @@ class RootInstanceRoutes:
             "size_bytes": envelope.size_bytes,
             "created_at": envelope.created_at,
             "labels": labels,
+            "parent_artifact_names": parent_artifact_names,
+            "parents": parents,
         }
 
 

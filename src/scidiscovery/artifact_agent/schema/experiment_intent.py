@@ -30,7 +30,7 @@ from .experiment import (
 )
 from .research_objective import ResearchObjectiveContract
 from .scientific_foundation import ScalarValue
-from ...operation_contract import SemanticRuleViolation
+from ...operation_contract import SemanticRuleViolation, declared_violation
 
 
 Level = Literal["low", "medium", "high"]
@@ -137,6 +137,14 @@ class ExperimentProposalIntent(SchemaModel):
     """Scientific choices for one experiment without domain execution payloads."""
 
     experiment_key: Identifier
+    objectives: Annotated[
+        tuple[Annotated[str, Field(min_length=1, max_length=8192)], ...],
+        Field(min_length=1, max_length=16),
+    ]
+    current_objectives: Annotated[
+        tuple[Annotated[str, Field(min_length=1, max_length=8192)], ...],
+        Field(min_length=1, max_length=16),
+    ]
     hypothesis_keys: Annotated[tuple[Identifier, ...], Field(max_length=12)] = ()
     frozen_invariants: Annotated[tuple[str, ...], Field(min_length=1, max_length=128)]
     cases: Annotated[tuple[IntentCase, ...], Field(min_length=1, max_length=10000)]
@@ -164,13 +172,13 @@ class ExperimentProposalIntent(SchemaModel):
         case_keys = tuple(item.case_key for item in self.cases)
         variable_keys = tuple(item.variable_key for item in self.variables)
         for values, label in (
-            (self.hypothesis_keys, "hypothesis_keys"),
             (case_keys, "case_key values"),
             (variable_keys, "comparison variable keys"),
-            (self.required_observables, "required_observables"),
         ):
             if len(values) != len(set(values)):
                 raise ValueError(f"{label} must be unique")
+        if not set(self.current_objectives).issubset(self.objectives):
+            raise ValueError("current_objectives must be an exact subset of objectives")
         if (self.validation_plan is None) == (self.validation_intent is None):
             raise ValueError(
                 "intent requires exactly one complete validation_plan or compact validation_intent"
@@ -182,9 +190,9 @@ class ExperimentProposalIntent(SchemaModel):
             raise ValueError("intent validation plan experiment_key differs")
         known_cases = set(case_keys)
         if self.baseline_case_key is None:
-            if len(self.cases) != 1 or self.variables:
+            if self.variables:
                 raise ValueError(
-                    "intent without a baseline comparison requires one case and no variables"
+                    "comparison variables require an explicit baseline for materialization"
                 )
         else:
             if self.baseline_case_key not in known_cases:
@@ -238,8 +246,6 @@ class ExperimentDesignIntent(SchemaModel):
         proposal_keys = tuple(item.experiment_key for item in self.proposals)
         if len(proposal_keys) != len(set(proposal_keys)):
             raise ValueError("intent experiment_key values must be unique")
-        if len(self.selected_hypothesis_keys) != len(set(self.selected_hypothesis_keys)):
-            raise ValueError("intent selected_hypothesis_keys must be unique")
         if set(self.priority_order) != set(proposal_keys) or len(
             self.priority_order
         ) != len(set(self.priority_order)):
@@ -253,21 +259,6 @@ class ExperimentDesignIntent(SchemaModel):
                 raise ValueError("scientific intent requires objective and hypotheses")
             if self.engineering_objective is not None:
                 raise ValueError("scientific intent cannot declare engineering_objective")
-            for proposal in self.proposals:
-                if (
-                    not proposal.hypothesis_keys
-                    or proposal.baseline_case_key is None
-                    or not any(
-                        item.comparison_role == "intended_change"
-                        for item in proposal.variables
-                    )
-                    or not proposal.identifiability_claims
-                    or not proposal.prediction_tests
-                ):
-                    raise ValueError(
-                        "scientific intent requires hypotheses, comparisons, "
-                        "identifiability claims, and prediction tests"
-                    )
         else:
             if (
                 self.objective_key is not None
@@ -277,18 +268,6 @@ class ExperimentDesignIntent(SchemaModel):
                 raise ValueError(
                     "engineering intent requires only an engineering objective"
                 )
-            for proposal in self.proposals:
-                if (
-                    proposal.hypothesis_keys
-                    or len(proposal.cases) != 1
-                    or proposal.baseline_case_key is not None
-                    or proposal.variables
-                    or proposal.identifiability_claims
-                    or proposal.prediction_tests
-                ):
-                    raise ValueError(
-                        "engineering intent must contain one non-comparison case"
-                    )
         return self
 
 
@@ -405,7 +384,10 @@ def materialize_experiment_design_intent(
         proposals.append(
             ExperimentProposal(
                 experiment_key=proposal_intent.experiment_key,
-                objective=objective_statement,
+                objectives=tuple(
+                    dict.fromkeys((objective_statement, *proposal_intent.objectives))
+                ),
+                current_objectives=proposal_intent.current_objectives,
                 hypothesis_keys=proposal_intent.hypothesis_keys,
                 changed_factors=changed_factors,
                 frozen_invariants=proposal_intent.frozen_invariants,
@@ -463,7 +445,7 @@ def validate_experiment_design_intent_task_output(
             raw_objective, strict=True
         )
         if intent.objective_key != objective.objective_key:
-            raise SemanticRuleViolation(
+            raise declared_violation(
                 "experiment intent objective_key differs from research objective"
             )
     try:
@@ -502,6 +484,9 @@ def materialize_experiment_design_inputs(
         objective = ResearchObjectiveContract.model_validate_json(
             inputs["research_objective"], strict=True
         )
+    if intent.study_kind != "engineering":
+        from .experiment import validate_experiment_input_objective
+        validate_experiment_input_objective(inputs)
     portfolio = materialize_experiment_design_intent(intent, objective)
     validation_inputs = {
         key: value for key, value in inputs.items() if key != "experiment_design_intent"

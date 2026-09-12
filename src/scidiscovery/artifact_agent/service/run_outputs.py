@@ -14,24 +14,33 @@ from ...operations.invoke import (
     operation_port_json_schema,
     operation_primary_output,
 )
-from ...operation_contract import SemanticRuleViolation
+from ...operation_contract import (SemanticRuleViolation, DeclaredDiagnostic, validation_diagnostics, diagnostic_path,
+                                  schema_field_names)
 from ...operations.spec import CompiledOperation
 from ..schema.common import canonical_json
-from ..schema.role_result import parse_role_result
+from ..schema.role_result import RoleResultEnvelope, parse_role_result
 from ..schema.run_signal import SchedulerSignal
 from .local_workspace import SealedWorkspace, WorkspaceError
 
 
 class RunOutputError(RuntimeError):
     def __init__(
-        self, message: str, *, details: tuple[dict[str, str], ...] = ()
+        self, message: str, *, details: tuple[dict[str, str], ...] = (), recorded: bool = False,
     ) -> None:
         super().__init__(message)
         self.details = details
+        self.recorded = recorded
 
 
 class RunCheckerError(RuntimeError):
-    """A compiled plugin checker contradicted its declared output contract."""
+    """Control integrity or checker failure, never a request to rewrite output."""
+
+    def __init__(self, message: str, *, category: str = "checker_failure") -> None:
+        super().__init__(message)
+        self.category = category if category in {"checker_failure", "integrity_failure", "admission_defect", "tool_timeout"} else "checker_failure"
+
+
+from ...operations.input_validation import InputBindingDescriptor, ValidationSources, BoundSourceError
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,11 +60,22 @@ def validate_run_output(
     *,
     input_source_ports: Mapping[str, str],
     input_bytes: Mapping[str, bytes],
+    input_binding_descriptors: Mapping[str, InputBindingDescriptor] | None = None,
+    validation_deadline: float | None = None,
+    tool_snapshot: bytes | None = None,
 ) -> ValidatedRunOutput:
     """Validate the one primary result without changing control state."""
 
     if set(input_source_ports) != set(input_bytes):
         raise RunCheckerError("input source bindings differ from the exact Run inputs")
+    if input_binding_descriptors is not None:
+        if set(input_binding_descriptors) != set(input_bytes):
+            raise RunCheckerError("input binding descriptors differ from the exact Run inputs")
+        if any(not isinstance(descriptor, InputBindingDescriptor)
+               or descriptor.source_name != name
+               or descriptor.port_name != input_source_ports[name]
+               for name, descriptor in input_binding_descriptors.items()):
+            raise RunCheckerError("output context descriptor wiring is invalid")
     input_port_names = tuple(input_source_ports.values())
     if sealed.run_id == "" or sealed.backend == "":
         raise RunOutputError("sealed workspace identity is invalid")
@@ -65,7 +85,8 @@ def validate_run_output(
         item["rule_id"] for item in contract["rules"] + contract["checkers"]
     )
     paths = {item.relative_path for item in sealed.files}
-    if paths != {"result.json"}:
+    expected_paths = {"result.json"} | ({"tool-evidence.json"} if tool_snapshot is not None else set())
+    if paths != expected_paths:
         raise RunOutputError(
             "this minimal Run accepts exactly output/result.json",
             details=_with_rule(
@@ -74,7 +95,9 @@ def validate_run_output(
                 declared_rule_ids,
             ),
         )
-    descriptor = sealed.files[0]
+    if tool_snapshot is not None and (sealed.root / "tool-evidence.json").read_bytes() != tool_snapshot:
+        raise RunCheckerError("tool evidence snapshot differs", category="integrity_failure")
+    descriptor = next(item for item in sealed.files if item.relative_path == "result.json")
     path = sealed.root / descriptor.relative_path
     try:
         raw_envelope = path.read_bytes()
@@ -97,7 +120,7 @@ def validate_run_output(
         raise RunOutputError(
             "worker output must use the role result envelope",
             details=_with_rule(
-                _validation_details(error), "runtime.envelope", declared_rule_ids
+                _validation_details(error, schema=RoleResultEnvelope.model_json_schema()), "runtime.envelope", declared_rule_ids
             ),
         ) from error
     if not isinstance(result.payload, dict):
@@ -160,7 +183,7 @@ def validate_run_output(
             raise RunOutputError(
                 "operation output validator rejected the payload",
                 details=_with_rule(
-                    _prefix(_validation_details(error), "$.payload"),
+                    _prefix(_validation_details(error, schema=compiled.output_contracts[port.name]), "$.payload"),
                     port.validator_rule_id,
                     declared_rule_ids,
                 ),
@@ -188,11 +211,21 @@ def validate_run_output(
             f"{port.context_validator.plugin_id or compiled.plugin_id}:"
             f"{port.context_validator.component_id}"
         )
-        sources = {
+        source_bytes = {
             name: content
             for name, content in input_bytes.items()
             if input_source_ports[name] in port.context_sources
         }
+        sources = ValidationSources(
+            source_bytes,
+            {
+                name: descriptor
+                for name, descriptor in (input_binding_descriptors or {}).items()
+                if name in source_bytes
+            },
+            validation_deadline=validation_deadline,
+            tool_snapshot=tool_snapshot,
+        )
         try:
             compiled.implementations[key](
                 result.payload,
@@ -205,11 +238,17 @@ def validate_run_output(
             raise RunOutputError(
                 "operation contextual output validator rejected the payload",
                 details=_with_rule(
-                    _prefix(_validation_details(error), "$.payload"),
+                    _prefix(_validation_details(error, schema=compiled.output_contracts[port.name], phase="output_context"), "$.payload"),
                     port.context_rule_id,
                     declared_rule_ids,
                 ),
             ) from error
+        except RunCheckerError:
+            raise
+        except TimeoutError as error:
+            raise RunCheckerError("output checking tool timed out", category="tool_timeout") from error
+        except BoundSourceError as error:
+            raise RunCheckerError("accepted source could not be parsed", category="admission_defect") from error
         except Exception as error:
             raise RunCheckerError("context checker failed") from error
     handoff = result.handoff
@@ -231,17 +270,18 @@ def validate_run_output(
     )
 
 
-def _validation_details(error: Exception) -> tuple[dict[str, str], ...]:
-    if isinstance(error, ValidationError):
-        return tuple(
-            {
-                "path": ".".join(str(part) for part in item["loc"]) or "$",
-                "message": str(item["msg"]),
-                "type": str(item["type"]),
-            }
-            for item in error.errors(include_url=False)[:32]
-        )
-    return ({"path": "$", "message": str(error), "type": "value_error"},)
+def _validation_details(error: Exception, *, schema: Any = None, phase: str = "output_payload") -> tuple[dict[str, Any], ...]:
+    current = error
+    for _ in range(4):
+        if isinstance(current, SemanticRuleViolation) and current.details:
+            return tuple((DeclaredDiagnostic if isinstance(item, DeclaredDiagnostic) else dict)(
+                {**item, "phase":phase}) for item in current.details)
+        if isinstance(current, ValidationError):
+            return validation_diagnostics(current, schema=schema or {}, phase=phase, action="submit")
+        if current.__cause__ is None:
+            break
+        current = current.__cause__
+    return ({"path": "$", "message": "Declared semantic rule requires correction.", "type": "value_error", "phase":phase},)
 
 
 def _validate_payload_schema(
@@ -272,39 +312,46 @@ def _validate_payload_schema(
         raise RunCheckerError("compiled output schema projection failed") from error
     if not errors:
         return
-    details = tuple(
-        {
-            "path": _json_path(error.absolute_path),
-            "message": error.message,
-            "type": f"json_schema.{error.validator}",
-        }
-        for error in errors[:32]
-    )
+    details = []
+    names = schema_field_names(schema)
+    for error in errors[:32]:
+        parts = list(error.absolute_path)
+        message = "Value does not satisfy the declared JSON Schema constraint."
+        if error.validator == "required" and isinstance(error.instance, dict):
+            missing = next((name for name in error.validator_value if name not in error.instance), None)
+            if missing is not None:
+                parts.append(missing)
+            message = "Required field is missing."
+        elif error.validator == "type":
+            message = f"Expected JSON type: {error.validator_value}."
+        elif error.validator in {"enum", "const"}:
+            message = "Supported values: " + json.dumps(error.validator_value, ensure_ascii=False)
+        elif error.validator in {"minimum", "maximum", "minItems", "maxItems", "minLength", "maxLength"}:
+            message = f"Declared {error.validator}: {error.validator_value}."
+        elif error.validator == "additionalProperties":
+            message = "An undeclared field was supplied."
+        details.append(DeclaredDiagnostic({
+            "path": diagnostic_path(parts, names, root="$.payload"),
+            "message": message[:512], "type": f"json_schema.{error.validator}",
+        }))
     raise RunOutputError(
         "operation payload does not satisfy its JSON Schema",
-        details=_with_rule(details, "runtime.schema", declared_rule_ids),
+        details=_with_rule(tuple(details), "runtime.schema", declared_rule_ids),
     )
-
-
-def _json_path(parts: Any) -> str:
-    path = "$.payload"
-    for part in parts:
-        path += f"[{part}]" if isinstance(part, int) else f".{part}"
-    return path
 
 
 def _prefix(
     details: tuple[dict[str, str], ...], prefix: str
 ) -> tuple[dict[str, str], ...]:
     return tuple(
-        {
+        (DeclaredDiagnostic if isinstance(item, DeclaredDiagnostic) else dict)({
             **item,
             "path": (
                 prefix
                 if item["path"] == "$"
-                else f"{prefix}.{item['path'].removeprefix('$.')}"
+                else prefix + item["path"][1:]
             ),
-        }
+        })
         for item in details
     )
 
@@ -316,10 +363,12 @@ def _with_rule(
 ) -> tuple[dict[str, str], ...]:
     if rule_id not in declared_rule_ids:
         raise RunCheckerError("validator used an undeclared compiled rule")
-    return tuple({**item, "rule_id": rule_id} for item in details)
+    return tuple((DeclaredDiagnostic if isinstance(item, DeclaredDiagnostic) else dict)({**item, "rule_id": rule_id}) for item in details)
 
 
 __all__ = [
+    "InputBindingDescriptor",
+    "ValidationSources",
     "RunCheckerError",
     "RunOutputError",
     "ValidatedRunOutput",

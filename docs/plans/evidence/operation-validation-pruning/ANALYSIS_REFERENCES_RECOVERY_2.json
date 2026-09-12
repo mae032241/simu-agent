@@ -1,0 +1,16 @@
+{
+  "command": [
+    "python",
+    "-m",
+    "pytest",
+    "-q",
+    "-x",
+    "tests/operations/test_analysis_artifact_references.py::test_saved_calculation_survives_failed_run_without_manual_receipt_rewriting"
+  ],
+  "exit_code": 0,
+  "seconds": 2.576,
+  "peak_tree_rss_bytes": 134520832,
+  "budget_bytes": 536870912,
+  "early_stop_bytes": 469762048,
+  "memory_terminated": false
+}

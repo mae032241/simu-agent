@@ -27,6 +27,17 @@ class RunStateConflict(RunError):
     pass
 
 
+class RunAttemptLimit(RunStateConflict):
+    def __init__(self, used: int, limit: int) -> None:
+        self.used = used
+        self.limit = limit
+        super().__init__(f"recovery attempt limit reached: {used} Runs used, limit {limit}; scheduler may set max_attempts for a new Run")
+
+
+class RunContractUnavailable(RunStateConflict):
+    """The frozen operation cannot be resolved in the installed catalog."""
+
+
 class RunSlotBusy(RunError):
     pass
 
@@ -91,6 +102,8 @@ class RunStatus:
     recovery_candidate_digest: str | None
     recovery_draft: dict[str, Any] | None
     request_digest: str
+    draft_from_run_id: str | None = None
+    recovery_policy: dict[str, Any] | None = None
 
 
 def status_from_row(row: sqlite3.Row) -> RunStatus:
@@ -141,6 +154,9 @@ def status_from_row(row: sqlite3.Row) -> RunStatus:
             else _json_object(row["recovery_draft_json"], "stored recovery draft")
         ),
         request_digest=str(row["request_digest"]),
+        draft_from_run_id=row["draft_from_run_id"],
+        recovery_policy=(None if row["recovery_policy_json"] is None else
+                         _json_object(row["recovery_policy_json"], "stored recovery policy")),
     )
 
 

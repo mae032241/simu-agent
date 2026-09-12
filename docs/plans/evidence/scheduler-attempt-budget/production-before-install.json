@@ -1,0 +1,36 @@
+{
+  "installed_files": [
+    {
+      "path": "src/scidiscovery/artifact_agent/interfaces/mcp_root.py",
+      "candidate_sha256": "dc2bcd3b1b894a4c933651c7c352dc09c3474ea9a72516986b20425bc2625bbf",
+      "installed_sha256": "0df25c3c0ef4801fb35111d3dd9fb9cb1ee1c98daba402c1ee92b3a0a26e1756",
+      "matches": false
+    },
+    {
+      "path": "src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py",
+      "candidate_sha256": "f661a54c7784bc0988fcd2e81b79c79a484c1e09b8c7ad6b5d2785a898f42670",
+      "installed_sha256": "2f551cc55fb469ba8631a7442f97f0d828a82aacf1baa870fd7dc8d2f21cb998",
+      "matches": false
+    },
+    {
+      "path": "src/scidiscovery/artifact_agent/service/runs.py",
+      "candidate_sha256": "7bad9a78710234c804d2952368d7f439fbc105e0af4cd2521e6b77605988d74f",
+      "installed_sha256": "c2ffd3ea786c7b4e9228636a2dc61e57b6fece208aba0344e50e493fbfd68a4c",
+      "matches": false
+    },
+    {
+      "path": "src/scidiscovery/artifact_agent/service/run_records.py",
+      "candidate_sha256": "22e5febe16cdb9193a59beb8b843f28cd384bf0f37afbb7cb2231aea65fa381b",
+      "installed_sha256": "9f22071e9b35bffa558bae8dee417517657cb9a63fc0b59d1d2ce711ba39cb24",
+      "matches": false
+    },
+    {
+      "path": "src/scidiscovery/artifact_agent/service/tool_evidence.py",
+      "candidate_sha256": "ae323c750ab40f9c6be163385253595770f9bcd04152e487ae5460cf11def5a7",
+      "installed_sha256": "9cb071185dc512be6a70406641e282f7512e4160a0dc31e3ea76f820cb13022c",
+      "matches": false
+    }
+  ],
+  "all_match": false,
+  "real_fig4_continuation_started": false
+}

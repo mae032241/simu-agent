@@ -1,0 +1,15 @@
+{
+  "command": [
+    "python",
+    "-m",
+    "pytest",
+    "-q",
+    "tests/operations/test_invoke_preflight.py::test_declared_input_checker_gets_exact_bounded_sources_before_run_creation"
+  ],
+  "exit_code": 0,
+  "seconds": 0.702,
+  "peak_tree_rss_bytes": 71229440,
+  "budget_bytes": 536870912,
+  "early_stop_bytes": 469762048,
+  "memory_terminated": false
+}

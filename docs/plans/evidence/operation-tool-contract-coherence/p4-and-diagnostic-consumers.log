@@ -1,0 +1,1221 @@
+................FFFFFFFFFF.............................................. [ 73%]
+................F....FF...                                               [100%]
+=================================== FAILURES ===================================
+_ test_generic_two_calculations_from_one_source_use_independent_evidence_keys_through_mcp_submit[None] _
+
+self = <scidiscovery.artifact_agent.interfaces.mcp_root.RootToolFacade object at 0x7fe1a8cc8260>
+values = {'on_conflict': 'reject', 'name': 'generic_analysis', 'operation_id': 'science.result.diagnose.v1', 'inputs': (Operati...ct_names=('generic_results',)), OperationInputSelection(port='curve_bundle', artifact_names=('generic_bundle',))), ...}
+
+    def operation_invoke(self, **values: Any) -> dict[str, Any]:
+        with self._create_lock:
+            try:
+>               bound = self._prepare_operation_call(**values)
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py:193: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py:1093: in _prepare_operation_call
+    bound = preflight_operation(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+compiled = CompiledOperation(plugin_id='curve_score', spec=OperationSpec(operation_id='science.result.diagnose.v1', version='3', ...he canonical payload must fit the compiled output byte limit.', 'output_paths': ('/',), 'required_inputs': ()}))})})}))
+name = 'generic_analysis'
+artifacts_by_port = {'experiment_plan': (InvocationArtifact(artifact_name='plan', ref=ArtifactRef(schema_version=1, artifact_id='art_3ebbf...discovery.experiment-portfolio.v1'),), labels=(), handoff_verdict=None, historical=False, producer_run_id=None),), ...}
+instruction = None, parameters = {}
+read_artifact = <bound method ArtifactService.read of <scidiscovery.artifact_agent.service.artifacts.ArtifactService object at 0x7fe1a7f97bf0>>
+source_name_overrides = None
+
+    def preflight_operation(
+        compiled: CompiledOperation,
+        *,
+        name: str,
+        artifacts_by_port: Mapping[str, tuple[InvocationArtifact, ...]],
+        instruction: str | None,
+        parameters: Mapping[str, Any] | None = None,
+        read_artifact: Callable[[ArtifactRef], bytes] | None = None,
+        source_name_overrides: Mapping[tuple[str, str], str] | None = None,
+    ) -> BoundOperationCall:
+        spec = compiled.spec
+        expected = {port.name: port for port in spec.inputs}
+        if set(artifacts_by_port) != set(expected):
+            missing = next(iter(sorted(set(expected) - set(artifacts_by_port))), None)
+            extra = next(iter(sorted(set(artifacts_by_port) - set(expected))), None)
+            raise OperationInvocationError(
+                "input_port_missing" if missing else "input_port_unknown",
+                port=missing or extra,
+            )
+        parameter_map = dict(parameters or {})
+        if parameter_map:
+            raise OperationInvocationError("parameters_not_declared")
+        if spec.executor.kind == "agent":
+            if instruction is None or not instruction.strip():
+>               raise OperationInvocationError("instruction_required")
+E               scidiscovery.operations.input_validation.OperationInvocationError: instruction_required: operation
+
+src/scidiscovery/operations/invoke.py:137: OperationInvocationError
+
+The above exception was the direct cause of the following exception:
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-84/test_generic_two_calculations_0')
+tamper = None
+
+    @pytest.mark.parametrize('tamper', [None, 'alias', 'record_key', 'failed_as_success'])
+    def test_generic_two_calculations_from_one_source_use_independent_evidence_keys_through_mcp_submit(tmp_path, tamper):
+>       worker, opened = generic_worker(tmp_path)
+                         ^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/operations/test_analysis_claim_scope.py:189: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/operations/test_analysis_claim_scope.py:179: in generic_worker
+    root.call_tool('operation_invoke', dict(name='generic_analysis', operation_id='science.result.diagnose.v1', inputs=[
+src/scidiscovery/artifact_agent/interfaces/mcp_root.py:402: in call_tool
+    return getattr(self.facade, name)(**values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <scidiscovery.artifact_agent.interfaces.mcp_root.RootToolFacade object at 0x7fe1a8cc8260>
+values = {'on_conflict': 'reject', 'name': 'generic_analysis', 'operation_id': 'science.result.diagnose.v1', 'inputs': (Operati...ct_names=('generic_results',)), OperationInputSelection(port='curve_bundle', artifact_names=('generic_bundle',))), ...}
+
+    def operation_invoke(self, **values: Any) -> dict[str, Any]:
+        with self._create_lock:
+            try:
+                bound = self._prepare_operation_call(**values)
+                kind = bound.compiled.spec.executor.kind
+                if kind == "agent":
+                    result = self._invoke_agent_operation(
+                        bound,
+                        values["on_conflict"],
+                        resume_from=values.get("resume_from"),
+                        draft_from=values.get("draft_from"),
+                    )
+                elif kind == "transform":
+                    result = self._invoke_compiled_transform(
+                        bound, values["on_conflict"]
+                    )
+                elif kind == "effect":
+                    plan = self._effect_operation_plan(bound)
+                    payloads = tuple(
+                        item for item in bound.inputs if item.port_name == plan.payload_port
+                    )
+                    if len(payloads) != 1 or len(bound.inputs) != 1:
+                        raise OperationInvocationError("effect_payload_not_singular")
+                    result = self._invoke_compiled_effect(
+                        bound, plan, values["on_conflict"]
+                    )
+                elif kind == "approval":
+                    result = self._invoke_approval_operation(
+                        bound, values["on_conflict"]
+                    )
+                else:
+                    raise OperationInvocationError("executor_kind_unknown")
+            except OperationInvocationError as error:
+>               raise RootToolError(
+                    f"operation invocation rejected [{error.reason_code}]", details=error.details
+                ) from error
+E               scidiscovery.artifact_agent.interfaces.mcp_root_shared.RootToolError: operation invocation rejected [instruction_required]
+
+src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py:223: RootToolError
+_ test_generic_two_calculations_from_one_source_use_independent_evidence_keys_through_mcp_submit[alias] _
+
+self = <scidiscovery.artifact_agent.interfaces.mcp_root.RootToolFacade object at 0x7fe1a81641a0>
+values = {'on_conflict': 'reject', 'name': 'generic_analysis', 'operation_id': 'science.result.diagnose.v1', 'inputs': (Operati...ct_names=('generic_results',)), OperationInputSelection(port='curve_bundle', artifact_names=('generic_bundle',))), ...}
+
+    def operation_invoke(self, **values: Any) -> dict[str, Any]:
+        with self._create_lock:
+            try:
+>               bound = self._prepare_operation_call(**values)
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py:193: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py:1093: in _prepare_operation_call
+    bound = preflight_operation(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+compiled = CompiledOperation(plugin_id='curve_score', spec=OperationSpec(operation_id='science.result.diagnose.v1', version='3', ...he canonical payload must fit the compiled output byte limit.', 'output_paths': ('/',), 'required_inputs': ()}))})})}))
+name = 'generic_analysis'
+artifacts_by_port = {'experiment_plan': (InvocationArtifact(artifact_name='plan', ref=ArtifactRef(schema_version=1, artifact_id='art_dc43d...discovery.experiment-portfolio.v1'),), labels=(), handoff_verdict=None, historical=False, producer_run_id=None),), ...}
+instruction = None, parameters = {}
+read_artifact = <bound method ArtifactService.read of <scidiscovery.artifact_agent.service.artifacts.ArtifactService object at 0x7fe1a7cb0950>>
+source_name_overrides = None
+
+    def preflight_operation(
+        compiled: CompiledOperation,
+        *,
+        name: str,
+        artifacts_by_port: Mapping[str, tuple[InvocationArtifact, ...]],
+        instruction: str | None,
+        parameters: Mapping[str, Any] | None = None,
+        read_artifact: Callable[[ArtifactRef], bytes] | None = None,
+        source_name_overrides: Mapping[tuple[str, str], str] | None = None,
+    ) -> BoundOperationCall:
+        spec = compiled.spec
+        expected = {port.name: port for port in spec.inputs}
+        if set(artifacts_by_port) != set(expected):
+            missing = next(iter(sorted(set(expected) - set(artifacts_by_port))), None)
+            extra = next(iter(sorted(set(artifacts_by_port) - set(expected))), None)
+            raise OperationInvocationError(
+                "input_port_missing" if missing else "input_port_unknown",
+                port=missing or extra,
+            )
+        parameter_map = dict(parameters or {})
+        if parameter_map:
+            raise OperationInvocationError("parameters_not_declared")
+        if spec.executor.kind == "agent":
+            if instruction is None or not instruction.strip():
+>               raise OperationInvocationError("instruction_required")
+E               scidiscovery.operations.input_validation.OperationInvocationError: instruction_required: operation
+
+src/scidiscovery/operations/invoke.py:137: OperationInvocationError
+
+The above exception was the direct cause of the following exception:
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-84/test_generic_two_calculations_1')
+tamper = 'alias'
+
+    @pytest.mark.parametrize('tamper', [None, 'alias', 'record_key', 'failed_as_success'])
+    def test_generic_two_calculations_from_one_source_use_independent_evidence_keys_through_mcp_submit(tmp_path, tamper):
+>       worker, opened = generic_worker(tmp_path)
+                         ^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/operations/test_analysis_claim_scope.py:189: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/operations/test_analysis_claim_scope.py:179: in generic_worker
+    root.call_tool('operation_invoke', dict(name='generic_analysis', operation_id='science.result.diagnose.v1', inputs=[
+src/scidiscovery/artifact_agent/interfaces/mcp_root.py:402: in call_tool
+    return getattr(self.facade, name)(**values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <scidiscovery.artifact_agent.interfaces.mcp_root.RootToolFacade object at 0x7fe1a81641a0>
+values = {'on_conflict': 'reject', 'name': 'generic_analysis', 'operation_id': 'science.result.diagnose.v1', 'inputs': (Operati...ct_names=('generic_results',)), OperationInputSelection(port='curve_bundle', artifact_names=('generic_bundle',))), ...}
+
+    def operation_invoke(self, **values: Any) -> dict[str, Any]:
+        with self._create_lock:
+            try:
+                bound = self._prepare_operation_call(**values)
+                kind = bound.compiled.spec.executor.kind
+                if kind == "agent":
+                    result = self._invoke_agent_operation(
+                        bound,
+                        values["on_conflict"],
+                        resume_from=values.get("resume_from"),
+                        draft_from=values.get("draft_from"),
+                    )
+                elif kind == "transform":
+                    result = self._invoke_compiled_transform(
+                        bound, values["on_conflict"]
+                    )
+                elif kind == "effect":
+                    plan = self._effect_operation_plan(bound)
+                    payloads = tuple(
+                        item for item in bound.inputs if item.port_name == plan.payload_port
+                    )
+                    if len(payloads) != 1 or len(bound.inputs) != 1:
+                        raise OperationInvocationError("effect_payload_not_singular")
+                    result = self._invoke_compiled_effect(
+                        bound, plan, values["on_conflict"]
+                    )
+                elif kind == "approval":
+                    result = self._invoke_approval_operation(
+                        bound, values["on_conflict"]
+                    )
+                else:
+                    raise OperationInvocationError("executor_kind_unknown")
+            except OperationInvocationError as error:
+>               raise RootToolError(
+                    f"operation invocation rejected [{error.reason_code}]", details=error.details
+                ) from error
+E               scidiscovery.artifact_agent.interfaces.mcp_root_shared.RootToolError: operation invocation rejected [instruction_required]
+
+src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py:223: RootToolError
+_ test_generic_two_calculations_from_one_source_use_independent_evidence_keys_through_mcp_submit[record_key] _
+
+self = <scidiscovery.artifact_agent.interfaces.mcp_root.RootToolFacade object at 0x7fe1a8509f70>
+values = {'on_conflict': 'reject', 'name': 'generic_analysis', 'operation_id': 'science.result.diagnose.v1', 'inputs': (Operati...ct_names=('generic_results',)), OperationInputSelection(port='curve_bundle', artifact_names=('generic_bundle',))), ...}
+
+    def operation_invoke(self, **values: Any) -> dict[str, Any]:
+        with self._create_lock:
+            try:
+>               bound = self._prepare_operation_call(**values)
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py:193: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py:1093: in _prepare_operation_call
+    bound = preflight_operation(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+compiled = CompiledOperation(plugin_id='curve_score', spec=OperationSpec(operation_id='science.result.diagnose.v1', version='3', ...he canonical payload must fit the compiled output byte limit.', 'output_paths': ('/',), 'required_inputs': ()}))})})}))
+name = 'generic_analysis'
+artifacts_by_port = {'experiment_plan': (InvocationArtifact(artifact_name='plan', ref=ArtifactRef(schema_version=1, artifact_id='art_685c8...discovery.experiment-portfolio.v1'),), labels=(), handoff_verdict=None, historical=False, producer_run_id=None),), ...}
+instruction = None, parameters = {}
+read_artifact = <bound method ArtifactService.read of <scidiscovery.artifact_agent.service.artifacts.ArtifactService object at 0x7fe1a78fdac0>>
+source_name_overrides = None
+
+    def preflight_operation(
+        compiled: CompiledOperation,
+        *,
+        name: str,
+        artifacts_by_port: Mapping[str, tuple[InvocationArtifact, ...]],
+        instruction: str | None,
+        parameters: Mapping[str, Any] | None = None,
+        read_artifact: Callable[[ArtifactRef], bytes] | None = None,
+        source_name_overrides: Mapping[tuple[str, str], str] | None = None,
+    ) -> BoundOperationCall:
+        spec = compiled.spec
+        expected = {port.name: port for port in spec.inputs}
+        if set(artifacts_by_port) != set(expected):
+            missing = next(iter(sorted(set(expected) - set(artifacts_by_port))), None)
+            extra = next(iter(sorted(set(artifacts_by_port) - set(expected))), None)
+            raise OperationInvocationError(
+                "input_port_missing" if missing else "input_port_unknown",
+                port=missing or extra,
+            )
+        parameter_map = dict(parameters or {})
+        if parameter_map:
+            raise OperationInvocationError("parameters_not_declared")
+        if spec.executor.kind == "agent":
+            if instruction is None or not instruction.strip():
+>               raise OperationInvocationError("instruction_required")
+E               scidiscovery.operations.input_validation.OperationInvocationError: instruction_required: operation
+
+src/scidiscovery/operations/invoke.py:137: OperationInvocationError
+
+The above exception was the direct cause of the following exception:
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-84/test_generic_two_calculations_2')
+tamper = 'record_key'
+
+    @pytest.mark.parametrize('tamper', [None, 'alias', 'record_key', 'failed_as_success'])
+    def test_generic_two_calculations_from_one_source_use_independent_evidence_keys_through_mcp_submit(tmp_path, tamper):
+>       worker, opened = generic_worker(tmp_path)
+                         ^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/operations/test_analysis_claim_scope.py:189: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/operations/test_analysis_claim_scope.py:179: in generic_worker
+    root.call_tool('operation_invoke', dict(name='generic_analysis', operation_id='science.result.diagnose.v1', inputs=[
+src/scidiscovery/artifact_agent/interfaces/mcp_root.py:402: in call_tool
+    return getattr(self.facade, name)(**values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <scidiscovery.artifact_agent.interfaces.mcp_root.RootToolFacade object at 0x7fe1a8509f70>
+values = {'on_conflict': 'reject', 'name': 'generic_analysis', 'operation_id': 'science.result.diagnose.v1', 'inputs': (Operati...ct_names=('generic_results',)), OperationInputSelection(port='curve_bundle', artifact_names=('generic_bundle',))), ...}
+
+    def operation_invoke(self, **values: Any) -> dict[str, Any]:
+        with self._create_lock:
+            try:
+                bound = self._prepare_operation_call(**values)
+                kind = bound.compiled.spec.executor.kind
+                if kind == "agent":
+                    result = self._invoke_agent_operation(
+                        bound,
+                        values["on_conflict"],
+                        resume_from=values.get("resume_from"),
+                        draft_from=values.get("draft_from"),
+                    )
+                elif kind == "transform":
+                    result = self._invoke_compiled_transform(
+                        bound, values["on_conflict"]
+                    )
+                elif kind == "effect":
+                    plan = self._effect_operation_plan(bound)
+                    payloads = tuple(
+                        item for item in bound.inputs if item.port_name == plan.payload_port
+                    )
+                    if len(payloads) != 1 or len(bound.inputs) != 1:
+                        raise OperationInvocationError("effect_payload_not_singular")
+                    result = self._invoke_compiled_effect(
+                        bound, plan, values["on_conflict"]
+                    )
+                elif kind == "approval":
+                    result = self._invoke_approval_operation(
+                        bound, values["on_conflict"]
+                    )
+                else:
+                    raise OperationInvocationError("executor_kind_unknown")
+            except OperationInvocationError as error:
+>               raise RootToolError(
+                    f"operation invocation rejected [{error.reason_code}]", details=error.details
+                ) from error
+E               scidiscovery.artifact_agent.interfaces.mcp_root_shared.RootToolError: operation invocation rejected [instruction_required]
+
+src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py:223: RootToolError
+_ test_generic_two_calculations_from_one_source_use_independent_evidence_keys_through_mcp_submit[failed_as_success] _
+
+self = <scidiscovery.artifact_agent.interfaces.mcp_root.RootToolFacade object at 0x7fe1a8793a40>
+values = {'on_conflict': 'reject', 'name': 'generic_analysis', 'operation_id': 'science.result.diagnose.v1', 'inputs': (Operati...ct_names=('generic_results',)), OperationInputSelection(port='curve_bundle', artifact_names=('generic_bundle',))), ...}
+
+    def operation_invoke(self, **values: Any) -> dict[str, Any]:
+        with self._create_lock:
+            try:
+>               bound = self._prepare_operation_call(**values)
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py:193: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py:1093: in _prepare_operation_call
+    bound = preflight_operation(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+compiled = CompiledOperation(plugin_id='curve_score', spec=OperationSpec(operation_id='science.result.diagnose.v1', version='3', ...he canonical payload must fit the compiled output byte limit.', 'output_paths': ('/',), 'required_inputs': ()}))})})}))
+name = 'generic_analysis'
+artifacts_by_port = {'experiment_plan': (InvocationArtifact(artifact_name='plan', ref=ArtifactRef(schema_version=1, artifact_id='art_6f304...discovery.experiment-portfolio.v1'),), labels=(), handoff_verdict=None, historical=False, producer_run_id=None),), ...}
+instruction = None, parameters = {}
+read_artifact = <bound method ArtifactService.read of <scidiscovery.artifact_agent.service.artifacts.ArtifactService object at 0x7fe1a8520fe0>>
+source_name_overrides = None
+
+    def preflight_operation(
+        compiled: CompiledOperation,
+        *,
+        name: str,
+        artifacts_by_port: Mapping[str, tuple[InvocationArtifact, ...]],
+        instruction: str | None,
+        parameters: Mapping[str, Any] | None = None,
+        read_artifact: Callable[[ArtifactRef], bytes] | None = None,
+        source_name_overrides: Mapping[tuple[str, str], str] | None = None,
+    ) -> BoundOperationCall:
+        spec = compiled.spec
+        expected = {port.name: port for port in spec.inputs}
+        if set(artifacts_by_port) != set(expected):
+            missing = next(iter(sorted(set(expected) - set(artifacts_by_port))), None)
+            extra = next(iter(sorted(set(artifacts_by_port) - set(expected))), None)
+            raise OperationInvocationError(
+                "input_port_missing" if missing else "input_port_unknown",
+                port=missing or extra,
+            )
+        parameter_map = dict(parameters or {})
+        if parameter_map:
+            raise OperationInvocationError("parameters_not_declared")
+        if spec.executor.kind == "agent":
+            if instruction is None or not instruction.strip():
+>               raise OperationInvocationError("instruction_required")
+E               scidiscovery.operations.input_validation.OperationInvocationError: instruction_required: operation
+
+src/scidiscovery/operations/invoke.py:137: OperationInvocationError
+
+The above exception was the direct cause of the following exception:
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-84/test_generic_two_calculations_3')
+tamper = 'failed_as_success'
+
+    @pytest.mark.parametrize('tamper', [None, 'alias', 'record_key', 'failed_as_success'])
+    def test_generic_two_calculations_from_one_source_use_independent_evidence_keys_through_mcp_submit(tmp_path, tamper):
+>       worker, opened = generic_worker(tmp_path)
+                         ^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/operations/test_analysis_claim_scope.py:189: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/operations/test_analysis_claim_scope.py:179: in generic_worker
+    root.call_tool('operation_invoke', dict(name='generic_analysis', operation_id='science.result.diagnose.v1', inputs=[
+src/scidiscovery/artifact_agent/interfaces/mcp_root.py:402: in call_tool
+    return getattr(self.facade, name)(**values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <scidiscovery.artifact_agent.interfaces.mcp_root.RootToolFacade object at 0x7fe1a8793a40>
+values = {'on_conflict': 'reject', 'name': 'generic_analysis', 'operation_id': 'science.result.diagnose.v1', 'inputs': (Operati...ct_names=('generic_results',)), OperationInputSelection(port='curve_bundle', artifact_names=('generic_bundle',))), ...}
+
+    def operation_invoke(self, **values: Any) -> dict[str, Any]:
+        with self._create_lock:
+            try:
+                bound = self._prepare_operation_call(**values)
+                kind = bound.compiled.spec.executor.kind
+                if kind == "agent":
+                    result = self._invoke_agent_operation(
+                        bound,
+                        values["on_conflict"],
+                        resume_from=values.get("resume_from"),
+                        draft_from=values.get("draft_from"),
+                    )
+                elif kind == "transform":
+                    result = self._invoke_compiled_transform(
+                        bound, values["on_conflict"]
+                    )
+                elif kind == "effect":
+                    plan = self._effect_operation_plan(bound)
+                    payloads = tuple(
+                        item for item in bound.inputs if item.port_name == plan.payload_port
+                    )
+                    if len(payloads) != 1 or len(bound.inputs) != 1:
+                        raise OperationInvocationError("effect_payload_not_singular")
+                    result = self._invoke_compiled_effect(
+                        bound, plan, values["on_conflict"]
+                    )
+                elif kind == "approval":
+                    result = self._invoke_approval_operation(
+                        bound, values["on_conflict"]
+                    )
+                else:
+                    raise OperationInvocationError("executor_kind_unknown")
+            except OperationInvocationError as error:
+>               raise RootToolError(
+                    f"operation invocation rejected [{error.reason_code}]", details=error.details
+                ) from error
+E               scidiscovery.artifact_agent.interfaces.mcp_root_shared.RootToolError: operation invocation rejected [instruction_required]
+
+src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py:223: RootToolError
+_ test_precomputed_schema_and_mcp_submit_accept_only_exact_package_evidence[None] _
+
+self = <scidiscovery.artifact_agent.interfaces.mcp_root.RootToolFacade object at 0x7fe1a74f0aa0>
+values = {'on_conflict': 'reject', 'name': 'precomputed', 'operation_id': 'science.result.diagnose.curve-error.v1', 'inputs': (OperationInputSelection(port='curve_analysis_package', artifact_names=('fixed_package',)),), ...}
+
+    def operation_invoke(self, **values: Any) -> dict[str, Any]:
+        with self._create_lock:
+            try:
+>               bound = self._prepare_operation_call(**values)
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py:193: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py:1093: in _prepare_operation_call
+    bound = preflight_operation(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+compiled = CompiledOperation(plugin_id='curve_score', spec=OperationSpec(operation_id='science.result.diagnose.curve-error.v1', v...he canonical payload must fit the compiled output byte limit.', 'output_paths': ('/',), 'required_inputs': ()}))})})}))
+name = 'precomputed'
+artifacts_by_port = {'curve_analysis_package': (InvocationArtifact(artifact_name='fixed_package', ref=ArtifactRef(schema_version=1, artifa...bytes=31178, current=False, parent_refs=(), labels=(), handoff_verdict=None, historical=False, producer_run_id=None),)}
+instruction = None, parameters = {}
+read_artifact = <bound method ArtifactService.read of <scidiscovery.artifact_agent.service.artifacts.ArtifactService object at 0x7fe1a74f1280>>
+source_name_overrides = None
+
+    def preflight_operation(
+        compiled: CompiledOperation,
+        *,
+        name: str,
+        artifacts_by_port: Mapping[str, tuple[InvocationArtifact, ...]],
+        instruction: str | None,
+        parameters: Mapping[str, Any] | None = None,
+        read_artifact: Callable[[ArtifactRef], bytes] | None = None,
+        source_name_overrides: Mapping[tuple[str, str], str] | None = None,
+    ) -> BoundOperationCall:
+        spec = compiled.spec
+        expected = {port.name: port for port in spec.inputs}
+        if set(artifacts_by_port) != set(expected):
+            missing = next(iter(sorted(set(expected) - set(artifacts_by_port))), None)
+            extra = next(iter(sorted(set(artifacts_by_port) - set(expected))), None)
+            raise OperationInvocationError(
+                "input_port_missing" if missing else "input_port_unknown",
+                port=missing or extra,
+            )
+        parameter_map = dict(parameters or {})
+        if parameter_map:
+            raise OperationInvocationError("parameters_not_declared")
+        if spec.executor.kind == "agent":
+            if instruction is None or not instruction.strip():
+>               raise OperationInvocationError("instruction_required")
+E               scidiscovery.operations.input_validation.OperationInvocationError: instruction_required: operation
+
+src/scidiscovery/operations/invoke.py:137: OperationInvocationError
+
+The above exception was the direct cause of the following exception:
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-84/test_precomputed_schema_and_mc0')
+fixed_package = b'{"curve_analysis":{"analyses":[{"comparison_key":"implementation_residual","global_score":{"kind":"residual_rms","op...a84d7b0748fdebb06cf7f85cb3f7e39bf0032b57ac4bd7d44f000c252ebbc","validation_scope":"complete_plan"},"schema_version":1}'
+tamper = None
+
+    @pytest.mark.parametrize('tamper', [None, 'pass', 'calculation', 'computed_calculation', 'external', 'pointer'])
+    def test_precomputed_schema_and_mcp_submit_accept_only_exact_package_evidence(tmp_path, fixed_package, tamper):
+>       worker, opened = precomputed_worker(tmp_path, fixed_package)
+                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/operations/test_analysis_claim_scope.py:240: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/operations/test_analysis_claim_scope.py:230: in precomputed_worker
+    root.call_tool('operation_invoke', dict(name='precomputed', operation_id=curve.DIAGNOSE_OPERATION,
+src/scidiscovery/artifact_agent/interfaces/mcp_root.py:402: in call_tool
+    return getattr(self.facade, name)(**values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <scidiscovery.artifact_agent.interfaces.mcp_root.RootToolFacade object at 0x7fe1a74f0aa0>
+values = {'on_conflict': 'reject', 'name': 'precomputed', 'operation_id': 'science.result.diagnose.curve-error.v1', 'inputs': (OperationInputSelection(port='curve_analysis_package', artifact_names=('fixed_package',)),), ...}
+
+    def operation_invoke(self, **values: Any) -> dict[str, Any]:
+        with self._create_lock:
+            try:
+                bound = self._prepare_operation_call(**values)
+                kind = bound.compiled.spec.executor.kind
+                if kind == "agent":
+                    result = self._invoke_agent_operation(
+                        bound,
+                        values["on_conflict"],
+                        resume_from=values.get("resume_from"),
+                        draft_from=values.get("draft_from"),
+                    )
+                elif kind == "transform":
+                    result = self._invoke_compiled_transform(
+                        bound, values["on_conflict"]
+                    )
+                elif kind == "effect":
+                    plan = self._effect_operation_plan(bound)
+                    payloads = tuple(
+                        item for item in bound.inputs if item.port_name == plan.payload_port
+                    )
+                    if len(payloads) != 1 or len(bound.inputs) != 1:
+                        raise OperationInvocationError("effect_payload_not_singular")
+                    result = self._invoke_compiled_effect(
+                        bound, plan, values["on_conflict"]
+                    )
+                elif kind == "approval":
+                    result = self._invoke_approval_operation(
+                        bound, values["on_conflict"]
+                    )
+                else:
+                    raise OperationInvocationError("executor_kind_unknown")
+            except OperationInvocationError as error:
+>               raise RootToolError(
+                    f"operation invocation rejected [{error.reason_code}]", details=error.details
+                ) from error
+E               scidiscovery.artifact_agent.interfaces.mcp_root_shared.RootToolError: operation invocation rejected [instruction_required]
+
+src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py:223: RootToolError
+_ test_precomputed_schema_and_mcp_submit_accept_only_exact_package_evidence[pass] _
+
+self = <scidiscovery.artifact_agent.interfaces.mcp_root.RootToolFacade object at 0x7fe1a7764410>
+values = {'on_conflict': 'reject', 'name': 'precomputed', 'operation_id': 'science.result.diagnose.curve-error.v1', 'inputs': (OperationInputSelection(port='curve_analysis_package', artifact_names=('fixed_package',)),), ...}
+
+    def operation_invoke(self, **values: Any) -> dict[str, Any]:
+        with self._create_lock:
+            try:
+>               bound = self._prepare_operation_call(**values)
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py:193: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py:1093: in _prepare_operation_call
+    bound = preflight_operation(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+compiled = CompiledOperation(plugin_id='curve_score', spec=OperationSpec(operation_id='science.result.diagnose.curve-error.v1', v...he canonical payload must fit the compiled output byte limit.', 'output_paths': ('/',), 'required_inputs': ()}))})})}))
+name = 'precomputed'
+artifacts_by_port = {'curve_analysis_package': (InvocationArtifact(artifact_name='fixed_package', ref=ArtifactRef(schema_version=1, artifa...bytes=31178, current=False, parent_refs=(), labels=(), handoff_verdict=None, historical=False, producer_run_id=None),)}
+instruction = None, parameters = {}
+read_artifact = <bound method ArtifactService.read of <scidiscovery.artifact_agent.service.artifacts.ArtifactService object at 0x7fe1a7765df0>>
+source_name_overrides = None
+
+    def preflight_operation(
+        compiled: CompiledOperation,
+        *,
+        name: str,
+        artifacts_by_port: Mapping[str, tuple[InvocationArtifact, ...]],
+        instruction: str | None,
+        parameters: Mapping[str, Any] | None = None,
+        read_artifact: Callable[[ArtifactRef], bytes] | None = None,
+        source_name_overrides: Mapping[tuple[str, str], str] | None = None,
+    ) -> BoundOperationCall:
+        spec = compiled.spec
+        expected = {port.name: port for port in spec.inputs}
+        if set(artifacts_by_port) != set(expected):
+            missing = next(iter(sorted(set(expected) - set(artifacts_by_port))), None)
+            extra = next(iter(sorted(set(artifacts_by_port) - set(expected))), None)
+            raise OperationInvocationError(
+                "input_port_missing" if missing else "input_port_unknown",
+                port=missing or extra,
+            )
+        parameter_map = dict(parameters or {})
+        if parameter_map:
+            raise OperationInvocationError("parameters_not_declared")
+        if spec.executor.kind == "agent":
+            if instruction is None or not instruction.strip():
+>               raise OperationInvocationError("instruction_required")
+E               scidiscovery.operations.input_validation.OperationInvocationError: instruction_required: operation
+
+src/scidiscovery/operations/invoke.py:137: OperationInvocationError
+
+The above exception was the direct cause of the following exception:
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-84/test_precomputed_schema_and_mc1')
+fixed_package = b'{"curve_analysis":{"analyses":[{"comparison_key":"implementation_residual","global_score":{"kind":"residual_rms","op...a84d7b0748fdebb06cf7f85cb3f7e39bf0032b57ac4bd7d44f000c252ebbc","validation_scope":"complete_plan"},"schema_version":1}'
+tamper = 'pass'
+
+    @pytest.mark.parametrize('tamper', [None, 'pass', 'calculation', 'computed_calculation', 'external', 'pointer'])
+    def test_precomputed_schema_and_mcp_submit_accept_only_exact_package_evidence(tmp_path, fixed_package, tamper):
+>       worker, opened = precomputed_worker(tmp_path, fixed_package)
+                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/operations/test_analysis_claim_scope.py:240: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/operations/test_analysis_claim_scope.py:230: in precomputed_worker
+    root.call_tool('operation_invoke', dict(name='precomputed', operation_id=curve.DIAGNOSE_OPERATION,
+src/scidiscovery/artifact_agent/interfaces/mcp_root.py:402: in call_tool
+    return getattr(self.facade, name)(**values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <scidiscovery.artifact_agent.interfaces.mcp_root.RootToolFacade object at 0x7fe1a7764410>
+values = {'on_conflict': 'reject', 'name': 'precomputed', 'operation_id': 'science.result.diagnose.curve-error.v1', 'inputs': (OperationInputSelection(port='curve_analysis_package', artifact_names=('fixed_package',)),), ...}
+
+    def operation_invoke(self, **values: Any) -> dict[str, Any]:
+        with self._create_lock:
+            try:
+                bound = self._prepare_operation_call(**values)
+                kind = bound.compiled.spec.executor.kind
+                if kind == "agent":
+                    result = self._invoke_agent_operation(
+                        bound,
+                        values["on_conflict"],
+                        resume_from=values.get("resume_from"),
+                        draft_from=values.get("draft_from"),
+                    )
+                elif kind == "transform":
+                    result = self._invoke_compiled_transform(
+                        bound, values["on_conflict"]
+                    )
+                elif kind == "effect":
+                    plan = self._effect_operation_plan(bound)
+                    payloads = tuple(
+                        item for item in bound.inputs if item.port_name == plan.payload_port
+                    )
+                    if len(payloads) != 1 or len(bound.inputs) != 1:
+                        raise OperationInvocationError("effect_payload_not_singular")
+                    result = self._invoke_compiled_effect(
+                        bound, plan, values["on_conflict"]
+                    )
+                elif kind == "approval":
+                    result = self._invoke_approval_operation(
+                        bound, values["on_conflict"]
+                    )
+                else:
+                    raise OperationInvocationError("executor_kind_unknown")
+            except OperationInvocationError as error:
+>               raise RootToolError(
+                    f"operation invocation rejected [{error.reason_code}]", details=error.details
+                ) from error
+E               scidiscovery.artifact_agent.interfaces.mcp_root_shared.RootToolError: operation invocation rejected [instruction_required]
+
+src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py:223: RootToolError
+_ test_precomputed_schema_and_mcp_submit_accept_only_exact_package_evidence[calculation] _
+
+self = <scidiscovery.artifact_agent.interfaces.mcp_root.RootToolFacade object at 0x7fe1a8043500>
+values = {'on_conflict': 'reject', 'name': 'precomputed', 'operation_id': 'science.result.diagnose.curve-error.v1', 'inputs': (OperationInputSelection(port='curve_analysis_package', artifact_names=('fixed_package',)),), ...}
+
+    def operation_invoke(self, **values: Any) -> dict[str, Any]:
+        with self._create_lock:
+            try:
+>               bound = self._prepare_operation_call(**values)
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py:193: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py:1093: in _prepare_operation_call
+    bound = preflight_operation(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+compiled = CompiledOperation(plugin_id='curve_score', spec=OperationSpec(operation_id='science.result.diagnose.curve-error.v1', v...he canonical payload must fit the compiled output byte limit.', 'output_paths': ('/',), 'required_inputs': ()}))})})}))
+name = 'precomputed'
+artifacts_by_port = {'curve_analysis_package': (InvocationArtifact(artifact_name='fixed_package', ref=ArtifactRef(schema_version=1, artifa...bytes=31178, current=False, parent_refs=(), labels=(), handoff_verdict=None, historical=False, producer_run_id=None),)}
+instruction = None, parameters = {}
+read_artifact = <bound method ArtifactService.read of <scidiscovery.artifact_agent.service.artifacts.ArtifactService object at 0x7fe1a8041fd0>>
+source_name_overrides = None
+
+    def preflight_operation(
+        compiled: CompiledOperation,
+        *,
+        name: str,
+        artifacts_by_port: Mapping[str, tuple[InvocationArtifact, ...]],
+        instruction: str | None,
+        parameters: Mapping[str, Any] | None = None,
+        read_artifact: Callable[[ArtifactRef], bytes] | None = None,
+        source_name_overrides: Mapping[tuple[str, str], str] | None = None,
+    ) -> BoundOperationCall:
+        spec = compiled.spec
+        expected = {port.name: port for port in spec.inputs}
+        if set(artifacts_by_port) != set(expected):
+            missing = next(iter(sorted(set(expected) - set(artifacts_by_port))), None)
+            extra = next(iter(sorted(set(artifacts_by_port) - set(expected))), None)
+            raise OperationInvocationError(
+                "input_port_missing" if missing else "input_port_unknown",
+                port=missing or extra,
+            )
+        parameter_map = dict(parameters or {})
+        if parameter_map:
+            raise OperationInvocationError("parameters_not_declared")
+        if spec.executor.kind == "agent":
+            if instruction is None or not instruction.strip():
+>               raise OperationInvocationError("instruction_required")
+E               scidiscovery.operations.input_validation.OperationInvocationError: instruction_required: operation
+
+src/scidiscovery/operations/invoke.py:137: OperationInvocationError
+
+The above exception was the direct cause of the following exception:
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-84/test_precomputed_schema_and_mc2')
+fixed_package = b'{"curve_analysis":{"analyses":[{"comparison_key":"implementation_residual","global_score":{"kind":"residual_rms","op...a84d7b0748fdebb06cf7f85cb3f7e39bf0032b57ac4bd7d44f000c252ebbc","validation_scope":"complete_plan"},"schema_version":1}'
+tamper = 'calculation'
+
+    @pytest.mark.parametrize('tamper', [None, 'pass', 'calculation', 'computed_calculation', 'external', 'pointer'])
+    def test_precomputed_schema_and_mcp_submit_accept_only_exact_package_evidence(tmp_path, fixed_package, tamper):
+>       worker, opened = precomputed_worker(tmp_path, fixed_package)
+                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/operations/test_analysis_claim_scope.py:240: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/operations/test_analysis_claim_scope.py:230: in precomputed_worker
+    root.call_tool('operation_invoke', dict(name='precomputed', operation_id=curve.DIAGNOSE_OPERATION,
+src/scidiscovery/artifact_agent/interfaces/mcp_root.py:402: in call_tool
+    return getattr(self.facade, name)(**values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <scidiscovery.artifact_agent.interfaces.mcp_root.RootToolFacade object at 0x7fe1a8043500>
+values = {'on_conflict': 'reject', 'name': 'precomputed', 'operation_id': 'science.result.diagnose.curve-error.v1', 'inputs': (OperationInputSelection(port='curve_analysis_package', artifact_names=('fixed_package',)),), ...}
+
+    def operation_invoke(self, **values: Any) -> dict[str, Any]:
+        with self._create_lock:
+            try:
+                bound = self._prepare_operation_call(**values)
+                kind = bound.compiled.spec.executor.kind
+                if kind == "agent":
+                    result = self._invoke_agent_operation(
+                        bound,
+                        values["on_conflict"],
+                        resume_from=values.get("resume_from"),
+                        draft_from=values.get("draft_from"),
+                    )
+                elif kind == "transform":
+                    result = self._invoke_compiled_transform(
+                        bound, values["on_conflict"]
+                    )
+                elif kind == "effect":
+                    plan = self._effect_operation_plan(bound)
+                    payloads = tuple(
+                        item for item in bound.inputs if item.port_name == plan.payload_port
+                    )
+                    if len(payloads) != 1 or len(bound.inputs) != 1:
+                        raise OperationInvocationError("effect_payload_not_singular")
+                    result = self._invoke_compiled_effect(
+                        bound, plan, values["on_conflict"]
+                    )
+                elif kind == "approval":
+                    result = self._invoke_approval_operation(
+                        bound, values["on_conflict"]
+                    )
+                else:
+                    raise OperationInvocationError("executor_kind_unknown")
+            except OperationInvocationError as error:
+>               raise RootToolError(
+                    f"operation invocation rejected [{error.reason_code}]", details=error.details
+                ) from error
+E               scidiscovery.artifact_agent.interfaces.mcp_root_shared.RootToolError: operation invocation rejected [instruction_required]
+
+src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py:223: RootToolError
+_ test_precomputed_schema_and_mcp_submit_accept_only_exact_package_evidence[computed_calculation] _
+
+self = <scidiscovery.artifact_agent.interfaces.mcp_root.RootToolFacade object at 0x7fe1a839c5c0>
+values = {'on_conflict': 'reject', 'name': 'precomputed', 'operation_id': 'science.result.diagnose.curve-error.v1', 'inputs': (OperationInputSelection(port='curve_analysis_package', artifact_names=('fixed_package',)),), ...}
+
+    def operation_invoke(self, **values: Any) -> dict[str, Any]:
+        with self._create_lock:
+            try:
+>               bound = self._prepare_operation_call(**values)
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py:193: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py:1093: in _prepare_operation_call
+    bound = preflight_operation(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+compiled = CompiledOperation(plugin_id='curve_score', spec=OperationSpec(operation_id='science.result.diagnose.curve-error.v1', v...he canonical payload must fit the compiled output byte limit.', 'output_paths': ('/',), 'required_inputs': ()}))})})}))
+name = 'precomputed'
+artifacts_by_port = {'curve_analysis_package': (InvocationArtifact(artifact_name='fixed_package', ref=ArtifactRef(schema_version=1, artifa...bytes=31178, current=False, parent_refs=(), labels=(), handoff_verdict=None, historical=False, producer_run_id=None),)}
+instruction = None, parameters = {}
+read_artifact = <bound method ArtifactService.read of <scidiscovery.artifact_agent.service.artifacts.ArtifactService object at 0x7fe1a839c320>>
+source_name_overrides = None
+
+    def preflight_operation(
+        compiled: CompiledOperation,
+        *,
+        name: str,
+        artifacts_by_port: Mapping[str, tuple[InvocationArtifact, ...]],
+        instruction: str | None,
+        parameters: Mapping[str, Any] | None = None,
+        read_artifact: Callable[[ArtifactRef], bytes] | None = None,
+        source_name_overrides: Mapping[tuple[str, str], str] | None = None,
+    ) -> BoundOperationCall:
+        spec = compiled.spec
+        expected = {port.name: port for port in spec.inputs}
+        if set(artifacts_by_port) != set(expected):
+            missing = next(iter(sorted(set(expected) - set(artifacts_by_port))), None)
+            extra = next(iter(sorted(set(artifacts_by_port) - set(expected))), None)
+            raise OperationInvocationError(
+                "input_port_missing" if missing else "input_port_unknown",
+                port=missing or extra,
+            )
+        parameter_map = dict(parameters or {})
+        if parameter_map:
+            raise OperationInvocationError("parameters_not_declared")
+        if spec.executor.kind == "agent":
+            if instruction is None or not instruction.strip():
+>               raise OperationInvocationError("instruction_required")
+E               scidiscovery.operations.input_validation.OperationInvocationError: instruction_required: operation
+
+src/scidiscovery/operations/invoke.py:137: OperationInvocationError
+
+The above exception was the direct cause of the following exception:
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-84/test_precomputed_schema_and_mc3')
+fixed_package = b'{"curve_analysis":{"analyses":[{"comparison_key":"implementation_residual","global_score":{"kind":"residual_rms","op...a84d7b0748fdebb06cf7f85cb3f7e39bf0032b57ac4bd7d44f000c252ebbc","validation_scope":"complete_plan"},"schema_version":1}'
+tamper = 'computed_calculation'
+
+    @pytest.mark.parametrize('tamper', [None, 'pass', 'calculation', 'computed_calculation', 'external', 'pointer'])
+    def test_precomputed_schema_and_mcp_submit_accept_only_exact_package_evidence(tmp_path, fixed_package, tamper):
+>       worker, opened = precomputed_worker(tmp_path, fixed_package)
+                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/operations/test_analysis_claim_scope.py:240: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/operations/test_analysis_claim_scope.py:230: in precomputed_worker
+    root.call_tool('operation_invoke', dict(name='precomputed', operation_id=curve.DIAGNOSE_OPERATION,
+src/scidiscovery/artifact_agent/interfaces/mcp_root.py:402: in call_tool
+    return getattr(self.facade, name)(**values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <scidiscovery.artifact_agent.interfaces.mcp_root.RootToolFacade object at 0x7fe1a839c5c0>
+values = {'on_conflict': 'reject', 'name': 'precomputed', 'operation_id': 'science.result.diagnose.curve-error.v1', 'inputs': (OperationInputSelection(port='curve_analysis_package', artifact_names=('fixed_package',)),), ...}
+
+    def operation_invoke(self, **values: Any) -> dict[str, Any]:
+        with self._create_lock:
+            try:
+                bound = self._prepare_operation_call(**values)
+                kind = bound.compiled.spec.executor.kind
+                if kind == "agent":
+                    result = self._invoke_agent_operation(
+                        bound,
+                        values["on_conflict"],
+                        resume_from=values.get("resume_from"),
+                        draft_from=values.get("draft_from"),
+                    )
+                elif kind == "transform":
+                    result = self._invoke_compiled_transform(
+                        bound, values["on_conflict"]
+                    )
+                elif kind == "effect":
+                    plan = self._effect_operation_plan(bound)
+                    payloads = tuple(
+                        item for item in bound.inputs if item.port_name == plan.payload_port
+                    )
+                    if len(payloads) != 1 or len(bound.inputs) != 1:
+                        raise OperationInvocationError("effect_payload_not_singular")
+                    result = self._invoke_compiled_effect(
+                        bound, plan, values["on_conflict"]
+                    )
+                elif kind == "approval":
+                    result = self._invoke_approval_operation(
+                        bound, values["on_conflict"]
+                    )
+                else:
+                    raise OperationInvocationError("executor_kind_unknown")
+            except OperationInvocationError as error:
+>               raise RootToolError(
+                    f"operation invocation rejected [{error.reason_code}]", details=error.details
+                ) from error
+E               scidiscovery.artifact_agent.interfaces.mcp_root_shared.RootToolError: operation invocation rejected [instruction_required]
+
+src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py:223: RootToolError
+_ test_precomputed_schema_and_mcp_submit_accept_only_exact_package_evidence[external] _
+
+self = <scidiscovery.artifact_agent.interfaces.mcp_root.RootToolFacade object at 0x7fe1a712ec90>
+values = {'on_conflict': 'reject', 'name': 'precomputed', 'operation_id': 'science.result.diagnose.curve-error.v1', 'inputs': (OperationInputSelection(port='curve_analysis_package', artifact_names=('fixed_package',)),), ...}
+
+    def operation_invoke(self, **values: Any) -> dict[str, Any]:
+        with self._create_lock:
+            try:
+>               bound = self._prepare_operation_call(**values)
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py:193: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py:1093: in _prepare_operation_call
+    bound = preflight_operation(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+compiled = CompiledOperation(plugin_id='curve_score', spec=OperationSpec(operation_id='science.result.diagnose.curve-error.v1', v...he canonical payload must fit the compiled output byte limit.', 'output_paths': ('/',), 'required_inputs': ()}))})})}))
+name = 'precomputed'
+artifacts_by_port = {'curve_analysis_package': (InvocationArtifact(artifact_name='fixed_package', ref=ArtifactRef(schema_version=1, artifa...bytes=31178, current=False, parent_refs=(), labels=(), handoff_verdict=None, historical=False, producer_run_id=None),)}
+instruction = None, parameters = {}
+read_artifact = <bound method ArtifactService.read of <scidiscovery.artifact_agent.service.artifacts.ArtifactService object at 0x7fe1a712e3f0>>
+source_name_overrides = None
+
+    def preflight_operation(
+        compiled: CompiledOperation,
+        *,
+        name: str,
+        artifacts_by_port: Mapping[str, tuple[InvocationArtifact, ...]],
+        instruction: str | None,
+        parameters: Mapping[str, Any] | None = None,
+        read_artifact: Callable[[ArtifactRef], bytes] | None = None,
+        source_name_overrides: Mapping[tuple[str, str], str] | None = None,
+    ) -> BoundOperationCall:
+        spec = compiled.spec
+        expected = {port.name: port for port in spec.inputs}
+        if set(artifacts_by_port) != set(expected):
+            missing = next(iter(sorted(set(expected) - set(artifacts_by_port))), None)
+            extra = next(iter(sorted(set(artifacts_by_port) - set(expected))), None)
+            raise OperationInvocationError(
+                "input_port_missing" if missing else "input_port_unknown",
+                port=missing or extra,
+            )
+        parameter_map = dict(parameters or {})
+        if parameter_map:
+            raise OperationInvocationError("parameters_not_declared")
+        if spec.executor.kind == "agent":
+            if instruction is None or not instruction.strip():
+>               raise OperationInvocationError("instruction_required")
+E               scidiscovery.operations.input_validation.OperationInvocationError: instruction_required: operation
+
+src/scidiscovery/operations/invoke.py:137: OperationInvocationError
+
+The above exception was the direct cause of the following exception:
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-84/test_precomputed_schema_and_mc4')
+fixed_package = b'{"curve_analysis":{"analyses":[{"comparison_key":"implementation_residual","global_score":{"kind":"residual_rms","op...a84d7b0748fdebb06cf7f85cb3f7e39bf0032b57ac4bd7d44f000c252ebbc","validation_scope":"complete_plan"},"schema_version":1}'
+tamper = 'external'
+
+    @pytest.mark.parametrize('tamper', [None, 'pass', 'calculation', 'computed_calculation', 'external', 'pointer'])
+    def test_precomputed_schema_and_mcp_submit_accept_only_exact_package_evidence(tmp_path, fixed_package, tamper):
+>       worker, opened = precomputed_worker(tmp_path, fixed_package)
+                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/operations/test_analysis_claim_scope.py:240: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/operations/test_analysis_claim_scope.py:230: in precomputed_worker
+    root.call_tool('operation_invoke', dict(name='precomputed', operation_id=curve.DIAGNOSE_OPERATION,
+src/scidiscovery/artifact_agent/interfaces/mcp_root.py:402: in call_tool
+    return getattr(self.facade, name)(**values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <scidiscovery.artifact_agent.interfaces.mcp_root.RootToolFacade object at 0x7fe1a712ec90>
+values = {'on_conflict': 'reject', 'name': 'precomputed', 'operation_id': 'science.result.diagnose.curve-error.v1', 'inputs': (OperationInputSelection(port='curve_analysis_package', artifact_names=('fixed_package',)),), ...}
+
+    def operation_invoke(self, **values: Any) -> dict[str, Any]:
+        with self._create_lock:
+            try:
+                bound = self._prepare_operation_call(**values)
+                kind = bound.compiled.spec.executor.kind
+                if kind == "agent":
+                    result = self._invoke_agent_operation(
+                        bound,
+                        values["on_conflict"],
+                        resume_from=values.get("resume_from"),
+                        draft_from=values.get("draft_from"),
+                    )
+                elif kind == "transform":
+                    result = self._invoke_compiled_transform(
+                        bound, values["on_conflict"]
+                    )
+                elif kind == "effect":
+                    plan = self._effect_operation_plan(bound)
+                    payloads = tuple(
+                        item for item in bound.inputs if item.port_name == plan.payload_port
+                    )
+                    if len(payloads) != 1 or len(bound.inputs) != 1:
+                        raise OperationInvocationError("effect_payload_not_singular")
+                    result = self._invoke_compiled_effect(
+                        bound, plan, values["on_conflict"]
+                    )
+                elif kind == "approval":
+                    result = self._invoke_approval_operation(
+                        bound, values["on_conflict"]
+                    )
+                else:
+                    raise OperationInvocationError("executor_kind_unknown")
+            except OperationInvocationError as error:
+>               raise RootToolError(
+                    f"operation invocation rejected [{error.reason_code}]", details=error.details
+                ) from error
+E               scidiscovery.artifact_agent.interfaces.mcp_root_shared.RootToolError: operation invocation rejected [instruction_required]
+
+src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py:223: RootToolError
+_ test_precomputed_schema_and_mcp_submit_accept_only_exact_package_evidence[pointer] _
+
+self = <scidiscovery.artifact_agent.interfaces.mcp_root.RootToolFacade object at 0x7fe1a8533bc0>
+values = {'on_conflict': 'reject', 'name': 'precomputed', 'operation_id': 'science.result.diagnose.curve-error.v1', 'inputs': (OperationInputSelection(port='curve_analysis_package', artifact_names=('fixed_package',)),), ...}
+
+    def operation_invoke(self, **values: Any) -> dict[str, Any]:
+        with self._create_lock:
+            try:
+>               bound = self._prepare_operation_call(**values)
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py:193: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py:1093: in _prepare_operation_call
+    bound = preflight_operation(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+compiled = CompiledOperation(plugin_id='curve_score', spec=OperationSpec(operation_id='science.result.diagnose.curve-error.v1', v...he canonical payload must fit the compiled output byte limit.', 'output_paths': ('/',), 'required_inputs': ()}))})})}))
+name = 'precomputed'
+artifacts_by_port = {'curve_analysis_package': (InvocationArtifact(artifact_name='fixed_package', ref=ArtifactRef(schema_version=1, artifa...bytes=31178, current=False, parent_refs=(), labels=(), handoff_verdict=None, historical=False, producer_run_id=None),)}
+instruction = None, parameters = {}
+read_artifact = <bound method ArtifactService.read of <scidiscovery.artifact_agent.service.artifacts.ArtifactService object at 0x7fe1a8730110>>
+source_name_overrides = None
+
+    def preflight_operation(
+        compiled: CompiledOperation,
+        *,
+        name: str,
+        artifacts_by_port: Mapping[str, tuple[InvocationArtifact, ...]],
+        instruction: str | None,
+        parameters: Mapping[str, Any] | None = None,
+        read_artifact: Callable[[ArtifactRef], bytes] | None = None,
+        source_name_overrides: Mapping[tuple[str, str], str] | None = None,
+    ) -> BoundOperationCall:
+        spec = compiled.spec
+        expected = {port.name: port for port in spec.inputs}
+        if set(artifacts_by_port) != set(expected):
+            missing = next(iter(sorted(set(expected) - set(artifacts_by_port))), None)
+            extra = next(iter(sorted(set(artifacts_by_port) - set(expected))), None)
+            raise OperationInvocationError(
+                "input_port_missing" if missing else "input_port_unknown",
+                port=missing or extra,
+            )
+        parameter_map = dict(parameters or {})
+        if parameter_map:
+            raise OperationInvocationError("parameters_not_declared")
+        if spec.executor.kind == "agent":
+            if instruction is None or not instruction.strip():
+>               raise OperationInvocationError("instruction_required")
+E               scidiscovery.operations.input_validation.OperationInvocationError: instruction_required: operation
+
+src/scidiscovery/operations/invoke.py:137: OperationInvocationError
+
+The above exception was the direct cause of the following exception:
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-84/test_precomputed_schema_and_mc5')
+fixed_package = b'{"curve_analysis":{"analyses":[{"comparison_key":"implementation_residual","global_score":{"kind":"residual_rms","op...a84d7b0748fdebb06cf7f85cb3f7e39bf0032b57ac4bd7d44f000c252ebbc","validation_scope":"complete_plan"},"schema_version":1}'
+tamper = 'pointer'
+
+    @pytest.mark.parametrize('tamper', [None, 'pass', 'calculation', 'computed_calculation', 'external', 'pointer'])
+    def test_precomputed_schema_and_mcp_submit_accept_only_exact_package_evidence(tmp_path, fixed_package, tamper):
+>       worker, opened = precomputed_worker(tmp_path, fixed_package)
+                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/operations/test_analysis_claim_scope.py:240: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/operations/test_analysis_claim_scope.py:230: in precomputed_worker
+    root.call_tool('operation_invoke', dict(name='precomputed', operation_id=curve.DIAGNOSE_OPERATION,
+src/scidiscovery/artifact_agent/interfaces/mcp_root.py:402: in call_tool
+    return getattr(self.facade, name)(**values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <scidiscovery.artifact_agent.interfaces.mcp_root.RootToolFacade object at 0x7fe1a8533bc0>
+values = {'on_conflict': 'reject', 'name': 'precomputed', 'operation_id': 'science.result.diagnose.curve-error.v1', 'inputs': (OperationInputSelection(port='curve_analysis_package', artifact_names=('fixed_package',)),), ...}
+
+    def operation_invoke(self, **values: Any) -> dict[str, Any]:
+        with self._create_lock:
+            try:
+                bound = self._prepare_operation_call(**values)
+                kind = bound.compiled.spec.executor.kind
+                if kind == "agent":
+                    result = self._invoke_agent_operation(
+                        bound,
+                        values["on_conflict"],
+                        resume_from=values.get("resume_from"),
+                        draft_from=values.get("draft_from"),
+                    )
+                elif kind == "transform":
+                    result = self._invoke_compiled_transform(
+                        bound, values["on_conflict"]
+                    )
+                elif kind == "effect":
+                    plan = self._effect_operation_plan(bound)
+                    payloads = tuple(
+                        item for item in bound.inputs if item.port_name == plan.payload_port
+                    )
+                    if len(payloads) != 1 or len(bound.inputs) != 1:
+                        raise OperationInvocationError("effect_payload_not_singular")
+                    result = self._invoke_compiled_effect(
+                        bound, plan, values["on_conflict"]
+                    )
+                elif kind == "approval":
+                    result = self._invoke_approval_operation(
+                        bound, values["on_conflict"]
+                    )
+                else:
+                    raise OperationInvocationError("executor_kind_unknown")
+            except OperationInvocationError as error:
+>               raise RootToolError(
+                    f"operation invocation rejected [{error.reason_code}]", details=error.details
+                ) from error
+E               scidiscovery.artifact_agent.interfaces.mcp_root_shared.RootToolError: operation invocation rejected [instruction_required]
+
+src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py:223: RootToolError
+__________ test_dynamic_model_error_message_is_not_public_or_durable ___________
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-84/test_dynamic_model_error_messa0')
+
+    def test_dynamic_model_error_message_is_not_public_or_durable(tmp_path):
+        from tests.operations.test_tcad_result_analysis import raw_request
+        system=analysis_system(tmp_path)
+        worker,_=open_analysis(system)
+        request=raw_request()
+        request['sources'][0]['x_axis']['unit']='SECRET_UNIT_SENTINEL'
+        response=MCPRouter(worker,name='probe').handle({'jsonrpc':'2.0','id':1,'method':'tools/call',
+            'params':{'name':'worker_tcad_curve_score','arguments':{'record_key':'unit','request':request}}})
+>       assert 'error' in response,response
+E       AssertionError: {'jsonrpc': '2.0', 'id': 1, 'result': {'content': [{'type': 'text', 'text': '{"algorithm_version":"analysis-curve-oper...'baseline', 'format': 'csv', 'input_alias': 'reference_material', 'role': 'reference', ...}]}, ...}, 'isError': False}}
+E       assert 'error' in {'jsonrpc': '2.0', 'id': 1, 'result': {'content': [{'type': 'text', 'text': '{"algorithm_version":"analysis-curve-oper...'baseline', 'format': 'csv', 'input_alias': 'reference_material', 'role': 'reference', ...}]}, ...}, 'isError': False}}
+
+tests/operations/test_contract_attempts.py:127: AssertionError
+_______ test_undeclared_case_scores_with_evidence_and_same_formal_basis ________
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-84/test_undeclared_case_scores_wi0')
+
+    def test_undeclared_case_scores_with_evidence_and_same_formal_basis(tmp_path):
+        system = analysis_system(tmp_path, mapped=False)
+        worker, opened = open_analysis(system)
+        request = raw_request()
+        rpc = MCPRouter(worker, name="probe")
+        def score(value):
+            return rpc.handle({"jsonrpc":"2.0", "id":1, "method":"tools/call", "params":{
+                "name":"worker_tcad_curve_score", "arguments":{"record_key":"conditional", "request":value}}})
+        rejected = score(request)
+>       assert rejected['error']['data']['diagnostics'][0]['code'] == 'case_mapping_invalid'
+E       AssertionError: assert 'runtime_failure' == 'case_mapping_invalid'
+E         
+E         - case_mapping_invalid
+E         + runtime_failure
+
+tests/operations/test_case_mapping_basis.py:18: AssertionError
+______________ test_evidence_basis_cannot_override_declared_case _______________
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-84/test_evidence_basis_cannot_ove0')
+
+    def test_evidence_basis_cannot_override_declared_case(tmp_path):
+        system = analysis_system(tmp_path)
+        worker, _ = open_analysis(system)
+        request = raw_request()
+        request['sources'][0].update(case_key='not_a_planned_case', case_mapping_basis=dict(
+            kind='evidence', evidence_refs=[dict(input_alias='experiment_plan',locator='/proposals/0')],
+            rationale='An incompatible claimed case.'))
+        reply = MCPRouter(worker,name='probe').handle({'jsonrpc':'2.0','id':1,'method':'tools/call',
+            'params':{'name':'worker_tcad_curve_score','arguments':{'record_key':'wrong','request':request}}})
+>       assert reply['error']['data']['diagnostics'][0]['code'] == 'case_mapping_invalid'
+E       AssertionError: assert 'runtime_failure' == 'case_mapping_invalid'
+E         
+E         - case_mapping_invalid
+E         + runtime_failure
+
+tests/operations/test_case_mapping_basis.py:55: AssertionError
+=========================== short test summary info ============================
+FAILED tests/operations/test_analysis_claim_scope.py::test_generic_two_calculations_from_one_source_use_independent_evidence_keys_through_mcp_submit[None]
+FAILED tests/operations/test_analysis_claim_scope.py::test_generic_two_calculations_from_one_source_use_independent_evidence_keys_through_mcp_submit[alias]
+FAILED tests/operations/test_analysis_claim_scope.py::test_generic_two_calculations_from_one_source_use_independent_evidence_keys_through_mcp_submit[record_key]
+FAILED tests/operations/test_analysis_claim_scope.py::test_generic_two_calculations_from_one_source_use_independent_evidence_keys_through_mcp_submit[failed_as_success]
+FAILED tests/operations/test_analysis_claim_scope.py::test_precomputed_schema_and_mcp_submit_accept_only_exact_package_evidence[None]
+FAILED tests/operations/test_analysis_claim_scope.py::test_precomputed_schema_and_mcp_submit_accept_only_exact_package_evidence[pass]
+FAILED tests/operations/test_analysis_claim_scope.py::test_precomputed_schema_and_mcp_submit_accept_only_exact_package_evidence[calculation]
+FAILED tests/operations/test_analysis_claim_scope.py::test_precomputed_schema_and_mcp_submit_accept_only_exact_package_evidence[computed_calculation]
+FAILED tests/operations/test_analysis_claim_scope.py::test_precomputed_schema_and_mcp_submit_accept_only_exact_package_evidence[external]
+FAILED tests/operations/test_analysis_claim_scope.py::test_precomputed_schema_and_mcp_submit_accept_only_exact_package_evidence[pointer]
+FAILED tests/operations/test_contract_attempts.py::test_dynamic_model_error_message_is_not_public_or_durable
+FAILED tests/operations/test_case_mapping_basis.py::test_undeclared_case_scores_with_evidence_and_same_formal_basis
+FAILED tests/operations/test_case_mapping_basis.py::test_evidence_basis_cannot_override_declared_case
+13 failed, 85 passed in 24.68s

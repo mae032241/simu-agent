@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import hashlib
+from scidiscovery.operations.input_validation import parse_bound_json, OperationInvocationError
 from types import MappingProxyType
 from typing import Any, Mapping
 
@@ -10,6 +12,8 @@ from scidiscovery.artifact_agent.schema.comparison import (
     RealizationSnapshot,
     StudyControlEquivalenceReport,
 )
+from scidiscovery.artifact_agent.schema.common import canonical_json
+from scidiscovery.artifact_agent.schema.execution_context import ExecutionContext
 from scidiscovery.artifact_agent.schema.experiment import (
     ComparisonContract,
     ExperimentPortfolio,
@@ -21,6 +25,7 @@ from scidiscovery.operations.spec import (
     ComponentSpec,
     ExecutorRef,
     InputPortSpec,
+    InputValidationSpec,
     LimitsSpec,
     OperationDescription,
     OperationSpec,
@@ -34,6 +39,7 @@ from .project_packager import (
     RuntimeAttestation,
     TCADRuntimeManifest,
 )
+from .execution_control import SolverCapabilitySnapshot
 from .transform_adapter import (
     attest_runtime as attest_runtime_payload,
     compare_projects,
@@ -50,6 +56,7 @@ REVIEWED_DECK_PACKAGE_OPERATION = "tcad.reviewed-deck-package.v2"
 RUNTIME_ATTESTATION_OPERATION = "tcad.runtime-attestation.v1"
 REALIZATION_SNAPSHOT_OPERATION = "tcad.realization-snapshot-materialize.v1"
 CONTROL_EQUIVALENCE_OPERATION = "tcad.control-equivalence.v1"
+EXECUTION_CONTEXT_OPERATION = "tcad.execution-context.project.v1"
 
 
 def _schema(model: type[Any], schema_id: str) -> str:
@@ -98,6 +105,23 @@ def package(values: Mapping[str, tuple[bytes, ...]]) -> dict[str, tuple[bytes, .
     return package_reviewed_project(inputs)
 
 
+def runtime_inputs(sources: Mapping[str, bytes]) -> None:
+    manifest = parse_bound_json(TCADRuntimeManifest, sources["runtime_manifest"], admission_port="runtime_manifest")
+    parse_bound_json(ReviewedDeckPackage, sources["reviewed_package"], admission_port="reviewed_package")
+    descriptors = sources.binding_descriptors
+    outputs = [name for name, descriptor in descriptors.items() if descriptor.port_name == "runtime_outputs"]
+    if len(outputs) != len(manifest.outputs):
+        raise OperationInvocationError("input_runtime_collection_mismatch", port="runtime_outputs",
+                                       message="Bind the complete output collection declared by the runtime manifest.")
+    for name, record in zip(outputs, manifest.outputs, strict=True):
+        if len(sources[name]) != record.size_bytes or hashlib.sha256(sources[name]).hexdigest() != record.sha256:
+            raise OperationInvocationError("input_runtime_output_mismatch", port="runtime_outputs",
+                                           message="Each runtime output must match its exact manifest record and order.")
+
+
+RUNTIME_INPUT_VALIDATOR = CallableComponent("validator", runtime_inputs)
+
+
 def attest_runtime(
     values: Mapping[str, tuple[bytes, ...]],
 ) -> dict[str, tuple[bytes, ...]]:
@@ -142,6 +166,24 @@ def control_equivalence(
     return evaluate_control_equivalence_outputs(inputs)
 
 
+def project_execution_context(
+    values: Mapping[str, tuple[bytes, ...]],
+) -> dict[str, tuple[bytes, ...]]:
+    snapshot = SolverCapabilitySnapshot.model_validate_json(
+        _one(values, "capability"), strict=True
+    )
+    context = ExecutionContext(
+        domain="tcad",
+        implementation_backend=snapshot.launch_name,
+        implementation_kind=snapshot.solver_kind,
+        release_label=snapshot.public_release_label,
+        public_arguments=snapshot.public_arguments,
+        capability_statements=None,
+        limitations=None,
+    )
+    return {"execution_context": (canonical_json(context),)}
+
+
 def _has_parent(child: Any, parent: Any) -> bool:
     return parent.artifact.ref in child.artifact.parent_refs
 
@@ -180,6 +222,7 @@ PACKAGE_COMPONENT = CallableComponent("transform", package)
 RUNTIME_ATTEST_COMPONENT = CallableComponent("transform", attest_runtime)
 REALIZATION_COMPONENT = CallableComponent("transform", materialize_realization)
 CONTROL_EQUIVALENCE_COMPONENT = CallableComponent("transform", control_equivalence)
+EXECUTION_CONTEXT_COMPONENT = CallableComponent("transform", project_execution_context)
 PACKAGE_PARENTAGE_GUARD = CallableComponent("guard", package_parentage)
 RUNTIME_PARENTAGE_GUARD = CallableComponent("guard", runtime_parentage)
 
@@ -272,6 +315,7 @@ def _operation(
     outputs: tuple[OutputPortSpec, ...],
     *,
     guards: tuple[ComponentRef, ...] = (),
+    input_validation: InputValidationSpec | None = None,
     max_input_bytes: int = 256 * 1024 * 1024,
     max_output_bytes: int = 64 * 1024 * 1024,
     max_files: int = 8,
@@ -290,6 +334,7 @@ def _operation(
         outputs=outputs,
         consequence="scientific",
         guards=guards,
+        input_validation=input_validation,
         limits=LimitsSpec(
             timeout_seconds=300,
             max_input_bytes=max_input_bytes,
@@ -300,12 +345,23 @@ def _operation(
 
 
 COMPONENT_SPECS = (
+    ComponentSpec("runtime_inputs", "validator", "tcad_artifact.operation_transforms:RUNTIME_INPUT_VALIDATOR"),
     ComponentSpec("deck_compare", "transform", "tcad_artifact.operation_transforms:COMPARE_COMPONENT"),
     ComponentSpec("review_validate", "transform", "tcad_artifact.operation_transforms:REVIEW_VALIDATION_COMPONENT"),
     ComponentSpec("reviewed_package", "transform", "tcad_artifact.operation_transforms:PACKAGE_COMPONENT"),
     ComponentSpec("runtime_attest", "transform", "tcad_artifact.operation_transforms:RUNTIME_ATTEST_COMPONENT"),
     ComponentSpec("realization_materialize", "transform", "tcad_artifact.operation_transforms:REALIZATION_COMPONENT"),
     ComponentSpec("control_equivalence", "transform", "tcad_artifact.operation_transforms:CONTROL_EQUIVALENCE_COMPONENT"),
+    ComponentSpec(
+        "execution_context_project",
+        "transform",
+        "tcad_artifact.operation_transforms:EXECUTION_CONTEXT_COMPONENT",
+        resources=(
+            _ref("capability_schema"),
+            _ref("execution_context_schema", "general_science"),
+        ),
+        configuration_identity="tcad.execution-context-project.v1",
+    ),
     ComponentSpec("package_parentage", "guard", "tcad_artifact.operation_transforms:PACKAGE_PARENTAGE_GUARD"),
     ComponentSpec("runtime_parentage", "guard", "tcad_artifact.operation_transforms:RUNTIME_PARENTAGE_GUARD"),
     *tuple(
@@ -325,6 +381,38 @@ COMPONENT_SPECS = (
 
 
 OPERATIONS = (
+    _operation(
+        EXECUTION_CONTEXT_OPERATION,
+        "execution_context_project",
+        "Project one public TCAD capability snapshot into a domain-neutral execution context.",
+        (
+            _input(
+                "capability",
+                "tcad.solver-capability.v2",
+                "capability_schema",
+                max_bytes=64 * 1024,
+                usage="prior_signal",
+            ),
+        ),
+        (
+            OutputPortSpec(
+                name="execution_context",
+                description="Domain-neutral execution context projected from one TCAD capability snapshot.",
+                schema="scidiscovery.execution-context.v1",
+                media_types=("application/json",),
+                codec=_ref("json_codec", "general_science"),
+                schema_resource=_ref("execution_context_schema", "general_science"),
+                min_items=1,
+                max_items=1,
+                max_item_bytes=64 * 1024,
+                kind="execution_context",
+                payload_schema_version=1,
+            ),
+        ),
+        max_input_bytes=64 * 1024,
+        max_output_bytes=64 * 1024,
+        max_files=1,
+    ),
     _operation(
         DECK_COMPARE_OPERATION,
         "deck_compare",
@@ -348,6 +436,7 @@ OPERATIONS = (
             _input("review", "tcad.deck-review-report.v1", "review_schema", usage="prior_signal"),
             _input("capability", "tcad.solver-capability.v2", "capability_schema", usage="prior_signal"),
             _input("experiment_plan", "scidiscovery.experiment-portfolio.v1", _ref("experiment_portfolio_schema", "general_science")),
+            _input("experiment_review", "scidiscovery.scientific-review.v1", _ref("scientific_review_schema", "general_science"), min_items=0, usage="prior_signal"),
         ),
         (_output(
             "reviewed_package",
@@ -392,6 +481,8 @@ OPERATIONS = (
         ),
         (_output("runtime_attestation", "runtime_attestation", "tcad.runtime-attestation.v1", "runtime_attestation_schema"),),
         guards=(_ref("runtime_parentage"),),
+        input_validation=InputValidationSpec(_ref("runtime_inputs"), "tcad.runtime.inputs",
+            "The supplied runtime outputs must match the manifest collection, order, sizes and digests before attestation."),
         max_input_bytes=512 * 1024 * 1024,
     ),
     _operation(
@@ -425,4 +516,8 @@ OPERATIONS = (
 )
 
 
-__all__ = ["COMPONENT_SPECS", "OPERATIONS"]
+__all__ = [
+    "COMPONENT_SPECS",
+    "EXECUTION_CONTEXT_OPERATION",
+    "OPERATIONS",
+]

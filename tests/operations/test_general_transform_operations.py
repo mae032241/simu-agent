@@ -15,6 +15,7 @@ from scidiscovery.artifact_agent.interfaces.mcp_root import (
 from scidiscovery.artifact_agent.runtime import open_runtime
 from scidiscovery.artifact_agent.schema.artifact import ArtifactRegistration
 from scidiscovery.artifact_agent.schema.common import canonical_json
+from scidiscovery.artifact_agent.schema.execution_context import ExecutionContext
 from tcad_artifact.device_parameters import (
     DeviceParameterCoverageReport,
     DeviceParameterRequirementSet,
@@ -27,6 +28,8 @@ from scidiscovery.builtin_plugin import CORE_PLUGIN as BUILTIN_PLUGIN
 from scidiscovery.general_science_plugin import PLUGIN as GENERAL_PLUGIN
 from scidiscovery.general_science_control_operations import INTAKE_SPLIT_OPERATION
 from tcad_artifact.plugin import PLUGIN as TCAD_PLUGIN
+from tcad_artifact.execution_control import SolverCapabilitySnapshot
+from tcad_artifact.operation_transforms import EXECUTION_CONTEXT_OPERATION
 from tcad_artifact.parameter_operations import (
     COVERAGE_OPERATION as PARAMETER_COVERAGE_OPERATION,
     UNCERTAINTY_OPERATION as PARAMETER_UNCERTAINTY_OPERATION,
@@ -47,6 +50,27 @@ GENERAL_TRANSFORM_OPERATION_IDS = {
     EXPERIMENT_MATERIALIZE_OPERATION,
     OBJECTIVE_PROJECT_OPERATION,
 }
+
+
+def test_materialize_maximum_legal_goals_and_current_selection_without_expansion() -> None:
+    from scidiscovery.artifact_agent.schema.experiment import ExperimentPortfolio
+    from scidiscovery.artifact_agent.transforms import materialize_experiment_plan
+    from tests.operations.m3_transform_equivalence_runner import _engineering_intent
+
+    intent = json.loads(_engineering_intent())
+    goals = ["原样目标 " + "x" * (8192 - 5), *[f"Bounded goal {index}" for index in range(15)]]
+    assert len(goals[0]) == 8192
+    proposal = intent["proposals"][0]
+    proposal.update(objectives=goals, current_objectives=goals)
+    raw, _ = materialize_experiment_plan({"experiment_design_intent": canonical_json(intent)})
+    plan = ExperimentPortfolio.model_validate_json(raw, strict=True)
+    assert plan.proposals[0].objectives == (intent["engineering_objective"], *goals)
+    assert plan.proposals[0].current_objectives == tuple(goals)
+    assert len(plan.proposals[0].objectives) == 17
+    assert len(plan.proposals[0].cases) == 1
+    assert plan.proposals[0].resource_estimate.case_count == 1
+    assert plan.proposals[0].value_assessment.rationale == proposal["value_assessment"]["rationale"]
+    assert plan.priority_rationale == intent["priority_rationale"]
 
 
 def _intake() -> ScientificIntake:
@@ -253,6 +277,300 @@ def test_general_plugin_compiles_only_its_domain_neutral_transform_set() -> None
     assert actual == GENERAL_TRANSFORM_OPERATION_IDS
     assert all(catalog.operation(item).plugin_id == "general_science" for item in actual)
     assert not any("foundation" in item or "hypothesis-portfolio" in item for item in actual)
+
+
+def _solver_capability_snapshot() -> SolverCapabilitySnapshot:
+    return SolverCapabilitySnapshot(
+        profile_id="sprocess_r2020_09",
+        solver_kind="sprocess",
+        launch_name="sprocess",
+        public_arguments=("-i",),
+        public_release_label="R-2020.09",
+        private_fixed_argument_count=1,
+        private_fixed_arguments_sha256="a" * 64,
+        private_release_evidence_bytes=16,
+        private_release_evidence_sha256="b" * 64,
+        capability_sha256="c" * 64,
+    )
+
+
+def test_tcad_execution_context_projection_is_narrow_and_composes_with_design() -> None:
+    catalog = _catalog()
+    operation = catalog.operation(EXECUTION_CONTEXT_OPERATION)
+    assert operation.spec.catalog_scope == "support"
+    assert operation.spec.executor.kind == "transform"
+    assert tuple(port.name for port in operation.spec.inputs) == ("capability",)
+    assert tuple(port.name for port in operation.spec.outputs) == (
+        "execution_context",
+    )
+    assert operation.spec.outputs[0].schema_id == "scidiscovery.execution-context.v1"
+
+    snapshot = _solver_capability_snapshot()
+    payload = snapshot.model_dump(mode="json")
+    raw = json.dumps(payload, indent=2).encode("utf-8")
+    capability = _invocation_artifact("capability", "tcad.solver-capability.v2")
+    bound = preflight_operation(
+        operation,
+        name="execution_context",
+        artifacts_by_port={"capability": (capability,)},
+        instruction=None,
+    )
+    output = execute_compiled_transform(bound, {"capability": raw})[0]
+    context = ExecutionContext.model_validate_json(output.content, strict=True)
+    assert context == ExecutionContext(
+        domain="tcad",
+        implementation_backend="sprocess",
+        implementation_kind="sprocess",
+        release_label="R-2020.09",
+        public_arguments=("-i",),
+        capability_statements=None,
+        limitations=None,
+    )
+    assert "private_" not in output.content.decode("utf-8")
+    reordered = json.dumps(
+        dict(reversed(tuple(payload.items()))), separators=(",", ":")
+    ).encode("utf-8")
+    assert execute_compiled_transform(bound, {"capability": reordered})[0].content == (
+        output.content
+    )
+
+    foundation = _invocation_artifact(
+        "foundation", "scidiscovery.scientific-foundation.v1"
+    )
+    objective = _invocation_artifact(
+        "objective",
+        "scidiscovery.research-objective.v1",
+        parent_refs=(foundation.ref,),
+    )
+    portfolio = _invocation_artifact(
+        "portfolio",
+        "scidiscovery.hypothesis-proposal.v2",
+        parent_refs=(foundation.ref,),
+    )
+    critic = _invocation_artifact(
+        "critic",
+        "scidiscovery.critic-review.v2",
+        parent_refs=(foundation.ref, portfolio.ref),
+    )
+    projected = InvocationArtifact(
+        artifact_name="execution_context",
+        ref=ArtifactRef(
+            artifact_id="art_execution_context",
+            sha256="d" * 64,
+            kind="execution_context",
+            schema_id="scidiscovery.execution-context.v1",
+        ),
+        schema_id="scidiscovery.execution-context.v1",
+        media_type="application/json",
+        size_bytes=len(output.content),
+        parent_refs=(capability.ref,),
+    )
+    design = preflight_operation(
+        catalog.operation("science.experiment.design.v1"),
+        name="design",
+        artifacts_by_port={
+            "scientific_foundation": (foundation,),
+            "research_objective": (objective,),
+            "hypothesis_portfolio": (portfolio,),
+            "critic_review": (critic,),
+            "execution_context": (projected,),
+            "current_progress": (),
+            "experiment_results": (),
+            "result_analysis": (),
+        },
+        instruction="Design one bounded experiment.",
+    )
+    assert next(
+        item for item in design.inputs if item.port_name == "execution_context"
+    ).artifact.ref == projected.ref
+
+
+def test_tcad_execution_context_projection_rejects_non_snapshot_content() -> None:
+    operation = _catalog().operation(EXECUTION_CONTEXT_OPERATION)
+    capability = _invocation_artifact("capability", "tcad.solver-capability.v2")
+    wrong_schema = _invocation_artifact("capability", "opaque")
+    with pytest.raises(OperationInvocationError) as mismatch:
+        preflight_operation(
+            operation,
+            name="execution_context",
+            artifacts_by_port={"capability": (wrong_schema,)},
+            instruction=None,
+        )
+    assert mismatch.value.reason_code == "input_schema_mismatch"
+    bound = preflight_operation(
+        operation,
+        name="execution_context",
+        artifacts_by_port={"capability": (capability,)},
+        instruction=None,
+    )
+    invalid = {
+        **_solver_capability_snapshot().model_dump(mode="json"),
+        "undeclared": True,
+    }
+    with pytest.raises(OperationInvocationError) as error:
+        execute_compiled_transform(
+            bound, {"capability": json.dumps(invalid).encode("utf-8")}
+        )
+    assert error.value.reason_code == "executor_component_failed"
+
+
+def test_root_projects_execution_context_idempotently_with_exact_parent(
+    tmp_path, monkeypatch
+) -> None:
+    runtime, instance, root = _root(tmp_path)
+    snapshot = _solver_capability_snapshot()
+    raw = json.dumps(snapshot.model_dump(mode="json"), indent=2).encode("utf-8")
+    capability = _register(
+        runtime,
+        instance,
+        name="solver_capability",
+        raw=raw,
+        kind="solver_capability",
+        schema="tcad.solver-capability.v2",
+    )
+    request = {
+        "name": "execution_context",
+        "operation_id": EXECUTION_CONTEXT_OPERATION,
+        "inputs": [
+            {"port": "capability", "artifact_names": ["solver_capability"]}
+        ],
+    }
+    assert root.call_tool("operation_preflight", request)["admissible"] is True
+    first = root.call_tool("operation_invoke", request)
+    assert root.call_tool("operation_invoke", request) == first
+    output_name = first["result"]["outputs"][0]["artifact_name"]
+    artifact_id = runtime.scheduler_bindings.resolve(
+        instance=instance.instance_id,
+        namespace="artifact",
+        name=output_name,
+    )
+    envelope = runtime.artifacts.get_by_id(artifact_id)
+    assert envelope.parent_refs == (capability.ref,)
+    assert envelope.schema_id == "scidiscovery.execution-context.v1"
+    context = ExecutionContext.model_validate_json(
+        runtime.artifacts.read(envelope.ref), strict=True
+    )
+    assert context.domain == "tcad"
+    assert context.implementation_backend == "sprocess"
+
+    reordered_raw = json.dumps(
+        dict(reversed(tuple(snapshot.model_dump(mode="json").items()))),
+        separators=(",", ":"),
+    ).encode("utf-8")
+    reordered_capability = _register(
+        runtime,
+        instance,
+        name="solver_capability_reordered",
+        raw=reordered_raw,
+        kind="solver_capability",
+        schema="tcad.solver-capability.v2",
+    )
+    reordered_request = {
+        "name": "execution_context_reordered",
+        "operation_id": EXECUTION_CONTEXT_OPERATION,
+        "inputs": [
+            {
+                "port": "capability",
+                "artifact_names": ["solver_capability_reordered"],
+            }
+        ],
+    }
+    reordered_result = root.call_tool("operation_invoke", reordered_request)
+    reordered_name = reordered_result["result"]["outputs"][0]["artifact_name"]
+    reordered_id = runtime.scheduler_bindings.resolve(
+        instance=instance.instance_id,
+        namespace="artifact",
+        name=reordered_name,
+    )
+    reordered_envelope = runtime.artifacts.get_by_id(reordered_id)
+    assert reordered_envelope.parent_refs == (reordered_capability.ref,)
+    assert reordered_envelope.ref != envelope.ref
+    assert runtime.artifacts.read(reordered_envelope.ref) == runtime.artifacts.read(
+        envelope.ref
+    )
+
+    foundation = _register(
+        runtime,
+        instance,
+        name="design_foundation",
+        raw=b"{}",
+        kind="scientific_foundation",
+        schema="scidiscovery.scientific-foundation.v1",
+    )
+    objective = _register(
+        runtime,
+        instance,
+        name="design_objective",
+        raw=b"{}",
+        kind="research_objective",
+        schema="scidiscovery.research-objective.v1",
+        parents=(foundation.ref,),
+    )
+    portfolio = _register(
+        runtime,
+        instance,
+        name="design_portfolio",
+        raw=b"{}",
+        kind="hypothesis_portfolio",
+        schema="scidiscovery.hypothesis-proposal.v2",
+        parents=(foundation.ref,),
+    )
+    critic = _register(
+        runtime,
+        instance,
+        name="design_critic",
+        raw=b"{}",
+        kind="critic_review",
+        schema="scidiscovery.critic-review.v2",
+        parents=(foundation.ref, portfolio.ref),
+    )
+    monkeypatch.setattr(
+        runtime.approvals,
+        "are_subjects_approved_by_provider",
+        lambda *args, **kwargs: True,
+    )
+    design_request = {
+        "name": "design_with_execution_context",
+        "operation_id": "science.experiment.design.v1",
+        "inputs": [
+            {
+                "port": "scientific_foundation",
+                "artifact_names": ["design_foundation"],
+            },
+            {
+                "port": "research_objective",
+                "artifact_names": ["design_objective"],
+            },
+            {
+                "port": "hypothesis_portfolio",
+                "artifact_names": ["design_portfolio"],
+            },
+            {
+                "port": "critic_review",
+                "artifact_names": ["design_critic"],
+            },
+            {
+                "port": "execution_context",
+                "artifact_names": [output_name],
+            },
+        ],
+        "instruction": "Design one bounded experiment using the declared context.",
+    }
+    assert root.call_tool("operation_preflight", design_request)[
+        "admissible"
+    ] is True
+    invoked = root.call_tool("operation_invoke", design_request)
+    assert invoked["result"]["state"] == "queued"
+    run_id = runtime.scheduler_bindings.resolve(
+        instance=instance.instance_id,
+        namespace="run",
+        name="design_with_execution_context",
+    )
+    status = runtime.runs.status(run_id)
+    bound_context = next(
+        item for item in status.inputs if item.port_name == "execution_context"
+    )
+    assert bound_context.artifact_name == output_name
 
 
 @pytest.mark.parametrize("raw, reason", (
@@ -578,6 +896,10 @@ def test_experiment_design_rejects_mixed_foundation_cohorts() -> None:
         "research_objective": (objective,),
         "hypothesis_portfolio": (portfolio,),
         "critic_review": (critic,),
+        "execution_context": (),
+        "current_progress": (),
+        "experiment_results": (),
+        "result_analysis": (),
     }
     with pytest.raises(OperationInvocationError, match="guard_rejected"):
         preflight_operation(
@@ -610,7 +932,7 @@ def test_experiment_design_rejects_mixed_foundation_cohorts() -> None:
     assert accepted.compiled is operation
 
 
-def test_wildcard_schema_is_limited_to_lineage_only_evidence_ports() -> None:
+def test_wildcard_schema_is_limited_to_read_only_evidence_ports() -> None:
     catalog = _catalog()
     wildcard_ports = tuple(
         port
@@ -620,7 +942,8 @@ def test_wildcard_schema_is_limited_to_lineage_only_evidence_ports() -> None:
     )
     assert wildcard_ports
     assert all(
-        port.exposure == "handoff_only" and port.usage == "evidence_inventory"
+        port.exposure in {"handoff_only", "on_demand"}
+        and port.usage == "evidence_inventory"
         for port in wildcard_ports
     )
 

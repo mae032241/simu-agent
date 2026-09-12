@@ -1,0 +1,20 @@
+{
+  "command": [
+    "python",
+    "-m",
+    "pytest",
+    "-q",
+    "--tb=short",
+    "tests/operations/test_agent_contract_alignment.py",
+    "tests/operations/test_score_request_contract.py",
+    "tests/operations/test_contract_attempts.py",
+    "tests/operations/test_tcad_result_analysis.py",
+    "--deselect=tests/operations/test_tcad_result_analysis.py::test_eight_near_sampling_limit_records_reparse_large_raw_plx_on_submit"
+  ],
+  "exit_code": 1,
+  "seconds": 67.857,
+  "peak_tree_rss_bytes": 166068224,
+  "budget_bytes": 536870912,
+  "early_stop_bytes": 469762048,
+  "memory_terminated": false
+}

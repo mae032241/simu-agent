@@ -1,0 +1,55 @@
+{
+  "plan_sha256": "e705e70dbf21a32c227adc3d6088afbe69ac80001f4fe2070ac671c05de06e1f",
+  "baseline_manifest_sha256": "44aeb87f8f934c3765907ff5416001e652c64159b97cef93a74dc6ccccd937e2",
+  "increment_manifest_sha256": "1b25a06762bb1c615b790454691d26195eeb38142e700daafca2cf956e899323",
+  "increment_patch_sha256": "e3524659761845ceb8c3f058397519dc444c966018c407eddcae3ee7686d1c13",
+  "files": 55,
+  "production_files": 35,
+  "test_files": 17,
+  "doc_files": 3,
+  "excluded_from_increment": [
+    "docs/plans/evidence/operation-tool-contract-coherence/",
+    "docs/plans/reviews/OPERATION_TOOL_CONTRACT_COHERENCE_IMPLEMENTATION_REVIEW.zh-CN.md"
+  ],
+  "wheels": [
+    {
+      "path": "INSTALLED_WHEELHOUSE/scidiscovery-0.1.0-py3-none-any.whl",
+      "sha256": "efbdb77afeb5889164c4b21284f0cde53d75f15a34ee81c2620a4aa6d25d8717",
+      "bytes": 310523
+    },
+    {
+      "path": "INSTALLED_WHEELHOUSE/scidiscovery_curve_score-0.2.1-py3-none-any.whl",
+      "sha256": "b78a2d96087d3b5a9593821c8dd9cabcca459e119cf9a7bacd1504de31b9b1be",
+      "bytes": 59624
+    },
+    {
+      "path": "INSTALLED_WHEELHOUSE/tcad_artifact-0.1.0-py3-none-any.whl",
+      "sha256": "0342fbb52b02f3e5965f1b43b5463c4ea110fb8af95aa3dcae71ee2fa41a1686",
+      "bytes": 163889
+    },
+    {
+      "path": "INSTALLED_WHEELHOUSE/scidiscovery_curve_figure_evidence-0.1.0-py3-none-any.whl",
+      "sha256": "9cca0c44e10d664f644b596bdf2cfb47b3cf30f6be22af86b3850e8aad54b490",
+      "bytes": 53384
+    }
+  ],
+  "installed_wheel_source_files_byte_verified": 159,
+  "release_export_trailing_whitespace_normalized_files": [
+    "scidiscovery/operations/catalog.py"
+  ],
+  "rollback_manifest_sha256": "c7923e519f350fbb2b9c74a22c82bb15365cc41eb93d7975a7f8e4e65cb1d4e4",
+  "default_inventory_sha256": "fabb52a143ab1edaa1d2074df2b2d8da79ce4804371f2f9790dcc1b3d2b5df55",
+  "figure_inventory_sha256": "8f20a07bab422121e6508335980f83da7407ec34e657235b8425370b6e3d135d",
+  "highest_measured_tree_rss_bytes": 257228800,
+  "any_memory_termination": false,
+  "selected_final_evidence": [
+    "p5-installed-final.json",
+    "p5-declaration-final.json",
+    "p5-final-inventory.json",
+    "p5-admission-parser-and-catalog.json",
+    "p4-generic-and-dynamic-errors.json",
+    "p5-baseline-hardened-witness.json"
+  ],
+  "deployed": false,
+  "p6_completed": false
+}

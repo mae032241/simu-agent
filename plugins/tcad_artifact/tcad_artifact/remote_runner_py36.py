@@ -142,6 +142,8 @@ def _handle(config, request, input_stream, output_stream):
     if operation == "put":
         _put(config, payload, input_stream)
         _write_response(output_stream, operation, {"stored": True})
+    elif operation == "get" and "max_bytes" in payload:
+        _stream_get(config, payload, output_stream)
     elif operation == "get":
         raw = _get(config, payload)
         _write_response(
@@ -170,6 +172,32 @@ def _put(config, payload, stream):
     destination = os.path.join(config["exchange_root"], *relative.split("/"))
     _require_within(destination, config["exchange_root"])
     _write_immutable(destination, raw)
+
+
+def _stream_get(config, payload, output_stream):
+    path = os.path.abspath(payload.get("local_path", ""))
+    _require_within(path, config["result_root"])
+    limit = min(int(payload["max_bytes"]), config["max_transfer_bytes"], 32 * 1024 * 1024)
+    metadata = os.lstat(path)
+    if not stat.S_ISREG(metadata.st_mode) or metadata.st_size > limit:
+        raise ValueError("inspection download exceeds file bounds")
+    digest = hashlib.sha256()
+    size = 0
+    with open(path, "rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            size += len(chunk)
+            if size > limit:
+                raise ValueError("inspection download exceeds file bounds")
+            digest.update(chunk)
+        _write_response(output_stream, "get", {"sha256": digest.hexdigest(), "size_bytes": size})
+        stream.seek(0)
+        sent = 0
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            sent += len(chunk)
+            if sent > limit:
+                raise ValueError("inspection download changed")
+            output_stream.write(chunk)
+    output_stream.flush()
 
 
 def _get(config, payload):
@@ -205,6 +233,8 @@ def _rpc(config, payload):
             result = _status(config, arguments.get("run_id"))
         elif name == "tcad_collect":
             result = _collect(config, arguments.get("run_id"))
+        elif name == "tcad_inspect_outputs":
+            result = _inspect_directory(_run_dir(config, arguments.get("run_id")), arguments.get("relative_path"), arguments.get("max_bytes", 32 * 1024 * 1024))
         elif name == "tcad_cancel":
             result = _cancel(config, arguments.get("run_id"))
         else:
@@ -309,14 +339,15 @@ def _submit(config, descriptor):
         }
         _write_new(os.path.join(run_dir, "runtime.json"), _canonical(runtime), 0o440)
         _write_new(os.path.join(run_dir, "submitted_at"), (_timestamp() + "\n").encode("ascii"), 0o440)
-        process = subprocess.Popen(
-            [sys.executable, os.path.abspath(__file__), "--config", config["_config_path"], "--worker", run_dir],
-            cwd=run_dir,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            start_new_session=True,
-        )
+        with open(os.path.join(run_dir, "launcher.log"), "xb") as launcher_log:
+            process = subprocess.Popen(
+                [sys.executable, os.path.abspath(__file__), "--config", config["_config_path"], "--worker", run_dir],
+                cwd=run_dir,
+                stdin=subprocess.DEVNULL,
+                stdout=launcher_log,
+                stderr=subprocess.STDOUT,
+                start_new_session=True,
+            )
         _write_new(os.path.join(run_dir, "launcher_pid"), (str(process.pid) + "\n").encode("ascii"), 0o440)
     return {"run_id": run_id, "state": "accepted", "accepted_at": _timestamp()}
 
@@ -387,7 +418,8 @@ def _collect(config, run_id):
         ):
             raise RuntimeError("completed output differs from its manifest")
         outputs.append(descriptor)
-    outputs.append(_descriptor("tcad_log", os.path.join(run_dir, "worker.log"), "text/plain; charset=utf-8"))
+    diagnostic = os.path.join(run_dir, "diagnostic.log")
+    outputs.append(_descriptor("tcad_log", diagnostic if os.path.isfile(diagnostic) else os.path.join(run_dir, "worker.log"), "text/plain; charset=utf-8"))
     outputs.append(_descriptor("tcad_manifest", os.path.join(run_dir, "output_manifest.json"), "application/json"))
     return {"run_id": run_id, "outputs": outputs}
 
@@ -415,6 +447,8 @@ def _run_worker(config, run_dir):
     _write_new(os.path.join(run_dir, "pid"), (str(os.getpid()) + "\n").encode("ascii"), 0o440)
     _write_new(os.path.join(run_dir, "running"), b"", 0o440)
     exit_code = 99
+    solver_exit_code = None
+    collection_errors = []
     terminal = "failed"
     error = ""
     outputs = []
@@ -438,12 +472,17 @@ def _run_worker(config, run_dir):
             )
             _write_new(os.path.join(run_dir, "solver_pid"), (str(process.pid) + "\n").encode("ascii"), 0o440)
             exit_code = _wait(process, runtime["limits"], run_dir)
+        solver_exit_code = exit_code
         _collect_expected(
             os.path.join(run_dir, "work"),
             runtime["expected_outputs"],
             runtime["limits"],
-            outputs,
+            outputs, collection_errors,
         )
+        if collection_errors:
+            error = "; ".join(collection_errors)[:8192]
+            if exit_code == 0:
+                exit_code = 97
         terminal = "succeeded" if exit_code == 0 else "failed"
     except _Cancelled as failure:
         exit_code = 130
@@ -468,13 +507,15 @@ def _run_worker(config, run_dir):
             _terminate(process)
     try:
         _augment_development_debug_log(run_dir, runtime)
-    except Exception:
-        pass
+    except Exception as failure:
+        error = (error + "; diagnostic collection failed: " + str(failure)).lstrip("; ")
     manifest = {
         "completed_at": _timestamp(),
         "error": error,
         "exit_code": exit_code,
         "outputs": outputs,
+        "solver_exit_code": solver_exit_code,
+        "collection_errors": collection_errors,
         "started_at": started_at,
         "terminal_state": terminal,
     }
@@ -555,42 +596,51 @@ def _extract_archive(raw, entries, destination):
         raise ValueError("archive is missing declared members")
 
 
-def _collect_expected(root, expected, limits, records=None):
+def _collect_expected(root, expected, limits, records=None, errors=None):
     records = [] if records is None else records
     total = sum(int(item["size_bytes"]) for item in records)
-    for item in expected:
-        relative = _safe_relative(item["relative_path"])
-        capture = item.get("capture", "workspace_file")
-        if capture == "workspace_file":
-            path = os.path.join(root, *relative.split("/"))
-        elif capture == "process_log":
-            path = os.path.join(os.path.dirname(root), "worker.log")
-        else:
-            raise RuntimeError("unsupported output capture mode")
-        if not os.path.isfile(path):
-            if item["required"]:
-                raise RuntimeError("required output missing: %s" % relative)
-            continue
-        raw = _read_regular(path)
-        if len(raw) > item["max_bytes"]:
-            raise RuntimeError("output exceeds declared bound")
-        total += len(raw)
-        if total > limits["max_output_bytes"]:
-            raise RuntimeError("total output exceeds job limit")
-        if capture == "process_log":
-            target = os.path.join(root, *relative.split("/"))
-            parent = os.path.dirname(target)
-            if parent and not os.path.isdir(parent):
-                os.makedirs(parent, 0o750)
-            _atomic_write(target, raw, 0o440)
-        os.chmod(path, 0o440)
-        records.append({"name": item["name"], "relative_path": relative, "media_type": item["media_type"], "sha256": _sha(raw), "size_bytes": len(raw)})
+    failures = [] if errors is None else errors
+    for index, item in enumerate(expected):
+        try:
+            relative = _safe_relative(item["relative_path"])
+            capture = item.get("capture", "workspace_file")
+            if capture == "workspace_file":
+                path = os.path.join(root, *relative.split("/"))
+            elif capture == "process_log":
+                path = os.path.join(os.path.dirname(root), "worker.log")
+            else:
+                raise RuntimeError("unsupported output capture mode")
+            if not os.path.isfile(path):
+                if item["required"]:
+                    raise RuntimeError("required output missing: %s" % relative)
+                continue
+            if os.lstat(path).st_size > item["max_bytes"]:
+                raise RuntimeError("output exceeds declared bound")
+            raw = _read_regular(path)
+            if len(raw) > item["max_bytes"]:
+                raise RuntimeError("output exceeds declared bound")
+            total += len(raw)
+            if total > limits["max_output_bytes"]:
+                raise RuntimeError("total output exceeds job limit")
+            if capture == "process_log":
+                target = os.path.join(root, *relative.split("/"))
+                parent = os.path.dirname(target)
+                if parent and not os.path.isdir(parent):
+                    os.makedirs(parent, 0o750)
+                _atomic_write(target, raw, 0o440)
+            os.chmod(path, 0o440)
+            records.append({"name": item["name"], "relative_path": relative, "media_type": item["media_type"], "sha256": _sha(raw), "size_bytes": len(raw)})
+        except (OSError, RuntimeError, ValueError) as failure:
+            failures.append(str(failure)[:1024])
+            if "total output" in str(failure):
+                failures[-1] += "; %d later outputs not inspected" % (len(expected)-index-1)
+                break
+    if errors is None and failures:
+        raise RuntimeError("; ".join(failures)[:8192])
     return records
 
 
 def _augment_development_debug_log(run_dir, runtime):
-    if runtime.get("execution_purpose") != "development_debug":
-        return
     arguments = runtime.get("arguments")
     if not isinstance(arguments, list) or not arguments:
         return
@@ -604,45 +654,35 @@ def _augment_development_debug_log(run_dir, runtime):
         names.extend(
             name
             for name in sorted(os.listdir(work_dir))
-            if name.endswith(".log") and name != preferred
+            if name.endswith((".log", ".err")) and name != preferred
         )
     except OSError:
         return
-    solver_log = None
-    for name in names[:32]:
+    if len(names) > 33:
+        raise ValueError("solver diagnostic file count exceeds 32; original files retained")
+    parts = []
+    total = 0
+    for name in names:
         candidate = os.path.join(work_dir, name)
-        try:
-            metadata = os.lstat(candidate)
-        except OSError:
+        if not os.path.exists(candidate):
             continue
-        if stat.S_ISREG(metadata.st_mode) and not stat.S_ISLNK(metadata.st_mode):
-            solver_log = candidate
-            break
-    if solver_log is None:
+        raw = _read_diagnostic_log(candidate, DEBUG_SOLVER_LOG_BYTES - total)
+        total += len(raw)
+        parts.append(b"\n--- scidiscovery solver diagnostic: " + name.encode("utf-8") + b" ---\n" + raw)
+    if not parts:
         return
-    worker_log = os.path.join(run_dir, "worker.log")
-    stdout = _bounded_excerpt(worker_log, DEBUG_STDOUT_BYTES)
-    solver = _bounded_excerpt(solver_log, DEBUG_SOLVER_LOG_BYTES)
-    combined = (
-        stdout
-        + b"\n--- scidiscovery solver diagnostic ---\n"
-        + solver
-    )
-    _atomic_write(worker_log, combined, 0o440)
+    stdout = _read_diagnostic_log(os.path.join(run_dir, "worker.log"), DEBUG_STDOUT_BYTES)
+    _atomic_write(os.path.join(run_dir, "diagnostic.log"), stdout + b"".join(parts), 0o440)
 
 
-def _bounded_excerpt(path, limit):
+def _read_diagnostic_log(path, limit):
     metadata = os.lstat(path)
     if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
         raise ValueError("debug log is not a regular file")
     with open(path, "rb") as source:
         if metadata.st_size <= limit:
             return source.read(limit + 1)
-        half = limit // 2
-        head = source.read(half)
-        source.seek(-half, os.SEEK_END)
-        tail = source.read(half)
-    return head + b"\n--- bounded log omission ---\n" + tail
+        raise ValueError("diagnostic log exceeds its capture limit; original file retained")
 
 
 def _limits(limits):
@@ -841,6 +881,68 @@ def _write_response(stream, operation, payload):
     stream.write(_canonical({"schema_version": 1, "operation": operation, "ok": True, "payload": payload}) + b"\n")
     stream.flush()
 
+
+
+def _inspect_directory(run_dir, relative_path=None, max_bytes=32 * 1024 * 1024):
+    """Read bounded terminal execution products; Python 3.6/local shared logic."""
+    if type(max_bytes) is not int or not 0 <= max_bytes <= 32 * 1024 * 1024:
+        raise ValueError("inspection byte budget invalid")
+    if not os.path.isfile(os.path.join(run_dir, "done")):
+        return {"status": "unavailable", "reason": "execution_not_terminal"}
+    root = os.path.join(run_dir, "work")
+    if os.path.islink(run_dir) or os.path.islink(root):
+        return {"status": "unavailable", "reason": "execution_directory_link"}
+    if relative_path is None:
+        entries = []
+        pending = [root]
+        visited = 0
+        deadline = time.monotonic() + 10
+        while pending:
+            directory = pending.pop()
+            with os.scandir(directory) as scan:
+                for item in scan:
+                    visited += 1
+                    if visited > 256 or time.monotonic() > deadline:
+                        return {"status": "limit_exceeded", "files": entries, "reason": "inventory_limit"}
+                    if item.is_symlink():
+                        continue
+                    if item.is_dir(follow_symlinks=False):
+                        pending.append(item.path)
+                    elif item.is_file(follow_symlinks=False):
+                        entry = {"relative_path": os.path.relpath(item.path, root).replace(os.sep, "/"), "size_bytes": item.stat(follow_symlinks=False).st_size}
+                        if len(_canonical(entries + [entry])) > 60 * 1024:
+                            return {"status": "limit_exceeded", "files": entries, "reason": "inventory_bytes"}
+                        entries.append(entry)
+        if len(_canonical(entries)) > 60 * 1024:
+            return {"status": "limit_exceeded", "reason": "inventory_bytes"}
+        return {"status": "available", "files": entries}
+    relative = _safe_relative(relative_path)
+    path = root
+    try:
+        for part in relative.split("/"):
+            path = os.path.join(path, part)
+            if stat.S_ISLNK(os.lstat(path).st_mode):
+                return {"status": "unavailable", "reason": "symlink_forbidden"}
+        metadata = os.lstat(path)
+    except FileNotFoundError:
+        return {"status": "not_found", "reason": "file_missing"}
+    if not stat.S_ISREG(metadata.st_mode):
+        return {"status": "unavailable", "reason": "not_regular_file"}
+    if metadata.st_size > max_bytes:
+        return {"status": "limit_exceeded", "reason": "file_bytes"}
+    digest = hashlib.sha256()
+    size = 0
+    with open(path, "rb") as stream:
+        before = os.fstat(stream.fileno())
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            size += len(chunk)
+            if size > max_bytes:
+                return {"status": "limit_exceeded", "reason": "file_bytes"}
+            digest.update(chunk)
+        after = os.fstat(stream.fileno())
+    if (before.st_ino, before.st_size, before.st_mtime_ns) != (after.st_ino, after.st_size, after.st_mtime_ns) or before.st_ino != metadata.st_ino:
+        return {"status": "changed_since_inspection", "reason": "file_changed"}
+    return {"status": "available", "relative_path": relative, "file": {"name": "candidate", "local_path": path, "media_type": "application/octet-stream", "sha256": digest.hexdigest(), "size_bytes": size}}
 
 if __name__ == "__main__":
     raise SystemExit(main())

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from ...operation_contract import DiagnosticError
+
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -11,7 +13,7 @@ from ...operations.lifecycle import AGENT_LIFECYCLE_PROTOCOL, AgentLifecycleInpu
 from ...operations.tooling import WorkerToolDefinition
 from ..service.local_pdf_tool import extract_pdf_text_local
 
-class WorkerToolError(RuntimeError):
+class WorkerToolError(DiagnosticError):
     pass
 
 class WorkerToolInput(BaseModel):

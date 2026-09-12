@@ -1,0 +1,23 @@
+{
+  "collected_nodeids": 686,
+  "unique_nodeids": 686,
+  "covered_files": 52,
+  "missing_files": [],
+  "independently_recomputed_final_totals": {
+    "passed": 676,
+    "failed": 10
+  },
+  "summary_claim_matches": true,
+  "line_counts": {
+    "plugin": {
+      "baseline": 1148,
+      "candidate": 1193
+    },
+    "transform": {
+      "baseline": 1197,
+      "candidate": 1270
+    }
+  },
+  "line_count_growth": 118,
+  "basis": "Final batch summaries checked against raw logs and exact collected nodeids; reused passes as attributed by existing logs, no full pytest rerun."
+}

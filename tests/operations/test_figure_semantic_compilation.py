@@ -1,132 +1,153 @@
-"""The existing public figure intent and deterministic resource bindings."""
+"""Compilation boundary for the Agent-owned figure request."""
 
 import hashlib
+import io
 import json
-from pathlib import Path
 
 import pytest
+from PIL import Image
 from pydantic import ValidationError
-from jsonschema.validators import validator_for
 
 from curve_figure_evidence.figure_digitization_contract import (
-    FigureExtractionIntent, calibration_from_tick_pairs,
+    FigureAxisRequest,
+    FigureDigitizationRequest,
 )
-from curve_figure_evidence.figure_science_operations import FIGURE_INTENT_SCHEMA, FIGURE_REQUEST_CONTEXT, REQUEST_PROMPT
+from curve_figure_evidence.figure_science_operations import (
+    FIGURE_REQUEST_CONTEXT,
+    FIGURE_REQUEST_SCHEMA,
+    REQUEST_PROMPT,
+)
+from curve_figure_evidence.figure_source import inspect_figure_source_bytes
+from curve_figure_evidence.plugin import PLUGIN as FIGURE_PLUGIN
+from curve_score.plugin import PLUGIN as CURVE_PLUGIN
 from scidiscovery.artifact_agent.schema.common import canonical_json
+from scidiscovery.builtin_plugin import CORE_PLUGIN
+from scidiscovery.general_science_plugin import PLUGIN as GENERAL_PLUGIN
 from scidiscovery.operation_contract import SemanticRuleViolation
-from scidiscovery.operation_contract import operation_port_json_schema
-from scidiscovery.artifact_agent.interfaces.mcp_local_worker import LocalWorkerMCPRouter
-from tests.operations.test_catalog_installed_entrypoint import _DETECTOR_RESOURCE_PROBE
-from tests.operations.test_m5_figure_review_closure import (
-    CORE_PLUGIN, GENERAL_PLUGIN, CURVE_PLUGIN, FIGURE_PLUGIN,
-    _system, _register,
-    _envelope,
-)
+from scidiscovery.operations.catalog import compile_catalog
+from scidiscovery.operations.tooling import operation_worker_tools
 
 
-def test_detector_resource_uses_existing_compilation_edges():
-    exec(_DETECTOR_RESOURCE_PROBE, {
-        "plugins": (CORE_PLUGIN, GENERAL_PLUGIN, CURVE_PLUGIN, FIGURE_PLUGIN),
-    })
-
-
-def _intent():
-    from tests.operations.test_figure_role_chain_v2 import intent_for
-    return intent_for(b"synthetic source")
-
-
-def test_public_intent_contains_only_scientific_selections():
-    schema = json.loads(FIGURE_INTENT_SCHEMA)
-    assert set(schema["properties"]) == {
-        "schema_version", "source_sha256", "detector_receipt", "figure", "panel",
-        "plot_candidate_id", "bindings", "unresolved_reasons", "rejected_candidates",
+def _source_and_request() -> tuple[bytes, dict[str, object]]:
+    image = Image.new("RGB", (12, 12), "white")
+    for x in range(1, 10):
+        image.putpixel((x, 10 - x), (255, 0, 0))
+    stream = io.BytesIO()
+    image.save(stream, format="PNG")
+    source = stream.getvalue()
+    recovered = inspect_figure_source_bytes(source, media_type="image/png")[0]
+    request = {
+        "schema_version": "scidiscovery.curve-figure-digitization-request.v2",
+        "figure_key": "figure",
+        "panel_key": "panel",
+        "figure": "Fig. 1",
+        "citation": "Fig. 1",
+        "source": {
+            "source_kind": "raster_image",
+            "media_type": "image/png",
+            "source_sha256": hashlib.sha256(source).hexdigest(),
+            "recovered_image_sha256": recovered.image_sha256,
+            "width": recovered.width,
+            "height": recovered.height,
+            "recovery_tool": recovered.recovery_tool,
+            "recovery_tool_version": recovered.recovery_tool_version,
+        },
+        "plot_bbox": [1, 1, 10, 10],
+        "axis_calibration": {
+            "x": {"scale": "linear", "unit": "V", "ticks": [[9, 8], [1, 0]]},
+            "y": {"scale": "log10", "unit": "A", "ticks": [[9, 1], [1, 100000000]]},
+        },
+        "series": [{
+            "series_key": "red",
+            "label": "Red curve",
+            "color": "#ff0000",
+            "line_style": "solid",
+            "binding_source": "legend",
+            "visible_label": "Red curve",
+            "binding_bbox": [1, 1, 10, 10],
+            "seeds": [[1, 9], [9, 1]],
+        }],
     }
-    for forbidden in ("pixel_min", "pixel_range", "seeds", "min_points", "min_visible_fraction", "max_gap_px", "declared_gap_ranges", "csv"):
-        with pytest.raises(ValidationError):
-            FigureExtractionIntent.model_validate_json(canonical_json({**_intent(), forbidden: 1}), strict=True)
+    return source, request
+
+
+def test_public_schema_contains_only_agent_owned_description() -> None:
+    schema = json.loads(FIGURE_REQUEST_SCHEMA)
+    assert set(schema["properties"]) == {
+        "schema_version",
+        "request_status",
+        "unresolved_reasons",
+        "figure_key",
+        "panel_key",
+        "figure",
+        "citation",
+        "source",
+        "plot_bbox",
+        "axis_calibration",
+        "exclusion_regions",
+        "series",
+    }
+    serialized = json.dumps(schema)
+    for forbidden in (
+        "min_points",
+        "pixel_range",
+        "shared_support",
+        "max_gap_px",
+        "min_visible_fraction",
+        "color_tolerance",
+        "min_color_pixels",
+        "eligibility",
+    ):
+        assert forbidden not in serialized
+    assert "[pixel_coordinate, tick_value]" in REQUEST_PROMPT
+
+
+def test_request_context_replays_the_exact_source() -> None:
+    source, request = _source_and_request()
+    FIGURE_REQUEST_CONTEXT.implementation(request, {"paper_source": source}, {})
     with pytest.raises(SemanticRuleViolation, match="source hash differs"):
-        FIGURE_REQUEST_CONTEXT.implementation(_intent(), {"paper_source": b"different"}, {})
+        FIGURE_REQUEST_CONTEXT.implementation(
+            request, {"paper_source": b"different"}, {}
+        )
 
 
-@pytest.mark.parametrize("field", [None, "bbox", "seed", "ticks", "coverage", "max_gap", "points", "parameters"])
-def test_worker_schema_and_formal_submit_agree_on_intent_structure(tmp_path, field):
-    from tests.operations.test_figure_role_chain_v2 import source_bytes, intent_for
-    source = source_bytes()
-    catalog, runtime, instance, root = _system(tmp_path)
-    _register(runtime, instance, name="paper_source", content=source, kind="paper_source",
-              schema_id="opaque", media_type="image/png")
-    payload = intent_for(source)
-    if field:
-        payload[field] = {"arbitrary": 1}
-    valid = field is None
-    compiled = catalog.operation("science.figure.request.prepare.v1")
-    schema = operation_port_json_schema(compiled, compiled.spec.outputs[0])
-    assert schema["properties"]["panel"]["description"] in REQUEST_PROMPT
-    assert {item["type"] for item in schema["properties"]["panel"]["anyOf"]} == {"string", "null"}
-    assert "panel" in schema["required"]
-    assert validator_for(schema)(schema).is_valid(payload) is valid
-    call = {"name": "intent_structure", "operation_id": compiled.spec.operation_id,
-            "inputs": [{"port": "paper_source", "artifact_names": ["paper_source"]}],
-            "instruction": "Select only the exact figure identity or report unresolved reasons."}
-    assert root.call_tool("operation_preflight", call)["admissible"] is True
-    root.call_tool("operation_invoke", call)
-    worker = LocalWorkerMCPRouter(runtime.runs, operation_id=compiled.spec.operation_id,
-                                 operation_digest=compiled.digest)
-    opened = worker.call_tool("worker_open_assignment", {})
-    worker_schema = json.loads(Path(opened["workspace_path"], "schema", "result.schema.json").read_text())
-    envelope = json.loads(_envelope(payload, verdict="inconclusive"))
-    assert validator_for(worker_schema)(worker_schema).is_valid(envelope) is valid
-    Path(opened["output_directory"], "result.json").write_bytes(canonical_json(envelope))
-    submitted = worker.call_tool("worker_submit_result", {})
-    assert submitted["state"] == ("completed" if valid else "rejected"), submitted
-
-
-@pytest.mark.parametrize("ticks", [((36.0, 1e20), (685.0, 1e15)), ((685.0, 1e15), (36.0, 1e20))])
-def test_tick_normalization_preserves_pixel_value_pairs(ticks):
-    axis = calibration_from_tick_pairs(scale="log10", unit="cm^-3", ticks=ticks, uncertainty_px=1.0)
+@pytest.mark.parametrize(
+    "ticks",
+    [
+        ((36, 100000000000000000000), (685, 1000000000000000)),
+        ((685, 1000000000000000), (36, 100000000000000000000)),
+    ],
+)
+def test_tick_normalization_preserves_integer_pixel_value_pairs(ticks) -> None:
+    axis = FigureAxisRequest(
+        scale="log10", unit="cm^-3", ticks=ticks, uncertainty_px=1
+    ).normalized()
     assert (axis.pixel_min, axis.value_min) == (685.0, 1e15)
     assert (axis.pixel_max, axis.value_max) == (36.0, 1e20)
 
 
-@pytest.mark.parametrize("ticks", [((1.0, 1.0), (1.0, 2.0)), ((1.0, 0.0), (2.0, 2.0)), ((float("nan"), 1.0), (2.0, 2.0))])
-def test_invalid_tick_pairs_fail_closed(ticks):
+@pytest.mark.parametrize(
+    "ticks",
+    [((1, 1), (1, 2)), ((1, 0), (2, 2)), ((float("nan"), 1), (2, 2))],
+)
+def test_invalid_tick_pairs_are_rejected(ticks) -> None:
     with pytest.raises(ValidationError):
-        calibration_from_tick_pairs(scale="log10", unit="cm^-3", ticks=ticks, uncertainty_px=1.0)
+        FigureAxisRequest.model_validate(
+            {"scale": "log10", "unit": "A", "ticks": ticks}, strict=True
+        )
 
 
-@pytest.mark.parametrize("defect", ["duplicate_binding", "duplicate_rejection", "same_id_other_text", "selected_rejected"])
-def test_g3_worker_exposes_and_enforces_candidate_uniqueness(tmp_path, monkeypatch, defect):
-    from tests.operations.test_figure_role_chain_v2 import measured_source
-    source, payload = measured_source(monkeypatch)
-    if defect == "duplicate_binding":
-        payload["bindings"].append(dict(payload["bindings"][0]))
-    elif defect == "duplicate_rejection":
-        rejected = payload["bindings"].pop()
-        payload["rejected_candidates"] = [{"candidate_id": rejected["candidate_id"], "reason": "Not relevant"}] * 2
-    elif defect == "same_id_other_text":
-        payload["bindings"].append({**payload["bindings"][0], "visible_label": "Different visible words"})
-    else:
-        payload["rejected_candidates"] = [{"candidate_id": payload["bindings"][0]["candidate_id"], "reason": "Not relevant"}]
-    catalog, runtime, instance, root = _system(tmp_path)
-    _register(runtime, instance, name="paper_source", content=source, kind="paper_source", schema_id="opaque", media_type="image/png")
-    compiled = catalog.operation("science.figure.request.prepare.v1")
-    call = {"name": "unique_candidates", "operation_id": compiled.spec.operation_id,
-        "inputs": [{"port": "paper_source", "artifact_names": ["paper_source"]}],
-        "instruction": "Select disjoint candidate identities from the bound source."}
-    assert root.call_tool("operation_preflight", call)["admissible"]
-    root.call_tool("operation_invoke", call)
-    worker = LocalWorkerMCPRouter(runtime.runs, operation_id=compiled.spec.operation_id, operation_digest=compiled.digest)
-    opened = worker.call_tool("worker_open_assignment", {})
-    schema = json.loads(Path(opened["workspace_path"], "schema", "result.schema.json").read_text())
-    envelope = json.loads(_envelope(payload))
-    structural = defect in {"duplicate_binding", "duplicate_rejection"}
-    assert validator_for(schema)(schema).is_valid(envelope) is not structural
-    if not structural:
-        rules = schema["properties"]["payload"]["x-scidiscovery-semantic-constraints"]["rules"]
-        rule = next(r for r in rules if r["rule_id"] == "curve.figure.request.internal_consistency")
-        assert "candidate_id" in rule["description"] and "disjoint" in rule["description"]
-    Path(opened["output_directory"], "result.json").write_bytes(canonical_json(envelope))
-    rejected = worker.call_tool("worker_submit_result", {})
-    assert rejected["state"] == "rejected"
-    assert {d["rule_id"] for d in rejected["diagnostics"]} == {
-        "runtime.schema" if structural else "curve.figure.request.internal_consistency"}
+def test_compiled_request_operation_exposes_raw_inspection_and_preview() -> None:
+    catalog = compile_catalog(
+        (CORE_PLUGIN, GENERAL_PLUGIN, CURVE_PLUGIN, FIGURE_PLUGIN)
+    )
+    operation = catalog.operation("science.figure.request.prepare.v1")
+    assert operation.spec.outputs[0].schema_id == (
+        "scidiscovery.curve-figure-digitization-request.v2"
+    )
+    assert {tool.name for tool in operation_worker_tools(operation)} >= {
+        "worker_curve_figure_inspect_source",
+        "worker_curve_figure_preview",
+    }
+    source, request = _source_and_request()
+    FigureDigitizationRequest.model_validate_json(canonical_json(request), strict=True)

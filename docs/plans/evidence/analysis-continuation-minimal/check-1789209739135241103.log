@@ -1,0 +1,79 @@
+..FFF.....                                                               [100%]
+=================================== FAILURES ===================================
+_ test_output_repair_has_exact_path_and_never_echoes_arbitrary_alias[input_alias-/tmp/untrusted-secret-$.payload.source_references[0].input_alias] _
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-208/test_output_repair_has_exact_p0')
+field = 'input_alias', value = '/tmp/untrusted-secret'
+expected = '$.payload.source_references[0].input_alias'
+
+    @pytest.mark.parametrize('field, value, expected', [
+        ('input_alias', '/tmp/untrusted-secret', '$.payload.source_references[0].input_alias'),
+        ('output_name', 'wrong', '$.payload.source_references[0].output_name'),
+        ('case_key', 'wrong', '$.payload.source_references[0].case_key'),
+    ])
+    def test_output_repair_has_exact_path_and_never_echoes_arbitrary_alias(tmp_path, field, value, expected):
+        from scidiscovery.artifact_agent.interfaces.mcp import MCPRouter
+        system = analysis_system(tmp_path); worker, opened = open_analysis(system)
+        report = analysis_report(alias='solver_outputs_001', output_name='A', mapped=True)
+        report['source_references'][0][field] = value
+        write_analysis(opened, report)
+        reply = MCPRouter(worker, name='probe').handle(dict(jsonrpc='2.0', id=1, method='tools/call',
+            params=dict(name='worker_submit_result', arguments={})))
+>       assert reply['error']['data']['diagnostics'][0]['path'] == expected, reply
+               ^^^^^^^^^^^^^^
+E       KeyError: 'error'
+
+tests/operations/test_analysis_continuation.py:128: KeyError
+_ test_output_repair_has_exact_path_and_never_echoes_arbitrary_alias[output_name-wrong-$.payload.source_references[0].output_name] _
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-208/test_output_repair_has_exact_p1')
+field = 'output_name', value = 'wrong'
+expected = '$.payload.source_references[0].output_name'
+
+    @pytest.mark.parametrize('field, value, expected', [
+        ('input_alias', '/tmp/untrusted-secret', '$.payload.source_references[0].input_alias'),
+        ('output_name', 'wrong', '$.payload.source_references[0].output_name'),
+        ('case_key', 'wrong', '$.payload.source_references[0].case_key'),
+    ])
+    def test_output_repair_has_exact_path_and_never_echoes_arbitrary_alias(tmp_path, field, value, expected):
+        from scidiscovery.artifact_agent.interfaces.mcp import MCPRouter
+        system = analysis_system(tmp_path); worker, opened = open_analysis(system)
+        report = analysis_report(alias='solver_outputs_001', output_name='A', mapped=True)
+        report['source_references'][0][field] = value
+        write_analysis(opened, report)
+        reply = MCPRouter(worker, name='probe').handle(dict(jsonrpc='2.0', id=1, method='tools/call',
+            params=dict(name='worker_submit_result', arguments={})))
+>       assert reply['error']['data']['diagnostics'][0]['path'] == expected, reply
+               ^^^^^^^^^^^^^^
+E       KeyError: 'error'
+
+tests/operations/test_analysis_continuation.py:128: KeyError
+_ test_output_repair_has_exact_path_and_never_echoes_arbitrary_alias[case_key-wrong-$.payload.source_references[0].case_key] _
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-208/test_output_repair_has_exact_p2')
+field = 'case_key', value = 'wrong'
+expected = '$.payload.source_references[0].case_key'
+
+    @pytest.mark.parametrize('field, value, expected', [
+        ('input_alias', '/tmp/untrusted-secret', '$.payload.source_references[0].input_alias'),
+        ('output_name', 'wrong', '$.payload.source_references[0].output_name'),
+        ('case_key', 'wrong', '$.payload.source_references[0].case_key'),
+    ])
+    def test_output_repair_has_exact_path_and_never_echoes_arbitrary_alias(tmp_path, field, value, expected):
+        from scidiscovery.artifact_agent.interfaces.mcp import MCPRouter
+        system = analysis_system(tmp_path); worker, opened = open_analysis(system)
+        report = analysis_report(alias='solver_outputs_001', output_name='A', mapped=True)
+        report['source_references'][0][field] = value
+        write_analysis(opened, report)
+        reply = MCPRouter(worker, name='probe').handle(dict(jsonrpc='2.0', id=1, method='tools/call',
+            params=dict(name='worker_submit_result', arguments={})))
+>       assert reply['error']['data']['diagnostics'][0]['path'] == expected, reply
+               ^^^^^^^^^^^^^^
+E       KeyError: 'error'
+
+tests/operations/test_analysis_continuation.py:128: KeyError
+=========================== short test summary info ============================
+FAILED tests/operations/test_analysis_continuation.py::test_output_repair_has_exact_path_and_never_echoes_arbitrary_alias[input_alias-/tmp/untrusted-secret-$.payload.source_references[0].input_alias]
+FAILED tests/operations/test_analysis_continuation.py::test_output_repair_has_exact_path_and_never_echoes_arbitrary_alias[output_name-wrong-$.payload.source_references[0].output_name]
+FAILED tests/operations/test_analysis_continuation.py::test_output_repair_has_exact_path_and_never_echoes_arbitrary_alias[case_key-wrong-$.payload.source_references[0].case_key]
+3 failed, 7 passed in 6.52s

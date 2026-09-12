@@ -1,0 +1,23 @@
+{
+  "plugins/curve_score/curve_score/science_operations.py": "c00251cf3014718c66ffb58a2cc54d6bbc8769b2761e3e4e1be261aecd89529d",
+  "plugins/curve_score/curve_score/analysis_files.py": "304b6a5acbaf6d51bd51b9adcd17963eb19719e757ae1bfbcf69fae5e29a65b9",
+  "plugins/tcad_artifact/tcad_artifact/result_analysis.py": "a88f5ad610f95c959d3db2faf31e126ea2ab9b336b7c91cfdfb7ef23ce7eade9",
+  "src/scidiscovery/artifact_agent/service/runs.py": "4a87d96597f30fe5cb40599ee3b938e58608d0242dab552a3db43a348eecfaa2",
+  "src/scidiscovery/artifact_agent/service/run_assignment.py": "a3b222b01c38002a0aeefd0e62eecb3a4b2d4463d2fa7172ee3096477efdd0e9",
+  "src/scidiscovery/artifact_agent/service/local_workspace.py": "4a5a84e96fe85a7a17e979edb878ea006ee3a70ea6ce95cb5b536118774c3fc4",
+  "src/scidiscovery/artifact_agent/service/tool_evidence.py": "9444ad800f959b5d4a809f3fb7ef4cce5f82c63228ddf23655891a318905a249",
+  "src/scidiscovery/artifact_agent/interfaces/mcp_root_run_routes.py": "51fe621a8849192610060b75fafabf472e43865b7c55bec70f73f3d013eaada1",
+  "src/scidiscovery/artifact_agent/interfaces/mcp_root_instance_routes.py": "ffad7e4edbedfa5801a89be3b7f2dbe4f7300ffd5bdf663e738beb8a20d7b2f1",
+  "src/scidiscovery/artifact_agent/schema/layered_diagnosis.py": "6816b6baaab82a2e40eb0d1bab86b3ab0575c058c086302cb5eae990c33e652a",
+  "src/scidiscovery/operations/invoke.py": "44b7c22447c6e0f16837d3b96ffcd16b9bffe1936b021744dea92ebf1609100e",
+  "roles/scheduler.md": "01200c78711731db2d465d61a80cd91a4f4c418f48d36805abec5f344281f392",
+  "docs/ARCHITECTURE.md": "c3a20d07308eefb98f9214dd06204599ec2e60ce22aed5fec1758b78d8c225f9",
+  "docs/ARCHITECTURE.zh-CN.md": "69142999cc55c8d09aabcfbb23f381933c9fb0c7f5c1206bdb65dc45809a8b58",
+  "docs/plans/README.md": "e6429ac5c88e7eb83218a25c742b57fe659c68e5b24c5415941832a4c273d60f",
+  "tests/operations/test_analysis_evidence_recovery.py": "02678cf581d6fbc95535220242f862122618652513a368c4297c3df2abd4d24f",
+  "tests/operations/test_analysis_artifact_references.py": "a9f77f70846b5fddd08ce42e6e7c92026b2f94d9fa7d9b472b5d04907b5fcd79",
+  "tests/operations/test_analysis_input_descriptors.py": "33e291bf6f5cd14e7899e747f5e3d58f36638a4ad15ab50899e05313ce765fcf",
+  "tests/operations/test_root_draft_routes.py": "39b4461b9b3dfe5283bfea1a7aef5bc001e42de306ec3ab9eee78050bf2aaab8",
+  "plugins/curve_score/README.md": "577d10491904772bd58895aa8c91bddaf046b40c0b93361b5aea05ff8ed75d46",
+  "plugins/curve_score/README.zh-CN.md": "c6dbbd518de576e6952ab0bc7bb677ff51a29ca24dbdfdd4c6e4277c8254a2df"
+}

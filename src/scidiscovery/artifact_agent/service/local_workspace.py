@@ -23,6 +23,10 @@ class WorkspaceError(RuntimeError):
     pass
 
 
+class WorkspaceOutputError(WorkspaceError):
+    """Candidate file content/shape can be corrected by the worker."""
+
+
 @dataclass(frozen=True, slots=True)
 class WorkspaceInput:
     name: str
@@ -90,7 +94,7 @@ class LocalTrustedBackend:
     """Small, prompt-constrained backend for trusted local development."""
 
     backend_id = "local_trusted"
-    backend_version = "1"
+    backend_version = "2"
     edit_protocol = "native"
     capabilities = ("native_workspace", "immutable_candidate", "failure_isolation")
 
@@ -102,6 +106,9 @@ class LocalTrustedBackend:
 
     @staticmethod
     def unsupported_requirements(compiled: object) -> tuple[str, ...]:
+        from ...operations.tooling import tool_evidence_ports
+        if tool_evidence_ports(compiled):
+            return ()
         return (
             ("agent_collection_outputs",)
             if any(port.collection is not None for port in compiled.spec.outputs)
@@ -238,6 +245,7 @@ class LocalTrustedBackend:
         max_files: int,
         max_bytes: int,
         expected_digest: str | None = None,
+        snapshot: tuple[WorkspaceInput, ...] | None = None,
     ) -> SealedWorkspace:
         workspace = self.open(run_id)
         if expected_digest is not None:
@@ -248,28 +256,37 @@ class LocalTrustedBackend:
                 max_files=max_files,
                 max_bytes=max_bytes,
             )
-        source_root = workspace.output_directory
-        source_files = tuple(sorted(source_root.rglob("*")))
-        regular = tuple(path for path in source_files if path.is_file())
-        if any(path.is_symlink() for path in source_files):
-            raise WorkspaceError("output cannot contain symbolic links")
-        if any(not path.is_file() and not path.is_dir() for path in source_files):
-            raise WorkspaceError("output contains a non-regular filesystem entry")
-        if not regular:
-            raise WorkspaceError("output is empty")
-        if len(regular) > max_files:
-            raise WorkspaceError("output contains too many files")
-        total = sum(path.stat().st_size for path in regular)
-        if total > max_bytes:
-            raise WorkspaceError("output exceeds the compiled byte limit")
+        if snapshot is None:
+            source_files = tuple(sorted(workspace.output_directory.rglob("*")))
+            if any(path.is_symlink() for path in source_files):
+                raise WorkspaceOutputError("output cannot contain symbolic links")
+            if any(not path.is_file() and not path.is_dir() for path in source_files):
+                raise WorkspaceOutputError("output contains a non-regular filesystem entry")
+            regular = tuple(path for path in source_files if path.is_file())
+            if not regular:
+                raise WorkspaceOutputError("output is empty")
+            if len(regular) > max_files:
+                raise WorkspaceOutputError("output contains too many files")
+            if sum(path.stat().st_size for path in regular) > max_bytes:
+                raise WorkspaceOutputError("output exceeds the compiled byte limit")
+            snapshot = tuple(WorkspaceInput(
+                name=path.relative_to(workspace.output_directory).as_posix(),
+                media_type=_media_type(path.name), content=_read_regular(path, max_bytes=max_bytes),
+            ) for path in regular)
+        if not snapshot or len(snapshot) > max_files or sum(len(item.content) for item in snapshot) > max_bytes:
+            raise WorkspaceOutputError("candidate exceeds its file/byte limit or is empty")
         fingerprint = hashlib.sha256()
         contents: list[tuple[str, bytes, str]] = []
-        for path in regular:
-            relative = path.relative_to(source_root).as_posix()
-            if relative.startswith("/") or ".." in Path(relative).parts:
-                raise WorkspaceError("output path escapes its workspace")
-            content = _read_regular(path, max_bytes=max_bytes)
-            _validate_publication_content(relative, content, _media_type(relative))
+        names: set[str] = set()
+        for item in sorted(snapshot, key=lambda item: item.name):
+            relative, content = item.name, item.content
+            path = Path(relative)
+            if (not relative or path.is_absolute() or "\\" in relative
+                    or any(token in {"", ".", ".."} for token in relative.split("/"))
+                    or relative in names):
+                raise WorkspaceOutputError("candidate path is invalid or duplicated")
+            names.add(relative)
+            _validate_publication_content(relative, content, item.media_type)
             digest = hashlib.sha256(content).hexdigest()
             fingerprint.update(relative.encode("utf-8") + b"\0" + digest.encode())
             contents.append((relative, content, digest))
@@ -289,7 +306,7 @@ class LocalTrustedBackend:
         files = tuple(
             SealedFile(
                 relative_path=relative,
-                media_type=_media_type(relative),
+                media_type=next(item.media_type for item in snapshot if item.name == relative),
                 size_bytes=len(content),
                 sha256=digest,
             )
@@ -304,6 +321,21 @@ class LocalTrustedBackend:
             files=files,
         )
 
+    def verify_recovery(self, digest: str, *, max_files: int, max_bytes: int) -> RecoveryDraft:
+        if re.fullmatch(r"[0-9a-f]{64}", digest) is None:
+            raise WorkspaceError("recovery digest is invalid")
+        root = self.root / "recovery" / digest
+        if not root.is_dir() or root.is_symlink():
+            raise WorkspaceError("recovery draft is unavailable")
+        files = _sealed_files(root, max_files=max_files, max_bytes=max_bytes, text_fallback=True)
+        fingerprint = hashlib.sha256()
+        for item in files:
+            fingerprint.update(item.relative_path.encode("utf-8") + b"\0" + item.sha256.encode())
+        if fingerprint.hexdigest() != digest:
+            raise WorkspaceError("recovery draft no longer matches its digest")
+        return RecoveryDraft(backend=self.backend_id, backend_version=self.backend_version,
+                             digest=digest, root=root, files=files)
+
     def discard(
         self,
         run_id: str,
@@ -311,11 +343,16 @@ class LocalTrustedBackend:
         preserve_digest: str | None = None,
         max_files: int = 1,
         max_bytes: int = 64 * 1024,
+        retain_original: bool = False,
     ) -> RecoveryDraft | None:
         workspace_name = self._workspace_name(run_id)
         root = self.root / "workspaces" / workspace_name
         quarantine = self.root / "quarantine" / workspace_name
-        if root.exists():
+        if retain_original and root.exists():
+            # Local native writers may still hold this cwd. Copy the immutable
+            # candidate without renaming or deleting their original directory.
+            quarantine = root
+        elif root.exists():
             if quarantine.exists():
                 raise WorkspaceError("Run has both active and isolated workspaces")
             os.replace(root, quarantine)
@@ -325,16 +362,7 @@ class LocalTrustedBackend:
             destination = self.root / "recovery" / preserve_digest
             if not destination.is_dir() or destination.is_symlink():
                 raise WorkspaceError("isolated recovery candidate is unavailable")
-            files = _sealed_files(
-                destination, max_files=max_files, max_bytes=max_bytes
-            )
-            return RecoveryDraft(
-                backend=self.backend_id,
-                backend_version=self.backend_version,
-                digest=preserve_digest,
-                root=destination,
-                files=files,
-            )
+            return self.verify_recovery(preserve_digest, max_files=max_files, max_bytes=max_bytes)
         draft: RecoveryDraft | None = None
         if preserve_digest is not None:
             source = quarantine / "candidates" / preserve_digest
@@ -355,7 +383,7 @@ class LocalTrustedBackend:
                 finally:
                     shutil.rmtree(staging, ignore_errors=True)
             files = _sealed_files(
-                destination, max_files=max_files, max_bytes=max_bytes
+                destination, max_files=max_files, max_bytes=max_bytes, text_fallback=True
             )
             draft = RecoveryDraft(
                 backend=self.backend_id,
@@ -364,7 +392,16 @@ class LocalTrustedBackend:
                 root=destination,
                 files=files,
             )
-        shutil.rmtree(quarantine, ignore_errors=True)
+        if preserve_digest is not None:
+            self.verify_recovery(preserve_digest, max_files=max_files, max_bytes=max_bytes)
+        if retain_original:
+            return draft
+        # Controlled candidates and recovery inputs are read-only directories.
+        # The verified recovery copy now permits removing this isolated tree.
+        for directory in (quarantine, *quarantine.rglob("*")):
+            if not directory.is_symlink() and directory.is_dir():
+                directory.chmod(directory.stat().st_mode | 0o700)
+        shutil.rmtree(quarantine)
         return draft
 
     def _sealed_candidate(
@@ -636,7 +673,7 @@ def _read_regular(path: Path, *, max_bytes: int) -> bytes:
 
 
 def _sealed_files(
-    root: Path, *, max_files: int, max_bytes: int
+    root: Path, *, max_files: int, max_bytes: int, text_fallback: bool = False
 ) -> tuple[SealedFile, ...]:
     values: list[SealedFile] = []
     total = 0
@@ -654,6 +691,8 @@ def _sealed_files(
         relative = path.relative_to(root).as_posix()
         content = _read_regular(path, max_bytes=min(size, max_bytes))
         media_type = _media_type(relative)
+        if text_fallback and media_type == "application/octet-stream":
+            media_type = "text/plain"
         _validate_publication_content(relative, content, media_type)
         values.append(
             SealedFile(
@@ -688,11 +727,11 @@ def _validate_publication_content(
     relative_path: str, content: bytes, media_type: str
 ) -> None:
     if media_type == "application/octet-stream":
-        raise WorkspaceError(f"undeclared binary output is forbidden: {relative_path}")
+        raise WorkspaceOutputError(f"undeclared binary output is forbidden: {relative_path}")
     if _SECRET.search(content):
-        raise WorkspaceError(f"output contains an apparent secret: {relative_path}")
+        raise WorkspaceOutputError(f"output contains an apparent secret: {relative_path}")
     if _MACHINE_PATH.search(content):
-        raise WorkspaceError(f"output contains a host-specific path: {relative_path}")
+        raise WorkspaceOutputError(f"output contains a host-specific path: {relative_path}")
     if media_type.startswith("text/") or media_type in {
         "application/json",
         "application/xml",
@@ -701,7 +740,7 @@ def _validate_publication_content(
         try:
             content.decode("utf-8")
         except UnicodeDecodeError as error:
-            raise WorkspaceError(f"text output is not UTF-8: {relative_path}") from error
+            raise WorkspaceOutputError(f"text output is not UTF-8: {relative_path}") from error
 
 
 def workspace_input_filename(name: str, media_type: str) -> str:
@@ -713,6 +752,8 @@ def workspace_input_filename(name: str, media_type: str) -> str:
 def _media_type(relative_path: str) -> str:
     if relative_path == "result.json" or relative_path.endswith(".json"):
         return "application/json"
+    if relative_path.endswith((".py", ".log")):
+        return "text/plain"
     return mimetypes.guess_type(relative_path)[0] or "application/octet-stream"
 
 

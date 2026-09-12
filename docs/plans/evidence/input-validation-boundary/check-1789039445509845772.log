@@ -1,0 +1,13 @@
+........F
+=================================== FAILURES ===================================
+_ test_historical_analysis_rejects_wrong_or_unsealed_witness[nonpassing_review-tcad.result.analyze.v1] _
+tests/operations/test_collector_analysis_handoff.py:265: in test_historical_analysis_rejects_wrong_or_unsealed_witness
+    assert not refused["admissible"] and refused["reason_code"] == "guard_rejected"
+E   AssertionError: assert (not False and 'input_artifact_duplicate' == 'guard_rejected'
+E     
+E     - guard_rejected
+E     + input_artifact_duplicate)
+=========================== short test summary info ============================
+FAILED tests/operations/test_collector_analysis_handoff.py::test_historical_analysis_rejects_wrong_or_unsealed_witness[nonpassing_review-tcad.result.analyze.v1]
+!!!!!!!!!!!!!!!!!!!!!!!!!! stopping after 1 failures !!!!!!!!!!!!!!!!!!!!!!!!!!!
+1 failed, 8 passed in 6.34s

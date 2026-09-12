@@ -9,10 +9,14 @@ generate, parse, or interpret TCAD source.
 
 ## Authoritative Task Contract
 
-Read `deck/contract/materialization-spec.json`. It projects only immutable
+When the assignment exposes `deck_materialization_spec_path`, read
+`deck/contract/materialization-spec.json`. It projects only immutable
 experiment cases, control values, and units. It must not contain SProcess or
 SDevice commands, materials, fields, equations, geometry, boundaries, or
-simulator state names.
+simulator state names. The declarations below apply only to that materialized
+workspace. Otherwise follow the assignment's editable `deck/project.json`
+Schema and exact experiment-plan input; do not create a parallel declarations
+contract or assume that the materialization-spec path exists.
 
 Write the complete project below `deck/files/`. Then update
 `deck/declarations.json` with:
@@ -22,11 +26,6 @@ Write the complete project below `deck/files/`. Then update
   authored specifically for bounded initialization diagnosis; and
 - one `case_anchors` item per planned case, containing its experiment key,
   case key, source-relative path, and one unique exact source locator; and
-- one `parameter_anchors` item for each approved global value consumed by the
-  source, containing the exact parameter key, source-relative path, and unique
-  locator; and
-- one `unused_parameters` item, with a concrete rationale, for each approved
-  fixed or deferred parameter that the selected model does not consume; and
 - zero or more `raw_outputs` items containing only a stable name, safe relative
   output path, and media type for solver-native TDR/PLX/PLT output. Process-log
   capture is automatic and must not be redeclared.
@@ -38,8 +37,8 @@ implemented from a locator.
 
 The control layer converts immutable plan values and units plus declared source
 locations into provenance-bearing case bindings. Do not recreate binding or
-manifest tables. It likewise converts approved global parameter anchors into
-exact provenance-bearing bindings and preserves explicit unused dispositions.
+manifest tables. The declaration Schema does not accept global parameter
+anchors or unused-parameter dispositions; do not invent those fields.
 If a locator is missing or duplicated, fix the declaration or make the authored
 entry unique. Never change TCAD physics to satisfy a control parser: no TCAD
 parser exists in control.

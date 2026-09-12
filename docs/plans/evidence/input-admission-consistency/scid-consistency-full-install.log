@@ -1,0 +1,31 @@
+WARNING: The directory '/home/da/.cache/pip' or its parent directory is not owned or is not writable by the current user. The cache has been disabled. Check the permissions and owner of that directory. If executing pip with sudo, you should use sudo's -H flag.
+Looking in indexes: https://mirrors.aliyun.com/pypi/simple/
+Processing /tmp/scid-consistency-wheels/scidiscovery-0.1.0-py3-none-any.whl
+Processing /tmp/scid-consistency-wheels/scidiscovery_curve_figure_evidence-0.1.0-py3-none-any.whl
+Processing /tmp/scid-consistency-wheels/scidiscovery_curve_score-0.2.1-py3-none-any.whl
+Processing /tmp/scid-consistency-wheels/tcad_artifact-0.1.0-py3-none-any.whl
+Installing collected packages: tcad-artifact, scidiscovery-curve-score, scidiscovery-curve-figure-evidence, scidiscovery
+Successfully installed scidiscovery-0.1.0 scidiscovery-curve-figure-evidence-0.1.0 scidiscovery-curve-score-0.2.1 tcad-artifact-0.1.0
+	Command being timed: "timeout 120 /home/da/miniconda3/bin/python -m pip install --no-deps --no-compile --target /tmp/scid-consistency-full-installed /tmp/scid-consistency-wheels/scidiscovery-0.1.0-py3-none-any.whl /tmp/scid-consistency-wheels/scidiscovery_curve_figure_evidence-0.1.0-py3-none-any.whl /tmp/scid-consistency-wheels/scidiscovery_curve_score-0.2.1-py3-none-any.whl /tmp/scid-consistency-wheels/tcad_artifact-0.1.0-py3-none-any.whl"
+	User time (seconds): 0.33
+	System time (seconds): 0.04
+	Percent of CPU this job got: 74%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:00.50
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 50120
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 0
+	Minor (reclaiming a frame) page faults: 16765
+	Voluntary context switches: 99
+	Involuntary context switches: 4
+	Swaps: 0
+	File system inputs: 1464
+	File system outputs: 5288
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0

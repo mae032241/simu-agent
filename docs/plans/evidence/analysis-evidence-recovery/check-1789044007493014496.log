@@ -1,0 +1,11 @@
+F
+=================================== FAILURES ===================================
+__________ test_failed_run_preserves_tool_evidence_for_new_bound_run ___________
+tests/operations/test_analysis_evidence_recovery.py:148: in test_failed_run_preserves_tool_evidence_for_new_bound_run
+    assert failed['recovery']['draft_available'], (failed['recovery'], runtime.runs.status(worker._run_id).recovery_draft)
+E   AssertionError: ({'delivery_preserved': True, 'resume_available': False, 'draft_available': False, 'recovery_pending': False}, {'backe...result.json', 'sha256': '65246b9e57d03716989b49afada1542a54396cf31fdaab414dddf52fc792ca33', 'size_bytes': 1941}], ...})
+E   assert False
+=========================== short test summary info ============================
+FAILED tests/operations/test_analysis_evidence_recovery.py::test_failed_run_preserves_tool_evidence_for_new_bound_run
+!!!!!!!!!!!!!!!!!!!!!!!!!! stopping after 1 failures !!!!!!!!!!!!!!!!!!!!!!!!!!!
+1 failed in 1.16s

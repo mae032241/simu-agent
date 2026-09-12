@@ -7,7 +7,8 @@ task.
 
 Manual basis throughout: *Sentaurus Process User Guide*, R-2020.09, SHA-256
 `bcaf5cfe87bd276a2068fa6681a0b62b2526512b65a710a660d892c45ceaf5d9`.
-Page numbers below are PDF pages used by the bundled extraction helper.
+PDF page numbers below are physical pages used by the bundled extraction helper;
+printed page labels are identified explicitly and must not be passed to it.
 
 ## Contents
 
@@ -101,7 +102,8 @@ pdbSetString <Material> <State> Equation \
 ```
 
 Sentaurus Process applies the outer divergence for the gradient flux form. See
-PDF pages 627-633 and the complete worked forms at PDF pages 668-671. Use
+printed pages 627-633 (PDF pages 663-669), including the worked forms at
+PDF pages 668-671. Use
 `EquationProc` only when a callback is actually needed to construct a
 case-dependent equation; its callback contract is on PDF pages 679-683.
 

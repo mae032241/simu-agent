@@ -1,0 +1,63 @@
+{
+  "recorded_at": "2026-09-09 02:50:51 UTC",
+  "scope": "Exact sealed UI qualification decision observed; current catalog accepts the new foundation for hypothesis proposal.",
+  "approval": {
+    "logical_name": "fig4_continuation_evidence_qualification_1",
+    "name": "fig4_continuation_evidence_qualification_1",
+    "rationale": "",
+    "revision": 1,
+    "selected_option": "approve",
+    "status": "decided"
+  },
+  "hypothesis_request": {
+    "name": "fig4_continuation_hypothesis_1",
+    "operation_id": "science.hypothesis.propose.v1",
+    "inputs": [
+      {
+        "port": "problem_frame",
+        "artifact_names": [
+          "fig4_continuation_intake_split_2"
+        ]
+      },
+      {
+        "port": "scientific_foundation",
+        "artifact_names": [
+          "fig4_continuation_intake_split_2.scientific_foundation"
+        ]
+      }
+    ],
+    "instruction": "依据已批准的确切研究基础、总体目标合同和当前矛盾，提出一组小而可证伪的假设。明确区分论文作者解释、实际图证支持和待检验机制；完整保留图证缺口、检出限冲突、缺失参数及使用条件。围绕这些现有材料能够支持的有界科学问题，说明能区分候选的最小观测或模型反事实及适用范围；不能用未经证实的参数填补缺口，也不要把后续目标一律强加为本轮执行前提。不要提前选择最终机制或宣称研究完成。"
+  },
+  "hypothesis_preflight": {
+    "admissible": true,
+    "executor_kind": "agent",
+    "port": null,
+    "reason_code": null
+  },
+  "hypothesis_invocation": {
+    "executor_kind": "agent",
+    "operation_id": "science.hypothesis.propose.v1",
+    "result": {
+      "agent_type": "op_science_hypothesis_propose_v1_1d7aef0c6b49",
+      "backend": "local_trusted",
+      "candidate_accepted": false,
+      "completed_at": null,
+      "created_at": "2026-09-09T02:50:06.749037Z",
+      "deadline_at": "2026-09-09T03:05:06.749037Z",
+      "head_advance": null,
+      "last_activity_at": null,
+      "logical_name": "fig4_continuation_hypothesis_1",
+      "name": "fig4_continuation_hypothesis_1",
+      "operation_id": "science.hypothesis.propose.v1",
+      "output_artifact_name": null,
+      "reason": null,
+      "recovery_available": false,
+      "revision": 1,
+      "scheduler_signal": null,
+      "sealed_output": null,
+      "sealed_output_status": "unavailable",
+      "started_at": null,
+      "state": "queued"
+    }
+  }
+}

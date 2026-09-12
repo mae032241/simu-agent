@@ -31,8 +31,10 @@ from tcad_artifact import parameter_operations as parameter_module
 
 
 def test_builtin_catalog_compiles_exactly_three_architecture_test_operations() -> None:
+    before = PLUGIN.model_dump(mode="python")
     first = compile_catalog((PLUGIN,))
     second = compile_catalog((PLUGIN,))
+    assert PLUGIN.model_dump(mode="python") == before
     assert first.operation_ids() == (
         "builtin.test.agent",
         "builtin.test.effect",
@@ -420,3 +422,31 @@ def test_compilation_resolves_but_does_not_invoke_registered_behavior(
     )
     compile_catalog((PLUGIN,))
     effect.assert_not_called()
+
+
+def test_compiled_contracts_have_no_self_digest_and_run_projections_are_isolated():
+    from scidiscovery.operation_contract import operation_port_json_schema
+    from scidiscovery.operations.spec import json_projection
+    catalog = compile_catalog((CORE_PLUGIN, GENERAL_PLUGIN, CURVE_PLUGIN, TCAD_PLUGIN))
+    for op_id in catalog.operation_ids():
+        compiled = catalog.operation(op_id)
+        for port in compiled.spec.outputs:
+            static = compiled.output_contracts[port.name]
+            assert 'operation_digest' not in static['x-scidiscovery-validation-contract']
+            with pytest.raises(TypeError):
+                static['x-scidiscovery-validation-contract']['rules'][0]['description'] = 'changed'
+            first = operation_port_json_schema(compiled, port)
+            first['x-scidiscovery-validation-contract']['rules'].clear()
+            second = operation_port_json_schema(compiled, port)
+            assert second['x-scidiscovery-validation-contract']['rules']
+            assert second['x-scidiscovery-validation-contract']['operation_digest'] == compiled.digest
+            from scidiscovery.operation_contract import _evidence_source_projection_version
+            if _evidence_source_projection_version(compiled.spec, port) is None:
+                continue
+            source = next(p for p in compiled.spec.inputs if p.usage == 'evidence_inventory' and p.exposure != 'handoff_only')
+            a = operation_port_json_schema(compiled, port, input_source_ports={'first': source.name})
+            b = operation_port_json_schema(compiled, port, input_source_ports={'second': source.name})
+            assert a != b
+            assert '"first"' not in json.dumps(b)
+            assert '"second"' not in json.dumps(a)
+            assert 'operation_digest' not in json_projection(static)['x-scidiscovery-validation-contract']

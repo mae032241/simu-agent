@@ -1,0 +1,44 @@
+{
+  "probe": "materialized_plan_original_objective_binding",
+  "plan_parent_names": [
+    "feedback_task.output",
+    "scientific_foundation",
+    "research_objective",
+    "hypothesis_portfolio",
+    "critic_review"
+  ],
+  "wrong_objective_is_plan_parent": false,
+  "objectives_share_key_and_statement": true,
+  "objective_bytes_differ": true,
+  "outcomes": {
+    "exact": {
+      "preflight": {
+        "admissible": true,
+        "reason_code": null,
+        "port": null,
+        "executor_kind": "agent"
+      },
+      "submission_state": "completed",
+      "run_state": "completed",
+      "sealed_verdict": "pass"
+    },
+    "wrong": {
+      "preflight": {
+        "admissible": true,
+        "reason_code": null,
+        "port": null,
+        "executor_kind": "agent"
+      },
+      "submission_state": "completed",
+      "run_state": "completed",
+      "sealed_verdict": "pass"
+    }
+  },
+  "downstream_curve_design_with_original_objective_and_wrong_objective_review": {
+    "admissible": true,
+    "reason_code": null,
+    "port": null,
+    "executor_kind": "agent"
+  },
+  "limits": "Isolated Local engineering fixture; foundation approval predicate mocked; no real research or external execution."
+}

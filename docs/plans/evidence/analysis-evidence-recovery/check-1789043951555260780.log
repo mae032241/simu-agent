@@ -1,0 +1,11 @@
+..........F
+=================================== FAILURES ===================================
+__________ test_failed_run_preserves_tool_evidence_for_new_bound_run ___________
+tests/operations/test_analysis_evidence_recovery.py:148: in test_failed_run_preserves_tool_evidence_for_new_bound_run
+    assert failed['recovery']['draft_available'],failed
+E   AssertionError: {'name': 'analysis', 'logical_name': 'analysis', 'revision': 1, 'operation_id': 'tcad.result.analyze.v1', ...}
+E   assert False
+=========================== short test summary info ============================
+FAILED tests/operations/test_analysis_evidence_recovery.py::test_failed_run_preserves_tool_evidence_for_new_bound_run
+!!!!!!!!!!!!!!!!!!!!!!!!!! stopping after 1 failures !!!!!!!!!!!!!!!!!!!!!!!!!!!
+1 failed, 10 passed in 5.98s

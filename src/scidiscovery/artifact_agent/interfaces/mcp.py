@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 import threading
 from typing import Any, Mapping
@@ -9,6 +10,7 @@ from typing import Any, Mapping
 from ..execution_bridge import ExecutionAdapter, ExecutionBridge
 from ..runtime import open_runtime, read_secret_file
 from ..schema.common import canonical_json
+from ...operation_contract import DiagnosticError, contract_diagnostic
 from .mcp_root import RootMCPRouter, RootToolFacade
 
 
@@ -21,11 +23,17 @@ class MCPRouter:
         self.name = name
 
     def handle(self, request: dict[str, Any]) -> dict[str, Any] | None:
-        request_id = request.get("id")
+        request_id = request.get("id") if isinstance(request, dict) else None
         try:
+            if not isinstance(request, dict):
+                raise DiagnosticError("invalid protocol request", details=(contract_diagnostic(
+                    "invalid_protocol_request", phase="protocol", affected_action="tool_call",
+                    message="Expected a JSON-RPC request object."),))
             method = request.get("method")
             if request.get("jsonrpc") != "2.0" or not isinstance(method, str):
-                raise ValueError("invalid JSON-RPC request")
+                raise DiagnosticError("invalid protocol request", details=(contract_diagnostic(
+                    "invalid_protocol_request", phase="protocol", affected_action="tool_call",
+                    message="Expected JSON-RPC 2.0 and a string method."),))
             if method == "notifications/initialized":
                 return None
             if method == "initialize":
@@ -37,9 +45,11 @@ class MCPRouter:
             elif method == "tools/list":
                 value = {"tools": self.router.list_tools()}
             elif method == "tools/call":
-                params = request.get("params") or {}
-                if not isinstance(params, dict):
-                    raise ValueError("tools/call params must be an object")
+                params = request.get("params", {})
+                if not isinstance(params, dict) or not isinstance(params.get("name"), str):
+                    raise DiagnosticError("invalid protocol parameters", details=(contract_diagnostic(
+                        "invalid_protocol_parameters", phase="protocol", affected_action="tool_call",
+                        message="tools/call requires a parameter object with a string tool name."),))
                 result = self.router.call_tool(
                     str(params.get("name", "")), params.get("arguments")
                 )
@@ -54,14 +64,44 @@ class MCPRouter:
                     "isError": False,
                 }
             else:
-                raise ValueError("unknown JSON-RPC method")
+                raise DiagnosticError("unknown protocol method", details=(contract_diagnostic(
+                    "unknown_protocol_method", phase="protocol", affected_action="tool_call",
+                    message="This JSON-RPC method is not declared by the server."),))
             return {"jsonrpc": "2.0", "id": request_id, "result": value}
         except Exception as error:
-            return {
-                "jsonrpc": "2.0",
-                "id": request_id,
-                "error": {"code": -32000, "message": str(error)},
-            }
+            return rpc_error(request_id, error)
+
+
+def rpc_error(request_id: Any, error: Exception) -> dict[str, Any]:
+    details = getattr(error, "details", ()) if isinstance(error, DiagnosticError) else ()
+    if not details:
+        details = (contract_diagnostic(
+            "tool_rejected" if isinstance(error, DiagnosticError) else "runtime_failure",
+            phase="tool_execution", affected_action="tool_call",
+            message="Tool request was rejected." if isinstance(error, DiagnosticError)
+            else "Tool execution failed; consult the controlled engineering diagnostics.",
+        ),)
+    return {
+        "jsonrpc": "2.0",
+        "id": request_id,
+        "error": {"code": -32000, "message": details[0]["message"],
+                  "data": {"diagnostics": list(details),
+                           **({"attempt": error.attempt} if getattr(error,"attempt",None) else {})}},
+    }
+
+
+def parse_rpc_line(raw: str | bytes) -> dict[str, Any]:
+    try:
+        value = json.loads(raw)
+    except (ValueError, UnicodeError) as error:
+        raise DiagnosticError("invalid JSON-RPC", details=(contract_diagnostic(
+            "invalid_protocol_request", phase="protocol", affected_action="tool_call",
+            message="Expected a valid JSON-RPC request object."),)) from error
+    if not isinstance(value, dict):
+        raise DiagnosticError("invalid JSON-RPC", details=(contract_diagnostic(
+            "invalid_protocol_request", phase="protocol", affected_action="tool_call",
+            message="Expected a JSON-RPC request object."),))
+    return value
 
 
 def build_root_router(

@@ -1,0 +1,12 @@
+{
+  "command": [
+    "python",
+    "-"
+  ],
+  "exit_code": 0,
+  "seconds": 1.061,
+  "peak_tree_rss_bytes": 118833152,
+  "budget_bytes": 536870912,
+  "early_stop_bytes": 469762048,
+  "memory_terminated": false
+}

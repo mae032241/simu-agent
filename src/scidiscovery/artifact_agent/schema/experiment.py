@@ -9,7 +9,7 @@ from pydantic import Field, field_validator, model_validator
 from .common import Identifier, SchemaModel, canonical_json, canonical_sha256
 from .scientific_foundation import ScalarValue
 from .units import supported_unit_spellings, unit_definition
-from ...operation_contract import SemanticRuleViolation
+from ...operation_contract import SemanticRuleViolation, declared_violation
 
 
 Level = Literal["low", "medium", "high"]
@@ -162,8 +162,8 @@ class ComparisonContract(SchemaModel):
         tuple[str, ...], Field(min_length=1, max_length=128)
     ]
     identifiability_claims: Annotated[
-        tuple[IdentifiabilityClaim, ...], Field(min_length=1, max_length=128)
-    ]
+        tuple[IdentifiabilityClaim, ...], Field(max_length=128)
+    ] = ()
 
     @model_validator(mode="after")
     def _contract_keys_are_unique(self) -> ComparisonContract:
@@ -175,7 +175,6 @@ class ComparisonContract(SchemaModel):
                 tuple(item.variable_key for item in self.variables),
                 "comparison variable keys",
             ),
-            (self.required_observables, "comparison required_observables"),
         ):
             if len(values) != len(set(values)):
                 raise ValueError(f"{label} must be unique")
@@ -205,7 +204,14 @@ class ExperimentValueAssessment(SchemaModel):
 
 class ExperimentProposal(SchemaModel):
     experiment_key: Identifier
-    objective: Annotated[str, Field(min_length=1, max_length=8192)]
+    objectives: Annotated[
+        tuple[Annotated[str, Field(min_length=1, max_length=8192)], ...],
+        Field(min_length=1, max_length=17),
+    ]
+    current_objectives: Annotated[
+        tuple[Annotated[str, Field(min_length=1, max_length=8192)], ...],
+        Field(min_length=1, max_length=16),
+    ]
     hypothesis_keys: Annotated[tuple[Identifier, ...], Field(max_length=12)] = ()
     changed_factors: Annotated[
         tuple[ExperimentFactor, ...], Field(max_length=64)
@@ -226,18 +232,16 @@ class ExperimentProposal(SchemaModel):
     @model_validator(mode="after")
     def _proposal_is_bounded(self) -> ExperimentProposal:
         for values, label in (
-            (self.hypothesis_keys, "hypothesis_keys"),
             (
                 tuple(item.name for item in self.changed_factors),
                 "changed factor names",
             ),
             (tuple(item.case_key for item in self.cases), "case_key values"),
-            (self.required_observables, "required_observables"),
         ):
             if len(values) != len(set(values)):
                 raise ValueError(f"{label} must be unique")
-        if not any(item.scientific_role in {"baseline", "control"} for item in self.cases):
-            raise ValueError("experiment requires at least one baseline or control case")
+        if not set(self.current_objectives).issubset(self.objectives):
+            raise declared_violation("current_objectives must be an exact subset of objectives")
         factor_by_name = {item.name: item for item in self.changed_factors}
         factor_names = set(factor_by_name)
         settings_by_case: dict[str, dict[str, FactorSetting]] = {}
@@ -270,18 +274,10 @@ class ExperimentProposal(SchemaModel):
         case_by_key = {item.case_key: item for item in self.cases}
         contract = self.comparison_contract
         if contract is None:
-            if len(self.cases) != 1:
-                raise ValueError(
-                    "experiment without comparison contract requires exactly one case"
-                )
-            if self.changed_factors:
-                raise ValueError(
-                    "experiment without comparison contract cannot declare changed factors"
-                )
             return self
         compared_cases = {contract.baseline_case_key, *contract.comparison_case_keys}
-        if compared_cases != set(case_by_key):
-            raise ValueError("comparison contract must cover every experiment case")
+        if not compared_cases.issubset(case_by_key):
+            raise ValueError("comparison contract references an undeclared experiment case")
         if case_by_key[contract.baseline_case_key].scientific_role not in {
             "baseline",
             "control",
@@ -292,15 +288,15 @@ class ExperimentProposal(SchemaModel):
             for item in contract.variables
             if item.comparison_role == "intended_change"
         }
-        if intended != factor_names:
-            raise ValueError("intended comparison variables must equal changed factors")
+        if not intended.issubset(factor_names):
+            raise ValueError("intended comparison variable references an undeclared factor")
         intended_by_key = {
             item.variable_key: item
             for item in contract.variables
             if item.comparison_role == "intended_change"
         }
-        for factor_name, factor in factor_by_name.items():
-            variable = intended_by_key[factor_name]
+        for factor_name, variable in intended_by_key.items():
+            factor = factor_by_name[factor_name]
             if variable.factor_type != factor.factor_type:
                 raise ValueError(
                     f"comparison factor type differs from changed factor: {factor_name}"
@@ -316,16 +312,16 @@ class ExperimentProposal(SchemaModel):
                         "comparison expectation differs from exact case setting: "
                         f"{factor_name}/{expectation.case_key}"
                     )
-        if set(contract.required_observables) != set(self.required_observables):
+        if not set(contract.required_observables).issubset(self.required_observables):
             raise ValueError(
-                "comparison contract observables must equal required_observables"
+                "comparison contract references an undeclared observable"
             )
         claim_hypotheses = {
             item.hypothesis_key for item in contract.identifiability_claims
         }
-        if claim_hypotheses != set(self.hypothesis_keys):
+        if not claim_hypotheses.issubset(self.hypothesis_keys):
             raise ValueError(
-                "identifiability claims must cover every experiment hypothesis"
+                "identifiability claim references an undeclared experiment hypothesis"
             )
         if not {
             item.observable for item in contract.identifiability_claims
@@ -429,14 +425,14 @@ class ExperimentPortfolio(SchemaModel):
             raise ValueError("experiment_key values must be unique")
         if len(plan_keys) != len(set(plan_keys)):
             raise ValueError("plan_key values must be unique")
-        if len(self.selected_hypothesis_keys) != len(set(self.selected_hypothesis_keys)):
-            raise ValueError("selected_hypothesis_keys must be unique")
         if set(self.priority_order) != set(proposal_keys) or len(
             self.priority_order
         ) != len(set(self.priority_order)):
             raise ValueError("priority_order must contain every experiment exactly once")
         selected = set(self.selected_hypothesis_keys)
         for proposal in self.proposals:
+            if self.objective not in proposal.objectives:
+                raise declared_violation("every proposal must contain the exact portfolio objective")
             if not set(proposal.hypothesis_keys).issubset(selected):
                 raise ValueError("proposal references an unselected hypothesis")
         if {item.experiment_key for item in self.validation_plans} != set(proposal_keys):
@@ -446,42 +442,6 @@ class ExperimentPortfolio(SchemaModel):
                 raise ValueError("scientific portfolio requires selected hypotheses")
             if self.objective_key is None:
                 raise ValueError("scientific portfolio requires objective_key")
-            for proposal in self.proposals:
-                if (
-                    not proposal.hypothesis_keys
-                    or not proposal.changed_factors
-                    or len(proposal.cases) < 2
-                    or proposal.comparison_contract is None
-                    or not proposal.prediction_tests
-                ):
-                    raise ValueError(
-                        "scientific experiment requires hypotheses, comparison cases, "
-                        "changed factors, comparison contract, and prediction tests"
-                    )
-        else:
-            if selected:
-                raise ValueError("engineering portfolio cannot select scientific hypotheses")
-            for proposal in self.proposals:
-                if (
-                    proposal.hypothesis_keys
-                    or proposal.changed_factors
-                    or len(proposal.cases) != 1
-                    or proposal.comparison_contract is not None
-                    or proposal.prediction_tests
-                ):
-                    raise ValueError(
-                        "engineering experiment must be one case with no hypotheses, "
-                        "changed factors, comparison contract, or prediction tests"
-                    )
-            for plan in self.validation_plans:
-                if (
-                    plan.numerical.applicability != "required"
-                    or plan.physical.applicability != "not_applicable"
-                    or plan.experimental.applicability != "not_applicable"
-                ):
-                    raise ValueError(
-                        "engineering experiment requires numerical validation only"
-                    )
         return self
 
 
@@ -501,6 +461,17 @@ def validate_experiment_portfolio(value: dict[str, object]) -> dict[str, object]
         canonical_json(value), strict=True
     )
     return portfolio.model_dump(mode="json")
+
+
+def validate_experiment_input_objective(inputs: dict[str, bytes]) -> None:
+    """Cross-input identity at admission or deterministic materialization."""
+    from .cognitive import HypothesisProposal
+    from .research_objective import ResearchObjectiveContract
+
+    objective = ResearchObjectiveContract.model_validate_json(inputs["research_objective"], strict=True)
+    hypotheses = HypothesisProposal.model_validate_json(inputs["hypothesis_portfolio"], strict=True)
+    if hypotheses.research_objective_key != objective.objective_key:
+        raise ValueError("hypothesis portfolio research_objective_key differs from research objective")
 
 
 def validate_experiment_design_task_output(
@@ -535,32 +506,13 @@ def validate_experiment_design_task_output(
         raise SemanticRuleViolation(
             "experiment portfolio selects a hypothesis absent from the supplied portfolio"
         )
-    if hypotheses.research_objective_key != objective.objective_key:
-        raise SemanticRuleViolation(
-            "hypothesis portfolio research_objective_key differs from research objective"
-        )
     if portfolio.objective_key != objective.objective_key:
-        raise SemanticRuleViolation(
+        raise declared_violation(
             "experiment portfolio objective_key differs from research objective"
         )
     if portfolio.objective != objective.statement:
         raise SemanticRuleViolation(
             "experiment portfolio objective statement differs from research objective"
-        )
-    declared_observables = {
-        observable
-        for proposal in portfolio.proposals
-        for observable in proposal.required_observables
-    }
-    missing_targets = tuple(
-        target.target_key
-        for target in objective.mandatory_targets
-        if target.observable not in declared_observables
-    )
-    if missing_targets:
-        raise SemanticRuleViolation(
-            "experiment portfolio omits mandatory objective targets: "
-            + ", ".join(missing_targets)
         )
 
 

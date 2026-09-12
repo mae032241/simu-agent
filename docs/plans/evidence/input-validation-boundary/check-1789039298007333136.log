@@ -1,0 +1,13 @@
+.....F
+=================================== FAILURES ===================================
+_ test_historical_review_reaches_new_analysis_without_current_authority[science.result.diagnose.v1] _
+tests/operations/test_collector_analysis_handoff.py:227: in test_historical_review_reaches_new_analysis_without_current_authority
+    assert worker.call_tool("worker_submit_result", {})["state"] == "completed"
+E   AssertionError: assert 'rejected' == 'completed'
+E     
+E     - completed
+E     + rejected
+=========================== short test summary info ============================
+FAILED tests/operations/test_collector_analysis_handoff.py::test_historical_review_reaches_new_analysis_without_current_authority[science.result.diagnose.v1]
+!!!!!!!!!!!!!!!!!!!!!!!!!! stopping after 1 failures !!!!!!!!!!!!!!!!!!!!!!!!!!!
+1 failed, 5 passed, 1 deselected in 4.04s

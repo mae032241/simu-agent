@@ -13,8 +13,11 @@ from pathlib import Path
 import pytest
 
 from deploy.install_transaction import (
+    _directory_digest,
+    _verify_managed_directory,
     begin_transaction,
     mark_managed_directory,
+    remove_transaction_target,
     rollback_transaction,
 )
 
@@ -175,30 +178,11 @@ def test_installer_previews_core_only_and_explicit_tcad_paths(tmp_path: Path) ->
     assert "Selected plugins: tcad_artifact,curve_score,curve_figure_evidence" in all_domains
 
 
-def _figure_supply(root: Path, *, version: str = "5.3.0", language_output: str | None = None) -> dict[str, str]:
-    """Simulated OCR supply; Poppler and Pillow calls still execute real libraries."""
-    language_output = language_output or "List of available languages (2):\neng\nosd"
+def _figure_supply(root: Path) -> dict[str, str]:
+    """Expose the real pdfimages binary through the simulated service PATH."""
     binary = root / "figure-bin"
     binary.mkdir()
-    model = root / "model/eng.traineddata"
-    model.parent.mkdir()
-    model.write_bytes(b"test-only OCR data, not a real model")
-    for name in ("pdfinfo", "pdfimages", "pdftoppm"):
-        (binary / name).symlink_to(shutil.which(name))
-    ocr = binary / "tesseract"
-    ocr.write_text(
-        f"#!{sys.executable}\nimport os\nimport sys\nfrom pathlib import Path\n"
-        "assert 'TESSDATA_PREFIX' not in os.environ\n"
-        f"if '--version' in sys.argv: print('tesseract {version}')\n"
-        "elif '--list-langs' in sys.argv:\n"
-        f" print({language_output!r} "
-        f"if Path({str(model)!r}).exists() else 'List of available languages (1):\\nosd')\n"
-        "else:\n"
-        " assert '--tessdata-dir' not in sys.argv and '-l' in sys.argv\n"
-        " print('left\\ttop\\twidth\\theight\\ttext\\n20\\t20\\t150\\t42\\t12345')\n",
-        encoding="utf-8",
-    )
-    ocr.chmod(0o755)
+    (binary / "pdfimages").symlink_to(shutil.which("pdfimages"))
     for name, body in {
         "systemd-path": f"printf '%s\\n' '{binary}'\n",
         "systemctl": "exit 0\n",
@@ -209,24 +193,20 @@ def _figure_supply(root: Path, *, version: str = "5.3.0", language_output: str |
     return {"PATH": f"{binary}:{os.environ['PATH']}"}
 
 
-def test_figure_preflight_uses_default_data_and_baseline_font_api(tmp_path: Path, monkeypatch) -> None:
+def test_figure_preflight_exercises_exact_pdf_image_recovery(
+    tmp_path: Path, monkeypatch
+) -> None:
     import runpy
-    from PIL import ImageFont
 
     project = Path(__file__).resolve().parents[2]
     monkeypatch.setenv("PATH", _figure_supply(tmp_path)["PATH"])
-    monkeypatch.setenv("TESSDATA_PREFIX", str(tmp_path / "wrong-tessdata"))
     monkeypatch.setattr(sys, "argv", ["figure_dependencies.py"])
-    load_default = ImageFont.load_default
-    # Pillow 10.0 supports load_default(), not the later size keyword.
-    monkeypatch.setattr(ImageFont, "load_default", lambda: load_default())
     runpy.run_path(str(project / "plugins/curve_figure_evidence/curve_figure_evidence/figure_dependencies.py"),
                    run_name="__main__")
 
 
 @pytest.mark.parametrize("failure", [
-    "missing_ocr", "missing_model", "ambiguous_languages", "ocr_failure", "poppler_versions",
-    "service_path", "service_python",
+    "missing_pdfimages", "service_path", "service_python",
     "manager_ansi_quoted", "manager_double_quoted", "manager_backslash",
     "manager_whitespace", "manager_control", "manager_relative",
     "manager_empty_segment", "manager_leading_empty", "manager_trailing_empty",
@@ -240,32 +220,14 @@ def test_figure_dependency_failure_precedes_install_transaction(tmp_path: Path, 
         "SCID_SERVICE_GROUP": subprocess.check_output(["id", "-gn"], text=True).strip()}
     binary = tmp_path / "figure-bin"
     expected = ""
-    if failure == "missing_ocr":
-        (binary / "tesseract").unlink()
-        expected = "unavailable in service PATH: tesseract"
-    elif failure == "missing_model":
-        (tmp_path / "model/eng.traineddata").unlink()
-        expected = "OCR language eng is unavailable"
-    elif failure == "ambiguous_languages":
-        script = binary / "tesseract"
-        script.write_text(script.read_text().replace(
-            "List of available languages (2):", "List of available languages (2):\\nList of available languages (2):"))
-        expected = "ambiguous OCR language list"
-    elif failure == "ocr_failure":
-        script = binary / "tesseract"
-        script.write_text(script.read_text().replace("12345", "unrecognized"))
-        expected = "OCR preflight did not recognize"
-    elif failure == "poppler_versions":
-        script = binary / "pdftoppm"
-        script.unlink()  # Remove only the fixture symlink, never its system target.
-        script.write_text("#!/bin/sh\nprintf 'pdftoppm version different\\n'\n")
-        script.chmod(0o755)
-        expected = "Poppler tool versions differ"
+    if failure == "missing_pdfimages":
+        (binary / "pdfimages").unlink()
+        expected = "unavailable in service PATH: pdfimages"
     elif failure == "service_path":
-        # The operator still resolves pdfinfo from /usr/bin, the service cannot.
-        (binary / "pdfinfo").unlink()
-        assert shutil.which("pdfinfo", path=environment["PATH"])
-        expected = "unavailable in service PATH: pdfinfo"
+        # The operator still resolves pdfimages from /usr/bin, the service cannot.
+        (binary / "pdfimages").unlink()
+        assert shutil.which("pdfimages", path=environment["PATH"])
+        expected = "unavailable in service PATH: pdfimages"
     elif failure.startswith("manager_"):
         manager_path = {
             "manager_ansi_quoted": "$'/g4/service tools:/usr/bin:/bin'",
@@ -322,11 +284,9 @@ def test_service_python_accepts_plain_systemd_manager_path(tmp_path: Path) -> No
     assert completed.stdout.strip() == service_path
 
 
-@pytest.mark.parametrize("change,expected", [
-    ("version", "Tesseract version differs"),
-    ("language", "OCR language eng is unavailable"),
-])
-def test_figure_installed_preflight_rechecks_the_frozen_contract(tmp_path: Path, change: str, expected: str) -> None:
+def test_figure_installed_preflight_rechecks_the_frozen_contract(
+    tmp_path: Path,
+) -> None:
     project = Path(__file__).resolve().parents[2]
     environment = {**os.environ, **_figure_supply(tmp_path),
         "SCID_WORKSPACE": str(tmp_path), "SCID_PYTHON": sys.executable}
@@ -338,28 +298,25 @@ SELECTED_PLUGINS=(curve_figure_evidence)
 validate_figure_dependencies
 printf '%s\\n' "$FIGURE_DEPENDENCY_CONTRACT" > "$2/curve_figure_evidence/figure_dependencies.json"
 validate_figure_dependencies "$2"
-"$PYTHON" -c 'from pathlib import Path; import sys; p=Path(sys.argv[1]); p.write_text(p.read_text().replace(sys.argv[2], sys.argv[3]))' "$3" "$4" "$5"
+"$SCID_PYTHON" -c 'import json,sys; p=sys.argv[1]; v=json.load(open(p)); v["poppler_version"]="different"; open(p,"w").write(json.dumps(v))' "$2/curve_figure_evidence/figure_dependencies.json"
 validate_figure_dependencies "$2"
-''', "bash", str(project / "deploy/install.sh"), str(site), str(tmp_path / "figure-bin/tesseract"),
-        *( ("tesseract 5.3.0", "tesseract 5.4.0") if change == "version" else ("eng", "fra") )],
+''', "bash", str(project / "deploy/install.sh"), str(site)],
         cwd=tmp_path, env=environment, capture_output=True, text=True, timeout=60)
     assert completed.returncode != 0
     assert completed.stderr.count("figure dependency preflight: pass") == 2
-    assert expected in completed.stderr
+    assert "pdfimages version differs" in completed.stderr
     contract = json.loads((site / "curve_figure_evidence/figure_dependencies.json").read_bytes())
-    assert contract["ocr"]["version"] == "5.3.0"
-    assert set(contract["ocr"]) == {"version", "language", "adapter", "supply_status"}
+    assert set(contract) == {"pillow_version", "poppler_version", "executables"}
+    assert set(contract["executables"]) == {"pdfimages"}
     assert all(Path(path).is_absolute() for path in contract["executables"].values())
 
 
-@pytest.mark.parametrize("version,language_output", [
-    ("4.1.1", "List of available languages (2):\neng\nosd"),
-    ("5.4.0", 'List of available languages in "/system/default/tessdata" (1):\neng'),
-])
-def test_figure_preflight_observes_dependencies_without_identity_inputs(tmp_path: Path, version: str, language_output: str) -> None:
+def test_figure_preflight_observes_dependencies_without_identity_inputs(
+    tmp_path: Path,
+) -> None:
     project = Path(__file__).resolve().parents[2]
     environment = {key: value for key, value in os.environ.items() if not key.startswith("SCID_FIGURE_")}
-    environment.update(_figure_supply(tmp_path, version=version, language_output=language_output))
+    environment.update(_figure_supply(tmp_path))
     environment.update(SCID_WORKSPACE=str(tmp_path), SCID_PYTHON=sys.executable)
     completed = subprocess.run([
         "bash", "-c", 'source "$1"; SELECTED_PLUGINS=(curve_figure_evidence); validate_figure_dependencies',
@@ -369,9 +326,8 @@ def test_figure_preflight_observes_dependencies_without_identity_inputs(tmp_path
     contract = json.loads(completed.stdout.removeprefix("Verified figure dependencies: "))
     from PIL import __version__
     assert contract["pillow_version"] == __version__
-    assert contract["ocr"]["version"] == version
-    assert contract["ocr"]["language"] == "eng"
-    assert set(contract["ocr"]) == {"version", "language", "adapter", "supply_status"}
+    assert contract["poppler_version"]
+    assert set(contract["executables"]) == {"pdfimages"}
 
 
 def test_installer_rejects_removed_case_plugin_before_installation(tmp_path: Path) -> None:
@@ -439,6 +395,49 @@ def test_tcad_runtime_configuration_is_owned_and_executed_by_plugin(
         "transport": "socket",
         "socket_path": str(socket),
     }
+
+
+def test_complete_tcad_skill_install_integrity_removal_and_rollback(tmp_path: Path) -> None:
+    import grp
+    import pwd
+
+    project_root = Path(__file__).resolve().parents[2]
+    skill_root = tmp_path / "skills"
+    skill = skill_root / "sentaurus-tcad-code"
+    name = "codex-skill-sentaurus-tcad-code"
+    result = subprocess.run(
+        ["bash", "-c", 'source "$1"; install_platform_skill "$2" codex "$3" sentaurus-tcad-code',
+         "bash", str(project_root / "deploy/install.sh"), str(tmp_path / "backup"), str(skill_root)],
+        cwd=project_root, capture_output=True, text=True, timeout=30,
+        env={**os.environ, "SCID_PYTHON": sys.executable,
+             "SCID_SERVICE_USER": pwd.getpwuid(os.getuid()).pw_name,
+             "SCID_SERVICE_GROUP": grp.getgrgid(os.getgid()).gr_name},
+    )
+    assert result.returncode == 0, result.stderr
+    source = project_root / "skills/sentaurus-tcad-code"
+    assert _directory_digest(skill) == _directory_digest(source)
+    _verify_managed_directory(skill, name=name)
+    for relative in ("references/manuals/R-2020.09/sprocess_ug.pdf",
+                     "references/manuals/topics.json", "references/manuals/catalog.json",
+                     "scripts/manual_extract.py", "SKILL.md"):
+        target = skill / relative
+        original = target.read_bytes()
+        target.write_bytes(original + b"\nchanged\n")
+        with pytest.raises(RuntimeError, match="content has changed"):
+            _verify_managed_directory(skill, name=name)
+        target.write_bytes(original)
+    link = skill / "outside-link"
+    link.symlink_to(tmp_path)
+    with pytest.raises(RuntimeError, match="symlink"):
+        _verify_managed_directory(skill, name=name)
+    link.unlink()
+    transaction = tmp_path / "transaction"
+    begin_transaction(transaction, targets=((name, skill),))
+    remove_transaction_target(transaction, name=name, path=skill, managed_directory_name=name)
+    assert not skill.exists()
+    rollback_transaction(transaction)
+    _verify_managed_directory(skill, name=name)
+    assert _directory_digest(skill) == _directory_digest(source)
 
 
 def test_core_install_retires_and_rollback_restores_tcad_surfaces(
@@ -1423,7 +1422,8 @@ def test_installer_requires_release_matched_tcad_manual_skill_sources() -> None:
         assert relative in script
 
 
-def test_generic_reinstaller_passes_resolved_configuration(tmp_path: Path) -> None:
+@pytest.mark.parametrize("explicit_tcad_state", [False, True])
+def test_generic_reinstaller_passes_resolved_configuration(tmp_path: Path, explicit_tcad_state: bool) -> None:
     project_root = Path(__file__).resolve().parents[2]
     wrapper = project_root / "deploy/reinstall.sh"
     workspace = tmp_path / "workspace"
@@ -1432,7 +1432,7 @@ def test_generic_reinstaller_passes_resolved_configuration(tmp_path: Path) -> No
     command_config.write_text("{}\n", encoding="utf-8")
     install_root = tmp_path / "install"
     state_root = tmp_path / "state"
-    tcad_state_root = tmp_path / "tcad-state"
+    tcad_state_root = tmp_path / "tcad-state" if explicit_tcad_state else state_root / "tcad"
     config_root = tmp_path / "config"
     backup_root = tmp_path / "backups"
     skill_root = tmp_path / "skills"
@@ -1461,7 +1461,7 @@ def test_generic_reinstaller_passes_resolved_configuration(tmp_path: Path) -> No
             "SCID_TCAD_COMMAND_CONFIG": str(command_config),
             "SCID_INSTALL_ROOT": str(install_root),
             "SCID_STATE_ROOT": str(state_root),
-            "TCAD_STATE_ROOT": str(tcad_state_root),
+            "TCAD_STATE_ROOT": str(tcad_state_root) if explicit_tcad_state else "",
             "SCID_CONFIG_ROOT": str(config_root),
             "SCID_BACKUP_ROOT": str(backup_root),
             "SCID_APPROVAL_PORT": "18765",
@@ -1491,6 +1491,83 @@ def test_generic_reinstaller_passes_resolved_configuration(tmp_path: Path) -> No
     assert f"SCID_CODEX_LAUNCH_ROOT={launch_root}" in output
     assert str(project_root / "deploy/install.sh") in output
     assert output[-1] == "install"
+
+
+@pytest.mark.parametrize("transport,override", [
+    ("socket", ""), ("socket", "legacy"),
+    ("command", ""), ("command", "legacy"), ("command", "unused-relative"),
+])
+def test_installer_only_manages_local_tcad_state(tmp_path: Path, transport: str, override: str) -> None:
+    project = Path(__file__).resolve().parents[2]
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    state = tmp_path / "state"
+    legacy = tmp_path / "legacy"
+    legacy.mkdir()
+    sentinel = legacy / "submissions.sqlite3"
+    sentinel.write_bytes(b"existing state must not be moved or rewritten")
+    legacy_mode = legacy.stat().st_mode
+    command_config = tmp_path / "command.json"
+    command_config.write_text("{}")
+    # Execute real installer branches, recording privileged filesystem calls
+    # and transaction targets instead of modifying the host installation.
+    python = tmp_path / "python"
+    python.write_text(f'''#!{sys.executable}
+import json, os, sys
+from pathlib import Path
+if sys.argv[1].endswith("/deploy/install_transaction.py"):
+    assert sys.argv[2] == "begin"
+    Path(os.environ["SCID_WORKSPACE"], "transaction.json").write_text(json.dumps(sys.argv[3:]))
+    Path(sys.argv[sys.argv.index("--root") + 1]).mkdir(parents=True)
+else:
+    os.execv({sys.executable!r}, [{sys.executable!r}, *sys.argv[1:]])
+''')
+    python.chmod(0o755)
+    tcad_state = str(legacy) if override == "legacy" else override
+    completed = subprocess.run([
+        "bash", "-c", '''source "$1"
+require_sources
+render_units "$WORKSPACE/units"
+for fn in require_root validate_source validate_base_python validate_figure_dependencies \
+    install_packages retire_old_deployment retire_inactive_tcad_surfaces activate_packages \
+    create_local_workspace_root ensure_secret configure_tcad_runtime install_units \
+    configure_platform verify_installation complete_install_transaction; do
+    eval "$fn() { :; }"
+done
+install() { printf 'install %s\\n' "$*" >> "$WORKSPACE/mutations"; }
+chown() { printf 'chown %s\\n' "$*" >> "$WORKSPACE/mutations"; }
+find() { :; }
+systemctl() { :; }
+rollback_install() { exit "$1"; }
+install_all
+trap - ERR INT TERM
+''', "bash", str(project / "deploy/install.sh")],
+        cwd=tmp_path, capture_output=True, text=True, timeout=20,
+        env={**os.environ, "SCID_WORKSPACE": str(workspace), "SCID_PYTHON": str(python),
+             "SCID_PLUGINS": "tcad_artifact,curve_score", "SCID_WORKER_BACKEND": "local",
+             "SCID_CODEX_LAUNCH_ROOT": "", "SCID_CODEX_SKILL_ROOT": str(tmp_path / "skills"),
+             "SCID_INSTALL_ROOT": str(tmp_path / "install"), "SCID_STATE_ROOT": str(state),
+             "SCID_CONFIG_ROOT": str(tmp_path / "config"), "SCID_BACKUP_ROOT": str(tmp_path / "backups"),
+             "TCAD_STATE_ROOT": tcad_state,
+             "SCID_TCAD_COMMAND_CONFIG": str(command_config) if transport == "command" else ""},
+    )
+    assert completed.returncode == 0, completed.stderr
+    targets = json.loads((workspace / "transaction.json").read_text())
+    mutations = (workspace / "mutations").read_text().splitlines()
+    unit = workspace / "units/tcad-control.service"
+    expected_state = legacy if override == "legacy" else state / "tcad"
+    if transport == "socket":
+        assert f'--state-root "{expected_state}"' in unit.read_text()
+        assert f"db-tcad-submissions={expected_state}/submissions.sqlite3" in targets
+        # Directory activation and ownership normalization both use this root.
+        assert sum(line.endswith(" " + str(expected_state)) for line in mutations) == 2
+    else:
+        assert not unit.exists()
+        assert not any("db-tcad-submissions=" in target for target in targets)
+        assert not any(line.endswith(" " + str(path)) for line in mutations
+                       for path in (legacy, state / "tcad", "/var/lib/scidiscovery-tcad", tcad_state) if path)
+    assert sentinel.read_bytes() == b"existing state must not be moved or rewritten"
+    assert legacy.stat().st_mode == legacy_mode
 
 
 def test_three_domain_plugins_delegate_to_generic_reinstaller(tmp_path: Path) -> None:

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 from bisect import bisect_right
-from typing import Annotated, Literal
+from typing import Callable, Annotated, Literal
 
 from pydantic import Field, model_validator
 
@@ -255,7 +255,7 @@ class CurveComparison(SchemaModel):
     operators: Annotated[
         tuple[CurveOperatorSpec, ...], Field(min_length=1, max_length=256)
     ]
-    required: bool = True
+    required: bool = Field(default=True, description="Selected by the analyst; optional comparisons may be used for any declared purpose.")
     purpose: CurveComparisonPurpose = "unspecified_legacy"
     gate_scope: CurveGateScope = "unspecified_legacy"
     metric_profile: CurveMetricProfile = "unspecified_legacy"
@@ -268,59 +268,6 @@ class CurveComparison(SchemaModel):
             raise ValueError("curve comparison operator keys must be unique")
         if self.reference_series == self.candidate_series:
             raise ValueError("curve comparison requires distinct series")
-        legacy_count = sum(
-            (
-                self.purpose == "unspecified_legacy",
-                self.gate_scope == "unspecified_legacy",
-                self.metric_profile == "unspecified_legacy",
-            )
-        )
-        if legacy_count not in {0, 3}:
-            raise ValueError(
-                "curve purpose, gate scope, and metric profile must be declared together"
-            )
-        expected_scope = {
-            "target_fit": "objective",
-            "numerical_convergence": "numerical_qualification",
-            "mechanism_separation": "mechanism",
-            "implementation_sanity": "numerical_qualification",
-            "exploratory_diagnostic": "diagnostic_only",
-        }.get(self.purpose)
-        if expected_scope is not None and self.gate_scope != expected_scope:
-            raise ValueError("curve comparison purpose has an incompatible gate scope")
-        if self.purpose == "target_fit" and not self.required:
-            raise ValueError("target-fit comparison cannot be optional")
-        if self.purpose == "exploratory_diagnostic" and self.required:
-            raise ValueError("exploratory diagnostic comparison cannot gate a claim")
-        front_operators = tuple(
-            item
-            for item in self.operators
-            if item.kind in {"crossing_shift", "width_shift"}
-        )
-        if self.metric_profile == "sharp_front" and not front_operators:
-            raise ValueError(
-                "sharp-front comparison requires a crossing or width operator"
-            )
-        if (
-            self.metric_profile == "sharp_front"
-            and self.gate_scope == "numerical_qualification"
-            and self.required
-            and not any(item.threshold is not None for item in front_operators)
-        ):
-            raise ValueError(
-                "numerical-qualification sharp-front comparison requires a "
-                "thresholded crossing or width operator"
-            )
-        if self.metric_profile == "point" and any(
-            item.kind != "point_difference" for item in self.operators
-        ):
-            raise ValueError("point comparison requires point-difference operators")
-        if self.metric_profile == "smooth_curve" and any(
-            item.kind
-            not in {"residual_rms", "residual_max_abs", "mean_signed_difference"}
-            for item in self.operators
-        ):
-            raise ValueError("smooth-curve comparison requires residual operators")
         return self
 
 
@@ -348,8 +295,6 @@ class CurveComparisonSpec(SchemaModel):
         keys = tuple(item.comparison_key for item in self.comparisons)
         if len(keys) != len(set(keys)):
             raise ValueError("curve comparison keys must be unique")
-        if not any(item.required for item in self.comparisons):
-            raise ValueError("curve comparison spec requires a required comparison")
         series_keys = tuple(item.series_key for item in self.series_declarations)
         identities = tuple(
             (item.case_key, item.role) for item in self.series_declarations
@@ -374,65 +319,6 @@ class CurveComparisonSpec(SchemaModel):
                 item.series_key: item for item in self.series_declarations
             }
             for comparison in self.comparisons:
-                if comparison.purpose == "unspecified_legacy":
-                    continue
-                reference_role = declarations[
-                    comparison.reference_series
-                ].scientific_role
-                candidate_role = declarations[
-                    comparison.candidate_series
-                ].scientific_role
-                if reference_role is None or candidate_role is None:
-                    raise ValueError(
-                        "purpose-aware comparison requires scientific series roles"
-                    )
-                allowed_roles = {
-                    "target_fit": (
-                        {"experimental_target"},
-                        {"simulation_candidate"},
-                    ),
-                    "numerical_convergence": (
-                        {"numerical_reference", "simulation_candidate"},
-                        {"numerical_variant", "simulation_candidate"},
-                    ),
-                    "mechanism_separation": (
-                        {"analytic_control", "simulation_candidate"},
-                        {"simulation_candidate"},
-                    ),
-                    "implementation_sanity": (
-                        {
-                            "diagnostic_series",
-                            "numerical_reference",
-                            "simulation_candidate",
-                        },
-                        {"diagnostic_series", "numerical_variant"},
-                    ),
-                    "exploratory_diagnostic": (
-                        {
-                            "experimental_target",
-                            "simulation_candidate",
-                            "numerical_reference",
-                            "numerical_variant",
-                            "analytic_control",
-                            "diagnostic_series",
-                        },
-                        {
-                            "experimental_target",
-                            "simulation_candidate",
-                            "numerical_reference",
-                            "numerical_variant",
-                            "analytic_control",
-                            "diagnostic_series",
-                        },
-                    ),
-                }[comparison.purpose]
-                if (
-                    reference_role not in allowed_roles[0]
-                    or candidate_role not in allowed_roles[1]
-                ):
-                    raise ValueError(
-                        "curve comparison series roles are incompatible with its purpose"
-                    )
                 if comparison.purpose == "target_fit" and (
                     declarations[comparison.reference_series].source
                     != "reference_input"
@@ -450,15 +336,6 @@ class CurveComparisonSpec(SchemaModel):
         compared_references = {
             item.reference_series for item in self.comparisons
         }
-        declared_references = {
-            item.series_key
-            for item in self.series_declarations
-            if item.source == "reference_input"
-        }
-        if not declared_references.issubset(compared_references):
-            raise ValueError(
-                "every reference_input declaration must be used by a comparison"
-            )
         compare_dispositions = {
             item.series_key
             for item in self.reference_dispositions
@@ -469,10 +346,8 @@ class CurveComparisonSpec(SchemaModel):
             for item in self.reference_dispositions
             if item.disposition == "exclude"
         }
-        if compare_dispositions and compare_dispositions != declared_references:
-            raise ValueError(
-                "compare dispositions must cover the exact comparison references"
-            )
+        if not compare_dispositions.issubset(compared_references):
+            raise ValueError("compare disposition references a series not actually compared")
         if excluded & compared_references:
             raise ValueError("a compared reference series cannot be excluded")
         return self
@@ -484,16 +359,6 @@ class CurveObjectiveTargetBinding(SchemaModel):
     required_domains: Annotated[
         tuple[CurveDomain, ...], Field(min_length=1, max_length=64)
     ]
-
-    @model_validator(mode="after")
-    def _domains_are_unique(self) -> CurveObjectiveTargetBinding:
-        values = tuple(
-            (item.start, item.stop, item.unit, item.min_points)
-            for item in self.required_domains
-        )
-        if len(values) != len(set(values)):
-            raise ValueError("curve objective binding domains must be unique")
-        return self
 
 
 class CurveExperimentContract(SchemaModel):
@@ -545,12 +410,11 @@ def validate_curve_experiment_contract(
     spec = contract.comparison_spec
     validate_curve_comparison_declaration_contract(spec)
     _validate_curve_cases(spec, proposal)
-    _validate_curve_check_bindings(
+    return _validate_curve_check_bindings(
         spec,
         plan,
         expected_evaluator_profile=expected_evaluator_profile,
     )
-    return deterministic_validation_check_keys(plan)
 
 
 def _validate_curve_cases(
@@ -558,35 +422,9 @@ def _validate_curve_cases(
     proposal: ExperimentProposal,
 ) -> None:
     cases = {item.case_key: item for item in proposal.cases}
-    declarations = {item.series_key: item for item in spec.series_declarations}
     for declaration in spec.series_declarations:
         if declaration.source == "solver_output" and declaration.case_key not in cases:
             raise SemanticRuleViolation("curve solver series names an undeclared experiment case")
-    for comparison in spec.comparisons:
-        if comparison.purpose != "target_fit":
-            continue
-        candidate = declarations[comparison.candidate_series]
-        candidate_case = cases.get(candidate.case_key)
-        if candidate_case is None:
-            raise SemanticRuleViolation(
-                "target-fit solver candidate must name a declared experiment case"
-            )
-        if candidate_case.scientific_role == "convergence":
-            raise SemanticRuleViolation("target-fit candidate cannot use a convergence-only case")
-        generic = proposal.comparison_contract
-        if generic is None:
-            raise SemanticRuleViolation("target-fit candidate requires a comparison contract")
-        for variable in generic.variables:
-            if variable.factor_type not in {"numerical", "implementation"}:
-                continue
-            expected = {item.case_key: item.value for item in variable.expectations}
-            baseline = expected[generic.baseline_case_key]
-            candidate_value = expected[candidate.case_key]
-            if type(candidate_value) is not type(baseline) or candidate_value != baseline:
-                raise SemanticRuleViolation(
-                    "target-fit candidate must preserve baseline numerical and "
-                    f"implementation factors: {variable.variable_key}"
-                )
 
 
 def _validate_curve_check_bindings(
@@ -594,16 +432,15 @@ def _validate_curve_check_bindings(
     plan: ValidationPlan,
     *,
     expected_evaluator_profile: str | None,
-) -> None:
+) -> tuple[Identifier, ...]:
     checks = {
         check.check_key: check
         for dimension in (plan.numerical, plan.physical, plan.experimental)
         for check in dimension.checks
         if check.evaluation_mode == "deterministic_threshold"
     }
-    bound: dict[str, CurveOperatorSpec] = {}
+    bound: dict[str, list[CurveOperatorSpec]] = {}
     for comparison in spec.comparisons:
-        bound_in_comparison = 0
         for operator in comparison.operators:
             key = operator.validation_check_key
             if operator.threshold is not None and key is None:
@@ -616,55 +453,43 @@ def _validate_curve_check_bindings(
                 )
             if key is None:
                 continue
-            if key in bound:
-                raise SemanticRuleViolation(
-                    "each deterministic validation check must bind one curve operator"
-                )
-            bound[key] = operator
-            bound_in_comparison += 1
-        if (
-            comparison.required
-            and comparison.gate_scope == "numerical_qualification"
-            and bound_in_comparison == 0
-        ):
+            bound.setdefault(key, []).append(operator)
+    for key, operators in bound.items():
+        if key not in checks:
             raise SemanticRuleViolation(
-                "required numerical-qualification curve comparison needs a "
-                "thresholded validation-check binding"
+                f"curve contract names an unknown deterministic validation check: {key}"
             )
-    if set(bound) != set(checks):
-        raise SemanticRuleViolation(
-            "curve contract must cover the exact deterministic validation checks; "
-            f"missing={sorted(set(checks) - set(bound))}, "
-            f"unexpected={sorted(set(bound) - set(checks))}"
-        )
-    for key, operator in bound.items():
         check = checks[key]
-        threshold = operator.threshold
         planned = check.threshold
-        assert threshold is not None and planned is not None
-        if check.evaluator_metric != operator.kind:
-            raise SemanticRuleViolation(
-                f"curve operator kind does not match validation evaluator for {key}"
+        for operator in operators:
+            threshold = operator.threshold
+            assert threshold is not None and planned is not None
+            if check.evaluator_metric != operator.kind:
+                raise SemanticRuleViolation(
+                    f"curve operator kind does not match validation evaluator for {key}"
+                )
+            if (
+                expected_evaluator_profile is not None
+                and check.evaluator_profile != expected_evaluator_profile
+            ):
+                raise SemanticRuleViolation(
+                    f"validation check requires a different curve evaluator for {key}"
+                )
+            expected_operator = (
+                "le" if threshold.comparison == "abs_le" else threshold.comparison
             )
-        if (
-            expected_evaluator_profile is not None
-            and check.evaluator_profile != expected_evaluator_profile
-        ):
-            raise SemanticRuleViolation(
-                f"validation check requires a different curve evaluator for {key}"
-            )
-        expected_operator = (
-            "le" if threshold.comparison == "abs_le" else threshold.comparison
-        )
-        if (
-            planned.operator != expected_operator
-            or planned.value != threshold.value
-            or planned.upper_value is not None
-            or planned.unit != threshold.unit
-        ):
-            raise SemanticRuleViolation(
-                f"curve operator threshold does not match validation check {key}"
-            )
+            if (
+                planned.operator != expected_operator
+                or planned.value != threshold.value
+                or planned.upper_value is not None
+                or planned.unit != threshold.unit
+            ):
+                raise SemanticRuleViolation(
+                    f"curve operator threshold does not match validation check {key}"
+                )
+    return tuple(
+        key for key in deterministic_validation_check_keys(plan) if key in bound
+    )
 
 
 def validate_curve_comparison_declaration_contract(
@@ -933,15 +758,6 @@ class CurveComparisonResult(SchemaModel):
 
     @model_validator(mode="after")
     def _status_is_derived(self) -> CurveComparisonResult:
-        legacy_fields = (
-            self.purpose == "unspecified_legacy",
-            self.gate_scope == "unspecified_legacy",
-            self.metric_profile == "unspecified_legacy",
-        )
-        if any(legacy_fields) and not all(legacy_fields):
-            raise ValueError(
-                "curve comparison result scope fields must be declared together"
-            )
         check_statuses = {item.status for item in self.checks}
         metric_statuses = {item.status for item in self.metrics}
         derived: AggregateStatus
@@ -1012,12 +828,15 @@ def evaluate_curve_consistency(
     operator_version: str = "curve-operators.v1",
     validation_plan_sha256: str | None = None,
     covered_validation_check_keys: tuple[str, ...] = (),
+    check_budget: Callable[[], None] | None = None,
 ) -> CurveConsistencyReport:
     """Evaluate a declarative curve comparison without physical interpretation."""
 
     by_key = {item.series_key: item for item in bundle.series}
     results: list[CurveComparisonResult] = []
     for comparison in spec.comparisons:
+        if check_budget is not None:
+            check_budget()
         reference = by_key.get(comparison.reference_series)
         candidate = by_key.get(comparison.candidate_series)
         if reference is None or candidate is None:

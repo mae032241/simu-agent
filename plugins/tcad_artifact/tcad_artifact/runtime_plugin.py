@@ -24,7 +24,7 @@ from scidiscovery.operations.spec import CallableComponent
 
 from .debug_adapter import TCADDevelopmentDebugBridge
 from .local_debug_service import LocalTCADDebugService
-from .project_packager import ReviewedDeckPackage
+from .project_packager import ReviewedDeckPackage, validate_reviewed_deck_eligibility
 
 
 _REVIEW_DETAIL_LIMIT = 64
@@ -86,8 +86,10 @@ def build_runtime(context: RuntimePluginContext) -> RuntimePluginContribution:
         return RuntimePluginContribution(execution_adapters={"tcad": adapter})
     if context.mode != "local_worker":
         raise ValueError("TCAD runtime mode is unsupported")
+    from .output_recovery import OutputInspectionService
     return RuntimePluginContribution(
         tool_services={
+            "tcad.output_inspection": OutputInspectionService(adapter),
             "tcad.development_debug": LocalTCADDebugService(
                 adapter=TCADDevelopmentDebugBridge(adapter),
                 exchange_root=context.state_root / "local-tcad-debug",
@@ -117,6 +119,7 @@ def execution_projector(context: ApprovalProjectorContext) -> ReviewDocument:
     package = ReviewedDeckPackage.model_validate_json(
         context.subjects[1].content, strict=True
     )
+    validate_reviewed_deck_eligibility(package)
     if (
         request.compiled_identity is None
         or request.compiled_identity.operation_id != context.operation_id

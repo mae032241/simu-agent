@@ -31,6 +31,21 @@ def _expect(code: str, *plugins: PluginDefinition) -> CatalogCompileError:
     return caught.value
 
 
+@pytest.mark.parametrize("exposure", ("handoff_only", "on_demand", "full"))
+@pytest.mark.parametrize("usage", ("evidence_inventory", "prior_signal", "claim_evidence"))
+@pytest.mark.parametrize("wildcard", ("paired", "schema_only", "media_only"))
+def test_wildcard_inputs_require_paired_read_only_inventory(exposure, usage, wildcard) -> None:
+    port = replace(
+        PLUGIN.operations[0].inputs[0],
+        schema_id="*" if wildcard != "media_only" else "example.input.v1",
+        media_types=("*/*",) if wildcard != "schema_only" else ("application/json",),
+        exposure=exposure,
+        usage=usage,
+    )
+    allowed = wildcard == "paired" and usage == "evidence_inventory" and exposure != "full"
+    assert port.issue() == (None if allowed else "input_wildcard_invalid")
+
+
 @pytest.mark.parametrize(
     ("implementation", "code"),
     (

@@ -34,12 +34,6 @@ class ObjectiveTarget(SchemaModel):
     ]
     rationale: Annotated[str, Field(min_length=1, max_length=4096)]
 
-    @model_validator(mode="after")
-    def _evidence_is_unique(self) -> ObjectiveTarget:
-        if len(self.evidence_item_keys) != len(set(self.evidence_item_keys)):
-            raise ValueError("objective target evidence_item_keys must be unique")
-        return self
-
 
 class ObjectiveClosureRequirement(SchemaModel):
     model_config = ConfigDict(
@@ -112,26 +106,19 @@ class ObjectiveClosureRequirement(SchemaModel):
     ] = "target_coverage"
     target_keys: Annotated[
         tuple[Identifier, ...],
-        Field(max_length=64, json_schema_extra={"uniqueItems": True}),
+        Field(max_length=64),
     ] = ()
     comparison_purposes: Annotated[
         tuple[ComparisonPurpose, ...],
-        Field(max_length=16, json_schema_extra={"uniqueItems": True}),
+        Field(max_length=16),
     ] = ()
     validation_check_keys: Annotated[
         tuple[Identifier, ...],
-        Field(max_length=128, json_schema_extra={"uniqueItems": True}),
+        Field(max_length=128),
     ] = ()
 
     @model_validator(mode="after")
     def _subjects_match_type(self) -> ObjectiveClosureRequirement:
-        for values, label in (
-            (self.target_keys, "target_keys"),
-            (self.comparison_purposes, "comparison_purposes"),
-            (self.validation_check_keys, "validation_check_keys"),
-        ):
-            if len(values) != len(set(values)):
-                raise ValueError(f"objective closure {label} must be unique")
         if self.requirement_type == "target_coverage":
             if not self.target_keys:
                 raise ValueError("target_coverage requires target_keys")

@@ -21,10 +21,7 @@ from typing import Iterable
 
 from PIL import Image, __version__ as PILLOW_VERSION
 
-from curve_figure_evidence.figure_digitization import (
-    FigureDigitizationRequest,
-    build_digitized_figure_bundle,
-)
+from curve_figure_evidence.figure_digitization import build_digitized_figure_bundle
 from curve_score.schema import CurveExperimentContract
 from curve_figure_evidence.plugin import PLUGIN as FIGURE_PLUGIN
 from scidiscovery.artifact_agent.interfaces.mcp_root import (
@@ -129,6 +126,8 @@ def _engineering_intent() -> bytes:
                 "proposals": [
                     {
                         "experiment_key": "engineering_smoke",
+                        "objectives": ["Verify one bounded analysis."],
+                        "current_objectives": ["Verify one bounded analysis."],
                         "frozen_invariants": ["same fixture"],
                         "cases": [
                             {
@@ -230,60 +229,36 @@ def _figure_payloads() -> tuple[bytes, bytes, bytes]:
         canonical_stream, format="PNG", optimize=False, compress_level=9
     )
     recovered = canonical_stream.getvalue()
-    new_source_contract = "source" in FigureDigitizationRequest.model_fields
-    e2_contract = "plot_bbox" in FigureDigitizationRequest.model_fields
     request = canonical_json(
         {
-            "schema_version": (
-                "scidiscovery.curve-figure-digitization-request.v2"
-                if new_source_contract
-                else "scidiscovery.curve-figure-digitization-request.v1"
-            ),
+            "schema_version": "scidiscovery.curve-figure-digitization-request.v2",
             "figure_key": "bounded_figure",
             "panel_key": "main",
             "figure": "Fig. 1",
             "citation": "Fig. 1",
-            **(
-                {
-                    "source": {
-                        "source_kind": "raster_image",
-                        "media_type": "image/png",
-                        "source_sha256": hashlib.sha256(source).hexdigest(),
-                        "recovered_image_sha256": hashlib.sha256(recovered).hexdigest(),
-                        "width": image.width,
-                        "height": image.height,
-                        **(
-                            {
-                                "recovery_tool": "Pillow",
-                                "recovery_tool_version": PILLOW_VERSION,
-                            }
-                            if e2_contract
-                            else {}
-                        ),
-                    }
-                }
-                if new_source_contract
-                else {"page": 1}
-            ),
-            **({"plot_bbox": [1, 1, 10, 10]} if e2_contract else {}),
+            "source": {
+                "source_kind": "raster_image",
+                "media_type": "image/png",
+                "source_sha256": hashlib.sha256(source).hexdigest(),
+                "recovered_image_sha256": hashlib.sha256(recovered).hexdigest(),
+                "width": image.width,
+                "height": image.height,
+                "recovery_tool": "Pillow",
+                "recovery_tool_version": PILLOW_VERSION,
+            },
+            "plot_bbox": [1, 1, 10, 10],
             "axis_calibration": {
                 "x": {
                     "scale": "linear",
                     "unit": "um",
-                    "pixel_min": 1.0,
-                    "pixel_max": 9.0,
-                    "value_min": 0.0,
-                    "value_max": 8.0,
-                    "reprojection_error_px": 0.0,
+                    "ticks": [[1, 0], [9, 8]],
+                    "uncertainty_px": 0,
                 },
                 "y": {
                     "scale": "linear",
                     "unit": "cm^-3",
-                    "pixel_min": 9.0,
-                    "pixel_max": 1.0,
-                    "value_min": 1.0,
-                    "value_max": 9.0,
-                    "reprojection_error_px": 0.0,
+                    "ticks": [[9, 1], [1, 9]],
+                    "uncertainty_px": 0,
                 },
             },
             "series": [
@@ -291,33 +266,11 @@ def _figure_payloads() -> tuple[bytes, bytes, bytes]:
                     "series_key": "reference",
                     "label": "Reference",
                     "color": "#ff0000",
-                    "color_tolerance": 0.0,
                     "line_style": "solid",
                     "binding_source": "legend",
                     "visible_label": "Reference",
-                    **(
-                        {
-                            "binding_bbox": [1, 1, 4, 10],
-                            "seeds": [[1.0, 9.0], [9.0, 1.0]],
-                            "tracking": {
-                                "max_vertical_step_px": 2.0,
-                                "max_gap_px": 0,
-                                "max_gap_vertical_displacement_px": 2.0,
-                                "max_guide_distance_px": 2.0,
-                                "min_visible_fraction": 0.5,
-                                "min_points": 3,
-                                "plot_border_exclusion_px": 0,
-                            },
-                            "eligibility": {"default_eligible": True},
-                        }
-                        if e2_contract
-                        else {
-                            "min_points": 3,
-                            "min_visible_fraction": 0.5,
-                            "max_vertical_spread_px": 1.0,
-                            "uncertainty_px": 0.0,
-                        }
-                    ),
+                    "binding_bbox": [1, 1, 4, 10],
+                    "seeds": [[1, 9], [9, 1]],
                 }
             ],
         }
@@ -776,6 +729,11 @@ def _scenarios(catalog) -> tuple[Scenario, ...]:
                 for name, raw in curve_inputs.items()
             ),
             "analysis_curve_contract_review",
+        ),
+        Scenario(
+            "tcad.execution-context.project.v1",
+            (Datum("capability", "execution_context_capability", tcad["capability"]),),
+            "execution_context_capability",
         ),
         Scenario(
             "tcad.deck-project-compare.v1",

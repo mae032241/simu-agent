@@ -144,3 +144,14 @@ def test_revision_may_reorder_the_same_stable_hypothesis_keys() -> None:
         },
         {},
     )
+
+
+def test_missing_foundation_objective_is_an_input_admission_error() -> None:
+    import json
+    from scidiscovery.general_science_components import _hypothesis_inputs
+    from scidiscovery.operations.input_validation import OperationInvocationError
+
+    foundation = json.loads(_foundation())
+    foundation["objective_contract"] = None
+    with pytest.raises(OperationInvocationError, match="input_objective_missing"):
+        _hypothesis_inputs({"scientific_foundation": canonical_json(foundation)})

@@ -15,7 +15,11 @@ import pytest
 from blind_csv_plugin.contracts import CSV_SCHEMA_PROBE, CsvObservation, summarize_csv
 from blind_csv_plugin.plugin import PLUGIN as BLIND_CSV_PLUGIN
 from scidiscovery.artifact_agent.interfaces.mcp_local_worker import LocalWorkerMCPRouter
-from scidiscovery.artifact_agent.interfaces.mcp_root import RootMCPRouter, RootToolFacade
+from scidiscovery.artifact_agent.interfaces.mcp_root import (
+    RootMCPRouter,
+    RootToolError,
+    RootToolFacade,
+)
 from scidiscovery.artifact_agent.runtime import open_runtime
 from scidiscovery.artifact_agent.schema.artifact import ArtifactRegistration
 from scidiscovery.artifact_agent.schema.common import canonical_json
@@ -625,9 +629,113 @@ def test_status_is_pure_and_failure_recovery_is_explicit(tmp_path: Path) -> None
 
 
 @pytest.mark.parametrize(
+    "changed_attribute, changed_value",
+    (
+        ("backend_id", "changed_backend"),
+        ("backend_version", "changed_version"),
+        ("capabilities", ("native_workspace",)),
+    ),
+)
+def test_recovery_rejects_changed_backend_identity_before_scheduling(
+    tmp_path: Path,
+    changed_attribute: str,
+    changed_value: object,
+) -> None:
+    catalog, runtime, instance, _, root = _system(tmp_path)
+    _invoke(root, "backend_source")
+    worker = _worker(catalog, runtime)
+    opened = worker.call_tool("worker_open_assignment", {})
+    Path(opened["output_directory"], "result.json").write_bytes(_envelope())
+    status = root.call_tool("run_status", {"name": "backend_source"})
+    failed = root.call_tool(
+        "run_record_failure",
+        {
+            "name": "backend_source",
+            "reason": "Preserve one exact recovery draft.",
+            "expected_state": "running",
+            "expected_last_activity_at": status["last_activity_at"],
+        },
+    )
+    assert failed["recovery_available"] is True
+
+    original = runtime.runs.backend
+    backend_type = type(
+        "ChangedLocalTrustedBackend",
+        (LocalTrustedBackend,),
+        {changed_attribute: changed_value},
+    )
+    runtime.runs.backend = backend_type(original.root)
+    assert root.call_tool("run_status", {"name": "backend_source"})[
+        "recovery_available"
+    ] is False
+
+    request = {
+        "name": "backend_resume",
+        "operation_id": "blind.csv.observe.v1",
+        "inputs": [
+            {"port": "source_table", "artifact_names": ["source_csv"]}
+        ],
+        "instruction": "Make one bounded observation.",
+        "resume_from": "backend_source",
+    }
+    before = root.call_tool("run_list", {})
+    rejected = root.call_tool("operation_preflight", request)
+    assert rejected["admissible"] is False
+    assert rejected["reason_code"] == "recovery_source_unavailable"
+    with pytest.raises(RootToolError, match="recovery_source_unavailable"):
+        root.call_tool("operation_invoke", request)
+    assert root.call_tool("run_list", {}) == before
+    with pytest.raises(Exception, match="unknown run name"):
+        runtime.scheduler_bindings.resolve(
+            instance=instance.instance_id,
+            namespace="run",
+            name="backend_resume",
+        )
+
+
+def test_backend_identity_is_part_of_the_run_request_digest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from scidiscovery.artifact_agent.service import runs as runs_module
+
+    _, runtime, instance, _, root = _system(tmp_path)
+    original_digest = runs_module.canonical_sha256
+    captured: list[dict[str, object]] = []
+
+    def capture(value: object) -> str:
+        if (
+            isinstance(value, dict)
+            and "operation_id" in value
+            and "backend_version" in value
+        ):
+            captured.append(dict(value))
+        return original_digest(value)
+
+    monkeypatch.setattr(runs_module, "canonical_sha256", capture)
+    _invoke(root, "backend_identity_request")
+    assert len(captured) == 1
+    identity = captured[0]
+    assert identity["backend"] == LocalTrustedBackend.backend_id
+    assert identity["backend_version"] == LocalTrustedBackend.backend_version
+    assert identity["backend_capabilities"] == LocalTrustedBackend.capabilities
+    run_id = runtime.scheduler_bindings.resolve(
+        instance=instance.instance_id,
+        namespace="run",
+        name="backend_identity_request",
+    )
+    assert runtime.runs.status(run_id).request_digest == original_digest(identity)
+    for key, value in (
+        ("backend", "changed_backend"),
+        ("backend_version", "changed_version"),
+        ("backend_capabilities", ("native_workspace",)),
+    ):
+        assert original_digest({**identity, key: value}) != original_digest(identity)
+
+
+@pytest.mark.parametrize(
     "old_state", ("queued", "running", "expired", "failed", "completed")
 )
-def test_source_projection_generation_retires_old_run_without_mutating_it(
+def test_source_projection_generation_handles_old_run_without_reusing_it(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     old_state: str,
@@ -753,20 +861,23 @@ def test_source_projection_generation_retires_old_run_without_mutating_it(
             with pytest.raises(Exception, match="Run deadline expired"):
                 restarted.runs.submit(run_id)
         else:
-            with pytest.raises(Exception, match="Run operation contract changed"):
-                restarted.runs.submit(run_id)
+            assert restarted.runs.submit(run_id) == ("failed", ())
         status = new_root.call_tool("run_status", {"name": name})
-        with pytest.raises(Exception, match="Run operation contract changed"):
-            new_root.call_tool(
-                "run_record_failure",
-                {
-                    "name": name,
-                    "reason": "A new contract cannot close an old active Run.",
-                    "expected_state": "queued" if old_state == "queued" else "running",
-                    "expected_last_activity_at": status["last_activity_at"],
-                    "timed_out": old_state == "expired",
-                },
-            )
+        failure_request = {
+            "name": name,
+            "reason": "Close one expired Run without reusing its retired contract.",
+            "expected_state": "queued" if old_state == "queued" else "running",
+            "expected_last_activity_at": status["last_activity_at"],
+            "timed_out": old_state == "expired",
+        }
+        failed = new_root.call_tool("run_record_failure", failure_request)
+        assert failed["state"] == "failed"
+        assert failed["recovery_available"] is False
+        assert failed["recovery"]["recovery_pending"] is True
+        # An unavailable contract cannot authorize deleting even a queued workspace.
+        retained = restarted.runs.backend.open(run_id)
+        if old_state != "queued":
+            assert (retained.output_directory / "result.json").read_bytes() == _audit_envelope()
     elif old_state == "failed":
         retired = new_root.call_tool("run_status", {"name": name})
         assert retired["recovery_available"] is False
@@ -792,13 +903,18 @@ def test_source_projection_generation_retires_old_run_without_mutating_it(
         assert new_root.call_tool("run_list", {}) == before_runs
     else:
         retired = new_root.call_tool("run_status", {"name": name})
-        assert retired["sealed_output_status"] == "contract_retired"
-        assert retired["sealed_output"] is None
-        assert retired["scheduler_signal"] is None
+        assert retired["sealed_output_status"] == "historical"
+        assert retired["sealed_output"] is not None
+        assert retired["scheduler_signal"] is not None
         assert restarted.runs.submit(run_id) == ("completed", ())
 
     after = restarted.runs.status(run_id)
-    assert after == before
+    if old_state in {"queued", "running", "expired"}:
+        assert before.state in {"queued", "running"}
+        assert after.state == "failed"
+        assert after.recovery_draft["recovery_pending"] is True
+    else:
+        assert after == before
     assert len(restarted.artifacts.list_artifacts(limit=1000)) == artifact_count
     assert _invoke_audit(new_root, f"new_after_{old_state}")["result"][
         "state"
@@ -846,6 +962,9 @@ def test_timeout_reconcile_uses_activity_compare_and_set(tmp_path: Path) -> None
         },
     )
     assert failed["state"] == "failed"
+
+    status = runtime.runs.status(run_id)
+    assert runtime.runs.diagnostic_summary(status)['failure']['category'] == 'run_timeout'
 
 
 def test_tool_projection_identity_independent_path_and_publication_gate(
@@ -1305,3 +1424,119 @@ def test_all_installed_local_tools_are_explicit_and_pdf_tool_executes(
         context,
     )
     assert "local_pdf_tool=works" in Path(result["local_path"]).read_text("utf-8")
+
+
+@pytest.mark.parametrize("entry", ("submit", "preview", "failure"))
+def test_unavailable_contract_preserves_latest_domain_files_and_reconciles(
+    tmp_path: Path, entry: str,
+) -> None:
+    from scidiscovery.artifact_agent.service.run_records import RunContractUnavailable
+
+    catalog, runtime, instance, _, root = _system(tmp_path)
+    _invoke(root, "contract_gap")
+    opened = _worker(catalog, runtime).call_tool("worker_open_assignment", {})
+    workspace = Path(opened["workspace_path"])
+    output = Path(opened["output_directory"], "result.json")
+    output.write_bytes(_envelope("Preview A"))
+    run_id = runtime.scheduler_bindings.resolve(
+        instance=instance.instance_id, namespace="run", name="contract_gap")
+    runtime.runs.validate_candidate(run_id)
+    deck = workspace / "deck"
+    deck.mkdir()
+    (deck / "device.cmd").write_text("latest B", encoding="utf-8")
+    runtime.runs.operation_catalog = compile_catalog((CORE_PLUGIN, GENERAL_PLUGIN))
+    if entry == "submit":
+        assert runtime.runs.submit(run_id) == ("failed", ())
+    elif entry == "preview":
+        with pytest.raises(RunContractUnavailable):
+            runtime.runs.validate_candidate(run_id)
+    else:
+        runtime.runs.fail(run_id, reason="Explicit failure after catalog removal")
+    failed = runtime.runs.status(run_id)
+    assert failed.state == "failed"
+    assert (deck / "device.cmd").read_text() == "latest B"
+    assert runtime.runs.recovery_status(failed) == {
+        "delivery_preserved": False, "resume_available": False,
+        "draft_available": False, "recovery_pending": True}
+    # Repeated recovery under the unavailable contract cannot delete B either.
+    runtime.runs.record_failure(run_id, reason="Retry isolation", expected_state="running",
+                               expected_last_activity_at=None)
+    assert (deck / "device.cmd").read_text() == "latest B"
+    assert runtime.runs.status(run_id).recovery_draft["recovery_pending"]
+
+
+def test_draft_source_crosses_contract_but_verifies_files_and_original_budget(tmp_path: Path) -> None:
+    from scidiscovery.artifact_agent.service.run_records import RunStateConflict
+
+    catalog, runtime, instance, _, root = _system(tmp_path)
+    _invoke(root, "draft_source")
+    opened = _worker(catalog, runtime).call_tool("worker_open_assignment", {})
+    Path(opened["output_directory"], "result.json").write_bytes(_envelope())
+    run_id = runtime.scheduler_bindings.resolve(
+        instance=instance.instance_id, namespace="run", name="draft_source")
+    source = runtime.runs.fail(run_id, reason="Preserve complete source")
+    author, reviewer = BLIND_CSV_PLUGIN.operations
+    changed = author.model_copy(update={"limits": author.limits.model_copy(
+        update={"max_attempts": author.limits.max_attempts + 1})})
+    new_catalog = compile_catalog((CORE_PLUGIN, GENERAL_PLUGIN,
+        BLIND_CSV_PLUGIN.model_copy(update={"operations": (changed, reviewer)})))
+    compiled = new_catalog.operation(author.operation_id)
+    assert compiled.digest != source.operation_digest
+    runtime.runs.operation_catalog = new_catalog
+    with pytest.raises(RunStateConflict, match="digest differs"):
+        runtime.runs.validate_resume(run_id, operation_digest=compiled.digest,
+            input_refs=tuple(item.artifact_ref for item in source.inputs), max_attempts=9)
+    digest = runtime.runs.validate_draft_source(run_id, compiled=compiled,
+                                               instance_id=instance.instance_id)
+    with pytest.raises(RunStateConflict, match="another instance"):
+        runtime.runs.validate_draft_source(run_id, compiled=compiled, instance_id="other")
+    recovery = runtime.runs.backend.root / "recovery" / digest / "result.json"
+    recovery.chmod(0o600)
+    recovery.write_bytes(_envelope("Changed after preservation"))
+    with pytest.raises(RunStateConflict, match="verification"):
+        runtime.runs.validate_draft_source(run_id, compiled=compiled,
+                                           instance_id=instance.instance_id)
+    assert runtime.runs.recovery_status(source)["delivery_preserved"] is False
+    recovery.write_bytes(_envelope())
+    new_root = RootMCPRouter(RootToolFacade(
+        runtime.artifacts, runtime.intake, runs=runtime.runs, approvals=runtime.approvals,
+        executions=runtime.executions, bindings=runtime.scheduler_bindings,
+        instance=instance.instance_id, operation_catalog=new_catalog))
+    request = {"name": "draft_successor", "operation_id": author.operation_id,
+        "inputs": [{"port": "source_table", "artifact_names": ["source_csv"]}],
+        "instruction": "Revalidate the draft under the new contract.", "draft_from": "draft_source"}
+    assert new_root.call_tool("operation_preflight", request)["admissible"]
+    new_root.call_tool("operation_invoke", request)
+    opened = _worker(new_catalog, runtime).call_tool("worker_open_assignment", {})
+    copied = Path(opened["workspace_path"], "recovery-draft", "result.json")
+    assert copied.read_bytes() == _envelope()
+    successor_id = runtime.scheduler_bindings.resolve(
+        instance=instance.instance_id, namespace="run", name="draft_successor")
+    assert runtime.runs.status(successor_id).draft_from_run_id == run_id
+    Path(opened["output_directory"], "result.json").write_bytes(_envelope())
+    runtime.runs.fail(successor_id, reason="Mixed-chain budget test")
+    with pytest.raises(RunStateConflict, match="attempt limit"):
+        runtime.runs.validate_draft_source(successor_id, compiled=compiled,
+                                           instance_id=instance.instance_id)
+
+
+def test_recovery_without_snapshot_keeps_original_and_reports_pending(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    catalog, runtime, instance, _, root = _system(tmp_path)
+    _invoke(root, "seal_failure")
+    opened = _worker(catalog, runtime).call_tool("worker_open_assignment", {})
+    output = Path(opened["output_directory"], "result.json")
+    output.write_bytes(_envelope())
+    run_id = runtime.scheduler_bindings.resolve(
+        instance=instance.instance_id, namespace="run", name="seal_failure")
+    def broken_seal(*args, **kwargs):
+        raise OSError("private infrastructure details must not be projected")
+    monkeypatch.setattr(runtime.runs.backend, "seal", broken_seal)
+    assert runtime.runs.submit(run_id) == ("failed", ())
+    failed = runtime.runs.status(run_id)
+    assert output.is_file()
+    assert runtime.runs.recovery_status(failed)["recovery_pending"]
+    summary = runtime.runs.diagnostic_summary(failed)
+    assert summary["failure"]["category"] == "checker_failure"
+    assert "private infrastructure" not in json.dumps(summary)

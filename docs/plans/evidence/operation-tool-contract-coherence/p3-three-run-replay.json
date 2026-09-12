@@ -1,0 +1,16 @@
+{
+  "command": [
+    "python",
+    "-m",
+    "pytest",
+    "-q",
+    "tests/operations/test_analysis_evidence_recovery.py::test_new_run_replays_original_record_from_sealed_evidence",
+    "tests/operations/test_analysis_evidence_recovery.py::test_recovered_bytes_score_and_seal_in_same_run"
+  ],
+  "exit_code": 0,
+  "seconds": 4.197,
+  "peak_tree_rss_bytes": 132988928,
+  "budget_bytes": 536870912,
+  "early_stop_bytes": 469762048,
+  "memory_terminated": false
+}

@@ -21,6 +21,7 @@ from scidiscovery.operations.catalog import compile_catalog
 from tcad_artifact.parameter_operations import (
     AUDIT_OPERATION,
     AUDIT_CONTEXT_VALIDATOR,
+    AUDIT_INPUT_VALIDATOR,
     COVERAGE_OPERATION,
     EXPAND_OPERATION,
     PASS_APPROVAL_OPERATION,
@@ -505,6 +506,29 @@ def test_real_parameter_run_reaches_expansion_audit_and_qualification(
     approval = root.call_tool("operation_invoke", approval_request)
     assert approval["result"]["status"] == "pending"
 
+    # The saved audit is history after its contract changes, not a new approval witness.
+    from scidiscovery.operations.input_validation import OperationInvocationError
+    from scidiscovery.artifact_agent.interfaces.mcp_root import OperationCallInput
+    typed = OperationCallInput.model_validate(approval_request)
+    values = {**typed.model_dump(exclude={"inputs"}), "inputs": typed.inputs}
+    bound = root.facade._prepare_operation_call(**values)
+    changed = TCAD_PLUGIN.model_copy(update={"operations": tuple(
+        op.model_copy(update={"version": "auditor-upgrade"})
+        if op.operation_id == AUDIT_OPERATION else op for op in TCAD_PLUGIN.operations)})
+    upgraded = compile_catalog((CORE_PLUGIN, GENERAL_PLUGIN, CURVE_PLUGIN, changed))
+    runtime.runs.operation_catalog = root.facade._operation_catalog = upgraded
+    with pytest.raises(OperationInvocationError, match="approval_subject_invalid") as failure:
+        root.facade._prepare_approval_projection(bound)
+    assert failure.value.details[0]["phase"] == "input_admission"
+    assert "independent passing" in failure.value.details[0]["message"]
+    old_request = {**approval_request, "name": "old_audit_parameters"}
+    before = runtime.scheduler_bindings.list(instance=instance.instance_id, namespace="approval")
+    assert not root.call_tool("operation_preflight", old_request)["admissible"]
+    with pytest.raises(Exception):
+        root.call_tool("operation_invoke", old_request)
+    assert runtime.scheduler_bindings.list(instance=instance.instance_id, namespace="approval") == before
+    runtime.runs.operation_catalog = root.facade._operation_catalog = catalog
+
     alternate_requirements = _package().parameter_requirements.model_copy(deep=True)
     alternate_payload = alternate_requirements.model_dump(mode="json")
     alternate_payload["parameters"][0]["display_name"] = "Alternate display label"
@@ -554,7 +578,7 @@ def test_real_parameter_run_reaches_expansion_audit_and_qualification(
         },
     )
     assert wrong_checklist["admissible"] is False
-    assert wrong_checklist["reason_code"] == "approval_projector_failed"
+    assert wrong_checklist["reason_code"] == "approval_subject_invalid"
     assert len(runtime.approvals.list_requests(limit=100)) == approval_count
 
     missing_source_request = {
@@ -610,9 +634,9 @@ def test_real_parameter_run_reaches_expansion_audit_and_qualification(
         "operation_preflight", extra_source_request
     )
     assert extra_source_preflight["admissible"] is False
-    assert extra_source_preflight["reason_code"] == "approval_projector_failed"
+    assert extra_source_preflight["reason_code"] == "approval_subject_invalid"
     assert len(runtime.approvals.list_requests(limit=100)) == approval_count
-    with pytest.raises(RootToolError, match="approval_projector_failed"):
+    with pytest.raises(RootToolError, match="approval_subject_invalid"):
         root.call_tool("operation_invoke", extra_source_request)
     assert len(runtime.approvals.list_requests(limit=100)) == approval_count
 
@@ -655,9 +679,9 @@ def test_real_parameter_run_reaches_expansion_audit_and_qualification(
         "operation_preflight", wrong_family_request
     )
     assert wrong_family_preflight["admissible"] is False
-    assert wrong_family_preflight["reason_code"] == "approval_projector_failed"
+    assert wrong_family_preflight["reason_code"] == "approval_subject_invalid"
     assert len(runtime.approvals.list_requests(limit=100)) == approval_count
-    with pytest.raises(RootToolError, match="approval_projector_failed"):
+    with pytest.raises(RootToolError, match="approval_subject_invalid"):
         root.call_tool("operation_invoke", wrong_family_request)
     assert len(runtime.approvals.list_requests(limit=100)) == approval_count
 
@@ -822,17 +846,19 @@ def test_parameter_run_rejects_package_with_invented_source_alias(tmp_path) -> N
 
     rejected = worker.call_tool("worker_submit_result", {})
     assert rejected["state"] == "rejected"
-    assert rejected["diagnostics"] == [
-        {
-            "path": (
-                "$.payload.scientific_intake.scientific_foundation."
-                "evidence[0].source_key"
-            ),
-            "message": "'invented_source' is not one of ['source_material']",
-            "type": "json_schema.enum",
-            "rule_id": "runtime.schema",
-        }
-    ]
+    assert len(rejected["diagnostics"]) == 1
+    diagnostic = rejected["diagnostics"][0]
+    assert {key: diagnostic[key] for key in ("path", "type", "rule_id", "code", "phase", "repairable")} == {
+        "path": (
+            "$.payload.scientific_intake.scientific_foundation."
+            "evidence[0].source_key"
+        ),
+        "type": "json_schema.enum",
+        "rule_id": "runtime.schema",
+        "code": "output_invalid",
+        "phase": "output_payload",
+        "repairable": True,
+    }
     active = tuple(
         item
         for item in runtime.runs.list(instance_id=instance.instance_id)
@@ -954,5 +980,8 @@ def test_parameter_audit_rejects_noncanonical_expansion() -> None:
     validator(payload, sources, {"verdict": "pass"})
     drifted = dict(sources)
     drifted["scientific_intake"] += b"\n"
-    with pytest.raises(ValueError, match="differs from its package"):
-        validator(payload, drifted, {"verdict": "pass"})
+    AUDIT_INPUT_VALIDATOR.implementation(sources)
+    with pytest.raises(ValueError, match="input_parameter_expansion_mismatch"):
+        AUDIT_INPUT_VALIDATOR.implementation(drifted)
+    # Output acceptance does not retry input admission.
+    validator(payload, drifted, {"verdict": "pass"})

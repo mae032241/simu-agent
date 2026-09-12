@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from scidiscovery.operations.input_validation import parse_bound_json
+
+from .operations.input_validation import OperationInvocationError
+
 import json
 from collections.abc import Mapping
 from typing import Any, Callable
@@ -41,16 +45,26 @@ def _opaque_codec(raw: bytes) -> bytes:
     return raw
 
 
+def _critic_inputs(sources: dict[str, bytes]) -> None:
+    portfolio = parse_bound_json(HypothesisProposal, sources["hypothesis_portfolio"],
+                                 admission_port="hypothesis_portfolio")
+    if not portfolio.hypotheses:
+        raise OperationInvocationError("input_portfolio_empty", port="hypothesis_portfolio")
+
+
+def _hypothesis_inputs(sources: dict[str, bytes]) -> None:
+    foundation = parse_bound_json(ScientificFoundation, sources["scientific_foundation"],
+                                  admission_port="scientific_foundation")
+    if foundation.objective_contract is None:
+        raise OperationInvocationError("input_objective_missing", port="scientific_foundation", field="/objective_contract")
+
+
 def _critic_portfolio_context(
     payload: dict[str, Any], sources: dict[str, bytes], handoff: dict[str, Any]
 ) -> None:
-    portfolio = HypothesisProposal.model_validate_json(
-        sources["hypothesis_portfolio"], strict=True
-    )
+    portfolio = parse_bound_json(HypothesisProposal, sources["hypothesis_portfolio"])
     review = CriticReview.model_validate_json(canonical_json(payload), strict=True)
     expected = tuple(item.hypothesis_key for item in portfolio.hypotheses)
-    if not expected:
-        raise SemanticRuleViolation("critic review requires a non-empty hypothesis portfolio")
     actual = tuple(item.hypothesis_key for item in review.reviews)
     if len(actual) != len(set(actual)) or set(actual) != set(expected):
         raise SemanticRuleViolation(
@@ -122,18 +136,13 @@ def _hypothesis_objective_context(
     proposal = HypothesisProposal.model_validate_json(
         canonical_json(payload), strict=True
     )
-    raw_foundation = sources.get("scientific_foundation")
-    if raw_foundation is None:
-        raise SemanticRuleViolation("hypothesis proposal requires scientific_foundation")
-    foundation = ScientificFoundation.model_validate_json(raw_foundation, strict=True)
+    foundation = parse_bound_json(ScientificFoundation, sources["scientific_foundation"])
     objective = foundation.objective_contract
-    if objective is None:
-        raise SemanticRuleViolation("hypothesis proposal requires an explicit research objective")
     if proposal.research_objective_key != objective.objective_key:
         raise SemanticRuleViolation("hypothesis research_objective_key differs from global objective")
     raw_prior = sources.get("prior_draft")
     if raw_prior is not None:
-        prior = HypothesisProposal.model_validate_json(raw_prior, strict=True)
+        prior = parse_bound_json(HypothesisProposal, raw_prior)
         if proposal.research_objective_key != prior.research_objective_key:
             raise SemanticRuleViolation("hypothesis revision cannot change the global objective")
         prior_keys = {item.hypothesis_key for item in prior.hypotheses}
@@ -207,7 +216,7 @@ def _subjects_by_port(
     grouped: dict[str, list[ApprovalSubjectSnapshot]] = {}
     refs = [item.ref for item in context.subjects]
     if len(refs) != len(set(refs)):
-        raise ValueError("approval subjects must be distinct exact artifacts")
+        raise OperationInvocationError("approval_subject_invalid", message="approval subjects must be distinct exact artifacts")
     for item in context.subjects:
         grouped.setdefault(item.port_name, []).append(item)
     return {name: tuple(items) for name, items in grouped.items()}
@@ -218,14 +227,14 @@ def _one_subject(
 ) -> ApprovalSubjectSnapshot:
     values = grouped.get(name, ())
     if len(values) != 1:
-        raise ValueError(f"approval port {name} requires exactly one subject")
+        raise OperationInvocationError("approval_subject_invalid", message=f"approval port {name} requires exactly one subject")
     return values[0]
 
 
 def _parse_subject(
     subject: ApprovalSubjectSnapshot, model: type[BaseModel]
 ) -> BaseModel:
-    return model.model_validate_json(subject.content, strict=True)
+    return parse_bound_json(model, subject.content, admission_port=subject.port_name)
 
 
 def _labels(subject: ApprovalSubjectSnapshot) -> dict[str, str]:
@@ -246,7 +255,7 @@ def _require_transform_output(
         or labels.get("operation_output_port") != port_name
         or subject.parent_refs != parent_refs
     ):
-        raise ValueError("approval subject has an invalid deterministic lineage")
+        raise OperationInvocationError("approval_subject_invalid", message="approval subject has an invalid deterministic lineage")
 
 
 def _unique_family_source_refs(family: object) -> tuple[object, ...]:
@@ -268,20 +277,20 @@ def _require_passing_audit(
     labels = _labels(audit_subject)
     operation_id = labels.get("operation_id")
     if expected_operations is not None and operation_id not in expected_operations:
-        raise ValueError("independent audit producer is not the required operation")
+        raise OperationInvocationError("approval_subject_invalid", message="independent audit producer is not the required operation")
     if audit_subject.handoff_verdict != "pass":
-        raise ValueError("independent audit does not have a passing handoff")
+        raise OperationInvocationError("approval_subject_invalid", message="independent audit does not have a passing handoff")
     if not required_parent_refs.issubset(set(audit_subject.parent_refs)):
-        raise ValueError("independent audit did not bind the complete exact review set")
-    audit = EvidenceAudit.model_validate_json(audit_subject.content, strict=True)
+        raise OperationInvocationError("approval_subject_invalid", message="independent audit did not bind the complete exact review set")
+    audit = parse_bound_json(EvidenceAudit, audit_subject.content, admission_port=audit_subject.port_name)
     audit_source_keys = {item.source_key for item in audit.evidence}
     if not required_source_keys.issubset(audit_source_keys):
-        raise ValueError("independent audit does not cover every declared source")
+        raise OperationInvocationError("approval_subject_invalid", message="independent audit does not cover every declared source")
     checks = {item.check_key: item for item in audit.checks}
     if not required_checks.issubset(checks) or any(
         checks[key].status != "pass" for key in required_checks
     ):
-        raise ValueError("independent audit lacks a required passing check")
+        raise OperationInvocationError("approval_subject_invalid", message="independent audit lacks a required passing check")
     return audit
 
 
@@ -313,9 +322,9 @@ def _review_document(
     )
 
 
-def _evidence_qualification_document(
+def _validate_evidence_qualification(
     context: ApprovalProjectorContext,
-) -> ReviewDocument:
+) -> None:
     grouped = _subjects_by_port(context)
     foundation_subject = _one_subject(grouped, "scientific_foundation")
     primary_subject = _one_subject(grouped, "extraction_primary")
@@ -326,11 +335,11 @@ def _evidence_qualification_document(
         if item.primary_ref == primary_subject.ref
     )
     if len(matching_families) != 1:
-        raise ValueError("qualification primary is not the exact producer primary")
+        raise OperationInvocationError("approval_subject_invalid", message="qualification primary is not the exact producer primary")
     family = matching_families[0]
     members = family.members
     if not members or members[0].ref != primary_subject.ref:
-        raise ValueError("producer family has no unique leading primary")
+        raise OperationInvocationError("approval_subject_invalid", message="producer family has no unique leading primary")
     bound_siblings = tuple(
         item.ref
         for name in ("producer_outputs", "validation_results")
@@ -341,16 +350,14 @@ def _evidence_qualification_document(
         len(bound_siblings) != len(set(bound_siblings))
         or set(bound_siblings) != set(expected_siblings)
     ):
-        raise ValueError("qualification must bind the complete producer sibling family")
+        raise OperationInvocationError("approval_subject_invalid", message="qualification must bind the complete producer sibling family")
     frozen_refs = _unique_family_source_refs(family)
     if tuple(item.ref for item in grouped.get("frozen_sources", ())) != frozen_refs:
-        raise ValueError("qualification omits or adds a frozen producer source")
-    intake = ScientificIntake.model_validate_json(primary_subject.content, strict=True)
-    foundation = ScientificFoundation.model_validate_json(
-        foundation_subject.content, strict=True
-    )
+        raise OperationInvocationError("approval_subject_invalid", message="qualification omits or adds a frozen producer source")
+    intake = parse_bound_json(ScientificIntake, primary_subject.content, admission_port=primary_subject.port_name)
+    foundation = parse_bound_json(ScientificFoundation, foundation_subject.content, admission_port=foundation_subject.port_name)
     if foundation != intake.scientific_foundation:
-        raise ValueError("split foundation differs from the extraction primary")
+        raise OperationInvocationError("approval_subject_invalid", message="split foundation differs from the extraction primary")
     _require_transform_output(
         foundation_subject,
         operation_id="science.intake.split.v1",
@@ -362,7 +369,7 @@ def _evidence_qualification_document(
         family.reviewer_operation is None
         or members[0].port_name not in family.review_subject_outputs
     ):
-        raise ValueError("evidence producer has no compiled independent-review edge")
+        raise OperationInvocationError("approval_subject_invalid", message="evidence producer has no compiled independent-review edge")
     audit_inputs = {item.ref for item in members}
     audit_inputs.update(frozen_refs)
     _require_passing_audit(
@@ -371,6 +378,10 @@ def _evidence_qualification_document(
         required_parent_refs=audit_inputs,
         required_source_keys=source_keys,
     )
+
+
+def _evidence_qualification_document(context: ApprovalProjectorContext) -> ReviewDocument:
+    _validate_evidence_qualification(context)
     return _review_document(
         context,
         title="科学证据资格审查",
@@ -379,6 +390,8 @@ def _evidence_qualification_document(
 
 
 class Components:
+    critic_inputs = CallableComponent("validator", _critic_inputs)
+    hypothesis_inputs = CallableComponent("validator", _hypothesis_inputs)
     json_codec = CallableComponent("codec", _json_codec)
     opaque_codec = CallableComponent("codec", _opaque_codec)
     intake_validator = CallableComponent("validator", payload_validator(validate_scientific_intake))
@@ -404,6 +417,8 @@ class Components:
     foundation_validator = CallableComponent("validator", _strict_validator(ScientificFoundation))
 
 
+from .artifact_agent.service.result_materialization import finalize_general_result
+RESULT_FINALIZER = CallableComponent("workspace_finalizer", finalize_general_result)
 WORKSPACE = WorkspaceContract()
 
 
@@ -420,6 +435,7 @@ def component_specs() -> tuple[ComponentSpec, ...]:
         "evidence_audit_context": ("evidence_audit_semantic_contract",),
     }
     for name in (
+        "critic_inputs", "hypothesis_inputs",
         "json_codec", "opaque_codec", "intake_validator", "intake_source_context",
         "hypothesis_validator", "hypothesis_objective_context",
         "critic_validator", "audit_validator",
@@ -432,6 +448,7 @@ def component_specs() -> tuple[ComponentSpec, ...]:
             getattr(Components, name).kind,
             f"scidiscovery.general_science_components:Components.{name}",
             resources=tuple(ComponentRef(resource) for resource in semantic_resources.get(name, ())),
+            configuration_identity=("input-boundary-r4:v1" if name in {"critic_portfolio_context", "hypothesis_objective_context"} else None),
             public=name in {
                 "json_codec", "opaque_codec",
                 "intake_validator", "intake_source_context",
@@ -451,7 +468,8 @@ def component_specs() -> tuple[ComponentSpec, ...]:
         "problem_frame_validator", "foundation_validator",
     ):
         values.append(ComponentSpec(name, "validator", f"scidiscovery.general_science_components:Components.{name}", configuration_identity=f"general-transform:{name}:v1"))
-    values.append(ComponentSpec("workspace", "workspace", "scidiscovery.general_science_components:WORKSPACE", public=True))
+    values.append(ComponentSpec("result_finalizer", "workspace_finalizer", "scidiscovery.general_science_components:RESULT_FINALIZER"))
+    values.append(ComponentSpec("workspace", "workspace", "scidiscovery.general_science_components:WORKSPACE", public=True, resources=(ComponentRef("result_finalizer", plugin_id="general_science"),)))
     values.append(ComponentSpec(
         "pdf_extract_tool",
         "worker_tool",

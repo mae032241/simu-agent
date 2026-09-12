@@ -1,0 +1,99 @@
+......F
+=================================== FAILURES ===================================
+________________ test_installed_generic_score_runs_without_tcad ________________
+
+installed_probe = <function installed_probe.<locals>.run at 0x7f06a75c9da0>
+
+    def test_installed_generic_score_runs_without_tcad(installed_probe):
+        # Only serialized scientific fixture bytes cross into the isolated interpreter.
+        from tests.operations.test_m2_curve_analysis_boundary import _inputs
+    
+        inputs = _inputs()
+        request = {
+            "sources": [{"input_alias": "curve_bundle", "format": "bundle"}],
+            "comparison_spec": json.loads(inputs["curve_contract"])["comparison_spec"],
+        }
+>       installed_probe("curve", "bundle_bytes = " + repr(inputs["curve_bundle"]) +
+                        "\nrequest = " + repr(request) + r'''
+    import importlib.util
+    import sys
+    from pathlib import Path
+    from curve_score.analysis_tool import replay_calculation
+    from scidiscovery.artifact_agent.schema.layered_diagnosis import CalculationRecord
+    from scidiscovery.operations.catalog import compile_installed_catalog
+    from scidiscovery.operations.tooling import operation_worker_tools
+    assert importlib.util.find_spec("tcad_artifact") is None
+    compiled = compile_installed_catalog().operation("science.result.diagnose.v1")
+    tool = next(t for t in operation_worker_tools(compiled) if t.name == "worker_curve_score")
+    class Context:
+        remaining_seconds = 120
+        def read_input(self, alias):
+            assert alias == "curve_bundle"
+            return bundle_bytes
+    record = tool.contextual_handler(tool.input_model(record_key="installed", request=request), Context())
+    assert record["status"] == "computed", record
+    assert record["result"]["aggregate_status"] == "fail"
+    replay_calculation(CalculationRecord.model_validate(record), {"curve_bundle": bundle_bytes})
+    assert not any(name.startswith("tcad_artifact") for name in sys.modules)
+    print("installed generic computation replayed without TCAD")
+    ''')
+
+tests/operations/test_analysis_tool_installed.py:98: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+environment_name = 'curve'
+source = 'bundle_bytes = b\'{"schema_version":1,"series":[{"availability":{"rationale":"Fixture curve.","reason_code":null,"sch...e.startswith("tcad_artifact") for name in sys.modules)\nprint("installed generic computation replayed without TCAD")\n'
+
+        def run(environment_name: str, source: str) -> str:
+            environment = installed_environments[environment_name]
+            clean_environment = dict(os.environ)
+            clean_environment.pop("PYTHONPATH", None)
+            clean_environment.pop("SCIDISCOVERY_ROLE_DIR", None)
+            clean_environment["PYTHONNOUSERSITE"] = "1"
+            prefix = """
+    from pathlib import Path as _R0Path
+    import scidiscovery as _r0_scidiscovery
+    import sys as _r0_sys
+    assert _R0Path(_r0_scidiscovery.__file__).resolve().is_relative_to(
+        _R0Path(_r0_sys.prefix).resolve()
+    ), _r0_scidiscovery.__file__
+    assert 'include-system-site-packages = false' in (_R0Path(_r0_sys.prefix) / 'pyvenv.cfg').read_text()
+    import PIL as _r0_pil
+    assert _R0Path(_r0_pil.__file__).resolve().is_relative_to(_R0Path(_r0_sys.prefix).resolve())
+    """
+            completed = subprocess.run(
+                [str(environment.python), "-c", textwrap.dedent(prefix + source)],
+                cwd=environment.workdir,
+                env=clean_environment,
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+>           assert completed.returncode == 0, (
+                f"installed probe failed ({environment_name})\n"
+                f"stdout:\n{completed.stdout}\n"
+                f"stderr:\n{completed.stderr}"
+            )
+E           AssertionError: installed probe failed (curve)
+E             stdout:
+E             
+E             stderr:
+E             Traceback (most recent call last):
+E               File "<string>", line 28, in <module>
+E               File "/tmp/pytest-of-da/pytest-56/r0-installed0/curve/lib/python3.12/site-packages/curve_score/analysis_tool.py", line 248, in score_tool
+E                 return run_score_tool(request, context, evaluate_analysis_request)
+E                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E               File "/tmp/pytest-of-da/pytest-56/r0-installed0/curve/lib/python3.12/site-packages/curve_score/analysis_tool.py", line 233, in run_score_tool
+E                 sources[name] = context.read_evidence(name)
+E                                 ^^^^^^^^^^^^^^^^^^^^^
+E             AttributeError: 'Context' object has no attribute 'read_evidence'
+E             
+E           assert 1 == 0
+E            +  where 1 = CompletedProcess(args=['/tmp/pytest-of-da/pytest-56/r0-installed0/curve/bin/python', '-c', '\nfrom pathlib import Path...)\n                    ^^^^^^^^^^^^^^^^^^^^^\nAttributeError: \'Context\' object has no attribute \'read_evidence\'\n').returncode
+
+tests/operations/conftest.py:284: AssertionError
+=========================== short test summary info ============================
+FAILED tests/operations/test_analysis_tool_installed.py::test_installed_generic_score_runs_without_tcad
+!!!!!!!!!!!!!!!!!!!!!!!!!! stopping after 1 failures !!!!!!!!!!!!!!!!!!!!!!!!!!!
+1 failed, 6 passed in 46.85s

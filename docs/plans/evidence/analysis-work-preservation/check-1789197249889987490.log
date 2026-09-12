@@ -1,0 +1,741 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+_ test_plot_failure_preserves_numbers_and_later_bound_plot_does_not_recompute __
+
+workspace = PosixPath('/tmp/pytest-of-da/pytest-187/test_plot_failure_preserves_nu0/project/.scidiscovery-runs/workspaces/workspace_d6c18bb962af423eb77e623d1adca693')
+relative_path = PosixPath('tools/local_process_observation.py')
+content = b'"""Optional stdlib launcher, executed by the Local Worker, never by the service.\n\nCopied unchanged to tools/ in an...eout=args.timeout, submission_reserve=args.submission_reserve)\n\n\nif __name__ == "__main__":\n    sys.exit(main())\n'
+replace = False, mode = 256, create_parents = False
+
+    def write_control_workspace_file(
+        workspace: Path,
+        relative_path: Path,
+        content: bytes,
+        *,
+        replace: bool,
+        mode: int,
+        create_parents: bool = False,
+    ) -> Path:
+        """Write through non-symlink directory handles below one workspace root."""
+    
+        if type(content) is not bytes:
+            raise TypeError("workspace content must be bytes")
+        if (
+            relative_path.is_absolute()
+            or not relative_path.parts
+            or any(part in {"", ".", ".."} for part in relative_path.parts)
+        ):
+            raise WorkspaceError("control workspace path is invalid")
+        directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+        directory_flags |= getattr(os, "O_NOFOLLOW", 0)
+        descriptors: list[int] = []
+        temporary = f".{relative_path.name}.{uuid.uuid4().hex}.tmp"
+        try:
+            descriptor = os.open(workspace, directory_flags)
+            descriptors.append(descriptor)
+            for part in relative_path.parts[:-1]:
+                try:
+>                   child = os.open(part, directory_flags, dir_fd=descriptor)
+                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E                   FileNotFoundError: [Errno 2] No such file or directory: 'tools'
+
+src/scidiscovery/artifact_agent/service/local_workspace.py:504: FileNotFoundError
+
+The above exception was the direct cause of the following exception:
+
+self = <scidiscovery.artifact_agent.service.runs.RunService object at 0x7f1f6ff56bd0>
+bound = BoundOperationCall(compiled=CompiledOperation(plugin_id='tcad_artifact', spec=OperationSpec(operation_id='tcad.result....posure='on_demand', usage='evidence_inventory')), instruction='Analyze the bound fixture outputs.', executor_plan=None)
+instance_id = 'ins_9295790ca77047ec958f8c42b50f7930'
+output_binding_name = 'analysis.output', output_logical_name = 'analysis.output'
+output_revision = 1
+output_binding_fingerprint = 'ee1b8c6636077957c94ac69a376eec53e3e85e8ad80ace067d850b887e0aed7e'
+resume_from = None, draft_from = None, draft_digest = None
+
+    def schedule(
+        self,
+        bound: BoundOperationCall,
+        *,
+        instance_id: str,
+        output_binding_name: str,
+        output_logical_name: str,
+        output_revision: int,
+        output_binding_fingerprint: str,
+        resume_from: str | None = None,
+        draft_from: str | None = None,
+        draft_digest: str | None = None,
+    ) -> str:
+        if resume_from is not None and draft_from is not None:
+            raise RunStateConflict("resume_from and draft_from are mutually exclusive")
+        if draft_digest is not None and draft_from is None:
+            raise RunStateConflict("draft digest requires a source Run")
+        compiled = bound.compiled
+        if compiled.spec.executor.kind != "agent":
+            raise ValueError("RunService accepts Agent operations only")
+        if not self.backend.supports_operation(compiled):
+            raise RunError("runtime backend does not support the compiled Operation")
+        if any(port.collection is not None for port in compiled.spec.outputs) and not tool_evidence_ports(compiled):
+            raise RunError("minimal local Run does not yet support output collections")
+        if compiled.spec.limits is None:
+            raise ValueError("compiled operation has no limits")
+        # Reconstruct the call from authoritative records before any Run/workspace write.
+        by_port = {port.name: [] for port in compiled.spec.inputs}
+        for item in bound.inputs:
+            envelope = self.artifacts.catalog(item.artifact.ref)
+            producer = self.completed_for_output(envelope.ref)
+            by_port.setdefault(item.port_name, []).append(InvocationArtifact(
+                artifact_name=item.artifact_name, ref=envelope.ref, schema_id=envelope.schema_id,
+                media_type=envelope.media_type, size_bytes=envelope.size_bytes,
+                parent_refs=envelope.parent_refs, labels=tuple(envelope.labels.items()),
+                producer_run_id=producer.run_id if producer else None,
+                current=self.input_is_current(instance_id=instance_id,
+                    artifact_name=item.artifact_name, artifact_ref=envelope.ref),
+                handoff_verdict=(self.signal_for_output(envelope.ref, require_current=False).verdict
+                    if self.signal_for_output(envelope.ref, require_current=False) else None),
+                historical=item.artifact.historical,
+            ))
+        bound = preflight_operation(compiled, name=bound.name,
+            artifacts_by_port={name: tuple(items) for name, items in by_port.items()},
+            instruction=bound.instruction, read_artifact=self.artifacts.read,
+            source_name_overrides={(item.port_name, item.artifact_name): item.source_name
+                                   for item in bound.inputs})
+        raw_inputs = tuple(
+            RunInputBinding(
+                port_name=item.port_name,
+                source_name=item.source_name,
+                artifact_name=item.artifact_name,
+                artifact_ref=item.artifact.ref,
+                media_type=item.artifact.media_type,
+                exposure=item.exposure,
+                usage=item.usage,
+                require_current=next(
+                    port.require_current
+                    for port in compiled.spec.inputs
+                    if port.name == item.port_name
+                ),
+            )
+            for item in bound.inputs
+        )
+        for item in raw_inputs:
+            self.artifacts.verify(item.artifact_ref)
+        run_id = f"run_{uuid.uuid4().hex}"
+        created_at = timestamp()
+        deadline_at = future(created_at, compiled.spec.limits.timeout_seconds)
+        recovery_digest: str | None = None
+        with self._connect() as connection:
+            self._attach_scheduler(connection)
+            connection.execute("BEGIN IMMEDIATE")
+            frozen_inputs = self.current.freeze(connection, instance_id, raw_inputs)
+            active_revision = active_direct_revision_ports(
+                compiled, (item.port_name for item in frozen_inputs)
+            )
+            revision_base = (
+                None
+                if active_revision is None
+                else next(
+                    item.artifact_ref
+                    for item in frozen_inputs
+                    if item.port_name == active_revision[0].name
+                )
+            )
+            if (
+                revision_base is not None
+                and compiled.spec.review is not None
+                and compiled.spec.review.max_revisions
+                and self._revision_successor(
+                    connection,
+                    instance_id=instance_id,
+                    operation_digest=compiled.digest,
+                    base_ref=revision_base,
+                )
+                is not None
+            ):
+                connection.execute("ROLLBACK")
+                raise RunSlotBusy("this revision base already has a successor Run")
+            if resume_from is not None:
+                source = status_from_row(self._row(connection, resume_from))
+                recovery_digest = self._validate_resume(
+                    connection,
+                    source,
+                    compiled.digest,
+                    tuple(item.artifact_ref for item in frozen_inputs),
+                    compiled.spec.limits.max_attempts,
+                )
+            if resume_from is not None and source.instance_id != instance_id:
+                raise RunStateConflict("recovery source belongs to another instance")
+            if draft_from is not None:
+                source = status_from_row(self._row(connection, draft_from))
+                recovery_digest = self._validate_draft_source(
+                    connection, source, compiled=compiled, instance_id=instance_id
+                )
+                if draft_digest is not None and draft_digest != recovery_digest:
+                    raise RunStateConflict("draft source digest changed")
+            request_digest = canonical_sha256(
+                {
+                    "operation_id": compiled.spec.operation_id,
+                    "operation_version": compiled.spec.version,
+                    "operation_digest": compiled.digest,
+                    "backend": self.backend.backend_id,
+                    "backend_version": self.backend.backend_version,
+                    "backend_capabilities": self.backend.capabilities,
+                    "instance_id": instance_id,
+                    "output_binding": {
+                        "name": output_binding_name,
+                        "logical_name": output_logical_name,
+                        "revision": output_revision,
+                        "request_fingerprint": output_binding_fingerprint,
+                    },
+                    "instruction": bound.instruction or "",
+                    "inputs": json.loads(inputs_json(frozen_inputs)),
+                    "limits": compiled.spec.limits.model_dump(mode="json"),
+                    "resume_from": resume_from,
+                    **({"draft_from": draft_from, "draft_digest": recovery_digest}
+                       if draft_from is not None else {}),
+                    "recovery_digest": recovery_digest,
+                }
+            )
+            try:
+                connection.execute(
+                    """
+                    INSERT INTO runs (
+                        run_id, instance_id, operation_id, operation_version,
+                        operation_digest, agent_type, instruction, inputs_json,
+                        backend_id, backend_version, backend_capabilities_json,
+                        output_binding_name, output_logical_name,
+                        output_revision, output_binding_fingerprint,
+                        request_digest, resume_from_run_id, draft_from_run_id, recovery_policy_json,
+                        state, created_at, deadline_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                              ?, ?, 'queued', ?, ?)
+                    """,
+                    (
+                        run_id,
+                        instance_id,
+                        compiled.spec.operation_id,
+                        compiled.spec.version,
+                        compiled.digest,
+                        operation_agent_type(compiled),
+                        bound.instruction or "",
+                        inputs_json(frozen_inputs),
+                        self.backend.backend_id,
+                        self.backend.backend_version,
+                        canonical_json(self.backend.capabilities),
+                        output_binding_name,
+                        output_logical_name,
+                        output_revision,
+                        output_binding_fingerprint,
+                        request_digest,
+                        resume_from,
+                        draft_from,
+                        canonical_json(self._recovery_policy(compiled)),
+                        created_at,
+                        deadline_at,
+                    ),
+                )
+            except sqlite3.IntegrityError as error:
+                connection.execute("ROLLBACK")
+                raise RunSlotBusy(
+                    "this compiled Operation already has an unopened or running Run"
+                ) from error
+            connection.execute("COMMIT")
+        try:
+            materialized_inputs = tuple(
+                WorkspaceInput(
+                    name=item.source_name,
+                    media_type=item.media_type,
+                    content=self.artifacts.read(item.artifact_ref),
+                )
+                for item in frozen_inputs
+                if item.exposure != "handoff_only"
+            )
+            input_bytes = {item.name: item.content for item in materialized_inputs}
+            direct_revision = active_direct_revision_ports(
+                compiled, (item.port_name for item in frozen_inputs)
+            )
+            workspace_hooks = operation_workspace_hooks(compiled)
+            revision_workspace_mode = _revision_workspace_mode(
+                direct_revision, workspace_hooks
+            )
+            initial_output = (
+                revision_draft_json(bound, input_bytes)
+                if revision_workspace_mode == "result_copy"
+                else None
+            )
+            if (
+                initial_output is not None
+                and len(initial_output) > compiled.spec.limits.max_output_bytes
+            ):
+                raise RunError("revision draft exceeds the compiled output limit")
+            workspace = self.backend.prepare(
+                run_id=run_id,
+                inputs=materialized_inputs,
+                assignment=assignment_json(
+                    bound,
+                    frozen_inputs,
+                    tool_names=self.backend.assignment_tool_names(compiled),
+                    recovery_relative_path=(
+                        "recovery-draft" if recovery_digest is not None else None
+                    ),
+                    revision_workspace_mode=revision_workspace_mode,
+                    prior_source_bindings=dict(self.prior_source_bindings(self.status(run_id))),
+                    deadline_at=deadline_at,
+                ),
+                result_schema=result_schema_json(
+                    compiled,
+                    input_source_ports={
+                        item.source_name: item.port_name for item in frozen_inputs
+                    },
+                ),
+                recovery_digest=recovery_digest,
+                initial_output=initial_output,
+            )
+>           self._materialize_workspace(compiled, run_id, workspace)
+
+src/scidiscovery/artifact_agent/service/runs.py:340: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/scidiscovery/artifact_agent/service/runs.py:1009: in _materialize_workspace
+    result = materializer(
+plugins/curve_score/curve_score/analysis_workspace.py:29: in materialize
+    write_control_workspace_file(request.workspace, Path(tool),
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+workspace = PosixPath('/tmp/pytest-of-da/pytest-187/test_plot_failure_preserves_nu0/project/.scidiscovery-runs/workspaces/workspace_d6c18bb962af423eb77e623d1adca693')
+relative_path = PosixPath('tools/local_process_observation.py')
+content = b'"""Optional stdlib launcher, executed by the Local Worker, never by the service.\n\nCopied unchanged to tools/ in an...eout=args.timeout, submission_reserve=args.submission_reserve)\n\n\nif __name__ == "__main__":\n    sys.exit(main())\n'
+replace = False, mode = 256, create_parents = False
+
+    def write_control_workspace_file(
+        workspace: Path,
+        relative_path: Path,
+        content: bytes,
+        *,
+        replace: bool,
+        mode: int,
+        create_parents: bool = False,
+    ) -> Path:
+        """Write through non-symlink directory handles below one workspace root."""
+    
+        if type(content) is not bytes:
+            raise TypeError("workspace content must be bytes")
+        if (
+            relative_path.is_absolute()
+            or not relative_path.parts
+            or any(part in {"", ".", ".."} for part in relative_path.parts)
+        ):
+            raise WorkspaceError("control workspace path is invalid")
+        directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+        directory_flags |= getattr(os, "O_NOFOLLOW", 0)
+        descriptors: list[int] = []
+        temporary = f".{relative_path.name}.{uuid.uuid4().hex}.tmp"
+        try:
+            descriptor = os.open(workspace, directory_flags)
+            descriptors.append(descriptor)
+            for part in relative_path.parts[:-1]:
+                try:
+                    child = os.open(part, directory_flags, dir_fd=descriptor)
+                except FileNotFoundError:
+                    if not create_parents:
+                        raise
+                    os.mkdir(part, mode=0o700, dir_fd=descriptor)
+                    child = os.open(part, directory_flags, dir_fd=descriptor)
+                descriptor = child
+                descriptors.append(descriptor)
+            parent = descriptors[-1]
+            destination = relative_path.name
+            try:
+                metadata = os.stat(destination, dir_fd=parent, follow_symlinks=False)
+            except FileNotFoundError:
+                metadata = None
+            if metadata is not None and not stat.S_ISREG(metadata.st_mode):
+                raise WorkspaceError("control workspace destination is invalid")
+            if metadata is not None and not replace:
+                flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+                existing = os.open(destination, flags, dir_fd=parent)
+                try:
+                    if os.read(existing, max(1, len(content)) + 1) != content:
+                        raise WorkspaceError("control workspace file changed")
+                finally:
+                    os.close(existing)
+                return workspace / relative_path
+            flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+            flags |= getattr(os, "O_NOFOLLOW", 0)
+            output = os.open(temporary, flags, mode, dir_fd=parent)
+            try:
+                with os.fdopen(output, "wb", closefd=False) as stream:
+                    stream.write(content)
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                os.fchmod(output, mode)
+            finally:
+                os.close(output)
+            os.replace(temporary, destination, src_dir_fd=parent, dst_dir_fd=parent)
+            os.chmod(destination, mode, dir_fd=parent, follow_symlinks=False)
+            return workspace / relative_path
+        except OSError as error:
+>           raise WorkspaceError("control workspace path is not a real directory tree") from error
+E           scidiscovery.artifact_agent.service.local_workspace.WorkspaceError: control workspace path is not a real directory tree
+
+src/scidiscovery/artifact_agent/service/local_workspace.py:544: WorkspaceError
+
+The above exception was the direct cause of the following exception:
+
+self = <scidiscovery.artifact_agent.interfaces.mcp_root.RootToolFacade object at 0x7f1f6ff56960>
+bound = BoundOperationCall(compiled=CompiledOperation(plugin_id='tcad_artifact', spec=OperationSpec(operation_id='tcad.result....posure='on_demand', usage='evidence_inventory')), instruction='Analyze the bound fixture outputs.', executor_plan=None)
+on_conflict = 'reject', resume_from = None, draft_from = None
+
+    def _invoke_local_run(
+        self,
+        bound: BoundOperationCall,
+        on_conflict: str,
+        *,
+        resume_from: str | None,
+        draft_from: str | None = None,
+    ) -> dict[str, Any]:
+        resume_run_id, draft_run_id, draft_digest, fingerprint, target = self._prepare_local_run(
+            bound, on_conflict, resume_from=resume_from, draft_from=draft_from
+        )
+        if target.existing_object_id is not None:
+            return self.run_status(name=target.name)
+        output_name = _derived_name(target.name, "output")
+        output_logical_name = _derived_name(target.logical_name, "output")
+        output_fingerprint = canonical_sha256(
+            {"run_request": fingerprint, "output": "primary"}
+        )
+        try:
+>           run_id = self.runs.schedule(
+                bound,
+                instance_id=self._instance_id(),
+                output_binding_name=output_name,
+                output_logical_name=output_logical_name,
+                output_revision=target.revision,
+                output_binding_fingerprint=output_fingerprint,
+                resume_from=resume_run_id,
+                draft_from=draft_run_id,
+                draft_digest=draft_digest,
+            )
+
+src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py:265: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <scidiscovery.artifact_agent.service.runs.RunService object at 0x7f1f6ff56bd0>
+bound = BoundOperationCall(compiled=CompiledOperation(plugin_id='tcad_artifact', spec=OperationSpec(operation_id='tcad.result....posure='on_demand', usage='evidence_inventory')), instruction='Analyze the bound fixture outputs.', executor_plan=None)
+instance_id = 'ins_9295790ca77047ec958f8c42b50f7930'
+output_binding_name = 'analysis.output', output_logical_name = 'analysis.output'
+output_revision = 1
+output_binding_fingerprint = 'ee1b8c6636077957c94ac69a376eec53e3e85e8ad80ace067d850b887e0aed7e'
+resume_from = None, draft_from = None, draft_digest = None
+
+    def schedule(
+        self,
+        bound: BoundOperationCall,
+        *,
+        instance_id: str,
+        output_binding_name: str,
+        output_logical_name: str,
+        output_revision: int,
+        output_binding_fingerprint: str,
+        resume_from: str | None = None,
+        draft_from: str | None = None,
+        draft_digest: str | None = None,
+    ) -> str:
+        if resume_from is not None and draft_from is not None:
+            raise RunStateConflict("resume_from and draft_from are mutually exclusive")
+        if draft_digest is not None and draft_from is None:
+            raise RunStateConflict("draft digest requires a source Run")
+        compiled = bound.compiled
+        if compiled.spec.executor.kind != "agent":
+            raise ValueError("RunService accepts Agent operations only")
+        if not self.backend.supports_operation(compiled):
+            raise RunError("runtime backend does not support the compiled Operation")
+        if any(port.collection is not None for port in compiled.spec.outputs) and not tool_evidence_ports(compiled):
+            raise RunError("minimal local Run does not yet support output collections")
+        if compiled.spec.limits is None:
+            raise ValueError("compiled operation has no limits")
+        # Reconstruct the call from authoritative records before any Run/workspace write.
+        by_port = {port.name: [] for port in compiled.spec.inputs}
+        for item in bound.inputs:
+            envelope = self.artifacts.catalog(item.artifact.ref)
+            producer = self.completed_for_output(envelope.ref)
+            by_port.setdefault(item.port_name, []).append(InvocationArtifact(
+                artifact_name=item.artifact_name, ref=envelope.ref, schema_id=envelope.schema_id,
+                media_type=envelope.media_type, size_bytes=envelope.size_bytes,
+                parent_refs=envelope.parent_refs, labels=tuple(envelope.labels.items()),
+                producer_run_id=producer.run_id if producer else None,
+                current=self.input_is_current(instance_id=instance_id,
+                    artifact_name=item.artifact_name, artifact_ref=envelope.ref),
+                handoff_verdict=(self.signal_for_output(envelope.ref, require_current=False).verdict
+                    if self.signal_for_output(envelope.ref, require_current=False) else None),
+                historical=item.artifact.historical,
+            ))
+        bound = preflight_operation(compiled, name=bound.name,
+            artifacts_by_port={name: tuple(items) for name, items in by_port.items()},
+            instruction=bound.instruction, read_artifact=self.artifacts.read,
+            source_name_overrides={(item.port_name, item.artifact_name): item.source_name
+                                   for item in bound.inputs})
+        raw_inputs = tuple(
+            RunInputBinding(
+                port_name=item.port_name,
+                source_name=item.source_name,
+                artifact_name=item.artifact_name,
+                artifact_ref=item.artifact.ref,
+                media_type=item.artifact.media_type,
+                exposure=item.exposure,
+                usage=item.usage,
+                require_current=next(
+                    port.require_current
+                    for port in compiled.spec.inputs
+                    if port.name == item.port_name
+                ),
+            )
+            for item in bound.inputs
+        )
+        for item in raw_inputs:
+            self.artifacts.verify(item.artifact_ref)
+        run_id = f"run_{uuid.uuid4().hex}"
+        created_at = timestamp()
+        deadline_at = future(created_at, compiled.spec.limits.timeout_seconds)
+        recovery_digest: str | None = None
+        with self._connect() as connection:
+            self._attach_scheduler(connection)
+            connection.execute("BEGIN IMMEDIATE")
+            frozen_inputs = self.current.freeze(connection, instance_id, raw_inputs)
+            active_revision = active_direct_revision_ports(
+                compiled, (item.port_name for item in frozen_inputs)
+            )
+            revision_base = (
+                None
+                if active_revision is None
+                else next(
+                    item.artifact_ref
+                    for item in frozen_inputs
+                    if item.port_name == active_revision[0].name
+                )
+            )
+            if (
+                revision_base is not None
+                and compiled.spec.review is not None
+                and compiled.spec.review.max_revisions
+                and self._revision_successor(
+                    connection,
+                    instance_id=instance_id,
+                    operation_digest=compiled.digest,
+                    base_ref=revision_base,
+                )
+                is not None
+            ):
+                connection.execute("ROLLBACK")
+                raise RunSlotBusy("this revision base already has a successor Run")
+            if resume_from is not None:
+                source = status_from_row(self._row(connection, resume_from))
+                recovery_digest = self._validate_resume(
+                    connection,
+                    source,
+                    compiled.digest,
+                    tuple(item.artifact_ref for item in frozen_inputs),
+                    compiled.spec.limits.max_attempts,
+                )
+            if resume_from is not None and source.instance_id != instance_id:
+                raise RunStateConflict("recovery source belongs to another instance")
+            if draft_from is not None:
+                source = status_from_row(self._row(connection, draft_from))
+                recovery_digest = self._validate_draft_source(
+                    connection, source, compiled=compiled, instance_id=instance_id
+                )
+                if draft_digest is not None and draft_digest != recovery_digest:
+                    raise RunStateConflict("draft source digest changed")
+            request_digest = canonical_sha256(
+                {
+                    "operation_id": compiled.spec.operation_id,
+                    "operation_version": compiled.spec.version,
+                    "operation_digest": compiled.digest,
+                    "backend": self.backend.backend_id,
+                    "backend_version": self.backend.backend_version,
+                    "backend_capabilities": self.backend.capabilities,
+                    "instance_id": instance_id,
+                    "output_binding": {
+                        "name": output_binding_name,
+                        "logical_name": output_logical_name,
+                        "revision": output_revision,
+                        "request_fingerprint": output_binding_fingerprint,
+                    },
+                    "instruction": bound.instruction or "",
+                    "inputs": json.loads(inputs_json(frozen_inputs)),
+                    "limits": compiled.spec.limits.model_dump(mode="json"),
+                    "resume_from": resume_from,
+                    **({"draft_from": draft_from, "draft_digest": recovery_digest}
+                       if draft_from is not None else {}),
+                    "recovery_digest": recovery_digest,
+                }
+            )
+            try:
+                connection.execute(
+                    """
+                    INSERT INTO runs (
+                        run_id, instance_id, operation_id, operation_version,
+                        operation_digest, agent_type, instruction, inputs_json,
+                        backend_id, backend_version, backend_capabilities_json,
+                        output_binding_name, output_logical_name,
+                        output_revision, output_binding_fingerprint,
+                        request_digest, resume_from_run_id, draft_from_run_id, recovery_policy_json,
+                        state, created_at, deadline_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                              ?, ?, 'queued', ?, ?)
+                    """,
+                    (
+                        run_id,
+                        instance_id,
+                        compiled.spec.operation_id,
+                        compiled.spec.version,
+                        compiled.digest,
+                        operation_agent_type(compiled),
+                        bound.instruction or "",
+                        inputs_json(frozen_inputs),
+                        self.backend.backend_id,
+                        self.backend.backend_version,
+                        canonical_json(self.backend.capabilities),
+                        output_binding_name,
+                        output_logical_name,
+                        output_revision,
+                        output_binding_fingerprint,
+                        request_digest,
+                        resume_from,
+                        draft_from,
+                        canonical_json(self._recovery_policy(compiled)),
+                        created_at,
+                        deadline_at,
+                    ),
+                )
+            except sqlite3.IntegrityError as error:
+                connection.execute("ROLLBACK")
+                raise RunSlotBusy(
+                    "this compiled Operation already has an unopened or running Run"
+                ) from error
+            connection.execute("COMMIT")
+        try:
+            materialized_inputs = tuple(
+                WorkspaceInput(
+                    name=item.source_name,
+                    media_type=item.media_type,
+                    content=self.artifacts.read(item.artifact_ref),
+                )
+                for item in frozen_inputs
+                if item.exposure != "handoff_only"
+            )
+            input_bytes = {item.name: item.content for item in materialized_inputs}
+            direct_revision = active_direct_revision_ports(
+                compiled, (item.port_name for item in frozen_inputs)
+            )
+            workspace_hooks = operation_workspace_hooks(compiled)
+            revision_workspace_mode = _revision_workspace_mode(
+                direct_revision, workspace_hooks
+            )
+            initial_output = (
+                revision_draft_json(bound, input_bytes)
+                if revision_workspace_mode == "result_copy"
+                else None
+            )
+            if (
+                initial_output is not None
+                and len(initial_output) > compiled.spec.limits.max_output_bytes
+            ):
+                raise RunError("revision draft exceeds the compiled output limit")
+            workspace = self.backend.prepare(
+                run_id=run_id,
+                inputs=materialized_inputs,
+                assignment=assignment_json(
+                    bound,
+                    frozen_inputs,
+                    tool_names=self.backend.assignment_tool_names(compiled),
+                    recovery_relative_path=(
+                        "recovery-draft" if recovery_digest is not None else None
+                    ),
+                    revision_workspace_mode=revision_workspace_mode,
+                    prior_source_bindings=dict(self.prior_source_bindings(self.status(run_id))),
+                    deadline_at=deadline_at,
+                ),
+                result_schema=result_schema_json(
+                    compiled,
+                    input_source_ports={
+                        item.source_name: item.port_name for item in frozen_inputs
+                    },
+                ),
+                recovery_digest=recovery_digest,
+                initial_output=initial_output,
+            )
+            self._materialize_workspace(compiled, run_id, workspace)
+        except Exception as error:
+            self.record_failure(
+                run_id,
+                reason=f"workspace preparation failed: {type(error).__name__}",
+                expected_state="queued",
+                expected_last_activity_at=None,
+            )
+>           raise RunError("local workspace preparation failed") from error
+E           scidiscovery.artifact_agent.service.run_records.RunError: local workspace preparation failed
+
+src/scidiscovery/artifact_agent/service/runs.py:348: RunError
+
+The above exception was the direct cause of the following exception:
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-187/test_plot_failure_preserves_nu0')
+
+    def test_plot_failure_preserves_numbers_and_later_bound_plot_does_not_recompute(tmp_path):
+        """A tiny staged task through publish, partial submit, exact binding and new Run."""
+        system = analysis_system(tmp_path)
+>       worker, opened = open_analysis(system)
+                         ^^^^^^^^^^^^^^^^^^^^^
+
+tests/operations/test_analysis_artifact_references.py:31: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/operations/test_tcad_result_analysis.py:126: in open_analysis
+    root.call_tool('operation_invoke',request)
+src/scidiscovery/artifact_agent/interfaces/mcp_root.py:403: in call_tool
+    return getattr(self.facade, name)(**values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py:196: in operation_invoke
+    result = self._invoke_agent_operation(
+src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py:242: in _invoke_agent_operation
+    return self._invoke_local_run(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <scidiscovery.artifact_agent.interfaces.mcp_root.RootToolFacade object at 0x7f1f6ff56960>
+bound = BoundOperationCall(compiled=CompiledOperation(plugin_id='tcad_artifact', spec=OperationSpec(operation_id='tcad.result....posure='on_demand', usage='evidence_inventory')), instruction='Analyze the bound fixture outputs.', executor_plan=None)
+on_conflict = 'reject', resume_from = None, draft_from = None
+
+    def _invoke_local_run(
+        self,
+        bound: BoundOperationCall,
+        on_conflict: str,
+        *,
+        resume_from: str | None,
+        draft_from: str | None = None,
+    ) -> dict[str, Any]:
+        resume_run_id, draft_run_id, draft_digest, fingerprint, target = self._prepare_local_run(
+            bound, on_conflict, resume_from=resume_from, draft_from=draft_from
+        )
+        if target.existing_object_id is not None:
+            return self.run_status(name=target.name)
+        output_name = _derived_name(target.name, "output")
+        output_logical_name = _derived_name(target.logical_name, "output")
+        output_fingerprint = canonical_sha256(
+            {"run_request": fingerprint, "output": "primary"}
+        )
+        try:
+            run_id = self.runs.schedule(
+                bound,
+                instance_id=self._instance_id(),
+                output_binding_name=output_name,
+                output_logical_name=output_logical_name,
+                output_revision=target.revision,
+                output_binding_fingerprint=output_fingerprint,
+                resume_from=resume_run_id,
+                draft_from=draft_run_id,
+                draft_digest=draft_digest,
+            )
+        except Exception as error:
+>           raise OperationEngineeringError("local_run_creation_failed") from error
+E           scidiscovery.operations.input_validation.OperationEngineeringError: local_run_creation_failed
+
+src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py:277: OperationEngineeringError
+=========================== short test summary info ============================
+FAILED tests/operations/test_analysis_artifact_references.py::test_plot_failure_preserves_numbers_and_later_bound_plot_does_not_recompute
+1 failed, 11 deselected in 1.84s

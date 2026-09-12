@@ -14,6 +14,7 @@ from .operations.spec import (
     ComponentRef,
     CompleteTransformFamilySpec,
     InputAdmissionSpec,
+    InputValidationSpec,
     InputPortSpec,
     LimitsSpec,
     NativeToolPolicy,
@@ -26,7 +27,34 @@ from .operations.spec import (
 )
 
 
-OPERATION_AGENT_PREAMBLE = """This is one bounded compiled scientific Operation.
+RESEARCH_WORK_CONTEXT = """Research context and responsibilities:
+Evidence establishes source-bound facts; hypotheses propose falsifiable explanations;
+design selects a feasible current objective and retains later objectives and conditions.
+Independent review checks scientific validity and whether the task is deliverable from
+its declared inputs. Authors implement the exact plan within available capabilities;
+execution requires its own authorization; analysis interprets actual results and may
+return limited or inconclusive findings for the next design. These are composable
+responsibilities, not a mandatory stage sequence. Only the scheduler selects Operations.
+
+Read the bound overall objective, current plan/task, and relevant progress before
+judging or implementing. Read large evidence on demand through declared input tools.
+Background and past verdicts do not override the current exact subject or grant claim
+or execution qualification. A producer's handoff is not automatically part of its payload.
+Never assume shared chat, unbound files, or another role's tools are available.
+Report unavailable context precisely without inventing facts or replacement inputs.
+
+Distinguish missing implementation inputs, responsibility/capability mismatch, and
+conditions affecting only later analysis. Do not turn all later conditions into authoring
+prerequisites. Redesign may defer work, change a supported method, narrow the current
+objective, or explain infeasibility; it need not perform every missing task itself.
+Do not repeat an unchanged impossible assignment or create placeholder success.
+Independent reviewers assess the exact subject themselves, not the author's hidden
+reasoning. Global awareness grants no extra access, scientific authority, or tools.
+
+"""
+
+
+OPERATION_AGENT_PREAMBLE = RESEARCH_WORK_CONTEXT + """This is one bounded compiled scientific Operation.
 Read only the exact assignment, declared inputs, and output contract returned by
 the selected runtime backend. Do not search the project repository, installed
 package, framework source, historical runs, or sibling workspaces. Treat missing
@@ -37,6 +65,14 @@ and tool instructions. A tool being visible is not authorization to use it. If
 output validation fails, correct the reported rule_id and field paths against
 the compiled Schema and its two contract pointers declared in assignment.json;
 never inspect framework implementation to reverse engineer a validator.
+The output Schema describes the sealed result. Existing workspace finalizers fill
+mechanical copies before validation: proposal resource case_count from cases, the
+portfolio objective in proposal objectives, and Intake objective text from its formal
+objective_contract.statement (or foundation objective when no contract exists).
+Write the authoritative scientific field once; its generated copies may be omitted.
+For a formal scientific/critic review or evidence audit, the finalizer projects the
+handoff verdict from the formal result; keep the handoff summary and next actions.
+Scientific choices, findings, current/later goals and evidence are never generated.
 Scientific content must be delivered through the backend's declared submit
 action, not through chat.
 
@@ -61,7 +97,7 @@ def payload_validator(
         try:
             function(value)
         except ValidationError as error:
-            raise SemanticRuleViolation(str(error)) from error
+            raise SemanticRuleViolation("payload does not satisfy its declared model") from error
 
     return validate
 
@@ -131,6 +167,7 @@ def scientific_agent_operation(
     native_shell: str = "inherited_prototype",
     native_view_image: bool = False,
     input_admission: InputAdmissionSpec | None = None,
+    input_validation: InputValidationSpec | None = None,
     complete_transform_family: CompleteTransformFamilySpec | None = None,
     review: ReviewSpec | None = None,
     guards: tuple[ComponentRef, ...] = (),
@@ -161,6 +198,7 @@ def scientific_agent_operation(
         outputs=outputs,
         consequence=consequence,
         input_admission=input_admission,
+        input_validation=input_validation,
         complete_transform_family=complete_transform_family,
         review=review,
         guards=guards,

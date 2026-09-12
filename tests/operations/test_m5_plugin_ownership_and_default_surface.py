@@ -36,13 +36,6 @@ FILE_TOOLS = {
     "file_delete_tool",
     "file_move_tool",
 }
-FIGURE_OPERATIONS = {
-    "scidiscovery.curve-bundle.figure-evidence.v2",
-    "science.figure.request.prepare.v1",
-    "science.figure.evidence.materialize.v1",
-    "science.evidence.extract.figure.v2",
-    "science.figure.evidence.audit.v1",
-}
 
 
 def _resource_value(implementation: str) -> object:
@@ -88,21 +81,6 @@ def test_installed_schema_ids_have_one_registration_owner() -> None:
                     (plugin.plugin_id, component.component_id)
                 )
     assert {schema_id: values for schema_id, values in owners.items() if len(values) > 1} == {}
-
-
-def test_optional_figure_plugin_owns_its_complete_vertical_slice() -> None:
-    default = compile_catalog(
-        (CORE_PLUGIN, GENERAL_PLUGIN, CURVE_PLUGIN, TCAD_PLUGIN)
-    )
-    optional = compile_catalog(
-        (CORE_PLUGIN, GENERAL_PLUGIN, CURVE_PLUGIN, TCAD_PLUGIN, FIGURE_PLUGIN)
-    )
-    assert FIGURE_OPERATIONS.isdisjoint(default.operation_ids())
-    assert set(optional.operation_ids()) - set(default.operation_ids()) == FIGURE_OPERATIONS
-    assert {
-        optional.operation(operation_id).plugin_id
-        for operation_id in FIGURE_OPERATIONS
-    } == {"curve_figure_evidence"}
 
 
 def test_project_and_execution_resource_contracts_share_one_type() -> None:

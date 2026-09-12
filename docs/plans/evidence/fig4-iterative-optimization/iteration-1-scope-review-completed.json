@@ -1,0 +1,1269 @@
+{
+  "status": {
+    "agent_type": "op_science_object_review_v1_a01836596a96",
+    "backend": "local_trusted",
+    "bound_inputs": [
+      {
+        "artifact_names": [
+          "fig4_morphology_objective_revision_4.output"
+        ],
+        "port": "experiment_plan"
+      },
+      {
+        "artifact_names": [
+          "fig4_continuation_objective_2"
+        ],
+        "port": "research_objective"
+      },
+      {
+        "artifact_names": [
+          "fig4_continuation_execution_context_1"
+        ],
+        "port": "execution_context"
+      },
+      {
+        "artifact_names": [
+          "fig4_continuation_experiment_plan_3",
+          "fig4_continuation_hypothesis_revision_1.output",
+          "fig4_continuation_tcad_author_4.output",
+          "fig4_morphology_objective_review_2.output"
+        ],
+        "port": "current_progress"
+      },
+      {
+        "artifact_names": [
+          "fig4_continuation_execution_1.result",
+          "fig4_morphology_closure_2.output.tool_evidence_030",
+          "fig4_continuation_figure_materialized_1.curve_tables_001",
+          "fig4_continuation_figure_materialized_1.curve_tables_002"
+        ],
+        "port": "experiment_results"
+      },
+      {
+        "artifact_names": [
+          "fig4_morphology_closure_2.output",
+          "fig4_uncertainty_diagnosis_1.output",
+          "fig4_curve_diagnostic_verification_1.output",
+          "fig4_recovery_consistency_verification_1.output"
+        ],
+        "port": "result_analysis"
+      }
+    ],
+    "candidate_accepted": true,
+    "completed_at": "2026-09-12T14:55:00.362315Z",
+    "created_at": "2026-09-12T14:48:21.579690Z",
+    "deadline_at": "2026-09-12T14:58:21.579690Z",
+    "diagnostic_summary": {
+      "failure": null,
+      "latest_native_error": null,
+      "latest_rejection": {
+        "category": "output_rejected",
+        "code": "output_rejected",
+        "details": [
+          {
+            "affected_action": "submit",
+            "code": "output_invalid",
+            "message": "Value violates the declared type, bounds, or field relationship.",
+            "path": "$.payload",
+            "phase": "output_payload",
+            "repairable": true,
+            "rule_id": "experiment.review.verdict_consistency",
+            "schema_version": 1,
+            "type": "value_error"
+          }
+        ],
+        "repairable_by_output": true
+      },
+      "latest_tool_error": null,
+      "native_coverage": "unobserved",
+      "recent_errors": [
+        {
+          "category": "output_rejected",
+          "code": "output_rejected",
+          "details": [
+            {
+              "affected_action": "submit",
+              "code": "output_invalid",
+              "message": "Value violates the declared type, bounds, or field relationship.",
+              "path": "$.payload",
+              "phase": "output_payload",
+              "repairable": true,
+              "rule_id": "experiment.review.verdict_consistency",
+              "schema_version": 1,
+              "type": "value_error"
+            }
+          ],
+          "repairable_by_output": true
+        },
+        {
+          "category": "output_rejected",
+          "code": "output_rejected",
+          "details": [
+            {
+              "affected_action": "submit",
+              "code": "output_invalid",
+              "message": "Value violates the declared type, bounds, or field relationship.",
+              "path": "$.payload",
+              "phase": "output_payload",
+              "repairable": true,
+              "rule_id": "experiment.review.verdict_consistency",
+              "schema_version": 1,
+              "type": "value_error"
+            }
+          ],
+          "repairable_by_output": true
+        }
+      ],
+      "rejection_count": 2
+    },
+    "draft_from": null,
+    "head_advance": "not_requested",
+    "last_activity_at": "2026-09-12T14:55:00.362315Z",
+    "logical_name": "fig4_iterative_alignment_scope_review_1",
+    "name": "fig4_iterative_alignment_scope_review_1",
+    "native_execution": {
+      "coverage": "unobserved",
+      "scientific_evidence": false
+    },
+    "operation_id": "science.object.review.v1",
+    "output_artifact_name": "fig4_iterative_alignment_scope_review_1.output",
+    "reason": null,
+    "recovery": {
+      "attempt_budget": {
+        "limit": 1,
+        "used": 1
+      },
+      "delivery_preserved": false,
+      "draft_available": false,
+      "recovery_pending": false,
+      "resume_available": false
+    },
+    "recovery_available": false,
+    "revision": 1,
+    "scheduler_signal": {
+      "assumptions": [
+        "将绑定的 result_analysis_001 至 result_analysis_004 视为当前计划之后的不可变进展，因为它们明确引用相同 experiment_key/plan_key，并报告该形貌合同已完成、复核且未发生字节漂移。",
+        "参数包络中的具体 D、Cs 候选和值域必须由后续设计者显式给出并标为来源约束或用户定义；本审查不补造数值。"
+      ],
+      "missing_inputs": [
+        "尚无有效的联合数字化不确定度表示或有依据的整体对齐容差，因此当前只能评价中央趋势、掩码敏感性和有限候选间的相对改进，不能封闭带不确定度的“良好对齐”结论。",
+        "execution_context 的 capability_statements 与 limitations 均为空；未来 shape-changing 模型在 SProcess R-2020.09 中的具体实现可行性尚未独立建立。"
+      ],
+      "next_action_kind": null,
+      "next_actions": [
+        "修订 current_objectives、cases、comparison_contract、validation、resource_estimate、value_assessment 和 priority_rationale：停止重复已完成的 60 单元归约，选择一轮有限 D/Cs 参数包络，并明确每个新增案例与历史 own-anchor 基线的关系。",
+        "用前部水平与前沿位置作为预注册校准观测；用未参与候选选择的 transition width、前沿对齐残差结构、尾部水平/斜率作为验证观测，并给出确定性排序、并列和停止规则。该结果只说明常数-D 家族在所列范围内的参数可校正性或不足。",
+        "复用已封存的参考行、60 单元形貌结果和数值敏感性；新案例按材料/案例独立交付，局部失败只补对应新案例。任何新执行前另行修正已知 TDR 声明路径并完成匹配的实现审查。",
+        "若要声称带不确定度的良好对齐，先修订并独立审查保持 point_index、缺口、共享组、正浓度与严格 x 次序的联合不确定度方法，或取得合格作者原始 SIMS 数据；若常数-D 包络仍不能通过独立形貌验证，再设计有限 shape-changing 结构反事实。"
+      ],
+      "schema_version": 1,
+      "summary": "需修订后再作为下一轮实验。原计划对两材料的前沿/深度、对齐形貌和前尾候选平台给出了严谨、可复算的回顾性归约合同，且其有限交付仍然有效；但绑定结果已经完成该合同的 60/60 单元、六个材料×目标处置和后续一致性核对。计划仍把同三项回顾性目标列为 current_objectives、声明零新增求解案例并复用相同输入与确定性规则，因此重复执行只会再现既有中央差异和全部角点不可判，不能增加关于参数失配、结构失配或机制的证据。最小修订是把当前目标改成一轮有限、预注册的常数-D 参数包络，用独立的校准与验证观测区分“参数可校正”与“冻结族形状不足”；若需机制区分，再把有限 shape-changing 模型族保留为后续目标。",
+      "verdict": "revise"
+    },
+    "scheduler_signal_status": "available",
+    "sealed_output": {
+      "artifact_name": "fig4_iterative_alignment_scope_review_1.output",
+      "kind": "scientific_review",
+      "payload": {
+        "evidence": [
+          {
+            "locator": "/proposals/0/current_objectives,/proposals/0/cases,/proposals/0/resource_estimate,/proposals/0/value_assessment,/priority_rationale,/validation_plans/0",
+            "schema_version": 1,
+            "source_key": "experiment_plan",
+            "source_type": "frozen_input"
+          },
+          {
+            "locator": "/mandatory_targets,/closure_requirements",
+            "schema_version": 1,
+            "source_key": "research_objective",
+            "source_type": "frozen_input"
+          },
+          {
+            "locator": "/verdict,/summary,/findings,/next_actions",
+            "schema_version": 1,
+            "source_key": "current_progress_004",
+            "source_type": "frozen_input"
+          },
+          {
+            "locator": "/summary,/remaining_contradiction,/objective_assessment,/next_action",
+            "schema_version": 1,
+            "source_key": "result_analysis_001",
+            "source_type": "frozen_input"
+          },
+          {
+            "locator": "/summary,/remaining_contradiction,/next_action",
+            "schema_version": 1,
+            "source_key": "result_analysis_002",
+            "source_type": "frozen_input"
+          },
+          {
+            "locator": "/summary,/remaining_contradiction,/next_action",
+            "schema_version": 1,
+            "source_key": "result_analysis_003",
+            "source_type": "frozen_input"
+          },
+          {
+            "locator": "/summary,/gates,/remaining_contradiction,/objective_assessment,/next_action",
+            "schema_version": 1,
+            "source_key": "result_analysis_004",
+            "source_type": "frozen_input"
+          },
+          {
+            "locator": "/domain,/implementation_backend,/release_label,/capability_statements,/limitations",
+            "schema_version": 1,
+            "source_key": "execution_context",
+            "source_type": "frozen_input"
+          },
+          {
+            "locator": "/terminal_state,/output_refs",
+            "schema_version": 1,
+            "source_key": "experiment_results_001",
+            "source_type": "frozen_input"
+          }
+        ],
+        "evidence_item_keys": [
+          "experiment_plan",
+          "research_objective",
+          "current_progress_004",
+          "result_analysis_001",
+          "result_analysis_002",
+          "result_analysis_003",
+          "result_analysis_004",
+          "execution_context",
+          "experiment_results_001"
+        ],
+        "findings": [
+          {
+            "epistemic_status": "inference",
+            "evidence_keys": [
+              "experiment_plan",
+              "research_objective",
+              "current_progress_004",
+              "result_analysis_001"
+            ],
+            "finding_key": "review.historical_delivery_retained",
+            "rationale": "部分覆盖本身不否定该历史实验；本次否定的是把同一已完成计划再次当作下一轮。",
+            "schema_version": 1,
+            "statement": "原计划的有限阶段效力应保留：三个材料别形貌目标覆盖 profile_shape_by_material 与 front_and_tail_contrast，且已通过独立审查并完成中央值、掩码、主/紧化敏感性、对齐轨迹和明确不可判处置；未覆盖的 mechanism_separation 没有被误报为完成。"
+          },
+          {
+            "epistemic_status": "inference",
+            "evidence_keys": [
+              "experiment_plan",
+              "result_analysis_001",
+              "result_analysis_004"
+            ],
+            "finding_key": "review.current_selection_is_exhausted",
+            "rationale": "确定性输入、算法和完整产物均已封存且一致性复核无漂移，故相同归约的预期输出已经由现有记录决定。",
+            "schema_version": 1,
+            "statement": "精确计划仍将已经完成的三项 retrospective reduction 列为 current_objectives，并声明零新增 solver cases、复用相同六案例、同一参考行与同一确定性算法；在绑定的最新进展下，它没有新的干预、观测或比较，重复运行不会增加科学证据。"
+          },
+          {
+            "epistemic_status": "inference",
+            "evidence_keys": [
+              "result_analysis_001",
+              "result_analysis_003",
+              "result_analysis_004"
+            ],
+            "finding_key": "review.existing_mismatch_is_descriptive",
+            "rationale": "当前案例只包含两个来源锚点且材料标签与 D 配对；回顾性归约没有新增参数扫描或 shape-changing 干预。",
+            "schema_version": 1,
+            "statement": "现有结果稳定支持一个有限中央趋势：两材料冻结常数-D own-anchor 曲线的 operational endpoint 更深、transition 更宽，且尾部水平高于参考；探索性残差也把主要偏差定位到参考曲线开始陡降之后。该证据描述形貌失配，但没有区分可校准的 D/Cs 失配与必须改变曲线族的结构失配。"
+          },
+          {
+            "epistemic_status": "runtime_observation",
+            "evidence_keys": [
+              "result_analysis_001",
+              "result_analysis_002",
+              "result_analysis_004"
+            ],
+            "finding_key": "review.uncertainty_repetition_has_no_value",
+            "rationale": "最新一致性核对确认角点失败计数和六条处置均未改变；问题位于联合不确定度构造与供应边界，而非未完成计算。",
+            "schema_version": 1,
+            "statement": "48 个全局 digitization corners 已全部因 non-strict x 或 nonpositive y-minus 在拟合前失去资格；再次按同一角点规则执行只会维持六个材料×目标 compatibility 的 not_determinable 处置，不能形成带不确定度的对齐判断。"
+          },
+          {
+            "epistemic_status": "inference",
+            "evidence_keys": [
+              "experiment_plan",
+              "result_analysis_001",
+              "result_analysis_003"
+            ],
+            "finding_key": "review.minimum_parameter_iteration",
+            "rationale": "D 和 Cs 分别提供深度尺度与幅度方向的最小参数干预；留出过渡和尾段形貌用于验证，才能判断改善来自参数校正还是常数-D 曲线族仍然不足。具体候选值、范围与停止阈值必须在修订计划中显式冻结。",
+            "schema_version": 1,
+            "statement": "下一轮最小有意义的实验应是每种材料一个预注册的有限 D/Cs 候选包络，并把参数选择观测与形状验证观测分开：可用前部水平和前沿位置选择候选，再用 transition width、front-aligned residual structure 与 tail level/slope 检验未被拟合的形貌。"
+          },
+          {
+            "epistemic_status": "inference",
+            "evidence_keys": [
+              "research_objective",
+              "experiment_plan",
+              "result_analysis_001"
+            ],
+            "finding_key": "review.parameter_and_mechanism_claims_separated",
+            "rationale": "原总体 closure requirement 单列 mechanism_separation；参数拟合与结构/机制证据具有不同可识别性。",
+            "schema_version": 1,
+            "statement": "有限 D/Cs 包络即使获得更好中央对齐，也只能支持所测常数-D 家族内的参数校准；它不能消除材料/D 配对或证明 kick-out、VCD、缺陷物种或唯一机制。若独立的过渡/尾段验证仍失败，才形成在所测范围内转向有限 shape-changing 结构反事实的依据。"
+          },
+          {
+            "epistemic_status": "inference",
+            "evidence_keys": [
+              "experiment_plan",
+              "execution_context",
+              "experiment_results_001"
+            ],
+            "finding_key": "review.feasibility_is_bounded",
+            "rationale": "这些是后续实现和执行条件；它们不要求重跑已完成历史批次，也不把未知结构模型的实现责任转移给当前计划作者。",
+            "schema_version": 1,
+            "statement": "参数包络可复用既有一维常数-D 实现路径、参考表和材料别归约，因此是当前最小可实现方向；但任何新增执行仍需显式案例数、资源估计、匹配实现审查及已知 TDR 路径修正。未来 shape-changing 模型的 SProcess R-2020.09 可行性不能从当前空 capability statements 独立推出。"
+          }
+        ],
+        "global_confounders": [
+          "材料标签与纸面 D 锚点绑定，现有材料差异不能与 D 差异分离。",
+          "全部全局数字化角点无资格，中央趋势与掩码敏感性不能升级为供应不确定度下的 compatibility 或“良好对齐”。",
+          "若同一形貌指标同时用于参数选择和成功判定，会把拟合优度误当成独立验证；修订计划必须预留未参与选择的过渡/尾段观测。",
+          "外部执行 terminal_state 仍为 failed，恢复的原始输出只支持已封存后处理，不构成成功执行回执。",
+          "没有有限 shape-changing 干预时，常数-D 参数拟合不能识别微观机制。"
+        ],
+        "hypothesis_reviews": [
+          {
+            "confounders": [
+              "材料标签与 D 配对。",
+              "当前计划没有新参数候选或 shape-changing 干预。"
+            ],
+            "falsifiability": "fail",
+            "hypothesis_key": "hypothesis.surface_boundary_control",
+            "identifiability": "fail",
+            "missing_inputs": [
+              "逐材料有限 D/Cs 候选集、校准/验证分离和停止规则。"
+            ],
+            "physical_plausibility": "unknown",
+            "rationale": "历史 G 协议已经因 own-anchor 充分性门失败而 inconclusive；当前精确计划只重复后处理，既不改变参数也不改变模型，所以本轮不能新增支持或反驳。",
+            "schema_version": 1,
+            "smallest_resolving_action": "把下一轮改成有限 D/Cs 参数包络，以前部水平和前沿位置校准，并用未参与选择的过渡与尾段形貌验证；只对所测常数-D 范围作结论。"
+          },
+          {
+            "confounders": [
+              "48 个全局数字化角点全部在拟合前无资格。",
+              "供应的共享支持与检测状态不足以构成新的联合不确定度表示。"
+            ],
+            "falsifiability": "fail",
+            "hypothesis_key": "hypothesis.tail_support_artifact",
+            "identifiability": "fail",
+            "missing_inputs": [
+              "保持 point_index、缺口、共享组、正值和严格 x 次序的已审联合不确定度合同，或合格作者原始 SIMS 行。"
+            ],
+            "physical_plausibility": "unknown",
+            "rationale": "既有掩码与角点分析已经完整交付且仍不可判；相同输入和规则无法再检验 tail-support artifact。该证据修订是带不确定度结论的条件，不是有限中央参数校准的前置条件。",
+            "schema_version": 1,
+            "smallest_resolving_action": "不要重复失败角点；取得并独立审查一个有效联合不确定度表示后，只重算受影响范围与六条 compatibility 处置。"
+          }
+        ],
+        "next_actions": [
+          "删除或标记已完成的三个 retrospective current_objectives，并把其封存结果作为新轮基线，而非待重复工作。",
+          "设计一轮有限 D/Cs 包络：逐材料声明候选值/范围、唯一变化、案例数、校准观测、独立验证观测、确定性排序/并列规则、停止条件及一个匹配的数值紧化控制。",
+          "更新 validation，使结果能分别回答：前沿/前部能否被参数校准、过渡/尾段是否在未参与选择的观测上改善、若无候选满足规则则常数-D 家族在所测范围内为何不足；不得把该结果表述为机制识别。",
+          "继续复用已完成形貌产物，不重算整批；新案例局部失败只重做对应案例。执行前由实现责任修正声明 TDR 与实际 *_fps.tdr 路径并完成匹配审查。",
+          "将有效联合不确定度或合格原始 SIMS 数据作为带不确定度对齐结论的条件；将有限 shape-changing 模型族及其后端可行性审查作为参数包络不能解释形状时的后续目标。"
+        ],
+        "review_target": "experiment_portfolio",
+        "schema_version": 1,
+        "summary": "该计划作为历史回顾性形貌计划是科学有效且已交付的：它覆盖原始目标的两个材料别 mandatory targets，冻结了可复算三段拟合、257 点对齐、缺口/共享支持、材料别处置和主/紧化敏感性，并把机制分离保留为后续目标。作为最新结果之后的下一轮计划，它不再有可识别的信息增益。绑定分析已经完成 60/60 单元，给出两材料 own-anchor 中央曲线相对参考更深、更宽且尾部更高的有限描述；48 个数字化角点全部在拟合前失去资格，六个 compatibility 处置均为 not_determinable，后续核对又确认完整产物身份和数值未漂移。精确计划仍选择同三项 retrospective current_objectives、同六个历史案例、零新增求解和同一确定性归约，故再次运行不会检验新参数或结构，也不能满足用户要求的多轮对齐优化。最小科学修订是选择一轮有限 D/Cs 校准包络：以表面/前部水平与前沿位置选择候选，以未参与选择的过渡宽度、前沿对齐残差和尾段水平/斜率验证形状；预注册有限候选、排序/并列、停止条件、数值控制和逐案例恢复。无论是否改善，都只形成所测常数-D 范围内的参数拟合证据。机制结论需后续 shape-changing 模型比较；带不确定度的“良好对齐”还需有效联合不确定度或合格原始数据。",
+        "verdict": "revise"
+      },
+      "schema": "scidiscovery.scientific-review.v1"
+    },
+    "sealed_output_status": "available",
+    "started_at": "2026-09-12T14:48:43.470484Z",
+    "state": "completed"
+  },
+  "observations": [
+    {
+      "agent_type": "op_science_object_review_v1_a01836596a96",
+      "backend": "local_trusted",
+      "bound_inputs": [
+        {
+          "artifact_names": [
+            "fig4_morphology_objective_revision_4.output"
+          ],
+          "port": "experiment_plan"
+        },
+        {
+          "artifact_names": [
+            "fig4_continuation_objective_2"
+          ],
+          "port": "research_objective"
+        },
+        {
+          "artifact_names": [
+            "fig4_continuation_execution_context_1"
+          ],
+          "port": "execution_context"
+        },
+        {
+          "artifact_names": [
+            "fig4_continuation_experiment_plan_3",
+            "fig4_continuation_hypothesis_revision_1.output",
+            "fig4_continuation_tcad_author_4.output",
+            "fig4_morphology_objective_review_2.output"
+          ],
+          "port": "current_progress"
+        },
+        {
+          "artifact_names": [
+            "fig4_continuation_execution_1.result",
+            "fig4_morphology_closure_2.output.tool_evidence_030",
+            "fig4_continuation_figure_materialized_1.curve_tables_001",
+            "fig4_continuation_figure_materialized_1.curve_tables_002"
+          ],
+          "port": "experiment_results"
+        },
+        {
+          "artifact_names": [
+            "fig4_morphology_closure_2.output",
+            "fig4_uncertainty_diagnosis_1.output",
+            "fig4_curve_diagnostic_verification_1.output",
+            "fig4_recovery_consistency_verification_1.output"
+          ],
+          "port": "result_analysis"
+        }
+      ],
+      "candidate_accepted": false,
+      "completed_at": null,
+      "created_at": "2026-09-12T14:48:21.579690Z",
+      "deadline_at": "2026-09-12T14:58:21.579690Z",
+      "diagnostic_summary": {
+        "failure": null,
+        "latest_native_error": null,
+        "latest_rejection": null,
+        "latest_tool_error": null,
+        "native_coverage": "unobserved",
+        "recent_errors": [],
+        "rejection_count": 0
+      },
+      "draft_from": null,
+      "head_advance": null,
+      "last_activity_at": "2026-09-12T14:48:43.470484Z",
+      "logical_name": "fig4_iterative_alignment_scope_review_1",
+      "name": "fig4_iterative_alignment_scope_review_1",
+      "native_execution": {
+        "coverage": "unobserved",
+        "scientific_evidence": false
+      },
+      "operation_id": "science.object.review.v1",
+      "output_artifact_name": null,
+      "reason": null,
+      "recovery": {
+        "attempt_budget": {
+          "limit": 1,
+          "used": 1
+        },
+        "delivery_preserved": false,
+        "draft_available": false,
+        "recovery_pending": false,
+        "resume_available": false
+      },
+      "recovery_available": false,
+      "revision": 1,
+      "scheduler_signal": null,
+      "scheduler_signal_status": "unavailable",
+      "sealed_output": null,
+      "sealed_output_status": "unavailable",
+      "started_at": "2026-09-12T14:48:43.470484Z",
+      "state": "running"
+    },
+    {
+      "agent_type": "op_science_object_review_v1_a01836596a96",
+      "backend": "local_trusted",
+      "bound_inputs": [
+        {
+          "artifact_names": [
+            "fig4_morphology_objective_revision_4.output"
+          ],
+          "port": "experiment_plan"
+        },
+        {
+          "artifact_names": [
+            "fig4_continuation_objective_2"
+          ],
+          "port": "research_objective"
+        },
+        {
+          "artifact_names": [
+            "fig4_continuation_execution_context_1"
+          ],
+          "port": "execution_context"
+        },
+        {
+          "artifact_names": [
+            "fig4_continuation_experiment_plan_3",
+            "fig4_continuation_hypothesis_revision_1.output",
+            "fig4_continuation_tcad_author_4.output",
+            "fig4_morphology_objective_review_2.output"
+          ],
+          "port": "current_progress"
+        },
+        {
+          "artifact_names": [
+            "fig4_continuation_execution_1.result",
+            "fig4_morphology_closure_2.output.tool_evidence_030",
+            "fig4_continuation_figure_materialized_1.curve_tables_001",
+            "fig4_continuation_figure_materialized_1.curve_tables_002"
+          ],
+          "port": "experiment_results"
+        },
+        {
+          "artifact_names": [
+            "fig4_morphology_closure_2.output",
+            "fig4_uncertainty_diagnosis_1.output",
+            "fig4_curve_diagnostic_verification_1.output",
+            "fig4_recovery_consistency_verification_1.output"
+          ],
+          "port": "result_analysis"
+        }
+      ],
+      "candidate_accepted": false,
+      "completed_at": null,
+      "created_at": "2026-09-12T14:48:21.579690Z",
+      "deadline_at": "2026-09-12T14:58:21.579690Z",
+      "diagnostic_summary": {
+        "failure": null,
+        "latest_native_error": null,
+        "latest_rejection": null,
+        "latest_tool_error": null,
+        "native_coverage": "unobserved",
+        "recent_errors": [],
+        "rejection_count": 0
+      },
+      "draft_from": null,
+      "head_advance": null,
+      "last_activity_at": "2026-09-12T14:48:43.470484Z",
+      "logical_name": "fig4_iterative_alignment_scope_review_1",
+      "name": "fig4_iterative_alignment_scope_review_1",
+      "native_execution": {
+        "coverage": "unobserved",
+        "scientific_evidence": false
+      },
+      "operation_id": "science.object.review.v1",
+      "output_artifact_name": null,
+      "reason": null,
+      "recovery": {
+        "attempt_budget": {
+          "limit": 1,
+          "used": 1
+        },
+        "delivery_preserved": false,
+        "draft_available": false,
+        "recovery_pending": false,
+        "resume_available": false
+      },
+      "recovery_available": false,
+      "revision": 1,
+      "scheduler_signal": null,
+      "scheduler_signal_status": "unavailable",
+      "sealed_output": null,
+      "sealed_output_status": "unavailable",
+      "started_at": "2026-09-12T14:48:43.470484Z",
+      "state": "running"
+    },
+    {
+      "agent_type": "op_science_object_review_v1_a01836596a96",
+      "backend": "local_trusted",
+      "bound_inputs": [
+        {
+          "artifact_names": [
+            "fig4_morphology_objective_revision_4.output"
+          ],
+          "port": "experiment_plan"
+        },
+        {
+          "artifact_names": [
+            "fig4_continuation_objective_2"
+          ],
+          "port": "research_objective"
+        },
+        {
+          "artifact_names": [
+            "fig4_continuation_execution_context_1"
+          ],
+          "port": "execution_context"
+        },
+        {
+          "artifact_names": [
+            "fig4_continuation_experiment_plan_3",
+            "fig4_continuation_hypothesis_revision_1.output",
+            "fig4_continuation_tcad_author_4.output",
+            "fig4_morphology_objective_review_2.output"
+          ],
+          "port": "current_progress"
+        },
+        {
+          "artifact_names": [
+            "fig4_continuation_execution_1.result",
+            "fig4_morphology_closure_2.output.tool_evidence_030",
+            "fig4_continuation_figure_materialized_1.curve_tables_001",
+            "fig4_continuation_figure_materialized_1.curve_tables_002"
+          ],
+          "port": "experiment_results"
+        },
+        {
+          "artifact_names": [
+            "fig4_morphology_closure_2.output",
+            "fig4_uncertainty_diagnosis_1.output",
+            "fig4_curve_diagnostic_verification_1.output",
+            "fig4_recovery_consistency_verification_1.output"
+          ],
+          "port": "result_analysis"
+        }
+      ],
+      "candidate_accepted": false,
+      "completed_at": null,
+      "created_at": "2026-09-12T14:48:21.579690Z",
+      "deadline_at": "2026-09-12T14:58:21.579690Z",
+      "diagnostic_summary": {
+        "failure": null,
+        "latest_native_error": null,
+        "latest_rejection": null,
+        "latest_tool_error": null,
+        "native_coverage": "unobserved",
+        "recent_errors": [],
+        "rejection_count": 0
+      },
+      "draft_from": null,
+      "head_advance": null,
+      "last_activity_at": "2026-09-12T14:51:26.358907Z",
+      "logical_name": "fig4_iterative_alignment_scope_review_1",
+      "name": "fig4_iterative_alignment_scope_review_1",
+      "native_execution": {
+        "coverage": "unobserved",
+        "scientific_evidence": false
+      },
+      "operation_id": "science.object.review.v1",
+      "output_artifact_name": null,
+      "reason": null,
+      "recovery": {
+        "attempt_budget": {
+          "limit": 1,
+          "used": 1
+        },
+        "delivery_preserved": false,
+        "draft_available": false,
+        "recovery_pending": false,
+        "resume_available": false
+      },
+      "recovery_available": false,
+      "revision": 1,
+      "scheduler_signal": null,
+      "scheduler_signal_status": "unavailable",
+      "sealed_output": null,
+      "sealed_output_status": "unavailable",
+      "started_at": "2026-09-12T14:48:43.470484Z",
+      "state": "running"
+    },
+    {
+      "agent_type": "op_science_object_review_v1_a01836596a96",
+      "backend": "local_trusted",
+      "bound_inputs": [
+        {
+          "artifact_names": [
+            "fig4_morphology_objective_revision_4.output"
+          ],
+          "port": "experiment_plan"
+        },
+        {
+          "artifact_names": [
+            "fig4_continuation_objective_2"
+          ],
+          "port": "research_objective"
+        },
+        {
+          "artifact_names": [
+            "fig4_continuation_execution_context_1"
+          ],
+          "port": "execution_context"
+        },
+        {
+          "artifact_names": [
+            "fig4_continuation_experiment_plan_3",
+            "fig4_continuation_hypothesis_revision_1.output",
+            "fig4_continuation_tcad_author_4.output",
+            "fig4_morphology_objective_review_2.output"
+          ],
+          "port": "current_progress"
+        },
+        {
+          "artifact_names": [
+            "fig4_continuation_execution_1.result",
+            "fig4_morphology_closure_2.output.tool_evidence_030",
+            "fig4_continuation_figure_materialized_1.curve_tables_001",
+            "fig4_continuation_figure_materialized_1.curve_tables_002"
+          ],
+          "port": "experiment_results"
+        },
+        {
+          "artifact_names": [
+            "fig4_morphology_closure_2.output",
+            "fig4_uncertainty_diagnosis_1.output",
+            "fig4_curve_diagnostic_verification_1.output",
+            "fig4_recovery_consistency_verification_1.output"
+          ],
+          "port": "result_analysis"
+        }
+      ],
+      "candidate_accepted": false,
+      "completed_at": null,
+      "created_at": "2026-09-12T14:48:21.579690Z",
+      "deadline_at": "2026-09-12T14:58:21.579690Z",
+      "diagnostic_summary": {
+        "failure": null,
+        "latest_native_error": null,
+        "latest_rejection": null,
+        "latest_tool_error": null,
+        "native_coverage": "unobserved",
+        "recent_errors": [],
+        "rejection_count": 0
+      },
+      "draft_from": null,
+      "head_advance": null,
+      "last_activity_at": "2026-09-12T14:51:26.358907Z",
+      "logical_name": "fig4_iterative_alignment_scope_review_1",
+      "name": "fig4_iterative_alignment_scope_review_1",
+      "native_execution": {
+        "coverage": "unobserved",
+        "scientific_evidence": false
+      },
+      "operation_id": "science.object.review.v1",
+      "output_artifact_name": null,
+      "reason": null,
+      "recovery": {
+        "attempt_budget": {
+          "limit": 1,
+          "used": 1
+        },
+        "delivery_preserved": false,
+        "draft_available": false,
+        "recovery_pending": false,
+        "resume_available": false
+      },
+      "recovery_available": false,
+      "revision": 1,
+      "scheduler_signal": null,
+      "scheduler_signal_status": "unavailable",
+      "sealed_output": null,
+      "sealed_output_status": "unavailable",
+      "started_at": "2026-09-12T14:48:43.470484Z",
+      "state": "running"
+    },
+    {
+      "agent_type": "op_science_object_review_v1_a01836596a96",
+      "backend": "local_trusted",
+      "bound_inputs": [
+        {
+          "artifact_names": [
+            "fig4_morphology_objective_revision_4.output"
+          ],
+          "port": "experiment_plan"
+        },
+        {
+          "artifact_names": [
+            "fig4_continuation_objective_2"
+          ],
+          "port": "research_objective"
+        },
+        {
+          "artifact_names": [
+            "fig4_continuation_execution_context_1"
+          ],
+          "port": "execution_context"
+        },
+        {
+          "artifact_names": [
+            "fig4_continuation_experiment_plan_3",
+            "fig4_continuation_hypothesis_revision_1.output",
+            "fig4_continuation_tcad_author_4.output",
+            "fig4_morphology_objective_review_2.output"
+          ],
+          "port": "current_progress"
+        },
+        {
+          "artifact_names": [
+            "fig4_continuation_execution_1.result",
+            "fig4_morphology_closure_2.output.tool_evidence_030",
+            "fig4_continuation_figure_materialized_1.curve_tables_001",
+            "fig4_continuation_figure_materialized_1.curve_tables_002"
+          ],
+          "port": "experiment_results"
+        },
+        {
+          "artifact_names": [
+            "fig4_morphology_closure_2.output",
+            "fig4_uncertainty_diagnosis_1.output",
+            "fig4_curve_diagnostic_verification_1.output",
+            "fig4_recovery_consistency_verification_1.output"
+          ],
+          "port": "result_analysis"
+        }
+      ],
+      "candidate_accepted": false,
+      "completed_at": null,
+      "created_at": "2026-09-12T14:48:21.579690Z",
+      "deadline_at": "2026-09-12T14:58:21.579690Z",
+      "diagnostic_summary": {
+        "failure": null,
+        "latest_native_error": null,
+        "latest_rejection": {
+          "category": "output_rejected",
+          "code": "output_rejected",
+          "details": [
+            {
+              "affected_action": "submit",
+              "code": "output_invalid",
+              "message": "Value violates the declared type, bounds, or field relationship.",
+              "path": "$.payload",
+              "phase": "output_payload",
+              "repairable": true,
+              "rule_id": "experiment.review.verdict_consistency",
+              "schema_version": 1,
+              "type": "value_error"
+            }
+          ],
+          "repairable_by_output": true
+        },
+        "latest_tool_error": null,
+        "native_coverage": "unobserved",
+        "recent_errors": [
+          {
+            "category": "output_rejected",
+            "code": "output_rejected",
+            "details": [
+              {
+                "affected_action": "submit",
+                "code": "output_invalid",
+                "message": "Value violates the declared type, bounds, or field relationship.",
+                "path": "$.payload",
+                "phase": "output_payload",
+                "repairable": true,
+                "rule_id": "experiment.review.verdict_consistency",
+                "schema_version": 1,
+                "type": "value_error"
+              }
+            ],
+            "repairable_by_output": true
+          }
+        ],
+        "rejection_count": 1
+      },
+      "draft_from": null,
+      "head_advance": null,
+      "last_activity_at": "2026-09-12T14:53:25.090034Z",
+      "logical_name": "fig4_iterative_alignment_scope_review_1",
+      "name": "fig4_iterative_alignment_scope_review_1",
+      "native_execution": {
+        "coverage": "unobserved",
+        "scientific_evidence": false
+      },
+      "operation_id": "science.object.review.v1",
+      "output_artifact_name": null,
+      "reason": null,
+      "recovery": {
+        "attempt_budget": {
+          "limit": 1,
+          "used": 1
+        },
+        "delivery_preserved": false,
+        "draft_available": false,
+        "recovery_pending": false,
+        "resume_available": false
+      },
+      "recovery_available": false,
+      "revision": 1,
+      "scheduler_signal": null,
+      "scheduler_signal_status": "unavailable",
+      "sealed_output": null,
+      "sealed_output_status": "unavailable",
+      "started_at": "2026-09-12T14:48:43.470484Z",
+      "state": "running"
+    },
+    {
+      "agent_type": "op_science_object_review_v1_a01836596a96",
+      "backend": "local_trusted",
+      "bound_inputs": [
+        {
+          "artifact_names": [
+            "fig4_morphology_objective_revision_4.output"
+          ],
+          "port": "experiment_plan"
+        },
+        {
+          "artifact_names": [
+            "fig4_continuation_objective_2"
+          ],
+          "port": "research_objective"
+        },
+        {
+          "artifact_names": [
+            "fig4_continuation_execution_context_1"
+          ],
+          "port": "execution_context"
+        },
+        {
+          "artifact_names": [
+            "fig4_continuation_experiment_plan_3",
+            "fig4_continuation_hypothesis_revision_1.output",
+            "fig4_continuation_tcad_author_4.output",
+            "fig4_morphology_objective_review_2.output"
+          ],
+          "port": "current_progress"
+        },
+        {
+          "artifact_names": [
+            "fig4_continuation_execution_1.result",
+            "fig4_morphology_closure_2.output.tool_evidence_030",
+            "fig4_continuation_figure_materialized_1.curve_tables_001",
+            "fig4_continuation_figure_materialized_1.curve_tables_002"
+          ],
+          "port": "experiment_results"
+        },
+        {
+          "artifact_names": [
+            "fig4_morphology_closure_2.output",
+            "fig4_uncertainty_diagnosis_1.output",
+            "fig4_curve_diagnostic_verification_1.output",
+            "fig4_recovery_consistency_verification_1.output"
+          ],
+          "port": "result_analysis"
+        }
+      ],
+      "candidate_accepted": true,
+      "completed_at": "2026-09-12T14:55:00.362315Z",
+      "created_at": "2026-09-12T14:48:21.579690Z",
+      "deadline_at": "2026-09-12T14:58:21.579690Z",
+      "diagnostic_summary": {
+        "failure": null,
+        "latest_native_error": null,
+        "latest_rejection": {
+          "category": "output_rejected",
+          "code": "output_rejected",
+          "details": [
+            {
+              "affected_action": "submit",
+              "code": "output_invalid",
+              "message": "Value violates the declared type, bounds, or field relationship.",
+              "path": "$.payload",
+              "phase": "output_payload",
+              "repairable": true,
+              "rule_id": "experiment.review.verdict_consistency",
+              "schema_version": 1,
+              "type": "value_error"
+            }
+          ],
+          "repairable_by_output": true
+        },
+        "latest_tool_error": null,
+        "native_coverage": "unobserved",
+        "recent_errors": [
+          {
+            "category": "output_rejected",
+            "code": "output_rejected",
+            "details": [
+              {
+                "affected_action": "submit",
+                "code": "output_invalid",
+                "message": "Value violates the declared type, bounds, or field relationship.",
+                "path": "$.payload",
+                "phase": "output_payload",
+                "repairable": true,
+                "rule_id": "experiment.review.verdict_consistency",
+                "schema_version": 1,
+                "type": "value_error"
+              }
+            ],
+            "repairable_by_output": true
+          },
+          {
+            "category": "output_rejected",
+            "code": "output_rejected",
+            "details": [
+              {
+                "affected_action": "submit",
+                "code": "output_invalid",
+                "message": "Value violates the declared type, bounds, or field relationship.",
+                "path": "$.payload",
+                "phase": "output_payload",
+                "repairable": true,
+                "rule_id": "experiment.review.verdict_consistency",
+                "schema_version": 1,
+                "type": "value_error"
+              }
+            ],
+            "repairable_by_output": true
+          }
+        ],
+        "rejection_count": 2
+      },
+      "draft_from": null,
+      "head_advance": "not_requested",
+      "last_activity_at": "2026-09-12T14:55:00.362315Z",
+      "logical_name": "fig4_iterative_alignment_scope_review_1",
+      "name": "fig4_iterative_alignment_scope_review_1",
+      "native_execution": {
+        "coverage": "unobserved",
+        "scientific_evidence": false
+      },
+      "operation_id": "science.object.review.v1",
+      "output_artifact_name": "fig4_iterative_alignment_scope_review_1.output",
+      "reason": null,
+      "recovery": {
+        "attempt_budget": {
+          "limit": 1,
+          "used": 1
+        },
+        "delivery_preserved": false,
+        "draft_available": false,
+        "recovery_pending": false,
+        "resume_available": false
+      },
+      "recovery_available": false,
+      "revision": 1,
+      "scheduler_signal": {
+        "assumptions": [
+          "将绑定的 result_analysis_001 至 result_analysis_004 视为当前计划之后的不可变进展，因为它们明确引用相同 experiment_key/plan_key，并报告该形貌合同已完成、复核且未发生字节漂移。",
+          "参数包络中的具体 D、Cs 候选和值域必须由后续设计者显式给出并标为来源约束或用户定义；本审查不补造数值。"
+        ],
+        "missing_inputs": [
+          "尚无有效的联合数字化不确定度表示或有依据的整体对齐容差，因此当前只能评价中央趋势、掩码敏感性和有限候选间的相对改进，不能封闭带不确定度的“良好对齐”结论。",
+          "execution_context 的 capability_statements 与 limitations 均为空；未来 shape-changing 模型在 SProcess R-2020.09 中的具体实现可行性尚未独立建立。"
+        ],
+        "next_action_kind": null,
+        "next_actions": [
+          "修订 current_objectives、cases、comparison_contract、validation、resource_estimate、value_assessment 和 priority_rationale：停止重复已完成的 60 单元归约，选择一轮有限 D/Cs 参数包络，并明确每个新增案例与历史 own-anchor 基线的关系。",
+          "用前部水平与前沿位置作为预注册校准观测；用未参与候选选择的 transition width、前沿对齐残差结构、尾部水平/斜率作为验证观测，并给出确定性排序、并列和停止规则。该结果只说明常数-D 家族在所列范围内的参数可校正性或不足。",
+          "复用已封存的参考行、60 单元形貌结果和数值敏感性；新案例按材料/案例独立交付，局部失败只补对应新案例。任何新执行前另行修正已知 TDR 声明路径并完成匹配的实现审查。",
+          "若要声称带不确定度的良好对齐，先修订并独立审查保持 point_index、缺口、共享组、正浓度与严格 x 次序的联合不确定度方法，或取得合格作者原始 SIMS 数据；若常数-D 包络仍不能通过独立形貌验证，再设计有限 shape-changing 结构反事实。"
+        ],
+        "schema_version": 1,
+        "summary": "需修订后再作为下一轮实验。原计划对两材料的前沿/深度、对齐形貌和前尾候选平台给出了严谨、可复算的回顾性归约合同，且其有限交付仍然有效；但绑定结果已经完成该合同的 60/60 单元、六个材料×目标处置和后续一致性核对。计划仍把同三项回顾性目标列为 current_objectives、声明零新增求解案例并复用相同输入与确定性规则，因此重复执行只会再现既有中央差异和全部角点不可判，不能增加关于参数失配、结构失配或机制的证据。最小修订是把当前目标改成一轮有限、预注册的常数-D 参数包络，用独立的校准与验证观测区分“参数可校正”与“冻结族形状不足”；若需机制区分，再把有限 shape-changing 模型族保留为后续目标。",
+        "verdict": "revise"
+      },
+      "scheduler_signal_status": "available",
+      "sealed_output": {
+        "artifact_name": "fig4_iterative_alignment_scope_review_1.output",
+        "kind": "scientific_review",
+        "payload": {
+          "evidence": [
+            {
+              "locator": "/proposals/0/current_objectives,/proposals/0/cases,/proposals/0/resource_estimate,/proposals/0/value_assessment,/priority_rationale,/validation_plans/0",
+              "schema_version": 1,
+              "source_key": "experiment_plan",
+              "source_type": "frozen_input"
+            },
+            {
+              "locator": "/mandatory_targets,/closure_requirements",
+              "schema_version": 1,
+              "source_key": "research_objective",
+              "source_type": "frozen_input"
+            },
+            {
+              "locator": "/verdict,/summary,/findings,/next_actions",
+              "schema_version": 1,
+              "source_key": "current_progress_004",
+              "source_type": "frozen_input"
+            },
+            {
+              "locator": "/summary,/remaining_contradiction,/objective_assessment,/next_action",
+              "schema_version": 1,
+              "source_key": "result_analysis_001",
+              "source_type": "frozen_input"
+            },
+            {
+              "locator": "/summary,/remaining_contradiction,/next_action",
+              "schema_version": 1,
+              "source_key": "result_analysis_002",
+              "source_type": "frozen_input"
+            },
+            {
+              "locator": "/summary,/remaining_contradiction,/next_action",
+              "schema_version": 1,
+              "source_key": "result_analysis_003",
+              "source_type": "frozen_input"
+            },
+            {
+              "locator": "/summary,/gates,/remaining_contradiction,/objective_assessment,/next_action",
+              "schema_version": 1,
+              "source_key": "result_analysis_004",
+              "source_type": "frozen_input"
+            },
+            {
+              "locator": "/domain,/implementation_backend,/release_label,/capability_statements,/limitations",
+              "schema_version": 1,
+              "source_key": "execution_context",
+              "source_type": "frozen_input"
+            },
+            {
+              "locator": "/terminal_state,/output_refs",
+              "schema_version": 1,
+              "source_key": "experiment_results_001",
+              "source_type": "frozen_input"
+            }
+          ],
+          "evidence_item_keys": [
+            "experiment_plan",
+            "research_objective",
+            "current_progress_004",
+            "result_analysis_001",
+            "result_analysis_002",
+            "result_analysis_003",
+            "result_analysis_004",
+            "execution_context",
+            "experiment_results_001"
+          ],
+          "findings": [
+            {
+              "epistemic_status": "inference",
+              "evidence_keys": [
+                "experiment_plan",
+                "research_objective",
+                "current_progress_004",
+                "result_analysis_001"
+              ],
+              "finding_key": "review.historical_delivery_retained",
+              "rationale": "部分覆盖本身不否定该历史实验；本次否定的是把同一已完成计划再次当作下一轮。",
+              "schema_version": 1,
+              "statement": "原计划的有限阶段效力应保留：三个材料别形貌目标覆盖 profile_shape_by_material 与 front_and_tail_contrast，且已通过独立审查并完成中央值、掩码、主/紧化敏感性、对齐轨迹和明确不可判处置；未覆盖的 mechanism_separation 没有被误报为完成。"
+            },
+            {
+              "epistemic_status": "inference",
+              "evidence_keys": [
+                "experiment_plan",
+                "result_analysis_001",
+                "result_analysis_004"
+              ],
+              "finding_key": "review.current_selection_is_exhausted",
+              "rationale": "确定性输入、算法和完整产物均已封存且一致性复核无漂移，故相同归约的预期输出已经由现有记录决定。",
+              "schema_version": 1,
+              "statement": "精确计划仍将已经完成的三项 retrospective reduction 列为 current_objectives，并声明零新增 solver cases、复用相同六案例、同一参考行与同一确定性算法；在绑定的最新进展下，它没有新的干预、观测或比较，重复运行不会增加科学证据。"
+            },
+            {
+              "epistemic_status": "inference",
+              "evidence_keys": [
+                "result_analysis_001",
+                "result_analysis_003",
+                "result_analysis_004"
+              ],
+              "finding_key": "review.existing_mismatch_is_descriptive",
+              "rationale": "当前案例只包含两个来源锚点且材料标签与 D 配对；回顾性归约没有新增参数扫描或 shape-changing 干预。",
+              "schema_version": 1,
+              "statement": "现有结果稳定支持一个有限中央趋势：两材料冻结常数-D own-anchor 曲线的 operational endpoint 更深、transition 更宽，且尾部水平高于参考；探索性残差也把主要偏差定位到参考曲线开始陡降之后。该证据描述形貌失配，但没有区分可校准的 D/Cs 失配与必须改变曲线族的结构失配。"
+            },
+            {
+              "epistemic_status": "runtime_observation",
+              "evidence_keys": [
+                "result_analysis_001",
+                "result_analysis_002",
+                "result_analysis_004"
+              ],
+              "finding_key": "review.uncertainty_repetition_has_no_value",
+              "rationale": "最新一致性核对确认角点失败计数和六条处置均未改变；问题位于联合不确定度构造与供应边界，而非未完成计算。",
+              "schema_version": 1,
+              "statement": "48 个全局 digitization corners 已全部因 non-strict x 或 nonpositive y-minus 在拟合前失去资格；再次按同一角点规则执行只会维持六个材料×目标 compatibility 的 not_determinable 处置，不能形成带不确定度的对齐判断。"
+            },
+            {
+              "epistemic_status": "inference",
+              "evidence_keys": [
+                "experiment_plan",
+                "result_analysis_001",
+                "result_analysis_003"
+              ],
+              "finding_key": "review.minimum_parameter_iteration",
+              "rationale": "D 和 Cs 分别提供深度尺度与幅度方向的最小参数干预；留出过渡和尾段形貌用于验证，才能判断改善来自参数校正还是常数-D 曲线族仍然不足。具体候选值、范围与停止阈值必须在修订计划中显式冻结。",
+              "schema_version": 1,
+              "statement": "下一轮最小有意义的实验应是每种材料一个预注册的有限 D/Cs 候选包络，并把参数选择观测与形状验证观测分开：可用前部水平和前沿位置选择候选，再用 transition width、front-aligned residual structure 与 tail level/slope 检验未被拟合的形貌。"
+            },
+            {
+              "epistemic_status": "inference",
+              "evidence_keys": [
+                "research_objective",
+                "experiment_plan",
+                "result_analysis_001"
+              ],
+              "finding_key": "review.parameter_and_mechanism_claims_separated",
+              "rationale": "原总体 closure requirement 单列 mechanism_separation；参数拟合与结构/机制证据具有不同可识别性。",
+              "schema_version": 1,
+              "statement": "有限 D/Cs 包络即使获得更好中央对齐，也只能支持所测常数-D 家族内的参数校准；它不能消除材料/D 配对或证明 kick-out、VCD、缺陷物种或唯一机制。若独立的过渡/尾段验证仍失败，才形成在所测范围内转向有限 shape-changing 结构反事实的依据。"
+            },
+            {
+              "epistemic_status": "inference",
+              "evidence_keys": [
+                "experiment_plan",
+                "execution_context",
+                "experiment_results_001"
+              ],
+              "finding_key": "review.feasibility_is_bounded",
+              "rationale": "这些是后续实现和执行条件；它们不要求重跑已完成历史批次，也不把未知结构模型的实现责任转移给当前计划作者。",
+              "schema_version": 1,
+              "statement": "参数包络可复用既有一维常数-D 实现路径、参考表和材料别归约，因此是当前最小可实现方向；但任何新增执行仍需显式案例数、资源估计、匹配实现审查及已知 TDR 路径修正。未来 shape-changing 模型的 SProcess R-2020.09 可行性不能从当前空 capability statements 独立推出。"
+            }
+          ],
+          "global_confounders": [
+            "材料标签与纸面 D 锚点绑定，现有材料差异不能与 D 差异分离。",
+            "全部全局数字化角点无资格，中央趋势与掩码敏感性不能升级为供应不确定度下的 compatibility 或“良好对齐”。",
+            "若同一形貌指标同时用于参数选择和成功判定，会把拟合优度误当成独立验证；修订计划必须预留未参与选择的过渡/尾段观测。",
+            "外部执行 terminal_state 仍为 failed，恢复的原始输出只支持已封存后处理，不构成成功执行回执。",
+            "没有有限 shape-changing 干预时，常数-D 参数拟合不能识别微观机制。"
+          ],
+          "hypothesis_reviews": [
+            {
+              "confounders": [
+                "材料标签与 D 配对。",
+                "当前计划没有新参数候选或 shape-changing 干预。"
+              ],
+              "falsifiability": "fail",
+              "hypothesis_key": "hypothesis.surface_boundary_control",
+              "identifiability": "fail",
+              "missing_inputs": [
+                "逐材料有限 D/Cs 候选集、校准/验证分离和停止规则。"
+              ],
+              "physical_plausibility": "unknown",
+              "rationale": "历史 G 协议已经因 own-anchor 充分性门失败而 inconclusive；当前精确计划只重复后处理，既不改变参数也不改变模型，所以本轮不能新增支持或反驳。",
+              "schema_version": 1,
+              "smallest_resolving_action": "把下一轮改成有限 D/Cs 参数包络，以前部水平和前沿位置校准，并用未参与选择的过渡与尾段形貌验证；只对所测常数-D 范围作结论。"
+            },
+            {
+              "confounders": [
+                "48 个全局数字化角点全部在拟合前无资格。",
+                "供应的共享支持与检测状态不足以构成新的联合不确定度表示。"
+              ],
+              "falsifiability": "fail",
+              "hypothesis_key": "hypothesis.tail_support_artifact",
+              "identifiability": "fail",
+              "missing_inputs": [
+                "保持 point_index、缺口、共享组、正值和严格 x 次序的已审联合不确定度合同，或合格作者原始 SIMS 行。"
+              ],
+              "physical_plausibility": "unknown",
+              "rationale": "既有掩码与角点分析已经完整交付且仍不可判；相同输入和规则无法再检验 tail-support artifact。该证据修订是带不确定度结论的条件，不是有限中央参数校准的前置条件。",
+              "schema_version": 1,
+              "smallest_resolving_action": "不要重复失败角点；取得并独立审查一个有效联合不确定度表示后，只重算受影响范围与六条 compatibility 处置。"
+            }
+          ],
+          "next_actions": [
+            "删除或标记已完成的三个 retrospective current_objectives，并把其封存结果作为新轮基线，而非待重复工作。",
+            "设计一轮有限 D/Cs 包络：逐材料声明候选值/范围、唯一变化、案例数、校准观测、独立验证观测、确定性排序/并列规则、停止条件及一个匹配的数值紧化控制。",
+            "更新 validation，使结果能分别回答：前沿/前部能否被参数校准、过渡/尾段是否在未参与选择的观测上改善、若无候选满足规则则常数-D 家族在所测范围内为何不足；不得把该结果表述为机制识别。",
+            "继续复用已完成形貌产物，不重算整批；新案例局部失败只重做对应案例。执行前由实现责任修正声明 TDR 与实际 *_fps.tdr 路径并完成匹配审查。",
+            "将有效联合不确定度或合格原始 SIMS 数据作为带不确定度对齐结论的条件；将有限 shape-changing 模型族及其后端可行性审查作为参数包络不能解释形状时的后续目标。"
+          ],
+          "review_target": "experiment_portfolio",
+          "schema_version": 1,
+          "summary": "该计划作为历史回顾性形貌计划是科学有效且已交付的：它覆盖原始目标的两个材料别 mandatory targets，冻结了可复算三段拟合、257 点对齐、缺口/共享支持、材料别处置和主/紧化敏感性，并把机制分离保留为后续目标。作为最新结果之后的下一轮计划，它不再有可识别的信息增益。绑定分析已经完成 60/60 单元，给出两材料 own-anchor 中央曲线相对参考更深、更宽且尾部更高的有限描述；48 个数字化角点全部在拟合前失去资格，六个 compatibility 处置均为 not_determinable，后续核对又确认完整产物身份和数值未漂移。精确计划仍选择同三项 retrospective current_objectives、同六个历史案例、零新增求解和同一确定性归约，故再次运行不会检验新参数或结构，也不能满足用户要求的多轮对齐优化。最小科学修订是选择一轮有限 D/Cs 校准包络：以表面/前部水平与前沿位置选择候选，以未参与选择的过渡宽度、前沿对齐残差和尾段水平/斜率验证形状；预注册有限候选、排序/并列、停止条件、数值控制和逐案例恢复。无论是否改善，都只形成所测常数-D 范围内的参数拟合证据。机制结论需后续 shape-changing 模型比较；带不确定度的“良好对齐”还需有效联合不确定度或合格原始数据。",
+          "verdict": "revise"
+        },
+        "schema": "scidiscovery.scientific-review.v1"
+      },
+      "sealed_output_status": "available",
+      "started_at": "2026-09-12T14:48:43.470484Z",
+      "state": "completed"
+    }
+  ],
+  "note": "Scientific content read only after Root completed. Two repairable output refusals identify experiment.review.verdict_consistency at $.payload; exact offending candidate field/value was not exposed in Root diagnostics. No input admission was rerun as the stated reason."
+}

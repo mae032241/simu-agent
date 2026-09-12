@@ -11,6 +11,7 @@ from ...operations.invoke import (
     operation_port_json_schema,
     operation_primary_output,
 )
+from ...operations.tooling import operation_tool_contracts
 from ..schema.common import canonical_json
 from ..schema.role_result import RoleResultEnvelope
 from .local_workspace import workspace_input_filename
@@ -24,6 +25,8 @@ def assignment_json(
     tool_names: tuple[str, ...],
     recovery_relative_path: str | None = None,
     revision_workspace_mode: str | None = None,
+    prior_source_bindings: dict[str, str] | None = None,
+    deadline_at: str | None = None,
 ) -> bytes:
     revision = _revision_assignment(
         bound, inputs, workspace_mode=revision_workspace_mode
@@ -37,9 +40,13 @@ def assignment_json(
                 "digest": bound.compiled.digest,
             },
             "instruction": bound.instruction or "",
+            "budget": {"deadline_at": deadline_at, "source": "control"} if deadline_at else None,
             "inputs": [
                 {
                     "source_name": item.source_name,
+                    "port": item.port_name,
+                    "description": next(port.description for port in bound.compiled.spec.inputs
+                        if port.name == item.port_name),
                     "relative_path": (
                         "inputs/"
                         + workspace_input_filename(item.source_name, item.media_type)
@@ -47,6 +54,10 @@ def assignment_json(
                     "media_type": item.media_type,
                     "usage": item.usage,
                     "exposure": item.exposure,
+                    "historical": next(
+                        value.artifact.historical for value in bound.inputs
+                        if value.source_name == item.source_name
+                    ),
                 }
                 for item in inputs
                 if item.exposure != "handoff_only"
@@ -62,7 +73,9 @@ def assignment_json(
                 ),
             },
             "revision": revision,
+            "prior_source_bindings": prior_source_bindings or {},
             "tools": list(tool_names),
+            "tool_contracts": operation_tool_contracts(bound.compiled, tool_names),
             "recovery_draft": (
                 None
                 if recovery_relative_path is None
@@ -71,8 +84,9 @@ def assignment_json(
                     "scientific_evidence": False,
                     "instruction": (
                         "Read this draft before continuing. Use it only as an editable "
-                        "starting point, preserve valid handoff assumptions, and "
-                        "revalidate the complete result."
+                        "starting point. Its contract and inputs may differ from this Run; "
+                        "check every assumption against the newly bound inputs and "
+                        "revalidate the complete result without inheriting conclusions."
                     ),
                 }
             ),

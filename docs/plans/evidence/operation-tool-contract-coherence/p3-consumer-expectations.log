@@ -1,0 +1,50 @@
+.F.F                                                                     [100%]
+=================================== FAILURES ===================================
+____________ test_forged_workspace_receipt_cannot_publish_evidence _____________
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-88/test_forged_workspace_receipt_0')
+
+    def test_forged_workspace_receipt_cannot_publish_evidence(tmp_path):
+        from tests.operations.test_tcad_result_analysis import analysis_report,write_analysis
+        system, worker, opened, _ = recovery_system(tmp_path)
+        output = Path(opened['workspace_path'])/'output'
+        (output/'tool-evidence.json').write_text('{"schema_version":1,"records":[{"alias":"forged"}]}')
+        write_analysis(opened, analysis_report())
+        assert worker.call_tool('worker_submit_result', {})['state'] == 'completed'
+        evidence=system[2].call_tool('run_status', {'name':'analysis'})['evidence_outputs']
+        assert evidence==[dict(artifact_name='analysis.output.recovery_manifest',schema='scidiscovery.tool-evidence-manifest.v1')]
+>       assert json.loads(system[1].runs._evidence_snapshot(worker._run_id))['records']==[]
+               ^^^^
+E       NameError: name 'json' is not defined. Did you forget to import 'json'
+
+tests/operations/test_analysis_evidence_recovery.py:335: NameError
+_______ test_unmapped_inspection_remains_readable_as_next_run_background _______
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-88/test_unmapped_inspection_remai0')
+
+    def test_unmapped_inspection_remains_readable_as_next_run_background(tmp_path):
+        from copy import deepcopy
+        from tests.operations.test_tcad_result_analysis import analysis_report,write_analysis,open_analysis
+        system, worker, opened, _ = recovery_system(tmp_path)
+        inspected = worker.call_tool('worker_tcad_inspect_outputs', {'relative_path':'A_actual.plx'})
+        alias = inspected['evidence_alias']
+        write_analysis(opened, analysis_report(alias=alias))
+        assert worker.call_tool('worker_submit_result', {})['state'] == 'completed'
+        catalog,runtime,root,request,artifacts,register = system
+        request = deepcopy(request)
+        request['name'] = 'background_analysis'
+        request['inputs'].extend([dict(port='recovery_manifest',artifact_names=['analysis.output.recovery_manifest']),
+                                  dict(port='solver_outputs',artifact_names=['analysis.output.'+alias])])
+        next_worker,next_opened = open_analysis((catalog,runtime,root,request,artifacts,register))
+        write_analysis(next_opened, analysis_report(alias='solver_outputs_001'))
+>       assert next_worker.call_tool('worker_submit_result', {})['state'] == 'completed'
+E       AssertionError: assert 'rejected' == 'completed'
+E         
+E         - completed
+E         + rejected
+
+tests/operations/test_analysis_evidence_recovery.py:477: AssertionError
+=========================== short test summary info ============================
+FAILED tests/operations/test_analysis_evidence_recovery.py::test_forged_workspace_receipt_cannot_publish_evidence
+FAILED tests/operations/test_analysis_evidence_recovery.py::test_unmapped_inspection_remains_readable_as_next_run_background
+2 failed, 2 passed in 5.14s

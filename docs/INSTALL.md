@@ -55,12 +55,12 @@ SCID_WORKSPACE="$PWD/workspace/<project-name>" \
 `SCID_TCAD_COMMAND_CONFIG`. `install` and `reinstall` use the same
 transactional flow; no argument is equivalent to `install`.
 
-Automatic figure extraction uses the three generic domain plugins. Preinstall
-Pillow within the plugin's declared package range, Poppler (`pdfinfo`,
-`pdfimages`, `pdftoppm`), and Tesseract with its default `eng` language data.
-Supply these dependencies offline before deployment. The installer discovers
-the executables and records actual versions itself; no figure-specific identity
-variables are required. The three Poppler tools must report the same version.
+Figure curve extraction uses the three generic domain plugins. Preinstall
+Pillow within the plugin's declared package range and Poppler `pdfimages`.
+The Agent supplies axis, tick, and scientific identity information after
+viewing the source figure; the runtime does not use OCR or Tesseract. The
+installer records the actual Pillow and `pdfimages` versions and the absolute
+executable path.
 
 ```bash
 export SCID_PYTHON=/absolute/path/to/service/python
@@ -77,23 +77,17 @@ deploy/reinstall.sh reinstall
 
 The workspace and launch directories must already exist and be separate from
 the checkout. Run the generic wrapper as the service user. The installer executes
-real Python imports, version calls, `tesseract --list-langs` (requiring `eng`),
-PDF extraction/rendering and OCR under that service
+real Python imports, version calls, and one real embedded-PDF-image recovery under that service
 identity and systemd's effective default PATH before creating the installation
 transaction. The operator's shell PATH is not the dependency check.
 
 The verified binding is written once to
 `site/curve_figure_evidence/figure_dependencies.json` in the staged installation,
 then checked again with the selected service Python before switching and after
-installation. The existing detector resource includes these bytes in the
-request/materialize Operation digests. Activation makes the installation prefix
-read-only. The separate Python runtime identity check does not hash application files.
-Runtime uses the recorded absolute executable paths and rechecks versions and
-`eng` availability before actual calls. Tesseract uses its own default data path;
-the installer does not record model paths or model hashes, copy models, or
-download dependencies. A tool-version change requires a new installation record.
-An ordinary wheel without this supplied record can
-compile but is unavailable for verified OCR and cannot pass figure installation.
+installation. Activation makes the installation prefix read-only. Runtime uses
+the recorded absolute `pdfimages` path and rechecks its version. A tool-version
+change requires a new installation record. An ordinary wheel without this
+supplied record can compile but cannot pass figure installation.
 
 The current trusted Local backend provides soft isolation, not an OS sandbox.
 The production package, runtime resources, default configuration and explicit
@@ -102,8 +96,17 @@ act as answer-discovery inputs. Historical audit documents may retain locators,
 but the runtime must not consume them. Record readable host probes honestly and
 claim only that those files were not supplied or observed in use; `SEC-002`
 remains a known issue. Check for queued or running old-contract Runs before any
-approved switch; cross-digest recovery is not promised. The automatic Operation
-does not bind the manual `scientific-paper-evidence` skill.
+approved switch; cross-digest recovery is not promised. The figure curve
+Operation does not bind the external `scientific-paper-evidence` skill.
+
+Local Workers may discover installed Skills and read their references on demand;
+Operation tool permissions remain unchanged. The separately managed TCAD Skill
+has deployment-directory integrity checks and transaction rollback. Its bytes
+are not bound to Operation or Run identity, so per-Run reference replay is not
+promised. Validate discovery and helper use in fresh compiled Agent sessions
+after installation; generated-prompt tests alone do not prove that behavior.
+
+After the curve-analysis update, check the compiled catalog in a fresh session: `science.result.diagnose.v1` accepts experiment results directly, with optional curve bundle and metric report inputs. With TCAD enabled, `tcad.result.analyze.v1` provides `worker_tcad_curve_score` for bound raw outputs and reference material. These are alternative analysis entrypoints, not sequential steps. Reinstallation does not refresh Worker tools in an existing session; restart the session. Historical records remain, while current preflight determines qualification after contract changes.
 
 ## 2. Obtain the Source
 
@@ -160,7 +163,7 @@ The installation creates:
 
 - `/opt/scidiscovery/site`: immutable installed Python packages;
 - `/var/lib/scidiscovery`: control-plane state;
-- `/var/lib/scidiscovery-tcad`: local execution state when used;
+- `/var/lib/scidiscovery/tcad`: execution state only for local-adapter mode;
 - `/etc/scidiscovery`: generated secrets and execution policy;
 - `/run/scidiscovery/control.sock`: Root MCP socket;
 - `scidiscovery-control.service`;
@@ -326,6 +329,8 @@ sudo SCID_PYTHON="$PYTHON" \
 The external adapter replaces the local `tcad-control.service`. SSH operations
 are bounded and return immediately; the VM runner owns detached execution and
 durable `running`, `status`, and `done` records.
+In this mode, `TCAD_STATE_ROOT` is ignored: installation does not create, change
+ownership of, or back up the local TCAD state directory.
 
 ## 6. Verify
 
@@ -358,9 +363,13 @@ scientific model or a Sentaurus license.
 | `SCID_PLUGINS` | empty | Comma-separated local plugin directory names, for example `tcad_artifact,curve_score,curve_figure_evidence` |
 | `SCID_INSTALL_ROOT` | `/opt/scidiscovery` | Installed package root |
 | `SCID_STATE_ROOT` | `/var/lib/scidiscovery` | Control-plane state |
+| `TCAD_STATE_ROOT` | `${SCID_STATE_ROOT}/tcad` | Local-adapter execution state; ignored for external command transport |
 | `SCID_CONFIG_ROOT` | `/etc/scidiscovery` | Secrets and policy |
 | `SCID_APPROVAL_PORT` | `8765` | Loopback approval UI port |
 | `SCID_TCAD_COMMAND_CONFIG` | unset | External command adapter configuration |
+
+When upgrading a local adapter that already uses a separate state directory,
+set `TCAD_STATE_ROOT` to that existing path. Installation does not migrate it.
 
 `hardened` currently rejects Operations requiring shell, code, or `view_image`,
 so TCAD Deck authoring v1 uses `local`. Effect approval and adapter boundaries
@@ -416,3 +425,5 @@ The cleanup script never removes `/opt/scidiscovery`, `/etc/scidiscovery`,
   configuration; never hard-code a discovered address in source.
 - **TCAD job appears stuck**: use short status calls. Never hold SSH open while
   the solver runs.
+
+Controlled analysis evidence recovery requires matching control/Worker packages and the VM helper. After reinstalling locally, use `SCID_PYTHON=/absolute/path/to/python deploy/install_ssh_tcad_runner.sh upgrade-code` to update only helper code using the existing transport configuration. Keep the original result directories and remote configuration. Restart the Codex session before scheduling a new analysis Run. Old helpers return unsupported inspection; ordinary offline analysis remains available. Never resubmit the old execution merely to refresh collection.

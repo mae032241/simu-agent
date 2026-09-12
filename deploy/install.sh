@@ -14,7 +14,7 @@ readonly INSTALL_ROOT="${SCID_INSTALL_ROOT:-/opt/scidiscovery}"
 readonly SITE_ROOT="${INSTALL_ROOT}/site"
 readonly SCID_STATE="${SCID_STATE_ROOT:-/var/lib/scidiscovery}"
 readonly LOCAL_WORKSPACE_ROOT="${WORKSPACE}/.scidiscovery-runs"
-readonly TCAD_STATE="${TCAD_STATE_ROOT:-/var/lib/scidiscovery-tcad}"
+readonly TCAD_STATE="${TCAD_STATE_ROOT:-${SCID_STATE}/tcad}"
 readonly CONFIG_ROOT="${SCID_CONFIG_ROOT:-/etc/scidiscovery}"
 readonly BACKUP_ROOT="${SCID_BACKUP_ROOT:-/var/backups/scidiscovery}"
 readonly CONTROL_SOCKET="/run/scidiscovery/control.sock"
@@ -175,8 +175,10 @@ require_sources() {
         do
             [[ -f "${SOURCE_ROOT}/${path}" ]] || die "missing TCAD source: ${path}"
         done
-        [[ "$TCAD_STATE" = /* ]] || die "TCAD_STATE_ROOT must be absolute"
-        validate_systemd_value "TCAD state path" "$TCAD_STATE"
+        if [[ "$TCAD_LOCAL_SERVICE" -eq 1 ]]; then
+            [[ "$TCAD_STATE" = /* ]] || die "TCAD_STATE_ROOT must be absolute"
+            validate_systemd_value "TCAD state path" "$TCAD_STATE"
+        fi
     elif [[ -n "$TCAD_COMMAND_CONFIG" ]]; then
         die "SCID_TCAD_COMMAND_CONFIG requires the tcad_artifact plugin"
     fi
@@ -456,7 +458,7 @@ PY
 normalize_database_ownership() {
     local directory link
     local -a directories=("${SCID_STATE}/database")
-    [[ "$TCAD_ENABLED" -eq 0 ]] || directories+=("$TCAD_STATE")
+    [[ "$TCAD_LOCAL_SERVICE" -eq 0 ]] || directories+=("$TCAD_STATE")
     for directory in "${directories[@]}"; do
         if [[ -e "$directory" ]]; then
             [[ -d "$directory" && ! -L "$directory" ]] || \
@@ -503,7 +505,7 @@ install_packages() {
         --target "$stage" "${package_roots[@]}"
     rm -rf "$source_stage"
     if [[ -n "$FIGURE_DEPENDENCY_CONTRACT" ]]; then
-        # This is the sole runtime binding, read by the compiled detector resource.
+        # This is the sole runtime binding for exact PDF image recovery.
         "$PYTHON" - "$stage/curve_figure_evidence/figure_dependencies.json" \
             "$FIGURE_DEPENDENCY_CONTRACT" <<'PY'
 from pathlib import Path
@@ -1041,7 +1043,7 @@ begin_install_transaction() {
     for name in "${database_names[@]}"; do
         command+=(--sqlite "db-${name}=${SCID_STATE}/database/${name}.sqlite3")
     done
-    if [[ "$TCAD_ENABLED" -eq 1 ]]; then
+    if [[ "$TCAD_LOCAL_SERVICE" -eq 1 ]]; then
         command+=(--sqlite "db-tcad-submissions=${TCAD_STATE}/submissions.sqlite3")
     fi
     "${command[@]}"
@@ -1124,7 +1126,7 @@ install_all() {
     activate_packages
     install -d -o "$SERVICE_USER" -g "$SERVICE_GROUP" -m 0750 "$SCID_STATE"
     create_local_workspace_root
-    if [[ "$TCAD_ENABLED" -eq 1 ]]; then
+    if [[ "$TCAD_LOCAL_SERVICE" -eq 1 ]]; then
         install -d -o "$SERVICE_USER" -g "$SERVICE_GROUP" -m 0750 "$TCAD_STATE"
     fi
     normalize_database_ownership

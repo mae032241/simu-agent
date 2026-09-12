@@ -1,0 +1,52 @@
+[
+  {
+    "name": "fig4_continuation_experiment_plan_3",
+    "schema": "scidiscovery.experiment-portfolio.v1",
+    "labels": {
+      "operation_digest": "016fbde4bc0f66dd1cc8b421f76fff45ada0766d13aa46a7bdc63226a9588337",
+      "operation_invocation_fingerprint": "8ca34365d75fd4fa16a8efa7cd6fa7683b2884b72f97aabf448736ec579b00ea",
+      "operation_output_port": "experiment_plan",
+      "operation_version": "1",
+      "output_label": "primary",
+      "transform_profile": "science.experiment.materialize.v1"
+    },
+    "producer_operation": "science.experiment.materialize.v1",
+    "matches_candidate": true
+  },
+  {
+    "name": "fig4_continuation_experiment_review_6.output",
+    "schema": "scidiscovery.scientific-review.v1",
+    "labels": {
+      "operation_consequence": "scientific",
+      "operation_digest": "0eeab19b7d32fa0b918c06e6f6ea8ba15f8f7669f667e1e5a84c10cd8be2d6c3",
+      "operation_output_port": "scientific_review",
+      "operation_version": "1"
+    },
+    "producer_operation": "science.object.review.v1",
+    "matches_candidate": true
+  },
+  {
+    "name": "fig4_continuation_tcad_author_4.output",
+    "schema": "tcad.deck-project.v1",
+    "labels": {
+      "operation_consequence": "scientific",
+      "operation_digest": "84a90761eb4cd81f0d881bd601adf09d474045a00dfdba5908fd73ddb15179dc",
+      "operation_output_port": "project",
+      "operation_version": "2"
+    },
+    "producer_operation": "tcad.deck.author.initial.v1",
+    "matches_candidate": true
+  },
+  {
+    "name": "fig4_continuation_tcad_review_5.output",
+    "schema": "tcad.deck-review-report.v1",
+    "labels": {
+      "operation_consequence": "scientific",
+      "operation_digest": "04bf4e32483517c9ad51fbed3d93937d7b3820381fff0c998fbce7843526fd11",
+      "operation_output_port": "review",
+      "operation_version": "2"
+    },
+    "producer_operation": "tcad.deck.review.v1",
+    "matches_candidate": true
+  }
+]

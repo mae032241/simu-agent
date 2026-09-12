@@ -1,0 +1,52 @@
+{
+  "public_catalog_responded": true,
+  "public_operation_count": 29,
+  "analysis_inputs_have_declared_metadata": true,
+  "current_session_analysis_worker_tools": [
+    "mcp__scid_worker_science_result_diagnose_v1_fba7f76437b6__worker_open_assignment",
+    "mcp__scid_worker_tcad_result_analyze_v1_71074c580caa__worker_open_assignment"
+  ],
+  "instance_current": {
+    "name": "M7-test0",
+    "state": "active"
+  },
+  "expected_new_agent_types_available_in_current_spawn_schema": false,
+  "new_run_created": false,
+  "E6": "not_verified_session_registration_stale",
+  "E7": "not_verified",
+  "checked_at": "2026-09-11T10:32:21.160732+00:00",
+  "plan_sha256": "6547fbe75d3d7b8a3d257a91e62e0f75688093ef0e39506f042323b40c18c1e1",
+  "production_deployed": true,
+  "catalog_digest": "f6acab6e9e24838caeb090d7a72b94307256559b8e0589e04c68f23658d438d1",
+  "installed_file_hashes": {
+    "plugins/curve_score/curve_score/analysis_tool.py": "704a090af1e6fc694aa045d8e3d9b3e980c3d3774e1124c83379c239413cb31a",
+    "src/scidiscovery/artifact_agent/interfaces/mcp_hardened_worker.py": "8fec3ac7f4b2c7e6df7969dc709605e65e7c8c315cfabc22aeeb009505947308",
+    "src/scidiscovery/artifact_agent/interfaces/mcp_local_worker.py": "6269e722ba79ac600f2b198af96777c501d666c600e2ca458c257c181caf43d9",
+    "src/scidiscovery/artifact_agent/interfaces/mcp_root.py": "0df25c3c0ef4801fb35111d3dd9fb9cb1ee1c98daba402c1ee92b3a0a26e1756",
+    "src/scidiscovery/artifact_agent/operation_tool_context.py": "ea5972158a6a46f09584da9d8541ea63c8b6e1f103359dbb8acf685e206c7eb0",
+    "src/scidiscovery/artifact_agent/schema/layered_diagnosis.py": "3401148ea162d2d899586b122b921af573c3e88a936e7ee612e5f658e0667cf7",
+    "src/scidiscovery/artifact_agent/service/run_assignment.py": "a3b222b01c38002a0aeefd0e62eecb3a4b2d4463d2fa7172ee3096477efdd0e9",
+    "src/scidiscovery/artifact_agent/service/run_outputs.py": "8e9846a03ecdb101d75e257db67ef9b6078d4341eb1a61d8b0a124b5325401b6",
+    "src/scidiscovery/artifact_agent/service/runs.py": "7eeeba4093c5747e556a2389a4cf913a7e88c797d974e984667f61c5c3b42113",
+    "src/scidiscovery/artifact_agent/service/tool_evidence.py": "dffc7ac3bf4f39a9e303ea6a384a9d232e030a5878eee4429ec99b7db63febf4",
+    "src/scidiscovery/operation_contract.py": "549139fc33add60a3b4fa0d08cec3482f0327e98faa2da2cf915cd90e1c65a46",
+    "src/scidiscovery/operations/invoke.py": "ddc7a15ee092fade527fe3ad1dcbed159921a8c4b5937fea298348cc4b91364a",
+    "src/scidiscovery/operations/spec.py": "f1c19b5da10b43b5e8494b037f9adfba4df6313f213cb0a8009ebdb1a5563e21",
+    "src/scidiscovery/operations/tooling.py": "6a369ae8632b267e57d175f863d5a55d3fef0b0a9dd865e5973f92d460ab6319",
+    "src/scidiscovery/platforms/codex.py": "76386b7ea3a2641ef584eda7cf3f415092b8153693617b7f9483775e6c53c5fa"
+  },
+  "generated_profiles": {
+    "science.result.diagnose.v1": {
+      "operation_digest": "3385587b45cc149c8eb24d1df0fbd092bc164eedde4273d7d90344967b32bd3d",
+      "agent_type": "op_science_result_diagnose_v1_3385587b45cc",
+      "path": "/home/da/project/ai4s/tcad/git_release/scidiscovery-agent/.codex/agents/op_science_result_diagnose_v1_3385587b45cc.toml",
+      "sha256": "3c4b2c6ca7fc2ce578a44e123a3d15b799f117b518d6bc3869c8b2cf6a70db8d"
+    },
+    "tcad.result.analyze.v1": {
+      "operation_digest": "c43feb5f3f65f6cfa363309b2611f1f76184457fa9539ab6de55c82a038d3541",
+      "agent_type": "op_tcad_result_analyze_v1_c43feb5f3f65",
+      "path": "/home/da/project/ai4s/tcad/git_release/scidiscovery-agent/.codex/agents/op_tcad_result_analyze_v1_c43feb5f3f65.toml",
+      "sha256": "00b16f866377a94bcca8f69aa827078afb9d884ca8bee1fa98df1fccebd00d8c"
+    }
+  }
+}

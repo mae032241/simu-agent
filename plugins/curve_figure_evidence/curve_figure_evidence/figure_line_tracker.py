@@ -40,22 +40,6 @@ class LineTrace:
     findings: tuple[LineFinding, ...]
 
 
-@dataclass(frozen=True, slots=True)
-class LineTrackingConfig:
-    max_vertical_step_px: float
-    max_gap_px: int
-    max_gap_vertical_displacement_px: float
-    max_guide_distance_px: float
-    ambiguity_margin_px: float
-    guide_weight: float
-    min_visible_fraction: float
-    max_ambiguous_fraction: float
-    skip_penalty: float
-    min_points: int
-    seed_radius_px: int
-    plot_border_exclusion_px: int
-
-
 def _matches(pixel: tuple[int, ...], rgb: tuple[int, int, int], tolerance: float) -> bool:
     return sum(
         (int(pixel[index]) - rgb[index]) ** 2 for index in range(3)
@@ -71,7 +55,7 @@ def _excluded(
     )
 
 
-def _guide_y(
+def guide_y(
     seeds: tuple[tuple[float, float], ...], x: float, fallback: float
 ) -> float:
     if x <= seeds[0][0]:
@@ -137,28 +121,6 @@ def _column_candidates(
     return result
 
 
-def _seed_supported(
-    image: Image.Image,
-    *,
-    seed: tuple[float, float],
-    rgb: tuple[int, int, int],
-    tolerance: float,
-    radius: int,
-    exclusions: tuple[tuple[int, int, int, int], ...],
-) -> bool:
-    pixels = image.load()
-    center_x, center_y = int(round(seed[0])), int(round(seed[1]))
-    for x in range(max(0, center_x - radius), min(image.width, center_x + radius + 1)):
-        for y in range(
-            max(0, center_y - radius), min(image.height, center_y + radius + 1)
-        ):
-            if not _excluded(x, y, exclusions) and _matches(
-                pixels[x, y], rgb, tolerance
-            ):
-                return True
-    return False
-
-
 def _select_path(
     image: Image.Image,
     *,
@@ -167,136 +129,38 @@ def _select_path(
     seeds: tuple[tuple[float, float], ...],
     bounds: tuple[int, int, int, int],
     exclusions: tuple[tuple[int, int, int, int], ...],
-    config: LineTrackingConfig,
 ) -> tuple[tuple[TracePoint, ...], int]:
     left, top, right, bottom = bounds
     fallback = (top + bottom - 1) / 2.0
-    states: list[dict[str, object]] = []
-    terminal_states: list[dict[str, object]] = []
+    selected: dict[int, dict[str, float]] = {}
     ambiguous_columns: set[int] = set()
-    search_top = min(bottom, top + config.plot_border_exclusion_px)
-    search_bottom = max(search_top, bottom - config.plot_border_exclusion_px)
-
     for x in range(left, right):
-        guide = _guide_y(seeds, x, fallback)
+        guide = guide_y(seeds, x, fallback)
         candidates = _column_candidates(
             image,
             x=x,
-            top=search_top,
-            bottom=search_bottom,
+            top=top,
+            bottom=bottom,
             rgb=rgb,
             tolerance=tolerance,
             exclusions=exclusions,
         )
-        guided = [
-            candidate
-            for candidate in candidates
-            if abs(candidate["subpixel_y"] - guide) <= config.max_guide_distance_px
-        ]
-        next_states: list[dict[str, object]] = []
-        candidate_states: list[dict[str, object]] = []
-        if states:
-            for candidate in candidates:
-                choices: list[tuple[float, dict[str, object]]] = []
-                for prior in states:
-                    last_x = int(prior["last_x"])
-                    span = max(1, x - last_x)
-                    allowed = (
-                        config.max_vertical_step_px
-                        if span == 1
-                        else config.max_gap_vertical_displacement_px
-                    )
-                    last_point = prior["last_point"]
-                    assert isinstance(last_point, dict)
-                    step = abs(
-                        candidate["subpixel_y"] - float(last_point["subpixel_y"])
-                    )
-                    if step <= allowed:
-                        choices.append(
-                            (
-                                float(prior["cost"])
-                                + config.guide_weight
-                                * abs(candidate["subpixel_y"] - guide)
-                                + (1.0 - config.guide_weight) * step / span,
-                                prior,
-                            )
-                        )
-                if choices:
-                    cost, prior = min(
-                        choices,
-                        key=lambda item: (
-                            item[0],
-                            float(
-                                (item[1]["last_point"])["subpixel_y"]  # type: ignore[index]
-                            ),
-                        ),
-                    )
-                    candidate_states.append(
-                        {
-                            "cost": cost,
-                            "last_point": candidate,
-                            "last_x": x,
-                            "node": {
-                                "point": candidate,
-                                "x": x,
-                                "previous": prior["node"],
-                            },
-                        }
-                    )
-            next_states.extend(candidate_states)
-            next_states.extend(
-                {**prior, "cost": float(prior["cost"]) + config.skip_penalty}
-                for prior in states
-                if x - int(prior["last_x"]) <= config.max_gap_px
-            )
-        if not states and guided:
-            candidate_states = [
-                {
-                    "cost": config.guide_weight
-                    * abs(candidate["subpixel_y"] - guide),
-                    "last_point": candidate,
-                    "last_x": x,
-                    "node": {"point": candidate, "x": x, "previous": None},
-                }
-                for candidate in guided
-            ]
-            next_states.extend(candidate_states)
-        if states and not next_states:
-            terminal_states.append(
-                min(states, key=lambda item: float(item["cost"]))
-            )
-            states = []
-            if guided:
-                next_states = [
-                    {
-                        "cost": config.guide_weight
-                        * abs(candidate["subpixel_y"] - guide),
-                        "last_point": candidate,
-                        "last_x": x,
-                        "node": {"point": candidate, "x": x, "previous": None},
-                    }
-                    for candidate in guided
-                ]
-                candidate_states = next_states
-        ranked = sorted(float(item["cost"]) for item in candidate_states)
-        if len(ranked) > 1 and ranked[1] - ranked[0] <= config.ambiguity_margin_px:
-            ambiguous_columns.add(x)
-        states = sorted(
-            next_states,
-            key=lambda item: (
-                float(item["cost"]),
-                float((item["last_point"])["subpixel_y"]),  # type: ignore[index]
+        if not candidates:
+            continue
+        ranked = sorted(
+            candidates,
+            key=lambda candidate: (
+                abs(candidate["subpixel_y"] - guide),
+                candidate["subpixel_y"],
             ),
-        )[:64]
-    if states:
-        terminal_states.append(min(states, key=lambda item: float(item["cost"])))
-
-    selected: dict[int, dict[str, float]] = {}
-    for terminal in terminal_states:
-        current = terminal["node"]
-        while isinstance(current, dict):
-            selected[int(current["x"])] = current["point"]  # type: ignore[assignment]
-            current = current["previous"]
+        )
+        selected[x] = ranked[0]
+        if (
+            len(ranked) > 1
+            and abs(ranked[0]["subpixel_y"] - guide)
+            == abs(ranked[1]["subpixel_y"] - guide)
+        ):
+            ambiguous_columns.add(x)
     return (
         tuple(
             TracePoint(
@@ -322,32 +186,11 @@ def trace_continuous_line(
     seeds: tuple[tuple[float, float], ...],
     bounds: tuple[int, int, int, int],
     exclusions: tuple[tuple[int, int, int, int], ...],
-    declared_gaps: tuple[tuple[int, int], ...],
-    config: LineTrackingConfig,
 ) -> LineTrace:
-    """Trace one line and report scientific uncertainty instead of guessing."""
+    """Select real descriptor-colored pixels nearest the Agent's visible guide."""
 
     left, top, right, bottom = bounds
-    border = config.plot_border_exclusion_px
-    findings = [
-        LineFinding(
-            "unsupported_seed",
-            f"configured seed [{seed[0]:g}, {seed[1]:g}] lacks permitted descriptor support",
-        )
-        for seed in seeds
-        if not (
-            left + border <= seed[0] < right - border
-            and top + border <= seed[1] < bottom - border
-            and _seed_supported(
-                image,
-                seed=seed,
-                rgb=rgb,
-                tolerance=tolerance,
-                radius=config.seed_radius_px,
-                exclusions=exclusions,
-            )
-        )
-    ]
+    findings: list[LineFinding] = []
     points, ambiguous_columns = _select_path(
         image,
         rgb=rgb,
@@ -355,7 +198,6 @@ def trace_continuous_line(
         seeds=seeds,
         bounds=bounds,
         exclusions=exclusions,
-        config=config,
     )
     width = max(1, right - left)
     observed_x = [point.pixel_x_raw for point in points]
@@ -372,43 +214,13 @@ def trace_continuous_line(
             gaps.append((observed_x[-1] + 1, right))
     else:
         gaps.append((left, right))
-    unexpected_gap = max(
-        (
-            gap_right - gap_left
-            for gap_left, gap_right in gaps
-            if not any(
-                declared_left <= gap_left and gap_right <= declared_right
-                for declared_left, declared_right in declared_gaps
-            )
-        ),
-        default=0,
-    )
     visible_fraction = len(set(observed_x)) / width
     ambiguous_fraction = ambiguous_columns / width
-    if len(points) < config.min_points:
-        findings.append(LineFinding("too_few_points", "too few trace points"))
-    if visible_fraction < config.min_visible_fraction:
-        findings.append(
-            LineFinding(
-                "insufficient_visible_support",
-                f"visible fraction {visible_fraction:.4f} is below "
-                f"{config.min_visible_fraction:.4f}",
-            )
-        )
-    if unexpected_gap > config.max_gap_px:
-        findings.append(
-            LineFinding(
-                "undeclared_gap",
-                f"maximum undeclared trace gap {unexpected_gap}px exceeds "
-                f"{config.max_gap_px}px",
-            )
-        )
-    if ambiguous_fraction > config.max_ambiguous_fraction:
+    if ambiguous_columns:
         findings.append(
             LineFinding(
                 "ambiguous_path",
-                f"candidate tie fraction {ambiguous_fraction:.4f} exceeds "
-                f"{config.max_ambiguous_fraction:.4f}",
+                f"{ambiguous_columns} columns have equally near real pixel clusters",
             )
         )
     max_gap = max((right - left,), default=width)
@@ -452,8 +264,8 @@ def mark_shared(
 __all__ = [
     "LineFinding",
     "LineTrace",
-    "LineTrackingConfig",
     "TracePoint",
+    "guide_y",
     "mark_shared",
     "trace_continuous_line",
 ]

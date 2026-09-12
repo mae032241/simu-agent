@@ -1,0 +1,1087 @@
+{
+  "agent_type": "op_science_experiment_revise_v1_d46cc12241b5",
+  "backend": "local_trusted",
+  "candidate_accepted": true,
+  "completed_at": "2026-09-11T15:20:43.743883Z",
+  "created_at": "2026-09-11T15:16:40.436898Z",
+  "deadline_at": "2026-09-11T15:31:40.436898Z",
+  "diagnostic_summary": {
+    "failure": null,
+    "latest_rejection": null,
+    "latest_tool_error": null,
+    "recent_errors": [],
+    "rejection_count": 0
+  },
+  "draft_from": null,
+  "head_advance": "not_requested",
+  "last_activity_at": "2026-09-11T15:20:43.743883Z",
+  "logical_name": "fig4_continuation_experiment_closure_revision_1",
+  "name": "fig4_continuation_experiment_closure_revision_1",
+  "operation_id": "science.experiment.revise.v1",
+  "output_artifact_name": "fig4_continuation_experiment_closure_revision_1.output",
+  "reason": null,
+  "recovery": {
+    "delivery_preserved": false,
+    "draft_available": false,
+    "recovery_pending": false,
+    "resume_available": false
+  },
+  "recovery_available": false,
+  "revision": 1,
+  "scheduler_signal": {
+    "assumptions": [
+      "The reported WRMSE, G, convergence, mask-sensitivity, artifact-completeness, and failed/97 facts are taken from the bound sealed progress and were not recomputed in this revision.",
+      "Recovered PLX/TDR evidence closes the current scientific artifact gap without changing the immutable failed execution terminal state or qualifying any future execution."
+    ],
+    "missing_inputs": [
+      "Later mechanism-separation design requires a separately qualified scientific basis defining one finite profile-shape-changing model family, its bounded variables, equations or parameters, boundary conditions, outputs, and decision rule.",
+      "A stronger tail-support conclusion requires series-identified author raw SIMS rows with consistent detection status and independent uncertainty.",
+      "Backend capability and limitation evidence for any newly selected structural model is required only after that model is specified."
+    ],
+    "next_action_kind": null,
+    "next_actions": [
+      "Independently review this stage-close revision as a complete portfolio while treating the retained six cases as the immutable completed experiment identity.",
+      "After a qualified scientific basis is bound, design one finite structural counterfactual that can change profile shape and preregister new adequacy and discrimination gates; do not reuse the completed boundary-amplitude family as that counterfactual.",
+      "If a stronger tail-support claim is still needed, qualify author raw SIMS rows with consistent detection status, independent uncertainty, and unambiguous series identity before applying the retained no-gap reduction.",
+      "Only if a new formal execution record of the old family is independently required, first revise all six expected TDR paths to the actual *_fps.tdr names and obtain matching implementation review; this maintenance action is not a scientific reason to rerun."
+    ],
+    "schema_version": 1,
+    "summary": "The six-case constant-D/fixed-boundary study is closed. Its two registered current objectives were completed, and both dispositions are inconclusive: recovered evidence covers all 13 required artifacts and normalized-shape convergence passed, but own-anchor WRMSE was 2.2445359 and 2.0127536 decade, above the 0.15-decade adequacy gate, while M0-M2/S0-S2 tail sensitivity crossed low, intermediate, and high categories. G=-0.01408761 remains descriptive and cannot trigger rejection. The immutable external execution remains failed/97 because declared *.tdr paths differed from actual *_fps.tdr paths; recovery does not rewrite that state. The portfolio schema requires nonempty current_objectives, cases, validation_plans, and priority_order, so the completed proposal is retained as a documentary stage-close record rather than an executable next study. Overall mechanism separation remains open and needs separately qualified inputs for one finite profile-shape-changing counterfactual; stronger tail claims separately need qualified raw SIMS rows.",
+    "verdict": "inconclusive"
+  },
+  "scheduler_signal_status": "available",
+  "sealed_output": {
+    "artifact_name": "fig4_continuation_experiment_closure_revision_1.output",
+    "kind": "experiment_portfolio",
+    "payload": {
+      "objective": "Use the supplied paper evidence to support later selection of falsifiable hypotheses and design of a minimal TCAD control experiment, while this Intake is limited to evidence extraction and does not select a hypothesis.",
+      "objective_key": "objective.fig4_mechanism_discrimination",
+      "priority_order": [
+        "experiment.fig4.raw_boundary_counterfactual"
+      ],
+      "priority_rationale": "The sole proposal remains in priority_order because the ExperimentPortfolio schema requires a nonempty order and proposal set. It is a closed historical record, not authorization or a request for another execution. Both selected current objectives were completed: all 13 required artifacts are now covered and normalized-shape convergence passed, but the frozen family failed its 0.15-decade own-anchor adequacy gate with WRMSE 2.2445359 and 2.0127536 decade, and the registered tail comparison changed category across M0-M2/S0-S2. Both hypothesis dispositions therefore remain inconclusive, and the observed G=-0.01408761 is descriptive only. Repeating the same six cases, changing only boundary amplitudes, or adding another numerical tier cannot identify the missing profile-shape physics and has low incremental information value. The original later branch required an adequate base family and stable direct-pixel above-limit tail contrast; neither condition was met. Overall mechanism separation is retained as a later objective but is not expanded into current cases. Its next design must wait for a separately qualified finite model family that defines one shape-changing structural intervention, bounded variables, equations or parameters, boundary conditions, outputs, and a decision rule, followed by backend feasibility and matching reviews. A stronger tail conclusion separately requires qualified author raw SIMS rows with consistent detection status and independent uncertainty. No new model, parameter, mechanism fact, or executable case is invented in this revision.",
+      "proposals": [
+        {
+          "cases": [
+            {
+              "case_key": "case.fig4.al_own_anchor_primary",
+              "purpose": "Primary In0.83Al0.17As-labelled constant-D response at Cs=6.85e19 cm^-3.",
+              "schema_version": 1,
+              "scientific_role": "baseline",
+              "settings": [
+                {
+                  "name": "variable.fig4.surface_concentration",
+                  "schema_version": 1,
+                  "unit": "cm^-3",
+                  "value": 68500000000000000000
+                },
+                {
+                  "name": "variable.fig4.domain_length",
+                  "schema_version": 1,
+                  "unit": "um",
+                  "value": 2.4476634882848627
+                },
+                {
+                  "name": "variable.fig4.surface_mesh_spacing",
+                  "schema_version": 1,
+                  "unit": "um",
+                  "value": 0.001
+                },
+                {
+                  "name": "variable.fig4.maximum_mesh_spacing",
+                  "schema_version": 1,
+                  "unit": "um",
+                  "value": 0.005
+                },
+                {
+                  "name": "variable.fig4.maximum_time_step",
+                  "schema_version": 1,
+                  "unit": "s",
+                  "value": 4
+                }
+              ]
+            },
+            {
+              "case_key": "case.fig4.al_high_anchor_primary",
+              "purpose": "Change only the InAlAs-labelled surface concentration from 6.85e19 to 8.35e19 cm^-3.",
+              "schema_version": 1,
+              "scientific_role": "perturbation",
+              "settings": [
+                {
+                  "name": "variable.fig4.surface_concentration",
+                  "schema_version": 1,
+                  "unit": "cm^-3",
+                  "value": 83500000000000000000
+                },
+                {
+                  "name": "variable.fig4.domain_length",
+                  "schema_version": 1,
+                  "unit": "um",
+                  "value": 2.4476634882848627
+                },
+                {
+                  "name": "variable.fig4.surface_mesh_spacing",
+                  "schema_version": 1,
+                  "unit": "um",
+                  "value": 0.001
+                },
+                {
+                  "name": "variable.fig4.maximum_mesh_spacing",
+                  "schema_version": 1,
+                  "unit": "um",
+                  "value": 0.005
+                },
+                {
+                  "name": "variable.fig4.maximum_time_step",
+                  "schema_version": 1,
+                  "unit": "s",
+                  "value": 4
+                }
+              ]
+            },
+            {
+              "case_key": "case.fig4.ga_own_anchor_primary",
+              "purpose": "Primary In0.83Ga0.17As-labelled constant-D response at Cs=8.35e19 cm^-3.",
+              "schema_version": 1,
+              "scientific_role": "control",
+              "settings": [
+                {
+                  "name": "variable.fig4.surface_concentration",
+                  "schema_version": 1,
+                  "unit": "cm^-3",
+                  "value": 83500000000000000000
+                },
+                {
+                  "name": "variable.fig4.domain_length",
+                  "schema_version": 1,
+                  "unit": "um",
+                  "value": 2.4476634882848627
+                },
+                {
+                  "name": "variable.fig4.surface_mesh_spacing",
+                  "schema_version": 1,
+                  "unit": "um",
+                  "value": 0.001
+                },
+                {
+                  "name": "variable.fig4.maximum_mesh_spacing",
+                  "schema_version": 1,
+                  "unit": "um",
+                  "value": 0.005
+                },
+                {
+                  "name": "variable.fig4.maximum_time_step",
+                  "schema_version": 1,
+                  "unit": "s",
+                  "value": 4
+                }
+              ]
+            },
+            {
+              "case_key": "case.fig4.ga_low_anchor_primary",
+              "purpose": "Change only the InGaAs-labelled surface concentration from 8.35e19 to 6.85e19 cm^-3.",
+              "schema_version": 1,
+              "scientific_role": "perturbation",
+              "settings": [
+                {
+                  "name": "variable.fig4.surface_concentration",
+                  "schema_version": 1,
+                  "unit": "cm^-3",
+                  "value": 68500000000000000000
+                },
+                {
+                  "name": "variable.fig4.domain_length",
+                  "schema_version": 1,
+                  "unit": "um",
+                  "value": 2.4476634882848627
+                },
+                {
+                  "name": "variable.fig4.surface_mesh_spacing",
+                  "schema_version": 1,
+                  "unit": "um",
+                  "value": 0.001
+                },
+                {
+                  "name": "variable.fig4.maximum_mesh_spacing",
+                  "schema_version": 1,
+                  "unit": "um",
+                  "value": 0.005
+                },
+                {
+                  "name": "variable.fig4.maximum_time_step",
+                  "schema_version": 1,
+                  "unit": "s",
+                  "value": 4
+                }
+              ]
+            },
+            {
+              "case_key": "case.fig4.al_own_anchor_tight",
+              "purpose": "Tightened normalized-shape control for the InAlAs-labelled own-anchor case.",
+              "schema_version": 1,
+              "scientific_role": "convergence",
+              "settings": [
+                {
+                  "name": "variable.fig4.surface_concentration",
+                  "schema_version": 1,
+                  "unit": "cm^-3",
+                  "value": 68500000000000000000
+                },
+                {
+                  "name": "variable.fig4.domain_length",
+                  "schema_version": 1,
+                  "unit": "um",
+                  "value": 3.671495232427294
+                },
+                {
+                  "name": "variable.fig4.surface_mesh_spacing",
+                  "schema_version": 1,
+                  "unit": "um",
+                  "value": 0.0005
+                },
+                {
+                  "name": "variable.fig4.maximum_mesh_spacing",
+                  "schema_version": 1,
+                  "unit": "um",
+                  "value": 0.0025
+                },
+                {
+                  "name": "variable.fig4.maximum_time_step",
+                  "schema_version": 1,
+                  "unit": "s",
+                  "value": 2
+                }
+              ]
+            },
+            {
+              "case_key": "case.fig4.ga_own_anchor_tight",
+              "purpose": "Tightened normalized-shape control for the InGaAs-labelled own-anchor case.",
+              "schema_version": 1,
+              "scientific_role": "convergence",
+              "settings": [
+                {
+                  "name": "variable.fig4.surface_concentration",
+                  "schema_version": 1,
+                  "unit": "cm^-3",
+                  "value": 83500000000000000000
+                },
+                {
+                  "name": "variable.fig4.domain_length",
+                  "schema_version": 1,
+                  "unit": "um",
+                  "value": 3.671495232427294
+                },
+                {
+                  "name": "variable.fig4.surface_mesh_spacing",
+                  "schema_version": 1,
+                  "unit": "um",
+                  "value": 0.0005
+                },
+                {
+                  "name": "variable.fig4.maximum_mesh_spacing",
+                  "schema_version": 1,
+                  "unit": "um",
+                  "value": 0.0025
+                },
+                {
+                  "name": "variable.fig4.maximum_time_step",
+                  "schema_version": 1,
+                  "unit": "s",
+                  "value": 2
+                }
+              ]
+            }
+          ],
+          "changed_factors": [
+            {
+              "factor_type": "physical",
+              "name": "variable.fig4.surface_concentration",
+              "rationale": "The two Table I anchors form the finite constant-boundary intervention; no source history or fitted amplitude is allowed.",
+              "schema_version": 1,
+              "unit": "cm^-3",
+              "values": [
+                68500000000000000000,
+                83500000000000000000
+              ]
+            },
+            {
+              "factor_type": "numerical",
+              "name": "variable.fig4.domain_length",
+              "rationale": "From both supplied tables, x_max=max(x_value)=0.7900990099009901 um. With D_max=1.59e-12 cm^2/s and t=480 s, 6*sqrt(D_max*t)=0.00016575644783838728 cm=1.6575644783838728 um; hence L_primary=x_max+margin=2.4476634882848627 um and L_tight=1.5*L_primary=3.671495232427294 um.",
+              "schema_version": 1,
+              "unit": "um",
+              "values": [
+                2.4476634882848627,
+                3.671495232427294
+              ]
+            },
+            {
+              "factor_type": "numerical",
+              "name": "variable.fig4.surface_mesh_spacing",
+              "rationale": "The primary surface spacing resolves the approximately 0.000990099 um digitized x increment; the tightened control halves it.",
+              "schema_version": 1,
+              "unit": "um",
+              "values": [
+                0.001,
+                0.0005
+              ]
+            },
+            {
+              "factor_type": "numerical",
+              "name": "variable.fig4.maximum_mesh_spacing",
+              "rationale": "Primary maximum spacing is comparable to or smaller than the supplied x uncertainty scale; the tightened control halves it.",
+              "schema_version": 1,
+              "unit": "um",
+              "values": [
+                0.005,
+                0.0025
+              ]
+            },
+            {
+              "factor_type": "numerical",
+              "name": "variable.fig4.maximum_time_step",
+              "rationale": "The primary tier uses 120 or more maximum steps over 480 s; the tightened tier doubles temporal resolution.",
+              "schema_version": 1,
+              "unit": "s",
+              "values": [
+                4,
+                2
+              ]
+            }
+          ],
+          "comparison_contract": {
+            "baseline_case_key": "case.fig4.al_own_anchor_primary",
+            "comparison_case_keys": [
+              "case.fig4.al_high_anchor_primary",
+              "case.fig4.ga_own_anchor_primary",
+              "case.fig4.ga_low_anchor_primary",
+              "case.fig4.al_own_anchor_tight",
+              "case.fig4.ga_own_anchor_tight"
+            ],
+            "identifiability_claims": [
+              {
+                "ambiguity_conditions": [
+                  "The frozen constant-D family is inadequate for either material.",
+                  "A mask, shared group, prediction, denominator, or required sensitivity value is unavailable or nonfinite.",
+                  "The category changes with support mask, central-value mask, or tightened numerics.",
+                  "Simultaneous perturbation of multiple dependence groups is not tested."
+                ],
+                "competing_hypothesis_key": "hypothesis.tail_support_artifact",
+                "decision_rule": "Use the 0.50 and 0.25 gates only after all six raw outputs are complete, the normalized-shape convergence error is at most 0.05 decade for each material, both own-anchor WRMSE values are at most 0.15 decade, and all registered reductions are finite. Otherwise conclude inconclusive.",
+                "distinguishing_outcome": "A gain range wholly above 0.50 after adequacy and convergence supports the bounded boundary-anchor explanation; a range wholly below 0.25 rejects it within the frozen family.",
+                "hypothesis_key": "hypothesis.surface_boundary_control",
+                "observable": "M0 profile-error gain G and its category stability under support masks and numerical tightening.",
+                "schema_version": 1,
+                "smallest_resolving_control": "For numerical ambiguity, tighten the failed material tier once more without changing physics; for evidence ambiguity, obtain qualified author raw SIMS rows with detection status and uncertainty."
+              },
+              {
+                "ambiguity_conditions": [
+                  "A baseline T is zero or unavailable.",
+                  "A required row, group, adjacency relation, or sampled prediction is unavailable.",
+                  "A relative change lies between 0.10 and 0.50 or a category changes only in some scenarios.",
+                  "The all-zero supplied below-limit flags remain inconsistent with central concentrations."
+                ],
+                "competing_hypothesis_key": "hypothesis.surface_boundary_control",
+                "decision_rule": "Compute T only from consecutive observed point indices and never across a gap. Apply the 0.50 and 0.10 rules only when every required T and category scenario is finite; intermediate or mask-dependent outcomes are inconclusive.",
+                "distinguishing_outcome": "A relative-T range wholly at or above 0.50 or a persistent category change makes evidence support decision-limiting; all ranges at or below 0.10 with invariant category reject the bounded artifact concern.",
+                "hypothesis_key": "hypothesis.tail_support_artifact",
+                "observable": "Relative change in contiguous resolved low-concentration support length T and the surface-boundary category across M0-M2 and S0-S2.",
+                "schema_version": 1,
+                "smallest_resolving_control": "Obtain author raw SIMS rows for the same samples with reconciled detection-limit status, independent uncertainties, and unambiguous series identity."
+              }
+            ],
+            "required_observables": [
+              "For each of six cases: case key, material label, D in cm^2/s, Cs in cm^-3, temperature in Celsius, duration in s, L and mesh spacings in um, maximum time step in s, terminal state, and solver-native raw C(x,480 s).",
+              "For each material, the primary and tightened normalized profile log10(C/Cs) on the common observed interval 0 to 0.7900990099009901 um.",
+              "During later reduction: M0-M2 and S0-S2 row ledgers, shared dependence-group weights, sampled positive finite predictions, WRMSE values, J_own, J_low, J_high, G, contiguous no-gap low-concentration support lengths T, registered one-group-at-a-time sensitivity values, and category stability.",
+              "M0 profile-error gain G and its category stability under support masks and numerical tightening.",
+              "Relative change in contiguous resolved low-concentration support length T and the surface-boundary category across M0-M2 and S0-S2."
+            ],
+            "schema_version": 1,
+            "variables": [
+              {
+                "comparison_role": "permitted_difference",
+                "equivalence_rule": "reviewed",
+                "expectations": [
+                  {
+                    "case_key": "case.fig4.al_own_anchor_primary",
+                    "schema_version": 1,
+                    "value": "In0.83Al0.17As"
+                  },
+                  {
+                    "case_key": "case.fig4.al_high_anchor_primary",
+                    "schema_version": 1,
+                    "value": "In0.83Al0.17As"
+                  },
+                  {
+                    "case_key": "case.fig4.ga_own_anchor_primary",
+                    "schema_version": 1,
+                    "value": "In0.83Ga0.17As"
+                  },
+                  {
+                    "case_key": "case.fig4.ga_low_anchor_primary",
+                    "schema_version": 1,
+                    "value": "In0.83Ga0.17As"
+                  },
+                  {
+                    "case_key": "case.fig4.al_own_anchor_tight",
+                    "schema_version": 1,
+                    "value": "In0.83Al0.17As"
+                  },
+                  {
+                    "case_key": "case.fig4.ga_own_anchor_tight",
+                    "schema_version": 1,
+                    "value": "In0.83Ga0.17As"
+                  }
+                ],
+                "factor_type": "physical",
+                "rationale": "This label selects the explicit D and own-anchor Cs operands. No built-in alloy transport parameter may enter the custom PDE.",
+                "schema_version": 1,
+                "scientific_path": "case.material_label",
+                "tolerance": null,
+                "unit": "category",
+                "variable_key": "variable.fig4.material_label"
+              },
+              {
+                "comparison_role": "permitted_difference",
+                "equivalence_rule": "exact",
+                "expectations": [
+                  {
+                    "case_key": "case.fig4.al_own_anchor_primary",
+                    "schema_version": 1,
+                    "value": 1.59e-12
+                  },
+                  {
+                    "case_key": "case.fig4.al_high_anchor_primary",
+                    "schema_version": 1,
+                    "value": 1.59e-12
+                  },
+                  {
+                    "case_key": "case.fig4.ga_own_anchor_primary",
+                    "schema_version": 1,
+                    "value": 1.05e-12
+                  },
+                  {
+                    "case_key": "case.fig4.ga_low_anchor_primary",
+                    "schema_version": 1,
+                    "value": 1.05e-12
+                  },
+                  {
+                    "case_key": "case.fig4.al_own_anchor_tight",
+                    "schema_version": 1,
+                    "value": 1.59e-12
+                  },
+                  {
+                    "case_key": "case.fig4.ga_own_anchor_tight",
+                    "schema_version": 1,
+                    "value": 1.05e-12
+                  }
+                ],
+                "factor_type": "physical",
+                "rationale": "Exact paper-reported constant-D anchors; D remains paired with material label, so the study cannot isolate a material effect.",
+                "schema_version": 1,
+                "scientific_path": "pde.D",
+                "tolerance": null,
+                "unit": "cm^2/s",
+                "variable_key": "variable.fig4.diffusivity"
+              },
+              {
+                "comparison_role": "intended_change",
+                "equivalence_rule": "exact",
+                "expectations": [
+                  {
+                    "case_key": "case.fig4.al_own_anchor_primary",
+                    "schema_version": 1,
+                    "value": 68500000000000000000
+                  },
+                  {
+                    "case_key": "case.fig4.al_high_anchor_primary",
+                    "schema_version": 1,
+                    "value": 83500000000000000000
+                  },
+                  {
+                    "case_key": "case.fig4.ga_own_anchor_primary",
+                    "schema_version": 1,
+                    "value": 83500000000000000000
+                  },
+                  {
+                    "case_key": "case.fig4.ga_low_anchor_primary",
+                    "schema_version": 1,
+                    "value": 68500000000000000000
+                  },
+                  {
+                    "case_key": "case.fig4.al_own_anchor_tight",
+                    "schema_version": 1,
+                    "value": 68500000000000000000
+                  },
+                  {
+                    "case_key": "case.fig4.ga_own_anchor_tight",
+                    "schema_version": 1,
+                    "value": 83500000000000000000
+                  }
+                ],
+                "factor_type": "physical",
+                "rationale": "The two Table I anchors form the finite constant-boundary intervention; no source history or fitted amplitude is allowed.",
+                "schema_version": 1,
+                "scientific_path": "boundary.x0.concentration",
+                "tolerance": null,
+                "unit": "cm^-3",
+                "variable_key": "variable.fig4.surface_concentration"
+              },
+              {
+                "comparison_role": "frozen",
+                "equivalence_rule": "exact",
+                "expectations": [
+                  {
+                    "case_key": "case.fig4.al_own_anchor_primary",
+                    "schema_version": 1,
+                    "value": 480
+                  },
+                  {
+                    "case_key": "case.fig4.al_high_anchor_primary",
+                    "schema_version": 1,
+                    "value": 480
+                  },
+                  {
+                    "case_key": "case.fig4.ga_own_anchor_primary",
+                    "schema_version": 1,
+                    "value": 480
+                  },
+                  {
+                    "case_key": "case.fig4.ga_low_anchor_primary",
+                    "schema_version": 1,
+                    "value": 480
+                  },
+                  {
+                    "case_key": "case.fig4.al_own_anchor_tight",
+                    "schema_version": 1,
+                    "value": 480
+                  },
+                  {
+                    "case_key": "case.fig4.ga_own_anchor_tight",
+                    "schema_version": 1,
+                    "value": 480
+                  }
+                ],
+                "factor_type": "physical",
+                "rationale": "Exact supplied single-layer thermal condition.",
+                "schema_version": 1,
+                "scientific_path": "thermal.temperature",
+                "tolerance": null,
+                "unit": "Celsius",
+                "variable_key": "variable.fig4.temperature"
+              },
+              {
+                "comparison_role": "frozen",
+                "equivalence_rule": "exact",
+                "expectations": [
+                  {
+                    "case_key": "case.fig4.al_own_anchor_primary",
+                    "schema_version": 1,
+                    "value": 480
+                  },
+                  {
+                    "case_key": "case.fig4.al_high_anchor_primary",
+                    "schema_version": 1,
+                    "value": 480
+                  },
+                  {
+                    "case_key": "case.fig4.ga_own_anchor_primary",
+                    "schema_version": 1,
+                    "value": 480
+                  },
+                  {
+                    "case_key": "case.fig4.ga_low_anchor_primary",
+                    "schema_version": 1,
+                    "value": 480
+                  },
+                  {
+                    "case_key": "case.fig4.al_own_anchor_tight",
+                    "schema_version": 1,
+                    "value": 480
+                  },
+                  {
+                    "case_key": "case.fig4.ga_own_anchor_tight",
+                    "schema_version": 1,
+                    "value": 480
+                  }
+                ],
+                "factor_type": "physical",
+                "rationale": "Eight minutes converted exactly to 480 s.",
+                "schema_version": 1,
+                "scientific_path": "thermal.duration",
+                "tolerance": null,
+                "unit": "s",
+                "variable_key": "variable.fig4.duration"
+              },
+              {
+                "comparison_role": "frozen",
+                "equivalence_rule": "exact",
+                "expectations": [
+                  {
+                    "case_key": "case.fig4.al_own_anchor_primary",
+                    "schema_version": 1,
+                    "value": 0
+                  },
+                  {
+                    "case_key": "case.fig4.al_high_anchor_primary",
+                    "schema_version": 1,
+                    "value": 0
+                  },
+                  {
+                    "case_key": "case.fig4.ga_own_anchor_primary",
+                    "schema_version": 1,
+                    "value": 0
+                  },
+                  {
+                    "case_key": "case.fig4.ga_low_anchor_primary",
+                    "schema_version": 1,
+                    "value": 0
+                  },
+                  {
+                    "case_key": "case.fig4.al_own_anchor_tight",
+                    "schema_version": 1,
+                    "value": 0
+                  },
+                  {
+                    "case_key": "case.fig4.ga_own_anchor_tight",
+                    "schema_version": 1,
+                    "value": 0
+                  }
+                ],
+                "factor_type": "physical",
+                "rationale": "Frozen initial condition for the bounded diffusion counterfactual.",
+                "schema_version": 1,
+                "scientific_path": "initial.C(x,0)",
+                "tolerance": null,
+                "unit": "cm^-3",
+                "variable_key": "variable.fig4.initial_concentration"
+              },
+              {
+                "comparison_role": "frozen",
+                "equivalence_rule": "exact",
+                "expectations": [
+                  {
+                    "case_key": "case.fig4.al_own_anchor_primary",
+                    "schema_version": 1,
+                    "value": 0
+                  },
+                  {
+                    "case_key": "case.fig4.al_high_anchor_primary",
+                    "schema_version": 1,
+                    "value": 0
+                  },
+                  {
+                    "case_key": "case.fig4.ga_own_anchor_primary",
+                    "schema_version": 1,
+                    "value": 0
+                  },
+                  {
+                    "case_key": "case.fig4.ga_low_anchor_primary",
+                    "schema_version": 1,
+                    "value": 0
+                  },
+                  {
+                    "case_key": "case.fig4.al_own_anchor_tight",
+                    "schema_version": 1,
+                    "value": 0
+                  },
+                  {
+                    "case_key": "case.fig4.ga_own_anchor_tight",
+                    "schema_version": 1,
+                    "value": 0
+                  }
+                ],
+                "factor_type": "physical",
+                "rationale": "Frozen far-boundary Dirichlet condition; the six-diffusion-length margin limits its effect over observed depths.",
+                "schema_version": 1,
+                "scientific_path": "boundary.xL.concentration",
+                "tolerance": null,
+                "unit": "cm^-3",
+                "variable_key": "variable.fig4.back_boundary_concentration"
+              },
+              {
+                "comparison_role": "intended_change",
+                "equivalence_rule": "exact",
+                "expectations": [
+                  {
+                    "case_key": "case.fig4.al_own_anchor_primary",
+                    "schema_version": 1,
+                    "value": 2.4476634882848627
+                  },
+                  {
+                    "case_key": "case.fig4.al_high_anchor_primary",
+                    "schema_version": 1,
+                    "value": 2.4476634882848627
+                  },
+                  {
+                    "case_key": "case.fig4.ga_own_anchor_primary",
+                    "schema_version": 1,
+                    "value": 2.4476634882848627
+                  },
+                  {
+                    "case_key": "case.fig4.ga_low_anchor_primary",
+                    "schema_version": 1,
+                    "value": 2.4476634882848627
+                  },
+                  {
+                    "case_key": "case.fig4.al_own_anchor_tight",
+                    "schema_version": 1,
+                    "value": 3.671495232427294
+                  },
+                  {
+                    "case_key": "case.fig4.ga_own_anchor_tight",
+                    "schema_version": 1,
+                    "value": 3.671495232427294
+                  }
+                ],
+                "factor_type": "numerical",
+                "rationale": "From both supplied tables, x_max=max(x_value)=0.7900990099009901 um. With D_max=1.59e-12 cm^2/s and t=480 s, 6*sqrt(D_max*t)=0.00016575644783838728 cm=1.6575644783838728 um; hence L_primary=x_max+margin=2.4476634882848627 um and L_tight=1.5*L_primary=3.671495232427294 um.",
+                "schema_version": 1,
+                "scientific_path": "geometry.L",
+                "tolerance": null,
+                "unit": "um",
+                "variable_key": "variable.fig4.domain_length"
+              },
+              {
+                "comparison_role": "intended_change",
+                "equivalence_rule": "exact",
+                "expectations": [
+                  {
+                    "case_key": "case.fig4.al_own_anchor_primary",
+                    "schema_version": 1,
+                    "value": 0.001
+                  },
+                  {
+                    "case_key": "case.fig4.al_high_anchor_primary",
+                    "schema_version": 1,
+                    "value": 0.001
+                  },
+                  {
+                    "case_key": "case.fig4.ga_own_anchor_primary",
+                    "schema_version": 1,
+                    "value": 0.001
+                  },
+                  {
+                    "case_key": "case.fig4.ga_low_anchor_primary",
+                    "schema_version": 1,
+                    "value": 0.001
+                  },
+                  {
+                    "case_key": "case.fig4.al_own_anchor_tight",
+                    "schema_version": 1,
+                    "value": 0.0005
+                  },
+                  {
+                    "case_key": "case.fig4.ga_own_anchor_tight",
+                    "schema_version": 1,
+                    "value": 0.0005
+                  }
+                ],
+                "factor_type": "numerical",
+                "rationale": "The primary surface spacing resolves the approximately 0.000990099 um digitized x increment; the tightened control halves it.",
+                "schema_version": 1,
+                "scientific_path": "numerics.surface_spacing",
+                "tolerance": null,
+                "unit": "um",
+                "variable_key": "variable.fig4.surface_mesh_spacing"
+              },
+              {
+                "comparison_role": "intended_change",
+                "equivalence_rule": "exact",
+                "expectations": [
+                  {
+                    "case_key": "case.fig4.al_own_anchor_primary",
+                    "schema_version": 1,
+                    "value": 0.005
+                  },
+                  {
+                    "case_key": "case.fig4.al_high_anchor_primary",
+                    "schema_version": 1,
+                    "value": 0.005
+                  },
+                  {
+                    "case_key": "case.fig4.ga_own_anchor_primary",
+                    "schema_version": 1,
+                    "value": 0.005
+                  },
+                  {
+                    "case_key": "case.fig4.ga_low_anchor_primary",
+                    "schema_version": 1,
+                    "value": 0.005
+                  },
+                  {
+                    "case_key": "case.fig4.al_own_anchor_tight",
+                    "schema_version": 1,
+                    "value": 0.0025
+                  },
+                  {
+                    "case_key": "case.fig4.ga_own_anchor_tight",
+                    "schema_version": 1,
+                    "value": 0.0025
+                  }
+                ],
+                "factor_type": "numerical",
+                "rationale": "Primary maximum spacing is comparable to or smaller than the supplied x uncertainty scale; the tightened control halves it.",
+                "schema_version": 1,
+                "scientific_path": "numerics.maximum_spacing",
+                "tolerance": null,
+                "unit": "um",
+                "variable_key": "variable.fig4.maximum_mesh_spacing"
+              },
+              {
+                "comparison_role": "intended_change",
+                "equivalence_rule": "exact",
+                "expectations": [
+                  {
+                    "case_key": "case.fig4.al_own_anchor_primary",
+                    "schema_version": 1,
+                    "value": 4
+                  },
+                  {
+                    "case_key": "case.fig4.al_high_anchor_primary",
+                    "schema_version": 1,
+                    "value": 4
+                  },
+                  {
+                    "case_key": "case.fig4.ga_own_anchor_primary",
+                    "schema_version": 1,
+                    "value": 4
+                  },
+                  {
+                    "case_key": "case.fig4.ga_low_anchor_primary",
+                    "schema_version": 1,
+                    "value": 4
+                  },
+                  {
+                    "case_key": "case.fig4.al_own_anchor_tight",
+                    "schema_version": 1,
+                    "value": 2
+                  },
+                  {
+                    "case_key": "case.fig4.ga_own_anchor_tight",
+                    "schema_version": 1,
+                    "value": 2
+                  }
+                ],
+                "factor_type": "numerical",
+                "rationale": "The primary tier uses 120 or more maximum steps over 480 s; the tightened tier doubles temporal resolution.",
+                "schema_version": 1,
+                "scientific_path": "numerics.diffuse.maxstep",
+                "tolerance": null,
+                "unit": "s",
+                "variable_key": "variable.fig4.maximum_time_step"
+              }
+            ]
+          },
+          "current_objectives": [
+            "Completed—inconclusive: Determine whether the two paper-reported material-specific constant surface anchors reduce joint supported-row log-profile error by at least 50% relative to the better common-anchor control while the material-specific constant-D anchor, thermal history, equation, initial condition, and reduction are frozen.",
+            "Completed—inconclusive: Determine whether the resolved low-concentration support length and the boundary decision change materially when shared-occlusion rows and rows at or below 3 x 10^15 cm^-3 are admitted by exact preregistered masks."
+          ],
+          "experiment_key": "experiment.fig4.raw_boundary_counterfactual",
+          "frozen_invariants": [
+            "Implement the bounded model family as partial C/partial t = D*partial^2 C/partial x^2 on 0<x<L with C(x,0)=0, C(0,t)=Cs, and C(L,t)=0. The only case-dependent physical values are the declared D and Cs.",
+            "Use a fresh custom nonnegative conservative concentration state. Do not use built-in Zn diffusion, activation, defect, alloy, concentration-dependent, electric-field, or source-history physics.",
+            "A common solver-supported inert host may be used for all cases because it must not enter the custom equation. If SProcess requires case-specific material regions or the host changes the equation, stop for domain review rather than inventing properties.",
+            "Each case must reconstruct independent geometry, mesh, state, initial condition, and boundaries. Temperature is 480 Celsius, duration is 480 s, and solver command units must be explicit.",
+            "Emit solver-native raw C(x,480 s) as a distinct PLX or TDR product for each case, plus termination metadata in the process log. Do not embed CSV masks, interpolation to evidence rows, scoring, or scientific pass/fail logic in solver source.",
+            "The reference tables are immutable downstream analysis inputs. Preserve their exact rows and fields; never bridge a missing point_index, count shared pixels independently, or treat M2 as qualified primary evidence.",
+            "For later reduction, M0 selects observed=1, eligible=1, direct_pixel, y_value>3e15 cm^-3, and y_value>y_uncertainty, giving 359 InAlAs and 702 InGaAs rows. M1 admits shared_occlusion and gives 383 and 753. M2 admits both support kinds without the 3e15 cutoff but still requires y_value>y_uncertainty, giving 439 and 757; it is sensitivity-only.",
+            "Later central-value masks S0, S1, and S2 omit y_value>y_uncertainty and contain respectively 373/702, 397/755, and 501/765 InAlAs/InGaAs rows. Exact identities, grouping, adjacency, and uncertainty corners must be computed from the supplied tables during reduction, not copied into solver inputs.",
+            "No result establishes kick-out, VCD, a continuous microscopic response, or any defect species. Material label remains paired with D, limiting claims to the frozen phenomenological family."
+          ],
+          "hypothesis_keys": [
+            "hypothesis.surface_boundary_control",
+            "hypothesis.tail_support_artifact"
+          ],
+          "objectives": [
+            "Use the supplied paper evidence to support later selection of falsifiable hypotheses and design of a minimal TCAD control experiment, while this Intake is limited to evidence extraction and does not select a hypothesis.",
+            "Completed—inconclusive: Determine whether the two paper-reported material-specific constant surface anchors reduce joint supported-row log-profile error by at least 50% relative to the better common-anchor control while the material-specific constant-D anchor, thermal history, equation, initial condition, and reduction are frozen.",
+            "Completed—inconclusive: Determine whether the resolved low-concentration support length and the boundary decision change materially when shared-occlusion rows and rows at or below 3 x 10^15 cm^-3 are admitted by exact preregistered masks.",
+            "If constant-boundary control is rejected or remains ambiguous, the base family is adequate, and the direct-pixel above-limit low-concentration contrast is stable, later compare the reviewed continuous material response with the reviewed two-regime kick-out/VCD phenomenology using a separately reviewed finite model family."
+          ],
+          "prediction_tests": [
+            {
+              "expected_result": "After complete-output, convergence, and own-anchor adequacy gates pass, support the bounded surface-boundary hypothesis within the registered tested set only if the minimum registered G is at least 0.50.",
+              "falsifying_result": "Reject within the registered tested set only if the maximum registered G is at most 0.25. Values between the gates, a changed category under M1-M2 or S0-S2, or either own-anchor M0 WRMSE above 0.15 decade are inconclusive.",
+              "hypothesis_key": "hypothesis.surface_boundary_control",
+              "observable": "M0 gain G=1-J_own/min(J_low,J_high), where each J is formed from the two material WRMSE values in log10 concentration.",
+              "prediction_key": "prediction.boundary.supported_row_gain",
+              "schema_version": 1
+            },
+            {
+              "expected_result": "Support the bounded artifact concern within the registered tested set if a required relative-T sensitivity range has minimum at least 0.50 or a boundary category change persists across every registered scenario.",
+              "falsifying_result": "Reject within the registered tested set only if every required relative-T range has maximum at most 0.10 and the boundary category is invariant across finite masks, central-value masks, registered one-group perturbations, and tightened numerics; otherwise report inconclusive.",
+              "hypothesis_key": "hypothesis.tail_support_artifact",
+              "observable": "For each material and mask, T is the sum of adjacent x increments only where consecutive point_index rows both lie below 5.4e16 cm^-3; M0-M1 also require concentrations above 3e15 cm^-3.",
+              "prediction_key": "prediction.artifact.resolved_length_sensitivity",
+              "schema_version": 1
+            }
+          ],
+          "required_observables": [
+            "For each of six cases: case key, material label, D in cm^2/s, Cs in cm^-3, temperature in Celsius, duration in s, L and mesh spacings in um, maximum time step in s, terminal state, and solver-native raw C(x,480 s).",
+            "For each material, the primary and tightened normalized profile log10(C/Cs) on the common observed interval 0 to 0.7900990099009901 um.",
+            "During later reduction: M0-M2 and S0-S2 row ledgers, shared dependence-group weights, sampled positive finite predictions, WRMSE values, J_own, J_low, J_high, G, contiguous no-gap low-concentration support lengths T, registered one-group-at-a-time sensitivity values, and category stability.",
+            "M0 profile-error gain G and its category stability under support masks and numerical tightening.",
+            "Relative change in contiguous resolved low-concentration support length T and the surface-boundary category across M0-M2 and S0-S2."
+          ],
+          "resource_estimate": {
+            "case_count": 6,
+            "relative_cost": "low",
+            "runtime_basis": "Completed historical workload: six one-dimensional cases comprising four primary material-by-boundary cells and two material-specific tightened normalized-shape controls. The recovered evidence set covers the required solver log, six PLX files, and six TDR files. This required resource field records the completed experiment and does not schedule a new workload. Repeating the family is stopped because its adequacy failure is structural within the frozen model. Resource needs for a later shape-changing counterfactual cannot be estimated until its scientific basis and exact model are qualified.",
+            "schema_version": 1
+          },
+          "schema_version": 1,
+          "stop_conditions": [
+            "Stage-close stop: do not schedule or execute these same six cases again to replace the immutable failed/97 receipt or seek a different scientific disposition; the recovered 13-artifact evidence set is complete, the family adequacy gate failed, and both registered outcomes are inconclusive.",
+            "Stop authoring if SProcess R-2020.09 cannot realize a custom nonnegative conservative state with the explicit constant-D equation and two fixed boundaries in an inert one-dimensional host without invoking built-in transport physics.",
+            "Stop before execution unless independent domain review confirms all six case values, complete case reset, explicit units, custom PDE, boundaries, numerical tiers, and distinct raw outputs, and fresh initialization reaches that implementation layer.",
+            "Stop numerical interpretation if any case fails, any M0 prediction is nonpositive or nonfinite, either normalized-shape convergence difference exceeds 0.05 decade, or a scientific category changes under tightened numerics.",
+            "If either own-anchor M0 WRMSE exceeds 0.15 decade, report the frozen constant-D family inadequate and the surface-boundary result inconclusive; do not treat model inadequacy as hypothesis rejection.",
+            "Do not bridge missing point indices, count shared pixels independently, use the all-zero below-limit flags to override central y_value, or treat M2 as qualified primary evidence.",
+            "Apply the 0.50 support and 0.25 rejection gates for G and the 0.50 support and 0.10 rejection gates for relative T only to the exact registered tested set; otherwise report inconclusive.",
+            "Do not add fitted D or Cs, a time-dependent source, another diffusion channel, alloy-dependent built-in physics, or any microscopic defect claim.",
+            "Stop after one bounded disposition for each selected hypothesis and an explicit statement that microscopic mechanism separation remains uncovered."
+          ],
+          "value_assessment": {
+            "added_free_parameters": 0,
+            "cost": "low",
+            "discrimination_power": "low",
+            "evidence_support": "high",
+            "information_gain": "low",
+            "rationale": "The completed current objectives covered both mandatory observables within their qualified-subset bounds: material-resolved M0 profile error tested the surface-anchor comparison, while contiguous no-gap T and M0-M2/S0-S2 sensitivity tested the front/tail contrast. Recovery now covers all 13 required artifacts, so evidence support for the bounded outcome is high. The numerical convergence gate passed, but own-anchor WRMSE values of 2.2445359 and 2.0127536 decade exceeded 0.15 decade; consequently G=-0.01408761 cannot support or falsify surface-boundary control. Tail response crossed low, intermediate, and high registered categories, so it also remains inconclusive. These results complete the two current objectives without closing the overall mechanism-separation objective. The original six cases were minimal for the 2x2 boundary comparison plus two normalized-shape convergence controls, and their settings, identities, predictions, and validation gates are preserved as history. Their current discrimination power and incremental information gain are low because another boundary-amplitude run or numerical tier cannot repair the frozen constant-D/fixed-boundary family's shape inadequacy. The original later microscopic branch is deferred because its adequate-family and stable-tail preconditions both failed. A new current study may be selected only after qualified evidence defines one finite profile-shape-changing structural model and its implementation operands, boundary conditions, outputs, uncertainty treatment, and decision rule. Stronger tail claims separately require qualified author raw SIMS rows. These later conditions do not invalidate the completed experiment and are not current authoring or execution prerequisites.",
+            "schema_version": 1
+          }
+        }
+      ],
+      "schema_version": 1,
+      "selected_hypothesis_keys": [
+        "hypothesis.surface_boundary_control",
+        "hypothesis.tail_support_artifact"
+      ],
+      "study_kind": "scientific",
+      "validation_plans": [
+        {
+          "claim_gate": "all_required_checks_pass",
+          "experiment_key": "experiment.fig4.raw_boundary_counterfactual",
+          "experimental": {
+            "applicability": "required",
+            "checks": [
+              {
+                "acceptance_condition": "All registered assertions pass before a scientific disposition is reported.",
+                "basis": "The bound tables reproduce the registered aggregate counts and x_max; exact row ledgers remain analysis products rather than solver inputs.",
+                "check_key": "check.fig4.reference_mask_reproduction",
+                "evaluation_mode": "deterministic_threshold",
+                "evaluator_metric": "assertion_pass_fraction",
+                "evaluator_profile": "profile.fig4.reference_mask_audit",
+                "failure_action": "Return the affected scientific result as evidence-inconclusive without invalidating completed raw solver profiles.",
+                "metric": "Fraction of registered count, predicate, grouping, and adjacency assertions satisfied.",
+                "observable": "M0-M2 and S0-S2 counts, exact row identities, shared-group weights, and no-gap adjacency ledgers reconstructed from the supplied tables.",
+                "schema_version": 1,
+                "threshold": {
+                  "operator": "equal",
+                  "schema_version": 1,
+                  "unit": "dimensionless",
+                  "upper_value": null,
+                  "value": 1
+                }
+              },
+              {
+                "acceptance_condition": "Both own-anchor WRMSE values are at most 0.15 decade.",
+                "basis": "A relative boundary gain from an inadequate base family is not identifiable mechanism evidence.",
+                "check_key": "check.fig4.own_anchor_adequacy",
+                "evaluation_mode": "deterministic_threshold",
+                "evaluator_metric": "max_own_anchor_wrmse",
+                "evaluator_profile": "profile.fig4.supported_row_counterfactual",
+                "failure_action": "Classify the frozen family as inadequate and both boundary-mechanism dispositions as inconclusive.",
+                "metric": "Maximum own-anchor WRMSE.",
+                "observable": "M0 own-anchor WRMSE for each material.",
+                "schema_version": 1,
+                "threshold": {
+                  "operator": "le",
+                  "schema_version": 1,
+                  "unit": "decade",
+                  "upper_value": null,
+                  "value": 0.15
+                }
+              }
+            ],
+            "rationale": "Completed outcome: registered reductions were available, but both own-anchor WRMSE values failed the 0.15-decade adequacy check and the tail category was mask-dependent. The claim gate therefore returned inconclusive dispositions. This historical validation record does not gate a new solver run because no repeat run is selected.",
+            "schema_version": 1
+          },
+          "numerical": {
+            "applicability": "required",
+            "checks": [
+              {
+                "acceptance_condition": "Both material values are at most 0.05 decade and the later decision category is unchanged.",
+                "basis": "The threshold is one third of the retained 0.15-decade own-anchor adequacy scale.",
+                "check_key": "check.fig4.normalized_shape_convergence",
+                "evaluation_mode": "deterministic_threshold",
+                "evaluator_metric": "max_normalized_log_difference",
+                "evaluator_profile": "profile.fig4.raw_boundary_counterfactual",
+                "failure_action": "Report numerical inconclusive and permit at most one separately reviewed tighter tier without changing physics.",
+                "metric": "Maximum paired normalized log-profile difference.",
+                "observable": "Maximum absolute primary-minus-tightened difference in log10(C/Cs) over all M0 x_value locations, evaluated separately for each material.",
+                "schema_version": 1,
+                "threshold": {
+                  "operator": "le",
+                  "schema_version": 1,
+                  "unit": "decade",
+                  "upper_value": null,
+                  "value": 0.05
+                }
+              },
+              {
+                "acceptance_condition": "All six cases and required raw profiles are complete.",
+                "basis": "The factorial comparison and paired convergence test require every declared cell.",
+                "check_key": "check.fig4.complete_raw_outputs",
+                "evaluation_mode": "deterministic_threshold",
+                "evaluator_metric": "complete_case_fraction",
+                "evaluator_profile": "profile.fig4.raw_boundary_counterfactual",
+                "failure_action": "Stop without imputing a case or row.",
+                "metric": "Fraction of cases with successful termination and finite positive predictions over all M0 depths.",
+                "observable": "Six case ledger and raw concentration profiles.",
+                "schema_version": 1,
+                "threshold": {
+                  "operator": "equal",
+                  "schema_version": 1,
+                  "unit": "dimensionless",
+                  "upper_value": null,
+                  "value": 1
+                }
+              }
+            ],
+            "rationale": "Completed outcome: the recovered six-case raw evidence is complete and the sealed 257-point normalized-shape comparisons were about 5.7835364e-6 and 5.3506933e-6 decade, below 0.05. Numerical convergence passed; it does not rescue the failed physical-family adequacy gate or change the immutable failed/97 external terminal state.",
+            "schema_version": 1
+          },
+          "physical": {
+            "applicability": "required",
+            "checks": [
+              {
+                "acceptance_condition": "Independent domain review passes and fresh initialization reaches the custom state and both boundaries for the exact source.",
+                "basis": "A prior blocked stub and its attestations do not qualify this redesigned experiment.",
+                "check_key": "physical/review/1",
+                "evaluation_mode": "reviewed_qualitative",
+                "evaluator_metric": null,
+                "evaluator_profile": null,
+                "failure_action": "Revise or block the realization before execution.",
+                "metric": "Fidelity to the frozen linear PDE and six-case comparison.",
+                "observable": "Effective SProcess source, custom state equation, independent case construction, boundary equations, explicit units, and raw outputs.",
+                "schema_version": 1,
+                "threshold": null
+              }
+            ],
+            "rationale": "The exact six-case source received matching implementation review and produced the recovered scientific outputs. The external run nevertheless remains failed/97 because its declared *.tdr paths did not match the actual *_fps.tdr files. Recovery closes the present evidence gap without changing that terminal state. Any independently required future execution record must first correct all six expected TDR paths and receive matching review; no current repeat execution is selected.",
+            "schema_version": 1
+          },
+          "plan_key": "experiment.fig4.raw_boundary_counterfactual/validation",
+          "schema_version": 1
+        }
+      ]
+    },
+    "schema": "scidiscovery.experiment-portfolio.v1"
+  },
+  "sealed_output_status": "available",
+  "started_at": "2026-09-11T15:17:06.474081Z",
+  "state": "completed"
+}

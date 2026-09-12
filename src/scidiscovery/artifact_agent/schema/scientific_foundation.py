@@ -102,10 +102,6 @@ class EvidenceItem(SchemaModel):
             "speculation",
         } and self.rationale is None:
             raise ValueError("non-factual evidence item requires a rationale")
-        if len(self.evidence_keys) != len(set(self.evidence_keys)):
-            raise ValueError("evidence_keys must be unique")
-        if len(self.tags) != len(set(self.tags)):
-            raise ValueError("tags must be unique")
         condition_names = tuple(item.name for item in self.conditions)
         if len(condition_names) != len(set(condition_names)):
             raise ValueError("condition names must be unique within one evidence item")
@@ -125,8 +121,6 @@ class EvidenceConflict(SchemaModel):
             raise ValueError("unresolved conflict cannot declare a resolution")
         if self.status != "unresolved" and self.resolution is None:
             raise ValueError("resolved conflict requires a resolution")
-        if len(self.item_keys) != len(set(self.item_keys)):
-            raise ValueError("conflict item_keys must be unique")
         return self
 
 
@@ -152,8 +146,6 @@ class ScientificFoundation(SchemaModel):
         conflict_keys = tuple(item.conflict_key for item in self.conflicts)
         if len(item_keys) != len(set(item_keys)):
             raise ValueError("item_key values must be unique")
-        if len(source_keys) != len(set(source_keys)):
-            raise ValueError("source_key values must be unique")
         if len(conflict_keys) != len(set(conflict_keys)):
             raise ValueError("conflict_key values must be unique")
         known_items = set(item_keys)

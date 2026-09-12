@@ -27,6 +27,10 @@ NORMALIZER_PROFILE = "scidiscovery.curve-normalize.sprocess-log.v1"
 MAX_LOG_BYTES = 64 * 1024 * 1024
 
 
+class SProcessPointLimitError(ValueError):
+    """A raw series exceeded its declared maximum point count."""
+
+
 class SProcessSeriesSpec(SchemaModel):
     series_key: Identifier
     case_key: Identifier
@@ -134,7 +138,7 @@ def normalize_sprocess_log(
             if not math.isfinite(x) or not math.isfinite(y):
                 raise ValueError("SProcess curve point must be finite")
             if len(points[key]) >= series_spec.max_points:
-                raise ValueError("SProcess curve series exceeds its point limit")
+                raise SProcessPointLimitError("SProcess curve series exceeds its point limit")
             points[key].append(CurvePoint(x=x, y=y))
             first_lines.setdefault(key, line_number)
             last_lines[key] = line_number
@@ -287,7 +291,7 @@ def _parse_legacy_case_csv(
             if not math.isfinite(x) or not math.isfinite(y):
                 raise ValueError("legacy SProcess curve point must be finite")
             if len(points[key]) >= series_spec.max_points:
-                raise ValueError("legacy SProcess curve series exceeds its point limit")
+                raise SProcessPointLimitError("legacy SProcess curve series exceeds its point limit")
             points[key].append(CurvePoint(x=x, y=y))
             first_lines.setdefault(key, line_number)
             last_lines[key] = line_number

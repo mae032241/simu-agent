@@ -188,6 +188,7 @@ def test_codex_profile_rejects_config_for_a_plugin_outside_the_catalog(
 def test_codex_profile_contains_root_and_compiled_operation_boundaries(
     tmp_path: Path,
 ) -> None:
+    assert LocalTrustedBackend.backend_version == "2"
     project = tmp_path / "project"
     project.mkdir()
     (project / "AGENTS.md").write_text("# Project\n", encoding="utf-8")
@@ -262,6 +263,22 @@ def test_codex_profile_contains_root_and_compiled_operation_boundaries(
             "developer_instructions"
         ]
         assert "trusted-local backend" in role["developer_instructions"]
+        instructions = role["developer_instructions"]
+        if compiled.spec.operation_id.startswith("tcad.deck.author."):
+            from tcad_artifact.role_pack import role_prompt
+            assert role_prompt("author") in instructions
+            assert "worker_tcad_debug_run" in operation_local_worker_tool_names(compiled)
+        elif compiled.spec.operation_id == "tcad.deck.review.v1":
+            assert "worker_tcad_debug_run" not in operation_local_worker_tool_names(compiled)
+        assert "exact Skill directories discovered by Codex" in instructions
+        assert "Keep global Skills read-only" in instructions
+        assert "TMPDIR=<workspace>/scratch" in instructions
+        assert "XDG_CACHE_HOME=<workspace>/scratch" in instructions
+        assert "PYTHONDONTWRITEBYTECODE=1" in instructions
+        assert "do not rely on a previous shell export" in instructions
+        assert "not unbound scientific facts" in instructions
+        assert "sole filesystem root" not in instructions
+        assert "skills" not in role
         assert "the only permitted chat" in role["developer_instructions"]
         assert "已完成受控提交。" in role["developer_instructions"]
         matching_parent_servers = [
@@ -287,6 +304,8 @@ def test_codex_profile_contains_root_and_compiled_operation_boundaries(
         ]
         assert str(project / ".scidiscovery-state") in matching_parent_servers[0]["args"]
     scheduler_prompt = (project / "AGENTS.md").read_text(encoding="utf-8")
+    assert "Local Workers may read discovered" in scheduler_prompt
+    assert "skills belonging to its selected OperationSpec" not in scheduler_prompt
     discriminator = scheduler_prompt.index(
         "This section applies only to the interactive parent scheduler."
     )
@@ -322,6 +341,8 @@ def test_codex_hardened_profile_remains_explicitly_compilable(tmp_path: Path) ->
             )
         )
         server = profile["mcp_servers"][operation_worker_server_name(compiled)]
+        assert "skills, apps or plugins" in profile["developer_instructions"]
+        assert "TMPDIR=<workspace>/scratch" not in profile["developer_instructions"]
         assert server["args"][:2] == [
             "-m",
             "scidiscovery.artifact_agent.interfaces.mcp_hardened_worker",

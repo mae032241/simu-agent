@@ -1,0 +1,142 @@
+"""Optional inspection and acceptance of original terminal execution products."""
+from __future__ import annotations
+import copy
+import hashlib
+import json
+import time
+from pathlib import Path
+from typing import Literal
+from pydantic import BaseModel, ConfigDict, Field
+from scidiscovery.operations.tooling import WorkerToolDefinition
+from scidiscovery.operation_declaration import schema_resource
+from scidiscovery.artifact_agent.schema.common import canonical_json
+from scidiscovery.artifact_agent.schema.refs import ArtifactRef
+from scidiscovery.artifact_agent.service.run_outputs import RunCheckerError
+from scidiscovery.artifact_agent.service.local_workspace import write_control_workspace_file
+from .project_packager import ReviewedDeckPackage
+
+class InspectRequest(BaseModel):
+    model_config=ConfigDict(extra='forbid')
+    execution_result: str = 'execution_result'
+    relative_path: str | None = Field(default=None,max_length=1024)
+
+class AcceptRequest(BaseModel):
+    model_config=ConfigDict(extra='forbid')
+    evidence_alias: str = Field(min_length=1,max_length=128)
+    output_name: str = Field(min_length=1,max_length=256)
+    rationale: str = Field(min_length=1,max_length=4096)
+    evidence_aliases: list[str] = Field(min_length=1,max_length=16)
+
+from scidiscovery.artifact_agent.service.tool_evidence import (
+    ToolEvidenceManifest as RecoveryManifest, TOOL_EVIDENCE_SCHEMA as RECOVERY_SCHEMA,
+)
+
+EXECUTION_SCHEMA=canonical_json({'$id':'scidiscovery.execution-result','type':'object'}).decode()
+
+class OutputInspectionService:
+    def __init__(self, adapter): self.adapter=adapter
+
+    def inspect(self, scope, relative_path, *, max_bytes, timeout):
+        if scope['executor'] != 'tcad_artifact:tcad':
+            return {'status':'unsupported','reason':'execution_adapter'}
+        adapter=copy.copy(self.adapter)
+        if hasattr(adapter, 'timeout'):
+            adapter.timeout=min(adapter.timeout,timeout)
+        if hasattr(adapter,'config') and hasattr(adapter.config,'operation_timeout_seconds'):
+            adapter.config=adapter.config.model_copy(update={'operation_timeout_seconds':max(1,min(adapter.config.operation_timeout_seconds,int(timeout)))})
+        return adapter.inspect_outputs(scope['external_run_id'],relative_path,max_bytes=max_bytes)
+
+
+def _file(raw, context, alias):
+    relative=Path('scratch/controlled-evidence')/alias
+    write_control_workspace_file(context.workspace,relative,raw,replace=(context.workspace/relative).exists(),mode=0o400,create_parents=True)
+    return str(context.workspace/relative)
+
+
+def _inspect(context, source_alias, path):
+    service=context.services.get('tcad.output_inspection')
+    if service is None:
+        return {'status':'unavailable','reason':'inspection_service_unavailable'}
+    scope=context.execution_scope(source_alias)
+    if scope['payload_ref'] != context.input_ref('reviewed_package'):
+        return {'status':'unavailable','reason':'execution_project_mismatch'}
+    package=ReviewedDeckPackage.model_validate_json(context.read_input('reviewed_package'),strict=True)
+    budget=context.io_budget(reserve=True)
+    timeout=min(budget['remaining_seconds'],context.remaining_seconds)
+    if timeout < 1 or budget['remaining_bytes'] < 1:
+        return {'status':'limit_exceeded','reason':'inspection_budget','budget':budget}
+    project_remaining=max(0,package.project.resource_limits.max_output_bytes-(256*1024*1024-budget['remaining_bytes']))
+    limit=min(32*1024*1024,budget['remaining_bytes'],project_remaining)
+    if limit < 1:
+        context.io_budget(used_bytes=-budget['remaining_bytes'],used_seconds=-budget['remaining_seconds'])
+        return {'status':'limit_exceeded','reason':'project_output_budget'}
+    started=time.monotonic(); transferred=limit if path is not None else 0
+    try:
+        response=service.inspect(scope,path,max_bytes=limit,timeout=timeout)
+        transferred=response.get('file',{}).get('size_bytes',0)
+        if path is None and response.get('status')=='available':
+            listed={item['relative_path'] for item in response.get('files',())}
+            declarations=[]
+            for output in package.project.expected_outputs:
+                item={'output_name':output.name,'declared_path':output.relative_path,'listed':output.relative_path in listed}
+                if len(declarations)>=256 or len(canonical_json({**response,'declared_outputs':declarations+[item]}))>60*1024:
+                    break
+                declarations.append(item)
+            response.update(declared_outputs=declarations,declarations_truncated=len(declarations)<len(package.project.expected_outputs))
+    finally:
+        budget=context.io_budget(used_bytes=transferred-budget['remaining_bytes'],used_seconds=time.monotonic()-started-budget['remaining_seconds'])
+    return {**response,'budget':budget}
+
+
+def inspect_tool(request,context):
+    try:
+        reply=_inspect(context,request.execution_result,request.relative_path)
+        if reply.get('status')!='available' or 'file' not in reply:
+            return reply
+        descriptor=reply['file']; path=Path(descriptor['local_path'])
+        if path.is_symlink() or descriptor['size_bytes']>32*1024*1024:
+            return {'status':'unavailable','reason':'file_scope_or_size'}
+        with path.open('rb') as stream:raw=stream.read(32*1024*1024+1)
+        if len(raw)!=descriptor['size_bytes'] or hashlib.sha256(raw).hexdigest()!=descriptor['sha256']:
+            return {'status':'changed_since_inspection','reason':'file_changed'}
+        record=context.accept_evidence(raw=raw,media_type=descriptor['media_type'],source_alias=request.execution_result,
+            metadata={'relative_path':reply['relative_path'],'output_name':None,'historical_integrity':'not_attested'})
+        return {'status':'available','evidence_alias':record['alias'],'relative_path':reply['relative_path'],
+                'sha256':descriptor['sha256'],'size_bytes':len(raw),'local_path':_file(raw,context,record['alias']),'budget':reply['budget']}
+    except RunCheckerError:
+        raise
+    except Exception as error:
+        return {'status':'unsupported' if 'unknown runner tool' in str(error) or 'unsupported TCAD transport' in str(error) else 'unavailable','reason':type(error).__name__,'detail':str(error)[:1024]}
+
+
+def accept_tool(request,context):
+    try:
+        prior=next((r for r in context.evidence() if r['alias']==request.evidence_alias),None)
+        if prior is None:
+            return {'status':'not_found','reason':'candidate_not_inspected'}
+        package=ReviewedDeckPackage.model_validate_json(context.read_input('reviewed_package'),strict=True)
+        expected=next((e for e in package.project.expected_outputs if e.name==request.output_name),None)
+        if expected is None:
+            return {'status':'not_found','reason':'output_not_declared'}
+        for alias in request.evidence_aliases:context.read_evidence(alias)
+        raw=context.read_evidence(prior['alias'])
+        if len(raw)>expected.max_bytes:
+            return {'status':'limit_exceeded','reason':'project_output_bytes'}
+        reply=_inspect(context,'execution_result',prior['metadata']['relative_path'])
+        if reply.get('status')!='available':return reply
+        if reply['file']['sha256']!=prior['artifact_ref']['sha256'] or reply['file']['size_bytes']!=len(raw):
+            return {'status':'changed_since_inspection','reason':'candidate_changed'}
+        record=context.accept_evidence(raw=raw,media_type=expected.media_type,metadata={**prior['metadata'],
+            'output_name':expected.name,'declared_path':expected.relative_path,'rationale':request.rationale,
+            'evidence_aliases':request.evidence_aliases,'experiment_key':expected.experiment_key,'case_key':expected.case_key})
+        return {'status':'accepted','evidence_alias':record['alias'],'output_name':expected.name,
+                'local_path':_file(raw,context,record['alias']),'size_bytes':len(raw),'budget':reply['budget']}
+    except ValueError as error:
+        return {'status':'ambiguous_mapping' if 'ambiguous_mapping' in str(error) else ('limit_exceeded' if str(error) in {'file_bytes','metadata_bytes','evidence_budget'} else 'unavailable'),'reason':str(error)[:1024]}
+    except RunCheckerError:
+        raise
+    except Exception as error:
+        return {'status':'unsupported' if 'unknown runner tool' in str(error) or 'unsupported TCAD transport' in str(error) else 'unavailable','reason':type(error).__name__,'detail':str(error)[:1024]}
+
+INSPECT_TOOL=WorkerToolDefinition(name='worker_tcad_inspect_outputs',description='Optionally list or inspect original files of the bound terminal execution_result. No solver, editing or renaming. A selected file yields a controlled evidence alias and read-only copy; unavailable inspection permits limited analysis.',input_model=InspectRequest,capability='tcad.analysis.inspect_outputs',contextual_handler=inspect_tool,optional_services=('tcad.output_inspection',),evidence_ports=('tool_evidence','recovery_manifest_output'))
+ACCEPT_TOOL=WorkerToolDefinition(name='worker_tcad_accept_output',description='Accept a previously inspected file as one declared output using an explicit evidence-backed mapping. Rechecks bytes; preserves source path and old execution. Read returned evidence alias for scoring and report references. No scientific success is granted.',input_model=AcceptRequest,capability='tcad.analysis.accept_output',contextual_handler=accept_tool,optional_services=('tcad.output_inspection',),evidence_ports=('tool_evidence','recovery_manifest_output'))

@@ -1,0 +1,18 @@
+{
+  "command": [
+    "python",
+    "-m",
+    "pytest",
+    "-q",
+    "tests/operations/test_analysis_evidence_recovery.py::test_new_run_replays_original_record_from_sealed_evidence",
+    "tests/operations/test_analysis_evidence_recovery.py::test_forged_workspace_receipt_cannot_publish_evidence",
+    "tests/operations/test_analysis_evidence_recovery.py::test_collection_declaration_without_trusted_tool_is_rejected_at_both_gates",
+    "tests/operations/test_analysis_evidence_recovery.py::test_unmapped_inspection_remains_readable_as_next_run_background"
+  ],
+  "exit_code": 1,
+  "seconds": 5.612,
+  "peak_tree_rss_bytes": 139489280,
+  "budget_bytes": 536870912,
+  "early_stop_bytes": 469762048,
+  "memory_terminated": false
+}

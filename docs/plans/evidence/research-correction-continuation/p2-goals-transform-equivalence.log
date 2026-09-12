@@ -1,0 +1,78 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+_____ test_retained_generic_transform_corpus_matches_the_complete_catalog ______
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-21/test_retained_generic_transfor0')
+
+    def test_retained_generic_transform_corpus_matches_the_complete_catalog(tmp_path: Path) -> None:
+        repository_root = Path(__file__).resolve().parents[2]
+>       current = _run_corpus(
+            source_root=repository_root,
+            repository_root=repository_root,
+            work_root=tmp_path / "current",
+        )
+
+tests/operations/test_m3_transform_equivalence.py:67: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+source_root = PosixPath('/home/da/project/ai4s/tcad/git_release/scidiscovery-agent/123/scidiscovery-e5.2')
+repository_root = PosixPath('/home/da/project/ai4s/tcad/git_release/scidiscovery-agent/123/scidiscovery-e5.2')
+work_root = PosixPath('/tmp/pytest-of-da/pytest-21/test_retained_generic_transfor0/current')
+
+    def _run_corpus(
+        *, source_root: Path, repository_root: Path, work_root: Path
+    ) -> dict[str, object]:
+        output = work_root / "manifest.json"
+        environment = dict(os.environ)
+        environment.update(
+            {
+                "MALLOC_ARENA_MAX": "2",
+                "PYTHONPATH": _pythonpath(source_root, repository_root),
+            }
+        )
+        completed = subprocess.run(
+            (
+                sys.executable,
+                str(
+                    repository_root
+                    / "tests"
+                    / "operations"
+                    / "m3_transform_equivalence_runner.py"
+                ),
+                "--source-root",
+                str(source_root),
+                "--work-root",
+                str(work_root / "runs"),
+                "--output",
+                str(output),
+            ),
+            cwd=repository_root,
+            env=environment,
+            capture_output=True,
+            text=True,
+            timeout=180,
+            check=False,
+        )
+>       assert completed.returncode == 0, (
+            f"transform corpus failed for {source_root}\n"
+            f"stdout:\n{completed.stdout}\n"
+            f"stderr:\n{completed.stderr}"
+        )
+E       AssertionError: transform corpus failed for /home/da/project/ai4s/tcad/git_release/scidiscovery-agent/123/scidiscovery-e5.2
+E         stdout:
+E         
+E         stderr:
+E         Traceback (most recent call last):
+E           File "/home/da/project/ai4s/tcad/git_release/scidiscovery-agent/123/scidiscovery-e5.2/tests/operations/m3_transform_equivalence_runner.py", line 1438, in <module>
+E             main()
+E           File "/home/da/project/ai4s/tcad/git_release/scidiscovery-agent/123/scidiscovery-e5.2/tests/operations/m3_transform_equivalence_runner.py", line 1395, in main
+E             raise AssertionError(
+E         AssertionError: transform corpus differs from catalog: {'tcad.execution-context.project.v1'}
+E         
+E       assert 1 == 0
+E        +  where 1 = CompletedProcess(args=('/home/da/miniconda3/bin/python', '/home/da/project/ai4s/tcad/git_release/scidiscovery-agent/12...ise AssertionError(\nAssertionError: transform corpus differs from catalog: {\'tcad.execution-context.project.v1\'}\n').returncode
+
+tests/operations/test_m3_transform_equivalence.py:57: AssertionError
+=========================== short test summary info ============================
+FAILED tests/operations/test_m3_transform_equivalence.py::test_retained_generic_transform_corpus_matches_the_complete_catalog
+1 failed in 1.16s

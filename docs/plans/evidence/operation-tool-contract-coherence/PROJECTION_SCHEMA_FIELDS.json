@@ -1,0 +1,117 @@
+[
+  {
+    "tool": "worker_curve_figure_preview",
+    "plot_bbox": {
+      "anyOf": [
+        {
+          "maxItems": 4,
+          "minItems": 4,
+          "prefixItems": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "integer"
+            }
+          ],
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Plot Bbox"
+    },
+    "ticks": {
+      "maxItems": 2,
+      "minItems": 2,
+      "prefixItems": [
+        {
+          "maxItems": 2,
+          "minItems": 2,
+          "prefixItems": [
+            {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "number"
+                }
+              ]
+            },
+            {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "number"
+                }
+              ]
+            }
+          ],
+          "type": "array"
+        },
+        {
+          "maxItems": 2,
+          "minItems": 2,
+          "prefixItems": [
+            {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "number"
+                }
+              ]
+            },
+            {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "number"
+                }
+              ]
+            }
+          ],
+          "type": "array"
+        }
+      ],
+      "title": "Ticks",
+      "type": "array"
+    }
+  },
+  {
+    "tool": "worker_curve_score",
+    "request_ref": {
+      "$ref": "#/$defs/AnalysisScoreRequest"
+    },
+    "bounds": {
+      "comparisons": 10000,
+      "evaluation_points": 1000000,
+      "operators": 256
+    }
+  },
+  {
+    "tool": "worker_tcad_curve_score",
+    "request_ref": {
+      "$ref": "#/$defs/TCADScoreRequest"
+    },
+    "bounds": {
+      "comparisons": 10000,
+      "evaluation_points": 1000000,
+      "operators": 256
+    }
+  }
+]

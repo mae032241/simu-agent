@@ -12,6 +12,9 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from ...operation_contract import DiagnosticError, validation_diagnostics, contract_diagnostic
+from ...operations.tooling import parse_tool_arguments
+
 from ...operations.catalog import CompiledCatalog, compile_installed_catalog
 from ...operations.tooling import operation_worker_tools
 from ..runtime_plugin_bindings import (
@@ -24,7 +27,7 @@ from ..service.hardened_files import HardenedFileEditor
 from ..service.hardened_workspace import HardenedWorkerBackend
 from ..service.runs import RunService, RunStateConflict
 from ..service.scheduler_bindings import SchedulerBindingService
-from .mcp import MCPRouter
+from .mcp import MCPRouter, parse_rpc_line, rpc_error
 from .mcp_local_worker import LocalWorkerMCPRouter
 from .mcp_worker_protocol import WorkerToolError
 
@@ -74,10 +77,16 @@ class HardenedWorkerMCPRouter(LocalWorkerMCPRouter):
                     result = self._dispatch_tool(name, arguments)
             else:
                 result = self._dispatch_tool(name, arguments)
-        except WorkerToolError:
+        except DiagnosticError as error:
+            if name in _FILE_TOOLS:
+                self._record_tool_failure(name, error)
             raise
         except Exception as error:
-            raise WorkerToolError(str(error)) from error
+            failure = WorkerToolError("Hardened transport failed", details=(contract_diagnostic(
+                "runtime_failure", phase="tool_execution", affected_action="tool_call",
+                message="Hardened transport failed.", error_type=type(error).__name__),))
+            self._record_tool_failure(name, failure)
+            raise failure from error
         if (
             name == "worker_submit_result"
             and isinstance(result, dict)
@@ -96,9 +105,10 @@ class HardenedWorkerMCPRouter(LocalWorkerMCPRouter):
             except KeyError as error:
                 raise WorkerToolError(f"unknown worker tool: {name}") from error
             try:
-                parsed = tool.input_model.model_validate(arguments or {}, strict=False)
+                parsed = parse_tool_arguments(tool.input_model, arguments)
             except ValidationError as error:
-                raise WorkerToolError(f"invalid arguments for {name}: {error}") from error
+                raise WorkerToolError("tool arguments do not satisfy the declared model",
+                    details=validation_diagnostics(error, schema=tool.schema()["inputSchema"])) from error
             if self._run_id is None or self._workspace is None or self._editor is None:
                 raise WorkerToolError("worker_open_assignment must be called first")
             if self._completed:
@@ -132,8 +142,7 @@ class HardenedWorkerMCPRouter(LocalWorkerMCPRouter):
                 else:
                     raise WorkerToolError("unknown server-side file operation")
             except Exception as error:
-                self.runs.record_activity(self._run_id, f"tool_failed:{name}")
-                if isinstance(error, WorkerToolError):
+                if isinstance(error, DiagnosticError):
                     raise
                 raise WorkerToolError("server-side workspace edit failed") from error
             self.runs.record_activity(self._run_id, f"tool_succeeded:{name}")
@@ -171,6 +180,7 @@ class HardenedWorkerMCPRouter(LocalWorkerMCPRouter):
             "state": "opened",
             "workspace_path": str(self._workspace.root),
             "assignment_path": str(self._workspace.assignment_path),
+            "tool_contracts": self._assignment_tool_contracts(),
             "output_directory": str(self._workspace.output_directory),
             "domain_workspace_path": (
                 None
@@ -253,17 +263,11 @@ def main(argv: list[str] | None = None) -> int:
     for line in __import__("sys").stdin:
         request_id: Any = None
         try:
-            request = json.loads(line)
+            request = parse_rpc_line(line)
             request_id = request.get("id") if isinstance(request, dict) else None
-            if not isinstance(request, dict):
-                raise ValueError("request must be a JSON object")
             response = router.handle(request)
         except Exception as error:
-            response = {
-                "jsonrpc": "2.0",
-                "id": request_id,
-                "error": {"code": -32000, "message": str(error)},
-            }
+            response = rpc_error(request_id, error)
         if response is not None:
             print(json.dumps(response, separators=(",", ":"), sort_keys=True), flush=True)
     return 0

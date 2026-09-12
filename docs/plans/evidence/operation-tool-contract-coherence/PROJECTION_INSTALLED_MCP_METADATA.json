@@ -1,0 +1,2809 @@
+{
+  "import_root": "/opt/scidiscovery-m7/site/scidiscovery",
+  "catalog_digest": "adb285db97177f951626220939864f8b899c3c1a0f62422befb256fcd893ecc8",
+  "root_schema_count": 26,
+  "lifecycle_schema_count": 3,
+  "checks": [
+    {
+      "operation_id": "science.curve.contract.design.v1",
+      "tool_names_match": true,
+      "backend_instruction_present": true,
+      "inherited_tool_names_match": true
+    },
+    {
+      "operation_id": "science.curve.contract.review.v1",
+      "tool_names_match": true,
+      "backend_instruction_present": true,
+      "inherited_tool_names_match": true
+    },
+    {
+      "operation_id": "science.evidence.audit.intake.v1",
+      "tool_names_match": true,
+      "backend_instruction_present": true,
+      "inherited_tool_names_match": true
+    },
+    {
+      "operation_id": "science.evidence.audit.v1",
+      "tool_names_match": true,
+      "backend_instruction_present": true,
+      "inherited_tool_names_match": true
+    },
+    {
+      "operation_id": "science.evidence.extract.figure.v2",
+      "tool_names_match": true,
+      "backend_instruction_present": true,
+      "inherited_tool_names_match": true
+    },
+    {
+      "operation_id": "science.evidence.extract.v1",
+      "tool_names_match": true,
+      "backend_instruction_present": true,
+      "inherited_tool_names_match": true
+    },
+    {
+      "operation_id": "science.evidence.revise-from-critic.v1",
+      "tool_names_match": true,
+      "backend_instruction_present": true,
+      "inherited_tool_names_match": true
+    },
+    {
+      "operation_id": "science.experiment.design.v1",
+      "tool_names_match": true,
+      "backend_instruction_present": true,
+      "inherited_tool_names_match": true
+    },
+    {
+      "operation_id": "science.experiment.revise.v1",
+      "tool_names_match": true,
+      "backend_instruction_present": true,
+      "inherited_tool_names_match": true
+    },
+    {
+      "operation_id": "science.figure.evidence.audit.v1",
+      "tool_names_match": true,
+      "backend_instruction_present": true,
+      "inherited_tool_names_match": true
+    },
+    {
+      "operation_id": "science.figure.request.prepare.v1",
+      "tool_names_match": true,
+      "backend_instruction_present": true,
+      "inherited_tool_names_match": true
+    },
+    {
+      "operation_id": "science.hypothesis.criticize.v1",
+      "tool_names_match": true,
+      "backend_instruction_present": true,
+      "inherited_tool_names_match": true
+    },
+    {
+      "operation_id": "science.hypothesis.propose.v1",
+      "tool_names_match": true,
+      "backend_instruction_present": true,
+      "inherited_tool_names_match": true
+    },
+    {
+      "operation_id": "science.hypothesis.revise.v1",
+      "tool_names_match": true,
+      "backend_instruction_present": true,
+      "inherited_tool_names_match": true
+    },
+    {
+      "operation_id": "science.intake.revise.v1",
+      "tool_names_match": true,
+      "backend_instruction_present": true,
+      "inherited_tool_names_match": true
+    },
+    {
+      "operation_id": "science.object.review.v1",
+      "tool_names_match": true,
+      "backend_instruction_present": true,
+      "inherited_tool_names_match": true
+    },
+    {
+      "operation_id": "science.result.diagnose.curve-error.v1",
+      "tool_names_match": true,
+      "backend_instruction_present": true,
+      "inherited_tool_names_match": true
+    },
+    {
+      "operation_id": "science.result.diagnose.v1",
+      "tool_names_match": true,
+      "backend_instruction_present": true,
+      "inherited_tool_names_match": true
+    },
+    {
+      "operation_id": "tcad.deck.author.initial.v1",
+      "tool_names_match": true,
+      "backend_instruction_present": true,
+      "inherited_tool_names_match": true
+    },
+    {
+      "operation_id": "tcad.deck.author.revise.v1",
+      "tool_names_match": true,
+      "backend_instruction_present": true,
+      "inherited_tool_names_match": true
+    },
+    {
+      "operation_id": "tcad.deck.author.runtime-failure.v1",
+      "tool_names_match": true,
+      "backend_instruction_present": true,
+      "inherited_tool_names_match": true
+    },
+    {
+      "operation_id": "tcad.deck.review.v1",
+      "tool_names_match": true,
+      "backend_instruction_present": true,
+      "inherited_tool_names_match": true
+    },
+    {
+      "operation_id": "tcad.parameter.evidence.audit.v1",
+      "tool_names_match": true,
+      "backend_instruction_present": true,
+      "inherited_tool_names_match": true
+    },
+    {
+      "operation_id": "tcad.parameter.evidence.extract.v1",
+      "tool_names_match": true,
+      "backend_instruction_present": true,
+      "inherited_tool_names_match": true
+    },
+    {
+      "operation_id": "tcad.result.analyze.v1",
+      "tool_names_match": true,
+      "backend_instruction_present": true,
+      "inherited_tool_names_match": true
+    }
+  ],
+  "wire": {
+    "science.figure.request.prepare.v1": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "tools": [
+          {
+            "name": "worker_curve_figure_inspect_source",
+            "description": "Recover original embedded images from one exact Agent-located PDF page, or canonicalize one exact raster source, and return only read-only source previews and deterministic source metadata. OCR and plot detection are not performed.",
+            "inputSchema": {
+              "additionalProperties": false,
+              "properties": {
+                "name": {
+                  "default": "paper_source",
+                  "maxLength": 256,
+                  "minLength": 1,
+                  "title": "Name",
+                  "type": "string"
+                },
+                "source_page": {
+                  "anyOf": [
+                    {
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "description": "One-based PDF page index located from the exact source text.",
+                  "title": "Source Page"
+                }
+              },
+              "title": "FigureSourceInspectionInput",
+              "type": "object"
+            }
+          },
+          {
+            "name": "worker_curve_figure_preview",
+            "description": "Run the same deterministic curve digitizer used by materialization for one draft request. Return read-only source-overlay and numeric-redraw paths for the current Agent to inspect before submitting the request.",
+            "inputSchema": {
+              "$defs": {
+                "FigureAxisRequest": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "scale": {
+                      "enum": [
+                        "linear",
+                        "log10"
+                      ],
+                      "title": "Scale",
+                      "type": "string"
+                    },
+                    "unit": {
+                      "maxLength": 256,
+                      "title": "Unit",
+                      "type": "string"
+                    },
+                    "ticks": {
+                      "maxItems": 2,
+                      "minItems": 2,
+                      "prefixItems": [
+                        {
+                          "maxItems": 2,
+                          "minItems": 2,
+                          "prefixItems": [
+                            {
+                              "anyOf": [
+                                {
+                                  "type": "integer"
+                                },
+                                {
+                                  "type": "number"
+                                }
+                              ]
+                            },
+                            {
+                              "anyOf": [
+                                {
+                                  "type": "integer"
+                                },
+                                {
+                                  "type": "number"
+                                }
+                              ]
+                            }
+                          ],
+                          "type": "array"
+                        },
+                        {
+                          "maxItems": 2,
+                          "minItems": 2,
+                          "prefixItems": [
+                            {
+                              "anyOf": [
+                                {
+                                  "type": "integer"
+                                },
+                                {
+                                  "type": "number"
+                                }
+                              ]
+                            },
+                            {
+                              "anyOf": [
+                                {
+                                  "type": "integer"
+                                },
+                                {
+                                  "type": "number"
+                                }
+                              ]
+                            }
+                          ],
+                          "type": "array"
+                        }
+                      ],
+                      "title": "Ticks",
+                      "type": "array"
+                    },
+                    "uncertainty_px": {
+                      "anyOf": [
+                        {
+                          "type": "integer"
+                        },
+                        {
+                          "type": "number"
+                        }
+                      ],
+                      "default": 1.0,
+                      "ge": 0.0,
+                      "le": 1000000.0,
+                      "title": "Uncertainty Px"
+                    }
+                  },
+                  "required": [
+                    "scale",
+                    "unit",
+                    "ticks"
+                  ],
+                  "title": "FigureAxisRequest",
+                  "type": "object"
+                },
+                "FigureDigitizationRequest": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "schema_version": {
+                      "const": "scidiscovery.curve-figure-digitization-request.v2",
+                      "title": "Schema Version",
+                      "type": "string"
+                    },
+                    "request_status": {
+                      "default": "ready",
+                      "enum": [
+                        "ready",
+                        "unresolved"
+                      ],
+                      "title": "Request Status",
+                      "type": "string"
+                    },
+                    "unresolved_reasons": {
+                      "default": [],
+                      "items": {
+                        "maxLength": 4096,
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "maxItems": 32,
+                      "title": "Unresolved Reasons",
+                      "type": "array"
+                    },
+                    "figure_key": {
+                      "maxLength": 128,
+                      "minLength": 1,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+                      "title": "Figure Key",
+                      "type": "string"
+                    },
+                    "panel_key": {
+                      "maxLength": 128,
+                      "minLength": 1,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+                      "title": "Panel Key",
+                      "type": "string"
+                    },
+                    "figure": {
+                      "maxLength": 4096,
+                      "minLength": 1,
+                      "title": "Figure",
+                      "type": "string"
+                    },
+                    "citation": {
+                      "maxLength": 4096,
+                      "minLength": 1,
+                      "title": "Citation",
+                      "type": "string"
+                    },
+                    "source": {
+                      "discriminator": {
+                        "mapping": {
+                          "pdf_embedded_image": "#/$defs/PdfFigureSource",
+                          "raster_image": "#/$defs/RasterFigureSource"
+                        },
+                        "propertyName": "source_kind"
+                      },
+                      "oneOf": [
+                        {
+                          "$ref": "#/$defs/PdfFigureSource"
+                        },
+                        {
+                          "$ref": "#/$defs/RasterFigureSource"
+                        }
+                      ],
+                      "title": "Source"
+                    },
+                    "plot_bbox": {
+                      "anyOf": [
+                        {
+                          "maxItems": 4,
+                          "minItems": 4,
+                          "prefixItems": [
+                            {
+                              "type": "integer"
+                            },
+                            {
+                              "type": "integer"
+                            },
+                            {
+                              "type": "integer"
+                            },
+                            {
+                              "type": "integer"
+                            }
+                          ],
+                          "type": "array"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "title": "Plot Bbox"
+                    },
+                    "axis_calibration": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/$defs/FigurePanelAxisRequest"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null
+                    },
+                    "exclusion_regions": {
+                      "default": [],
+                      "items": {
+                        "maxItems": 4,
+                        "minItems": 4,
+                        "prefixItems": [
+                          {
+                            "type": "integer"
+                          },
+                          {
+                            "type": "integer"
+                          },
+                          {
+                            "type": "integer"
+                          },
+                          {
+                            "type": "integer"
+                          }
+                        ],
+                        "type": "array"
+                      },
+                      "maxItems": 128,
+                      "title": "Exclusion Regions",
+                      "type": "array"
+                    },
+                    "series": {
+                      "default": [],
+                      "items": {
+                        "$ref": "#/$defs/FigureDigitizationSeries"
+                      },
+                      "maxItems": 32,
+                      "title": "Series",
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "schema_version",
+                    "figure_key",
+                    "panel_key",
+                    "figure",
+                    "citation",
+                    "source"
+                  ],
+                  "title": "FigureDigitizationRequest",
+                  "type": "object"
+                },
+                "FigureDigitizationSeries": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "series_key": {
+                      "maxLength": 128,
+                      "minLength": 1,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+                      "title": "Series Key",
+                      "type": "string"
+                    },
+                    "label": {
+                      "maxLength": 4096,
+                      "minLength": 1,
+                      "title": "Label",
+                      "type": "string"
+                    },
+                    "primitive_kind": {
+                      "const": "line",
+                      "default": "line",
+                      "title": "Primitive Kind",
+                      "type": "string"
+                    },
+                    "color": {
+                      "pattern": "^#[0-9a-f]{6}$",
+                      "title": "Color",
+                      "type": "string"
+                    },
+                    "line_style": {
+                      "const": "solid",
+                      "default": "solid",
+                      "title": "Line Style",
+                      "type": "string"
+                    },
+                    "binding_source": {
+                      "enum": [
+                        "legend",
+                        "annotation",
+                        "caption"
+                      ],
+                      "title": "Binding Source",
+                      "type": "string"
+                    },
+                    "visible_label": {
+                      "maxLength": 4096,
+                      "minLength": 1,
+                      "title": "Visible Label",
+                      "type": "string"
+                    },
+                    "binding_bbox": {
+                      "maxItems": 4,
+                      "minItems": 4,
+                      "prefixItems": [
+                        {
+                          "type": "integer"
+                        },
+                        {
+                          "type": "integer"
+                        },
+                        {
+                          "type": "integer"
+                        },
+                        {
+                          "type": "integer"
+                        }
+                      ],
+                      "title": "Binding Bbox",
+                      "type": "array"
+                    },
+                    "seeds": {
+                      "items": {
+                        "maxItems": 2,
+                        "minItems": 2,
+                        "prefixItems": [
+                          {
+                            "anyOf": [
+                              {
+                                "type": "integer"
+                              },
+                              {
+                                "type": "number"
+                              }
+                            ]
+                          },
+                          {
+                            "anyOf": [
+                              {
+                                "type": "integer"
+                              },
+                              {
+                                "type": "number"
+                              }
+                            ]
+                          }
+                        ],
+                        "type": "array"
+                      },
+                      "maxItems": 128,
+                      "minItems": 1,
+                      "title": "Seeds",
+                      "type": "array"
+                    },
+                    "exclusion_regions": {
+                      "default": [],
+                      "items": {
+                        "maxItems": 4,
+                        "minItems": 4,
+                        "prefixItems": [
+                          {
+                            "type": "integer"
+                          },
+                          {
+                            "type": "integer"
+                          },
+                          {
+                            "type": "integer"
+                          },
+                          {
+                            "type": "integer"
+                          }
+                        ],
+                        "type": "array"
+                      },
+                      "maxItems": 128,
+                      "title": "Exclusion Regions",
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "series_key",
+                    "label",
+                    "color",
+                    "binding_source",
+                    "visible_label",
+                    "binding_bbox",
+                    "seeds"
+                  ],
+                  "title": "FigureDigitizationSeries",
+                  "type": "object"
+                },
+                "FigurePanelAxisRequest": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "x": {
+                      "$ref": "#/$defs/FigureAxisRequest"
+                    },
+                    "y": {
+                      "$ref": "#/$defs/FigureAxisRequest"
+                    }
+                  },
+                  "required": [
+                    "x",
+                    "y"
+                  ],
+                  "title": "FigurePanelAxisRequest",
+                  "type": "object"
+                },
+                "PdfFigureSource": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "source_kind": {
+                      "const": "pdf_embedded_image",
+                      "title": "Source Kind",
+                      "type": "string"
+                    },
+                    "media_type": {
+                      "const": "application/pdf",
+                      "title": "Media Type",
+                      "type": "string"
+                    },
+                    "source_sha256": {
+                      "pattern": "^[0-9a-f]{64}$",
+                      "title": "Source Sha256",
+                      "type": "string"
+                    },
+                    "page": {
+                      "maximum": 100000,
+                      "minimum": 1,
+                      "title": "Page",
+                      "type": "integer"
+                    },
+                    "document_image_index": {
+                      "maximum": 1000000,
+                      "minimum": 0,
+                      "title": "Document Image Index",
+                      "type": "integer"
+                    },
+                    "page_image_index": {
+                      "maximum": 10000,
+                      "minimum": 0,
+                      "title": "Page Image Index",
+                      "type": "integer"
+                    },
+                    "pdf_object_id": {
+                      "maximum": 2147483647,
+                      "minimum": 1,
+                      "title": "Pdf Object Id",
+                      "type": "integer"
+                    },
+                    "pdf_object_generation": {
+                      "default": 0,
+                      "maximum": 65535,
+                      "minimum": 0,
+                      "title": "Pdf Object Generation",
+                      "type": "integer"
+                    },
+                    "recovered_image_sha256": {
+                      "pattern": "^[0-9a-f]{64}$",
+                      "title": "Recovered Image Sha256",
+                      "type": "string"
+                    },
+                    "width": {
+                      "maximum": 1000000,
+                      "minimum": 1,
+                      "title": "Width",
+                      "type": "integer"
+                    },
+                    "height": {
+                      "maximum": 1000000,
+                      "minimum": 1,
+                      "title": "Height",
+                      "type": "integer"
+                    },
+                    "recovery_tool": {
+                      "const": "pdfimages+Pillow",
+                      "title": "Recovery Tool",
+                      "type": "string"
+                    },
+                    "recovery_tool_version": {
+                      "maxLength": 256,
+                      "minLength": 1,
+                      "title": "Recovery Tool Version",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "source_kind",
+                    "media_type",
+                    "source_sha256",
+                    "page",
+                    "document_image_index",
+                    "page_image_index",
+                    "pdf_object_id",
+                    "recovered_image_sha256",
+                    "width",
+                    "height",
+                    "recovery_tool",
+                    "recovery_tool_version"
+                  ],
+                  "title": "PdfFigureSource",
+                  "type": "object"
+                },
+                "RasterFigureSource": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "source_kind": {
+                      "const": "raster_image",
+                      "title": "Source Kind",
+                      "type": "string"
+                    },
+                    "media_type": {
+                      "enum": [
+                        "image/png",
+                        "image/jpeg",
+                        "image/webp"
+                      ],
+                      "title": "Media Type",
+                      "type": "string"
+                    },
+                    "source_sha256": {
+                      "pattern": "^[0-9a-f]{64}$",
+                      "title": "Source Sha256",
+                      "type": "string"
+                    },
+                    "recovered_image_sha256": {
+                      "pattern": "^[0-9a-f]{64}$",
+                      "title": "Recovered Image Sha256",
+                      "type": "string"
+                    },
+                    "width": {
+                      "maximum": 1000000,
+                      "minimum": 1,
+                      "title": "Width",
+                      "type": "integer"
+                    },
+                    "height": {
+                      "maximum": 1000000,
+                      "minimum": 1,
+                      "title": "Height",
+                      "type": "integer"
+                    },
+                    "recovery_tool": {
+                      "const": "Pillow",
+                      "title": "Recovery Tool",
+                      "type": "string"
+                    },
+                    "recovery_tool_version": {
+                      "maxLength": 256,
+                      "minLength": 1,
+                      "title": "Recovery Tool Version",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "source_kind",
+                    "media_type",
+                    "source_sha256",
+                    "recovered_image_sha256",
+                    "width",
+                    "height",
+                    "recovery_tool",
+                    "recovery_tool_version"
+                  ],
+                  "title": "RasterFigureSource",
+                  "type": "object"
+                }
+              },
+              "additionalProperties": false,
+              "properties": {
+                "name": {
+                  "default": "paper_source",
+                  "maxLength": 256,
+                  "minLength": 1,
+                  "title": "Name",
+                  "type": "string"
+                },
+                "request": {
+                  "$ref": "#/$defs/FigureDigitizationRequest"
+                }
+              },
+              "required": [
+                "request"
+              ],
+              "title": "FigureDigitizationPreviewInput",
+              "type": "object"
+            }
+          },
+          {
+            "name": "worker_extract_pdf_text",
+            "description": "Freeze a bounded PDF page range and return its exact local read-only path for native inspection.",
+            "inputSchema": {
+              "additionalProperties": false,
+              "properties": {
+                "name": {
+                  "maxLength": 256,
+                  "minLength": 1,
+                  "title": "Name",
+                  "type": "string"
+                },
+                "first_page": {
+                  "default": 1,
+                  "maximum": 100000,
+                  "minimum": 1,
+                  "title": "First Page",
+                  "type": "integer"
+                },
+                "last_page": {
+                  "anyOf": [
+                    {
+                      "maximum": 100000,
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "title": "Last Page"
+                },
+                "max_chars": {
+                  "default": 131072,
+                  "maximum": 524288,
+                  "minimum": 1,
+                  "title": "Max Chars",
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "name"
+              ],
+              "title": "PdfInput",
+              "type": "object"
+            }
+          },
+          {
+            "name": "worker_heartbeat",
+            "description": "Record bounded liveness without extending the absolute budget.",
+            "inputSchema": {
+              "additionalProperties": false,
+              "properties": {},
+              "title": "AgentLifecycleInput",
+              "type": "object"
+            }
+          },
+          {
+            "name": "worker_open_assignment",
+            "description": "Open the exact Run assignment and materialize its private read-only inputs.",
+            "inputSchema": {
+              "additionalProperties": false,
+              "properties": {},
+              "title": "AgentLifecycleInput",
+              "type": "object"
+            }
+          },
+          {
+            "name": "worker_submit_result",
+            "description": "Validate, seal, and submit the complete result bundle, or return bounded correction diagnostics.",
+            "inputSchema": {
+              "additionalProperties": false,
+              "properties": {},
+              "title": "AgentLifecycleInput",
+              "type": "object"
+            }
+          }
+        ]
+      }
+    },
+    "science.result.diagnose.v1": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "tools": [
+          {
+            "name": "worker_curve_score",
+            "description": "Optionally score bound bundle/explicit CSV columns with an existing comparison_spec; returns a replayable scalar record. Unsupported metrics are never substituted.",
+            "inputSchema": {
+              "$defs": {
+                "AnalysisScoreRequest": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "sources": {
+                      "items": {
+                        "discriminator": {
+                          "mapping": {
+                            "bundle": "#/$defs/BundleSource",
+                            "csv": "#/$defs/CSVSource"
+                          },
+                          "propertyName": "format"
+                        },
+                        "oneOf": [
+                          {
+                            "$ref": "#/$defs/BundleSource"
+                          },
+                          {
+                            "$ref": "#/$defs/CSVSource"
+                          }
+                        ]
+                      },
+                      "maxItems": 40,
+                      "minItems": 1,
+                      "title": "Sources",
+                      "type": "array"
+                    },
+                    "comparison_spec": {
+                      "$ref": "#/$defs/CurveComparisonSpec"
+                    }
+                  },
+                  "required": [
+                    "sources",
+                    "comparison_spec"
+                  ],
+                  "title": "AnalysisScoreRequest",
+                  "type": "object"
+                },
+                "BundleSource": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "input_alias": {
+                      "minLength": 1,
+                      "title": "Input Alias",
+                      "type": "string"
+                    },
+                    "format": {
+                      "const": "bundle",
+                      "title": "Format",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "input_alias",
+                    "format"
+                  ],
+                  "title": "BundleSource",
+                  "type": "object"
+                },
+                "CSVSource": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "input_alias": {
+                      "minLength": 1,
+                      "title": "Input Alias",
+                      "type": "string"
+                    },
+                    "format": {
+                      "const": "csv",
+                      "title": "Format",
+                      "type": "string"
+                    },
+                    "series_key": {
+                      "maxLength": 256,
+                      "minLength": 1,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:/-]*$",
+                      "title": "Series Key",
+                      "type": "string"
+                    },
+                    "case_key": {
+                      "maxLength": 256,
+                      "minLength": 1,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:/-]*$",
+                      "title": "Case Key",
+                      "type": "string"
+                    },
+                    "role": {
+                      "maxLength": 256,
+                      "minLength": 1,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:/-]*$",
+                      "title": "Role",
+                      "type": "string"
+                    },
+                    "x_axis": {
+                      "$ref": "#/$defs/CurveAxis"
+                    },
+                    "y_axis": {
+                      "$ref": "#/$defs/CurveAxis"
+                    },
+                    "x_column": {
+                      "title": "X Column",
+                      "type": "string"
+                    },
+                    "y_column": {
+                      "title": "Y Column",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "input_alias",
+                    "format",
+                    "series_key",
+                    "case_key",
+                    "role",
+                    "x_axis",
+                    "y_axis",
+                    "x_column",
+                    "y_column"
+                  ],
+                  "title": "CSVSource",
+                  "type": "object"
+                },
+                "CurveAxis": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "schema_version": {
+                      "const": 1,
+                      "default": 1,
+                      "title": "Schema Version",
+                      "type": "integer"
+                    },
+                    "name": {
+                      "maxLength": 256,
+                      "minLength": 1,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:/-]*$",
+                      "title": "Name",
+                      "type": "string"
+                    },
+                    "unit": {
+                      "maxLength": 128,
+                      "minLength": 1,
+                      "title": "Unit",
+                      "type": "string"
+                    },
+                    "scale": {
+                      "default": "linear",
+                      "enum": [
+                        "linear",
+                        "log10"
+                      ],
+                      "title": "Scale",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "unit"
+                  ],
+                  "title": "CurveAxis",
+                  "type": "object"
+                },
+                "CurveComparison": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "schema_version": {
+                      "const": 1,
+                      "default": 1,
+                      "title": "Schema Version",
+                      "type": "integer"
+                    },
+                    "comparison_key": {
+                      "maxLength": 256,
+                      "minLength": 1,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:/-]*$",
+                      "title": "Comparison Key",
+                      "type": "string"
+                    },
+                    "reference_series": {
+                      "maxLength": 256,
+                      "minLength": 1,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:/-]*$",
+                      "title": "Reference Series",
+                      "type": "string"
+                    },
+                    "candidate_series": {
+                      "maxLength": 256,
+                      "minLength": 1,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:/-]*$",
+                      "title": "Candidate Series",
+                      "type": "string"
+                    },
+                    "domain": {
+                      "$ref": "#/$defs/CurveDomain"
+                    },
+                    "interpolation": {
+                      "enum": [
+                        "linear_y",
+                        "log10_y"
+                      ],
+                      "title": "Interpolation",
+                      "type": "string"
+                    },
+                    "evaluation_points": {
+                      "default": 257,
+                      "maximum": 1000000,
+                      "minimum": 2,
+                      "title": "Evaluation Points",
+                      "type": "integer"
+                    },
+                    "operators": {
+                      "items": {
+                        "$ref": "#/$defs/CurveOperatorSpec"
+                      },
+                      "maxItems": 256,
+                      "minItems": 1,
+                      "title": "Operators",
+                      "type": "array"
+                    },
+                    "required": {
+                      "default": true,
+                      "title": "Required",
+                      "type": "boolean"
+                    },
+                    "purpose": {
+                      "default": "unspecified_legacy",
+                      "enum": [
+                        "unspecified_legacy",
+                        "target_fit",
+                        "numerical_convergence",
+                        "mechanism_separation",
+                        "implementation_sanity",
+                        "exploratory_diagnostic"
+                      ],
+                      "title": "Purpose",
+                      "type": "string"
+                    },
+                    "gate_scope": {
+                      "default": "unspecified_legacy",
+                      "enum": [
+                        "unspecified_legacy",
+                        "objective",
+                        "numerical_qualification",
+                        "mechanism",
+                        "diagnostic_only"
+                      ],
+                      "title": "Gate Scope",
+                      "type": "string"
+                    },
+                    "metric_profile": {
+                      "default": "unspecified_legacy",
+                      "enum": [
+                        "unspecified_legacy",
+                        "point",
+                        "smooth_curve",
+                        "sharp_front"
+                      ],
+                      "title": "Metric Profile",
+                      "type": "string"
+                    },
+                    "floor_mask": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/$defs/CurveFloorMask"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null
+                    }
+                  },
+                  "required": [
+                    "comparison_key",
+                    "reference_series",
+                    "candidate_series",
+                    "domain",
+                    "interpolation",
+                    "operators"
+                  ],
+                  "title": "CurveComparison",
+                  "type": "object"
+                },
+                "CurveComparisonSpec": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "schema_version": {
+                      "const": 1,
+                      "default": 1,
+                      "title": "Schema Version",
+                      "type": "integer"
+                    },
+                    "spec_key": {
+                      "maxLength": 256,
+                      "minLength": 1,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:/-]*$",
+                      "title": "Spec Key",
+                      "type": "string"
+                    },
+                    "series_declarations": {
+                      "default": [],
+                      "items": {
+                        "$ref": "#/$defs/CurveSeriesDeclaration"
+                      },
+                      "maxItems": 10000,
+                      "title": "Series Declarations",
+                      "type": "array"
+                    },
+                    "comparisons": {
+                      "items": {
+                        "$ref": "#/$defs/CurveComparison"
+                      },
+                      "maxItems": 10000,
+                      "minItems": 1,
+                      "title": "Comparisons",
+                      "type": "array"
+                    },
+                    "reference_dispositions": {
+                      "default": [],
+                      "items": {
+                        "$ref": "#/$defs/CurveReferenceDisposition"
+                      },
+                      "maxItems": 10000,
+                      "title": "Reference Dispositions",
+                      "type": "array"
+                    },
+                    "aggregate_rule": {
+                      "const": "all_required",
+                      "default": "all_required",
+                      "title": "Aggregate Rule",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "spec_key",
+                    "comparisons"
+                  ],
+                  "title": "CurveComparisonSpec",
+                  "type": "object"
+                },
+                "CurveDomain": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "schema_version": {
+                      "const": 1,
+                      "default": 1,
+                      "title": "Schema Version",
+                      "type": "integer"
+                    },
+                    "start": {
+                      "title": "Start",
+                      "type": "number"
+                    },
+                    "stop": {
+                      "title": "Stop",
+                      "type": "number"
+                    },
+                    "unit": {
+                      "maxLength": 128,
+                      "minLength": 1,
+                      "title": "Unit",
+                      "type": "string"
+                    },
+                    "min_points": {
+                      "default": 2,
+                      "maximum": 1000000,
+                      "minimum": 2,
+                      "title": "Min Points",
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "start",
+                    "stop",
+                    "unit"
+                  ],
+                  "title": "CurveDomain",
+                  "type": "object"
+                },
+                "CurveFloorMask": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "schema_version": {
+                      "const": 1,
+                      "default": 1,
+                      "title": "Schema Version",
+                      "type": "integer"
+                    },
+                    "reference_at_or_below": {
+                      "minimum": 0,
+                      "title": "Reference At Or Below",
+                      "type": "number"
+                    },
+                    "candidate_at_or_below": {
+                      "minimum": 0,
+                      "title": "Candidate At Or Below",
+                      "type": "number"
+                    },
+                    "unit": {
+                      "maxLength": 128,
+                      "minLength": 1,
+                      "title": "Unit",
+                      "type": "string"
+                    },
+                    "rationale": {
+                      "maxLength": 4096,
+                      "minLength": 1,
+                      "title": "Rationale",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "reference_at_or_below",
+                    "candidate_at_or_below",
+                    "unit",
+                    "rationale"
+                  ],
+                  "title": "CurveFloorMask",
+                  "type": "object"
+                },
+                "CurveOperatorSpec": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "schema_version": {
+                      "const": 1,
+                      "default": 1,
+                      "title": "Schema Version",
+                      "type": "integer"
+                    },
+                    "operator_key": {
+                      "maxLength": 256,
+                      "minLength": 1,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:/-]*$",
+                      "title": "Operator Key",
+                      "type": "string"
+                    },
+                    "validation_check_key": {
+                      "anyOf": [
+                        {
+                          "maxLength": 256,
+                          "minLength": 1,
+                          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:/-]*$",
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "title": "Validation Check Key"
+                    },
+                    "kind": {
+                      "enum": [
+                        "point_difference",
+                        "residual_rms",
+                        "residual_max_abs",
+                        "mean_signed_difference",
+                        "crossing_shift",
+                        "width_shift"
+                      ],
+                      "title": "Kind",
+                      "type": "string"
+                    },
+                    "value_space": {
+                      "default": "linear",
+                      "enum": [
+                        "linear",
+                        "log10"
+                      ],
+                      "title": "Value Space",
+                      "type": "string"
+                    },
+                    "level": {
+                      "anyOf": [
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "title": "Level"
+                    },
+                    "second_level": {
+                      "anyOf": [
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "title": "Second Level"
+                    },
+                    "crossing_direction": {
+                      "default": "either",
+                      "enum": [
+                        "increasing",
+                        "decreasing",
+                        "either"
+                      ],
+                      "title": "Crossing Direction",
+                      "type": "string"
+                    },
+                    "x": {
+                      "anyOf": [
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "title": "X"
+                    },
+                    "threshold": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/$defs/CurveThreshold"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null
+                    }
+                  },
+                  "required": [
+                    "operator_key",
+                    "kind"
+                  ],
+                  "title": "CurveOperatorSpec",
+                  "type": "object"
+                },
+                "CurveReferenceDisposition": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "schema_version": {
+                      "const": 1,
+                      "default": 1,
+                      "title": "Schema Version",
+                      "type": "integer"
+                    },
+                    "series_key": {
+                      "maxLength": 256,
+                      "minLength": 1,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:/-]*$",
+                      "title": "Series Key",
+                      "type": "string"
+                    },
+                    "disposition": {
+                      "enum": [
+                        "compare",
+                        "exclude"
+                      ],
+                      "title": "Disposition",
+                      "type": "string"
+                    },
+                    "rationale": {
+                      "maxLength": 4096,
+                      "minLength": 1,
+                      "title": "Rationale",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "series_key",
+                    "disposition",
+                    "rationale"
+                  ],
+                  "title": "CurveReferenceDisposition",
+                  "type": "object"
+                },
+                "CurveSeriesDeclaration": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "schema_version": {
+                      "const": 1,
+                      "default": 1,
+                      "title": "Schema Version",
+                      "type": "integer"
+                    },
+                    "series_key": {
+                      "maxLength": 256,
+                      "minLength": 1,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:/-]*$",
+                      "title": "Series Key",
+                      "type": "string"
+                    },
+                    "case_key": {
+                      "maxLength": 256,
+                      "minLength": 1,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:/-]*$",
+                      "title": "Case Key",
+                      "type": "string"
+                    },
+                    "role": {
+                      "maxLength": 256,
+                      "minLength": 1,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:/-]*$",
+                      "title": "Role",
+                      "type": "string"
+                    },
+                    "scientific_role": {
+                      "anyOf": [
+                        {
+                          "enum": [
+                            "experimental_target",
+                            "simulation_candidate",
+                            "numerical_reference",
+                            "numerical_variant",
+                            "analytic_control",
+                            "diagnostic_series"
+                          ],
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "title": "Scientific Role"
+                    },
+                    "source": {
+                      "default": "solver_output",
+                      "enum": [
+                        "solver_output",
+                        "reference_input"
+                      ],
+                      "title": "Source",
+                      "type": "string"
+                    },
+                    "x_axis": {
+                      "$ref": "#/$defs/CurveAxis"
+                    },
+                    "y_axis": {
+                      "$ref": "#/$defs/CurveAxis"
+                    },
+                    "min_points": {
+                      "default": 2,
+                      "maximum": 1000000,
+                      "minimum": 2,
+                      "title": "Min Points",
+                      "type": "integer"
+                    },
+                    "max_points": {
+                      "default": 1000000,
+                      "maximum": 1000000,
+                      "minimum": 2,
+                      "title": "Max Points",
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "series_key",
+                    "case_key",
+                    "role",
+                    "x_axis",
+                    "y_axis"
+                  ],
+                  "title": "CurveSeriesDeclaration",
+                  "type": "object"
+                },
+                "CurveThreshold": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "schema_version": {
+                      "const": 1,
+                      "default": 1,
+                      "title": "Schema Version",
+                      "type": "integer"
+                    },
+                    "comparison": {
+                      "enum": [
+                        "le",
+                        "ge",
+                        "abs_le"
+                      ],
+                      "title": "Comparison",
+                      "type": "string"
+                    },
+                    "value": {
+                      "title": "Value",
+                      "type": "number"
+                    },
+                    "unit": {
+                      "maxLength": 128,
+                      "minLength": 1,
+                      "title": "Unit",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "comparison",
+                    "value",
+                    "unit"
+                  ],
+                  "title": "CurveThreshold",
+                  "type": "object"
+                }
+              },
+              "additionalProperties": false,
+              "properties": {
+                "record_key": {
+                  "maxLength": 256,
+                  "minLength": 1,
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:/-]*$",
+                  "title": "Record Key",
+                  "type": "string"
+                },
+                "request": {
+                  "$ref": "#/$defs/AnalysisScoreRequest"
+                }
+              },
+              "required": [
+                "record_key",
+                "request"
+              ],
+              "title": "AnalysisScoreInput",
+              "type": "object"
+            }
+          },
+          {
+            "name": "worker_heartbeat",
+            "description": "Record bounded liveness without extending the absolute budget.",
+            "inputSchema": {
+              "additionalProperties": false,
+              "properties": {},
+              "title": "AgentLifecycleInput",
+              "type": "object"
+            }
+          },
+          {
+            "name": "worker_open_assignment",
+            "description": "Open the exact Run assignment and materialize its private read-only inputs.",
+            "inputSchema": {
+              "additionalProperties": false,
+              "properties": {},
+              "title": "AgentLifecycleInput",
+              "type": "object"
+            }
+          },
+          {
+            "name": "worker_submit_result",
+            "description": "Validate, seal, and submit the complete result bundle, or return bounded correction diagnostics.",
+            "inputSchema": {
+              "additionalProperties": false,
+              "properties": {},
+              "title": "AgentLifecycleInput",
+              "type": "object"
+            }
+          }
+        ]
+      }
+    },
+    "tcad.result.analyze.v1": {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "tools": [
+          {
+            "name": "worker_heartbeat",
+            "description": "Record bounded liveness without extending the absolute budget.",
+            "inputSchema": {
+              "additionalProperties": false,
+              "properties": {},
+              "title": "AgentLifecycleInput",
+              "type": "object"
+            }
+          },
+          {
+            "name": "worker_open_assignment",
+            "description": "Open the exact Run assignment and materialize its private read-only inputs.",
+            "inputSchema": {
+              "additionalProperties": false,
+              "properties": {},
+              "title": "AgentLifecycleInput",
+              "type": "object"
+            }
+          },
+          {
+            "name": "worker_submit_result",
+            "description": "Validate, seal, and submit the complete result bundle, or return bounded correction diagnostics.",
+            "inputSchema": {
+              "additionalProperties": false,
+              "properties": {},
+              "title": "AgentLifecycleInput",
+              "type": "object"
+            }
+          },
+          {
+            "name": "worker_tcad_accept_output",
+            "description": "Accept a previously inspected file as one declared output using an explicit evidence-backed mapping. Rechecks bytes; preserves source path and old execution. Read returned evidence alias for scoring and report references. No scientific success is granted.",
+            "inputSchema": {
+              "additionalProperties": false,
+              "properties": {
+                "evidence_alias": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "title": "Evidence Alias",
+                  "type": "string"
+                },
+                "output_name": {
+                  "maxLength": 256,
+                  "minLength": 1,
+                  "title": "Output Name",
+                  "type": "string"
+                },
+                "rationale": {
+                  "maxLength": 4096,
+                  "minLength": 1,
+                  "title": "Rationale",
+                  "type": "string"
+                },
+                "evidence_aliases": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "maxItems": 16,
+                  "minItems": 1,
+                  "title": "Evidence Aliases",
+                  "type": "array"
+                }
+              },
+              "required": [
+                "evidence_alias",
+                "output_name",
+                "rationale",
+                "evidence_aliases"
+              ],
+              "title": "AcceptRequest",
+              "type": "object"
+            }
+          },
+          {
+            "name": "worker_tcad_curve_score",
+            "description": "Optionally parse bound TCAD PLX/log and explicit CSV columns, then score in this analysis Run. Returns a replayable bounded record.",
+            "inputSchema": {
+              "$defs": {
+                "CaseMappingBasis": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "schema_version": {
+                      "const": 1,
+                      "default": 1,
+                      "title": "Schema Version",
+                      "type": "integer"
+                    },
+                    "kind": {
+                      "enum": [
+                        "declared",
+                        "evidence"
+                      ],
+                      "title": "Kind",
+                      "type": "string"
+                    },
+                    "evidence_refs": {
+                      "default": [],
+                      "items": {
+                        "$ref": "#/$defs/CaseMappingEvidence"
+                      },
+                      "maxItems": 8,
+                      "title": "Evidence Refs",
+                      "type": "array"
+                    },
+                    "rationale": {
+                      "maxLength": 2048,
+                      "minLength": 1,
+                      "title": "Rationale",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "rationale"
+                  ],
+                  "title": "CaseMappingBasis",
+                  "type": "object"
+                },
+                "CaseMappingEvidence": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "schema_version": {
+                      "const": 1,
+                      "default": 1,
+                      "title": "Schema Version",
+                      "type": "integer"
+                    },
+                    "input_alias": {
+                      "maxLength": 256,
+                      "minLength": 1,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:/-]*$",
+                      "title": "Input Alias",
+                      "type": "string"
+                    },
+                    "locator": {
+                      "maxLength": 256,
+                      "minLength": 1,
+                      "title": "Locator",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "input_alias",
+                    "locator"
+                  ],
+                  "title": "CaseMappingEvidence",
+                  "type": "object"
+                },
+                "CurveAxis": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "schema_version": {
+                      "const": 1,
+                      "default": 1,
+                      "title": "Schema Version",
+                      "type": "integer"
+                    },
+                    "name": {
+                      "maxLength": 256,
+                      "minLength": 1,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:/-]*$",
+                      "title": "Name",
+                      "type": "string"
+                    },
+                    "unit": {
+                      "maxLength": 128,
+                      "minLength": 1,
+                      "title": "Unit",
+                      "type": "string"
+                    },
+                    "scale": {
+                      "default": "linear",
+                      "enum": [
+                        "linear",
+                        "log10"
+                      ],
+                      "title": "Scale",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "unit"
+                  ],
+                  "title": "CurveAxis",
+                  "type": "object"
+                },
+                "CurveComparison": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "schema_version": {
+                      "const": 1,
+                      "default": 1,
+                      "title": "Schema Version",
+                      "type": "integer"
+                    },
+                    "comparison_key": {
+                      "maxLength": 256,
+                      "minLength": 1,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:/-]*$",
+                      "title": "Comparison Key",
+                      "type": "string"
+                    },
+                    "reference_series": {
+                      "maxLength": 256,
+                      "minLength": 1,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:/-]*$",
+                      "title": "Reference Series",
+                      "type": "string"
+                    },
+                    "candidate_series": {
+                      "maxLength": 256,
+                      "minLength": 1,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:/-]*$",
+                      "title": "Candidate Series",
+                      "type": "string"
+                    },
+                    "domain": {
+                      "$ref": "#/$defs/CurveDomain"
+                    },
+                    "interpolation": {
+                      "enum": [
+                        "linear_y",
+                        "log10_y"
+                      ],
+                      "title": "Interpolation",
+                      "type": "string"
+                    },
+                    "evaluation_points": {
+                      "default": 257,
+                      "maximum": 1000000,
+                      "minimum": 2,
+                      "title": "Evaluation Points",
+                      "type": "integer"
+                    },
+                    "operators": {
+                      "items": {
+                        "$ref": "#/$defs/CurveOperatorSpec"
+                      },
+                      "maxItems": 256,
+                      "minItems": 1,
+                      "title": "Operators",
+                      "type": "array"
+                    },
+                    "required": {
+                      "default": true,
+                      "title": "Required",
+                      "type": "boolean"
+                    },
+                    "purpose": {
+                      "default": "unspecified_legacy",
+                      "enum": [
+                        "unspecified_legacy",
+                        "target_fit",
+                        "numerical_convergence",
+                        "mechanism_separation",
+                        "implementation_sanity",
+                        "exploratory_diagnostic"
+                      ],
+                      "title": "Purpose",
+                      "type": "string"
+                    },
+                    "gate_scope": {
+                      "default": "unspecified_legacy",
+                      "enum": [
+                        "unspecified_legacy",
+                        "objective",
+                        "numerical_qualification",
+                        "mechanism",
+                        "diagnostic_only"
+                      ],
+                      "title": "Gate Scope",
+                      "type": "string"
+                    },
+                    "metric_profile": {
+                      "default": "unspecified_legacy",
+                      "enum": [
+                        "unspecified_legacy",
+                        "point",
+                        "smooth_curve",
+                        "sharp_front"
+                      ],
+                      "title": "Metric Profile",
+                      "type": "string"
+                    },
+                    "floor_mask": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/$defs/CurveFloorMask"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null
+                    }
+                  },
+                  "required": [
+                    "comparison_key",
+                    "reference_series",
+                    "candidate_series",
+                    "domain",
+                    "interpolation",
+                    "operators"
+                  ],
+                  "title": "CurveComparison",
+                  "type": "object"
+                },
+                "CurveComparisonSpec": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "schema_version": {
+                      "const": 1,
+                      "default": 1,
+                      "title": "Schema Version",
+                      "type": "integer"
+                    },
+                    "spec_key": {
+                      "maxLength": 256,
+                      "minLength": 1,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:/-]*$",
+                      "title": "Spec Key",
+                      "type": "string"
+                    },
+                    "series_declarations": {
+                      "default": [],
+                      "items": {
+                        "$ref": "#/$defs/CurveSeriesDeclaration"
+                      },
+                      "maxItems": 10000,
+                      "title": "Series Declarations",
+                      "type": "array"
+                    },
+                    "comparisons": {
+                      "items": {
+                        "$ref": "#/$defs/CurveComparison"
+                      },
+                      "maxItems": 10000,
+                      "minItems": 1,
+                      "title": "Comparisons",
+                      "type": "array"
+                    },
+                    "reference_dispositions": {
+                      "default": [],
+                      "items": {
+                        "$ref": "#/$defs/CurveReferenceDisposition"
+                      },
+                      "maxItems": 10000,
+                      "title": "Reference Dispositions",
+                      "type": "array"
+                    },
+                    "aggregate_rule": {
+                      "const": "all_required",
+                      "default": "all_required",
+                      "title": "Aggregate Rule",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "spec_key",
+                    "comparisons"
+                  ],
+                  "title": "CurveComparisonSpec",
+                  "type": "object"
+                },
+                "CurveDomain": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "schema_version": {
+                      "const": 1,
+                      "default": 1,
+                      "title": "Schema Version",
+                      "type": "integer"
+                    },
+                    "start": {
+                      "title": "Start",
+                      "type": "number"
+                    },
+                    "stop": {
+                      "title": "Stop",
+                      "type": "number"
+                    },
+                    "unit": {
+                      "maxLength": 128,
+                      "minLength": 1,
+                      "title": "Unit",
+                      "type": "string"
+                    },
+                    "min_points": {
+                      "default": 2,
+                      "maximum": 1000000,
+                      "minimum": 2,
+                      "title": "Min Points",
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "start",
+                    "stop",
+                    "unit"
+                  ],
+                  "title": "CurveDomain",
+                  "type": "object"
+                },
+                "CurveFloorMask": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "schema_version": {
+                      "const": 1,
+                      "default": 1,
+                      "title": "Schema Version",
+                      "type": "integer"
+                    },
+                    "reference_at_or_below": {
+                      "minimum": 0,
+                      "title": "Reference At Or Below",
+                      "type": "number"
+                    },
+                    "candidate_at_or_below": {
+                      "minimum": 0,
+                      "title": "Candidate At Or Below",
+                      "type": "number"
+                    },
+                    "unit": {
+                      "maxLength": 128,
+                      "minLength": 1,
+                      "title": "Unit",
+                      "type": "string"
+                    },
+                    "rationale": {
+                      "maxLength": 4096,
+                      "minLength": 1,
+                      "title": "Rationale",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "reference_at_or_below",
+                    "candidate_at_or_below",
+                    "unit",
+                    "rationale"
+                  ],
+                  "title": "CurveFloorMask",
+                  "type": "object"
+                },
+                "CurveOperatorSpec": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "schema_version": {
+                      "const": 1,
+                      "default": 1,
+                      "title": "Schema Version",
+                      "type": "integer"
+                    },
+                    "operator_key": {
+                      "maxLength": 256,
+                      "minLength": 1,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:/-]*$",
+                      "title": "Operator Key",
+                      "type": "string"
+                    },
+                    "validation_check_key": {
+                      "anyOf": [
+                        {
+                          "maxLength": 256,
+                          "minLength": 1,
+                          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:/-]*$",
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "title": "Validation Check Key"
+                    },
+                    "kind": {
+                      "enum": [
+                        "point_difference",
+                        "residual_rms",
+                        "residual_max_abs",
+                        "mean_signed_difference",
+                        "crossing_shift",
+                        "width_shift"
+                      ],
+                      "title": "Kind",
+                      "type": "string"
+                    },
+                    "value_space": {
+                      "default": "linear",
+                      "enum": [
+                        "linear",
+                        "log10"
+                      ],
+                      "title": "Value Space",
+                      "type": "string"
+                    },
+                    "level": {
+                      "anyOf": [
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "title": "Level"
+                    },
+                    "second_level": {
+                      "anyOf": [
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "title": "Second Level"
+                    },
+                    "crossing_direction": {
+                      "default": "either",
+                      "enum": [
+                        "increasing",
+                        "decreasing",
+                        "either"
+                      ],
+                      "title": "Crossing Direction",
+                      "type": "string"
+                    },
+                    "x": {
+                      "anyOf": [
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "title": "X"
+                    },
+                    "threshold": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/$defs/CurveThreshold"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null
+                    }
+                  },
+                  "required": [
+                    "operator_key",
+                    "kind"
+                  ],
+                  "title": "CurveOperatorSpec",
+                  "type": "object"
+                },
+                "CurveReferenceDisposition": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "schema_version": {
+                      "const": 1,
+                      "default": 1,
+                      "title": "Schema Version",
+                      "type": "integer"
+                    },
+                    "series_key": {
+                      "maxLength": 256,
+                      "minLength": 1,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:/-]*$",
+                      "title": "Series Key",
+                      "type": "string"
+                    },
+                    "disposition": {
+                      "enum": [
+                        "compare",
+                        "exclude"
+                      ],
+                      "title": "Disposition",
+                      "type": "string"
+                    },
+                    "rationale": {
+                      "maxLength": 4096,
+                      "minLength": 1,
+                      "title": "Rationale",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "series_key",
+                    "disposition",
+                    "rationale"
+                  ],
+                  "title": "CurveReferenceDisposition",
+                  "type": "object"
+                },
+                "CurveSeriesDeclaration": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "schema_version": {
+                      "const": 1,
+                      "default": 1,
+                      "title": "Schema Version",
+                      "type": "integer"
+                    },
+                    "series_key": {
+                      "maxLength": 256,
+                      "minLength": 1,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:/-]*$",
+                      "title": "Series Key",
+                      "type": "string"
+                    },
+                    "case_key": {
+                      "maxLength": 256,
+                      "minLength": 1,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:/-]*$",
+                      "title": "Case Key",
+                      "type": "string"
+                    },
+                    "role": {
+                      "maxLength": 256,
+                      "minLength": 1,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:/-]*$",
+                      "title": "Role",
+                      "type": "string"
+                    },
+                    "scientific_role": {
+                      "anyOf": [
+                        {
+                          "enum": [
+                            "experimental_target",
+                            "simulation_candidate",
+                            "numerical_reference",
+                            "numerical_variant",
+                            "analytic_control",
+                            "diagnostic_series"
+                          ],
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "title": "Scientific Role"
+                    },
+                    "source": {
+                      "default": "solver_output",
+                      "enum": [
+                        "solver_output",
+                        "reference_input"
+                      ],
+                      "title": "Source",
+                      "type": "string"
+                    },
+                    "x_axis": {
+                      "$ref": "#/$defs/CurveAxis"
+                    },
+                    "y_axis": {
+                      "$ref": "#/$defs/CurveAxis"
+                    },
+                    "min_points": {
+                      "default": 2,
+                      "maximum": 1000000,
+                      "minimum": 2,
+                      "title": "Min Points",
+                      "type": "integer"
+                    },
+                    "max_points": {
+                      "default": 1000000,
+                      "maximum": 1000000,
+                      "minimum": 2,
+                      "title": "Max Points",
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "series_key",
+                    "case_key",
+                    "role",
+                    "x_axis",
+                    "y_axis"
+                  ],
+                  "title": "CurveSeriesDeclaration",
+                  "type": "object"
+                },
+                "CurveThreshold": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "schema_version": {
+                      "const": 1,
+                      "default": 1,
+                      "title": "Schema Version",
+                      "type": "integer"
+                    },
+                    "comparison": {
+                      "enum": [
+                        "le",
+                        "ge",
+                        "abs_le"
+                      ],
+                      "title": "Comparison",
+                      "type": "string"
+                    },
+                    "value": {
+                      "title": "Value",
+                      "type": "number"
+                    },
+                    "unit": {
+                      "maxLength": 128,
+                      "minLength": 1,
+                      "title": "Unit",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "comparison",
+                    "value",
+                    "unit"
+                  ],
+                  "title": "CurveThreshold",
+                  "type": "object"
+                },
+                "SProcessLogSource": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "input_alias": {
+                      "minLength": 1,
+                      "title": "Input Alias",
+                      "type": "string"
+                    },
+                    "output_name": {
+                      "anyOf": [
+                        {
+                          "maxLength": 256,
+                          "minLength": 1,
+                          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:/-]*$",
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "title": "Output Name"
+                    },
+                    "experiment_key": {
+                      "anyOf": [
+                        {
+                          "maxLength": 256,
+                          "minLength": 1,
+                          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:/-]*$",
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "title": "Experiment Key"
+                    },
+                    "case_mapping_basis": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/$defs/CaseMappingBasis"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null
+                    },
+                    "schema_version": {
+                      "const": 1,
+                      "default": 1,
+                      "title": "Schema Version",
+                      "type": "integer"
+                    },
+                    "series_key": {
+                      "maxLength": 256,
+                      "minLength": 1,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:/-]*$",
+                      "title": "Series Key",
+                      "type": "string"
+                    },
+                    "case_key": {
+                      "maxLength": 256,
+                      "minLength": 1,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:/-]*$",
+                      "title": "Case Key",
+                      "type": "string"
+                    },
+                    "role": {
+                      "maxLength": 256,
+                      "minLength": 1,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:/-]*$",
+                      "title": "Role",
+                      "type": "string"
+                    },
+                    "x_axis": {
+                      "$ref": "#/$defs/CurveAxis"
+                    },
+                    "y_axis": {
+                      "$ref": "#/$defs/CurveAxis"
+                    },
+                    "min_points": {
+                      "default": 2,
+                      "maximum": 65536,
+                      "minimum": 2,
+                      "title": "Min Points",
+                      "type": "integer"
+                    },
+                    "max_points": {
+                      "const": 65536,
+                      "default": 65536,
+                      "title": "Max Points",
+                      "type": "integer"
+                    },
+                    "format": {
+                      "const": "sprocess_log",
+                      "title": "Format",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "input_alias",
+                    "series_key",
+                    "case_key",
+                    "role",
+                    "x_axis",
+                    "y_axis",
+                    "format"
+                  ],
+                  "title": "SProcessLogSource",
+                  "type": "object"
+                },
+                "SProcessPLXSource": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "input_alias": {
+                      "minLength": 1,
+                      "title": "Input Alias",
+                      "type": "string"
+                    },
+                    "output_name": {
+                      "anyOf": [
+                        {
+                          "maxLength": 256,
+                          "minLength": 1,
+                          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:/-]*$",
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "title": "Output Name"
+                    },
+                    "experiment_key": {
+                      "anyOf": [
+                        {
+                          "maxLength": 256,
+                          "minLength": 1,
+                          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:/-]*$",
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "title": "Experiment Key"
+                    },
+                    "case_mapping_basis": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/$defs/CaseMappingBasis"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null
+                    },
+                    "schema_version": {
+                      "const": 1,
+                      "default": 1,
+                      "title": "Schema Version",
+                      "type": "integer"
+                    },
+                    "series_key": {
+                      "maxLength": 256,
+                      "minLength": 1,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:/-]*$",
+                      "title": "Series Key",
+                      "type": "string"
+                    },
+                    "case_key": {
+                      "maxLength": 256,
+                      "minLength": 1,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:/-]*$",
+                      "title": "Case Key",
+                      "type": "string"
+                    },
+                    "role": {
+                      "maxLength": 256,
+                      "minLength": 1,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:/-]*$",
+                      "title": "Role",
+                      "type": "string"
+                    },
+                    "x_axis": {
+                      "$ref": "#/$defs/CurveAxis"
+                    },
+                    "y_axis": {
+                      "$ref": "#/$defs/CurveAxis"
+                    },
+                    "min_points": {
+                      "default": 2,
+                      "maximum": 65536,
+                      "minimum": 2,
+                      "title": "Min Points",
+                      "type": "integer"
+                    },
+                    "max_points": {
+                      "const": 65536,
+                      "default": 65536,
+                      "title": "Max Points",
+                      "type": "integer"
+                    },
+                    "format": {
+                      "const": "sprocess_plx",
+                      "title": "Format",
+                      "type": "string"
+                    },
+                    "dataset_name": {
+                      "maxLength": 256,
+                      "minLength": 1,
+                      "title": "Dataset Name",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "input_alias",
+                    "series_key",
+                    "case_key",
+                    "role",
+                    "x_axis",
+                    "y_axis",
+                    "format",
+                    "dataset_name"
+                  ],
+                  "title": "SProcessPLXSource",
+                  "type": "object"
+                },
+                "TCADCSVSource": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "input_alias": {
+                      "minLength": 1,
+                      "title": "Input Alias",
+                      "type": "string"
+                    },
+                    "output_name": {
+                      "anyOf": [
+                        {
+                          "maxLength": 256,
+                          "minLength": 1,
+                          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:/-]*$",
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "title": "Output Name"
+                    },
+                    "experiment_key": {
+                      "anyOf": [
+                        {
+                          "maxLength": 256,
+                          "minLength": 1,
+                          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:/-]*$",
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "title": "Experiment Key"
+                    },
+                    "case_mapping_basis": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/$defs/CaseMappingBasis"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null
+                    },
+                    "format": {
+                      "const": "csv",
+                      "title": "Format",
+                      "type": "string"
+                    },
+                    "series_key": {
+                      "maxLength": 256,
+                      "minLength": 1,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:/-]*$",
+                      "title": "Series Key",
+                      "type": "string"
+                    },
+                    "case_key": {
+                      "maxLength": 256,
+                      "minLength": 1,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:/-]*$",
+                      "title": "Case Key",
+                      "type": "string"
+                    },
+                    "role": {
+                      "maxLength": 256,
+                      "minLength": 1,
+                      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:/-]*$",
+                      "title": "Role",
+                      "type": "string"
+                    },
+                    "x_axis": {
+                      "$ref": "#/$defs/CurveAxis"
+                    },
+                    "y_axis": {
+                      "$ref": "#/$defs/CurveAxis"
+                    },
+                    "x_column": {
+                      "title": "X Column",
+                      "type": "string"
+                    },
+                    "y_column": {
+                      "title": "Y Column",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "input_alias",
+                    "format",
+                    "series_key",
+                    "case_key",
+                    "role",
+                    "x_axis",
+                    "y_axis",
+                    "x_column",
+                    "y_column"
+                  ],
+                  "title": "TCADCSVSource",
+                  "type": "object"
+                },
+                "TCADScoreRequest": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "sources": {
+                      "items": {
+                        "discriminator": {
+                          "mapping": {
+                            "csv": "#/$defs/TCADCSVSource",
+                            "sprocess_log": "#/$defs/SProcessLogSource",
+                            "sprocess_plx": "#/$defs/SProcessPLXSource"
+                          },
+                          "propertyName": "format"
+                        },
+                        "oneOf": [
+                          {
+                            "$ref": "#/$defs/TCADCSVSource"
+                          },
+                          {
+                            "$ref": "#/$defs/SProcessPLXSource"
+                          },
+                          {
+                            "$ref": "#/$defs/SProcessLogSource"
+                          }
+                        ]
+                      },
+                      "maxItems": 40,
+                      "minItems": 1,
+                      "title": "Sources",
+                      "type": "array"
+                    },
+                    "comparison_spec": {
+                      "$ref": "#/$defs/CurveComparisonSpec"
+                    }
+                  },
+                  "required": [
+                    "sources",
+                    "comparison_spec"
+                  ],
+                  "title": "TCADScoreRequest",
+                  "type": "object"
+                }
+              },
+              "additionalProperties": false,
+              "properties": {
+                "record_key": {
+                  "maxLength": 256,
+                  "minLength": 1,
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:/-]*$",
+                  "title": "Record Key",
+                  "type": "string"
+                },
+                "request": {
+                  "$ref": "#/$defs/TCADScoreRequest"
+                }
+              },
+              "required": [
+                "record_key",
+                "request"
+              ],
+              "title": "TCADScoreInput",
+              "type": "object"
+            }
+          },
+          {
+            "name": "worker_tcad_inspect_outputs",
+            "description": "Optionally list or inspect original files of the bound terminal execution_result. No solver, editing or renaming. A selected file yields a controlled evidence alias and read-only copy; unavailable inspection permits limited analysis.",
+            "inputSchema": {
+              "additionalProperties": false,
+              "properties": {
+                "execution_result": {
+                  "default": "execution_result",
+                  "title": "Execution Result",
+                  "type": "string"
+                },
+                "relative_path": {
+                  "anyOf": [
+                    {
+                      "maxLength": 1024,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "title": "Relative Path"
+                }
+              },
+              "title": "InspectRequest",
+              "type": "object"
+            }
+          }
+        ]
+      }
+    }
+  }
+}

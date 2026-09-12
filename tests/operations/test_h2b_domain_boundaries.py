@@ -31,7 +31,8 @@ def _engineering_plan() -> ExperimentPortfolio:
             "proposals": [
                 {
                     "experiment_key": "implementation_check",
-                    "objective": "Check one bounded implementation curve.",
+                    "objectives": ["Check one bounded implementation curve."],
+                    "current_objectives": ["Check one bounded implementation curve."],
                     "frozen_invariants": ["same implementation"],
                     "cases": [
                         {

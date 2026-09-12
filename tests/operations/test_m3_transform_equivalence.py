@@ -69,7 +69,7 @@ def test_retained_generic_transform_corpus_matches_the_complete_catalog(tmp_path
         repository_root=repository_root,
         work_root=tmp_path / "current",
     )
-    assert current["transform_count"] == 18
+    assert current["transform_count"] == 19
     assert current["guard_count"] == 8
     assert set(current["catalog_transform_ids"]) == {
         *(item["operation_id"] for item in current["operations"]),

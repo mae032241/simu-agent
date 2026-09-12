@@ -1,0 +1,31 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+_ test_historical_intake_can_request_new_qualification_after_fresh_audit[pass] _
+/tmp/scid-projection-r1-baseline/tests/operations/test_historical_compatibility_paths.py:124: in test_historical_intake_can_request_new_qualification_after_fresh_audit
+    runtime, instance, root = _root(tmp_path, catalog=_catalog())
+                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/operations/test_general_transform_operations.py:208: in _root
+    runtime = open_runtime(
+/tmp/scid-projection-r1-baseline/src/scidiscovery/artifact_agent/runtime.py:71: in open_runtime
+    artifacts = ArtifactService.open(
+/tmp/scid-projection-r1-baseline/src/scidiscovery/artifact_agent/service/artifacts.py:48: in open
+    registry = SQLiteArtifactRegistry(database_path)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/tmp/scid-projection-r1-baseline/src/scidiscovery/artifact_agent/storage/sqlite.py:131: in __init__
+    self._initialize()
+/tmp/scid-projection-r1-baseline/src/scidiscovery/artifact_agent/storage/sqlite.py:427: in _initialize
+    connection.executescript(_migration_sql())
+                             ^^^^^^^^^^^^^^^^
+/tmp/scid-projection-r1-baseline/src/scidiscovery/artifact_agent/storage/sqlite.py:623: in _migration_sql
+    .read_text(encoding="utf-8")
+     ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/home/da/miniconda3/lib/python3.12/pathlib.py:1027: in read_text
+    with self.open(mode='r', encoding=encoding, errors=errors) as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/home/da/miniconda3/lib/python3.12/pathlib.py:1013: in open
+    return io.open(self, mode, buffering, encoding, errors, newline)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/scid-projection-r1-baseline/src/scidiscovery/artifact_agent/storage/migrations/0001_artifacts.sql'
+=========================== short test summary info ============================
+FAILED ../../../../../../../../../dev::test_historical_intake_can_request_new_qualification_after_fresh_audit[pass]
+1 failed in 1.13s

@@ -1,0 +1,23 @@
+[
+  {
+    "source": "plugins/tcad_artifact/tcad_artifact/operation_workspace.py",
+    "installed": "/opt/scidiscovery-m7/site/tcad_artifact/operation_workspace.py",
+    "source_sha256": "50565eac43f919ca22c8a34319d23033efa4b9f6d2c6891ffcf7c2575ade886f",
+    "installed_sha256": "50565eac43f919ca22c8a34319d23033efa4b9f6d2c6891ffcf7c2575ade886f",
+    "equal": true
+  },
+  {
+    "source": "plugins/tcad_artifact/tcad_artifact/project_packager.py",
+    "installed": "/opt/scidiscovery-m7/site/tcad_artifact/project_packager.py",
+    "source_sha256": "0777e800ce469547ac1bfd5d9b7a039b0a3fa03541d88c375cecb224435c771e",
+    "installed_sha256": "0777e800ce469547ac1bfd5d9b7a039b0a3fa03541d88c375cecb224435c771e",
+    "equal": true
+  },
+  {
+    "source": "src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py",
+    "installed": "/opt/scidiscovery-m7/site/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py",
+    "source_sha256": "48474d56f92ddbb98f2f053c0a8d39bb0cb0c2bbe9dc63dac5af2a7814d3172d",
+    "installed_sha256": "48474d56f92ddbb98f2f053c0a8d39bb0cb0c2bbe9dc63dac5af2a7814d3172d",
+    "equal": true
+  }
+]

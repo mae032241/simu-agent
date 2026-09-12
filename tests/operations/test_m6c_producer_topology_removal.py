@@ -191,17 +191,6 @@ def test_producer_contract_requires_exact_version_digest_and_port() -> None:
     assert caught.value.reason_code == "input_producer_contract_changed"
 
 
-def test_output_contract_has_no_downstream_usage_prediction() -> None:
-    catalog = _catalog()
-    outputs = tuple(
-        port
-        for operation_id in catalog.operation_ids()
-        for port in catalog.operation(operation_id).spec.outputs
-    )
-    assert outputs
-    assert all("allowed_input_usages" not in type(port).model_fields for port in outputs)
-
-
 def test_explore_or_internal_output_is_intrinsically_nonclaiming() -> None:
     from architecture_operation_test_plugin.plugin import (
         ARCHITECTURE_TEST_PLUGIN,
@@ -223,3 +212,171 @@ def test_explore_or_internal_output_is_intrinsically_nonclaiming() -> None:
     assert operation_artifact_labels(SimpleNamespace(compiled=internal))[
         "scientific_claim_admissible"
     ] == "false"
+
+
+@pytest.mark.parametrize("producer_id, port", (
+    ("tcad.deck.author.initial.v1", "project"),
+    ("tcad.deck.author.revise.v1", "project"),
+    ("tcad.deck.author.runtime-failure.v1", "project"),
+))
+def test_tcad_review_prior_signal_keeps_the_exact_producer_review_edge(producer_id, port):
+    catalog = _catalog()
+    producer = catalog.operation(producer_id)
+    reviewer = catalog.operation("tcad.deck.review.v1")
+    subject = next(item for item in reviewer.spec.inputs if item.name == "project")
+    assert subject.usage == "prior_signal"
+    assert producer.spec.review.reviewer_operation == reviewer.spec.operation_id
+    assert producer.spec.review.reviewer_input_port == subject.name
+    artifact, envelope = _produced_artifact(catalog, producer_id, port, "tcad_subject")
+    routes = _routes(catalog, {artifact.ref.artifact_id: envelope})
+    bound = _bound(reviewer, _input(subject.name, subject.usage, artifact))
+    routes._validate_producer_output_admission(bound)
+    envelope.labels["operation_digest"] = "0" * 64
+    routes._validate_producer_output_admission(bound)
+
+
+_EXISTING_INVENTORY_CONSUMERS = {
+    "science.curve.contract.design.v1": ("reference_bundle",),
+    "science.curve.contract.review.v1": ("reference_bundle",),
+    "science.evidence.audit.intake.v1": ("source_material",),
+    "science.evidence.audit.v1": ("source_material",),
+    "science.evidence.extract.figure.v2": (
+        "paper_source", "figure_request", "figure_manifest", "validation_report",
+        "source_panels", "audit_overlays", "curve_tables",
+    ),
+    "science.figure.evidence.audit.v1": (
+        "paper_source", "figure_request", "figure_manifest", "validation_report",
+        "source_panels", "audit_overlays", "curve_tables",
+    ),
+    "science.figure.request.prepare.v1": ("paper_source",),
+    "tcad.parameter.evidence.audit.v1": (
+        "required_parameter_checklist", "parameter_requirements", "device_parameters",
+        "source_catalog", "source_material",
+    ),
+    "tcad.parameter.evidence.extract.v1": ("source_material",),
+}
+
+
+def test_agent_inventory_exception_has_an_explicit_complete_consumer_inventory(monkeypatch) -> None:
+    from scidiscovery.operations import catalog as catalog_module
+    from scidiscovery.operations.spec import OPERATION_ABI_VERSION
+
+    assert OPERATION_ABI_VERSION == "17"
+    catalog = _catalog()
+    actual = {
+        operation_id: tuple(port.name for port in catalog.operation(operation_id).spec.inputs
+                            if port.usage == "evidence_inventory")
+        for operation_id in catalog.operation_ids()
+        if catalog.operation(operation_id).spec.executor.kind == "agent"
+        and any(port.usage == "evidence_inventory" for port in catalog.operation(operation_id).spec.inputs)
+    }
+    assert actual == {
+        **_EXISTING_INVENTORY_CONSUMERS,
+        "science.experiment.design.v1": ("current_progress", "experiment_results", "result_analysis"),
+        "science.object.review.v1": ("current_progress", "experiment_results", "result_analysis"),
+        "science.result.diagnose.v1": ("experiment_results", "reference_material", "current_progress"),
+        "tcad.result.analyze.v1": ("solver_outputs", "reference_material", "current_progress"),
+        "science.experiment.revise.v1": ("current_progress",),
+        "tcad.deck.author.initial.v1": ("current_progress",),
+        "tcad.deck.author.revise.v1": ("current_progress",),
+        "tcad.deck.author.runtime-failure.v1": ("current_progress",),
+        "tcad.deck.review.v1": ("current_progress",),
+    }
+    monkeypatch.setattr(catalog_module, "OPERATION_ABI_VERSION", "16")
+    prior_abi = _catalog()
+    assert all(catalog.operation(operation_id).digest != prior_abi.operation(operation_id).digest
+               for operation_id in catalog.operation_ids())
+
+
+@pytest.mark.parametrize("operation_id", tuple(_EXISTING_INVENTORY_CONSUMERS))
+def test_existing_agent_inventory_reads_skip_stale_producer_contracts(operation_id) -> None:
+    catalog = _catalog()
+    artifact, envelope = _produced_artifact(catalog, "science.experiment.revise.v1", "experiment_plan", "stale_inventory")
+    envelope.labels["operation_digest"] = "0" * 64
+    routes = _routes(catalog, {artifact.ref.artifact_id: envelope})
+    routes._operation_output_contract = Mock(side_effect=AssertionError("inventory must not inspect producer qualification"))
+    compiled = catalog.operation(operation_id)
+    for port in compiled.spec.inputs:
+        if port.usage == "evidence_inventory":
+            routes._validate_producer_output_admission(_bound(compiled, _input(port.name, port.usage, artifact)))
+    routes._operation_output_contract.assert_not_called()
+
+
+@pytest.mark.parametrize("usage", ("claim_evidence", "change_request", "review_signal"))
+def test_claim_and_review_inputs_keep_stale_producer_rejection(usage) -> None:
+    catalog = _catalog()
+    artifact, envelope = _produced_artifact(catalog, "science.experiment.revise.v1", "experiment_plan", "stale_subject")
+    envelope.labels["operation_digest"] = "0" * 64
+    routes = _routes(catalog, {artifact.ref.artifact_id: envelope})
+    compiled = catalog.operation("science.experiment.revise.v1")
+    with pytest.raises(OperationInvocationError) as caught:
+        routes._validate_producer_output_admission(_bound(compiled, _input("prior_draft", usage, artifact)))
+    assert caught.value.reason_code == "input_producer_contract_changed"
+
+
+def test_transform_inventory_reads_history_without_qualifying_it() -> None:
+    catalog = _catalog()
+    artifact, envelope = _produced_artifact(catalog, "science.experiment.revise.v1", "experiment_plan", "stale_transform_input")
+    envelope.labels["operation_digest"] = "0" * 64
+    routes = _routes(catalog, {artifact.ref.artifact_id: envelope})
+    compiled = catalog.operation("tcad.execution-context.project.v1")
+    routes._validate_producer_output_admission(_bound(compiled, _input("capability", "evidence_inventory", artifact)))
+
+
+def test_historical_prior_signal_still_requires_exact_current_review() -> None:
+    catalog = _catalog()
+    artifact, envelope = _produced_artifact(
+        catalog, "science.hypothesis.propose.v1", "hypothesis_portfolio", "historical_hypotheses"
+    )
+    envelope.labels["operation_digest"] = "0" * 64
+    routes = _routes(catalog, {artifact.ref.artifact_id: envelope})
+    designer = catalog.operation("science.experiment.design.v1")
+    bound = _bound(designer, _input("hypothesis_portfolio", "prior_signal", artifact))
+    with pytest.raises(OperationInvocationError) as caught:
+        routes._validate_producer_output_admission(bound)
+    assert caught.value.reason_code == "input_independent_review_missing"
+
+    review, review_envelope = _produced_artifact(
+        catalog, "science.hypothesis.criticize.v1", "scientific_review", "critic_review"
+    )
+    routes.artifacts = SimpleNamespace(catalog=lambda ref: {
+        artifact.ref: envelope, review.ref: review_envelope,
+    }[ref])
+    routes._is_exact_reviewer_output = Mock(return_value=False)
+    bound = _bound(designer, *bound.inputs, _input("critic_review", "prior_signal", review))
+    with pytest.raises(OperationInvocationError) as caught:
+        routes._validate_producer_output_admission(bound)
+    assert caught.value.reason_code == "input_independent_review_missing"
+    routes._is_exact_reviewer_output.return_value = True
+    routes._validate_producer_output_admission(bound)
+    assert routes._is_exact_reviewer_output.call_args.kwargs["subject_ref"] == artifact.ref
+
+
+def test_historical_prior_signal_rejects_incompatible_producer_port() -> None:
+    catalog = _catalog()
+    artifact, envelope = _produced_artifact(
+        catalog, "science.experiment.revise.v1", "experiment_plan", "old_schema"
+    )
+    envelope.labels["operation_digest"] = "0" * 64
+    routes = _routes(catalog, {artifact.ref.artifact_id: envelope})
+    artifact = replace(artifact, schema_id="incompatible.v0")
+    with pytest.raises(OperationInvocationError) as caught:
+        routes._operation_output_contract(artifact, allow_historical=True)
+    assert caught.value.reason_code == "input_producer_port_incompatible"
+
+
+@pytest.mark.parametrize("missing", ("operation_version", "operation_digest"))
+def test_historical_prior_signal_requires_complete_provenance(missing) -> None:
+    catalog = _catalog()
+    artifact, envelope = _produced_artifact(
+        catalog, "science.experiment.revise.v1", "experiment_plan", "missing_identity"
+    )
+    del envelope.labels[missing]
+    routes = _routes(catalog, {artifact.ref.artifact_id: envelope})
+    with pytest.raises(OperationInvocationError) as caught:
+        routes._validate_producer_output_admission(_bound(
+            catalog.operation("science.object.review.v1"),
+            _input("experiment_plan", "prior_signal", artifact),
+        ))
+    assert caught.value.reason_code == "input_producer_contract_unavailable"
+    assert caught.value.port == "experiment_plan"

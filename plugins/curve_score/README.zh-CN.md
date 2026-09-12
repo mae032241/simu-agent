@@ -1,5 +1,11 @@
 # 曲线科学插件
 
+分析 Operation 共享 Local 工作区，失败后可交付有界的未发布脚本与数值结果。
+可选本地 Python 启动脚本见 `domain-workspace.json`，只读恢复子集入口见
+`assignment.recovery_draft`。逐个原子保存完整数值单元后再绘图，渲染重试仅读取已保存数据。
+遥测或绘图库缺失不阻止有限报告。发布路径相对工作区根，例如 `scratch/analysis.py` 和
+`scratch/results.csv`。TCAD 分析引用同一工作区；科学方法与结论仍由分析 Agent 判断。
+
 `scidiscovery-curve-score` 只拥有曲线领域的科学语义：曲线契约、规范曲线、确定性评价、覆盖检查和曲线诊断。它不读取 TCAD 原生输出，也不认识 SProcess、PLX、求解器证明或执行协议。TCAD 原生输出到规范曲线的转换由 `tcad_artifact` 插件负责。
 
 ## 公开科学操作

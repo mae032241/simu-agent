@@ -18,7 +18,7 @@ limits, workspace, tools, network, review, approval, and effect requirements.
 Narrow plugin components implement codecs, validators, guards, projectors,
 workspace hooks, worker tools, and runtime factories.
 
-Operation ABI 15 requires every Agent output to reference a structured semantic
+Operation ABI 17 requires every Agent output to reference a structured semantic
 contract. Each rule that is not expressible in JSON Schema has a stable
 `rule_id`, description, output paths, and required inputs. Compilation rejects
 unknown inputs and rules that silently make an optional port required. The
@@ -33,6 +33,20 @@ The scheduler and expert Workers own scientific judgment. The control plane
 owns identity, immutable records, least-context projection, lifecycle,
 qualification, and effect gates. Deterministic code owns replayable mechanical
 work. Domain adapters own side effects only.
+
+Experiment proposals retain an ordered `objectives` list and a nonempty exact
+`current_objectives` subset. Materialization includes the original overall
+objective in each proposal and expands only the declared current cases. Existing
+rationale fields preserve the selection reasons, remaining goals, and future
+conditions. Designers and independent reviewers assess whether omitted targets
+prevent the current experiment, including targets sharing an observable. Curve
+contracts use explicit target bindings when requested; local success does not close
+uncovered overall targets. Curve scoring is an optional tool of result analysis,
+not a prerequisite for authoring or execution. Generic and TCAD result analysis
+are alternative Operations. The TCAD analysis tool parses bound raw outputs and
+scores in the same Run; unsupported scoring limits a quantitative conclusion but
+does not prevent a partial analysis. Exact plan, review, execution, file, and case
+identity checks apply even when no scoring tool is called.
 
 ## 2. Registration, compilation, and catalog views
 
@@ -49,6 +63,27 @@ ports and limits, structured semantic rules, permission templates,
 review/provider edges, and approval contracts. It creates the single
 `CompiledCatalog` containing frozen
 implementations plus operation id, version, and digest.
+
+The existing declarations also compile the static Worker tool schemas and output
+contracts once. Catalog, assignment, MCP and submission reuse these projections;
+Run aliases are added to detached copies. Static material excludes its own digest
+before the existing identity envelope is computed. Root and lifecycle tools retain
+their own declarations and share strict JSON argument parsing and diagnostics.
+Preflight/invoke own input admission. Submission checks outputs and their claims
+against frozen evidence; it does not repeat input eligibility checks.
+
+Public errors carry bounded code, phase, path, message, repairability and affected
+action. Immediate replies and durable activity use the same safe details. Unknown
+checker exceptions are engineering failures. Opted-in scoring tools record attempts
+before parsing, including rejected and interrupted calls, in the existing Run
+activity and sealed evidence manifest. A failed calculation can explain a limit;
+it cannot establish a successful quantitative check. Scientific Agents and independent
+reviewers judge claim scope, necessary checks and the impact of missing evidence.
+Validators do not derive scientific verdicts from a fixed checklist or prescribe case
+counts from scientific/engineering labels. Historical calculations use paired manifests
+and full Artifact identities to verify provenance. Evidence collection receipts and
+scientific case-mapping claims stay distinct. New computed records require controlled
+receipts; submission does not rerun scoring.
 
 `public`, `support`, `internal`, and diagnostic `all` are projections of that
 one catalog, not separate registries:
@@ -80,11 +115,49 @@ declare a fixed stage or successor.
 Legacy `next_action_kind`, `accepts_actions`, and `recommended_task_mode` fields
 remain parseable compatibility data, but every control path ignores their
 values. They are neither a second action catalog nor an admission condition.
+A TCAD implementation gap may include control-captured bounded
+source, declarations, attempt notes and diagnostic files. These remain negative
+development records, not an executable project. Review and revision both accept
+this result; revision restores diagnostics under `reports/history` and requires
+fresh completion proofs. Legacy gaps with no captured files remain readable but
+cannot reconstruct an earlier failed source. Diagnostic excerpts retain their
+existing truncation bounds; the gap still obeys the Operation output byte limit.
+The trusted-local Worker router can claim a new queued Run of the same compiled
+Operation after its previous Run terminates, clearing all per-Run tool state.
+Codex may reuse an idle matching Agent; different compiled roles, catalog
+generations and independent review of its own work require a fresh Agent.
+Agent memory grants no permission to access old workspaces or use unbound facts.
+
+Framework-owned diagnostic logs follow one rule: retain bounded original files,
+derive display excerpts separately, and locate errors before display truncation.
+TCAD runners keep merged stdout/stderr in `worker.log`; a separate diagnostic
+file includes bounded solver `.log` and `.err` files for development and production.
+Capture limits report incomplete coverage instead of silently deleting log content.
+Development Workers receive a full bounded redacted file path and may read line
+ranges; captured logs travel with implementation gaps. Replies remain short and
+debug time budgets are unchanged. Launcher, transport and PDF failure diagnostics
+are retained in their existing run/result directories. This is file-based reading,
+not a new logging service or a grant to read unbound historical workspaces.
 A completed Run's `run_status` includes its validated sealed scientific payload
 for this decision; running Runs and bulk `run_list` do not expose payloads. Review
 sources used for change accept only non-passing verdicts, never `pass`. If the
 Run's saved Operation version or digest no longer matches the compiled catalog,
-status reports `contract_retired` without exposing the old payload or handoff.
+status reports `historical` and returns the sealed payload and parseable handoff
+without renewing qualification. Missing producer installations also leave completed
+records readable; an unavailable handoff does not hide an independently verified
+payload. `scheduler_signal_status` reports that limitation separately. Inventory
+and Worker input descriptions explicitly mark historical context.
+`evidence_inventory` permits historical reading. `prior_signal` and `revision_base`
+may cross producer versions when the current port can consume the same type;
+structured historical JSON is validated against the consumer input Schema before
+creating a Run. These rules apply to input usage, not executor kind. Current
+independent review and exact revision subjects remain mandatory, and cross-version
+revision history does not reset revision limits. Retired reviews cannot qualify
+new work. Historical producer families preserve their original identity and must
+still prove all sources, members and unambiguous port bindings when requesting a
+new human decision. Historical blocked/revise signals retain nonclaiming labels
+through deterministic transforms. Claim inputs and execution authorization keep
+their exact contract gates; historical reading never renews an approval or Run.
 The structured object is in `sealed_output`; bounded verdict, missing inputs,
 and suggestions are in the same response's `scheduler_signal`. Every review
 signal must bind an exact reviewed subject in the same call.
@@ -96,6 +169,26 @@ Public producers may reference only public reviewers. If a reviewer is not
 currently runnable, its producer is also absent from the available public view
 and fails preflight. Root rejects internal Operations; support remains limited
 to deterministic helpers for a selected public action.
+
+Design and plan review can bind optional `current_progress`, `experiment_results`,
+and `result_analysis` originals: zero to four Artifacts per group, up to 8 MiB
+each, within a 32 MiB total input budget. These are `on_demand` read-only
+`evidence_inventory` files. Only Agent inventory inputs skip producer-output
+qualification admission; instance, size, current, family, cohort, claim, revision,
+and effect gates remain in their existing paths. Wildcard schema/media pairs are
+limited to inventory with `handoff_only` or `on_demand` exposure. Reading history
+does not restore retired qualification. Deck review treats its exact project as
+`prior_signal`: incomplete implementation may receive a negative review, while
+passing review, packaging, and execution retain their implementation requirements.
+
+`artifact_catalog(name=...)` returns ordered `parent_artifact_names` for the exact
+Artifact: `[]` without parents and `null` for a parent without a current-instance
+binding. Names resolve the stored parent identity, never the latest revision;
+aliases use the existing first-created/name order. More than 4096 direct parents
+causes an explicit error. The query neither writes state nor recursively searches
+history. A new scheduler follows plan revisions to the materialized plan's typed
+parents to recover its original objective, then explicitly binds relevant context
+to the next Worker. This continuation path adds no progress object or stage machine.
 
 Behavior is created through `operation_invoke`. The TCAD plugin
 registers the device-parameter schemas, extraction/audit Agents, deterministic
@@ -149,6 +242,24 @@ Deployment keeps formal Artifacts and control databases under the state root,
 while the trusted-local Run workspace uses a separate Codex-writable project
 path compiled identically into control and Worker processes. That workspace is
 not a second state authority.
+
+Local analysis workspaces preserve a versioned, bounded subset of `output/` and
+`scratch/` on failure. The immutable recovery copy and pending original-directory
+cleanup are distinct: failure does not prove native writers stopped. Unconfirmed
+writers, unsupported files and original logs keep the directory retained. Ordinary
+tracebacks can be delivered as normalized copies; bytecode caches are excluded.
+Recovery remains provisional and never inherits scientific qualification.
+
+An optional stdlib launcher is materialized from the installed core package into
+the analysis workspace. The Worker executes it locally; it is not a server tool.
+It bounds logs and numerical-process resources and clips each requested timeout
+to the absolute Run deadline minus an adjustable submission reserve. Root reads
+only bounded timing/status metadata. Unobserved execution remains unknown and
+does not block submission. Analysts save complete numerical units atomically and
+retry plotting from saved data; optional rendering failure cannot erase numbers.
+`run_status.bound_inputs` and ordered `artifact_catalog.parents` project exact
+bindings without selecting replacements. TCAD plan/review ports retain original
+execution identity; newer analysis plans and reviews use `current_progress`.
 
 A direct revision is an ordinary Agent Operation with one `revision_base` input
 and one complete output using the same schema, media type, codec, and schema
@@ -255,7 +366,13 @@ direct revision Operations instead of advertising an unusable capability.
 The TCAD plugin registers deck author/reviewer Agents, project workspace and
 debug tools, packaging/attestation/control-equivalence Transforms, and the
 solver Effect. The curve-score plugin registers curve contracts, canonical
-curves, scoring, and diagnosis. The optional curve-figure-evidence plugin
+curves, scoring, and diagnosis. TCAD result analysis composes its own raw-output
+parsers with the curve plugin's deterministic scoring functions without a reverse
+dependency. Final analysis validation verifies tool receipts, calculation records and
+exact source references without rerunning scoring. Raw evidence cites bound aliases;
+calculation evidence cites returned records without repeating their case mappings.
+Read-only binding descriptors distinguish same-content output files by their registered
+identity. The optional curve-figure-evidence plugin
 registers paper-figure extraction, independent review, and their tools while
 reusing the curve plugin's deterministic algorithms. Core does not recognize curve
 manifests, fixed script names, or figure collections; native and domain tools
@@ -271,7 +388,8 @@ cardinality, and per-item validators before registering immutable Artifacts
 with the same input parentage; it does not interpret domain bytes or branch by
 plugin, Operation, or Schema. Agent primary-output context validators instead
 receive only the input sources and tool receipts explicitly declared by their
-OperationSpec and may replay deterministic algorithms at submit time.
+OperationSpec to verify output references and record integrity. They neither recheck
+input readiness nor decide scientific conclusions.
 This is not a second registry, state object, or scientific decision hook.
 Agent collection declarations compile, but Run v1 does not invoke them as
 formal submissions. Optional capabilities requiring collection submission are
@@ -320,3 +438,5 @@ record for every task-local read. Effect policy still limits executable,
 arguments, environment, resources, and inputs. Scientific acceptance still
 depends on provenance, independent review, deterministic reports, and result
 diagnosis.
+
+TCAD analysis may optionally inspect files from its bound terminal execution and accept explicit output mappings. Registered tools preserve the original bytes and durable receipts in Run-owned Artifact collections; frozen inputs remain unchanged. The report and exact evidence snapshot complete together. Root exposes ancillary semantic names only after completion; a later Run binds the recovery manifest and raw files explicitly and can replay original calculation aliases. Missing inspection services or old runners allow limited analysis. Solver exit status and collection errors remain separate; recovery never rewrites the old execution or grants scientific success.

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import os
 
+import pytest
+
 from curve_figure_evidence.plugin import PLUGIN as FIGURE_PLUGIN
 from curve_score.plugin import PLUGIN as CURVE_PLUGIN
 from scidiscovery.artifact_agent.interfaces.mcp_root import RootToolFacade
@@ -27,19 +29,11 @@ FIGURE_OPERATIONS = {
 }
 
 
-def test_default_tcad_catalog_has_no_paper_figure_operations() -> None:
-    catalog = compile_catalog(
-        (CORE_PLUGIN, GENERAL_PLUGIN, CURVE_PLUGIN, TCAD_PLUGIN)
-    )
-
-    assert not FIGURE_OPERATIONS.intersection(catalog.operation_ids())
-
-
-def test_optional_plugin_adds_the_complete_figure_vertical_slice() -> None:
-    default = compile_catalog((CORE_PLUGIN, GENERAL_PLUGIN, CURVE_PLUGIN))
-    optional = compile_catalog(
-        (CORE_PLUGIN, GENERAL_PLUGIN, CURVE_PLUGIN, FIGURE_PLUGIN)
-    )
+@pytest.mark.parametrize("extra_plugins", ((), (TCAD_PLUGIN,)))
+def test_optional_plugin_adds_the_complete_figure_vertical_slice(extra_plugins) -> None:
+    plugins = (CORE_PLUGIN, GENERAL_PLUGIN, CURVE_PLUGIN, *extra_plugins)
+    default = compile_catalog(plugins)
+    optional = compile_catalog((*plugins, FIGURE_PLUGIN))
 
     assert set(optional.operation_ids()) - set(default.operation_ids()) == (
         FIGURE_OPERATIONS
@@ -51,11 +45,15 @@ def test_optional_plugin_adds_the_complete_figure_vertical_slice() -> None:
     assert "science.evidence.extract.figure.v1" not in optional.operation_ids()
     request = optional.operation("science.figure.request.prepare.v1")
     assert request.spec.outputs[0].schema_id == (
-        "scidiscovery.figure-extraction-intent.v2"
+        "scidiscovery.curve-figure-digitization-request.v2"
     )
     assert {
         item.name for item in operation_worker_tools(request)
-    } >= {"worker_curve_figure_inspect_source", "worker_extract_pdf_text"}
+    } >= {
+        "worker_curve_figure_inspect_source",
+        "worker_curve_figure_preview",
+        "worker_extract_pdf_text",
+    }
 
     extraction = optional.operation("science.evidence.extract.figure.v2")
     assert len(extraction.spec.outputs) == 1
@@ -65,7 +63,6 @@ def test_optional_plugin_adds_the_complete_figure_vertical_slice() -> None:
     assert intake_output.context_rule_id == "intake.source_binding"
     assert intake_output.context_sources == (
         "paper_source",
-        "figure_intent",
         "figure_request",
         "figure_manifest",
         "validation_report",
@@ -165,14 +162,13 @@ def test_public_and_support_views_expose_one_runnable_figure_topology(
         "complete_transform_family"
     ] == {
         "output_ports": [
-            "figure_request",
             "figure_manifest",
             "validation_report",
             "source_panels",
             "audit_overlays",
             "curve_tables",
         ],
-        "input_ports": ["paper_source", "figure_intent"],
+        "input_ports": ["paper_source", "figure_request"],
     }
     assert all(
         all_items[operation_id].get("runtime_binding", {}).get(

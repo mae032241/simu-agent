@@ -2,18 +2,27 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 import uuid
+import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from ...operation_contract import sanitize_diagnostic_details
+from ...operations.tooling import operation_worker_tools
 from ...operations.catalog import CompiledCatalog
 from ...operations.invoke import (
     BoundOperationCall,
+    InvocationArtifact,
+    preflight_operation,
+    operation_output_validation_contract,
+    operation_primary_output,
     active_direct_revision_ports,
 )
-from ...operations.tooling import operation_agent_type
+from ...operations.tooling import operation_agent_type, tool_evidence_ports
 from ...operations.workspace import (
     WorkspaceFinalizationRequest,
     WorkspaceMaterializationRequest,
@@ -29,11 +38,13 @@ from .local_workspace import (
     OpenWorkspace,
     WorkspaceBackend,
     WorkspaceError,
+    WorkspaceOutputError,
     WorkspaceInput,
 )
 from .run_assignment import assignment_json, result_schema_json, revision_draft_json
 from .run_current import RunCurrentGuard
 from .run_outputs import (
+    InputBindingDescriptor,
     RunCheckerError,
     RunOutputError,
     ValidatedRunOutput,
@@ -41,9 +52,11 @@ from .run_outputs import (
 )
 from .run_records import (
     RunCompletionReceipt,
+    RunContractUnavailable,
     RunError,
     RunInputBinding,
     RunNotFound,
+    RunAttemptLimit,
     RunSlotBusy,
     RunStateConflict,
     RunStatus,
@@ -58,7 +71,10 @@ from .run_records import (
 from .scheduler_bindings import SchedulerBindingService
 
 
-class RunService:
+from .tool_evidence import ToolEvidenceMixin
+
+
+class RunService(ToolEvidenceMixin):
     """The only service allowed to publish an Agent result as scientific data."""
 
     def __init__(
@@ -95,16 +111,45 @@ class RunService:
         output_revision: int,
         output_binding_fingerprint: str,
         resume_from: str | None = None,
+        draft_from: str | None = None,
+        draft_digest: str | None = None,
+        max_attempts: int | None = None,
     ) -> str:
+        if resume_from is not None and draft_from is not None:
+            raise RunStateConflict("resume_from and draft_from are mutually exclusive")
+        if draft_digest is not None and draft_from is None:
+            raise RunStateConflict("draft digest requires a source Run")
+        self._validate_attempt_limit(max_attempts)
         compiled = bound.compiled
         if compiled.spec.executor.kind != "agent":
             raise ValueError("RunService accepts Agent operations only")
         if not self.backend.supports_operation(compiled):
             raise RunError("runtime backend does not support the compiled Operation")
-        if any(port.collection is not None for port in compiled.spec.outputs):
+        if any(port.collection is not None for port in compiled.spec.outputs) and not tool_evidence_ports(compiled):
             raise RunError("minimal local Run does not yet support output collections")
         if compiled.spec.limits is None:
             raise ValueError("compiled operation has no limits")
+        # Reconstruct the call from authoritative records before any Run/workspace write.
+        by_port = {port.name: [] for port in compiled.spec.inputs}
+        for item in bound.inputs:
+            envelope = self.artifacts.catalog(item.artifact.ref)
+            producer = self.completed_for_output(envelope.ref)
+            by_port.setdefault(item.port_name, []).append(InvocationArtifact(
+                artifact_name=item.artifact_name, ref=envelope.ref, schema_id=envelope.schema_id,
+                media_type=envelope.media_type, size_bytes=envelope.size_bytes,
+                parent_refs=envelope.parent_refs, labels=tuple(envelope.labels.items()),
+                producer_run_id=producer.run_id if producer else None,
+                current=self.input_is_current(instance_id=instance_id,
+                    artifact_name=item.artifact_name, artifact_ref=envelope.ref),
+                handoff_verdict=(self.signal_for_output(envelope.ref, require_current=False).verdict
+                    if self.signal_for_output(envelope.ref, require_current=False) else None),
+                historical=item.artifact.historical,
+            ))
+        bound = preflight_operation(compiled, name=bound.name,
+            artifacts_by_port={name: tuple(items) for name, items in by_port.items()},
+            instruction=bound.instruction, read_artifact=self.artifacts.read,
+            source_name_overrides={(item.port_name, item.artifact_name): item.source_name
+                                   for item in bound.inputs})
         raw_inputs = tuple(
             RunInputBinding(
                 port_name=item.port_name,
@@ -128,6 +173,7 @@ class RunService:
         created_at = timestamp()
         deadline_at = future(created_at, compiled.spec.limits.timeout_seconds)
         recovery_digest: str | None = None
+        recovery_policy = self._recovery_policy(compiled)
         with self._connect() as connection:
             self._attach_scheduler(connection)
             connection.execute("BEGIN IMMEDIATE")
@@ -166,7 +212,23 @@ class RunService:
                     compiled.digest,
                     tuple(item.artifact_ref for item in frozen_inputs),
                     compiled.spec.limits.max_attempts,
+                    scheduler_max_attempts=max_attempts,
                 )
+            if resume_from is not None and source.instance_id != instance_id:
+                raise RunStateConflict("recovery source belongs to another instance")
+            if draft_from is not None:
+                source = status_from_row(self._row(connection, draft_from))
+                recovery_digest = self._validate_draft_source(
+                    connection, source, compiled=compiled, instance_id=instance_id,
+                    scheduler_max_attempts=max_attempts,
+                )
+                if draft_digest is not None and draft_digest != recovery_digest:
+                    raise RunStateConflict("draft source digest changed")
+            scheduler_budget = max_attempts
+            if scheduler_budget is None and (resume_from is not None or draft_from is not None):
+                scheduler_budget = (source.recovery_policy or {}).get("scheduler_max_attempts")
+            if scheduler_budget is not None:
+                recovery_policy.update(max_attempts=scheduler_budget, scheduler_max_attempts=scheduler_budget)
             request_digest = canonical_sha256(
                 {
                     "operation_id": compiled.spec.operation_id,
@@ -186,7 +248,10 @@ class RunService:
                     "inputs": json.loads(inputs_json(frozen_inputs)),
                     "limits": compiled.spec.limits.model_dump(mode="json"),
                     "resume_from": resume_from,
+                    **({"draft_from": draft_from, "draft_digest": recovery_digest}
+                       if draft_from is not None else {}),
                     "recovery_digest": recovery_digest,
+                    **({"scheduler_max_attempts": max_attempts} if max_attempts is not None else {}),
                 }
             )
             try:
@@ -198,10 +263,10 @@ class RunService:
                         backend_id, backend_version, backend_capabilities_json,
                         output_binding_name, output_logical_name,
                         output_revision, output_binding_fingerprint,
-                        request_digest, resume_from_run_id,
+                        request_digest, resume_from_run_id, draft_from_run_id, recovery_policy_json,
                         state, created_at, deadline_at
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                              'queued', ?, ?)
+                              ?, ?, 'queued', ?, ?)
                     """,
                     (
                         run_id,
@@ -221,6 +286,8 @@ class RunService:
                         output_binding_fingerprint,
                         request_digest,
                         resume_from,
+                        draft_from,
+                        canonical_json(recovery_policy),
                         created_at,
                         deadline_at,
                     ),
@@ -270,6 +337,8 @@ class RunService:
                         "recovery-draft" if recovery_digest is not None else None
                     ),
                     revision_workspace_mode=revision_workspace_mode,
+                    prior_source_bindings=dict(self.prior_source_bindings(self.status(run_id))),
+                    deadline_at=deadline_at,
                 ),
                 result_schema=result_schema_json(
                     compiled,
@@ -432,6 +501,16 @@ class RunService:
                 expected_last_activity_at=value.last_activity_at,
             )
             raise RunStateConflict("prepared workspace is unavailable") from error
+        try:
+            self.adopt_tool_evidence(run_id)
+            if tool_evidence_ports(self._compiled(self.status(run_id))):
+                self._refresh_evidence_schema(run_id)
+        except RunCheckerError as error:
+            value = self.status(run_id)
+            self.record_failure(run_id, reason=f"preserved tool evidence cannot be opened: {error}",
+                category=error.category, expected_state="running",
+                expected_last_activity_at=value.last_activity_at)
+            raise RunStateConflict("preserved tool evidence integrity failure") from error
         return self.status(run_id), workspace
 
     def heartbeat(self, run_id: str) -> RunStatus:
@@ -457,20 +536,20 @@ class RunService:
         value = self._require_running(run_id)
         try:
             sealed, validated = self._validated_candidate(value)
-        except RunCheckerError as error:
+        except (RunCheckerError, RunContractUnavailable) as error:
             self.record_failure(
                 run_id,
-                reason=f"compiled output checker failed: {error}",
+                reason="Run validation framework failure",
+                category=getattr(error, "category", "integrity_failure"),
+                candidate_digest=getattr(error, "candidate_digest", None),
                 expected_state="running",
                 expected_last_activity_at=value.last_activity_at,
             )
             return "failed", ()
         except (RunOutputError, WorkspaceError) as error:
-            details = getattr(error, "details", ()) or (
-                {"path": "$", "message": str(error), "type": "value_error"},
-            )
-            self.record_activity(run_id, "output_rejected")
-            return "rejected", tuple(details)
+            diagnostic = self.record_activity(run_id, "output_rejected",
+                                 diagnostic=self._rejection_diagnostic(value, error))
+            return "rejected", tuple(diagnostic.get("details", ()))
         self._accept_candidate(run_id, sealed.digest)
         output = self._register_candidate(value, validated, sealed.digest)
         self._complete(run_id, sealed.digest, output, validated.signal)
@@ -478,112 +557,167 @@ class RunService:
 
     def validate_candidate(self, run_id: str) -> ValidatedRunOutput:
         value = self._require_running(run_id)
-        _, validated = self._validated_candidate(value)
+        try:
+            _, validated = self._validated_candidate(value, final_submission=False)
+        except (RunCheckerError, RunContractUnavailable) as error:
+            self.record_failure(run_id, reason="Run validation framework failure",
+                category=getattr(error, "category", "integrity_failure"),
+                candidate_digest=getattr(error, "candidate_digest", None),
+                expected_state="running", expected_last_activity_at=value.last_activity_at)
+            raise
+        except (RunOutputError, WorkspaceError) as error:
+            diagnostic = self.record_activity(run_id, "output_rejected",
+                diagnostic=self._rejection_diagnostic(value, error))
+            raise RunOutputError("candidate requires correction", details=tuple(diagnostic.get("details", ())),
+                                 recorded=True) from error
         return validated
 
+    def _recovery_policy(self, compiled: Any) -> dict[str, Any]:
+        limits = compiled.spec.limits
+        return {
+            "operation_id": compiled.spec.operation_id,
+            "operation_digest": compiled.digest,
+            "backend_id": self.backend.backend_id,
+            "backend_version": self.backend.backend_version,
+            "max_files": limits.max_files, "max_output_bytes": limits.max_output_bytes,
+            "max_attempts": limits.max_attempts,
+            "snapshot_max_files": 132, "snapshot_max_bytes": 32 * 1024 * 1024,
+        }
+
     def record_failure(
-        self,
-        run_id: str,
-        *,
-        reason: str,
-        expected_state: str,
-        expected_last_activity_at: str | None,
-        timed_out: bool = False,
+        self, run_id: str, *, reason: str, expected_state: str,
+        expected_last_activity_at: str | None, timed_out: bool = False,
+        category: str = "runtime_failure", candidate_digest: str | None = None,
     ) -> RunStatus:
-        if expected_state not in {"queued", "running"}:
-            raise ValueError("failure precondition state is invalid")
         value = self.status(run_id)
         if value.state == "failed":
             return self._finish_failed_workspace(value)
+        if expected_state not in {"queued", "running"}:
+            raise ValueError("failure precondition state is invalid")
         if value.state != expected_state or value.last_activity_at != expected_last_activity_at:
             raise RunStateConflict("Run failure compare-and-set failed")
         if timed_out and not expired(value.deadline_at):
             raise RunStateConflict("Run deadline has not expired")
-        compiled = self._compiled(value)
-        assert compiled.spec.limits is not None
-        sealed = None
-        try:
-            sealed = self.backend.seal(
-                run_id,
-                max_files=compiled.spec.limits.max_files,
-                max_bytes=compiled.spec.limits.max_output_bytes,
-                expected_digest=value.accepted_candidate_digest,
-            )
-        except Exception:
-            pass
+        # First fence the worker; cleanup is restartable and never discards an unsealed draft.
         now = timestamp()
+        diagnostic = self._safe_diagnostic("run_timeout" if timed_out else category, repairable=False)
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             cursor = connection.execute(
-                """
-                UPDATE runs SET state = 'failed', reason = ?, completed_at = ?,
-                    recovery_candidate_digest = ?
-                WHERE run_id = ? AND state = ? AND last_activity_at IS ?
-                """,
-                (
-                    reason[:4096],
-                    now,
-                    None if sealed is None else sealed.digest,
-                    run_id,
-                    expected_state,
-                    expected_last_activity_at,
-                ),
-            )
+                """UPDATE runs SET state='failed', reason=?, completed_at=?,
+                    recovery_candidate_digest=COALESCE(?, recovery_candidate_digest)
+                    WHERE run_id=? AND state=? AND last_activity_at IS ?""",
+                (reason[:4096], now, candidate_digest, run_id, expected_state,
+                 expected_last_activity_at))
             if cursor.rowcount != 1:
-                connection.execute("ROLLBACK")
                 raise RunStateConflict("Run failure compare-and-set failed")
-            connection.execute("COMMIT")
+            connection.execute(
+                "INSERT INTO run_activity(run_id,activity,recorded_at,diagnostic_json) VALUES (?,?,?,?)",
+                (run_id, "framework_failure", now, canonical_json(diagnostic)))
         return self._finish_failed_workspace(self.status(run_id))
 
     def _finish_failed_workspace(self, value: RunStatus) -> RunStatus:
         if value.state != "failed":
             raise RunStateConflict("Run is not failed")
-        if value.recovery_draft is not None:
+        if value.recovery_draft and value.recovery_draft.get("draft_digest"):
+            # A delivered immutable subset stays frozen. Pending native writers
+            # are not cleared merely because another failure request arrived.
+            if value.recovery_draft.get("recovery_pending"):
+                self._verify_draft(value, value.recovery_draft["draft_digest"])
             return value
-        compiled = self._compiled(value)
-        assert compiled.spec.limits is not None
+        if (value.backend_id != self.backend.backend_id
+                or value.backend_version != self.backend.backend_version
+                or value.backend_capabilities != self.backend.capabilities):
+            self._pending_recovery(value, "backend_unavailable",
+                complete_snapshot_digest=(value.recovery_draft or {}).get("complete_snapshot_digest"))
+            return self.status(value.run_id)
         try:
-            draft = self.backend.discard(
-                value.run_id,
-                preserve_digest=value.recovery_candidate_digest,
-                max_files=compiled.spec.limits.max_files,
-                max_bytes=compiled.spec.limits.max_output_bytes,
-            )
-        except Exception as error:
-            raise RunError("failed Run workspace isolation is incomplete") from error
-        if draft is not None:
-            manifest = canonical_json(
-                {
-                    "source_run_id": value.run_id,
-                    "source_request_digest": value.request_digest,
-                    "operation_digest": value.operation_digest,
-                    "input_refs": [
-                        item.artifact_ref.model_dump(mode="json") for item in value.inputs
-                    ],
-                    "backend": draft.backend,
-                    "backend_version": draft.backend_version,
-                    "draft_digest": draft.digest,
-                    "files": [
-                        {
-                            "relative_path": item.relative_path,
-                            "media_type": item.media_type,
-                            "size_bytes": item.size_bytes,
-                            "sha256": item.sha256,
-                        }
-                        for item in draft.files
-                    ],
-                    "reason": value.reason,
-                }
-            )
+            compiled = self._compiled(value)
+        except RunContractUnavailable:
+            # output/ alone cannot prove coverage of deck/ or other domain files.
+            # No new-contract hooks and no destructive isolation are permitted here.
+            policy = value.recovery_policy
+            digest = value.recovery_candidate_digest
+            if policy is not None and digest is None:
+                try:
+                    digest = self.backend.seal(value.run_id,
+                        max_files=policy["max_files"],
+                        max_bytes=policy["max_output_bytes"]).digest
+                except Exception:
+                    pass
+            self._pending_recovery(value, "contract_unavailable", digest=digest,
+                complete_snapshot_digest=(value.recovery_draft or {}).get("complete_snapshot_digest"))
+            return self.status(value.run_id)
+        limits = compiled.spec.limits
+        snapshotter = operation_workspace_hooks(compiled).get("workspace_snapshotter")
+        max_files = 132 if snapshotter else limits.max_files
+        max_bytes = 32 * 1024 * 1024 if snapshotter else limits.max_output_bytes
+        try:
+            coverage = (value.recovery_draft or {}).get("complete_snapshot_digest")
+            workspace = self.backend.open(value.run_id) if coverage is None else None
+            retain_original = (self.backend.backend_id == "local_trusted"
+                and (value.recovery_policy or {}).get("retain_original_on_failure") is True)
+            if retain_original and workspace:
+                from .local_process_observation import request_stop
+                request_stop(workspace.root)
+            if coverage is None and value.accepted_candidate_digest is None and value.recovery_candidate_digest is None:
+                self._prepare_evidence_snapshot(value.run_id)
+            if coverage is not None:
+                digest = coverage
+            elif value.accepted_candidate_digest is not None:
+                digest = self.backend.seal(value.run_id, max_files=max_files,
+                    max_bytes=max_bytes, expected_digest=value.accepted_candidate_digest).digest
+            elif snapshotter is not None:
+                snapshot = tuple(WorkspaceInput(name=item.relative_path,
+                    media_type=item.media_type, content=item.content)
+                    for item in snapshotter(self.backend.open(value.run_id).root))
+                digest = self.backend.seal(value.run_id, max_files=max_files,
+                    max_bytes=max_bytes, snapshot=snapshot).digest
+            else:
+                digest = self.backend.seal(value.run_id, max_files=max_files,
+                    max_bytes=max_bytes, expected_digest=(value.accepted_candidate_digest
+                        or value.recovery_candidate_digest)).digest
+            # Only a matching contract's snapshot scope establishes cleanup coverage.
+            self._pending_recovery(value, "writers_unconfirmed" if retain_original else "isolation_incomplete",
+                digest=digest, complete_snapshot_digest=None if retain_original else digest)
+            draft = self.backend.discard(value.run_id, preserve_digest=digest,
+                max_files=max_files, max_bytes=max_bytes,
+                **({"retain_original": True} if retain_original else {}))
+            if draft is None:
+                raise WorkspaceError("recovery draft unavailable")
+            manifest = {
+                "source_run_id": value.run_id, "source_request_digest": value.request_digest,
+                "operation_digest": value.operation_digest,
+                "input_refs": [item.artifact_ref.model_dump(mode="json") for item in value.inputs],
+                "backend": draft.backend, "backend_version": draft.backend_version,
+                "draft_digest": draft.digest,
+                "files": [{"relative_path": item.relative_path, "media_type": item.media_type,
+                           "size_bytes": item.size_bytes, "sha256": item.sha256} for item in draft.files],
+            }
+            if retain_original:
+                manifest.update(recovery_pending=True, code="writers_unconfirmed",
+                    original_retained=True)
             with self._connect() as connection:
-                connection.execute(
-                    """
-                    UPDATE runs SET recovery_draft_json = ?
-                    WHERE run_id = ? AND state = 'failed' AND recovery_draft_json IS NULL
-                    """,
-                    (manifest, value.run_id),
-                )
+                connection.execute("UPDATE runs SET recovery_draft_json=? WHERE run_id=? AND state='failed'",
+                                   (canonical_json(manifest), value.run_id))
+        except Exception as error:
+            current = self.status(value.run_id)
+            if not current.recovery_draft:
+                self._pending_recovery(current, "snapshot_unavailable")
+            elif current.recovery_draft.get("complete_snapshot_digest"):
+                raise RunError("failed Run workspace isolation is incomplete") from error
         return self.status(value.run_id)
+
+    def _pending_recovery(self, value: RunStatus, code: str, *, digest: str | None = None,
+                          complete_snapshot_digest: str | None = None) -> None:
+        record = {**(value.recovery_draft or {}), "recovery_pending": True, "code": code}
+        if complete_snapshot_digest is not None:
+            record["complete_snapshot_digest"] = complete_snapshot_digest
+        with self._connect() as connection:
+            connection.execute("""UPDATE runs SET recovery_draft_json=?,
+                recovery_candidate_digest=COALESCE(?, recovery_candidate_digest)
+                WHERE run_id=? AND state='failed'""",
+                (canonical_json(record), digest, value.run_id))
 
     def fail(self, run_id: str, *, reason: str) -> RunStatus:
         value = self.status(run_id)
@@ -624,12 +758,25 @@ class RunService:
             ).fetchall()
         if len(rows) > 1:
             raise RunStateConflict("multiple Runs claim the same exact output")
-        return None if not rows else status_from_row(rows[0])
+        if rows:
+            return status_from_row(rows[0])
+        producer = self.artifacts.catalog(artifact_ref).labels.get('tool_producer_run')
+        if producer:
+            try:
+                value = self.status(producer)
+            except RunNotFound:
+                return None
+            if any(ref == artifact_ref for _, ref in self.evidence_output_refs(value)):
+                return value
+        return None
 
-    def record_activity(self, run_id: str, activity: str) -> None:
+    def record_activity(self, run_id: str, activity: str, *,
+                        diagnostic: dict[str, Any] | None = None) -> dict[str, Any] | None:
         if not activity or len(activity) > 128:
             raise ValueError("Run activity is invalid")
         value = self._require_running(run_id)
+        normalized = None if diagnostic is None else self._sanitize_diagnostic(
+            value, diagnostic, repairable=activity == "output_rejected")
         now = timestamp()
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
@@ -644,10 +791,81 @@ class RunService:
                 connection.execute("ROLLBACK")
                 raise RunStateConflict("Run activity changed concurrently")
             connection.execute(
-                "INSERT INTO run_activity (run_id, activity, recorded_at) VALUES (?, ?, ?)",
-                (run_id, activity, now),
+                "INSERT INTO run_activity (run_id, activity, recorded_at, diagnostic_json) VALUES (?, ?, ?, ?)",
+                (run_id, activity, now, None if normalized is None else canonical_json(normalized)),
             )
             connection.execute("COMMIT")
+        return normalized
+
+    @staticmethod
+    def _safe_diagnostic(category: str, *, repairable: bool) -> dict[str, Any]:
+        allowed = {"output_rejected", "integrity_failure", "admission_defect", "checker_failure",
+                   "tool_failed", "runtime_failure", "run_timeout", "tool_timeout"}
+        category = category if category in allowed else "runtime_failure"
+        return {"category": category, "code": category,
+                "repairable_by_output": repairable}
+
+    def _rejection_diagnostic(self, value: RunStatus, error: Exception) -> dict[str, Any]:
+        return {"category": "output_rejected", "details":getattr(error, "details", ()) or
+                ({"path":"$", "type":"value_error"},)}
+
+    def _sanitize_diagnostic(self, value: RunStatus, diagnostic: dict[str, Any],
+                             *, repairable: bool) -> dict[str, Any]:
+        result = self._safe_diagnostic(diagnostic.get("category"), repairable=repairable)
+        try:
+            compiled = self._compiled(value)
+            contract = operation_output_validation_contract(compiled, operation_primary_output(compiled))
+            rules = {item["rule_id"]:item.get("description") for item in contract["rules"]}
+            rule_phases = {item["rule_id"]:"output_"+item["phase"] for item in contract["checkers"]}
+            for item in contract["checkers"]:
+                rules.setdefault(item["rule_id"], None)
+        except RunContractUnavailable:
+            rules, rule_phases = {}, {}
+        schema = compiled.output_contracts[operation_primary_output(compiled).name] if rules else {}
+        tool_name = diagnostic.get("tool_name")
+        tool = next((tool for tool in operation_worker_tools(compiled) if tool.name == tool_name), None) if rules else None
+        phase, action = "output_payload", "submit"
+        if result["category"] == "tool_failed":
+            phase, action = "tool_execution", "tool_call"
+            from ..interfaces.mcp_worker_protocol import LIFECYCLE_WORKER_TOOLS
+            tool = tool or next((tool for tool in LIFECYCLE_WORKER_TOOLS if tool.name == tool_name),None)
+            schema = tool.schema()["inputSchema"] if tool else {}
+            if tool:
+                result["tool_name"] = tool.name
+            if any(item.get("phase") == "tool_arguments" for item in diagnostic.get("details", ()) if isinstance(item,dict)):
+                phase = "tool_arguments"
+        details = sanitize_diagnostic_details(diagnostic.get("details", ()),
+            schema=schema, rules=rules, phase=phase, action=action, rule_phases=rule_phases)
+        if details:
+            result["details"] = list(details)
+        return result
+
+    def diagnostic_summary(self, value: RunStatus) -> dict[str, Any]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT activity, diagnostic_json FROM run_activity WHERE run_id=? ORDER BY rowid",
+                (value.run_id,)).fetchall()
+        rejections = [row for row in rows if row["activity"] == "output_rejected"]
+        def safe(row: Any) -> dict[str, Any] | None:
+            if row is None or row["diagnostic_json"] is None:
+                return None
+            raw = json.loads(row["diagnostic_json"])
+            result = self._safe_diagnostic(raw.get("category"),
+                repairable=row["activity"] == "output_rejected")
+            # These fields were checked against the frozen catalog on insertion.
+            if raw.get("details"):
+                result["details"] = raw["details"][:16]
+            if raw.get("tool_name"):
+                result["tool_name"] = raw["tool_name"]
+            return result
+        failures = [row for row in rows if row["activity"] == "framework_failure"]
+        tool_errors = [row for row in rows if row["activity"] in {"tool_failed", "tool_not_computed"}]
+        errors = [row for row in rows if row["activity"] in {"tool_failed", "tool_not_computed", "output_rejected", "framework_failure"} and row["diagnostic_json"] is not None]
+        return {"latest_tool_error": safe(tool_errors[-1] if tool_errors else None),
+                "recent_errors": [safe(row) for row in errors[-8:]],
+                "rejection_count": len(rejections),
+                "latest_rejection": safe(rejections[-1] if rejections else None),
+                "failure": safe(failures[-1] if failures else None)}
 
     def successful_tools(self, run_id: str) -> tuple[str, ...]:
         with self._connect() as connection:
@@ -660,22 +878,15 @@ class RunService:
             ).fetchall()
         return tuple(sorted({str(row["activity"]).partition(":")[2] for row in rows}))
 
-    def signal_for_output(self, artifact_ref: ArtifactRef) -> SchedulerSignal | None:
-        with self._connect() as connection:
-            row = connection.execute(
-                """
-                SELECT * FROM runs
-                WHERE state = 'completed' AND output_ref_json = ?
-                """,
-                (artifact_ref.canonical_json(),),
-            ).fetchone()
-        if row is None:
+    def signal_for_output(self, artifact_ref: ArtifactRef, *, require_current: bool = True) -> SchedulerSignal | None:
+        status = self.completed_for_output(artifact_ref)
+        if status is None:
             return None
-        status = status_from_row(row)
-        try:
-            self._compiled(status)
-        except RunStateConflict:
-            return None
+        if require_current:
+            try:
+                self._compiled(status)
+            except RunStateConflict:
+                return None
         return status.signal
 
     def is_exact_reviewer_output(
@@ -712,28 +923,86 @@ class RunService:
         )
 
     def _validated_candidate(
-        self, value: RunStatus
+        self, value: RunStatus, *, final_submission: bool = True
     ) -> tuple[Any, ValidatedRunOutput]:
         compiled = self._compiled(value)
         assert compiled.spec.limits is not None
-        if value.accepted_candidate_digest is None:
-            self._finalize_workspace(compiled, value.run_id)
-        sealed = self.backend.seal(
-            value.run_id,
-            max_files=compiled.spec.limits.max_files,
-            max_bytes=compiled.spec.limits.max_output_bytes,
-            expected_digest=value.accepted_candidate_digest,
-        )
-        validated = validate_run_output(
-            compiled,
-            sealed,
-            input_source_ports={item.source_name: item.port_name for item in value.inputs},
-            input_bytes={
-                item.source_name: self.artifacts.read(item.artifact_ref)
-                for item in value.inputs
-            },
-        )
+        try:
+            if value.accepted_candidate_digest is None:
+                self._finalize_workspace(compiled, value.run_id, final_submission=final_submission)
+                self._prepare_evidence_snapshot(value.run_id)
+            sealed = self.backend.seal(
+                value.run_id,
+                max_files=compiled.spec.limits.max_files,
+                max_bytes=compiled.spec.limits.max_output_bytes,
+                expected_digest=value.accepted_candidate_digest,
+            )
+        except RunOutputError:
+            raise
+        except WorkspaceOutputError as error:
+            if value.accepted_candidate_digest is None:
+                raise RunOutputError("candidate files require correction", details=(
+                    {"path": "$", "message": str(error), "type": "value_error"},)) from error
+            raise RunCheckerError("accepted candidate integrity failed", category="integrity_failure") from error
+        except WorkspaceError as error:
+            raise RunCheckerError("Run workspace integrity failed", category="integrity_failure") from error
+        except TimeoutError as error:
+            raise RunCheckerError("candidate preparation tool timed out", category="tool_timeout") from error
+        except Exception as error:
+            raise RunCheckerError("candidate preparation failed", category="checker_failure") from error
+        # Reserve half the remaining Run time for publishing after domain replay.
+        remaining = (datetime.fromisoformat(value.deadline_at.replace("Z", "+00:00"))
+                     - datetime.now(timezone.utc)).total_seconds()
+        validation_deadline = time.monotonic() + max(0, remaining) / 2
+        try:
+            input_bytes, descriptors = self._validation_inputs(value)
+            validated = validate_run_output(
+                compiled,
+                sealed,
+                input_source_ports=self.validation_source_ports(value),
+                input_bytes=input_bytes,
+                input_binding_descriptors=descriptors,
+                validation_deadline=validation_deadline,
+                tool_snapshot=self._evidence_snapshot(value.run_id) if tool_evidence_ports(compiled) else None,
+            )
+        except WorkspaceError as error:
+            failure = RunCheckerError("sealed candidate integrity failed", category="integrity_failure")
+            failure.candidate_digest = sealed.digest
+            raise failure from error
+        except RunCheckerError as error:
+            error.candidate_digest = sealed.digest
+            raise
         return sealed, validated
+
+    def _validation_inputs(
+        self, value: RunStatus
+    ) -> tuple[dict[str, bytes], dict[str, InputBindingDescriptor]]:
+        contents: dict[str, bytes] = {}
+        descriptors: dict[str, InputBindingDescriptor] = {}
+        for item in value.inputs:
+            try:
+                envelope = self.artifacts.catalog(item.artifact_ref)
+                content = self.artifacts.read(item.artifact_ref)
+            except Exception as error:
+                raise RunCheckerError("exact Run input registration or bytes are unavailable", category="integrity_failure") from error
+            if (
+                envelope.ref != item.artifact_ref
+                or envelope.media_type != item.media_type
+                or envelope.sha256 != item.artifact_ref.sha256
+                or envelope.size_bytes != len(content)
+                or hashlib.sha256(content).hexdigest() != item.artifact_ref.sha256
+                or item.source_name in descriptors
+            ):
+                raise RunCheckerError("input registration contradicts the exact Run binding", category="integrity_failure")
+            contents[item.source_name] = content
+            descriptors[item.source_name] = self.source_descriptor(value, item.source_name)
+        acquired, acquired_descriptors = self.evidence_sources(value.run_id)
+        contents.update(acquired); descriptors.update(acquired_descriptors)
+        if tool_evidence_ports(self._compiled(value)):
+            manifest_raw = self._evidence_snapshot(value.run_id)
+            contents["tool_recovery_manifest"] = manifest_raw
+            descriptors["tool_recovery_manifest"] = InputBindingDescriptor(source_name="tool_recovery_manifest", port_name="recovery_manifest_output", artifact_ref=self._evidence_manifest(value), media_type="application/json", size_bytes=len(manifest_raw), sha256=hashlib.sha256(manifest_raw).hexdigest())
+        return contents, descriptors
 
     def _materialize_workspace(
         self, compiled: Any, run_id: str, workspace: OpenWorkspace
@@ -744,6 +1013,7 @@ class RunService:
         if materializer is None:
             return
         recovery = workspace.root / "recovery-draft"
+        value = self.status(run_id)
         try:
             result = materializer(
                 WorkspaceMaterializationRequest(
@@ -752,8 +1022,19 @@ class RunService:
                     input_paths=workspace.input_paths,
                     provisional_roots=(recovery,) if recovery.is_dir() else (),
                     edit_protocol=getattr(self.backend, "edit_protocol", "native"),
+                    binding_descriptors={alias: self.source_descriptor(value, alias)
+                        for alias in workspace.input_paths},
                 )
             )
+            if (self.backend.backend_id == "local_trusted"
+                    and result.manifest.get("retain_original_on_failure") is True):
+                # Freeze control-produced policy before dispatch. A Worker copy
+                # of domain-workspace.json cannot authorize directory deletion.
+                with self._connect() as connection:
+                    policy = json.loads(self._row(connection, run_id)["recovery_policy_json"])
+                    policy["retain_original_on_failure"] = True
+                    connection.execute("UPDATE runs SET recovery_policy_json=? WHERE run_id=? AND state='queued'",
+                        (canonical_json(policy), run_id))
             payload = canonical_json(
                 {
                     "schema_version": 1,
@@ -773,11 +1054,14 @@ class RunService:
         except WorkspaceProtocolError as error:
             raise RunError(str(error)) from error
 
-    def _finalize_workspace(self, compiled: Any, run_id: str) -> None:
+    def _finalize_workspace(
+        self, compiled: Any, run_id: str, *, final_submission: bool
+    ) -> None:
         finalizer = operation_workspace_hooks(compiled).get("workspace_finalizer")
         if finalizer is None:
             return
         workspace = self.backend.open(run_id)
+        value = self.status(run_id)
         try:
             raw = finalizer(
                 WorkspaceFinalizationRequest(
@@ -785,6 +1069,11 @@ class RunService:
                     workspace=workspace.root,
                     input_paths=workspace.input_paths,
                     output_limit_bytes=compiled.spec.limits.max_output_bytes,
+                    final_submission=final_submission,
+                    output_schema_id=operation_primary_output(compiled).schema_id,
+                    binding_descriptors={alias: self.source_descriptor(value, alias)
+                        for alias in (*workspace.input_paths,
+                            *(record["alias"] for record in self.tool_evidence(run_id)))},
                 )
             )
             writer = getattr(self.backend, "write_primary_output", None)
@@ -803,6 +1092,11 @@ class RunService:
             if row["state"] != "running":
                 connection.execute("ROLLBACK")
                 raise RunStateConflict("Run is no longer running")
+            compiled = self._compiled(self.status(run_id))
+            if tool_evidence_ports(compiled):
+                snapshot = self.backend.seal(run_id, max_files=compiled.spec.limits.max_files, max_bytes=compiled.spec.limits.max_output_bytes, expected_digest=digest)
+                if (snapshot.root / 'tool-evidence.json').read_bytes() != self._evidence_snapshot(run_id):
+                    raise RunCheckerError('tool evidence snapshot changed before acceptance', category='integrity_failure')
             accepted = row["accepted_candidate_digest"]
             if accepted is not None and str(accepted) != digest:
                 connection.execute("ROLLBACK")
@@ -823,6 +1117,8 @@ class RunService:
         candidate_digest: str,
     ) -> ArtifactRef:
         compiled = self._compiled(value)
+        manifest = self._evidence_manifest(value)
+        extra_parents = (manifest,) if manifest is not None else ()
         return self.artifacts.register(
             validated.content,
             ArtifactRegistration(
@@ -831,7 +1127,7 @@ class RunService:
                 payload_schema_version=validated.payload_schema_version,
                 media_type=validated.media_type,
                 creator=ActorRef(actor_id=value.agent_type, actor_type="agent_worker"),
-                parent_refs=tuple(item.artifact_ref for item in value.inputs),
+                parent_refs=tuple(item.artifact_ref for item in value.inputs) + extra_parents,
                 labels={
                     "operation_id": value.operation_id,
                     "operation_version": value.operation_version,
@@ -903,6 +1199,13 @@ class RunService:
                 request_fingerprint=value.output_binding_fingerprint,
                 attached=True,
             )
+            evidence = [(r['alias'], ArtifactRef.model_validate(r['artifact_ref'])) for r in self.tool_evidence(run_id)]
+            evidence += [('recovery_manifest', ref) for ref in self.artifacts.catalog(output).parent_refs if ref.schema_id == 'scidiscovery.tool-evidence-manifest.v1' and self.artifacts.catalog(ref).labels.get('tool_producer_run') == run_id]
+            for alias, ref in evidence:
+                self.scheduler_bindings.bind_in_connection(connection, instance=value.instance_id, namespace='artifact',
+                    name=value.output_binding_name+'.'+alias, logical_name=value.output_logical_name+'.'+alias,
+                    revision=value.output_revision, object_id=ref.artifact_id,
+                    request_fingerprint=hashlib.sha256((candidate_digest+alias).encode()).hexdigest(), attached=True)
             cursor = connection.execute(
                 """
                 UPDATE runs SET state = 'completed', output_ref_json = ?,
@@ -939,9 +1242,9 @@ class RunService:
         try:
             compiled = self.operation_catalog.operation(value.operation_id)
         except KeyError as error:
-            raise RunStateConflict("Run operation is no longer installed") from error
+            raise RunContractUnavailable("Run operation is no longer installed") from error
         if compiled.spec.version != value.operation_version or compiled.digest != value.operation_digest:
-            raise RunStateConflict("Run operation contract changed")
+            raise RunContractUnavailable("Run operation contract changed")
         return compiled
 
     def validate_resume(
@@ -951,6 +1254,8 @@ class RunService:
         operation_digest: str,
         input_refs: tuple[ArtifactRef, ...],
         max_attempts: int,
+        scheduler_max_attempts: int | None = None,
+        check_attempts: bool = True,
     ) -> str:
         """Validate the exact recovery source used by preflight and schedule."""
 
@@ -961,6 +1266,7 @@ class RunService:
                 operation_digest,
                 input_refs,
                 max_attempts,
+                scheduler_max_attempts=scheduler_max_attempts, check_attempts=check_attempts,
             )
 
     def recovery_available(self, value: RunStatus) -> bool:
@@ -995,26 +1301,169 @@ class RunService:
         operation_digest: str,
         input_refs: tuple[ArtifactRef, ...],
         max_attempts: int,
+        *,
+        scheduler_max_attempts: int | None = None,
+        check_attempts: bool = True,
     ) -> str:
+        if (
+            source.backend_id != self.backend.backend_id
+            or source.backend_version != self.backend.backend_version
+            or source.backend_capabilities != self.backend.capabilities
+        ):
+            raise RunStateConflict("recovery backend identity changed")
         digest = self._recovery_digest(source, operation_digest, input_refs)
-        root_run_id = self._recovery_root_id(connection, source.run_id)
-        attempts = connection.execute(
-            """
-            WITH RECURSIVE recovery_chain(run_id) AS (
-                SELECT run_id FROM runs WHERE run_id = ?
-                UNION
-                SELECT child.run_id
-                FROM runs AS child
-                JOIN recovery_chain AS parent
-                  ON child.resume_from_run_id = parent.run_id
-            )
-            SELECT COUNT(*) FROM recovery_chain
-            """,
-            (root_run_id,),
-        ).fetchone()
-        if attempts is None or int(attempts[0]) >= max_attempts:
-            raise RunStateConflict("recovery attempt limit reached")
+        self._verify_draft(source, digest)
+        if check_attempts:
+            self._check_recovery_attempts(connection, source, max_attempts, scheduler_max_attempts)
         return digest
+
+    def validate_draft_source(self, source_run_id: str, *, compiled: Any,
+                              instance_id: str, scheduler_max_attempts: int | None = None,
+                              check_attempts: bool = True) -> str:
+        with self._connect() as connection:
+            return self._validate_draft_source(connection,
+                status_from_row(self._row(connection, source_run_id)),
+                compiled=compiled, instance_id=instance_id,
+                scheduler_max_attempts=scheduler_max_attempts, check_attempts=check_attempts)
+
+    def _validate_draft_source(self, connection: sqlite3.Connection, source: RunStatus,
+                               *, compiled: Any, instance_id: str, scheduler_max_attempts: int | None = None,
+                              check_attempts: bool = True) -> str:
+        if source.instance_id != instance_id:
+            raise RunStateConflict("draft source belongs to another instance")
+        if source.operation_id != compiled.spec.operation_id:
+            raise RunStateConflict("draft source Operation differs")
+        if (source.backend_id != self.backend.backend_id
+                or source.backend_version != self.backend.backend_version
+                or source.backend_capabilities != self.backend.capabilities
+                or not self.backend.supports_operation(compiled)):
+            raise RunStateConflict("recovery backend identity changed or unsupported")
+        if source.state != "failed" or not source.recovery_draft:
+            raise RunStateConflict("source Run has no recovery draft")
+        digest = source.recovery_draft.get("draft_digest")
+        if not isinstance(digest, str):
+            raise RunStateConflict("source Run recovery is incomplete")
+        self._verify_draft(source, digest)
+        if check_attempts:
+            self._check_recovery_attempts(connection, source, compiled.spec.limits.max_attempts, scheduler_max_attempts)
+        return digest
+
+    def _verify_draft(self, source: RunStatus, digest: str) -> Any:
+        manifest = source.recovery_draft
+        if (not manifest or manifest.get("source_run_id") != source.run_id
+                or manifest.get("source_request_digest") != source.request_digest
+                or manifest.get("operation_digest") != source.operation_digest
+                or manifest.get("backend") != source.backend_id
+                or manifest.get("backend_version") != source.backend_version):
+            raise RunStateConflict("recovery source binding differs")
+        policy = source.recovery_policy
+        if policy is None:
+            policy = self._recovery_policy(self._compiled(source))
+        verifier = getattr(self.backend, "verify_recovery", None)
+        if not callable(verifier):
+            raise RunStateConflict("backend cannot verify recovery material")
+        try:
+            draft = verifier(digest, max_files=max(policy["max_files"], policy["snapshot_max_files"]),
+                max_bytes=max(policy["max_output_bytes"], policy["snapshot_max_bytes"]))
+        except WorkspaceError as error:
+            raise RunStateConflict("recovery material failed verification") from error
+        actual = [(item.relative_path, item.size_bytes, item.sha256) for item in draft.files]
+        declared = [(item["relative_path"], item["size_bytes"], item["sha256"])
+                    for item in manifest.get("files", ())]
+        if actual != declared:
+            raise RunStateConflict("recovery file manifest differs")
+        return draft
+
+    @staticmethod
+    def _validate_attempt_limit(value: int | None) -> None:
+        if value is not None and (type(value) is not int or value < 1):
+            raise ValueError("max_attempts must be a positive integer")
+
+    def _recovery_attempt_budget(self, connection: sqlite3.Connection,
+                                 source: RunStatus, max_attempts: int,
+                                 scheduler_max_attempts: int | None = None) -> dict[str, int]:
+        self._validate_attempt_limit(scheduler_max_attempts)
+        root_run_id = self._recovery_root_id(connection, source.run_id)
+        override = scheduler_max_attempts
+        if override is None:
+            override = (source.recovery_policy or {}).get("scheduler_max_attempts")
+        if override is not None:
+            self._validate_attempt_limit(override)
+            limit = override
+        else:
+            root = status_from_row(self._row(connection, root_run_id))
+            policy = root.recovery_policy
+            if policy is None:
+                try:
+                    policy = self._recovery_policy(self._compiled(root))
+                except RunContractUnavailable as error:
+                    raise RunStateConflict("original recovery attempt limit is unavailable") from error
+            limit = min(max_attempts, policy["max_attempts"])
+        attempts = connection.execute(
+            """WITH RECURSIVE recovery_chain(run_id) AS (
+                SELECT run_id FROM runs WHERE run_id = ?
+                UNION SELECT child.run_id FROM runs AS child
+                JOIN recovery_chain AS parent ON child.resume_from_run_id = parent.run_id
+                    OR child.draft_from_run_id = parent.run_id
+            ) SELECT COUNT(*) FROM recovery_chain""", (root_run_id,)).fetchone()
+        return {"used": int(attempts[0]), "limit": limit}
+
+    def _check_recovery_attempts(self, connection: sqlite3.Connection,
+                                 source: RunStatus, max_attempts: int,
+                                 scheduler_max_attempts: int | None = None) -> None:
+        budget = self._recovery_attempt_budget(connection, source, max_attempts, scheduler_max_attempts)
+        if budget["used"] >= budget["limit"]:
+            raise RunAttemptLimit(budget["used"], budget["limit"])
+
+    def recovery_status(self, value: RunStatus) -> dict[str, Any]:
+        preserved = False
+        draft = None
+        try:
+            if value.recovery_draft and isinstance(value.recovery_draft.get("draft_digest"), str):
+                draft = self._verify_draft(value, value.recovery_draft["draft_digest"])
+                preserved = True
+        except (RunError, KeyError, ValueError, TypeError):
+            pass
+        draft_available = False
+        if preserved:
+            try:
+                compiled = self.operation_catalog.operation(value.operation_id)
+                self.validate_draft_source(value.run_id, compiled=compiled,
+                                           instance_id=value.instance_id)
+                draft_available = True
+            except (RunError, KeyError, ValueError):
+                pass
+        result = {"delivery_preserved": preserved,
+                "resume_available": self.recovery_available(value),
+                "draft_available": draft_available,
+                "recovery_pending": value.state == "failed" and (
+                    not preserved or (value.recovery_draft or {}).get("recovery_pending", False))}
+        evidence = self.recovery_evidence_status(value)
+        if evidence is not None:
+            result["tool_evidence"] = evidence
+        if value.recovery_draft and "original_retained" in value.recovery_draft:
+            result["original_retained"] = value.recovery_draft["original_retained"]
+        if preserved and draft is not None and value.recovery_draft.get("original_retained") is True:
+            entry = next((f for f in draft.files if f.relative_path == "analysis-recovery.json"), None)
+            if entry and entry.size_bytes <= 64 * 1024:
+                try:
+                    coverage = json.loads((draft.root / entry.relative_path).read_bytes())
+                    if coverage.get("format") == "analysis-work-v1":
+                        result["coverage"] = {key: coverage[key] for key in
+                            ("format", "scope", "saved_count", "saved_bytes", "saved_by_scope",
+                             "omitted_count", "omitted", "normalized_count", "writers_stopped",
+                             "original_retained", "complete") if key in coverage}
+                except (OSError, ValueError, AttributeError):
+                    result["coverage"] = {"status": "unavailable"}
+        try:
+            compiled = self.operation_catalog.operation(value.operation_id)
+            with self._connect() as connection:
+                result["attempt_budget"] = self._recovery_attempt_budget(
+                    connection, value, compiled.spec.limits.max_attempts)
+        except (RunError, KeyError, ValueError):
+            pass
+        return result
+
     def _recovery_root_id(
         self, connection: sqlite3.Connection, source_run_id: str
     ) -> str:
@@ -1025,7 +1474,9 @@ class RunService:
                 raise RunStateConflict("recovery chain is cyclic")
             seen.add(current)
             row = self._row(connection, current)
-            parent = row["resume_from_run_id"]
+            if row["resume_from_run_id"] and row["draft_from_run_id"]:
+                raise RunStateConflict("recovery chain has multiple parents")
+            parent = row["resume_from_run_id"] or row["draft_from_run_id"]
             if parent is None:
                 return current
             current = str(parent)
@@ -1069,6 +1520,7 @@ class RunService:
                 )
             connection.executescript(
                 """
+                CREATE TABLE IF NOT EXISTS run_tool_evidence (run_id TEXT NOT NULL, ordinal INTEGER NOT NULL, evidence_key TEXT NOT NULL, record_json BLOB NOT NULL, alias TEXT NOT NULL, PRIMARY KEY(run_id, ordinal), UNIQUE(run_id,evidence_key));
                 CREATE TABLE IF NOT EXISTS runs (
                     run_id TEXT PRIMARY KEY,
                     instance_id TEXT NOT NULL,
@@ -1111,6 +1563,14 @@ class RunService:
                 );
                 """
             )
+            for table, columns in {
+                "runs": {"draft_from_run_id": "TEXT", "recovery_policy_json": "BLOB"},
+                "run_activity": {"diagnostic_json": "BLOB"},
+            }.items():
+                existing = {row[1] for row in connection.execute(f"PRAGMA table_info({table})")}
+                for name, kind in columns.items():
+                    if name not in existing:
+                        connection.execute(f"ALTER TABLE {table} ADD COLUMN {name} {kind}")
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.database_path, timeout=30.0)

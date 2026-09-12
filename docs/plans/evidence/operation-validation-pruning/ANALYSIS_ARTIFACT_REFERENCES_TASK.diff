@@ -1,0 +1,1028 @@
+--- before/plugins/curve_score/curve_score/analysis_tool.py
++++ after/plugins/curve_score/curve_score/analysis_tool.py
+@@ -317,11 +317,12 @@
+     if finished is not None:
+         attempt, diagnostics = finished
+         response.update(attempt=attempt, diagnostics=list(diagnostics))
+-    return response
++    from scidiscovery.artifact_agent.service.analysis_artifacts import retain_calculation
++    return retain_calculation(context, response)
+ 
+ 
+ def score_tool(request: AnalysisScoreInput, context: OperationToolContext) -> dict[str, Any]:
+     return run_score_tool(request, context, evaluate_analysis_request)
+ 
+ 
+-CURVE_SCORE_TOOL = WorkerToolDefinition(name="worker_curve_score", description="Optionally score bound bundle/explicit CSV columns with an existing comparison_spec; returns a replayable scalar record. Unsupported metrics are never substituted.", input_model=AnalysisScoreInput, capability="analysis.curve_score", contextual_handler=score_tool, record_attempts=True)
++CURVE_SCORE_TOOL = WorkerToolDefinition(name="worker_curve_score", description="Optionally score bound bundle/explicit CSV columns. Cite the returned calculation_ref; the complete record and receipt are saved automatically. Unsupported metrics are never substituted.", input_model=AnalysisScoreInput, capability="analysis.curve_score", contextual_handler=score_tool, record_attempts=True, evidence_ports=("tool_evidence", "recovery_manifest_output"))
+--- before/plugins/curve_score/curve_score/diagnostic_tool.py
++++ after/plugins/curve_score/curve_score/diagnostic_tool.py
+@@ -11,6 +11,7 @@
+ from scidiscovery.artifact_agent.operation_tool_context import OperationToolContext
+ from scidiscovery.artifact_agent.schema.common import canonical_json
+ from scidiscovery.artifact_agent.schema.layered_diagnosis import CalculationRecord
++from scidiscovery.artifact_agent.service.analysis_artifacts import publish_analysis_file, retain_calculation
+ from scidiscovery.artifact_agent.service.local_workspace import WorkspaceError, write_control_workspace_file
+ from scidiscovery.operation_contract import contract_diagnostic
+ from scidiscovery.operations.spec import CollectionSpec, ComponentRef, OutputPortSpec
+@@ -23,10 +24,10 @@
+ )
+ from .schema import CurveConsistencyReport, CurveOperatorSpec
+ 
+-ALGORITHM_VERSION = "analysis-curve-diagnostics.v1"
++ALGORITHM_VERSION = "analysis-curve-diagnostics.v2"
+ PLOT_PORT = "tool_evidence"
+-MAX_RECORD_BYTES = 31 * 1024
+-MAX_PLOTS = 8
++MAX_DETAILS_BYTES = 4 * 1024 * 1024
++MAX_PLOTS = 32
+ 
+ 
+ class ResidualOperator(CurveOperatorSpec):
+@@ -34,8 +35,7 @@
+ 
+ 
+ class DiagnosticComparison(AnalysisCurveComparison):
+-    # A full trace fits the existing calculation-record budget without silently
+-    # substituting a different grid or downsampling the requested calculation.
++    # The bounded diagnostic grid is independent of the short report record.
+     evaluation_points: Annotated[int, Field(ge=2, le=257)] = 257
+     operators: Annotated[tuple[ResidualOperator, ...], Field(min_length=1, max_length=1)]
+ 
+@@ -53,13 +53,13 @@
+ 
+ 
+ DIAGNOSTIC_PLOT_OUTPUT = OutputPortSpec(
+-    name=PLOT_PORT, description="Optional task-local diagnostic images produced by the analysis tool.",
+-    kind="tool_evidence", schema="opaque", media_types=("image/png",),
++    name=PLOT_PORT, description="Optional tool-owned calculation records, details, images and declared analysis files.",
++    kind="tool_evidence", schema="opaque", media_types=("application/json", "image/png", "text/plain", "text/csv"),
+     codec=ComponentRef("opaque_codec", plugin_id="general_science"),
+     schema_resource=ComponentRef("opaque_schema", plugin_id="general_science"),
+     semantic_contract=ComponentRef("diagnosis_semantic_contract", plugin_id="curve_score"),
+-    min_items=0, max_items=MAX_PLOTS, max_item_bytes=1024 * 1024,
+-    collection=CollectionSpec(max_total_bytes=MAX_PLOTS * 1024 * 1024),
++    min_items=0, max_items=MAX_PLOTS, max_item_bytes=16 * 1024 * 1024,
++    collection=CollectionSpec(max_total_bytes=64 * 1024 * 1024),
+ )
+ 
+ DIAGNOSTIC_GUIDANCE = """
+@@ -70,7 +70,9 @@
+ not another stage or a required check. They use the same sources/comparison_spec
+ format as scoring, with one comparison, one residual operator and 2-257 samples
+ per call. No curve contract or new independent review is needed.
+-Preserve the returned record in calculation_records; cite calculation_records:<record_key>.
++Use record.calculation_ref as an evidence locator; the full record and receipt
++are already retained. Do not copy them into calculation_records. Full residual
++traces and segments are retained separately under the returned details alias/path.
+ Read returned images with native view_image when useful; the images
+ are read-only task-local previews; their registered evidence is sealed with this Run.
+ A residual segment boundary is not a gradient change point or a physical interface.
+@@ -84,7 +86,7 @@
+ 
+ def record_metric_report(record: CalculationRecord) -> CurveConsistencyReport:
+     result = record.result
+-    if record.algorithm_version == ALGORITHM_VERSION:
++    if record.algorithm_version in {"analysis-curve-diagnostics.v1", ALGORITHM_VERSION}:
+         result = result["metric_report"]
+     return CurveConsistencyReport.model_validate_json(canonical_json(result), strict=True)
+ 
+@@ -114,7 +116,7 @@
+     are identical for both operations.
+     """
+     deadline = time.monotonic() + context.remaining_seconds / 2
+-    sources, images, diagnostics = {}, [], ()
++    sources, images, diagnostics, details = {}, [], (), None
+     base = dict(record_key=request.record_key, request=request.request.raw_request,
+                 input_digests={}, algorithm_version=ALGORITHM_VERSION)
+     try:
+@@ -147,20 +149,20 @@
+                 name = f"curve_{hashlib.sha256(raw).hexdigest()}.png"
+                 item["plot_item"] = name
+                 plots.append((name, raw))
+-            record = CalculationRecord(**base, status="computed", result={
+-                "metric_report": score.result, "localization": localization,
+-            })
+-            if len(record.canonical_json()) > MAX_RECORD_BYTES:
+-                raise ScoreLimitError("diagnostic_record_byte_limit")
++            raw_details = canonical_json({"metric_report": score.result, "localization": localization})
++            if len(raw_details) > MAX_DETAILS_BYTES:
++                raise ScoreLimitError("diagnostic_details_byte_limit")
++            details = publish_analysis_file(context, raw_details, media_type="application/json",
++                kind="calculation_details", sources=tuple(sources), suffix=".json",
++                metadata={"record_key": request.record_key, "algorithm_version": ALGORITHM_VERSION})
+             for name, raw in plots:
+                 check_deadline(deadline)
+                 images.append(_publish_plot(context, name, raw, tuple(sources)))
+             record = CalculationRecord(**base, status="computed", result={
+-                **record.result,
++                "metric_report": score.result,
++                "details_alias": details["evidence_alias"],
+                 "images": [{k: v for k, v in image.items() if k != "path"} for image in images],
+             })
+-            if len(record.canonical_json()) > MAX_RECORD_BYTES:
+-                raise ScoreLimitError("diagnostic_record_byte_limit")
+         check_deadline(deadline)
+     except (TimeoutError, ScoreLimitError, UnsupportedSourceError, ValueError, OSError, WorkspaceError) as error:
+         status = "error" if isinstance(error, (TimeoutError, ScoreLimitError, OSError, WorkspaceError)) else "unavailable"
+@@ -172,6 +174,7 @@
+         diagnostics = (contract_diagnostic(reason, phase="tool_execution",
+             affected_action="tool_call", message=str(error)[:1000] or reason),)
+         images = []
++        details = None
+     response = record.model_dump(mode="json", exclude={"attempt", "diagnostics"})
+     if record.status != "computed" and not diagnostics:
+         diagnostics = (contract_diagnostic(record.reason_code or record.status,
+@@ -182,14 +185,14 @@
+         response=response, diagnostics=diagnostics,
+     )
+     if finished is not None:
+-        attempt, details = finished
+-        response.update(attempt=attempt, diagnostics=list(details))
+-    return {"record": response, "images": images}
++        attempt, attempt_diagnostics = finished
++        response.update(attempt=attempt, diagnostics=list(attempt_diagnostics))
++    return {"record": retain_calculation(context, response), "images": images, "details": details}
+ 
+ 
+ DIAGNOSTIC_TOOL = WorkerToolDefinition(
+     name="worker_curve_diagnose",
+-    description="Optionally localize one residual comparison using bound curves or explicit CSV columns. Returns record (retain in calculation_records) and task-local overlay/residual images (read with view_image). One operator, 2-257 samples; no curve contract or additional Run.",
++    description="Optionally localize one residual comparison using bound curves or explicit CSV columns. Cite record.calculation_ref; record and receipt are retained automatically. Full details (<=4 MiB) and overlay/residual images have saved evidence aliases and task-local paths. One operator, 2-257 samples; no curve contract or additional Run.",
+     input_model=DiagnosticInput, capability="analysis.curve_diagnose",
+     contextual_handler=run_diagnostic_tool, record_attempts=True,
+     evidence_ports=("tool_evidence", "recovery_manifest_output"),
+--- before/plugins/curve_score/curve_score/science_operations.py
++++ after/plugins/curve_score/curve_score/science_operations.py
+@@ -18,6 +18,8 @@
+ )
+ from .curve_contract_compiler import validate_compiled_curve_contract
+ from .diagnostic_tool import DIAGNOSTIC_GUIDANCE, DIAGNOSTIC_PLOT_OUTPUT, record_metric_report
++from .analysis_files import GUIDANCE as ANALYSIS_FILES_GUIDANCE
++from scidiscovery.artifact_agent.service.analysis_artifacts import analysis_calculations
+ from .schema import (
+     CurveBundle,
+     CurveComparisonSpec,
+@@ -283,7 +285,7 @@
+         operation_id, purpose, applies_when,
+         "Changing evidence, inventing unsupported metrics, or executing experiments.",
+         agent=ComponentRef("diagnosis_agent"), workspace=ComponentRef("workspace", plugin_id=_GENERAL_SCIENCE),
+-        prompt=ComponentRef(prompt), tools=BASE_TOOLS + (ComponentRef("analysis_score_tool"), ComponentRef("analysis_diagnostic_tool")),
++        prompt=ComponentRef(prompt), tools=BASE_TOOLS + (ComponentRef("analysis_score_tool"), ComponentRef("analysis_diagnostic_tool"), ComponentRef("analysis_files_tool")),
+         native_view_image=True,
+         input_validation=InputValidationSpec(ComponentRef("diagnosis_inputs"), "science.diagnosis.history_inputs",
+             "Bind a structurally valid historical plan and its exact completed science.object.review.v1 scientific_review output, with matching plan parent and passing experiment_portfolio verdict. Results must have the exact plan parent. Historical review is evidence for analysis, not current authoring or execution authority."),
+@@ -310,8 +312,8 @@
+                 min_items=0, max_items=1, max_item_bytes=1024*1024,
+                 collection=CollectionSpec(max_total_bytes=1024*1024)), DIAGNOSTIC_PLOT_OUTPUT),
+         guards=(ComponentRef("diagnosis_identity"),), timeout=900,
+-        max_input_bytes=272 * 1024 * 1024, max_output_bytes=1152 * 1024 + 8 * 1024 * 1024,
+-        max_files=10, consequence="scientific",
++        max_input_bytes=272 * 1024 * 1024, max_output_bytes=1152 * 1024 + 64 * 1024 * 1024,
++        max_files=34, consequence="scientific",
+     ).model_copy(update={"version": "3"})
+ 
+ 
+@@ -545,7 +547,7 @@
+ def validate_analysis_report(diagnosis: LayeredDiagnosisReport, portfolio: ExperimentPortfolio,
+                              metric_report: CurveConsistencyReport | None = None, *,
+                              metric_spec: CurveComparisonSpec | None = None,
+-                             metric_alias: str = "metric_report") -> None:
++                             metric_alias: str = "metric_report", calculations=None) -> None:
+     """Check references to recorded work; the analyst owns scientific conclusions."""
+     del metric_alias
+     plans = tuple(item for item in portfolio.validation_plans
+@@ -555,9 +557,9 @@
+     assessment = diagnosis.objective_assessment
+     if assessment is not None and assessment.objective_key != portfolio.objective_key:
+         raise declared_violation("analysis objective differs from plan", path="$.objective_assessment")
+-    records = {item.record_key: item for item in diagnosis.calculation_records}
++    records = diagnosis.calculation_records if calculations is None else calculations
+     comparisons = set()
+-    for record in records.values():
++    for record in records:
+         if record.status == "computed":
+             report = record_metric_report(record)
+             comparisons.update(item.comparison_key for item in report.comparisons)
+@@ -567,8 +569,9 @@
+         if metric_spec is not None and metric_report.comparison_spec_sha256 != canonical_sha256(metric_spec):
+             raise declared_violation("metric report differs from its exact comparison specification")
+         comparisons.update(item.comparison_key for item in metric_report.comparisons)
++    inline_keys = {record.record_key for record in diagnosis.calculation_records}
+     for evidence in diagnosis.evidence:
+-        if evidence.locator.startswith("calculation_records:") and evidence.locator.split(":", 1)[1] not in records:
++        if evidence.locator.startswith("calculation_records:") and evidence.locator.split(":", 1)[1] not in inline_keys:
+             raise declared_violation("analysis references an unknown calculation", path="$.evidence")
+     if assessment is not None and not set(assessment.comparison_keys).issubset(comparisons):
+         raise declared_violation("objective assessment references an unknown comparison", path="$.objective_assessment")
+@@ -578,10 +581,11 @@
+     del handoff
+     diagnosis = LayeredDiagnosisReport.model_validate_json(canonical_json(payload), strict=True)
+     portfolio = parse_bound_json(ExperimentPortfolio, sources["experiment_plan"])
+-    for record in diagnosis.calculation_records:
++    calculations = analysis_calculations(diagnosis, sources)
++    for record in calculations:
+         calculation_sources(record, sources)
+     metric_report = parse_bound_json(CurveConsistencyReport, sources["metric_report"]) if "metric_report" in sources else None
+-    validate_analysis_report(diagnosis, portfolio, metric_report)
++    validate_analysis_report(diagnosis, portfolio, metric_report, calculations=calculations)
+     _validate_analysis_evidence(diagnosis, sources)
+ 
+ 
+@@ -723,12 +727,12 @@
+ Scoring is optional: worker_curve_score accepts explicit sources and comparison_spec.
+ Do not invent metric implementations, replace unsupported statistics with RMS, or
+ change methods after seeing results without recording analysis_method and method_changes.
+-Include only calculation records used in the report (at most eight, aggregate 96 KiB).
++Include evidence references only for calculations used in the report.
+ Use an independent evidence source_key for each cited item, with raw locator
+ input_alias or input_alias:detail. The bound alias supplies source identity;
+-source_references is optional and must agree if supplied. Use locator
+-calculation_records:record_key for calculations; their evidence source_key may
+-differ from the record_key. Preserve each returned attempt and its diagnostics.
++source_references is optional and must agree if supplied. Use the returned
++calculation_ref as locator for new calculations; their evidence source_key may
++differ from the record_key. Control retains their records and diagnostics.
+ Submission verifies controlled receipts without rerunning calculations. Do not copy
+ a calculation's source mappings into source_references; cite its record instead.
+ Unavailable/unsupported/error records explain limits and cannot support numeric success.
+@@ -738,11 +742,11 @@
+ result inconclusive while other evidence supports finite findings or a local objective.
+ A partial metric pass does not establish unperformed comparisons or overall closure.
+ Link computed operators to the selected plan using exact validation_check_key values,
+-and cite their calculation_records:record_key from the relevant gate evidence.
++and cite their saved calculation_ref from the relevant gate evidence.
+ Explain which planned checks were completed and how missing or failed checks limit each conclusion.
+ The reviewer assesses scientific sufficiency; submission does not derive the verdict from gate statuses.
+ The optional curve-error helper is never a required next stage.
+-""" + DIAGNOSTIC_GUIDANCE.format(diagnostic_tool="worker_curve_diagnose")
++""" + DIAGNOSTIC_GUIDANCE.format(diagnostic_tool="worker_curve_diagnose") + ANALYSIS_FILES_GUIDANCE
+ 
+ 
+ def _curve_diagnosis_schema() -> str:
+@@ -968,6 +972,7 @@
+         ComponentSpec("diagnosis_inputs", "validator", "curve_score.science_operations:Components.diagnosis_inputs", configuration_identity="historical-analysis-r2:v1"),
+         ComponentSpec("analysis_score_tool", "worker_tool", "curve_score.analysis_tool:CURVE_SCORE_TOOL"),
+         ComponentSpec("analysis_diagnostic_tool", "worker_tool", "curve_score.diagnostic_tool:DIAGNOSTIC_TOOL"),
++        ComponentSpec("analysis_files_tool", "worker_tool", "curve_score.analysis_files:TOOL", public=True),
+         ComponentSpec(
+             "diagnosis_validator",
+             "validator",
+--- before/plugins/tcad_artifact/tcad_artifact/result_analysis.py
++++ after/plugins/tcad_artifact/tcad_artifact/result_analysis.py
+@@ -21,6 +21,8 @@
+     run_diagnostic_tool,
+ )
+ from curve_score.science_operations import BASE_TOOLS, Components, validate_analysis_report
++from curve_score.analysis_files import GUIDANCE as ANALYSIS_FILES_GUIDANCE
++from scidiscovery.artifact_agent.service.analysis_artifacts import analysis_calculations
+ from scidiscovery.artifact_agent.operation_tool_context import OperationToolContext
+ from scidiscovery.artifact_agent.schema.common import Identifier, canonical_json
+ from scidiscovery.artifact_agent.schema.experiment import ExperimentPortfolio
+@@ -397,13 +399,14 @@
+         reference = references.get(evidence.source_key)
+         if evidence.locator not in descriptors or (reference is not None and evidence.locator != reference.input_alias):
+             raise declared_violation("TCAD evidence must use an exact bound input alias")
+-    for record in report.calculation_records:
++    calculations = analysis_calculations(report, sources)
++    for record in calculations:
+         from scidiscovery.artifact_agent.service.tool_evidence import calculation_sources
+         calculation_sources(record, sources)
+-    validate_analysis_report(report, plan)
++    validate_analysis_report(report, plan, calculations=calculations)
+ 
+ PROMPT = OPERATION_AGENT_PREAMBLE + """Analyze this exact TCAD execution in one Run.
+-Optionally use worker_tcad_inspect_outputs and worker_tcad_accept_output with the bound execution_result to inspect and collect original terminal products. These tools cannot run a solver or edit files. Missing services or ambiguous correspondence permit a limited report. State mapping reasons; a successful collection is not scientific success. Tool-returned evidence aliases and the updated schema/result.schema.json may be used in source_references and scoring in this same Run. Tool evidence is acquired runtime evidence, not a changed startup input. Up to 32 evidence files, 32 MiB each, 256 MiB total, 120s I/O within the Run budget. A declaration/source correction goes back to author; do not alter the scientific task. Old aggregate 97 does not establish solver success: use explicit solver status when present and cite actual step evidence and uncertainty when absent.
++Optionally use worker_tcad_inspect_outputs and worker_tcad_accept_output with the bound execution_result to inspect and collect original terminal products. These tools cannot run a solver or edit files. Missing services or ambiguous correspondence permit a limited report. State mapping reasons; a successful collection is not scientific success. Tool-returned evidence aliases and the updated schema/result.schema.json may be used in source_references and scoring in this same Run. Tool evidence includes recovered original files and identified analysis derivatives; it does not change startup inputs. Up to 32 evidence files, 32 MiB each, 256 MiB total, 120s I/O within the Run budget. A declaration/source correction goes back to author; do not alter the scientific task. Old aggregate 97 does not establish solver success: use explicit solver status when present and cite actual step evidence and uncertainty when absent.
+ Return LayeredDiagnosisReport in the declared RoleResultEnvelope. Read bound raw
+ files and logs; scoring is optional. The diagnostics port contains controlled runner
+ logs; solver_outputs contains manifest-declared products. Diagnostics may support
+@@ -421,8 +424,8 @@
+ conclusion; this does not independently establish scientific sufficiency. Original
+ declared cases cannot be overridden. Global logs need no single case mapping.
+ Do not infer case from filenames or matching bytes. A calculation evidence item
+-uses the computed record_key as source_key and calculation_records:<record_key>
+-as locator. Unsupported/error records are limits,
++uses the returned calculation_ref as locator and a scientific source_key of your
++choice. Unsupported/error records are limits,
+ not evidence of success. Never claim an unbound output was read.
+ Optionally call worker_tcad_curve_score with record_key and request containing
+ comparison_spec and sources. Each source mapping supplies input_alias, format,
+@@ -430,26 +433,24 @@
+ explicit dataset_name; output_name and experiment_key need not repeat an identity
+ already declared by the bound project. Log mappings use format sprocess_log. CSV mappings use format csv
+ and explicit x_column/y_column. Formats sprocess_plx and sprocess_log use the
+-existing TCAD parsers; no curve contract or prebound bundle is needed. Keep the
+-returned records in calculation_records, at most 8, including the supplied attempt
+-and diagnostics. A rejected request may be reported as unavailable/error with its
+-actual code/phase and attempt; it does not establish an unsupported data format.
++existing TCAD parsers; no curve contract or prebound bundle is needed. Cite the
++returned calculation_ref as an evidence locator; control saves the full record,
++attempt and diagnostics. Do not copy them into calculation_records. For a rejected
++request, cite tool_recovery_manifest and explain its actual error; it does not
++establish an unsupported data format or require a manually written calculation record.
+ Use current input aliases for new calls. assignment.json prior_source_bindings
+ maps old aliases for reference; it never adds old aliases to the current namespace.
+ For historical calculations, bind prior_analysis and its own manifest. If that
+ manifest is also the original recovery_manifest, bind it once there; otherwise
+-use prior_analysis_manifest and recovery_manifest separately. Retain the historical
+-request unchanged and refer to its proof's current manifest alias in attempt.
+-For a controlled failed-Run draft containing tool-evidence.json, retain the original
+-attempt and set proof_kind=recovery with manifest_alias=tool_recovery_manifest.
+-This proves the prior engineering attempt, not a current computation. A later Run
+-uses the paired prior manifest alias while retaining proof_kind=recovery.
++use prior_analysis_manifest and recovery_manifest separately. Cite the saved
++calculation file's current alias; control handles the historical receipt.
++Preserved files from a failed Run remain engineering history, not a new computation.
+ Match each operator
+ validation_check_key to the exact selected plan check; document any changed method
+ and resulting conclusion limits in analysis_method and method_changes. Submission verifies
+ the controlled calculation receipt and exact output references; it does not rerun scoring.
+ Do not use unavailable quantitative comparisons as successful objective evidence.
+-""" + DIAGNOSTIC_GUIDANCE.format(diagnostic_tool="worker_tcad_curve_diagnose")
++""" + DIAGNOSTIC_GUIDANCE.format(diagnostic_tool="worker_tcad_curve_diagnose") + ANALYSIS_FILES_GUIDANCE
+ SEMANTIC_CONTRACT = scientific_semantic_contract(
+     "tcad.result_analysis", "Scoring is optional and occurs after execution.",
+     context_constraint="The report must identify the bound plan and use exact input aliases for solver claims. Calculation records must match their controlled receipts or exact sealed historical records; no repeated source mapping or scoring is required at submission. Missing products and failed execution limit claims, not submission of a limited report.",
+@@ -460,12 +461,13 @@
+ CONTEXT = CallableComponent("validator", analysis_context)
+ INPUT_VALIDATOR = CallableComponent("validator", validate_analysis_inputs)
+ TOOL = WorkerToolDefinition(
+-    name="worker_tcad_curve_score", description="Optionally parse bound TCAD PLX/log and explicit CSV columns, then score in this analysis Run. Returns a replayable bounded record.",
++    name="worker_tcad_curve_score", description="Optionally parse bound TCAD PLX/log and explicit CSV columns, then score in this analysis Run. Cite calculation_ref; control saves the record and receipt.",
+     input_model=TCADScoreInput, capability="tcad.analysis.curve_score", contextual_handler=tcad_score_tool, record_attempts=True,
++    evidence_ports=("tool_evidence", "recovery_manifest_output"),
+ )
+ DIAGNOSTIC_TOOL = WorkerToolDefinition(
+     name="worker_tcad_curve_diagnose",
+-    description="Optionally localize one residual comparison from bound PLX/log/CSV sources. Returns record (retain in calculation_records) and task-local overlay/residual images (read with view_image). One operator, 2-257 samples; no curve contract or additional Run.",
++    description="Optionally localize one residual comparison from bound PLX/log/CSV sources. Cite record.calculation_ref; full details (<=4 MiB) and images have saved evidence aliases and task-local paths. One operator, 2-257 samples; no curve contract or additional Run.",
+     input_model=TCADDiagnosticInput, capability="tcad.analysis.curve_diagnose",
+     contextual_handler=tcad_diagnostic_tool, record_attempts=True,
+     evidence_ports=("tool_evidence", "recovery_manifest_output"),
+@@ -524,7 +526,7 @@
+     "An exact reviewed plan, package and terminal execution manifest exist, including failed runs.",
+     "Solver execution, mandatory pre-experiment curve contracts, or changing raw evidence.",
+     agent=_ref("result_analysis_agent"), workspace=_ref("workspace", "general_science"),
+-    prompt=_ref("result_analysis_prompt"), tools=(*BASE_TOOLS, _ref("result_analysis_score_tool"), _ref("result_analysis_diagnostic_tool"), _ref("analysis_inspect_tool"), _ref("analysis_accept_tool")),
++    prompt=_ref("result_analysis_prompt"), tools=(*BASE_TOOLS, _ref("result_analysis_score_tool"), _ref("result_analysis_diagnostic_tool"), _ref("analysis_files_tool", "curve_score"), _ref("analysis_inspect_tool"), _ref("analysis_accept_tool")),
+     native_view_image=True,
+     input_validation=InputValidationSpec(validator=_ref("result_analysis_input"),
+         rule_id="tcad.result_analysis.input_binding",
+@@ -539,7 +541,7 @@
+         max_item_bytes=128*1024, semantic_contract=_ref("result_analysis_semantic"),
+         validator_rule_id="tcad.result_analysis.payload_consistency",
+         context_rule_id="tcad.result_analysis.context_binding",
+-    ), OutputPortSpec(name='tool_evidence', description='Original runtime bytes accepted by registered tools only.', schema='opaque', media_types=('*/*',), codec=_ref('opaque_codec','general_science'), schema_resource=_ref('opaque_schema','general_science'), kind='tool_evidence', min_items=0, max_items=32, max_item_bytes=32*1024*1024, collection=CollectionSpec(max_total_bytes=256*1024*1024)),
++    ), OutputPortSpec(name='tool_evidence', description='Tool-retained original runtime files, calculation records and declared analysis derivatives.', schema='opaque', media_types=('*/*',), codec=_ref('opaque_codec','general_science'), schema_resource=_ref('opaque_schema','general_science'), kind='tool_evidence', min_items=0, max_items=32, max_item_bytes=32*1024*1024, collection=CollectionSpec(max_total_bytes=256*1024*1024)),
+     OutputPortSpec(name='recovery_manifest_output', description='Service-generated immutable evidence receipts and source mappings.', schema='scidiscovery.tool-evidence-manifest.v1',media_types=('application/json',),codec=_ref('json_codec','general_science'),schema_resource=_ref('analysis_recovery_schema'),kind='tool_evidence_manifest',min_items=0,max_items=1,max_item_bytes=1024*1024,collection=CollectionSpec(max_total_bytes=1024*1024))), guards=(_ref("result_analysis_parentage"),), timeout=900, max_attempts=2,
+     max_input_bytes=512*1024*1024, max_output_bytes=257*1024*1024+128*1024, max_files=34,
+ ),)
+--- before/src/scidiscovery/artifact_agent/schema/layered_diagnosis.py
++++ after/src/scidiscovery/artifact_agent/schema/layered_diagnosis.py
+@@ -116,10 +116,12 @@
+     reason_code: Identifier | None = None
+     attempt: CalculationAttemptReference | None = None
+     diagnostics: tuple[ContractDiagnostic, ...] = Field(default=(), max_length=8)
++    calculation_ref: Identifier | None = Field(default=None, exclude=True,
++        description="Tool-returned evidence alias. Cite this alias in evidence; control retains the complete record. Optional transport hint, excluded from calculation identity.")
+ 
+     @model_validator(mode="after")
+     def _bounded_status(self) -> CalculationRecord:
+-        if len(canonical_json(self)) > 32 * 1024:
++        if len(canonical_json(self.model_dump(mode="json"))) > 32 * 1024:
+             raise ValueError("calculation record exceeds 32 KiB")
+         if self.status == "computed":
+             if self.result is None or self.reason_code is not None:
+@@ -180,7 +182,8 @@
+     remaining_contradiction: Annotated[str, Field(min_length=1, max_length=8192)]
+     next_action: Annotated[str, Field(min_length=1, max_length=4096)]
+     recommended_task_mode: RecommendedTaskMode | None = None
+-    calculation_records: Annotated[tuple[CalculationRecord, ...], Field(max_length=8)] = ()
++    calculation_records: Annotated[tuple[CalculationRecord, ...], Field(max_length=8)] = Field(default=(),
++        description="Legacy inline calculation records remain readable. For new tool results, cite calculation_ref in evidence instead; tools retain records and receipts automatically.")
+     analysis_method: Annotated[str, Field(min_length=1, max_length=4096)] | None = None
+     method_changes: Annotated[tuple[str, ...], Field(max_length=16)] = ()
+ 
+@@ -206,7 +209,7 @@
+     record_keys = tuple(item.record_key for item in report.calculation_records)
+     if len(record_keys) != len(set(record_keys)):
+         issue("/calculation_records", "calculation record keys must be unique")
+-    if sum(len(canonical_json(item)) for item in report.calculation_records) > 96 * 1024:
++    if sum(len(canonical_json(item.model_dump(mode="json"))) for item in report.calculation_records) > 96 * 1024:
+         issue("/calculation_records", "calculation records exceed report byte budget")
+     source_keys = tuple(item.source_key for item in report.evidence)
+     if len(source_keys) != len(set(source_keys)):
+--- before/src/scidiscovery/artifact_agent/service/tool_evidence.py
++++ after/src/scidiscovery/artifact_agent/service/tool_evidence.py
+@@ -367,6 +367,8 @@
+                 parent_refs=tuple(parent_refs),
+                 labels={'operation_id':value.operation_id,'operation_digest':value.operation_digest,'operation_version':value.operation_version,
+                         'operation_output_port':'tool_evidence','tool_name':tool_name,'tool_producer_run':run_id,
++                        **({'analysis_artifact_kind':metadata['kind']} if metadata.get('kind') in
++                           {'calculation_record', 'calculation_details', 'analysis_script', 'analysis_derived'} else {}),
+                         **({'logical_name':metadata['output_name']} if metadata.get('output_name') else {})},confidentiality='run_private'),
+                 idempotency_key=f'run:{run_id}:tool:{key}').ref
+             record={'alias':alias,'artifact_ref':artifact.model_dump(mode='json'),'source_ref':source_ref.model_dump(mode='json'),
+@@ -501,11 +503,12 @@
+             return
+         original=next((i.artifact_ref for i in source.inputs if i.port_name=='execution_result'),None)
+         current=next((i.artifact_ref for i in value.inputs if i.port_name=='execution_result'),None)
+-        if original is None or original!=current or source.instance_id!=value.instance_id:
++        if source.instance_id!=value.instance_id:
+             raise RunCheckerError('preserved tool evidence belongs to another execution',category='integrity_failure')
+         port = tool_evidence_ports(self._compiled(value)).get('tool_evidence')
+         if port is None or len(previous) > port.max_items or sum(r['size_bytes'] for r in previous) > port.collection.max_total_bytes:
+             raise RunCheckerError('preserved evidence exceeds this operation capability',category='integrity_failure')
++        available_refs = {item.artifact_ref for item in value.inputs}
+         for record in previous:
+             ref=ArtifactRef.model_validate(record['artifact_ref'])
+             try:
+@@ -514,7 +517,13 @@
+                 raise RunCheckerError('preserved evidence bytes unavailable', category='integrity_failure') from error
+             if hashlib.sha256(raw).hexdigest()!=ref.sha256:
+                 raise RunCheckerError('preserved evidence bytes changed',category='integrity_failure')
+-            if len(raw) > port.max_item_bytes or record['source_ref'] != original.model_dump(mode='json'):
++            derived = record['metadata'].get('derived_from', ())
++            if derived:
++                parents = tuple(self.source_descriptor(source, alias).artifact_ref for alias in derived)
++                origin_matches = all(ref in available_refs for ref in parents) and record['source_ref'] == parents[0].model_dump(mode='json')
++            else:
++                origin_matches = original is not None and original == current and record['source_ref'] == original.model_dump(mode='json')
++            if len(raw) > port.max_item_bytes or not origin_matches:
+                 raise RunCheckerError('preserved evidence receipt differs from its origin',category='integrity_failure')
+             if record['alias'] in {item.source_name for item in value.inputs}:
+                 raise RunCheckerError('preserved evidence alias conflicts with current input',category='integrity_failure')
+@@ -531,10 +540,12 @@
+                 if found:
+                     if json.loads(found[0]) != record:
+                         raise RunCheckerError('preserved receipt conflicts with current receipt',category='integrity_failure')
++                    available_refs.add(ref)
+                     continue
+                 ordinal = connection.execute('SELECT COUNT(*) FROM run_tool_evidence WHERE run_id=?',(run_id,)).fetchone()[0]+1
+                 connection.execute('INSERT INTO run_tool_evidence VALUES (?,?,?,?,?)',
+                     (run_id,ordinal,key,canonical_json(record),record['alias']))
++            available_refs.add(ref)
+ 
+     def validation_source_ports(self, value):
+         """Expected source wiring comes from bindings/receipts, never descriptors."""
+--- before/tests/operations/test_analysis_diagnostic_tool.py
++++ after/tests/operations/test_analysis_diagnostic_tool.py
+@@ -53,7 +53,7 @@
+     assert record["status"] == "computed", value
+     assert record["attempt"]["manifest_alias"] == "tool_recovery_manifest"
+     assert record["attempt"]["attempt_key"]
+-    localization = record["result"]["localization"]["analyses"][0]
++    localization = json.loads(Path(value["details"]["path"]).read_text())["localization"]["analyses"][0]
+     assert len(localization["residual_trace"]) == request["comparison_spec"]["comparisons"][0]["evaluation_points"]
+     assert localization["segments"] and value["images"]
+     image = value["images"][0]
+@@ -90,7 +90,7 @@
+         record_key="detail", request=request_for_diagnostic(score_inputs()[1])))
+     record = value["record"]
+     assert record["status"] == "computed", value
+-    record["result"]["localization"]["analyses"][0]["segments"][0]["mean_signed_error"] += 1
++    record["result"]["metric_report"]["comparisons"][0]["metrics"][0]["value"] += 1
+     report = limited_report()
+     report["source_references"] = []
+     report["calculation_records"] = [record]
+--- before/tests/operations/test_analysis_evidence_recovery.py
++++ after/tests/operations/test_analysis_evidence_recovery.py
+@@ -61,7 +61,7 @@
+     submitted=worker.call_tool('worker_submit_result',{})
+     assert submitted['state']=='completed',submitted
+     status=system[2].call_tool('run_status',{'name':'analysis'})
+-    assert len(status['evidence_outputs'])==3
++    assert len(status['evidence_outputs'])==4  # inspection, accepted raw file, calculation, manifest
+     assert status['sealed_output']['payload']['calculation_records']==[record]
+     assert (directory/'work/A_actual.plx').exists()
+ 
+@@ -115,8 +115,8 @@
+     submitted=next_worker.call_tool('worker_submit_result',{})
+     assert submitted['state']=='completed',submitted
+     second_status=root.call_tool('run_status', {'name':'next_analysis'})
+-    assert len(second_status['evidence_outputs'])==1
+-    assert json.loads(runtime.runs._evidence_snapshot(next_worker._run_id))['records']==[]
++    assert len(second_status['evidence_outputs'])==2  # saved calculation and manifest
++    assert [item['metadata']['kind'] for item in json.loads(runtime.runs._evidence_snapshot(next_worker._run_id))['records']]==['calculation_record']
+     # C needs B's calculation proof and A's original collection proof separately.
+     third=deepcopy(request);third['name']='third_analysis'
+     next(i for i in third['inputs'] if i['port']=='prior_analysis')['artifact_names']=['next_analysis.output']
+--- before/tests/operations/test_analysis_tool_installed.py
++++ after/tests/operations/test_analysis_tool_installed.py
+@@ -94,6 +94,7 @@
+ assert "curve_contract" not in ports
+ assert "worker_curve_score" in operation_local_worker_tool_names(generic)
+ assert "worker_curve_diagnose" in operation_local_worker_tool_names(generic)
++assert "worker_analysis_publish_files" in operation_local_worker_tool_names(generic)
+ operations = [generic, catalog.operation("science.result.diagnose.curve-error.v1")]
+ if environment == "curve":
+     assert importlib.util.find_spec("tcad_artifact") is None
+@@ -111,6 +112,7 @@
+     assert "curve_bundle" not in domain_ports and "metric_report" not in domain_ports
+     assert "worker_tcad_curve_score" in operation_local_worker_tool_names(domain)
+     assert "worker_tcad_curve_diagnose" in operation_local_worker_tool_names(domain)
++    assert "worker_analysis_publish_files" in operation_local_worker_tool_names(domain)
+     from scidiscovery.platforms.codex import _operation_runtime_plugin_configs
+     configured = {"tcad_artifact": Path("/fixture/tcad.json")}
+     assert _operation_runtime_plugin_configs(domain, configured) == tuple(configured.items())
+@@ -164,6 +166,7 @@
+     installed_probe("curve", "bundle_bytes = " + repr(inputs["curve_bundle"]) +
+                     "\nrequest = " + repr(request) + r'''
+ import importlib.util
++import json
+ import sys
+ import tempfile
+ from pathlib import Path
+@@ -179,6 +182,7 @@
+     workspace = Path(tempfile.mkdtemp(prefix="installed-diagnostic-"))
+     output_directory = workspace / "output"
+     output_collections = ("tool_evidence", "recovery_manifest_output")
++    saved = {}
+     def finish_attempt(self, **values):
+         return None
+     def read_evidence(self, alias):
+@@ -186,11 +190,14 @@
+         return bundle_bytes
+     def accept_evidence(self, **values):
+         assert values["derived_from"] == ("curve_bundle",)
+-        assert values["media_type"] == "image/png"
+-        return {"alias": "tool_evidence_001"}
++        assert values["media_type"] in {"image/png", "application/json"}
++        alias = f"tool_evidence_{len(self.saved) + 1:03d}"
++        self.saved[alias] = values["raw"]
++        return {"alias": alias}
+ record = tool.contextual_handler(tool.input_model(record_key="installed", request=request), Context())
+ assert record["status"] == "computed", record
+ assert record["result"]["aggregate_status"] == "fail"
++assert json.loads(Context.saved[record["calculation_ref"]])["request"] == request
+ replay_calculation(CalculationRecord.model_validate(record), {"curve_bundle": bundle_bytes})
+ diagnostic_tool = next(t for t in operation_worker_tools(compiled) if t.name == "worker_curve_diagnose")
+ request["comparison_spec"]["comparisons"] = request["comparison_spec"]["comparisons"][:1]
+@@ -198,7 +205,8 @@
+ request["comparison_spec"]["comparisons"][0]["evaluation_points"] = 65
+ diagnostic = diagnostic_tool.contextual_handler(diagnostic_tool.input_model(record_key="installed_diagnostic", request=request), Context())
+ assert diagnostic["record"]["status"] == "computed", diagnostic
+-assert diagnostic["record"]["result"]["localization"]["analyses"][0]["residual_trace"]
++assert json.loads(Path(diagnostic["details"]["path"]).read_bytes())["localization"]["analyses"][0]["residual_trace"]
++assert diagnostic["record"]["calculation_ref"] in Context.saved
+ assert Path(diagnostic["images"][0]["path"]).read_bytes().startswith(b"\x89PNG")
+ assert not any(name.startswith("tcad_artifact") for name in sys.modules)
+ print("installed generic score and residual diagnostic run without TCAD")
+--- before/tests/operations/test_result_analysis_tool.py
++++ after/tests/operations/test_result_analysis_tool.py
+@@ -295,7 +295,7 @@
+     assert record.request['comparison_spec']['comparisons'][0]['operators'][0]['threshold']['value'] == 100.0
+ 
+ 
+-def test_deadline_stops_reading_more_inputs_and_error_can_be_replayed(monkeypatch):
++def test_deadline_stops_reading_more_inputs_and_error_can_be_replayed(monkeypatch, tmp_path):
+     from types import SimpleNamespace
+     import curve_score.analysis_tool as tool
+     clock = [0.0]
+@@ -308,7 +308,8 @@
+         clock[0] = 6.0
+         return sources['curve_bundle']
+     raw = tool.score_tool(AnalysisScoreInput.model_validate_json(canonical_json(dict(record_key='timed', request=request))),
+-        SimpleNamespace(remaining_seconds=10, read_evidence=read, finish_attempt=lambda **kwargs: None))
++        SimpleNamespace(remaining_seconds=10, read_evidence=read, finish_attempt=lambda **kwargs: None,
++            workspace=tmp_path, accept_evidence=lambda **kwargs: {'alias': 'tool_evidence_001'}))
+     record = CalculationRecord.model_validate_json(canonical_json(raw))
+     assert record.status == 'error' and record.result is None
+     assert reads == ['curve_bundle']
+--- before/tests/operations/test_score_request_contract.py
++++ after/tests/operations/test_score_request_contract.py
+@@ -89,7 +89,7 @@
+     assert diagnostic['message'] == 'Value must be at most 4096.'
+ 
+ 
+-def test_supported_log_and_linear_metrics_have_independent_known_values():
++def test_supported_log_and_linear_metrics_have_independent_known_values(tmp_path):
+     sources, request = score_inputs()
+     bundle = json.loads(sources['curve_bundle'])
+     for series in bundle['series']:
+@@ -104,7 +104,8 @@
+                    for space in ('linear', 'log10')])]
+     parsed = AnalysisScoreInput.model_validate_json(canonical_json(dict(record_key='known', request=request)))
+     record = score_tool(parsed, SimpleNamespace(remaining_seconds=30,
+-        read_evidence=sources.__getitem__, finish_attempt=lambda **kwargs: None))
++        read_evidence=sources.__getitem__, finish_attempt=lambda **kwargs: None,
++        workspace=tmp_path, accept_evidence=lambda **kwargs: {'alias': 'tool_evidence_001'}))
+     assert record['status'] == 'computed', record
+     metrics = record['result']['comparisons'][0]['metrics']
+     assert {item['operator_key']: item['value'] for item in metrics} == {'linear': 900.0, 'log10': 1.0}
+@@ -156,7 +157,7 @@
+ 
+ 
+ @pytest.mark.parametrize('explicit_defaults', [False, True])
+-def test_generic_tool_uses_defaults_without_rewriting_the_raw_receipt(explicit_defaults):
++def test_generic_tool_uses_defaults_without_rewriting_the_raw_receipt(explicit_defaults, tmp_path):
+     sources, request = score_inputs()
+     comparison = request['comparison_spec']['comparisons'][0]
+     comparison.pop('evaluation_points')
+@@ -166,7 +167,8 @@
+     parsed = AnalysisScoreInput.model_validate_json(canonical_json(dict(record_key='score', request=request)))
+     assert parsed.request.comparison_spec.comparisons[0].evaluation_points == 257
+     response = score_tool(parsed, SimpleNamespace(remaining_seconds=60,
+-        read_evidence=sources.__getitem__, finish_attempt=lambda **kwargs: None))
++        read_evidence=sources.__getitem__, finish_attempt=lambda **kwargs: None,
++        workspace=tmp_path, accept_evidence=lambda **kwargs: {'alias': 'tool_evidence_001'}))
+     assert response['status'] == 'computed'
+     assert response['request'] == original
+     record = CalculationRecord.model_validate_json(canonical_json(response))
+--- /dev/null
++++ after/src/scidiscovery/artifact_agent/service/analysis_artifacts.py
+@@ -0,0 +1,78 @@
++"""Tool-owned analysis files and reference-only consumption of their receipts."""
++from __future__ import annotations
++
++import hashlib
++import json
++from pathlib import Path
++
++from ...operation_contract import declared_violation
++from ...operations.input_validation import prior_analysis_sources
++from ..schema.common import canonical_json
++from ..schema.layered_diagnosis import CalculationRecord
++from .local_workspace import write_control_workspace_file
++
++
++def publish_analysis_file(context, raw, *, media_type, kind, sources, suffix, metadata=None):
++    """Register immutable bytes first; expose only a task-local preview path."""
++    accepted = context.accept_evidence(raw=raw, media_type=media_type, derived_from=tuple(sources),
++        metadata={**(metadata or {}), "kind": kind})
++    digest = hashlib.sha256(raw).hexdigest()
++    path = write_control_workspace_file(context.workspace,
++        Path(".operation-tools/analysis") / (digest + suffix), raw,
++        replace=False, mode=0o400, create_parents=True)
++    return {"evidence_alias": accepted["alias"], "path": str(path), "sha256": digest}
++
++
++def retain_calculation(context, response):
++    """Keep the existing tool reply readable, but remove the need to copy it.
++
++    The complete record is a tool output. The added alias is a transport hint,
++    excluded by CalculationRecord from receipt identity and historical replay.
++    """
++    record = CalculationRecord.model_validate_json(canonical_json(response))
++    saved = publish_analysis_file(context, canonical_json(record.model_dump(mode="json")), media_type="application/json",
++        kind="calculation_record", sources=tuple(record.input_digests) or ("experiment_plan",),
++        suffix=".json", metadata={"record_key": record.record_key})
++    return {**response, "calculation_ref": saved["evidence_alias"]}
++
++
++def analysis_calculations(report, sources):
++    """Resolve cited tool records without changing scientific output or rerunning tools.
++
++    Old inline reports retain their exact validation path. New reports cite a
++    current registered file, or an explicitly bound file from their paired prior
++    analysis. Provenance and the existing calculation receipt are both checked.
++    """
++    records = list(report.calculation_records)
++    descriptors = getattr(sources, "binding_descriptors", {})
++    current_raw = getattr(sources, "tool_snapshot", None)
++    current_proof = json.loads(current_raw) if current_raw else {}
++    current = current_proof.get("records", ())
++    for evidence in report.evidence:
++        alias = evidence.locator
++        descriptor = descriptors.get(alias)
++        if descriptor is None or dict(descriptor.labels).get("analysis_artifact_kind") != "calculation_record":
++            continue
++        record = CalculationRecord.model_validate_json(sources[alias])
++        is_current = any(item["alias"] == alias and item["artifact_ref"] == descriptor.artifact_ref.model_dump(mode="json")
++                         for item in current)
++        proof = current_proof
++        if not is_current:
++            prior = prior_analysis_sources(sources)
++            if prior is None:
++                raise declared_violation("historical calculation reference needs its paired prior analysis manifest", path="$.evidence")
++            proof = json.loads(sources[prior["manifest_alias"]])
++            if not any(item["artifact_ref"] == descriptor.artifact_ref.model_dump(mode="json")
++                       for item in proof.get("records", ())):
++                raise declared_violation("calculation reference is not in the paired prior manifest", path="$.evidence")
++            if record.attempt is not None:
++                record = record.model_copy(update={"attempt": record.attempt.model_copy(
++                    update={"manifest_alias": prior["manifest_alias"]})})
++        recovery = proof.get("recovery") or {}
++        if record.attempt is not None and any(binding["artifact_ref"] == descriptor.artifact_ref.model_dump(mode="json")
++                for binding in recovery.get("bindings", {}).values()):
++            record = record.model_copy(update={"attempt": record.attempt.model_copy(update={"proof_kind": "recovery"})})
++        # Saved files have distinct artifact identities. Their human-chosen
++        # record names need not form another namespace across calls or Runs.
++        records.append(record)
++    return tuple(records)
+--- /dev/null
++++ after/plugins/curve_score/curve_score/analysis_files.py
+@@ -0,0 +1,99 @@
++"""Preserve Agent-authored analysis scripts and derived files in the same Run."""
++from pathlib import Path
++from typing import Annotated, Literal
++
++from pydantic import BaseModel, ConfigDict, Field
++
++from scidiscovery.artifact_agent.service.analysis_artifacts import publish_analysis_file
++from scidiscovery.artifact_agent.service.local_workspace import WorkspaceError, read_control_workspace_file
++from scidiscovery.operation_contract import DiagnosticError, contract_diagnostic
++from scidiscovery.operations.tooling import WorkerToolDefinition
++
++MAX_FILE_BYTES = 16 * 1024 * 1024
++MAX_TOTAL_BYTES = 32 * 1024 * 1024
++
++
++class AnalysisFile(BaseModel):
++    model_config = ConfigDict(extra="forbid")
++    path: str = Field(description="Relative regular file below the opened Run's scratch/ directory; no symlinks.")
++    media_type: Literal["text/csv", "application/json", "text/plain", "image/png"]
++
++
++class PublishAnalysisFiles(BaseModel):
++    model_config = ConfigDict(extra="forbid")
++    source_aliases: Annotated[tuple[str, ...], Field(min_length=1, max_length=40)]
++    script_path: str = Field(description="Relative UTF-8 analysis script below scratch/. Saved with its declared inputs and outputs; publication does not attest execution.")
++    files: Annotated[tuple[AnalysisFile, ...], Field(min_length=1, max_length=8)]
++    method: Annotated[str, Field(min_length=1, max_length=1024,
++        description="Short scientific method summary; full procedure belongs in the saved script and report.")]
++
++
++def publish_files(request, context):
++    """Seal declared local bytes, not a claim that the script was executed."""
++    try:
++        sources = tuple(dict.fromkeys(request.source_aliases))
++        for alias in sources:
++            context.source_descriptor(alias)
++        def read(name, limit):
++            path = Path(name)
++            if path.is_absolute() or not path.parts or path.parts[0] != "scratch":
++                raise ValueError("analysis files must be below scratch/")
++            return read_control_workspace_file(context.workspace, path, max_bytes=limit)
++        script = read(request.script_path, 1024 * 1024)
++        script.decode("utf-8")
++        # Admit the whole local byte set before registering any file.
++        files = []
++        total = len(script)
++        for item in request.files:
++            raw = read(item.path, min(MAX_FILE_BYTES, MAX_TOTAL_BYTES - total))
++            total += len(raw)
++            if item.media_type != "image/png":
++                raw.decode("utf-8")
++            files.append((item, raw))
++        saved_script = publish_analysis_file(context, script, media_type="text/plain",
++            kind="analysis_script", sources=sources, suffix=".py" if request.script_path.endswith(".py") else ".txt",
++            metadata={"method": request.method, "execution_proof": "agent_reported", "file_name": Path(request.script_path).name})
++        outputs = []
++        for item, raw in files:
++            suffix = {"text/csv": ".csv", "application/json": ".json", "text/plain": ".txt", "image/png": ".png"}[item.media_type]
++            saved = publish_analysis_file(context, raw, media_type=item.media_type,
++                kind="analysis_derived", sources=(*sources, saved_script["evidence_alias"]), suffix=suffix,
++                metadata={"script_alias": saved_script["evidence_alias"], "method": request.method,
++                          "execution_proof": "agent_reported", "file_name": Path(item.path).name})
++            outputs.append({**saved, "media_type": item.media_type})
++        return {"status": "retained", "script": saved_script, "files": outputs,
++                "execution_proof": "agent_reported"}
++    except (ValueError, OSError, WorkspaceError) as error:
++        raise DiagnosticError("analysis files could not be retained", details=(contract_diagnostic(
++            "analysis_file_unavailable", phase="tool_execution", affected_action="tool_call",
++            repairable=True, message=str(error)[:1000]),)) from error
++
++
++GUIDANCE = """
++Use the calculation_ref returned by a scoring/diagnostic tool as an evidence
++locator. The control layer has already saved its complete record and receipt;
++do not copy requests, digests, attempt metadata or result arrays into the report.
++Keep calculation_records empty for new calls. Choose evidence source_key/title
++for the scientific claim and use evidence_keys normally. Legacy inline records
++remain readable. If a request is rejected before a calculation_ref exists, cite
++tool_recovery_manifest and explain the reported failure; do not construct a
++calculation record or copy the attempt receipt. To reuse a prior calculation, bind its saved calculation file
++and the paired prior analysis/manifest with the original sources, then cite the
++current file alias; receipt and historical alias handling belong to control.
++When built-in tools cannot express a needed row selection, weighting or other
++analysis method, use the allowed bounded native analysis tools. Preserve the
++script and derived tables/results with worker_analysis_publish_files; its paths
++are relative to scratch/, files are at most 16 MiB each and 32 MiB per call,
++and the script is at most 1 MiB. Cite source aliases and describe the scientific
++method once. Returned derived-data aliases are readable by the scoring and
++diagnostic tools immediately and can be bound in a later Run's reference_material
++inventory; they are derived analysis data, not original solver_outputs. Publication
++preserves bytes and declared derivation, not proof of execution or scientific
++validity. Report weighting/selection rules and limitations; do not relabel an
++exploratory curve statistic as a different preregistered statistic.
++"""
++
++TOOL = WorkerToolDefinition(name="worker_analysis_publish_files",
++    description="Retain a task-local analysis script and derived CSV/JSON/text/PNG files with declared source lineage. Returns reusable evidence aliases; does not execute code or attest its result. Script <=1 MiB; files <=16 MiB each, <=32 MiB per call, within the Run collection budget.",
++    input_model=PublishAnalysisFiles, capability="analysis.publish_files", contextual_handler=publish_files,
++    evidence_ports=("tool_evidence", "recovery_manifest_output"))
+--- /dev/null
++++ after/tests/operations/test_analysis_artifact_references.py
+@@ -0,0 +1,210 @@
++"""Real Worker paths for saved calculations and Agent-authored derived evidence."""
++from copy import deepcopy
++import json
++from pathlib import Path
++import subprocess
++import sys
++
++import pytest
++
++from scidiscovery.artifact_agent.schema.common import canonical_json
++from scidiscovery.artifact_agent.schema.layered_diagnosis import CalculationRecord
++from scidiscovery.artifact_agent.interfaces.mcp_local_worker import LocalWorkerMCPRouter
++from scidiscovery.operation_contract import DiagnosticError
++from tests.operations.test_analysis_claim_scope import generic_worker, submit
++from tests.operations.test_analysis_diagnostic_tool import request_for_diagnostic
++from tests.operations.test_result_analysis_tool import limited_report, score_inputs
++from tests.operations.test_tcad_result_analysis import analysis_system, open_analysis, raw_request, analysis_report
++
++
++def cite(report, alias, key="calculation"):
++    report["source_references"] = []
++    report["calculation_records"] = []
++    report["evidence"].append(dict(source_key=key, title="Saved analysis evidence",
++        source_type="runtime_output", locator=alias))
++    return report
++
++
++@pytest.mark.parametrize("domain", ["generic", "tcad"])
++def test_reference_only_report_resolves_saved_score_without_copy_or_recalculation(tmp_path, monkeypatch, domain):
++    if domain == "generic":
++        worker, opened = generic_worker(tmp_path)
++        request, name, report = score_inputs()[1], "worker_curve_score", limited_report()
++    else:
++        worker, opened = open_analysis(analysis_system(tmp_path))
++        request, name, report = raw_request(), "worker_tcad_curve_score", analysis_report()
++    reply = worker.call_tool(name, dict(record_key="saved", request=request))
++    assert reply["status"] == "computed", reply
++    alias = reply["calculation_ref"]
++    saved = json.loads(worker.runs.read_tool_evidence(worker.runs.status(worker._run_id), alias))
++    assert saved["request"] == request
++    assert saved["attempt"] == CalculationRecord.model_validate_json(canonical_json(reply)).attempt.model_dump(mode="json")
++    assert "calculation_ref" not in saved
++    monkeypatch.setattr("curve_score.analysis_tool.evaluate_analysis_request", lambda **kw: pytest.fail("recomputed during submission"))
++    report = cite(report, alias)
++    report["objective_assessment"] = dict(objective_key="local_profile", status="inconclusive",
++        comparison_keys=[request["comparison_spec"]["comparisons"][0]["comparison_key"]],
++        evidence_keys=["calculation"], summary="Cited comparison is available without copying its record.")
++    # Use the exact fixture objective, with no scientific mutation by the runtime.
++    plan = json.loads(worker.runs.artifacts.read(next(i.artifact_ref for i in worker.runs.status(worker._run_id).inputs if i.port_name == "experiment_plan")))
++    if plan.get("objective_key"):
++        report["objective_assessment"]["objective_key"] = plan["objective_key"]
++    else:
++        report["objective_assessment"] = None
++    assert submit(worker, opened, report)["state"] == "completed"
++    sealed = json.loads(worker.runs.artifacts.read(worker.runs.status(worker._run_id).output_ref))
++    assert sealed == report  # No copying of request, digest, values or receipt into scientific text.
++    assert sealed["calculation_records"] == []
++
++
++def test_full_257_point_diagnostic_does_not_shrink_to_fit_report(tmp_path):
++    worker, opened = open_analysis(analysis_system(tmp_path))
++    request = request_for_diagnostic(raw_request())
++    request["comparison_spec"]["comparisons"][0]["evaluation_points"] = 257
++    for source in request["sources"]:
++        source["case_mapping_basis"] = dict(kind="evidence", rationale="bounded fixture rationale " * 70,
++            evidence_refs=[dict(input_alias="experiment_plan", locator="fixture " * 30) for _ in range(8)])
++    value = worker.call_tool("worker_tcad_curve_diagnose", dict(record_key="full_detail", request=request))
++    record = value["record"]
++    assert record["status"] == "computed", value
++    details = json.loads(Path(value["details"]["path"]).read_text())
++    assert len(details["localization"]["analyses"][0]["residual_trace"]) == 257
++    old_layout = {**record, "result": details}
++    with pytest.raises(ValueError, match="exceeds 32 KiB"):
++        CalculationRecord.model_validate_json(canonical_json(old_layout))
++    assert len(canonical_json(record)) < 32 * 1024
++    assert submit(worker, opened, cite(analysis_report(), record["calculation_ref"]))["state"] == "completed"
++
++
++def test_saved_calculations_use_artifact_identity_when_names_repeat(tmp_path):
++    worker, opened = generic_worker(tmp_path)
++    request = score_inputs()[1]
++    first = worker.call_tool("worker_curve_score", dict(record_key="comparison", request=request))
++    request["comparison_spec"]["comparisons"][0]["comparison_key"] = "second_comparison"
++    second = worker.call_tool("worker_curve_score", dict(record_key="comparison", request=request))
++    assert first["status"] == second["status"] == "computed"
++    assert first["calculation_ref"] != second["calculation_ref"]
++    report = cite(limited_report(), first["calculation_ref"], "first")
++    cite(report, second["calculation_ref"], "second")
++    assert submit(worker, opened, report)["state"] == "completed"
++
++
++def test_rejected_score_needs_no_manual_failure_record(tmp_path):
++    from tests.operations.test_score_request_contract import call_score
++    worker, opened = open_analysis(analysis_system(tmp_path))
++    request = raw_request()
++    request["comparison_spec"]["comparisons"][0]["evaluation_points"] = 5000
++    result = call_score(worker, request)
++    assert result["error"]["data"]["diagnostics"][0]["phase"] == "tool_arguments"
++    report = cite(analysis_report(), "tool_recovery_manifest", "calculation_limit")
++    assert submit(worker, opened, report)["state"] == "completed"
++
++
++def test_native_script_and_filtered_table_are_saved_and_consumed_by_curve_tool(tmp_path):
++    worker, opened = generic_worker(tmp_path)
++    workspace = Path(opened["output_directory"]).parent
++    scratch = workspace / "scratch"; scratch.mkdir(exist_ok=True)
++    raw = worker.runs.artifacts.read(next(i.artifact_ref for i in worker.runs.status(worker._run_id).inputs if i.port_name == "curve_bundle"))
++    (scratch / "source.json").write_bytes(raw)
++    script = '''import csv, json
++from pathlib import Path
++points = json.loads(Path("source.json").read_text())["series"][0]["points"]
++selected = [p for p in points if p["x"] >= 0.5]
++with Path("selected.csv").open("w") as f:
++    w = csv.writer(f); w.writerow(["x", "y"])
++    w.writerows((p["x"], p["y"]) for p in selected)
++weights = [p["x"] + 1 for p in selected]
++Path("weighted.json").write_text(json.dumps({"weighted_mean": sum(w*p["y"] for w,p in zip(weights, selected))/sum(weights), "count": len(selected)}))
++'''
++    (scratch / "analysis.py").write_text(script)
++    subprocess.run([sys.executable, "analysis.py"], cwd=scratch, check=True, timeout=10)
++    published = worker.call_tool("worker_analysis_publish_files", dict(source_aliases=["curve_bundle"],
++        script_path="scratch/analysis.py", files=[dict(path="scratch/selected.csv", media_type="text/csv"),
++            dict(path="scratch/weighted.json", media_type="application/json")],
++        method="Select x >= 0.5; preserve the x+1 weighted mean separately from the curve comparison."))
++    assert published["execution_proof"] == "agent_reported"
++    alias = published["files"][0]["evidence_alias"]
++    original = json.loads(raw)["series"][0]
++    request = request_for_diagnostic(score_inputs()[1])
++    reference, candidate = (request["comparison_spec"]["comparisons"][0][key] for key in ("reference_series", "candidate_series"))
++    request["comparison_spec"]["comparisons"][0]["domain"]["start"] = 0.5
++    request["sources"] = [dict(format="csv", input_alias=alias, series_key=name,
++        case_key=original["case_key"], role=role, x_axis=original["x_axis"], y_axis=original["y_axis"],
++        x_column="x", y_column="y") for name, role in ((reference, "reference"), (candidate, "candidate"))]
++    result = worker.call_tool("worker_curve_score", dict(record_key="filtered_comparison", request=request))
++    assert result["status"] == "computed", result
++    report = cite(limited_report(), result["calculation_ref"])
++    report = cite(report, published["files"][1]["evidence_alias"], "weighted_native_result")
++    assert submit(worker, opened, report)["state"] == "completed"
++    for file in [published["script"], *published["files"]]:
++        stored = worker.runs.read_tool_evidence(worker.runs.status(worker._run_id), file["evidence_alias"])
++        assert stored == Path(file["path"]).read_bytes()
++
++
++@pytest.mark.parametrize("bad", ["outside", "symlink", "source"])
++def test_publish_files_rejects_unbound_or_outside_files_without_blocking_analysis(tmp_path, bad):
++    worker, opened = generic_worker(tmp_path)
++    workspace = Path(opened["output_directory"]).parent
++    scratch = workspace / "scratch"; scratch.mkdir(exist_ok=True)
++    (scratch / "script.py").write_text("# fixture")
++    (scratch / "out.csv").write_text("x,y\n0,1\n")
++    args = dict(source_aliases=["curve_bundle"], script_path="scratch/script.py",
++        files=[dict(path="scratch/out.csv", media_type="text/csv")], method="fixture")
++    if bad == "outside": args["script_path"] = "../outside.py"
++    if bad == "source": args["source_aliases"] = ["unbound"]
++    if bad == "symlink":
++        (scratch / "out.csv").unlink(); (scratch / "out.csv").symlink_to(scratch / "script.py")
++    with pytest.raises(DiagnosticError):
++        worker.call_tool("worker_analysis_publish_files", args)
++    assert worker.runs.tool_evidence(worker._run_id) == []
++    assert submit(worker, opened, limited_report())["state"] == "completed"
++
++
++def test_saved_calculation_can_be_cited_next_round_with_current_alias(tmp_path, monkeypatch):
++    system = analysis_system(tmp_path)
++    catalog, runtime, root, request, _, _ = system
++    worker, opened = open_analysis(system)
++    result = worker.call_tool("worker_tcad_curve_score", dict(record_key="persisted", request=raw_request()))
++    assert submit(worker, opened, cite(analysis_report(), result["calculation_ref"]))["state"] == "completed"
++    second = deepcopy(request); second["name"] = "second_analysis"
++    second["inputs"].extend([dict(port="prior_analysis", artifact_names=["analysis.output"]),
++        dict(port="prior_analysis_manifest", artifact_names=["analysis.output.recovery_manifest"])])
++    reference = next(i for i in second["inputs"] if i["port"] == "reference_material")
++    reference["artifact_names"].append("analysis.output." + result["calculation_ref"])
++    next_worker, next_opened = open_analysis((catalog, runtime, root, second, *system[4:]))
++    monkeypatch.setattr("curve_score.analysis_tool.evaluate_analysis_request", lambda **kw: pytest.fail("historical score rerun"))
++    assert submit(next_worker, next_opened, cite(analysis_report(), "reference_material_002"))["state"] == "completed"
++
++
++def test_saved_calculation_survives_failed_run_without_manual_receipt_rewriting(tmp_path):
++    from tests.operations.test_tcad_result_analysis import write_analysis
++    system = analysis_system(tmp_path)
++    catalog, runtime, root, request, _, _ = system
++    worker, opened = open_analysis(system)
++    scratch = Path(opened["output_directory"]).parent / "scratch"
++    scratch.mkdir(exist_ok=True)
++    raw = runtime.artifacts.read(system[4]["reference"].ref)
++    (scratch / "analysis.py").write_text("# Identity-copy fixture; publication makes no execution claim.\n")
++    (scratch / "derived.csv").write_bytes(raw)
++    published = worker.call_tool("worker_analysis_publish_files", dict(source_aliases=["reference_material"],
++        script_path="scratch/analysis.py", files=[dict(path="scratch/derived.csv", media_type="text/csv")],
++        method="Identity copy to exercise retained script/data dependencies."))
++    score_request = raw_request()
++    score_request["sources"][1]["input_alias"] = published["files"][0]["evidence_alias"]
++    result = worker.call_tool("worker_tcad_curve_score", dict(record_key="before_interruption", request=score_request))
++    assert result["status"] == "computed", result
++    report = cite(analysis_report(), result["calculation_ref"])
++    write_analysis(opened, report)
++    status = root.call_tool("run_status", {"name": "analysis"})
++    failed = root.call_tool("run_record_failure", dict(name="analysis", reason="fixture interruption",
++        expected_state="running", expected_last_activity_at=status["last_activity_at"]))
++    assert failed["recovery"]["draft_available"]
++    second = deepcopy(request); second.update(name="resumed_analysis", draft_from="analysis")
++    next_worker, next_opened = open_analysis((catalog, runtime, root, second, *system[4:]))
++    # Reopening must preserve dependencies even when every file is already adopted.
++    next_opened = next_worker.call_tool("worker_open_assignment", {})
++    assert next_worker.runs.tool_attempts(next_worker._run_id) == []
++    derived = next_worker.runs.read_tool_evidence(next_worker.runs.status(next_worker._run_id),
++        published["files"][0]["evidence_alias"])
++    assert derived == raw
++    assert submit(next_worker, next_opened, report)["state"] == "completed"

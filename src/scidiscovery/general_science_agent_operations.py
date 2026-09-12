@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from .operation_declaration import scientific_agent_operation
-from .operations.spec import CollectionSpec, ComponentRef, InputAdmissionSpec, InputPortSpec, OperationSpec, OutputPortSpec, ReviewSpec
+from .operations.spec import CollectionSpec, ComponentRef, InputAdmissionSpec, InputValidationSpec, InputPortSpec, OperationSpec, OutputPortSpec, ReviewSpec
 
 JSON_CODEC = ComponentRef("json_codec")
 OPAQUE_CODEC = ComponentRef("opaque_codec")
@@ -141,6 +141,7 @@ def _schema_component(schema: str) -> str:
         "scidiscovery.critic-review.v2": "critic_review_schema",
         "scidiscovery.evidence-audit.v1": "evidence_audit_schema",
         "scidiscovery.research-objective.v1": "research_objective_schema",
+        "scidiscovery.execution-context.v1": "execution_context_schema",
         "scidiscovery.experiment-design-intent.v1": "experiment_intent_schema",
         "scidiscovery.experiment-portfolio.v1": "experiment_portfolio_schema",
         "scidiscovery.scientific-review.v1": "scientific_review_schema",
@@ -208,6 +209,7 @@ def _agent(
     tools: tuple[ComponentRef, ...] = BASE_TOOLS,
     native_view_image: bool = False,
     input_admission: InputAdmissionSpec | None = None,
+    input_validation: InputValidationSpec | None = None,
     review: ReviewSpec | None = None,
     guards: tuple[str, ...] = (),
     consequence: str = "scientific",
@@ -230,6 +232,7 @@ def _agent(
         max_files=max_files,
         native_view_image=native_view_image,
         input_admission=input_admission,
+        input_validation=input_validation,
         review=review,
         guards=tuple(ComponentRef(item) for item in guards),
         consequence=consequence,
@@ -402,6 +405,7 @@ OPERATIONS = (
         "Adversarially review every proposed hypothesis.",
         "A hypothesis portfolio and its scientific foundation are available.",
         "Generating hypotheses or deciding qualification.",
+        input_validation=InputValidationSpec(ComponentRef("critic_inputs"), "science.hypothesis.criticize.v1.inputs", "The exact hypothesis portfolio must contain hypotheses."),
         agent="critic_agent",
         prompt="critic_prompt",
         inputs=(
@@ -440,6 +444,7 @@ OPERATIONS = (
         "Propose a small falsifiable portfolio for the current contradiction.",
         "A problem frame and scientific foundation expose an unresolved mechanism.",
         "Reviewing, selecting, or qualifying hypotheses.",
+        input_validation=InputValidationSpec(ComponentRef("hypothesis_inputs"), "science.hypothesis.propose.v1.inputs", "The scientific foundation must contain its explicit original objective."),
         agent="ideator_agent",
         prompt="ideator_prompt",
         inputs=(
@@ -607,6 +612,7 @@ REVISION_OPERATIONS = (
         "Revise one complete hypothesis portfolio within the approved foundation.",
         "An exact prior portfolio and independent critic request require correction.",
         "Producing a patch, inheriting a critic verdict, or expanding the evidence basis.",
+        input_validation=InputValidationSpec(ComponentRef("hypothesis_inputs"), "science.hypothesis.revise.v1.inputs", "The scientific foundation must contain its explicit original objective."),
         agent="ideator_agent",
         prompt="ideator_prompt",
         inputs=(

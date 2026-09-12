@@ -1,0 +1,27 @@
+.........F
+=================================== FAILURES ===================================
+____________ test_corrupt_retained_evidence_is_engineering_failure _____________
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-58/test_corrupt_retained_evidence0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7f55c9f87170>
+
+    def test_corrupt_retained_evidence_is_engineering_failure(tmp_path, monkeypatch):
+        from tests.operations.test_tcad_result_analysis import analysis_report,write_analysis
+        system, worker, opened, _ = recovery_system(tmp_path)
+        inspected = worker.call_tool('worker_tcad_inspect_outputs', {'relative_path':'A_actual.plx'})
+        record = system[1].runs.tool_evidence(worker._run_id)[0]
+        original_read = system[1].artifacts.read
+        def read(ref):
+            return b'corrupted' if ref.model_dump(mode='json') == record['artifact_ref'] else original_read(ref)
+        write_analysis(opened, analysis_report(alias=inspected['evidence_alias']))
+        monkeypatch.setattr(system[1].artifacts, 'read', read)
+        assert worker.call_tool('worker_submit_result', {})['state'] == 'failed'
+>       assert system[1].runs.status(worker._run_id).recovery_draft['preserved']
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       KeyError: 'preserved'
+
+tests/operations/test_analysis_evidence_recovery.py:375: KeyError
+=========================== short test summary info ============================
+FAILED tests/operations/test_analysis_evidence_recovery.py::test_corrupt_retained_evidence_is_engineering_failure
+!!!!!!!!!!!!!!!!!!!!!!!!!! stopping after 1 failures !!!!!!!!!!!!!!!!!!!!!!!!!!!
+1 failed, 9 passed in 51.81s

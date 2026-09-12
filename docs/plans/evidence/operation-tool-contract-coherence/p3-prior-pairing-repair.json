@@ -1,0 +1,15 @@
+{
+  "command": [
+    "python",
+    "-m",
+    "pytest",
+    "-q",
+    "tests/operations/test_prior_analysis_sources.py"
+  ],
+  "exit_code": 0,
+  "seconds": 0.391,
+  "peak_tree_rss_bytes": 68202496,
+  "budget_bytes": 536870912,
+  "early_stop_bytes": 469762048,
+  "memory_terminated": false
+}
