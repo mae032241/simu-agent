@@ -12,13 +12,14 @@ from typing import Any
 from pydantic import ValidationError
 
 from scidiscovery.artifact_agent.schema.common import canonical_json, canonical_sha256
+from scidiscovery.artifact_agent.service.run_outputs import RunCheckerError, _validation_details
 from scidiscovery.artifact_agent.schema.role_result import (
     RoleHandoff,
     RoleResultEnvelope,
     parse_role_result,
 )
 from scidiscovery.operations.spec import CallableComponent
-from scidiscovery.operation_contract import contract_diagnostic, DeclaredDiagnostic, validation_diagnostics
+from scidiscovery.operation_contract import contract_diagnostic, DeclaredDiagnostic, SemanticRuleViolation
 from scidiscovery.operations.workspace import (
     WorkspaceFileRequest,
     WorkspaceFileRule,
@@ -71,13 +72,12 @@ def _deck_root(root: Path) -> Path:
     return deck
 
 
-def _protocol_error(message: str, error: Exception | None = None) -> WorkspaceProtocolError:
+def _protocol_error(message: str, error: Exception | None = None, *, path: str = "$.deck") -> WorkspaceProtocolError:
     details: tuple[dict[str, str], ...] = getattr(error, "details", ())
-    if isinstance(error, ValidationError):
+    if isinstance(error, (ValidationError, SemanticRuleViolation)):
         schema = {"allOf": [DeckProjectDraft.model_json_schema(), ImplementationGap.model_json_schema()]}
-        details = tuple(DeclaredDiagnostic({**item, "path": "$.deck" + item["path"][1:]})
-            for item in validation_diagnostics(error, schema=schema,
-                phase="output_payload", action="submit"))
+        details = tuple(DeclaredDiagnostic({**item, "path": path + item["path"][1:]})
+            for item in _validation_details(error, schema=schema, phase="output_payload"))
     return WorkspaceProtocolError(message, details=details)
 
 
@@ -130,9 +130,9 @@ def _pretty(value: Any) -> bytes:
 def _input(request: WorkspaceMaterializationRequest | WorkspaceFinalizationRequest, name: str) -> bytes:
     try:
         path = request.input_paths[name]
-    except KeyError as error:
-        raise WorkspaceProtocolError(f"TCAD workspace requires input: {name}") from error
-    return _read(path, max_bytes=64 * 1024 * 1024)
+        return _read(path, max_bytes=64 * 1024 * 1024)
+    except (KeyError, WorkspaceProtocolError) as error:
+        raise RunCheckerError("TCAD bound input is unavailable in the workspace", category="integrity_failure") from error
 
 
 def _source_files(root: Path, *, max_bytes: int = _MAX_SOURCE_TOTAL_BYTES, max_files: int = _MAX_SOURCE_FILES) -> list[dict[str, str]]:
@@ -279,9 +279,9 @@ def _capability_snapshot(raw: bytes) -> dict[str, Any]:
     try:
         value = json.loads(raw)
     except (UnicodeDecodeError, json.JSONDecodeError) as error:
-        raise WorkspaceProtocolError("execution_capability is invalid JSON") from error
+        raise RunCheckerError("admitted execution_capability is invalid JSON", category="admission_defect") from error
     if not isinstance(value, dict):
-        raise WorkspaceProtocolError("execution_capability must be a JSON object")
+        raise RunCheckerError("admitted execution_capability must be a JSON object", category="admission_defect")
     return value
 
 
@@ -619,16 +619,22 @@ def finalize_workspace(request: WorkspaceFinalizationRequest) -> bytes:
     if (deck / "gap.json").exists():
         try:
             gap = ImplementationGap.model_validate_json(_read(deck / "gap.json", max_bytes=64 * 1024), strict=True)
+        except (ValidationError, ValueError) as error:
+            raise _protocol_error("TCAD implementation gap is invalid", error, path="$.deck.gap") from error
+        try:
             handoff_value = json.loads(_read(deck / "handoff.json", max_bytes=64 * 1024))
             if isinstance(handoff_value, dict):
                 handoff_value["verdict"] = "blocked"
             handoff = RoleHandoff.model_validate_json(canonical_json(handoff_value), strict=True)
+        except (ValidationError, ValueError) as error:
+            raise _protocol_error("TCAD handoff is invalid", error, path="$.deck.handoff") from error
+        try:
             inputs = {name: _input(request, name) for name in ("experiment_plan", "prior_project") if name in request.input_paths}
             # The finalizer owns captured files; never trust an authored snapshot.
             gap = gap.model_copy(update={"attempt_files": _attempt_files(deck)})
             validate_implementation_gap(gap, inputs, handoff.model_dump(mode="json"))
         except (ValidationError, ValueError) as error:
-            raise _protocol_error("TCAD implementation gap is invalid", error) from error
+            raise _protocol_error("TCAD implementation gap is invalid", error, path="$.deck.gap") from error
         raw = RoleResultEnvelope[Any](schema_version=1, handoff=handoff, payload=gap).canonical_json()
         if len(raw) > request.output_limit_bytes:
             raise WorkspaceProtocolError("implementation gap exceeds output limit")

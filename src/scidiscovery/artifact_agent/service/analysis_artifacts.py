@@ -36,6 +36,85 @@ def retain_calculation(context, response):
     return {**response, "calculation_ref": saved["evidence_alias"]}
 
 
+def calculation_reference_aliases(records, sources):
+    """Join inline/file representations of one complete controlled receipt.
+
+    Manifest scope and artifact identity distinguish identical bytes from
+    different Runs. Receipt owners still verify consumed records before sealing.
+    """
+    from .tool_evidence import ToolEvidenceManifest, _recovery_origins
+
+    if not records:
+        return {}
+    descriptors = getattr(sources, "binding_descriptors", {})
+    prior = prior_analysis_sources(sources)
+    proofs = {}
+    aliases = {}
+    for record in records:
+        if not isinstance(record, CalculationRecord) or record.attempt is None:
+            continue
+        manifest_alias = record.attempt.manifest_alias
+        if manifest_alias not in proofs:
+            raw = (getattr(sources, "tool_snapshot", None) if manifest_alias == "tool_recovery_manifest"
+                   else sources[manifest_alias] if prior and manifest_alias == prior["manifest_alias"] else None)
+            # Missing/unpaired receipts retain their original identities; the
+            # existing receipt consumer owns the resulting diagnostic.
+            proofs[manifest_alias] = ToolEvidenceManifest.model_validate_json(raw) if raw else None
+        proof = proofs[manifest_alias]
+        if proof is None:
+            continue
+        recovered_refs = {canonical_json(binding.artifact_ref) for origin in _recovery_origins(proof.recovery)
+                          for binding in origin.bindings.values()}
+        scope = (recovered_refs if record.attempt.proof_kind == "recovery" else
+                 {canonical_json(item.get("artifact_ref")) for item in proof.records} - recovered_refs)
+        # These two fields are transport projections of the selected proof.
+        # The stored tool record uses its original current-manifest spelling.
+        original = record.model_copy(update={"attempt": record.attempt.model_copy(update={
+            "manifest_alias": "tool_recovery_manifest", "proof_kind": "current"})})
+        digest = hashlib.sha256(canonical_json(original.model_dump(mode="json"))).hexdigest()
+        matches = sorted(alias for alias, descriptor in descriptors.items()
+                         if dict(descriptor.labels).get("analysis_artifact_kind") == "calculation_record"
+                         and descriptor.sha256 == digest and canonical_json(descriptor.artifact_ref) in scope)
+        identities = {canonical_json(descriptors[alias].artifact_ref) for alias in matches}
+        if len(identities) == 1:
+            aliases.update({alias: matches[0] for alias in matches})
+            aliases["calculation_records:" + record.record_key] = matches[0]
+    return aliases
+
+
+def analysis_source_claims(source_key, locator, input_alias, sources, calculation_aliases=None):
+    """Use the same source identities for validation and mechanical completion."""
+    claims = {source_key} if source_key in sources else set()
+    if input_alias is not None:
+        claims.add(input_alias)
+    if locator.startswith("calculation_records:"):
+        claims.add(locator)
+    elif locator.split(":", 1)[0] in sources:
+        claims.add(locator.split(":", 1)[0])
+    aliases = calculation_aliases or {}
+    return {aliases.get(claim, claim) for claim in claims}
+
+
+def analysis_evidence_aliases(evidence, references, sources, calculation_aliases=None):
+    """Resolve optional citations without letting a generated mapping hide a conflict."""
+    resolved = {}
+    for index, reference in enumerate(references):
+        claims = analysis_source_claims(reference.source_key, "", reference.input_alias, sources, calculation_aliases)
+        claims.update(resolved.get(reference.source_key, ()))
+        if len(claims) != 1:
+            raise declared_violation("analysis source key has conflicting source mappings",
+                path=f"$.source_references[{index}].source_key")
+        resolved[reference.source_key] = claims
+    for index, item in enumerate(evidence):
+        claims = analysis_source_claims(item.source_key, item.locator, None, sources, calculation_aliases)
+        claims.update(resolved.get(item.source_key, ()))
+        if len(claims) > 1:
+            raise declared_violation("analysis source key has conflicting source mappings",
+                path=f"$.evidence[{index}].source_key")
+        resolved[item.source_key] = claims
+    return {key: next(iter(claims)) if claims else key for key, claims in resolved.items()}
+
+
 def analysis_calculations(report, sources):
     """Resolve cited tool records without changing scientific output or rerunning tools.
 
@@ -48,8 +127,23 @@ def analysis_calculations(report, sources):
     current_raw = getattr(sources, "tool_snapshot", None)
     current_proof = json.loads(current_raw) if current_raw else {}
     current = current_proof.get("records", ())
-    for evidence in report.evidence:
-        alias = evidence.locator
+    # Accept direct citations as well as optional local citation mappings. A
+    # copied evidence row is not required to consume a tool-owned receipt.
+    aliases = list(dict.fromkeys(
+        [item.input_alias for item in report.source_references]
+        + [item.source_key for item in report.evidence]
+        + [item.locator.split(":", 1)[0] for item in report.evidence]))
+    pending = [report.model_dump(mode="json")]
+    while pending:
+        value = pending.pop()
+        if isinstance(value, dict):
+            for alias in value.get("evidence_keys", ()):
+                if alias not in aliases:
+                    aliases.append(alias)
+            pending.extend(child for child in value.values() if isinstance(child, (dict, list)))
+        elif isinstance(value, list):
+            pending.extend(child for child in value if isinstance(child, (dict, list)))
+    for alias in aliases:
         descriptor = descriptors.get(alias)
         if descriptor is None or dict(descriptor.labels).get("analysis_artifact_kind") != "calculation_record":
             continue

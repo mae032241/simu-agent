@@ -107,16 +107,12 @@ class HypothesisProposal(VersionedPayload):
         if len(keys) != len(set(keys)):
             raise ValueError("hypothesis_key values must be unique")
         known_hypotheses = set(keys)
-        source_keys = tuple(item.source_key for item in self.evidence)
-        known_evidence = set(source_keys)
         for hypothesis in self.hypotheses:
             competitors = set(hypothesis.competing_hypothesis_keys)
             if hypothesis.hypothesis_key in competitors:
                 raise ValueError("hypothesis cannot compete with itself")
             if not competitors.issubset(known_hypotheses):
                 raise ValueError("hypothesis references an undeclared competitor")
-            if not set(hypothesis.evidence_keys).issubset(known_evidence):
-                raise ValueError("hypothesis references undeclared evidence")
         return self
 
 
@@ -191,13 +187,8 @@ class EvidenceAudit(VersionedPayload):
     @model_validator(mode="after")
     def _audit_is_coherent(self) -> EvidenceAudit:
         check_keys = tuple(item.check_key for item in self.checks)
-        source_keys = tuple(item.source_key for item in self.evidence)
         if len(check_keys) != len(set(check_keys)):
             raise ValueError("evidence check keys must be unique")
-        known = set(source_keys)
-        for check in self.checks:
-            if not set(check.evidence_keys).issubset(known):
-                raise ValueError("evidence check references undeclared evidence")
         return self
 
 

@@ -41,8 +41,10 @@ def test_mechanical_diagnostics_preserve_scientific_verdict_and_check_references
     assert diagnosis_consistency_issues(report) == ()
     assert canonical_json(report) == before
     raw['gates']['observation']['evidence_keys'] = ['unbound_evidence']
-    with pytest.raises(ValueError, match='undeclared evidence'):
-        LayeredDiagnosisReport.model_validate_json(canonical_json(raw))
+    from curve_score.science_operations import _validate_diagnosis_references
+    report = LayeredDiagnosisReport.model_validate_json(canonical_json(raw))
+    with pytest.raises(ValueError, match='source bound to this task'):
+        _validate_diagnosis_references(report, {'metric_report': b'bound fixture'})
 
 
 @pytest.mark.parametrize('physical', ['fail', 'pass', 'inconclusive'])

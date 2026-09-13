@@ -101,6 +101,75 @@ def test_domain_checker_preserves_its_specific_terminal_category(tmp_path, categ
     assert runs.diagnostic_summary(runs.status(worker._run_id))['failure']['category'] == category
 
 
+@pytest.mark.parametrize('category', ['integrity_failure', 'admission_defect'])
+@pytest.mark.parametrize('submit', [False, True])
+def test_finalizer_failure_keeps_category_and_bounded_reason_through_control(tmp_path, monkeypatch, category, submit):
+    from scidiscovery.artifact_agent.service.run_outputs import RunCheckerError
+    system = analysis_system(tmp_path)
+    worker, opened = open_analysis(system)
+    write_analysis(opened, analysis_report())
+    runs = system[1].runs
+    reason = 'Controlled bound input fault. ' + 'x' * 600
+    def fail(*args, **kwargs):
+        raise RunCheckerError(reason, category=category)
+    monkeypatch.setattr(runs, '_finalize_workspace', fail)
+    if submit:
+        assert worker.call_tool('worker_submit_result', {})['state'] == 'failed'
+    else:
+        with pytest.raises(RunCheckerError) as caught:
+            runs.validate_candidate(worker._run_id)
+        assert caught.value.category == category
+    status = system[2].call_tool('run_status', {'name': 'analysis'})
+    assert status['state'] == 'failed'
+    assert status['reason'] == 'Run validation framework failure: ' + reason[:512]
+    assert status['diagnostic_summary']['failure']['category'] == category
+    assert status['diagnostic_summary']['rejection_count'] == 0
+
+
+@pytest.mark.parametrize('before_workspace', [False, True])
+def test_pre_dispatch_input_fault_is_recorded_with_its_declared_category(tmp_path, monkeypatch, before_workspace):
+    from scidiscovery.artifact_agent.interfaces.mcp import MCPRouter
+    from scidiscovery.artifact_agent.service.run_outputs import RunCheckerError
+    from tests.operations.test_l4_local_tcad import _system
+    _, runtime, root, _ = _system(tmp_path)
+    owner = runtime.runs.backend if before_workspace else runtime.runs
+    method = 'prepare' if before_workspace else '_materialize_workspace'
+    original = getattr(owner, method)
+    attempts = []
+    def fail(*args, **kwargs):
+        attempts.append(True)
+        raise RunCheckerError('admitted execution_capability is invalid JSON', category='admission_defect')
+    monkeypatch.setattr(owner, method, fail)
+    wire = MCPRouter(root, name='preparation_fault_fixture')
+    def call(name, arguments):
+        reply = wire.handle({'jsonrpc': '2.0', 'id': 1, 'method': 'tools/call',
+            'params': {'name': name, 'arguments': arguments}})
+        assert 'error' not in reply, reply
+        return reply['result']['structuredContent']
+    request = dict(name='preparation_fault', operation_id='tcad.deck.author.initial.v1',
+        instruction='Implement the bound fixture plan.', inputs=[
+            {'port': 'execution_capability', 'artifact_names': ['execution_capability']},
+            {'port': 'experiment_plan', 'artifact_names': ['experiment_plan']}])
+    failed = call('operation_invoke', request)['result']
+    assert failed['state'] == 'failed'
+    assert failed['reason'] == 'workspace preparation failed: admitted execution_capability is invalid JSON'
+    assert failed['diagnostic_summary']['failure']['category'] == 'admission_defect'
+    assert failed['diagnostic_summary']['rejection_count'] == 0
+    assert failed['sealed_output'] is None
+    assert call('run_status', {'name': 'preparation_fault'}) == failed
+    listed = call('run_list', {})['runs']
+    assert len(listed) == 1 and listed[0]['reason'] == failed['reason']
+    assert call('operation_invoke', request)['result'] == failed
+    assert len(attempts) == 1  # An identical request reads the failed Run; it does not retry it.
+    changed = {**request, 'instruction': 'Implement after repairing the preparation defect.'}
+    assert call('operation_preflight', changed)['reason_code'] == 'semantic_name_conflict'
+    monkeypatch.setattr(owner, method, original)
+    successor = call('operation_invoke', {**changed, 'on_conflict': 'create_revision'})['result']
+    assert successor['state'] == 'queued'
+    assert call('run_status', {'name': 'preparation_fault'}) == failed
+    assert len(call('run_list', {})['runs']) == 2
+
+
 def test_unclassified_run_failure_is_runtime_failure_and_timeout_keeps_deadline_gate(tmp_path):
     system = analysis_system(tmp_path)
     worker, _ = open_analysis(system)

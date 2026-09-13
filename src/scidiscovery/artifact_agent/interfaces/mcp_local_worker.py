@@ -5,6 +5,8 @@ from __future__ import annotations
 import argparse
 import json
 import threading
+import time
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -91,6 +93,13 @@ class LocalWorkerMCPRouter:
 
     def call_tool(self, name: str, arguments: dict[str, Any] | None) -> Any:
         with self._lock:
+            started = time.monotonic()
+            started_at = datetime.now(timezone.utc).isoformat()
+            timing_key = uuid.uuid4().hex
+            timing_enabled = False
+            timing_error = None
+            opening = name == "worker_open_assignment"
+            timing_run_id = None if opening else self._run_id
             self._active_attempt = None
             self._attempt_sources = {}
             self._attempt_finished = False
@@ -98,15 +107,26 @@ class LocalWorkerMCPRouter:
                 tool = self._registered.get(name)
                 if tool is not None and tool.record_attempts and self._run_id is not None:
                     self._active_attempt = self.runs.begin_tool_attempt(self._run_id, tool, arguments)
+                else:
+                    timing_enabled = name in self._tools
+                    if timing_enabled and timing_run_id:
+                        try:
+                            self.runs.record_tool_observation(timing_run_id, "tool_call_started",
+                                {"call_key": timing_key, "tool_name": name, "started_at": started_at})
+                        except Exception as observation_error:
+                            timing_error = observation_error
                 result = self._call_tool(name, arguments)
                 if self._active_attempt and not self._attempt_finished:
                     raise WorkerToolError("declared tool omitted its outcome receipt")
                 return result
             except Exception as error:
-                failure = error if isinstance(error, DiagnosticError) else WorkerToolError(
-                    "Worker call failed", details=(contract_diagnostic(
-                        "runtime_failure", phase="tool_execution", affected_action="tool_call",
-                        message="Worker call failed.", error_type=type(error).__name__),))
+                if opening and isinstance(error, RunStateConflict) and error.run_id is not None:
+                    self._run_id = error.run_id
+                    self._workspace = None
+                    self._completed = False
+                    self._tool_state.clear()
+                failure = self._engineering_failure(name, error)
+                engineering = failure.engineering
                 if self._active_attempt and not self._attempt_finished:
                     try:
                         failure.attempt, failure.details = self._finish_attempt(rejected=True, diagnostics=failure.details)
@@ -114,14 +134,64 @@ class LocalWorkerMCPRouter:
                         failure = WorkerToolError("tool receipt could not be retained", details=(contract_diagnostic(
                             "attempt_recording_failed", phase="tool_execution", affected_action="tool_call",
                             message="The call has no terminal receipt; its outcome is unknown."),))
-                        self._record_tool_failure(name, failure)
+                        failure.engineering = {**engineering, "receipt_error": self._engineering_failure(name, receipt_error).engineering}
+                        self._record_failure_safely(name, failure)
                         raise failure from receipt_error
-                self._record_tool_failure(name, failure)
+                self._record_failure_safely(name, failure)
                 if failure is error: raise
                 raise failure from error
             finally:
+                if opening:
+                    timing_run_id = self._run_id
+                if timing_enabled and timing_run_id:
+                    try:
+                        if opening:
+                            self.runs.record_tool_observation(timing_run_id, "tool_call_started",
+                                {"call_key": timing_key, "tool_name": name, "started_at": started_at})
+                        self.runs.record_tool_observation(timing_run_id, "tool_call_completed",
+                            {"call_key": timing_key, "tool_name": name, "started_at": started_at,
+                             "completed_at": datetime.now(timezone.utc).isoformat(),
+                             "duration_seconds": round(time.monotonic() - started, 6)})
+                    except Exception as observation_error:
+                        timing_error = observation_error
+                if timing_error is not None:
+                    from ..service.engineering_diagnostics import EngineeringDiagnostics
+                    EngineeringDiagnostics(self.runs.database_path.parent.parent / "engineering-diagnostics").capture(
+                        timing_error, scope="worker:unbound", layer="worker_timing", action=name)
                 self._active_attempt = None
                 self._attempt_sources = {}
+
+    def _engineering_failure(self, name, error):
+        from ..service.engineering_diagnostics import EngineeringDiagnostics
+        store = EngineeringDiagnostics(self.runs.database_path.parent.parent / "engineering-diagnostics")
+        scope = "worker:unbound"
+        try:
+            if self._run_id:
+                scope = "instance:" + self.runs.status(self._run_id).instance_id
+        except Exception as scope_error:
+            from ..service.engineering_diagnostics import exception_facts
+            error.scope_lookup_error = exception_facts(scope_error, layer="worker", action="scope")
+        engineering = store.capture(error, scope=scope, layer="worker", action=name)
+        if self._workspace is not None and engineering.get("reference"):
+            try:
+                from ..service.local_workspace import write_control_workspace_file
+                engineering["workspace_report"] = "reports/" + engineering["reference"] + ".json"
+                report = {**engineering, "sections": {
+                    section: store.read(engineering["reference"], scopes=(scope,), section=section,
+                        max_bytes=16384) for section in engineering.get("available_sections", ())}}
+                write_control_workspace_file(self._workspace.root,
+                    Path(engineering["workspace_report"]),
+                    json.dumps(report, ensure_ascii=False).encode(),
+                    replace=False, mode=0o400, create_parents=True)
+            except Exception as record_error:
+                from ..service.engineering_diagnostics import exception_facts
+                engineering["workspace_record_error"] = exception_facts(record_error, layer="worker_workspace", action="record")
+        failure = error if isinstance(error, DiagnosticError) else WorkerToolError(
+            engineering["causes"][0]["message"], details=(contract_diagnostic(
+                engineering["category"], phase="tool_execution", affected_action="tool_call",
+                message=engineering["causes"][0]["message"], error_type=type(error).__name__),))
+        failure.engineering = engineering
+        return failure
 
     def _finish_attempt(self, **values):
         if self._active_attempt is None: return None
@@ -143,13 +213,22 @@ class LocalWorkerMCPRouter:
         self.runs.record_tool_attempt_read(self._run_id, self._active_attempt, self._attempt_sources)
 
     def _record_tool_failure(self, name: str, error: WorkerToolError) -> None:
-        if self._run_id is None or self.runs.status(self._run_id).state != "running":
+        if self._run_id is None:
             return
-        self.runs.record_activity(self._run_id, "tool_failed", diagnostic={
+        self.runs.record_error_observation(self._run_id, "tool_failed", diagnostic={
             "category": "tool_failed", "tool_name": name,
             "details": error.details or (contract_diagnostic("tool_rejected",
                 phase="tool_execution", affected_action="tool_call"),),
+            "engineering": getattr(error, "engineering", None),
         })
+
+    def _record_failure_safely(self, name: str, error: WorkerToolError) -> None:
+        try:
+            self._record_tool_failure(name, error)
+        except Exception as recording_error:
+            from ..service.engineering_diagnostics import exception_facts
+            error.engineering = {**getattr(error, "engineering", {}), "activity_record_error":
+                exception_facts(recording_error, layer="run_activity", action="record")}
 
     def _call_tool(self, name: str, arguments: dict[str, Any] | None) -> Any:
         with self._lock:
@@ -199,23 +278,20 @@ class LocalWorkerMCPRouter:
                     expected_state="running",
                     expected_last_activity_at=status.last_activity_at,
                     category=error.category,
+                    engineering=self._engineering_failure(name, error).engineering,
                 )
                 return {"state": "failed", "diagnostics": []}
             except (RunOutputError, WorkspaceError) as error:
                 if isinstance(error, RunOutputError) and error.recorded:
                     details = error.details
                 else:
-                    diagnostic = self.runs.record_activity(self._run_id, "output_rejected",
+                    diagnostic = self.runs.record_error_observation(self._run_id, "output_rejected",
                         diagnostic=self.runs._rejection_diagnostic(self.runs.status(self._run_id), error))
                     details = diagnostic.get("details", ())
                 return {"state": "rejected", "diagnostics": list(details)}
             except DiagnosticError:
                 raise
-            except Exception as error:
-                raise WorkerToolError("registered operation tool failed", details=(contract_diagnostic(
-                    "runtime_failure", phase="tool_execution", affected_action="tool_call",
-                    message="Registered tool execution failed.", error_type=type(error).__name__,
-                ),)) from error
+            # The common call boundary records concrete engineering failures.
             self.runs.record_activity(self._run_id, f"tool_succeeded:{name}")
             return result
 
@@ -233,7 +309,9 @@ class LocalWorkerMCPRouter:
                     operation_digest=self.operation_digest,
                 )
             except RunStateConflict as error:
-                if terminal:
+                if error.run_id is not None:
+                    raise
+                if terminal and str(error) == "no exact queued Run is available":
                     return {"state": self.runs.status(self._run_id).state}
                 from ...operations.tooling import tool_evidence_ports
                 if not tool_evidence_ports(self.compiled) or str(error) != "no exact queued Run is available":

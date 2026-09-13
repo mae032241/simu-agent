@@ -19,6 +19,7 @@ REPOSITORY = Path(__file__).resolve().parents[1]
 import scidiscovery
 from scidiscovery.artifact_agent.approval_ui import ApprovalUI
 from scidiscovery.artifact_agent.execution_bridge import ExecutionBridge
+from scidiscovery.artifact_agent.service.execution_collection import ExecutionCollection
 from scidiscovery.artifact_agent.interfaces.mcp_root import (
     RootMCPRouter,
     RootToolFacade,
@@ -257,6 +258,15 @@ def _collect_effect(
 ) -> dict[str, object]:
     started = router.call_tool("execution_start", {"name": EXECUTION_NAME})
     synced = router.call_tool("execution_sync", {"name": EXECUTION_NAME})
+    router.call_tool("execution_collect", {"name": EXECUTION_NAME})
+    deadline = time.monotonic() + 605
+    while True:
+        status = router.call_tool("execution_status", {"name": EXECUTION_NAME})
+        if status["state"] == "collected":
+            break
+        if status.get("collection", {}).get("state") not in {"running", "stopping", "stop_pending"} or time.monotonic() >= deadline:
+            raise RuntimeError(f"Effect collection did not complete: {status.get('collection')}")
+        time.sleep(.1)
     outputs = router.call_tool(
         "execution_outputs", {"name": EXECUTION_NAME}
     ).get("outputs")
@@ -385,6 +395,8 @@ def run(root: Path, *, timeout_seconds: int, ui_port: int) -> dict[str, object]:
             operation_catalog=catalog,
             approval_base_url=base_url,
             execution_bridge=bridge,
+            execution_collection=ExecutionCollection(runtime.executions,
+                plugin_configs={"m7_effect_fixture": str(config_path)}),
         )
     )
     request = _request()
@@ -465,6 +477,7 @@ def run(root: Path, *, timeout_seconds: int, ui_port: int) -> dict[str, object]:
             resumed_same_pending_approval=False,
         )
     finally:
+        router.facade.execution_collection.close()
         ui.stop()
 
 
@@ -532,6 +545,8 @@ def resume(root: Path, *, timeout_seconds: int, ui_port: int) -> dict[str, objec
             operation_catalog=catalog,
             approval_base_url=base_url,
             execution_bridge=bridge,
+            execution_collection=ExecutionCollection(runtime.executions,
+                plugin_configs={"m7_effect_fixture": str(config_path)}),
         )
     )
     try:
@@ -612,6 +627,7 @@ def resume(root: Path, *, timeout_seconds: int, ui_port: int) -> dict[str, objec
             resumed_same_pending_approval=True,
         )
     finally:
+        router.facade.execution_collection.close()
         ui.stop()
 
 

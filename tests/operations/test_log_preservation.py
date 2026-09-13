@@ -115,13 +115,15 @@ def test_complete_debug_log_is_published_with_the_gap(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize("returncode", [0, 1])
-def test_command_transport_error_retains_stderr_instead_of_only_message(tmp_path, monkeypatch, returncode):
+def test_command_transport_error_retains_stderr_instead_of_only_message(tmp_path, returncode):
     from tcad_artifact.command_adapter import CommandAdapterConfig, CommandTCADExecutorAdapter
-    import tcad_artifact.command_adapter as module
     raw = b"FIRST ERROR\n" + b"trailing detail\n" * 1000
-    monkeypatch.setattr(module.subprocess, "run", lambda *a, **k:
-                        SimpleNamespace(returncode=returncode, stdout=b'{"schema_version":1,"operation":"capabilities","ok":false,"error":"protocol failure"}', stderr=raw))
-    adapter = CommandTCADExecutorAdapter(CommandAdapterConfig(executable="/bin/false"), local_result_root=tmp_path)
+    script=tmp_path/'broken_transport.py'
+    script.write_text('import sys,json\nassert json.load(sys.stdin)["operation"]=="capabilities"\n'
+        f'sys.stderr.buffer.write({raw!r})\n'
+        'print(\'{"schema_version":1,"operation":"capabilities","ok":false,"error":"protocol failure"}\')\n'
+        f'raise SystemExit({returncode})\n')
+    adapter = CommandTCADExecutorAdapter(CommandAdapterConfig(executable=sys.executable,arguments=(str(script),)), local_result_root=tmp_path)
     with pytest.raises(RuntimeError):
         adapter.capabilities()
     assert next((tmp_path / "logs").glob("*.stderr.log")).read_bytes() == raw

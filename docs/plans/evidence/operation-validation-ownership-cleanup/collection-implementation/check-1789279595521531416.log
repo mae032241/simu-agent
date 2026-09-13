@@ -1,0 +1,296 @@
+.....F.....                                                              [100%]
+=================================== FAILURES ===================================
+________ test_local_tcad_response_bound_includes_budget_before_sealing _________
+
+self = <tcad_artifact.local_debug_service.LocalTCADDebugService object at 0x7f90da5ec800>
+context = OperationToolContext(services=mappingproxy({'tcad.development_debug': <tcad_artifact.local_debug_service.LocalTCADDebu...nish_attempt=None, _prior_source_bindings=<function LocalWorkerMCPRouter._context.<locals>.<lambda> at 0x7f90d9f51440>)
+run_name = 'big', mode = 'preflight'
+
+    def run(
+        self, context: OperationToolContext, *, run_name: str, mode: str
+    ) -> dict[str, object]:
+        call_started = time.monotonic()
+        if _RUN_NAME.fullmatch(run_name) is None or mode not in _MODES:
+            raise TCADDebugError("TCAD development debug request is invalid")
+        runs = context.state.setdefault("runs", {})
+        if not isinstance(runs, dict):
+            raise TCADDebugError("local TCAD debug state is invalid")
+        record = runs.get(run_name)
+        if record is None:
+            if len(runs) >= _MAX_RUNS:
+                raise TCADDebugError("TCAD development debug run limit is exhausted")
+            record = self._start(context, run_name, mode)
+            runs[run_name] = record
+        if not isinstance(record, dict) or record.get("mode") != mode:
+            raise TCADDebugError("TCAD debug run_name is bound to another mode")
+        if isinstance(record.get("response"), dict):
+            return dict(record["response"])
+        state = _state(str(record["state"]))
+        if state not in _TERMINAL:
+            try:
+                reader = getattr(self.adapter, "status_details", None)
+                details = (reader(str(record["external_run_id"])) if callable(reader)
+                           else {"state": self.adapter.status(str(record["external_run_id"]))})
+                state = _state(str(details["state"]))
+            except Exception as error:
+                raise RuntimeError("TCAD debug status is unavailable") from error
+            record["state"] = state
+            context.record_activity("tcad_debug_polled")
+        if state not in _TERMINAL:
+            response = _pending(run_name, mode, state)
+            if isinstance(details.get("progress"), dict):
+                response["progress"] = details["progress"]
+            return response
+        try:
+            from scidiscovery.artifact_agent.service.execution_collection import CollectionContext
+            remaining = context.remaining_seconds - (time.monotonic() - call_started)
+            budget = CollectionContext.for_seconds(remaining)
+            budget.remaining_seconds()
+            collect = getattr(self.adapter, "collect_with_budget", None)
+            if self.runtime_context is not None:
+                from .debug_collection import collect as collect_in_process
+                collected = collect_in_process(self.runtime_context, str(record["external_run_id"]), context=budget)
+            elif callable(collect):
+                collected = collect(str(record["external_run_id"]), context=budget)
+            else:
+                raise RuntimeError("legacy debug collection requires its configured runtime factory")
+            budget.remaining_seconds()
+>           response = self._finish(context, run_name, mode, record, collected, budget=budget)
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+plugins/tcad_artifact/tcad_artifact/local_debug_service.py:139: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+plugins/tcad_artifact/tcad_artifact/local_debug_service.py:244: in _finish
+    debug_response(context, run_name, response)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+context = OperationToolContext(services=mappingproxy({'tcad.development_debug': <tcad_artifact.local_debug_service.LocalTCADDebu...nish_attempt=None, _prior_source_bindings=<function LocalWorkerMCPRouter._context.<locals>.<lambda> at 0x7f90d9f51440>)
+run_name = 'big'
+response = {'run_name': 'big', 'mode': 'preflight', 'state': 'succeeded', 'phase': 'collected', ...}
+
+    def debug_response(context: OperationToolContext, run_name: str, response: dict) -> dict:
+        runs = context.state.get("runs", {})
+        used = context.state.get("reserved_wall_seconds", 0)
+        remaining = max(0, _TOTAL_WALL_SECONDS - used)
+        result = {**response, "budget": {
+            "total_wall_seconds": _TOTAL_WALL_SECONDS,
+            "reserved_wall_seconds": used,
+            "remaining_wall_seconds": remaining,
+            "max_runs": _MAX_RUNS,
+            "created_runs": len(runs),
+            "remaining_runs": max(0, _MAX_RUNS - len(runs)),
+            "run_remaining_seconds": context.remaining_seconds,
+            "effective_wall_seconds": max(0, min(remaining, context.remaining_seconds)),
+        }}
+        record = runs.get(run_name)
+        if record is not None:
+            result["reserved_wall_seconds_for_run"] = record["reserved_wall_seconds"]
+        if len(canonical_json(result)) > _MAX_RESPONSE_BYTES:
+>           raise TCADDebugError("TCAD debug diagnostic response exceeds its bound")
+E           tcad_artifact.debug_contract.TCADDebugError: TCAD debug diagnostic response exceeds its bound
+
+plugins/tcad_artifact/tcad_artifact/local_debug_service.py:74: TCADDebugError
+
+The above exception was the direct cause of the following exception:
+
+self = <scidiscovery.artifact_agent.interfaces.mcp_local_worker.LocalWorkerMCPRouter object at 0x7f90da5ef0e0>
+name = 'worker_tcad_debug_run'
+arguments = {'run_name': 'big', 'mode': 'preflight'}
+
+    def call_tool(self, name: str, arguments: dict[str, Any] | None) -> Any:
+        with self._lock:
+            started = time.monotonic()
+            started_at = datetime.now(timezone.utc).isoformat()
+            timing_key = uuid.uuid4().hex
+            timing_enabled = False
+            timing_error = None
+            self._active_attempt = None
+            self._attempt_sources = {}
+            self._attempt_finished = False
+            try:
+                tool = self._registered.get(name)
+                if tool is not None and tool.record_attempts and self._run_id is not None:
+                    self._active_attempt = self.runs.begin_tool_attempt(self._run_id, tool, arguments)
+                else:
+                    timing_enabled = name in self._tools
+                    if timing_enabled and self._run_id:
+                        try:
+                            self.runs.record_tool_observation(self._run_id, "tool_call_started",
+                                {"call_key": timing_key, "tool_name": name, "started_at": started_at})
+                        except Exception as observation_error:
+                            timing_error = observation_error
+>               result = self._call_tool(name, arguments)
+                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+src/scidiscovery/artifact_agent/interfaces/mcp_local_worker.py:116: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/scidiscovery/artifact_agent/interfaces/mcp_local_worker.py:254: in _call_tool
+    result = registered.contextual_handler(
+plugins/tcad_artifact/tcad_artifact/plugin.py:192: in _debug_tool
+    response = run(context, run_name=request.run_name, mode=request.mode)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <tcad_artifact.local_debug_service.LocalTCADDebugService object at 0x7f90da5ec800>
+context = OperationToolContext(services=mappingproxy({'tcad.development_debug': <tcad_artifact.local_debug_service.LocalTCADDebu...nish_attempt=None, _prior_source_bindings=<function LocalWorkerMCPRouter._context.<locals>.<lambda> at 0x7f90d9f51440>)
+run_name = 'big', mode = 'preflight'
+
+    def run(
+        self, context: OperationToolContext, *, run_name: str, mode: str
+    ) -> dict[str, object]:
+        call_started = time.monotonic()
+        if _RUN_NAME.fullmatch(run_name) is None or mode not in _MODES:
+            raise TCADDebugError("TCAD development debug request is invalid")
+        runs = context.state.setdefault("runs", {})
+        if not isinstance(runs, dict):
+            raise TCADDebugError("local TCAD debug state is invalid")
+        record = runs.get(run_name)
+        if record is None:
+            if len(runs) >= _MAX_RUNS:
+                raise TCADDebugError("TCAD development debug run limit is exhausted")
+            record = self._start(context, run_name, mode)
+            runs[run_name] = record
+        if not isinstance(record, dict) or record.get("mode") != mode:
+            raise TCADDebugError("TCAD debug run_name is bound to another mode")
+        if isinstance(record.get("response"), dict):
+            return dict(record["response"])
+        state = _state(str(record["state"]))
+        if state not in _TERMINAL:
+            try:
+                reader = getattr(self.adapter, "status_details", None)
+                details = (reader(str(record["external_run_id"])) if callable(reader)
+                           else {"state": self.adapter.status(str(record["external_run_id"]))})
+                state = _state(str(details["state"]))
+            except Exception as error:
+                raise RuntimeError("TCAD debug status is unavailable") from error
+            record["state"] = state
+            context.record_activity("tcad_debug_polled")
+        if state not in _TERMINAL:
+            response = _pending(run_name, mode, state)
+            if isinstance(details.get("progress"), dict):
+                response["progress"] = details["progress"]
+            return response
+        try:
+            from scidiscovery.artifact_agent.service.execution_collection import CollectionContext
+            remaining = context.remaining_seconds - (time.monotonic() - call_started)
+            budget = CollectionContext.for_seconds(remaining)
+            budget.remaining_seconds()
+            collect = getattr(self.adapter, "collect_with_budget", None)
+            if self.runtime_context is not None:
+                from .debug_collection import collect as collect_in_process
+                collected = collect_in_process(self.runtime_context, str(record["external_run_id"]), context=budget)
+            elif callable(collect):
+                collected = collect(str(record["external_run_id"]), context=budget)
+            else:
+                raise RuntimeError("legacy debug collection requires its configured runtime factory")
+            budget.remaining_seconds()
+            response = self._finish(context, run_name, mode, record, collected, budget=budget)
+        except Exception as error:
+>           raise RuntimeError("TCAD debug collection is unavailable") from error
+E           RuntimeError: TCAD debug collection is unavailable
+
+plugins/tcad_artifact/tcad_artifact/local_debug_service.py:141: RuntimeError
+
+The above exception was the direct cause of the following exception:
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-297/test_local_tcad_response_bound0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7f90dba20470>
+
+    def test_local_tcad_response_bound_includes_budget_before_sealing(tmp_path, monkeypatch):
+        from dataclasses import replace
+    
+        worker, adapter, opened = _budget_case(tmp_path)
+        first = worker.call_tool("worker_tcad_debug_run", {"run_name": "one", "mode": "preflight"})
+        report = Path(str(opened["workspace_path"]), "deck/reports/preflight.json")
+        prior = report.read_bytes()
+        diagnostic = {key: value for key, value in first.items() if key not in {"budget", "reserved_wall_seconds_for_run"}}
+        diagnostic["log_excerpt"] = ""
+        log = "x" * (32 * 1024 - len(canonical_json(diagnostic)))
+        collect = adapter.collect
+        monkeypatch.setattr(adapter, "collect", lambda binding: replace(collect(binding), log_excerpt=log))
+>       result = worker.call_tool("worker_tcad_debug_run", {"run_name": "big", "mode": "preflight"})
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/operations/test_l4_local_tcad.py:992: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <scidiscovery.artifact_agent.interfaces.mcp_local_worker.LocalWorkerMCPRouter object at 0x7f90da5ef0e0>
+name = 'worker_tcad_debug_run'
+arguments = {'run_name': 'big', 'mode': 'preflight'}
+
+    def call_tool(self, name: str, arguments: dict[str, Any] | None) -> Any:
+        with self._lock:
+            started = time.monotonic()
+            started_at = datetime.now(timezone.utc).isoformat()
+            timing_key = uuid.uuid4().hex
+            timing_enabled = False
+            timing_error = None
+            self._active_attempt = None
+            self._attempt_sources = {}
+            self._attempt_finished = False
+            try:
+                tool = self._registered.get(name)
+                if tool is not None and tool.record_attempts and self._run_id is not None:
+                    self._active_attempt = self.runs.begin_tool_attempt(self._run_id, tool, arguments)
+                else:
+                    timing_enabled = name in self._tools
+                    if timing_enabled and self._run_id:
+                        try:
+                            self.runs.record_tool_observation(self._run_id, "tool_call_started",
+                                {"call_key": timing_key, "tool_name": name, "started_at": started_at})
+                        except Exception as observation_error:
+                            timing_error = observation_error
+                result = self._call_tool(name, arguments)
+                if self._active_attempt and not self._attempt_finished:
+                    raise WorkerToolError("declared tool omitted its outcome receipt")
+                return result
+            except Exception as error:
+                from ..service.engineering_diagnostics import EngineeringDiagnostics
+                store = EngineeringDiagnostics(self.runs.database_path.parent.parent / "engineering-diagnostics")
+                scope = "worker:unbound"
+                try:
+                    if self._run_id:
+                        scope = "instance:" + self.runs.status(self._run_id).instance_id
+                except Exception as scope_error:
+                    from ..service.engineering_diagnostics import exception_facts
+                    error.scope_lookup_error = exception_facts(scope_error, layer="worker", action="scope")
+                engineering = store.capture(error, scope=scope, layer="worker", action=name)
+                if self._workspace is not None and engineering.get("reference"):
+                    try:
+                        from ..service.local_workspace import write_control_workspace_file
+                        engineering["workspace_report"] = "reports/" + engineering["reference"] + ".json"
+                        report = {**engineering, "sections": {
+                            section: store.read(engineering["reference"], scopes=(scope,), section=section,
+                                max_bytes=16384) for section in engineering.get("available_sections", ())}}
+                        write_control_workspace_file(self._workspace.root,
+                            Path(engineering["workspace_report"]),
+                            json.dumps(report, ensure_ascii=False).encode(),
+                            replace=False, mode=0o400, create_parents=True)
+                    except Exception as record_error:
+                        from ..service.engineering_diagnostics import exception_facts
+                        engineering["workspace_record_error"] = exception_facts(record_error, layer="worker_workspace", action="record")
+                failure = error if isinstance(error, DiagnosticError) else WorkerToolError(
+                    "Worker call failed", details=(contract_diagnostic(
+                        engineering["category"], phase="tool_execution", affected_action="tool_call",
+                        message=engineering["causes"][0]["message"], error_type=type(error).__name__),))
+                failure.engineering = engineering
+                if self._active_attempt and not self._attempt_finished:
+                    try:
+                        failure.attempt, failure.details = self._finish_attempt(rejected=True, diagnostics=failure.details)
+                    except Exception as receipt_error:
+                        failure = WorkerToolError("tool receipt could not be retained", details=(contract_diagnostic(
+                            "attempt_recording_failed", phase="tool_execution", affected_action="tool_call",
+                            message="The call has no terminal receipt; its outcome is unknown."),))
+                        failure.engineering = {**engineering, "receipt_error": store.capture(
+                            receipt_error, scope=scope, layer="worker_receipt", action=name)}
+                        self._record_failure_safely(name, failure)
+                        raise failure from receipt_error
+                self._record_failure_safely(name, failure)
+                if failure is error: raise
+>               raise failure from error
+E               scidiscovery.artifact_agent.interfaces.mcp_worker_protocol.WorkerToolError: Worker call failed
+
+src/scidiscovery/artifact_agent/interfaces/mcp_local_worker.py:163: WorkerToolError
+=========================== short test summary info ============================
+FAILED tests/operations/test_l4_local_tcad.py::test_local_tcad_response_bound_includes_budget_before_sealing
+1 failed, 10 passed, 86 deselected in 13.53s

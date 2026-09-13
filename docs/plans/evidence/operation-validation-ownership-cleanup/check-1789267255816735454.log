@@ -1,0 +1,12 @@
+........................................................................ [ 59%]
+.................................................                        [100%]
+=============================== warnings summary ===============================
+tests/operations/test_log_preservation.py::test_middle_error_survives_collection_and_is_located_before_excerpt[development_debug-False]
+tests/operations/test_log_preservation.py::test_middle_error_survives_collection_and_is_located_before_excerpt[development_debug-True]
+tests/operations/test_log_preservation.py::test_middle_error_survives_collection_and_is_located_before_excerpt[production-False]
+tests/operations/test_log_preservation.py::test_middle_error_survives_collection_and_is_located_before_excerpt[production-True]
+  /home/da/project/ai4s/tcad/git_release/scidiscovery-agent/123/scidiscovery-e5.2/plugins/tcad_artifact/tcad_artifact/remote_runner_py36.py:884: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    return datetime.utcnow().isoformat(timespec="microseconds") + "Z"
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+121 passed, 4 warnings in 50.99s

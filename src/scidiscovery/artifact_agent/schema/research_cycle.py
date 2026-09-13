@@ -115,11 +115,6 @@ class ScientificReview(SchemaModel):
         keys = tuple(item.hypothesis_key for item in self.hypothesis_reviews)
         if len(keys) != len(set(keys)):
             raise ValueError("a scientific review may review each hypothesis once")
-        source_keys = tuple(item.source_key for item in self.evidence)
-        known_sources = set(source_keys)
-        for finding in self.findings:
-            if not set(finding.evidence_keys).issubset(known_sources):
-                raise ValueError("scientific review finding references undeclared evidence")
         if self.review_target == "hypothesis_portfolio" and not self.hypothesis_reviews:
             raise ValueError("hypothesis portfolio review requires hypothesis_reviews")
         return self

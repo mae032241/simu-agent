@@ -1,0 +1,34 @@
+{
+  "catalog_count": 50,
+  "stdio": [
+    {
+      "operation_id": "tcad.result.analyze.v1",
+      "state": "completed",
+      "start_bytes": 7548
+    },
+    {
+      "operation_id": "science.result.diagnose.v1",
+      "state": "completed",
+      "start_bytes": 6032
+    },
+    {
+      "operation_id": "science.result.diagnose.curve-error.v1",
+      "state": "completed",
+      "start_bytes": 2969
+    }
+  ],
+  "real_agent": false,
+  "status": "pass",
+  "root": "/tmp/scid-handoff-installed-766dsmwz",
+  "packaged_source_sha256": {
+    "plugins/curve_score/curve_score/analysis_workspace.py": "50adb578b02f12fa088c0b1c225f4f81f32658ed5d4812f1e5f7760dfe08f954",
+    "plugins/tcad_artifact/tcad_artifact/analysis_bindings.py": "b8b94e06c21b90aaf38285cdce4498acc2eac41cc78560bba94a3b0bbeb0a007",
+    "src/scidiscovery/artifact_agent/schema/layered_diagnosis.py": "6d21e59e76c003311a6a1e135f952d2dd34456de7ae07d545107a5750e3ee3d6",
+    "src/scidiscovery/artifact_agent/service/result_materialization.py": "1286761d1fdb7970b14545cdf558886a6f4c1d242caabe1f36dfd2009a008994",
+    "src/scidiscovery/artifact_agent/schema/claim.py": "7b0e8f53707d989fead1ede2cae828ac0fec9bd1a4d03a8d6b4a825495742c8b",
+    "plugins/curve_score/curve_score/science_operations.py": "025c6aa3361c1886e4d2945d087234075bcd524dbdd87bd401579db0149a19d8",
+    "plugins/tcad_artifact/tcad_artifact/result_analysis.py": "a936695feb0217ca57d88a3952b49bdb26274d92df9d3e22d5a220ef1702ec54",
+    "src/scidiscovery/platforms/codex.py": "352a72e484ffb5069414937492d2ba955c9d2dd92f4ac050134b7ad74d6eaabe"
+  },
+  "boundary": "Installed local Worker stdio with fixture tasks; no live Agent, daemon, VM or solver"
+}

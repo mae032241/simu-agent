@@ -1,0 +1,123 @@
+{
+  "status": "independent review failed: unresolved source interpretation and failed Run visibility",
+  "production_files_unchanged": true,
+  "files": [
+    {
+      "path": "src/scidiscovery/operation_contract.py",
+      "sha256": "9f1bbd9e5a24d0a26e0f896c2469049a44bf28b6d309c3ce2cdc1be36f04a585",
+      "actual_sha256": "9f1bbd9e5a24d0a26e0f896c2469049a44bf28b6d309c3ce2cdc1be36f04a585",
+      "unchanged": true
+    },
+    {
+      "path": "src/scidiscovery/artifact_agent/service/analysis_artifacts.py",
+      "sha256": "17543548f36157989387acedd00705ad48260809fc6e98005d63b2019a15f392",
+      "actual_sha256": "17543548f36157989387acedd00705ad48260809fc6e98005d63b2019a15f392",
+      "unchanged": true
+    },
+    {
+      "path": "src/scidiscovery/artifact_agent/service/runs.py",
+      "sha256": "30ecc83de381998fb49ea0f794fb8778bac79e9fb89008c78a91ea7dce94c779",
+      "actual_sha256": "30ecc83de381998fb49ea0f794fb8778bac79e9fb89008c78a91ea7dce94c779",
+      "unchanged": true
+    },
+    {
+      "path": "plugins/curve_score/curve_score/science_operations.py",
+      "sha256": "f9e71a8c98d46b9159fd32992543fd092ec2d291563d0c323fdd6d1ff437f4f8",
+      "actual_sha256": "f9e71a8c98d46b9159fd32992543fd092ec2d291563d0c323fdd6d1ff437f4f8",
+      "unchanged": true
+    },
+    {
+      "path": "plugins/tcad_artifact/tcad_artifact/result_analysis.py",
+      "sha256": "e0ef0a89daf7db2a10f9dbab3c3c480d9a65aa8cfc8b1b6e898366702573f7f0",
+      "actual_sha256": "e0ef0a89daf7db2a10f9dbab3c3c480d9a65aa8cfc8b1b6e898366702573f7f0",
+      "unchanged": true
+    },
+    {
+      "path": "plugins/tcad_artifact/tcad_artifact/operation_workspace.py",
+      "sha256": "d2e6928f084bba0b519aebead7479277942f83551c5748d09c158c7eac4d1805",
+      "actual_sha256": "d2e6928f084bba0b519aebead7479277942f83551c5748d09c158c7eac4d1805",
+      "unchanged": true
+    },
+    {
+      "path": "plugins/tcad_artifact/tcad_artifact/project_packager.py",
+      "sha256": "5c3bb774cd2c1d6a425db77b01a8dbe12890febc4e84e4944d39e9332265b3b2",
+      "actual_sha256": "5c3bb774cd2c1d6a425db77b01a8dbe12890febc4e84e4944d39e9332265b3b2",
+      "unchanged": true
+    },
+    {
+      "path": "plugins/tcad_artifact/tcad_artifact/analysis_bindings.py",
+      "sha256": "2434291e4ca5f0b389914f109466ec9c6f4de83cd6a38bb20906998694842a63",
+      "actual_sha256": "2434291e4ca5f0b389914f109466ec9c6f4de83cd6a38bb20906998694842a63",
+      "unchanged": true
+    }
+  ],
+  "probes": [
+    {
+      "path": "review_r2_visibility_probes.py",
+      "sha256": "8574a5078f095ff2951a1f66b80939340e1513397bc2378d1efa3b8c523cd8f1"
+    },
+    {
+      "path": "review_r2_mapping_probes.py",
+      "sha256": "cb5771aaa79c56d990d115ba3993c450b157c82a875ba906777cd44e946aed2a"
+    }
+  ],
+  "checks": [
+    {
+      "command": [
+        "python",
+        "-m",
+        "pytest",
+        "-q",
+        "-s",
+        "-c",
+        "pyproject.toml",
+        "/tmp/test_validation_fix_r2_visibility.py"
+      ],
+      "exit_code": 1,
+      "duration_seconds": 2.65,
+      "peak_tree_rss_bytes": 118456320,
+      "stopped": null,
+      "log": "check-1789261662784365762.log"
+    },
+    {
+      "command": [
+        "python",
+        "-m",
+        "pytest",
+        "-q",
+        "-s",
+        "-c",
+        "pyproject.toml",
+        "/tmp/test_validation_fix_r2_mapping.py"
+      ],
+      "exit_code": 1,
+      "duration_seconds": 3.53,
+      "peak_tree_rss_bytes": 125820928,
+      "stopped": null,
+      "log": "check-1789261771922163338.log"
+    },
+    {
+      "command": [
+        "python",
+        "-m",
+        "pytest",
+        "-q",
+        "-s",
+        "-c",
+        "pyproject.toml",
+        "/tmp/test_validation_fix_r2_mapping.py",
+        "-k",
+        "optional_citation"
+      ],
+      "exit_code": 1,
+      "duration_seconds": 3.52,
+      "peak_tree_rss_bytes": 121520128,
+      "stopped": null,
+      "log": "check-1789261921264150213.log"
+    }
+  ],
+  "peak_tree_rss_bytes": 125820928,
+  "production_deployed": false,
+  "full_suite_run": false,
+  "report": "INDEPENDENT_REVIEW_R2.zh-CN.md"
+}

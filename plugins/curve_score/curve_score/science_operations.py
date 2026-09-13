@@ -22,8 +22,8 @@ from .analysis import (
 from .curve_contract_compiler import validate_compiled_curve_contract, validate_curve_contract_inputs
 from .diagnostic_tool import DIAGNOSTIC_GUIDANCE, DIAGNOSTIC_PLOT_OUTPUT, record_metric_report
 from .analysis_files import GUIDANCE as ANALYSIS_FILES_GUIDANCE
-from .analysis_workspace import GUIDANCE as CONTINUATION_GUIDANCE
-from scidiscovery.artifact_agent.service.analysis_artifacts import analysis_calculations
+from .analysis_workspace import GUIDANCE as CONTINUATION_GUIDANCE, REPORT_GUIDANCE
+from scidiscovery.artifact_agent.service.analysis_artifacts import analysis_calculations, analysis_evidence_aliases, calculation_reference_aliases
 from .schema import (
     CurveBundle,
     CurveComparisonSpec,
@@ -53,7 +53,7 @@ from scidiscovery.operation_declaration import (
     scientific_semantic_contract,
     scientific_agent_operation,
 )
-from scidiscovery.operation_contract import SemanticRuleViolation, declared_violation, DiagnosticError, contract_diagnostic
+from scidiscovery.operation_contract import SemanticRuleViolation, declared_violation, DiagnosticError, contract_diagnostic, validate_evidence_source_aliases
 from scidiscovery.operations.input_validation import OperationInvocationError
 from scidiscovery.operations.spec import (
     CallableComponent,
@@ -165,6 +165,7 @@ def _curve_contract_review_context(
     expected_verdict = "blocked" if review.verdict == "reject" else review.verdict
     if handoff.get("verdict") != expected_verdict:
         raise SemanticRuleViolation("curve contract review handoff differs from payload verdict")
+    validate_evidence_source_aliases(payload, sources)
 
 
 def _nonempty(raw: bytes) -> None:
@@ -288,6 +289,12 @@ def _diagnosis_identity(inputs: tuple[Any, ...], parameters: Any) -> bool:
 
 def _diagnosis_inputs(sources: dict[str, bytes]) -> None:
     prior_analysis_sources(sources)
+    if "metric_report" in sources:
+        plan = parse_bound_json(ExperimentPortfolio, sources["experiment_plan"], admission_port="experiment_plan")
+        report = parse_bound_json(CurveConsistencyReport, sources["metric_report"], admission_port="metric_report")
+        if report.validation_plan_sha256 not in {canonical_sha256(item) for item in plan.validation_plans}:
+            raise OperationInvocationError("input_metric_plan_mismatch", port="metric_report", field="validation_plan_sha256",
+                message="The metric report must identify a validation plan in the bound experiment.")
     for port, model in (("experiment_plan", ExperimentPortfolio), ("experiment_review", ScientificReview)):
         parsed = parse_bound_json(model, sources[port], admission_port=port)
         if port == "experiment_review":
@@ -305,7 +312,7 @@ def _diagnosis_operation(operation_id: str, purpose: str, applies_when: str, *, 
         prompt=ComponentRef(prompt), tools=BASE_TOOLS + (ComponentRef("analysis_score_tool"), ComponentRef("analysis_diagnostic_tool"), ComponentRef("analysis_files_tool")),
         native_view_image=True,
         input_validation=InputValidationSpec(ComponentRef("diagnosis_inputs"), "science.diagnosis.history_inputs",
-            "Bind a structurally valid historical plan and its exact completed science.object.review.v1 scientific_review output, with matching plan parent and passing experiment_portfolio verdict. Results must have the exact plan parent. Historical review is evidence for analysis, not current authoring or execution authority."),
+            "Bind a structurally valid historical plan and its exact completed science.object.review.v1 scientific_review output, with matching plan parent and passing experiment_portfolio verdict. Results must have the exact plan parent. Historical review is evidence for analysis, not current authoring or execution authority. An optional metric report must identify a validation plan in the bound experiment."),
         inputs=(
             _input("experiment_plan", "Exact experiment portfolio.", "scidiscovery.experiment-portfolio.v1", max_item_bytes=2 * 1024 * 1024, usage="evidence_inventory"),
             _review_input("experiment_review", "Exact independent passing plan review.").model_copy(update={"exposure": "on_demand", "usage": "evidence_inventory"}),
@@ -342,7 +349,7 @@ def _curve_error_diagnosis_operation() -> OperationSpec:
         "Recomputing analysis, producing plots, or changing exact scientific inputs.",
         input_validation=InputValidationSpec(ComponentRef("curve_diagnosis_inputs"), "curve.diagnosis.inputs", "At admission, the analysis package must reproduce from its exact curve inputs and bind a valid curve contract with complete-plan metric coverage. Diagnosis submission does not repeat this input validation or calculation."),
         agent=ComponentRef("diagnosis_agent"),
-        workspace=ComponentRef("workspace", plugin_id=_GENERAL_SCIENCE),
+        workspace=ComponentRef("analysis_workspace"),
         prompt=ComponentRef("curve_diagnosis_prompt"),
         tools=BASE_TOOLS,
         native_view_image=True,
@@ -567,10 +574,8 @@ AGENT_OPERATIONS = (
 
 def validate_analysis_report(diagnosis: LayeredDiagnosisReport, portfolio: ExperimentPortfolio,
                              metric_report: CurveConsistencyReport | None = None, *,
-                             metric_spec: CurveComparisonSpec | None = None,
-                             metric_alias: str = "metric_report", calculations=None) -> None:
+                             calculations=None) -> None:
     """Check references to recorded work; the analyst owns scientific conclusions."""
-    del metric_alias
     plans = tuple(item for item in portfolio.validation_plans
                   if item.experiment_key == diagnosis.experiment_key and item.plan_key == diagnosis.plan_key)
     if len(plans) != 1 or diagnosis.study_kind != portfolio.study_kind:
@@ -584,11 +589,7 @@ def validate_analysis_report(diagnosis: LayeredDiagnosisReport, portfolio: Exper
         if record.status == "computed":
             report = record_metric_report(record)
             comparisons.update(item.comparison_key for item in report.comparisons)
-    if metric_report is not None:
-        if metric_report.validation_plan_sha256 != canonical_sha256(plans[0]):
-            raise declared_violation("optional metric report differs from exact validation plan")
-        if metric_spec is not None and metric_report.comparison_spec_sha256 != canonical_sha256(metric_spec):
-            raise declared_violation("metric report differs from its exact comparison specification")
+    if metric_report is not None and metric_report.validation_plan_sha256 == canonical_sha256(plans[0]):
         comparisons.update(item.comparison_key for item in metric_report.comparisons)
     inline_keys = {record.record_key for record in diagnosis.calculation_records}
     for evidence in diagnosis.evidence:
@@ -608,34 +609,40 @@ def _diagnosis_context(payload: dict[str, Any], sources: dict[str, bytes], hando
     metric_report = parse_bound_json(CurveConsistencyReport, sources["metric_report"]) if "metric_report" in sources else None
     validate_analysis_report(diagnosis, portfolio, metric_report, calculations=calculations)
     _validate_analysis_evidence(diagnosis, sources)
+    _validate_diagnosis_references(diagnosis, sources)
+
+
+def _validate_diagnosis_references(diagnosis, sources):
+    # Locally named citations have already been resolved by the domain checker.
+    # Direct input/tool aliases need no second entry in the evidence table.
+    validate_evidence_source_aliases(diagnosis.model_dump(mode="json"),
+        set(sources) | {item.source_key for item in diagnosis.evidence}
+        | {item.source_key for item in diagnosis.source_references}
+        | {item.record_key for item in diagnosis.calculation_records})
 
 
 def _validate_analysis_evidence(diagnosis, sources, *, package=None) -> None:
-    references = {item.source_key: item for item in diagnosis.source_references}
-    evidence_keys = {item.source_key for item in diagnosis.evidence}
-    if len(references) != len(diagnosis.source_references) or set(references) - evidence_keys:
-        raise declared_violation("analysis source references must uniquely identify declared evidence", path="$.source_references")
+    references = {}
+    for index, reference in enumerate(diagnosis.source_references):
+        if reference.source_key in references and reference != references[reference.source_key]:
+            raise declared_violation("analysis source key has conflicting source mappings", path=f"$.source_references[{index}].source_key")
+        references[reference.source_key] = reference
     records = {item.record_key for item in diagnosis.calculation_records}
     for reference in references.values():
         if reference.input_alias not in sources:
             raise declared_violation("analysis source reference is not a bound input", path="$.source_references")
-        if package is not None and reference.input_alias != "curve_analysis_package":
-            raise declared_violation("precomputed analysis can reference only its exact package", path="$.source_references")
+    aliases = analysis_evidence_aliases(diagnosis.evidence, diagnosis.source_references, sources,
+        calculation_reference_aliases(diagnosis.calculation_records, sources))
     for evidence in diagnosis.evidence:
         if evidence.locator.startswith("calculation_records:"):
             if package is not None or evidence.locator.split(":", 1)[1] not in records:
                 raise declared_violation("analysis references an unknown calculation", path="$.evidence")
-            if evidence.source_key in references:
-                raise declared_violation("calculation evidence cannot also claim a raw input reference", path="$.source_references")
             continue
-        reference = references.get(evidence.source_key)
-        alias = reference.input_alias if reference is not None else evidence.locator.split(":", 1)[0]
-        if alias not in sources or not (evidence.locator == alias or evidence.locator.startswith(alias + ":")):
+        alias = aliases[evidence.source_key]
+        if alias not in sources:
             raise declared_violation("raw analysis evidence requires a bound input locator", path="$.evidence")
-        if package is not None and alias != "curve_analysis_package":
-            raise declared_violation("precomputed analysis can reference only its exact package", path="$.evidence")
-        if package is not None and evidence.locator != alias:
-            pointer = evidence.locator[len(alias) + 1:]
+        if package is not None and alias == "curve_analysis_package" and evidence.locator != alias:
+            pointer = evidence.locator[len(alias) + 1:] if evidence.locator.startswith(alias + ":") else evidence.locator
             value = package
             if not pointer.startswith("/") or re.search(r"~(?![01])", pointer):
                 raise declared_violation("precomputed evidence requires a valid package JSON pointer", path="$.evidence")
@@ -684,6 +691,7 @@ def _curve_diagnosis_context(
     if diagnosis.calculation_records:
         raise declared_violation("precomputed analysis cannot create calculation records", path="$.calculation_records")
     _validate_analysis_evidence(diagnosis, sources, package=json.loads(sources["curve_analysis_package"]))
+    _validate_diagnosis_references(diagnosis, sources)
     _validate_diagnosis_against(
         diagnosis,
         package.experiment_plan,
@@ -700,8 +708,7 @@ def _validate_diagnosis_against(
 ) -> None:
     if diagnosis.experiment_key != contract.experiment_key:
         raise declared_violation("diagnosis differs from the exact contract experiment", path="$.experiment_key")
-    validate_analysis_report(diagnosis, portfolio, metric_report,
-        metric_spec=contract.comparison_spec, metric_alias="curve_analysis_package")
+    validate_analysis_report(diagnosis, portfolio, metric_report)
 
 
 def _curve_error_inputs(sources: dict[str, bytes]) -> None:
@@ -768,27 +775,27 @@ def _curve_error_analysis(
     }
 
 
-DIAGNOSIS_PROMPT = CONTINUATION_GUIDANCE + """Return one RoleResultEnvelope with LayeredDiagnosisReport payload.
+DIAGNOSIS_PROMPT = CONTINUATION_GUIDANCE + REPORT_GUIDANCE + """Return one RoleResultEnvelope with LayeredDiagnosisReport payload.
 Analyze the exact plan and bound results, including failures and missing observations.
 Scoring is optional: worker_curve_score accepts explicit sources and comparison_spec.
 Do not invent metric implementations, replace unsupported statistics with RMS, or
 change methods after seeing results without recording analysis_method and method_changes.
 Include evidence references only for calculations used in the report.
-Use an independent evidence source_key for each cited item, with raw locator
-input_alias or input_alias:detail. The bound alias supplies source identity;
-source_references is optional and must agree if supplied. Use the returned
-calculation_ref as locator for new calculations; their evidence source_key may
-differ from the record_key. Control retains their records and diagnostics.
+Use bound input/tool aliases directly in evidence_keys; no separate citation ledger
+is required. Optional evidence entries may use the bound alias as source_key with a
+local locator, or a local source_key resolved by source_references.input_alias or an
+alias-prefixed locator. Multiple locators for the same source are allowed.
+Cite returned calculation_ref aliases for new calculations. Control retains their records and diagnostics.
 Submission verifies controlled receipts without rerunning calculations. Do not copy
 a calculation's source mappings into source_references; cite its record instead.
 Unavailable/unsupported/error records explain limits and cannot support numeric success.
 No score is a normal path: report valid findings, missing conditions, current objective
-limits, remaining overall targets, and next steps. Assess each gate from the evidence
-it uses and the plan's actual dependencies. A missing comparison may leave the overall
+limits, remaining overall targets, and next steps, according to the evidence and the
+plan's actual dependencies. A missing comparison may leave the overall
 result inconclusive while other evidence supports finite findings or a local objective.
 A partial metric pass does not establish unperformed comparisons or overall closure.
 Link computed operators to the selected plan using exact validation_check_key values,
-and cite their saved calculation_ref from the relevant gate evidence.
+and cite their saved calculation_ref in evidence.
 Explain which planned checks were completed and how missing or failed checks limit each conclusion.
 The reviewer assesses scientific sufficiency; submission does not derive the verdict from gate statuses.
 The optional curve-error helper is never a required next stage.
@@ -816,6 +823,7 @@ class Resources:
         "curve.diagnosis",
         "Bind analysis to the exact plan, results, evidence and optional calculations.",
         "Report findings and limitations; verify controlled calculation receipts without rerunning scoring.",
+        context_constraint="Output identities and references must agree with the exact declared context sources that are present. A source key must resolve to one bound input or calculation record. Inline and saved representations of the same complete controlled calculation receipt share one identity. A bound input alias retains its identity even in an optional source mapping. Repeated citations and local locators are allowed; an explicit locator naming another bound input conflicts with that mapping.",
         payload_rule_id="curve.diagnosis.report_consistency",
         context_rule_id="curve.diagnosis.input_binding",
     )
@@ -840,8 +848,8 @@ class Resources:
         context_constraint=(
             "Objective, case, reference-series, metric, and threshold identities must "
             "match the exact objective, experiment plan, and reference bundle. "
-            "Each selected target must exist in the original objective and its "
-            "observable must belong to the selected experiment. Unselected targets "
+            "Each selected target must exist in the original objective; observable "
+            "descriptions need not repeat the experiment's prose verbatim. Unselected targets "
             "remain outstanding; scientific review assesses their impact."
         ),
         payload_rule_id="curve.contract.case_metric_closure",
@@ -871,16 +879,16 @@ class Resources:
         OPERATION_AGENT_PREAMBLE + CURVE_CONTRACT_REVIEW_PROMPT
     )
     diagnosis_prompt = OPERATION_AGENT_PREAMBLE + DIAGNOSIS_PROMPT
-    curve_diagnosis_prompt = OPERATION_AGENT_PREAMBLE + """Read any bound curve_analysis_plots with native view_image when useful; these images supplement the fixed package, never supply unbound scientific facts.\nReturn exactly one
+    curve_diagnosis_prompt = OPERATION_AGENT_PREAMBLE + CONTINUATION_GUIDANCE + REPORT_GUIDANCE + """Read any bound curve_analysis_plots with native view_image when useful; these images supplement the fixed package, never supply unbound scientific facts.\nReturn exactly one
 RoleResultEnvelope whose payload is the LayeredDiagnosisReport required by
 output.schema.json. Interpret the supplied immutable curve-analysis package,
 using the evidence and actual dependencies of each conclusion. The package's metric values,
 localized residuals, and plot identities are deterministic facts: do not
 recompute or alter them. Do not mutate evidence or author state transitions.
-Leave calculation_records empty, including failure records. Cite only
-curve_analysis_package, with evidence locators curve_analysis_package or
-curve_analysis_package:/JSON/pointer. source_references is optional; when supplied,
-its input_alias must identify that same package.
+Leave calculation_records empty, including failure records. Cite the exact
+curve_analysis_package or bound curve_analysis_plots aliases directly. Optional
+package locators use valid JSON pointers; plot locators describe positions in
+that image. Source identity needs no duplicate entry in another citation table.
 No scoring tool or external evidence is available in this Operation. Distinguish
 declared check coverage from actual passing metrics and thresholds. Missing or
 failed checks limit complete success; they do not erase independently supported facts.

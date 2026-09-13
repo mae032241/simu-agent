@@ -43,10 +43,25 @@ def materialize_intake(value: dict) -> None:
         value['problem_frame']['objective'] = foundation['objective']
 
 
+def materialize_analysis_handoff(value: dict) -> None:
+    """Project only duplicate transport fields from the analyst's formal report."""
+    payload = value['payload']
+    verdict = {'pass': 'pass', 'fail': 'blocked', 'invalid_study': 'blocked',
+               'inconclusive': 'inconclusive'}.get(str(payload.get('overall_verdict')))
+    if verdict is None or not isinstance(payload.get('summary'), str):
+        return  # Missing scientific content belongs to the existing output checker.
+    handoff = value.setdefault('handoff', {})
+    if isinstance(handoff, dict):
+        handoff['verdict'] = verdict
+        handoff['summary'] = 'Read run_status.sealed_output.payload.summary for the scientific conclusion; payload.next_action contains any scientific recommendation.'
+
+
 def materialize_general_result(value: dict, schema_id: str) -> None:
     payload = value['payload']
     verdict = None
-    if schema_id == 'scidiscovery.scientific-intake.v1':
+    if schema_id == 'scidiscovery.layered-diagnosis.v1':
+        materialize_analysis_handoff(value)
+    elif schema_id == 'scidiscovery.scientific-intake.v1':
         materialize_intake(payload)
     elif schema_id == 'scidiscovery.experiment-portfolio.v1':
         for proposal in (payload['proposals'] if isinstance(payload.get('proposals'), list) else ()):

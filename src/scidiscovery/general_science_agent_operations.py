@@ -186,7 +186,7 @@ def _checker_rule_ids(schema: str) -> tuple[str, str]:
             "experiment.revision.review_target",
         ),
         "scidiscovery.scientific-review.v1": (
-            "experiment.review.verdict_consistency",
+            "experiment.review.structure",
             "experiment.review.subject_binding",
         ),
     }[schema]

@@ -6,6 +6,7 @@ from typing import Literal
 
 from .common import Identifier, SchemaModel
 from .validation import ValidationReport
+from .layered_diagnosis import LayeredDiagnosisReport
 
 
 class ClaimDecision(SchemaModel):
@@ -25,13 +26,11 @@ def project_claim_decision(
     if isinstance(report, ValidationReport):
         report_kind = "validation_report"
         numerical_verdict = report.numerical.status
-    else:
-        gates = getattr(report, "gates", None)
-        numerical = getattr(gates, "numerical_validity", None)
-        numerical_verdict = getattr(numerical, "status", None)
-        if numerical_verdict is None:
-            raise TypeError("claim projection requires a supported report contract")
+    elif isinstance(report, LayeredDiagnosisReport):
+        numerical_verdict = report.gates.numerical_validity.status if report.gates else "not_evaluable"
         report_kind = "layered_diagnosis"
+    else:
+        raise TypeError("claim projection requires a supported report contract")
     return ClaimDecision(
         report_kind=report_kind,
         experiment_key=report.experiment_key,

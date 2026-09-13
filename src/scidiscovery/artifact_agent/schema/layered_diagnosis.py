@@ -167,15 +167,16 @@ class LayeredDiagnosisReport(SchemaModel):
     summary: Annotated[str, Field(min_length=1, max_length=8192)]
     evidence: Annotated[tuple[ValidationEvidence, ...], Field(max_length=256)] = ()
     source_references: Annotated[tuple[AnalysisSourceReference, ...], Field(max_length=64)] = ()
-    gates: ScientificGateSequence
+    gates: ScientificGateSequence | None = None
     overall_verdict: Literal["pass", "fail", "inconclusive", "invalid_study"]
     claim_allowed: bool
     objective_assessment: ObjectiveDiagnosisAssessment | None = None
     hypothesis_assessments: Annotated[
         tuple[HypothesisAssessment, ...], Field(max_length=32)
     ] = ()
-    remaining_contradiction: Annotated[str, Field(min_length=1, max_length=8192)]
-    next_action: Annotated[str, Field(min_length=1, max_length=4096)]
+    limitations: Annotated[tuple[str, ...], Field(max_length=64)] = ()
+    remaining_contradiction: Annotated[str, Field(min_length=1, max_length=8192)] | None = None
+    next_action: Annotated[str, Field(min_length=1, max_length=4096)] | None = None
     recommended_task_mode: RecommendedTaskMode | None = None
     calculation_records: Annotated[tuple[CalculationRecord, ...], Field(max_length=8)] = Field(default=(),
         description="Legacy inline calculation records remain readable. For new tool results, cite calculation_ref in evidence instead; tools retain records and receipts automatically.")
@@ -206,26 +207,9 @@ def diagnosis_consistency_issues(report: LayeredDiagnosisReport) -> tuple[dict[s
         issue("/calculation_records", "calculation record keys must be unique")
     if sum(len(canonical_json(item.model_dump(mode="json"))) for item in report.calculation_records) > 96 * 1024:
         issue("/calculation_records", "calculation records exceed report byte budget")
-    source_keys = tuple(item.source_key for item in report.evidence)
-    if len(source_keys) != len(set(source_keys)):
-        issue("/evidence", "diagnosis evidence source_key values must be unique")
-    known = set(source_keys)
-    gate_names = ("evidence_identity", "implementation_fidelity", "numerical_validity",
-                  "control_equivalence", "observation", "physical_interpretation")
-    gates = tuple(getattr(report.gates, name) for name in gate_names)
-    for name, gate in zip(gate_names, gates):
-        if not set(gate.evidence_keys).issubset(known):
-            issue("/gates/" + name, "diagnosis gate references undeclared evidence")
-    objective = report.objective_assessment
-    if objective is not None and not set(objective.evidence_keys).issubset(known):
-        issue("/objective_assessment", "objective assessment references undeclared evidence")
     assessment_keys = tuple(item.hypothesis_key for item in report.hypothesis_assessments)
     if len(assessment_keys) != len(set(assessment_keys)):
         issue("/hypothesis_assessments", "a diagnosis may assess each hypothesis once")
-    for index, assessment in enumerate(report.hypothesis_assessments):
-        path = f"/hypothesis_assessments/{index}"
-        if not set(assessment.evidence_keys).issubset(known):
-            issue(path, "hypothesis assessment references undeclared evidence")
     return tuple(issues)
 
 

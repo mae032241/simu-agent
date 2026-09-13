@@ -345,6 +345,18 @@ class RunIdInput(ExecutionToolInput):
 class InspectOutputsInput(RunIdInput):
     max_bytes: int = Field(default=32*1024*1024, ge=0, le=32*1024*1024)
     relative_path: str | None = Field(default=None, max_length=1024)
+    deadline_monotonic: float | None = None
+
+
+class CollectionBudgetInput(ExecutionToolInput):
+    deadline_monotonic: float
+    stop_deadline_monotonic: float
+    file_timeout_seconds: float
+    idle_timeout_seconds: float
+
+
+class CollectInput(RunIdInput):
+    collection: CollectionBudgetInput | None = None
 
 
 class SubmissionDigestInput(ExecutionToolInput):
@@ -377,10 +389,10 @@ EXECUTION_TOOLS = (
         SubmissionDigestInput,
     ),
     ExecutionTool("tcad_submit", "Submit one prepared TCAD job and return immediately.", SubmitInput),
-    ExecutionTool("tcad_status", "Read one short durable TCAD job status.", RunIdInput),
+    ExecutionTool("tcad_status", "Read one durable TCAD job status and optional bounded, redacted log tails with observed job timing.", RunIdInput),
     ExecutionTool("tcad_cancel", "Request cancellation of one TCAD job.", RunIdInput),
     ExecutionTool("tcad_inspect_outputs", "Read bounded terminal files without execution or mutation.", InspectOutputsInput),
-    ExecutionTool("tcad_collect", "Return local descriptors for terminal TCAD outputs.", RunIdInput),
+    ExecutionTool("tcad_collect", "Return local descriptors for terminal TCAD outputs within the supplied collection budget.", CollectInput),
 )
 
 
@@ -553,6 +565,13 @@ class TCADExecutionFacade:
         return {"found": True, **self.tcad_status(run_id=row["run_id"])}
 
     def tcad_status(self, *, run_id: str) -> dict[str, Any]:
+        from .remote_runner_py36 import _job_progress
+
+        value = self._tcad_status_value(run_id=run_id)
+        value["progress"] = _job_progress(str(self.runs_root / run_id))
+        return value
+
+    def _tcad_status_value(self, *, run_id: str) -> dict[str, Any]:
         row = self._submission_row(run_id)
         run_dir = self.runs_root / run_id
         submitted = row["submitted_at"]
@@ -706,12 +725,23 @@ class TCADExecutionFacade:
                 continue
         return {**status, "state": "cancelling"}
 
-    def tcad_inspect_outputs(self, *, run_id: str, relative_path: str | None = None, max_bytes: int = 32*1024*1024) -> dict[str, Any]:
+    def tcad_inspect_outputs(self, *, run_id: str, relative_path: str | None = None, max_bytes: int = 32*1024*1024, deadline_monotonic=None) -> dict[str, Any]:
         from .remote_runner_py36 import _inspect_directory
+        from scidiscovery.artifact_agent.service.execution_collection import CollectionContext
+        context = CollectionContext(deadline_monotonic, deadline_monotonic) if deadline_monotonic is not None else None
+        if context: context.remaining_seconds()
         self.tcad_status(run_id=run_id)
-        return _inspect_directory(str(self._run_dir(run_id)), relative_path, max_bytes)
+        result = _inspect_directory(str(self._run_dir(run_id)), relative_path, max_bytes,
+            deadline_monotonic=deadline_monotonic)
+        if context: context.remaining_seconds()
+        return result
 
-    def tcad_collect(self, *, run_id: str) -> dict[str, Any]:
+    def tcad_collect(self, *, run_id: str, collection=None) -> dict[str, Any]:
+        from scidiscovery.artifact_agent.service.execution_collection import CollectionContext
+        if isinstance(collection, CollectionBudgetInput):
+            collection = collection.model_dump()
+        context = CollectionContext(**collection) if collection is not None else None
+        if context: context.remaining_seconds()
         status = self.tcad_status(run_id=run_id)
         if not status["done"]:
             raise ExecutionToolError("TCAD job is not terminal")
@@ -722,6 +752,7 @@ class TCADExecutionFacade:
                 name=item["name"],
                 path=run_dir / "work" / item["relative_path"],
                 media_type=item["media_type"],
+                context=context,
             )
             for item in manifest["outputs"]
         ]
@@ -730,6 +761,7 @@ class TCADExecutionFacade:
                 name="tcad_log",
                 path=(run_dir / "diagnostic.log") if (run_dir / "diagnostic.log").is_file() else (run_dir / "worker.log"),
                 media_type="text/plain; charset=utf-8",
+                context=context,
             )
         )
         outputs.append(
@@ -737,6 +769,7 @@ class TCADExecutionFacade:
                 name="tcad_manifest",
                 path=run_dir / "output_manifest.json",
                 media_type="application/json",
+                context=context,
             )
         )
         return {"run_id": run_id, "outputs": outputs}
@@ -859,13 +892,19 @@ def _read_descriptor(descriptor: FileDescriptor) -> bytes:
     return content
 
 
-def _descriptor(*, name: str, path: Path, media_type: str) -> dict[str, Any]:
-    content = path.read_bytes()
+def _descriptor(*, name: str, path: Path, media_type: str, context=None) -> dict[str, Any]:
+    digest = hashlib.sha256()
+    size = 0
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            if context: context.remaining_seconds()
+            digest.update(chunk)
+            size += len(chunk)
     return FileDescriptor(
         name=name,
         local_path=str(path),
-        sha256=hashlib.sha256(content).hexdigest(),
-        size_bytes=len(content),
+        sha256=digest.hexdigest(),
+        size_bytes=size,
         media_type=media_type,
     ).model_dump(mode="json")
 

@@ -1,0 +1,62 @@
+[
+  {
+    "path": "plugins/curve_score/curve_score/analysis_files.py",
+    "wheel_sha256": "cf5a9ad16a97c8c0ed30f6648b9ad0baa3102547847fe3636c5a39a1df71b1eb",
+    "matches_candidate": true
+  },
+  {
+    "path": "plugins/curve_score/curve_score/curve_contract_compiler.py",
+    "wheel_sha256": "280c1e6450b73e7b0cbd74ad6bac436300bdba4a9137f49ec713c52b9ec8bd6a",
+    "matches_candidate": true
+  },
+  {
+    "path": "plugins/curve_score/curve_score/science_operations.py",
+    "wheel_sha256": "43c01742b16baab6b62e97e12022b04480313db5480fbdb30eba143bd951915a",
+    "matches_candidate": true
+  },
+  {
+    "path": "src/scidiscovery/artifact_agent/interfaces/mcp_local_worker.py",
+    "wheel_sha256": "8f66cec31f9588249890795401f6f03f3830fe063d1bee8c738402f942f0e8d7",
+    "matches_candidate": true
+  },
+  {
+    "path": "src/scidiscovery/artifact_agent/interfaces/mcp_root.py",
+    "wheel_sha256": "7eaf064f1d110276b5c82a26e4dbe4d2baaf23d5731cc4c1e84d193e0bdbe8ce",
+    "matches_candidate": true
+  },
+  {
+    "path": "src/scidiscovery/artifact_agent/interfaces/mcp_root_run_routes.py",
+    "wheel_sha256": "aa4a57166aa3520d7d7a1c4fd1b6007b645386503e9f47ae22b38603890f5f15",
+    "matches_candidate": true
+  },
+  {
+    "path": "src/scidiscovery/artifact_agent/schema/experiment.py",
+    "wheel_sha256": "de589f5fd7afcc5d7ac421f3499e9a5b9a4d760712e2aa8aee3d9da1320f943e",
+    "matches_candidate": true
+  },
+  {
+    "path": "src/scidiscovery/artifact_agent/schema/experiment_intent.py",
+    "wheel_sha256": "db80d81a7fb940f73fa62fffb8a7099df5943e2304db2e991599f664c35b7663",
+    "matches_candidate": true
+  },
+  {
+    "path": "src/scidiscovery/artifact_agent/service/run_outputs.py",
+    "wheel_sha256": "f937149c7a22377fa38a9948765c2b27131cbb72c820fe722c7b7633ee678817",
+    "matches_candidate": true
+  },
+  {
+    "path": "src/scidiscovery/artifact_agent/service/runs.py",
+    "wheel_sha256": "9676ecaf27149787120bc0531732c1d1247266952a81b1d5b38e2eeb896129be",
+    "matches_candidate": true
+  },
+  {
+    "path": "src/scidiscovery/general_science_experiment_components.py",
+    "wheel_sha256": "2d8afef474e3afdc3f26b52008c6bf392a7f14a6dc2f8a9a5beb19d45a0aa100",
+    "matches_candidate": true
+  },
+  {
+    "path": "src/scidiscovery/operation_contract.py",
+    "wheel_sha256": "e3af0c00e31daa1e03705b7c9b6fb9ac86b73bc6c71a1bd2ef5d0c000528cda6",
+    "matches_candidate": true
+  }
+]

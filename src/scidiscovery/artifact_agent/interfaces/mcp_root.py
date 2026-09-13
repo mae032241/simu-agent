@@ -35,6 +35,8 @@ from .mcp_root_execution_routes import RootExecutionRoutes
 from .mcp_root_instance_routes import RootInstanceRoutes
 from .mcp_root_operation_routes import RootOperationRoutes
 from .mcp_root_run_routes import RootRunRoutes
+from ..service.engineering_diagnostics import EngineeringDiagnostics
+from ..service.execution_collection import COLLECTION_SECONDS
 
 
 _NAME_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,255}$"
@@ -53,6 +55,18 @@ class OperationCatalogInput(RootToolInput):
 
 class NamedInput(RootToolInput):
     name: str = Field(pattern=_NAME_PATTERN)
+
+
+class DiagnosticReadInput(RootToolInput):
+    reference: str = Field(pattern=r"^diag_[0-9a-f]{32}$")
+    offset: int = Field(default=0, ge=0)
+    max_bytes: int = Field(default=16384, ge=1, le=65536)
+    section: Literal["summary", "traceback", "stdout", "stderr"] = "summary"
+
+
+class ExecutionCollectInput(NamedInput):
+    total_seconds: float = Field(default=COLLECTION_SECONDS, gt=0, allow_inf_nan=False,
+        description="Total collection attempt budget, including transfer, registration and cleanup. A running attempt is never extended by a duplicate call.")
 
 
 class InstanceListInput(RootToolInput):
@@ -97,6 +111,14 @@ class ScientificCurrentSelectInput(NamedInput):
 class RunListInput(RootToolInput):
     state: Literal["queued", "running", "completed", "failed"] | None = None
     limit: int = Field(default=50, ge=1, le=100)
+    before: str | None = Field(default=None, pattern=_NAME_PATTERN,
+        description="Continue after this semantic Run name, returned as next_before by the previous page.")
+
+
+class RunStatusInput(NamedInput):
+    diagnostic_after: int | None = Field(default=None, ge=0,
+        description="Set to 0 for the first page of saved errors, then use diagnostic_events.next_after. Omit for the compact status.")
+    diagnostic_limit: int = Field(default=50, ge=1, le=100)
 
 
 class RunFailureInput(NamedInput):
@@ -151,6 +173,7 @@ class RootTool:
 
 
 ROOT_TOOLS = (
+    RootTool("diagnostic_read", "Read bounded engineering error details visible to the current instance or session.", DiagnosticReadInput),
     RootTool("instance_current", "Read the bound research instance or return its direct local management URL.", EmptyInput),
     RootTool("instance_list", "List research instances without exposing internal identity.", InstanceListInput),
     RootTool("instance_close", "Close the current research instance against further writes.", EmptyInput),
@@ -164,7 +187,7 @@ ROOT_TOOLS = (
     RootTool("operation_preflight", "Check one exact operation call without writing control state.", OperationCallInput),
     RootTool("operation_invoke", "Create one Agent, Transform, or Effect through the compiled operation catalog.", OperationCallInput),
     RootTool("run_list", "List minimal Runs in this research instance.", RunListInput),
-    RootTool("run_status", "Read one minimal Run; completed Runs include their validated sealed scientific output.", NamedInput),
+    RootTool("run_status", "Read one minimal Run and optional paginated error history; completed Runs include their sealed scientific output.", RunStatusInput),
     RootTool("run_record_failure", "Record failure of one running minimal Run.", RunFailureInput),
     RootTool("approval_list", "List named reviews in this scheduler instance.", ApprovalListInput),
     RootTool("approval_status", "Read one named human-review state.", NamedInput),
@@ -176,7 +199,8 @@ ROOT_TOOLS = (
     RootTool("execution_status", "Read one named execution state.", NamedInput),
     RootTool("execution_outputs", "Bind and list logical outputs from one named execution.", NamedInput),
     RootTool("execution_start", "Submit one named execution after its exact local review authorizes it.", NamedInput),
-    RootTool("execution_sync", "Synchronize one named submitted execution.", NamedInput),
+    RootTool("execution_sync", "Refresh bounded solver status and logs; never collect artifacts.", NamedInput),
+    RootTool("execution_collect", "Start or resume terminal artifact collection; returns immediately. Other active collection returns busy without queuing.", ExecutionCollectInput),
 )
 
 
@@ -209,6 +233,7 @@ class RootToolFacade(
         approval_base_url: str | None = None,
         instance_management_secret: bytes | None = None,
         operation_catalog: CompiledCatalog | None = None,
+        execution_collection=None,
     ) -> None:
         self.artifacts = artifacts
         self.intake = intake
@@ -219,10 +244,20 @@ class RootToolFacade(
         self.instance = instance
         self.session_key = session_key
         self.execution_bridge = execution_bridge
+        self.execution_collection = execution_collection
         self.approval_base_url = approval_base_url
         self.instance_management_secret = instance_management_secret
         self._operation_catalog = operation_catalog or compile_installed_catalog()
         self._create_lock = creation_lock or threading.RLock()
+        self.engineering_diagnostics = EngineeringDiagnostics(runs.database_path.parent.parent / "engineering-diagnostics")
+
+    def diagnostic_read(self, *, reference: str, offset: int, max_bytes: int, section: str) -> dict:
+        scopes = ["session:" + self.session_key] if self.session_key else []
+        try:
+            scopes.append("instance:" + self._instance_id())
+        except RootToolError:
+            pass
+        return self.engineering_diagnostics.read(reference, scopes=tuple(scopes), offset=offset, max_bytes=max_bytes, section=section)
 
     def _bind(
         self,
@@ -404,7 +439,16 @@ class RootMCPRouter:
             raise RootToolError("tool arguments do not satisfy the declared model",
                     details=validation_diagnostics(error, schema=tool.schema()["inputSchema"])) from error
         values = {field: getattr(parsed, field) for field in type(parsed).model_fields}
-        return getattr(self.facade, name)(**values)
+        try:
+            return getattr(self.facade, name)(**values)
+        except Exception as error:
+            scope = "session:" + (self.facade.session_key or "unbound")
+            try:
+                scope = "instance:" + self.facade._instance_id()
+            except RootToolError:
+                pass
+            self.facade.engineering_diagnostics.capture(error, scope=scope, layer="root", action=name)
+            raise
 
 
 __all__ = [

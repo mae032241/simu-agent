@@ -478,7 +478,7 @@ REVISION_INPUTS = (
 RUNTIME_INPUTS = (
     _input("prior_project", "tcad.deck-project.v1", "project_schema", usage="revision_base"),
     _input("runtime_attestation", "tcad.runtime-attestation.v1", "runtime_attestation_schema", usage="prior_signal", max_bytes=512 * 1024),
-    _input("solver_log", "opaque", "opaque_schema", schema_plugin="general_science", usage="prior_signal", media_types=("text/plain",), max_bytes=32 * 1024 * 1024),
+    _input("solver_log", "opaque", "opaque_schema", schema_plugin="general_science", usage="prior_signal", media_types=("text/plain", "text/plain; charset=utf-8"), max_bytes=32 * 1024 * 1024),
     *INITIAL_INPUTS,
 )
 REVIEW_INPUTS = (
@@ -545,7 +545,7 @@ PLUGIN = PluginDefinition(
             resources=(_ref("workspace_materializer"), _ref("review_result_finalizer")),
             configuration_identity="tcad.deck-review-workspace.v2",
         ),
-        ComponentSpec("debug_tool", "worker_tool", "tcad_artifact.plugin:DEBUG_TOOL", configuration_identity="tcad.debug-tool.v4:service=tcad.development_debug"),
+        ComponentSpec("debug_tool", "worker_tool", "tcad_artifact.plugin:DEBUG_TOOL", configuration_identity="tcad.debug-tool.v5:service=tcad.development_debug:observed-progress"),
         ComponentSpec("runtime_configuration_schema", "resource", "tcad_artifact.runtime_plugin:CONFIGURATION_SCHEMA"),
         ComponentSpec("runtime_factory", "runtime_factory", "tcad_artifact.runtime_plugin:RUNTIME_FACTORY", configuration_identity="tcad.runtime-factory.v3:run-local-tool-service"),
         ComponentSpec("study_execute", "effect", "tcad_artifact.runtime_plugin:EXECUTE_EFFECT", configuration_identity="tcad.execution-adapter:tcad:reviewed-deck-package.v2"),

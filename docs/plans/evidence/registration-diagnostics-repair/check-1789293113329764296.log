@@ -1,0 +1,250 @@
+FFFFF.....F.F.......................                                     [100%]
+=================================== FAILURES ===================================
+_ test_prose_and_baseline_labels_survive_submit_materialize_and_review[False] __
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-324/test_prose_and_baseline_labels0')
+experiment_case = ({'study_kind': 'scientific', 'objective_key': 'objective_wrong', 'selected_hypothesis_keys': ['hypothesis_a'], 'propo...research_objective_key":"objective_expected","schema_version":2,"stage_objective":"Separate one bounded mechanism."}'})
+derive_baseline = False
+
+    @pytest.mark.parametrize("derive_baseline", [False, True])
+    def test_prose_and_baseline_labels_survive_submit_materialize_and_review(tmp_path, experiment_case, derive_baseline):
+        intent, sources = deepcopy(experiment_case)
+        intent["objective_key"] = "objective_expected"
+        proposal = intent["proposals"][0]
+        proposal["identifiability_claims"] = [{
+            "hypothesis_key": "hypothesis_a", "observable": "Combined depth and normalized shape response",
+            "distinguishing_outcome": "The response distinguishes the stated alternatives.",
+            "decision_rule": "Review the supplied response.", "ambiguity_conditions": ["Finite support."],
+            "smallest_resolving_control": "The existing bounded comparison.",
+        }]
+        if derive_baseline:
+            proposal.pop("baseline_case_key")
+        else:
+            proposal["cases"][0]["scientific_role"] = "perturbation"
+        (tmp_path / "design").mkdir()
+        (tmp_path / "review").mkdir()
+        runtime, run_id, output = _experiment_run(tmp_path / "design", sources)
+        output.write_bytes(_experiment_envelope(intent))
+>       assert runtime.runs.submit(run_id) == ("completed", ())
+E       AssertionError: assert ('rejected', ..._type'}, ...)) == ('completed', ())
+E         
+E         At index 0 diff: 'rejected' != 'completed'
+E         Use -v to get more diff
+
+tests/operations/test_registration_diagnostics_repair.py:52: AssertionError
+__ test_prose_and_baseline_labels_survive_submit_materialize_and_review[True] __
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-324/test_prose_and_baseline_labels1')
+experiment_case = ({'study_kind': 'scientific', 'objective_key': 'objective_wrong', 'selected_hypothesis_keys': ['hypothesis_a'], 'propo...research_objective_key":"objective_expected","schema_version":2,"stage_objective":"Separate one bounded mechanism."}'})
+derive_baseline = True
+
+    @pytest.mark.parametrize("derive_baseline", [False, True])
+    def test_prose_and_baseline_labels_survive_submit_materialize_and_review(tmp_path, experiment_case, derive_baseline):
+        intent, sources = deepcopy(experiment_case)
+        intent["objective_key"] = "objective_expected"
+        proposal = intent["proposals"][0]
+        proposal["identifiability_claims"] = [{
+            "hypothesis_key": "hypothesis_a", "observable": "Combined depth and normalized shape response",
+            "distinguishing_outcome": "The response distinguishes the stated alternatives.",
+            "decision_rule": "Review the supplied response.", "ambiguity_conditions": ["Finite support."],
+            "smallest_resolving_control": "The existing bounded comparison.",
+        }]
+        if derive_baseline:
+            proposal.pop("baseline_case_key")
+        else:
+            proposal["cases"][0]["scientific_role"] = "perturbation"
+        (tmp_path / "design").mkdir()
+        (tmp_path / "review").mkdir()
+        runtime, run_id, output = _experiment_run(tmp_path / "design", sources)
+        output.write_bytes(_experiment_envelope(intent))
+>       assert runtime.runs.submit(run_id) == ("completed", ())
+E       AssertionError: assert ('rejected', ..._type'}, ...)) == ('completed', ())
+E         
+E         At index 0 diff: 'rejected' != 'completed'
+E         Use -v to get more diff
+
+tests/operations/test_registration_diagnostics_repair.py:52: AssertionError
+____ test_real_variable_conflict_is_precise_and_correctable_without_cascade ____
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-324/test_real_variable_conflict_is0')
+experiment_case = ({'study_kind': 'scientific', 'objective_key': 'objective_wrong', 'selected_hypothesis_keys': ['hypothesis_a'], 'propo...research_objective_key":"objective_expected","schema_version":2,"stage_objective":"Separate one bounded mechanism."}'})
+
+    def test_real_variable_conflict_is_precise_and_correctable_without_cascade(tmp_path, experiment_case):
+        intent, sources = deepcopy(experiment_case)
+        intent["objective_key"] = "objective_expected"
+        intent["proposals"][0]["variables"][0]["comparison_role"] = "frozen"
+        runtime, run_id, output = _experiment_run(tmp_path, sources)
+        output.write_bytes(_experiment_envelope(intent))
+        state, details = runtime.runs.submit(run_id)
+        assert state == "rejected"
+>       assert len(details) == 1, details
+E       AssertionError: ({'schema_version': 1, 'code': 'output_invalid', 'phase': 'output_payload', 'path': '$.payload.proposals[0].objectives...airable': True, 'affected_action': 'submit', 'rule_id': 'experiment.design.intent_closure', 'type': 'tuple_type'}, ...)
+E       assert 10 == 1
+E        +  where 10 = len(({'schema_version': 1, 'code': 'output_invalid', 'phase': 'output_payload', 'path': '$.payload.proposals[0].objectives...airable': True, 'affected_action': 'submit', 'rule_id': 'experiment.design.intent_closure', 'type': 'tuple_type'}, ...))
+
+tests/operations/test_registration_diagnostics_repair.py:87: AssertionError
+_____ test_missing_ambiguous_baseline_and_true_empty_cases_remain_rejected _____
+
+experiment_case = ({'study_kind': 'scientific', 'objective_key': 'objective_wrong', 'selected_hypothesis_keys': ['hypothesis_a'], 'propo...research_objective_key":"objective_expected","schema_version":2,"stage_objective":"Separate one bounded mechanism."}'})
+
+    def test_missing_ambiguous_baseline_and_true_empty_cases_remain_rejected(experiment_case):
+        intent, _ = deepcopy(experiment_case)
+        proposal = intent["proposals"][0]
+        proposal.pop("baseline_case_key")
+        for case in proposal["cases"]:
+            case["scientific_role"] = "perturbation"
+>       with pytest.raises(ValidationError, match="unambiguous baseline"):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AssertionError: Regex pattern did not match.
+E         Expected regex: 'unambiguous baseline'
+E         Actual message: "11 validation errors for ExperimentDesignIntent\nproposals.0.objectives\n  Input should be a valid array [type=tuple_type, input_value=['Distinguish one bounded mechanism.'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.11/v/tuple_type\nproposals.0.current_objectives\n  Input should be a valid array [type=tuple_type, input_value=['Distinguish one bounded mechanism.'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.11/v/tuple_type\nproposals.0.hypothesis_keys\n  Input should be a valid array [type=tuple_type, input_value=['hypothesis_a'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.11/v/tuple_type\nproposals.0.frozen_invariants\n  Input should be a valid array [type=tuple_type, input_value=['Use the same bounded system.'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.11/v/tuple_type\nproposals.0.cases\n  Input should be a valid array [type=tuple_type, input_value=[{'case_key': 'baseline',..._role': 'perturbation'}], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.11/v/tuple_type\nproposals.0.variables\n  Input should be a valid array [type=tuple_type, input_value=[{'baseline_value': 0, 'c...e_key': 'intervention'}], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.11/v/tuple_type\nproposals.0.required_observables\n  Input should be a valid array [type=tuple_type, input_value=['response'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.11/v/tuple_type\nproposals.0.identifiability_claims\n  Input should be a valid array [type=tuple_type, input_value=[{'ambiguity_conditions':...peat the failed case.'}], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.11/v/tuple_type\nproposals.0.prediction_tests\n  Input should be a valid array [type=tuple_type, input_value=[{'expected_result': 'The...n_key': 'prediction_a'}], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.11/v/tuple_type\nproposals.0.stop_conditions\n  Input should be a valid array [type=tuple_type, input_value=['Stop after both cases.'], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.11/v/tuple_type\nproposals\n  Tuple should have at least 1 item after validation, not 0 [type=too_short, input_value=[{'cases': [{'case_key': ...key': 'intervention'}]}], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.11/v/too_short"
+
+tests/operations/test_registration_diagnostics_repair.py:101: AssertionError
+________________ test_derived_plan_failure_keeps_payload_owner _________________
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-324/test_derived_plan_failure_keep0')
+experiment_case = ({'study_kind': 'scientific', 'objective_key': 'objective_wrong', 'selected_hypothesis_keys': ['hypothesis_a'], 'propo...research_objective_key":"objective_expected","schema_version":2,"stage_objective":"Separate one bounded mechanism."}'})
+
+    def test_derived_plan_failure_keeps_payload_owner(tmp_path, experiment_case):
+        intent, sources = deepcopy(experiment_case)
+        intent["objective_key"] = "objective_expected"
+        intent["proposals"][0]["identifiability_claims"] = [{
+            "hypothesis_key": "unknown_hypothesis", "observable": "response",
+            "distinguishing_outcome": "response", "decision_rule": "response",
+            "ambiguity_conditions": ["bounded"], "smallest_resolving_control": "control",
+        }]
+        runtime, run_id, output = _experiment_run(tmp_path, sources)
+        output.write_bytes(_experiment_envelope(intent))
+        state, details = runtime.runs.submit(run_id)
+        assert state == "rejected"
+        assert details[0]["phase"] == "output_payload"
+        assert details[0]["rule_id"] == "experiment.design.intent_closure"
+>       assert "hypothesis" in details[0]["message"]
+E       AssertionError: assert 'hypothesis' in 'Expected a JSON array.'
+
+tests/operations/test_registration_diagnostics_repair.py:122: AssertionError
+_______ test_review_can_submit_multiple_locators_and_repeated_references _______
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-324/test_review_can_submit_multipl0')
+experiment_case = ({'study_kind': 'scientific', 'objective_key': 'objective_wrong', 'selected_hypothesis_keys': ['hypothesis_a'], 'propo...research_objective_key":"objective_expected","schema_version":2,"stage_objective":"Separate one bounded mechanism."}'})
+
+    def test_review_can_submit_multiple_locators_and_repeated_references(tmp_path, experiment_case):
+>       raw = canonical_json(_plan(experiment_case))
+                             ^^^^^^^^^^^^^^^^^^^^^^
+
+tests/operations/test_validation_reaudit_removal.py:43: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+experiment_case = ({'study_kind': 'scientific', 'objective_key': 'objective_wrong', 'selected_hypothesis_keys': ['hypothesis_a'], 'propo...research_objective_key":"objective_expected","schema_version":2,"stage_objective":"Separate one bounded mechanism."}'})
+
+    def _plan(experiment_case):
+        intent, sources = deepcopy(experiment_case)
+        intent['objective_key'] = 'objective_expected'
+        return materialize_experiment_design_intent(
+>           ExperimentDesignIntent.model_validate_json(canonical_json(intent)),
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+            ResearchObjectiveContract.model_validate_json(sources['research_objective']),
+        ).model_dump(mode='json')
+E       pydantic_core._pydantic_core.ValidationError: 11 validation errors for ExperimentDesignIntent
+E       proposals.0.objectives
+E         Input should be a valid array [type=tuple_type, input_value=['Distinguish one bounded mechanism.'], input_type=list]
+E           For further information visit https://errors.pydantic.dev/2.11/v/tuple_type
+E       proposals.0.current_objectives
+E         Input should be a valid array [type=tuple_type, input_value=['Distinguish one bounded mechanism.'], input_type=list]
+E           For further information visit https://errors.pydantic.dev/2.11/v/tuple_type
+E       proposals.0.hypothesis_keys
+E         Input should be a valid array [type=tuple_type, input_value=['hypothesis_a'], input_type=list]
+E           For further information visit https://errors.pydantic.dev/2.11/v/tuple_type
+E       proposals.0.frozen_invariants
+E         Input should be a valid array [type=tuple_type, input_value=['Use the same bounded system.'], input_type=list]
+E           For further information visit https://errors.pydantic.dev/2.11/v/tuple_type
+E       proposals.0.cases
+E         Input should be a valid array [type=tuple_type, input_value=[{'case_key': 'baseline',..._role': 'perturbation'}], input_type=list]
+E           For further information visit https://errors.pydantic.dev/2.11/v/tuple_type
+E       proposals.0.variables
+E         Input should be a valid array [type=tuple_type, input_value=[{'baseline_value': 0, 'c...e_key': 'intervention'}], input_type=list]
+E           For further information visit https://errors.pydantic.dev/2.11/v/tuple_type
+E       proposals.0.required_observables
+E         Input should be a valid array [type=tuple_type, input_value=['response'], input_type=list]
+E           For further information visit https://errors.pydantic.dev/2.11/v/tuple_type
+E       proposals.0.identifiability_claims
+E         Input should be a valid array [type=tuple_type, input_value=[{'ambiguity_conditions':...peat the failed case.'}], input_type=list]
+E           For further information visit https://errors.pydantic.dev/2.11/v/tuple_type
+E       proposals.0.prediction_tests
+E         Input should be a valid array [type=tuple_type, input_value=[{'expected_result': 'The...n_key': 'prediction_a'}], input_type=list]
+E           For further information visit https://errors.pydantic.dev/2.11/v/tuple_type
+E       proposals.0.stop_conditions
+E         Input should be a valid array [type=tuple_type, input_value=['Stop after both cases.'], input_type=list]
+E           For further information visit https://errors.pydantic.dev/2.11/v/tuple_type
+E       proposals
+E         Tuple should have at least 1 item after validation, not 0 [type=too_short, input_value=[{'baseline_case_key': 'b...key': 'intervention'}]}], input_type=list]
+E           For further information visit https://errors.pydantic.dev/2.11/v/too_short
+
+tests/operations/test_validation_reaudit_removal.py:37: ValidationError
+_ test_partial_comparison_retains_valid_refs_and_can_be_independently_reviewed _
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-324/test_partial_comparison_retain0')
+experiment_case = ({'study_kind': 'scientific', 'objective_key': 'objective_wrong', 'selected_hypothesis_keys': ['hypothesis_a'], 'propo...research_objective_key":"objective_expected","schema_version":2,"stage_objective":"Separate one bounded mechanism."}'})
+
+    def test_partial_comparison_retains_valid_refs_and_can_be_independently_reviewed(tmp_path, experiment_case):
+>       raw = _plan(experiment_case)
+              ^^^^^^^^^^^^^^^^^^^^^^
+
+tests/operations/test_validation_reaudit_removal.py:79: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+experiment_case = ({'study_kind': 'scientific', 'objective_key': 'objective_wrong', 'selected_hypothesis_keys': ['hypothesis_a'], 'propo...research_objective_key":"objective_expected","schema_version":2,"stage_objective":"Separate one bounded mechanism."}'})
+
+    def _plan(experiment_case):
+        intent, sources = deepcopy(experiment_case)
+        intent['objective_key'] = 'objective_expected'
+        return materialize_experiment_design_intent(
+>           ExperimentDesignIntent.model_validate_json(canonical_json(intent)),
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+            ResearchObjectiveContract.model_validate_json(sources['research_objective']),
+        ).model_dump(mode='json')
+E       pydantic_core._pydantic_core.ValidationError: 11 validation errors for ExperimentDesignIntent
+E       proposals.0.objectives
+E         Input should be a valid array [type=tuple_type, input_value=['Distinguish one bounded mechanism.'], input_type=list]
+E           For further information visit https://errors.pydantic.dev/2.11/v/tuple_type
+E       proposals.0.current_objectives
+E         Input should be a valid array [type=tuple_type, input_value=['Distinguish one bounded mechanism.'], input_type=list]
+E           For further information visit https://errors.pydantic.dev/2.11/v/tuple_type
+E       proposals.0.hypothesis_keys
+E         Input should be a valid array [type=tuple_type, input_value=['hypothesis_a'], input_type=list]
+E           For further information visit https://errors.pydantic.dev/2.11/v/tuple_type
+E       proposals.0.frozen_invariants
+E         Input should be a valid array [type=tuple_type, input_value=['Use the same bounded system.'], input_type=list]
+E           For further information visit https://errors.pydantic.dev/2.11/v/tuple_type
+E       proposals.0.cases
+E         Input should be a valid array [type=tuple_type, input_value=[{'case_key': 'baseline',..._role': 'perturbation'}], input_type=list]
+E           For further information visit https://errors.pydantic.dev/2.11/v/tuple_type
+E       proposals.0.variables
+E         Input should be a valid array [type=tuple_type, input_value=[{'baseline_value': 0, 'c...e_key': 'intervention'}], input_type=list]
+E           For further information visit https://errors.pydantic.dev/2.11/v/tuple_type
+E       proposals.0.required_observables
+E         Input should be a valid array [type=tuple_type, input_value=['response'], input_type=list]
+E           For further information visit https://errors.pydantic.dev/2.11/v/tuple_type
+E       proposals.0.identifiability_claims
+E         Input should be a valid array [type=tuple_type, input_value=[{'ambiguity_conditions':...peat the failed case.'}], input_type=list]
+E           For further information visit https://errors.pydantic.dev/2.11/v/tuple_type
+E       proposals.0.prediction_tests
+E         Input should be a valid array [type=tuple_type, input_value=[{'expected_result': 'The...n_key': 'prediction_a'}], input_type=list]
+E           For further information visit https://errors.pydantic.dev/2.11/v/tuple_type
+E       proposals.0.stop_conditions
+E         Input should be a valid array [type=tuple_type, input_value=['Stop after both cases.'], input_type=list]
+E           For further information visit https://errors.pydantic.dev/2.11/v/tuple_type
+E       proposals
+E         Tuple should have at least 1 item after validation, not 0 [type=too_short, input_value=[{'baseline_case_key': 'b...key': 'intervention'}]}], input_type=list]
+E           For further information visit https://errors.pydantic.dev/2.11/v/too_short
+
+tests/operations/test_validation_reaudit_removal.py:37: ValidationError
+=========================== short test summary info ============================
+FAILED tests/operations/test_registration_diagnostics_repair.py::test_prose_and_baseline_labels_survive_submit_materialize_and_review[False]
+FAILED tests/operations/test_registration_diagnostics_repair.py::test_prose_and_baseline_labels_survive_submit_materialize_and_review[True]
+FAILED tests/operations/test_registration_diagnostics_repair.py::test_real_variable_conflict_is_precise_and_correctable_without_cascade
+FAILED tests/operations/test_registration_diagnostics_repair.py::test_missing_ambiguous_baseline_and_true_empty_cases_remain_rejected
+FAILED tests/operations/test_registration_diagnostics_repair.py::test_derived_plan_failure_keeps_payload_owner
+FAILED tests/operations/test_validation_reaudit_removal.py::test_review_can_submit_multiple_locators_and_repeated_references
+FAILED tests/operations/test_validation_reaudit_removal.py::test_partial_comparison_retains_valid_refs_and_can_be_independently_reviewed
+7 failed, 29 passed in 10.64s

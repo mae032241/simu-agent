@@ -12,6 +12,7 @@ from ..runtime import open_runtime, read_secret_file
 from ..schema.common import canonical_json
 from ...operation_contract import DiagnosticError, contract_diagnostic
 from .mcp_root import RootMCPRouter, RootToolFacade
+from ..service.engineering_diagnostics import exception_facts
 
 
 PROTOCOL_VERSION = "2025-03-26"
@@ -74,18 +75,21 @@ class MCPRouter:
 
 def rpc_error(request_id: Any, error: Exception) -> dict[str, Any]:
     details = getattr(error, "details", ()) if isinstance(error, DiagnosticError) else ()
+    engineering = getattr(error, "engineering", None)
     if not details:
+        engineering = engineering or exception_facts(error, layer="mcp", action="tool_call")
+        reason = engineering["causes"][0]
         details = (contract_diagnostic(
-            "tool_rejected" if isinstance(error, DiagnosticError) else "runtime_failure",
+            "tool_rejected" if isinstance(error, DiagnosticError) else engineering["category"],
             phase="tool_execution", affected_action="tool_call",
-            message="Tool request was rejected." if isinstance(error, DiagnosticError)
-            else "Tool execution failed; consult the controlled engineering diagnostics.",
+            message=f"{reason['type']}: {reason['message']}", error_type=reason["type"],
         ),)
     return {
         "jsonrpc": "2.0",
         "id": request_id,
         "error": {"code": -32000, "message": details[0]["message"],
                   "data": {"diagnostics": list(details),
+                           **({"engineering": engineering} if engineering else {}),
                            **({"attempt": error.attempt} if getattr(error,"attempt",None) else {})}},
     }
 
@@ -117,6 +121,7 @@ def build_root_router(
     scheduler_creation_lock: threading.RLock | None = None,
     worker_backend: str = "local",
     local_workspace_root: Path | None = None,
+    execution_collection=None,
 ) -> MCPRouter:
     approval_secret = read_secret_file(
         approval_secret_file, label="approval receipt"
@@ -156,6 +161,7 @@ def build_root_router(
         approval_base_url=approval_base_url,
         instance_management_secret=approval_secret,
         operation_catalog=runtime.operation_catalog,
+        execution_collection=execution_collection,
     )
     return MCPRouter(
         RootMCPRouter(facade),

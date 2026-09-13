@@ -621,6 +621,7 @@ def test_tcad_deployment_examples_declare_both_direct_solvers() -> None:
 
 def test_ssh_runner_installer_cleans_up_without_scope_error(tmp_path: Path) -> None:
     project_root = Path(__file__).resolve().parents[2]
+    bytecode_before = set((project_root / "plugins/tcad_artifact/tcad_artifact").rglob("remote_runner_py36*.pyc"))
     private_config = tmp_path / "private-runner.json"
     private_config.write_bytes(
         (
@@ -692,11 +693,11 @@ print("fake SSH extraction: pass")
     config = json.loads((remote_root / "config/runner.json").read_text())
     assert config["exchange_root"] == str(remote_root / "exchange")
     assert config["result_root"] == str(remote_root / "state/runs")
-    assert tuple(
+    assert set(
         (project_root / "plugins/tcad_artifact/tcad_artifact").rglob(
             "remote_runner_py36*.pyc"
         )
-    ) == ()
+    ) == bytecode_before
 
 
 def test_ssh_runner_install_requires_an_explicit_private_config(

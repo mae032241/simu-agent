@@ -93,6 +93,7 @@ def build_runtime(context: RuntimePluginContext) -> RuntimePluginContribution:
             "tcad.development_debug": LocalTCADDebugService(
                 adapter=TCADDevelopmentDebugBridge(adapter),
                 exchange_root=context.state_root / "local-tcad-debug",
+                runtime_context=context,
             )
         }
     )

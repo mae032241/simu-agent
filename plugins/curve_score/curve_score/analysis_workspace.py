@@ -22,10 +22,26 @@ MAX_BYTES = 32 * 1024 * 1024
 _SUFFIXES = {".py", ".csv", ".json", ".txt", ".log", ".png"}
 START = "analysis-start.json"
 START_LIMIT = 24 * 1024
+READ_VIEW_LIMIT = 32 * 1024
+REPORT_GUIDANCE = """Concentrate the scientific conclusion in payload.summary and overall_verdict.
+Cite key evidence; use optional limitations for restrictions and actual anomalies.
+Write remaining_contradiction and next_action only when needed. Gates and separate
+objective/hypothesis assessments are optional, not a required six-layer form.
+Keep claim_allowed explicit; no omitted gate implies success. Detailed numbers,
+scripts and plots belong in controlled evidence files. For a LayeredDiagnosisReport
+draft, handoff may be omitted: the finalizer generates its verdict and a short
+reference to payload.summary. Do not repeat the conclusion or next action there.
+The sealed envelope schema includes these generated fields; domain-workspace.json
+patch_contract identifies them. Other handoff explanations remain optional.
+"""
 GUIDANCE = """If the workspace provides analysis-start.json, read it first. It contains
 bounded verbatim excerpts and exact source pointers, not a new scientific authority.
-Follow the bound objective, current method and relevant progress to their originals
-as needed. Read only the selected tool's complete assignment.json tool_contracts entry
+Check the current input index, then follow the bound objective, current method and
+relevant progress to their originals as needed. Do not print complete packages or
+data files merely to acknowledge their bindings. Truncated excerpts are navigation,
+not complete formulas or decision rules; read the referenced original before use.
+Inputs with unknown schemas remain indexed without generated excerpts.
+Read only the selected tool's complete assignment.json tool_contracts entry
 before calling it. Restored scratch files are editable provisional work; check their
 assumptions against this Run's inputs. Reuse valid saved numbers for plot-only repairs.
 Historical runtime observations remain in recovery-draft, separate from this Run.
@@ -35,6 +51,18 @@ Its --command mode runs an argv command from the workspace root and returns boun
 stdout/stderr; script mode keeps paths relative to scratch/. Direct platform calls
 are outside this observation coverage. Missing telemetry never blocks submission.
 """
+
+
+def view_bytes(value):
+    return (json.dumps(value, ensure_ascii=False, separators=(",", ":")) + "\n").encode()
+
+
+def append_view(view, section, item, limit):
+    """Bound only presentation, retaining a pointer to the full input index."""
+    view[section].append(item)
+    if len(view_bytes(view)) > limit - 512:
+        view[section].pop()
+        view["omitted"] += 1
 
 
 def _json_file(root, relative, limit=2 * 1024 * 1024):
@@ -80,7 +108,7 @@ def _excerpts(value, schema):
         return
     fields = {
         "scidiscovery.experiment-portfolio.v1": ("objective", "priority_rationale"),
-        "scidiscovery.layered-diagnosis.v1": ("summary", "remaining_contradiction", "next_action", "analysis_method", "method_changes"),
+        "scidiscovery.layered-diagnosis.v1": ("summary", "limitations", "remaining_contradiction", "next_action", "analysis_method", "method_changes"),
         "scidiscovery.research-objective.v1": ("statement",),
         "scidiscovery.scientific-review.v1": ("summary",),
     }.get(schema, ())
@@ -95,7 +123,38 @@ def _excerpts(value, schema):
                         yield f"/proposals/{index}/{name}", proposal[name]
 
 
-def _start_file(request, restored):
+def _plan_index(value):
+    """Exact field locations and rosters, with verbatim observable deduplication."""
+    yield {"pointer": "", "fields": list(value), "proposal_count": len(value.get("proposals", ())),
+        "validation_plan_count": len(value.get("validation_plans", ()))}
+    observables = {}
+    for index, proposal in enumerate(value.get("proposals", ())):
+        if not isinstance(proposal, dict):
+            continue
+        pointer = f"/proposals/{index}"
+        yield {"pointer": pointer, "experiment_key": proposal.get("experiment_key"),
+            "fields": list(proposal), "case_count": len(proposal.get("cases", ())),
+            "cases": [{"case_key": case.get("case_key"), "scientific_role": case.get("scientific_role"),
+                "pointer": f"{pointer}/cases/{number}"} for number, case in enumerate(proposal.get("cases", ()))
+                if isinstance(case, dict)]}
+        contract = proposal.get("comparison_contract")
+        if isinstance(contract, dict):
+            yield {"pointer": pointer + "/comparison_contract", "fields": list(contract),
+                "variable_count": len(contract.get("variables", ()))}
+        for parent, content in ((pointer, proposal), (pointer + "/comparison_contract", contract)):
+            if not isinstance(content, dict):
+                continue
+            for number, observable in enumerate(content.get("required_observables", ())):
+                if isinstance(observable, str):
+                    observables.setdefault(observable, []).append(f"{parent}/required_observables/{number}")
+    for text, pointers in observables.items():
+        yield {"observable": text[:768], "excerpt_omitted": len(text) > 768, "pointers": pointers}
+    for index, validation in enumerate(value.get("validation_plans", ())):
+        if isinstance(validation, dict):
+            yield {"pointer": f"/validation_plans/{index}", "fields": list(validation)}
+
+
+def _start_file(request, restored, limit=START_LIMIT):
     assignment = _json_file(request.workspace, "assignment.json",
         (request.workspace / "assignment.json").stat().st_size)
     instruction = assignment.get("instruction", "")
@@ -103,7 +162,8 @@ def _start_file(request, restored):
         "instruction_omitted": len(instruction) > 2048,
         "instruction_source": {"relative_path": "assignment.json", "pointer": "/instruction"},
         "budget": assignment.get("budget"), "output": assignment.get("output"),
-        "inputs": [], "excerpts": [], "omitted": 0,
+        "inputs": [], "ports": [], "plan_index": [], "excerpts": [], "omitted": 0,
+        "omission_source": {"relative_path": "assignment.json", "pointer": "/inputs"},
         "full_assignment": "assignment.json", "tool_contracts": {
             name: ({"relative_path": "assignment.json", "pointer": "/tool_contracts/" + name}
                 if "tool_contracts" in assignment else {"open_reply_pointer": "/tool_contracts/" + name})
@@ -112,16 +172,23 @@ def _start_file(request, restored):
         "restored_files": [], "copy_omissions": [], "guidance": GUIDANCE}
 
     def append(section, item):
-        start[section].append(item)
-        if len(json.dumps(start, ensure_ascii=False).encode()) > START_LIMIT - 512:
-            start[section].pop()
-            start["omitted"] += 1
+        append_view(start, section, item, limit)
 
     inputs = assignment.get("inputs", ())
     # Index all visible originals before excerpts; no current-head ranking.
     for item in inputs:
-        append("inputs", {key: item[key] for key in
-            ("source_name", "port", "relative_path", "historical") if key in item})
+        descriptor = request.binding_descriptors.get(item["source_name"])
+        append("inputs", {**{key: item[key] for key in
+            ("source_name", "port", "relative_path", "historical", "media_type") if key in item},
+            "schema_id": descriptor.artifact_ref.schema_id if descriptor else None,
+            "size_bytes": descriptor.size_bytes if descriptor else None})
+    # Purpose is a port declaration, shared by its files; do not repeat it per curve.
+    seen_ports = set()
+    for item in inputs:
+        if item["port"] not in seen_ports:
+            append("ports", {key: item[key] for key in ("port", "description", "usage", "exposure") if key in item})
+            seen_ports.add(item["port"])
+    observables = []
     for item in inputs:
         descriptor = request.binding_descriptors.get(item["source_name"])
         if descriptor is None or item["port"] not in {
@@ -131,29 +198,36 @@ def _start_file(request, restored):
             value = _json_file(request.workspace, item["relative_path"])
         except (ValueError, OSError, WorkspaceError):
             continue  # The exact original remains indexed, never a new admission gate.
+        if descriptor.artifact_ref.schema_id == "scidiscovery.experiment-portfolio.v1" and isinstance(value, dict):
+            for entry in _plan_index(value):
+                indexed = {"source_name": item["source_name"], **entry}
+                if "observable" in entry:
+                    observables.append(indexed)
+                else:
+                    append("plan_index", indexed)
         for pointer, content in _excerpts(value, descriptor.artifact_ref.schema_id):
             text = content if isinstance(content, str) else json.dumps(content, ensure_ascii=False)
             append("excerpts", {"source_name": item["source_name"], "pointer": pointer,
                 "text": text[:768], "omitted": len(text) > 768})
+    for entry in observables:
+        append("plan_index", entry)
     for path in restored["restored"]:
         append("restored_files", path)
     for item in restored["copy_omissions"]:
         append("copy_omissions", item)
     write_control_workspace_file(request.workspace, Path(START),
-        (json.dumps(start, ensure_ascii=False) + "\n").encode(), replace=False, mode=0o400)
+        view_bytes(start), replace=False, mode=0o400)
 
 
-def materialize(request):
+def materialize(request, *, start_limit=START_LIMIT):
     (request.workspace / "scratch").mkdir(exist_ok=True, mode=0o700)
     restored = _restore_scratch(request)
-    _start_file(request, restored)
+    _start_file(request, restored, start_limit)
     tool = "tools/local_process_observation.py"
     available = False
     if request.edit_protocol == "native":
         try:
-            write_control_workspace_file(request.workspace, Path(tool),
-                Path(local_process_observation.__file__).read_bytes(), replace=False, mode=0o400,
-                create_parents=True)
+            local_process_observation.materialize_launcher(request.workspace, analysis_policy=True)
             available = True
         except (OSError, WorkspaceError):
             pass  # Optional telemetry must not prevent the actual analysis task.
@@ -168,6 +242,11 @@ def materialize(request):
                 "script_base": "scratch", "optional": True,
                 "budget": "Timeout is clipped to the Run deadline minus the selected submission reserve. Reserve is adjustable; timing is not required to submit."}},
         read_paths=(START, "scratch", "recovery-draft", "tools"),
+        patch_contract={"target": "output/result.json", "schema": "scidiscovery.layered-diagnosis.v1",
+            "generated_fields": {"/handoff/verdict": "/payload/overall_verdict",
+                "/handoff/summary": "short reference to /payload/summary"},
+            "draft_may_omit": ["/handoff"],
+            "instruction": REPORT_GUIDANCE},
     )
 
 

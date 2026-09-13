@@ -680,7 +680,7 @@ result_schema = json.loads(
 source_key = result_schema["properties"]["payload"]["properties"]["evidence"][
     "items"
 ]["allOf"][-1]["properties"]["source_key"]
-assert source_key["enum"] == ["source_material"]
+assert source_key["enum"] == ["scientific_foundation", "source_material"]
 # The workspace copy is only a Worker aid.  Expanding it must not expand the
 # authoritative schema rebuilt by submit from the frozen Run binding.
 source_key["enum"].append("invented_source")
@@ -719,7 +719,7 @@ assert rejected["state"] == "rejected"
 assert {item["rule_id"] for item in rejected["diagnostics"]} == {"runtime.schema"}
 assert router.call_tool("run_status", {"name": "audit"})["state"] == "running"
 
-output.write_bytes(result("source_material"))
+output.write_bytes(result("scientific_foundation"))
 completed = worker.call_tool("worker_submit_result", {})
 assert completed["state"] == "completed"
 ''',

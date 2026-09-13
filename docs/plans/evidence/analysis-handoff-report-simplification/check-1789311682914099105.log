@@ -1,0 +1,86 @@
+........................................FF................               [100%]
+=================================== FAILURES ===================================
+_ test_historical_review_reaches_new_analysis_without_current_authority[tcad.result.analyze.v1] _
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-340/test_historical_review_reaches0')
+operation_id = 'tcad.result.analyze.v1'
+
+    @pytest.mark.parametrize("operation_id", ("tcad.result.analyze.v1", "science.result.diagnose.v1"))
+    def test_historical_review_reaches_new_analysis_without_current_authority(tmp_path, operation_id):
+        from scidiscovery.artifact_agent.interfaces.mcp_local_worker import LocalWorkerMCPRouter
+        system, report = historical_analysis_fixture(tmp_path, operation_id=operation_id)
+        catalog, runtime, root, request, artifacts, register = system
+        preflight = root.call_tool("operation_preflight", request)
+        assert preflight["admissible"], preflight
+        root.call_tool("operation_invoke", request)
+        compiled = catalog.operation(operation_id)
+        worker = LocalWorkerMCPRouter(runtime.runs, operation_id=operation_id, operation_digest=compiled.digest)
+        opened = worker.call_tool("worker_open_assignment", {})
+        write_analysis(opened, report)
+        submitted = worker.call_tool("worker_submit_result", {})
+        assert submitted["state"] == "completed", submitted
+        assert root.call_tool("run_status", {"name": "analysis"})["sealed_output"]["payload"]["claim_allowed"] is False
+        # Analysis completion does not renew the old review's authoring authority.
+        import json
+        package = json.loads(runtime.artifacts.read(artifacts["package"].ref))
+        register("capability", canonical_json(package["capability"]), "tcad.solver-capability.v2")
+        author = dict(name="author_after_upgrade", operation_id="tcad.deck.author.initial.v1",
+            instruction="Implement the exact plan after upgrade.", inputs=[
+            dict(port="experiment_plan", artifact_names=["materialized_plan"]),
+            dict(port="experiment_review", artifact_names=["materialized_review.output"]),
+            dict(port="execution_capability", artifact_names=["capability"])])
+        denied = root.call_tool("operation_preflight", author)
+>       assert not denied["admissible"] and denied["reason_code"] == "input_producer_contract_changed"
+E       AssertionError: assert (not False and 'input_indepe..._incompatible' == 'input_produc...tract_changed'
+E         
+E         - input_producer_contract_changed
+E         + input_independent_review_incompatible)
+
+tests/operations/test_collector_analysis_handoff.py:245: AssertionError
+_ test_historical_review_reaches_new_analysis_without_current_authority[science.result.diagnose.v1] _
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-340/test_historical_review_reaches1')
+operation_id = 'science.result.diagnose.v1'
+
+    @pytest.mark.parametrize("operation_id", ("tcad.result.analyze.v1", "science.result.diagnose.v1"))
+    def test_historical_review_reaches_new_analysis_without_current_authority(tmp_path, operation_id):
+        from scidiscovery.artifact_agent.interfaces.mcp_local_worker import LocalWorkerMCPRouter
+        system, report = historical_analysis_fixture(tmp_path, operation_id=operation_id)
+        catalog, runtime, root, request, artifacts, register = system
+        preflight = root.call_tool("operation_preflight", request)
+        assert preflight["admissible"], preflight
+        root.call_tool("operation_invoke", request)
+        compiled = catalog.operation(operation_id)
+        worker = LocalWorkerMCPRouter(runtime.runs, operation_id=operation_id, operation_digest=compiled.digest)
+        opened = worker.call_tool("worker_open_assignment", {})
+        write_analysis(opened, report)
+        submitted = worker.call_tool("worker_submit_result", {})
+        assert submitted["state"] == "completed", submitted
+        assert root.call_tool("run_status", {"name": "analysis"})["sealed_output"]["payload"]["claim_allowed"] is False
+        # Analysis completion does not renew the old review's authoring authority.
+        import json
+        package = json.loads(runtime.artifacts.read(artifacts["package"].ref))
+        register("capability", canonical_json(package["capability"]), "tcad.solver-capability.v2")
+        author = dict(name="author_after_upgrade", operation_id="tcad.deck.author.initial.v1",
+            instruction="Implement the exact plan after upgrade.", inputs=[
+            dict(port="experiment_plan", artifact_names=["materialized_plan"]),
+            dict(port="experiment_review", artifact_names=["materialized_review.output"]),
+            dict(port="execution_capability", artifact_names=["capability"])])
+        denied = root.call_tool("operation_preflight", author)
+>       assert not denied["admissible"] and denied["reason_code"] == "input_producer_contract_changed"
+E       AssertionError: assert (not False and 'input_indepe..._incompatible' == 'input_produc...tract_changed'
+E         
+E         - input_producer_contract_changed
+E         + input_independent_review_incompatible)
+
+tests/operations/test_collector_analysis_handoff.py:245: AssertionError
+=============================== warnings summary ===============================
+tests/operations/test_collector_analysis_handoff.py: 15 warnings
+  /home/da/project/ai4s/tcad/git_release/scidiscovery-agent/123/scidiscovery-e5.2/plugins/tcad_artifact/tcad_artifact/remote_runner_py36.py:884: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    return datetime.utcnow().isoformat(timespec="microseconds") + "Z"
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/operations/test_collector_analysis_handoff.py::test_historical_review_reaches_new_analysis_without_current_authority[tcad.result.analyze.v1]
+FAILED tests/operations/test_collector_analysis_handoff.py::test_historical_review_reaches_new_analysis_without_current_authority[science.result.diagnose.v1]
+2 failed, 56 passed, 1 deselected, 15 warnings in 45.68s

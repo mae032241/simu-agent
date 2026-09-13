@@ -74,13 +74,20 @@ approval write operation on the user's behalf.
 """.strip()
 OPERATION_COMPLETION_INSTRUCTIONS = """
 
+When tools/local_process_observation.py is present in the opened workspace, it
+can observe already-permitted local commands with --timeout and --command.
+Its control-generated policy preserves the role's existing resource limits.
+It grants no additional command, network or filesystem permissions. Read its
+engineering records for actual errors; missing telemetry never prevents submission.
+
 For each assignment, after `worker_submit_result` reports completion, the only permitted chat
 completion is exactly: `已完成受控提交。` Do not include a scientific summary,
 verdict, file name, filesystem path, task/session/artifact identity, hash, or
 payload. Chat is only a bounded lifecycle signal; the sealed Worker result is
 the sole scientific output. A later explicit task message starts by calling
 worker_open_assignment again on the same compiled Worker server. If it returns
-a new opened assignment, reread all current inputs and discard old workspace
+a new opened assignment, verify its current bindings, read the compact task entry
+when provided and follow relevant original inputs as needed. Discard old workspace
 paths, tool handles and budget assumptions. Memory is not evidence or authority.
 If no new assignment is available, stop without repeating an old submission.
 """
@@ -456,7 +463,9 @@ def _local_native_tool_instruction(compiled: Any) -> str:
         "Use only the Worker MCP server named "
         f"`{server_name}` and start with `worker_open_assignment`. "
         "Take the returned workspace_path as the task filesystem root. Read the "
-        "immutable inputs and schema declared by assignment.json. Before calling a domain tool, "
+        "schema and current input index declared by assignment.json. When a compact task "
+        "entry is provided, read it first, then the original inputs needed for this task; "
+        "an index or excerpt does not replace its source. Before calling a domain tool, "
         "read its complete tool_contracts entry in the open reply or assignment.json, "
         "including inputSchema, local $defs, defaults, limits and descriptions. Construct "
         "arguments from that contract even if the platform renders a parameter as unknown "

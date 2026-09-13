@@ -1,0 +1,209 @@
+{
+  "recorded_at": "2026-09-14",
+  "instance_name": "M7-test0",
+  "status": "live_delivery_and_next_design_preflight_pass_with_observation_limits",
+  "run_name": "fig4_compact_analysis_acceptance_1",
+  "operation_id": "tcad.result.analyze.v1",
+  "agent_type": "op_tcad_result_analyze_v1_1e5b01a08c98",
+  "parent_history_inherited": false,
+  "state": "completed",
+  "created_at": "2026-09-13T22:52:41.863766Z",
+  "started_at": "2026-09-13T22:53:01.540385Z",
+  "completed_at": "2026-09-13T23:01:04.484646Z",
+  "duration_seconds": 502.621,
+  "worker_open_delay_seconds": 19.677,
+  "first_observed_native_delay_seconds": 54.289,
+  "evidence_publish_to_submit_seconds": 116.026,
+  "bound_input_count": 31,
+  "bound_input_bytes": 3119446,
+  "output_artifact_name": "fig4_compact_analysis_acceptance_1.output",
+  "report_bytes": 9171,
+  "baseline": {
+    "run_name": "fig4_shape_basis_analysis_1",
+    "duration_seconds": 841.994,
+    "report_bytes": 16611
+  },
+  "report_reduction_fraction": 0.44789597254831137,
+  "report_shape": {
+    "gates_present": false,
+    "limitations_present": true,
+    "claim_allowed": true,
+    "overall_verdict": "inconclusive",
+    "handoff_summary": "Read run_status.sealed_output.payload.summary for the scientific conclusion; payload.next_action contains any scientific recommendation."
+  },
+  "rejections": 0,
+  "failure": null,
+  "native_execution": {
+    "attempt_count": 16,
+    "budget_source": "run_deadline",
+    "cancelled": false,
+    "coverage": "local_launcher",
+    "effective_timeout_seconds": 60,
+    "elapsed_seconds": 0.08961579704191536,
+    "ended_at": "2026-09-13T22:58:34.343519+00:00",
+    "error_count": 2,
+    "error_type": null,
+    "exit_code": 0,
+    "first_started_at": "2026-09-13T22:53:36.152665+00:00",
+    "logs_truncated": false,
+    "observation_status": "available",
+    "peak_rss_kib": 18508,
+    "process_group_stopped": true,
+    "reason": null,
+    "recent_errors": [
+      {
+        "budget_source": "run_deadline",
+        "cancelled": false,
+        "effective_timeout_seconds": 30,
+        "elapsed_seconds": 0.01697358099045232,
+        "ended_at": "2026-09-13T22:54:22.146926+00:00",
+        "error_type": "SyntaxError",
+        "exit_code": 1,
+        "first_started_at": "2026-09-13T22:53:36.152665+00:00",
+        "logs_truncated": false,
+        "peak_rss_kib": 10680,
+        "process_group_stopped": true,
+        "reason": null,
+        "started_at": "2026-09-13T22:54:22.129977+00:00",
+        "state": "finished",
+        "stderr_log": "scratch/.analysis-process/aa9e10ab96e54abaa2a6a734c9d9861c.stderr.log",
+        "stdout_log": "scratch/.analysis-process/aa9e10ab96e54abaa2a6a734c9d9861c.stdout.log",
+        "timed_out": false
+      },
+      {
+        "budget_source": "run_deadline",
+        "cancelled": false,
+        "effective_timeout_seconds": 30,
+        "elapsed_seconds": 0.05029270000522956,
+        "ended_at": "2026-09-13T22:55:04.306392+00:00",
+        "error_type": "FileNotFoundError",
+        "exit_code": null,
+        "first_started_at": "2026-09-13T22:53:36.152665+00:00",
+        "logs_truncated": false,
+        "peak_rss_kib": 10680,
+        "process_group_stopped": null,
+        "reason": "launch_failed",
+        "started_at": "2026-09-13T22:55:04.256127+00:00",
+        "state": "finished",
+        "stderr_log": "scratch/.analysis-process/eecef4fca0194e6882a55e96b5804c90.stderr.log",
+        "stdout_log": null,
+        "timed_out": false
+      }
+    ],
+    "scientific_evidence": false,
+    "started_at": "2026-09-13T22:58:34.253929+00:00",
+    "state": "finished",
+    "stderr_log": "scratch/.analysis-process/90fe52646b774b159e656ad0dca193e2.stderr.log",
+    "stdout_log": "scratch/.analysis-process/90fe52646b774b159e656ad0dca193e2.stdout.log",
+    "timed_out": false,
+    "total_stderr_bytes": 1708,
+    "total_stdout_bytes": 192399
+  },
+  "tool_timing": [
+    {
+      "completed_at": "2026-09-13T22:53:01.559396+00:00",
+      "duration_seconds": 0.019163,
+      "started_at": "2026-09-13T22:53:01.540252+00:00",
+      "tool_name": "worker_open_assignment"
+    },
+    {
+      "completed_at": "2026-09-13T22:59:07.960956+00:00",
+      "duration_seconds": 0.292254,
+      "started_at": "2026-09-13T22:59:07.668722+00:00",
+      "tool_name": "worker_analysis_publish_files"
+    },
+    {
+      "completed_at": "2026-09-13T23:01:04.501989+00:00",
+      "duration_seconds": 0.515559,
+      "started_at": "2026-09-13T23:01:03.986452+00:00",
+      "tool_name": "worker_submit_result"
+    }
+  ],
+  "new_evidence": [
+    {
+      "artifact_name": "fig4_compact_analysis_acceptance_1.output.tool_evidence_001",
+      "schema": "opaque",
+      "media_type": "text/plain",
+      "size_bytes": 14538
+    },
+    {
+      "artifact_name": "fig4_compact_analysis_acceptance_1.output.tool_evidence_002",
+      "schema": "opaque",
+      "media_type": "application/json",
+      "size_bytes": 8138
+    }
+  ],
+  "reuse_evidence_source": "completed run_status.sealed_output.payload.analysis_method and summary",
+  "next_design_preflight": {
+    "request": {
+      "name": "fig4_compact_analysis_next_design_preflight_1",
+      "operation_id": "science.experiment.design.v1",
+      "inputs": [
+        {
+          "port": "scientific_foundation",
+          "artifact_names": [
+            "fig4_continuation_intake_split_2.scientific_foundation"
+          ]
+        },
+        {
+          "port": "research_objective",
+          "artifact_names": [
+            "fig4_continuation_objective_2"
+          ]
+        },
+        {
+          "port": "hypothesis_portfolio",
+          "artifact_names": [
+            "fig4_continuation_hypothesis_revision_1.output"
+          ]
+        },
+        {
+          "port": "critic_review",
+          "artifact_names": [
+            "fig4_continuation_hypothesis_critic_3.output"
+          ]
+        },
+        {
+          "port": "execution_context",
+          "artifact_names": [
+            "fig4_continuation_execution_context_1"
+          ]
+        },
+        {
+          "port": "current_progress",
+          "artifact_names": [
+            "fig4_shape_counterfactual_plan_revision_2.output",
+            "fig4_shape_counterfactual_plan_review_3.output"
+          ]
+        },
+        {
+          "port": "experiment_results",
+          "artifact_names": [
+            "fig4_shape_basis_execution_1.result"
+          ]
+        },
+        {
+          "port": "result_analysis",
+          "artifact_names": [
+            "fig4_compact_analysis_acceptance_1.output"
+          ]
+        }
+      ],
+      "instruction": "从精确绑定的原始研究目标、已审查假设、执行计划和当前结果分析判断当前最小可行实验及后续仍相关目标。先判断现有证据能否回答问题，保留证据与执行能力的限制；只选下游能按绑定输入完成的任务。不得用总体目标尚未全部覆盖替代当前可行性判断。"
+    },
+    "result": {
+      "admissible": true,
+      "executor_kind": "agent",
+      "port": null,
+      "reason_code": null
+    },
+    "invoked": false
+  },
+  "observation_limits": [
+    "Root can read completed primary payload and ancillary artifact metadata, not the ancillary acceptance JSON content through the available public tools.",
+    "Live startup-view byte counts and detailed command stderr causes are registered in a referenced Worker evidence file but not independently read by Root; do not substitute offline rendering for live measurements.",
+    "Native command output byte counts are not actual model token/read counts. Native timing does not observe Agent reasoning or platform wait time.",
+    "Prior run performed original reduction; current run reused saved numbers. One duration comparison does not establish causal or general speedup.",
+    "No new solver execution, full test suite or hardened backend was tested in this acceptance."
+  ]
+}

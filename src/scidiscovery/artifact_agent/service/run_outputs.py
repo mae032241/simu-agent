@@ -15,7 +15,7 @@ from ...operations.invoke import (
     operation_primary_output,
 )
 from ...operation_contract import (SemanticRuleViolation, DeclaredDiagnostic, validation_diagnostics, diagnostic_path,
-                                  schema_field_names)
+                                  schema_field_names, contract_diagnostic)
 from ...operations.spec import CompiledOperation
 from ..schema.common import canonical_json
 from ..schema.role_result import RoleResultEnvelope, parse_role_result
@@ -78,7 +78,7 @@ def validate_run_output(
             raise RunCheckerError("output context descriptor wiring is invalid")
     input_port_names = tuple(input_source_ports.values())
     if sealed.run_id == "" or sealed.backend == "":
-        raise RunOutputError("sealed workspace identity is invalid")
+        raise RunCheckerError("sealed workspace identity is invalid", category="integrity_failure")
     port = operation_primary_output(compiled)
     contract = operation_output_validation_contract(compiled, port)
     declared_rule_ids = frozenset(
@@ -106,10 +106,13 @@ def validate_run_output(
     try:
         decoded = json.loads(raw_envelope.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        reason = (f"Invalid JSON: {error.msg} (line {error.lineno}, column {error.colno})."
+                  if isinstance(error, json.JSONDecodeError) else
+                  f"Invalid UTF-8 at byte {error.start}: {error.reason}.")
         raise RunOutputError(
             "worker output is not valid UTF-8 JSON",
             details=_with_rule(
-                ({"path": "$", "message": str(error), "type": "json_invalid"},),
+                ({"path": "$", "message": reason, "type": "json_invalid"},),
                 "runtime.envelope",
                 declared_rule_ids,
             ),
@@ -157,7 +160,7 @@ def validate_run_output(
     if direct_revision is not None:
         base_content = input_bytes.get(direct_revision[0].name)
         if base_content is None:
-            raise RunOutputError("revision base is absent from the exact Run inputs")
+            raise RunCheckerError("revision base is absent from the exact Run inputs", category="admission_defect")
         if encoded == base_content:
             raise RunOutputError(
                 "revision payload is unchanged",
@@ -272,15 +275,22 @@ def validate_run_output(
 
 def _validation_details(error: Exception, *, schema: Any = None, phase: str = "output_payload") -> tuple[dict[str, Any], ...]:
     current = error
+    semantic_reason = None
     for _ in range(4):
         if isinstance(current, SemanticRuleViolation) and current.details:
             return tuple((DeclaredDiagnostic if isinstance(item, DeclaredDiagnostic) else dict)(
-                {**item, "phase":phase}) for item in current.details)
+                {**item, "phase":item.get("phase", phase) if isinstance(item, DeclaredDiagnostic)
+                 and item.get("rule_id") else phase}) for item in current.details)
         if isinstance(current, ValidationError):
             return validation_diagnostics(current, schema=schema or {}, phase=phase, action="submit")
+        if isinstance(current, SemanticRuleViolation) and semantic_reason is None:
+            semantic_reason = str(current)[:512]
         if current.__cause__ is None:
             break
         current = current.__cause__
+    if semantic_reason:
+        return (contract_diagnostic("output_invalid", phase=phase, affected_action="submit",
+            repairable=True, message=semantic_reason, error_type="value_error"),)
     return ({"path": "$", "message": "Declared semantic rule requires correction.", "type": "value_error", "phase":phase},)
 
 
@@ -363,7 +373,15 @@ def _with_rule(
 ) -> tuple[dict[str, str], ...]:
     if rule_id not in declared_rule_ids:
         raise RunCheckerError("validator used an undeclared compiled rule")
-    return tuple((DeclaredDiagnostic if isinstance(item, DeclaredDiagnostic) else dict)({**item, "rule_id": rule_id}) for item in details)
+    # These details are created by this validation owner, not accepted from a
+    # Worker error dictionary. Preserve their concrete reason through Run logging.
+    result = []
+    for item in details:
+        owner = item.get("rule_id", rule_id) if isinstance(item, DeclaredDiagnostic) else rule_id
+        if owner not in declared_rule_ids:
+            raise RunCheckerError("validator used an undeclared compiled rule")
+        result.append(DeclaredDiagnostic({**item, "rule_id": owner}))
+    return tuple(result)
 
 
 __all__ = [

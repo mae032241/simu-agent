@@ -149,7 +149,7 @@ def recovery_system(tmp_path):
     raw=runtime.artifacts.read(artifacts['output_A'].ref)
     (directory/'work/A_actual.plx').write_bytes(raw)
     class Adapter:
-        def inspect_outputs(self, external_run_id, relative_path, max_bytes=32*1024*1024):
+        def inspect_outputs(self, external_run_id, relative_path, max_bytes=32*1024*1024, *, deadline_monotonic=None):
             assert external_run_id=='terminal_collected'
             return _inspect_directory(str(directory),relative_path,max_bytes)
     root.call_tool('operation_invoke',request)
@@ -462,18 +462,20 @@ def test_ssh_inspection_download_streams_through_remote_protocol(tmp_path, monke
     source.write_bytes(raw)
     client = SSHRemoteClient(SSHTCADTransportConfig(ssh_executable=sys.executable,
         destination='a@fixture',remote_helper='/fixture/helper',remote_config='/fixture/config',remote_exchange_root='/fixture/exchange'))
+    from scidiscovery.artifact_agent.service.execution_collection import run_bounded
     def run(command, **kwargs):
-        assert kwargs['stdout'] != subprocess.PIPE
+        assert callable(kwargs['sink'])
         code = "import runpy,sys,json; m=runpy.run_path(sys.argv[1]); m['_handle'](json.loads(sys.argv[2]),json.loads(sys.stdin.buffer.readline()),sys.stdin.buffer,sys.stdout.buffer)"
-        return subprocess.run([sys.executable,'-c',code,remote_runner_py36.__file__,
+        return run_bounded([sys.executable,'-c',code,remote_runner_py36.__file__,
                                json.dumps({'result_root':str(tmp_path),'max_transfer_bytes':4*1024*1024})], **kwargs)
-    monkeypatch.setattr(client, '_run', run)
+    monkeypatch.setattr('tcad_artifact.ssh_transport.run_bounded', run)
     target = tmp_path/'download'
     client.get_to(str(source), target, len(raw))
     assert target.read_bytes() == raw
 
 
-def test_socket_inspection_uses_existing_execution_router(tmp_path):
+@pytest.mark.parametrize('short_budget', [False, True])
+def test_socket_inspection_uses_existing_execution_router(tmp_path, monkeypatch, short_budget):
     import json
     import multiprocessing
     import time
@@ -484,7 +486,7 @@ def test_socket_inspection_uses_existing_execution_router(tmp_path):
         tools=(ToolProfile(profile_id='fixture',solver_kind='deterministic_tool',executable='/bin/true',release_evidence='fixture'),)), state_root=tmp_path/'state')
     directory = facade.runs_root/'terminal_fixture'
     (directory/'work').mkdir(parents=True)
-    (directory/'work/actual').write_bytes(b'raw')
+    (directory/'work/actual').write_bytes(b'x'*(3*1024*1024) if short_budget else b'raw')
     (directory/'done').touch()
     (directory/'output_manifest.json').write_text(json.dumps({'terminal_state':'succeeded','exit_code':0}))
     import sqlite3
@@ -492,14 +494,34 @@ def test_socket_inspection_uses_existing_execution_router(tmp_path):
         connection.execute('INSERT INTO submissions VALUES (?,?,?,?)', ('a'*64,'terminal_fixture','2026-09-09T00:00:00Z','terminal'))
     socket = tmp_path/'control.sock'
     from scidiscovery.artifact_agent.interfaces.mcp import MCPRouter
+    if short_budget:
+        from types import SimpleNamespace
+        from tcad_artifact import remote_runner_py36 as remote
+        original_hash=hashlib.sha256
+        class SlowHash:
+            def __init__(self): self.inner=original_hash()
+            def update(self, raw):
+                with (directory/'hash-steps').open('a') as stream: stream.write('step\n')
+                time.sleep(.15)
+                self.inner.update(raw)
+            def hexdigest(self): return self.inner.hexdigest()
+        monkeypatch.setattr(remote,'hashlib',SimpleNamespace(sha256=SlowHash))
     process = multiprocessing.get_context('fork').Process(target=UnixSocketDaemon(socket,MCPRouter(TCADExecutionRouter(facade),name='tcad-control')).serve_forever)
     process.start()
     try:
         deadline=time.monotonic()+5
         while not socket.exists() and time.monotonic()<deadline:
             time.sleep(.02)
-        result=TCADExecutorAdapter(socket).inspect_outputs('terminal_fixture','actual')
-        assert result['status']=='available' and result['file']['size_bytes']==3
+        adapter=TCADExecutorAdapter(socket)
+        if short_budget:
+            with pytest.raises(TimeoutError):
+                adapter.inspect_outputs('terminal_fixture','actual',deadline_monotonic=time.monotonic()+.08)
+            time.sleep(.2)
+            assert (directory/'hash-steps').read_text()=='step\n'
+            assert adapter.status('terminal_fixture')=='succeeded'
+        else:
+            result=adapter.inspect_outputs('terminal_fixture','actual')
+            assert result['status']=='available' and result['file']['size_bytes']==3
     finally:
         process.terminate()
         process.join(5)
@@ -573,6 +595,87 @@ def test_old_runner_tool_error_allows_limited_report(tmp_path):
     assert worker.call_tool('worker_tcad_inspect_outputs', {})['status'] == 'unsupported'
     write_analysis(opened, analysis_report())
     assert worker.call_tool('worker_submit_result', {})['state'] == 'completed'
+
+
+@pytest.mark.parametrize('action', ['inspect', 'accept'])
+def test_inspection_transport_failure_has_shared_diagnostic_and_allows_report(tmp_path, action):
+    from tcad_artifact.output_recovery import OutputInspectionService
+    from scidiscovery.artifact_agent.interfaces.mcp_worker_protocol import WorkerToolError
+    from tests.operations.test_tcad_result_analysis import analysis_report,write_analysis
+    system,worker,opened,_=recovery_system(tmp_path)
+    arguments = {}
+    tool = 'worker_tcad_inspect_outputs'
+    if action == 'accept':
+        candidate=worker.call_tool(tool,{'relative_path':'A_actual.plx'})
+        tool='worker_tcad_accept_output'
+        arguments=dict(evidence_alias=candidate['evidence_alias'],output_name='A',rationale='fixture mapping',evidence_aliases=['runtime_manifest'])
+    class BrokenAdapter:
+        def inspect_outputs(self,*args,**kwargs):
+            try:
+                raise TimeoutError('inspection IO budget exhausted')
+            except TimeoutError as cause:
+                raise RuntimeError('transport failed; stderr log: /private/runtime/stderr') from cause
+    worker.tool_services['tcad_artifact:tcad.output_inspection']=OutputInspectionService(BrokenAdapter())
+    with pytest.raises(WorkerToolError) as caught:
+        worker.call_tool(tool,arguments)
+    facts=caught.value.engineering
+    assert facts['category']=='timeout' and facts['reference']
+    assert '/private/runtime' not in str(facts)
+    assert (Path(opened['workspace_path'])/facts['workspace_report']).is_file()
+    assert system[1].runs.status(worker._run_id).state=='running'
+    write_analysis(opened,analysis_report())
+    assert worker.call_tool('worker_submit_result',{})['state']=='completed'
+
+
+def test_local_evidence_hash_consumes_same_inspection_budget(tmp_path, monkeypatch):
+    import time
+    from dataclasses import replace
+    from types import SimpleNamespace
+    from tcad_artifact import output_recovery
+    from scidiscovery.artifact_agent.interfaces.mcp_worker_protocol import WorkerToolError
+    system,worker,_,_=recovery_system(tmp_path)
+    original_context=worker._context
+    monkeypatch.setattr(worker,'_context',lambda *args:replace(original_context(*args),remaining_seconds=1.1))
+    original_hash=hashlib.sha256
+    class SlowHash:
+        def __init__(self):self.inner=original_hash()
+        def update(self,raw):time.sleep(1.2);self.inner.update(raw)
+        def hexdigest(self):return self.inner.hexdigest()
+    monkeypatch.setattr(output_recovery,'hashlib',SimpleNamespace(sha256=SlowHash))
+    with pytest.raises(WorkerToolError) as caught:
+        worker.call_tool('worker_tcad_inspect_outputs',{'relative_path':'A_actual.plx'})
+    assert any(cause.get('timeout_kind')=='inspection_io' for cause in caught.value.engineering['causes'])
+    assert system[1].runs.tool_io_budget(worker._run_id)['remaining_seconds']<119
+    assert system[1].runs.status(worker._run_id).state=='running'
+
+
+@pytest.mark.parametrize('action',['inspect','accept'])
+def test_inspection_preparation_cannot_restart_run_deadline(tmp_path,monkeypatch,action):
+    import time
+    from dataclasses import replace
+    from tcad_artifact.output_recovery import OutputInspectionService
+    _,worker,_,_=recovery_system(tmp_path)
+    tool='worker_tcad_inspect_outputs'; arguments={}
+    if action=='accept':
+        candidate=worker.call_tool(tool,{'relative_path':'A_actual.plx'})
+        tool='worker_tcad_accept_output'
+        arguments=dict(evidence_alias=candidate['evidence_alias'],output_name='A',rationale='fixture mapping',evidence_aliases=['runtime_manifest'])
+    observed={}; original_context=worker._context
+    def context(*args):
+        current=original_context(*args)
+        observed['run_deadline']=time.monotonic()+3
+        def read(name):
+            if name=='reviewed_package': time.sleep(.2)
+            return current._read_input(name)
+        return replace(current,remaining_seconds=3,_read_input=read)
+    class Adapter:
+        def inspect_outputs(self,*args,**kwargs):
+            observed['adapter_deadline']=kwargs['deadline_monotonic']
+            return {'status':'not_found','reason':'fixture'}
+    monkeypatch.setattr(worker,'_context',context)
+    worker.tool_services['tcad_artifact:tcad.output_inspection']=OutputInspectionService(Adapter())
+    assert worker.call_tool(tool,arguments)['status']=='not_found'
+    assert observed['adapter_deadline']<=observed['run_deadline']+.05
 
 
 def test_unmapped_inspection_remains_readable_as_next_run_background(tmp_path):

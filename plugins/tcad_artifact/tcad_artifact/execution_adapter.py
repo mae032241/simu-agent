@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import hashlib
 import json
-import socket
+import time
 import uuid
 from pathlib import Path
+from scidiscovery.artifact_agent.service.execution_collection import CollectionContext, QUERY_SECONDS
 from typing import Any
 
 from scidiscovery.artifact_agent.execution_bridge import AdapterCapability
@@ -143,13 +144,28 @@ class TCADExecutorAdapter:
         return str(value["run_id"]), str(value["state"])
 
     def status(self, external_run_id: str) -> str:
-        return str(self._call("tcad_status", {"run_id": external_run_id})["state"])
+        return str(self.status_details(external_run_id)["state"])
+
+    def status_details(self, external_run_id: str) -> dict[str, Any]:
+        return self._call("tcad_status", {"run_id": external_run_id})
 
     def cancel(self, external_run_id: str) -> str:
         return str(self._call("tcad_cancel", {"run_id": external_run_id})["state"])
 
-    def inspect_outputs(self, external_run_id: str, relative_path: str | None = None, max_bytes: int = 32*1024*1024) -> dict[str, Any]:
-        return self._call("tcad_inspect_outputs", {"run_id": external_run_id, "relative_path": relative_path, "max_bytes": max_bytes})
+    def inspect_outputs(self, external_run_id: str, relative_path: str | None = None, max_bytes: int = 32*1024*1024, *, deadline_monotonic=None) -> dict[str, Any]:
+        payload = {"run_id": external_run_id, "relative_path": relative_path, "max_bytes": max_bytes}
+        if deadline_monotonic is not None:
+            payload["deadline_monotonic"] = deadline_monotonic
+        return self._call("tcad_inspect_outputs", payload)
+
+    def collect_with_budget(self, external_run_id: str, *, context: CollectionContext) -> tuple[LocalFileDescriptor, ...]:
+        context.remaining_seconds()
+        value = self._call("tcad_collect", {"run_id": external_run_id, "collection": context.wire()})
+        context.remaining_seconds()
+        outputs = tuple(LocalFileDescriptor.model_validate(item, strict=True) for item in value["outputs"])
+        context.report_progress({"completed_files": len(outputs), "completed_bytes": sum(x.size_bytes for x in outputs),
+            "transfer_coverage": "local_descriptors"})
+        return outputs
 
     def collect(self, external_run_id: str) -> tuple[LocalFileDescriptor, ...]:
         value = self._call("tcad_collect", {"run_id": external_run_id})
@@ -159,6 +175,13 @@ class TCADExecutorAdapter:
         )
 
     def _call(self, tool: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        deadline = (arguments.get("collection") or {}).get("deadline_monotonic",
+            arguments.get("deadline_monotonic", time.monotonic() + (min(QUERY_SECONDS, self.timeout) if tool == "tcad_status" else self.timeout)))
+        def remaining():
+            seconds = deadline - time.monotonic()
+            if seconds <= 0:
+                raise TimeoutError("TCAD socket request budget exhausted")
+            return seconds
         request_id = uuid.uuid4().hex
         request = json.dumps(
             {
@@ -170,19 +193,21 @@ class TCADExecutorAdapter:
             separators=(",", ":"),
             sort_keys=True,
         ).encode("utf-8")
-        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
-            client.settimeout(self.timeout)
-            client.connect(str(self.socket_path))
-            client.sendall(request + b"\n")
-            with client.makefile("rb") as stream:
-                raw = stream.readline(16 * 1024 * 1024 + 1)
-        if not raw or len(raw) > 16 * 1024 * 1024:
-            raise RuntimeError("TCAD control returned no bounded response")
-        response = json.loads(raw)
+        from scidiscovery.artifact_agent.interfaces.mcp_proxy import forward_request
+        try:
+            response = forward_request(self.socket_path, request, timeout=remaining())
+        except TimeoutError as error:
+            error.timeout_kind = ("collection_total" if arguments.get("collection") else
+                "inspection_io" if arguments.get("deadline_monotonic") is not None else "query")
+            raise
         if response.get("id") != request_id:
             raise RuntimeError("TCAD control response identity differs")
         if "error" in response:
-            raise RuntimeError(str(response["error"].get("message", "TCAD call failed")))
+            error = RuntimeError(str(response["error"].get("message", "TCAD call failed")))
+            detail = response["error"].get("data", {}).get("engineering")
+            if isinstance(detail, dict):
+                error.engineering = detail
+            raise error
         try:
             value = response["result"]["structuredContent"]
         except (KeyError, TypeError) as error:

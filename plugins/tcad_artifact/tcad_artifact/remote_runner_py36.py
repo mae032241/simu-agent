@@ -367,6 +367,12 @@ def _lookup_submission(config, submission_sha256):
 
 
 def _status(config, run_id):
+    value = _status_value(config, run_id)
+    value["progress"] = _job_progress(_run_dir(config, run_id))
+    return value
+
+
+def _status_value(config, run_id):
     run_dir = _run_dir(config, run_id)
     submitted = _read_regular(os.path.join(run_dir, "submitted_at")).decode("ascii").strip()
     done = os.path.isfile(os.path.join(run_dir, "done"))
@@ -454,6 +460,7 @@ def _run_worker(config, run_dir):
     outputs = []
     process = None
     started_at = _timestamp()
+    _write_new(os.path.join(run_dir, "started_at"), started_at.encode("ascii"), 0o440)
     try:
         environment = _runtime_environment(run_dir)
         environment.update(runtime["environment"])
@@ -877,14 +884,125 @@ def _timestamp():
     return datetime.utcnow().isoformat(timespec="microseconds") + "Z"
 
 
+def _execution_timing(started_at, completed_at=None, terminal=False):
+    """Observed job wall time, not solver CPU time or proof of initialization."""
+    observed_at = _timestamp()
+    result = {"observed_at": observed_at}
+    parsed = {}
+    for name, value in (("started_at", started_at), ("completed_at", completed_at)):
+        try:
+            parsed[name] = datetime.strptime(value, "%Y-%m-%dT%H:%M:%S.%fZ" if "." in value else "%Y-%m-%dT%H:%M:%SZ")
+            result[name] = value
+        except (TypeError, ValueError):
+            pass
+    end = parsed.get("completed_at")
+    if end is None and completed_at is None and not terminal:
+        end = datetime.strptime(observed_at, "%Y-%m-%dT%H:%M:%S.%fZ")
+    if end is not None and "started_at" in parsed:
+        result["elapsed_seconds"] = round(max(0, (end - parsed["started_at"]).total_seconds()), 3)
+    return result
+
+
+def _redact_log(text):
+    # Shared by live status and the complete terminal debug log.
+    text = re.sub(r"(?<![A-Za-z0-9_.-])(?:/[A-Za-z0-9_.-]+){2,}", "<path>", text)
+    text = re.sub(r"(?i)\b[A-Z]:\\(?:[^\s\\]+\\)*[^\s\\]*", "<path>", text)
+    text = re.sub(r"\b[0-9]{2,6}@[A-Za-z0-9_.-]+\b", "<license-endpoint>", text)
+    text = re.sub(r"(?im)\b(?:SNPSLMD_LICENSE_FILE|LM_LICENSE_FILE|PATH|HOME)\s*=\s*\S+",
+                  "<redacted-environment>", text)
+    return re.sub(r"(?im)^.*\b(?:password|credential|private[_ -]?key|access[_ -]?token)\b.*$",
+                  "<redacted-private-line>", text)
+
+
+def _progress_read(directory, name, limit, tail=False):
+    """Nonblocking, bounded reads of regular files in this job only."""
+    parent = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        handle = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
+        try:
+            metadata = os.fstat(handle)
+            if not stat.S_ISREG(metadata.st_mode):
+                raise ValueError("progress source is not regular")
+            if tail:
+                os.lseek(handle, max(0, metadata.st_size - limit), os.SEEK_SET)
+            elif metadata.st_size > limit:
+                raise ValueError("progress metadata exceeds its bound")
+            return os.read(handle, limit), metadata
+        finally:
+            os.close(handle)
+    finally:
+        os.close(parent)
+
+
+def _job_progress(run_dir):
+    # Optional observations must never change the authoritative job state.
+    started_at = completed_at = None
+    terminal = os.path.isfile(os.path.join(run_dir, "done"))
+    try:
+        if terminal:
+            raw, _ = _progress_read(run_dir, "output_manifest.json", 1024 * 1024)
+            manifest = json.loads(raw.decode("utf-8"))
+            started_at, completed_at = manifest.get("started_at"), manifest.get("completed_at")
+        else:
+            raw, _ = _progress_read(run_dir, "started_at", 128)
+            started_at = raw.decode("ascii").strip()
+    except (OSError, ValueError, AttributeError):
+        pass
+    result = _execution_timing(started_at, completed_at, terminal=terminal)
+    candidates = [(run_dir, "worker.log")]
+    work = os.path.join(run_dir, "work")
+    # One latest solver log plus stdout; bounded scan, no recursion or symlinks.
+    latest = None
+    try:
+        if not os.path.islink(work):
+            with os.scandir(work) as entries:
+                for index, entry in enumerate(entries):
+                    if index >= 64:
+                        break
+                    if entry.name.endswith((".log", ".err")) and entry.is_file(follow_symlinks=False):
+                        candidate = (entry.stat(follow_symlinks=False).st_mtime, entry.name)
+                        if latest is None or candidate > latest:
+                            latest = candidate
+    except OSError:
+        pass
+    if latest is not None:
+        candidates.append((work, latest[1]))
+    result["log_tails"] = []
+    for directory, name in candidates:
+        try:
+            raw, metadata = _progress_read(directory, name, 2048, tail=True)
+            # Drop a partial first line: its redaction context may be omitted.
+            truncated = metadata.st_size > len(raw)
+            text = raw.decode("utf-8", errors="replace")
+            if truncated:
+                text = text.partition("\n")[2]
+            result["log_tails"].append({
+                "source": "stdout" if directory == run_dir else "solver_log",
+                "tail": _redact_log(text), "size_bytes": metadata.st_size,
+                "updated_at": datetime.utcfromtimestamp(metadata.st_mtime).isoformat(timespec="microseconds") + "Z",
+                "truncated": truncated,
+            })
+        except (OSError, ValueError):
+            pass
+    return result
+
+
 def _write_response(stream, operation, payload):
     stream.write(_canonical({"schema_version": 1, "operation": operation, "ok": True, "payload": payload}) + b"\n")
     stream.flush()
 
 
 
-def _inspect_directory(run_dir, relative_path=None, max_bytes=32 * 1024 * 1024):
+def _inspect_directory(run_dir, relative_path=None, max_bytes=32 * 1024 * 1024, deadline_monotonic=None):
     """Read bounded terminal execution products; Python 3.6/local shared logic."""
+    # Only the local socket caller supplies its host's absolute deadline. The
+    # remote RPC and standalone runner retain their existing default behavior.
+    def check_deadline():
+        if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
+            error = TimeoutError("inspection IO budget exhausted")
+            error.timeout_kind = "inspection_io"
+            raise error
+    check_deadline()
     if type(max_bytes) is not int or not 0 <= max_bytes <= 32 * 1024 * 1024:
         raise ValueError("inspection byte budget invalid")
     if not os.path.isfile(os.path.join(run_dir, "done")):
@@ -898,9 +1016,11 @@ def _inspect_directory(run_dir, relative_path=None, max_bytes=32 * 1024 * 1024):
         visited = 0
         deadline = time.monotonic() + 10
         while pending:
+            check_deadline()
             directory = pending.pop()
             with os.scandir(directory) as scan:
                 for item in scan:
+                    check_deadline()
                     visited += 1
                     if visited > 256 or time.monotonic() > deadline:
                         return {"status": "limit_exceeded", "files": entries, "reason": "inventory_limit"}
@@ -920,6 +1040,7 @@ def _inspect_directory(run_dir, relative_path=None, max_bytes=32 * 1024 * 1024):
     path = root
     try:
         for part in relative.split("/"):
+            check_deadline()
             path = os.path.join(path, part)
             if stat.S_ISLNK(os.lstat(path).st_mode):
                 return {"status": "unavailable", "reason": "symlink_forbidden"}
@@ -934,12 +1055,18 @@ def _inspect_directory(run_dir, relative_path=None, max_bytes=32 * 1024 * 1024):
     size = 0
     with open(path, "rb") as stream:
         before = os.fstat(stream.fileno())
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+        while True:
+            check_deadline()
+            chunk = stream.read(1024 * 1024)
+            check_deadline()
+            if not chunk:
+                break
             size += len(chunk)
             if size > max_bytes:
                 return {"status": "limit_exceeded", "reason": "file_bytes"}
             digest.update(chunk)
         after = os.fstat(stream.fileno())
+    check_deadline()
     if (before.st_ino, before.st_size, before.st_mtime_ns) != (after.st_ino, after.st_size, after.st_mtime_ns) or before.st_ino != metadata.st_ino:
         return {"status": "changed_since_inspection", "reason": "file_changed"}
     return {"status": "available", "relative_path": relative, "file": {"name": "candidate", "local_path": path, "media_type": "application/octet-stream", "sha256": digest.hexdigest(), "size_bytes": size}}

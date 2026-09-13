@@ -56,6 +56,33 @@ def declared_violation(message: str, *, path: str = "$") -> SemanticRuleViolatio
         path=path, message=message, error_type="value_error"),))
 
 
+def validate_evidence_source_aliases(payload: Mapping[str, Any], sources: Iterable[str]) -> None:
+    """Check scientific source references against bound aliases, not a copied ledger.
+
+    Source-alias forms pass exact bound aliases. Analysis owners first resolve
+    their optional local citations and verify calculation receipts, then include
+    those local identities in the known set. This helper never creates bindings.
+    """
+    known = set(sources)
+    pending = [(payload, "$")]
+    while pending:
+        value, path = pending.pop()
+        if isinstance(value, Mapping):
+            for index, key in enumerate(value.get("evidence_keys", ())):
+                if key not in known:
+                    raise declared_violation("Evidence reference must name a source bound to this task.",
+                        path=f"{path}.evidence_keys[{index}]")
+            for index, citation in enumerate(value.get("evidence", ())):
+                if isinstance(citation, Mapping) and citation.get("source_key") not in known:
+                    raise declared_violation("Evidence citation must name a source bound to this task.",
+                        path=f"{path}.evidence[{index}].source_key")
+            pending.extend((child, f"{path}.{key}") for key, child in value.items()
+                           if isinstance(child, (Mapping, list, tuple)))
+        elif isinstance(value, (list, tuple)):
+            pending.extend((child, f"{path}[{index}]") for index, child in enumerate(value)
+                           if isinstance(child, (Mapping, list, tuple)))
+
+
 def schema_field_names(schema: Any) -> frozenset[str]:
     names = set()
     def visit(value):
@@ -95,8 +122,16 @@ def validation_diagnostics(error: ValidationError, *, schema: Any,
     }
     names = schema_field_names(schema)
     result = []
-    for item in error.errors(include_input=False, include_context=True, include_url=False)[:32]:
+    errors = error.errors(include_input=True, include_context=True, include_url=False)
+    for item in errors[:32]:
         kind = item["type"]
+        # Invalid children can make Pydantic's validated array look empty even
+        # when the supplied array meets min_length. Report the child failures.
+        if (kind == "too_short" and isinstance(item.get("input"), (list, tuple))
+                and len(item["input"]) >= item.get("ctx", {}).get("min_length", 1)
+                and any(len(child["loc"]) > len(item["loc"])
+                        and child["loc"][:len(item["loc"])] == item["loc"] for child in errors)):
+            continue
         cause = item.get("ctx", {}).get("error")
         explicit = cause.details if isinstance(cause, SemanticRuleViolation) else ()
         if explicit and all(isinstance(detail, DeclaredDiagnostic) for detail in explicit):
@@ -107,6 +142,19 @@ def validation_diagnostics(error: ValidationError, *, schema: Any,
                     message=detail["message"], error_type=kind))
             continue
         message = messages.get(kind, "Value violates the declared type, bounds, or field relationship.")
+        if kind == "value_error" and isinstance(cause, ValueError):
+            # Pydantic has already classified this as a declared model rejection.
+            # Keep its bounded reason, without serializing the supplied value,
+            # exception context or traceback. Ordinary runtime exceptions are not
+            # handled here and remain engineering failures.
+            message = str(cause)[:512] or message
+            supplied = item.get("input")
+            if isinstance(supplied, str) and 0 < len(supplied) <= 512:
+                # Retain the rule's explanation while removing an echoed value.
+                # Merely omitting Pydantic's input field does not remove echoes
+                # embedded by a custom validator in its exception message.
+                message = re.sub(r"(?<!\w)" + re.escape(supplied) + r"(?!\w)",
+                    "[redacted input]", message)
         # These two values are generated from the declared literal/tag schema;
         # the supplied input and arbitrary custom error context are never copied.
         if kind in {"literal_error", "union_tag_invalid"}:
@@ -498,7 +546,7 @@ def operation_port_json_schema(
                 sorted(
                     source_name
                     for source_name, port_name in input_source_ports.items()
-                    if port_name in evidence_ports or (inputs[port_name].usage == "evidence_inventory"
+                    if port_name in evidence_ports or (port_name in port.context_sources
                     and inputs[port_name].exposure != "handoff_only")
                 )
             )
@@ -526,7 +574,7 @@ def _evidence_source_projection_version(
             for item in spec.inputs
         )
     ):
-        return "evidence-source-enum.v1"
+        return "evidence-source-enum.v2"
     return None
 
 

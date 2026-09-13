@@ -83,6 +83,12 @@ def test_sdevice_initialization_uses_the_manual_backed_initial_solution_mode() -
 
 
 class _ImmediateDebugAdapter:
+    def collect_with_budget(self, external_run_id, *, context):
+        context.remaining_seconds()
+        result = self.collect(external_run_id)
+        context.remaining_seconds()
+        return result
+
     def __init__(self) -> None:
         self.submissions = 0
 
@@ -549,12 +555,10 @@ def test_tcad_device_grid_is_one_declared_optional_port_and_debug_fails_closed(
         ],
         "instruction": "Exercise the declared grid input.",
     }
-    assert root.call_tool("operation_preflight", wrong_request) == {
-        "admissible": False,
-        "reason_code": "input_media_type_mismatch",
-        "port": "device_grid",
-        "executor_kind": None,
-    }
+    refused = root.call_tool("operation_preflight", wrong_request)
+    assert not refused["admissible"]
+    assert refused["reason_code"] == "input_media_type_mismatch" and refused["port"] == "device_grid"
+    assert refused["diagnostics"][0]["path"] == "$.inputs.device_grid"
 
     _invoke(
         root,
@@ -1463,8 +1467,7 @@ def test_local_tcad_debug_treats_checker_failure_as_terminal(
     assert debug == {"state": "failed", "diagnostics": []}
     status = root.call_tool("run_status", {"name": "broken_checker_deck"})
     assert status["state"] == "failed"
-    assert status["reason"] == "Run validation framework failure"
-    assert "fixture checker defect" not in str(status)
+    assert status["reason"] == "Run validation framework failure: fixture checker defect"
 
 
 def test_local_tcad_debug_rejects_a_private_output_symlink(
@@ -1699,19 +1702,25 @@ def test_negative_deck_review_can_report_implementation_defects(defect, verdict)
     report.update(verdict=verdict, execution_ready=False, implementation_fidelity="fail",
                   missing_inputs=[f"Resolve the {defect} implementation gap."])
     _review_context(report, sources, {"verdict": verdict})
-    # The same exact project remains inadmissible as an author result, even blocked.
-    with pytest.raises(SemanticRuleViolation):
+    if defect == "uncertainty":
+        # Input uncertainty is a design/review consideration, not an output prerequisite.
         _author_context(project.model_dump(mode="json"), sources, {"verdict": "blocked"})
+    else:
+        with pytest.raises(SemanticRuleViolation):
+            _author_context(project.model_dump(mode="json"), sources, {"verdict": "blocked"})
 
 
 @pytest.mark.parametrize("defect, diagnostic", (
     ("case", "case_parameter_bindings"), ("value", "approved parameter value"),
     ("unit", "approved parameter value"), ("uncertainty", "blocking-unbounded"),
 ))
-def test_deck_review_cannot_pass_the_same_implementation_defects(defect, diagnostic):
+def test_deck_review_checks_implementation_without_rechecking_input_readiness(defect, diagnostic):
     _, sources, report = _review_context_fixture(defect)
-    with pytest.raises(SemanticRuleViolation, match=diagnostic):
+    if defect == "uncertainty":
         _review_context(report, sources, {"verdict": "pass"})
+    else:
+        with pytest.raises(SemanticRuleViolation, match=diagnostic):
+            _review_context(report, sources, {"verdict": "pass"})
 
 
 @pytest.mark.parametrize("verdict", ("pass", "revise", "blocked"))
@@ -1751,7 +1760,7 @@ def test_deck_review_keeps_exact_input_and_report_validation(verdict, mismatch):
         from tcad_artifact.plugin import _parameter_inputs
         with pytest.raises(Exception):
             _parameter_inputs(sources)
-    elif mismatch == "approved_key" and verdict != "pass":
+    elif mismatch == "uncertainty_parse" or (mismatch == "approved_key" and verdict != "pass"):
         _review_context(report, sources, handoff)
     else:
         with pytest.raises((SemanticRuleViolation, ValidationError, BoundSourceError)):
@@ -2140,9 +2149,25 @@ def test_author_gap_submits_without_source_and_has_independent_review(tmp_path):
     worker = _debug_worker(catalog, runtime, _ImmediateDebugAdapter(), tmp_path / "unused-debug")
     opened = worker.call_tool("worker_open_assignment", {})
     _write_gap(opened)
+    gap = _task_gap()
+    gap['affected_work'][0]['plan_locator'] = '/missing_plan_field'
+    _write_gap(opened, raw=canonical_json(gap))
+    rejected = worker.call_tool('worker_submit_result', {})
+    assert rejected['state'] == 'rejected'
+    detail = rejected['diagnostics'][0]
+    assert detail['path'] == '$.deck.gap.affected_work[0].plan_locator'
+    assert detail['message'] == 'gap plan_locator must be an existing JSON pointer in experiment_plan'
+    assert runtime.runs.diagnostic_summary(runtime.runs.status(worker._run_id))['latest_rejection']['details'] == rejected['diagnostics']
+    _write_gap(opened)
     # No source, materialization or solver diagnostics are necessary for a negative result.
     assert not tuple(Path(str(opened["workspace_path"]), "deck/files").iterdir())
     handoff_path = Path(str(opened["workspace_path"]), "deck/handoff.json")
+    invalid_handoff = json.loads(handoff_path.read_bytes())
+    invalid_handoff["summary"] = ""
+    handoff_path.write_bytes(canonical_json(invalid_handoff))
+    rejected = worker.call_tool("worker_submit_result", {})
+    assert rejected["state"] == "rejected"
+    assert rejected["diagnostics"][0]["path"] == "$.deck.handoff.summary"
     # A stale mirror is projected from the formal gap before sealing.
     handoff_path.write_bytes(canonical_json({"verdict": "pass", "summary": "The task has an implementation gap.", "missing_inputs": []}))
     submitted = worker.call_tool("worker_submit_result", {})

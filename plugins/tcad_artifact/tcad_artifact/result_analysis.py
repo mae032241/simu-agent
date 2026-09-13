@@ -22,7 +22,7 @@ from curve_score.diagnostic_tool import (
 )
 from curve_score.science_operations import BASE_TOOLS, Components, validate_analysis_report
 from curve_score.analysis_files import GUIDANCE as ANALYSIS_FILES_GUIDANCE
-from scidiscovery.artifact_agent.service.analysis_artifacts import analysis_calculations
+from scidiscovery.artifact_agent.service.analysis_artifacts import analysis_calculations, analysis_evidence_aliases, calculation_reference_aliases
 from scidiscovery.artifact_agent.operation_tool_context import OperationToolContext
 from scidiscovery.artifact_agent.schema.common import Identifier, canonical_json
 from scidiscovery.artifact_agent.schema.experiment import ExperimentPortfolio
@@ -44,7 +44,7 @@ from .curve_normalizer import SProcessLogSourceSpec, SProcessPointLimitError, SP
 from .plx_normalizer import SProcessPLXSourceSpec, normalize_sprocess_plx
 from .project_packager import ReviewedDeckPackage, TCADRuntimeManifest
 from .analysis_bindings import source_bindings, JSON_PORTS
-from curve_score.analysis_workspace import GUIDANCE as CONTINUATION_GUIDANCE
+from curve_score.analysis_workspace import GUIDANCE as CONTINUATION_GUIDANCE, REPORT_GUIDANCE
 
 
 class TCADSourceIdentity(AnalysisSource):
@@ -429,21 +429,25 @@ def analysis_context(payload: dict[str, Any], sources: Mapping[str, bytes], hand
     view = source_bindings(sources)
     references = {}
     for index, reference in enumerate(report.source_references):
-        if reference.source_key in references:
-            raise declared_violation("analysis source references must be unique", path=f"$.source_references[{index}].source_key")
+        if reference.source_key in references and reference != references[reference.source_key]:
+            raise declared_violation("analysis source key has conflicting source mappings", path=f"$.source_references[{index}].source_key")
         references[reference.source_key] = reference
         resolve_case_mapping(plan, package, descriptors, reference,
             known=view["sources"].get(reference.input_alias), path=f"$.source_references[{index}]")
     records = {record.record_key: record for record in report.calculation_records}
+    aliases = analysis_evidence_aliases(report.evidence, report.source_references, descriptors,
+        calculation_reference_aliases(report.calculation_records, sources))
     for index, evidence in enumerate(report.evidence):
         if evidence.locator.startswith("calculation_records:"):
             if evidence.locator.split(":", 1)[1] not in records:
                 raise declared_violation("calculation evidence references an unknown record", path=f"$.evidence[{index}].locator")
             continue
-        reference = references.get(evidence.source_key)
-        alias = reference.input_alias if reference is not None else evidence.locator.split(":", 1)[0]
-        if alias not in descriptors or not (evidence.locator == alias or evidence.locator.startswith(alias + ":")):
+        alias = aliases[evidence.source_key]
+        if alias not in descriptors:
             raise declared_violation("TCAD evidence requires a bound input alias with an optional local locator", path=f"$.evidence[{index}].locator")
+    from scidiscovery.operation_contract import validate_evidence_source_aliases
+    validate_evidence_source_aliases(payload,
+        set(sources) | set(references) | set(records) | {item.source_key for item in report.evidence})
     calculations = analysis_calculations(report, sources)
     for index, record in enumerate(calculations):
         from scidiscovery.artifact_agent.service.tool_evidence import calculation_sources
@@ -459,7 +463,10 @@ def analysis_context(payload: dict[str, Any], sources: Mapping[str, bytes], hand
     validate_analysis_report(report, plan, calculations=calculations)
 
 
-PROMPT = OPERATION_AGENT_PREAMBLE + CONTINUATION_GUIDANCE + """Analyze this exact TCAD execution in one Run.
+PROMPT = OPERATION_AGENT_PREAMBLE + CONTINUATION_GUIDANCE + REPORT_GUIDANCE + """Analyze this exact TCAD execution in one Run.
+Read the compact project and scientific case matrix in analysis-bindings.json first;
+follow its original source pointers for implementation details. The control-generated
+case_parameter_bindings ledger is not a required reading or reporting task.
 Optionally use worker_tcad_inspect_outputs and worker_tcad_accept_output with the bound execution_result to inspect and collect original terminal products. These tools cannot run a solver or edit files. Missing services or ambiguous correspondence permit a limited report. State mapping reasons; a successful collection is not scientific success. Tool-returned evidence aliases and the updated schema/result.schema.json may be used in source_references and scoring in this same Run. Tool evidence includes recovered original files and identified analysis derivatives; it does not change startup inputs. Up to 32 evidence files, 32 MiB each, 256 MiB total, 120s I/O within the Run budget. A declaration/source correction goes back to author; do not alter the scientific task. Old aggregate 97 does not establish solver success: use explicit solver status when present and cite actual step evidence and uncertainty when absent.
 Return LayeredDiagnosisReport in the declared RoleResultEnvelope. Read bound raw
 files and logs; scoring is optional. The diagnostics port contains controlled runner
@@ -467,8 +474,10 @@ logs; solver_outputs contains manifest-declared products. Diagnostics may suppor
 execution diagnosis but must not be represented as registered solver products. A failed/cancelled execution or missing
 outputs may yield invalid_study or limited inconclusive analysis. Preserve the
 plan's scientific tests, deferred goals, method changes and conclusion limits.
-For every raw evidence item, locator is its input alias, optionally followed by
-":" and a position within that source (for example a log line range). Source identity
+Cite bound input/tool aliases directly in evidence_keys. Optional evidence items may
+use the bound alias as source_key with a local locator. With a local source_key,
+use source_references.input_alias or an alias-prefixed locator to identify the input.
+Do not repeat a binding already established by source_key or source_references. Source identity
 comes from the bound input; source_references is optional for additional scientific
 case correspondence. Control fills absent mechanical fields from declared bindings or
 an unambiguous exact prior_analysis mapping shown in analysis-bindings.json. Historical
@@ -513,7 +522,7 @@ Do not use unavailable quantitative comparisons as successful objective evidence
 """ + DIAGNOSTIC_GUIDANCE.format(diagnostic_tool="worker_tcad_curve_diagnose") + ANALYSIS_FILES_GUIDANCE
 SEMANTIC_CONTRACT = scientific_semantic_contract(
     "tcad.result_analysis", "Scoring is optional and occurs after execution.",
-    context_constraint="The report must identify the bound plan and use exact input aliases for solver claims. Calculation records must match their controlled receipts or exact sealed historical records; no repeated source mapping or scoring is required at submission. Missing products and failed execution limit claims, not submission of a limited report.",
+    context_constraint="The report must identify the bound plan and use exact input aliases for solver claims. A source key must resolve to one bound input or calculation record. Inline and saved representations of the same complete controlled calculation receipt share one identity. A bound input alias retains its identity even in an optional source mapping. Repeated citations and local locators are allowed; an explicit locator naming another bound input conflicts with that mapping. Calculation records must match their controlled receipts or exact sealed historical records; no repeated source mapping or scoring is required at submission. Missing products and failed execution limit claims, not submission of a limited report.",
 )
 DIAGNOSIS_AGENT = Components.diagnosis_agent
 DIAGNOSIS_VALIDATOR = Components.diagnosis_validator

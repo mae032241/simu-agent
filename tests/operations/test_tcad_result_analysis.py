@@ -186,6 +186,98 @@ def test_same_worker_rejects_wrong_name_case_or_score(tmp_path,tamper):
     assert result['state']=='rejected',result
 
 
+@pytest.mark.parametrize('explicit_reference', [False, True])
+def test_conflicting_citation_sources_repair_without_forbidding_repeated_citations(tmp_path, explicit_reference):
+    system = analysis_system(tmp_path)
+    worker, opened = open_analysis(system)
+    report = analysis_report(alias='solver_outputs_001')
+    if not explicit_reference:
+        report['source_references'] = []
+    report['evidence'] = [dict(source_key='raw_evidence', source_type='runtime_output', title='Exact output', locator=locator)
+        for locator in ('solver_outputs_001:row1', 'solver_outputs_002:row2')]
+    write_analysis(opened, report)
+    reply = worker.call_tool('worker_submit_result', {})
+    assert reply['state'] == 'rejected', reply
+    assert reply['diagnostics'][0]['path'] == '$.payload.evidence[1].source_key'
+    assert 'conflicting source mappings' in reply['diagnostics'][0]['message']
+    assert system[1].runs.status(worker._run_id).state == 'running'
+    report = json.loads(Path(opened['output_directory'], 'result.json').read_bytes())['payload']
+    if explicit_reference:
+        # The explicit binding makes a local locator sufficient.
+        report['evidence'][1]['locator'] = 'row2'
+    else:
+        # Control must not persist a guessed mapping for the Agent to undo.
+        assert not report['source_references']
+        report['evidence'][0]['locator'] = 'solver_outputs_002:row1'
+    write_analysis(opened, report)
+    assert worker.call_tool('worker_submit_result', {})['state'] == 'completed'
+    sealed = system[2].call_tool('run_status', {'name': 'analysis'})['sealed_output']['payload']
+    assert sealed['source_references'][0]['output_name'] == ('A' if explicit_reference else 'B')
+
+
+@pytest.mark.parametrize('source_key, conflicting_locator', [
+    ('solver_outputs_001', 'solver_outputs_002:row2'),
+    ('raw_evidence', 'reference_material:row2'),
+])
+def test_source_conflict_does_not_leave_a_control_mapping_to_repair(tmp_path, source_key, conflicting_locator):
+    system = analysis_system(tmp_path)
+    worker, opened = open_analysis(system)
+    report = json.loads(json.dumps(analysis_report(alias='solver_outputs_001')).replace('raw_evidence', source_key))
+    report['source_references'] = []
+    report['evidence'][0]['locator'] = 'solver_outputs_001:row1'
+    report['evidence'].append({**report['evidence'][0], 'locator': conflicting_locator})
+    write_analysis(opened, report)
+    rejected = worker.call_tool('worker_submit_result', {})
+    assert rejected['state'] == 'rejected'
+    assert 'conflicting source mappings' in rejected['diagnostics'][0]['message']
+    report = json.loads(Path(opened['output_directory'], 'result.json').read_bytes())['payload']
+    assert report['source_references'] == []
+    report['evidence'][1]['locator'] = 'solver_outputs_001:row2'
+    write_analysis(opened, report)
+    assert worker.call_tool('worker_submit_result', {})['state'] == 'completed'
+    sealed = system[2].call_tool('run_status', {'name': 'analysis'})['sealed_output']['payload']
+    assert sealed['source_references'][0]['output_name'] == 'A'
+
+
+def test_inline_calculation_source_conflict_can_be_corrected_without_changing_the_receipt(tmp_path):
+    system = analysis_system(tmp_path)
+    worker, opened = open_analysis(system)
+    record = worker.call_tool('worker_tcad_curve_score', {'record_key': 'score', 'request': raw_request()})
+    assert record['status'] == 'computed'
+    report = analysis_report(alias='solver_outputs_001')
+    report['source_references'] = []
+    report['calculation_records'] = [record]
+    report['evidence'].append({**report['evidence'][0], 'locator': 'calculation_records:score'})
+    write_analysis(opened, report)
+    rejected = worker.call_tool('worker_submit_result', {})
+    assert rejected['state'] == 'rejected'
+    assert rejected['diagnostics'][0]['path'] == '$.payload.evidence[1].source_key'
+    report = json.loads(Path(opened['output_directory'], 'result.json').read_bytes())['payload']
+    assert report['source_references'] == []
+    report['evidence'][1]['source_key'] = 'score_evidence'
+    write_analysis(opened, report)
+    assert worker.call_tool('worker_submit_result', {})['state'] == 'completed'
+    sealed = system[2].call_tool('run_status', {'name': 'analysis'})['sealed_output']['payload']
+    assert sealed['calculation_records'] == [record]
+    assert sealed['source_references'][0]['output_name'] == 'A'
+
+
+def test_optional_citation_cannot_change_an_exact_bound_alias(tmp_path):
+    worker, opened = open_analysis(analysis_system(tmp_path))
+    report = json.loads(json.dumps(analysis_report(alias='solver_outputs_001')).replace('raw_evidence', 'solver_outputs_002'))
+    report['evidence'][0]['locator'] = 'row1'
+    for evidence in (report['evidence'], []):
+        report['evidence'] = evidence
+        write_analysis(opened, report)
+        rejected = worker.call_tool('worker_submit_result', {})
+        assert rejected['state'] == 'rejected'
+        assert rejected['diagnostics'][0]['path'] == '$.payload.source_references[0].source_key'
+    # A local citation name may still use only the optional mapping, without an evidence row.
+    report = json.loads(json.dumps(report).replace('solver_outputs_002', 'local_citation'))
+    write_analysis(opened, report)
+    assert worker.call_tool('worker_submit_result', {})['state'] == 'completed'
+
+
 def test_legacy_unmapped_output_can_seal_limited_analysis(tmp_path):
     worker,opened=open_analysis(analysis_system(tmp_path,mapped=False,bind_names=('A',)))
     write_analysis(opened,analysis_report(alias='solver_outputs',output_name='A'))

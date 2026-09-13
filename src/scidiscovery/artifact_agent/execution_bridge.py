@@ -173,29 +173,35 @@ class ExecutionBridge:
             )
         return values
 
-    def sync(self, *, execution_id: str) -> None:
+    def sync(self, *, execution_id: str, diagnostic_scope: str | None = None) -> dict | None:
         current = self.executions.status(execution_id)
-        if current.state == "collected":
-            return
         if current.external_run_id is None:
             raise ExecutionServiceError("execution has no submitted external run")
         adapter = self._adapter(current.executor)
-        if current.state in {"succeeded", "failed", "cancelled"}:
-            external_state = current.state
-        else:
-            external_state = adapter.status(current.external_run_id)
-            self.executions.record_status(
-                execution_id=execution_id,
-                external_run_id=current.external_run_id,
-                state=external_state,
-            )
-        if external_state in {"succeeded", "failed", "cancelled"}:
-            outputs = adapter.collect(current.external_run_id)
-            self.executions.ingest_result(
-                execution_id=execution_id,
-                external_run_id=current.external_run_id,
-                outputs=outputs,
-            )
+        observation = self.executions.observation(execution_id)
+        from datetime import datetime, timezone
+        try:
+            reader = getattr(adapter, "status_details", None)
+            details = (reader(current.external_run_id) if callable(reader)
+                       else {"state": adapter.status(current.external_run_id)})
+            external_state = details["state"]
+            if isinstance(details.get("progress"), dict):
+                observation["progress"] = details["progress"]
+                observation["progress_observed_at"] = datetime.now(timezone.utc).isoformat()
+            if current.state not in {"succeeded", "failed", "cancelled", "collected"}:
+                self.executions.record_status(execution_id=execution_id,
+                    external_run_id=current.external_run_id, state=external_state)
+            observation["solver_state"] = external_state
+            observation["status_observed_at"] = datetime.now(timezone.utc).isoformat()
+            observation.pop("observation_error", None)
+        except Exception as error:
+            from .service.engineering_diagnostics import EngineeringDiagnostics, exception_facts
+            observation["observation_error"] = (EngineeringDiagnostics(
+                self.executions.database_path.parent.parent / "engineering-diagnostics").capture(
+                    error, scope=diagnostic_scope, layer="execution_observation", action="sync") if diagnostic_scope
+                else exception_facts(error, layer="execution_observation", action="sync"))
+        self.executions.save_observation(execution_id, observation)
+        return observation.get("progress")
 
     def cancel(self, *, execution_id: str) -> None:
         current = self.executions.status(execution_id)

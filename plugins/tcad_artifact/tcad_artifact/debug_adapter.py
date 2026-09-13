@@ -21,6 +21,7 @@ from .debug_contract import (
 )
 
 from .execution_control import ResourceLimits, SolverCapabilitySnapshot, TCADJobSpec
+from .remote_runner_py36 import _execution_timing, _redact_log
 from .project_packager import (
     DeckProjectDraft,
     PackagerError,
@@ -392,13 +393,29 @@ class TCADDevelopmentDebugBridge:
         return submission
 
     def status(self, external_run_id: str) -> str:
-        return self.adapter.status(external_run_id)
+        return str(self.status_details(external_run_id)["state"])
+
+    def status_details(self, external_run_id: str) -> dict:
+        reader = getattr(self.adapter, "status_details", None)
+        return reader(external_run_id) if callable(reader) else {"state": self.adapter.status(external_run_id)}
 
     def cancel(self, external_run_id: str) -> str:
         return self.adapter.cancel(external_run_id)
 
     def collect(self, external_run_id: str) -> CollectedTCADDebugRun:
         descriptors = self.adapter.collect(external_run_id)
+        return self._collected_run(descriptors)
+
+    def collect_with_budget(self, external_run_id: str, *, context) -> CollectedTCADDebugRun:
+        context.remaining_seconds()
+        method = getattr(self.adapter, "collect_with_budget", None)
+        if not callable(method):
+            raise RuntimeError("legacy debug collection requires its configured runtime factory")
+        descriptors = method(external_run_id, context=context)
+        return self._collected_run(descriptors, context=context)
+
+    def _collected_run(self, descriptors, *, context=None):
+        if context: context.remaining_seconds()
         if len(descriptors) > _MAX_OUTPUT_FILES + 2:
             raise ValueError("development debug output count exceeds its bound")
         for descriptor in descriptors:
@@ -424,6 +441,7 @@ class TCADDevelopmentDebugBridge:
         files = []
         total = 0
         for name, descriptor in sorted(by_name.items()):
+            if context: context.remaining_seconds()
             content = _read_descriptor(
                 descriptor, max_bytes=_MAX_OUTPUT_FILE_BYTES
             )
@@ -478,6 +496,7 @@ class TCADDevelopmentDebugBridge:
             log_excerpt=log_excerpt,
             files=tuple(files),
             source_diagnostic=source_diagnostic,
+            timing=_execution_timing(manifest.get("started_at"), manifest.get("completed_at"), terminal=True),
         )
 
     def _capabilities(self) -> tuple[SolverCapabilitySnapshot, ...]:
@@ -649,24 +668,7 @@ def _sanitize_log(raw: bytes, *, truncate: bool = True) -> str:
             + "\n--- bounded diagnostic omission ---\n"
             + text[-half:]
         )
-    text = re.sub(r"(?<![A-Za-z0-9_.-])(?:/[A-Za-z0-9_.-]+){2,}", "<path>", text)
-    text = re.sub(
-        r"(?i)\b[A-Z]:\\(?:[^\s\\]+\\)*[^\s\\]*",
-        "<path>",
-        text,
-    )
-    text = re.sub(r"\b[0-9]{2,6}@[A-Za-z0-9_.-]+\b", "<license-endpoint>", text)
-    text = re.sub(
-        r"(?im)\b(?:SNPSLMD_LICENSE_FILE|LM_LICENSE_FILE|PATH|HOME)\s*=\s*\S+",
-        "<redacted-environment>",
-        text,
-    )
-    text = re.sub(
-        r"(?im)^.*\b(?:password|credential|private[_ -]?key|access[_ -]?token)\b.*$",
-        "<redacted-private-line>",
-        text,
-    )
-    return text
+    return _redact_log(text)
 
 
 def _read_descriptor(

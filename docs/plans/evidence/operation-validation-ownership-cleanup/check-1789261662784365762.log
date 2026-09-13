@@ -1,0 +1,43 @@
+{"invoke": {"jsonrpc": "2.0", "id": 1, "error": {"code": -32000, "message": "An Operation control component failed; input admission could not be completed.", "data": {"diagnostics": [{"schema_version": 1, "code": "local_run_creation_failed", "phase": "tool_execution", "path": "$", "message": "An Operation control component failed; input admission could not be completed.", "repairable": false, "affected_action": "invoke"}]}}}, "listed": {"runs": []}, "lookup": {"jsonrpc": "2.0", "id": 2, "error": {"code": -32000, "message": "Tool execution failed; consult the controlled engineering diagnostics.", "data": {"diagnostics": [{"schema_version": 1, "code": "runtime_failure", "phase": "tool_execution", "path": "$", "message": "Tool execution failed; consult the controlled engineering diagnostics.", "repairable": false, "affected_action": "tool_call"}]}}}, "internal_reason": "workspace preparation failed: admitted execution_capability is invalid JSON"}
+F
+=================================== FAILURES ===================================
+______________ test_pre_dispatch_failure_is_visible_through_root _______________
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-259/test_pre_dispatch_failure_is_v0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7fa3acecb140>
+
+    def test_pre_dispatch_failure_is_visible_through_root(tmp_path, monkeypatch):
+        from tests.operations.test_l4_local_tcad import _system
+        from scidiscovery.artifact_agent.interfaces.mcp import MCPRouter
+        from scidiscovery.artifact_agent.service.run_outputs import RunCheckerError
+        _, runtime, root, _ = _system(tmp_path)
+        run_ids = []
+        reason = 'admitted execution_capability is invalid JSON'
+        def fail(compiled, run_id, workspace):
+            run_ids.append(run_id)
+            raise RunCheckerError(reason, category='admission_defect')
+        monkeypatch.setattr(runtime.runs, '_materialize_workspace', fail)
+        wire = MCPRouter(root, name='review-visibility')
+        request = {'name': 'preparation_fault', 'operation_id': 'tcad.deck.author.initial.v1',
+            'inputs': [{'port': 'execution_capability', 'artifact_names': ['execution_capability']},
+                       {'port': 'experiment_plan', 'artifact_names': ['experiment_plan']}],
+            'instruction': 'Implement the bound fixture plan.'}
+        reply = wire.handle({'jsonrpc': '2.0', 'id': 1, 'method': 'tools/call',
+            'params': {'name': 'operation_invoke', 'arguments': request}})
+        assert len(run_ids) == 1
+        internal = runtime.runs.status(run_ids[0])
+        assert internal.state == 'failed' and reason in internal.reason
+        listed = root.call_tool('run_list', {})
+        lookup = wire.handle({'jsonrpc': '2.0', 'id': 2, 'method': 'tools/call',
+            'params': {'name': 'run_status', 'arguments': {'name': 'preparation_fault'}}})
+        print(json.dumps({'invoke': reply, 'listed': listed, 'lookup': lookup,
+            'internal_reason': internal.reason}, ensure_ascii=False))
+>       assert reason in json.dumps({'invoke': reply, 'listed': listed, 'lookup': lookup})
+E       assert 'admitted execution_capability is invalid JSON' in '{"invoke": {"jsonrpc": "2.0", "id": 1, "error": {"code": -32000, "message": "An Operation control component failed; i...on failed; consult the controlled engineering diagnostics.", "repairable": false, "affected_action": "tool_call"}]}}}}'
+E        +  where '{"invoke": {"jsonrpc": "2.0", "id": 1, "error": {"code": -32000, "message": "An Operation control component failed; i...on failed; consult the controlled engineering diagnostics.", "repairable": false, "affected_action": "tool_call"}]}}}}' = <function dumps at 0x7fa3ad2ba480>({'invoke': {'jsonrpc': '2.0', 'id': 1, 'error': {'code': -32000, 'message': 'An Operation control component failed; in...ion failed; consult the controlled engineering diagnostics.', 'repairable': False, 'affected_action': 'tool_call'}]}}}})
+E        +    where <function dumps at 0x7fa3ad2ba480> = json.dumps
+
+/tmp/test_validation_fix_r2_visibility.py:29: AssertionError
+=========================== short test summary info ============================
+FAILED ::test_pre_dispatch_failure_is_visible_through_root - assert 'admitted...
+1 failed in 2.22s

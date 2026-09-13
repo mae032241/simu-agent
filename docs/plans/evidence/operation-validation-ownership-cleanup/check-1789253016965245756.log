@@ -1,0 +1,69 @@
+F.......                                                                 [100%]
+=================================== FAILURES ===================================
+_ test_review_binds_direct_progress_reference_and_repairs_unknown_source_in_same_run _
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-232/test_review_binds_direct_progr0')
+experiment_case = ({'study_kind': 'scientific', 'objective_key': 'objective_expected', 'selected_hypothesis_keys': ['hypothesis_a'], 'pr...research_objective_key":"objective_expected","schema_version":2,"stage_objective":"Separate one bounded mechanism."}'})
+
+    def test_review_binds_direct_progress_reference_and_repairs_unknown_source_in_same_run(tmp_path, experiment_case):
+        from scidiscovery.artifact_agent.transforms import materialize_experiment_plan
+        intent, inputs = _partial_experiment(experiment_case)
+        plan, _ = materialize_experiment_plan({
+            'experiment_design_intent': canonical_json(intent),
+            'research_objective': inputs['research_objective'],
+            'hypothesis_portfolio': inputs['hypothesis_portfolio'],
+        })
+>       runtime, run_id, workspace = _review_run(tmp_path, {
+            'experiment_plan': plan, 'current_progress': canonical_json({'completed_units': 60}),
+        })
+
+tests/operations/test_evidence_reference_ownership.py:25: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/operations/test_agent_contract_alignment.py:856: in _review_run
+    envelope = _register(runtime, instance, name=port.name, raw=sources[port.name],
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+runtime = ArtifactAgentRuntime(project_root=PosixPath('/tmp/pytest-of-da/pytest-232/test_review_binds_direct_progr0/project'), s...bject at 0x7f5eb7dbf020>, operation_catalog=<scidiscovery.operations.catalog.CompiledCatalog object at 0x7f5eb8221b80>)
+instance = SchedulerInstance(instance_id='ins_836be37d50f94384a85f42b8122952d2', name='r3_transform', title='R3 deterministic tra...ify catalog-owned deterministic transforms.', state='active', created_at='2026-09-12T22:43:38.842651Z', closed_at=None)
+name = 'current_progress', raw = b'{"completed_units":60}'
+kind = 'current_progress', schema = '*', media_type = 'application/json'
+parents = (), provisional = False
+
+    def _register(
+        runtime,
+        instance,
+        *,
+        name: str,
+        raw: bytes,
+        kind: str,
+        schema: str,
+        media_type: str = "application/json",
+        parents: tuple[ArtifactRef, ...] = (),
+        provisional: bool = False,
+    ):
+        envelope = runtime.artifacts.register(
+            raw,
+>           ArtifactRegistration(
+                kind=kind,
+                schema_id=schema,
+                payload_schema_version=1,
+                media_type=media_type,
+                creator=runtime.actor,
+                parent_refs=parents,
+                labels=(
+                    {"scientific_claim_admissible": "false"}
+                    if provisional
+                    else {}
+                ),
+            ),
+            idempotency_key=f"r3-transform:{name}",
+        )
+E       pydantic_core._pydantic_core.ValidationError: 1 validation error for ArtifactRegistration
+E       schema_id
+E         String should match pattern '^[A-Za-z0-9][A-Za-z0-9_.:/-]*$' [type=string_pattern_mismatch, input_value='*', input_type=str]
+E           For further information visit https://errors.pydantic.dev/2.11/v/string_pattern_mismatch
+
+tests/operations/test_general_transform_operations.py:245: ValidationError
+=========================== short test summary info ============================
+FAILED tests/operations/test_evidence_reference_ownership.py::test_review_binds_direct_progress_reference_and_repairs_unknown_source_in_same_run
+1 failed, 7 passed in 1.59s

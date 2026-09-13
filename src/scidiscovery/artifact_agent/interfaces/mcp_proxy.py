@@ -6,10 +6,12 @@ import argparse
 import json
 import socket
 import sys
+import time
 import uuid
 from pathlib import Path
 
 from .mcp import parse_rpc_line, rpc_error
+from ..service.engineering_diagnostics import exception_facts
 
 
 MAX_RESPONSE_BYTES = 16 * 1024 * 1024
@@ -35,6 +37,9 @@ def main(argv: list[str] | None = None) -> int:
                 timeout=args.timeout,
             )
         except Exception as error:
+            error.engineering = exception_facts(error, layer="root_proxy", action="forward_request")
+            error.engineering["response_timeout_seconds"] = args.timeout
+            print(json.dumps(error.engineering, ensure_ascii=False), file=sys.stderr, flush=True)
             response = rpc_error(request_id, error)
         if response is not None:
             print(
@@ -47,14 +52,35 @@ def main(argv: list[str] | None = None) -> int:
 def forward_request(socket_path: Path, raw: bytes, *, timeout: float) -> dict | None:
     request = json.loads(raw)
     notification = request.get("method") == "notifications/initialized"
-    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
-        client.settimeout(timeout)
-        client.connect(str(socket_path.expanduser().absolute()))
-        client.sendall(raw.rstrip(b"\r\n") + b"\n")
-        if notification:
-            return None
-        with client.makefile("rb") as stream:
-            response_raw = stream.readline(MAX_RESPONSE_BYTES + 1)
+    started = time.monotonic()
+    deadline = started + timeout
+    response_raw = bytearray()
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+            def remaining():
+                value = deadline - time.monotonic()
+                if value <= 0:
+                    raise TimeoutError("proxy response deadline exhausted")
+                client.settimeout(value)
+            remaining()
+            client.connect(str(socket_path.expanduser().absolute()))
+            remaining()
+            client.sendall(raw.rstrip(b"\r\n") + b"\n")
+            if notification:
+                return None
+            while len(response_raw) <= MAX_RESPONSE_BYTES:
+                remaining()
+                chunk = client.recv(min(65536, MAX_RESPONSE_BYTES + 1 - len(response_raw)))
+                if not chunk:
+                    break
+                response_raw.extend(chunk)
+                if b"\n" in chunk:
+                    break
+    except TimeoutError as error:
+        error.timeout = timeout
+        error.timeout_kind = "proxy_response"
+        error.elapsed_seconds = time.monotonic() - started
+        raise
     if not response_raw or len(response_raw) > MAX_RESPONSE_BYTES:
         raise RuntimeError("control service returned no bounded response")
     response = json.loads(response_raw)

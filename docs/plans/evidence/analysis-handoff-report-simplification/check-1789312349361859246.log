@@ -1,0 +1,65 @@
+.......F........................                                         [100%]
+=================================== FAILURES ===================================
+_ test_sealed_compact_analysis_reaches_next_design_preflight_and_original_input _
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-342/test_sealed_compact_analysis_r0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7f142e1a2270>
+
+    def test_sealed_compact_analysis_reaches_next_design_preflight_and_original_input(tmp_path, monkeypatch):
+        from scidiscovery.artifact_agent.interfaces.mcp_local_worker import LocalWorkerMCPRouter
+        from tests.operations import test_agent_contract_alignment as alignment
+        from tests.operations import test_general_transform_operations as transforms
+        system = analysis_system(tmp_path)
+        worker, opened = open_analysis(system)
+        submit_compact(worker, opened, compact_report())
+        catalog, runtime, root = system[:3]
+        completed = runtime.runs.status(worker._run_id)
+        original = runtime.artifacts.read(completed.output_ref)
+        # Reuse the existing design cohort fixture in the same instance. Its approval
+        # stub belongs to that fixture; this test checks feedback transport, not governance.
+        monkeypatch.setattr(transforms, '_root', lambda *args, **kwargs:
+            (runtime, SimpleNamespace(instance_id=completed.instance_id), root))
+>       _, _, _, request, _ = alignment._feedback_root(tmp_path, monkeypatch,
+            alignment.experiment_case.__wrapped__(), 'science.experiment.design.v1', catalog=catalog)
+
+tests/operations/test_analysis_handoff_report.py:117: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-342/test_sealed_compact_analysis_r0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7f142e1a2270>
+experiment_case = ({'study_kind': 'scientific', 'objective_key': 'objective_expected', 'selected_hypothesis_keys': ['hypothesis_a'], 'pr...research_objective_key":"objective_expected","schema_version":2,"stage_objective":"Separate one bounded mechanism."}'})
+operation_id = 'science.experiment.design.v1', name = 'feedback_task'
+catalog = <scidiscovery.operations.catalog.CompiledCatalog object at 0x7f142e39d300>
+
+    def _feedback_root(tmp_path, monkeypatch, experiment_case, operation_id, *, name="feedback_task", catalog=None):
+        from scidiscovery.artifact_agent.transforms import materialize_experiment_plan
+        from tests.operations.test_general_transform_operations import _intake, _register, _root
+    
+        intent, sources = _partial_experiment(experiment_case)
+        catalog = catalog or _catalog()
+        runtime, instance, root = _root(tmp_path, catalog=catalog)
+        foundation = _intake().scientific_foundation.model_dump(mode="json")
+        foundation["objective"] = json.loads(sources["research_objective"])["statement"]
+        foundation["objective_contract"] = json.loads(sources["research_objective"])
+        content = {"scientific_foundation": canonical_json(foundation), **sources}
+        envelopes = {}
+        for port in ("scientific_foundation", "research_objective", "hypothesis_portfolio", "critic_review"):
+            parents = () if port == "scientific_foundation" else (envelopes["scientific_foundation"].ref,)
+            if port == "critic_review":
+                parents += (envelopes["hypothesis_portfolio"].ref,)
+            declaration = next(item for item in catalog.operation("science.experiment.design.v1").spec.inputs if item.name == port)
+            envelopes[port] = _register(runtime, instance, name=port, raw=content[port],
+                                        kind=port, schema=declaration.schema_id, parents=parents)
+>       monkeypatch.setattr(runtime.approvals, "are_subjects_approved_by_provider", lambda *args, **kwargs: True)
+E       AttributeError: None has no attribute 'are_subjects_approved_by_provider'
+
+tests/operations/test_agent_contract_alignment.py:610: AttributeError
+=============================== warnings summary ===============================
+tests/operations/test_analysis_continuation.py::test_compact_open_and_editable_nested_recovery_with_fresh_runtime
+  /home/da/project/ai4s/tcad/git_release/scidiscovery-agent/123/scidiscovery-e5.2/plugins/tcad_artifact/tcad_artifact/remote_runner_py36.py:884: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    return datetime.utcnow().isoformat(timespec="microseconds") + "Z"
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/operations/test_analysis_handoff_report.py::test_sealed_compact_analysis_reaches_next_design_preflight_and_original_input
+1 failed, 31 passed, 1 warning in 21.76s

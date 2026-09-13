@@ -1376,6 +1376,7 @@ class RootOperationRoutes:
             refs,
             kind=admission.approval_kind,
             accepted_options=admission.accepted_options,
+            allow_compatible_provider=bound.compiled.spec.executor.kind != "effect",
             accepted_providers=tuple(
                 CompiledApprovalIdentity(
                     operation_id=provider.operation_id,
@@ -1428,7 +1429,10 @@ class RootOperationRoutes:
                     ),
                 )
             except OperationInvocationError as error:
-                raise OperationInvocationError(error.reason_code, port=port_name) from error
+                raise OperationInvocationError(
+                    error.reason_code, port=port_name, field=error.field,
+                    message=error.details[0]["message"],
+                ) from error
             if contract is None:
                 if mode == "direct_revision":
                     raise OperationInvocationError(
@@ -1464,29 +1468,30 @@ class RootOperationRoutes:
                 reviewer_input_port=reviewer_input_port,
             ) == "review_subject":
                 continue
-            reviewer_output = next(
-                (
-                    candidate
-                    for candidate in bound.inputs
-                    if candidate.artifact.ref != artifact.ref
-                    and self._is_exact_reviewer_output(
-                        candidate.artifact.ref,
-                        reviewer_operation=required_reviewer,
-                        reviewer_input_port=reviewer_input_port,
-                        accepted_verdicts=(
-                            _NONPASSING_REVIEW_VERDICTS
-                            if candidate.usage
-                            in {"change_request", "review_signal"}
-                            else accepted_verdicts
-                        ),
-                        subject_ref=artifact.ref,
-                    )
-                ),
-                None,
-            )
+            def exact_review(candidate: Any, *, require_compatible: bool = True) -> bool:
+                return candidate.artifact.ref != artifact.ref and self._is_exact_reviewer_output(
+                    candidate.artifact.ref,
+                    reviewer_operation=required_reviewer,
+                    reviewer_input_port=reviewer_input_port,
+                    accepted_verdicts=(
+                        _NONPASSING_REVIEW_VERDICTS
+                        if candidate.usage in {"change_request", "review_signal"}
+                        else accepted_verdicts
+                    ),
+                    subject_ref=artifact.ref,
+                    require_compatible=require_compatible,
+                )
+
+            reviewer_output = next((candidate for candidate in bound.inputs if exact_review(candidate)), None)
             if reviewer_output is None:
+                if any(exact_review(candidate, require_compatible=False) for candidate in bound.inputs):
+                    raise OperationInvocationError(
+                        "input_independent_review_incompatible", port=port_name,
+                        message="An exact completed review exists, but its Operation version or output type is no longer supported. Request a new review of this same subject.",
+                    )
                 raise OperationInvocationError(
-                    "input_independent_review_missing", port=port_name
+                    "input_independent_review_missing", port=port_name,
+                    message="No bound completed review from the declared reviewer covers this exact subject with an accepted verdict.",
                 )
             if reviewer_output.usage in {"change_request", "review_signal"}:
                 consumed_review_signals.add(reviewer_output.artifact.ref)
@@ -1544,8 +1549,21 @@ class RootOperationRoutes:
             None,
         )
         if invalid is not None:
+            if self._is_exact_reviewer_output(
+                invalid.artifact.ref,
+                reviewer_operation=reviewer_operation,
+                reviewer_input_port=reviewer_input_port,
+                accepted_verdicts=_NONPASSING_REVIEW_VERDICTS,
+                subject_ref=base.ref,
+                require_compatible=False,
+            ):
+                raise OperationInvocationError(
+                    "input_independent_review_incompatible", port=invalid.port_name,
+                    message="The exact change request exists, but its reviewer version or output type is no longer supported. Request a new review of this same prior draft.",
+                )
             raise OperationInvocationError(
-                "input_change_request_mismatch", port=invalid.port_name
+                "input_change_request_mismatch", port=invalid.port_name,
+                message="The change request must be a compatible completed non-passing review of the exact prior draft by its declared reviewer.",
             )
         return tuple(item.artifact.ref for item in change_requests)
 
@@ -1580,23 +1598,26 @@ class RootOperationRoutes:
             compiled = self._operation_catalog.operation(str(operation_id))
         except KeyError as error:
             raise OperationInvocationError("input_producer_contract_unavailable") from error
-        if (
-            compiled.spec.version != version or compiled.digest != digest
-        ) and not allow_historical:
-            raise OperationInvocationError("input_producer_contract_changed")
+        if compiled.spec.version != version and not allow_historical:
+            raise OperationInvocationError(
+                "input_producer_contract_changed",
+                message="The producer Operation version is incompatible with current scientific use. Review or revise the historical record under the supported version; changing Agent output fields cannot repair this admission failure.",
+            )
         try:
             port = next(value for value in compiled.spec.outputs if value.name == port_name)
         except StopIteration as error:
             raise OperationInvocationError("input_producer_port_unknown") from error
-        # Historical context can be read under the consumer's declared input
-        # contract. It still follows the installed producer's review edge; an
-        # old review never becomes a current review or execution authorization.
-        if allow_historical and (
+        # Same-version runtime drift does not revoke sealed science. The
+        # current typed port and review edge still govern its consumption.
+        if (allow_historical or compiled.digest != digest) and (
             port.schema_id != artifact.schema_id
             or port.kind != artifact.ref.kind
             or artifact.media_type not in port.media_types
         ):
-            raise OperationInvocationError("input_producer_port_incompatible")
+            raise OperationInvocationError(
+                "input_producer_port_incompatible",
+                message="The historical output no longer matches the producer port's schema, kind or media type.",
+            )
         declared = compiled.spec.review
         review = None
         if (

@@ -1,6 +1,6 @@
 # TCAD 传输与开发调试合同（Run v1）
 
-更新日期：2026-09-03
+更新日期：2026-09-13
 状态：当前规范
 
 ## 1. 权限边界
@@ -37,6 +37,21 @@ transport 只能：
 - `collect`：仅在终态后收集有界原始结果。
 
 transport 不等待 Solver、不循环轮询、不生成或修改 Deck、不批准请求、不写 SciDiscovery 控制状态。
+
+状态/日志与产物分开调用：Root 的 `execution_sync` 只同步短观测，终态仍可刷新；显式
+`execution_collect` 由 daemon 共享收集器启动一个有界工作进程组；私有控制监督进程持锁至该组
+实际停止，daemon退出后仍保留所有权，不依赖原生SSH继承锁。`execution_status` 读取其进度，
+`execution_outputs` 只在 collected 后发布输出名。适配器不拥有调度队列或独立重试预算。
+
+正式收集默认总预算600秒，内部预留 `min(2秒, 总预算10%)` 用于停止和回收，单文件120秒、
+无字节进展30秒；状态查询默认5秒，Root 代理默认10秒。`collect(external_run_id)` 保留兼容；
+可选 `collect_with_budget(external_run_id, *, context)` 消费共同 `CollectionContext` 的单调时钟
+截止点、文件/无进展预算及进度回调。command/socket 传递同一剩余预算，不能逐项重置。
+旧调用由控制进程封装。作者调试由已有 runtime factory 重建适配器，在独立受控进程中消费
+本 Run 剩余时间；手工注入的适配器需实现预算方法，不能直接把无界旧方法放进 Worker 线程。
+分析恢复的 `inspect_outputs(..., *, deadline_monotonic=None)` 消费原 IO/Run 较短剩余时间，
+不继承正式收集预算。原 VM 协议、已批准求解任务和原始工作目录保持兼容。
+
 `submit` 必须对同一已准备描述符幂等。每次提交前由 adapter 调用
 `lookup_submission`：查到既有任务则只返回它，权威确认不存在才可提交，查询不可用则在副作用前
 失败。未知提交不能盲目重发。

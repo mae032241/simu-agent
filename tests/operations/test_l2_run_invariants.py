@@ -14,7 +14,7 @@ import pytest
 
 from blind_csv_plugin.contracts import CSV_SCHEMA_PROBE, CsvObservation, summarize_csv
 from blind_csv_plugin.plugin import PLUGIN as BLIND_CSV_PLUGIN
-from scidiscovery.artifact_agent.interfaces.mcp_local_worker import LocalWorkerMCPRouter
+from scidiscovery.artifact_agent.interfaces.mcp_local_worker import LocalWorkerMCPRouter, WorkerToolError
 from scidiscovery.artifact_agent.interfaces.mcp_root import (
     RootMCPRouter,
     RootToolError,
@@ -420,8 +420,13 @@ def test_candidate_binding_crash_windows_and_response_replay(
         "_register_candidate",
         lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("after seal")),
     )
-    with pytest.raises(Exception, match="registered operation tool failed|after seal"):
+    with pytest.raises(WorkerToolError) as error:
         worker.call_tool("worker_submit_result", {})
+    assert error.value.details[0]["message"] == "after seal"
+    diagnostic = root.call_tool("run_status", {"name": "candidate"})["diagnostic_summary"]["latest_tool_error"]
+    assert diagnostic["details"][0]["message"] == "after seal"
+    assert "after seal" in root.call_tool("diagnostic_read", {
+        "reference": diagnostic["engineering"]["reference"], "section": "traceback"})["text"]
     status = runtime.runs.status(runtime.scheduler_bindings.resolve(
         instance=runtime.scheduler_bindings.list_instances()[0].instance_id,
         namespace="run",
@@ -452,8 +457,10 @@ def test_candidate_binding_crash_windows_and_response_replay(
         "_complete",
         lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("after artifact")),
     )
-    with pytest.raises(Exception, match="after artifact"):
+    with pytest.raises(WorkerToolError) as error:
         second_worker.call_tool("worker_submit_result", {})
+    assert error.value.details[0]["message"] == "after artifact"
+    assert root.call_tool("run_status", {"name": "artifact_window"})["diagnostic_summary"]["latest_tool_error"]["details"][0]["message"] == "after artifact"
     before = len(runtime.artifacts.list_artifacts(kind="observation", limit=100))
     monkeypatch.setattr(runtime.runs, "_complete", original_complete)
     assert second_worker.call_tool("worker_submit_result", {})["state"] == "completed"
@@ -533,12 +540,15 @@ def test_status_is_pure_and_failure_recovery_is_explicit(tmp_path: Path) -> None
             "resume_from": "recoverable",
         },
     )
-    assert rejected == {
+    assert {key: rejected[key] for key in ("admissible", "reason_code", "port", "executor_kind")} == {
         "admissible": False,
         "reason_code": "recovery_source_unavailable",
         "port": None,
         "executor_kind": None,
     }
+    assert rejected["diagnostics"][0]["code"] == "recovery_source_unavailable"
+    assert rejected["diagnostics"][0]["phase"] == "input_admission"
+    assert rejected["diagnostics"][0]["path"] == "$.inputs"
     assert root.call_tool("run_list", {}) == before_rejected_preflight
     with pytest.raises(Exception, match="unknown run name"):
         runtime.scheduler_bindings.resolve(
@@ -604,9 +614,9 @@ def test_status_is_pure_and_failure_recovery_is_explicit(tmp_path: Path) -> None
             },
         )
         assert limited["admissible"] is False
-        assert limited["reason_code"] == "recovery_source_unavailable"
+        assert limited["reason_code"] == "recovery_attempt_limit_reached"
     for source_name in ("recoverable", "resumed"):
-        with pytest.raises(Exception, match="recovery_source_unavailable"):
+        with pytest.raises(Exception, match="recovery_attempt_limit_reached"):
             restarted_root.call_tool(
                 "operation_invoke",
                 {
@@ -1017,9 +1027,9 @@ def test_tool_projection_identity_independent_path_and_publication_gate(
     escaped.write_bytes(_envelope())
     output.symlink_to(escaped)
     rejected = worker.call_tool("worker_submit_result", {})
-    assert rejected["state"] == "rejected" and "symbolic links" in json.dumps(
+    assert rejected["state"] == "rejected" and "regular file" in json.dumps(
         rejected
-    )
+    )  # The finalizer reports the bad primary file before the seal step.
     output.unlink()
     output.write_bytes(_envelope("Leaked host path: /home/example/private/state.db"))
     rejected = worker.call_tool("worker_submit_result", {})
@@ -1027,10 +1037,10 @@ def test_tool_projection_identity_independent_path_and_publication_gate(
     output.write_bytes(_envelope("password=abcdefghijklmnop"))
     rejected = worker.call_tool("worker_submit_result", {})
     assert rejected["state"] == "rejected" and "secret" in json.dumps(rejected)
-    output.unlink()
+    output.write_bytes(_envelope())
     (workspace / "output/undeclared.bin").write_bytes(b"\x00\x01")
     rejected = worker.call_tool("worker_submit_result", {})
-    assert rejected["state"] == "rejected" and "binary" in json.dumps(rejected)
+    assert rejected["state"] == "rejected" and "too many files" in json.dumps(rejected)
     (workspace / "output/undeclared.bin").unlink()
     output.write_bytes(_envelope())
     assert worker.call_tool("worker_submit_result", {})["state"] == "completed"
@@ -1221,8 +1231,14 @@ def test_real_process_failure_isolation_windows_replay_after_restart(
         )
         assert reconciled["recovery_available"]
         assert not workspace.exists()
-        with pytest.raises(Exception, match="already completed|already failed|not running"):
+        with pytest.raises(WorkerToolError) as error:
             worker.call_tool("worker_heartbeat", {})
+        assert error.value.details[0]["type"] == "RunStateConflict"
+        assert "failed" in error.value.details[0]["message"]
+        after_late_call = root.call_tool("run_status", {"name": name, "diagnostic_after": 0})
+        assert after_late_call["state"] == "failed"
+        assert "failed" in after_late_call["diagnostic_summary"]["latest_tool_error"]["details"][0]["message"]
+        assert after_late_call["diagnostic_events"]["events"][-1]["activity"] == "tool_failed"
         first_manifest = runtime.runs.status(run_id).recovery_draft
         root.call_tool(
             "run_record_failure",
@@ -1531,7 +1547,7 @@ def test_recovery_without_snapshot_keeps_original_and_reports_pending(
     run_id = runtime.scheduler_bindings.resolve(
         instance=instance.instance_id, namespace="run", name="seal_failure")
     def broken_seal(*args, **kwargs):
-        raise OSError("private infrastructure details must not be projected")
+        raise OSError("snapshot write failed: /srv/private/run/candidate.json token=fixture-secret")
     monkeypatch.setattr(runtime.runs.backend, "seal", broken_seal)
     assert runtime.runs.submit(run_id) == ("failed", ())
     failed = runtime.runs.status(run_id)
@@ -1539,4 +1555,11 @@ def test_recovery_without_snapshot_keeps_original_and_reports_pending(
     assert runtime.runs.recovery_status(failed)["recovery_pending"]
     summary = runtime.runs.diagnostic_summary(failed)
     assert summary["failure"]["category"] == "checker_failure"
-    assert "private infrastructure" not in json.dumps(summary)
+    projected = json.dumps(summary)
+    assert "snapshot write failed" in projected
+    assert "fixture-secret" not in projected and "/srv/private" not in projected
+    engineering = summary["failure"]["engineering"]
+    assert any(cause["type"] == "OSError" for cause in engineering["causes"])
+    report = root.call_tool("diagnostic_read", {"reference": engineering["reference"], "section": "traceback"})
+    assert "snapshot write failed" in report["text"]
+    assert "fixture-secret" not in report["text"] and "/srv/private" not in report["text"]

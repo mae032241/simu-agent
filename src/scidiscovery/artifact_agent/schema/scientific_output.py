@@ -50,15 +50,7 @@ class ScientificRoleOutput(SchemaModel):
 
     @model_validator(mode="after")
     def _references_exist(self) -> ScientificRoleOutput:
-        keys = tuple(item.source_key for item in self.evidence)
-        if len(keys) != len(set(keys)):
-            raise ValueError("evidence source_key values must be unique")
-        known = set(keys)
         for finding in self.findings:
-            if len(finding.evidence_keys) != len(set(finding.evidence_keys)):
-                raise ValueError("finding evidence_keys must be unique")
-            if not set(finding.evidence_keys).issubset(known):
-                raise ValueError("finding references an undeclared evidence key")
             if finding.epistemic_status in {
                 "paper_fact",
                 "user_defined",

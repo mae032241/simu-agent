@@ -177,6 +177,12 @@ the failed implementation.
 
 
 ## Diagnostic logs
+Poll the same run_name/mode to read progress.log_tails and observed job
+elapsed_seconds on updated runners. Compare the last log update and known steps
+with the job limit to decide whether to keep polling or correct a failure.
+Elapsed wall time is not solver CPU time, an ETA, or proof of initialization;
+missing progress on an older runner is not itself a failed experiment.
+Collected progress retains the manifest's start/end times and elapsed wall time.
 The debug response's log_excerpt is display-only. Read the complete bounded,
 redacted log at log_relative_path in chunks (for example a limited line range),
 especially when no source error appears in the excerpt. Do not rerun the solver

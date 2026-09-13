@@ -1,0 +1,65 @@
+{
+  "request": {
+    "name": "fig4_compact_analysis_next_design_preflight_1",
+    "operation_id": "science.experiment.design.v1",
+    "inputs": [
+      {
+        "port": "scientific_foundation",
+        "artifact_names": [
+          "fig4_continuation_intake_split_2.scientific_foundation"
+        ]
+      },
+      {
+        "port": "research_objective",
+        "artifact_names": [
+          "fig4_continuation_objective_2"
+        ]
+      },
+      {
+        "port": "hypothesis_portfolio",
+        "artifact_names": [
+          "fig4_continuation_hypothesis_revision_1.output"
+        ]
+      },
+      {
+        "port": "critic_review",
+        "artifact_names": [
+          "fig4_continuation_hypothesis_critic_3.output"
+        ]
+      },
+      {
+        "port": "execution_context",
+        "artifact_names": [
+          "fig4_continuation_execution_context_1"
+        ]
+      },
+      {
+        "port": "current_progress",
+        "artifact_names": [
+          "fig4_shape_counterfactual_plan_revision_2.output",
+          "fig4_shape_counterfactual_plan_review_3.output"
+        ]
+      },
+      {
+        "port": "experiment_results",
+        "artifact_names": [
+          "fig4_shape_basis_execution_1.result"
+        ]
+      },
+      {
+        "port": "result_analysis",
+        "artifact_names": [
+          "fig4_compact_analysis_acceptance_1.output"
+        ]
+      }
+    ],
+    "instruction": "从精确绑定的原始研究目标、已审查假设、执行计划和当前结果分析判断当前最小可行实验及后续仍相关目标。先判断现有证据能否回答问题，保留证据与执行能力的限制；只选下游能按绑定输入完成的任务。不得用总体目标尚未全部覆盖替代当前可行性判断。"
+  },
+  "result": {
+    "admissible": true,
+    "executor_kind": "agent",
+    "port": null,
+    "reason_code": null
+  },
+  "invoked": false
+}

@@ -60,6 +60,10 @@ def test_known_output_identity_need_not_be_retyped_and_forged_score_still_reject
     assert record['status'] == 'computed'
     report = analysis_report()
     report['source_references'] = []
+    report['evidence'] = []
+    for gate in report['gates'].values():
+        if isinstance(gate, dict):
+            gate['evidence_keys'] = [record['record_key']]
     report['calculation_records'] = [deepcopy(record)]
     report['calculation_records'][0]['result']['comparisons'][0]['metrics'][0]['value'] += 1
     write_analysis(opened, report)

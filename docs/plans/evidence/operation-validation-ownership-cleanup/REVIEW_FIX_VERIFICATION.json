@@ -1,0 +1,187 @@
+{
+  "status": "R1-R4 repaired; focused verification complete; not deployed",
+  "production_files_changed": 8,
+  "files": [
+    {
+      "path": "src/scidiscovery/operation_contract.py",
+      "sha256": "9f1bbd9e5a24d0a26e0f896c2469049a44bf28b6d309c3ce2cdc1be36f04a585"
+    },
+    {
+      "path": "src/scidiscovery/artifact_agent/service/analysis_artifacts.py",
+      "sha256": "17543548f36157989387acedd00705ad48260809fc6e98005d63b2019a15f392"
+    },
+    {
+      "path": "src/scidiscovery/artifact_agent/service/runs.py",
+      "sha256": "30ecc83de381998fb49ea0f794fb8778bac79e9fb89008c78a91ea7dce94c779"
+    },
+    {
+      "path": "plugins/curve_score/curve_score/science_operations.py",
+      "sha256": "f9e71a8c98d46b9159fd32992543fd092ec2d291563d0c323fdd6d1ff437f4f8"
+    },
+    {
+      "path": "plugins/tcad_artifact/tcad_artifact/result_analysis.py",
+      "sha256": "e0ef0a89daf7db2a10f9dbab3c3c480d9a65aa8cfc8b1b6e898366702573f7f0"
+    },
+    {
+      "path": "plugins/tcad_artifact/tcad_artifact/operation_workspace.py",
+      "sha256": "d2e6928f084bba0b519aebead7479277942f83551c5748d09c158c7eac4d1805"
+    },
+    {
+      "path": "plugins/tcad_artifact/tcad_artifact/project_packager.py",
+      "sha256": "5c3bb774cd2c1d6a425db77b01a8dbe12890febc4e84e4944d39e9332265b3b2"
+    },
+    {
+      "path": "plugins/tcad_artifact/tcad_artifact/analysis_bindings.py",
+      "sha256": "2434291e4ca5f0b389914f109466ec9c6f4de83cd6a38bb20906998694842a63"
+    }
+  ],
+  "operation_count": 50,
+  "operation_ids_unchanged": true,
+  "public_agents": 25,
+  "checks": [
+    {
+      "command": [
+        "python",
+        "-m",
+        "pytest",
+        "-q",
+        "-c",
+        "pyproject.toml",
+        "docs/plans/evidence/operation-validation-ownership-cleanup/review_probes.py"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 4.78,
+      "peak_tree_rss_bytes": 131424256,
+      "stopped": null,
+      "log": "check-1789260510350500587.log"
+    },
+    {
+      "command": [
+        "python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/operations/test_evidence_reference_ownership.py",
+        "tests/operations/test_tcad_result_analysis.py",
+        "tests/operations/test_contract_attempts.py",
+        "tests/operations/test_l4_local_tcad.py::test_author_gap_submits_without_source_and_has_independent_review",
+        "tests/operations/test_l4_local_tcad.py::test_local_tcad_debug_treats_checker_failure_as_terminal",
+        "tests/operations/test_agent_contract_alignment.py::test_evidence_source_projection_uses_exact_bound_context_aliases",
+        "tests/operations/test_agent_contract_alignment.py::test_empty_optional_inventory_still_allows_citing_the_bound_review_subject"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 41.12,
+      "peak_tree_rss_bytes": 139874304,
+      "stopped": null,
+      "log": "check-1789260658404085811.log"
+    },
+    {
+      "command": [
+        "python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/operations/test_agent_contract_alignment.py",
+        "tests/operations/test_catalog_compile.py"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 38.0,
+      "peak_tree_rss_bytes": 147922944,
+      "stopped": null,
+      "log": "check-1789260745868959816.log"
+    },
+    {
+      "command": [
+        "python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/operations/test_analysis_artifact_references.py",
+        "tests/operations/test_m2_curve_analysis_boundary.py",
+        "tests/operations/test_validation_responsibility_placement.py",
+        "tests/operations/test_l4_local_tcad.py",
+        "tests/operations/test_l2_run_invariants.py::test_real_stdio_worker_process_opens_calls_registered_tool_and_submits"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 54.16,
+      "peak_tree_rss_bytes": 207523840,
+      "stopped": null,
+      "log": "check-1789260853813892301.log"
+    },
+    {
+      "command": [
+        "python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/operations/test_catalog_installed_entrypoint.py::test_installed_evidence_alias_schema_matches_local_worker_submit",
+        "tests/operations/test_contract_attempts.py::test_pre_dispatch_input_fault_is_recorded_with_its_declared_category",
+        "docs/plans/evidence/operation-validation-ownership-cleanup/review_probes.py"
+      ],
+      "exit_code": 1,
+      "duration_seconds": 45.28,
+      "peak_tree_rss_bytes": 201723904,
+      "stopped": null,
+      "log": "check-1789261006210697398.log"
+    },
+    {
+      "command": [
+        "python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/operations/test_contract_attempts.py",
+        "tests/operations/test_score_request_contract.py",
+        "tests/operations/test_validation_responsibility_pruning.py",
+        "docs/plans/evidence/operation-validation-ownership-cleanup/review_probes.py"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 24.05,
+      "peak_tree_rss_bytes": 141643776,
+      "stopped": null,
+      "log": "check-1789261104759176862.log"
+    },
+    {
+      "command": [
+        "python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/operations/test_tcad_result_analysis.py",
+        "tests/operations/test_analysis_artifact_references.py",
+        "tests/operations/test_analysis_input_descriptors.py",
+        "docs/plans/evidence/operation-validation-ownership-cleanup/review_probes.py"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 51.39,
+      "peak_tree_rss_bytes": 149331968,
+      "stopped": null,
+      "log": "check-1789261209429001862.log"
+    },
+    {
+      "command": [
+        "python",
+        "docs/plans/evidence/operation-validation-ownership-cleanup/catalog_audit.py",
+        "docs/plans/evidence/operation-validation-ownership-cleanup/CATALOG_REVIEW_FIX.json"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 1.38,
+      "peak_tree_rss_bytes": 94543872,
+      "stopped": null,
+      "log": "check-1789261330936403371.log"
+    }
+  ],
+  "check_groups_overlap": true,
+  "peak_tree_rss_bytes": 207523840,
+  "memory_limit_bytes": 536870912,
+  "resource_limit_stops": [],
+  "corrected_test_expectation": "Pre-dispatch router returns OperationEngineeringError(local_run_creation_failed); the detailed category and reason persist on the failed Run. The corrected assertion passed in check-1789261104759176862.log.",
+  "installed_package_probe": "test_installed_evidence_alias_schema_matches_local_worker_submit passed in check-1789261006210697398.log; installed into isolated test venv only.",
+  "limits": [
+    "No production deployment or solver execution",
+    "No full suite or stress run",
+    "No new independent post-fix review",
+    "Unconfirmed hypothesis change_request citation question remains outside this repair"
+  ],
+  "diff_check": "passed"
+}

@@ -166,12 +166,16 @@ def runtime_process_summary(
     *,
     mode: Literal["control", "local_worker"],
 ) -> bytes:
+    from .service.execution_collection import COLLECTION_SECONDS, QUERY_SECONDS, FILE_SECONDS, IDLE_SECONDS
     return (
         json.dumps(
             {
                 "schema_version": 1,
                 "mode": mode,
                 "catalog_digest": catalog.digest(),
+                "io_budget_defaults": {"query_seconds": QUERY_SECONDS, "collection_seconds": COLLECTION_SECONDS,
+                    "file_seconds": FILE_SECONDS, "idle_seconds": IDLE_SECONDS,
+                    "author_debug": "remaining Run budget", "analysis_inspection": "remaining Run/IO budget"},
                 "plugins": [
                     {
                         "plugin_id": item.plugin_id,

@@ -1,0 +1,257 @@
+{
+  "instance": {
+    "closed_at": null,
+    "created_at": "2026-09-02T23:51:07.737872Z",
+    "name": "M7-test0",
+    "objective": "仅依据 inputs/papers/123103_1_5.0242861.pdf 中可定位的证据，提取目标曲线和器件条件，提出可证伪假设，设计最小 TCAD\r\n    实验，在已启动虚拟机中运行真实 Sentaurus，将仿真与论文实验曲线定量比较，并经独立审查给出结论或下一轮修订；不得引入论文未\r\n    包含的 800°C、900°C 曲线或未经证实的参数。",
+    "state": "active",
+    "title": "M7 完整科学闭环：InGaAs/InAlAs Fig.4 TCAD 复现实验 "
+  },
+  "design": {
+    "request": {
+      "name": "fig4_iterative_alignment_design_1",
+      "operation_id": "science.experiment.design.v1",
+      "max_attempts": 1,
+      "inputs": [
+        {
+          "port": "scientific_foundation",
+          "artifact_names": [
+            "fig4_continuation_intake_split_2.scientific_foundation"
+          ]
+        },
+        {
+          "port": "research_objective",
+          "artifact_names": [
+            "fig4_continuation_objective_2"
+          ]
+        },
+        {
+          "port": "hypothesis_portfolio",
+          "artifact_names": [
+            "fig4_continuation_hypothesis_revision_1.output"
+          ]
+        },
+        {
+          "port": "critic_review",
+          "artifact_names": [
+            "fig4_continuation_hypothesis_critic_3.output"
+          ]
+        },
+        {
+          "port": "execution_context",
+          "artifact_names": [
+            "fig4_continuation_execution_context_1"
+          ]
+        },
+        {
+          "port": "current_progress",
+          "artifact_names": [
+            "fig4_continuation_experiment_plan_3",
+            "fig4_morphology_objective_revision_4.output",
+            "fig4_morphology_objective_review_2.output",
+            "fig4_continuation_tcad_author_4.output"
+          ]
+        },
+        {
+          "port": "experiment_results",
+          "artifact_names": [
+            "fig4_continuation_execution_1.result",
+            "fig4_morphology_closure_2.output.tool_evidence_030",
+            "fig4_continuation_figure_materialized_1.curve_tables_001",
+            "fig4_continuation_figure_materialized_1.curve_tables_002"
+          ]
+        },
+        {
+          "port": "result_analysis",
+          "artifact_names": [
+            "fig4_morphology_closure_2.output",
+            "fig4_uncertainty_diagnosis_1.output",
+            "fig4_curve_diagnostic_verification_1.output",
+            "fig4_recovery_consistency_verification_1.output"
+          ]
+        }
+      ],
+      "instruction": "用户继续推进 Fig.4 迭代式仿真优化，允许多轮，期望最终交付两种有证据的结果之一：良好的实测结果对齐，或确认在已检验范围内为什么对不齐。沿用精确原研究目标和已审假设；对齐重点是材料别掺杂深度、曲线形状、前部和尾部平台，不把全曲线decade均方误差或任意阈值作为唯一成功标准。请基于所有相关封存进展独立选择当前最小可执行实验目标，保留后续目标和条件，产出紧凑设计意图，供确定性物化和独立审查。不要把本轮变成再次恢复核对或框架测试，也不要重复已经完成的数值工作。需要用有限优化或反事实减少当前对不齐原因的歧义；具体模型、参数范围、比较方法、是否需要新solver执行、是否先做现有结果上的确定性计算，由你根据已绑定材料和实现能力判断，不由调度者替你选择。明确哪些改变只是拟合参数、哪些检验模型结构/边界/证据解释，并保留反例及可证伪条件。任何新假定都必须标明为测试假定而非论文事实，不引入未给来源的实验曲线或器件参数。对齐与原因判定的标准要有科学依据和可实现的比较办法，区分中央描述、数字化不确定度、数值敏感性和物理机制，不把计算完毕等同物理成功。不要原样重复已失败的方法，也不要通过排序、删失或虚构不确定度来获得通过；若必须调整方法，明确方法变更理由、影响及独立审查要求。设计必须能由后续角色仅凭绑定输入完成：列清本轮实际必要输入、已有成果如何复用、实现与后处理各自职责；后续分析条件不应变成作者缺失的实现前提。以最小参数/模型集合和清楚的阶段停止条件控制工作量，先做能改变判断的有限动作，再据结果选择下一轮，而不是大规模盲扫。当前运行资源继续串行、低内存；后处理按小单元及时落盘，图只读已保存数字，局部失败不能要求整批重算。若需要新外部执行，必须完成匹配科学审查、实现审查和人类执行审批；旧failed执行记录不改写。不能保证两种期望结果之一必然可识别：若证据确实不足，必须精确说明已排除哪些原因、剩余不可区分项和最小所需证据，而不是编造唯一机理或仅重复无解释的inconclusive。"
+    },
+    "preflight": {
+      "admissible": false,
+      "diagnostics": [
+        {
+          "affected_action": "invoke",
+          "code": "input_independent_review_missing",
+          "message": "The declared requirement was not satisfied.",
+          "path": "$.inputs.hypothesis_portfolio",
+          "phase": "input_admission",
+          "repairable": true,
+          "schema_version": 1
+        }
+      ],
+      "executor_kind": null,
+      "port": "hypothesis_portfolio",
+      "reason_code": "input_independent_review_missing"
+    },
+    "run_created": false
+  },
+  "critic": {
+    "request": {
+      "name": "fig4_iterative_alignment_hypothesis_review_1",
+      "operation_id": "science.hypothesis.criticize.v1",
+      "max_attempts": 1,
+      "inputs": [
+        {
+          "port": "hypothesis_portfolio",
+          "artifact_names": [
+            "fig4_continuation_hypothesis_revision_1.output"
+          ]
+        },
+        {
+          "port": "scientific_foundation",
+          "artifact_names": [
+            "fig4_continuation_intake_split_2.scientific_foundation"
+          ]
+        }
+      ],
+      "instruction": "对精确绑定的假设组合做一次独立审查，评估逻辑、可证伪性和有限可区分性，给出真实处分，不预设通过。用户正在继续 Fig.4 迭代式仿真优化，希望得到有依据的结果对齐，或在已检验范围内说明无法对齐的原因。此角色只审查当前已绑定的组合与科学基础，不得假定读过后续实验/聊天，也不编造新结果；后续设计者将另行获得完整进展和结果。区分可以直接设计的有限模型反事实与必须补充事实证据或修订假设的缺口；没有关键缺口时允许进入有限设计，不把未知物理参数要求转嫁给作者。保留材料/曲线身份、支持区间、尾部与检测限制及新假定的条件性，不把当前审查通过等同仿真可复现或机制已证明。无需重算、读取仓库或运行求解器，按现有合同封存审查。"
+    },
+    "preflight": {
+      "admissible": false,
+      "diagnostics": [
+        {
+          "affected_action": "invoke",
+          "code": "input_producer_contract_changed",
+          "message": "The declared requirement was not satisfied.",
+          "path": "$.inputs.scientific_foundation",
+          "phase": "input_admission",
+          "repairable": true,
+          "schema_version": 1
+        }
+      ],
+      "executor_kind": null,
+      "port": "scientific_foundation",
+      "reason_code": "input_producer_contract_changed"
+    },
+    "run_created": false
+  },
+  "design_postinstall_preflight": {
+    "admissible": true,
+    "executor_kind": "agent",
+    "port": null,
+    "reason_code": null
+  },
+  "critic_postinstall_preflight": {
+    "admissible": true,
+    "executor_kind": "agent",
+    "port": null,
+    "reason_code": null
+  },
+  "revision_request": {
+    "name": "fig4_iterative_alignment_plan_revision_1",
+    "operation_id": "science.experiment.revise.v1",
+    "max_attempts": 2,
+    "inputs": [
+      {
+        "port": "prior_draft",
+        "artifact_names": [
+          "fig4_morphology_objective_revision_4.output"
+        ]
+      },
+      {
+        "port": "change_request",
+        "artifact_names": [
+          "fig4_iterative_alignment_scope_review_1.output"
+        ]
+      },
+      {
+        "port": "current_progress",
+        "artifact_names": [
+          "fig4_continuation_objective_2",
+          "fig4_continuation_tcad_author_4.output",
+          "fig4_morphology_closure_2.output.tool_evidence_030",
+          "fig4_curve_diagnostic_verification_1.output"
+        ]
+      }
+    ],
+    "instruction": "依据精确独立审查修订已有完整实验计划，产出可由后续作者和分析者实现的新一轮有限实验，而不是重复已交付阶段。用户允许多轮优化，最终希望良好对齐实测曲线，或有证据说明已检验范围内无法对齐的原因；优先材料别掺杂深度、曲线形状和前尾平台。总体目标及原实验身份保持；本轮科学变更范围以change_request为准。你独立确定审查要求的有限候选数值、来源/测试假定、校准与验证分离、排序/并列规则、停止条件及数值控制，给出下游能够直接实现的具体定义，不能把尚未选择的关键参数留给作者猜。可读的原项目和已封存60单元成果已直接绑定，依据它们复用实现与完成数字；最新曲线诊断用于保留已知限制。对实际需要但本轮未绑定的原始参考表/日志/成果，列清精确后续输入要求，不声称已经读取；本轮审查给出的其他进展仅按其已封存陈述使用。不要原样重复已失败角点或重跑旧60单元，不引入未有来源的实测温度/曲线/器件参数。新参数候选必须明确为受检验条件而非论文事实。结果应能区分所测常数-D参数可校正性与剩余形状不足，不扩大为微观机制结论；如后续必须改变假设或结构，保留该目标及条件，不能为了迁就当前框架把它永久排除。不能凭任意0.15decade阈值或纯全曲线MSE宣布良好对齐；没有科学支持的绝对成功容差时，明确可交付的相对改进和证据边界。新仿真实例有限、串行，每个案例和后处理单元独立保存，图只读取已保存数字，局部失败只补对应工作。修正原输出声明与实际文件命名的要求交给实现角色；需要新求解时依次取得匹配科学审查、实现审查和人类执行审批。只做最小必要修订，保留已完成工作、其原结论和未覆盖目标，按正式完整对象合同封存。"
+  },
+  "revision_preflight": {
+    "admissible": true,
+    "executor_kind": "agent",
+    "port": null,
+    "reason_code": null
+  },
+  "revision_invoke": {
+    "executor_kind": "agent",
+    "operation_id": "science.experiment.revise.v1",
+    "result": {
+      "agent_type": "op_science_experiment_revise_v1_b2a301a008b2",
+      "backend": "local_trusted",
+      "bound_inputs": [
+        {
+          "artifact_names": [
+            "fig4_morphology_objective_revision_4.output"
+          ],
+          "port": "prior_draft"
+        },
+        {
+          "artifact_names": [
+            "fig4_iterative_alignment_scope_review_1.output"
+          ],
+          "port": "change_request"
+        },
+        {
+          "artifact_names": [
+            "fig4_continuation_objective_2",
+            "fig4_continuation_tcad_author_4.output",
+            "fig4_morphology_closure_2.output.tool_evidence_030",
+            "fig4_curve_diagnostic_verification_1.output"
+          ],
+          "port": "current_progress"
+        }
+      ],
+      "candidate_accepted": false,
+      "completed_at": null,
+      "created_at": "2026-09-12T15:47:57.807182Z",
+      "deadline_at": "2026-09-12T16:02:57.807182Z",
+      "diagnostic_summary": {
+        "failure": null,
+        "latest_native_error": null,
+        "latest_rejection": null,
+        "latest_tool_error": null,
+        "native_coverage": "unobserved",
+        "recent_errors": [],
+        "rejection_count": 0
+      },
+      "draft_from": null,
+      "head_advance": null,
+      "last_activity_at": null,
+      "logical_name": "fig4_iterative_alignment_plan_revision_1",
+      "name": "fig4_iterative_alignment_plan_revision_1",
+      "native_execution": {
+        "coverage": "unobserved",
+        "scientific_evidence": false
+      },
+      "operation_id": "science.experiment.revise.v1",
+      "output_artifact_name": null,
+      "reason": null,
+      "recovery": {
+        "attempt_budget": {
+          "limit": 2,
+          "used": 1
+        },
+        "delivery_preserved": false,
+        "draft_available": false,
+        "recovery_pending": false,
+        "resume_available": false
+      },
+      "recovery_available": false,
+      "revision": 1,
+      "scheduler_signal": null,
+      "scheduler_signal_status": "unavailable",
+      "sealed_output": null,
+      "sealed_output_status": "unavailable",
+      "started_at": null,
+      "state": "queued"
+    }
+  },
+  "recorded_at": "2026-09-12T15:48:42.925445+00:00"
+}

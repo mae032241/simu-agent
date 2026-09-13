@@ -12,6 +12,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
 import uuid
 from pathlib import Path
 from typing import Any, Protocol
@@ -21,6 +22,8 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from scidiscovery.artifact_agent.schema.execution import LocalFileDescriptor
 
 from .transport_logs import preserve_log
+from scidiscovery.artifact_agent.service.execution_collection import CollectionContext, run_bounded
+from scidiscovery.artifact_agent.service.engineering_diagnostics import atomic_json, exception_facts
 
 from .execution_control import FileDescriptor, SolverCapabilitySnapshot, TCADJobSpec
 
@@ -70,10 +73,16 @@ class SSHRemoteClient:
             raise ValueError("destination resolver executable does not exist")
         self.config = config
         self.diagnostic_root = diagnostic_root
+        self.context = None
+        self.download_progress = lambda _: None
 
-    def _run(self, *args, **kwargs):
+    def _run(self, command, **kwargs):
         try:
-            return subprocess.run(*args, **kwargs)
+            if self.context is not None:
+                kwargs["timeout"] = min(kwargs.get("timeout", self.context.remaining_seconds()), self.context.remaining_seconds())
+            return run_bounded(command, input=kwargs.get("input", b""), env=kwargs.get("env"),
+                timeout=kwargs["timeout"], context=self.context,
+                max_output_bytes=self.config.max_transfer_bytes + 1024 * 1024)
         except subprocess.TimeoutExpired as error:
             if self.diagnostic_root is not None:
                 preserve_log(self.diagnostic_root, "ssh-stderr", error.stderr or b"")
@@ -122,6 +131,8 @@ class SSHRemoteClient:
         size = 0
         with destination.open("rb") as stream:
             for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                if self.context:
+                    self.context.remaining_seconds()
                 size += len(chunk)
                 digest.update(chunk)
         if payload.get("size_bytes") != size or payload.get("sha256") != digest.hexdigest():
@@ -134,6 +145,7 @@ class SSHRemoteClient:
         body: bytes,
         *, download_to: Path | None = None, download_limit: int = 0,
     ) -> tuple[dict[str, Any], bytes]:
+        started = time.monotonic()
         request = _canonical(
             {"schema_version": 1, "operation": operation, "payload": payload}
         ) + b"\n" + body
@@ -162,35 +174,57 @@ class SSHRemoteClient:
                 f"{self.config.remote_helper} --config {self.config.remote_config}",
             )
         )
-        download_stream = tempfile.TemporaryFile() if download_to is not None else None
-        try:
-            completed = self._run(
-                command,
-                input=request,
-                stdout=download_stream if download_stream is not None else subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                env=_transport_environment(self.config.ssh_executable),
-                timeout=self.config.operation_timeout_seconds,
-                check=False,
-            )
-            if download_stream is not None:
-                download_stream.seek(0)
-                header = download_stream.readline(1024 * 1024 + 1)
-                if not header.endswith(b"\n") or len(header) > 1024 * 1024:
-                    raise RuntimeError("VM download returned no bounded header")
-                response = json.loads(header)
-                size = 0
-                with download_to.open("wb") as stream:
-                    for chunk in iter(lambda: download_stream.read(1024 * 1024), b""):
-                        size += len(chunk)
-                        if size > download_limit:
-                            raise RuntimeError("VM download exceeds inspection bound")
-                        stream.write(chunk)
-                completed = subprocess.CompletedProcess(completed.args, completed.returncode,
-                                                         stdout=header, stderr=completed.stderr)
-        finally:
-            if download_stream is not None:
-                download_stream.close()
+        if download_to is not None:
+            header = bytearray()
+            received = 0
+            parsed = None
+            last_report = 0.0
+            with download_to.open("wb") as stream:
+                def consume(raw):
+                    nonlocal received, parsed, last_report
+                    if parsed is None:
+                        prefix, separator, body = raw.partition(b"\n")
+                        header.extend(prefix)
+                        if len(header) > 1024 * 1024:
+                            raise RuntimeError("VM download header exceeds its bound")
+                        if not separator:
+                            return
+                        parsed = json.loads(header)
+                        raw = body
+                    received += len(raw)
+                    if received > download_limit:
+                        raise RuntimeError("VM download exceeds inspection bound")
+                    stream.write(raw)
+                    now = time.monotonic()
+                    if now - last_report >= .2:
+                        self.download_progress(received)
+                        last_report = now
+                timeout = self.context.remaining_seconds() if self.context else self.config.operation_timeout_seconds
+                timeout_kind = "collection_total" if self.context else "operation_total"
+                if self.context:
+                    file_remaining = self.context.file_timeout_seconds - (time.monotonic() - started)
+                    if file_remaining <= timeout:
+                        timeout, timeout_kind = max(.001, file_remaining), "file_total"
+                try:
+                    completed = run_bounded(command, input=request, env=_transport_environment(self.config.ssh_executable),
+                        timeout=timeout, idle_seconds=self.context.idle_timeout_seconds if self.context else None,
+                        sink=consume, context=self.context, process_group=False, timeout_kind=timeout_kind)
+                except subprocess.TimeoutExpired as error:
+                    if self.diagnostic_root is not None:
+                        preserve_log(self.diagnostic_root, "ssh-stderr", error.stderr or b"")
+                    raise
+                stream.flush(); os.fsync(stream.fileno())
+            if self.diagnostic_root is not None and completed.stderr:
+                preserve_log(self.diagnostic_root, "ssh-stderr", completed.stderr)
+            if completed.returncode:
+                raise subprocess.CalledProcessError(completed.returncode, command, stderr=completed.stderr)
+            if parsed is None:
+                raise RuntimeError("VM download returned no header")
+            self.download_progress(received)
+            return parsed, b""
+        completed = self._run(command, input=request, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            env=_transport_environment(self.config.ssh_executable), timeout=self.config.operation_timeout_seconds,
+            check=False)
         if completed.stderr and self.diagnostic_root is not None:
             preserve_log(self.diagnostic_root, "ssh-stderr", completed.stderr)
         if completed.returncode != 0:
@@ -260,6 +294,17 @@ class SSHTCADTransport:
             raise ValueError("remote exchange root must be absolute")
 
     def handle(self, operation: str, payload: dict[str, Any]) -> dict[str, Any]:
+        context = None
+        if payload.get("collection"):
+            context = CollectionContext(**payload["collection"])
+        elif payload.get("deadline_monotonic") is not None:
+            deadline = payload["deadline_monotonic"]
+            context = CollectionContext(deadline, deadline)
+        if isinstance(self.remote, SSHRemoteClient):
+            self.remote.context = context
+        if context and payload.get("progress_path"):
+            path = Path(payload["progress_path"])
+            context.report_progress = lambda value: atomic_json(path, value)
         if operation == "capabilities":
             if payload:
                 raise ValueError("capability discovery accepts no payload")
@@ -301,14 +346,14 @@ class SSHTCADTransport:
             return {"run_id": value["run_id"], "state": value["state"]}
         if operation == "status":
             value = self._rpc("tcad_status", {"run_id": payload["run_id"]})
-            return {"state": value["state"]}
+            return {key: value[key] for key in ("state", "progress") if key in value}
         if operation == "cancel":
             value = self._rpc("tcad_cancel", {"run_id": payload["run_id"]})
             return {"state": value["state"]}
         if operation == "inspect_outputs":
             return self._inspect_outputs(str(payload["run_id"]), payload.get("relative_path"), payload.get("max_bytes", 32*1024*1024))
         if operation == "collect":
-            return self._collect(str(payload["run_id"]))
+            return self._collect(str(payload["run_id"]), context=context)
         raise ValueError("unsupported TCAD transport operation")
 
     def _prepare(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -388,34 +433,64 @@ class SSHTCADTransport:
                 os.link(temporary, path)
         return {**value, "file": _local_descriptor("candidate", path, descriptor.media_type).model_dump(mode="json")}
 
-    def _collect(self, run_id: str) -> dict[str, Any]:
+    def _collect(self, run_id: str, *, context=None) -> dict[str, Any]:
         if not re.fullmatch(r"run_[0-9a-f]{32}", run_id):
             raise ValueError("invalid TCAD run identity")
         value = self._rpc("tcad_collect", {"run_id": run_id})
         output_directory = self.local_result_root / "runs" / run_id
         outputs: list[dict[str, Any]] = []
         seen: set[str] = set()
+        completed_bytes = 0
+        total_bytes = sum(item["size_bytes"] for item in value["outputs"])
+        def progress(**extra):
+            if context is not None:
+                context.report_progress({"completed_files": len(outputs), "completed_bytes": completed_bytes,
+                    "total_files": len(value["outputs"]), "total_bytes": total_bytes, **extra})
         for item in value["outputs"]:
+            if context is not None:
+                context.remaining_seconds()
             remote_descriptor = FileDescriptor.model_validate(item, strict=True)
             if remote_descriptor.name in seen:
                 raise RuntimeError("remote result names are not unique")
             seen.add(remote_descriptor.name)
-            raw = self.remote.get(remote_descriptor.local_path)
-            if (
-                len(raw) != remote_descriptor.size_bytes
-                or hashlib.sha256(raw).hexdigest() != remote_descriptor.sha256
-            ):
-                raise RuntimeError("downloaded result differs from remote descriptor")
-            name = re.sub(r"[^A-Za-z0-9_.-]+", "_", remote_descriptor.name)
+            name = (remote_descriptor.name if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", remote_descriptor.name)
+                else "output_" + hashlib.sha256(remote_descriptor.name.encode()).hexdigest())
             path = output_directory / name
-            _write_immutable(path, raw)
+            output_directory.mkdir(parents=True, exist_ok=True)
+            if path.is_symlink() or output_directory.is_symlink():
+                raise ValueError("collection cache must not contain symlinks")
+            def matches(candidate):
+                if not candidate.is_file() or candidate.stat().st_size != remote_descriptor.size_bytes:
+                    return False
+                digest = hashlib.sha256()
+                with candidate.open("rb") as stream:
+                    for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                        if context: context.remaining_seconds()
+                        digest.update(chunk)
+                return digest.hexdigest() == remote_descriptor.sha256
+            reused = matches(path)
+            if not reused:
+                temporary = path.with_name(path.name + ".download")
+                if temporary.is_symlink():
+                    raise ValueError("collection temporary file must not be a symlink")
+                try:
+                    get_to = getattr(self.remote, "get_to", None)
+                    if isinstance(self.remote, SSHRemoteClient):
+                        self.remote.download_progress = lambda count: progress(current_file=name, current_file_bytes=count)
+                    if callable(get_to):
+                        get_to(remote_descriptor.local_path, temporary, remote_descriptor.size_bytes)
+                    else:
+                        temporary.write_bytes(self.remote.get(remote_descriptor.local_path))
+                    if not matches(temporary):
+                        raise RuntimeError("downloaded result differs from remote descriptor")
+                    os.replace(temporary, path)
+                finally:
+                    temporary.unlink(missing_ok=True)
             outputs.append(
-                _local_descriptor(
-                    remote_descriptor.name,
-                    path,
-                    remote_descriptor.media_type,
-                ).model_dump(mode="json")
+                {**remote_descriptor.model_dump(mode="json"), "local_path": str(path)}
             )
+            completed_bytes += remote_descriptor.size_bytes
+            progress(current_file=None, current_file_bytes=0, reused=reused)
         return {"outputs": outputs}
 
     def _rpc(self, tool: str, arguments: dict[str, Any]) -> dict[str, Any]:
@@ -581,6 +656,7 @@ def main(argv: list[str] | None = None) -> int:
             "operation": operation,
             "ok": False,
             "error": str(error),
+            "engineering": exception_facts(error, layer="ssh_transport", action=operation),
             "payload": {},
         }
     sys.stdout.buffer.write(_canonical(response))

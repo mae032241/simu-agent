@@ -43,9 +43,10 @@ class ArtifactService:
         cas_root: Path | str,
         database_path: Path | str,
         shared_group: bool = False,
+        deadline_monotonic: float | None = None,
     ) -> ArtifactService:
         # Validate/open the registry before creating the CAS directory.
-        registry = SQLiteArtifactRegistry(database_path)
+        registry = SQLiteArtifactRegistry(database_path, deadline_monotonic=deadline_monotonic)
         return cls(
             ContentAddressedStore(
                 cas_root,

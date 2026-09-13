@@ -1,0 +1,639 @@
+FF......F.                                                               [100%]
+=================================== FAILURES ===================================
+_ test_prose_and_baseline_labels_survive_submit_materialize_and_review[False] __
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-322/test_prose_and_baseline_labels0')
+experiment_case = ({'study_kind': 'scientific', 'objective_key': 'objective_wrong', 'selected_hypothesis_keys': ['hypothesis_a'], 'propo...research_objective_key":"objective_expected","schema_version":2,"stage_objective":"Separate one bounded mechanism."}'})
+derive_baseline = False
+
+    @pytest.mark.parametrize("derive_baseline", [False, True])
+    def test_prose_and_baseline_labels_survive_submit_materialize_and_review(tmp_path, experiment_case, derive_baseline):
+        intent, sources = deepcopy(experiment_case)
+        intent["objective_key"] = "objective_expected"
+        proposal = intent["proposals"][0]
+        proposal["identifiability_claims"] = [{
+            "hypothesis_key": "hypothesis_a", "observable": "Combined depth and normalized shape response",
+            "distinguishing_outcome": "The response distinguishes the stated alternatives.",
+            "decision_rule": "Review the supplied response.", "ambiguity_conditions": ["Finite support."],
+            "smallest_resolving_control": "The existing bounded comparison.",
+        }]
+        if derive_baseline:
+            proposal.pop("baseline_case_key")
+        else:
+            proposal["cases"][0]["scientific_role"] = "perturbation"
+>       runtime, run_id, output = _experiment_run(tmp_path / "design", sources)
+                                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/operations/test_registration_diagnostics_repair.py:48: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/operations/test_agent_contract_alignment.py:1125: in _experiment_run
+    runtime, instance, _ = _root(tmp_path, catalog=catalog)
+                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/operations/test_general_transform_operations.py:207: in _root
+    project.mkdir()
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = PosixPath('/tmp/pytest-of-da/pytest-322/test_prose_and_baseline_labels0/design/project')
+mode = 511, parents = False, exist_ok = False
+
+    def mkdir(self, mode=0o777, parents=False, exist_ok=False):
+        """
+        Create a new directory at this given path.
+        """
+        try:
+>           os.mkdir(self, mode)
+E           FileNotFoundError: [Errno 2] No such file or directory: '/tmp/pytest-of-da/pytest-322/test_prose_and_baseline_labels0/design/project'
+
+/home/da/miniconda3/lib/python3.12/pathlib.py:1311: FileNotFoundError
+__ test_prose_and_baseline_labels_survive_submit_materialize_and_review[True] __
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-322/test_prose_and_baseline_labels1')
+experiment_case = ({'study_kind': 'scientific', 'objective_key': 'objective_wrong', 'selected_hypothesis_keys': ['hypothesis_a'], 'propo...research_objective_key":"objective_expected","schema_version":2,"stage_objective":"Separate one bounded mechanism."}'})
+derive_baseline = True
+
+    @pytest.mark.parametrize("derive_baseline", [False, True])
+    def test_prose_and_baseline_labels_survive_submit_materialize_and_review(tmp_path, experiment_case, derive_baseline):
+        intent, sources = deepcopy(experiment_case)
+        intent["objective_key"] = "objective_expected"
+        proposal = intent["proposals"][0]
+        proposal["identifiability_claims"] = [{
+            "hypothesis_key": "hypothesis_a", "observable": "Combined depth and normalized shape response",
+            "distinguishing_outcome": "The response distinguishes the stated alternatives.",
+            "decision_rule": "Review the supplied response.", "ambiguity_conditions": ["Finite support."],
+            "smallest_resolving_control": "The existing bounded comparison.",
+        }]
+        if derive_baseline:
+            proposal.pop("baseline_case_key")
+        else:
+            proposal["cases"][0]["scientific_role"] = "perturbation"
+>       runtime, run_id, output = _experiment_run(tmp_path / "design", sources)
+                                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/operations/test_registration_diagnostics_repair.py:48: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/operations/test_agent_contract_alignment.py:1125: in _experiment_run
+    runtime, instance, _ = _root(tmp_path, catalog=catalog)
+                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/operations/test_general_transform_operations.py:207: in _root
+    project.mkdir()
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = PosixPath('/tmp/pytest-of-da/pytest-322/test_prose_and_baseline_labels1/design/project')
+mode = 511, parents = False, exist_ok = False
+
+    def mkdir(self, mode=0o777, parents=False, exist_ok=False):
+        """
+        Create a new directory at this given path.
+        """
+        try:
+>           os.mkdir(self, mode)
+E           FileNotFoundError: [Errno 2] No such file or directory: '/tmp/pytest-of-da/pytest-322/test_prose_and_baseline_labels1/design/project'
+
+/home/da/miniconda3/lib/python3.12/pathlib.py:1311: FileNotFoundError
+_______ test_mcp_pages_all_saved_errors_and_runs_with_instance_isolation _______
+
+self = <scidiscovery.artifact_agent.service.runs.RunService object at 0x7f6faa4e3aa0>
+bound = BoundOperationCall(compiled=CompiledOperation(plugin_id='tcad_artifact', spec=OperationSpec(operation_id='tcad.result....posure='on_demand', usage='evidence_inventory')), instruction='Analyze the bound fixture outputs.', executor_plan=None)
+instance_id = 'ins_52722c5fb36c4caaaa0fdf75cd353294'
+output_binding_name = 'second.output', output_logical_name = 'second.output'
+output_revision = 1
+output_binding_fingerprint = '9ca33969c01e5c27c471d7c2f5c65dbe90b268f14052d6839f833b50982b7deb'
+resume_from = None, draft_from = None, draft_digest = None, max_attempts = None
+
+    def schedule(
+        self,
+        bound: BoundOperationCall,
+        *,
+        instance_id: str,
+        output_binding_name: str,
+        output_logical_name: str,
+        output_revision: int,
+        output_binding_fingerprint: str,
+        resume_from: str | None = None,
+        draft_from: str | None = None,
+        draft_digest: str | None = None,
+        max_attempts: int | None = None,
+    ) -> str:
+        if resume_from is not None and draft_from is not None:
+            raise RunStateConflict("resume_from and draft_from are mutually exclusive")
+        if draft_digest is not None and draft_from is None:
+            raise RunStateConflict("draft digest requires a source Run")
+        self._validate_attempt_limit(max_attempts)
+        compiled = bound.compiled
+        if compiled.spec.executor.kind != "agent":
+            raise ValueError("RunService accepts Agent operations only")
+        if not self.backend.supports_operation(compiled):
+            raise RunError("runtime backend does not support the compiled Operation")
+        if any(port.collection is not None for port in compiled.spec.outputs) and not tool_evidence_ports(compiled):
+            raise RunError("minimal local Run does not yet support output collections")
+        if compiled.spec.limits is None:
+            raise ValueError("compiled operation has no limits")
+        # Reconstruct the call from authoritative records before any Run/workspace write.
+        by_port = {port.name: [] for port in compiled.spec.inputs}
+        for item in bound.inputs:
+            envelope = self.artifacts.catalog(item.artifact.ref)
+            producer = self.completed_for_output(envelope.ref)
+            by_port.setdefault(item.port_name, []).append(InvocationArtifact(
+                artifact_name=item.artifact_name, ref=envelope.ref, schema_id=envelope.schema_id,
+                media_type=envelope.media_type, size_bytes=envelope.size_bytes,
+                parent_refs=envelope.parent_refs, labels=tuple(envelope.labels.items()),
+                producer_run_id=producer.run_id if producer else None,
+                current=self.input_is_current(instance_id=instance_id,
+                    artifact_name=item.artifact_name, artifact_ref=envelope.ref),
+                handoff_verdict=(self.signal_for_output(envelope.ref, require_current=False).verdict
+                    if self.signal_for_output(envelope.ref, require_current=False) else None),
+                historical=item.artifact.historical,
+            ))
+        bound = preflight_operation(compiled, name=bound.name,
+            artifacts_by_port={name: tuple(items) for name, items in by_port.items()},
+            instruction=bound.instruction, read_artifact=self.artifacts.read,
+            source_name_overrides={(item.port_name, item.artifact_name): item.source_name
+                                   for item in bound.inputs})
+        raw_inputs = tuple(
+            RunInputBinding(
+                port_name=item.port_name,
+                source_name=item.source_name,
+                artifact_name=item.artifact_name,
+                artifact_ref=item.artifact.ref,
+                media_type=item.artifact.media_type,
+                exposure=item.exposure,
+                usage=item.usage,
+                require_current=next(
+                    port.require_current
+                    for port in compiled.spec.inputs
+                    if port.name == item.port_name
+                ),
+            )
+            for item in bound.inputs
+        )
+        for item in raw_inputs:
+            self.artifacts.verify(item.artifact_ref)
+        run_id = f"run_{uuid.uuid4().hex}"
+        created_at = timestamp()
+        deadline_at = future(created_at, compiled.spec.limits.timeout_seconds)
+        recovery_digest: str | None = None
+        recovery_policy = self._recovery_policy(compiled)
+        with self._connect() as connection:
+            self._attach_scheduler(connection)
+            connection.execute("BEGIN IMMEDIATE")
+            frozen_inputs = self.current.freeze(connection, instance_id, raw_inputs)
+            active_revision = active_direct_revision_ports(
+                compiled, (item.port_name for item in frozen_inputs)
+            )
+            revision_base = (
+                None
+                if active_revision is None
+                else next(
+                    item.artifact_ref
+                    for item in frozen_inputs
+                    if item.port_name == active_revision[0].name
+                )
+            )
+            if (
+                revision_base is not None
+                and compiled.spec.review is not None
+                and compiled.spec.review.max_revisions
+                and self._revision_successor(
+                    connection,
+                    instance_id=instance_id,
+                    operation_digest=compiled.digest,
+                    base_ref=revision_base,
+                )
+                is not None
+            ):
+                connection.execute("ROLLBACK")
+                raise RunSlotBusy("this revision base already has a successor Run")
+            if resume_from is not None:
+                source = status_from_row(self._row(connection, resume_from))
+                recovery_digest = self._validate_resume(
+                    connection,
+                    source,
+                    compiled.digest,
+                    tuple(item.artifact_ref for item in frozen_inputs),
+                    compiled.spec.limits.max_attempts,
+                    scheduler_max_attempts=max_attempts,
+                )
+            if resume_from is not None and source.instance_id != instance_id:
+                raise RunStateConflict("recovery source belongs to another instance")
+            if draft_from is not None:
+                source = status_from_row(self._row(connection, draft_from))
+                recovery_digest = self._validate_draft_source(
+                    connection, source, compiled=compiled, instance_id=instance_id,
+                    scheduler_max_attempts=max_attempts,
+                )
+                if draft_digest is not None and draft_digest != recovery_digest:
+                    raise RunStateConflict("draft source digest changed")
+            scheduler_budget = max_attempts
+            if scheduler_budget is None and (resume_from is not None or draft_from is not None):
+                scheduler_budget = (source.recovery_policy or {}).get("scheduler_max_attempts")
+            if scheduler_budget is not None:
+                recovery_policy.update(max_attempts=scheduler_budget, scheduler_max_attempts=scheduler_budget)
+            request_digest = canonical_sha256(
+                {
+                    "operation_id": compiled.spec.operation_id,
+                    "operation_version": compiled.spec.version,
+                    "operation_digest": compiled.digest,
+                    "backend": self.backend.backend_id,
+                    "backend_version": self.backend.backend_version,
+                    "backend_capabilities": self.backend.capabilities,
+                    "instance_id": instance_id,
+                    "output_binding": {
+                        "name": output_binding_name,
+                        "logical_name": output_logical_name,
+                        "revision": output_revision,
+                        "request_fingerprint": output_binding_fingerprint,
+                    },
+                    "instruction": bound.instruction or "",
+                    "inputs": json.loads(inputs_json(frozen_inputs)),
+                    "limits": compiled.spec.limits.model_dump(mode="json"),
+                    "resume_from": resume_from,
+                    **({"draft_from": draft_from, "draft_digest": recovery_digest}
+                       if draft_from is not None else {}),
+                    "recovery_digest": recovery_digest,
+                    **({"scheduler_max_attempts": max_attempts} if max_attempts is not None else {}),
+                }
+            )
+            try:
+>               connection.execute(
+                    """
+                    INSERT INTO runs (
+                        run_id, instance_id, operation_id, operation_version,
+                        operation_digest, agent_type, instruction, inputs_json,
+                        backend_id, backend_version, backend_capabilities_json,
+                        output_binding_name, output_logical_name,
+                        output_revision, output_binding_fingerprint,
+                        request_digest, resume_from_run_id, draft_from_run_id, recovery_policy_json,
+                        state, created_at, deadline_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                              ?, ?, 'queued', ?, ?)
+                    """,
+                    (
+                        run_id,
+                        instance_id,
+                        compiled.spec.operation_id,
+                        compiled.spec.version,
+                        compiled.digest,
+                        operation_agent_type(compiled),
+                        bound.instruction or "",
+                        inputs_json(frozen_inputs),
+                        self.backend.backend_id,
+                        self.backend.backend_version,
+                        canonical_json(self.backend.capabilities),
+                        output_binding_name,
+                        output_logical_name,
+                        output_revision,
+                        output_binding_fingerprint,
+                        request_digest,
+                        resume_from,
+                        draft_from,
+                        canonical_json(recovery_policy),
+                        created_at,
+                        deadline_at,
+                    ),
+                )
+E               sqlite3.IntegrityError: UNIQUE constraint failed: runs.operation_digest
+
+src/scidiscovery/artifact_agent/service/runs.py:258: IntegrityError
+
+The above exception was the direct cause of the following exception:
+
+self = <scidiscovery.artifact_agent.interfaces.mcp_root.RootToolFacade object at 0x7f6faa5afc20>
+bound = BoundOperationCall(compiled=CompiledOperation(plugin_id='tcad_artifact', spec=OperationSpec(operation_id='tcad.result....posure='on_demand', usage='evidence_inventory')), instruction='Analyze the bound fixture outputs.', executor_plan=None)
+on_conflict = 'reject', resume_from = None, draft_from = None
+max_attempts = None
+
+    def _invoke_local_run(
+        self,
+        bound: BoundOperationCall,
+        on_conflict: str,
+        *,
+        resume_from: str | None,
+        draft_from: str | None = None,
+        max_attempts: int | None = None,
+    ) -> dict[str, Any]:
+        resume_run_id, draft_run_id, draft_digest, fingerprint, target = self._prepare_local_run(
+            bound, on_conflict, resume_from=resume_from, draft_from=draft_from, max_attempts=max_attempts
+        )
+        if target.existing_object_id is not None:
+            return self.run_status(name=target.name)
+        output_name = _derived_name(target.name, "output")
+        output_logical_name = _derived_name(target.logical_name, "output")
+        output_fingerprint = canonical_sha256(
+            {"run_request": fingerprint, "output": "primary"}
+        )
+        try:
+>           run_id = self.runs.schedule(
+                bound,
+                instance_id=self._instance_id(),
+                output_binding_name=output_name,
+                output_logical_name=output_logical_name,
+                output_revision=target.revision,
+                output_binding_fingerprint=output_fingerprint,
+                resume_from=resume_run_id,
+                draft_from=draft_run_id,
+                draft_digest=draft_digest,
+                max_attempts=max_attempts,
+            )
+
+src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py:280: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <scidiscovery.artifact_agent.service.runs.RunService object at 0x7f6faa4e3aa0>
+bound = BoundOperationCall(compiled=CompiledOperation(plugin_id='tcad_artifact', spec=OperationSpec(operation_id='tcad.result....posure='on_demand', usage='evidence_inventory')), instruction='Analyze the bound fixture outputs.', executor_plan=None)
+instance_id = 'ins_52722c5fb36c4caaaa0fdf75cd353294'
+output_binding_name = 'second.output', output_logical_name = 'second.output'
+output_revision = 1
+output_binding_fingerprint = '9ca33969c01e5c27c471d7c2f5c65dbe90b268f14052d6839f833b50982b7deb'
+resume_from = None, draft_from = None, draft_digest = None, max_attempts = None
+
+    def schedule(
+        self,
+        bound: BoundOperationCall,
+        *,
+        instance_id: str,
+        output_binding_name: str,
+        output_logical_name: str,
+        output_revision: int,
+        output_binding_fingerprint: str,
+        resume_from: str | None = None,
+        draft_from: str | None = None,
+        draft_digest: str | None = None,
+        max_attempts: int | None = None,
+    ) -> str:
+        if resume_from is not None and draft_from is not None:
+            raise RunStateConflict("resume_from and draft_from are mutually exclusive")
+        if draft_digest is not None and draft_from is None:
+            raise RunStateConflict("draft digest requires a source Run")
+        self._validate_attempt_limit(max_attempts)
+        compiled = bound.compiled
+        if compiled.spec.executor.kind != "agent":
+            raise ValueError("RunService accepts Agent operations only")
+        if not self.backend.supports_operation(compiled):
+            raise RunError("runtime backend does not support the compiled Operation")
+        if any(port.collection is not None for port in compiled.spec.outputs) and not tool_evidence_ports(compiled):
+            raise RunError("minimal local Run does not yet support output collections")
+        if compiled.spec.limits is None:
+            raise ValueError("compiled operation has no limits")
+        # Reconstruct the call from authoritative records before any Run/workspace write.
+        by_port = {port.name: [] for port in compiled.spec.inputs}
+        for item in bound.inputs:
+            envelope = self.artifacts.catalog(item.artifact.ref)
+            producer = self.completed_for_output(envelope.ref)
+            by_port.setdefault(item.port_name, []).append(InvocationArtifact(
+                artifact_name=item.artifact_name, ref=envelope.ref, schema_id=envelope.schema_id,
+                media_type=envelope.media_type, size_bytes=envelope.size_bytes,
+                parent_refs=envelope.parent_refs, labels=tuple(envelope.labels.items()),
+                producer_run_id=producer.run_id if producer else None,
+                current=self.input_is_current(instance_id=instance_id,
+                    artifact_name=item.artifact_name, artifact_ref=envelope.ref),
+                handoff_verdict=(self.signal_for_output(envelope.ref, require_current=False).verdict
+                    if self.signal_for_output(envelope.ref, require_current=False) else None),
+                historical=item.artifact.historical,
+            ))
+        bound = preflight_operation(compiled, name=bound.name,
+            artifacts_by_port={name: tuple(items) for name, items in by_port.items()},
+            instruction=bound.instruction, read_artifact=self.artifacts.read,
+            source_name_overrides={(item.port_name, item.artifact_name): item.source_name
+                                   for item in bound.inputs})
+        raw_inputs = tuple(
+            RunInputBinding(
+                port_name=item.port_name,
+                source_name=item.source_name,
+                artifact_name=item.artifact_name,
+                artifact_ref=item.artifact.ref,
+                media_type=item.artifact.media_type,
+                exposure=item.exposure,
+                usage=item.usage,
+                require_current=next(
+                    port.require_current
+                    for port in compiled.spec.inputs
+                    if port.name == item.port_name
+                ),
+            )
+            for item in bound.inputs
+        )
+        for item in raw_inputs:
+            self.artifacts.verify(item.artifact_ref)
+        run_id = f"run_{uuid.uuid4().hex}"
+        created_at = timestamp()
+        deadline_at = future(created_at, compiled.spec.limits.timeout_seconds)
+        recovery_digest: str | None = None
+        recovery_policy = self._recovery_policy(compiled)
+        with self._connect() as connection:
+            self._attach_scheduler(connection)
+            connection.execute("BEGIN IMMEDIATE")
+            frozen_inputs = self.current.freeze(connection, instance_id, raw_inputs)
+            active_revision = active_direct_revision_ports(
+                compiled, (item.port_name for item in frozen_inputs)
+            )
+            revision_base = (
+                None
+                if active_revision is None
+                else next(
+                    item.artifact_ref
+                    for item in frozen_inputs
+                    if item.port_name == active_revision[0].name
+                )
+            )
+            if (
+                revision_base is not None
+                and compiled.spec.review is not None
+                and compiled.spec.review.max_revisions
+                and self._revision_successor(
+                    connection,
+                    instance_id=instance_id,
+                    operation_digest=compiled.digest,
+                    base_ref=revision_base,
+                )
+                is not None
+            ):
+                connection.execute("ROLLBACK")
+                raise RunSlotBusy("this revision base already has a successor Run")
+            if resume_from is not None:
+                source = status_from_row(self._row(connection, resume_from))
+                recovery_digest = self._validate_resume(
+                    connection,
+                    source,
+                    compiled.digest,
+                    tuple(item.artifact_ref for item in frozen_inputs),
+                    compiled.spec.limits.max_attempts,
+                    scheduler_max_attempts=max_attempts,
+                )
+            if resume_from is not None and source.instance_id != instance_id:
+                raise RunStateConflict("recovery source belongs to another instance")
+            if draft_from is not None:
+                source = status_from_row(self._row(connection, draft_from))
+                recovery_digest = self._validate_draft_source(
+                    connection, source, compiled=compiled, instance_id=instance_id,
+                    scheduler_max_attempts=max_attempts,
+                )
+                if draft_digest is not None and draft_digest != recovery_digest:
+                    raise RunStateConflict("draft source digest changed")
+            scheduler_budget = max_attempts
+            if scheduler_budget is None and (resume_from is not None or draft_from is not None):
+                scheduler_budget = (source.recovery_policy or {}).get("scheduler_max_attempts")
+            if scheduler_budget is not None:
+                recovery_policy.update(max_attempts=scheduler_budget, scheduler_max_attempts=scheduler_budget)
+            request_digest = canonical_sha256(
+                {
+                    "operation_id": compiled.spec.operation_id,
+                    "operation_version": compiled.spec.version,
+                    "operation_digest": compiled.digest,
+                    "backend": self.backend.backend_id,
+                    "backend_version": self.backend.backend_version,
+                    "backend_capabilities": self.backend.capabilities,
+                    "instance_id": instance_id,
+                    "output_binding": {
+                        "name": output_binding_name,
+                        "logical_name": output_logical_name,
+                        "revision": output_revision,
+                        "request_fingerprint": output_binding_fingerprint,
+                    },
+                    "instruction": bound.instruction or "",
+                    "inputs": json.loads(inputs_json(frozen_inputs)),
+                    "limits": compiled.spec.limits.model_dump(mode="json"),
+                    "resume_from": resume_from,
+                    **({"draft_from": draft_from, "draft_digest": recovery_digest}
+                       if draft_from is not None else {}),
+                    "recovery_digest": recovery_digest,
+                    **({"scheduler_max_attempts": max_attempts} if max_attempts is not None else {}),
+                }
+            )
+            try:
+                connection.execute(
+                    """
+                    INSERT INTO runs (
+                        run_id, instance_id, operation_id, operation_version,
+                        operation_digest, agent_type, instruction, inputs_json,
+                        backend_id, backend_version, backend_capabilities_json,
+                        output_binding_name, output_logical_name,
+                        output_revision, output_binding_fingerprint,
+                        request_digest, resume_from_run_id, draft_from_run_id, recovery_policy_json,
+                        state, created_at, deadline_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                              ?, ?, 'queued', ?, ?)
+                    """,
+                    (
+                        run_id,
+                        instance_id,
+                        compiled.spec.operation_id,
+                        compiled.spec.version,
+                        compiled.digest,
+                        operation_agent_type(compiled),
+                        bound.instruction or "",
+                        inputs_json(frozen_inputs),
+                        self.backend.backend_id,
+                        self.backend.backend_version,
+                        canonical_json(self.backend.capabilities),
+                        output_binding_name,
+                        output_logical_name,
+                        output_revision,
+                        output_binding_fingerprint,
+                        request_digest,
+                        resume_from,
+                        draft_from,
+                        canonical_json(recovery_policy),
+                        created_at,
+                        deadline_at,
+                    ),
+                )
+            except sqlite3.IntegrityError as error:
+                connection.execute("ROLLBACK")
+>               raise RunSlotBusy(
+                    "this compiled Operation already has an unopened or running Run"
+                ) from error
+E               scidiscovery.artifact_agent.service.run_records.RunSlotBusy: this compiled Operation already has an unopened or running Run
+
+src/scidiscovery/artifact_agent/service/runs.py:297: RunSlotBusy
+
+The above exception was the direct cause of the following exception:
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-322/test_mcp_pages_all_saved_error0')
+
+    def test_mcp_pages_all_saved_errors_and_runs_with_instance_isolation(tmp_path):
+        system = analysis_system(tmp_path)
+        worker, _ = open_analysis(system)
+        runs, root, request = system[1].runs, system[2], system[3]
+        for i in range(11):
+            runs.record_error_observation(worker._run_id, "output_rejected", diagnostic={
+                "category": "output_rejected", "details": [contract_diagnostic(
+                    "output_invalid", phase="output_payload", affected_action="submit", repairable=True,
+                    path="$.payload.summary", message=f"Fixture rejection {i}.")],
+            })
+        # Legacy records without details must remain visible, without invented causes.
+        with runs._connect() as connection:
+            connection.execute("INSERT INTO run_activity(run_id,activity,recorded_at,diagnostic_json) VALUES (?,?,?,NULL)",
+                (worker._run_id, "output_rejected", "2026-01-01T00:00:00Z"))
+        assert "diagnostic_events" not in root.call_tool("run_status", {"name": "analysis"})
+        cursor, events = 0, []
+        while cursor is not None:
+            reply = wire(root, "run_status", {"name": "analysis", "diagnostic_after": cursor, "diagnostic_limit": 3})
+            assert "error" not in reply
+            page = reply["result"]["structuredContent"]["diagnostic_events"]
+            events.extend(page["events"])
+            cursor = page["next_after"]
+        assert len(events) == 12 and len({e["event_id"] for e in events}) == 12
+        assert events[-1]["diagnostic"] is None
+        assert all(e["recorded_at"] and e["activity"] == "output_rejected" for e in events)
+>       root.call_tool("operation_invoke", {**request, "name": "second"})
+
+tests/operations/test_registration_diagnostics_repair.py:205: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/scidiscovery/artifact_agent/interfaces/mcp_root.py:443: in call_tool
+    return getattr(self.facade, name)(**values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py:208: in operation_invoke
+    result = self._invoke_agent_operation(
+src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py:256: in _invoke_agent_operation
+    return self._invoke_local_run(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <scidiscovery.artifact_agent.interfaces.mcp_root.RootToolFacade object at 0x7f6faa5afc20>
+bound = BoundOperationCall(compiled=CompiledOperation(plugin_id='tcad_artifact', spec=OperationSpec(operation_id='tcad.result....posure='on_demand', usage='evidence_inventory')), instruction='Analyze the bound fixture outputs.', executor_plan=None)
+on_conflict = 'reject', resume_from = None, draft_from = None
+max_attempts = None
+
+    def _invoke_local_run(
+        self,
+        bound: BoundOperationCall,
+        on_conflict: str,
+        *,
+        resume_from: str | None,
+        draft_from: str | None = None,
+        max_attempts: int | None = None,
+    ) -> dict[str, Any]:
+        resume_run_id, draft_run_id, draft_digest, fingerprint, target = self._prepare_local_run(
+            bound, on_conflict, resume_from=resume_from, draft_from=draft_from, max_attempts=max_attempts
+        )
+        if target.existing_object_id is not None:
+            return self.run_status(name=target.name)
+        output_name = _derived_name(target.name, "output")
+        output_logical_name = _derived_name(target.logical_name, "output")
+        output_fingerprint = canonical_sha256(
+            {"run_request": fingerprint, "output": "primary"}
+        )
+        try:
+            run_id = self.runs.schedule(
+                bound,
+                instance_id=self._instance_id(),
+                output_binding_name=output_name,
+                output_logical_name=output_logical_name,
+                output_revision=target.revision,
+                output_binding_fingerprint=output_fingerprint,
+                resume_from=resume_run_id,
+                draft_from=draft_run_id,
+                draft_digest=draft_digest,
+                max_attempts=max_attempts,
+            )
+        except RunAttemptLimit as error:
+            raise _attempt_limit_error(error) from error
+        except Exception as error:
+>           raise OperationEngineeringError("local_run_creation_failed") from error
+E           scidiscovery.operations.input_validation.OperationEngineeringError: local_run_creation_failed
+
+src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py:295: OperationEngineeringError
+=========================== short test summary info ============================
+FAILED tests/operations/test_registration_diagnostics_repair.py::test_prose_and_baseline_labels_survive_submit_materialize_and_review[False]
+FAILED tests/operations/test_registration_diagnostics_repair.py::test_prose_and_baseline_labels_survive_submit_materialize_and_review[True]
+FAILED tests/operations/test_registration_diagnostics_repair.py::test_mcp_pages_all_saved_errors_and_runs_with_instance_isolation
+3 failed, 7 passed in 6.67s

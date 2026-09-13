@@ -1,0 +1,112 @@
+{
+  "status": "implemented; not installed; no live scientific requalification",
+  "production_files_changed": 20,
+  "operations": 50,
+  "operation_ids_unchanged": true,
+  "public_agents": 25,
+  "original_failed_submissions_replayed": 6,
+  "all_original_bound_aliases_verified": true,
+  "successful_groups_overlap": true,
+  "successful_principal_groups": [
+    {
+      "command": [
+        "python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/operations/test_analysis_artifact_references.py",
+        "tests/operations/test_score_request_contract.py",
+        "tests/operations/test_contract_attempts.py",
+        "tests/operations/test_validation_responsibility_placement.py"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 29.61,
+      "peak_tree_rss_bytes": 141668352,
+      "stopped": null,
+      "log": "check-1789254031111365377.log"
+    },
+    {
+      "command": [
+        "python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/operations/test_evidence_reference_ownership.py",
+        "tests/operations/test_agent_contract_alignment.py",
+        "tests/operations/test_hypothesis_objective_boundary.py",
+        "tests/operations/test_validation_reaudit_removal.py",
+        "tests/operations/test_validation_responsibility_pruning.py",
+        "tests/operations/test_analysis_claim_scope.py"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 57.38,
+      "peak_tree_rss_bytes": 144691200,
+      "stopped": null,
+      "log": "check-1789254797129695766.log"
+    },
+    {
+      "command": [
+        "python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/operations/test_tcad_result_analysis.py",
+        "tests/operations/test_result_analysis_tool.py",
+        "tests/operations/test_m2_curve_analysis_boundary.py",
+        "tests/operations/test_analysis_artifact_references.py",
+        "tests/operations/test_validation_responsibility_pruning.py::test_known_output_identity_need_not_be_retyped_and_forged_score_still_rejects",
+        "tests/operations/test_evidence_reference_ownership.py"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 46.85,
+      "peak_tree_rss_bytes": 154607616,
+      "stopped": null,
+      "log": "check-1789254905090395689.log"
+    },
+    {
+      "command": [
+        "python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/operations/test_l4_local_tcad.py",
+        "tests/operations/test_evidence_reference_ownership.py",
+        "tests/operations/test_l2_run_invariants.py::test_tool_projection_identity_independent_path_and_publication_gate",
+        "tests/operations/test_l2_run_invariants.py::test_real_stdio_worker_process_opens_calls_registered_tool_and_submits",
+        "tests/operations/test_contract_attempts.py"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 40.21,
+      "peak_tree_rss_bytes": 198217728,
+      "stopped": null,
+      "log": "check-1789255571136014379.log"
+    }
+  ],
+  "final_catalog_check": {
+    "command": [
+      "python",
+      "docs/plans/evidence/operation-validation-ownership-cleanup/catalog_audit.py"
+    ],
+    "exit_code": 0,
+    "duration_seconds": 1.16,
+    "peak_tree_rss_bytes": 93089792,
+    "stopped": null,
+    "log": "check-1789255700616057542.log"
+  },
+  "memory_limit_bytes": 536870912,
+  "highest_observed_tree_rss_bytes": 209084416,
+  "stopped_by_resource_limit": [],
+  "preexisting_unrelated_failures_remaining": 4,
+  "preexisting_failures_corrected_as_stale_assertions": 8,
+  "baseline_logs": [
+    "check-1789254731917468479.log",
+    "check-1789255498184291609.log"
+  ],
+  "diff_check": "passed",
+  "scope_limitations": [
+    "No full suite or stress run",
+    "No production install/restart or scientific review approval",
+    "No solver execution",
+    "Unobserved native platform errors are not ruled out"
+  ]
+}

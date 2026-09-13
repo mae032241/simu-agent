@@ -317,8 +317,9 @@ class ApprovalService:
         kind: str,
         accepted_options: tuple[str, ...],
         accepted_providers: tuple[CompiledApprovalIdentity, ...],
+        allow_compatible_provider: bool = False,
     ) -> bool:
-        """Return whether one exact decision came from an accepted compiled provider."""
+        """Match an exact decision; research may reuse the same approval contract."""
 
         if (
             not subject_refs
@@ -356,8 +357,20 @@ class ApprovalService:
                 )
             except ValidationError as error:
                 raise ApprovalError("stored approval qualification is invalid") from error
+            identity = request.compiled_identity
+            provider_matches = identity in accepted or (
+                allow_compatible_provider
+                and kind != "execution_authorization"
+                and identity is not None
+                and any(
+                    identity.operation_id == provider.operation_id
+                    and identity.operation_version == provider.operation_version
+                    and identity.approval_contract_digest == provider.approval_contract_digest
+                    for provider in accepted
+                )
+            )
             if (
-                request.compiled_identity in accepted
+                provider_matches
                 and request.kind == kind
                 and decision.approval_request_ref == request_ref
                 and decision.subject_refs == request.subject_refs

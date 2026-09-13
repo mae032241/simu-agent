@@ -175,7 +175,7 @@ def test_review_signal_cannot_enter_an_unrelated_operation_unconsumed() -> None:
     assert caught.value.reason_code == "input_review_signal_unbound"
 
 
-def test_producer_contract_requires_exact_version_digest_and_port() -> None:
+def test_producer_contract_requires_compatible_version_and_port() -> None:
     catalog = _catalog()
     artifact, envelope = _produced_artifact(
         catalog,
@@ -189,6 +189,21 @@ def test_producer_contract_requires_exact_version_digest_and_port() -> None:
     with pytest.raises(OperationInvocationError) as caught:
         routes._operation_output_contract(artifact)
     assert caught.value.reason_code == "input_producer_contract_changed"
+
+
+def test_same_version_runtime_drift_preserves_claim_port_type_boundary() -> None:
+    catalog = _catalog()
+    artifact, envelope = _produced_artifact(catalog, "science.intake.split.v1", "scientific_foundation", "old_claim")
+    envelope.labels["operation_digest"] = "0" * 64
+    routes = _routes(catalog, {artifact.ref.artifact_id: envelope})
+    assert routes._operation_output_contract(artifact) is not None
+    for incompatible in (
+        replace(artifact, schema_id="incompatible.v0"),
+        replace(artifact, media_type="text/plain"),
+        replace(artifact, ref=artifact.ref.model_copy(update={"kind": "wrong_kind"})),
+    ):
+        with pytest.raises(OperationInvocationError, match="input_producer_port_incompatible"):
+            routes._operation_output_contract(incompatible)
 
 
 def test_explore_or_internal_output_is_intrinsically_nonclaiming() -> None:
@@ -303,10 +318,11 @@ def test_existing_agent_inventory_reads_skip_stale_producer_contracts(operation_
 
 
 @pytest.mark.parametrize("usage", ("claim_evidence", "change_request", "review_signal"))
-def test_claim_and_review_inputs_keep_stale_producer_rejection(usage) -> None:
+def test_claim_and_review_inputs_keep_incompatible_version_rejection(usage) -> None:
     catalog = _catalog()
     artifact, envelope = _produced_artifact(catalog, "science.experiment.revise.v1", "experiment_plan", "stale_subject")
     envelope.labels["operation_digest"] = "0" * 64
+    envelope.labels["operation_version"] = "incompatible"
     routes = _routes(catalog, {artifact.ref.artifact_id: envelope})
     compiled = catalog.operation("science.experiment.revise.v1")
     with pytest.raises(OperationInvocationError) as caught:

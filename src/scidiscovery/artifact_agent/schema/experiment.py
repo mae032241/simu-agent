@@ -125,9 +125,9 @@ class ComparisonVariable(SchemaModel):
             raise ValueError("comparison variable case expectations must be unique")
         values = tuple(item.value for item in self.expectations)
         if self.comparison_role == "intended_change" and len(set(values)) < 2:
-            raise ValueError("intended_change variable must vary between cases")
+            raise declared_violation("intended_change variable must vary between cases", path="$.comparison_role")
         if self.comparison_role == "frozen" and len(set(values)) != 1:
-            raise ValueError("frozen variable must have the same value in every case")
+            raise declared_violation("frozen variable must have the same value in every compared case", path="$.comparison_role")
         if self.equivalence_rule == "absolute_tolerance":
             if self.tolerance is None:
                 raise ValueError("absolute_tolerance requires tolerance")
@@ -278,11 +278,6 @@ class ExperimentProposal(SchemaModel):
         compared_cases = {contract.baseline_case_key, *contract.comparison_case_keys}
         if not compared_cases.issubset(case_by_key):
             raise ValueError("comparison contract references an undeclared experiment case")
-        if case_by_key[contract.baseline_case_key].scientific_role not in {
-            "baseline",
-            "control",
-        }:
-            raise ValueError("comparison baseline must name a baseline or control case")
         intended = {
             item.variable_key
             for item in contract.variables
@@ -312,22 +307,12 @@ class ExperimentProposal(SchemaModel):
                         "comparison expectation differs from exact case setting: "
                         f"{factor_name}/{expectation.case_key}"
                     )
-        if not set(contract.required_observables).issubset(self.required_observables):
-            raise ValueError(
-                "comparison contract references an undeclared observable"
-            )
         claim_hypotheses = {
             item.hypothesis_key for item in contract.identifiability_claims
         }
         if not claim_hypotheses.issubset(self.hypothesis_keys):
             raise ValueError(
                 "identifiability claim references an undeclared experiment hypothesis"
-            )
-        if not {
-            item.observable for item in contract.identifiability_claims
-        }.issubset(set(self.required_observables)):
-            raise ValueError(
-                "identifiability claim references an unrequired observable"
             )
         return self
 

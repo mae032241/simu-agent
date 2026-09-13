@@ -21,7 +21,8 @@ class AnalysisFile(BaseModel):
 
 class PublishAnalysisFiles(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    source_aliases: Annotated[tuple[str, ...], Field(min_length=1, max_length=40)]
+    source_aliases: Annotated[tuple[str, ...], Field(min_length=1, max_length=40,
+        description="Bound input or current/adopted tool-evidence aliases used by this derivation. Workspace helper indexes are not sources unless exposed as bound inputs or adopted evidence.")]
     script_path: str = Field(description="Path relative to the opened workspace root, e.g. scratch/analysis.py; UTF-8 script below scratch/. Publication does not attest execution.")
     files: Annotated[tuple[AnalysisFile, ...], Field(min_length=1, max_length=8)]
     method: Annotated[str, Field(min_length=1, max_length=1024,
@@ -30,10 +31,13 @@ class PublishAnalysisFiles(BaseModel):
 
 def publish_files(request, context):
     """Seal declared local bytes, not a claim that the script was executed."""
+    error_path = "$"
     try:
         sources = tuple(dict.fromkeys(request.source_aliases))
-        for alias in sources:
+        for index, alias in enumerate(request.source_aliases):
+            error_path = f"$.source_aliases[{index}]"
             context.source_descriptor(alias)
+        error_path = "$"
         def read(name, limit, field):
             path = Path(name)
             if path.is_absolute() or not path.parts or path.parts[0] != "scratch":
@@ -66,15 +70,16 @@ def publish_files(request, context):
     except (ValueError, OSError, WorkspaceError) as error:
         raise DiagnosticError("analysis files could not be retained", details=(contract_diagnostic(
             "analysis_file_unavailable", phase="tool_execution", affected_action="tool_call",
-            repairable=True, message=str(error)[:1000]),)) from error
+            repairable=True, path=error_path, message=str(error)[:512]),)) from error
 
 
 GUIDANCE = """
-Use the calculation_ref returned by a scoring/diagnostic tool as an evidence
-locator. The control layer has already saved its complete record and receipt;
+Cite a scoring/diagnostic tool's returned calculation_ref directly in evidence_keys,
+or use it as the source_key/locator of an optional evidence item.
+The control layer has already saved its complete record and receipt;
 do not copy requests, digests, attempt metadata or result arrays into the report.
-Keep calculation_records empty for new calls. Choose evidence source_key/title
-for the scientific claim and use evidence_keys normally. Legacy inline records
+Keep calculation_records empty for new calls. A separate evidence or source_references
+entry is optional; multiple locators for one source are allowed. Legacy inline records
 remain readable. If a request is rejected before a calculation_ref exists, cite
 tool_recovery_manifest and explain the reported failure; do not construct a
 calculation record or copy the attempt receipt. To reuse a prior calculation, bind its saved calculation file

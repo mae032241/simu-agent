@@ -34,7 +34,7 @@ from scidiscovery.artifact_agent.schema.research_cycle import (
 )
 from scidiscovery.artifact_agent.schema.scientific_foundation import ScientificFoundation
 from scidiscovery.operations.invoke import ApprovalProjectorContext, ApprovalSubjectSnapshot
-from scidiscovery.operation_contract import SemanticRuleViolation
+from scidiscovery.operation_contract import SemanticRuleViolation, declared_violation, validate_evidence_source_aliases
 from scidiscovery.operation_declaration import semantic_contract
 from scidiscovery.operations.spec import (
     ApprovalContract,
@@ -256,11 +256,7 @@ def _audit_context(
         raise SemanticRuleViolation(
             "parameter evidence audit requires at least one check"
         )
-    declared = {item.source_key for item in audit.evidence}
-    if not declared.issubset(sources):
-        raise SemanticRuleViolation(
-            "parameter evidence audit cites an unbound source"
-        )
+    validate_evidence_source_aliases(payload, sources)
     for check in audit.checks:
         if check.status in {"pass", "fail"} and not check.evidence_keys:
             raise SemanticRuleViolation(
@@ -375,8 +371,6 @@ def _validate_parameter_family(
     if not observed_keys.issubset(catalog_by_key):
         raise ValueError("a parameter observation references an undeclared source")
     foundation_evidence = intake.scientific_foundation.evidence
-    if not set(catalog_by_key).issubset(item.source_key for item in foundation_evidence):
-        raise ValueError("the source catalog is not closed over the intake foundation")
     if any(
         item.source_type != catalog_by_key[item.source_key].source_type
         for item in foundation_evidence if item.source_key in catalog_by_key
@@ -406,11 +400,11 @@ def validate_extract_context(
         canonical_json(payload), strict=True
     )
     source_aliases = set(sources) - {"required_parameter_checklist"}
-    catalog_keys = {item.source_key for item in package.source_catalog.sources}
-    if not source_aliases or catalog_keys != source_aliases:
-        raise SemanticRuleViolation(
-            "parameter package sources must equal the exact Run input aliases"
-        )
+    for index, source in enumerate(package.source_catalog.sources):
+        if source.source_key not in source_aliases:
+            raise declared_violation("Parameter source must name a bound source input.",
+                path=f"$.source_catalog.sources[{index}].source_key")
+    validate_evidence_source_aliases(payload, source_aliases)
     raw = sources.get("required_parameter_checklist")
     if raw is None:
         return
@@ -594,7 +588,7 @@ def _validate_parameter_qualification(
             raise OperationInvocationError("approval_subject_invalid", message="extracted parameter requirements differ from the supplied checklist")
     selected = parse_bound_json(DeviceParameterSet, parameters_subject.content, admission_port=parameters_subject.port_name)
     catalog = parse_bound_json(EvidenceSourceCatalog, catalog_subject.content, admission_port=catalog_subject.port_name)
-    if {item.source_key for item in catalog.sources} != expected_source_keys:
+    if not {item.source_key for item in catalog.sources}.issubset(expected_source_keys):
         raise OperationInvocationError("approval_subject_invalid", message="parameter source catalog differs from frozen Run inputs")
     supplied_coverage = parse_bound_json(DeviceParameterCoverageReport, coverage_subject.content, admission_port=coverage_subject.port_name)
     if (
@@ -644,12 +638,6 @@ def _validate_parameter_qualification(
     if audit_subject.parent_refs != expected_audit_inputs:
         raise OperationInvocationError("approval_subject_invalid", message="parameter audit does not bind the exact ordered review set")
     audit = parse_bound_json(EvidenceAudit, audit_subject.content, admission_port=audit_subject.port_name)
-    source_keys = {item.source_key for item in catalog.sources}
-    audited_source_keys = {item.source_key for item in audit.evidence}
-    if not source_keys.issubset(audited_source_keys):
-        raise OperationInvocationError("approval_subject_invalid", message="parameter audit does not cover every catalog source")
-    if not expected_source_keys.issubset(audited_source_keys):
-        raise OperationInvocationError("approval_subject_invalid", message="parameter audit does not cover every frozen source")
     checks = {item.check_key: item for item in audit.checks}
     if not _AUDIT_CHECKS.issubset(checks) or any(
         checks[name].status != "pass" for name in _AUDIT_CHECKS

@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import stat
+import time
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -16,6 +17,7 @@ from scidiscovery.artifact_agent.execution_bridge import AdapterCapability
 from scidiscovery.artifact_agent.schema.execution import LocalFileDescriptor
 
 from .transport_logs import preserve_log
+from scidiscovery.artifact_agent.service.execution_collection import CollectionContext, QUERY_SECONDS, run_bounded
 
 from .execution_control import FileDescriptor, SolverCapabilitySnapshot, TCADJobSpec
 from .project_packager import (
@@ -32,6 +34,7 @@ class CommandAdapterConfig(BaseModel):
     arguments: tuple[str, ...] = Field(default=(), max_length=64)
     environment: dict[str, str] = Field(default_factory=dict)
     operation_timeout_seconds: int = Field(default=30, ge=1, le=300)
+    query_timeout_seconds: float = Field(default=QUERY_SECONDS, gt=0)
 
     @field_validator("executable")
     @classmethod
@@ -188,15 +191,20 @@ class CommandTCADExecutorAdapter:
         return str(value["run_id"]), str(value["state"])
 
     def status(self, external_run_id: str) -> str:
-        value = self._call("status", {"run_id": external_run_id})
-        return str(value["state"])
+        return str(self.status_details(external_run_id)["state"])
+
+    def status_details(self, external_run_id: str) -> dict[str, Any]:
+        return self._call("status", {"run_id": external_run_id})
 
     def cancel(self, external_run_id: str) -> str:
         value = self._call("cancel", {"run_id": external_run_id})
         return str(value["state"])
 
-    def inspect_outputs(self, external_run_id: str, relative_path: str | None = None, max_bytes: int = 32*1024*1024) -> dict[str, Any]:
-        value = self._call("inspect_outputs", {"run_id": external_run_id, "relative_path": relative_path, "max_bytes": max_bytes})
+    def inspect_outputs(self, external_run_id: str, relative_path: str | None = None, max_bytes: int = 32*1024*1024, *, deadline_monotonic=None) -> dict[str, Any]:
+        payload = {"run_id": external_run_id, "relative_path": relative_path, "max_bytes": max_bytes}
+        if deadline_monotonic is not None:
+            payload["deadline_monotonic"] = deadline_monotonic
+        value = self._call("inspect_outputs", payload)
         if value.get("status") == "available" and "file" in value:
             descriptor = LocalFileDescriptor.model_validate(value["file"], strict=True)
             path = Path(descriptor.local_path)
@@ -212,26 +220,46 @@ class CommandTCADExecutorAdapter:
                 "local_result_root": str(self.local_result_root),
             },
         )
+        return self._collected_outputs(value)
+
+    def collect_with_budget(self, external_run_id: str, *, context: CollectionContext) -> tuple[LocalFileDescriptor, ...]:
+        context.remaining_seconds()
+        value = self._call("collect", {"run_id": external_run_id,
+            "local_result_root": str(self.local_result_root), "collection": context.wire(),
+            "progress_path": context.progress_path}, context=context)
+        return self._collected_outputs(value, context=context)
+
+    def _collected_outputs(self, value, *, context=None):
         outputs = tuple(
             LocalFileDescriptor.model_validate(item, strict=True)
             for item in value["outputs"]
         )
         for item in outputs:
+            if context is not None:
+                context.remaining_seconds()
             path = Path(item.local_path).expanduser().absolute()
             if not _within(path, self.local_result_root):
                 raise RuntimeError("transport output is outside its result root")
             metadata = os.lstat(path)
             if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
                 raise RuntimeError("transport output is not a regular file")
-            raw = path.read_bytes()
-            if (
-                len(raw) != item.size_bytes
-                or hashlib.sha256(raw).hexdigest() != item.sha256
-            ):
+            digest = hashlib.sha256()
+            with path.open("rb") as stream:
+                for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                    if context is not None:
+                        context.remaining_seconds()
+                    digest.update(chunk)
+            if metadata.st_size != item.size_bytes or digest.hexdigest() != item.sha256:
                 raise RuntimeError("transport output differs from its descriptor")
         return outputs
 
-    def _call(self, operation: str, payload: dict[str, Any]) -> dict[str, Any]:
+    def _call(self, operation: str, payload: dict[str, Any], *, context=None) -> dict[str, Any]:
+        if operation == "status":
+            payload = {**payload, "deadline_monotonic": time.monotonic() + self.config.query_timeout_seconds}
+        deadline = payload.get("deadline_monotonic")
+        timeout = context.remaining_seconds() if context is not None else max(.001, deadline - time.monotonic()) if deadline is not None else self.config.operation_timeout_seconds
+        if deadline is not None and deadline <= time.monotonic():
+            raise TimeoutError("TCAD transport request deadline exhausted before start")
         request = _canonical(
             {
                 "schema_version": 1,
@@ -247,15 +275,8 @@ class CommandTCADExecutorAdapter:
             **self.config.environment,
         }
         try:
-            completed = subprocess.run(
-                [self.config.executable, *self.config.arguments],
-                input=request,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                env=environment,
-                timeout=self.config.operation_timeout_seconds,
-                check=False,
-            )
+            completed = run_bounded([self.config.executable, *self.config.arguments],
+                input=request, env=environment, timeout=timeout, context=context)
         except subprocess.TimeoutExpired as error:
             log = preserve_log(self.local_result_root, "stderr", error.stderr or b"")
             preserve_log(self.local_result_root, "stdout", error.stdout or b"")
@@ -263,7 +284,9 @@ class CommandTCADExecutorAdapter:
         stderr_log = preserve_log(self.local_result_root, "stderr", completed.stderr) if completed.stderr else None
         if completed.returncode != 0:
             preserve_log(self.local_result_root, "stdout", completed.stdout)
-            raise RuntimeError(f"TCAD transport operation failed; stderr log: {stderr_log}")
+            error = subprocess.CalledProcessError(completed.returncode, "TCAD transport",
+                output=completed.stdout, stderr=completed.stderr)
+            raise RuntimeError(f"TCAD transport operation failed; stderr log: {stderr_log}") from error
         if len(completed.stdout) > 8 * 1024 * 1024:
             raise RuntimeError("TCAD transport response exceeds its byte limit")
         try:
@@ -280,7 +303,10 @@ class CommandTCADExecutorAdapter:
         if response.get("operation") != operation:
             raise RuntimeError("TCAD transport response operation differs")
         if response.get("ok") is not True or not isinstance(response.get("payload"), dict):
-            raise RuntimeError(str(response.get("error", "TCAD transport rejected operation")))
+            error = RuntimeError(str(response.get("error", "TCAD transport rejected operation")))
+            if isinstance(response.get("engineering"), dict):
+                error.engineering = response["engineering"]
+            raise error
         return response["payload"]
 
     def _require_active_capability(

@@ -108,8 +108,12 @@ def _project_record(value):
 def read_summary(workspace):
     """Pure, bounded Root projection: no commands, script or log contents."""
     try:
-        value = _read_json(_directory(workspace) / "latest.json")
-        result = {"coverage": "local_launcher", "scientific_evidence": False, **_project_record(value)}
+        path = _directory(workspace) / "latest.json"
+        if not path.exists() and not path.is_symlink():
+            return {"coverage": "unobserved", "scientific_evidence": False,
+                "reason": "no_records" if (Path(workspace) / "tools/local_process_observation.py").is_file() else "not_installed"}
+        value = _read_json(path)
+        result = {"coverage": "local_launcher", "scientific_evidence": False, "observation_status": "available", **_project_record(value)}
         for key in ("attempt_count", "error_count", "total_stdout_bytes", "total_stderr_bytes"):
             item = value.get(key)
             result[key] = item if type(item) is int and 0 <= item <= 2**63 - 1 else 0
@@ -119,8 +123,24 @@ def read_summary(workspace):
             # Legacy launchers only retained the latest observation, not counts.
             result.update(recent_errors=[_project_record(value)], error_count=1)
         return result
-    except (OSError, ValueError, TypeError, AttributeError):
-        return {"coverage": "unobserved", "scientific_evidence": False}
+    except (OSError, ValueError, TypeError, AttributeError) as error:
+        return {"coverage": "unobserved", "scientific_evidence": False,
+            "reason": "record_read_failed", "error_type": type(error).__name__}
+
+
+def materialize_launcher(workspace, *, analysis_policy=False):
+    """Control-only preparation; the copied launcher remains stdlib-only."""
+    from .local_workspace import write_control_workspace_file
+    root = Path(workspace)
+    (root / "scratch").mkdir(exist_ok=True, mode=0o700)
+    tool = Path("tools/local_process_observation.py")
+    if not (root / tool).exists():
+        write_control_workspace_file(root, tool, Path(__file__).read_bytes(),
+            replace=False, mode=0o400, create_parents=True)
+    write_control_workspace_file(root, Path("tools/local_process_policy.json"),
+        json.dumps({"policy": "analysis" if analysis_policy else "inherit"}).encode(),
+        replace=True, mode=0o400, create_parents=True)
+    return tool.as_posix()
 
 
 def _failed(record):
@@ -179,8 +199,10 @@ def _stop_group(process):
     return not _group_exists(process.pid)
 
 
-def run(workspace, script, arguments=(), *, timeout, submission_reserve=120, command=False):
+def run(workspace, script, arguments=(), *, timeout, submission_reserve=None, command=False, policy="analysis"):
     """Observe Worker execution; argv mode has the same native permissions."""
+    if submission_reserve is None:
+        submission_reserve = 120 if policy == "analysis" else 0
     workspace = Path(workspace).absolute()
     scratch = workspace / "scratch"
     if command:
@@ -219,12 +241,15 @@ def run(workspace, script, arguments=(), *, timeout, submission_reserve=120, com
         raw_logs = {}
         truncated = False
         rc = 1
-        env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1", "OPENBLAS_NUM_THREADS": "1",
-            "OMP_NUM_THREADS": "1", "MKL_NUM_THREADS": "1", "NUMEXPR_NUM_THREADS": "1"}
+        env = dict(os.environ)
+        if policy == "analysis":
+            env.update(PYTHONDONTWRITEBYTECODE="1", OPENBLAS_NUM_THREADS="1",
+                OMP_NUM_THREADS="1", MKL_NUM_THREADS="1", NUMEXPR_NUM_THREADS="1")
         try:
             process = subprocess.Popen(argv, cwd=cwd,
-                env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                start_new_session=True, preexec_fn=_limits)
+                env=env, stdin=subprocess.DEVNULL if policy == "analysis" else None,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                start_new_session=True, preexec_fn=_limits if policy == "analysis" else None)
             with selectors.DefaultSelector() as selector:
                 for key, pipe in (("stdout", process.stdout), ("stderr", process.stderr)):
                     os.set_blocking(pipe.fileno(), False)
@@ -236,7 +261,7 @@ def run(workspace, script, arguments=(), *, timeout, submission_reserve=120, com
                             cancelled=(directory / "stop").exists())
                         record["process_group_stopped"] = _stop_group(process)
                         break
-                    if process.poll() is not None and _group_exists(process.pid):
+                    if policy == "analysis" and process.poll() is not None and _group_exists(process.pid):
                         record["process_group_stopped"] = _stop_group(process)
                     for key, _ in selector.select(.02):
                         data = os.read(key.fileobj.fileno(), 8192)
@@ -246,15 +271,16 @@ def run(workspace, script, arguments=(), *, timeout, submission_reserve=120, com
                         available = max(0, LOG_LIMIT - log.tell())
                         log.write(data[:available]); truncated |= len(data) > available
                         record["total_" + key.data + "_bytes"] += len(data)
-                        if command and available:
+                        if command and (available or policy != "analysis"):
                             stream = sys.stdout.buffer if key.data == "stdout" else sys.stderr.buffer
-                            stream.write(data[:available]); stream.flush()
+                            stream.write(data[:available] if policy == "analysis" else data); stream.flush()
                 if process.poll() is None:
                     try:
                         process.wait(timeout=max(.001, seconds - (time.monotonic() - started)))
                     except subprocess.TimeoutExpired:
                         record["timed_out"] = True
-                record["process_group_stopped"] = _stop_group(process)
+                if policy == "analysis" or record["timed_out"] or record["cancelled"]:
+                    record["process_group_stopped"] = _stop_group(process)
                 rc = 124 if record["timed_out"] or record["cancelled"] else process.returncode
         except (OSError, ValueError, KeyboardInterrupt) as error:
             record["reason"] = "interrupted" if process else "launch_failed"
@@ -268,7 +294,8 @@ def run(workspace, script, arguments=(), *, timeout, submission_reserve=120, com
                     sys.stderr.buffer.write(raw); sys.stderr.buffer.flush()
         finally:
             if process:
-                record["process_group_stopped"] = _stop_group(process)
+                if policy == "analysis" or process.poll() is None:
+                    record["process_group_stopped"] = _stop_group(process)
                 for pipe in (process.stdout, process.stderr):
                     pipe.close()
             for key, log in raw_logs.items():
@@ -297,14 +324,17 @@ def run(workspace, script, arguments=(), *, timeout, submission_reserve=120, com
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--timeout", type=float, required=True)
-    parser.add_argument("--submission-reserve", type=float, default=120)
+    parser.add_argument("--submission-reserve", type=float, default=None)
     parser.add_argument("--command", action="store_true",
         help="Run an argv command from the workspace root and return bounded stdout/stderr.")
     parser.add_argument("script")
     parser.add_argument("arguments", nargs=argparse.REMAINDER)
     args = parser.parse_args()
-    return run(Path(__file__).resolve().parents[1], args.script, args.arguments,
-        timeout=args.timeout, submission_reserve=args.submission_reserve, command=args.command)
+    workspace = Path(__file__).resolve().parents[1]
+    policy_file = workspace / "tools/local_process_policy.json"
+    policy = _read_json(policy_file).get("policy", "analysis") if policy_file.exists() else "analysis"
+    return run(workspace, args.script, args.arguments, timeout=args.timeout,
+        submission_reserve=args.submission_reserve, command=args.command, policy=policy)
 
 
 if __name__ == "__main__":

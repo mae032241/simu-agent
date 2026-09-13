@@ -30,7 +30,9 @@ from .experiment import (
 )
 from .research_objective import ResearchObjectiveContract
 from .scientific_foundation import ScalarValue
-from ...operation_contract import SemanticRuleViolation, declared_violation
+from ...operation_contract import (
+    SemanticRuleViolation, contract_diagnostic, declared_violation, validation_diagnostics,
+)
 
 
 Level = Literal["low", "medium", "high"]
@@ -189,22 +191,24 @@ class ExperimentProposalIntent(SchemaModel):
         ):
             raise ValueError("intent validation plan experiment_key differs")
         known_cases = set(case_keys)
+        if self.baseline_case_key is None and self.variables:
+            baselines = tuple(item.case_key for item in self.cases
+                              if item.scientific_role in {"baseline", "control"})
+            if len(baselines) == 1:
+                # Normalize validated fields during construction, before the frozen
+                # intent is returned or sealed (as SchemaModel does for collections).
+                object.__setattr__(self, "baseline_case_key", baselines[0])
         if self.baseline_case_key is None:
             if self.variables:
-                raise ValueError(
-                    "comparison variables require an explicit baseline for materialization"
-                )
-        else:
+                raise declared_violation(
+                    "Select a baseline_case_key: the declared cases do not identify one unambiguous baseline/control.",
+                    path="$.baseline_case_key")
+        if self.baseline_case_key is not None:
             if self.baseline_case_key not in known_cases:
-                raise ValueError("intent baseline case is undeclared")
-            baseline = next(
-                item for item in self.cases if item.case_key == self.baseline_case_key
-            )
-            if baseline.scientific_role not in {"baseline", "control"}:
-                raise ValueError("intent baseline must be a baseline or control case")
+                raise declared_violation("intent baseline case is undeclared", path="$.baseline_case_key")
             if len(self.cases) < 2 or not self.variables:
                 raise ValueError("intent comparison requires cases and variables")
-        for variable in self.variables:
+        for index, variable in enumerate(self.variables):
             overrides = {item.case_key: item.value for item in variable.case_overrides}
             if self.baseline_case_key in overrides:
                 raise ValueError("intent baseline value cannot also be overridden")
@@ -216,9 +220,9 @@ class ExperimentProposalIntent(SchemaModel):
             )
             distinct = {(type(item).__name__, item) for item in values}
             if variable.comparison_role == "intended_change" and len(distinct) < 2:
-                raise ValueError("intended_change intent variable must vary")
+                raise declared_violation("intended_change intent variable must vary", path=f"$.variables[{index}].comparison_role")
             if variable.comparison_role == "frozen" and len(distinct) != 1:
-                raise ValueError("frozen intent variable must not vary")
+                raise declared_violation("frozen intent variable must not vary across its declared cases", path=f"$.variables[{index}].comparison_role")
         return self
 
 
@@ -315,12 +319,21 @@ def materialize_experiment_design_intent(
         objective_statement = intent.engineering_objective
     proposals: list[ExperimentProposal] = []
     plans: list[ValidationPlan] = []
-    for proposal_intent in intent.proposals:
+    for proposal_index, proposal_intent in enumerate(intent.proposals):
         case_keys = tuple(item.case_key for item in proposal_intent.cases)
-        variables = tuple(
-            _materialize_variable(item, case_keys)
-            for item in proposal_intent.variables
-        )
+        variables = []
+        for variable_index, item in enumerate(proposal_intent.variables):
+            try:
+                variables.append(_materialize_variable(item, case_keys))
+            except ValidationError as error:
+                # Construction happens before the portfolio exists. Preserve the
+                # editable intent location instead of exposing a relative field.
+                prefix = ("proposals", proposal_index, "variables", variable_index)
+                raise ValidationError.from_exception_data("ExperimentDesignIntent", [
+                    {**detail, "loc": (*prefix, *detail["loc"])}
+                    for detail in error.errors(include_url=False)
+                ]) from error
+        variables = tuple(variables)
         intended = tuple(
             item for item in variables if item.comparison_role == "intended_change"
         )
@@ -453,7 +466,14 @@ def validate_experiment_design_intent_task_output(
     except ValidationError as error:
         # Only derived-model constraints reject Worker content here. Immutable
         # input parsing and unexpected materializer exceptions remain failures.
-        raise SemanticRuleViolation(str(error)) from error
+        details = tuple(
+            contract_diagnostic("output_invalid", phase="output_payload", affected_action="submit",
+                repairable=True, path=item["path"], message=item["message"],
+                rule_id="experiment.design.intent_closure", error_type=item.get("type"))
+            for item in validation_diagnostics(error, schema=ExperimentPortfolio.model_json_schema(),
+                phase="output_payload", action="submit"))
+        message = details[0]["message"] if details else "materialized experiment output requires correction"
+        raise SemanticRuleViolation(message, details=details) from error
     validate_experiment_design_task_output(
         portfolio.model_dump(mode="json"), inputs, handoff
     )

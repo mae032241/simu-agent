@@ -8,6 +8,7 @@ from typing import Protocol
 
 from scidiscovery.artifact_agent.schema.execution import LocalFileDescriptor
 from scidiscovery.artifact_agent.schema.refs import ArtifactRef
+from scidiscovery.artifact_agent.service.execution_collection import CollectionContext
 
 
 class TCADDebugError(RuntimeError):
@@ -55,6 +56,7 @@ class CollectedTCADDebugRun:
     log_excerpt: str
     files: tuple[CollectedTCADDebugFile, ...]
     source_diagnostic: TCADSourceDiagnostic | None = None
+    timing: dict[str, object] | None = None
 
 
 class TCADDevelopmentDebugAdapter(Protocol):
@@ -83,6 +85,8 @@ class TCADDevelopmentDebugAdapter(Protocol):
     def cancel(self, external_run_id: str) -> str: ...
 
     def collect(self, external_run_id: str) -> CollectedTCADDebugRun: ...
+
+    def collect_with_budget(self, external_run_id: str, *, context: CollectionContext) -> CollectedTCADDebugRun: ...
 
 
 __all__ = [

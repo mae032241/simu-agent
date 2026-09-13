@@ -1,0 +1,87 @@
+FFFF                                                                     [100%]
+=================================== FAILURES ===================================
+____________________ test_terminal_sync_never_calls_collect ____________________
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-282/test_terminal_sync_never_calls0')
+
+    def test_terminal_sync_never_calls_collect(tmp_path):
+        current = SimpleNamespace(state="succeeded", external_run_id="run", executor="fixture")
+        saved = {}
+        executions = SimpleNamespace(status=lambda _: current, exchange_root=tmp_path,
+            save_observation=lambda _, value: saved.update(value), observation=lambda _: dict(saved))
+        def forbidden(*args, **kwargs):
+            raise AssertionError("observation entered artifact collection")
+        adapter = SimpleNamespace(lookup_submission=lambda _: None, collect=forbidden,
+            status_details=lambda _: {"state": "succeeded", "progress": {"elapsed_seconds": 12}})
+        bridge = ExecutionBridge(executions, adapters={"fixture": adapter})
+>       assert bridge.sync(execution_id="execution")["elapsed_seconds"] == 12
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/operations/test_execution_collection.py:22: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/scidiscovery/artifact_agent/execution_bridge.py:201: in sync
+    outputs = adapter.collect(current.external_run_id)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+args = ('run',), kwargs = {}
+
+    def forbidden(*args, **kwargs):
+>       raise AssertionError("observation entered artifact collection")
+E       AssertionError: observation entered artifact collection
+
+tests/operations/test_execution_collection.py:18: AssertionError
+______________________ test_completed_download_is_reused _______________________
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-282/test_completed_download_is_reu0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7f5618dc70b0>
+
+    def test_completed_download_is_reused(tmp_path, monkeypatch):
+        raw = b"solver data\n"
+        calls = []
+        remote = SimpleNamespace(get=lambda path: calls.append(path) or raw)
+        transport = SSHTCADTransport(remote, local_result_root=tmp_path)
+        monkeypatch.setattr(transport, "_rpc", lambda *args: {"outputs": [{
+            "name": "profile", "local_path": "/remote/profile.dat", "media_type": "text/plain",
+            "size_bytes": len(raw), "sha256": hashlib.sha256(raw).hexdigest()}]})
+        first = transport._collect("run_" + "a" * 32)
+        assert transport._collect("run_" + "a" * 32) == first
+>       assert calls == ["/remote/profile.dat"]
+E       AssertionError: assert ['/remote/pro.../profile.dat'] == ['/remote/profile.dat']
+E         
+E         Left contains one more item: '/remote/profile.dat'
+E         Use -v to get more diff
+
+tests/operations/test_execution_collection.py:36: AssertionError
+___________ test_empty_subprocess_timeout_preserves_actionable_cause ___________
+
+    def test_empty_subprocess_timeout_preserves_actionable_cause():
+        error = subprocess.TimeoutExpired(["hidden-command"], 30, output=b"", stderr=b"")
+        response = rpc_error(1, error)
+        text = str(response)
+>       assert "TimeoutExpired" in text and "30" in text
+E       assert ('TimeoutExpired' in "{'jsonrpc': '2.0', 'id': 1, 'error': {'code': -32000, 'message': 'Tool execution failed; consult the controlled engin...ion failed; consult the controlled engineering diagnostics.', 'repairable': False, 'affected_action': 'tool_call'}]}}}")
+
+tests/operations/test_execution_collection.py:43: AssertionError
+______________ test_observation_missing_and_corrupt_are_distinct _______________
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-282/test_observation_missing_and_c0')
+
+    def test_observation_missing_and_corrupt_are_distinct(tmp_path):
+        missing = read_summary(tmp_path)
+        directory = tmp_path / "scratch/.analysis-process"
+        directory.mkdir(parents=True)
+        (directory / "latest.json").write_text("invalid json")
+        invalid = read_summary(tmp_path)
+        assert missing["coverage"] == invalid["coverage"] == "unobserved"
+>       assert missing["reason"] != invalid["reason"]
+               ^^^^^^^^^^^^^^^^^
+E       KeyError: 'reason'
+
+tests/operations/test_execution_collection.py:54: KeyError
+=========================== short test summary info ============================
+FAILED tests/operations/test_execution_collection.py::test_terminal_sync_never_calls_collect
+FAILED tests/operations/test_execution_collection.py::test_completed_download_is_reused
+FAILED tests/operations/test_execution_collection.py::test_empty_subprocess_timeout_preserves_actionable_cause
+FAILED tests/operations/test_execution_collection.py::test_observation_missing_and_corrupt_are_distinct
+4 failed in 0.33s

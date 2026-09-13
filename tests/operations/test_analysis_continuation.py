@@ -120,7 +120,13 @@ def test_prior_mapping_reused_across_alias_reorder_tool_receipt_and_next_seal(tm
     write_analysis(opened, report)
     assert worker.call_tool('worker_submit_result', {})['state'] == 'completed'
     sealed = system[2].call_tool('run_status', {'name':'with_history'})['sealed_output']['payload']
-    assert sealed['source_references'][0]['case_mapping_basis'] == known['case_mapping_basis']
+    assert 'case_mapping_basis' not in known  # Display points to the preserved prior basis.
+    origin = known['origin']
+    assignment = json.loads(Path(opened['assignment_path']).read_bytes())
+    original_input = next(item for item in assignment['inputs'] if item['source_name'] == origin['input_alias'])
+    original = json.loads((Path(opened['workspace_path']) / original_input['relative_path']).read_bytes())
+    reference = original['source_references'][int(origin['pointer'].rsplit('/', 1)[1])]
+    assert sealed['source_references'][0]['case_mapping_basis'] == reference['case_mapping_basis']
     request['name'] = 'history_again'
     next(i for i in request['inputs'] if i['port']=='prior_analysis')['artifact_names'] = ['with_history.output']
     next(i for i in request['inputs'] if i['port']=='prior_analysis_manifest')['artifact_names'] = ['with_history.output.recovery_manifest']
@@ -224,6 +230,7 @@ def test_out_of_scope_receipt_corruption_still_fails_open_with_record_index(tmp_
 
 
 @pytest.mark.parametrize('field, value, expected', [
+    ('source_key', [], '$.payload.source_references[0].source_key'),
     ('input_alias', 'untrusted\nalias', '$.payload.source_references[0].input_alias'),
     ('output_name', 'wrong', '$.payload.source_references[0].output_name'),
     ('case_key', 'wrong', '$.payload.source_references[0].case_key'),
@@ -355,5 +362,5 @@ def test_explicit_new_scientific_basis_is_not_replaced_by_history():
             rationale='A newly argued association, different from the prior conditional claim.'))
     payload = {'evidence':[dict(source_key='new_claim', locator='new_curve')], 'source_references':[reference]}
     before = deepcopy(payload)
-    materialize_references(payload, source_bindings(sources))
+    materialize_references(payload, source_bindings(sources), sources.binding_descriptors)
     assert payload == before

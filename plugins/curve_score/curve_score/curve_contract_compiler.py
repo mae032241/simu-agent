@@ -128,13 +128,6 @@ def _compile_curve_contract(
         for item in objective.mandatory_targets
         if item.target_key in bindings
     )
-    if any(
-        item.observable not in proposal.required_observables
-        for item in selected_targets
-    ):
-        raise SemanticRuleViolation(
-            "curve target_bindings observable is absent from the selected experiment"
-        )
     references = {item.series_key: item for item in reference_bundle.series}
     if not set(item.reference_series_key for item in request.target_bindings).issubset(
         references

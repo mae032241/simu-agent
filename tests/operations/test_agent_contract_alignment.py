@@ -854,7 +854,7 @@ def _review_run(tmp_path, sources, *, operation_id="science.object.review.v1"):
             artifacts[port.name] = ()
             continue
         envelope = _register(runtime, instance, name=port.name, raw=sources[port.name],
-                             kind=port.name, schema=port.schema_id)
+                             kind=port.name, schema=port.schema_id if port.schema_id != "*" else "test.progress.v1")
         artifacts[port.name] = (InvocationArtifact(
             artifact_name=port.name, ref=envelope.ref, schema_id=envelope.schema_id,
             media_type=envelope.media_type, size_bytes=envelope.size_bytes,
@@ -1013,7 +1013,7 @@ def test_review_validates_bound_original_context_and_actual_source_aliases(exper
     else:
         payload["evidence"] = [{"source_key": "experiment_plan_aux", "source_type": "frozen_input",
                                 "locator": "absent input"}]
-        error, message = SemanticRuleViolation, "actual visible input alias"
+        error, message = SemanticRuleViolation, "source bound to this task"
     with pytest.raises(error, match=message):
         if mismatch == "unbound_citation":
             _object_review_context(payload, sources, {"verdict": "revise"})
@@ -1450,7 +1450,7 @@ def test_objective_closure_schema_matches_strict_model_acceptance(
     assert model_accepts is accepted
 
 
-def test_evidence_source_projection_uses_only_exact_bound_inventory_aliases() -> None:
+def test_evidence_source_projection_uses_exact_bound_context_aliases() -> None:
     compiled = _catalog().operation("tcad.parameter.evidence.extract.v1")
     port = operation_primary_output(compiled)
     schema = operation_port_json_schema(
@@ -1468,6 +1468,7 @@ def test_evidence_source_projection_uses_only_exact_bound_inventory_aliases() ->
     foundation = schema["$defs"][foundation_ref.removeprefix("#/$defs/")]
     item_projection = foundation["properties"]["evidence"]["items"]["allOf"][-1]
     assert item_projection["properties"]["source_key"]["enum"] == [
+        "required_parameter_checklist",
         "source_material_001",
         "source_material_002",
     ]
@@ -1481,7 +1482,7 @@ def test_evidence_source_projection_uses_only_exact_bound_inventory_aliases() ->
     }
 
 
-def test_empty_optional_evidence_inventory_forbids_nonempty_evidence() -> None:
+def test_empty_optional_inventory_still_allows_citing_the_bound_review_subject() -> None:
     compiled = _catalog().operation("science.evidence.audit.v1")
     port = operation_primary_output(compiled)
     static_schema = operation_port_json_schema(compiled, port)
@@ -1492,7 +1493,12 @@ def test_empty_optional_evidence_inventory_forbids_nonempty_evidence() -> None:
         port,
         input_source_ports={"scientific_foundation": "scientific_foundation"},
     )
-    assert bound_schema["properties"]["evidence"]["maxItems"] == 0
+    from jsonschema import Draft202012Validator
+    validator = Draft202012Validator(bound_schema)
+    payload = {"evidence": [{"source_key": "scientific_foundation", "source_type": "frozen_input", "locator": "/items/0"}]}
+    validator.validate(payload)
+    payload["evidence"][0]["source_key"] = "unbound_source"
+    assert list(validator.iter_errors(payload))
 
 
 def test_evidence_source_projection_version_changes_only_applicable_digest(

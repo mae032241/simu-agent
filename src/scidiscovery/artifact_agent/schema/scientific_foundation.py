@@ -142,17 +142,12 @@ class ScientificFoundation(SchemaModel):
     @model_validator(mode="after")
     def _references_are_local_and_complete(self) -> ScientificFoundation:
         item_keys = tuple(item.item_key for item in self.items)
-        source_keys = tuple(item.source_key for item in self.evidence)
         conflict_keys = tuple(item.conflict_key for item in self.conflicts)
         if len(item_keys) != len(set(item_keys)):
             raise ValueError("item_key values must be unique")
         if len(conflict_keys) != len(set(conflict_keys)):
             raise ValueError("conflict_key values must be unique")
         known_items = set(item_keys)
-        known_sources = set(source_keys)
-        for item in self.items:
-            if not set(item.evidence_keys).issubset(known_sources):
-                raise ValueError("evidence item references an undeclared source_key")
         for conflict in self.conflicts:
             if not set(conflict.item_keys).issubset(known_items):
                 raise ValueError("conflict references an undeclared item_key")

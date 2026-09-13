@@ -39,6 +39,7 @@ def main(argv: list[str] | None = None) -> int:
     (run_dir / "pid").write_text(f"{os.getpid()}\n", encoding="ascii")
     (run_dir / "running").touch(exist_ok=False)
     started_at = _timestamp()
+    _atomic_text(run_dir / "started_at", started_at)
     exit_code = 99
     solver_exit_code = None
     collection_errors = []

@@ -727,7 +727,7 @@ def validate_implementation_gap(
     if handoff.get("verdict") != "blocked":
         raise SemanticRuleViolation("implementation gap requires a blocked handoff")
     plan = json.loads(inputs["experiment_plan"])
-    for item in gap.affected_work:
+    for index, item in enumerate(gap.affected_work):
         current = plan
         try:
             for token in item.plan_locator[1:].split("/"):
@@ -739,7 +739,8 @@ def validate_implementation_gap(
                 else:
                     current = current[token]
         except (KeyError, IndexError, TypeError, ValueError) as error:
-            raise SemanticRuleViolation("gap plan_locator must be an existing JSON pointer in experiment_plan") from error
+            raise declared_violation("gap plan_locator must be an existing JSON pointer in experiment_plan",
+                path=f"$.affected_work[{index}].plan_locator") from error
     if "prior_project" in inputs:
         parse_author_result(inputs["prior_project"])
 

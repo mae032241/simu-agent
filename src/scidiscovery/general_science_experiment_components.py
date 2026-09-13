@@ -42,7 +42,7 @@ from .operation_declaration import (
     schema_resource,
     scientific_semantic_contract,
 )
-from .operation_contract import SemanticRuleViolation
+from .operation_contract import SemanticRuleViolation, validate_evidence_source_aliases
 from .operations.spec import (
     CallableComponent,
     ComponentRef,
@@ -240,10 +240,7 @@ def _object_review_context(
     expected_verdict = "blocked" if review.verdict == "reject" else review.verdict
     if handoff.get("verdict") != expected_verdict:
         raise SemanticRuleViolation("review handoff verdict differs from payload verdict")
-    if any(item.source_key not in sources for item in review.evidence):
-        raise SemanticRuleViolation(
-            "review evidence source_key must name an actual visible input alias"
-        )
+    validate_evidence_source_aliases(payload, sources)
 
 
 def _one(values: Mapping[str, tuple[bytes, ...]], name: str) -> bytes:
@@ -319,6 +316,12 @@ class ExperimentResources:
             "later conditions; priority_rationale explains the current ordering."
             " The designer chooses the experiment shape; study_kind does not impose "
             "a minimum case count, comparison design, or fixed validation dimensions."
+            " Observable prose is not an identity registry and need not be copied "
+            "verbatim between declarations. An explicit baseline_case_key selects "
+            "the comparison baseline regardless of its descriptive case role; "
+            "when omitted, control derives it only from one unambiguous declared "
+            "baseline/control case. A frozen variable must be constant within its "
+            "declared comparison; distinct blocks need their own stated scope."
         ),
         context_constraint=(
             "The objective key and selected hypothesis keys must match the exact "
@@ -366,21 +369,21 @@ class ExperimentResources:
         "The review verdict is not a human approval decision.",
         required_inputs=("experiment_plan",),
         payload_constraint=(
-            "Review target, verdict, issue severities, and disposition must form one "
-            "internally consistent scientific review."
+            "The review must satisfy its declared structural Schema and use "
+            "unambiguous hypothesis identities. Source references do not require "
+            "duplicated citation ledger entries."
         ),
         context_constraint=(
             "The review must assess the exact supplied experiment without mutating it. "
-            "If research_objective is supplied, its key and statement must match "
-            "the plan. If execution_context is supplied, parse its strict schema. "
-            "Every evidence.source_key must name an actual visible input alias, "
+            "Input objective and execution-context compatibility belong to preflight. "
+            "Every evidence.source_key and findings[].evidence_keys reference must name an actual visible input alias, "
             "including actual collection aliases. Independently assess original "
             "mandatory targets and closure, current selection, deferral, feasibility "
             "and supplied feedback; judge how uncovered targets affect current "
             "validity, identifiability and claims. Optional absent inputs limit "
             "conclusions without imposing a hidden submission requirement."
         ),
-        payload_rule_id="experiment.review.verdict_consistency",
+        payload_rule_id="experiment.review.structure",
         context_rule_id="experiment.review.subject_binding",
     )
     experiment_prompt = OPERATION_AGENT_PREAMBLE + EXPERIMENT_PROMPT

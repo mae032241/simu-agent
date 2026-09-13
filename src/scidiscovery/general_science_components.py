@@ -28,7 +28,7 @@ from .artifact_agent.schema.cognitive import (
     validate_hypothesis_proposal,
 )
 from .artifact_agent.schema.research_cycle import ProblemFrame, ScientificFoundation, ScientificIntake, validate_scientific_intake
-from .operation_contract import SemanticRuleViolation
+from .operation_contract import SemanticRuleViolation, validate_evidence_source_aliases
 from .operation_declaration import payload_validator
 from .operations.invoke import ApprovalProjectorContext, ApprovalSubjectSnapshot
 from .operations.spec import (CallableComponent, ComponentRef, ComponentSpec,
@@ -86,14 +86,8 @@ def _intake_source_context(
     payload: dict[str, Any], sources: dict[str, bytes], handoff: dict[str, Any]
 ) -> None:
     del handoff
-    intake = ScientificIntake.model_validate_json(canonical_json(payload), strict=True)
-    declared = {
-        item.source_key for item in intake.scientific_foundation.evidence
-    }
-    if not declared.issubset(sources):
-        raise SemanticRuleViolation(
-            "scientific intake cites a source outside the bound inputs"
-        )
+    ScientificIntake.model_validate_json(canonical_json(payload), strict=True)
+    validate_evidence_source_aliases(payload, sources)
 
 
 def _evidence_revision_cohort(
@@ -137,6 +131,11 @@ def _hypothesis_objective_context(
         canonical_json(payload), strict=True
     )
     foundation = parse_bound_json(ScientificFoundation, sources["scientific_foundation"])
+    # Qualified foundation provenance remains usable without copying its source
+    # registry into every hypothesis. The exact frozen foundation owns those keys.
+    validate_evidence_source_aliases(payload,
+        set(sources) | {item.source_key for item in foundation.evidence}
+        | {key for item in foundation.items for key in item.evidence_keys})
     objective = foundation.objective_contract
     if proposal.research_objective_key != objective.objective_key:
         raise SemanticRuleViolation("hypothesis research_objective_key differs from global objective")
@@ -174,8 +173,8 @@ def _validate_audit_handoff_and_sources(
 def _evidence_audit_context(
     payload: dict[str, Any], sources: dict[str, bytes], handoff: dict[str, Any]
 ) -> None:
-    del sources
     audit = EvidenceAudit.model_validate_json(canonical_json(payload), strict=True)
+    validate_evidence_source_aliases(payload, sources)
     _validate_audit_handoff_and_sources(audit, handoff)
 
 
@@ -271,7 +270,6 @@ def _require_passing_audit(
     *,
     expected_operations: frozenset[str] | None,
     required_parent_refs: set[object],
-    required_source_keys: set[str],
     required_checks: frozenset[str] = frozenset(),
 ) -> EvidenceAudit:
     labels = _labels(audit_subject)
@@ -283,9 +281,6 @@ def _require_passing_audit(
     if not required_parent_refs.issubset(set(audit_subject.parent_refs)):
         raise OperationInvocationError("approval_subject_invalid", message="independent audit did not bind the complete exact review set")
     audit = parse_bound_json(EvidenceAudit, audit_subject.content, admission_port=audit_subject.port_name)
-    audit_source_keys = {item.source_key for item in audit.evidence}
-    if not required_source_keys.issubset(audit_source_keys):
-        raise OperationInvocationError("approval_subject_invalid", message="independent audit does not cover every declared source")
     checks = {item.check_key: item for item in audit.checks}
     if not required_checks.issubset(checks) or any(
         checks[key].status != "pass" for key in required_checks
@@ -364,7 +359,6 @@ def _validate_evidence_qualification(
         port_name="scientific_foundation",
         parent_refs=(primary_subject.ref, audit_subject.ref),
     )
-    source_keys = {item.source_key for item in foundation.evidence}
     if (
         family.reviewer_operation is None
         or members[0].port_name not in family.review_subject_outputs
@@ -376,7 +370,6 @@ def _validate_evidence_qualification(
         audit_subject,
         expected_operations=frozenset({family.reviewer_operation}),
         required_parent_refs=audit_inputs,
-        required_source_keys=source_keys,
     )
 
 

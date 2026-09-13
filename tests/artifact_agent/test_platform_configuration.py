@@ -105,6 +105,7 @@ def test_curve_error_agent_is_available_after_plots_move_to_support_transform(
     assert LocalTrustedBackend.unsupported_requirements(compiled) == ()
     assert HardenedWorkerBackend.unsupported_requirements(compiled) == (
         "native_shell",
+        "native_view_image",
     )
     assert LocalTrustedBackend.supports_operation(compiled)
     assert not HardenedWorkerBackend.supports_operation(compiled)

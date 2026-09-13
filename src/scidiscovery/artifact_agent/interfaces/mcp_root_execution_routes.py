@@ -460,7 +460,18 @@ class RootExecutionRoutes:
             "state": status.state,
             "result_artifact_name": result_artifact_name,
             "created_at": status.created_at,
+            **self.executions.observation(binding.object_id),
+            **({"collection": self.execution_collection.summary(binding.object_id)}
+               if self.execution_collection is not None else {}),
         }
+
+    def execution_collect(self, *, name: str, total_seconds: float) -> dict:
+        execution_id = self._resolve("execution", name)
+        if self.execution_collection is None:
+            raise RootToolError("execution collection requires the configured control-service coordinator")
+        result = self.execution_collection.collect(execution_id,
+            scope="instance:" + self._instance_id(), total_seconds=total_seconds)
+        return {"execution_name": name, "collection": result}
 
     def execution_list(self, *, state: str | None, limit: int) -> dict[str, Any]:
         items = []
@@ -511,9 +522,13 @@ class RootExecutionRoutes:
         if self.execution_bridge is None:
             raise RootToolError("no execution bridge is configured")
         execution_id = self._resolve("execution", name)
-        self.execution_bridge.sync(execution_id=execution_id)
+        progress = self.execution_bridge.sync(execution_id=execution_id,
+            diagnostic_scope="instance:" + self._instance_id())
         self._publish_execution_result(name=name)
-        return self.execution_status(name=name)
+        result = self.execution_status(name=name)
+        if progress is not None:
+            result["progress"] = progress
+        return result
 
     def _publish_execution_result(self, *, name: str) -> str | None:
         status = self.executions.status(self._resolve("execution", name))

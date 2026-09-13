@@ -79,8 +79,6 @@ class ValidationCheckResult(SchemaModel):
             raise ValueError("deterministic pass/fail result requires a unit")
         if self.observed_value is None and self.unit is not None:
             raise ValueError("unit cannot be declared without observed_value")
-        if len(self.evidence_keys) != len(set(self.evidence_keys)):
-            raise ValueError("validation evidence_keys must be unique")
         return self
 
 
@@ -132,18 +130,11 @@ class ValidationReport(SchemaModel):
 
     @model_validator(mode="after")
     def _verdict_is_derived_from_dimensions(self) -> ValidationReport:
-        source_keys = tuple(item.source_key for item in self.evidence)
-        if len(source_keys) != len(set(source_keys)):
-            raise ValueError("validation source_key values must be unique")
-        known_sources = set(source_keys)
         dimensions = (self.numerical, self.physical, self.experimental)
         results = tuple(item for dimension in dimensions for item in dimension.results)
         keys = tuple(item.check_key for item in results)
         if len(keys) != len(set(keys)):
             raise ValueError("validation result check_key values must be globally unique")
-        for result in results:
-            if not set(result.evidence_keys).issubset(known_sources):
-                raise ValueError("validation result references an undeclared source_key")
         active = [item.status for item in dimensions if item.status != "not_applicable"]
         derived = (
             "fail"
@@ -162,10 +153,6 @@ class ValidationReport(SchemaModel):
         if len(assessment_keys) != len(set(assessment_keys)):
             raise ValueError("a report may assess each hypothesis once")
         for assessment in self.hypothesis_assessments:
-            if not set(assessment.evidence_keys).issubset(known_sources):
-                raise ValueError(
-                    "hypothesis assessment references an undeclared source_key"
-                )
             if assessment.outcome == "supports" and (
                 derived != "pass" or self.numerical.status != "pass"
             ):

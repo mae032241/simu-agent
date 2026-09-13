@@ -7,10 +7,11 @@ import json
 from pathlib import Path
 
 from curve_score import analysis_workspace
+from scidiscovery.artifact_agent.service.analysis_artifacts import analysis_source_claims
 from scidiscovery.artifact_agent.service.local_workspace import (
     read_control_workspace_file, write_control_workspace_file,
 )
-from scidiscovery.artifact_agent.service.result_materialization import finalize_result
+from scidiscovery.artifact_agent.service.result_materialization import finalize_result, materialize_analysis_handoff
 from scidiscovery.operations.input_validation import ValidationSources, prior_analysis_sources
 from scidiscovery.operations.spec import CallableComponent
 
@@ -99,23 +100,94 @@ def workspace_sources(request):
     return ValidationSources(contents, request.binding_descriptors)
 
 
+def _case_matrix(proposal, pointer):
+    contract = proposal.get("comparison_contract")
+    if not isinstance(contract, dict):
+        return
+    cases = [contract["baseline_case_key"], *contract["comparison_case_keys"]]
+    yield {"pointer": pointer + "/comparison_contract", "case_columns": cases,
+        "value_locations": "Each row pointer + /expectations/<expectation_indices[column]>/value.",
+        "fields": list(contract)}
+    for number, variable in enumerate(contract.get("variables", ())):
+        expectations = {item["case_key"]: (index, item["value"])
+            for index, item in enumerate(variable["expectations"])}
+        yield {"pointer": f"{pointer}/comparison_contract/variables/{number}",
+            **{key: variable[key] for key in ("variable_key", "scientific_path", "factor_type",
+                "comparison_role", "unit", "equivalence_rule", "tolerance") if key in variable},
+            "expectation_indices": [expectations[case][0] for case in cases],
+            "values": [expectations[case][1] for case in cases]}
+
+
+def reading_view(request, sources, limit):
+    """A bounded display copy; tools and finalization retain source_bindings in full."""
+    by_port = {d.port_name: alias for alias, d in sources.binding_descriptors.items()
+        if d.port_name in JSON_PORTS}
+    plan_alias, package_alias = by_port["experiment_plan"], by_port["reviewed_package"]
+    plan = json.loads(sources[plan_alias])
+    package = json.loads(sources[package_alias])
+    project = package["project"]
+    originals = {alias: {"relative_path": request.input_paths[alias].relative_to(request.workspace).as_posix(),
+        "pointer": ""} for alias in (plan_alias, package_alias)}
+    view = {"sources": {}, "unavailable": [], "project_index": [], "case_matrix": [],
+        "originals": originals, "omitted": 0,
+        "omission_source": {"relative_path": "assignment.json", "pointer": "/inputs"},
+        "matrix_order": "Each variable row uses its own original comparison_contract: baseline_case_key followed by comparison_case_keys. expectation_indices locate the exact case/value even when a header is omitted. Never borrow another proposal's header.",
+        "meaning": "Navigation only. Cite the original input alias and JSON pointer. Embedded source content is not a separate workspace file. Mechanical bindings stay in the frozen original; tools read them in full."}
+
+    def append(section, alias, entry):
+        item = {"source_name": alias, **entry}
+        before = view["omitted"]
+        analysis_workspace.append_view(view, section, item, limit)
+        if view["omitted"] != before and "pointer" in entry:
+            analysis_workspace.append_view(view, section,
+                {"source_name": alias, "pointer": entry["pointer"], "details_omitted": True}, limit)
+
+    append("project_index", package_alias, {"pointer": "/project",
+        **{key: project[key] for key in ("solver_kind", "tool_profile", "entrypoint") if key in project}})
+    if "review" in package:
+        append("project_index", package_alias, {"pointer": "/review"})
+    for index, file in enumerate(project.get("files", ())):
+        append("project_index", package_alias, {"pointer": f"/project/files/{index}/content",
+            "source_file": file["relative_path"], "content_bytes": len(file["content"].encode())})
+    append("project_index", package_alias, {"pointer": "/project/expected_outputs",
+        "output_count": len(project.get("expected_outputs", ())),
+        "names": [item["name"] for item in project.get("expected_outputs", ())]})
+    complete = source_bindings(sources)
+    for alias, binding in complete["sources"].items():
+        # Historical rationale/evidence remain at origin.pointer, not copied again.
+        view["sources"][alias] = {key: value for key, value in binding.items() if key != "case_mapping_basis"}
+        if len(analysis_workspace.view_bytes(view)) > limit - 512:
+            del view["sources"][alias]
+            view["omitted"] += 1
+    for entry in complete["unavailable"]:
+        analysis_workspace.append_view(view, "unavailable", entry, limit)
+    for index, proposal in enumerate(plan.get("proposals", ())):
+        pointer = f"/proposals/{index}"
+        append("case_matrix", plan_alias, {"pointer": pointer, "experiment_key": proposal["experiment_key"],
+            "cases_pointer": pointer + "/cases", "case_count": len(proposal["cases"])})
+        for entry in _case_matrix(proposal, pointer):
+            append("case_matrix", plan_alias, entry)
+    return view
+
+
 def materialize(request):
-    result = analysis_workspace.materialize(request)
-    view = source_bindings(workspace_sources(request))
-    write_control_workspace_file(request.workspace, Path(VIEW_PATH),
-        (json.dumps(view, ensure_ascii=False) + "\n").encode(), replace=False, mode=0o400)
-    # A pointer keeps the start entry bounded even for a large historical basis.
+    # Reserve room for known product correspondence before optional display detail.
+    result = analysis_workspace.materialize(request, start_limit=12 * 1024)
     path = Path(analysis_workspace.START)
     start = json.loads(read_control_workspace_file(request.workspace, path, max_bytes=analysis_workspace.START_LIMIT))
     start["source_bindings"] = {"relative_path": VIEW_PATH,
-        "meaning": "Declared metadata and prior conditional mappings; no renewed scientific qualification. New tool evidence uses its current descriptor."}
+        "meaning": "Compact project, scientific case matrix and declared/prior conditional mappings. Use originals for omitted details; no renewed qualification."}
+    start_bytes = analysis_workspace.view_bytes(start)
+    view = reading_view(request, workspace_sources(request), analysis_workspace.READ_VIEW_LIMIT - len(start_bytes))
+    write_control_workspace_file(request.workspace, Path(VIEW_PATH),
+        analysis_workspace.view_bytes(view), replace=False, mode=0o400)
     write_control_workspace_file(request.workspace, path,
-        (json.dumps(start, ensure_ascii=False) + "\n").encode(), replace=True, mode=0o400)
+        start_bytes, replace=True, mode=0o400)
     return replace(result, paths={**result.paths, "source_bindings": VIEW_PATH},
         read_paths=(*result.read_paths, VIEW_PATH))
 
 
-def materialize_references(payload, view):
+def materialize_references(payload, view, sources):
     evidence = payload.get("evidence", [])
     references = payload.get("source_references", [])
     if not isinstance(evidence, list) or not isinstance(references, list):
@@ -123,25 +195,38 @@ def materialize_references(payload, view):
     references = deepcopy(references)
     by_key = {item["source_key"]: item for item in references
         if isinstance(item, dict) and isinstance(item.get("source_key"), str)}
+    candidates = {}
+    for reference in references:
+        if (isinstance(reference, dict) and isinstance(reference.get("source_key"), str)
+                and isinstance(reference.get("input_alias"), str)):
+            candidates.setdefault(reference["source_key"], set()).update(analysis_source_claims(
+                reference["source_key"], "", reference["input_alias"], sources))
     for item in evidence:
         if not isinstance(item, dict) or not isinstance(item.get("locator"), str) or not isinstance(item.get("source_key"), str):
             continue
-        alias = item["locator"].split(":", 1)[0]
-        known = view["sources"].get(alias)
-        if known is None:
-            continue
-        reference = by_key.get(item["source_key"])
+        candidates.setdefault(item["source_key"], set()).update(analysis_source_claims(
+            item["source_key"], item["locator"], None, sources))
+    for source_key, aliases in candidates.items():
+        if len(aliases) != 1:
+            continue  # Preserve conflicting citations without guessing a mapping.
+        alias = next(iter(aliases))
+        if alias not in view["sources"]:
+            continue  # Only solver products have mechanical output/case metadata.
+        reference = by_key.get(source_key)
         if reference is None:
             if len(references) >= 64:
                 continue  # No second table is required for a plain bound locator.
-            reference = {"source_key": item["source_key"], "input_alias": alias}
+            reference = {"source_key": source_key, "input_alias": alias}
             references.append(reference)
-            by_key[item["source_key"]] = reference
+            by_key[source_key] = reference
         elif reference.get("input_alias", alias) != alias:
             continue  # Never hide an explicit source conflict.
         reference.setdefault("input_alias", alias)
     for reference in references:
-        if not isinstance(reference, dict) or not isinstance(reference.get("input_alias"), str):
+        if (not isinstance(reference, dict) or not isinstance(reference.get("input_alias"), str)
+                or not isinstance(reference.get("source_key"), str)):
+            continue
+        if len(candidates.get(reference.get("source_key"), ())) > 1:
             continue
         known = view["sources"].get(reference["input_alias"])
         if known is None:
@@ -162,8 +247,12 @@ def materialize_references(payload, view):
 
 
 def finalize(request):
-    view = source_bindings(workspace_sources(request))
-    return finalize_result(request, lambda value: materialize_references(value["payload"], view))
+    sources = workspace_sources(request)
+    view = source_bindings(sources)
+    def project(value):
+        materialize_analysis_handoff(value)
+        materialize_references(value["payload"], view, sources.binding_descriptors)
+    return finalize_result(request, project)
 
 
 MATERIALIZER = CallableComponent("workspace_materializer", materialize)

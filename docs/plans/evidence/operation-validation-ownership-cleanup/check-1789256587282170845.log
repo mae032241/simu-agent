@@ -1,0 +1,37 @@
+{"second_alias": "solver_outputs_001", "reply": {"state": "completed", "receipt": {"head_advance": "not_requested", "completed_at": "2026-09-12T23:43:09.484762Z"}}, "sealed_source_references": [{"case_key": "baseline", "experiment_key": "implementation_check", "input_alias": "solver_outputs_001", "output_name": "A", "source_key": "raw_evidence"}]}
+.{"second_alias": "solver_outputs_002", "reply": {"state": "completed", "receipt": {"head_advance": "not_requested", "completed_at": "2026-09-12T23:43:10.050866Z"}}, "sealed_source_references": [{"case_key": "baseline", "experiment_key": "implementation_check", "input_alias": "solver_outputs_001", "output_name": "A", "source_key": "raw_evidence"}]}
+F
+=================================== FAILURES ===================================
+_ test_analysis_repeated_citation_keeps_one_source_identity[solver_outputs_002] _
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-251/test_analysis_repeated_citatio1')
+second_alias = 'solver_outputs_002'
+
+    @pytest.mark.parametrize('second_alias', ['solver_outputs_001', 'solver_outputs_002'])
+    def test_analysis_repeated_citation_keeps_one_source_identity(tmp_path, second_alias):
+        from tests.operations.test_tcad_result_analysis import analysis_system, open_analysis, analysis_report, write_analysis
+        system = analysis_system(tmp_path)
+        worker, opened = open_analysis(system)
+        report = analysis_report(alias='solver_outputs_001')
+        report['source_references'] = []
+        report['evidence'] = [
+            {'source_key': 'raw_evidence', 'source_type': 'runtime_output', 'title': 'Exact fixture result', 'locator': 'solver_outputs_001:row1'},
+            {'source_key': 'raw_evidence', 'source_type': 'runtime_output', 'title': 'Exact fixture result', 'locator': second_alias + ':row2'},
+        ]
+        write_analysis(opened, report)
+        reply = worker.call_tool('worker_submit_result', {})
+        summary = {'second_alias': second_alias, 'reply': reply}
+        if reply['state'] == 'completed':
+            status = system[2].call_tool('run_status', {'name': 'analysis'})
+            summary['sealed_source_references'] = status['sealed_output']['payload']['source_references']
+        print(json.dumps(summary))
+>       assert reply['state'] == ('completed' if second_alias == 'solver_outputs_001' else 'rejected')
+E       AssertionError: assert 'completed' == 'rejected'
+E         
+E         - rejected
+E         + completed
+
+/tmp/test_validation_cleanup_independent_probe.py:101: AssertionError
+=========================== short test summary info ============================
+FAILED ::test_analysis_repeated_citation_keeps_one_source_identity[solver_outputs_002]
+1 failed, 1 passed, 4 deselected in 2.59s

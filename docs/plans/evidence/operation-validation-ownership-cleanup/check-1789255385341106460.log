@@ -1,0 +1,557 @@
+....FF.....................................F...F...F............FFF..... [ 62%]
+...........................................                              [100%]
+=================================== FAILURES ===================================
+_ test_tcad_device_grid_is_one_declared_optional_port_and_debug_fails_closed[False] _
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-245/test_tcad_device_grid_is_one_d0')
+historical = False
+
+    @pytest.mark.parametrize("historical", (False, True))
+    def test_tcad_device_grid_is_one_declared_optional_port_and_debug_fails_closed(
+        tmp_path: Path, historical: bool,
+    ) -> None:
+        catalog, runtime, root, capability = _system(tmp_path)
+        author = catalog.operation("tcad.deck.author.revise.v1")
+        port = next(item for item in author.spec.inputs if item.name == "device_grid")
+        assert (port.schema_id, port.media_types, port.min_items, port.max_items) == (
+            "opaque",
+            ("application/octet-stream",),
+            0,
+            1,
+        )
+        assert sum(item.name == "device_grid" for item in author.spec.inputs) == 1
+        for operation_id in (
+            "tcad.deck.author.initial.v1",
+            "tcad.deck.review.v1",
+        ):
+            assert not any(
+                item.name == "device_grid"
+                for item in catalog.operation(operation_id).spec.inputs
+            )
+    
+        instance_id = runtime.scheduler_bindings.list_instances()[0].instance_id
+        wrong_grid = runtime.artifacts.register(
+            b"not-a-binary-grid",
+            ArtifactRegistration(
+                kind="tcad_solver_input",
+                schema_id="opaque",
+                payload_schema_version=1,
+                media_type="text/plain",
+                creator=runtime.actor,
+            ),
+            idempotency_key="l4:wrong-device-grid",
+        )
+        runtime.scheduler_bindings.bind(
+            instance=instance_id,
+            namespace="artifact",
+            name="wrong_device_grid",
+            object_id=wrong_grid.artifact_id,
+        )
+        _invoke(
+            root,
+            "grid_base",
+            "tcad.deck.author.initial.v1",
+            [
+                {"port": "execution_capability", "artifact_names": ["execution_capability"]},
+                {"port": "experiment_plan", "artifact_names": ["experiment_plan"]},
+            ],
+        )
+        initial = catalog.operation("tcad.deck.author.initial.v1")
+        worker = LocalWorkerMCPRouter(
+            runtime.runs,
+            operation_id=initial.spec.operation_id,
+            operation_digest=initial.digest,
+            tool_services={
+                "tcad_artifact:tcad.development_debug": LocalTCADDebugService(
+                    adapter=_ImmediateDebugAdapter(),
+                    exchange_root=tmp_path / "base-debug",
+                )
+            },
+        )
+        opened = worker.call_tool("worker_open_assignment", {})
+        _write_author_workspace(opened, _project(capability))
+        assert worker.call_tool(
+            "worker_tcad_debug_run", {"run_name": "preflight", "mode": "preflight"}
+        )["state"] == "succeeded"
+        assert worker.call_tool(
+            "worker_tcad_debug_run", {"run_name": "initialization", "mode": "initialization"}
+        )["state"] == "succeeded"
+        assert worker.call_tool("worker_submit_result", {})["state"] == "completed"
+        prior_name = root.call_tool("run_status", {"name": "grid_base"})[
+            "output_artifact_name"
+        ]
+    
+        if historical:
+            changed = TCAD_PLUGIN.model_copy(update={"operations": tuple(
+                op.model_copy(update={"version": "new-generation"})
+                if op.operation_id == "tcad.deck.author.initial.v1" else op
+                for op in TCAD_PLUGIN.operations)})
+            catalog = compile_catalog((CORE_PLUGIN, SCIENCE_PLUGIN, CURVE_PLUGIN, changed))
+            runtime.runs.operation_catalog = catalog
+            root.facade._operation_catalog = catalog
+            assert root.call_tool("run_status", {"name": "grid_base"})["sealed_output_status"] == "historical"
+    
+        _invoke(
+            root,
+            "grid_change_request",
+            "tcad.deck.review.v1",
+            [
+                {"port": "project", "artifact_names": [prior_name]},
+                {"port": "execution_capability", "artifact_names": ["execution_capability"]},
+                {"port": "experiment_plan", "artifact_names": ["experiment_plan"]},
+            ],
+        )
+        review_operation = catalog.operation("tcad.deck.review.v1")
+        reviewer = LocalWorkerMCPRouter(
+            runtime.runs,
+            operation_id=review_operation.spec.operation_id,
+            operation_digest=review_operation.digest,
+        )
+        review_open = reviewer.call_tool("worker_open_assignment", {})
+        change_request = DeckReviewReport(
+            verdict="revise",
+            capability_sha256=capability.canonical_sha256(),
+            summary="The direct SDevice source needs one exact device grid input.",
+            rationale="The source has no closed device-grid input.",
+            physical_fidelity="unknown",
+            implementation_fidelity="fail",
+            numerical_protocol_fidelity="fail",
+            requirement_reviews=(
+                DeckRequirementReview(
+                    requirement_key="entrypoint",
+                    status="fail",
+                    rationale="The entrypoint does not bind a device grid.",
+                ),
+            ),
+            execution_ready=False,
+        )
+        Path(str(review_open["output_directory"]), "result.json").write_bytes(
+            canonical_json(
+                {
+                    "schema_version": 1,
+                    "handoff": {
+                        "verdict": "revise",
+                        "summary": "Add the exact device grid input and review again.",
+                    },
+                    "payload": change_request.model_dump(mode="json"),
+                }
+            )
+        )
+        assert reviewer.call_tool("worker_submit_result", {})["state"] == "completed"
+        change_name = root.call_tool("run_status", {"name": "grid_change_request"})[
+            "output_artifact_name"
+        ]
+    
+        revision_inputs = [
+            {"port": "prior_project", "artifact_names": [prior_name]},
+            {"port": "change_request", "artifact_names": [change_name]},
+            {"port": "execution_capability", "artifact_names": ["execution_capability"]},
+            {"port": "experiment_plan", "artifact_names": ["experiment_plan"]},
+        ]
+        wrong_request = {
+            "name": "wrong_grid",
+            "operation_id": "tcad.deck.author.revise.v1",
+            "inputs": [
+                *revision_inputs,
+                {"port": "device_grid", "artifact_names": ["wrong_device_grid"]},
+            ],
+            "instruction": "Exercise the declared grid input.",
+        }
+>       assert root.call_tool("operation_preflight", wrong_request) == {
+            "admissible": False,
+            "reason_code": "input_media_type_mismatch",
+            "port": "device_grid",
+            "executor_kind": None,
+        }
+E       AssertionError: assert {'admissible'...d': None, ...} == {'admissible'...r_kind': None}
+E         
+E         Omitting 4 identical items, use -vv to show
+E         Left contains 1 more item:
+E         {'diagnostics': [{'affected_action': 'invoke',
+E                           'code': 'input_media_type_mismatch',
+E                           'message': 'The declared requirement was not satisfied.',
+E                           'path': '$.inputs.device_grid',...
+E         
+E         ...Full output truncated (4 lines hidden), use '-vv' to show
+
+tests/operations/test_l4_local_tcad.py:552: AssertionError
+_ test_tcad_device_grid_is_one_declared_optional_port_and_debug_fails_closed[True] _
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-245/test_tcad_device_grid_is_one_d1')
+historical = True
+
+    @pytest.mark.parametrize("historical", (False, True))
+    def test_tcad_device_grid_is_one_declared_optional_port_and_debug_fails_closed(
+        tmp_path: Path, historical: bool,
+    ) -> None:
+        catalog, runtime, root, capability = _system(tmp_path)
+        author = catalog.operation("tcad.deck.author.revise.v1")
+        port = next(item for item in author.spec.inputs if item.name == "device_grid")
+        assert (port.schema_id, port.media_types, port.min_items, port.max_items) == (
+            "opaque",
+            ("application/octet-stream",),
+            0,
+            1,
+        )
+        assert sum(item.name == "device_grid" for item in author.spec.inputs) == 1
+        for operation_id in (
+            "tcad.deck.author.initial.v1",
+            "tcad.deck.review.v1",
+        ):
+            assert not any(
+                item.name == "device_grid"
+                for item in catalog.operation(operation_id).spec.inputs
+            )
+    
+        instance_id = runtime.scheduler_bindings.list_instances()[0].instance_id
+        wrong_grid = runtime.artifacts.register(
+            b"not-a-binary-grid",
+            ArtifactRegistration(
+                kind="tcad_solver_input",
+                schema_id="opaque",
+                payload_schema_version=1,
+                media_type="text/plain",
+                creator=runtime.actor,
+            ),
+            idempotency_key="l4:wrong-device-grid",
+        )
+        runtime.scheduler_bindings.bind(
+            instance=instance_id,
+            namespace="artifact",
+            name="wrong_device_grid",
+            object_id=wrong_grid.artifact_id,
+        )
+        _invoke(
+            root,
+            "grid_base",
+            "tcad.deck.author.initial.v1",
+            [
+                {"port": "execution_capability", "artifact_names": ["execution_capability"]},
+                {"port": "experiment_plan", "artifact_names": ["experiment_plan"]},
+            ],
+        )
+        initial = catalog.operation("tcad.deck.author.initial.v1")
+        worker = LocalWorkerMCPRouter(
+            runtime.runs,
+            operation_id=initial.spec.operation_id,
+            operation_digest=initial.digest,
+            tool_services={
+                "tcad_artifact:tcad.development_debug": LocalTCADDebugService(
+                    adapter=_ImmediateDebugAdapter(),
+                    exchange_root=tmp_path / "base-debug",
+                )
+            },
+        )
+        opened = worker.call_tool("worker_open_assignment", {})
+        _write_author_workspace(opened, _project(capability))
+        assert worker.call_tool(
+            "worker_tcad_debug_run", {"run_name": "preflight", "mode": "preflight"}
+        )["state"] == "succeeded"
+        assert worker.call_tool(
+            "worker_tcad_debug_run", {"run_name": "initialization", "mode": "initialization"}
+        )["state"] == "succeeded"
+        assert worker.call_tool("worker_submit_result", {})["state"] == "completed"
+        prior_name = root.call_tool("run_status", {"name": "grid_base"})[
+            "output_artifact_name"
+        ]
+    
+        if historical:
+            changed = TCAD_PLUGIN.model_copy(update={"operations": tuple(
+                op.model_copy(update={"version": "new-generation"})
+                if op.operation_id == "tcad.deck.author.initial.v1" else op
+                for op in TCAD_PLUGIN.operations)})
+            catalog = compile_catalog((CORE_PLUGIN, SCIENCE_PLUGIN, CURVE_PLUGIN, changed))
+            runtime.runs.operation_catalog = catalog
+            root.facade._operation_catalog = catalog
+            assert root.call_tool("run_status", {"name": "grid_base"})["sealed_output_status"] == "historical"
+    
+        _invoke(
+            root,
+            "grid_change_request",
+            "tcad.deck.review.v1",
+            [
+                {"port": "project", "artifact_names": [prior_name]},
+                {"port": "execution_capability", "artifact_names": ["execution_capability"]},
+                {"port": "experiment_plan", "artifact_names": ["experiment_plan"]},
+            ],
+        )
+        review_operation = catalog.operation("tcad.deck.review.v1")
+        reviewer = LocalWorkerMCPRouter(
+            runtime.runs,
+            operation_id=review_operation.spec.operation_id,
+            operation_digest=review_operation.digest,
+        )
+        review_open = reviewer.call_tool("worker_open_assignment", {})
+        change_request = DeckReviewReport(
+            verdict="revise",
+            capability_sha256=capability.canonical_sha256(),
+            summary="The direct SDevice source needs one exact device grid input.",
+            rationale="The source has no closed device-grid input.",
+            physical_fidelity="unknown",
+            implementation_fidelity="fail",
+            numerical_protocol_fidelity="fail",
+            requirement_reviews=(
+                DeckRequirementReview(
+                    requirement_key="entrypoint",
+                    status="fail",
+                    rationale="The entrypoint does not bind a device grid.",
+                ),
+            ),
+            execution_ready=False,
+        )
+        Path(str(review_open["output_directory"]), "result.json").write_bytes(
+            canonical_json(
+                {
+                    "schema_version": 1,
+                    "handoff": {
+                        "verdict": "revise",
+                        "summary": "Add the exact device grid input and review again.",
+                    },
+                    "payload": change_request.model_dump(mode="json"),
+                }
+            )
+        )
+        assert reviewer.call_tool("worker_submit_result", {})["state"] == "completed"
+        change_name = root.call_tool("run_status", {"name": "grid_change_request"})[
+            "output_artifact_name"
+        ]
+    
+        revision_inputs = [
+            {"port": "prior_project", "artifact_names": [prior_name]},
+            {"port": "change_request", "artifact_names": [change_name]},
+            {"port": "execution_capability", "artifact_names": ["execution_capability"]},
+            {"port": "experiment_plan", "artifact_names": ["experiment_plan"]},
+        ]
+        wrong_request = {
+            "name": "wrong_grid",
+            "operation_id": "tcad.deck.author.revise.v1",
+            "inputs": [
+                *revision_inputs,
+                {"port": "device_grid", "artifact_names": ["wrong_device_grid"]},
+            ],
+            "instruction": "Exercise the declared grid input.",
+        }
+>       assert root.call_tool("operation_preflight", wrong_request) == {
+            "admissible": False,
+            "reason_code": "input_media_type_mismatch",
+            "port": "device_grid",
+            "executor_kind": None,
+        }
+E       AssertionError: assert {'admissible'...d': None, ...} == {'admissible'...r_kind': None}
+E         
+E         Omitting 4 identical items, use -vv to show
+E         Left contains 1 more item:
+E         {'diagnostics': [{'affected_action': 'invoke',
+E                           'code': 'input_media_type_mismatch',
+E                           'message': 'The declared requirement was not satisfied.',
+E                           'path': '$.inputs.device_grid',...
+E         
+E         ...Full output truncated (4 lines hidden), use '-vv' to show
+
+tests/operations/test_l4_local_tcad.py:552: AssertionError
+_ test_negative_deck_review_can_report_implementation_defects[revise-uncertainty] _
+
+defect = 'uncertainty', verdict = 'revise'
+
+    @pytest.mark.parametrize("defect", ("case", "value", "unit", "uncertainty"))
+    @pytest.mark.parametrize("verdict", ("revise", "blocked"))
+    def test_negative_deck_review_can_report_implementation_defects(defect, verdict):
+        project, sources, report = _review_context_fixture(defect)
+        report.update(verdict=verdict, execution_ready=False, implementation_fidelity="fail",
+                      missing_inputs=[f"Resolve the {defect} implementation gap."])
+        _review_context(report, sources, {"verdict": verdict})
+        # The same exact project remains inadmissible as an author result, even blocked.
+>       with pytest.raises(SemanticRuleViolation):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE SemanticRuleViolation
+
+tests/operations/test_l4_local_tcad.py:1703: Failed
+_ test_negative_deck_review_can_report_implementation_defects[blocked-uncertainty] _
+
+defect = 'uncertainty', verdict = 'blocked'
+
+    @pytest.mark.parametrize("defect", ("case", "value", "unit", "uncertainty"))
+    @pytest.mark.parametrize("verdict", ("revise", "blocked"))
+    def test_negative_deck_review_can_report_implementation_defects(defect, verdict):
+        project, sources, report = _review_context_fixture(defect)
+        report.update(verdict=verdict, execution_ready=False, implementation_fidelity="fail",
+                      missing_inputs=[f"Resolve the {defect} implementation gap."])
+        _review_context(report, sources, {"verdict": verdict})
+        # The same exact project remains inadmissible as an author result, even blocked.
+>       with pytest.raises(SemanticRuleViolation):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE SemanticRuleViolation
+
+tests/operations/test_l4_local_tcad.py:1703: Failed
+_ test_deck_review_cannot_pass_the_same_implementation_defects[uncertainty-blocking-unbounded] _
+
+defect = 'uncertainty', diagnostic = 'blocking-unbounded'
+
+    @pytest.mark.parametrize("defect, diagnostic", (
+        ("case", "case_parameter_bindings"), ("value", "approved parameter value"),
+        ("unit", "approved parameter value"), ("uncertainty", "blocking-unbounded"),
+    ))
+    def test_deck_review_cannot_pass_the_same_implementation_defects(defect, diagnostic):
+        _, sources, report = _review_context_fixture(defect)
+>       with pytest.raises(SemanticRuleViolation, match=diagnostic):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE SemanticRuleViolation
+
+tests/operations/test_l4_local_tcad.py:1713: Failed
+_ test_deck_review_keeps_exact_input_and_report_validation[uncertainty_parse-pass] _
+
+verdict = 'pass', mismatch = 'uncertainty_parse'
+
+    @pytest.mark.parametrize("verdict", ("pass", "revise", "blocked"))
+    @pytest.mark.parametrize("mismatch", (
+        "project_parse", "plan_parse", "parameters_parse", "coverage_parse", "uncertainty_parse",
+        "coverage_identity", "missing_coverage", "approved_key", "handoff", "subject", "capability",
+    ))
+    def test_deck_review_keeps_exact_input_and_report_validation(verdict, mismatch):
+        project, sources, report = _review_context_fixture("none")
+        report.update(verdict=verdict, execution_ready=verdict == "pass")
+        handoff = {"verdict": verdict}
+        if mismatch.endswith("_parse"):
+            port = {"parameters": "device_parameters", "plan": "experiment_plan"}.get(
+                mismatch[:-6], mismatch[:-6])
+            if port == "coverage":
+                port = "parameter_coverage"
+            if port == "uncertainty":
+                port = "parameter_uncertainty"
+            sources[port] = b"{}"
+        elif mismatch == "coverage_identity":
+            coverage = json.loads(sources["parameter_coverage"])
+            coverage["parameter_set_key"] = "another_set"
+            sources["parameter_coverage"] = canonical_json(coverage)
+        elif mismatch == "missing_coverage":
+            sources.pop("parameter_coverage")
+        elif mismatch == "approved_key":
+            value = project.model_dump(mode="json")
+            value["parameter_bindings"][0]["approved_parameter_key"] = "unknown"
+            sources["project"] = canonical_json(value)
+        elif mismatch == "handoff":
+            handoff["verdict"] = "blocked" if verdict != "blocked" else "revise"
+        elif mismatch == "subject":
+            report["requirement_reviews"][0]["requirement_key"] = "another_subject"
+        elif mismatch == "capability":
+            report["capability_sha256"] = "f" * 64
+        if mismatch in {"coverage_identity", "missing_coverage", "parameters_parse", "coverage_parse"}:
+            from tcad_artifact.plugin import _parameter_inputs
+            with pytest.raises(Exception):
+                _parameter_inputs(sources)
+        elif mismatch == "approved_key" and verdict != "pass":
+            _review_context(report, sources, handoff)
+        else:
+>           with pytest.raises((SemanticRuleViolation, ValidationError, BoundSourceError)):
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           Failed: DID NOT RAISE any of (SemanticRuleViolation, ValidationError, BoundSourceError)
+
+tests/operations/test_l4_local_tcad.py:1757: Failed
+_ test_deck_review_keeps_exact_input_and_report_validation[uncertainty_parse-revise] _
+
+verdict = 'revise', mismatch = 'uncertainty_parse'
+
+    @pytest.mark.parametrize("verdict", ("pass", "revise", "blocked"))
+    @pytest.mark.parametrize("mismatch", (
+        "project_parse", "plan_parse", "parameters_parse", "coverage_parse", "uncertainty_parse",
+        "coverage_identity", "missing_coverage", "approved_key", "handoff", "subject", "capability",
+    ))
+    def test_deck_review_keeps_exact_input_and_report_validation(verdict, mismatch):
+        project, sources, report = _review_context_fixture("none")
+        report.update(verdict=verdict, execution_ready=verdict == "pass")
+        handoff = {"verdict": verdict}
+        if mismatch.endswith("_parse"):
+            port = {"parameters": "device_parameters", "plan": "experiment_plan"}.get(
+                mismatch[:-6], mismatch[:-6])
+            if port == "coverage":
+                port = "parameter_coverage"
+            if port == "uncertainty":
+                port = "parameter_uncertainty"
+            sources[port] = b"{}"
+        elif mismatch == "coverage_identity":
+            coverage = json.loads(sources["parameter_coverage"])
+            coverage["parameter_set_key"] = "another_set"
+            sources["parameter_coverage"] = canonical_json(coverage)
+        elif mismatch == "missing_coverage":
+            sources.pop("parameter_coverage")
+        elif mismatch == "approved_key":
+            value = project.model_dump(mode="json")
+            value["parameter_bindings"][0]["approved_parameter_key"] = "unknown"
+            sources["project"] = canonical_json(value)
+        elif mismatch == "handoff":
+            handoff["verdict"] = "blocked" if verdict != "blocked" else "revise"
+        elif mismatch == "subject":
+            report["requirement_reviews"][0]["requirement_key"] = "another_subject"
+        elif mismatch == "capability":
+            report["capability_sha256"] = "f" * 64
+        if mismatch in {"coverage_identity", "missing_coverage", "parameters_parse", "coverage_parse"}:
+            from tcad_artifact.plugin import _parameter_inputs
+            with pytest.raises(Exception):
+                _parameter_inputs(sources)
+        elif mismatch == "approved_key" and verdict != "pass":
+            _review_context(report, sources, handoff)
+        else:
+>           with pytest.raises((SemanticRuleViolation, ValidationError, BoundSourceError)):
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           Failed: DID NOT RAISE any of (SemanticRuleViolation, ValidationError, BoundSourceError)
+
+tests/operations/test_l4_local_tcad.py:1757: Failed
+_ test_deck_review_keeps_exact_input_and_report_validation[uncertainty_parse-blocked] _
+
+verdict = 'blocked', mismatch = 'uncertainty_parse'
+
+    @pytest.mark.parametrize("verdict", ("pass", "revise", "blocked"))
+    @pytest.mark.parametrize("mismatch", (
+        "project_parse", "plan_parse", "parameters_parse", "coverage_parse", "uncertainty_parse",
+        "coverage_identity", "missing_coverage", "approved_key", "handoff", "subject", "capability",
+    ))
+    def test_deck_review_keeps_exact_input_and_report_validation(verdict, mismatch):
+        project, sources, report = _review_context_fixture("none")
+        report.update(verdict=verdict, execution_ready=verdict == "pass")
+        handoff = {"verdict": verdict}
+        if mismatch.endswith("_parse"):
+            port = {"parameters": "device_parameters", "plan": "experiment_plan"}.get(
+                mismatch[:-6], mismatch[:-6])
+            if port == "coverage":
+                port = "parameter_coverage"
+            if port == "uncertainty":
+                port = "parameter_uncertainty"
+            sources[port] = b"{}"
+        elif mismatch == "coverage_identity":
+            coverage = json.loads(sources["parameter_coverage"])
+            coverage["parameter_set_key"] = "another_set"
+            sources["parameter_coverage"] = canonical_json(coverage)
+        elif mismatch == "missing_coverage":
+            sources.pop("parameter_coverage")
+        elif mismatch == "approved_key":
+            value = project.model_dump(mode="json")
+            value["parameter_bindings"][0]["approved_parameter_key"] = "unknown"
+            sources["project"] = canonical_json(value)
+        elif mismatch == "handoff":
+            handoff["verdict"] = "blocked" if verdict != "blocked" else "revise"
+        elif mismatch == "subject":
+            report["requirement_reviews"][0]["requirement_key"] = "another_subject"
+        elif mismatch == "capability":
+            report["capability_sha256"] = "f" * 64
+        if mismatch in {"coverage_identity", "missing_coverage", "parameters_parse", "coverage_parse"}:
+            from tcad_artifact.plugin import _parameter_inputs
+            with pytest.raises(Exception):
+                _parameter_inputs(sources)
+        elif mismatch == "approved_key" and verdict != "pass":
+            _review_context(report, sources, handoff)
+        else:
+>           with pytest.raises((SemanticRuleViolation, ValidationError, BoundSourceError)):
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           Failed: DID NOT RAISE any of (SemanticRuleViolation, ValidationError, BoundSourceError)
+
+tests/operations/test_l4_local_tcad.py:1757: Failed
+=========================== short test summary info ============================
+FAILED tests/operations/test_l4_local_tcad.py::test_tcad_device_grid_is_one_declared_optional_port_and_debug_fails_closed[False]
+FAILED tests/operations/test_l4_local_tcad.py::test_tcad_device_grid_is_one_declared_optional_port_and_debug_fails_closed[True]
+FAILED tests/operations/test_l4_local_tcad.py::test_negative_deck_review_can_report_implementation_defects[revise-uncertainty]
+FAILED tests/operations/test_l4_local_tcad.py::test_negative_deck_review_can_report_implementation_defects[blocked-uncertainty]
+FAILED tests/operations/test_l4_local_tcad.py::test_deck_review_cannot_pass_the_same_implementation_defects[uncertainty-blocking-unbounded]
+FAILED tests/operations/test_l4_local_tcad.py::test_deck_review_keeps_exact_input_and_report_validation[uncertainty_parse-pass]
+FAILED tests/operations/test_l4_local_tcad.py::test_deck_review_keeps_exact_input_and_report_validation[uncertainty_parse-revise]
+FAILED tests/operations/test_l4_local_tcad.py::test_deck_review_keeps_exact_input_and_report_validation[uncertainty_parse-blocked]
+8 failed, 107 passed in 31.29s

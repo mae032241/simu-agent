@@ -24,7 +24,11 @@ class RunNotFound(RunError):
 
 
 class RunStateConflict(RunError):
-    pass
+    def __init__(self, message: str, *, run_id: str | None = None) -> None:
+        super().__init__(message)
+        # Internal ownership for failures after an assignment has been selected.
+        # The Worker wire diagnostic never exposes this control identifier.
+        self.run_id = run_id
 
 
 class RunAttemptLimit(RunStateConflict):

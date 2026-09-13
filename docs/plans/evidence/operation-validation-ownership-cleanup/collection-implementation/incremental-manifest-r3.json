@@ -1,0 +1,284 @@
+{
+  "baseline_root": "/tmp/scid-collection-baseline-1789276126341295526",
+  "head": "be5da77acdbf98054e0b096fc4e940de560d4ba1",
+  "plan_sha256": "db00f49fe6070c5babba0dfffcb55dadeae293001d2b5cf404ed79de8d16f592",
+  "files": [
+    {
+      "path": "docs/ARCHITECTURE.md",
+      "before_sha256": "f667169251a731de7a9cab0bac7267b61968d1de1d3fbc73925cea345c389912",
+      "after_sha256": "f691aa698f78ba79c5995b39921bdbe6ceb3444148dabe44bad8557815a8377c",
+      "status": "modified"
+    },
+    {
+      "path": "docs/ARCHITECTURE.zh-CN.md",
+      "before_sha256": "7bc07fc1e2bcd14af7f95f315e921e1af7818b4652abad74cbde85d3a9c5f67a",
+      "after_sha256": "3a7cef6da3deb0ebd7a9edfd3b89500a9f87fc3c01a69c08b201c5fc45a4c890",
+      "status": "modified"
+    },
+    {
+      "path": "docs/plans/README.md",
+      "before_sha256": "36f8a9b0fc51a4580a9f865e191a9cbca27c56ff59fa464c57a544c8faf77249",
+      "after_sha256": "b3454ba45fde176a258185d80874c1901c6ef6bcc18b02127ca7caa41b80e7f3",
+      "status": "modified"
+    },
+    {
+      "path": "plugins/curve_score/curve_score/analysis_workspace.py",
+      "before_sha256": "b4952e7b1f8208370abb8fa18c07eb9a597e670250e9506053f5f8193b12e3c7",
+      "after_sha256": "503b6b8bb72b5f4681e0c260feddc9d43ec300f8bb4571f046501edbf5cece6c",
+      "status": "modified"
+    },
+    {
+      "path": "plugins/tcad_artifact/config/command-adapter.example.json",
+      "before_sha256": "581031ff795c1b13baccd1dec5f5bede6459fc4d0f289ea6996edc55bfa0df66",
+      "after_sha256": "15f0a8e6a53a66cfaf32f103a8fe5a0278b19bafeadcb7becfee4e1e8acb678f",
+      "status": "modified"
+    },
+    {
+      "path": "plugins/tcad_artifact/tcad_artifact/command_adapter.py",
+      "before_sha256": "2974055f65e21cac93e216dc7a55330d4f822afc39ccb3c1e087b1576954679b",
+      "after_sha256": "e471fc5ac033645e523a7d469a2683ca5913c33e03e0d960da4f6bb5cede3c25",
+      "status": "modified"
+    },
+    {
+      "path": "plugins/tcad_artifact/tcad_artifact/debug_adapter.py",
+      "before_sha256": "151b894e058c975448002956fb90873df5b508b500902510ece181ccd26bf3ce",
+      "after_sha256": "c11cb5de40dcdf578e8a035aed69d9dabfcf6c6d8ae73b02624b0f7fec2fb7cf",
+      "status": "modified"
+    },
+    {
+      "path": "plugins/tcad_artifact/tcad_artifact/debug_contract.py",
+      "before_sha256": "b7de9a4227a558eb067989e31eb2e395618c7f982e341ee1efe1916f5ff683b0",
+      "after_sha256": "35bda6891fe3dfa72e9a6917ad6b0b447a3117cdf4abefd6b33615ae3f68c919",
+      "status": "modified"
+    },
+    {
+      "path": "plugins/tcad_artifact/tcad_artifact/execution_adapter.py",
+      "before_sha256": "b15cc67d5d00dd71c81231c0c32e867fc6510f28b3ec117467dda553d01534df",
+      "after_sha256": "4a83f1ec2111587eb0efcf0c3714deb70b22ece29c06a6c7f628b0a8815e3d81",
+      "status": "modified"
+    },
+    {
+      "path": "plugins/tcad_artifact/tcad_artifact/execution_control.py",
+      "before_sha256": "093214bcfc605a63766993cb87635fc251a82eb1e16b6c96fb16ac2e6ebef9a2",
+      "after_sha256": "4e9961c8570c6c040748c9e13a6adfb34ed95e81229434ce28359f8c230bd7db",
+      "status": "modified"
+    },
+    {
+      "path": "plugins/tcad_artifact/tcad_artifact/execution_mcp.py",
+      "before_sha256": "dda150f4b57c14fead6cc8756919059d91b49a9c14d8e63fe79c9a03fb759c9c",
+      "after_sha256": "a31c68e1f78be5124672c31c24aefc26f9fc33d5b4c2f87bf3ef581b593b96fa",
+      "status": "modified"
+    },
+    {
+      "path": "plugins/tcad_artifact/tcad_artifact/local_debug_service.py",
+      "before_sha256": "dd41ec285365c05bbf7e75c5976ce95a8ca8065438c07412b769f00f2757294b",
+      "after_sha256": "376443edcb723db5b3ae5ca9d349642f7523969ea7f736f1428ba1f91cf77227",
+      "status": "modified"
+    },
+    {
+      "path": "plugins/tcad_artifact/tcad_artifact/output_recovery.py",
+      "before_sha256": "2dca2e6bb4d092a8e6b4ac1ef5ba45f0446b83b156f6518f846fb9825cb2ec78",
+      "after_sha256": "2e2374cd8207a720ff30e19d771cbf3f2c7c3af2ec6f3e3a5aad39690e6882c1",
+      "status": "modified"
+    },
+    {
+      "path": "plugins/tcad_artifact/tcad_artifact/remote_runner_py36.py",
+      "before_sha256": "bf8372e70af057114075c1b08a4303ad5ad32f3bc5bfce32ca6e8c35ff882c18",
+      "after_sha256": "c4ccc3f3d11f236275b89c6576c6195c14adbd48c791fac23c44f987b02d4ec3",
+      "status": "modified"
+    },
+    {
+      "path": "plugins/tcad_artifact/tcad_artifact/runtime_plugin.py",
+      "before_sha256": "b15c1f601263b1a3a3237f217e2496dd2e3a743831ee6a8f4e21207735ba4b55",
+      "after_sha256": "6378300a81ebab703bc81c9f915f72b4060674f1e48f394c9f0c5c2cf607d01d",
+      "status": "modified"
+    },
+    {
+      "path": "plugins/tcad_artifact/tcad_artifact/ssh_transport.py",
+      "before_sha256": "f0f6b3f9587450fdfa4b3a4125e4f5fa83481943a6824ba70a107f23fcd34d9b",
+      "after_sha256": "f07b07a1c7fe24f494373c09cef0595c2882edc710f63ae9c22b34ca81c484d8",
+      "status": "modified"
+    },
+    {
+      "path": "roles/scheduler.md",
+      "before_sha256": "aa667ca7b041d0323c19481edcb0701124103581fb5d9097392b655afad10011",
+      "after_sha256": "1411c9d4986c2113494eff052c4cd156b4490d2d7396e90e3511416f366c21ab",
+      "status": "modified"
+    },
+    {
+      "path": "scripts/m7_live_effect_probe.py",
+      "before_sha256": "194daf742d552baf122a746c5330d5e7744141bf74c4ca08ac16a60148478b64",
+      "after_sha256": "2de137757c1a6c14c1064e2fdf83f19008c1adfe1ec6de73ce6580abd49bcc5b",
+      "status": "modified"
+    },
+    {
+      "path": "src/scidiscovery/artifact_agent/execution_bridge.py",
+      "before_sha256": "1c6909c238c3ba0f041c1718b8b57dca39cfc63dea201d47de90a3ebf8b6104f",
+      "after_sha256": "a34af6778adfbb2b0f14c38a3819c71da6558464ebaaa554f9ae28cd32cab885",
+      "status": "modified"
+    },
+    {
+      "path": "src/scidiscovery/artifact_agent/interfaces/mcp.py",
+      "before_sha256": "bfa9bcf72f16585f2d942742ba9d3d28a72415bd32abb6bf7fc18b74243f1189",
+      "after_sha256": "be7d3b2803ec495692e68530f190f1d32392268d25da49075e35ed5e10dbeb23",
+      "status": "modified"
+    },
+    {
+      "path": "src/scidiscovery/artifact_agent/interfaces/mcp_daemon.py",
+      "before_sha256": "1836e456ce9c2f63d27499cf92708ac1f9f6341c82e069bfee196722f2460ea1",
+      "after_sha256": "e556cccdeb6061c2b3c57d7151e1bd7a445bd5c943e269222725d91903dc65dd",
+      "status": "modified"
+    },
+    {
+      "path": "src/scidiscovery/artifact_agent/interfaces/mcp_hardened_worker.py",
+      "before_sha256": "8fec3ac7f4b2c7e6df7969dc709605e65e7c8c315cfabc22aeeb009505947308",
+      "after_sha256": "bfff51091ad5ab7a431ca8ae249320e5078dd901bbb61421b8e84c9d6c47ebf7",
+      "status": "modified"
+    },
+    {
+      "path": "src/scidiscovery/artifact_agent/interfaces/mcp_local_worker.py",
+      "before_sha256": "89ce55563a1f39341fae6732341339a7db40f4fd41354258120ffc88451bb724",
+      "after_sha256": "068ee7b247f88844c28a5b73597f351e04f19c19de4773be4072c8d5098872b5",
+      "status": "modified"
+    },
+    {
+      "path": "src/scidiscovery/artifact_agent/interfaces/mcp_proxy.py",
+      "before_sha256": "00ad87250bc0f4e385e4bb229da0cee0ee907c39fc0d70892e6a1265ed893a16",
+      "after_sha256": "50fce9cb0956f83f67d27555afa7962007346526a0c813d6c6ecec14e7dd9890",
+      "status": "modified"
+    },
+    {
+      "path": "src/scidiscovery/artifact_agent/interfaces/mcp_root.py",
+      "before_sha256": "dc2bcd3b1b894a4c933651c7c352dc09c3474ea9a72516986b20425bc2625bbf",
+      "after_sha256": "0838d20efccb9e32432272beeba52f6fdbff3e37cdd227b4bfe3081dfe4d78da",
+      "status": "modified"
+    },
+    {
+      "path": "src/scidiscovery/artifact_agent/interfaces/mcp_root_execution_routes.py",
+      "before_sha256": "16ac2a19d99a1ace61ba81fcf2fa9ff28f1495cebfbdf09864c0e629e78588d6",
+      "after_sha256": "fb5cb70c4ff74e3a46d706ab73318d36dc570a936ffdfc39ae032428bb435307",
+      "status": "modified"
+    },
+    {
+      "path": "src/scidiscovery/artifact_agent/interfaces/mcp_root_run_routes.py",
+      "before_sha256": "5c742c562c775cdd4ceced4729a83fc62d06c140019d216984ae65c403562562",
+      "after_sha256": "062d474349ba5cdc2a6fc17952d0b5006fe642e80c1bf63abb54fdab1a0b6840",
+      "status": "modified"
+    },
+    {
+      "path": "src/scidiscovery/artifact_agent/runtime_plugin_bindings.py",
+      "before_sha256": "32fc4aa8f1f38b8217aaba0da5c0e6bb3e0adbbeee72f0dc624150fe426b5074",
+      "after_sha256": "692742e5e1d3316e55dd729f89f93454c99c02aa2b700437fec5857e9d23d8ee",
+      "status": "modified"
+    },
+    {
+      "path": "src/scidiscovery/artifact_agent/service/artifacts.py",
+      "before_sha256": "4424dd11de453c85a416398ba7baf059690dd33bcd1cb4c8a0cf0903c09ddd3d",
+      "after_sha256": "971c765b404823623d414e54a7292a731a9493e4a59e12ea8300a0683a55050c",
+      "status": "modified"
+    },
+    {
+      "path": "src/scidiscovery/artifact_agent/service/executions.py",
+      "before_sha256": "4be8037e63a8787319902a37e5a06043ccdb5a08c3d6d0ff8dafe75b3f104def",
+      "after_sha256": "787cc4347cd629f7a31250dfee172f0514eb61f9e66c87ef3154ecf47eb580df",
+      "status": "modified"
+    },
+    {
+      "path": "src/scidiscovery/artifact_agent/service/local_process_observation.py",
+      "before_sha256": "14dee17d9a76cd1fb7f8516e76133f310a4568921ddafeb91a4cbf66ffab84e0",
+      "after_sha256": "03a893dbe28b367290c54651397495d870de29a06c1c9d3ffa7aced8f580d544",
+      "status": "modified"
+    },
+    {
+      "path": "src/scidiscovery/artifact_agent/service/runs.py",
+      "before_sha256": "fd25010ffb9d1918dd101035a90c79715e5a0384431a70bd6c8237abff773cbf",
+      "after_sha256": "d51203c69fd5841bdf6f97b297bdefd832b6409fde816a96d1396c7ad45ac8a1",
+      "status": "modified"
+    },
+    {
+      "path": "src/scidiscovery/artifact_agent/storage/sqlite.py",
+      "before_sha256": "e9553531915216b4f679bcd3cd98aa8073e20b5f498e580e883b4388004179ed",
+      "after_sha256": "7e8096345345cb671a0f1d4d702d519aa23fce2a6cb6986a3d422fb9f525b116",
+      "status": "modified"
+    },
+    {
+      "path": "src/scidiscovery/operation_contract.py",
+      "before_sha256": "9f1bbd9e5a24d0a26e0f896c2469049a44bf28b6d309c3ce2cdc1be36f04a585",
+      "after_sha256": "37f98de9e19dee5ecacd9b5e45bcc9aa2ec89903aac08f9708f08a0d92848312",
+      "status": "modified"
+    },
+    {
+      "path": "src/scidiscovery/platforms/codex.py",
+      "before_sha256": "76386b7ea3a2641ef584eda7cf3f415092b8153693617b7f9483775e6c53c5fa",
+      "after_sha256": "c88e004b30c50539ad1129e5ae7befc1b8af6e08bcf064755e002ad3fd6e8fcf",
+      "status": "modified"
+    },
+    {
+      "path": "tests/artifact_agent/test_deploy_scripts.py",
+      "before_sha256": "8312fea4d7bf70d86ac285f5726715fe5614f04b9d443c01b3d754ee3f4309ad",
+      "after_sha256": "58e1125972cb943096e9b1d0dceaa31f74272f291bae7a4124dc099b20cdcfe8",
+      "status": "modified"
+    },
+    {
+      "path": "tests/artifact_agent/test_platform_configuration.py",
+      "before_sha256": "f8d2a4c141bfc7ef04005f21216fbff58f5e057c2331af9b531d92bfc900c2ab",
+      "after_sha256": "5afdaf3663025122c1a21bfe6f5461c86af5de3b23b813700f6cb779dc6dc037",
+      "status": "modified"
+    },
+    {
+      "path": "tests/operations/test_analysis_evidence_recovery.py",
+      "before_sha256": "b3c9910dde6cf5b97d1aa75d86f1ea0552d9c1e441744106638a8e586b39c78d",
+      "after_sha256": "87aef44a9a435f245aa0790b8e0efc67874728907e25e542303e163537002d25",
+      "status": "modified"
+    },
+    {
+      "path": "tests/operations/test_baseline_effect_lifecycle.py",
+      "before_sha256": "eed03202a63996c44fcd2c730727898369ed2ed8dc8957ee4bd08f2a73b0ffb1",
+      "after_sha256": "a0195d41d2b1b1c44d574172c40de01cb08c797c7245d78c8ff8fc2ae5cb6526",
+      "status": "modified"
+    },
+    {
+      "path": "tests/operations/test_l4_local_tcad.py",
+      "before_sha256": "b875198f44c7f34a9af66eaeeccadfeb2bf3b76366cc3f8c35cfd9d3e78520fc",
+      "after_sha256": "7c8c1e51b041c028a2c72e159852942f35a051068954bf29736bc955ff5e2a1d",
+      "status": "modified"
+    },
+    {
+      "path": "tests/operations/test_tcad_log_progress.py",
+      "before_sha256": "1e5f1b6876ff5da49735c7763379214a07d799a842df2c1b7e2ed86b121cb03e",
+      "after_sha256": "38c6728ce6e2f601b111fa84c74681a6f56d28bfd1b590d42fbac7825cc45bd7",
+      "status": "modified"
+    },
+    {
+      "path": "src/scidiscovery/artifact_agent/service/engineering_diagnostics.py",
+      "before_sha256": null,
+      "after_sha256": "d7c40b51ac7f15e7703b3388a7b87639eaa4fe174f88351893c47a157eef368b",
+      "status": "new"
+    },
+    {
+      "path": "src/scidiscovery/artifact_agent/service/execution_collection.py",
+      "before_sha256": null,
+      "after_sha256": "b9e870f4be5480abb441544e2953be12aa9dd6050788d00ff9ea8244de42326b",
+      "status": "new"
+    },
+    {
+      "path": "plugins/tcad_artifact/tcad_artifact/debug_collection.py",
+      "before_sha256": null,
+      "after_sha256": "20b0f13760ed90c4ac62fcabda3483750efee1c1db9f9d47d1ee37b6aee8d5b0",
+      "status": "new"
+    },
+    {
+      "path": "tests/operations/test_execution_collection.py",
+      "before_sha256": null,
+      "after_sha256": "c627f7eed8941c0f7462492c668c1035bcbfa4759928db5512c7a579232c2cef",
+      "status": "new"
+    },
+    {
+      "path": "docs/tcad_transport_contract.md",
+      "before_sha256": null,
+      "after_sha256": "7bb3eded408d478a37195e045392f45adfded7798ea85524890bfbb409cff803",
+      "status": "current_only_no_baseline"
+    }
+  ],
+  "revision_record_sha256": "454b106dfb00758711cdb3fdf3715fc9cb15664de813bac4eb0a44f393befccf"
+}

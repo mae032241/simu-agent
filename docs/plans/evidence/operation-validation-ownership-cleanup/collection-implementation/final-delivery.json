@@ -1,0 +1,18 @@
+{
+  "review": "INDEPENDENT_REVIEW_R6.zh-CN.md",
+  "review_sha256": "3ee8b44c1e1b5d08def64906195d7a2f6373378297cb1eaa08e19b63f0dc0a43",
+  "reviewed_manifest": "incremental-manifest-r6.json",
+  "reviewed_manifest_sha256": "b61461c85e5c600b16b81bbb268d62017c7807123092ae1b586c6c1ffdfc465c",
+  "scope": "Linux local_trusted TCAD control; no production deployment or scientific acceptance",
+  "production_and_test_bytes_unchanged_after_review": true,
+  "post_review_index_changes": [
+    {
+      "path": "docs/plans/README.md",
+      "reviewed_sha256": "b3454ba45fde176a258185d80874c1901c6ef6bcc18b02127ca7caa41b80e7f3",
+      "delivery_sha256": "3918671fdb1f539515b2682851d66c68bfa4b9947f47d2073f7f60df030220c3",
+      "reason": "review completion status only"
+    }
+  ],
+  "execution_record_sha256": "87ec54a9960ef4c2623a0208081545179ca2190a4b0ef767fb8d1f73ec8e2274",
+  "installed_smoke_sha256": "9016be6b492a6f775fa623237044e7690d4ea45b759878c149ee7d3ec41f0a40"
+}

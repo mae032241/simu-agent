@@ -5,6 +5,8 @@ from __future__ import annotations
 import argparse
 import re
 import threading
+import signal
+import os
 from collections import OrderedDict
 from contextlib import nullcontext
 from pathlib import Path
@@ -15,6 +17,7 @@ from scidiscovery.interfaces.daemon import UnixSocketDaemon
 from .mcp import build_root_router
 from .mcp_proxy import SCHEDULER_PROXY_FIELD
 from ..service import StateMaintenanceLock
+from ..service.execution_collection import ExecutionCollection, open_collection_executions
 from scidiscovery.operations.catalog import compile_installed_catalog
 from ..runtime_plugin_bindings import (
     load_runtime_plugin_contributions,
@@ -67,7 +70,7 @@ class RootBrokerRouter:
         context = nullcontext()
         if self.maintenance is not None:
             context = (
-                self.maintenance.exclusive()
+                self.maintenance.exclusive(blocking=False)
                 if exclusive
                 else self.maintenance.shared()
             )
@@ -125,6 +128,9 @@ def main(argv: list[str] | None = None) -> int:
     maintenance = StateMaintenanceLock(
         state_root / "maintenance.lock", shared_group=True
     )
+    with maintenance.shared():
+        collection = ExecutionCollection(open_collection_executions(state_root),
+            plugin_configs={key: str(value) for key, value in plugin_configs.items()})
     router = RootBrokerRouter(
         lambda proxy_id: build_root_router(
             project_root=project_root,
@@ -137,15 +143,21 @@ def main(argv: list[str] | None = None) -> int:
             scheduler_creation_lock=creation_lock,
             worker_backend=args.worker_backend,
             local_workspace_root=args.local_workspace_root,
+            execution_collection=collection,
         ),
         maintenance=maintenance,
     )
-    UnixSocketDaemon(
-        args.socket,
-        router,
-        max_connections=args.max_connections,
-        socket_mode=0o660,
-    ).serve_forever()
+    def stop(*_):
+        collection.close()
+        signal.signal(signal.SIGTERM, signal.SIG_DFL)
+        os.kill(os.getpid(), signal.SIGTERM)
+    previous_term = signal.signal(signal.SIGTERM, stop)
+    try:
+        UnixSocketDaemon(args.socket, router, max_connections=args.max_connections,
+            socket_mode=0o660).serve_forever()
+    finally:
+        collection.close()
+        signal.signal(signal.SIGTERM, previous_term)
     return 0
 
 

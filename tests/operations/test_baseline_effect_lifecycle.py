@@ -234,9 +234,28 @@ finally:
 
 started = root.call_tool("execution_start", {"name": "no_effect_execution"})
 assert started["state"] == "submitted"
-collected = root.call_tool("execution_sync", {"name": "no_effect_execution"})
-assert collected["state"] == "collected"
-assert root.call_tool("execution_sync", {"name": "no_effect_execution"}) == collected
+terminal = root.call_tool("execution_sync", {"name": "no_effect_execution"})
+assert terminal["state"] == "succeeded"
+# This fixture owns an in-memory adapter. Freeze its completed download and
+# exercise installed background ingestion independently from adapter discovery.
+from scidiscovery.artifact_agent.service.execution_collection import ExecutionCollection
+from scidiscovery.artifact_agent.service.engineering_diagnostics import atomic_json
+import time
+collector = ExecutionCollection(runtime.executions, plugin_configs={})
+root.facade.execution_collection = collector
+execution_id = root.facade._resolve("execution", "no_effect_execution")
+atomic_json(collector.directory(execution_id) / "outputs.json", {
+    "outputs": [item.model_dump(mode="json") for item in adapter.collect("no-effect-run")],
+    "collected_at": "2026-09-13T00:00:00Z"})
+try:
+    root.call_tool("execution_collect", {"name": "no_effect_execution", "total_seconds": 10})
+    deadline = time.monotonic() + 12
+    while root.call_tool("execution_status", {"name": "no_effect_execution"})["state"] != "collected":
+        assert time.monotonic() < deadline, collector.summary(execution_id)
+        time.sleep(.05)
+finally:
+    collector.close()
+assert root.call_tool("execution_sync", {"name": "no_effect_execution"})["state"] == "collected"
 assert adapter.submit_count == 1
 assert adapter.submit(adapter.last_submission) == ("no-effect-run", "accepted")
 assert adapter.submit_count == 1

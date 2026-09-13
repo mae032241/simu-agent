@@ -18,9 +18,9 @@ and ScientificFoundation for only the assigned question. They must use the same
 objective, and every problem-frame foundation reference must close over an item
 in that foundation.
 
-Use the exact assignment source_name as FoundationEvidence.source_key and in
-every factual item's evidence_keys; do not invent aliases from filenames or the
-local instruction. Preserve scope, conditions, units, uncertainty, conflicts,
+Use the exact assignment source_name in every factual item's evidence_keys;
+optional citation locators do not require a second source registration. Do not
+invent aliases from filenames or the local instruction. Preserve scope, conditions, units, uncertainty, conflicts,
 assumptions, and open questions when supported. Paper facts, user definitions,
 and runtime observations require exact supplied evidence; inference,
 assumption, and speculation require an explicit rationale. Do not generalize
@@ -80,8 +80,8 @@ candidate, or demand that uncertainty be hidden by further prose.
 AUDITOR_PROMPT = """Return exactly one RoleResultEnvelope whose payload is the
 EvidenceAudit required by output.schema.json. Audit whether the exact supplied
 object's factual claims, values, conditions, structures, and conclusions are
-supported by the immutable sources. Declare each source once, use one compact
-check per material question, preserve conflicts and missing support, and cite
+supported by the immutable sources. Use one compact check per material question,
+preserve conflicts and missing support, and cite
 only exact task-local source aliases. Do not grant qualification or inherit a
 prior verdict.
 
@@ -106,7 +106,7 @@ class Resources:
         "A parameter item requires both a value and a unit; use dimensionless when applicable.",
         "A unit cannot exist without a value, and numeric uncertainty requires a unit.",
         "Paper facts, user definitions, and runtime observations require evidence keys; inference, assumption, and speculation require a rationale.",
-        "Item, conflict, and condition identities must be unambiguous and every reference must close locally. References and tags may repeat; one source may have multiple citation locators.",
+        "Item, conflict, and condition identities must be unambiguous. Item references close locally; source references resolve to bound inputs without a duplicated source ledger. References and tags may repeat; one source may have multiple citation locators.",
         "Conflict resolution fields must match unresolved, resolved, or accepted-assumption status.",
         "A supplied objective contract must exactly match the foundation objective and reference only declared items.",
         "The payload may frame the bounded question but must not generalize beyond supplied evidence.",
@@ -117,7 +117,7 @@ class Resources:
         "hypothesis",
         "research_objective_key references the immutable global objective; stage_objective is the role-authored bounded goal for this hypothesis action.",
         "A hypothesis Worker may not replace or paraphrase the global research objective.",
-        "Hypothesis, parameter, prediction, and falsifier identities must be unambiguous. Competitor and evidence references must close locally; repeated references and multiple locators for one source are permitted.",
+        "Hypothesis, parameter, prediction, and falsifier identities must be unambiguous. Competitor references close locally. Evidence references resolve to bound inputs or the exact foundation provenance without a copied source ledger; repeated references and multiple locators for one source are permitted.",
         "A bounded hypothesis revision preserves the complete hypothesis key set; adding, removing, or renaming a hypothesis requires a new proposal action.",
         "Every hypothesis must contain at least one falsifiable prediction and one explicit falsifier.",
         "Portfolio order is a proposal only and does not qualify or select a candidate.",
@@ -139,7 +139,7 @@ class Resources:
     )
     evidence_audit_semantic_contract = scientific_semantic_contract(
         "evidence.audit",
-        "Every evidence reference must close over the audit's declared exact source keys.",
+        "Every evidence reference must identify an exact bound source; a duplicate source entry in the audit is not required.",
         "Audit status measures whether the reviewed object is faithful to the exact sources, not whether those sources are sufficient for a broader objective or qualification.",
         "Pass applies to supported statements and to statements that faithfully preserve limitations, gaps, detection limits, shared dependencies, or unresolved identity.",
         "Fail applies to overstatement, hidden limitations, incorrect identity binding, or unsupported affirmative claims; unknown applies only when required material is missing, unreadable, or not comparable; not_applicable applies only when the check does not apply.",

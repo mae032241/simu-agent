@@ -48,6 +48,13 @@ scores in the same Run; unsupported scoring limits a quantitative conclusion but
 does not prevent a partial analysis. Exact plan, review, execution, file, and case
 identity checks apply even when no scoring tool is called.
 
+Observable descriptions are scientific prose, not a second identity registry.
+Design, materialization, review, and curve compilation do not require repeating
+them verbatim. An explicit comparison baseline key identifies the baseline
+without a duplicate case-role label. Compact intent can omit that key when
+exactly one declared baseline/control supplies it; ambiguity remains a located
+missing input. Unknown cases and contradictory variable values remain errors.
+
 ## 2. Registration, compilation, and catalog views
 
 The system has one entry-point group, `scidiscovery.plugins`. Each entry returns
@@ -71,6 +78,15 @@ before the existing identity envelope is computed. Root and lifecycle tools reta
 their own declarations and share strict JSON argument parsing and diagnostics.
 Preflight/invoke own input admission. Submission checks outputs and their claims
 against frozen evidence; it does not repeat input eligibility checks.
+
+Source references resolve against exact control-owned input aliases and tool records; they
+need no second registration in an output evidence table. Optional citation tables add
+locators and scientific source descriptions. Repeated citations, multiple locators and
+unused bound sources do not block a whole result. Qualification verifies complete frozen
+subjects and independent review lineage, rather than copied citation ledgers. Analysis can
+cite saved calculation files directly; receipt and execution/case identity checks still apply.
+Declared model and semantic rejections retain bounded specific reasons without echoing
+whole inputs, exception chains or tracebacks. Unknown engineering failures remain separate.
 
 Public errors carry bounded code, phase, path, message, repairability and affected
 action. Immediate replies and durable activity use the same safe details. Unknown
@@ -150,14 +166,23 @@ and Worker input descriptions explicitly mark historical context.
 `evidence_inventory` permits historical reading. `prior_signal` and `revision_base`
 may cross producer versions when the current port can consume the same type;
 structured historical JSON is validated against the consumer input Schema before
-creating a Run. These rules apply to input usage, not executor kind. Current
-independent review and exact revision subjects remain mandatory, and cross-version
-revision history does not reset revision limits. Retired reviews cannot qualify
-new work. Historical producer families preserve their original identity and must
+creating a Run. These rules apply to input usage, not executor kind. Exact
+independent review and revision subjects remain mandatory, and cross-version
+revision history does not reset revision limits. Sealed scientific records and
+reviews remain consumable when their Operation id/version and output port type
+(schema, kind, media) are compatible; runtime digest drift alone does not revoke
+the original object's proof. Scientifically incompatible changes must advance the
+existing Operation version or schema. A new object cannot inherit an old review,
+and an incompatible reviewer requires a new review of the exact old subject.
+Historical producer families preserve their original identity and must
 still prove all sources, members and unambiguous port bindings when requesting a
 new human decision. Historical blocked/revise signals retain nonclaiming labels
-through deterministic transforms. Claim inputs and execution authorization keep
-their exact contract gates; historical reading never renews an approval or Run.
+through deterministic transforms. Research input qualification may reuse a sealed
+human decision for its original subjects when provider id/version and the existing
+approval contract digest match. This does not create a decision or renew a Run.
+Run continuation and external execution/approval retain full compiled identity
+checks; the provider matching service is strict by default and never relaxes
+execution authorization. History flags and original provenance digests are retained.
 The structured object is in `sealed_output`; bounded verdict, missing inputs,
 and suggestions are in the same response's `scheduler_signal`. Every review
 signal must bind an exact reviewed subject in the same call.
@@ -181,6 +206,27 @@ does not restore retired qualification. Deck review treats its exact project as
 `prior_signal`: incomplete implementation may receive a negative review, while
 passing review, packaging, and execution retain their implementation requirements.
 
+Analysis Workers start with `analysis-start.json`: an input size/purpose index,
+verbatim excerpts and exact original field pointers. TCAD adds a bounded project
+and scientific case matrix in `analysis-bindings.json`. Control-generated case
+binding ledgers remain in immutable originals and server-side tool inputs; they
+are not default reading or reporting tasks. The combined TCAD display budget is
+32 KiB, with original pointers and omission counts when details do not fit.
+Views do not become scientific evidence or change source identity, qualification,
+or native filesystem permissions. Reused Agents verify the new bindings and read
+relevant current originals; they need not reread every complete input file.
+
+`LayeredDiagnosisReport` concentrates conclusions in `summary` and `overall_verdict`,
+with evidence and optional `limitations`. Its complete legacy `gates` object,
+remaining contradiction, next action and additional assessments are optional.
+`claim_allowed` remains an explicit scientific judgment; absent numerical gates
+project to `not_evaluable`. For these analysis reports only, the existing finalizer
+creates handoff verdict and a short reference to the formal summary before sealing.
+The workspace `patch_contract` declares draft omissions; Root reads the sealed
+payload and scheduler signal together. TCAD, generic and fixed curve-error analysis
+share this behavior on their supported local backend. Old Artifact bytes remain
+unchanged; these reading and delivery changes do not add a scoring prerequisite.
+
 `artifact_catalog(name=...)` returns ordered `parent_artifact_names` for the exact
 Artifact: `[]` without parents and `null` for a parent without a current-instance
 binding. Names resolve the stored parent identity, never the latest revision;
@@ -202,6 +248,40 @@ request and its exact pending loopback review from the compiled approval
 contract. It returns the request-specific review URL but neither decides nor
 starts the side effect. Only a sealed UI decision followed by explicit
 `execution_start` and bounded `execution_sync` advances execution.
+
+`execution_sync` refreshes solver state and bounded logs, including terminal
+executions. `execution_status` reads saved observations without contacting the
+adapter. Artifact transfer starts only with explicit `execution_collect`;
+`execution_outputs` publishes names after collection. One daemon-owned collection
+slot consumes a frozen total budget (600 seconds by default), with cleanup
+reserved inside it. A private control guard holds the locks until its single work
+process group has stopped, including after daemon exit; transport programs do not
+own those locks. Duplicate active requests retain that budget; another
+execution receives busy without being queued. Complete files and a stable output
+manifest survive interrupted collection and registration. Adapters implement
+transport only, optionally consuming the common `CollectionContext`; they do not
+own another scheduler. Query, file and idle defaults are 5, 120 and 30 seconds.
+
+Engineering failures use one bounded, redacted diagnostic projection. Root reads
+details by an instance/session-scoped `diagnostic_read` reference; Workers retain
+their own readable workspace reports. Existing Run activity also supplies MCP
+timing. Local trusted workspaces share an optional process-observation launcher:
+analysis retains its existing execution policy, other roles inherit their prior
+environment and limits. Missing or damaged observation is reported explicitly
+and never adds a scientific submission requirement.
+
+Error observations append to existing Run activity even after the deadline or
+terminal state; they do not renew a budget, reopen a Run, or accept a result.
+Each MCP call's start and finish belong to the same Run, including when an idle
+Worker opens its next assignment. An open failure after selection belongs to
+that selected Run, preserves its cause,
+and cannot return the previous Run's completion as the new call's outcome.
+`run_status` retains a compact default summary; `diagnostic_after=0` requests
+the first saved error page, with `next_after` as the
+continuation cursor and `diagnostic_limit` bounded to 100. `run_list` returns
+`next_before` for its optional semantic-name `before` cursor. Both queries stay
+instance-scoped. Historical events without details remain explicitly incomplete;
+pagination does not reconstruct information that was never recorded.
 
 ## 4. Four executor closures
 

@@ -6,6 +6,7 @@ import hashlib
 import json
 import re
 import uuid
+import time
 from dataclasses import asdict
 from pathlib import Path
 
@@ -44,7 +45,11 @@ def debug_tool_description() -> str:
         "further clamped by project limits, remaining debug budget and Run time; "
         "solver failure does not refund it. Repeat the same name/mode to poll without "
         "new reservation; use a new name after source corrections, which do not reset "
-        "the budget. Responses report current budget and per-job reservation."
+        "the budget. Responses report current budget and per-job reservation. "
+        "On updated runners, progress includes observed job elapsed_seconds and bounded "
+        "redacted log_tails while running; collected responses retain manifest timing "
+        "and log_relative_path for the complete bounded log. These are observations, "
+        "not an ETA or proof of physical initialization. Older runners may omit progress."
     )
 
 
@@ -73,8 +78,10 @@ def debug_response(context: OperationToolContext, run_name: str, response: dict)
 class LocalTCADDebugService:
     """Keep only process-local diagnostic bindings; Run owns scientific state."""
 
-    def __init__(self, *, adapter: TCADDevelopmentDebugAdapter, exchange_root: Path | str) -> None:
+    def __init__(self, *, adapter: TCADDevelopmentDebugAdapter, exchange_root: Path | str,
+                 runtime_context=None) -> None:
         self.adapter = adapter
+        self.runtime_context = runtime_context
         self.exchange_root = Path(exchange_root).expanduser().absolute()
         self.exchange_root.mkdir(parents=True, exist_ok=True, mode=0o700)
         if self.exchange_root.is_symlink() or not self.exchange_root.is_dir():
@@ -83,6 +90,7 @@ class LocalTCADDebugService:
     def run(
         self, context: OperationToolContext, *, run_name: str, mode: str
     ) -> dict[str, object]:
+        call_started = time.monotonic()
         if _RUN_NAME.fullmatch(run_name) is None or mode not in _MODES:
             raise TCADDebugError("TCAD development debug request is invalid")
         runs = context.state.setdefault("runs", {})
@@ -101,18 +109,38 @@ class LocalTCADDebugService:
         state = _state(str(record["state"]))
         if state not in _TERMINAL:
             try:
-                state = _state(self.adapter.status(str(record["external_run_id"])))
+                reader = getattr(self.adapter, "status_details", None)
+                details = (reader(str(record["external_run_id"])) if callable(reader)
+                           else {"state": self.adapter.status(str(record["external_run_id"]))})
+                state = _state(str(details["state"]))
             except Exception as error:
-                raise TCADDebugError("TCAD debug status is unavailable") from error
+                raise RuntimeError("TCAD debug status is unavailable") from error
             record["state"] = state
             context.record_activity("tcad_debug_polled")
         if state not in _TERMINAL:
-            return _pending(run_name, mode, state)
+            response = _pending(run_name, mode, state)
+            if isinstance(details.get("progress"), dict):
+                response["progress"] = details["progress"]
+            return response
         try:
-            collected = self.adapter.collect(str(record["external_run_id"]))
-            response = self._finish(context, run_name, mode, record, collected)
+            from scidiscovery.artifact_agent.service.execution_collection import CollectionContext
+            remaining = context.remaining_seconds - (time.monotonic() - call_started)
+            budget = CollectionContext.for_seconds(remaining)
+            budget.remaining_seconds()
+            collect = getattr(self.adapter, "collect_with_budget", None)
+            if self.runtime_context is not None:
+                from .debug_collection import collect as collect_in_process
+                collected = collect_in_process(self.runtime_context, str(record["external_run_id"]), context=budget)
+            elif callable(collect):
+                collected = collect(str(record["external_run_id"]), context=budget)
+            else:
+                raise RuntimeError("legacy debug collection requires its configured runtime factory")
+            budget.remaining_seconds()
+            response = self._finish(context, run_name, mode, record, collected, budget=budget)
+        except TCADDebugError:
+            raise
         except Exception as error:
-            raise TCADDebugError("TCAD debug collection is unavailable") from error
+            raise RuntimeError("TCAD debug collection is unavailable") from error
         record["state"] = "collected"
         record["response"] = response
         context.record_activity("tcad_debug_collected")
@@ -146,10 +174,12 @@ class LocalTCADDebugService:
             prepared = self.adapter.clamp_wall_time(prepared, wall_time_seconds=remaining)
             submission = self.adapter.prepare_submission(prepared)
             external_run_id, state = self.adapter.submit(submission)
-        except Exception as error:
+        except ValueError as error:
             raise TCADDebugError(
                 "staged TCAD project is not eligible for development debug"
             ) from error
+        except Exception as error:
+            raise RuntimeError("TCAD development debug startup failed") from error
         if not isinstance(external_run_id, str) or not external_run_id:
             raise TCADDebugError("TCAD debug returned an invalid private binding")
         context.state["reserved_wall_seconds"] = used + prepared.wall_time_seconds
@@ -166,7 +196,7 @@ class LocalTCADDebugService:
             "declarations_sha256": declarations_sha,
         }
 
-    def _finish(self, context, run_name, mode, record, collected) -> dict[str, object]:
+    def _finish(self, context, run_name, mode, record, collected, *, budget=None) -> dict[str, object]:
         root = context.workspace / ".operation-tools/tcad" / run_name
         for directory in (root.parents[1], root.parent, root):
             directory.mkdir(exist_ok=True, mode=0o700)
@@ -174,6 +204,7 @@ class LocalTCADDebugService:
                 raise TCADDebugError("TCAD debug private directory is unsafe")
         outputs = []
         for item in collected.files:
+            if budget: budget.remaining_seconds()
             _write_private(root / item.name, item.content)
             if item.name == "debug.log.txt":
                 write_control_workspace_file(
@@ -208,9 +239,12 @@ class LocalTCADDebugService:
         }
         if collected.source_diagnostic is not None:
             response["source_diagnostic"] = asdict(collected.source_diagnostic)
+        if collected.timing is not None:
+            response["progress"] = collected.timing
         # Validate the complete public response before sealing a control proof.
         # Cache only the diagnostic; the handler refreshes budget on every call.
         debug_response(context, run_name, response)
+        if budget: budget.remaining_seconds()
         # Preserve each attempt, including failed diagnostics, as a bounded
         # workspace record tied to the exact submitted source and declarations.
         diagnostic = {key: value for key, value in response.items() if key != "run_name"}

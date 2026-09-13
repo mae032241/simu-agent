@@ -76,7 +76,9 @@ class ExecutionService:
         database_path: Path | str,
         exchange_root: Path | str,
         service_actor: ActorRef,
+        deadline_monotonic: float | None = None,
     ) -> None:
+        self.deadline_monotonic = deadline_monotonic
         self.artifacts = artifacts
         self.approvals = approvals
         self.database_path = Path(database_path).expanduser().absolute()
@@ -498,7 +500,11 @@ class ExecutionService:
         execution_id: str,
         external_run_id: str,
         outputs: tuple[LocalFileDescriptor, ...],
+        collected_at: str | None = None,
+        context=None,
     ) -> ArtifactRef:
+        if context is not None:
+            context.remaining_seconds()
         with self._connect() as connection:
             row = self._row(connection, execution_id)
         if row["external_run_id"] != external_run_id:
@@ -511,6 +517,8 @@ class ExecutionService:
         payload_ref = _parse_ref(row["payload_ref_json"])
         output_refs = []
         for descriptor in outputs:
+            if context is not None:
+                context.remaining_seconds()
             content = _read_descriptor(descriptor)
             output_refs.append(
                 self.artifacts.register(
@@ -532,7 +540,7 @@ class ExecutionService:
             external_run_id=external_run_id,
             terminal_state=row["state"],
             output_refs=tuple(output_refs),
-            collected_at=_timestamp(),
+            collected_at=collected_at or _timestamp(),
         )
         result_ref = self.artifacts.register(
             manifest.canonical_json(),
@@ -546,7 +554,11 @@ class ExecutionService:
             ),
             idempotency_key=f"execution:{execution_id}:result",
         ).ref
+        if context is not None:
+            context.remaining_seconds()
         with self._connect() as connection:
+            if context is not None:
+                connection.execute(f"PRAGMA busy_timeout = {max(1, int(context.remaining_seconds() * 1000))}")
             connection.execute("BEGIN IMMEDIATE")
             current = self._row(connection, execution_id)
             if current["state"] != row["state"]:
@@ -557,6 +569,22 @@ class ExecutionService:
             )
             connection.execute("COMMIT")
         return result_ref
+
+    def observation(self, execution_id: str) -> dict:
+        from .engineering_diagnostics import read_json
+        self.status(execution_id)
+        try:
+            return read_json(self.exchange_root / execution_id / "observation.json")
+        except FileNotFoundError:
+            return {}
+        except (OSError, ValueError) as error:
+            from .engineering_diagnostics import exception_facts
+            return {"observation_error": exception_facts(error, layer="execution_observation", action="read")}
+
+    def save_observation(self, execution_id: str, value: dict) -> None:
+        from .engineering_diagnostics import atomic_json
+        self.status(execution_id)
+        atomic_json(self.exchange_root / execution_id / "observation.json", value)
 
     def status(self, execution_id: str) -> ExecutionStatusView:
         with self._connect() as connection:
@@ -654,7 +682,11 @@ class ExecutionService:
             )
 
     def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.database_path, timeout=30)
+        import time
+        timeout = 30.0 if self.deadline_monotonic is None else min(30.0, self.deadline_monotonic - time.monotonic())
+        if timeout <= 0:
+            raise TimeoutError("execution registration connection budget exhausted")
+        connection = sqlite3.connect(self.database_path, timeout=timeout)
         connection.row_factory = sqlite3.Row
         return connection
 

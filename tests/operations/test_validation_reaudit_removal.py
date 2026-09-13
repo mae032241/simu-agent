@@ -113,7 +113,7 @@ def test_partial_comparison_retains_valid_refs_and_can_be_independently_reviewed
                     'summary': 'The extra diagnostic is outside this comparison.'},
     }))
     assert runtime.runs.submit(run_id) == ('completed', ())
-    for field, missing in (('comparison_case_keys', 'unknown_case'), ('required_observables', 'unknown_observable')):
+    for field, missing in (('comparison_case_keys', 'unknown_case'),):
         invalid = deepcopy(raw)
         invalid['proposals'][0]['comparison_contract'][field].append(missing)
         with pytest.raises(ValidationError):
@@ -203,7 +203,7 @@ def test_parameter_audit_can_cite_its_subject_but_not_an_unbound_source():
                       'basis': 'The exact subject omits a needed condition.', 'evidence_keys': ['parameter_requirements']}],
            'evidence': [{'source_key': 'parameter_requirements', 'source_type': 'frozen_input', 'locator': '/parameters/0'}]}
     _audit_context(raw, {'parameter_requirements': b'{}'}, {'verdict': 'blocked'})
-    with pytest.raises(SemanticRuleViolation, match='unbound source'):
+    with pytest.raises(SemanticRuleViolation, match='source bound to this task'):
         _audit_context(raw, {'different_input': b'{}'}, {'verdict': 'blocked'})
 
 
@@ -233,6 +233,7 @@ def test_curve_compiler_deduplicates_references_without_policing_case_roles():
 
     raw = _compiler_plan().model_dump(mode='json')
     proposal = raw['proposals'][0]
+    proposal['required_observables'] = ['Independent description; target identity is selected by target_key.']
     proposal['cases'].append({**deepcopy(proposal['cases'][0]),
                               'case_key': 'extra_convergence', 'scientific_role': 'convergence'})
     proposal['resource_estimate']['case_count'] += 1
@@ -254,10 +255,11 @@ def test_curve_compiler_deduplicates_references_without_policing_case_roles():
 def test_tcad_local_locator_survives_submission_and_wrong_alias_still_rejects(tmp_path, mapped):
     worker, opened = open_analysis(analysis_system(tmp_path))
     report = analysis_report(alias='solver_outputs_001', output_name='A', mapped=mapped)
-    report['evidence'][0]['locator'] = 'unbound_alias:lines-1-3'
+    report['evidence'][0]['locator'] = 'lines-1-3'
+    report['source_references'][0]['input_alias'] = 'unbound_alias'
     write_analysis(opened, report)
     assert worker.call_tool('worker_submit_result', {})['state'] == 'rejected'
-    report['evidence'][0]['locator'] = 'solver_outputs_001:lines-1-3'
+    report['source_references'][0]['input_alias'] = 'solver_outputs_001'
     write_analysis(opened, report)
     result = worker.call_tool('worker_submit_result', {})
     assert result['state'] == 'completed', result

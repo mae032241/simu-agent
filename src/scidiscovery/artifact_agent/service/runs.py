@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from ...operation_contract import sanitize_diagnostic_details
+from ...operation_contract import contract_diagnostic, sanitize_diagnostic_details
 from ...operations.tooling import operation_worker_tools
 from ...operations.catalog import CompiledCatalog
 from ...operations.invoke import (
@@ -353,11 +353,13 @@ class RunService(ToolEvidenceMixin):
         except Exception as error:
             self.record_failure(
                 run_id,
-                reason=f"workspace preparation failed: {type(error).__name__}",
+                reason=f"workspace preparation failed: {str(error)[:512] if isinstance(error, RunCheckerError) else type(error).__name__}",
+                category=error.category if isinstance(error, RunCheckerError) else "runtime_failure",
                 expected_state="queued",
                 expected_last_activity_at=None,
             )
-            raise RunError("local workspace preparation failed") from error
+            # The Run already exists. Return its identity so Root can bind its
+            # requested name and expose the persisted failure through run_status.
         return run_id
 
     def revision_successor(
@@ -489,28 +491,35 @@ class RunService(ToolEvidenceMixin):
                 expected_last_activity_at=expired_run[2],
                 timed_out=True,
             )
-            raise RunStateConflict("queued Run has expired")
+            raise RunStateConflict("queued Run has expired", run_id=expired_run[0])
         try:
             workspace = self.backend.open(run_id)
         except Exception as error:
             value = self.status(run_id)
+            from .engineering_diagnostics import EngineeringDiagnostics
+            engineering = EngineeringDiagnostics(self.database_path.parent.parent / "engineering-diagnostics").capture(
+                error, scope="instance:" + value.instance_id, layer="run_open", action="open")
             self.record_failure(
                 run_id,
                 reason="prepared workspace is unavailable",
                 expected_state="running",
                 expected_last_activity_at=value.last_activity_at,
+                engineering=engineering,
             )
-            raise RunStateConflict("prepared workspace is unavailable") from error
+            raise RunStateConflict("prepared workspace is unavailable", run_id=run_id) from error
         try:
             self.adopt_tool_evidence(run_id)
             if tool_evidence_ports(self._compiled(self.status(run_id))):
                 self._refresh_evidence_schema(run_id)
         except RunCheckerError as error:
             value = self.status(run_id)
+            from .engineering_diagnostics import EngineeringDiagnostics
+            engineering = EngineeringDiagnostics(self.database_path.parent.parent / "engineering-diagnostics").capture(
+                error, scope="instance:" + value.instance_id, layer="run_open", action="open")
             self.record_failure(run_id, reason=f"preserved tool evidence cannot be opened: {error}",
                 category=error.category, expected_state="running",
-                expected_last_activity_at=value.last_activity_at)
-            raise RunStateConflict("preserved tool evidence integrity failure") from error
+                expected_last_activity_at=value.last_activity_at, engineering=engineering)
+            raise RunStateConflict("preserved tool evidence integrity failure", run_id=run_id) from error
         return self.status(run_id), workspace
 
     def heartbeat(self, run_id: str) -> RunStatus:
@@ -537,17 +546,21 @@ class RunService(ToolEvidenceMixin):
         try:
             sealed, validated = self._validated_candidate(value)
         except (RunCheckerError, RunContractUnavailable) as error:
+            from .engineering_diagnostics import EngineeringDiagnostics
+            engineering = EngineeringDiagnostics(self.database_path.parent.parent / "engineering-diagnostics").capture(
+                error, scope="instance:" + value.instance_id, layer="run_checker", action="submit")
             self.record_failure(
                 run_id,
-                reason="Run validation framework failure",
+                reason=f"Run validation framework failure: {str(error)[:512]}",
                 category=getattr(error, "category", "integrity_failure"),
                 candidate_digest=getattr(error, "candidate_digest", None),
+                engineering=engineering,
                 expected_state="running",
                 expected_last_activity_at=value.last_activity_at,
             )
             return "failed", ()
         except (RunOutputError, WorkspaceError) as error:
-            diagnostic = self.record_activity(run_id, "output_rejected",
+            diagnostic = self.record_error_observation(run_id, "output_rejected",
                                  diagnostic=self._rejection_diagnostic(value, error))
             return "rejected", tuple(diagnostic.get("details", ()))
         self._accept_candidate(run_id, sealed.digest)
@@ -560,13 +573,13 @@ class RunService(ToolEvidenceMixin):
         try:
             _, validated = self._validated_candidate(value, final_submission=False)
         except (RunCheckerError, RunContractUnavailable) as error:
-            self.record_failure(run_id, reason="Run validation framework failure",
+            self.record_failure(run_id, reason=f"Run validation framework failure: {str(error)[:512]}",
                 category=getattr(error, "category", "integrity_failure"),
                 candidate_digest=getattr(error, "candidate_digest", None),
                 expected_state="running", expected_last_activity_at=value.last_activity_at)
             raise
         except (RunOutputError, WorkspaceError) as error:
-            diagnostic = self.record_activity(run_id, "output_rejected",
+            diagnostic = self.record_error_observation(run_id, "output_rejected",
                 diagnostic=self._rejection_diagnostic(value, error))
             raise RunOutputError("candidate requires correction", details=tuple(diagnostic.get("details", ())),
                                  recorded=True) from error
@@ -588,6 +601,7 @@ class RunService(ToolEvidenceMixin):
         self, run_id: str, *, reason: str, expected_state: str,
         expected_last_activity_at: str | None, timed_out: bool = False,
         category: str = "runtime_failure", candidate_digest: str | None = None,
+        engineering: dict | None = None,
     ) -> RunStatus:
         value = self.status(run_id)
         if value.state == "failed":
@@ -601,6 +615,8 @@ class RunService(ToolEvidenceMixin):
         # First fence the worker; cleanup is restartable and never discards an unsealed draft.
         now = timestamp()
         diagnostic = self._safe_diagnostic("run_timeout" if timed_out else category, repairable=False)
+        if engineering:
+            diagnostic["engineering"] = engineering
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             cursor = connection.execute(
@@ -805,6 +821,41 @@ class RunService(ToolEvidenceMixin):
         return {"category": category, "code": category,
                 "repairable_by_output": repairable}
 
+    def record_tool_observation(self, run_id: str, activity: str, observation: dict) -> None:
+        """Engineering timing only: no heartbeat, candidate or lifecycle mutation."""
+        with self._connect() as connection:
+            self._row(connection, run_id)
+            connection.execute(
+                "INSERT INTO run_activity(run_id,activity,recorded_at,diagnostic_json) VALUES (?,?,?,?)",
+                (run_id, activity, timestamp(), canonical_json(observation)))
+
+    def record_error_observation(self, run_id: str, activity: str, *, diagnostic: dict[str, Any]) -> dict[str, Any]:
+        """Retain failures without reopening or heartbeating an expired Run."""
+        value = self.status(run_id)
+        normalized = self._sanitize_diagnostic(value, diagnostic, repairable=activity == "output_rejected")
+        self.record_tool_observation(run_id, activity, normalized)
+        return normalized
+
+    def tool_timing(self, run_id: str) -> list[dict]:
+        with self._connect() as connection:
+            rows = connection.execute("""SELECT activity, recorded_at, diagnostic_json FROM run_activity
+                WHERE run_id=? AND activity IN ('tool_call_started','tool_call_completed',
+                'tool_attempt_started','tool_attempt_completed') ORDER BY rowid DESC LIMIT 128""", (run_id,)).fetchall()
+        calls = {}
+        for row in reversed(rows):
+            raw = json.loads(row['diagnostic_json'])
+            key = raw.get('call_key') or raw.get('attempt_key')
+            record = calls.setdefault(key, {"tool_name": raw.get('tool_name')})
+            if row['activity'].endswith('_started'):
+                record['started_at'] = raw.get('started_at', row['recorded_at'])
+            else:
+                record['started_at'] = raw.get('started_at', record.get('started_at'))
+                record['completed_at'] = raw.get('completed_at', row['recorded_at'])
+                if record.get('started_at'):
+                    record['duration_seconds'] = raw.get('duration_seconds', max(0,
+                        (datetime.fromisoformat(record['completed_at'].replace('Z', '+00:00')) - datetime.fromisoformat(record['started_at'].replace('Z', '+00:00'))).total_seconds()))
+        return list(calls.values())[-16:]
+
     def _rejection_diagnostic(self, value: RunStatus, error: Exception) -> dict[str, Any]:
         return {"category": "output_rejected", "details":getattr(error, "details", ()) or
                 ({"path":"$", "type":"value_error"},)}
@@ -838,7 +889,40 @@ class RunService(ToolEvidenceMixin):
             schema=schema, rules=rules, phase=phase, action=action, rule_phases=rule_phases)
         if details:
             result["details"] = list(details)
+        if isinstance(diagnostic.get("engineering"), dict):
+            # Produced by the shared error recorder, never scientific payload fields.
+            result["engineering"] = diagnostic["engineering"]
         return result
+
+    @classmethod
+    def _stored_diagnostic(cls, row: Any) -> dict[str, Any] | None:
+        if row is None or row["diagnostic_json"] is None:
+            return None
+        raw = json.loads(row["diagnostic_json"])
+        result = cls._safe_diagnostic(raw.get("category"),
+            repairable=row["activity"] == "output_rejected")
+        if raw.get("tool_name"):
+            result["tool_name"] = raw["tool_name"]
+        if isinstance(raw.get("engineering"), dict):
+            result["engineering"] = raw["engineering"]
+        if raw.get("details"):
+            result["details"] = raw["details"][:16]
+        return result
+
+    def diagnostic_events(self, value: RunStatus, *, after: int = 0, limit: int = 50) -> dict[str, Any]:
+        """Page the existing durable error records; never read Worker drafts."""
+        if after < 0 or not 1 <= limit <= 100:
+            raise ValueError("invalid diagnostic page bounds")
+        with self._connect() as connection:
+            rows = connection.execute(
+                """SELECT rowid AS event_id, activity, recorded_at, diagnostic_json
+                FROM run_activity WHERE run_id=? AND rowid>? AND activity IN
+                ('tool_failed','tool_not_computed','output_rejected','framework_failure','observation_unavailable')
+                ORDER BY rowid LIMIT ?""", (value.run_id, after, limit + 1)).fetchall()
+        events = [{"event_id": row["event_id"], "recorded_at": row["recorded_at"],
+                   "activity": row["activity"], "diagnostic": self._stored_diagnostic(row)}
+                  for row in rows[:limit]]
+        return {"events": events, "next_after": events[-1]["event_id"] if len(rows) > limit else None}
 
     def diagnostic_summary(self, value: RunStatus) -> dict[str, Any]:
         with self._connect() as connection:
@@ -846,18 +930,7 @@ class RunService(ToolEvidenceMixin):
                 "SELECT activity, diagnostic_json FROM run_activity WHERE run_id=? ORDER BY rowid",
                 (value.run_id,)).fetchall()
         rejections = [row for row in rows if row["activity"] == "output_rejected"]
-        def safe(row: Any) -> dict[str, Any] | None:
-            if row is None or row["diagnostic_json"] is None:
-                return None
-            raw = json.loads(row["diagnostic_json"])
-            result = self._safe_diagnostic(raw.get("category"),
-                repairable=row["activity"] == "output_rejected")
-            # These fields were checked against the frozen catalog on insertion.
-            if raw.get("details"):
-                result["details"] = raw["details"][:16]
-            if raw.get("tool_name"):
-                result["tool_name"] = raw["tool_name"]
-            return result
+        safe = self._stored_diagnostic
         failures = [row for row in rows if row["activity"] == "framework_failure"]
         tool_errors = [row for row in rows if row["activity"] in {"tool_failed", "tool_not_computed"}]
         errors = [row for row in rows if row["activity"] in {"tool_failed", "tool_not_computed", "output_rejected", "framework_failure"} and row["diagnostic_json"] is not None]
@@ -882,12 +955,28 @@ class RunService(ToolEvidenceMixin):
         status = self.completed_for_output(artifact_ref)
         if status is None:
             return None
-        if require_current:
-            try:
-                self._compiled(status)
-            except RunStateConflict:
-                return None
+        if require_current and not self._completed_output_is_compatible(status):
+            return None
         return status.signal
+
+    def _completed_output_is_compatible(self, value: RunStatus) -> bool:
+        """Read sealed science under its versioned type, without reopening its Run."""
+        if value.state != "completed" or value.output_ref is None:
+            return False
+        try:
+            compiled = self.operation_catalog.operation(value.operation_id)
+        except KeyError:
+            return False
+        if compiled.spec.version != value.operation_version:
+            return False
+        envelope = self.artifacts.catalog(value.output_ref)
+        return any(
+            port.name == envelope.labels.get("operation_output_port")
+            and port.schema_id == value.output_ref.schema_id
+            and port.kind == value.output_ref.kind
+            and envelope.media_type in port.media_types
+            for port in compiled.spec.outputs
+        )
 
     def is_exact_reviewer_output(
         self,
@@ -897,6 +986,7 @@ class RunService(ToolEvidenceMixin):
         reviewer_input_port: str,
         accepted_verdicts: tuple[str, ...] | None,
         subject_ref: ArtifactRef,
+        require_compatible: bool = True,
     ) -> bool:
         with self._connect() as connection:
             row = connection.execute(
@@ -909,10 +999,6 @@ class RunService(ToolEvidenceMixin):
         if row is None or str(row["operation_id"]) != reviewer_operation:
             return False
         status = status_from_row(row)
-        try:
-            self._compiled(status)
-        except RunStateConflict:
-            return False
         return bool(
             status.signal is not None
             and (accepted_verdicts is None or status.signal.verdict in accepted_verdicts)
@@ -920,6 +1006,7 @@ class RunService(ToolEvidenceMixin):
                 item.port_name == reviewer_input_port and item.artifact_ref == subject_ref
                 for item in status.inputs
             )
+            and (not require_compatible or self._completed_output_is_compatible(status))
         )
 
     def _validated_candidate(
@@ -937,12 +1024,13 @@ class RunService(ToolEvidenceMixin):
                 max_bytes=compiled.spec.limits.max_output_bytes,
                 expected_digest=value.accepted_candidate_digest,
             )
-        except RunOutputError:
+        except (RunOutputError, RunCheckerError):
             raise
         except WorkspaceOutputError as error:
             if value.accepted_candidate_digest is None:
                 raise RunOutputError("candidate files require correction", details=(
-                    {"path": "$", "message": str(error), "type": "value_error"},)) from error
+                    contract_diagnostic("output_invalid", phase="output_payload", affected_action="submit",
+                        repairable=True, message=str(error)[:512], error_type="value_error"),)) from error
             raise RunCheckerError("accepted candidate integrity failed", category="integrity_failure") from error
         except WorkspaceError as error:
             raise RunCheckerError("Run workspace integrity failed", category="integrity_failure") from error
@@ -1007,6 +1095,19 @@ class RunService(ToolEvidenceMixin):
     def _materialize_workspace(
         self, compiled: Any, run_id: str, workspace: OpenWorkspace
     ) -> None:
+        if self.backend.backend_id == "local_trusted":
+            from .local_process_observation import materialize_launcher
+            try:
+                materialize_launcher(workspace.root)
+            except (OSError, WorkspaceError, ValueError) as error:
+                from .engineering_diagnostics import EngineeringDiagnostics
+                facts = EngineeringDiagnostics(self.database_path.parent.parent / "engineering-diagnostics").capture(
+                    error, scope="instance:" + self.status(run_id).instance_id,
+                    layer="worker_workspace", action="install_observation_launcher")
+                try:
+                    self.record_tool_observation(run_id, "observation_unavailable", {"engineering": facts})
+                except Exception:
+                    pass  # Optional observation never prevents scientific work.
         materializer = operation_workspace_hooks(compiled).get(
             "workspace_materializer"
         )
@@ -1083,7 +1184,13 @@ class RunService(ToolEvidenceMixin):
                 )
             writer(run_id, raw)
         except WorkspaceProtocolError as error:
-            raise RunOutputError(str(error), details=error.details) from error
+            # The finalizer deliberately reports a correctable workspace error.
+            # Keep its reason even when it has no per-field diagnostic details.
+            details = error.details or ({"path": "$.files", "message": str(error), "type": "value_error"},)
+            raise RunOutputError(str(error), details=tuple(contract_diagnostic(
+                "output_invalid", phase="output_payload", affected_action="submit", repairable=True,
+                path=item.get("path", "$.files"), message=item.get("message", str(error))[:512],
+                error_type=item.get("type", "value_error"), rule_id=item.get("rule_id")) for item in details)) from error
 
     def _accept_candidate(self, run_id: str, digest: str) -> None:
         with self._connect() as connection:

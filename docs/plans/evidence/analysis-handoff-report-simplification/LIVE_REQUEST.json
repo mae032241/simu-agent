@@ -1,0 +1,103 @@
+{
+  "date": "2026-09-14",
+  "instance": "M7-test0",
+  "request": {
+    "name": "fig4_compact_analysis_acceptance_1",
+    "operation_id": "tcad.result.analyze.v1",
+    "max_attempts": 2,
+    "inputs": [
+      {
+        "artifact_names": [
+          "fig4_shape_counterfactual_plan_revision_2.output"
+        ],
+        "port": "experiment_plan"
+      },
+      {
+        "artifact_names": [
+          "fig4_shape_counterfactual_plan_review_3.output"
+        ],
+        "port": "experiment_review"
+      },
+      {
+        "artifact_names": [
+          "fig4_shape_basis_reviewed_package_1"
+        ],
+        "port": "reviewed_package"
+      },
+      {
+        "artifact_names": [
+          "fig4_shape_basis_execution_1.output.tcad_manifest"
+        ],
+        "port": "runtime_manifest"
+      },
+      {
+        "artifact_names": [
+          "fig4_shape_basis_execution_1.output.solver_log",
+          "fig4_shape_basis_execution_1.output.fig4_ga_D0_primary_plx",
+          "fig4_shape_basis_execution_1.output.fig4_ga_Dmid_primary_plx",
+          "fig4_shape_basis_execution_1.output.fig4_ga_DB_primary_plx",
+          "fig4_shape_basis_execution_1.output.fig4_ga_D0_tight_plx",
+          "fig4_shape_basis_execution_1.output.fig4_ga_Dmid_tight_plx",
+          "fig4_shape_basis_execution_1.output.fig4_ga_DB_tight_plx",
+          "fig4_shape_basis_execution_1.output.fig4_al_D0_primary_plx",
+          "fig4_shape_basis_execution_1.output.fig4_al_Dmid_primary_plx",
+          "fig4_shape_basis_execution_1.output.fig4_al_DB_primary_plx",
+          "fig4_shape_basis_execution_1.output.fig4_al_D0_tight_plx",
+          "fig4_shape_basis_execution_1.output.fig4_al_Dmid_tight_plx",
+          "fig4_shape_basis_execution_1.output.fig4_al_DB_tight_plx"
+        ],
+        "port": "solver_outputs"
+      },
+      {
+        "artifact_names": [
+          "fig4_shape_basis_execution_1.output.tcad_log"
+        ],
+        "port": "diagnostics"
+      },
+      {
+        "artifact_names": [
+          "fig4_continuation_figure_materialized_1.curve_tables_001",
+          "fig4_continuation_figure_materialized_1.curve_tables_002",
+          "fig4_continuation_figure_materialized_1.source_panels",
+          "fig4_shape_basis_analysis_1.output.tool_evidence_001",
+          "fig4_shape_basis_analysis_1.output.tool_evidence_004",
+          "fig4_shape_basis_analysis_1.output.tool_evidence_005",
+          "fig4_shape_basis_analysis_1.output.tool_evidence_006",
+          "fig4_shape_basis_analysis_1.output.tool_evidence_008"
+        ],
+        "port": "reference_material"
+      },
+      {
+        "artifact_names": [
+          "fig4_continuation_objective_2",
+          "fig4_constant_cs_closure_analysis_1.output",
+          "fig4_iterative_alignment_analysis_delivery_1.output"
+        ],
+        "port": "current_progress"
+      },
+      {
+        "port": "prior_analysis",
+        "artifact_names": [
+          "fig4_shape_basis_analysis_1.output"
+        ]
+      },
+      {
+        "port": "prior_analysis_manifest",
+        "artifact_names": [
+          "fig4_shape_basis_analysis_1.output.recovery_manifest"
+        ]
+      }
+    ],
+    "instruction": "这是同一 Fig4 已完成执行的有界分析续接和新交付合同验收。所有科学目标、当前任务范围、比较方法、阈值及局限只来自绑定的原始目标、精确执行计划/审查和封存记录。本轮不新增实验、不执行求解器、不扩大拟合或重做整套已完成归约。先读控制生成的紧凑入口和项目/案例视图，再追查本轮必要的原件；无需全文打印计划、项目或机械绑定表。优先核对并复用 prior_analysis、其精确 manifest 和 reference_material 中已绑定的归约脚本、材料账本、跨材料账本、残差表及图。自主判断这些证据能支持什么有限结论，以及是否仍有不能回答的总体目标；旧报告结论不是必须照抄的答案，若发现问题应按证据限定结论。曲线工具和看图按实际分析需要自主选择；已完成且适用的数值不重复计算。正式结论集中写在简版 LayeredDiagnosisReport，引用现有证据、说明真实限制和必要后续；可省略 gates、重复 handoff 和机械引用表，依工作区 patch_contract 由控制补全。为本轮验收，在既有分析证据发布权限内保留一份简短处理记录：入口和默认视图的实际字节数、查阅了哪些原件/字段、复用了哪些已封存数值、实际执行了哪些新增检查以及遇到的错误。不要把这些工程记录搬成重复的科学结论或引入新的报告必填字段。使用既有本地观测入口保留必要命令的错误与日志，给提交留出时间。"
+  },
+  "preflight": {
+    "admissible": true,
+    "executor_kind": "agent",
+    "port": null,
+    "reason_code": null
+  },
+  "created_at": "2026-09-13T22:52:41.863766Z",
+  "deadline_at": "2026-09-13T23:07:41.863766Z",
+  "agent_history_inherited": false,
+  "baseline_run": "fig4_shape_basis_analysis_1"
+}

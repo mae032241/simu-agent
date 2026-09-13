@@ -1,6 +1,5 @@
 """Optional inspection and acceptance of original terminal execution products."""
 from __future__ import annotations
-import copy
 import hashlib
 import json
 import time
@@ -36,15 +35,13 @@ EXECUTION_SCHEMA=canonical_json({'$id':'scidiscovery.execution-result','type':'o
 class OutputInspectionService:
     def __init__(self, adapter): self.adapter=adapter
 
-    def inspect(self, scope, relative_path, *, max_bytes, timeout):
+    def inspect(self, scope, relative_path, *, max_bytes, timeout=None, deadline_monotonic=None):
         if scope['executor'] != 'tcad_artifact:tcad':
             return {'status':'unsupported','reason':'execution_adapter'}
-        adapter=copy.copy(self.adapter)
-        if hasattr(adapter, 'timeout'):
-            adapter.timeout=min(adapter.timeout,timeout)
-        if hasattr(adapter,'config') and hasattr(adapter.config,'operation_timeout_seconds'):
-            adapter.config=adapter.config.model_copy(update={'operation_timeout_seconds':max(1,min(adapter.config.operation_timeout_seconds,int(timeout)))})
-        return adapter.inspect_outputs(scope['external_run_id'],relative_path,max_bytes=max_bytes)
+        if deadline_monotonic is None:
+            deadline_monotonic=time.monotonic()+timeout
+        return self.adapter.inspect_outputs(scope['external_run_id'],relative_path,max_bytes=max_bytes,
+            deadline_monotonic=deadline_monotonic)
 
 
 def _file(raw, context, alias):
@@ -53,7 +50,7 @@ def _file(raw, context, alias):
     return str(context.workspace/relative)
 
 
-def _inspect(context, source_alias, path):
+def _inspect(context, source_alias, path, *, run_deadline, consume=None):
     service=context.services.get('tcad.output_inspection')
     if service is None:
         return {'status':'unavailable','reason':'inspection_service_unavailable'}
@@ -62,17 +59,25 @@ def _inspect(context, source_alias, path):
         return {'status':'unavailable','reason':'execution_project_mismatch'}
     package=ReviewedDeckPackage.model_validate_json(context.read_input('reviewed_package'),strict=True)
     budget=context.io_budget(reserve=True)
-    timeout=min(budget['remaining_seconds'],context.remaining_seconds)
+    started=time.monotonic()
+    deadline=min(started+budget['remaining_seconds'],run_deadline)
+    timeout=deadline-started
     if timeout < 1 or budget['remaining_bytes'] < 1:
+        budget=context.io_budget(used_bytes=-budget['remaining_bytes'],used_seconds=-budget['remaining_seconds'])
         return {'status':'limit_exceeded','reason':'inspection_budget','budget':budget}
     project_remaining=max(0,package.project.resource_limits.max_output_bytes-(256*1024*1024-budget['remaining_bytes']))
     limit=min(32*1024*1024,budget['remaining_bytes'],project_remaining)
     if limit < 1:
         context.io_budget(used_bytes=-budget['remaining_bytes'],used_seconds=-budget['remaining_seconds'])
         return {'status':'limit_exceeded','reason':'project_output_budget'}
-    started=time.monotonic(); transferred=limit if path is not None else 0
+    transferred=limit if path is not None else 0
+    def check_budget():
+        if time.monotonic() >= deadline:
+            error=TimeoutError("inspection IO budget exhausted during local evidence processing")
+            error.timeout_kind="inspection_io"
+            raise error
     try:
-        response=service.inspect(scope,path,max_bytes=limit,timeout=timeout)
+        response=service.inspect(scope,path,max_bytes=limit,deadline_monotonic=deadline)
         transferred=response.get('file',{}).get('size_bytes',0)
         if path is None and response.get('status')=='available':
             listed={item['relative_path'] for item in response.get('files',())}
@@ -83,33 +88,53 @@ def _inspect(context, source_alias, path):
                     break
                 declarations.append(item)
             response.update(declared_outputs=declarations,declarations_truncated=len(declarations)<len(package.project.expected_outputs))
+        check_budget()
+        if consume is not None and response.get("status")=="available" and "file" in response:
+            response=consume(response,check_budget)
+        check_budget()
     finally:
         budget=context.io_budget(used_bytes=transferred-budget['remaining_bytes'],used_seconds=time.monotonic()-started-budget['remaining_seconds'])
     return {**response,'budget':budget}
 
 
 def inspect_tool(request,context):
-    try:
-        reply=_inspect(context,request.execution_result,request.relative_path)
-        if reply.get('status')!='available' or 'file' not in reply:
-            return reply
+    run_deadline=time.monotonic()+context.remaining_seconds
+    def consume(reply,check_budget):
         descriptor=reply['file']; path=Path(descriptor['local_path'])
         if path.is_symlink() or descriptor['size_bytes']>32*1024*1024:
             return {'status':'unavailable','reason':'file_scope_or_size'}
-        with path.open('rb') as stream:raw=stream.read(32*1024*1024+1)
-        if len(raw)!=descriptor['size_bytes'] or hashlib.sha256(raw).hexdigest()!=descriptor['sha256']:
+        chunks=[]; size=0; digest=hashlib.sha256()
+        with path.open('rb') as stream:
+            while True:
+                check_budget()
+                chunk=stream.read(min(1024*1024,32*1024*1024+1-size))
+                check_budget()
+                if not chunk:break
+                size+=len(chunk); chunks.append(chunk); digest.update(chunk)
+                if size>32*1024*1024:break
+        raw=b''.join(chunks)
+        if size!=descriptor['size_bytes'] or digest.hexdigest()!=descriptor['sha256']:
             return {'status':'changed_since_inspection','reason':'file_changed'}
+        check_budget()
         record=context.accept_evidence(raw=raw,media_type=descriptor['media_type'],source_alias=request.execution_result,
             metadata={'relative_path':reply['relative_path'],'output_name':None,'historical_integrity':'not_attested'})
+        check_budget()
         return {'status':'available','evidence_alias':record['alias'],'relative_path':reply['relative_path'],
-                'sha256':descriptor['sha256'],'size_bytes':len(raw),'local_path':_file(raw,context,record['alias']),'budget':reply['budget']}
+                'sha256':descriptor['sha256'],'size_bytes':len(raw),'local_path':_file(raw,context,record['alias'])}
+    try:
+        return _inspect(context,request.execution_result,request.relative_path,run_deadline=run_deadline,consume=consume)
     except RunCheckerError:
         raise
     except Exception as error:
-        return {'status':'unsupported' if 'unknown runner tool' in str(error) or 'unsupported TCAD transport' in str(error) else 'unavailable','reason':type(error).__name__,'detail':str(error)[:1024]}
+        if 'unknown runner tool' in str(error) or 'unsupported TCAD transport' in str(error):
+            return {'status':'unsupported','reason':'inspection_transport_unsupported'}
+        # The shared Worker boundary retains engineering causes and readable
+        # diagnostics. A failed optional tool never fails scientific submission.
+        raise
 
 
 def accept_tool(request,context):
+    run_deadline=time.monotonic()+context.remaining_seconds
     try:
         prior=next((r for r in context.evidence() if r['alias']==request.evidence_alias),None)
         if prior is None:
@@ -118,25 +143,35 @@ def accept_tool(request,context):
         expected=next((e for e in package.project.expected_outputs if e.name==request.output_name),None)
         if expected is None:
             return {'status':'not_found','reason':'output_not_declared'}
-        for alias in request.evidence_aliases:context.read_evidence(alias)
-        raw=context.read_evidence(prior['alias'])
-        if len(raw)>expected.max_bytes:
-            return {'status':'limit_exceeded','reason':'project_output_bytes'}
-        reply=_inspect(context,'execution_result',prior['metadata']['relative_path'])
-        if reply.get('status')!='available':return reply
-        if reply['file']['sha256']!=prior['artifact_ref']['sha256'] or reply['file']['size_bytes']!=len(raw):
-            return {'status':'changed_since_inspection','reason':'candidate_changed'}
-        record=context.accept_evidence(raw=raw,media_type=expected.media_type,metadata={**prior['metadata'],
-            'output_name':expected.name,'declared_path':expected.relative_path,'rationale':request.rationale,
-            'evidence_aliases':request.evidence_aliases,'experiment_key':expected.experiment_key,'case_key':expected.case_key})
-        return {'status':'accepted','evidence_alias':record['alias'],'output_name':expected.name,
-                'local_path':_file(raw,context,record['alias']),'size_bytes':len(raw),'budget':reply['budget']}
+        def consume(reply,check_budget):
+            for alias in request.evidence_aliases:
+                check_budget(); context.read_evidence(alias)
+            check_budget()
+            raw=context.read_evidence(prior['alias'])
+            check_budget()
+            if len(raw)>expected.max_bytes:
+                return {'status':'limit_exceeded','reason':'project_output_bytes'}
+            if reply['file']['sha256']!=prior['artifact_ref']['sha256'] or reply['file']['size_bytes']!=len(raw):
+                return {'status':'changed_since_inspection','reason':'candidate_changed'}
+            record=context.accept_evidence(raw=raw,media_type=expected.media_type,metadata={**prior['metadata'],
+                'output_name':expected.name,'declared_path':expected.relative_path,'rationale':request.rationale,
+                'evidence_aliases':request.evidence_aliases,'experiment_key':expected.experiment_key,'case_key':expected.case_key})
+            check_budget()
+            return {'status':'accepted','evidence_alias':record['alias'],'output_name':expected.name,
+                    'local_path':_file(raw,context,record['alias']),'size_bytes':len(raw)}
+        return _inspect(context,'execution_result',prior['metadata']['relative_path'],run_deadline=run_deadline,consume=consume)
     except ValueError as error:
-        return {'status':'ambiguous_mapping' if 'ambiguous_mapping' in str(error) else ('limit_exceeded' if str(error) in {'file_bytes','metadata_bytes','evidence_budget'} else 'unavailable'),'reason':str(error)[:1024]}
+        if 'ambiguous_mapping' in str(error):
+            return {'status':'ambiguous_mapping','reason':'ambiguous_mapping'}
+        if str(error) in {'file_bytes','metadata_bytes','evidence_budget'}:
+            return {'status':'limit_exceeded','reason':str(error)}
+        raise
     except RunCheckerError:
         raise
     except Exception as error:
-        return {'status':'unsupported' if 'unknown runner tool' in str(error) or 'unsupported TCAD transport' in str(error) else 'unavailable','reason':type(error).__name__,'detail':str(error)[:1024]}
+        if 'unknown runner tool' in str(error) or 'unsupported TCAD transport' in str(error):
+            return {'status':'unsupported','reason':'inspection_transport_unsupported'}
+        raise
 
 INSPECT_TOOL=WorkerToolDefinition(name='worker_tcad_inspect_outputs',description='Optionally list or inspect original files of the bound terminal execution_result. No solver, editing or renaming. A selected file yields a controlled evidence alias and read-only copy; unavailable inspection permits limited analysis.',input_model=InspectRequest,capability='tcad.analysis.inspect_outputs',contextual_handler=inspect_tool,optional_services=('tcad.output_inspection',),evidence_ports=('tool_evidence','recovery_manifest_output'))
 ACCEPT_TOOL=WorkerToolDefinition(name='worker_tcad_accept_output',description='Accept a previously inspected file as one declared output using an explicit evidence-backed mapping. Rechecks bytes; preserves source path and old execution. Read returned evidence alias for scoring and report references. No scientific success is granted.',input_model=AcceptRequest,capability='tcad.analysis.accept_output',contextual_handler=accept_tool,optional_services=('tcad.output_inspection',),evidence_ports=('tool_evidence','recovery_manifest_output'))

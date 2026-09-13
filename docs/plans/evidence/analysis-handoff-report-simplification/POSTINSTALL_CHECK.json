@@ -1,0 +1,49 @@
+{
+  "date": "2026-09-14",
+  "check": "read_only_service_PYTHONPATH_source_hashes",
+  "checks": [
+    {
+      "source": "plugins/curve_score/curve_score/analysis_workspace.py",
+      "installed_path": "/opt/scidiscovery-m7/site/curve_score/analysis_workspace.py",
+      "matches_reviewed_version": true
+    },
+    {
+      "source": "plugins/tcad_artifact/tcad_artifact/analysis_bindings.py",
+      "installed_path": "/opt/scidiscovery-m7/site/tcad_artifact/analysis_bindings.py",
+      "matches_reviewed_version": true
+    },
+    {
+      "source": "src/scidiscovery/artifact_agent/schema/layered_diagnosis.py",
+      "installed_path": "/opt/scidiscovery-m7/site/scidiscovery/artifact_agent/schema/layered_diagnosis.py",
+      "matches_reviewed_version": true
+    },
+    {
+      "source": "src/scidiscovery/artifact_agent/service/result_materialization.py",
+      "installed_path": "/opt/scidiscovery-m7/site/scidiscovery/artifact_agent/service/result_materialization.py",
+      "matches_reviewed_version": true
+    },
+    {
+      "source": "src/scidiscovery/artifact_agent/schema/claim.py",
+      "installed_path": "/opt/scidiscovery-m7/site/scidiscovery/artifact_agent/schema/claim.py",
+      "matches_reviewed_version": true
+    },
+    {
+      "source": "plugins/curve_score/curve_score/science_operations.py",
+      "installed_path": "/opt/scidiscovery-m7/site/curve_score/science_operations.py",
+      "matches_reviewed_version": true
+    },
+    {
+      "source": "plugins/tcad_artifact/tcad_artifact/result_analysis.py",
+      "installed_path": "/opt/scidiscovery-m7/site/tcad_artifact/result_analysis.py",
+      "matches_reviewed_version": true
+    },
+    {
+      "source": "src/scidiscovery/platforms/codex.py",
+      "installed_path": "/opt/scidiscovery-m7/site/scidiscovery/platforms/codex.py",
+      "matches_reviewed_version": true
+    }
+  ],
+  "all_match": true,
+  "instance_state": "unbound",
+  "live_agent_acceptance": "pending"
+}

@@ -35,6 +35,11 @@ Worker tool 和 runtime factory 由插件内的窄组件实现。
 TCAD 工具在同一 Run 中解析已绑定原始输出并评分。评分不受支持只限制相应定量结论，不阻止受限分析。
 即使不调用评分工具，计划、审查、执行、文件与 case 的确切身份检查仍然适用。
 
+observable 描述是科学文字，不是第二份身份登记表；设计、物化、审查和曲线编译不要求原文重复。
+比较中明确的 baseline key 已标识基线，不要求案例角色标签重复声明。紧凑意图缺省该 key 时，
+仅当恰好一个已声明 baseline/control 能确定它才自动补全；存在歧义时返回具体字段缺口。
+未知案例和变量数值自相矛盾仍是错误。
+
 ## 2. 注册、编译与三种视图
 
 系统只有一个 entry-point group `scidiscovery.plugins`；每个入口返回一个 `PluginDefinition`，
@@ -53,6 +58,12 @@ Operations。组件没有独立 entry point，插件私有实现也不能由 Roo
 这些投影；每个 Run 的别名加入独立副本。静态材料先排除自身 digest，再进入既有身份摘要结构。
 Root 与 lifecycle 工具保留各自声明，共用严格 JSON 参数解析和诊断。preflight/invoke 负责输入
 准入；提交只校验输出及其对冻结证据的主张，不重跑输入资格判断。
+
+来源引用对照控制层的精确输入别名及工具记录解析，不要求在输出 evidence 表中再次登记。
+可选来源表补充定位与科学来源说明；重复引用、多个定位及未使用的绑定来源不会形成整份成果的阻断。
+审批检查完整冻结对象和独立审查父链，不以审查者是否抄齐来源表判断完成。分析可直接引用工具保存的
+计算文件，原有收据与执行／案例身份检查照常适用。已声明的模型／语义错误保留有界具体原因；
+不回显整个输入、异常链或堆栈，未知工程异常仍单独记录。
 
 公开错误包含有界 code、phase、path、message、可修正性与受影响动作，即时回复与持久活动使用
 同一份安全详情；未知校验器异常属于工程故障。声明记录尝试的评分工具在解析前登记调用，包括
@@ -89,10 +100,15 @@ Worker 不输出具有控制权威的后继 Operation 名称。调度 Agent 可�
 交接不可解析也不遮蔽可独立核验的封存载荷，其限制由 `scheduler_signal_status` 单独报告。
 清单和 Worker 输入描述明确标记 historical。`evidence_inventory` 允许历史背景读取；`prior_signal`
 与 `revision_base` 在当前端口仍可消费相同类型时允许历史版本，结构化历史 JSON 在创建 Run 前按
-消费者输入 Schema 校验。规则依据输入用途，不依据 Agent/Transform 分类。当前独立审查和精确
-修订主体仍须匹配，跨版本修订历史不重置次数限制，退休审查不提供当前资格。申请新人工决定时，
+消费者输入 Schema 校验。规则依据输入用途，不依据 Agent/Transform 分类。独立审查和精确
+修订主体仍须匹配，跨版本修订历史不重置次数限制。同 Operation id/version 且输出端口类型
+（schema、kind、media）兼容时，封存科学记录及其审查可继续使用，完整运行 digest 漂移本身不撤销
+原对象的证明。科学含义不兼容的变更须提升已有 Operation version 或 schema；新对象不继承旧审查，
+不兼容 reviewer 须对原精确对象重新审查。申请新人工决定时，
 历史来源族保留原身份，并核验完整来源、输出集合及唯一端口绑定。历史 blocked/revise 经确定性
-变换仍传播非合格标记。可信依据输入和执行授权保留精确合同门；历史读取不恢复旧批准或旧 Run。
+变换仍传播非合格标记。研究输入资格可以复用原对象的已封存人工决定，条件是 provider id/version
+及既有 approval_contract_digest 一致；这不创建决定或恢复旧 Run。Run 续接及外部执行/批准仍比较
+完整编译身份；provider 匹配服务默认严格，执行授权不启用兼容放宽。historical 标记和来源原 digest 保留。
 结构化对象位于
 `sealed_output`，有界 verdict/缺失输入/建议位于同一响应的 `scheduler_signal`。两类审查来源只接受
 非通过 verdict，`pass` 不能被当作修订理由；每个信号还必须精确绑定同次调用中的被审查对象。
@@ -108,6 +124,19 @@ Root 调用入口拒绝 internal Operation；support 只保留给已选择 publi
 通配对仅允许用于 `handoff_only` 或 `on_demand` inventory。读取历史不恢复退休资格。
 Deck review 将精确 project 作为 `prior_signal`，实现不完整时可以封存负面审查；通过审查、
 包装和执行仍须满足原实现要求。
+
+分析 Worker 从 `analysis-start.json` 接手：入口提供输入大小/用途、逐字摘录和原字段位置。
+TCAD 另在 `analysis-bindings.json` 提供有界项目视图和科学案例值矩阵。控制生成的案例绑定账本
+保留在不可变原件和服务端工具输入中，不作为默认阅读或报告任务。TCAD 两份展示文件合计预算
+32 KiB；放不下的细节保留原件指针和遗漏计数。视图不是新科学证据，不改变来源身份、资格或
+native 文件权限。复用 Agent 核对新绑定并读取本轮相关原件，无需全文重读每个输入文件。
+
+`LayeredDiagnosisReport` 以 `summary` 和 `overall_verdict` 集中表达结论，附证据和可选
+`limitations`。旧完整 `gates` 对象、剩余矛盾、下一步和额外评估均可省略。`claim_allowed`
+仍由科学 Agent 明确判断；缺少数值诊断层时，声明投影为 `not_evaluable`。仅这类分析报告由
+既有 finalizer 在封存前生成 handoff 状态及正式摘要的短引用；工作区 `patch_contract` 声明
+草稿可省略字段，Root 同时读取封存正文与调度信号。TCAD、通用和固定曲线误差分析在其支持的
+local backend 共用此行为。历史 Artifact 字节保持不变，也不新增评分前提。
 
 TCAD 实现缺口可携带控制端捕获的有界源码、声明、尝试记录和诊断文件；它们仍是负面开发记录，
 不构成可执行项目。审查和修订均接受该交付；修订把旧诊断恢复到 `reports/history`，必须重新
@@ -215,6 +244,26 @@ Effect Operation 的 `operation_invoke` 在创建精确副作用请求后，直�
 决定的请求并返回精确回环 UI 地址；它不会写决定或启动副作用。UI 决定后，调度器显式调用
 `execution_start`，再做有界 `execution_sync`。唯一 Execution 生命周期负责幂等、状态映射、未知
 提交恢复和原始输出登记；已编译 runtime factory 提供的领域 adapter 不能修改科学对象或批准自己。
+
+`execution_sync` 仅刷新求解状态和有界日志，终态也可刷新；`execution_status` 只读已保存观测，
+不联系适配器。产物传输由显式 `execution_collect` 启动，收集完成后由 `execution_outputs`
+发布语义名。daemon 统一拥有一个收集槽，消费接收时冻结的总预算（默认600秒，含停止回收）。
+私有控制监督进程持锁，直到唯一工作进程组实际停止；daemon退出也不提前释放，不依赖传输程序持锁。
+重复请求不延长活动预算，其他执行忙时直接返回、不排队。完整文件及稳定输出清单保留以支持
+传输和登记中断后的恢复。适配器仅实现传输，可消费共同 `CollectionContext`，不另建调度器。
+查询、单文件、无进展默认预算分别为5、120、30秒。
+
+工程故障使用共同的有界脱敏投影。Root 按实例/会话范围通过 `diagnostic_read` 引用读取详情，
+Worker 在自身工作区保留可读报告。既有 Run 活动记录还提供 MCP 调用时序。本地可信工作区
+共享可选进程观测入口：分析保留既有执行策略，其他角色继承原环境和资源限制。观测缺失、
+损坏均明确报告，不能增加科学提交要求。
+
+错误观测在截止时间后或 Run 终态仍追加到既有活动记录，不续预算、不重开 Run、不接收成果。
+同次 MCP 调用的开始与结束归属同一 Run，包括空闲 Worker 打开下一份 assignment 的情况。
+选定任务后打开失败，失败归属该 Run 并保留原原因，不能把前一个 Run 的完成当作此次打开结果。
+`run_status` 默认仍返回精简摘要；`diagnostic_after=0` 读取已保存错误的第一页，以 `next_after`
+续读，`diagnostic_limit` 最大100。`run_list` 返回 `next_before`，供可选的语义名 `before`
+游标续读。两种查询均限当前实例；旧事件缺失详情时明确保留缺失，分页不能补造从未记录的信息。
 
 ## 5. 控制面与数据面
 

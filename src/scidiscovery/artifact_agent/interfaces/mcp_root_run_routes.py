@@ -7,24 +7,34 @@ from typing import Any
 
 
 class RootRunRoutes:
-    def run_list(self, *, state: str | None, limit: int) -> dict[str, Any]:
+    def run_list(self, *, state: str | None, limit: int, before: str | None = None) -> dict[str, Any]:
         if self.runs is None:
-            return {"runs": []}
+            return {"runs": [], "next_before": None}
+        if before is not None:
+            self._resolve("run", before)
         items = []
+        past_cursor = before is None
         for binding in self.bindings.list(instance=self._instance_id(), namespace="run"):
+            if not past_cursor:
+                past_cursor = binding.name == before
+                continue
             value = self.runs.status(binding.object_id)
             if state is not None and value.state != state:
                 continue
+            if len(items) == limit:
+                return {"runs": items, "next_before": items[-1]["name"]}
             items.append(self._run_status_value(binding.name, value))
-            if len(items) >= limit:
-                break
-        return {"runs": items}
+        return {"runs": items, "next_before": None}
 
-    def run_status(self, *, name: str) -> dict[str, Any]:
+    def run_status(self, *, name: str, diagnostic_after: int | None = None,
+                   diagnostic_limit: int = 50) -> dict[str, Any]:
         if self.runs is None:
             raise RuntimeError("minimal Run service is unavailable")
         value = self.runs.status(self._resolve("run", name))
         result = self._run_status_value(name, value)
+        if diagnostic_after is not None:
+            result["diagnostic_events"] = self.runs.diagnostic_events(
+                value, after=diagnostic_after, limit=diagnostic_limit)
         bound_inputs = {}
         instance = self._instance_id()
         aliases = {b.name: b.object_id for b in self.bindings.list(instance=instance, namespace="artifact")}
@@ -39,8 +49,9 @@ class RootRunRoutes:
             from ..service.local_workspace import WorkspaceError
             try:
                 result["native_execution"] = read_summary(self.runs.backend.open(value.run_id).root)
-            except (WorkspaceError, OSError):
-                result["native_execution"] = {"coverage": "unobserved", "scientific_evidence": False}
+            except (WorkspaceError, OSError) as error:
+                result["native_execution"] = {"coverage": "unobserved", "scientific_evidence": False,
+                    "reason": "workspace_unavailable", "error_type": type(error).__name__}
             native = result["native_execution"]
             result["diagnostic_summary"]["native_coverage"] = native["coverage"]
             result["diagnostic_summary"]["latest_native_error"] = next(
@@ -107,6 +118,7 @@ class RootRunRoutes:
             "recovery_available": self.runs.recovery_available(value),
             "recovery": self.runs.recovery_status(value),
             "diagnostic_summary": self.runs.diagnostic_summary(value),
+            "tool_timing": self.runs.tool_timing(value.run_id),
             "draft_from": (
                 None if value.draft_from_run_id is None else self.bindings.find_name(
                     instance=self._instance_id(), namespace="run",

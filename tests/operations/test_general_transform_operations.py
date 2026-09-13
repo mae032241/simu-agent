@@ -151,7 +151,7 @@ def test_intake_source_context_accepts_only_exact_bound_source_names() -> None:
     payload["scientific_foundation"]["items"][0]["evidence_keys"] = [
         "invented_source"
     ]
-    with pytest.raises(SemanticRuleViolation, match="outside the bound inputs"):
+    with pytest.raises(SemanticRuleViolation, match="source bound to this task"):
         _intake_source_context(
             payload,
             {"source_material": b"bounded source"},

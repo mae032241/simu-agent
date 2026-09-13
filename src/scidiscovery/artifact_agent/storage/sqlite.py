@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import re
 import sqlite3
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from functools import lru_cache
@@ -125,7 +126,8 @@ class RegistryAuditSnapshot:
 class SQLiteArtifactRegistry:
     """Append-only artifact metadata registry at one explicit path."""
 
-    def __init__(self, database_path: Path | str) -> None:
+    def __init__(self, database_path: Path | str, *, deadline_monotonic: float | None = None) -> None:
+        self.deadline_monotonic = deadline_monotonic
         self.database_path = _validate_database_path(database_path)
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
         self._initialize()
@@ -437,6 +439,9 @@ class SQLiteArtifactRegistry:
             connection.close()
 
     def _connect(self, *, read_only: bool = False) -> sqlite3.Connection:
+        timeout = 30.0 if self.deadline_monotonic is None else min(30.0, self.deadline_monotonic - time.monotonic())
+        if timeout <= 0:
+            raise TimeoutError("artifact registration connection budget exhausted")
         target: Path | str = self.database_path
         parameters: dict[str, object] = {}
         if read_only:
@@ -444,13 +449,13 @@ class SQLiteArtifactRegistry:
             parameters["uri"] = True
         connection = sqlite3.connect(
             target,
-            timeout=30.0,
+            timeout=timeout,
             isolation_level=None,
             **parameters,
         )
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys = ON")
-        connection.execute("PRAGMA busy_timeout = 30000")
+        connection.execute(f"PRAGMA busy_timeout = {max(1, int(timeout * 1000))}")
         if read_only:
             connection.execute("PRAGMA query_only = ON")
         else:

@@ -1,0 +1,14 @@
+Traceback (most recent call last):
+  File "/home/da/project/ai4s/tcad/git_release/scidiscovery-agent/123/scidiscovery-e5.2/docs/plans/evidence/operation-validation-ownership-cleanup/collection-implementation/installed_smoke.py", line 75, in <module>
+    print(run([python, str(evidence/'installed_collection_probe.py')], env=clean).strip())
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/da/project/ai4s/tcad/git_release/scidiscovery-agent/123/scidiscovery-e5.2/docs/plans/evidence/operation-validation-ownership-cleanup/collection-implementation/installed_smoke.py", line 23, in run
+    raise RuntimeError(f"{command[0]} failed ({result.returncode}):\n{result.stdout[-6000:]}\n{result.stderr[-6000:]}")
+RuntimeError: /tmp/scid-collection-installed-10qgwmk2/venv/bin/python failed (1):
+
+Traceback (most recent call last):
+  File "/home/da/project/ai4s/tcad/git_release/scidiscovery-agent/123/scidiscovery-e5.2/docs/plans/evidence/operation-validation-ownership-cleanup/collection-implementation/installed_collection_probe.py", line 76, in <module>
+    assert time.monotonic()<until,(root/'daemon.log').read_text()
+           ^^^^^^^^^^^^^^^^^^^^^^
+AssertionError
+

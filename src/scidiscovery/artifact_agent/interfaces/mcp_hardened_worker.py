@@ -74,18 +74,17 @@ class HardenedWorkerMCPRouter(LocalWorkerMCPRouter):
                     self._transport_owner,
                     renew=name == "worker_heartbeat",
                 ):
-                    result = self._dispatch_tool(name, arguments)
+                    result = super().call_tool(name, arguments)
             else:
-                result = self._dispatch_tool(name, arguments)
+                result = super().call_tool(name, arguments)
         except DiagnosticError as error:
-            if name in _FILE_TOOLS:
-                self._record_tool_failure(name, error)
+            if not getattr(error, "engineering", None):
+                self._engineering_failure(name, error)
+                self._record_failure_safely(name, error)
             raise
         except Exception as error:
-            failure = WorkerToolError("Hardened transport failed", details=(contract_diagnostic(
-                "runtime_failure", phase="tool_execution", affected_action="tool_call",
-                message="Hardened transport failed.", error_type=type(error).__name__),))
-            self._record_tool_failure(name, failure)
+            failure = self._engineering_failure(name, error)
+            self._record_failure_safely(name, failure)
             raise failure from error
         if (
             name == "worker_submit_result"
@@ -96,9 +95,9 @@ class HardenedWorkerMCPRouter(LocalWorkerMCPRouter):
             backend.release_transport(self._run_id, self._transport_owner)
         return result
 
-    def _dispatch_tool(self, name: str, arguments: dict[str, Any] | None) -> Any:
+    def _call_tool(self, name: str, arguments: dict[str, Any] | None) -> Any:
         if name not in _FILE_TOOLS:
-            return super().call_tool(name, arguments)
+            return super()._call_tool(name, arguments)
         with self._lock:
             try:
                 tool = self._tools[name]

@@ -1,0 +1,13 @@
+{
+  "run_name": "fig4_iterative_alignment_plan_review_1",
+  "candidate_scope": "verified final recovery result only; earlier rejected revisions not retained here",
+  "integrity_verified": true,
+  "candidate_bytes": 4218,
+  "hypothesis_review_count": 0,
+  "hypothesis_keys_duplicate": false,
+  "review_target_is_experiment_portfolio": true,
+  "findings_count": 4,
+  "evidence_count": 6,
+  "reference_membership_failures": [],
+  "pydantic_accepted": true
+}

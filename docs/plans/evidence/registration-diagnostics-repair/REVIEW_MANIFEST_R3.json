@@ -1,0 +1,120 @@
+{
+  "head": "be5da77acdbf98054e0b096fc4e940de560d4ba1",
+  "base_snapshot": "/tmp/scid-registration-diagnostics-before-89_k59w5",
+  "files": [
+    {
+      "path": "docs/ARCHITECTURE.md",
+      "before_sha256": "59084871ecd190bdcc55b8adfcf6d0261230f0753530d4665477a20cd34ddf13",
+      "sha256": "2ffbb07b69413bc1982498f1e8f41d40cb678746ec29bf50076ca13a90016bd2",
+      "size": 32567
+    },
+    {
+      "path": "docs/ARCHITECTURE.zh-CN.md",
+      "before_sha256": "fabfbdc0751fd0b5faa5840c5419fd113f1999a7507e227b5ea0d24c4e935a31",
+      "sha256": "3cc625ca1d6808af1b1e2528b70518d27468c8cd5c7684f87ca2bdc9d13662ec",
+      "size": 28852
+    },
+    {
+      "path": "docs/plans/README.md",
+      "before_sha256": "15830e11643a9a718623583b0c9a6671b51d9ebf4621724405fa9a88dd285541",
+      "sha256": "e1461b28b7cfd62980842e01f0cf3b862a43b0be3caff87676b83060ab051021",
+      "size": 44747
+    },
+    {
+      "path": "plugins/curve_score/curve_score/analysis_files.py",
+      "before_sha256": "558c9fc3e9fad7ffcaf965d2e6220c117485998f4a90bb37a9317cb4e621c163",
+      "sha256": "cf5a9ad16a97c8c0ed30f6648b9ad0baa3102547847fe3636c5a39a1df71b1eb",
+      "size": 8406
+    },
+    {
+      "path": "plugins/curve_score/curve_score/curve_contract_compiler.py",
+      "before_sha256": "15cce43b3c418175b2ecccca39080a97d72ca3acf739e95da436112386ee2e64",
+      "sha256": "280c1e6450b73e7b0cbd74ad6bac436300bdba4a9137f49ec713c52b9ec8bd6a",
+      "size": 21346
+    },
+    {
+      "path": "plugins/curve_score/curve_score/science_operations.py",
+      "before_sha256": "784719055ee7d18c3a1435866a28b3d9e745f90cc6fd955e6d445bff0372f487",
+      "sha256": "43c01742b16baab6b62e97e12022b04480313db5480fbdb30eba143bd951915a",
+      "size": 56850
+    },
+    {
+      "path": "src/scidiscovery/artifact_agent/interfaces/mcp_local_worker.py",
+      "before_sha256": "068ee7b247f88844c28a5b73597f351e04f19c19de4773be4072c8d5098872b5",
+      "sha256": "a59e473e04b2d3526a932b09e2effd84e6fe1a449c1735e177ddec902efe50f9",
+      "size": 28562
+    },
+    {
+      "path": "src/scidiscovery/artifact_agent/interfaces/mcp_root.py",
+      "before_sha256": "0838d20efccb9e32432272beeba52f6fdbff3e37cdd227b4bfe3081dfe4d78da",
+      "sha256": "7eaf064f1d110276b5c82a26e4dbe4d2baaf23d5731cc4c1e84d193e0bdbe8ce",
+      "size": 19070
+    },
+    {
+      "path": "src/scidiscovery/artifact_agent/interfaces/mcp_root_run_routes.py",
+      "before_sha256": "062d474349ba5cdc2a6fc17952d0b5006fe642e80c1bf63abb54fdab1a0b6840",
+      "sha256": "aa4a57166aa3520d7d7a1c4fd1b6007b645386503e9f47ae22b38603890f5f15",
+      "size": 7210
+    },
+    {
+      "path": "src/scidiscovery/artifact_agent/schema/experiment.py",
+      "before_sha256": "3b0b707b3e6e4fa6de9a57484ba6cd1c2f7e0cfc68d22f7f5463c6ab39a7d437",
+      "sha256": "de589f5fd7afcc5d7ac421f3499e9a5b9a4d760712e2aa8aee3d9da1320f943e",
+      "size": 22303
+    },
+    {
+      "path": "src/scidiscovery/artifact_agent/schema/experiment_intent.py",
+      "before_sha256": "5a5f1fc4274a22bb0d0bd4c00d938682ab10ac7e00d1707ea1d90886ef605b0d",
+      "sha256": "486211b57436dea3c3cd01b360eb207b6b7117e17eeb986fffdd5fd020a10c45",
+      "size": 27503
+    },
+    {
+      "path": "src/scidiscovery/artifact_agent/service/run_outputs.py",
+      "before_sha256": "44b7585a9327ca624f1e4f159b3af6f6d4498c9db920df5ef24ff58a9804f7e4",
+      "sha256": "f937149c7a22377fa38a9948765c2b27131cbb72c820fe722c7b7633ee678817",
+      "size": 16716
+    },
+    {
+      "path": "src/scidiscovery/artifact_agent/service/run_records.py",
+      "before_sha256": "22e5febe16cdb9193a59beb8b843f28cd384bf0f37afbb7cb2231aea65fa381b",
+      "sha256": "d8cd234bbac41ceb5b6b281996a128f8a71532db3d7a29933c4560d388e83fa2",
+      "size": 10835
+    },
+    {
+      "path": "src/scidiscovery/artifact_agent/service/runs.py",
+      "before_sha256": "d51203c69fd5841bdf6f97b297bdefd832b6409fde816a96d1396c7ad45ac8a1",
+      "sha256": "aac052cbb202378c7f5476d1b9d4dfd5c7a54a4513f1c18e1b90228865048f14",
+      "size": 84462
+    },
+    {
+      "path": "src/scidiscovery/general_science_experiment_components.py",
+      "before_sha256": "b72ddbfac57a4024b88e5f0544c067c514d8420ece613af8c6041f2ea35002ca",
+      "sha256": "2d8afef474e3afdc3f26b52008c6bf392a7f14a6dc2f8a9a5beb19d45a0aa100",
+      "size": 24685
+    },
+    {
+      "path": "src/scidiscovery/operation_contract.py",
+      "before_sha256": "37f98de9e19dee5ecacd9b5e45bcc9aa2ec89903aac08f9708f08a0d92848312",
+      "sha256": "e3af0c00e31daa1e03705b7c9b6fb9ac86b73bc6c71a1bd2ef5d0c000528cda6",
+      "size": 29353
+    },
+    {
+      "path": "tests/operations/test_l2_run_invariants.py",
+      "before_sha256": "2c1067c324c71b42d7d00ccd57d0157f68d14bd7e9657479c7b62e690112d94e",
+      "sha256": "871b3ae389ed4e977f5044f6e45b13b126cf3bbc99f348d0bf3a5ec3cda4b9da",
+      "size": 63735
+    },
+    {
+      "path": "tests/operations/test_registration_diagnostics_repair.py",
+      "before_sha256": null,
+      "sha256": "65e00ddb34c59f6bb52a5e75a2b5f33c9bb4e557d298b277bedb94304697f27c",
+      "size": 17782
+    },
+    {
+      "path": "tests/operations/test_validation_reaudit_removal.py",
+      "before_sha256": "37bf9966c85761c858a5f0ace0850b582696a6b089e32fd9e23e2c365ec31bc2",
+      "sha256": "43dfaef81db0d226c0ab7bdbb0fc571f211d99854c9a33e1dfd5bbfa1957e238",
+      "size": 15745
+    }
+  ]
+}

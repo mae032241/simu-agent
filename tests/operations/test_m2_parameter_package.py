@@ -444,6 +444,8 @@ def test_real_parameter_run_reaches_expansion_audit_and_qualification(
             }
         ],
     }
+    if with_checklist:
+        audit_payload.pop("evidence")  # Direct citations survive qualification without a copied ledger.
     audit_name = _complete_agent(catalog, runtime, AUDIT_OPERATION, audit_payload)
     split = root.call_tool(
         "operation_invoke",
