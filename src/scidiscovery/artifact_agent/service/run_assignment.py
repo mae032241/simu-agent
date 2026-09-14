@@ -31,6 +31,12 @@ def assignment_json(
     revision = _revision_assignment(
         bound, inputs, workspace_mode=revision_workspace_mode
     )
+    user_context_origins = {
+        item.source_name: {"source_origin": "user_via_scheduler"}
+        for item in bound.inputs
+        if item.port_name == "user_context"
+        and dict(item.artifact.labels).get("source_origin") == "user_via_scheduler"
+    }
     return canonical_json(
         {
             "schema_version": 1,
@@ -54,6 +60,7 @@ def assignment_json(
                     "media_type": item.media_type,
                     "usage": item.usage,
                     "exposure": item.exposure,
+                    **user_context_origins.get(item.source_name, {}),
                     "historical": next(
                         value.artifact.historical for value in bound.inputs
                         if value.source_name == item.source_name

@@ -42,6 +42,7 @@ class InvocationArtifact:
     handoff_verdict: str | None = None
     historical: bool = False
     producer_run_id: str | None = None
+    producer_inputs: tuple[tuple[str, ArtifactRef], ...] | None = None
 @dataclass(frozen=True, slots=True)
 class BoundInput:
     port_name: str
@@ -96,6 +97,7 @@ class ProducerOutputFamily:
     reviewer_operation: str | None = None
     review_subject_outputs: tuple[str, ...] = ()
     family_identity: str | None = None
+    producer_inputs: tuple[tuple[str, ArtifactRef], ...] | None = None
 @dataclass(frozen=True, slots=True)
 class ApprovalProjectorContext:
     operation_id: str
@@ -199,7 +201,8 @@ def preflight_operation(
             )
     assert spec.limits is not None
     if total_bytes > spec.limits.max_input_bytes:
-        raise OperationInvocationError("input_total_too_large")
+        raise OperationInvocationError("input_total_too_large",
+            message=f"Total input size {total_bytes} bytes exceeds max_input_bytes={spec.limits.max_input_bytes}.")
     bound_inputs = tuple(bound)
     admission = spec.input_admission
     if admission is not None:
@@ -351,7 +354,8 @@ def _validate_port_binding(
     port: InputPortSpec, artifacts: tuple[InvocationArtifact, ...]
 ) -> None:
     if not port.min_items <= len(artifacts) <= port.max_items:
-        raise OperationInvocationError("input_cardinality_invalid", port=port.name)
+        raise OperationInvocationError("input_cardinality_invalid", port=port.name,
+            message=f"Port {port.name} accepts {port.min_items}..{port.max_items} items; received {len(artifacts)}.")
     wildcard = port.schema_id == "*" and port.media_types == ("*/*",)
     for artifact in artifacts:
         if not wildcard and artifact.schema_id != port.schema_id:
@@ -359,7 +363,8 @@ def _validate_port_binding(
         if not wildcard and artifact.media_type not in port.media_types:
             raise OperationInvocationError("input_media_type_mismatch", port=port.name)
         if artifact.size_bytes > port.max_item_bytes:
-            raise OperationInvocationError("input_item_too_large", port=port.name)
+            raise OperationInvocationError("input_item_too_large", port=port.name,
+                message=f"Input size {artifact.size_bytes} bytes exceeds max_item_bytes={port.max_item_bytes}.")
         if port.require_current and not artifact.current:
             raise OperationInvocationError("input_not_current", port=port.name)
 def _run_guards(

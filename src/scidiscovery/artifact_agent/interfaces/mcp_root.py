@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import threading
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from ...operation_contract import validation_diagnostics, contract_diagnostic
 from ...operations.tooling import parse_tool_arguments
@@ -17,7 +17,7 @@ from ..execution_bridge import ExecutionBridge
 from ..service.approvals import ApprovalService
 from ..service.artifacts import ArtifactService
 from ..service.executions import ExecutionService
-from ..service.intake import SecureIntakeService
+from ..service.intake import SecureIntakeService, USER_TEXT_MAX_LENGTH
 from ..service.scheduler_bindings import (
     SchedulerBinding,
     SchedulerBindingService,
@@ -82,6 +82,24 @@ class IngestFileInput(NamedInput, RevisionInput):
     media_type: str | None = Field(default=None, min_length=3, max_length=255)
 
 
+class IngestTextInput(NamedInput, RevisionInput):
+    text: str = Field(
+        min_length=1,
+        max_length=USER_TEXT_MAX_LENGTH,
+        description="Original user text in valid Unicode, stored as UTF-8 without changing whitespace, line endings, or normalization.",
+    )
+
+    @field_validator("text", mode="before")
+    @classmethod
+    def _validate_unicode(cls, value: Any) -> Any:
+        if isinstance(value, str):
+            try:
+                value.encode("utf-8")
+            except UnicodeEncodeError as error:
+                raise ValueError("text must be valid Unicode encodable as UTF-8") from error
+        return value
+
+
 class OperationInputSelection(RootToolInput):
     port: str = Field(pattern=_SOURCE_NAME_PATTERN)
     artifact_names: tuple[str, ...] = Field(max_length=256)
@@ -116,6 +134,10 @@ class RunListInput(RootToolInput):
 
 
 class RunStatusInput(NamedInput):
+    output_paths: list[Annotated[str, Field(pattern=r"^(?:/(?:[^~]|~[01])*)?$")]] | None = Field(
+        default=None, max_length=8,
+        description="Sealed payload JSON Pointers: omit/null for the legacy full result; [] for status/signal/metadata without reading the payload. Select up to 8 paths (32 KiB values total). Empty pointer selects the root. Oversized subtrees are omitted with bounded direct-child navigation (32 items, 8 KiB total); missing paths are explicit. selected_output is a reading projection, never a complete sealed_output.",
+    )
     diagnostic_after: int | None = Field(default=None, ge=0,
         description="Set to 0 for the first page of saved errors, then use diagnostic_events.next_after. Omit for the compact status.")
     diagnostic_limit: int = Field(default=50, ge=1, le=100)
@@ -182,6 +204,7 @@ ROOT_TOOLS = (
     RootTool("scientific_current_select", "Compare-and-set one immutable scientific object as the explicit current selection.", ScientificCurrentSelectInput),
     RootTool("lifecycle_events", "Return persistent semantic task, approval, and execution state changes for this scheduler process.", EmptyInput),
     RootTool("artifact_ingest_file", "Freeze and bind one project file under a semantic name.", IngestFileInput),
+    RootTool("artifact_ingest_text", "Freeze original user text and bind it under a semantic name in the current instance; does not create a Run.", IngestTextInput),
     RootTool("artifact_catalog", "Read sanitized metadata for one bound semantic input.", NamedInput),
     RootTool("operation_catalog", "List one view of installed compiled operations without implementation identity.", OperationCatalogInput),
     RootTool("operation_preflight", "Check one exact operation call without writing control state.", OperationCallInput),
@@ -434,7 +457,14 @@ class RootMCPRouter:
         except KeyError as error:
             raise RootToolError(f"unknown root tool: {name}") from error
         try:
-            parsed = parse_tool_arguments(tool.input_model, arguments)
+            if tool.input_model is IngestTextInput:
+                # Validate strings before JSON parsing can turn invalid Unicode
+                # into a root-level error without the affected text field.
+                parsed = tool.input_model.model_validate(
+                    {} if arguments is None else arguments, strict=True
+                )
+            else:
+                parsed = parse_tool_arguments(tool.input_model, arguments)
         except ValidationError as error:
             raise RootToolError("tool arguments do not satisfy the declared model",
                     details=validation_diagnostics(error, schema=tool.schema()["inputSchema"])) from error

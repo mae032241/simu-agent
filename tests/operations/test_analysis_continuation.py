@@ -61,6 +61,9 @@ def test_compact_open_and_editable_nested_recovery_with_fresh_runtime(tmp_path):
     new = Path(new_opened['workspace_path']); draft = new / 'recovery-draft'
     domain = json.loads((new / 'domain-workspace.json').read_bytes())
     entry = json.loads(Path(new_opened['start_here_path']).read_bytes())
+    from curve_score.analysis_workspace import GUIDANCE, REPORT_GUIDANCE
+    assert entry['guidance'] == start['guidance'] == GUIDANCE
+    assert domain['patch_contract']['instruction'] == REPORT_GUIDANCE
     assert domain['paths']['recovery_manifest'] == entry['recovery']['coverage_path']
     assert (new / domain['paths']['recovery_manifest']).is_file()
     frozen = draft / 'scratch/nested/numbers.json'
@@ -79,12 +82,14 @@ def test_compact_open_and_editable_nested_recovery_with_fresh_runtime(tmp_path):
     assert (new / 'scratch/plot.txt').read_text() == 'plot only'
     assert frozen.read_text() == '{"value":3}'
     assert (draft / 'scratch/plot.py').read_text() == script
-    # Legacy materializations retain the old complete inline-contract response.
+    # Contract navigation does not depend on optional analysis navigation.
     domain = json.loads((new / 'domain-workspace.json').read_text())
     domain['paths'].pop('start_here')
     (new / 'domain-workspace.json').chmod(0o600)
     (new / 'domain-workspace.json').write_text(json.dumps(domain))
-    assert following.call_tool('worker_open_assignment', {})['tool_contracts'] == contracts
+    reopened = following.call_tool('worker_open_assignment', {})
+    assert 'tool_contracts' not in reopened and 'start_here_path' not in reopened
+    assert json.loads(Path(reopened['tool_contracts_path']).read_bytes())['tool_contracts'] == contracts
 
 
 def test_prior_mapping_reused_across_alias_reorder_tool_receipt_and_next_seal(tmp_path):

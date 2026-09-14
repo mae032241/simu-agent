@@ -22,7 +22,6 @@ from .analysis import (
 from .curve_contract_compiler import validate_compiled_curve_contract, validate_curve_contract_inputs
 from .diagnostic_tool import DIAGNOSTIC_GUIDANCE, DIAGNOSTIC_PLOT_OUTPUT, record_metric_report
 from .analysis_files import GUIDANCE as ANALYSIS_FILES_GUIDANCE
-from .analysis_workspace import GUIDANCE as CONTINUATION_GUIDANCE, REPORT_GUIDANCE
 from scidiscovery.artifact_agent.service.analysis_artifacts import analysis_calculations, analysis_evidence_aliases, calculation_reference_aliases
 from .schema import (
     CurveBundle,
@@ -775,7 +774,7 @@ def _curve_error_analysis(
     }
 
 
-DIAGNOSIS_PROMPT = CONTINUATION_GUIDANCE + REPORT_GUIDANCE + """Return one RoleResultEnvelope with LayeredDiagnosisReport payload.
+DIAGNOSIS_PROMPT = """Read analysis-start.json first for the input index and full continuation guidance.\nRead domain-workspace.json /patch_contract for the complete draft/report instructions.\nReturn one RoleResultEnvelope with LayeredDiagnosisReport payload.
 Analyze the exact plan and bound results, including failures and missing observations.
 Scoring is optional: worker_curve_score accepts explicit sources and comparison_spec.
 Do not invent metric implementations, replace unsupported statistics with RMS, or
@@ -879,7 +878,7 @@ class Resources:
         OPERATION_AGENT_PREAMBLE + CURVE_CONTRACT_REVIEW_PROMPT
     )
     diagnosis_prompt = OPERATION_AGENT_PREAMBLE + DIAGNOSIS_PROMPT
-    curve_diagnosis_prompt = OPERATION_AGENT_PREAMBLE + CONTINUATION_GUIDANCE + REPORT_GUIDANCE + """Read any bound curve_analysis_plots with native view_image when useful; these images supplement the fixed package, never supply unbound scientific facts.\nReturn exactly one
+    curve_diagnosis_prompt = OPERATION_AGENT_PREAMBLE + """Read analysis-start.json first for the input index and full continuation guidance.\nRead domain-workspace.json /patch_contract for the complete draft/report instructions.\nRead any bound curve_analysis_plots with native view_image when useful; these images supplement the fixed package, never supply unbound scientific facts.\nReturn exactly one
 RoleResultEnvelope whose payload is the LayeredDiagnosisReport required by
 output.schema.json. Interpret the supplied immutable curve-analysis package,
 using the evidence and actual dependencies of each conclusion. The package's metric values,
@@ -1030,7 +1029,7 @@ def component_specs() -> tuple[ComponentSpec, ...]:
                 ComponentRef("analysis_snapshotter", plugin_id="curve_score"),
                 ComponentRef("analysis_finalizer", plugin_id="curve_score"))),
         ComponentSpec("analysis_finalizer", "workspace_finalizer", "scidiscovery.general_science_components:RESULT_FINALIZER"),
-        ComponentSpec("analysis_materializer", "workspace_materializer", "curve_score.analysis_workspace:MATERIALIZER"),
+        ComponentSpec("analysis_materializer", "workspace_materializer", "curve_score.analysis_workspace:MATERIALIZER", configuration_identity="analysis.user-context-origin:v1"),
         ComponentSpec("analysis_snapshotter", "workspace_snapshotter", "curve_score.analysis_workspace:SNAPSHOTTER"),
         ComponentSpec("curve_error_inputs", "validator", "curve_score.science_operations:Components.curve_error_inputs"),
         ComponentSpec("curve_contract_inputs", "validator", "curve_score.science_operations:Components.curve_contract_inputs"),

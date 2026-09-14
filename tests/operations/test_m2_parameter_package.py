@@ -277,9 +277,9 @@ def test_parameter_catalog_and_preflight_share_local_capability(tmp_path) -> Non
     assert runtime.runs.list(instance_id=instance.instance_id) == ()
 
 
-@pytest.mark.parametrize("with_checklist", (False, True), ids=("no-checklist", "checklist"))
+@pytest.mark.parametrize("with_checklist,note_stage", ((False, None), (True, None), (False, "extract"), (True, "audit")))
 def test_real_parameter_run_reaches_expansion_audit_and_qualification(
-    tmp_path, with_checklist: bool,
+    tmp_path, with_checklist: bool, note_stage: str | None,
 ) -> None:
     catalog, runtime, instance, root = _root(tmp_path)
     source = runtime.artifacts.register(
@@ -299,6 +299,10 @@ def test_real_parameter_run_reaches_expansion_audit_and_qualification(
         name="parameter_source",
         object_id=source.artifact_id,
     )
+    if note_stage:
+        from tests.operations.test_general_transform_operations import _register
+        _register(runtime, instance, name="user_note", raw="保留原始来源；对建议作独立判断。".encode(),
+                  kind="source_text", schema="opaque", media_type="text/plain; charset=utf-8")
     checklist_name = None
     if with_checklist:
         checklist_name = "required_parameter_checklist"
@@ -330,6 +334,8 @@ def test_real_parameter_run_reaches_expansion_audit_and_qualification(
                 "artifact_names": [checklist_name],
             },
         )
+    if note_stage == "extract":
+        extraction_inputs.append({"port": "user_context", "artifact_names": ["user_note"]})
     root.call_tool(
         "operation_invoke",
         {
@@ -411,6 +417,8 @@ def test_real_parameter_run_reaches_expansion_audit_and_qualification(
                 "artifact_names": [checklist_name],
             },
         )
+    if note_stage == "audit":
+        audit_inputs.append({"port": "user_context", "artifact_names": ["user_note"]})
     audit_request = {
         "name": "parameter_audit",
         "operation_id": AUDIT_OPERATION,

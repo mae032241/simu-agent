@@ -68,7 +68,11 @@ independent syntax run. A failed/absent/stale preflight cannot be repaired by
 reviewer prose; a passing preflight proves syntax only. For engineering
 studies, review only the declared implementation-qualification scope.
 Read the sealed `initialization_attestation` when present and check that its
-declared probe reaches the implementation layer being reviewed. It is a
+declared probe reaches the implementation layer being reviewed. Read the author's
+source comments about production correspondence and untested case-reset paths,
+then independently check the actual code and current attestation. Those comments
+are claims to review, not execution proof. For older projects without them, assess
+what the supplied code and evidence can establish. The attestation is a
 control-generated provisional diagnostic, not an independent reviewer run or
 proof of physical fidelity.
 
@@ -84,7 +88,10 @@ negative report submit. Every verdict still requires the exact parseable
 parameter set and coverage context, resolvable approved parameter keys, exact
 realization requirement coverage and capability binding. The finalizer copies
 capability_sha256 from the exact subject and handoff.verdict from the formal
-report; these two mirror fields may be omitted. A negative report grants no packaging or execution readiness.
+report, and fills an omitted handoff.summary with a short reference to the formal
+summary. Write the scientific summary once in the payload; these generated fields
+or the whole handoff may be omitted. Explicit handoff notes remain. A negative
+report grants no packaging or execution readiness.
 
 Use the assignment's exact mode and inputs. For an initial review, read the
 complete project and experiment plan. For a revision review, read the complete

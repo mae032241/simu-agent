@@ -1,0 +1,20 @@
+{
+  "checkpoint": "096a13fd89aacf2d4e73f77e87ab3174e5f89ec3",
+  "files": {
+    "plugins/tcad_artifact/tcad_artifact/roles/tcad_deck_author.md": "c3e6bb40b92c457b8898c2a0cdc0d3f23036eb6287812202bd5000f8a827f6d3",
+    "plugins/tcad_artifact/tcad_artifact/roles/tcad_deck_reviewer.md": "65460db1a04b3c1adc3a8a3ae74966a8b7794f5aaa9122ee957fd7652b46532a",
+    "src/scidiscovery/artifact_agent/interfaces/mcp_root.py": "7eaf064f1d110276b5c82a26e4dbe4d2baaf23d5731cc4c1e84d193e0bdbe8ce",
+    "src/scidiscovery/artifact_agent/interfaces/mcp_root_run_routes.py": "aa4a57166aa3520d7d7a1c4fd1b6007b645386503e9f47ae22b38603890f5f15",
+    "roles/scheduler.md": "1411c9d4986c2113494eff052c4cd156b4490d2d7396e90e3511416f366c21ab",
+    "src/scidiscovery/artifact_agent/interfaces/mcp_local_worker.py": "a59e473e04b2d3526a932b09e2effd84e6fe1a449c1735e177ddec902efe50f9",
+    "src/scidiscovery/platforms/codex.py": "352a72e484ffb5069414937492d2ba955c9d2dd92f4ac050134b7ad74d6eaabe",
+    "src/scidiscovery/artifact_agent/service/result_materialization.py": "1286761d1fdb7970b14545cdf558886a6f4c1d242caabe1f36dfd2009a008994",
+    "src/scidiscovery/operation_declaration.py": "7441952a48fcfe5c1abd77231c51506ea38861d595977a2bbdc056a9121f0b63",
+    "src/scidiscovery/general_science_experiment_components.py": "2d8afef474e3afdc3f26b52008c6bf392a7f14a6dc2f8a9a5beb19d45a0aa100",
+    "src/scidiscovery/general_science_components.py": "8c54c3fe56e7111b0bf01b7f05bac28d02e70b9bda1f7499ea4e5986824bb69b",
+    "plugins/tcad_artifact/tcad_artifact/operation_workspace.py": "4d6283cbdddf1484297c5a8a59638df27b7de8b1cf594104cad66b8d763c351f",
+    "plugins/tcad_artifact/tcad_artifact/plugin.py": "9ab461ce1f44f0ced4fe4698843051d304289f706d8cbd2891361bce8cccb99f",
+    "plugins/curve_score/curve_score/science_operations.py": "025c6aa3361c1886e4d2945d087234075bcd524dbdd87bd401579db0149a19d8",
+    "plugins/tcad_artifact/tcad_artifact/result_analysis.py": "a936695feb0217ca57d88a3952b49bdb26274d92df9d3e22d5a220ef1702ec54"
+  }
+}

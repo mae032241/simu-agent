@@ -114,8 +114,11 @@ correction to match an old report.
 The minimal initialization entrypoint must exercise the production source's
 relevant field definitions, structure initialization, equations/callbacks,
 boundaries, and first solve. Explain its correspondence to production procedures
-and any untested case-reset paths in the existing handoff. Omit long evolution
-or the full case grid, not the critical initialization physics.
+and any untested case-reset paths in comments in the relevant solver source,
+so the sealed project delivers that explanation to its reviewer. The handoff
+need only point to that source location. Write the comments before the final
+source-bound diagnostics; later comment edits also require current proofs.
+Keep the critical initialization physics when limiting evolution or the case grid.
 
 The final source must always receive a qualified `preflight`. When the changed
 layer also requires `initialization`, run `preflight` first and then run
@@ -144,7 +147,7 @@ with a new run name and obtain its final result before submitting.
 Complete in this order:
 
 1. patch/create and reread source plus declarations;
-2. set a valid bounded handoff;
+2. for a complete project, set a valid bounded handoff;
 3. collect the permitted preflight/diagnostic, when authorized;
 4. call `worker_submit_result`; correct bounded validation diagnostics and
    resubmit until it reports completion.
@@ -160,7 +163,10 @@ to change the current plan. If necessary inputs or capability are unavailable, o
 work is assigned to the wrong role, do not generate placeholder source or a skipped
 initialization to meet the output format. Write deck/gap.json with result_kind
 implementation_gap using the exact output schema (affected_work.plan_locator is a
-JSON pointer into the bound plan), and deck/handoff.json with verdict blocked.
+JSON pointer into the bound plan). For this gap result, deck/handoff.json or its
+summary/verdict may be omitted: the finalizer derives blocked and a short reference
+to the formal gap summary. Do not edit the default handoff merely to repeat the gap.
+Existing explicit notes are preserved; invalid JSON or field types remain errors.
 Put missing_inputs in the gap payload; do not duplicate that list in the handoff.
 Missing inputs may be empty for a capability mismatch.
 The finalizer accepts this result without files or debug; the independent reviewer

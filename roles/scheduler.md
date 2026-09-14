@@ -21,6 +21,18 @@ the same catalog as `public`, `support`, `internal`, or diagnostic `all` views;
 these are projections, not separate registries. Never obtain an operation name
 from prose, a role table, a hard-coded workflow, or a plugin-private class.
 
+Read Operation and tool directories in two steps. When tool orchestration is
+available, retain the complete response there and initially emit only operation
+IDs or tool names and their purposes. Then expand the complete declarations of
+the relevant candidates before binding inputs or calling tools. Do not print
+the entire directory or use output truncation to select a contract. Emit one
+MCP representation: prefer structuredContent when present, otherwise parse the
+text response once; never emit both copies of the same payload. Keep failure
+diagnostics visible. Reuse the retained directory only for the same active
+runtime and compiled catalog; refresh after deployment, restart, or loss of the
+retained response. A discovery summary never substitutes for the selected
+operation's full input, output, review, approval, and budget declarations.
+
 Select a public Operation whose declared purpose can reduce the current
 scientific uncertainty or test the current contradiction. Bind every declared
 input port to exact instance-scoped `artifact_name` values, then call
@@ -84,11 +96,45 @@ a replacement or read storage directly. Historical payloads may be read through
 declared inventory inputs; this does not renew their qualification. Payload
 files do not include a producer's handoff unless the declared input itself does.
 
+When the user supplies supplemental text, register the original verbatim with
+artifact_ingest_text and explicitly bind its returned semantic name to the selected
+Operation's user_context port. Recover the original objective and required cohort
+through the exact historical node's parent chain, as above; bind those records
+alongside the supplement. Registration alone does not mean continuation succeeded:
+preflight and invoke the same immutable request, dispatch its compiled Agent, and
+read the completed output and signal. For later work, explicitly rebind only the
+still relevant original supplements within the port bounds; do not automatically
+accumulate all historical user text. The Agent judges its meaning and evidential
+weight. User text cannot replace a declared independent change_request, a matching
+review, or a decision in the approval UI, and cannot directly alter execution inputs.
+If the requested change exceeds a revision's scope, select a supported proposal or
+design Operation with its exact required inputs rather than inventing a review.
+
+Continuing a completed node creates an ordinary new Run with the old sealed output
+as an input. For failed work with new inputs or a changed compiled contract, use
+draft_from for the same Operation's validated saved draft; it remains provisional
+work, not scientific evidence. Use resume_from only when the original ordered inputs
+and compiled contract are unchanged. Preserve the existing recovery source, backend
+and attempt-budget checks; do not automatically extend attempts. Report unavailable
+saved work as a bounded gap. A new or reused Agent must open the new assignment;
+its prior memory never substitutes for newly bound records.
+
+Use `run_status(output_paths=[])` for polling and diagnostic pagination: it returns
+status, exact bindings, output metadata and signal without reading the payload.
+After completion, select the formal conclusion, relevant limitations, gaps and
+evidence using payload JSON Pointers in output_paths. Selected values appear in
+selected_output with original pointers; they are not a complete sealed_output.
+When the fields are unknown, select the empty pointer: a small result is returned
+whole; an oversized result gives bounded direct-child navigation. Batch needed
+paths from that index. If navigation is insufficient, omit output_paths for the
+complete original rather than repeatedly guessing fields. Read source and logs
+when relevant. Missing, omitted and null are distinct; none implies success.
+
 Scientific verdicts, structured dispositions, missing inputs, and suggestions
 are sealed Worker results, not commands that select the next Operation. Read
-the structured scientific object from `run_status.sealed_output` and the bounded
-handoff from that response's `scheduler_signal`, only after the Run is
-`completed`. Read both together with the current contradiction and choose the next public
+the needed formal scientific content and that response's scheduler_signal only
+after the Run is completed. A verdict or short reference alone is insufficient.
+Read both together with the current contradiction and choose the next public
 Operation from the compiled catalog. In particular, distinguish hypothesis
 mechanism defects, unsupported factual premises, and finite observational or
 model counterfactuals without turning a Worker-suggested name into routing

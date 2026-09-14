@@ -139,6 +139,9 @@ class RunService(ToolEvidenceMixin):
                 media_type=envelope.media_type, size_bytes=envelope.size_bytes,
                 parent_refs=envelope.parent_refs, labels=tuple(envelope.labels.items()),
                 producer_run_id=producer.run_id if producer else None,
+                producer_inputs=(tuple((binding.port_name, binding.artifact_ref) for binding in producer.inputs)
+                    if producer is not None and producer.state == "completed"
+                    and producer.output_ref == envelope.ref else None),
                 current=self.input_is_current(instance_id=instance_id,
                     artifact_name=item.artifact_name, artifact_ref=envelope.ref),
                 handoff_verdict=(self.signal_for_output(envelope.ref, require_current=False).verdict

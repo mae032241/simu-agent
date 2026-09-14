@@ -7,7 +7,7 @@ and approval projection that give those primitives their TCAD meaning.
 
 from __future__ import annotations
 
-from scidiscovery.operations.input_validation import parse_bound_json
+from scidiscovery.operations.input_validation import ValidationSources, parse_bound_json
 
 from scidiscovery.operations.input_validation import OperationInvocationError
 from scidiscovery.operations.spec import InputValidationSpec
@@ -35,7 +35,7 @@ from scidiscovery.artifact_agent.schema.research_cycle import (
 from scidiscovery.artifact_agent.schema.scientific_foundation import ScientificFoundation
 from scidiscovery.operations.invoke import ApprovalProjectorContext, ApprovalSubjectSnapshot
 from scidiscovery.operation_contract import SemanticRuleViolation, declared_violation, validate_evidence_source_aliases
-from scidiscovery.operation_declaration import semantic_contract
+from scidiscovery.operation_declaration import RESEARCH_WORK_CONTEXT, semantic_contract, with_user_context
 from scidiscovery.operations.spec import (
     ApprovalContract,
     ApprovalOption,
@@ -92,7 +92,7 @@ PARAMETER_ADMISSION = InputAdmissionSpec(
 _REVIEW_DETAIL_LIMIT = 64
 
 _ROLE_ROOT = Path(__file__).with_name("roles")
-_TOOL_PREAMBLE = """This is one compiled TCAD parameter Operation. Claim only
+_TOOL_PREAMBLE = RESEARCH_WORK_CONTEXT + """This is one compiled TCAD parameter Operation. Claim only
 the queued assignment, materialize its controlled workspace, and read the exact
 assignment and output schemas. Use only declared tools and inputs. Write and
 finalize only the declared primary file. A successful Worker
@@ -393,18 +393,19 @@ def expand_parameter_evidence(
 
 
 def validate_extract_context(
-    payload: dict[str, Any], sources: dict[str, bytes], handoff: dict[str, Any]
+    payload: dict[str, Any], sources: ValidationSources, handoff: dict[str, Any]
 ) -> None:
     del handoff
     package = ParameterEvidencePackage.model_validate_json(
         canonical_json(payload), strict=True
     )
-    source_aliases = set(sources) - {"required_parameter_checklist"}
+    source_aliases = {name for name, descriptor in sources.binding_descriptors.items()
+                      if descriptor.port_name == "source_material"}
     for index, source in enumerate(package.source_catalog.sources):
         if source.source_key not in source_aliases:
             raise declared_violation("Parameter source must name a bound source input.",
                 path=f"$.source_catalog.sources[{index}].source_key")
-    validate_evidence_source_aliases(payload, source_aliases)
+    validate_evidence_source_aliases(payload, sources)
     raw = sources.get("required_parameter_checklist")
     if raw is None:
         return
@@ -573,7 +574,14 @@ def _validate_parameter_qualification(
         if required_checklist_subject is None
         else (required_checklist_subject.ref,)
     )
-    if package_subject.parent_refs != (*checklist_refs, *frozen_refs):
+    extraction_inputs = extraction_family.producer_inputs
+    if extraction_inputs is None:
+        raise OperationInvocationError("input_producer_metadata_unavailable", port="parameter_evidence_package",
+            message="The exact completed extraction's saved input bindings are unavailable.")
+    if (tuple(ref for _, ref in extraction_inputs) != package_subject.parent_refs
+        or tuple(ref for port, ref in extraction_inputs
+                 if port in {"required_parameter_checklist", "source_material"})
+        != (*checklist_refs, *frozen_refs)):
         raise OperationInvocationError("approval_subject_invalid", message="parameter package does not preserve its exact extraction inputs")
 
     package = parse_bound_json(ParameterEvidencePackage, package_subject.content, admission_port=package_subject.port_name)
@@ -635,7 +643,15 @@ def _validate_parameter_qualification(
         coverage_subject.ref,
         *frozen_refs,
     )
-    if audit_subject.parent_refs != expected_audit_inputs:
+    audit_families = tuple(family for family in context.producer_families
+        if family.primary_ref == audit_subject.ref and family.operation_id == AUDIT_OPERATION)
+    if len(audit_families) != 1 or audit_families[0].producer_inputs is None:
+        raise OperationInvocationError("input_producer_metadata_unavailable", port="parameter_audit",
+            message="The exact completed parameter audit's saved input bindings are unavailable.")
+    audit_inputs = audit_families[0].producer_inputs
+    if (tuple(ref for _, ref in audit_inputs) != audit_subject.parent_refs
+        or tuple(ref for port, ref in audit_inputs if port in {item.name for item in AUDIT_INPUTS})
+        != expected_audit_inputs):
         raise OperationInvocationError("approval_subject_invalid", message="parameter audit does not bind the exact ordered review set")
     audit = parse_bound_json(EvidenceAudit, audit_subject.content, admission_port=audit_subject.port_name)
     checks = {item.check_key: item for item in audit.checks}
@@ -923,7 +939,7 @@ def _agent(
     review: ReviewSpec | None = None,
     input_validation: InputValidationSpec | None = None,
 ) -> OperationSpec:
-    return OperationSpec(
+    return with_user_context(OperationSpec(
         operation_id=operation_id,
         version="1",
         catalog_scope="public",
@@ -948,7 +964,7 @@ def _agent(
             max_output_bytes=max_output_bytes,
             max_files=max_files,
         ),
-    )
+    ))
 
 
 EXTRACT_OUTPUTS = (
@@ -1212,13 +1228,13 @@ COMPONENT_SPECS = (
     ComponentSpec("source_catalog_validator", "validator", "tcad_artifact.parameter_operations:CATALOG_VALIDATOR", resources=(_ref("parameter_semantic_contract"),)),
     ComponentSpec("parameter_coverage_validator", "validator", "tcad_artifact.parameter_operations:COVERAGE_VALIDATOR", resources=(_ref("parameter_semantic_contract"),)),
     ComponentSpec("parameter_uncertainty_validator", "validator", "tcad_artifact.parameter_operations:UNCERTAINTY_VALIDATOR", resources=(_ref("parameter_semantic_contract"),)),
-    ComponentSpec("parameter_extract_context", "validator", "tcad_artifact.parameter_operations:EXTRACT_CONTEXT_VALIDATOR", configuration_identity="input-boundary-r4:v1", resources=(_ref("parameter_semantic_contract"),)),
+    ComponentSpec("parameter_extract_context", "validator", "tcad_artifact.parameter_operations:EXTRACT_CONTEXT_VALIDATOR", configuration_identity="parameter.source-material-aliases:v2", resources=(_ref("parameter_semantic_contract"),)),
     ComponentSpec("parameter_expand", "transform", "tcad_artifact.parameter_operations:EXPAND_TRANSFORM"),
     ComponentSpec("parameter_coverage", "transform", "tcad_artifact.parameter_operations:COVERAGE_TRANSFORM"),
     ComponentSpec("parameter_uncertainty", "transform", "tcad_artifact.parameter_operations:UNCERTAINTY_TRANSFORM"),
     ComponentSpec("parameter_uncertainty_lineage", "guard", "tcad_artifact.parameter_operations:UNCERTAINTY_LINEAGE"),
-    ComponentSpec("parameter_pass_projector", "projector", "tcad_artifact.parameter_operations:PASS_PROJECTOR"),
-    ComponentSpec("parameter_exception_projector", "projector", "tcad_artifact.parameter_operations:EXCEPTION_PROJECTOR"),
+    ComponentSpec("parameter_pass_projector", "projector", "tcad_artifact.parameter_operations:PASS_PROJECTOR", configuration_identity="parameter.producer-inputs:v2"),
+    ComponentSpec("parameter_exception_projector", "projector", "tcad_artifact.parameter_operations:EXCEPTION_PROJECTOR", configuration_identity="parameter.producer-inputs:v2"),
 )
 
 

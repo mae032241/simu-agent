@@ -7,6 +7,7 @@ from typing import Any
 from urllib.parse import urlencode
 
 from ..schema.common import canonical_sha256
+from ..service.intake import USER_TEXT_MEDIA_TYPE, USER_TEXT_SOURCE_ORIGIN
 from ..service.instance_management import issue_instance_management_capability
 from ..service.scheduler_bindings import SchedulerBinding
 from .mcp_root_shared import RootToolError, identity_word as _identity_word
@@ -237,6 +238,38 @@ class RootInstanceRoutes:
             )
             if target.existing_object_id is None:
                 reference = self.intake.ingest_prepared(prepared)
+                binding = self._bind_target(
+                    "artifact", target, reference.artifact_id, fingerprint
+                )
+            else:
+                binding = self._binding("artifact", target.name)
+        return {**self._binding_value(binding), "state": "bound"}
+
+    def artifact_ingest_text(
+        self,
+        *,
+        name: str,
+        text: str,
+        on_conflict: str,
+    ) -> dict[str, Any]:
+        content = text.encode("utf-8")
+        fingerprint = canonical_sha256(
+            {
+                "operation": "artifact_ingest_text",
+                "kind": "source_text",
+                "schema_id": "opaque",
+                "payload_schema_version": 1,
+                "media_type": USER_TEXT_MEDIA_TYPE,
+                "source_origin": USER_TEXT_SOURCE_ORIGIN,
+                "payload_sha256": hashlib.sha256(content).hexdigest(),
+            }
+        )
+        with self._create_lock:
+            target = self._creation_target(
+                "artifact", name, fingerprint, on_conflict
+            )
+            if target.existing_object_id is None:
+                reference = self.intake.ingest_text(content=content)
                 binding = self._bind_target(
                     "artifact", target, reference.artifact_id, fingerprint
                 )

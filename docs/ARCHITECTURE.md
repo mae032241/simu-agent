@@ -155,7 +155,13 @@ debug time budgets are unchanged. Launcher, transport and PDF failure diagnostic
 are retained in their existing run/result directories. This is file-based reading,
 not a new logging service or a grant to read unbound historical workspaces.
 A completed Run's `run_status` includes its validated sealed scientific payload
-for this decision; running Runs and bulk `run_list` do not expose payloads. Review
+by default. `output_paths=[]` returns status, exact bindings, signal and output metadata
+without reading the payload. Explicit payload JSON Pointers return exact values in
+`selected_output`, never a partial `sealed_output`: up to 8 paths and 32 KiB of values.
+Oversized subtrees have bounded direct-child navigation (32 entries, 8 KiB total);
+missing, null and omitted values remain distinct. Full reading is always available
+by omitting the parameter. Signal availability is independent of payload delivery.
+Running Runs and bulk `run_list` do not expose payloads. Review
 sources used for change accept only non-passing verdicts, never `pass`. If the
 Run's saved Operation version or digest no longer matches the compiled catalog,
 status reports `historical` and returns the sealed payload and parseable handoff
@@ -197,7 +203,7 @@ to deterministic helpers for a selected public action.
 
 Design and plan review can bind optional `current_progress`, `experiment_results`,
 and `result_analysis` originals: zero to four Artifacts per group, up to 8 MiB
-each, within a 32 MiB total input budget. These are `on_demand` read-only
+each, within the original 32 MiB input allowance plus the user-text allowance below. These are `on_demand` read-only
 `evidence_inventory` files. Only Agent inventory inputs skip producer-output
 qualification admission; instance, size, current, family, cohort, claim, revision,
 and effect gates remain in their existing paths. Wildcard schema/media pairs are
@@ -205,6 +211,26 @@ limited to inventory with `handoff_only` or `on_demand` exposure. Reading histor
 does not restore retired qualification. Deck review treats its exact project as
 `prior_signal`: incomplete implementation may receive a negative review, while
 passing review, packaging, and execution retain their implementation requirements.
+
+Root's `artifact_ingest_text(name, text, on_conflict)` registers 1–8,192 valid
+Unicode code points as exact UTF-8 bytes, including whitespace and line endings.
+The immutable `opaque` text records `source_origin=user_via_scheduler` separately
+from its content and retains the actual caller as creator. Registration uses the
+existing instance name, fingerprint and revision mechanisms; it creates no Run.
+All public scientific Agents declare an optional `user_context` port for up to
+four originals, each at most 32,768 bytes. Its `prior_signal`/`on_demand` usage
+does not create evidence qualification or consume `current_progress` slots;
+131,072 bytes are added to each Agent's original aggregate input allowance.
+Assignment and analysis navigation expose the original path and recorded origin.
+The Agent judges the text's scientific meaning; control requires no adoption form.
+
+All inputs remain in output provenance. Exact saved producer input ports distinguish
+formal sources from background for evidence revision and parameter qualification;
+Root and scheduling's authoritative reconstruction project the same stored bindings.
+The projection is neither a second persistent record nor a new scientific claim.
+Continuing a completed node creates a new Run with explicit original inputs. Failed
+work with changed inputs uses `draft_from`; `resume_from` retains exact input and
+contract identity. User text cannot replace an independent review or UI approval.
 
 Analysis Workers start with `analysis-start.json`: an input size/purpose index,
 verbatim excerpts and exact original field pointers. TCAD adds a bounded project
@@ -214,18 +240,38 @@ are not default reading or reporting tasks. The combined TCAD display budget is
 32 KiB, with original pointers and omission counts when details do not fit.
 Views do not become scientific evidence or change source identity, qualification,
 or native filesystem permissions. Reused Agents verify the new bindings and read
-relevant current originals; they need not reread every complete input file.
+relevant current originals; they need not reread every complete input file. The full
+continuation guidance lives in `analysis-start.json`, and report instructions in the
+workspace `patch_contract`; analysis role prompts provide short navigation.
+
+Local Worker open returns the frozen assignment tool-contract path and pointer
+independently of analysis navigation. Workers read the selected tool contract before
+use, including its complete Schema and local definitions. Old assignments without
+contracts retain their frozen fallback; Hardened retains inline contracts. Corrupt
+assignments are engineering errors, never permission to substitute newer contracts.
+TCAD authors put initialization coverage and untested reset paths in source comments
+before their final source-bound diagnostics, so the reviewer receives and independently
+checks those statements with the sealed project. Comments are not execution proof.
 
 `LayeredDiagnosisReport` concentrates conclusions in `summary` and `overall_verdict`,
 with evidence and optional `limitations`. Its complete legacy `gates` object,
 remaining contradiction, next action and additional assessments are optional.
 `claim_allowed` remains an explicit scientific judgment; absent numerical gates
-project to `not_evaluable`. For these analysis reports only, the existing finalizer
+project to `not_evaluable`. For these analysis reports, the existing finalizer
 creates handoff verdict and a short reference to the formal summary before sealing.
 The workspace `patch_contract` declares draft omissions; Root reads the sealed
 payload and scheduler signal together. TCAD, generic and fixed curve-error analysis
 share this behavior on their supported local backend. Old Artifact bytes remain
 unchanged; these reading and delivery changes do not add a scoring prerequisite.
+
+ScientificReview, DeckReviewReport and ImplementationGap also author their formal
+summary once. Their finalizers fill omitted handoff verdict/summary, retaining explicit
+legacy notes; the sealed envelope Schema stays strict. Generic review Schema descriptions
+and TCAD workspace patch contracts explain draft omissions. New author templates omit
+mechanical placeholders; gaps may omit the handoff file, while complete projects still
+require their authored handoff. An impossible projection reports its formal source field,
+so an invalid verdict or summary can be corrected in the same Run. CriticReview and
+EvidenceAudit still require their own handoff summary; old sealed records are unchanged.
 
 `artifact_catalog(name=...)` returns ordered `parent_artifact_names` for the exact
 Artifact: `[]` without parents and `null` for a parent without a current-instance

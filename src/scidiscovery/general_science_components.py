@@ -105,7 +105,10 @@ def _evidence_revision_cohort(
     foundation = by_port["scientific_foundation"]
     portfolio = by_port["hypothesis_portfolio"]
     request = by_port["change_request"]
-    frozen_sources = set(audit.parent_refs) - {prior.ref}
+    if audit.producer_inputs is None:
+        raise OperationInvocationError("input_producer_metadata_unavailable", port="intake_audit",
+            message="The exact completed intake audit's saved input bindings are unavailable.")
+    frozen_sources = {ref for port, ref in audit.producer_inputs if port == "source_material"}
     bound_sources = {item.artifact.ref for item in inputs
                      if item.port_name == "source_material"}
     return bool(
@@ -455,13 +458,13 @@ def component_specs() -> tuple[ComponentSpec, ...]:
         "evidence_revision_cohort",
         "guard",
         "scidiscovery.general_science_components:Components.evidence_revision_cohort",
-        configuration_identity="general-guard:evidence-revision-cohort:v1",
+        configuration_identity="general-guard:evidence-revision-cohort:v2:producer-inputs",
     ))
     for name in (
         "problem_frame_validator", "foundation_validator",
     ):
         values.append(ComponentSpec(name, "validator", f"scidiscovery.general_science_components:Components.{name}", configuration_identity=f"general-transform:{name}:v1"))
-    values.append(ComponentSpec("result_finalizer", "workspace_finalizer", "scidiscovery.general_science_components:RESULT_FINALIZER"))
+    values.append(ComponentSpec("result_finalizer", "workspace_finalizer", "scidiscovery.general_science_components:RESULT_FINALIZER", configuration_identity="general.result-finalizer.v2:formal-review-summary"))
     values.append(ComponentSpec("workspace", "workspace", "scidiscovery.general_science_components:WORKSPACE", public=True, resources=(ComponentRef("result_finalizer", plugin_id="general_science"),)))
     values.append(ComponentSpec(
         "pdf_extract_tool",

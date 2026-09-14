@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -302,7 +304,10 @@ def test_evidence_revision_requires_the_exact_review_lineage() -> None:
         parents=(portfolio.ref, foundation.ref),
         verdict="inconclusive",
     )
+    audit = replace(audit, producer_inputs=(("scientific_intake", prior.ref),
+        ("source_material", source.ref), ("source_material", source_table.ref)))
     inputs = {
+        "user_context": (),
         "prior_draft": (prior,),
         "intake_audit": (audit,),
         "scientific_foundation": (foundation,),
@@ -336,6 +341,7 @@ def test_evidence_revision_requires_the_exact_review_lineage() -> None:
         parents=(prior.ref, source.ref, source_table.ref),
         verdict="pass",
     )
+    alternate_audit = replace(alternate_audit, producer_inputs=audit.producer_inputs)
     with pytest.raises(OperationInvocationError) as caught:
         preflight_operation(
             operation,
@@ -385,118 +391,8 @@ def test_evidence_revision_requires_the_exact_review_lineage() -> None:
     assert caught.value.reason_code == "guard_rejected"
 
 
-def test_root_preflight_rejects_replacing_the_prior_intake_source(tmp_path) -> None:
-    catalog = _catalog()
-    project = tmp_path / "project"
-    project.mkdir()
-    runtime = open_runtime(project_root=project, state_root=tmp_path / "state")
-    instance = runtime.scheduler_bindings.create_instance(
-        name="source_continuity",
-        title="Source continuity",
-        objective="Reject replacement evidence sources during bounded revision.",
-    )
-
-    def register(
-        name: str,
-        schema: str,
-        *,
-        kind: str = "scientific_object",
-        media_type: str = "application/json",
-        parents: tuple[ArtifactRef, ...] = (),
-    ):
-        envelope = runtime.artifacts.register(
-            b"source" if kind == "source_file" else b"{}",
-            ArtifactRegistration(
-                kind=kind,
-                schema_id=schema,
-                payload_schema_version=1,
-                media_type=media_type,
-                creator=runtime.actor,
-                parent_refs=parents,
-            ),
-            idempotency_key=f"source-continuity:{name}",
-        )
-        runtime.scheduler_bindings.bind(
-            instance=instance.instance_id,
-            namespace="artifact",
-            name=name,
-            object_id=envelope.artifact_id,
-        )
-        return envelope
-
-    original = register(
-        "original_source", "opaque", kind="source_file", media_type="text/plain"
-    )
-    replacement = register(
-        "replacement_source", "opaque", kind="source_file", media_type="text/plain"
-    )
-    intake = register(
-        "prior_intake",
-        "scidiscovery.scientific-intake.v1",
-        parents=(original.ref,),
-    )
-    audit = register(
-        "intake_audit",
-        "scidiscovery.evidence-audit.v1",
-        parents=(intake.ref, original.ref),
-    )
-    foundation = register(
-        "foundation",
-        "scidiscovery.scientific-foundation.v1",
-        parents=(intake.ref, audit.ref),
-    )
-    portfolio = register(
-        "portfolio",
-        "scidiscovery.hypothesis-proposal.v2",
-        parents=(foundation.ref,),
-    )
-    critic = register(
-        "critic",
-        "scidiscovery.critic-review.v2",
-        parents=(portfolio.ref, foundation.ref),
-    )
-    signals = {
-        audit.ref: SchedulerSignal(verdict="pass", summary="Exact intake audit."),
-        critic.ref: SchedulerSignal(
-            verdict="inconclusive",
-            summary="One factual premise is missing.",
-        ),
-    }
-    facade = RootToolFacade(
-        runtime.artifacts,
-        runtime.intake,
-        runs=runtime.runs,
-        approvals=runtime.approvals,
-        executions=runtime.executions,
-        bindings=runtime.scheduler_bindings,
-        instance=instance.instance_id,
-        operation_catalog=catalog,
-    )
-    facade._scheduler_signal_for_output = lambda ref: signals.get(ref)
-    facade._validate_operation_input_admission = lambda bound: None
-    root = RootMCPRouter(facade)
-
-    def request(source_name: str) -> dict[str, object]:
-        return {
-            "name": f"revise_with_{source_name}",
-            "operation_id": "science.evidence.revise-from-critic.v1",
-            "inputs": [
-                {"port": "prior_draft", "artifact_names": ["prior_intake"]},
-                {"port": "intake_audit", "artifact_names": ["intake_audit"]},
-                {"port": "scientific_foundation", "artifact_names": ["foundation"]},
-                {"port": "hypothesis_portfolio", "artifact_names": ["portfolio"]},
-                {"port": "change_request", "artifact_names": ["critic"]},
-                {"port": "source_material", "artifact_names": [source_name]},
-            ],
-            "instruction": "Revise only the omitted fact in the frozen source.",
-        }
-
-    assert root.call_tool("operation_preflight", request("original_source"))[
-        "admissible"
-    ] is True
-    rejected = root.call_tool("operation_preflight", request("replacement_source"))
-    assert rejected["admissible"] is False
-    assert rejected["reason_code"] == "guard_rejected"
+# The real Root preflight/invoke source-continuity path is covered in
+# test_user_context_contract, with completed producers and an actual fixture approval.
 
 
 def test_same_critic_problem_cannot_trigger_a_second_text_only_revision() -> None:
@@ -771,6 +667,7 @@ def test_run_transaction_rejects_a_second_revision_successor(tmp_path) -> None:
         operation,
         name="first_revision",
         artifacts_by_port={
+            "user_context": (),
             "prior_draft": (base,),
             "change_request": (request,),
             "scientific_foundation": (foundation,),
@@ -830,6 +727,7 @@ def test_run_transaction_rejects_a_second_revision_successor(tmp_path) -> None:
         operation,
         name="retry_revision",
         artifacts_by_port={
+            "user_context": (),
             "prior_draft": (retry_base,),
             "change_request": (request,),
             "scientific_foundation": (foundation,),

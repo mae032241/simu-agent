@@ -7,6 +7,8 @@ registration remains a single, explicit composition step.
 
 from __future__ import annotations
 
+import json
+
 from scidiscovery.operations.input_validation import parse_bound_json
 
 from .operations.input_validation import OperationInvocationError
@@ -290,9 +292,14 @@ class ExperimentResources:
     experiment_portfolio_schema = schema_resource(
         ExperimentPortfolio, "scidiscovery.experiment-portfolio.v1"
     )
-    scientific_review_schema = schema_resource(
-        ScientificReview, "scidiscovery.scientific-review.v1"
-    )
+    scientific_review_schema = json.dumps({
+        **json.loads(schema_resource(ScientificReview, "scidiscovery.scientific-review.v1")),
+        "description": "Formal ScientificReview payload of the sealed envelope. In the draft envelope, "
+            "/handoff or its /summary and /verdict may be omitted: the workspace finalizer derives "
+            "handoff verdict from payload.verdict (reject maps to blocked) and a short reference "
+            "to payload.summary. Existing explicit summary/notes are preserved. This is a draft "
+            "omission, not a relaxation of the sealed RoleResultEnvelope Schema.",
+    }, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
     materialization_report_schema = schema_resource(
         ExperimentPlanMaterializationReport,
         "scidiscovery.experiment-plan-materialization.v1",

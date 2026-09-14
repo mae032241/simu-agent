@@ -308,6 +308,7 @@ def test_experiment_revision_has_only_its_true_behavioral_inputs() -> None:
         "prior_draft",
         "change_request",
         "current_progress",
+        "user_context",
     )
     assert operation.input_admission is None
     assert operation.guards == ()
@@ -315,6 +316,7 @@ def test_experiment_revision_has_only_its_true_behavioral_inputs() -> None:
         "prior_draft",
         "change_request",
         "current_progress",
+        "user_context",
     )
 
 
@@ -674,6 +676,9 @@ def test_exact_optional_feedback_reaches_root_run_local_worker_and_output_parent
     compiled = runtime.runs.operation_catalog.operation(operation_id)
     worker = LocalWorkerMCPRouter(runtime.runs, operation_id=operation_id, operation_digest=compiled.digest)
     opened = worker.call_tool("worker_open_assignment", {})
+    assert "tool_contracts" not in opened
+    assert opened["tool_contracts_pointer"] == "/tool_contracts"
+    assert Path(opened["tool_contracts_path"]).is_file()
     run_id = runtime.scheduler_bindings.resolve(instance=instance.instance_id, namespace="run", name=request["name"])
     status = runtime.runs.status(run_id)
     workspace = runtime.runs.backend.open(run_id)
@@ -745,11 +750,19 @@ def test_feedback_root_keeps_size_count_duplicate_and_instance_gates(
         _feedback_record(runtime, selected_instance, name, raw=bytes([index]) * size)
         names.append(name)
     request["inputs"].append({"port": "current_progress", "artifact_names": names})
+    if defect == "total":
+        _feedback_record(runtime, instance, "additional_feedback", raw=b"x" * 131072)
+        request["inputs"].append({"port": "result_analysis", "artifact_names": ["additional_feedback"]})
     if defect == "duplicate":
         request["inputs"].append({"port": "result_analysis", "artifact_names": names})
     rejected = root.call_tool("operation_preflight", request)
     assert rejected["admissible"] is False
     assert rejected["reason_code"] == reason
+    if defect == "total":
+        limit = runtime.runs.operation_catalog.operation(request["operation_id"]).spec.limits.max_input_bytes
+        assert f"max_input_bytes={limit}" in json.dumps(rejected)
+    elif defect == "too_large":
+        assert "max_item_bytes=8388608" in json.dumps(rejected)
 
 
 def _feedback_catalog_with_input(operation_id, port_name, **changes):
@@ -939,7 +952,7 @@ def test_review_contract_declares_optional_original_and_execution_inputs() -> No
     checker = next(item for item in contract["checkers"] if item["phase"] == "context")
     assert set(checker["optional_inputs"]) == {
         "research_objective", "execution_context", "current_progress",
-        "experiment_results", "result_analysis",
+        "experiment_results", "result_analysis", "user_context",
     }
 
 
@@ -1479,6 +1492,7 @@ def test_evidence_source_projection_uses_exact_bound_context_aliases() -> None:
     assert usages == {
         "required_parameter_checklist": "prior_signal",
         "source_material": "evidence_inventory",
+        "user_context": "prior_signal",
     }
 
 
@@ -1594,3 +1608,37 @@ def test_experiment_output_does_not_recheck_unused_critic_input(tmp_path, experi
     intent["objective_key"] = "objective_expected"
     sources["critic_review"] = b"{}"
     _validate_experiment_submission(tmp_path, intent, sources)
+
+
+def test_corrupt_assignment_does_not_fall_back_to_a_new_tool_contract(tmp_path, monkeypatch):
+    from scidiscovery.artifact_agent.interfaces.mcp_local_worker import WorkerToolError
+    from tests.operations.test_tcad_result_analysis import analysis_system, open_analysis
+    worker, opened = open_analysis(analysis_system(tmp_path))
+    path = Path(opened['assignment_path'])
+    path.chmod(0o600)
+    path.write_text('{broken assignment')
+    def forbidden():
+        pytest.fail('corrupt assignment was silently replaced by a contract fallback')
+    monkeypatch.setattr(worker, '_assignment_tool_contracts', forbidden)
+    with pytest.raises(WorkerToolError) as error:
+        worker.call_tool('worker_open_assignment', {})
+    assert 'JSONDecodeError' in str(error.value.engineering)
+
+
+@pytest.mark.parametrize('owner,component,consumer', [
+    ('general_science', 'result_finalizer', 'science.object.review.v1'),
+    ('tcad_artifact', 'workspace_materializer', 'tcad.deck.author.initial.v1'),
+    ('tcad_artifact', 'workspace_finalizer', 'tcad.deck.author.initial.v1'),
+    ('tcad_artifact', 'review_result_finalizer', 'tcad.deck.review.v1'),
+])
+def test_handoff_component_identity_changes_without_prompt_drift(owner, component, consumer):
+    plugins = (CORE_PLUGIN, GENERAL_PLUGIN, CURVE_PLUGIN, TCAD_PLUGIN)
+    original = compile_catalog(plugins)
+    changed = []
+    for plugin in plugins:
+        if plugin.plugin_id == owner:
+            declarations = tuple(item.model_copy(update={'configuration_identity': item.configuration_identity + ':fixture-change'})
+                if item.component_id == component else item for item in plugin.components)
+            plugin = plugin.model_copy(update={'components': declarations})
+        changed.append(plugin)
+    assert compile_catalog(tuple(changed)).operation(consumer).digest != original.operation(consumer).digest

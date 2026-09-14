@@ -5,6 +5,58 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from ..schema.approval import parse_json_pointer
+from ..schema.common import canonical_json
+
+
+def _output_selection(output: dict[str, Any], pointers: list[str]) -> dict[str, Any]:
+    """Select exact scientific values; omission and navigation are not evidence."""
+    remaining = 32 * 1024
+    navigation_remaining = 8 * 1024
+    items = []
+    for pointer in pointers:
+        value = output["payload"]
+        try:
+            for token in parse_json_pointer(pointer):
+                if isinstance(value, dict):
+                    value = value[token]
+                elif isinstance(value, list) and (token == "0" or (
+                    token.isascii() and token.isdigit() and not token.startswith("0")
+                )):
+                    value = value[int(token)]
+                else:
+                    raise KeyError(token)
+        except (KeyError, IndexError, ValueError):
+            items.append({"pointer": pointer, "status": "missing"})
+            continue
+        size = len(canonical_json(value))
+        item = {"pointer": pointer, "size_bytes": size}
+        if size <= remaining:
+            item.update(status="selected", value=value)
+            remaining -= size
+        else:
+            item["status"] = "omitted"
+            if isinstance(value, (dict, list)):
+                children = []
+                candidates = value.items() if isinstance(value, dict) else enumerate(value)
+                for key, child in candidates:
+                    if len(children) == 32:
+                        break
+                    child_pointer = pointer + "/" + str(key).replace("~", "~0").replace("/", "~1")
+                    child_type = ("null" if child is None else "boolean" if isinstance(child, bool)
+                        else "object" if isinstance(child, dict) else "array" if isinstance(child, list)
+                        else "string" if isinstance(child, str) else "number")
+                    entry = {"pointer": child_pointer, "type": child_type,
+                        "size_bytes": len(canonical_json(child))}
+                    # Count the complete navigation array; never shorten a key into a false pointer.
+                    cost = len(canonical_json([*children, entry]))
+                    if cost <= navigation_remaining:
+                        children.append(entry)
+                navigation_remaining -= len(canonical_json(children)) if children else 0
+                item.update(children=children, omitted_children=len(value) - len(children))
+        items.append(item)
+    return {key: output[key] for key in ("artifact_name", "kind", "schema")} | {"items": items}
+
 
 class RootRunRoutes:
     def run_list(self, *, state: str | None, limit: int, before: str | None = None) -> dict[str, Any]:
@@ -27,7 +79,8 @@ class RootRunRoutes:
         return {"runs": items, "next_before": None}
 
     def run_status(self, *, name: str, diagnostic_after: int | None = None,
-                   diagnostic_limit: int = 50) -> dict[str, Any]:
+                   diagnostic_limit: int = 50,
+                   output_paths: list[str] | None = None) -> dict[str, Any]:
         if self.runs is None:
             raise RuntimeError("minimal Run service is unavailable")
         value = self.runs.status(self._resolve("run", name))
@@ -56,9 +109,18 @@ class RootRunRoutes:
             result["diagnostic_summary"]["native_coverage"] = native["coverage"]
             result["diagnostic_summary"]["latest_native_error"] = next(
                 iter(reversed(native.get("recent_errors", []))), None)
-        output_status, output = self._sealed_output(value)
+        output_status, output = self._sealed_output(value, include_payload=output_paths != [])
         result["sealed_output_status"] = output_status
-        result["sealed_output"] = output
+        result["sealed_output"] = output if output_paths is None else None
+        if output_paths is not None:
+            result["output_delivery"] = "selected" if output_paths else "omitted"
+            result["output_metadata"] = (
+                {key: output[key] for key in ("artifact_name", "kind", "schema")}
+                if output is not None else None
+            )
+            result["selected_output"] = (
+                _output_selection(output, output_paths) if output_paths and output is not None else None
+            )
         result["scheduler_signal_status"] = (
             "available" if output is not None and value.signal is not None else "unavailable"
         )
@@ -128,7 +190,7 @@ class RootRunRoutes:
         }
 
     def _sealed_output(
-        self, value: Any
+        self, value: Any, *, include_payload: bool = True
     ) -> tuple[str, dict[str, Any] | None]:
         """Expose scientific content only after the Run completed and sealed it."""
 
@@ -145,15 +207,17 @@ class RootRunRoutes:
                 or compiled.digest != value.operation_digest
             ):
                 output_status = "historical"
+        metadata = {"artifact_name": value.output_binding_name, "kind": value.output_ref.kind,
+            "schema": value.output_ref.schema_id}
+        if not include_payload:
+            return output_status, metadata
         payload = json.loads(self.artifacts.read(value.output_ref))
         if not isinstance(payload, dict):
             raise RuntimeError("completed scientific output is not a JSON object")
         return (
             output_status,
             {
-                "artifact_name": value.output_binding_name,
-                "kind": value.output_ref.kind,
-                "schema": value.output_ref.schema_id,
+                **metadata,
                 "payload": payload,
             },
         )

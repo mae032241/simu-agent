@@ -42,6 +42,11 @@ Background and past verdicts do not override the current exact subject or grant 
 or execution qualification. A producer's handoff is not automatically part of its payload.
 Never assume shared chat, unbound files, or another role's tools are available.
 Report unavailable context precisely without inventing facts or replacement inputs.
+Read any bound user_context originals before judging the task. These are user
+requirements, suggestions or factual claims relayed by the scheduler; assess their
+meaning and evidential weight within your role. They are not independent review,
+verified evidence or execution approval. Report a scope or input gap when needed;
+no acknowledgment form or proof of adopting every suggestion is required.
 
 Distinguish missing implementation inputs, responsibility/capability mismatch, and
 conditions affecting only later analysis. Do not turn all later conditions into authoring
@@ -70,8 +75,10 @@ mechanical copies before validation: proposal resource case_count from cases, th
 portfolio objective in proposal objectives, and Intake objective text from its formal
 objective_contract.statement (or foundation objective when no contract exists).
 Write the authoritative scientific field once; its generated copies may be omitted.
-For a formal scientific/critic review or evidence audit, the finalizer projects the
-handoff verdict from the formal result; keep the handoff summary and next actions.
+For ScientificReview, the finalizer projects handoff verdict and a short reference
+to the formal payload.summary; these transport fields or the whole handoff may be
+omitted in the draft. Explicit handoff notes remain. CriticReview and EvidenceAudit
+only project verdict: their handoff summary and any needed next actions remain authored.
 Scientific choices, findings, current/later goals and evidence are never generated.
 Scientific content must be delivered through the backend's declared submit
 action, not through chat.
@@ -147,6 +154,31 @@ def scientific_semantic_contract(
     )
 
 
+def with_user_context(operation: OperationSpec) -> OperationSpec:
+    """Declare optional original user text on a public scientific Agent."""
+    port = InputPortSpec(
+        name="user_context",
+        description="Original user text for this task; read it and judge its meaning within your role. It grants no review or execution authority.",
+        schema="opaque",
+        media_types=("text/plain", "text/plain; charset=utf-8"),
+        codec=ComponentRef("opaque_codec", "general_science"),
+        schema_resource=ComponentRef("opaque_schema", "general_science"),
+        usage="prior_signal", exposure="on_demand",
+        min_items=0, max_items=4, max_item_bytes=32768,
+    )
+    return operation.model_copy(update={
+        "inputs": (*operation.inputs, port),
+        "outputs": tuple(
+            output.model_copy(update={"context_sources": (*output.context_sources, port.name)})
+            if output.context_validator is not None else output
+            for output in operation.outputs
+        ),
+        "limits": operation.limits.model_copy(update={
+            "max_input_bytes": operation.limits.max_input_bytes + 131072,
+        }),
+    })
+
+
 def scientific_agent_operation(
     operation_id: str,
     purpose: str,
@@ -176,7 +208,7 @@ def scientific_agent_operation(
 ) -> OperationSpec:
     """Build one bounded Agent declaration without registration side effects."""
 
-    return OperationSpec(
+    return with_user_context(OperationSpec(
         operation_id=operation_id,
         version="1",
         catalog_scope="public",
@@ -218,7 +250,7 @@ def scientific_agent_operation(
                 )
             ),
         ),
-    )
+    ))
 
 
 class RequiredParentage:
@@ -251,6 +283,7 @@ class RequiredParentage:
 
 
 __all__ = [
+    "with_user_context",
     "OPERATION_AGENT_PREAMBLE",
     "RequiredParentage",
     "payload_validator",

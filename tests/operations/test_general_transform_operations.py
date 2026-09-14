@@ -170,7 +170,7 @@ def test_general_intake_operations_execute_the_declared_source_binding_rule() ->
         assert output.context_validator is not None
         assert output.context_validator.component_id == "intake_source_context"
         assert output.context_rule_id == "intake.source_binding"
-        assert output.context_sources == ("source_material",)
+        assert output.context_sources == ("source_material", "user_context")
 
 
 def _catalog():
@@ -377,6 +377,7 @@ def test_tcad_execution_context_projection_is_narrow_and_composes_with_design() 
             "current_progress": (),
             "experiment_results": (),
             "result_analysis": (),
+            "user_context": (),
         },
         instruction="Design one bounded experiment.",
     )
@@ -900,6 +901,7 @@ def test_experiment_design_rejects_mixed_foundation_cohorts() -> None:
         "current_progress": (),
         "experiment_results": (),
         "result_analysis": (),
+        "user_context": (),
     }
     with pytest.raises(OperationInvocationError, match="guard_rejected"):
         preflight_operation(

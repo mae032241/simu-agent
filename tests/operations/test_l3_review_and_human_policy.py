@@ -52,7 +52,8 @@ def _review_gate_catalog():
                 applies_when="The exact observation has a passing exact review.",
                 not_for="Creating or editing the observation or its review.",
             ),
-            "inputs": (REVIEWER.inputs[0], reviewed_observation, optional_review),
+            "inputs": (REVIEWER.inputs[0], reviewed_observation, optional_review,
+                       *tuple(port for port in REVIEWER.inputs if port.name == "user_context")),
             "outputs": (output,),
         }
     )

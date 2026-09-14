@@ -322,26 +322,26 @@ class LocalWorkerMCPRouter:
             self._completed = False
             self._tool_state.clear()
         status = self.runs.status(self._run_id)
-        contracts = None
+        assignment = json.loads(read_control_workspace_file(self._workspace.root,
+            Path("assignment.json"), max_bytes=self._workspace.assignment_path.stat().st_size))
+        contracts = ({"tool_contracts_path": str(self._workspace.assignment_path),
+            "tool_contracts_pointer": "/tool_contracts"} if "tool_contracts" in assignment
+            else {"tool_contracts": self._assignment_tool_contracts()})
         if self._workspace.domain_workspace_path is not None:
             try:
                 domain = json.loads(read_control_workspace_file(self._workspace.root,
                     Path("domain-workspace.json"), max_bytes=1024 * 1024))
                 start = domain.get("paths", {}).get("start_here")
-                assignment = json.loads(read_control_workspace_file(self._workspace.root,
-                    Path("assignment.json"), max_bytes=self._workspace.assignment_path.stat().st_size))
                 if isinstance(start, str) and "tool_contracts" in assignment:
                     read_control_workspace_file(self._workspace.root, Path(start), max_bytes=24 * 1024)
-                    contracts = {"start_here_path": str(self._workspace.root / start),
-                        "tool_contracts_path": str(self._workspace.assignment_path),
-                        "tool_contracts_pointer": "/tool_contracts"}
+                    contracts["start_here_path"] = str(self._workspace.root / start)
             except (ValueError, WorkspaceError):
                 pass  # Old workspaces keep their exact existing contract entry.
         return {
             "state": "opened",
             "workspace_path": str(self._workspace.root),
             "assignment_path": str(self._workspace.assignment_path),
-            **(contracts if contracts is not None else {"tool_contracts": self._assignment_tool_contracts()}),
+            **contracts,
             "output_directory": str(self._workspace.output_directory),
             "domain_workspace_path": (
                 None

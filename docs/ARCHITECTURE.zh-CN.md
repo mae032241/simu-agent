@@ -94,8 +94,11 @@ Worker 不输出具有控制权威的后继 Operation 名称。调度 Agent 可�
 证明精确独立审查和来源关系，不预先指定下一阶段或后继操作。
 旧 `next_action_kind`、`accepts_actions` 与 `recommended_task_mode` 字段暂时保留为可解析兼容数据，
 所有控制路径均忽略其值；它们不是第二行动目录，也不能导致调用被接受或拒绝。
-单个完成 Run 的 `run_status` 返回已校验、已封存的科学载荷，供调度 Agent 做这项判断；运行中 Run
-和批量 `run_list` 不暴露科学载荷。若 Run 保存的 Operation 版本或摘要不再匹配当前编译目录，状态
+单个完成 Run 的 `run_status` 默认返回已校验、已封存的科学载荷。`output_paths=[]` 只返回状态、
+精确绑定、signal 和结果元数据，不读取正文。显式 payload JSON Pointer 在 `selected_output` 中
+返回原值，不把部分结果装入 `sealed_output`；最多 8 个指针、累计 32 KiB 原值。超预算子树提供
+有界的一层导航（32 项、累计 8 KiB）；missing、null 和 omitted 分开表达。不传参数仍可读取
+完整原件。signal 是否可用与正文是否展开无关。运行中 Run 和批量 `run_list` 不暴露科学载荷。若 Run 保存的 Operation 版本或摘要不再匹配当前编译目录，状态
 报告 `historical` 并返回封存载荷和可解析的交接摘要，但不恢复资格；生产者插件卸载也不抹去完成记录。
 交接不可解析也不遮蔽可独立核验的封存载荷，其限制由 `scheduler_signal_status` 单独报告。
 清单和 Worker 输入描述明确标记 historical。`evidence_inventory` 允许历史背景读取；`prior_signal`
@@ -118,25 +121,53 @@ verdict），因此独立审查也只从同一编译目录调度，不查角色�
 Root 调用入口拒绝 internal Operation；support 只保留给已选择 public 行为所需的确定性辅助变换。
 
 设计和计划审查可选绑定 `current_progress`、`experiment_results`、`result_analysis` 三组原件，
-每组零到四项、每项至多 8 MiB、全部输入合计至多 32 MiB。它们是 `on_demand` 只读
+每组零到四项、每项至多 8 MiB，使用原 32 MiB 输入额度及下述用户文本附加额度。它们是 `on_demand` 只读
 `evidence_inventory` 文件。仅 Agent 的 inventory 输入跳过 producer-output 资格检查；实例、
 大小、current、完整 family、cohort、claim、revision 和 effect 门禁仍走原路径。Schema/media
 通配对仅允许用于 `handoff_only` 或 `on_demand` inventory。读取历史不恢复退休资格。
 Deck review 将精确 project 作为 `prior_signal`，实现不完整时可以封存负面审查；通过审查、
 包装和执行仍须满足原实现要求。
 
+Root 的 `artifact_ingest_text(name, text, on_conflict)` 将 1—8,192 个有效 Unicode
+码点按原样 UTF-8 登记，保留空白和换行。不可变 `opaque` 文本在元数据中记录
+`source_origin=user_via_scheduler`，creator 保留实际调用者；来源说明不混入原文。
+登记复用现有实例名称、指纹和修订机制，不创建 Run。所有公开科研 Agent 声明可选
+`user_context`，最多四条原文、每条至多 32,768 字节，使用 `prior_signal`/`on_demand`。
+它不获得证据资格、不占用 `current_progress` 槽位，各 Agent 原聚合输入额度增加
+131,072 字节。assignment 和分析导航显示原文路径与已记录来源；Agent 判断科学意义，
+控制层不要求填写采纳证明。
+
+全部输入仍保留在输出来源链中。证据修订及参数资格依据生产 Run 保存的原端口绑定区分
+正式来源与背景；Root 和调度层权威重建投影相同的保存记录。这不是第二份持久化状态或
+新科学主张。完成节点通过显式原输入创建新 Run；失败工作改变输入后使用 `draft_from`，
+`resume_from` 保留精确输入及合同身份要求。用户文本不能替代独立审查或 UI 审批。
+
 分析 Worker 从 `analysis-start.json` 接手：入口提供输入大小/用途、逐字摘录和原字段位置。
 TCAD 另在 `analysis-bindings.json` 提供有界项目视图和科学案例值矩阵。控制生成的案例绑定账本
 保留在不可变原件和服务端工具输入中，不作为默认阅读或报告任务。TCAD 两份展示文件合计预算
 32 KiB；放不下的细节保留原件指针和遗漏计数。视图不是新科学证据，不改变来源身份、资格或
-native 文件权限。复用 Agent 核对新绑定并读取本轮相关原件，无需全文重读每个输入文件。
+native 文件权限。复用 Agent 核对新绑定并读取本轮相关原件，无需全文重读每个输入文件。完整
+接续指导位于 `analysis-start.json`，报告说明位于工作区 `patch_contract`；分析角色提示只保留短导航。
+
+Local Worker 打开任务时返回不可变 assignment 的工具合同位置和指针，不再依赖分析导航是否存在。
+Worker 使用工具前读取所选工具的完整 Schema 及局部定义。旧 assignment 缺合同字段时保留冻结
+fallback；Hardened 保留内联合同。assignment 损坏是工程错误，不能用更新后的合同替代。
+TCAD 作者在最后一次源码诊断前，把初始化覆盖与未测试 reset 路径写入源码注释，使其随封存项目
+到达审查者；审查者独立核对说明与实际源码、证明。源码注释本身不是执行证明。
 
 `LayeredDiagnosisReport` 以 `summary` 和 `overall_verdict` 集中表达结论，附证据和可选
 `limitations`。旧完整 `gates` 对象、剩余矛盾、下一步和额外评估均可省略。`claim_allowed`
-仍由科学 Agent 明确判断；缺少数值诊断层时，声明投影为 `not_evaluable`。仅这类分析报告由
+仍由科学 Agent 明确判断；缺少数值诊断层时，声明投影为 `not_evaluable`。这类分析报告由
 既有 finalizer 在封存前生成 handoff 状态及正式摘要的短引用；工作区 `patch_contract` 声明
 草稿可省略字段，Root 同时读取封存正文与调度信号。TCAD、通用和固定曲线误差分析在其支持的
 local backend 共用此行为。历史 Artifact 字节保持不变，也不新增评分前提。
+
+ScientificReview、DeckReviewReport 和 ImplementationGap 同样只要求写一份正式摘要；finalizer
+补齐省略的 handoff verdict/summary，保留显式旧说明，封存 envelope Schema 不放宽。通用审查
+Schema 描述与 TCAD 工作区 patch_contract 说明草稿可省略字段。新作者模板不再生成机械空值，
+gap 可省略 handoff 文件；完整项目仍需其作者 handoff。无法投影时诊断直接指向正式来源字段，
+使 verdict/summary 错误可在同一 Run 修正。CriticReview、EvidenceAudit 仍需自己的 handoff
+摘要；旧封存记录不改写。
 
 TCAD 实现缺口可携带控制端捕获的有界源码、声明、尝试记录和诊断文件；它们仍是负面开发记录，
 不构成可执行项目。审查和修订均接受该交付；修订把旧诊断恢复到 `reports/history`，必须重新

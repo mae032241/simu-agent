@@ -56,6 +56,24 @@ def materialize_analysis_handoff(value: dict) -> None:
         handoff['summary'] = 'Read run_status.sealed_output.payload.summary for the scientific conclusion; payload.next_action contains any scientific recommendation.'
 
 
+def materialize_summary_handoff(value: dict, verdict: str | None) -> None:
+    """Fill omitted transport fields from a formal summary; preserve explicit notes."""
+    # A draft may omit handoff. Name the actual source of an impossible copy,
+    # before envelope validation mistakes absent generated fields for authored omissions.
+    if verdict is None:
+        raise WorkspaceProtocolError('Cannot derive handoff verdict from the formal result', details=({
+            'path': '$.payload.verdict', 'message': 'Formal verdict must use a value allowed by the output Schema to generate handoff.verdict.',
+            'type': 'field_projection_unavailable'},))
+    if not isinstance(value['payload'].get('summary'), str):
+        raise WorkspaceProtocolError('Cannot reference the formal summary', details=({
+            'path': '$.payload.summary', 'message': 'Formal summary must be a string as declared by the output Schema.',
+            'type': 'field_projection_unavailable'},))
+    handoff = value.setdefault('handoff', {})
+    if isinstance(handoff, dict):
+        handoff['verdict'] = verdict
+        handoff.setdefault('summary', 'Read the sealed payload.summary for the scientific conclusion.')
+
+
 def materialize_general_result(value: dict, schema_id: str) -> None:
     payload = value['payload']
     verdict = None
@@ -75,6 +93,7 @@ def materialize_general_result(value: dict, schema_id: str) -> None:
                 proposal['objectives'] = list(dict.fromkeys([payload['objective'], *objectives]))
     elif schema_id == 'scidiscovery.scientific-review.v1':
         verdict = {'pass': 'pass', 'revise': 'revise', 'reject': 'blocked', 'inconclusive': 'inconclusive'}.get(str(payload.get('verdict')))
+        materialize_summary_handoff(value, verdict)
     elif schema_id == 'scidiscovery.critic-review.v2':
         verdict = {'ready_for_experiment': 'pass', 'revise_hypothesis': 'revise',
                    'revise_evidence': 'inconclusive', 'design_model_counterfactual': 'pass',

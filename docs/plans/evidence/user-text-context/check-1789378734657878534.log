@@ -1,0 +1,5 @@
+Traceback (most recent call last):
+  File "/tmp/scid-user-text-impl-20260914/catalog_snapshot.py", line 11, in <module>
+    rows=[dict(digest=o.digest,spec=o.spec.model_dump(mode="json")) for o in c.operations]
+                                                                             ^^^^^^^^^^^^
+AttributeError: 'CompiledCatalog' object has no attribute 'operations'. Did you mean: '_operations'?

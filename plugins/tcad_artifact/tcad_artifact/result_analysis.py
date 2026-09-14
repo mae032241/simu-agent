@@ -44,7 +44,6 @@ from .curve_normalizer import SProcessLogSourceSpec, SProcessPointLimitError, SP
 from .plx_normalizer import SProcessPLXSourceSpec, normalize_sprocess_plx
 from .project_packager import ReviewedDeckPackage, TCADRuntimeManifest
 from .analysis_bindings import source_bindings, JSON_PORTS
-from curve_score.analysis_workspace import GUIDANCE as CONTINUATION_GUIDANCE, REPORT_GUIDANCE
 
 
 class TCADSourceIdentity(AnalysisSource):
@@ -463,7 +462,7 @@ def analysis_context(payload: dict[str, Any], sources: Mapping[str, bytes], hand
     validate_analysis_report(report, plan, calculations=calculations)
 
 
-PROMPT = OPERATION_AGENT_PREAMBLE + CONTINUATION_GUIDANCE + REPORT_GUIDANCE + """Analyze this exact TCAD execution in one Run.
+PROMPT = OPERATION_AGENT_PREAMBLE + """Read analysis-start.json first for the input index and full continuation guidance.\nRead domain-workspace.json /patch_contract for the complete draft/report instructions.\nAnalyze this exact TCAD execution in one Run.
 Read the compact project and scientific case matrix in analysis-bindings.json first;
 follow its original source pointers for implementation details. The control-generated
 case_parameter_bindings ledger is not a required reading or reporting task.
@@ -582,7 +581,7 @@ COMPONENT_SPECS = (
     ComponentSpec("analysis_accept_tool", "worker_tool", "tcad_artifact.output_recovery:ACCEPT_TOOL", configuration_identity="tcad.analysis.accept.v1"),
     ComponentSpec("tcad_analysis_workspace", "workspace", "tcad_artifact.analysis_bindings:WORKSPACE",
         resources=(_ref("tcad_analysis_materializer"), _ref("tcad_analysis_finalizer"), _ref("tcad_analysis_snapshotter"))),
-    ComponentSpec("tcad_analysis_materializer", "workspace_materializer", "tcad_artifact.analysis_bindings:MATERIALIZER"),
+    ComponentSpec("tcad_analysis_materializer", "workspace_materializer", "tcad_artifact.analysis_bindings:MATERIALIZER", configuration_identity="analysis.user-context-origin:v1"),
     ComponentSpec("tcad_analysis_finalizer", "workspace_finalizer", "tcad_artifact.analysis_bindings:FINALIZER"),
     ComponentSpec("tcad_analysis_snapshotter", "workspace_snapshotter", "tcad_artifact.analysis_bindings:SNAPSHOTTER"),
     ComponentSpec("result_analysis_agent", "agent", "tcad_artifact.result_analysis:DIAGNOSIS_AGENT"),

@@ -196,3 +196,80 @@ def test_restored_project_scope_checks_output_duties_against_admitted_prior(prio
         # retaining it in a blocked result uses the declared default identity.
         validate_deck_author_task_output(project, inputs, {'verdict': 'pass'})
         validate_deck_author_task_output(prior, inputs, {'verdict': 'blocked'})
+
+
+@pytest.mark.parametrize('handoff_mode', ['untouched', 'absent', 'explicit'])
+def test_formal_gap_and_review_need_no_mechanical_summary_edits(tmp_path, handoff_mode):
+    catalog, runtime, root, _ = fixture._system(tmp_path, solver_kind='sprocess')
+    inputs = [dict(port='execution_capability', artifact_names=['execution_capability']),
+              dict(port='experiment_plan', artifact_names=['experiment_plan'])]
+    fixture._invoke(root, 'formal_gap', 'tcad.deck.author.initial.v1', inputs)
+    worker = fixture._debug_worker(catalog, runtime, fixture._ImmediateDebugAdapter(), tmp_path / 'debug')
+    opened = worker.call_tool('worker_open_assignment', {})
+    deck = Path(opened['workspace_path'], 'deck')
+    automatic = (deck / 'handoff.json').read_bytes()
+    assert 'summary' not in json.loads(automatic) and 'verdict' not in json.loads(automatic)
+    if handoff_mode == 'absent':
+        (deck / 'handoff.json').unlink()
+    elif handoff_mode == 'explicit':
+        (deck / 'handoff.json').write_bytes(canonical_json(dict(summary='Separate preserved note.', assumptions=['Limited fixture.'])))
+    gap = fixture._task_gap()
+    (deck / 'gap.json').write_bytes(canonical_json(gap))
+    assert worker.call_tool('worker_submit_result', {})['state'] == 'completed'
+    if handoff_mode == 'untouched':
+        assert (deck / 'handoff.json').read_bytes() == automatic
+    status = root.call_tool('run_status', dict(name='formal_gap', output_paths=['/summary']))
+    assert status['selected_output']['items'][0]['value'] == gap['summary']
+    assert status['scheduler_signal']['verdict'] == 'blocked'
+    if handoff_mode == 'explicit':
+        assert status['scheduler_signal']['summary'] == 'Separate preserved note.'
+    root.call_tool('operation_invoke', dict(name='formal_review', operation_id='tcad.deck.review.v1', instruction='Review the exact fixture gap.',
+        inputs=[dict(port='project', artifact_names=[status['output_artifact_name']]), *inputs]))
+    compiled = catalog.operation('tcad.deck.review.v1')
+    reviewer = fixture.LocalWorkerMCPRouter(runtime.runs, operation_id=compiled.spec.operation_id, operation_digest=compiled.digest)
+    reviewed = reviewer.call_tool('worker_open_assignment', {})
+    value = json.loads(Path(reviewed['workspace_path'], 'deck/review-template.json').read_bytes())
+    assert 'summary' not in value['handoff'] and 'verdict' not in value['handoff']
+    value['payload'].update(verdict='revise', summary='Implementation is incomplete.', rationale='The exact source cannot run.')
+    if handoff_mode == 'untouched':
+        value['payload']['verdict'] = []
+        Path(reviewed['output_directory'], 'result.json').write_bytes(canonical_json(value))
+        rejected = reviewer.call_tool('worker_submit_result', {})
+        assert rejected['state'] == 'rejected', rejected
+        assert any(item['path'] == '$.payload.verdict' for item in rejected['diagnostics'])
+        value['payload']['verdict'] = 'revise'
+    Path(reviewed['output_directory'], 'result.json').write_bytes(canonical_json(value))
+    assert reviewer.call_tool('worker_submit_result', {})['state'] == 'completed'
+    review_status = root.call_tool('run_status', dict(name='formal_review', output_paths=['/summary']))
+    assert review_status['scheduler_signal']['verdict'] == 'revise'
+    assert review_status['selected_output']['items'][0]['value'] == value['payload']['summary']
+
+
+@pytest.mark.parametrize('damage', ['null_summary', 'broken_json', 'invalid_formal', 'complete_project'])
+def test_omitted_handoff_is_not_confused_with_damage_or_complete_projects(tmp_path, damage):
+    catalog, runtime, root, _ = fixture._system(tmp_path, solver_kind='sprocess')
+    fixture._invoke(root, 'damaged', 'tcad.deck.author.initial.v1', [
+        dict(port='execution_capability', artifact_names=['execution_capability']),
+        dict(port='experiment_plan', artifact_names=['experiment_plan'])])
+    worker = fixture._debug_worker(catalog, runtime, fixture._ImmediateDebugAdapter(), tmp_path / 'debug')
+    opened = worker.call_tool('worker_open_assignment', {})
+    deck = Path(opened['workspace_path'], 'deck')
+    if damage == 'complete_project':
+        fixture._write_sprocess_workspace(opened)
+        (deck / 'handoff.json').write_text('{}')
+    else:
+        gap = fixture._task_gap()
+        if damage == 'invalid_formal':
+            gap['summary'] = ''
+        (deck / 'gap.json').write_bytes(canonical_json(gap))
+        if damage == 'null_summary':
+            (deck / 'handoff.json').write_text('{"summary":null}')
+        if damage == 'broken_json':
+            (deck / 'handoff.json').write_text('{broken')
+    result = worker.call_tool('worker_submit_result', {})
+    assert result['state'] == 'rejected'
+    assert result['diagnostics'] and result['diagnostics'][0]['path']
+    if damage == 'null_summary':
+        assert result['diagnostics'][0]['path'] == '$.deck.handoff.summary'
+    elif damage == 'invalid_formal':
+        assert result['diagnostics'][0]['path'] == '$.deck.gap.summary'

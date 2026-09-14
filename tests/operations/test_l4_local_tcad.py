@@ -1110,6 +1110,12 @@ def test_local_tcad_author_debug_and_independent_review_share_one_operation_path
     )
     opened = worker.call_tool("worker_open_assignment", {})
     _write_author_workspace(opened, _project(capability))
+    assert "tool_contracts" not in opened
+    assert opened["tool_contracts_pointer"] == "/tool_contracts"
+    # Necessary implementation notes travel with the sealed source, not Root-only handoff.
+    source_note = "# Probe initializes production equations; the second reset path is untested.\n"
+    source_path = Path(opened["workspace_path"], "deck/files/main.cmd")
+    source_path.write_text(source_note + source_path.read_text())
     if verdict != "pass":
         handoff_path = Path(str(opened["workspace_path"]), "deck/handoff.json")
         handoff_path.write_bytes(canonical_json({
@@ -1151,6 +1157,8 @@ def test_local_tcad_author_debug_and_independent_review_share_one_operation_path
         operation_digest=review_compiled.digest,
     )
     review_open = reviewer.call_tool("worker_open_assignment", {})
+    assert "tool_contracts" not in review_open
+    assert review_open["tool_contracts_pointer"] == "/tool_contracts"
     review_domain = json.loads(
         Path(str(review_open["domain_workspace_path"])).read_text("utf-8")
     )
@@ -1158,6 +1166,7 @@ def test_local_tcad_author_debug_and_independent_review_share_one_operation_path
     reviewed_project = json.loads(
         Path(str(review_open["workspace_path"]), "deck/project.json").read_bytes()
     )
+    assert Path(review_open["workspace_path"], "deck/files/main.cmd").read_text().startswith(source_note)
     assert reviewed_project["initialization_attestation"]["qualified"] is True
     assert reviewed_project["initialization_attestation"]["project_sha256"] == reviewed_project["preflight_attestation"]["project_sha256"]
     snapshot = capability.public_snapshot()

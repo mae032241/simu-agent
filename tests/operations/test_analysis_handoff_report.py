@@ -27,6 +27,18 @@ def compact_report(alias='runtime_manifest', verdict='inconclusive'):
 
 def submit_compact(worker, opened, payload):
     domain = json.loads(Path(opened['domain_workspace_path']).read_bytes())
+    from curve_score.analysis_workspace import GUIDANCE, REPORT_GUIDANCE
+    from scidiscovery.platforms.codex import _operation_toml, tomllib
+    import sys
+    start = json.loads(Path(opened['start_here_path']).read_bytes())
+    assert start['guidance'] == GUIDANCE
+    assert domain['patch_contract']['instruction'] == REPORT_GUIDANCE
+    profile = tomllib.loads(_operation_toml(worker.compiled, python=Path(sys.executable),
+        python_path=None, state_root=Path(opened['workspace_path']),
+        local_workspace_root=Path(opened['workspace_path']), worker_backend='local'))
+    prompt = profile['developer_instructions']
+    assert GUIDANCE not in prompt and REPORT_GUIDANCE not in prompt
+    assert 'analysis-start.json' in prompt and '/patch_contract' in prompt
     assert domain['patch_contract']['draft_may_omit'] == ['/handoff']
     Path(opened['output_directory'], 'result.json').write_bytes(canonical_json(
         dict(schema_version=1, payload=payload)))
@@ -211,3 +223,53 @@ def test_bounded_views_preserve_originals_matrix_values_and_full_rule_pointers(t
         original = pointer(contents[entry['source_name']], entry['pointer'])
         if 'source_file' in entry:
             assert isinstance(original, str) and len(original.encode()) == entry['content_bytes']
+
+
+@pytest.mark.parametrize('explicit_notes', [False, True])
+def test_scientific_review_can_submit_one_formal_summary(tmp_path, explicit_notes):
+    from tests.operations import test_l4_local_tcad as f
+    catalog, runtime, root, _ = f._system(tmp_path)
+    request = dict(name='summary_review', operation_id='science.object.review.v1', instruction='Review the bound fixture.',
+        inputs=[dict(port='experiment_plan', artifact_names=['experiment_plan'])])
+    root.call_tool('operation_invoke', request)
+    compiled = catalog.operation(request['operation_id'])
+    worker = f.LocalWorkerMCPRouter(runtime.runs, operation_id=compiled.spec.operation_id, operation_digest=compiled.digest)
+    opened = worker.call_tool('worker_open_assignment', {})
+    schema = json.loads(Path(opened['workspace_path'], 'schema/result.schema.json').read_bytes())
+    assert '/handoff' in schema['properties']['payload']['description']
+    payload = dict(review_target='experiment_portfolio', verdict='revise', summary='Finite formal finding.')
+    value = dict(schema_version=1, payload=payload)
+    if not explicit_notes:
+        for field in ('verdict', 'summary'):
+            invalid = deepcopy(value)
+            invalid['payload'][field] = []
+            Path(opened['output_directory'], 'result.json').write_bytes(canonical_json(invalid))
+            rejected = worker.call_tool('worker_submit_result', {})
+            assert rejected['state'] == 'rejected', rejected
+            assert rejected['diagnostics'][0]['path'] == '$.payload.' + field
+    if explicit_notes:
+        value['handoff'] = dict(summary='Preserve explicit prior note.', assumptions=['A separate premise.'])
+    Path(opened['output_directory'], 'result.json').write_bytes(canonical_json(value))
+    assert worker.call_tool('worker_submit_result', {})['state'] == 'completed'
+    status = root.call_tool('run_status', dict(name=request['name'], output_paths=['/summary']))
+    assert status['selected_output']['items'][0]['value'] == payload['summary']
+    assert status['scheduler_signal']['verdict'] == 'revise'
+    assert status['scheduler_signal']['summary'] == ('Preserve explicit prior note.' if explicit_notes
+        else 'Read the sealed payload.summary for the scientific conclusion.')
+
+
+def test_formal_summary_projection_leaves_other_role_contracts_unchanged():
+    from scidiscovery.artifact_agent.service.result_materialization import materialize_general_result
+    for schema, payload in [
+        ('scidiscovery.critic-review.v2', dict(disposition='ready_for_experiment')),
+        ('scidiscovery.evidence-audit.v1', dict(checks=[dict(status='pass')])),
+    ]:
+        value = dict(payload=payload)
+        materialize_general_result(value, schema)
+        assert 'handoff' not in value
+    malformed = dict(payload=dict(summary=None, verdict='pass'), handoff=dict(summary=None))
+    from scidiscovery.operations.workspace import WorkspaceProtocolError
+    with pytest.raises(WorkspaceProtocolError) as error:
+        materialize_general_result(malformed, 'scidiscovery.scientific-review.v1')
+    assert error.value.details[0]['path'] == '$.payload.summary'
+    assert malformed['payload']['summary'] is malformed['handoff']['summary'] is None

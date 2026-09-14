@@ -618,6 +618,7 @@ class RootOperationRoutes:
                 ),
             ),
             evidence_sources=sources,
+            producer_inputs=tuple((item.port_name, item.artifact_ref) for item in status.inputs),
             reviewer_operation=(
                 producer.spec.review.reviewer_operation
                 if producer.spec.review is not None
@@ -1123,6 +1124,9 @@ class RootOperationRoutes:
                         handoff_verdict=(signal.verdict if signal is not None else None),
                         historical=self._is_historical(envelope),
                         producer_run_id=producer.run_id if producer else None,
+                        producer_inputs=(tuple((item.port_name, item.artifact_ref) for item in producer.inputs)
+                            if producer is not None and producer.state == "completed"
+                            and producer.output_ref == envelope.ref else None),
                     )
                 )
             resolved[selection.port] = tuple(artifacts)

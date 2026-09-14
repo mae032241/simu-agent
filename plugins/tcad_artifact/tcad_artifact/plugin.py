@@ -14,7 +14,7 @@ from scidiscovery.artifact_agent.service.local_workspace import WorkspaceError
 from scidiscovery.artifact_agent.service.run_outputs import RunOutputError
 from scidiscovery.operation_contract import SemanticRuleViolation
 from scidiscovery.operations.input_validation import OperationInvocationError
-from scidiscovery.operation_declaration import semantic_contract
+from scidiscovery.operation_declaration import semantic_contract, with_user_context
 from .device_parameters import (
     DeviceParameterCoverageReport,
     DeviceParameterRequirementSet,
@@ -359,7 +359,7 @@ def _author_operation(
     input_validation: InputValidationSpec | None = None,
 ) -> OperationSpec:
     names = tuple(item.name for item in inputs if item.exposure != "handoff_only")
-    return OperationSpec(
+    return with_user_context(OperationSpec(
         operation_id=operation_id,
         version="2",
         catalog_scope="public",
@@ -402,7 +402,7 @@ def _author_operation(
             max_files=1,
             max_attempts=2,
         ),
-    )
+    ))
 
 
 _PARAMETER_APPROVAL_PROVIDERS = (
@@ -521,10 +521,10 @@ PLUGIN = PluginDefinition(
         ComponentSpec("review_validator", "validator", "tcad_artifact.plugin:REVIEW_VALIDATOR_COMPONENT", resources=(_ref("semantic_contract"),)),
         ComponentSpec("review_context", "validator", "tcad_artifact.plugin:REVIEW_CONTEXT_COMPONENT", configuration_identity="output-responsibility:v1", resources=(_ref("semantic_contract"),)),
         ComponentSpec("parameter_cohort_guard", "guard", "tcad_artifact.plugin:PARAMETER_COHORT_GUARD", configuration_identity="tcad.approved-parameter-cohort.v1"),
-        ComponentSpec("workspace_materializer", "workspace_materializer", "tcad_artifact.operation_workspace:MATERIALIZER_COMPONENT", configuration_identity="tcad.workspace-materializer.v4"),
+        ComponentSpec("workspace_materializer", "workspace_materializer", "tcad_artifact.operation_workspace:MATERIALIZER_COMPONENT", configuration_identity="tcad.workspace-materializer.v5:formal-handoff"),
         ComponentSpec("workspace_file_policy", "workspace_file_policy", "tcad_artifact.operation_workspace:FILE_POLICY_COMPONENT", configuration_identity="tcad.workspace-file-policy.v1"),
-        ComponentSpec("review_result_finalizer", "workspace_finalizer", "tcad_artifact.operation_workspace:REVIEW_FINALIZER_COMPONENT"),
-        ComponentSpec("workspace_finalizer", "workspace_finalizer", "tcad_artifact.operation_workspace:FINALIZER_COMPONENT", configuration_identity="tcad.workspace-finalizer.v4:admitted-prior"),
+        ComponentSpec("review_result_finalizer", "workspace_finalizer", "tcad_artifact.operation_workspace:REVIEW_FINALIZER_COMPONENT", configuration_identity="tcad.review-finalizer.v2:formal-summary"),
+        ComponentSpec("workspace_finalizer", "workspace_finalizer", "tcad_artifact.operation_workspace:FINALIZER_COMPONENT", configuration_identity="tcad.workspace-finalizer.v5:formal-gap-summary"),
         ComponentSpec("workspace_snapshotter", "workspace_snapshotter", "tcad_artifact.operation_workspace:SNAPSHOTTER_COMPONENT", configuration_identity="tcad.workspace-snapshotter.v2"),
         ComponentSpec(
             "deck_workspace",
@@ -591,7 +591,7 @@ PLUGIN = PluginDefinition(
             "runtime_author_context",
             input_validation=InputValidationSpec(_ref("runtime_author_inputs"), "tcad.author.runtime_failure.inputs", "The bound runtime attestation must report failure."),
         ),
-        OperationSpec(
+        with_user_context(OperationSpec(
             operation_id="tcad.deck.review.v1",
             version="2",
             catalog_scope="public",
@@ -632,7 +632,7 @@ PLUGIN = PluginDefinition(
                 max_output_bytes=128 * 1024,
                 max_files=1,
             ),
-        ),
+        )),
         *TRANSFORM_OPERATIONS,
         OperationSpec(
             operation_id="tcad.study.execute",

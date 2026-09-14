@@ -1,4 +1,4 @@
-"""Safe project-local file intake into immutable Artifact storage."""
+"""Safe project-local file and user-text intake into immutable Artifact storage."""
 
 from __future__ import annotations
 
@@ -12,6 +12,11 @@ from pathlib import Path
 from ..schema.artifact import ArtifactRegistration
 from ..schema.refs import ActorRef, ArtifactRef
 from .artifacts import ArtifactService
+
+
+USER_TEXT_MAX_LENGTH = 8192
+USER_TEXT_MEDIA_TYPE = "text/plain; charset=utf-8"
+USER_TEXT_SOURCE_ORIGIN = "user_via_scheduler"
 
 
 class IntakeError(RuntimeError):
@@ -84,6 +89,24 @@ class SecureIntakeService:
             idempotency_key=f"intake:{artifact_id}",
         ).ref
 
+    def ingest_text(self, *, content: bytes) -> ArtifactRef:
+        """Register the original UTF-8 bytes validated by the Root input model."""
+        artifact_id = f"art_{uuid.uuid4().hex}"
+        return self.artifacts.register(
+            content,
+            ArtifactRegistration(
+                artifact_id=artifact_id,
+                kind="source_text",
+                schema_id="opaque",
+                payload_schema_version=1,
+                media_type=USER_TEXT_MEDIA_TYPE,
+                creator=self.creator,
+                labels={"source_origin": USER_TEXT_SOURCE_ORIGIN},
+                confidentiality="project",
+            ),
+            idempotency_key=f"intake:{artifact_id}",
+        ).ref
+
     def _resolve_regular_file(self, relative_path: str) -> Path:
         candidate = Path(relative_path)
         if candidate.is_absolute() or ".." in candidate.parts:
@@ -108,4 +131,7 @@ __all__ = [
     "PreparedIntakeFile",
     "SecureIntakeService",
     "UnsafeSourcePathError",
+    "USER_TEXT_MAX_LENGTH",
+    "USER_TEXT_MEDIA_TYPE",
+    "USER_TEXT_SOURCE_ORIGIN",
 ]

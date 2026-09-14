@@ -137,7 +137,7 @@ def test_deck_review_copies_capability_from_exact_subject(tmp_path):
     source = tmp_path / 'project.json'
     raw = canonical_json({'capability_sha256': 'a' * 64})
     source.write_bytes(raw)
-    request = _final_request(tmp_path, 'tcad.deck-review-report.v1', {'verdict': 'revise'}, inputs={'project': source})
+    request = _final_request(tmp_path, 'tcad.deck-review-report.v1', {'verdict': 'revise', 'summary': 'Finite review.'}, inputs={'project': source})
     result = json.loads(finalize_review_workspace(request))
     assert result['payload']['capability_sha256'] == 'a' * 64
     assert result['handoff']['verdict'] == 'revise'

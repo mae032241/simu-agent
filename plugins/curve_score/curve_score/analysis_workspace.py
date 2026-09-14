@@ -36,7 +36,9 @@ patch_contract identifies them. Other handoff explanations remain optional.
 """
 GUIDANCE = """If the workspace provides analysis-start.json, read it first. It contains
 bounded verbatim excerpts and exact source pointers, not a new scientific authority.
-Check the current input index, then follow the bound objective, current method and
+Check the current input index and read this Run's user_context originals first.
+If the index omits inputs, follow omission_source to the complete assignment input
+index. Then follow the bound objective, current method and
 relevant progress to their originals as needed. Do not print complete packages or
 data files merely to acknowledge their bindings. Truncated excerpts are navigation,
 not complete formulas or decision rules; read the referenced original before use.
@@ -179,7 +181,7 @@ def _start_file(request, restored, limit=START_LIMIT):
     for item in inputs:
         descriptor = request.binding_descriptors.get(item["source_name"])
         append("inputs", {**{key: item[key] for key in
-            ("source_name", "port", "relative_path", "historical", "media_type") if key in item},
+            ("source_name", "port", "relative_path", "historical", "media_type", "source_origin") if key in item},
             "schema_id": descriptor.artifact_ref.schema_id if descriptor else None,
             "size_bytes": descriptor.size_bytes if descriptor else None})
     # Purpose is a port declaration, shared by its files; do not repeat it per curve.

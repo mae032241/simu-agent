@@ -316,8 +316,6 @@ def _review_template(project: DeckProjectDraft | ImplementationGap) -> bytes:
         {
             "schema_version": 1,
             "handoff": {
-                "verdict": "blocked",
-                "summary": "结构模板；独立审查者必须用实际审查结论替换。",
                 "assumptions": [],
                 "missing_inputs": [],
                 "next_actions": [],
@@ -475,8 +473,6 @@ def materialize_workspace(
             _pretty(
                 handoff
                 or {
-                    "verdict": None,
-                    "summary": None,
                     "assumptions": [],
                     "missing_inputs": [],
                     "next_actions": [],
@@ -565,6 +561,25 @@ def materialize_workspace(
         manifest=manifest,
         paths=paths,
         read_paths=("deck",),
+        patch_contract=({
+            "target": "deck/handoff.json",
+            "generated_fields": {"/verdict": "blocked when deck/gap.json exists",
+                "/summary": "short reference to deck/gap.json /summary"},
+            "draft_may_omit": ["/verdict", "/summary"],
+            "instruction": "Only when deck/gap.json exists, the handoff file or these fields may be "
+                "omitted. The finalizer fills them from the formal gap; explicit notes remain. "
+                "A complete project still requires its authored handoff. Invalid existing JSON/types "
+                "are errors, not omissions.",
+        } if author else {
+            "target": "output/result.json",
+            "generated_fields": {"/handoff/verdict": "/payload/verdict",
+                "/handoff/summary": "short reference to /payload/summary",
+                "/payload/capability_sha256": "exact subject capability"},
+            "draft_may_omit": ["/handoff", "/payload/capability_sha256"],
+            "instruction": "Write the formal review summary once. The finalizer fills omitted "
+                "handoff summary/verdict and subject capability before validating the sealed Schema; "
+                "existing explicit handoff notes remain.",
+        }),
     )
 
 
@@ -594,7 +609,7 @@ def workspace_file_policy(request: WorkspaceFileRequest) -> WorkspaceFileRule | 
 
 
 def finalize_review_workspace(request: WorkspaceFinalizationRequest) -> bytes:
-    from scidiscovery.artifact_agent.service.result_materialization import finalize_result
+    from scidiscovery.artifact_agent.service.result_materialization import finalize_result, materialize_summary_handoff
     def project(value):
         payload = value["payload"]
         project_name = next((name for name in ("project", "revised_project") if name in request.input_paths), None)
@@ -604,8 +619,9 @@ def finalize_review_workspace(request: WorkspaceFinalizationRequest) -> bytes:
                 source = json.loads(_input(request, "execution_capability"))
             if source.get("capability_sha256") is not None:
                 payload["capability_sha256"] = source["capability_sha256"]
-        if payload.get("verdict") in {"pass", "revise", "blocked"} and isinstance(value.get("handoff"), dict):
-            value["handoff"]["verdict"] = payload["verdict"]
+        verdict = payload.get("verdict")
+        valid_verdict = verdict if isinstance(verdict, str) and verdict in {"pass", "revise", "blocked"} else None
+        materialize_summary_handoff(value, valid_verdict)
     return finalize_result(request, project)
 
 
@@ -622,10 +638,13 @@ def finalize_workspace(request: WorkspaceFinalizationRequest) -> bytes:
         except (ValidationError, ValueError) as error:
             raise _protocol_error("TCAD implementation gap is invalid", error, path="$.deck.gap") from error
         try:
-            handoff_value = json.loads(_read(deck / "handoff.json", max_bytes=64 * 1024))
-            if isinstance(handoff_value, dict):
-                handoff_value["verdict"] = "blocked"
-            handoff = RoleHandoff.model_validate_json(canonical_json(handoff_value), strict=True)
+            from scidiscovery.artifact_agent.service.result_materialization import materialize_summary_handoff
+            handoff_path = deck / "handoff.json"
+            handoff_value = (json.loads(_read(handoff_path, max_bytes=64 * 1024))
+                if handoff_path.exists() or handoff_path.is_symlink() else {})
+            value = {"payload": {"summary": gap.summary}, "handoff": handoff_value}
+            materialize_summary_handoff(value, "blocked")
+            handoff = RoleHandoff.model_validate_json(canonical_json(value["handoff"]), strict=True)
         except (ValidationError, ValueError) as error:
             raise _protocol_error("TCAD handoff is invalid", error, path="$.deck.handoff") from error
         try:
