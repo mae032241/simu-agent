@@ -8,12 +8,18 @@ REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / 'tests/operations'))
 import test_l4_local_tcad as fixture
 from scidiscovery.artifact_agent.schema.common import canonical_json
-from tcad_artifact.operation_workspace import snapshot_workspace
-from tcad_artifact.project_packager import ImplementationGap, validate_implementation_gap
+from scidiscovery.operations.workspace import (
+    WorkspaceFinalizationRequest, WorkspaceMaterializationRequest, WorkspaceProtocolError,
+)
+from tcad_artifact.operation_workspace import finalize_workspace, materialize_workspace, snapshot_workspace
+from tcad_artifact.project_packager import (
+    ImplementationGap, validate_deck_author_task_output, validate_implementation_gap,
+)
 
 
 @pytest.mark.parametrize("broken_metadata", [False, True])
-def test_gap_records_reach_fresh_revision_worker(tmp_path, broken_metadata):
+@pytest.mark.parametrize("complete_project", [False, True])
+def test_gap_records_reach_fresh_revision_worker(tmp_path, broken_metadata, complete_project):
     catalog, runtime, root, _ = fixture._system(tmp_path, solver_kind='sprocess')
     inputs = [
         {'port': 'execution_capability', 'artifact_names': ['execution_capability']},
@@ -75,8 +81,24 @@ def test_gap_records_reach_fresh_revision_worker(tmp_path, broken_metadata):
     assert (fresh_deck / 'attempts.md').read_text() == 'Attempted fixture change; initialization failed.\n'
     if broken_metadata:
         assert len(tuple((fresh_deck / 'reports/history').glob('*_project.json'))) == 1
-    fixture._write_gap(fresh)
+    if complete_project:
+        (fresh_deck / 'gap.json').unlink()
+        fixture._write_sprocess_workspace(fresh)
+        assert revision.call_tool('worker_submit_result', {})['diagnostics'][0]['type'] == 'tcad_preflight_missing'
+        debug = revision.call_tool('worker_tcad_debug_run', {'run_name': 'parser', 'mode': 'preflight'})
+        assert debug['state'] == 'succeeded', debug
+        assert revision.call_tool('worker_submit_result', {})['diagnostics'][0]['type'] == 'tcad_initialization_missing'
+        assert revision.call_tool('worker_tcad_debug_run', {'run_name': 'init', 'mode': 'initialization'})['state'] == 'succeeded'
+    else:
+        fixture._write_gap(fresh)
     assert revision.call_tool('worker_submit_result', {})['state'] == 'completed'
+    result = root.call_tool('run_status', {'name': 'probe_revision'})['sealed_output']['payload']
+    if complete_project:
+        assert result['materialization_report']['status'] == 'pass'
+        assert result['preflight_attestation']['qualified']
+        assert result['initialization_attestation']['qualified']
+    else:
+        assert result['result_kind'] == 'implementation_gap'
 
 
 def test_completed_local_router_claims_new_run_with_fresh_tool_state(tmp_path):
@@ -107,3 +129,70 @@ def test_gap_paths_and_prior_gap_validation():
     for path in ('../outside', 'contract/override.json', '/tmp/outside'):
         with pytest.raises(ValueError):
             ImplementationGap.model_validate_json(canonical_json({**fixture._task_gap(), 'attempt_files': [{'relative_path': path, 'content': 'bad'}]}), strict=True)
+
+
+@pytest.mark.parametrize('prior_kind', ['project', 'gap'])
+@pytest.mark.parametrize('operation_id', ['tcad.deck.author.revise.v1', 'tcad.deck.author.runtime-failure.v1'])
+def test_revision_keeps_current_capability_bound_without_revalidating_prior(tmp_path, prior_kind, operation_id):
+    capability = fixture.SolverCapability(
+        profile_id='recovery_fixture', solver_kind='sdevice',
+        executable='/opt/fake/sdevice', environment={}, release_evidence='Synthetic R-2020.09 fixture',
+    )
+    project = fixture._project(capability)
+    prior = project.model_dump(mode='json') if prior_kind == 'project' else fixture._task_gap()
+    inputs = {}
+    for name, value in {
+        'execution_capability': capability.public_snapshot().model_dump(mode='json'),
+        'experiment_plan': fixture._portfolio(), 'prior_project': prior,
+    }.items():
+        inputs[name] = tmp_path / f'{name}.json'
+        inputs[name].write_bytes(canonical_json(value))
+    workspace = tmp_path / 'workspace'
+    materialize_workspace(WorkspaceMaterializationRequest(
+        operation_id=operation_id, workspace=workspace, input_paths=inputs, provisional_roots=(),
+    ))
+    deck = workspace / 'deck'
+    (deck / 'gap.json').unlink(missing_ok=True)
+    metadata = project.model_dump(mode='json', exclude={'files'})
+    (deck / 'project.json').write_bytes(canonical_json(metadata))
+    (deck / 'files/main.cmd').write_text(project.files[0].content)
+    (deck / 'handoff.json').write_bytes(canonical_json({'verdict': 'pass', 'summary': 'Fixture revision.'}))
+    request = WorkspaceFinalizationRequest(
+        operation_id=operation_id, workspace=workspace, input_paths=inputs,
+        output_limit_bytes=8 * 1024 * 1024, final_submission=False,
+    )
+    assert json.loads(finalize_workspace(request))['payload']['capability_sha256'] == project.capability_sha256
+    for field, value in [('tool_profile', 'other'), ('solver_kind', 'sprocess'), ('capability_sha256', '0' * 64)]:
+        (deck / 'project.json').write_bytes(canonical_json({**metadata, field: value}))
+        with pytest.raises(WorkspaceProtocolError) as error:
+            finalize_workspace(request)
+        assert error.value.details[0]['type'] == 'frozen_field_changed'
+        assert error.value.details[0]['path'] == f'$.deck.project.{field}'
+
+
+@pytest.mark.parametrize('prior_kind', ['project', 'gap'])
+def test_restored_project_scope_checks_output_duties_against_admitted_prior(prior_kind):
+    capability = fixture.SolverCapability(
+        profile_id='recovery_fixture', solver_kind='sdevice',
+        executable='/opt/fake/sdevice', environment={}, release_evidence='Synthetic R-2020.09 fixture',
+    )
+    project = fixture._project(capability).model_dump(mode='json')
+    inputs = {'prior_project': canonical_json(project if prior_kind == 'project' else fixture._task_gap())}
+    validate_deck_author_task_output(project, inputs, {'verdict': 'pass'})
+    project['expected_outputs'][0]['relative_path'] = 'analysis.csv'
+    with pytest.raises(fixture.SemanticRuleViolation, match='introduced post-execution'):
+        validate_deck_author_task_output(project, inputs, {'verdict': 'blocked'})
+    if prior_kind == 'project':
+        inputs['prior_project'] = canonical_json(project)
+        validate_deck_author_task_output(project, inputs, {'verdict': 'blocked'})
+        with pytest.raises(fixture.SemanticRuleViolation, match='passing deck revision retains'):
+            validate_deck_author_task_output(project, inputs, {'verdict': 'pass'})
+        project['expected_outputs'][0]['relative_path'] = 'profile.tdr'
+        prior = {**project, 'runtime_assertions': [{
+            'description': 'Historical output requirement.', 'expected_output_name': 'profile',
+        }]}
+        inputs['prior_project'] = canonical_json(prior)
+        # The historical field is optional: removing the duty is allowed, and
+        # retaining it in a blocked result uses the declared default identity.
+        validate_deck_author_task_output(project, inputs, {'verdict': 'pass'})
+        validate_deck_author_task_output(prior, inputs, {'verdict': 'blocked'})

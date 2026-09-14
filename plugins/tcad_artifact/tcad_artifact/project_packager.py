@@ -15,7 +15,7 @@ import tarfile
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Annotated, Literal, Mapping
+from typing import Annotated, Any, Literal, Mapping
 
 from pydantic import RootModel, Field, ValidationError, field_validator, model_validator
 from scidiscovery.artifact_agent.schema.common import canonical_json, canonical_sha256
@@ -741,8 +741,6 @@ def validate_implementation_gap(
         except (KeyError, IndexError, TypeError, ValueError) as error:
             raise declared_violation("gap plan_locator must be an existing JSON pointer in experiment_plan",
                 path=f"$.affected_work[{index}].plan_locator") from error
-    if "prior_project" in inputs:
-        parse_author_result(inputs["prior_project"])
 
 
 class DeckReviewReport(StrictModel):
@@ -1226,25 +1224,28 @@ _SOLVER_NATIVE_OUTPUT_SUFFIXES = {
 }
 
 
-def solver_deck_scope_violations(project: DeckProjectDraft) -> tuple[str, ...]:
+def solver_deck_scope_violations(project: DeckProjectDraft | Mapping[str, Any]) -> tuple[str, ...]:
     """Return deterministic direct-solver responsibilities outside a deck."""
 
-    suffixes = _SOLVER_NATIVE_OUTPUT_SUFFIXES.get(project.solver_kind)
+    if isinstance(project, DeckProjectDraft):
+        project = project.model_dump(mode="json")
+    suffixes = _SOLVER_NATIVE_OUTPUT_SUFFIXES.get(project.get("solver_kind"))
     if suffixes is None:
         return ()
     violations = [
-        f"unsupported_requirement:{item.requirement_key}"
-        for item in project.realization_manifest
-        if item.implementation_status == "unsupported"
+        f"unsupported_requirement:{item['requirement_key']}"
+        for item in project.get("realization_manifest", ())
+        if item["implementation_status"] == "unsupported"
     ]
     violations.extend(
-        f"runtime_assertion:{index}:{item.expected_output_name}:{item.assertion_kind}"
-        for index, item in enumerate(project.runtime_assertions, start=1)
+        f"runtime_assertion:{index}:{item['expected_output_name']}:"
+        f"{item.get('assertion_kind', RuntimeAssertion.model_fields['assertion_kind'].default)}"
+        for index, item in enumerate(project.get("runtime_assertions", ()), start=1)
     )
     violations.extend(
-        f"non_solver_native_output:{item.name}:{item.relative_path}"
-        for item in project.expected_outputs
-        if Path(item.relative_path).suffix.lower() not in suffixes
+        f"non_solver_native_output:{item['name']}:{item['relative_path']}"
+        for item in project.get("expected_outputs", ())
+        if Path(item["relative_path"]).suffix.lower() not in suffixes
     )
     return tuple(sorted(violations))
 
@@ -1277,7 +1278,9 @@ def validate_deck_author_task_output(
                 + ", ".join(sorted(current))
             )
         return
-    prior = parse_bound_json(DeckProjectDraft, prior_raw)
+    # Compare duties with the admitted prior result, without revalidating that
+    # input as a current project. An implementation gap carries no deck duties.
+    prior = json.loads(prior_raw)
     introduced = current - set(solver_deck_scope_violations(prior))
     if introduced:
         raise SemanticRuleViolation(

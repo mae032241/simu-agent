@@ -629,7 +629,7 @@ def finalize_workspace(request: WorkspaceFinalizationRequest) -> bytes:
         except (ValidationError, ValueError) as error:
             raise _protocol_error("TCAD handoff is invalid", error, path="$.deck.handoff") from error
         try:
-            inputs = {name: _input(request, name) for name in ("experiment_plan", "prior_project") if name in request.input_paths}
+            inputs = {"experiment_plan": _input(request, "experiment_plan")}
             # The finalizer owns captured files; never trust an authored snapshot.
             gap = gap.model_copy(update={"attempt_files": _attempt_files(deck)})
             validate_implementation_gap(gap, inputs, handoff.model_dump(mode="json"))
@@ -725,16 +725,22 @@ def finalize_workspace(request: WorkspaceFinalizationRequest) -> bytes:
                 },),
             )
     if request.operation_id in _REVISION_OPERATIONS:
-        try:
-            base = DeckProjectDraft.model_validate_json(
-                _input(request, "prior_project"), strict=True
-            )
-        except ValidationError as error:
-            raise _protocol_error("prior_project is invalid", error) from error
+        # Admission owns the prior result's shape. A gap has no executable
+        # capability to inherit; bind its restored project to this Run's input.
+        base = json.loads(_input(request, "prior_project"))
+        capability_source = "prior_project"
+        if base.get("result_kind") == "implementation_gap":
+            capability = _capability_snapshot(_input(request, "execution_capability"))
+            base = {
+                "tool_profile": capability["profile_id"],
+                "solver_kind": capability["solver_kind"],
+                "capability_sha256": capability["capability_sha256"],
+            }
+            capability_source = "execution_capability"
         changed = tuple(
             name
             for name in ("tool_profile", "solver_kind", "capability_sha256")
-            if getattr(base, name) != getattr(project, name)
+            if base.get(name) != getattr(project, name)
         )
         if changed:
             raise WorkspaceProtocolError(
@@ -742,7 +748,7 @@ def finalize_workspace(request: WorkspaceFinalizationRequest) -> bytes:
                 details=tuple(
                     {
                         "path": f"$.deck.project.{name}",
-                        "message": "field must equal prior_project",
+                        "message": f"field must equal {capability_source}",
                         "type": "frozen_field_changed",
                     }
                     for name in changed
