@@ -1,0 +1,20 @@
+{
+  "command": [
+    "python",
+    "-m",
+    "pytest",
+    "-q",
+    "tests/operations/test_agent_execution_settings.py"
+  ],
+  "exit_code": 1,
+  "stop_reason": null,
+  "duration_seconds": 2.615,
+  "peak_tree_rss_mib": 110.06,
+  "budget_mib": 512,
+  "peak_processes": [
+    {
+      "name": "python",
+      "rss_mib": 110.06
+    }
+  ]
+}

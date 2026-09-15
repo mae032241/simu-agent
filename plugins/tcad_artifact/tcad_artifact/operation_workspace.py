@@ -209,6 +209,7 @@ def _author_metadata(metadata: dict[str, Any], *, deterministic: bool) -> dict[s
         for field in (
             "schema_version", "tool_profile", "solver_kind", "capability_sha256",
             "expected_outputs", "parameter_bindings", "case_parameter_bindings",
+            "case_anchors",
             "runtime_assertions", "realization_manifest",
         ):
             metadata.pop(field, None)

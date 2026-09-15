@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from ...agent_execution_settings import narrative_instruction
+
 import argparse
 import json
 import threading
@@ -35,6 +37,7 @@ from ..service.local_workspace import workspace_input_filename, read_control_wor
 from ..service.run_outputs import RunCheckerError, RunOutputError
 from ..service.runs import RunService, RunStateConflict
 from ..service.scheduler_bindings import SchedulerBindingService
+from ..service.instance_maintenance import InstanceMaintenanceBusy, InstanceMaintenanceUnavailable
 from .mcp import MCPRouter, parse_rpc_line, rpc_error
 from .mcp_worker_protocol import LIFECYCLE_WORKER_TOOLS, WorkerToolError
 
@@ -74,6 +77,7 @@ class LocalWorkerMCPRouter:
         }
         self._missing_services = tuple(sorted(required - set(self.tool_services)))
         self._run_id: str | None = None
+        self._opened_call_run_id: str | None = None
         self._workspace: Any | None = None
         self._completed = False
         self._tool_state: dict[str, dict[str, object]] = {}
@@ -92,6 +96,51 @@ class LocalWorkerMCPRouter:
         return json_projection(self._tool_schemas)
 
     def call_tool(self, name: str, arguments: dict[str, Any] | None) -> Any:
+        self._validate_open_call(name, arguments)
+        with self._maintenance_call(name):
+            return self._observed_call_tool(name, arguments)
+
+    def _validate_open_call(self, name, arguments):
+        if name != "worker_open_assignment":
+            return
+        self._opened_call_run_id = None
+        # No assignment has been selected. Invalid open arguments must not
+        # enter timing, failure recording, or an old hardened transport lease.
+        tool = self._tools[name]
+        try:
+            parse_tool_arguments(tool.input_model, arguments)
+        except ValidationError as error:
+            raise WorkerToolError("tool arguments do not satisfy the declared model",
+                details=validation_diagnostics(error, schema=tool.schema()["inputSchema"])) from error
+
+    def _maintenance_call(self, name, *, existing_assignment=False):
+        from contextlib import contextmanager
+
+        @contextmanager
+        def guarded():
+            gate = self.runs.instance_maintenance
+            with gate.global_guard():
+                # RunService selects and guards the new assignment on open.
+                if (name == "worker_open_assignment" and not existing_assignment) or self._run_id is None:
+                    yield
+                else:
+                    instance_id = self.runs.status(self._run_id).instance_id
+                    with gate.guard(instance_id):
+                        self.runs.scheduler_bindings.require_active_instance(instance_id=instance_id)
+                        yield
+        return guarded()
+
+    def _check_opened_instance(self):
+        if self._run_id is not None:
+            instance_id = self.runs.status(self._run_id).instance_id
+            self.runs.instance_maintenance.ensure_available(instance_id)
+            from ..service.scheduler_bindings import SchedulerInstanceClosed
+            try:
+                self.runs.scheduler_bindings.require_active_instance(instance_id=instance_id)
+            except SchedulerInstanceClosed as error:
+                raise InstanceMaintenanceUnavailable("assignment instance is closed") from error
+
+    def _observed_call_tool(self, name: str, arguments: dict[str, Any] | None) -> Any:
         with self._lock:
             started = time.monotonic()
             started_at = datetime.now(timezone.utc).isoformat()
@@ -119,9 +168,15 @@ class LocalWorkerMCPRouter:
                 if self._active_attempt and not self._attempt_finished:
                     raise WorkerToolError("declared tool omitted its outcome receipt")
                 return result
+            except (InstanceMaintenanceBusy, InstanceMaintenanceUnavailable):
+                # A refused open may still have an old Agent's cached Run ID.
+                # Never append timing, diagnostics or a failure to that Run.
+                timing_enabled = False
+                raise
             except Exception as error:
                 if opening and isinstance(error, RunStateConflict) and error.run_id is not None:
                     self._run_id = error.run_id
+                    self._opened_call_run_id = error.run_id
                     self._workspace = None
                     self._completed = False
                     self._tool_state.clear()
@@ -142,7 +197,7 @@ class LocalWorkerMCPRouter:
                 raise failure from error
             finally:
                 if opening:
-                    timing_run_id = self._run_id
+                    timing_run_id = self._opened_call_run_id
                 if timing_enabled and timing_run_id:
                     try:
                         if opening:
@@ -165,14 +220,15 @@ class LocalWorkerMCPRouter:
         from ..service.engineering_diagnostics import EngineeringDiagnostics
         store = EngineeringDiagnostics(self.runs.database_path.parent.parent / "engineering-diagnostics")
         scope = "worker:unbound"
+        run_id = self._opened_call_run_id if name == "worker_open_assignment" else self._run_id
         try:
-            if self._run_id:
-                scope = "instance:" + self.runs.status(self._run_id).instance_id
+            if run_id:
+                scope = "instance:" + self.runs.status(run_id).instance_id
         except Exception as scope_error:
             from ..service.engineering_diagnostics import exception_facts
             error.scope_lookup_error = exception_facts(scope_error, layer="worker", action="scope")
         engineering = store.capture(error, scope=scope, layer="worker", action=name)
-        if self._workspace is not None and engineering.get("reference"):
+        if run_id is not None and run_id == self._run_id and self._workspace is not None and engineering.get("reference"):
             try:
                 from ..service.local_workspace import write_control_workspace_file
                 engineering["workspace_report"] = "reports/" + engineering["reference"] + ".json"
@@ -213,9 +269,10 @@ class LocalWorkerMCPRouter:
         self.runs.record_tool_attempt_read(self._run_id, self._active_attempt, self._attempt_sources)
 
     def _record_tool_failure(self, name: str, error: WorkerToolError) -> None:
-        if self._run_id is None:
+        run_id = self._opened_call_run_id if name == "worker_open_assignment" else self._run_id
+        if run_id is None:
             return
-        self.runs.record_error_observation(self._run_id, "tool_failed", diagnostic={
+        self.runs.record_error_observation(run_id, "tool_failed", diagnostic={
             "category": "tool_failed", "tool_name": name,
             "details": error.details or (contract_diagnostic("tool_rejected",
                 phase="tool_execution", affected_action="tool_call"),),
@@ -312,15 +369,20 @@ class LocalWorkerMCPRouter:
                 if error.run_id is not None:
                     raise
                 if terminal and str(error) == "no exact queued Run is available":
+                    self._check_opened_instance()
+                    self._opened_call_run_id = self._run_id
                     return {"state": self.runs.status(self._run_id).state}
                 from ...operations.tooling import tool_evidence_ports
                 if not tool_evidence_ports(self.compiled) or str(error) != "no exact queued Run is available":
                     raise WorkerToolError(str(error)) from error
                 status, workspace = self.runs.reopen(operation_id=self.operation_id, operation_digest=self.operation_digest)
             self._run_id = status.run_id
+            self._opened_call_run_id = status.run_id
             self._workspace = workspace
             self._completed = False
             self._tool_state.clear()
+        self._check_opened_instance()
+        self._opened_call_run_id = self._run_id
         status = self.runs.status(self._run_id)
         assignment = json.loads(read_control_workspace_file(self._workspace.root,
             Path("assignment.json"), max_bytes=self._workspace.assignment_path.stat().st_size))
@@ -339,6 +401,8 @@ class LocalWorkerMCPRouter:
                 pass  # Old workspaces keep their exact existing contract entry.
         return {
             "state": "opened",
+            "narrative_instruction": narrative_instruction(
+                status.execution_profile["profile"] if status.execution_profile else None),
             "workspace_path": str(self._workspace.root),
             "assignment_path": str(self._workspace.assignment_path),
             **contracts,

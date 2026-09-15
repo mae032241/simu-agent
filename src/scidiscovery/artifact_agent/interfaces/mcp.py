@@ -122,6 +122,7 @@ def build_root_router(
     worker_backend: str = "local",
     local_workspace_root: Path | None = None,
     execution_collection=None,
+    agent_settings=None,
 ) -> MCPRouter:
     approval_secret = read_secret_file(
         approval_secret_file, label="approval receipt"
@@ -134,7 +135,10 @@ def build_root_router(
         shared_group=shared_group,
         worker_backend=worker_backend,
         local_workspace_root=local_workspace_root,
+        agent_settings=agent_settings,
     )
+    if scheduler_session_key is not None:
+        runtime.scheduler_bindings.register_client(session_key=scheduler_session_key)
     facade = RootToolFacade(
         runtime.artifacts,
         runtime.intake,

@@ -1,0 +1,18 @@
+{
+  "command": [
+    "python",
+    "docs/plans/evidence/home-navigation/parameter_sources_probe.py",
+    "/tmp/scid-parameter-ui-access.json"
+  ],
+  "exit_code": 0,
+  "stop_reason": null,
+  "duration_seconds": 0.414,
+  "peak_tree_rss_mib": 24.14,
+  "budget_mib": 512,
+  "peak_processes": [
+    {
+      "name": "python",
+      "rss_mib": 24.14
+    }
+  ]
+}

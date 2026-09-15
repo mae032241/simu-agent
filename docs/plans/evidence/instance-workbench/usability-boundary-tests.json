@@ -1,0 +1,26 @@
+{
+  "command": [
+    "python",
+    "-m",
+    "pytest",
+    "-q",
+    "tests/operations/test_instance_browser_access.py",
+    "tests/operations/test_instance_browser_http.py",
+    "tests/operations/test_instance_approval_presentation.py",
+    "tests/operations/test_instance_events.py",
+    "tests/operations/test_instance_trajectory_cache.py",
+    "tests/operations/test_instance_evidence.py",
+    "tests/operations/test_r4_execution_approval_identity.py"
+  ],
+  "exit_code": 0,
+  "stop_reason": null,
+  "duration_seconds": 21.58,
+  "peak_tree_rss_mib": 136.0,
+  "budget_mib": 512,
+  "peak_processes": [
+    {
+      "name": "python",
+      "rss_mib": 136.0
+    }
+  ]
+}

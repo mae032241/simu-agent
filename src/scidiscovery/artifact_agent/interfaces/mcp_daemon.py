@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from ...agent_execution_settings import load_settings
+
 import argparse
 import re
 import threading
@@ -17,6 +19,7 @@ from scidiscovery.interfaces.daemon import UnixSocketDaemon
 from .mcp import build_root_router
 from .mcp_proxy import SCHEDULER_PROXY_FIELD
 from ..service import StateMaintenanceLock
+from ..service.instance_maintenance import InstanceMaintenance
 from ..service.execution_collection import ExecutionCollection, open_collection_executions
 from scidiscovery.operations.catalog import compile_installed_catalog
 from ..runtime_plugin_bindings import (
@@ -38,12 +41,14 @@ class RootBrokerRouter:
         builder: Callable[[str], Any],
         *,
         maintenance: StateMaintenanceLock | None = None,
+        instance_maintenance: InstanceMaintenance | None = None,
         max_cached_routers: int = 128,
     ) -> None:
         if type(max_cached_routers) is not int or max_cached_routers < 1:
             raise ValueError("max_cached_routers must be positive")
         self.builder = builder
         self.maintenance = maintenance
+        self.instance_maintenance = instance_maintenance
         self.max_cached_routers = max_cached_routers
         self._routers: OrderedDict[str, Any] = OrderedDict()
         self._lock = threading.Lock()
@@ -68,7 +73,11 @@ class RootBrokerRouter:
             and clean["params"].get("name") == "instance_close"
         )
         context = nullcontext()
-        if self.maintenance is not None:
+        if self.instance_maintenance is not None:
+            # RootMCPRouter owns the short EX for instance_close. Never nest
+            # shared -> exclusive around that call.
+            context = nullcontext() if exclusive else self.instance_maintenance.global_guard()
+        elif self.maintenance is not None:
             context = (
                 self.maintenance.exclusive(blocking=False)
                 if exclusive
@@ -111,6 +120,7 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--local-workspace-root is required for the local backend")
     try:
         plugin_configs = parse_plugin_config_assignments(tuple(args.plugin_config))
+        agent_settings = load_settings(os.environ.get("SCID_AGENT_SETTINGS_FILE"))
         catalog = compile_installed_catalog()
         contributions = load_runtime_plugin_contributions(
             catalog,
@@ -128,6 +138,7 @@ def main(argv: list[str] | None = None) -> int:
     maintenance = StateMaintenanceLock(
         state_root / "maintenance.lock", shared_group=True
     )
+    instance_maintenance = InstanceMaintenance(state_root, maintenance=maintenance)
     with maintenance.shared():
         collection = ExecutionCollection(open_collection_executions(state_root),
             plugin_configs={key: str(value) for key, value in plugin_configs.items()})
@@ -144,8 +155,10 @@ def main(argv: list[str] | None = None) -> int:
             worker_backend=args.worker_backend,
             local_workspace_root=args.local_workspace_root,
             execution_collection=collection,
+            agent_settings=agent_settings,
         ),
         maintenance=maintenance,
+        instance_maintenance=instance_maintenance,
     )
     def stop(*_):
         collection.close()

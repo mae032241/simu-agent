@@ -1919,11 +1919,14 @@ def _complete_plan_fixture(catalog, runtime, root, name, operation_id, payload, 
 
 
 @pytest.mark.parametrize("produced", (False, True), ids=("imported-plan", "reviewed-producer-plan"))
-def test_materialized_sprocess_author_review_package_preserves_case_anchors(tmp_path, monkeypatch, produced):
+@pytest.mark.parametrize("with_controls", (False, True), ids=("single-case-no-controls", "comparison"))
+def test_materialized_sprocess_author_review_package_preserves_case_anchors(tmp_path, monkeypatch, produced, with_controls):
     catalog, runtime, root, capability = _system(
         tmp_path, solver_kind="sprocess", science_plugin=_plan_producer_plugin() if produced else SCIENCE_PLUGIN,
     )
     _, sources, _ = _review_context_fixture("case")
+    if not with_controls:
+        sources["experiment_plan"] = canonical_json(_portfolio().model_dump(mode="json"))
     artifact = runtime.artifacts.register(sources["experiment_plan"], ArtifactRegistration(
         kind="experiment_portfolio", schema_id="scidiscovery.experiment-portfolio.v1",
         payload_schema_version=1, media_type="application/json", creator=runtime.actor,
@@ -1961,7 +1964,8 @@ def test_materialized_sprocess_author_review_package_preserves_case_anchors(tmp_
     declarations["case_anchors"] = [
         {"experiment_key": "entrypoint_smoke", "case_key": key,
          "relative_path": "main.cmd", "locator": f"set bias_{key} {value}"}
-        for key, value in (("smoke", "0.0"), ("comparison", "1.0"))
+        for key, value in ((("smoke", "0.0"), ("comparison", "1.0"))
+                           if with_controls else (("smoke", "0.0"),))
     ]
     path.write_bytes(canonical_json(declarations))
     for mode in ("preflight", "initialization"):
@@ -2086,7 +2090,12 @@ def test_materialized_sprocess_author_review_package_preserves_case_anchors(tmp_
         assert proof_id in {ref.artifact_id for ref in envelope.parent_refs}
     package = json.loads(runtime.artifacts.read(envelope.ref))
     author_project = root.call_tool("run_status", {"name": "process"})["sealed_output"]["payload"]
-    assert len(author_project["case_parameter_bindings"]) == 2
+    assert len(author_project["case_parameter_bindings"]) == (2 if with_controls else 0)
+    assert author_project["case_anchors"] == declarations["case_anchors"]
+    assert package["project"]["case_anchors"] == declarations["case_anchors"]
+    from tcad_artifact.project_materializer import declarations_template
+    sealed = DeckProjectDraft.model_validate_json(canonical_json(author_project), strict=True)
+    assert declarations_template(sources["experiment_plan"], base_project=sealed)["case_anchors"] == declarations["case_anchors"]
     assert author_project["initialization_attestation"]["qualified"] is True
     assert canonical_json(package["project"]["initialization_attestation"]) == canonical_json(
         author_project["initialization_attestation"]
@@ -2101,6 +2110,36 @@ def test_materialized_sprocess_author_review_package_preserves_case_anchors(tmp_
         "capability": canonical_json(capability.public_snapshot().model_dump(mode="json")),
         "experiment_plan": sources["experiment_plan"],
     }
+    # Historical serialization and proof digests must survive the added field.
+    # Emulate the pre-fix producer which never retained case_anchors.
+    legacy = dict(author_project)
+    legacy.pop("case_anchors")
+    legacy_digest = hashlib.sha256(canonical_json({
+        key: value for key, value in legacy.items()
+        if key not in {"preflight_attestation", "initialization_attestation", "materialization_report"}
+    })).hexdigest()
+    for field in ("preflight_attestation", "initialization_attestation"):
+        legacy[field] = {**legacy[field], "project_sha256": legacy_digest}
+    legacy_raw = canonical_json(legacy)
+    assert canonical_json(DeckProjectDraft.model_validate_json(legacy_raw, strict=True).model_dump(mode="json")) == legacy_raw
+    legacy_package = transform_adapter.package_reviewed_project({**exact_inputs, "project": legacy_raw})
+    assert canonical_json(json.loads(legacy_package["reviewed_package"][0])["project"]) == legacy_raw
+
+    # Removing a new project's retained anchors invalidates its bound proof;
+    # it must not silently turn into a compatible historical object.
+    stripped = dict(author_project)
+    stripped.pop("case_anchors")
+    with pytest.raises(ValidationError, match="project digest differs"):
+        transform_adapter.package_reviewed_project({**exact_inputs, "project": canonical_json(stripped)})
+    # An explicitly empty declaration is not the same as historical absence.
+    from tcad_artifact.project_materializer import ProjectMaterializationError
+    from tcad_artifact.project_packager import project_debug_sha256
+    empty = sealed.model_copy(update={"case_anchors": (), "preflight_attestation": None,
+                                      "initialization_attestation": None})
+    empty = empty.model_copy(update={"preflight_attestation": sealed.preflight_attestation.model_copy(
+        update={"project_sha256": project_debug_sha256(empty)})})
+    with pytest.raises(ProjectMaterializationError, match="no declared source anchor"):
+        transform_adapter.package_reviewed_project({**exact_inputs, "project": canonical_json(empty.model_dump(mode="json"))})
     for field, diagnostic in (("source_tree_sha256", "source digest differs"),
                                ("project_sha256", "project digest differs")):
         changed = json.loads(exact_inputs["project"])

@@ -502,6 +502,7 @@ class RootExecutionRoutes:
         return {"execution_name": name, "outputs": outputs}
 
     def execution_start(self, *, name: str) -> dict[str, Any]:
+        self._require_scheduling_enabled()
         if self.execution_bridge is None:
             raise RootToolError("no execution bridge is configured")
         execution_id = self._resolve("execution", name)

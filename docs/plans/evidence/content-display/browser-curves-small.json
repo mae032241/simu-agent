@@ -1,0 +1,30 @@
+{
+  "command": [
+    "env",
+    "PYTHONPATH=src:plugins/tcad_artifact:plugins/curve_score:plugins/curve_figure_evidence:/opt/scidiscovery-m7/site",
+    "PLAYWRIGHT_BROWSERS_PATH=/tmp/scid-workbench-browsers",
+    "NODE_OPTIONS=--max-old-space-size=48",
+    "python",
+    "docs/plans/evidence/content-display/browser_replay.py",
+    "curves"
+  ],
+  "exit_code": -9,
+  "stop_reason": "memory_budget_exceeded",
+  "duration_seconds": 7.263,
+  "peak_tree_rss_mib": 515.03,
+  "budget_mib": 512,
+  "peak_processes": [
+    {
+      "name": "chrome-headless-shell",
+      "rss_mib": 319.37
+    },
+    {
+      "name": "MainThread",
+      "rss_mib": 113.03
+    },
+    {
+      "name": "python",
+      "rss_mib": 82.63
+    }
+  ]
+}

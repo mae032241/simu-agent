@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
+from ...agent_execution_settings import (EXECUTION_SETTINGS_COLUMNS, AgentSettings, ExecutionProfile,
+                                          parse_settings, resolve_settings)
+
 import hashlib
 import json
 import sqlite3
@@ -86,7 +91,10 @@ class RunService(ToolEvidenceMixin):
         operation_catalog: CompiledCatalog,
         backend: WorkspaceBackend,
         scheduler_bindings: SchedulerBindingService,
+        instance_maintenance=None,
+        agent_settings: AgentSettings | None = None,
     ) -> None:
+        self.agent_settings = agent_settings or AgentSettings()
         self.artifacts = artifacts
         self.database_path = Path(database_path).expanduser().absolute()
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
@@ -95,11 +103,37 @@ class RunService(ToolEvidenceMixin):
         self.backend = backend
         self.scheduler_bindings = scheduler_bindings
         self.scheduler_database_path = scheduler_bindings.database_path
+        from .instance_maintenance import InstanceMaintenance
+        self.instance_maintenance = instance_maintenance or InstanceMaintenance(self.database_path.parent.parent)
         self.current = RunCurrentGuard(
             artifacts=artifacts,
             scheduler_database_path=self.scheduler_database_path,
         )
         self._initialize()
+
+    def execution_settings(self, compiled, *, instance_id, profile=None, recovery_source=None, max_attempts=None):
+        source = self.status(recovery_source) if recovery_source else None
+        if source is not None and source.instance_id != instance_id:
+            raise RunStateConflict("recovery source belongs to another instance")
+        if profile is not None and (source is not None or max_attempts is not None):
+            value = profile if isinstance(profile, ExecutionProfile) else ExecutionProfile.model_validate(profile)
+            return {"profile": value.model_dump(), "sources": {key: "request_snapshot" for key in ExecutionProfile.model_fields},
+                    "default_max_attempts": None}
+        # A legacy recovery must not silently acquire the latest instance/global preferences.
+        global_settings = AgentSettings() if source else self.agent_settings
+        instance = AgentSettings() if source else parse_settings(self.scheduler_bindings.agent_settings(instance_id)["settings"])
+        resolved = resolve_settings(global_settings, instance, operation_id=compiled.spec.operation_id,
+            operation_model=compiled.spec.executor.model, operation_max_attempts=compiled.spec.limits.max_attempts)
+        budget = resolved["max_attempts"] if source is None else None
+        if profile is not None:
+            value = profile if isinstance(profile, ExecutionProfile) else ExecutionProfile.model_validate(profile)
+            return {"profile": value.model_dump(), "sources": {key: "request_snapshot" for key in ExecutionProfile.model_fields},
+                    "default_max_attempts": budget}
+        if source is not None and source.execution_profile is not None:
+            return {**source.execution_profile, "default_max_attempts": None}
+        return {"profile": resolved["profile"].model_dump(),
+                "sources": {key: "legacy_recovery_default" if source else resolved["sources"][key]
+                            for key in ExecutionProfile.model_fields}, "default_max_attempts": budget}
 
     def schedule(
         self,
@@ -121,6 +155,7 @@ class RunService(ToolEvidenceMixin):
             raise RunStateConflict("draft digest requires a source Run")
         self._validate_attempt_limit(max_attempts)
         compiled = bound.compiled
+        execution_profile = bound.execution_profile
         if compiled.spec.executor.kind != "agent":
             raise ValueError("RunService accepts Agent operations only")
         if not self.backend.supports_operation(compiled):
@@ -153,6 +188,13 @@ class RunService(ToolEvidenceMixin):
             instruction=bound.instruction, read_artifact=self.artifacts.read,
             source_name_overrides={(item.port_name, item.artifact_name): item.source_name
                                    for item in bound.inputs})
+        if execution_profile is None:
+            settings = self.execution_settings(compiled, instance_id=instance_id,
+                recovery_source=resume_from or draft_from)
+            execution_profile = {key: settings[key] for key in ("profile", "sources")}
+            if max_attempts is None:
+                max_attempts = settings["default_max_attempts"]
+        bound = replace(bound, execution_profile=execution_profile)
         raw_inputs = tuple(
             RunInputBinding(
                 port_name=item.port_name,
@@ -247,6 +289,7 @@ class RunService(ToolEvidenceMixin):
                         "revision": output_revision,
                         "request_fingerprint": output_binding_fingerprint,
                     },
+                    "execution_profile": execution_profile["profile"],
                     "instruction": bound.instruction or "",
                     "inputs": json.loads(inputs_json(frozen_inputs)),
                     "limits": compiled.spec.limits.model_dump(mode="json"),
@@ -267,9 +310,9 @@ class RunService(ToolEvidenceMixin):
                         output_binding_name, output_logical_name,
                         output_revision, output_binding_fingerprint,
                         request_digest, resume_from_run_id, draft_from_run_id, recovery_policy_json,
-                        state, created_at, deadline_at
+                        state, created_at, deadline_at, execution_profile_json
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                              ?, ?, 'queued', ?, ?)
+                              ?, ?, 'queued', ?, ?, ?)
                     """,
                     (
                         run_id,
@@ -293,6 +336,7 @@ class RunService(ToolEvidenceMixin):
                         canonical_json(recovery_policy),
                         created_at,
                         deadline_at,
+                        json.dumps(execution_profile),
                     ),
                 )
             except sqlite3.IntegrityError as error:
@@ -447,6 +491,28 @@ class RunService(ToolEvidenceMixin):
         operation_digest: str,
         allow_running: bool,
     ) -> tuple[RunStatus, OpenWorkspace]:
+        # Select before taking the instance lock, and reselect the same row in
+        # the write transaction. Opening a reused Agent must guard its NEW Run.
+        with self.instance_maintenance.global_guard():
+            with self._connect() as connection:
+                selected = connection.execute(
+                    "SELECT run_id, instance_id FROM runs WHERE operation_id = ? AND operation_digest = ? "
+                    "AND state IN ('queued', 'running') ORDER BY created_at LIMIT 1",
+                    (operation_id, operation_digest),
+                ).fetchone()
+            if selected is None:
+                raise RunStateConflict("no exact queued Run is available")
+            with self.instance_maintenance.guard(str(selected["instance_id"])):
+                from .scheduler_bindings import SchedulerInstanceClosed
+                from .instance_maintenance import InstanceMaintenanceUnavailable
+                try:
+                    self.scheduler_bindings.require_active_instance(instance_id=str(selected["instance_id"]))
+                except SchedulerInstanceClosed as error:
+                    raise InstanceMaintenanceUnavailable("assignment instance is closed") from error
+                return self._open_selected(operation_id=operation_id, operation_digest=operation_digest,
+                    allow_running=allow_running, selected_run_id=str(selected["run_id"]))
+
+    def _open_selected(self, *, operation_id, operation_digest, allow_running, selected_run_id):
         now = timestamp()
         expired_run: tuple[str, str, str | None] | None = None
         with self._connect() as connection:
@@ -455,10 +521,11 @@ class RunService(ToolEvidenceMixin):
                 """
                 SELECT * FROM runs
                 WHERE operation_id = ? AND operation_digest = ?
+                  AND run_id = ?
                   AND state IN ('queued', 'running')
                 ORDER BY created_at LIMIT 1
                 """,
-                (operation_id, operation_digest),
+                (operation_id, operation_digest, selected_run_id),
             ).fetchone()
             if row is None:
                 connection.execute("ROLLBACK")
@@ -630,9 +697,7 @@ class RunService(ToolEvidenceMixin):
                  expected_last_activity_at))
             if cursor.rowcount != 1:
                 raise RunStateConflict("Run failure compare-and-set failed")
-            connection.execute(
-                "INSERT INTO run_activity(run_id,activity,recorded_at,diagnostic_json) VALUES (?,?,?,?)",
-                (run_id, "framework_failure", now, canonical_json(diagnostic)))
+            self._append_activity(connection, run_id, "framework_failure", now, canonical_json(diagnostic))
         return self._finish_failed_workspace(self.status(run_id))
 
     def _finish_failed_workspace(self, value: RunStatus) -> RunStatus:
@@ -764,6 +829,64 @@ class RunService(ToolEvidenceMixin):
             rows = connection.execute(query, values).fetchall()
         return tuple(status_from_row(row) for row in rows)
 
+    def active_ids(self, *, instance_id: str, limit: int = 31) -> tuple[str, ...]:
+        """Bound current tasks by state before paging; never read output payloads."""
+        if type(limit) is not int or not 1 <= limit <= 101:
+            raise ValueError("active Run limit must be between 1 and 101")
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT run_id FROM runs WHERE instance_id = ? AND state IN ('queued', 'running') "
+                "ORDER BY created_at DESC, run_id LIMIT ?", (instance_id, limit),
+            ).fetchall()
+        return tuple(str(row["run_id"]) for row in rows)
+
+    def recent_ids(self, *, instance_id: str, limit: int = 1) -> tuple[str, ...]:
+        """Read recent control identities without assigning scientific priority."""
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise ValueError("recent Run limit must be between 1 and 100")
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT run_id FROM runs WHERE instance_id=? ORDER BY created_at DESC, run_id LIMIT ?",
+                (instance_id, limit),
+            ).fetchall()
+        return tuple(str(row["run_id"]) for row in rows)
+
+    def related_runs(self, *, instance_id: str, artifact_ref: ArtifactRef,
+                     relation: str = "input", limit: int = 51) -> tuple[RunStatus, ...]:
+        """Read exact input/output edges without loading or validating outputs."""
+        if relation not in {"input", "output"} or type(limit) is not int or not 1 <= limit <= 101:
+            raise ValueError("invalid related Run query")
+        query = "SELECT r.* FROM runs r WHERE r.instance_id=?"
+        values: list[Any] = [instance_id]
+        if relation == "output":
+            query += " AND r.output_ref_json=?"
+            values.append(artifact_ref.canonical_json())
+        else:
+            query += " AND EXISTS (SELECT 1 FROM json_each(CAST(r.inputs_json AS TEXT)) i WHERE " + " AND ".join(
+                "json_extract(i.value, '$.artifact_ref." + field + "')=?" for field in ("artifact_id", "sha256", "kind", "schema_id")) + ")"
+            values.extend((artifact_ref.artifact_id, artifact_ref.sha256, artifact_ref.kind, artifact_ref.schema_id))
+        query += " ORDER BY r.created_at, r.run_id LIMIT ?"
+        values.append(limit)
+        with self._connect() as connection:
+            rows = connection.execute(query, values).fetchall()
+        return tuple(status_from_row(row) for row in rows)
+
+    def recovery_links(self, run_id: str) -> dict[str, str | None]:
+        """Read frozen resume/draft identity omitted from the public RunStatus."""
+        with self._connect() as connection:
+            row = self._row(connection, run_id)
+        return {key: row[key] for key in ("resume_from_run_id", "draft_from_run_id")}
+
+    def diagnostic_reference_belongs(self, run_id: str, reference: str) -> bool:
+        """Associate an engineering reference with this exact durable Run event."""
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT 1 FROM run_activity WHERE run_id=? AND "
+                "json_extract(CAST(diagnostic_json AS TEXT), '$.engineering.reference')=? LIMIT 1",
+                (run_id, reference),
+            ).fetchone()
+        return row is not None
+
     def completed_for_output(self, artifact_ref: ArtifactRef) -> RunStatus | None:
         """Return the unique completed Run that registered this exact output."""
 
@@ -809,10 +932,8 @@ class RunService(ToolEvidenceMixin):
             if cursor.rowcount != 1:
                 connection.execute("ROLLBACK")
                 raise RunStateConflict("Run activity changed concurrently")
-            connection.execute(
-                "INSERT INTO run_activity (run_id, activity, recorded_at, diagnostic_json) VALUES (?, ?, ?, ?)",
-                (run_id, activity, now, None if normalized is None else canonical_json(normalized)),
-            )
+            self._append_activity(connection, run_id, activity, now,
+                None if normalized is None else canonical_json(normalized))
             connection.execute("COMMIT")
         return normalized
 
@@ -828,9 +949,30 @@ class RunService(ToolEvidenceMixin):
         """Engineering timing only: no heartbeat, candidate or lifecycle mutation."""
         with self._connect() as connection:
             self._row(connection, run_id)
-            connection.execute(
-                "INSERT INTO run_activity(run_id,activity,recorded_at,diagnostic_json) VALUES (?,?,?,?)",
-                (run_id, activity, timestamp(), canonical_json(observation)))
+            self._append_activity(connection, run_id, activity, timestamp(), canonical_json(observation))
+
+    @staticmethod
+    def _append_activity(connection, run_id, activity, recorded_at, diagnostic_json):
+        """Allocate a durable event ID in the caller's original transaction.
+
+        Archive removal may delete the largest visible rowid; the global high
+        water mark preserves its identity for a later exact restore. Reading
+        MAX also accommodates legacy/imported explicit event IDs without
+        changing those rows or their pagination semantics.
+        """
+        if not connection.in_transaction:
+            connection.execute("BEGIN IMMEDIATE")
+        changed = connection.execute(
+            "UPDATE run_activity_sequence SET high_water = "
+            "MAX(high_water, COALESCE((SELECT MAX(rowid) FROM run_activity), 0)) + 1 WHERE slot = 1"
+        )
+        if changed.rowcount != 1:
+            raise RunError("Run activity identity allocator is unavailable")
+        event_id = connection.execute("SELECT high_water FROM run_activity_sequence WHERE slot = 1").fetchone()[0]
+        connection.execute(
+            "INSERT INTO run_activity(rowid,run_id,activity,recorded_at,diagnostic_json) VALUES (?,?,?,?,?)",
+            (event_id, run_id, activity, recorded_at, diagnostic_json))
+        return event_id
 
     def record_error_observation(self, run_id: str, activity: str, *, diagnostic: dict[str, Any]) -> dict[str, Any]:
         """Retain failures without reopening or heartbeating an expired Run."""
@@ -1671,16 +1813,26 @@ class RunService(ToolEvidenceMixin):
                     recorded_at TEXT NOT NULL,
                     FOREIGN KEY(run_id) REFERENCES runs(run_id)
                 );
+                CREATE TABLE IF NOT EXISTS run_activity_sequence (
+                    slot INTEGER PRIMARY KEY CHECK(slot = 1),
+                    high_water INTEGER NOT NULL CHECK(high_water >= 0)
+                );
                 """
             )
             for table, columns in {
-                "runs": {"draft_from_run_id": "TEXT", "recovery_policy_json": "BLOB"},
+                "runs": {"draft_from_run_id": "TEXT", "recovery_policy_json": "BLOB",
+                         **{name: value[0] for name, value in EXECUTION_SETTINGS_COLUMNS["runs"].items()}},
                 "run_activity": {"diagnostic_json": "BLOB"},
             }.items():
                 existing = {row[1] for row in connection.execute(f"PRAGMA table_info({table})")}
                 for name, kind in columns.items():
                     if name not in existing:
                         connection.execute(f"ALTER TABLE {table} ADD COLUMN {name} {kind}")
+            connection.execute(
+                "INSERT INTO run_activity_sequence(slot,high_water) "
+                "VALUES (1, (SELECT COALESCE(MAX(rowid), 0) FROM run_activity)) "
+                "ON CONFLICT(slot) DO UPDATE SET high_water = MAX(high_water, excluded.high_water)"
+            )
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.database_path, timeout=30.0)

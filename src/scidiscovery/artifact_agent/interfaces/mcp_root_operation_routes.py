@@ -107,6 +107,7 @@ class RootOperationRoutes:
                 "status": "available" if available else "unavailable",
             }
         elif compiled.spec.executor.kind == "agent":
+            value["executor_model_usage"] = "Operation compatibility default; dispatch uses the Run execution_profile."
             value["default_max_attempts"] = compiled.spec.limits.max_attempts
             if self.runs is not None:
                 if not self.runs.backend.supports_operation(compiled):
@@ -182,27 +183,59 @@ class RootOperationRoutes:
             )
         return True
 
+    def _configured_operation_call(self, values):
+        self._require_scheduling_enabled()
+        values = dict(values)
+        profile = values.pop("execution_profile", None)
+        bound = self._prepare_operation_call(**values)
+        if bound.compiled.spec.executor.kind != "agent":
+            if profile is not None:
+                raise OperationInvocationError("execution_profile_not_applicable",
+                    message="execution_profile applies only to Agent Runs")
+            return bound, values
+        if self.runs is None:
+            raise OperationInvocationError("runtime_backend_unavailable")
+        source_name = values.get("resume_from") or values.get("draft_from")
+        try:
+            settings = self.runs.execution_settings(bound.compiled, instance_id=self._instance_id(),
+                profile=profile, recovery_source=self._resolve("run", source_name) if source_name else None,
+                max_attempts=values.get("max_attempts"))
+        except ValueError as error:
+            raise OperationInvocationError("execution_configuration_invalid", message=str(error)) from error
+        if values.get("max_attempts") is None and source_name is None:
+            values["max_attempts"] = settings["default_max_attempts"]
+        bound = replace(bound, execution_profile={key: settings[key] for key in ("profile", "sources")})
+        values["execution_profile"] = settings["profile"]
+        return bound, values
+
     def operation_preflight(self, **values: Any) -> dict[str, Any]:
+        normalized = {}
         def prepare() -> BoundOperationCall:
-            bound = self._prepare_operation_call(**values)
+            bound, configured = self._configured_operation_call(values)
+            normalized.update(configured)
             if bound.compiled.spec.executor.kind == "agent":
                 self._prepare_local_run(
                     bound,
                     values["on_conflict"],
                     resume_from=values.get("resume_from"),
                     draft_from=values.get("draft_from"),
-                    max_attempts=values.get("max_attempts"),
+                    max_attempts=normalized.get("max_attempts"),
                 )
             elif bound.compiled.spec.executor.kind == "approval":
                 self._prepare_approval_projection(bound)
             return bound
 
-        return preflight_result(prepare)
+        result = preflight_result(prepare)
+        if result["admissible"] and result["executor_kind"] == "agent":
+            result["normalized_request"] = {**normalized,
+                "inputs": [{"port": item.port, "artifact_names": list(item.artifact_names)}
+                           for item in normalized["inputs"]]}
+        return result
 
     def operation_invoke(self, **values: Any) -> dict[str, Any]:
         with self._create_lock:
             try:
-                bound = self._prepare_operation_call(**values)
+                bound, values = self._configured_operation_call(values)
                 kind = bound.compiled.spec.executor.kind
                 if kind == "agent":
                     result = self._invoke_agent_operation(
@@ -326,6 +359,7 @@ class RootOperationRoutes:
                 "operation": bound.compiled.spec.operation_id,
                 "operation_version": bound.compiled.spec.version,
                 "operation_digest": bound.compiled.digest,
+                "execution_profile": bound.execution_profile["profile"],
                 "instruction": bound.instruction,
                 "inputs": [
                     {

@@ -1,0 +1,30 @@
+.......................................F................................ [ 98%]
+.                                                                        [100%]
+=================================== FAILURES ===================================
+_ test_restore_switch_rechecks_files_verified_outside_global_exclusive_lock[False] _
+
+archive_system = (ArtifactAgentRuntime(project_root=PosixPath('/tmp/pytest-of-da/pytest-44/test_restore_switch_rechecks_f0/project'), s...tanceArchive object at 0x7f6d88104650>, 'ins_5a4e806ca61e4b6bb409b03b064fe707', 'ins_9f615927c999480299824c8c19644406')
+disappear = False
+
+    @pytest.mark.parametrize("disappear", [False, True])
+    def test_restore_switch_rechecks_files_verified_outside_global_exclusive_lock(archive_system, disappear):
+        runtime, service, first, _ = archive_system
+        original = artifact(runtime, first, "restore.changed", b"verified")
+        save_archive(service, first)
+        path = runtime.artifacts.cas.path_for(original.sha256)
+        def change_after_verification(point):
+            if point == "before_restore_switch":
+                if disappear:
+                    path.unlink()
+                else:
+                    os.chmod(path, 0o600)
+                    path.write_bytes(b"modified")
+        service._fault = change_after_verification
+>       with pytest.raises(ArchiveError, match="conflicts changed"):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE ArchiveError
+
+tests/operations/test_instance_archive.py:581: Failed
+=========================== short test summary info ============================
+FAILED tests/operations/test_instance_archive.py::test_restore_switch_rechecks_files_verified_outside_global_exclusive_lock[False]
+1 failed, 72 passed in 26.67s

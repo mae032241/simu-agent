@@ -349,6 +349,48 @@ For an external TCAD setup, first verify SSH and the configured runner with a
 deployment-smoke tool profile. A service health check does not qualify a
 scientific model or a Sentaurus license.
 
+### Instance workbench and archives
+
+Parameter panels offer compact previews and complete pagination for each original,
+separating design choices, cited evidence, and implementation bindings without inferring
+missing sources or uncertainty. Pages contain at most 8 rows; originals above 4 MiB
+retain their download entry. With `curve_figure_evidence` installed, evidence nodes show
+saved paper panels, numerical CSV redraws, and point overlays, with original CSV downloads.
+Association uses the exact saved invocation and manifest. Missing images, output ports,
+or incomplete manifests produce local display gaps without re-extraction or scientific
+requalification. Historical prose translation is deferred; no translation service is required.
+
+This update uses the existing approval UI service and port. It adds no service,
+environment variable, or VM runner protocol; no VM synchronization is needed.
+Reinstall with the existing deployment configuration and restart the services.
+Use the management URL returned by `instance_current` to obtain instance read or
+maintenance access; request a new URL after expiry. An approval link still
+authorizes only its original request, never instance maintenance.
+
+The installer safely creates `<SCID_WORKSPACE>/.scidiscovery-archive/instances`,
+rejects symlinks, and grants the approval UI write access only to that fixed
+archive root rather than the whole workspace. Management supports confirmed
+previews, archive, read-only browsing, restore, and instance UI-cache cleanup.
+There is no permanent-delete action. Restore requires selecting the instance
+again; it does not restart work or extend approvals. Shared originals and
+historical files with unknown ownership are retained and listed. Remote VM
+originals remain remote. This version bounds the target control-record snapshot
+to 32 MiB, individual control-payload reads to 16 MiB, and its file inventory to
+50,000 entries; an oversized target receives an unsupported preview with its
+originals preserved. Incomplete external-reference reads conservatively retain
+shared data and report a gap instead of assuming that no reference exists.
+
+An unknown native writer produces a busy/unknown preview and preserves the files.
+In particular, a terminal LocalTrusted Run alone cannot prove process quiescence;
+this restriction does not affect workbench reading or ordinary scientific work.
+Resume or roll back interrupted maintenance through its page; do not remove the
+journal to force access. Before reverting to old code, restore with the new
+version or retain the archive offline without expecting the old code to resume
+that instance. Installation and uninstall do not delete archives.
+
+See the [implementation record](plans/evidence/instance-workbench/IMPLEMENTATION.zh-CN.md)
+for verification coverage and outstanding production checks.
+
 ## 7. Configuration Reference
 
 | Variable | Default | Purpose |
@@ -427,3 +469,17 @@ The cleanup script never removes `/opt/scidiscovery`, `/etc/scidiscovery`,
   the solver runs.
 
 Controlled analysis evidence recovery requires matching control/Worker packages and the VM helper. After reinstalling locally, use `SCID_PYTHON=/absolute/path/to/python deploy/install_ssh_tcad_runner.sh upgrade-code` to update only helper code using the existing transport configuration. Keep the original result directories and remote configuration. Restart the Codex session before scheduling a new analysis Run. Old helpers return unsupported inspection; ordinary offline analysis remains available. Never resubmit the old execution merely to refresh collection.
+
+## Agent execution settings
+
+The instance directory has separate Agent Settings and archive-management entries. Agent Settings obtains editing access and opens the dedicated settings page; saving stays on that page.
+
+The installer creates `${SCID_CONFIG_ROOT}/agent-settings.json` (default `/etc/scidiscovery/agent-settings.json`) only when absent, with `zh-CN`, `gpt-5.6-sol`, and `medium` defaults. Upgrades preserve the file and include it in installation-transaction backups. Control and UI services use the same `SCID_AGENT_SETTINGS_FILE`; global-file edits require restarting both services. Missing files retain compatibility defaults; malformed existing files report their path and fields.
+
+```json
+{"schema_version":1,"defaults":{"narrative_language":"zh-CN","model":"gpt-5.6-sol","reasoning_effort":"medium"},"operations":{}}
+```
+
+Instance management exposes sparse overrides for narrative language, model, effort and recovery-chain total Run count. The latter three also support installed Operation IDs. Blank fields inherit; resetting removes instance overrides only. Read-only and archived instances cannot save. Saving affects future preflights only: it does not dispatch, execute, approve or rebind a session. Historical reports are not translated and missing historical Run profiles are not backfilled.
+
+The initial upgrade requires installation, role regeneration and reloading Codex to remove fixed role models. Later instance edits need neither new roles nor a restart. Reuse preflight's `normalized_request` for invoke and dispatch its frozen `execution_profile.profile.model` and `reasoning_effort`. The standalone CLI launcher accepts `--model` and `--reasoning-effort`; dynamic roles require both from the queued Run. Requested configuration is not actual model telemetry. VM runner is unchanged and needs no synchronization. Roll back with matching code, roles, database and configuration transaction backups.

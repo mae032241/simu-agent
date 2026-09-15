@@ -1,0 +1,151 @@
+"""Known general-science record views; no historical scientific revalidation."""
+
+from collections.abc import Mapping
+
+from .artifact_agent.approval_ui.presentation import (
+    MISSING, NO_SOURCE, NO_UNCERTAINTY, add_fields, add_gap, citation,
+    empty, items, parameter, pointer, source, ParameterPageRows,
+)
+
+
+_ROOTS = {
+    "scidiscovery.research-objective.v1": ("总体研究目标", (("statement", "目标原文"), ("intent", "目标类型"), ("mandatory_targets", "必需目标"), ("closure_requirements", "完成条件"))),
+    "scidiscovery.experiment-design-intent.v1": ("实验设计", (("engineering_objective", "工程目标"), ("priority_rationale", "设计理由"))),
+    "scidiscovery.experiment-portfolio.v1": ("实验计划", (("objective", "总体目标"), ("priority_rationale", "优先级理由"), ("validation_plans", "验证要求"))),
+    "scidiscovery.scientific-review.v1": ("独立科学审查", (("verdict", "审查结论"), ("summary", "正式摘要"), ("global_confounders", "混杂因素"), ("findings", "审查意见"), ("next_actions", "原记录后续建议"))),
+    "scidiscovery.layered-diagnosis.v1": ("结果分析", (("summary", "正式结论"), ("overall_verdict", "分析结论"), ("claim_allowed", "声明允许性"), ("objective_assessment", "目标评估"), ("gates", "分层判定"), ("limitations", "限制"), ("remaining_contradiction", "剩余矛盾"), ("analysis_method", "分析方法"))),
+    "scidiscovery.scientific-foundation.v1": ("科学依据", (("objective", "目标"), ("summary", "正式摘要"), ("conflicts", "冲突"), ("missing_inputs", "缺失输入"), ("open_questions", "未解决问题"))),
+    "scidiscovery.problem-frame.v1": ("研究问题", (("objective", "目标"), ("scientific_question", "科学问题"), ("current_contradiction", "当前矛盾"), ("scope", "适用范围"), ("claim_boundary", "结论边界"))),
+    "scidiscovery.critic-review.v2": ("假设审查", (("disposition", "正式处置"), ("reviews", "逐项审查"), ("global_issues", "全局问题"))),
+    "scidiscovery.hypothesis-proposal.v2": ("研究假设", (("stage_objective", "本轮目标"), ("contradiction", "当前矛盾"), ("hypotheses", "假设与可证伪条件"))),
+}
+
+
+def _foundation(result, artifact, payload, base=""):
+    for index, item in enumerate(items(payload.get("items"))):
+        if not isinstance(item, Mapping) or item.get("item_type") != "parameter":
+            continue
+        if len(result["parameters"]) >= 128:
+            add_gap(result, "parameter_rows_limited", artifact, base)
+            return
+        path = base + pointer("items", index)
+        citations = []
+        unresolved = False
+        for key in items(item.get("evidence_keys")):
+            matches = [(i, entry) for i, entry in enumerate(items(payload.get("evidence"))) if isinstance(entry, Mapping) and entry.get("source_key") == key]
+            if len(matches) == 1 and not artifact.get("gaps"):
+                i, entry = matches[0]
+                citations.append(citation(artifact, base + pointer("evidence", i), entry))
+            else:
+                unresolved = True
+                add_gap(result, "source_key_ambiguous" if matches else "source_key_missing", artifact, path, source_key=key)
+        row = parameter(artifact, path, name=item.get("statement", item.get("item_key", MISSING)),
+            selected_value=item.get("value", MISSING), unit=item.get("unit", MISSING),
+            conditions=item.get("conditions", MISSING), case_scope=item.get("scope", MISSING),
+            epistemic_status=item.get("epistemic_status", NO_SOURCE), uncertainty=item.get("uncertainty") or NO_UNCERTAINTY,
+            rationale=item.get("rationale") or MISSING, sources=citations, record_type="科学依据中的参数",
+            source_status="展示暂未完整解析引用（缺失、歧义或读取不完整）" if unresolved else None,
+            field_sources={key: source(artifact, path + pointer(field)) for key, field in (("name", "statement"), ("selected_value", "value"), ("unit", "unit"), ("conditions", "conditions"), ("case_scope", "scope"), ("uncertainty", "uncertainty"), ("rationale", "rationale")) if field in item})
+        result["parameters"].append(row)
+
+
+def _proposals(result, artifact, payload):
+    for i, proposal in enumerate(items(payload.get("proposals"))):
+        if not isinstance(proposal, Mapping):
+            continue
+        base = pointer("proposals", i)
+        add_fields(result, artifact, "本轮实验与后续条件", (
+            ("experiment_key", "实验"), ("objectives", "完整目标集合"), ("current_objectives", "本轮目标"),
+            ("frozen_invariants", "固定条件"), ("required_observables", "观测量"), ("stop_conditions", "停止条件"),
+            ("value_assessment", "实验价值理由"), ("resource_estimate", "资源估计")), payload=proposal, path=base)
+        variables = proposal.get("variables", ())
+        variable_base = base + "/variables"
+        if isinstance(proposal.get("comparison_contract"), Mapping):
+            variables = proposal["comparison_contract"].get("variables", ())
+            variable_base = base + "/comparison_contract/variables"
+        for j, variable in enumerate(items(variables)):
+            if not isinstance(variable, Mapping):
+                continue
+            path = variable_base + pointer(j)
+            values = [(item, path + pointer("expectations", k), "value") for k, item in enumerate(items(variable.get("expectations"))) if isinstance(item, Mapping)]
+            if "baseline_value" in variable:
+                values.insert(0, ({"case_key": proposal.get("baseline_case_key", MISSING), "baseline_value": variable["baseline_value"]}, path, "baseline_value"))
+                values.extend((item, path + pointer("case_overrides", k), "value") for k, item in enumerate(items(variable.get("case_overrides"))) if isinstance(item, Mapping))
+            for value, value_path, field in values:
+                if len(result["parameters"]) >= 128:
+                    add_gap(result, "parameter_rows_limited", artifact, base)
+                    return
+                result["parameters"].append(parameter(artifact, path,
+                    name=variable.get("display_name", variable.get("scientific_path", variable.get("variable_key", MISSING))),
+                    record_type="实验对照变量", epistemic_status="实验设计取值",
+                    source_status="来源：原实验计划及设计理由；不等同于实测依据",
+                    selected_value=value.get(field, MISSING), unit=variable.get("unit", MISSING),
+                    conditions={key: variable[key] for key in ("factor_type", "comparison_role", "equivalence_rule", "tolerance") if key in variable},
+                    case_scope={"experiment_key": proposal.get("experiment_key", MISSING), "case_key": value.get("case_key", MISSING)},
+                    rationale=variable.get("rationale", MISSING),
+                    field_sources={"selected_value": source(artifact, value_path + pointer(field)),
+                                   **{key: source(artifact, path + pointer(key)) for key in ("unit", "rationale") if key in variable},
+                                   **({"case_scope.experiment_key": source(artifact, base + "/experiment_key")} if "experiment_key" in proposal else {}),
+                                   **({"case_scope.case_key": source(artifact, base + "/baseline_case_key")} if field == "baseline_value" and "baseline_case_key" in proposal else {}),
+                                   **({"case_scope.case_key": source(artifact, value_path + "/case_key")} if field == "value" and "case_key" in value else {})}))
+        # Case settings are already the exact selected controls, including plans
+        # without a comparison contract. Do not invent settings for absent cases.
+        if not items(variables):
+            for j, case in enumerate(items(proposal.get("cases"))):
+                if not isinstance(case, Mapping):
+                    continue
+                for k, setting in enumerate(items(case.get("settings"))):
+                    if not isinstance(setting, Mapping) or len(result["parameters"]) >= 128:
+                        continue
+                    path = base + pointer("cases", j, "settings", k)
+                    result["parameters"].append(parameter(artifact, path, name=setting.get("name", MISSING),
+                        selected_value=setting.get("value", MISSING), unit=setting.get("unit", MISSING),
+                        record_type="实验案例设置", epistemic_status="实验设计取值", source_status="来源：原实验计划中的案例设置",
+                        case_scope={"experiment_key": proposal.get("experiment_key", MISSING), "case_key": case.get("case_key", MISSING)},
+                        field_sources={**{key: source(artifact, path + pointer(field)) for key, field in (("name", "name"), ("selected_value", "value"), ("unit", "unit")) if field in setting},
+                            **({"case_scope.case_key": source(artifact, base + pointer("cases", j, "case_key"))} if "case_key" in case else {}),
+                            **({"case_scope.experiment_key": source(artifact, base + "/experiment_key")} if "experiment_key" in proposal else {})}))
+
+
+def build_presentation(artifacts, *, parameter_target=None, parameter_after=0, parameter_limit=8):
+    result = empty()
+    if parameter_target is not None:
+        result["parameters"] = ParameterPageRows(parameter_after, parameter_limit)
+    for artifact in artifacts:
+        if parameter_target is not None and artifact["artifact_id"] != parameter_target:
+            continue
+        schema = artifact.get("schema_id")
+        payload = artifact.get("payload")
+        if not isinstance(payload, Mapping):
+            continue
+        if schema == "scidiscovery.scientific-intake.v1":
+            for field, title in (("problem_frame", "研究问题"), ("scientific_foundation", "科学依据")):
+                nested = payload.get(field)
+                if isinstance(nested, Mapping):
+                    add_fields(result, artifact, title, (("objective", "目标"), ("summary", "正式摘要"), ("current_contradiction", "当前矛盾"), ("missing_inputs", "缺失输入")), payload=nested, path=pointer(field))
+                    if field == "scientific_foundation":
+                        _foundation(result, artifact, nested, pointer(field))
+        elif schema in _ROOTS:
+            title, fields = _ROOTS[schema]
+            add_fields(result, artifact, title, fields)
+            if schema in {"scidiscovery.experiment-design-intent.v1", "scidiscovery.experiment-portfolio.v1"}:
+                _proposals(result, artifact, payload)
+            if schema == "scidiscovery.scientific-foundation.v1":
+                _foundation(result, artifact, payload)
+    return result
+
+
+DISPLAY_POINTERS = {schema: tuple(pointer(key) for key, _ in fields) for schema, (_, fields) in _ROOTS.items()}
+for _schema in ("scidiscovery.experiment-design-intent.v1", "scidiscovery.experiment-portfolio.v1"):
+    DISPLAY_POINTERS[_schema] += tuple("/proposals/*/" + path for path in (
+        "experiment_key", "objectives", "current_objectives", "frozen_invariants",
+        "required_observables", "stop_conditions", "value_assessment", "resource_estimate",
+        "baseline_case_key", "variables", "comparison_contract/variables", "cases"))
+DISPLAY_POINTERS["scidiscovery.scientific-foundation.v1"] += ("/items", "/evidence")
+DISPLAY_POINTERS["scidiscovery.scientific-intake.v1"] = (
+    "/problem_frame/objective", "/problem_frame/current_contradiction", "/scientific_foundation/objective",
+    "/scientific_foundation/summary", "/scientific_foundation/items", "/scientific_foundation/evidence",
+    "/scientific_foundation/missing_inputs")
+build_presentation.display_pointers = DISPLAY_POINTERS
+
+build_presentation.parameter_schemas = ("scidiscovery.scientific-foundation.v1", "scidiscovery.scientific-intake.v1", "scidiscovery.experiment-design-intent.v1", "scidiscovery.experiment-portfolio.v1")

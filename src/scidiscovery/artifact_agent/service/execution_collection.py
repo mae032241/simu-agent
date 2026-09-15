@@ -268,6 +268,35 @@ class ExecutionCollection:
         return result
 
     def collect(self, execution_id, *, scope, total_seconds=COLLECTION_SECONDS):
+        gate = getattr(self.executions, "instance_maintenance", None)
+        lease = None
+        if gate is not None:
+            with gate.global_guard():
+                owner = self.executions.scheduler_bindings.find_owner(namespace="execution", object_id=execution_id)
+                # `scope` is a diagnostic label, not an ownership credential.
+                # Existing internal callers may use an unscoped label. Exact
+                # bindings govern the gate; unowned legacy objects retain only
+                # global writer protection and gain no inferred instance.
+                lease = gate.acquire_writer(owner[0].instance_id if owner else None)
+                if owner is not None:
+                    scope = "instance:" + owner[0].instance_id
+                    try:
+                        self.executions.scheduler_bindings.require_active_instance(instance_id=owner[0].instance_id)
+                    except BaseException:
+                        lease.close()
+                        raise
+        try:
+            return self._collect_owned(execution_id, scope=scope, total_seconds=total_seconds, maintenance_lease=lease)
+        finally:
+            # Accepted work transfers the independent lease to its supervisor;
+            # the request guard may now finish without exposing a write window.
+            if lease is not None:
+                with self._mutex:
+                    transferred = self._active is not None and self._active[-1] is lease
+                if not transferred:
+                    lease.close()
+
+    def _collect_owned(self, execution_id, *, scope, total_seconds, maintenance_lease):
         with self._mutex:
             status = self.executions.status(execution_id)
             if status.state == "collected":
@@ -314,8 +343,8 @@ class ExecutionCollection:
                     "parent_fd": reader, "work_command": self.child_command})
                 process = subprocess.Popen([sys.executable, "-m", __name__, "--guard", str(directory / "request.json")],
                     stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True,
-                    pass_fds=(reader, owned, slot))
-                self._active = (execution_id, process, context, writer, owned, slot)
+                    pass_fds=(reader, owned, slot) + (maintenance_lease.descriptors if maintenance_lease else ()))
+                self._active = (execution_id, process, context, writer, owned, slot, maintenance_lease)
                 threading.Thread(target=self._watch, args=(self._active, scope), daemon=True).start()
                 return {**record, "accepted": True}
             except BaseException as error:
@@ -345,7 +374,8 @@ class ExecutionCollection:
                     os.close(reader)
 
     def _watch(self, active, scope):
-        execution_id, process, context, writer, owned, slot = active
+        execution_id, process, context, writer, owned, slot = active[:6]
+        maintenance_lease = active[6] if len(active) > 6 else None
         directory = self.executions.exchange_root / execution_id / "collection"
         signalled = False
         logs = {"stdout": bytearray(), "stderr": bytearray()}
@@ -442,6 +472,8 @@ class ExecutionCollection:
                 with self._mutex:
                     if self._active is active:
                         self._active = None
+                if maintenance_lease is not None:
+                    maintenance_lease.close()
 
     def close(self):
         self._closed = True
@@ -471,10 +503,15 @@ def open_collection_executions(state_root: Path, *, actor=None, context=None):
     artifacts = ArtifactService.open(cas_root=state_root / "artifacts",
         database_path=state_root / "database/artifact_agent.sqlite3", shared_group=True,
         deadline_monotonic=context.deadline_monotonic if context else None)
-    return ExecutionService(artifacts=artifacts, approvals=None,
+    executions = ExecutionService(artifacts=artifacts, approvals=None,
         database_path=state_root / "database/executions.sqlite3", exchange_root=state_root / "execution-exchange",
         service_actor=ActorRef.model_validate(actor or {"actor_id": "root_orchestrator", "actor_type": "service"}),
         deadline_monotonic=context.deadline_monotonic if context else None)
+    from .instance_maintenance import InstanceMaintenance
+    from .scheduler_bindings import SchedulerBindingService
+    executions.instance_maintenance = InstanceMaintenance(state_root)
+    executions.scheduler_bindings = SchedulerBindingService(state_root / "database/scheduler-bindings.sqlite3")
+    return executions
 
 
 def _guard(request_path: Path) -> int:

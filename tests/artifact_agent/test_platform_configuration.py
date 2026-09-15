@@ -245,7 +245,7 @@ def test_codex_profile_contains_root_and_compiled_operation_boundaries(
                 encoding="utf-8"
             )
         )
-        assert role["model"] == compiled.spec.executor.model
+        assert "model" not in role and "model_reasoning_effort" not in role
         assert role["web_search"] == "disabled"
         assert "default_permissions" not in role
         assert "permissions" not in role

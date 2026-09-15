@@ -488,6 +488,25 @@ class ApprovalService:
             decided_at=decided_at,
         )
 
+    def active_ids(self, *, instance_id: str, scheduler_database_path: Path | str,
+                   limit: int = 31, now: datetime | None = None) -> tuple[str, ...]:
+        """Read pending instance-owned requests using persisted control metadata."""
+        if type(limit) is not int or not 1 <= limit <= 101:
+            raise ValueError("active approval limit must be between 1 and 101")
+        current = _now(now).isoformat().replace("+00:00", "Z")
+        with self._connect() as connection:
+            connection.execute("ATTACH DATABASE ? AS workbench_scope", (str(scheduler_database_path),))
+            rows = connection.execute(
+                "SELECT approval_id FROM approval_requests a WHERE status = 'pending' "
+                "AND (expires_at IS NULL OR julianday(expires_at) > julianday(?)) "
+                "AND json_extract(CAST(create_request_json AS TEXT), '$.kind') NOT IN "
+                "('instance_creation', 'research_instance_registration', 'session_binding', 'research_session_binding') "
+                "AND EXISTS (SELECT 1 FROM workbench_scope.scheduler_bindings b "
+                "WHERE b.instance = ? AND b.namespace = 'approval' AND b.object_id = a.approval_id) "
+                "ORDER BY created_at DESC, approval_id LIMIT ?", (current, instance_id, limit),
+            ).fetchall()
+        return tuple(str(row["approval_id"]) for row in rows)
+
     def refresh_access(
         self, approval_id: str, *, now: datetime | None = None
     ) -> ApprovalLaunch:

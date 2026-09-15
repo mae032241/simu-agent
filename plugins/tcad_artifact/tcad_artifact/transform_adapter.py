@@ -154,6 +154,7 @@ def package_reviewed_project(
             "expected_outputs",
             "parameter_bindings",
             "case_parameter_bindings",
+            "case_anchors",
             "runtime_assertions",
             "realization_manifest",
             "materialization_report",
@@ -161,7 +162,10 @@ def package_reviewed_project(
         ):
             metadata.pop(generated, None)
         anchors: dict[tuple[str, str], dict[str, str]] = {}
-        for item in project.case_parameter_bindings:
+        for item in (
+            project.case_parameter_bindings
+            if project.case_anchors is None else project.case_anchors
+        ):
             anchors.setdefault(
                 (item.experiment_key, item.case_key),
                 {
@@ -198,6 +202,7 @@ def package_reviewed_project(
             experiment_plan=inputs["experiment_plan"],
             execution_capability=inputs["capability"],
             preflight_attestation=preflight,
+            legacy_case_bindings_only=project.case_anchors is None,
         )
         rebuilt_value = rematerialized.model_dump(mode="json")
         rebuilt_value["initialization_attestation"] = (

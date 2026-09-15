@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from ...agent_execution_settings import ExecutionProfile
+
 import threading
 from dataclasses import dataclass
 from typing import Annotated, Any, Literal
@@ -110,6 +112,8 @@ class OperationCallInput(NamedInput, RevisionInput):
     inputs: tuple[OperationInputSelection, ...] = Field(max_length=64)
     instruction: str | None = Field(default=None, max_length=65536)
     parameters: EmptyOperationParameters = Field(default_factory=dict)
+    execution_profile: ExecutionProfile | None = Field(default=None,
+        description="Complete control-owned model, reasoning effort and narrative language snapshot. Reuse the normalized_request returned by preflight for invoke; settings changes then cannot alter this request. Not scientific parameters.")
     max_attempts: int | None = Field(
         default=None, ge=1, strict=True,
         description="Scheduler-selected total Run budget for this recovery chain, including its first Run. An explicit value supersedes earlier attempt budgets for this new request; omission inherits the last scheduler budget or the Operation default. Other resource and identity limits are unchanged.",
@@ -404,6 +408,10 @@ class RootToolFacade(
             request_fingerprint=request_fingerprint,
         )
 
+    def _require_scheduling_enabled(self) -> None:
+        if self.session_key is not None and not self.bindings.client_enabled(session_key=self.session_key):
+            raise RootToolError("this research client is paused by the workbench; resume it in the local workbench before scheduling")
+
     def _instance_id(self) -> str:
         if self.session_key is not None:
             bound = self.bindings.session_instance(session_key=self.session_key)
@@ -452,6 +460,36 @@ class RootMCPRouter:
         return json_projection(self._tool_schemas)
 
     def call_tool(self, name: str, arguments: dict[str, Any] | None) -> Any:
+        gate = getattr(self.facade.runs, "instance_maintenance", None)
+        if gate is None:
+            return self._call_tool(name, arguments)
+
+        def current():
+            # Never trust a facade cached before a management close/unbind.
+            if self.facade.session_key is not None:
+                return self.facade.bindings.session_instance(session_key=self.facade.session_key)
+            return self.facade.instance
+
+        if name == "instance_close":
+            with gate.global_guard():
+                instance_id = current()
+            if instance_id is not None:
+                with gate.exclusive(instance_id):
+                    from ..service.instance_maintenance import InstanceMaintenanceUnavailable
+                    if current() != instance_id:
+                        raise InstanceMaintenanceUnavailable("session binding changed before instance close")
+                    gate.ensure_available(instance_id)
+                    self.facade.bindings.require_active_instance(instance_id=instance_id)
+                    return self._call_tool(name, arguments)
+        with gate.global_guard():
+            instance_id = current()
+            if instance_id is not None and name not in {"instance_current", "instance_list", "operation_catalog"}:
+                with gate.guard(instance_id):
+                    self.facade.bindings.require_active_instance(instance_id=instance_id)
+                    return self._call_tool(name, arguments)
+            return self._call_tool(name, arguments)
+
+    def _call_tool(self, name: str, arguments: dict[str, Any] | None) -> Any:
         try:
             tool = self._tools[name]
         except KeyError as error:
@@ -472,6 +510,9 @@ class RootMCPRouter:
         try:
             return getattr(self.facade, name)(**values)
         except Exception as error:
+            from ..service.instance_maintenance import InstanceMaintenanceBusy, InstanceMaintenanceUnavailable
+            if isinstance(error, (InstanceMaintenanceBusy, InstanceMaintenanceUnavailable)):
+                raise
             scope = "session:" + (self.facade.session_key or "unbound")
             try:
                 scope = "instance:" + self.facade._instance_id()

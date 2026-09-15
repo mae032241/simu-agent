@@ -1,0 +1,109 @@
+{
+  "runs": [
+    {
+      "run": "candidate_a",
+      "state": "completed",
+      "profile": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "low",
+        "narrative_language": "zh-CN"
+      },
+      "scheduler_signal": {
+        "schema_version": 1,
+        "verdict": "pass",
+        "summary": "已完成对绑定 CSV 的结构观察；数据包含 2 行、2 列，value 列均值为 2.0。",
+        "assumptions": [],
+        "missing_inputs": [],
+        "next_actions": [],
+        "next_action_kind": null
+      }
+    },
+    {
+      "run": "candidate_b",
+      "state": "completed",
+      "profile": {
+        "model": "gpt-5.6-sol",
+        "reasoning_effort": "medium",
+        "narrative_language": "en"
+      },
+      "scheduler_signal": {
+        "schema_version": 1,
+        "verdict": "pass",
+        "summary": "The exact bound CSV was summarized successfully: it contains two rows, columns sample and value, and a mean value of 2.0.",
+        "assumptions": [],
+        "missing_inputs": [],
+        "next_actions": [],
+        "next_action_kind": null
+      }
+    }
+  ],
+  "actual_platform_children": [
+    {
+      "session_file": "rollout-2026-09-15T17-54-55-01a0a47d-ada0-7dc3-b778-487ebe861136.jsonl",
+      "contexts": [
+        {
+          "model": "gpt-5.6-luna",
+          "effort": "low"
+        }
+      ],
+      "tool_names": [
+        "apply_patch",
+        "exec",
+        "exec_command",
+        "mcp__scid_worker_blind_csv_observe_v1_56b24007eb0b__worker_csv_summarize",
+        "mcp__scid_worker_blind_csv_observe_v1_56b24007eb0b__worker_open_assignment",
+        "mcp__scid_worker_blind_csv_observe_v1_56b24007eb0b__worker_submit_result"
+      ],
+      "session_id": "01a0a47d-ada0-7dc3-b778-487ebe861136",
+      "agent_role": "op_blind_csv_observe_v1_56b24007eb0b",
+      "source": {
+        "subagent": {
+          "thread_spawn": {
+            "parent_thread_id": "01a0a47d-52b9-7a90-8fd2-7efeac02d8c5",
+            "depth": 1,
+            "agent_path": null,
+            "agent_nickname": "Carver",
+            "agent_role": "op_blind_csv_observe_v1_56b24007eb0b"
+          }
+        }
+      }
+    },
+    {
+      "session_file": "rollout-2026-09-15T17-57-20-01a0a47f-e419-7622-8f5e-dae783c65273.jsonl",
+      "contexts": [
+        {
+          "model": "gpt-5.6-sol",
+          "effort": "medium"
+        }
+      ],
+      "tool_names": [
+        "apply_patch",
+        "exec",
+        "exec_command",
+        "mcp__scid_worker_blind_csv_observe_v1_56b24007eb0b__worker_csv_summarize",
+        "mcp__scid_worker_blind_csv_observe_v1_56b24007eb0b__worker_open_assignment",
+        "mcp__scid_worker_blind_csv_observe_v1_56b24007eb0b__worker_submit_result"
+      ],
+      "session_id": "01a0a47f-e419-7622-8f5e-dae783c65273",
+      "agent_role": "op_blind_csv_observe_v1_56b24007eb0b",
+      "source": {
+        "subagent": {
+          "thread_spawn": {
+            "parent_thread_id": "01a0a47f-9fcf-7e03-bd3f-e60fa0d36316",
+            "depth": 1,
+            "agent_path": null,
+            "agent_nickname": "Carson",
+            "agent_role": "op_blind_csv_observe_v1_56b24007eb0b"
+          }
+        }
+      }
+    }
+  ],
+  "same_operation_digest": "56b24007eb0bb782f4ad2d7c72a5f813a1222a300f6e36eefbae9d21baf765c1",
+  "actual_model_evidence": "Codex turn_context, independently observed",
+  "production_research_started": false,
+  "instance_ids_distinct": true,
+  "same_agent_type": "op_blind_csv_observe_v1_56b24007eb0b",
+  "same_worker_server": "scid_worker_blind_csv_observe_v1_56b24007eb0b",
+  "role_file_count": 1
+}

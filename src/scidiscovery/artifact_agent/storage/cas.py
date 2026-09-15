@@ -7,6 +7,7 @@ import errno
 import os
 import stat
 import tempfile
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -133,6 +134,23 @@ class ContentAddressedStore:
                 f"expected {expected_size}, observed {observed_size}"
             )
         return CASObject(digest, observed_size, path)
+
+    @contextmanager
+    def open_verified(self, digest: str, *, expected_size: int | None = None):
+        """Stream an exact original using the same verified, no-follow descriptor."""
+        try:
+            descriptor = self._open_no_follow(self.path_for(digest), directory=False)
+        except FileNotFoundError as error:
+            raise CASObjectMissingError(f"CAS object is missing: {digest}") from error
+        with os.fdopen(descriptor, "rb") as source:
+            observed, size = hashlib.sha256(), 0
+            while block := source.read(1024 * 1024):
+                observed.update(block)
+                size += len(block)
+            if observed.hexdigest() != digest or (expected_size is not None and size != expected_size):
+                raise CASIntegrityError("CAS original failed hash or size verification")
+            source.seek(0)
+            yield source
 
     def path_for(self, digest: str) -> Path:
         _validate_digest(digest)

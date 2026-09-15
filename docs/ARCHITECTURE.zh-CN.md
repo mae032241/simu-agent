@@ -42,10 +42,10 @@ observable 描述是科学文字，不是第二份身份登记表；设计、物
 
 ## 2. 注册、编译与三种视图
 
-系统只有一个 entry-point group `scidiscovery.plugins`；每个入口返回一个 `PluginDefinition`，
+科学行动只有一个 entry-point group `scidiscovery.plugins`；每个入口返回一个 `PluginDefinition`，
 同一发行包当前可以发布多个插件定义。一个插件同时声明冻结组件元组和由这些组件组成的
 Operations。组件没有独立 entry point，插件私有实现也不能由 Root 或 Worker 按 Python 路径二次
-发现。
+发现。浏览器的可选 `scidiscovery.instance_views` 只加载纯展示映射，不注册行动、工具或科学准入规则。
 
 启动时 `compile_installed_catalog()` 一次性完成：
 
@@ -350,7 +350,7 @@ Operation 或 Schema 分支。Agent 主输出的 context validator 则获得其 
   unavailable，preflight 失败关闭；Transform 多输出不受此限制；
 - Hardened v1 的历史实现只支持纯 MCP Operation；当前阶段不扩展、不补齐，也不以其通过作为完成
   条件；
-- 审批 UI 的安全合同已经自动化覆盖，但信息层级和视觉可读性仍是产品缺陷；
+- 审批 UI 已增加结构化参数、证据与原件入口；真实 Fig4 部署后的阅读验收仍需单列，不以合成页面代替；
 - 当前测试证明工程边界和 TCAD 最小纵向路径，不证明论文图数字化精度、Solver 科学正确性、三领域
   通用性或相对单 Agent 的统计优势。
 
@@ -370,3 +370,34 @@ Worker prompt、任务目录和 JSON 校验提供上下文软隔离，不是完�
 仍依赖来源、独立审查、确定性报告和结果诊断。
 
 TCAD 分析可选择检查所绑定终态执行的原文件并接收明确的输出映射。注册工具将原始字节及持久回执保存在本 Run 的 Artifact 集合中，冻结输入不变。报告和精确证据快照一起完成；Root 仅在 completed 后公开附属语义名称。后轮显式绑定恢复清单及原始文件，可重放原计算别名。检查服务缺失或旧 runner 不支持时仍可交付有限分析。求解器退出结果和收集错误分别保留；恢复不重写原执行，也不授予科学成功。
+
+## 9. 实例浏览、轨迹与资料维护
+
+现有审批 UI 服务提供实例概览、节点、来源图件和资料管理。`InstanceReadModel` 按实例绑定及
+精确冻结父链读取记录；通用/TCAD 展示提供者仅把已有原值映射成带出处的正文、参数表和安全图件。
+未知字段、缺失来源和展示失败保留缺口，不成为 Worker 输出拒绝。浏览权限、维护权限及原审批
+token 各自限定范围；新页面不变更审批 subjects、期限或决定权威。
+
+UI 内只有一个有界观测器，订阅时轮询节点元数据并通过 SSE 发送定位和游标。成果按需读取，
+`state_root/ui/workbench.sqlite3` 保存可重建视图与实际观测事件。原始事件时间和首次观测时间分开，
+没有历史遥测就不补造历史；浏览器和缓存不触发科研 Run、执行或收集，也不增加 Agent 交接字段。
+
+归档是用户明确发起的存储维护：精确实例资料迁到工作区 `.scidiscovery-archive/instances`，
+其他实例仍依赖的共享副本和不能确认归属的资料保留。只读归档使用原记录身份与字节；恢复不重绑
+旧会话、不重启进程、不更新资格或延长审批。永久删除尚未提供。持久维护门覆盖 Root、Worker、
+审批写入及收集后台的实际写入生命周期；无法确认原生写入者停止时保留现场并拒绝迁移。
+
+为恢复原活动编号，Run 库新增一个全局 `run_activity_sequence` 分配器；普通活动写入在原事务内
+分配 rowid。它不属于实例快照，避免一个实例归档后，其他实例重用其历史活动编号。科学 Schema、
+Operation 和工具合同保持不变；归档定向事务恢复原 append-only 触发器，维护清单不属于可清缓存。
+范围、故障证据和部署边界见[实施记录](plans/evidence/instance-workbench/IMPLEMENTATION.zh-CN.md)。
+
+## Agent 执行配置与科学合同的边界
+
+公共默认在服务启动时加载一次；实例稀疏覆盖保存在 scheduler 数据库的实例行，由同一个配置解析器逐字段合并。优先级为实例任务覆盖、实例默认、公共任务覆盖、公共默认、Operation 兼容默认。语言只按实例统一设置。模型名称不维护第二份目录；平台不可用时保留原错误，不自动替换模型。
+
+预检生成完整 `normalized_request`。新 Run 冻结模型、推理强度和语言，行为值进入请求指纹，来源说明不参与幂等身份。Run 快照投影给调度方、Worker assignment 和页面，提交不读取最新配置。新写科学叙述遵守语言偏好，字段、代码、单位、引述和要求精确复制的文字不改；输出校验不检查语言。尝试次数仍由原恢复策略管理：显式值优先，恢复链沿用已有调度预算，新的实例默认不会自动延长恢复。
+
+`ExecutorRef.model` 及 permission 模型保留为旧编译摘要中的兼容默认；动态覆盖不重编译科学 Operation。Codex 角色文件不再固定模型/强度，调度使用同一角色显式传参；只有编译角色、实际模型/强度匹配且符合独立审查规则时复用 Agent。语言从新 assignment 读取。未观测配置不声明匹配，interrupt 不等于关闭。
+
+仅增加 `scheduler_instances.agent_settings_json/agent_settings_revision/agent_settings_updated_at` 和 `runs.execution_profile_json` 四列。历史 NULL 表示未记录。旧归档原件不改；恢复采用与安装相同的四列 ALTER 定义生成期望视图，缺失值固定为 NULL/0，并在预检、事务导入和续接收尾应用。无关结构、索引、触发器和记录差异仍冲突；缓存清理不能删执行配置。没有新增状态机、科学 Artifact 类型、翻译角色或模型角色池。

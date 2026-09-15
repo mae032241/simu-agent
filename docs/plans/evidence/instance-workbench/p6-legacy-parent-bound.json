@@ -1,0 +1,20 @@
+{
+  "command": [
+    "python",
+    "-m",
+    "pytest",
+    "-q",
+    "tests/operations/test_m6a_direct_instance_management.py::test_artifact_catalog_parent_limit_never_truncates"
+  ],
+  "exit_code": 0,
+  "stop_reason": null,
+  "duration_seconds": 32.242,
+  "peak_tree_rss_mib": 128.16,
+  "budget_mib": 512,
+  "peak_processes": [
+    {
+      "name": "python",
+      "rss_mib": 128.16
+    }
+  ]
+}

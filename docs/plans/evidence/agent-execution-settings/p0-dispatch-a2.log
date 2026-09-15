@@ -1,0 +1,9 @@
+WARNING: proceeding, even though we could not create PATH aliases: Refusing to create helper binaries under temporary dir "/tmp" (codex_home: AbsolutePathBuf("/tmp/scid-execution-settings-p0/cli-home"))
+Reading additional input from stdin...
+{"type":"thread.started","thread_id":"01a0a44c-957e-7b50-b76a-6e25b8d7e4a1"}
+{"type":"item.completed","item":{"id":"item_0","type":"error","message":"Code Mode is unavailable because code-mode host is disabled. Code mode will fail closed; enable `features.code_mode_host` and install `codex-code-mode-host`."}}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"Dispatching the single isolated child assignment now."}}
+2026-09-15T09:01:30.912701Z ERROR codex_core::tools::router: error=code-mode host is disabled
+{"type":"item.completed","item":{"id":"item_2","type":"agent_message","text":"Unable to dispatch: the agent-spawn host is disabled."}}
+{"type":"turn.completed","usage":{"input_tokens":25487,"cached_input_tokens":0,"cache_write_input_tokens":0,"output_tokens":578,"reasoning_output_tokens":397}}

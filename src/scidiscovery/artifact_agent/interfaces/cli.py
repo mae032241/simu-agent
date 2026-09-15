@@ -81,6 +81,8 @@ def build_parser() -> argparse.ArgumentParser:
     serve_ui.add_argument("--port", type=int, default=0)
     serve_ui.add_argument("--identity-id", default="local_user")
     serve_ui.add_argument("--display-name", default="Local user")
+    serve_ui.add_argument("--local-workspace-root", type=Path)
+    serve_ui.add_argument("--plugin-config", action="append", default=[])
     serve_ui.add_argument(
         "--worker-backend", choices=("local", "hardened"), default="local"
     )
@@ -161,6 +163,7 @@ def _run(args: argparse.Namespace) -> Any:
         actor_id="admin_cli",
         shared_group=args.shared_group,
         worker_backend=getattr(args, "worker_backend", "local"),
+        local_workspace_root=getattr(args, "local_workspace_root", None),
     )
     if args.command == "instance-create":
         with runtime.maintenance.shared():
@@ -230,6 +233,13 @@ def _run(args: argparse.Namespace) -> Any:
             return facade.approval_status(name=args.name)
     if args.command == "serve-approval-ui":
         assert runtime.approvals is not None
+        from ..approval_ui.read_model import InstanceReadModel
+        from ..approval_ui.trajectory import TrajectoryStore
+        from ..service.engineering_diagnostics import EngineeringDiagnostics
+        from ..service.execution_collection import ExecutionCollection
+        from ..service.instance_archive import InstanceArchive
+        from ..runtime_plugin_bindings import parse_plugin_config_assignments
+        plugin_configs = parse_plugin_config_assignments(tuple(args.plugin_config))
         ui = ApprovalUI(
             runtime.approvals,
             host=args.host,
@@ -237,6 +247,13 @@ def _run(args: argparse.Namespace) -> Any:
             bindings=runtime.scheduler_bindings,
             instance_management_secret=approval_secret,
             maintenance=runtime.maintenance,
+            instance_archive=InstanceArchive(runtime, gate=runtime.instance_maintenance, plugin_configs=plugin_configs),
+            trajectory_store=TrajectoryStore(state / "ui" / "workbench.sqlite3"),
+            read_model=InstanceReadModel(artifacts=runtime.artifacts, bindings=runtime.scheduler_bindings,
+                runs=runtime.runs, approvals=runtime.approvals, executions=runtime.executions,
+                operation_catalog=runtime.operation_catalog,
+                engineering_diagnostics=EngineeringDiagnostics(state / "engineering-diagnostics"),
+                execution_collection=ExecutionCollection(runtime.executions, plugin_configs={})),
             local_identity=LocalIdentityRef(
                 identity_id=args.identity_id,
                 display_name=args.display_name,

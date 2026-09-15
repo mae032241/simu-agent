@@ -180,6 +180,7 @@ def _launch_overrides(snapshot: dict[str, Any]) -> list[tuple[str, str]]:
             f"projects.{_toml_value(str(snapshot['trusted_root']))}.trust_level",
             '"trusted"',
         ),
+        ("model_reasoning_effort", _toml_value(snapshot["dispatch_reasoning_effort"])),
         ("agents.enabled", "false"),
         ("features.apps", "false"),
         ("web_search", _toml_value(profile["web_search"])),
@@ -229,7 +230,7 @@ def _build_command_from_snapshot(
             "-C",
             str(snapshot["workspace_root"]),
             "-m",
-            str(snapshot["profile"]["model"]),
+            str(snapshot["dispatch_model"]),
         )
     )
     for key, value in _launch_overrides(snapshot):
@@ -264,7 +265,8 @@ def _launch_projection(
         if isinstance((profile_instruction := snapshot["profile"]["developer_instructions"]), str)
         else "",
         "externally_sandboxed_debug": externally_sandboxed_debug,
-        "model": snapshot["profile"]["model"],
+        "model": snapshot["dispatch_model"],
+        "reasoning_effort": snapshot["dispatch_reasoning_effort"],
         "native_capabilities": {
             **snapshot["profile"]["features"],
             **snapshot["profile"]["tools"],
@@ -287,8 +289,14 @@ def build_launch_plan(
     agent_type: str,
     *,
     externally_sandboxed_debug: bool = False,
+    model: str | None = None,
+    reasoning_effort: str | None = None,
 ) -> tuple[list[str], str, dict[str, Any]]:
     snapshot = _load_launch_snapshot(project_root, agent_type)
+    snapshot["dispatch_model"] = model or snapshot["profile"].get("model")
+    snapshot["dispatch_reasoning_effort"] = reasoning_effort or snapshot["profile"].get("model_reasoning_effort", "medium")
+    if not snapshot["dispatch_model"] or ("model" not in snapshot["profile"] and (model is None or reasoning_effort is None)):
+        raise ValueError("dynamic Operation roles require model and reasoning_effort from the queued Run execution_profile")
     command = _build_command_from_snapshot(
         snapshot, externally_sandboxed_debug=externally_sandboxed_debug
     )
@@ -306,10 +314,13 @@ def build_command(
     agent_type: str,
     *,
     externally_sandboxed_debug: bool = False,
+    model: str | None = None,
+    reasoning_effort: str | None = None,
 ) -> tuple[list[str], str]:
     command, server, _ = build_launch_plan(
         project_root,
         agent_type,
+        model=model, reasoning_effort=reasoning_effort,
         externally_sandboxed_debug=externally_sandboxed_debug,
     )
     return command, server
@@ -385,6 +396,8 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--project-root", type=Path, required=True)
     parser.add_argument("--agent-type", required=True)
+    parser.add_argument("--model", help="Requested model from the queued Run execution_profile")
+    parser.add_argument("--reasoning-effort", help="Requested effort from the same Run snapshot")
     parser.add_argument("--memory-limit-mib", type=int, default=4096)
     parser.add_argument("--externally-sandboxed-debug", action="store_true")
     parser.add_argument("--receipt-name")
@@ -411,6 +424,7 @@ def main() -> int:
         command, server, projection = build_launch_plan(
             args.project_root,
             args.agent_type,
+            model=args.model, reasoning_effort=args.reasoning_effort,
             externally_sandboxed_debug=args.externally_sandboxed_debug,
         )
     except (FileNotFoundError, KeyError, TypeError, ValueError, tomllib.TOMLDecodeError) as error:

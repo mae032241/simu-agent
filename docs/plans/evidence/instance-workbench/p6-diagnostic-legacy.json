@@ -1,0 +1,20 @@
+{
+  "command": [
+    "python",
+    "-m",
+    "pytest",
+    "-q",
+    "tests/operations/test_instance_trajectory_read.py"
+  ],
+  "exit_code": 0,
+  "stop_reason": null,
+  "duration_seconds": 3.214,
+  "peak_tree_rss_mib": 78.93,
+  "budget_mib": 512,
+  "peak_processes": [
+    {
+      "name": "python",
+      "rss_mib": 78.93
+    }
+  ]
+}

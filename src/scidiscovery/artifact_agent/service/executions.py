@@ -300,6 +300,17 @@ class ExecutionService:
             row = self._row(connection, execution_id)
         return _parse_ref(row["request_ref_json"]).artifact_id
 
+    def record_references(self, execution_id: str) -> dict:
+        """Read persisted control references without revalidating old payloads."""
+
+        with self._connect() as connection:
+            row = self._row(connection, execution_id)
+        return {
+            "request_ref": _parse_ref(row["request_ref_json"]),
+            "payload_ref": _parse_ref(row["payload_ref_json"]),
+            "result_ref": _parse_optional_ref(row["result_ref_json"]),
+        }
+
     def approval_subject_refs(self, execution_id: str) -> tuple[ArtifactRef, ArtifactRef]:
         """Return the exact request and executable payload a human must review."""
 
@@ -630,6 +641,21 @@ class ExecutionService:
         with self._connect() as connection:
             rows = connection.execute(query, parameters).fetchall()
         return tuple(self.status(row["execution_id"]) for row in rows)
+
+    def active_ids(self, *, instance_id: str, scheduler_database_path: Path | str,
+                   limit: int = 31) -> tuple[str, ...]:
+        """Read exact instance-owned unfinished or uncollected execution IDs."""
+        if type(limit) is not int or not 1 <= limit <= 101:
+            raise ValueError("active execution limit must be between 1 and 101")
+        with self._connect() as connection:
+            connection.execute("ATTACH DATABASE ? AS workbench_scope", (str(scheduler_database_path),))
+            rows = connection.execute(
+                "SELECT execution_id FROM executions e WHERE state NOT IN ('collected', 'abandoned') "
+                "AND EXISTS (SELECT 1 FROM workbench_scope.scheduler_bindings b "
+                "WHERE b.instance = ? AND b.namespace = 'execution' AND b.object_id = e.execution_id) "
+                "ORDER BY created_at DESC, execution_id LIMIT ?", (instance_id, limit),
+            ).fetchall()
+        return tuple(str(row["execution_id"]) for row in rows)
 
     def outputs(self, execution_id: str) -> tuple[ExecutionOutputView, ...]:
         """Resolve collected outputs without exposing their payload bytes."""

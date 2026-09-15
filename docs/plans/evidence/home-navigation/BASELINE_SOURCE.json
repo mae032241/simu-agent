@@ -1,0 +1,65 @@
+{
+  "base": "current working tree after usability R2",
+  "files": [
+    {
+      "path": "src/scidiscovery/artifact_agent/approval_ui/__init__.py",
+      "sha256": "ceb333725e0f98d42a43bc30636fb308131f89f8d90481d67155cbeeade9a397"
+    },
+    {
+      "path": "src/scidiscovery/artifact_agent/approval_ui/access.py",
+      "sha256": "9f8ed62d5707865ff54ba6182dd4164b461e86eefe66ecae2f244cb0508da56e"
+    },
+    {
+      "path": "src/scidiscovery/artifact_agent/approval_ui/app.py",
+      "sha256": "6d020af2d3977c64e92c2acb892b1f25c7c2a0b9c0c26268a99bf935152cdfc9"
+    },
+    {
+      "path": "src/scidiscovery/artifact_agent/approval_ui/evidence.py",
+      "sha256": "42745b4a1bd755eaacd13ecdcea4316c0533a60577c2d822d1d924d93fcd560c"
+    },
+    {
+      "path": "src/scidiscovery/artifact_agent/approval_ui/management.py",
+      "sha256": "87f8092ba281bb3e67f2e060dc67c471df4e2953c402141523e0fed373d5ee0a"
+    },
+    {
+      "path": "src/scidiscovery/artifact_agent/approval_ui/management_render.py",
+      "sha256": "72bee72fb2b91d1cad49515df58b7e843b766033d607cdb9a69b5d9222aab7b3"
+    },
+    {
+      "path": "src/scidiscovery/artifact_agent/approval_ui/presentation.py",
+      "sha256": "a9df189745572c7b7c12a9000b5fe9bf03ee0ba067da5a79561a7df60a22bfc1"
+    },
+    {
+      "path": "src/scidiscovery/artifact_agent/approval_ui/presentation_render.py",
+      "sha256": "d75b5bc6744decfb9e7734df82678f139dfd8d39dc4db64715be4c9312fcbf91"
+    },
+    {
+      "path": "src/scidiscovery/artifact_agent/approval_ui/read_model.py",
+      "sha256": "851a935371e68d9453a701fe43b4108c82b5a0dcf0bd3eac0233015a834fb16b"
+    },
+    {
+      "path": "src/scidiscovery/artifact_agent/approval_ui/render.py",
+      "sha256": "56be2877c59cf00fef8586386662720524d8b620c714f93e8dba293c6071c1e5"
+    },
+    {
+      "path": "src/scidiscovery/artifact_agent/approval_ui/trajectory.py",
+      "sha256": "38e3aed5ed34da2fabc786b026cc606a0bc40c1cbb8a9af51041dda584689c00"
+    },
+    {
+      "path": "src/scidiscovery/artifact_agent/approval_ui/view_models.py",
+      "sha256": "aa7249dbdc25b63e0ec97d6b813e1eef1d9afda1ea11a472efddce797cdd2f1f"
+    },
+    {
+      "path": "src/scidiscovery/artifact_agent/approval_ui/workbench_render.py",
+      "sha256": "7bcf02561629e5a6ff1879a6a0dedb33b47d99350d3b03f5966d1875a076d245"
+    },
+    {
+      "path": "src/scidiscovery/artifact_agent/approval_ui/static/style.css",
+      "sha256": "f5feb56b7fb7fb792db7f49a9a6e0e19f3ebe203fc959464790699173ce722b0"
+    },
+    {
+      "path": "src/scidiscovery/artifact_agent/service/scheduler_bindings.py",
+      "sha256": "555dc695192f0e02d2089ce0ae692f5484215034d0983ceaa394fa4abea5eda2"
+    }
+  ]
+}

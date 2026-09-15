@@ -1,0 +1,29 @@
+{
+  "command": [
+    "python",
+    "docs/plans/evidence/instance-workbench/sandbox_check.py"
+  ],
+  "exit_code": 0,
+  "stop_reason": null,
+  "duration_seconds": 1.815,
+  "peak_tree_rss_mib": 107.68,
+  "budget_mib": 512,
+  "peak_processes": [
+    {
+      "name": "python",
+      "rss_mib": 93.68
+    },
+    {
+      "name": "python",
+      "rss_mib": 13.37
+    },
+    {
+      "name": "bwrap",
+      "rss_mib": 0.48
+    },
+    {
+      "name": "bwrap",
+      "rss_mib": 0.15
+    }
+  ]
+}

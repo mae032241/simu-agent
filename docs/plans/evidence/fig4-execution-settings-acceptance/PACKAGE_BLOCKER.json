@@ -1,0 +1,87 @@
+{
+  "scope": "Engineering blocker; scientific results remain sealed in M7-test0.",
+  "project": "fig4_single_entry_nonlinear_author_1.output",
+  "plan": "fig4_single_entry_initialization_plan_2",
+  "scientific_review": "fig4_single_entry_plan_review_1.output",
+  "implementation_review": "fig4_single_entry_implementation_review_1.output",
+  "packaging_request": {
+    "name": "fig4_single_entry_reviewed_package_1",
+    "operation_id": "tcad.reviewed-deck-package.v2",
+    "inputs": [
+      {
+        "port": "project",
+        "artifact_names": [
+          "fig4_single_entry_nonlinear_author_1.output"
+        ]
+      },
+      {
+        "port": "review",
+        "artifact_names": [
+          "fig4_single_entry_implementation_review_1.output"
+        ]
+      },
+      {
+        "port": "capability",
+        "artifact_names": [
+          "fig4_continuation_sprocess_capability_1"
+        ]
+      },
+      {
+        "port": "experiment_plan",
+        "artifact_names": [
+          "fig4_single_entry_initialization_plan_2"
+        ]
+      },
+      {
+        "port": "experiment_review",
+        "artifact_names": [
+          "fig4_single_entry_plan_review_1.output"
+        ]
+      }
+    ]
+  },
+  "preflight": {
+    "admissible": true,
+    "executor_kind": "transform",
+    "port": null,
+    "reason_code": null
+  },
+  "invoke": {
+    "content": [
+      {
+        "type": "text",
+        "text": "tool call error: tool call failed for `scidiscovery/operation_invoke`\n\nCaused by:\n    Mcp error: -32000: An Operation control component failed; input admission could not be completed.({\"diagnostics\":[{\"affected_action\":\"invoke\",\"code\":\"executor_component_failed\",\"message\":\"An Operation control component failed; input admission could not be completed.\",\"path\":\"$\",\"phase\":\"tool_execution\",\"repairable\":false,\"schema_version\":1}],\"engineering\":{\"action\":\"operation_invoke\",\"available_sections\":[\"summary\",\"traceback\"],\"category\":\"runtime_failure\",\"causes\":[{\"message\":\"deterministic transform failed\",\"type\":\"RootToolError\"},{\"message\":\"executor_component_failed\",\"type\":\"OperationEngineeringError\"},{\"message\":\"TCAD project materialization failed: missing_control_binding: planned case has no declared source anchor\",\"type\":\"ProjectMaterializationError\"}],\"layer\":\"root\",\"reference\":\"diag_99878d8e6ec34974bafb12317b1479f3\"}})"
+      }
+    ],
+    "isError": true
+  },
+  "diagnostic": {
+    "available_sections": [
+      "summary",
+      "traceback"
+    ],
+    "next_offset": null,
+    "offset": 0,
+    "reference": "diag_99878d8e6ec34974bafb12317b1479f3",
+    "section": "traceback",
+    "text": "RootToolError\n  File \"[host-path]\", line 507, in _call_tool\n    return getattr(self.facade, name)(**values)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"[host-path]\", line 248, in operation_invoke\n    result = self._invoke_compiled_transform(\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"[host-path]\", line 958, in _invoke_compiled_transform\n    raise RootToolError(\"deterministic transform failed\", details=getattr(error, \"details\", ())) from error\nOperationEngineeringError\n  File \"[host-path]\", line 956, in _invoke_compiled_transform\n    outputs = execute_compiled_transform(bound, payloads)\n              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"[host-path]\", line 350, in execute_compiled_transform\n    raise OperationEngineeringError(\"executor_component_failed\") from error\nProjectMaterializationError\n  File \"[host-path]\", line 344, in execute_compiled_transform\n    value = _executor_callable(bound.compiled)(\n            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"[host-path]\", line 105, in package\n    return package_reviewed_project(inputs)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"[host-path]\", line 174, in package_reviewed_project\n    rematerialized = materialize_deck_project(\n                     ^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"[host-path]\", line 402, in materialize_deck_project\n    _raise(findings, source_sha)\n  File \"[host-path]\", line 586, in _raise\n    raise ProjectMaterializationError(\n\n{\"layer\": \"root\", \"action\": \"operation_invoke\", \"causes\": [{\"type\": \"RootToolError\", \"message\": \"deterministic transform failed\"}, {\"type\": \"OperationEngineeringError\", \"message\": \"executor_component_failed\"}, {\"type\": \"ProjectMaterializationError\", \"message\": \"TCAD project materialization failed: missing_control_binding: planned case has no declared source anchor\"}], \"category\": \"runtime_failure\"}",
+    "total_bytes": 1859
+  },
+  "observed": {
+    "case_parameter_bindings": [],
+    "materialization_report": {
+      "findings": [],
+      "generated_case_bindings": 0,
+      "generated_parameter_bindings": 0,
+      "generated_requirements": 0,
+      "profile": "tcad.project-materializer.declared-source.v2",
+      "schema_version": 1,
+      "source_tree_sha256": "a2fd08b312ef3ec77d9a06f6c1b45c7526f195b46e1c9ce425748b9398248b96",
+      "status": "pass"
+    },
+    "source_anchor_present": true
+  },
+  "root_cause": "project_materializer validates declared case anchors but persists them only through generated case_parameter_bindings. A plan without comparison variables generates no such bindings. package_reviewed_project reconstructs case_anchors exclusively from that list and therefore loses the valid case anchor before rematerialization.",
+  "deployment": "Installed project_materializer.py and transform_adapter.py SHA-256 match repository sources.",
+  "stopped_before": "No new reviewed package, human execution request, or production solver execution was created."
+}

@@ -448,6 +448,22 @@ class LocalTrustedBackend:
             raise WorkspaceError("Run workspace binding is invalid")
         return workspace_name
 
+    def exact_workspace_paths(self, run_id: str) -> tuple[Path, ...]:
+        """Existing original/isolation paths from the immutable Run binding.
+
+        This is identity evidence only, never proof that native writers stopped.
+        """
+        if (self.root / ".bindings").is_symlink():
+            raise WorkspaceError("Run workspace binding directory is a symlink")
+        name = self._workspace_name(run_id)
+        paths = (self.root / "workspaces" / name, self.root / "quarantine" / name)
+        for path in paths:
+            if path.parent.is_symlink() or path.is_symlink():
+                raise WorkspaceError("Run workspace identity is a symlink")
+            if path.exists() and not path.is_dir():
+                raise WorkspaceError("Run workspace identity is not a directory")
+        return tuple(path for path in paths if path.exists())
+
     def _binding_path(self, run_id: str) -> Path:
         if not run_id.startswith("run_") or not run_id[4:].isalnum():
             raise WorkspaceError("Run identity is invalid")

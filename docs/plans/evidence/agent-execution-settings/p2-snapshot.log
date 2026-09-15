@@ -1,0 +1,54 @@
+.........FF                                                              [100%]
+=================================== FAILURES ===================================
+____ test_preflight_snapshot_survives_settings_change_and_submission[local] ____
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-83/test_preflight_snapshot_surviv0')
+backend = 'local'
+
+    @pytest.mark.parametrize("backend", ["local", "hardened"])
+    def test_preflight_snapshot_survives_settings_change_and_submission(tmp_path, backend):
+        from tests.operations.test_l5_hardened_run_backend import _system, _worker, _write_result
+        from scidiscovery.artifact_agent.interfaces.mcp_local_worker import LocalWorkerMCPRouter
+        from blind_csv_plugin.contracts import CSV_SCHEMA_PROBE
+        catalog, runtime, instance, root = _system(tmp_path, worker_backend=backend)
+        gate = runtime.instance_maintenance
+        bindings = runtime.scheduler_bindings
+        bindings.save_agent_settings(instance.instance_id,
+            {"defaults": {"model": "gpt-5.6-luna", "reasoning_effort": "low", "narrative_language": "zh-CN", "max_attempts": 3}},
+            expected_revision=0, maintenance=gate)
+        request = dict(name="snapshot", operation_id="blind.csv.observe.v1",
+                       inputs=[dict(port="source_table", artifact_names=["source_csv"])])
+        checked = root.call_tool("operation_preflight", request)
+>       assert checked["admissible"], checked
+E       AssertionError: {'admissible': False, 'reason_code': 'instruction_required', 'port': None, 'executor_kind': None, ...}
+E       assert False
+
+tests/operations/test_agent_execution_settings.py:84: AssertionError
+__ test_preflight_snapshot_survives_settings_change_and_submission[hardened] ___
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-83/test_preflight_snapshot_surviv1')
+backend = 'hardened'
+
+    @pytest.mark.parametrize("backend", ["local", "hardened"])
+    def test_preflight_snapshot_survives_settings_change_and_submission(tmp_path, backend):
+        from tests.operations.test_l5_hardened_run_backend import _system, _worker, _write_result
+        from scidiscovery.artifact_agent.interfaces.mcp_local_worker import LocalWorkerMCPRouter
+        from blind_csv_plugin.contracts import CSV_SCHEMA_PROBE
+        catalog, runtime, instance, root = _system(tmp_path, worker_backend=backend)
+        gate = runtime.instance_maintenance
+        bindings = runtime.scheduler_bindings
+        bindings.save_agent_settings(instance.instance_id,
+            {"defaults": {"model": "gpt-5.6-luna", "reasoning_effort": "low", "narrative_language": "zh-CN", "max_attempts": 3}},
+            expected_revision=0, maintenance=gate)
+        request = dict(name="snapshot", operation_id="blind.csv.observe.v1",
+                       inputs=[dict(port="source_table", artifact_names=["source_csv"])])
+        checked = root.call_tool("operation_preflight", request)
+>       assert checked["admissible"], checked
+E       AssertionError: {'admissible': False, 'reason_code': 'operation_runtime_unavailable', 'port': None, 'executor_kind': None, ...}
+E       assert False
+
+tests/operations/test_agent_execution_settings.py:84: AssertionError
+=========================== short test summary info ============================
+FAILED tests/operations/test_agent_execution_settings.py::test_preflight_snapshot_survives_settings_change_and_submission[local]
+FAILED tests/operations/test_agent_execution_settings.py::test_preflight_snapshot_survives_settings_change_and_submission[hardened]
+2 failed, 9 passed in 1.63s

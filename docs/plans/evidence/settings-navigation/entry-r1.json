@@ -1,0 +1,20 @@
+{
+  "command": [
+    "python",
+    "-m",
+    "pytest",
+    "-q",
+    "tests/operations/test_agent_settings_ui.py::test_separate_settings_and_archive_entry_grants_do_not_bind_or_start_work"
+  ],
+  "exit_code": 1,
+  "stop_reason": null,
+  "duration_seconds": 2.114,
+  "peak_tree_rss_mib": 105.91,
+  "budget_mib": 512,
+  "peak_processes": [
+    {
+      "name": "python",
+      "rss_mib": 105.91
+    }
+  ]
+}

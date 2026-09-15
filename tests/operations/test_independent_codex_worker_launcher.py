@@ -138,6 +138,20 @@ def test_launcher_rejects_parent_role_worker_drift(
         launcher.build_command(project, agent_type)
 
 
+def test_dynamic_launcher_requires_and_projects_run_model(tmp_path, monkeypatch):
+    project, agent_type, _ = _project(tmp_path)
+    monkeypatch.setattr(launcher.shutil, "which", lambda _: "/usr/bin/codex")
+    role = project / ".codex/agents" / f"{agent_type}.toml"
+    role.write_text("\n".join(line for line in role.read_text().splitlines() if not line.startswith("model =")) + "\n")
+    with pytest.raises(ValueError, match="queued Run execution_profile"):
+        launcher.build_command(project, agent_type)
+    command, _, projection = launcher.build_launch_plan(project, agent_type,
+        model="gpt-5.6-luna", reasoning_effort="low")
+    assert command[command.index("-m") + 1] == "gpt-5.6-luna"
+    assert 'model_reasoning_effort="low"' in command
+    assert projection["model"] == "gpt-5.6-luna" and projection["reasoning_effort"] == "low"
+
+
 def test_receipt_publication_is_atomic_and_never_overwrites(tmp_path: Path) -> None:
     receipt = tmp_path / "receipts/current.json"
     launcher._write_exclusive(receipt, {"schema_version": 1})

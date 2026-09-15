@@ -15,6 +15,9 @@ dependencies = [
 [project.entry-points."scidiscovery.plugins"]
 curve_figure_evidence = "curve_figure_evidence.plugin:PLUGIN"
 
+[project.entry-points."scidiscovery.instance_views"]
+curve_figure_evidence = "curve_figure_evidence.instance_views:build_presentation"
+
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["curve_figure_evidence*"]

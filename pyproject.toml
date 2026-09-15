@@ -29,6 +29,9 @@ scid = "scidiscovery.artifact_agent.interfaces.cli:main"
 builtin = "scidiscovery.builtin_plugin:CORE_PLUGIN"
 general_science = "scidiscovery.general_science_plugin:PLUGIN"
 
+[project.entry-points."scidiscovery.instance_views"]
+general_science = "scidiscovery.general_science_views:build_presentation"
+
 [tool.setuptools.packages.find]
 where = ["src"]
 

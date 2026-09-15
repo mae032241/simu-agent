@@ -1,0 +1,17 @@
+{
+  "command": [
+    "python",
+    "/tmp/scid_workbench_export_views.py"
+  ],
+  "exit_code": 0,
+  "stop_reason": null,
+  "duration_seconds": 3.358,
+  "peak_tree_rss_mib": 40.11,
+  "budget_mib": 512,
+  "peak_processes": [
+    {
+      "name": "python",
+      "rss_mib": 40.11
+    }
+  ]
+}

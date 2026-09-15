@@ -20,6 +20,9 @@ scidiscovery-tcad-transport = "tcad_artifact.ssh_transport:main"
 [project.entry-points."scidiscovery.plugins"]
 tcad_artifact = "tcad_artifact.plugin:PLUGIN"
 
+[project.entry-points."scidiscovery.instance_views"]
+tcad_artifact = "tcad_artifact.instance_views:build_presentation"
+
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["tcad_artifact*"]

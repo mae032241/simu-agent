@@ -1,0 +1,93 @@
+"""Display saved figure families without re-running scientific qualification."""
+from collections.abc import Mapping
+
+from scidiscovery.artifact_agent.approval_ui.presentation import (
+    add_fields, add_gap, empty, items, pointer, source,
+)
+
+MANIFEST = "scidiscovery.figure-evidence-manifest.v1"
+
+
+def build_presentation(artifacts):
+    result = empty()
+    for artifact in artifacts:
+        payload = artifact.get("payload")
+        if artifact.get("schema_id") != MANIFEST or not isinstance(payload, Mapping):
+            continue
+        fingerprint = artifact.get("family", {}).get("operation_invocation_fingerprint")
+        members = [a for a in artifacts if fingerprint and a.get("family", {}).get("operation_invocation_fingerprint") == fingerprint
+                   and a.get("family", {}).get("transform_profile") == artifact.get("family", {}).get("transform_profile")
+                   and a.get("provenance") == artifact.get("provenance")
+                   and all(a.get("family", {}).get(key) == artifact.get("family", {}).get(key)
+                           for key in ("operation_id", "operation_version", "operation_digest"))]
+        provenance = payload.get("provenance")
+        manifest_items = items(provenance.get("output_artifacts")) if isinstance(provenance, Mapping) else ()
+        manifest_partial = any(str(g.get("source_pointer", "")).startswith("/provenance") for g in artifact.get("gaps", ()))
+        if manifest_partial:
+            add_gap(result, "figure_manifest_members_partial", artifact)
+        mapped, seen_items = {}, set()
+        for index, item in enumerate(manifest_items):
+            if not isinstance(item, Mapping):
+                continue
+            key, collection, media = item.get("data_item"), item.get("collection"), item.get("media_type")
+            if isinstance(key, str):
+                if key in seen_items:
+                    mapped[key] = None
+                    add_gap(result, "figure_data_item_ambiguous", artifact)
+                    continue
+                seen_items.add(key)
+            if (not isinstance(collection, str) or not isinstance(media, str) or collection not in {"curve_tables", "source_panels", "audit_overlays"}
+                    or not isinstance(key, str) or not key.startswith(collection + "/") or not key[len(collection)+1:]
+                    or (collection == "curve_tables" and media != "text/csv")
+                    or (collection != "curve_tables" and media not in {"image/png", "image/jpeg"})):
+                add_gap(result, "figure_member_metadata_unreadable", artifact, pointer("provenance", "output_artifacts", index))
+                continue
+            matches = [a for a in members if a.get("ref", {}).get("sha256") == item.get("sha256")
+                       and a.get("size_bytes") == item.get("bytes") and a.get("media_type") == item.get("media_type")
+                       and a.get("family", {}).get("operation_output_port") == item.get("collection")]
+            if len(matches) != 1 or manifest_partial or artifact.get("family", {}).get("lookup_incomplete"):
+                add_gap(result, "figure_member_missing_or_ambiguous", artifact,
+                        pointer("provenance", "output_artifacts", index), data_item=item.get("data_item"))
+                continue
+            if key in mapped:
+                mapped[key] = None
+                add_gap(result, "figure_data_item_ambiguous", artifact)
+            else:
+                mapped[key] = matches[0]
+        add_fields(result, artifact, "论文曲线提取", (("source", "论文原图出处"),), kind="curve_evidence")
+        for i, panel in enumerate(items(payload.get("panels"))):
+            if not isinstance(panel, Mapping):
+                continue
+            add_fields(result, artifact, "论文曲线提取", (("panel_key", "面板"), ("citation", "文献引用"),
+                ("axis_calibration", "原记录坐标标定")), payload=panel, path=pointer("panels", i), kind="curve_evidence")
+            for j, series in enumerate(items(panel.get("series"))):
+                if not isinstance(series, Mapping):
+                    continue
+                add_fields(result, artifact, "提取曲线", (("label", "曲线名称"), ("point_count", "登记采样点数"),
+                    ("binding", "原图身份依据")), payload=series, path=pointer("panels", i, "series", j), kind="curve_evidence")
+                data_item = series.get("data_item")
+                table = mapped.get(data_item) if isinstance(data_item, str) else None
+                if table is not None and table.get("media_type") == "text/csv":
+                    result["sections"].append({"title": "提取曲线", "kind": "curve_evidence", "items": [{
+                        "label": "CSV 数据表", "value": series.get("data_item"), "source": source(table)}]})
+        redraw = False
+        for data_item, member in mapped.items():
+            if member is None or member.get("media_type") not in {"image/png", "image/jpeg"}:
+                continue
+            if data_item.startswith("source_panels/"):
+                label = "论文原图"
+            elif data_item.endswith("--numeric-redraw.png"):
+                label, redraw = "CSV 数值重绘", True
+            elif data_item.endswith("--identity-fidelity.png"):
+                label = "原图叠点检查"
+            else:
+                label = "已保存审计图（用途未明确）"
+            result["figures"].append({"artifact_id": member["artifact_id"], "label": label, "source": source(member)})
+        if not redraw:
+            add_gap(result, "numeric_redraw_not_saved_or_not_readable", artifact)
+    result["figures"].sort(key=lambda item: {"论文原图": 0, "CSV 数值重绘": 1, "原图叠点检查": 2}.get(item["label"], 3))
+    return result
+
+
+build_presentation.display_pointers = {MANIFEST: ("/source", "/panels", "/provenance/output_artifacts")}
+build_presentation.family_schemas = (MANIFEST,)

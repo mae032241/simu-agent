@@ -160,6 +160,13 @@ class ArtifactService:
         return envelope
 
     @contextmanager
+    def open_original(self, reference: ArtifactRef):
+        """Read a verified original without loading large downloads into memory."""
+        envelope = self.registry.resolve(reference)
+        with self.cas.open_verified(envelope.sha256, expected_size=envelope.size_bytes) as source:
+            yield source
+
+    @contextmanager
     def _mutation_lock(self) -> Iterator[None]:
         path = self.registry.database_path.with_name(
             self.registry.database_path.name + ".mutation.lock"

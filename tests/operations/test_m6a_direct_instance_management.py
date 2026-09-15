@@ -138,7 +138,7 @@ def test_instance_current_is_pure_and_ui_directly_creates_and_binds(
     before_artifacts = _row_count(artifact_db, "artifact_envelopes")
     try:
         capability, csrf, page = _management_page(root, base)
-        assert "创建新实例".encode("utf-8") in page
+        assert "创建实例".encode("utf-8") in page
         assert scheduler_db.read_bytes() == before_scheduler
 
         status, headers, _ = _request(
@@ -191,7 +191,7 @@ def test_direct_ui_selection_atomically_transfers_the_single_session_owner(
 
         capability, csrf, page = _management_page(second, base)
         assert b"m6a.transfer" in page
-        status, _, _ = _request(
+        status, _, confirmation = _request(
             base,
             "POST",
             "/instances/select",
@@ -201,6 +201,12 @@ def test_direct_ui_selection_atomically_transfers_the_single_session_owner(
                 "name": "m6a.transfer",
             },
         )
+        assert status == 200
+        assert first.call_tool("instance_current", {})["name"] == "m6a.transfer"
+        expected = re.search(rb"name='expected_binding' value='([^']+)'", confirmation)[1].decode()
+        status, _, _ = _request(base, "POST", "/instances/select", form={
+            "capability": capability, "csrf": csrf, "name": "m6a.transfer",
+            "confirm_binding": "yes", "expected_binding": expected})
         assert status == 303
         assert first.call_tool("instance_current", {})["state"] == "unbound"
         assert second.call_tool("instance_current", {})["name"] == "m6a.transfer"

@@ -1,0 +1,61 @@
+.......................F...F...............                              [100%]
+=================================== FAILURES ===================================
+____ test_unknown_source_and_uncertainty_are_not_inferred_from_doi_or_null _____
+
+    def test_unknown_source_and_uncertainty_are_not_inferred_from_doi_or_null() -> None:
+        page = render_presentation({"parameters": [{"name": "unrecorded", "selected_value": None,
+            "reported_values": [1, 2], "sources": [{"title": "doi:10.1234/example"}]}]},
+            evidence_href=_evidence, image_href=_image)
+        assert "doi:10.1234/example" in page
+        assert "网络检索" not in page
+        assert "实验测量" not in page
+        assert "null（原记录空值）" in page
+        assert "未提供估计" in page
+        assert "未记录/是否默认未知" in page
+>       assert "来源定位不完整" in page
+E       assert '来源定位不完整' in "<div class='research-presentation'><details class='research-panel parameters-panel'><summary><span>关键参数与条件</span><spa...ss='source-gap'>来源未记录</span></li></ul></details></div></details></td></tr></tbody></table></div></div></details></div>"
+
+tests/operations/test_instance_presentation_render.py:114: AssertionError
+________ test_fixed_review_document_renderer_escapes_all_plugin_values _________
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-64/test_fixed_review_document_ren0')
+
+    def test_fixed_review_document_renderer_escapes_all_plugin_values(
+        tmp_path: Path,
+    ) -> None:
+        runtime = _runtime(tmp_path)
+        launch, review, binary = _malicious_review(runtime)
+        page = render_review(
+            review,
+            access_token=launch.access_token,
+            identity=LocalIdentityRef(
+                identity_id="local_test_user",
+                display_name="<img src=x onerror=alert(5)>",
+            ),
+        ).decode("utf-8")
+    
+        assert page.count("<script") == 1
+        assert "<script src='/static/app.js' defer></script>" in page
+        for executable in ("<style", "<svg", "<iframe", "<img"):
+            assert executable not in page
+        assert "&lt;script&gt;document title&lt;/script&gt;" in page
+        assert "javascript:alert(1)" in page
+        assert not re.search(r"href=['\"](?:javascript|data):", page, re.IGNORECASE)
+        assert "binary must never be inlined" not in page
+        assert binary.sha256 in page
+        assert (
+            f"/subject/r4d_fixed_renderer/1?token={launch.access_token}" in page
+        )
+        assert "plugin.synthetic.approve.v1" in page
+        assert page.count("<details class='raw-subject'>") == 2
+        assert "<details class='raw-subject' open>" not in page
+        assert "<details class='request-details' open>" not in page
+        assert "<dl class='value-map'>" in page
+>       assert "查看来源" in page and "pointer=%2Ftree" in page
+E       assert ('查看来源' in "<!doctype html><html lang='zh-CN'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initi...</p><button class='submit-decision' type='submit'>确认并记录决定</button></form></section></aside></div></main></body></html>" and 'pointer=%2Ftree' in "<!doctype html><html lang='zh-CN'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initi...</p><button class='submit-decision' type='submit'>确认并记录决定</button></form></section></aside></div></main></body></html>")
+
+tests/operations/test_r4_approval_ui_renderer.py:200: AssertionError
+=========================== short test summary info ============================
+FAILED tests/operations/test_instance_presentation_render.py::test_unknown_source_and_uncertainty_are_not_inferred_from_doi_or_null
+FAILED tests/operations/test_r4_approval_ui_renderer.py::test_fixed_review_document_renderer_escapes_all_plugin_values
+2 failed, 41 passed in 3.90s

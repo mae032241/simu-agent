@@ -12,15 +12,16 @@ UMask=0007
 WorkingDirectory=@PROJECT_ROOT@
 Environment="PYTHONPATH=@PYTHONPATH@"
 Environment=PYTHONNOUSERSITE=1
+Environment="SCID_AGENT_SETTINGS_FILE=@AGENT_SETTINGS_FILE@"
 ExecStartPre="@PYTHON@" -m scidiscovery.runtime_identity verify --manifest "@RUNTIME_IDENTITY@"
-ExecStart="@PYTHON@" -m scidiscovery.artifact_agent.interfaces.cli --project-root "@PROJECT_ROOT@" --state-root "@STATE_ROOT@" --approval-secret-file "@APPROVAL_SECRET@" --shared-group serve-approval-ui --host 127.0.0.1 --port @APPROVAL_PORT@ --identity-id @LOCAL_IDENTITY@ --display-name @LOCAL_DISPLAY_NAME@ --worker-backend "@WORKER_BACKEND@"
+ExecStart="@PYTHON@" -m scidiscovery.artifact_agent.interfaces.cli --project-root "@PROJECT_ROOT@" --state-root "@STATE_ROOT@" --approval-secret-file "@APPROVAL_SECRET@" --shared-group serve-approval-ui --host 127.0.0.1 --port @APPROVAL_PORT@ --identity-id @LOCAL_IDENTITY@ --display-name @LOCAL_DISPLAY_NAME@ --worker-backend "@WORKER_BACKEND@" @LOCAL_WORKSPACE_ARGS@ @PLUGIN_CONFIG_ARGS@
 Restart=on-failure
 RestartSec=2s
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths="@STATE_ROOT@" @LOCAL_WORKSPACE_ACCESS@
+ReadWritePaths="@STATE_ROOT@" @LOCAL_WORKSPACE_ACCESS@ "@INSTANCE_ARCHIVE_ROOT@"
 ProtectControlGroups=true
 ProtectKernelModules=true
 ProtectKernelTunables=true

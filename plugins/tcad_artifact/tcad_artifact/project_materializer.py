@@ -21,6 +21,7 @@ from scidiscovery.artifact_agent.schema.experiment import (
 from .execution_control import SolverCapabilitySnapshot, StrictModel
 from .project_packager import (
     CaseParameterBinding,
+    DeclaredCaseAnchor,
     DeckFile,
     DeckProjectDraft,
     MaterializationFinding,
@@ -42,23 +43,6 @@ def _safe_relative_path(value: str) -> str:
     ):
         raise ValueError("unsafe relative path")
     return value
-
-
-class DeclaredCaseAnchor(StrictModel):
-    experiment_key: str = Field(
-        min_length=1,
-        max_length=256,
-        pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:/-]*$",
-    )
-    case_key: str = Field(
-        min_length=1,
-        max_length=256,
-        pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:/-]*$",
-    )
-    relative_path: str = Field(min_length=1, max_length=1024)
-    locator: str = Field(min_length=1, max_length=4096)
-
-    _safe_path = field_validator("relative_path")(_safe_relative_path)
 
 
 class DeclaredRawOutput(StrictModel):
@@ -209,7 +193,10 @@ def declarations_template(
     portfolio = ExperimentPortfolio.model_validate_json(experiment_plan, strict=True)
     existing: dict[tuple[str, str], tuple[str, str]] = {}
     if base_project is not None:
-        for item in base_project.case_parameter_bindings:
+        for item in (
+            base_project.case_parameter_bindings
+            if base_project.case_anchors is None else base_project.case_anchors
+        ):
             existing.setdefault(
                 (item.experiment_key, item.case_key),
                 (item.relative_path, item.locator),
@@ -268,6 +255,7 @@ def materialize_deck_project(
     experiment_plan: bytes,
     execution_capability: bytes,
     preflight_attestation: Mapping[str, object] | None = None,
+    legacy_case_bindings_only: bool = False,
 ) -> DeckProjectDraft:
     """Build one project without interpreting solver-language content."""
 
@@ -336,7 +324,9 @@ def materialize_deck_project(
                 fix="Keep one source anchor for each experiment/case pair.",
             )
         )
-    for key in sorted(expected_cases - actual_cases):
+    # Old sealed projects retained anchors only through parameter bindings. Missing
+    # anchors for parameter-free cases cannot be reconstructed from that projection.
+    for key in sorted(expected_cases - actual_cases) if not legacy_case_bindings_only else ():
         findings.append(
             _finding(
                 "missing_control_binding",
@@ -517,6 +507,7 @@ def materialize_deck_project(
         ),
         parameter_bindings=(),
         case_parameter_bindings=tuple(bindings),
+        case_anchors=None if legacy_case_bindings_only else declared.case_anchors,
         runtime_assertions=(),
         realization_manifest=(),
         materialization_report=report,

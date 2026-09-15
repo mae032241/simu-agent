@@ -1,0 +1,1 @@
+{"baseline": "da220ce31c8cc9f9a60542a018b279e2f331f4c0", "nodeid": "tests/operations/test_l2_run_invariants.py::test_recursive_current_uses_producer_receipts_and_commit_rechecks_head", "baseline_test_exit_code": 1, "known_catalog_fixture_failure_reproduced": true}

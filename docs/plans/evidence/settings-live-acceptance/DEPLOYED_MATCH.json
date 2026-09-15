@@ -1,0 +1,40 @@
+{
+  "deployed_source_files_matched": 26,
+  "all_matched": true,
+  "role_count": 25,
+  "fixed_role_models": false,
+  "global_settings_file": "/etc/scidiscovery-m7/agent-settings.json",
+  "global_defaults": {
+    "narrative_language": "zh-CN",
+    "model": "gpt-5.6-sol",
+    "reasoning_effort": "medium"
+  },
+  "files": {
+    "src/scidiscovery/artifact_agent/runtime.py": true,
+    "src/scidiscovery/platforms/codex.py": true,
+    "src/scidiscovery/operations/invoke.py": true,
+    "src/scidiscovery/artifact_agent/interfaces/mcp_local_worker.py": true,
+    "src/scidiscovery/artifact_agent/interfaces/mcp.py": true,
+    "src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py": true,
+    "src/scidiscovery/artifact_agent/interfaces/mcp_root.py": true,
+    "src/scidiscovery/artifact_agent/interfaces/mcp_hardened_worker.py": true,
+    "src/scidiscovery/artifact_agent/interfaces/mcp_daemon.py": true,
+    "src/scidiscovery/artifact_agent/interfaces/mcp_root_run_routes.py": true,
+    "src/scidiscovery/artifact_agent/approval_ui/read_model.py": true,
+    "src/scidiscovery/artifact_agent/approval_ui/navigation.py": true,
+    "src/scidiscovery/artifact_agent/approval_ui/workbench_render.py": true,
+    "src/scidiscovery/artifact_agent/approval_ui/app.py": true,
+    "src/scidiscovery/artifact_agent/approval_ui/management_render.py": true,
+    "src/scidiscovery/artifact_agent/service/instance_archive.py": true,
+    "src/scidiscovery/artifact_agent/service/run_assignment.py": true,
+    "src/scidiscovery/artifact_agent/service/run_records.py": true,
+    "src/scidiscovery/artifact_agent/service/scheduler_bindings.py": true,
+    "src/scidiscovery/artifact_agent/service/runs.py": true,
+    "src/scidiscovery/artifact_agent/service/instance_archive_records.py": true,
+    "src/scidiscovery/artifact_agent/approval_ui/static/style.css": true,
+    "src/scidiscovery/agent_execution_settings.py": true,
+    "src/scidiscovery/artifact_agent/approval_ui/agent_settings.py": true,
+    "src/scidiscovery/artifact_agent/approval_ui/static/agent-settings.js": true,
+    "src/scidiscovery/artifact_agent/approval_ui/home_render.py": true
+  }
+}

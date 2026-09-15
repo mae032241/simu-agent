@@ -57,12 +57,13 @@ missing input. Unknown cases and contradictory variable values remain errors.
 
 ## 2. Registration, compilation, and catalog views
 
-The system has one entry-point group, `scidiscovery.plugins`. Each entry returns
+Scientific actions have one entry-point group, `scidiscovery.plugins`. Each entry returns
 one `PluginDefinition`; one distribution may currently publish more than one
 plugin definition. A plugin declares one frozen component tuple and the
 Operations composed from those components. Components have no separate entry
 points, and Root or Worker code cannot rediscover private implementations by
-Python path.
+Python path. The optional browser-only `scidiscovery.instance_views` group loads
+pure presentation mappings; it registers no actions, tools, or scientific admission rules.
 
 At startup, `compile_installed_catalog()` validates plugin identity,
 dependencies, component closure and protocols, resource digests, Operation
@@ -533,8 +534,9 @@ with a reason in the diagnostic `all` view.
 - The historical Hardened-v1 implementation supports MCP-only Operations. The
   current milestone neither extends nor completes it and does not require it to
   pass.
-- The approval UI safety contract is covered, but its information hierarchy and
-  visual readability still need product work.
+- The approval UI now provides structured parameters, evidence and original-file
+  links. Post-deployment Fig4 reading still requires separate acceptance; synthetic
+  page checks do not substitute for it.
 - Current tests establish engineering boundaries and one TCAD vertical slice,
   not paper-digitization accuracy, solver scientific validity, three-domain
   universality, or statistical superiority to a single Agent.
@@ -566,3 +568,48 @@ depends on provenance, independent review, deterministic reports, and result
 diagnosis.
 
 TCAD analysis may optionally inspect files from its bound terminal execution and accept explicit output mappings. Registered tools preserve the original bytes and durable receipts in Run-owned Artifact collections; frozen inputs remain unchanged. The report and exact evidence snapshot complete together. Root exposes ancillary semantic names only after completion; a later Run binds the recovery manifest and raw files explicitly and can replay original calculation aliases. Missing inspection services or old runners allow limited analysis. Solver exit status and collection errors remain separate; recovery never rewrites the old execution or grants scientific success.
+
+## 9. Instance browsing, trajectory and storage maintenance
+
+The existing approval UI serves instance overviews, nodes, source figures and
+management. `InstanceReadModel` follows exact instance bindings and frozen parent
+references. General and TCAD presentation providers map existing values into
+source-linked text, parameter tables and safe figures. Unknown fields, missing
+sources or presentation failures remain display gaps, never Worker rejections.
+Browser read access, maintenance access and original approval tokens have separate
+scopes; pages do not change approval subjects, deadlines or decision authority.
+
+One bounded UI observer polls node metadata while subscribed and sends SSE
+locations and cursors. Results load on demand. The UI-owned
+`state_root/ui/workbench.sqlite3` stores rebuildable views and actual observations;
+source timestamps remain separate from observation timestamps. Missing telemetry
+is never invented. Browsing and caches neither start scientific Runs/executions/
+collection nor add Agent handoff fields.
+
+User-confirmed archive maintenance moves exactly owned instance data into the
+workspace's `.scidiscovery-archive/instances`. Shared active copies and files with
+unknown ownership remain in place and are reported. Read-only archives retain
+original identities and bytes. Restore does not rebind old sessions, restart
+processes, promote qualification or extend approvals. Permanent deletion is not
+provided. A durable maintenance gate covers Root, Worker, approval writes and the
+full collection writer lifecycle; unknown native quiescence preserves the files
+and prevents migration.
+
+A global `run_activity_sequence` allocator in the Run database preserves activity
+rowids across archive/restore. Normal activity writes allocate inside their
+original transaction. This counter stays outside instance snapshots so another
+instance cannot reuse archived event IDs. Scientific schemas, Operations and tool
+contracts remain unchanged. Directed archive transactions restore original
+append-only triggers; the maintenance journal is not disposable UI cache. See the
+[implementation record](plans/evidence/instance-workbench/IMPLEMENTATION.zh-CN.md)
+for scope, failure evidence and deployment limits.
+
+## Execution preferences and scientific contracts
+
+Global defaults are loaded once at service startup; sparse instance overrides live on scheduler instance rows. One resolver merges instance Operation overrides, instance defaults, global Operation overrides, global defaults, then Operation compatibility defaults. Narrative language is instance-wide. There is no second model registry or automatic model fallback.
+
+Preflight produces a complete `normalized_request`. Each new Run freezes model, reasoning effort and narrative language; behavior values participate in request identity while source annotations do not. Scheduler dispatch, Worker assignment and UI project that snapshot. Submission never rereads current preferences. Language affects newly authored prose only, preserving identifiers, code, units, quotations and required exact copies; output validation does not enforce language. Existing recovery policy remains the attempt authority: explicit values win, recovery inherits its saved scheduler budget, and new instance defaults do not extend a chain automatically.
+
+`ExecutorRef.model` and permission model retain their legacy compiled-digest role as compatibility defaults. Runtime overrides never recompile scientific Operations. Generated Codex roles omit fixed model/effort; dispatch supplies both explicitly. Agent reuse requires the same compiled role and known matching actual model/effort, while preserving independent-review rules. New assignments supply language. Unknown configuration is not a match; interruption is not closure.
+
+Only four additive columns are introduced: `scheduler_instances.agent_settings_json`, `agent_settings_revision`, `agent_settings_updated_at`, and `runs.execution_profile_json`. Historical NULL means unrecorded. Legacy archive bytes remain immutable. Restore projects exactly these installation ALTER definitions, using fixed NULL/0 for absent values, through preview, transactional import and interrupted completion. Unrelated schema/index/trigger or record conflicts remain rejected. Cache cleanup does not remove execution settings. No new scientific artifact, state machine, translation role or model-specific role pool is introduced.

@@ -14,6 +14,7 @@ readonly INSTALL_ROOT="${SCID_INSTALL_ROOT:-/opt/scidiscovery}"
 readonly SITE_ROOT="${INSTALL_ROOT}/site"
 readonly SCID_STATE="${SCID_STATE_ROOT:-/var/lib/scidiscovery}"
 readonly LOCAL_WORKSPACE_ROOT="${WORKSPACE}/.scidiscovery-runs"
+readonly INSTANCE_ARCHIVE_ROOT="${WORKSPACE}/.scidiscovery-archive/instances"
 readonly TCAD_STATE="${TCAD_STATE_ROOT:-${SCID_STATE}/tcad}"
 readonly CONFIG_ROOT="${SCID_CONFIG_ROOT:-/etc/scidiscovery}"
 readonly BACKUP_ROOT="${SCID_BACKUP_ROOT:-/var/backups/scidiscovery}"
@@ -97,11 +98,39 @@ finally:
 PY
 }
 
+create_instance_archive_root() {
+    # Only these two owned directories receive permissions; never chmod the workspace.
+    "$PYTHON" - "$WORKSPACE" "$SERVICE_USER" "$SERVICE_GROUP" <<'PY'
+import grp
+import os
+import pwd
+import sys
+
+workspace, user, group = sys.argv[1:]
+uid, gid = pwd.getpwnam(user).pw_uid, grp.getgrnam(group).gr_gid
+flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+parent = os.open(workspace, flags)
+try:
+    for name in (".scidiscovery-archive", "instances"):
+        try:
+            os.mkdir(name, mode=0o750, dir_fd=parent)
+        except FileExistsError:
+            pass
+        child = os.open(name, flags, dir_fd=parent)
+        os.close(parent)
+        parent = child
+        os.fchown(parent, uid, gid)
+        os.fchmod(parent, 0o750)
+finally:
+    os.close(parent)
+PY
+}
+
 require_sources() {
     local path plugin_ids plugin_distributions
     local -a deployment_paths=(
         "$WORKSPACE" "$PYTHON" "$INSTALL_ROOT" "$SCID_STATE"
-        "$LOCAL_WORKSPACE_ROOT" "$CONFIG_ROOT" "$BACKUP_ROOT"
+        "$LOCAL_WORKSPACE_ROOT" "$INSTANCE_ARCHIVE_ROOT" "$CONFIG_ROOT" "$BACKUP_ROOT"
     )
     for path in \
         pyproject.toml \
@@ -340,6 +369,7 @@ render_units() {
         "PYTHON=${PYTHON}"
         "RUNTIME_IDENTITY=${SITE_ROOT}/runtime-identity.json"
         "APPROVAL_SECRET=${CONFIG_ROOT}/approval-receipt.key"
+        "AGENT_SETTINGS_FILE=${CONFIG_ROOT}/agent-settings.json"
         "WORKER_BACKEND=${WORKER_BACKEND}"
     )
     render_unit \
@@ -356,6 +386,8 @@ render_units() {
         "${output}/scidiscovery-approval-ui.service" \
         "${common[@]}" \
         "APPROVAL_USER=${SERVICE_USER}" \
+        "INSTANCE_ARCHIVE_ROOT=${INSTANCE_ARCHIVE_ROOT}" \
+        "PLUGIN_CONFIG_ARGS=${plugin_config_args}" \
         "APPROVAL_PORT=${APPROVAL_PORT}" \
         "LOCAL_IDENTITY=local_user" \
         "LOCAL_DISPLAY_NAME=Local_user"
@@ -994,6 +1026,7 @@ begin_install_transaction() {
         --target "site=${SITE_ROOT}"
         --target "scid-cli=/usr/local/bin/scid"
         --target "approval-secret=${CONFIG_ROOT}/approval-receipt.key"
+        --target "agent-settings=${CONFIG_ROOT}/agent-settings.json"
         --target "framework-codex=${SOURCE_ROOT}/.codex"
         --target "framework-agents=${SOURCE_ROOT}/AGENTS.md"
         --target "workspace-codex=${WORKSPACE}/.codex"
@@ -1110,6 +1143,24 @@ complete_install_transaction() {
     printf 'Install transaction evidence: %s\n' "$destination"
 }
 
+ensure_agent_settings() {
+    local target="${CONFIG_ROOT}/agent-settings.json"
+    if [[ -e "$target" || -L "$target" ]]; then
+        [[ -f "$target" && ! -L "$target" ]] || die "agent settings must be a regular non-symlink file"
+        return 0
+    fi
+    "$PYTHON" - "$target" <<'PYSETTINGS'
+import json, os, sys
+value = {"schema_version": 1, "defaults": {"narrative_language": "zh-CN",
+    "model": "gpt-5.6-sol", "reasoning_effort": "medium"}, "operations": {}}
+fd = os.open(sys.argv[1], os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o640)
+with os.fdopen(fd, "w", encoding="utf-8") as stream:
+    json.dump(value, stream, ensure_ascii=False, indent=2)
+    stream.write("\n")
+PYSETTINGS
+    chown root:"$SERVICE_GROUP" "$target"
+}
+
 install_all() {
     require_root
     printf '[1/6] Validating source and selected base Python...\n'
@@ -1126,12 +1177,14 @@ install_all() {
     activate_packages
     install -d -o "$SERVICE_USER" -g "$SERVICE_GROUP" -m 0750 "$SCID_STATE"
     create_local_workspace_root
+    create_instance_archive_root
     if [[ "$TCAD_LOCAL_SERVICE" -eq 1 ]]; then
         install -d -o "$SERVICE_USER" -g "$SERVICE_GROUP" -m 0750 "$TCAD_STATE"
     fi
     normalize_database_ownership
     install -d -o root -g "$SERVICE_GROUP" -m 0750 "$CONFIG_ROOT"
     ensure_secret "${CONFIG_ROOT}/approval-receipt.key"
+    ensure_agent_settings
     if [[ "$TCAD_ENABLED" -eq 1 ]]; then
         configure_tcad_runtime
     fi

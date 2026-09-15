@@ -318,6 +318,32 @@ pytest -q
 外部 TCAD 首先应使用部署冒烟 profile 验证 SSH 和 Runner。服务健康不代表
 Sentaurus 许可证或任何科学模型已经通过。
 
+### 实例工作台与归档
+
+参数区提供精简预览，以及按原件分页的完整参数入口；设计取值、文献依据和实现绑定分别说明，
+不推断缺失的出处或不确定性。每页最多 8 条，超过 4 MiB 的原件保留下载入口。
+安装 `curve_figure_evidence` 插件后，证据节点可展示已保存的论文局部图、CSV 数值重绘与
+叠点审计图，并下载原 CSV。仅按同次调用与原清单精确关联；缺图、缺输出端口或清单不完整时
+显示局部缺口，不重新提取或判定旧资料资格。历史正文翻译暂未实现，无需配置翻译服务。
+
+本版沿用审批 UI 服务及原端口，不新增服务、环境变量或 VM runner 协议；此次更新无需同步 VM。
+使用原部署配置执行重新安装并重启服务。已绑定会话可通过 `instance_current` 返回的管理 URL
+取得实例浏览/维护入口；URL 过期后重新获取。审批链接仍仅授权原请求，不能代替实例维护凭据。
+
+安装器仅为审批 UI 增加 `<SCID_WORKSPACE>/.scidiscovery-archive/instances` 的写权限，安全创建
+该固定目录并拒绝符号链接；不开放整个工作区。管理页支持精确预览后归档、只读浏览、恢复及
+清理本实例的 UI 缓存，本版没有永久删除入口。恢复后需重新选择实例，不自动重启任务或延长审批。
+共享原件和无法确认归属的历史文件保留并列明；远端 VM 原文件不迁移。首版限制目标实例的
+控制记录快照为 32 MiB、单个控制载荷读取为 16 MiB、文件清单为 50,000 项；超过目标维护上限
+会在预览报告不支持，保留原资料。无法完整读取的外部引用按共享缺口保守保留，不推定无引用。
+
+如果无法确认本地原生进程已经停止，归档预览显示 busy/unknown 并保留资料。当前
+LocalTrusted 历史 Run 不能单凭终态证明无写入者，这个限制不影响工作台读取或原科学流程。
+归档/恢复中断应在管理页继续或回退，不能删除维护日志强行解锁。回滚旧代码前须使用新版完成
+恢复，或将已归档实例保留为旧版无法续跑的离线资料。安装、卸载不删除归档。
+
+验收范围与未完成的生产现场项见[实施记录](plans/evidence/instance-workbench/IMPLEMENTATION.zh-CN.md)。
+
 ## 7. 主要配置变量
 
 | 变量 | 默认值 | 作用 |
@@ -384,3 +410,19 @@ sudo deploy/cleanup_legacy_services.sh clean
 - **TCAD 作业似乎卡住**：使用短状态调用，不得用长连接 SSH 等待 Solver。
 
 分析内受控补收集需要控制端、Worker 和 VM helper 匹配更新。本地重装后，执行 `SCID_PYTHON=/absolute/path/to/python deploy/install_ssh_tcad_runner.sh upgrade-code`，沿用现有传输配置只更新 helper 代码。保留原结果目录和远端配置；重启 Codex 会话后再创建新分析 Run。旧 helper 不支持检查时返回不可用，普通离线分析仍可进行。不要为了重新收集而重提原执行。
+
+## Agent 执行配置
+
+安装器首次创建 `${SCID_CONFIG_ROOT}/agent-settings.json`（默认 `/etc/scidiscovery/agent-settings.json`），默认使用简体中文新报告、`gpt-5.6-sol`、`medium`。升级保留已有文件，并把该文件纳入安装事务备份。控制服务与审批/管理页面通过相同的 `SCID_AGENT_SETTINGS_FILE` 读取它；修改公共文件后重启两个服务生效。缺文件沿用兼容默认；文件存在但内容错误时显示具体字段错误，不静默回退。
+
+```json
+{
+  "schema_version": 1,
+  "defaults": {"narrative_language": "zh-CN", "model": "gpt-5.6-sol", "reasoning_effort": "medium"},
+  "operations": {}
+}
+```
+
+实例管理列表提供独立的“Agent 设置”和“资料整理与归档”入口。点击“Agent 设置”可取得编辑权限并覆盖语言、模型、推理强度和恢复链总 Run 数，也可按已安装 Operation ID 覆盖后三项。留空继承，清除全部覆盖恢复公共默认。只读访问不能保存；归档实例只读；保存仅影响新预检，不启动 Agent、仿真或审批，也不改变会话绑定。历史英文报告不翻译，历史 Run 未记录的配置不回填。
+
+首次升级本功能需要正常安装、重新生成角色并重新加载 Codex，移除旧角色文件固定的模型；之后实例修改配置无需新 role 或重启。Worker 按每个 Run 的冻结配置工作，调度方须将预检返回的 `normalized_request` 原样用于 invoke，并使用返回的 `execution_profile.profile.model` / `reasoning_effort` 分发。旧独立 CLI 启动脚本支持 `--model` 与 `--reasoning-effort`，新动态角色要求这两项来自已排队 Run。配置是请求事实，不冒充实际模型遥测。VM runner 不变，本次无需同步 VM。回滚应使用安装事务中匹配的代码、角色、数据库和配置备份。

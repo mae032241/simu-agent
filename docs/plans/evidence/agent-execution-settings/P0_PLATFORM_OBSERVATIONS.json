@@ -1,0 +1,184 @@
+{
+  "agent_type": "op_blind_csv_observe_v1_56b24007eb0b",
+  "operation_digest": "56b24007eb0bb782f4ad2d7c72a5f813a1222a300f6e36eefbae9d21baf765c1",
+  "source": "Codex session_meta and turn_context records; not Agent self-report",
+  "observed_children": [
+    {
+      "session_file": "rollout-2026-09-15T16-58-52-01a0a44a-5e95-77c2-a17d-b3fa35d9bb22.jsonl",
+      "contexts": [],
+      "tool_names": [],
+      "session_id": "01a0a44a-5e95-77c2-a17d-b3fa35d9bb22",
+      "agent_role": "op_blind_csv_observe_v1_56b24007eb0b",
+      "source": {
+        "subagent": {
+          "thread_spawn": {
+            "parent_thread_id": "01a0a44a-07e5-7301-985a-b498680cbaf0",
+            "depth": 1,
+            "agent_path": null,
+            "agent_nickname": "Aquinas",
+            "agent_role": "op_blind_csv_observe_v1_56b24007eb0b"
+          }
+        }
+      }
+    },
+    {
+      "session_file": "rollout-2026-09-15T17-02-50-01a0a44d-feb3-7a53-b7fa-87ce42fcd0c6.jsonl",
+      "contexts": [
+        {
+          "model": "gpt-5.6-luna",
+          "effort": "low"
+        }
+      ],
+      "tool_names": [
+        "exec"
+      ],
+      "session_id": "01a0a44d-feb3-7a53-b7fa-87ce42fcd0c6",
+      "agent_role": "op_blind_csv_observe_v1_56b24007eb0b",
+      "source": {
+        "subagent": {
+          "thread_spawn": {
+            "parent_thread_id": "01a0a44d-b643-7410-b1d7-05d06d889478",
+            "depth": 1,
+            "agent_path": null,
+            "agent_nickname": "Hilbert",
+            "agent_role": "op_blind_csv_observe_v1_56b24007eb0b"
+          }
+        }
+      }
+    },
+    {
+      "session_file": "rollout-2026-09-15T17-08-31-01a0a453-3493-72a0-836c-1c02235e05aa.jsonl",
+      "contexts": [
+        {
+          "model": "gpt-5.6-luna",
+          "effort": "low"
+        }
+      ],
+      "tool_names": [
+        "apply_patch",
+        "exec",
+        "exec_command",
+        "mcp__scid_worker_blind_csv_observe_v1_56b24007eb0b__worker_csv_summarize",
+        "mcp__scid_worker_blind_csv_observe_v1_56b24007eb0b__worker_open_assignment",
+        "mcp__scid_worker_blind_csv_observe_v1_56b24007eb0b__worker_submit_result"
+      ],
+      "session_id": "01a0a453-3493-72a0-836c-1c02235e05aa",
+      "agent_role": "op_blind_csv_observe_v1_56b24007eb0b",
+      "source": {
+        "subagent": {
+          "thread_spawn": {
+            "parent_thread_id": "01a0a452-fd15-7711-83a3-5b67aaf693a8",
+            "depth": 1,
+            "agent_path": null,
+            "agent_nickname": "Darwin",
+            "agent_role": "op_blind_csv_observe_v1_56b24007eb0b"
+          }
+        }
+      }
+    },
+    {
+      "session_file": "rollout-2026-09-15T17-11-30-01a0a455-ee20-7cb1-9521-26722f18c1db.jsonl",
+      "contexts": [
+        {
+          "model": "gpt-5.6-luna",
+          "effort": "low"
+        }
+      ],
+      "tool_names": [
+        "apply_patch",
+        "exec",
+        "exec_command",
+        "mcp__scid_worker_blind_csv_observe_v1_56b24007eb0b__worker_csv_summarize",
+        "mcp__scid_worker_blind_csv_observe_v1_56b24007eb0b__worker_open_assignment",
+        "mcp__scid_worker_blind_csv_observe_v1_56b24007eb0b__worker_submit_result"
+      ],
+      "session_id": "01a0a455-ee20-7cb1-9521-26722f18c1db",
+      "agent_role": "op_blind_csv_observe_v1_56b24007eb0b",
+      "source": {
+        "subagent": {
+          "thread_spawn": {
+            "parent_thread_id": "01a0a455-b810-75d3-91d6-33902a3bc629",
+            "depth": 1,
+            "agent_path": null,
+            "agent_nickname": "Kuhn",
+            "agent_role": "op_blind_csv_observe_v1_56b24007eb0b"
+          }
+        }
+      }
+    },
+    {
+      "session_file": "rollout-2026-09-15T17-13-21-01a0a457-a05a-7ea0-8923-6964c938a566.jsonl",
+      "contexts": [
+        {
+          "model": "gpt-5.6-sol",
+          "effort": "medium"
+        }
+      ],
+      "tool_names": [
+        "apply_patch",
+        "exec",
+        "exec_command",
+        "mcp__scid_worker_blind_csv_observe_v1_56b24007eb0b__worker_csv_summarize",
+        "mcp__scid_worker_blind_csv_observe_v1_56b24007eb0b__worker_open_assignment",
+        "mcp__scid_worker_blind_csv_observe_v1_56b24007eb0b__worker_submit_result"
+      ],
+      "session_id": "01a0a457-a05a-7ea0-8923-6964c938a566",
+      "agent_role": "op_blind_csv_observe_v1_56b24007eb0b",
+      "source": {
+        "subagent": {
+          "thread_spawn": {
+            "parent_thread_id": "01a0a457-5d9c-7e00-8b93-9293ed26c76d",
+            "depth": 1,
+            "agent_path": null,
+            "agent_nickname": "Halley",
+            "agent_role": "op_blind_csv_observe_v1_56b24007eb0b"
+          }
+        }
+      }
+    },
+    {
+      "session_file": "rollout-2026-09-15T17-16-05-01a0a45a-229a-7fa2-b973-f4378244cd4a.jsonl",
+      "contexts": [],
+      "tool_names": [],
+      "session_id": "01a0a45a-229a-7fa2-b973-f4378244cd4a",
+      "agent_role": "op_blind_csv_observe_v1_56b24007eb0b",
+      "source": {
+        "subagent": {
+          "thread_spawn": {
+            "parent_thread_id": "01a0a459-f1e2-7172-b325-5be517fca889",
+            "depth": 1,
+            "agent_path": null,
+            "agent_nickname": "Socrates",
+            "agent_role": "op_blind_csv_observe_v1_56b24007eb0b"
+          }
+        }
+      }
+    },
+    {
+      "session_file": "rollout-2026-09-15T17-17-02-01a0a45b-00fc-7070-bedc-2f10ac2ec69b.jsonl",
+      "contexts": [
+        {
+          "model": "gpt-5.6-sol",
+          "effort": "low"
+        }
+      ],
+      "tool_names": [
+        "exec",
+        "mcp__scid_worker_blind_csv_observe_v1_56b24007eb0b__worker_open_assignment"
+      ],
+      "session_id": "01a0a45b-00fc-7070-bedc-2f10ac2ec69b",
+      "agent_role": "op_blind_csv_observe_v1_56b24007eb0b",
+      "source": {
+        "subagent": {
+          "thread_spawn": {
+            "parent_thread_id": "01a0a45a-c596-7643-8800-fdde411a1f77",
+            "depth": 1,
+            "agent_path": null,
+            "agent_nickname": "Hume",
+            "agent_role": "op_blind_csv_observe_v1_56b24007eb0b"
+          }
+        }
+      }
+    }
+  ]
+}

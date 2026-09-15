@@ -1,0 +1,24 @@
+{
+  "command": [
+    "python",
+    "-m",
+    "pytest",
+    "-q",
+    "tests/operations/test_instance_usability.py",
+    "tests/operations/test_instance_workbench_render.py",
+    "tests/operations/test_instance_presentation_render.py",
+    "tests/operations/test_r4_approval_ui_renderer.py",
+    "tests/operations/test_instance_presentations.py"
+  ],
+  "exit_code": 1,
+  "stop_reason": null,
+  "duration_seconds": 4.64,
+  "peak_tree_rss_mib": 114.32,
+  "budget_mib": 512,
+  "peak_processes": [
+    {
+      "name": "python",
+      "rss_mib": 114.32
+    }
+  ]
+}

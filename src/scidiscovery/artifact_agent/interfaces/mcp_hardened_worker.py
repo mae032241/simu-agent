@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from ...agent_execution_settings import narrative_instruction
+
 import argparse
 import json
 import uuid
@@ -27,6 +29,7 @@ from ..service.hardened_files import HardenedFileEditor
 from ..service.hardened_workspace import HardenedWorkerBackend
 from ..service.runs import RunService, RunStateConflict
 from ..service.scheduler_bindings import SchedulerBindingService
+from ..service.instance_maintenance import InstanceMaintenanceBusy, InstanceMaintenanceUnavailable
 from .mcp import MCPRouter, parse_rpc_line, rpc_error
 from .mcp_local_worker import LocalWorkerMCPRouter
 from .mcp_worker_protocol import WorkerToolError
@@ -65,8 +68,21 @@ class HardenedWorkerMCPRouter(LocalWorkerMCPRouter):
         self._transport_owner = f"transport_{uuid.uuid4().hex}"
 
     def call_tool(self, name: str, arguments: dict[str, Any] | None) -> Any:
+        # Include the transport lock, inherited timing/failure handlers, and the
+        # final transport release under the same outer maintenance ownership.
+        self._validate_open_call(name, arguments)
+        with self._maintenance_call(name, existing_assignment=self._run_id is not None):
+            return self._transport_call_tool(name, arguments)
+
+    def _transport_call_tool(self, name: str, arguments: dict[str, Any] | None) -> Any:
         backend = self.runs.backend
         assert isinstance(backend, HardenedWorkerBackend)
+        if name == "worker_open_assignment" and self._run_id is not None and not self._completed:
+            # This backend reattaches the same cached Run on open. Check that
+            # exact owner before reading/locking its potentially expired lease.
+            # A fresh assignment has no cached Run and never takes this branch.
+            self._check_opened_instance()
+            self._opened_call_run_id = self._run_id
         try:
             if self._run_id is not None and not self._completed:
                 with backend.transport_guard(
@@ -74,9 +90,11 @@ class HardenedWorkerMCPRouter(LocalWorkerMCPRouter):
                     self._transport_owner,
                     renew=name == "worker_heartbeat",
                 ):
-                    result = super().call_tool(name, arguments)
+                    result = self._observed_call_tool(name, arguments)
             else:
-                result = super().call_tool(name, arguments)
+                result = self._observed_call_tool(name, arguments)
+        except (InstanceMaintenanceBusy, InstanceMaintenanceUnavailable):
+            raise
         except DiagnosticError as error:
             if not getattr(error, "engineering", None):
                 self._engineering_failure(name, error)
@@ -149,6 +167,8 @@ class HardenedWorkerMCPRouter(LocalWorkerMCPRouter):
 
     def _open(self) -> dict[str, Any]:
         if self._completed:
+            self._check_opened_instance()
+            self._opened_call_run_id = self._run_id
             return {"state": "completed"}
         if self._missing_services:
             raise WorkerToolError(
@@ -164,6 +184,7 @@ class HardenedWorkerMCPRouter(LocalWorkerMCPRouter):
             except RunStateConflict as error:
                 raise WorkerToolError(str(error)) from error
             self._run_id = status.run_id
+            self._opened_call_run_id = status.run_id
             self._workspace = workspace
             backend = self.runs.backend
             assert isinstance(backend, HardenedWorkerBackend)
@@ -174,9 +195,13 @@ class HardenedWorkerMCPRouter(LocalWorkerMCPRouter):
                 self._workspace = None
                 raise WorkerToolError(str(error)) from error
             self._editor = HardenedFileEditor(self.compiled, workspace)
+        self._check_opened_instance()
+        self._opened_call_run_id = self._run_id
         status = self.runs.status(self._run_id)
         return {
             "state": "opened",
+            "narrative_instruction": narrative_instruction(
+                status.execution_profile["profile"] if status.execution_profile else None),
             "workspace_path": str(self._workspace.root),
             "assignment_path": str(self._workspace.assignment_path),
             "tool_contracts": self._assignment_tool_contracts(),

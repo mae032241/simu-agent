@@ -1,0 +1,16 @@
+{
+  "command": [
+    "python",
+    "-m",
+    "pytest",
+    "-q",
+    "tests/operations/test_instance_management_http.py",
+    "tests/operations/test_instance_management_render.py",
+    "tests/operations/test_instance_maintenance.py"
+  ],
+  "exit_code": 1,
+  "stop_reason": null,
+  "duration_seconds": 4.922,
+  "peak_tree_rss_mib": 123.14,
+  "budget_mib": 512
+}

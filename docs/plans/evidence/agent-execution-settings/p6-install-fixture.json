@@ -1,0 +1,26 @@
+{
+  "command": [
+    "/tmp/scid-execution-settings-installed/venv/bin/python",
+    "-m",
+    "pip",
+    "install",
+    "--no-deps",
+    "--no-build-isolation",
+    "tests/fixtures/plugins/blind_csv_operation_plugin"
+  ],
+  "exit_code": 2,
+  "stop_reason": null,
+  "duration_seconds": 0.806,
+  "peak_tree_rss_mib": 50.83,
+  "budget_mib": 512,
+  "peak_processes": [
+    {
+      "name": "python",
+      "rss_mib": 44.11
+    },
+    {
+      "name": "rustc",
+      "rss_mib": 6.71
+    }
+  ]
+}

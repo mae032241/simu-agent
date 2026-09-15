@@ -1,0 +1,25 @@
+{
+  "command": [
+    "python",
+    "/tmp/scid_workbench_live_detail.py"
+  ],
+  "exit_code": 0,
+  "stop_reason": null,
+  "duration_seconds": 4.365,
+  "peak_tree_rss_mib": 497.11,
+  "budget_mib": 512,
+  "peak_processes": [
+    {
+      "name": "chrome-headless-shell",
+      "rss_mib": 331.3
+    },
+    {
+      "name": "MainThread",
+      "rss_mib": 131.55
+    },
+    {
+      "name": "python",
+      "rss_mib": 34.25
+    }
+  ]
+}

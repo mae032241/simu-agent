@@ -1,0 +1,70 @@
+WARNING: The directory '/home/da/.cache/pip' or its parent directory is not owned or is not writable by the current user. The cache has been disabled. Check the permissions and owner of that directory. If executing pip with sudo, you should use sudo's -H flag.
+Looking in indexes: https://mirrors.aliyun.com/pypi/simple/
+Processing ./tests/fixtures/plugins/blind_csv_operation_plugin
+  Preparing metadata (pyproject.toml): started
+  Preparing metadata (pyproject.toml): finished with status 'done'
+
+[notice] A new release of pip is available: 25.0.1 -> 26.2.1
+[notice] To update, run: /tmp/scid-execution-settings-installed/venv/bin/python -m pip install --upgrade pip
+ERROR: Exception:
+Traceback (most recent call last):
+  File "/tmp/scid-execution-settings-installed/venv/lib/python3.12/site-packages/pip/_internal/cli/base_command.py", line 106, in _run_wrapper
+    status = _inner_run()
+             ^^^^^^^^^^^^
+  File "/tmp/scid-execution-settings-installed/venv/lib/python3.12/site-packages/pip/_internal/cli/base_command.py", line 97, in _inner_run
+    return self.run(options, args)
+           ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/scid-execution-settings-installed/venv/lib/python3.12/site-packages/pip/_internal/cli/req_command.py", line 67, in wrapper
+    return func(self, options, args)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/scid-execution-settings-installed/venv/lib/python3.12/site-packages/pip/_internal/commands/install.py", line 386, in run
+    requirement_set = resolver.resolve(
+                      ^^^^^^^^^^^^^^^^^
+  File "/tmp/scid-execution-settings-installed/venv/lib/python3.12/site-packages/pip/_internal/resolution/resolvelib/resolver.py", line 76, in resolve
+    collected = self.factory.collect_root_requirements(root_reqs)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/scid-execution-settings-installed/venv/lib/python3.12/site-packages/pip/_internal/resolution/resolvelib/factory.py", line 545, in collect_root_requirements
+    reqs = list(
+           ^^^^^
+  File "/tmp/scid-execution-settings-installed/venv/lib/python3.12/site-packages/pip/_internal/resolution/resolvelib/factory.py", line 501, in _make_requirements_from_install_req
+    cand = self._make_base_candidate_from_link(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/scid-execution-settings-installed/venv/lib/python3.12/site-packages/pip/_internal/resolution/resolvelib/factory.py", line 233, in _make_base_candidate_from_link
+    self._link_candidate_cache[link] = LinkCandidate(
+                                       ^^^^^^^^^^^^^^
+  File "/tmp/scid-execution-settings-installed/venv/lib/python3.12/site-packages/pip/_internal/resolution/resolvelib/candidates.py", line 304, in __init__
+    super().__init__(
+  File "/tmp/scid-execution-settings-installed/venv/lib/python3.12/site-packages/pip/_internal/resolution/resolvelib/candidates.py", line 159, in __init__
+    self.dist = self._prepare()
+                ^^^^^^^^^^^^^^^
+  File "/tmp/scid-execution-settings-installed/venv/lib/python3.12/site-packages/pip/_internal/resolution/resolvelib/candidates.py", line 236, in _prepare
+    dist = self._prepare_distribution()
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/scid-execution-settings-installed/venv/lib/python3.12/site-packages/pip/_internal/resolution/resolvelib/candidates.py", line 315, in _prepare_distribution
+    return preparer.prepare_linked_requirement(self._ireq, parallel_builds=True)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/scid-execution-settings-installed/venv/lib/python3.12/site-packages/pip/_internal/operations/prepare.py", line 527, in prepare_linked_requirement
+    return self._prepare_linked_requirement(req, parallel_builds)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/scid-execution-settings-installed/venv/lib/python3.12/site-packages/pip/_internal/operations/prepare.py", line 642, in _prepare_linked_requirement
+    dist = _get_prepared_distribution(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/scid-execution-settings-installed/venv/lib/python3.12/site-packages/pip/_internal/operations/prepare.py", line 72, in _get_prepared_distribution
+    abstract_dist.prepare_distribution_metadata(
+  File "/tmp/scid-execution-settings-installed/venv/lib/python3.12/site-packages/pip/_internal/distributions/sdist.py", line 69, in prepare_distribution_metadata
+    self.req.prepare_metadata()
+  File "/tmp/scid-execution-settings-installed/venv/lib/python3.12/site-packages/pip/_internal/req/req_install.py", line 575, in prepare_metadata
+    self.metadata_directory = generate_metadata(
+                              ^^^^^^^^^^^^^^^^^^
+  File "/tmp/scid-execution-settings-installed/venv/lib/python3.12/site-packages/pip/_internal/operations/build/metadata.py", line 35, in generate_metadata
+    distinfo_dir = backend.prepare_metadata_for_build_wheel(metadata_dir)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/scid-execution-settings-installed/venv/lib/python3.12/site-packages/pip/_internal/utils/misc.py", line 723, in prepare_metadata_for_build_wheel
+    return super().prepare_metadata_for_build_wheel(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/scid-execution-settings-installed/venv/lib/python3.12/site-packages/pip/_vendor/pyproject_hooks/_impl.py", line 224, in prepare_metadata_for_build_wheel
+    return self._call_hook(
+           ^^^^^^^^^^^^^^^^
+  File "/tmp/scid-execution-settings-installed/venv/lib/python3.12/site-packages/pip/_vendor/pyproject_hooks/_impl.py", line 402, in _call_hook
+    raise BackendUnavailable(
+pip._vendor.pyproject_hooks._impl.BackendUnavailable: Cannot import 'setuptools.build_meta'

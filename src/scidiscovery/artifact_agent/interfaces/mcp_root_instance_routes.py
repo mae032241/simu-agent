@@ -15,6 +15,8 @@ from .mcp_root_shared import RootToolError, identity_word as _identity_word
 class RootInstanceRoutes:
     def instance_current(self) -> dict[str, Any]:
         if self.session_key is not None:
+            if not self.bindings.client_enabled(session_key=self.session_key):
+                return {"state": "paused", "management_url": self._instance_management_url()}
             bound = self.bindings.session_instance(session_key=self.session_key)
             if bound is None:
                 self.instance = None
@@ -24,7 +26,11 @@ class RootInstanceRoutes:
                 }
             self.instance = bound
         value = self.bindings.get_instance(instance_id=self._instance_id())
-        return self._instance_value(value)
+        result = self._instance_value(value)
+        if (self.session_key is not None and self.instance_management_secret is not None
+                and self.approval_base_url is not None):
+            result["management_url"] = self._instance_management_url()
+        return result
 
     def instance_list(self, *, state: str | None) -> dict[str, Any]:
         return {

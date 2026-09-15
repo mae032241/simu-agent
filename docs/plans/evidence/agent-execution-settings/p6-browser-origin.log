@@ -1,0 +1,5 @@
+{"save_diagnostic": {"path": "/instance/ins_db32adaefc3340d4b77e603f7831b7bc/manage/agent-settings", "text": "返回首页\n实例管理\n页面暂不可用\n\n403 Forbidden\n\n可返回首页查看当前授权与实例入口。", "invalid": []}, "events": {"javascript_errors": [], "http_errors": [403], "origin_checks": [{"origin": "null", "accepted": false}]}}
+Traceback (most recent call last):
+  File "/home/da/project/ai4s/tcad/git_release/scidiscovery-agent/123/scidiscovery-e5.2/docs/plans/evidence/agent-execution-settings/browser_check.py", line 69, in <module>
+    raise AssertionError('save timeout')
+AssertionError: save timeout

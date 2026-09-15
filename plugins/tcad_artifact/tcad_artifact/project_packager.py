@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated, Any, Literal, Mapping
 
-from pydantic import RootModel, Field, ValidationError, field_validator, model_validator
+from pydantic import RootModel, Field, ValidationError, field_validator, model_serializer, model_validator
 from scidiscovery.artifact_agent.schema.common import canonical_json, canonical_sha256
 from scidiscovery.artifact_agent.schema.experiment import ExperimentPortfolio
 from scidiscovery.operation_contract import SemanticRuleViolation, declared_violation
@@ -68,6 +68,19 @@ def _safe_optional_relative_path(value: str | None) -> str | None:
 class DeckFile(StrictModel):
     relative_path: str = Field(min_length=1, max_length=1024)
     content: str = Field(max_length=8 * 1024 * 1024)
+
+    _safe_path = field_validator("relative_path")(_safe_relative_path)
+
+
+class DeclaredCaseAnchor(StrictModel):
+    experiment_key: str = Field(
+        min_length=1, max_length=256, pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:/-]*$"
+    )
+    case_key: str = Field(
+        min_length=1, max_length=256, pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:/-]*$"
+    )
+    relative_path: str = Field(min_length=1, max_length=1024)
+    locator: str = Field(min_length=1, max_length=4096)
 
     _safe_path = field_validator("relative_path")(_safe_relative_path)
 
@@ -450,6 +463,11 @@ class DeckProjectDraft(StrictModel):
     case_parameter_bindings: tuple[CaseParameterBinding, ...] = Field(
         default=(), max_length=100000
     )
+    # Control-retained declarations, independent of whether a case varies a parameter.
+    # None identifies historical projects which did not retain this information.
+    case_anchors: tuple[DeclaredCaseAnchor, ...] | None = Field(
+        default=None, max_length=100000
+    )
     runtime_assertions: tuple[RuntimeAssertion, ...] = Field(default=(), max_length=4096)
     realization_manifest: tuple[RealizationRequirement, ...] = Field(
         default=(), max_length=4096
@@ -458,6 +476,13 @@ class DeckProjectDraft(StrictModel):
     preflight_attestation: ProjectPreflightAttestation | None = None
     initialization_attestation: ProjectInitializationAttestation | None = None
     resource_limits: ProjectResourceLimits
+
+    @model_serializer(mode="wrap")
+    def _preserve_historical_payload(self, handler):
+        value = handler(self)
+        if self.case_anchors is None:
+            value.pop("case_anchors", None)
+        return value
 
     _safe_entrypoint = field_validator("entrypoint")(_safe_relative_path)
     _safe_initialization_entrypoint = field_validator(

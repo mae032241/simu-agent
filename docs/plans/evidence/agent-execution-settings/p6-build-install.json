@@ -1,0 +1,25 @@
+{
+  "command": [
+    "python",
+    "docs/plans/evidence/agent-execution-settings/install_check.py"
+  ],
+  "exit_code": 0,
+  "stop_reason": null,
+  "duration_seconds": 8.257,
+  "peak_tree_rss_mib": 92.86,
+  "budget_mib": 512,
+  "peak_processes": [
+    {
+      "name": "python",
+      "rss_mib": 44.42
+    },
+    {
+      "name": "python",
+      "rss_mib": 34.98
+    },
+    {
+      "name": "python",
+      "rss_mib": 13.46
+    }
+  ]
+}

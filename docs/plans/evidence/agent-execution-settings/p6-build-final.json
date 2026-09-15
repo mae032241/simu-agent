@@ -1,0 +1,28 @@
+{
+  "command": [
+    "env",
+    "SCID_SETTINGS_INSTALL_ROOT=/tmp/scid-execution-settings-installed-final",
+    "SCID_SETTINGS_BUILD_LOG=installed-final-build.log",
+    "python",
+    "docs/plans/evidence/agent-execution-settings/install_check.py"
+  ],
+  "exit_code": 0,
+  "stop_reason": null,
+  "duration_seconds": 8.258,
+  "peak_tree_rss_mib": 93.18,
+  "budget_mib": 512,
+  "peak_processes": [
+    {
+      "name": "python",
+      "rss_mib": 44.45
+    },
+    {
+      "name": "python",
+      "rss_mib": 34.75
+    },
+    {
+      "name": "python",
+      "rss_mib": 13.98
+    }
+  ]
+}

@@ -1,0 +1,228 @@
+{
+  "scope": "Read-only control API; new UI is not deployed. No Run, approval decision, execution or archive created.",
+  "instance": {
+    "closed_at": null,
+    "created_at": "2026-09-02T23:51:07.737872Z",
+    "name": "M7-test0",
+    "objective": "仅依据 inputs/papers/123103_1_5.0242861.pdf 中可定位的证据，提取目标曲线和器件条件，提出可证伪假设，设计最小 TCAD\r\n    实验，在已启动虚拟机中运行真实 Sentaurus，将仿真与论文实验曲线定量比较，并经独立审查给出结论或下一轮修订；不得引入论文未\r\n    包含的 800°C、900°C 曲线或未经证实的参数。",
+    "state": "active",
+    "title": "M7 完整科学闭环：InGaAs/InAlAs Fig.4 TCAD 复现实验 "
+  },
+  "run": {
+    "agent_type": "op_science_experiment_design_v1_812c0d90b1d4",
+    "backend": "local_trusted",
+    "bound_inputs": [
+      {
+        "artifact_names": [
+          "fig4_continuation_intake_split_2.scientific_foundation"
+        ],
+        "port": "scientific_foundation"
+      },
+      {
+        "artifact_names": [
+          "fig4_continuation_objective_2"
+        ],
+        "port": "research_objective"
+      },
+      {
+        "artifact_names": [
+          "fig4_continuation_hypothesis_revision_1.output"
+        ],
+        "port": "hypothesis_portfolio"
+      },
+      {
+        "artifact_names": [
+          "fig4_continuation_hypothesis_critic_3.output"
+        ],
+        "port": "critic_review"
+      },
+      {
+        "artifact_names": [
+          "fig4_continuation_execution_context_1"
+        ],
+        "port": "execution_context"
+      },
+      {
+        "artifact_names": [
+          "fig4_dimensionless_initialization_plan_2",
+          "fig4_dimensionless_plan_review_2.output",
+          "fig4_alignment_gap_plan_revision_1.output",
+          "fig4_regularized_implementation_review_1.output"
+        ],
+        "port": "current_progress"
+      },
+      {
+        "artifact_names": [
+          "fig4_regularized_author_1.output",
+          "fig4_shape_basis_author_1.output",
+          "fig4_shape_basis_execution_1.result"
+        ],
+        "port": "experiment_results"
+      },
+      {
+        "artifact_names": [
+          "fig4_compact_analysis_acceptance_1.output",
+          "fig4_constant_cs_closure_analysis_1.output"
+        ],
+        "port": "result_analysis"
+      },
+      {
+        "artifact_names": [
+          "fig4_user_profile_shape_priority_1"
+        ],
+        "port": "user_context"
+      }
+    ],
+    "candidate_accepted": true,
+    "completed_at": "2026-09-14T11:34:58.811169Z",
+    "created_at": "2026-09-14T11:29:03.586835Z",
+    "deadline_at": "2026-09-14T11:44:03.586835Z",
+    "diagnostic_events": {
+      "events": [
+        {
+          "activity": "output_rejected",
+          "diagnostic": {
+            "category": "output_rejected",
+            "code": "output_rejected",
+            "details": [
+              {
+                "affected_action": "submit",
+                "code": "output_invalid",
+                "message": "engineering intent requires only an engineering objective",
+                "path": "$.payload",
+                "phase": "output_payload",
+                "repairable": true,
+                "rule_id": "experiment.design.intent_closure",
+                "schema_version": 1,
+                "type": "value_error"
+              }
+            ],
+            "repairable_by_output": true
+          },
+          "event_id": 1591,
+          "recorded_at": "2026-09-14T11:34:43.640556Z"
+        }
+      ],
+      "next_after": null
+    },
+    "diagnostic_summary": {
+      "failure": null,
+      "latest_native_error": null,
+      "latest_rejection": {
+        "category": "output_rejected",
+        "code": "output_rejected",
+        "details": [
+          {
+            "affected_action": "submit",
+            "code": "output_invalid",
+            "message": "engineering intent requires only an engineering objective",
+            "path": "$.payload",
+            "phase": "output_payload",
+            "repairable": true,
+            "rule_id": "experiment.design.intent_closure",
+            "schema_version": 1,
+            "type": "value_error"
+          }
+        ],
+        "repairable_by_output": true
+      },
+      "latest_tool_error": null,
+      "native_coverage": "unobserved",
+      "recent_errors": [
+        {
+          "category": "output_rejected",
+          "code": "output_rejected",
+          "details": [
+            {
+              "affected_action": "submit",
+              "code": "output_invalid",
+              "message": "engineering intent requires only an engineering objective",
+              "path": "$.payload",
+              "phase": "output_payload",
+              "repairable": true,
+              "rule_id": "experiment.design.intent_closure",
+              "schema_version": 1,
+              "type": "value_error"
+            }
+          ],
+          "repairable_by_output": true
+        }
+      ],
+      "rejection_count": 1
+    },
+    "draft_from": null,
+    "head_advance": "not_requested",
+    "last_activity_at": "2026-09-14T11:34:58.811169Z",
+    "logical_name": "fig4_user_context_continuation_design_1",
+    "name": "fig4_user_context_continuation_design_1",
+    "native_execution": {
+      "coverage": "unobserved",
+      "reason": "no_records",
+      "scientific_evidence": false
+    },
+    "operation_id": "science.experiment.design.v1",
+    "output_artifact_name": "fig4_user_context_continuation_design_1.output",
+    "output_delivery": "omitted",
+    "output_metadata": {
+      "artifact_name": "fig4_user_context_continuation_design_1.output",
+      "kind": "experiment_design_intent",
+      "schema": "scidiscovery.experiment-design-intent.v1"
+    },
+    "reason": null,
+    "recovery": {
+      "attempt_budget": {
+        "limit": 1,
+        "used": 1
+      },
+      "delivery_preserved": false,
+      "draft_available": false,
+      "recovery_pending": false,
+      "resume_available": false
+    },
+    "recovery_available": false,
+    "revision": 1,
+    "scheduler_signal": {
+      "assumptions": [
+        "The user supplement is treated as a priority and claim-weighting requirement, not as new quantitative evidence or execution authorization.",
+        "No authoring operand is missing for the two-case diagnostic; actual nonlinear first-step capability remains unestablished because the execution context gives no affirmative nonlinear capability statement.",
+        "A failed engineering probe has no physical-hypothesis meaning, and a passed probe qualifies only the representation for a separately reviewed 480 s study."
+      ],
+      "missing_inputs": [],
+      "next_action_kind": null,
+      "next_actions": [
+        "Author and independently review the exact two-case SProcess R-2020.09 project, including the symbolic scaling, numerical operands, boundary identities, case order, and raw PLX/TDR declarations.",
+        "After the required execution authorization, run the dimensionless constant-D control first and attempt the nonlinear probe only if every control gate passes.",
+        "If both probes pass, revise and independently review the deferred 480 s InGaAs comparison so that supported depth, shape, and front/tail platform endpoints govern the decision and global decade MSE is secondary; if either probe fails, seal the capability result and stop this implementation path."
+      ],
+      "schema_version": 1,
+      "summary": "The existing two-case dimensionless initialization discriminant remains the smallest deliverable next experiment. It does not use decade MSE and does not claim Fig. 4 reproduction; it only tests whether the exact state transformation C=Cs*u allows the reviewed smooth nonlinear conservation law to advance its first 1e-6 s step after a same-structure constant-D control. The supplemental user priority changes the ordering and decision basis of later scientific work: supported diffusion-depth descriptors, curve shape, and front/tail plateau consistency must be primary, while a global decade MSE may be reported only as a secondary diagnostic. No additional current case is justified.",
+      "verdict": "pass"
+    },
+    "scheduler_signal_status": "available",
+    "sealed_output": null,
+    "sealed_output_status": "available",
+    "selected_output": null,
+    "started_at": "2026-09-14T11:29:22.838773Z",
+    "state": "completed",
+    "tool_timing": [
+      {
+        "completed_at": "2026-09-14T11:29:22.849130+00:00",
+        "duration_seconds": 0.01047,
+        "started_at": "2026-09-14T11:29:22.838678+00:00",
+        "tool_name": "worker_open_assignment"
+      },
+      {
+        "completed_at": "2026-09-14T11:34:43.645806+00:00",
+        "duration_seconds": 0.21738,
+        "started_at": "2026-09-14T11:34:43.428629+00:00",
+        "tool_name": "worker_submit_result"
+      },
+      {
+        "completed_at": "2026-09-14T11:34:58.823626+00:00",
+        "duration_seconds": 0.16022,
+        "started_at": "2026-09-14T11:34:58.663421+00:00",
+        "tool_name": "worker_submit_result"
+      }
+    ]
+  }
+}

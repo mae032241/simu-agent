@@ -233,8 +233,7 @@ class ToolEvidenceMixin:
                 raise ToolAttemptLimit()
             record = ToolAttempt(attempt_key=f"attempt_{count+1:03d}", tool_name=tool.name,
                 operation_digest=value.operation_digest, request_digest=digest, state="started")
-            connection.execute("INSERT INTO run_activity(run_id,activity,recorded_at,diagnostic_json) VALUES (?,?,?,?)",
-                (run_id,"tool_attempt_started",timestamp(),canonical_json(record)))
+            self._append_activity(connection, run_id, "tool_attempt_started", timestamp(), canonical_json(record))
         return record.model_dump(mode="json")
 
     def finish_tool_attempt(self, run_id, attempt, *, sources, result_status=None,
@@ -269,8 +268,7 @@ class ToolEvidenceMixin:
             completed = connection.execute("SELECT diagnostic_json FROM run_activity WHERE run_id=? AND activity='tool_attempt_completed'", (run_id,)).fetchall()
             if any(json.loads(r[0])["attempt_key"] == record.attempt_key for r in completed):
                 raise RunStateConflict("attempt already has a terminal receipt")
-            connection.execute("INSERT INTO run_activity(run_id,activity,recorded_at,diagnostic_json) VALUES (?,?,?,?)",
-                (run_id,"tool_attempt_completed",timestamp(),raw))
+            self._append_activity(connection, run_id, "tool_attempt_completed", timestamp(), raw)
         reference = {"manifest_alias":"tool_recovery_manifest", "attempt_key":record.attempt_key}
         return reference, details[:len(record.diagnostics)]
 
@@ -287,8 +285,7 @@ class ToolEvidenceMixin:
             row = self._row(connection, run_id)
             if row['state'] != 'running' or row['accepted_candidate_digest'] is not None:
                 raise RunStateConflict("candidate no longer accepts read receipts")
-            connection.execute("INSERT INTO run_activity(run_id,activity,recorded_at,diagnostic_json) VALUES (?,?,?,?)",
-                (run_id,"tool_attempt_read",timestamp(),raw))
+            self._append_activity(connection, run_id, "tool_attempt_read", timestamp(), raw)
 
     def tool_attempts(self, run_id):
         with self._connect() as connection:
@@ -513,9 +510,9 @@ class ToolEvidenceMixin:
                 used_bytes = remaining['remaining_bytes']
                 used_seconds = remaining['remaining_seconds']
             if used_bytes or used_seconds:
-                connection.execute('INSERT INTO run_activity(run_id,activity,recorded_at,diagnostic_json) VALUES (?,?,?,?)',
-                    (run_id, 'evidence_io:%d:%d' % (used_bytes, round(used_seconds*1000)),
-                     datetime.now(timezone.utc).isoformat(), None))
+                self._append_activity(connection, run_id,
+                    'evidence_io:%d:%d' % (used_bytes, round(used_seconds*1000)),
+                    datetime.now(timezone.utc).isoformat(), None)
         return remaining if reserve else {
             'remaining_bytes': max(0, remaining['remaining_bytes']-used_bytes),
             'remaining_seconds': max(0, remaining['remaining_seconds']-used_seconds)}

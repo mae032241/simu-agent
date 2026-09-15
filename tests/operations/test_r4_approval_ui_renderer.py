@@ -10,6 +10,7 @@ import pytest
 
 from scidiscovery.artifact_agent.approval_ui import ApprovalUI
 from scidiscovery.artifact_agent.approval_ui.render import (
+    ReviewContext,
     _json_pointer_value,
     render_review,
 )
@@ -195,12 +196,10 @@ def test_fixed_review_document_renderer_escapes_all_plugin_values(
     assert page.count("<details class='raw-subject'>") == 2
     assert "<details class='raw-subject' open>" not in page
     assert "<details class='request-details' open>" not in page
+    assert "<dl class='value-map'>" in page
+    assert "查看来源" in page and "原记录位置：/tree" in page
+    assert "<pre class='json-value'>" not in page
 
-    style = (
-        Path(render_review.__code__.co_filename).with_name("static") / "style.css"
-    ).read_text(encoding="utf-8")
-    assert ".decision-column { order: -1; position: static; }" in style
-    assert ".decision-column { min-width: 0; position: sticky; top: 18px; }" in style
 
 
 def test_renderer_uses_raw_fallback_without_domain_schema_dispatch(
@@ -282,6 +281,8 @@ def test_http_surface_only_downloads_binary_and_removes_preview_route(
         page_status, page_headers, page_raw = request(launch.review_path)
         assert page_status == 200
         assert page_headers["X-Content-Type-Options"] == "nosniff"
+        assert page_headers["Referrer-Policy"] == "same-origin"
+        assert b"name='referrer'" not in page_raw
         assert "script-src 'self'" in page_headers["Content-Security-Policy"]
         assert b"binary must never be inlined" not in page_raw
 
@@ -303,3 +304,69 @@ def test_http_surface_only_downloads_binary_and_removes_preview_route(
         assert preview_status == 404
     finally:
         ui.stop()
+
+
+def test_large_frozen_subject_is_not_embedded_and_download_is_unchanged(
+    tmp_path: Path,
+) -> None:
+    runtime = _runtime(tmp_path)
+    raw = canonical_json({"summary": "original summary", "large_report": "not-for-first-page" * 50000})
+    subject = _subject(runtime, raw=raw, name="large", schema_id="plugin.large.v1", media_type="application/json")
+    launch = runtime.approvals.create_request(
+        approval_id="r4d_large_readable",
+        kind="synthetic_plugin_review",
+        subject_refs=(subject,),
+        question="Review exact frozen report?",
+        options=_options(),
+        requested_by=runtime.actor,
+        idempotency_key="r4d-renderer:large",
+        review_document=ReviewDocument(title="Readable report", sections=(ReviewDocumentSection(
+            title="Original fields", items=(ReviewDocumentItem(kind="json_tree", label="Report", subject_index=0, json_pointer=""),),
+        ),)),
+    )
+    review = runtime.approvals.review(launch.approval_id, access_token=launch.access_token)
+    page = render_review(review, access_token=launch.access_token,
+        identity=LocalIdentityRef(identity_id="local_test_user", display_name="Reviewer"),
+        context=ReviewContext(instance_name="instance", instance_title="Instance", instance_objective="Current administrative description",
+            approval_name="request", approval_logical_name="request", approval_revision=1),
+        presentation={"sections": [{"title": "Original research objective", "items": [{"label": "Objective",
+            "value": "Historically bound original objective", "source": {"artifact_id": subject.artifact_id, "json_pointer": "/summary"}}]}]},
+    )
+    assert len(page) <= 256 * 1024
+    text = page.decode("utf-8")
+    assert "实例管理描述" in text
+    assert "Historically bound original objective" in text
+    assert "原始 JSON 较大，未嵌入页面" in text
+    assert "<form method='post' action='/review/r4d_large_readable/decision'>" in text
+    assert f"name='csrf' value='{review.csrf_token}'" in text
+    assert f"name='nonce' value='{review.decision_nonce}'" in text
+    assert subject.sha256 in text
+    assert review.request_ref.sha256 in text
+    assert runtime.approvals.review(launch.approval_id, access_token=launch.access_token).subjects[0][1] == raw
+
+
+def test_maximum_request_text_uses_explicit_preview_and_exact_request_link(
+    tmp_path: Path,
+) -> None:
+    runtime = _runtime(tmp_path)
+    subject = _subject(runtime, raw=b"{}", name="maximum-text", schema_id="plugin.large.v1", media_type="application/json")
+    options = tuple(ApprovalOption(option_id=f"option_{index}", label="\"" * 256,
+        description="\"" * 4096, requires_rationale=bool(index % 2)) for index in range(32))
+    launch = runtime.approvals.create_request(
+        approval_id="r4d_maximum_text", kind="synthetic_plugin_review", subject_refs=(subject,),
+        question="\"" * 16384, options=options, requested_by=runtime.actor,
+        idempotency_key="r4d-renderer:maximum-text",
+    )
+    review = runtime.approvals.review(launch.approval_id, access_token=launch.access_token)
+    page = render_review(review, access_token=launch.access_token,
+        identity=LocalIdentityRef(identity_id="local_test_user", display_name="Reviewer"))
+    text = page.decode("utf-8")
+    assert len(page) <= 256 * 1024
+    assert "长度超过页面预览范围，请读取完整原文" in text
+    assert "完整审批问题与选项（原件）" in text
+    assert f"/request/r4d_maximum_text?token={launch.access_token}" in text
+    for option in options:
+        assert f"value='{option.option_id}'" in text
+        assert f"data-requires-rationale='{str(option.requires_rationale).lower()}'" in text
+    assert review.request.question == "\"" * 16384
+    assert review.request.options == options

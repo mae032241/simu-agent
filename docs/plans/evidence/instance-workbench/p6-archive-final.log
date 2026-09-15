@@ -1,0 +1,73 @@
+.........................................................FF............. [ 81%]
+................                                                         [100%]
+=================================== FAILURES ===================================
+_ test_archive_browse_restore_preserves_real_continuation_admission_and_assignment[resume_from] _
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-57/test_archive_browse_restore_pr0')
+continuation = 'resume_from'
+
+    @pytest.mark.parametrize("continuation", ["resume_from", "draft_from"])
+    def test_archive_browse_restore_preserves_real_continuation_admission_and_assignment(tmp_path, continuation):
+>       catalog, runtime, instance, root, source, draft_bytes, activities = _archived_and_restored_draft(tmp_path)
+                                                                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/operations/test_instance_archive_continuation.py:122: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/operations/test_instance_archive_continuation.py:88: in _archived_and_restored_draft
+    assert archived.overview(instance.instance_id)["instance"]["name"] == instance.name
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <scidiscovery.artifact_agent.approval_ui.read_model.InstanceReadModel object at 0x7fd623a48ce0>
+instance_id = 'ins_3b82f91f476a4806afdb855e6aeb4d4d'
+
+    def overview(self, instance_id: str) -> dict[str, Any]:
+        instance = self.bindings.get_instance(instance_id=instance_id)
+        recent = self.nodes(instance_id, limit=30)
+        active, pages, gaps = [], {}, []
+        for namespace, service in (("run", self.runs), ("approval", self.approvals), ("execution", self.executions)):
+            arguments = {"instance_id": instance_id, "limit": 31}
+            if namespace != "run":
+                arguments["scheduler_database_path"] = self.bindings.database_path
+>           ids = service.active_ids(**arguments)
+                  ^^^^^^^^^^^^^^^^^^
+E           AttributeError: 'NoneType' object has no attribute 'active_ids'
+
+src/scidiscovery/artifact_agent/approval_ui/read_model.py:59: AttributeError
+_ test_archive_browse_restore_preserves_real_continuation_admission_and_assignment[draft_from] _
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-57/test_archive_browse_restore_pr1')
+continuation = 'draft_from'
+
+    @pytest.mark.parametrize("continuation", ["resume_from", "draft_from"])
+    def test_archive_browse_restore_preserves_real_continuation_admission_and_assignment(tmp_path, continuation):
+>       catalog, runtime, instance, root, source, draft_bytes, activities = _archived_and_restored_draft(tmp_path)
+                                                                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/operations/test_instance_archive_continuation.py:122: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/operations/test_instance_archive_continuation.py:88: in _archived_and_restored_draft
+    assert archived.overview(instance.instance_id)["instance"]["name"] == instance.name
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <scidiscovery.artifact_agent.approval_ui.read_model.InstanceReadModel object at 0x7fd6244dc1d0>
+instance_id = 'ins_37703815c8ee4512bd31f6659361a89b'
+
+    def overview(self, instance_id: str) -> dict[str, Any]:
+        instance = self.bindings.get_instance(instance_id=instance_id)
+        recent = self.nodes(instance_id, limit=30)
+        active, pages, gaps = [], {}, []
+        for namespace, service in (("run", self.runs), ("approval", self.approvals), ("execution", self.executions)):
+            arguments = {"instance_id": instance_id, "limit": 31}
+            if namespace != "run":
+                arguments["scheduler_database_path"] = self.bindings.database_path
+>           ids = service.active_ids(**arguments)
+                  ^^^^^^^^^^^^^^^^^^
+E           AttributeError: 'NoneType' object has no attribute 'active_ids'
+
+src/scidiscovery/artifact_agent/approval_ui/read_model.py:59: AttributeError
+=========================== short test summary info ============================
+FAILED tests/operations/test_instance_archive_continuation.py::test_archive_browse_restore_preserves_real_continuation_admission_and_assignment[resume_from]
+FAILED tests/operations/test_instance_archive_continuation.py::test_archive_browse_restore_preserves_real_continuation_admission_and_assignment[draft_from]
+2 failed, 86 passed in 33.40s

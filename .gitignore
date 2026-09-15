@@ -18,6 +18,7 @@ CLAUDE.md
 # Runtime state and local configuration
 .scidiscovery/
 .scidiscovery-state/
+.scidiscovery-archive/
 agent/runtime/
 config/local/
 *.sqlite

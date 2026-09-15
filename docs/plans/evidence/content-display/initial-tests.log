@@ -1,0 +1,86 @@
+.FFF....F..........F......                                               [100%]
+=================================== FAILURES ===================================
+_ test_selected_reported_and_acquisition_dimensions_remain_separate[frozen_input-\u83b7\u5f97\u65b9\u5f0f\u672a\u8bb0\u5f55] _
+
+installed = ['scidiscovery.instance_views'], source_type = 'frozen_input'
+expected = '获得方式未记录'
+
+    @pytest.mark.parametrize("source_type,expected", [("frozen_input", "获得方式未记录"), ("web_snapshot", "网络检索")])
+    def test_selected_reported_and_acquisition_dimensions_remain_separate(installed, source_type, expected):
+        result = presentation.build_presentation(parameter_family(source_type=source_type))
+        row = result["parameters"][0]
+>       assert row["name"] == "Band gap" and row["selected_value"] == "1.1e0"
+E       AssertionError: assert ('bandgap' == 'Band gap'
+E         
+E         - Band gap
+E         ? ^   -
+E         + bandgap
+E         ? ^)
+
+tests/operations/test_instance_presentations.py:80: AssertionError
+_ test_selected_reported_and_acquisition_dimensions_remain_separate[web_snapshot-\u7f51\u7edc\u68c0\u7d22] _
+
+installed = ['scidiscovery.instance_views'], source_type = 'web_snapshot'
+expected = '网络检索'
+
+    @pytest.mark.parametrize("source_type,expected", [("frozen_input", "获得方式未记录"), ("web_snapshot", "网络检索")])
+    def test_selected_reported_and_acquisition_dimensions_remain_separate(installed, source_type, expected):
+        result = presentation.build_presentation(parameter_family(source_type=source_type))
+        row = result["parameters"][0]
+>       assert row["name"] == "Band gap" and row["selected_value"] == "1.1e0"
+E       AssertionError: assert ('bandgap' == 'Band gap'
+E         
+E         - Band gap
+E         ? ^   -
+E         + bandgap
+E         ? ^)
+
+tests/operations/test_instance_presentations.py:80: AssertionError
+__________ test_source_catalog_ambiguity_never_selects_newer_version ___________
+
+installed = ['scidiscovery.instance_views']
+
+    def test_source_catalog_ambiguity_never_selects_newer_version(installed):
+        result = presentation.build_presentation(parameter_family(second_catalog=True))
+        assert result["parameters"][0]["sources"] == []
+>       assert any(gap["code"] == "source_catalog_ambiguous" for gap in result["gaps"])
+E       assert False
+E        +  where False = any(<generator object test_source_catalog_ambiguity_never_selects_newer_version.<locals>.<genexpr> at 0x7efe5888f5e0>)
+
+tests/operations/test_instance_presentations.py:93: AssertionError
+_ test_markup_stays_text_urls_are_filtered_and_only_authorized_images_are_listed _
+
+installed = ['scidiscovery.instance_views']
+
+    def test_markup_stays_text_urls_are_filtered_and_only_authorized_images_are_listed(installed):
+        artifacts = list(parameter_family(source_type="web_snapshot"))
+        artifacts[1]["payload"]["sources"][0].update(title="<script>alert(1)</script>", final_url="javascript:alert(1)")
+        artifacts.extend((view("figure", "opaque", media_type="image/png"), view("active_svg", "opaque", media_type="image/svg+xml")))
+        result = presentation.build_presentation(tuple(artifacts))
+>       assert result["parameters"][0]["sources"][0]["title"] == "<script>alert(1)</script>"
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       IndexError: list index out of range
+
+tests/operations/test_instance_presentations.py:156: IndexError
+____ test_unknown_source_and_uncertainty_are_not_inferred_from_doi_or_null _____
+
+    def test_unknown_source_and_uncertainty_are_not_inferred_from_doi_or_null() -> None:
+        page = render_presentation({"parameters": [{"name": "unrecorded", "selected_value": None,
+            "reported_values": [1, 2], "sources": [{"title": "doi:10.1234/example"}]}]},
+            evidence_href=_evidence, image_href=_image)
+        assert "doi:10.1234/example" in page
+        assert "网络检索" not in page
+        assert "实验测量" not in page
+        assert "null（原记录空值）" in page
+        assert "未提供估计" in page
+>       assert "未记录/是否默认未知" in page
+E       assert '未记录/是否默认未知' in "<div class='research-presentation'><details class='research-panel parameters-panel'><summary><span>关键参数与条件</span><spa...</ul></details></div></details></td></tr></tbody></table></div><ul class='parameter-pages'></ul></div></details></div>"
+
+tests/operations/test_instance_presentation_render.py:113: AssertionError
+=========================== short test summary info ============================
+FAILED tests/operations/test_instance_presentations.py::test_selected_reported_and_acquisition_dimensions_remain_separate[frozen_input-\u83b7\u5f97\u65b9\u5f0f\u672a\u8bb0\u5f55]
+FAILED tests/operations/test_instance_presentations.py::test_selected_reported_and_acquisition_dimensions_remain_separate[web_snapshot-\u7f51\u7edc\u68c0\u7d22]
+FAILED tests/operations/test_instance_presentations.py::test_source_catalog_ambiguity_never_selects_newer_version
+FAILED tests/operations/test_instance_presentations.py::test_markup_stays_text_urls_are_filtered_and_only_authorized_images_are_listed
+FAILED tests/operations/test_instance_presentation_render.py::test_unknown_source_and_uncertainty_are_not_inferred_from_doi_or_null
+5 failed, 21 passed in 2.86s

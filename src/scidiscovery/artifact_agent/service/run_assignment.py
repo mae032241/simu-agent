@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from ...agent_execution_settings import narrative_instruction
+
 import json
 from typing import Any
 
@@ -46,6 +48,8 @@ def assignment_json(
                 "digest": bound.compiled.digest,
             },
             "instruction": bound.instruction or "",
+            "narrative_instruction": narrative_instruction(
+                bound.execution_profile["profile"] if bound.execution_profile else None),
             "budget": {"deadline_at": deadline_at, "source": "control"} if deadline_at else None,
             "inputs": [
                 {

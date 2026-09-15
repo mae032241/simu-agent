@@ -1,0 +1,85 @@
+............F....F............                                           [100%]
+=================================== FAILURES ===================================
+_ test_arbitrary_scientific_payload_does_not_grant_private_artifact_ownership __
+
+archive_system = (ArtifactAgentRuntime(project_root=PosixPath('/tmp/pytest-of-da/pytest-38/test_arbitrary_scientific_payl0/project'), s...tanceArchive object at 0x7fa434e8a570>, 'ins_85fa02028229438a81371ef030780ff8', 'ins_b0ee861cb9c2430b8978f50de7841890')
+
+    def test_arbitrary_scientific_payload_does_not_grant_private_artifact_ownership(archive_system):
+        runtime, service, first, second = archive_system
+        private = artifact(runtime, second, "private", b"secret")
+        artifact(runtime, first, "untrusted.reference", canonical_json({"claimed": private.ref.model_dump(mode="json")}))
+        save_archive(service, first)
+        model = service.archived_model(first)
+        from scidiscovery.artifact_agent.approval_ui.read_model import ReadModelNotFound
+        with pytest.raises(ReadModelNotFound):
+>           model.artifact(first, private.artifact_id)
+
+tests/operations/test_instance_archive.py:163: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/scidiscovery/artifact_agent/approval_ui/read_model.py:235: in artifact
+    envelope = self._authorized_artifact(instance_id, artifact_id)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <scidiscovery.artifact_agent.approval_ui.read_model.InstanceReadModel object at 0x7fa434e8b890>
+instance_id = 'ins_85fa02028229438a81371ef030780ff8'
+artifact_id = 'art_105c3ad4348443faa108d3294c67fb2f'
+
+    def _authorized_artifact(self, instance_id, artifact_id):
+        self.bindings.get_instance(instance_id=instance_id)
+        if not isinstance(artifact_id, str) or not artifact_id:
+            raise ReadModelNotFound("invalid artifact identity")
+        direct = self.bindings.find_name(instance=instance_id, namespace="artifact", object_id=artifact_id)
+        if direct is not None:
+            try:
+                return self.artifacts.get_by_id(artifact_id)
+            except ArtifactNotFoundError as error:
+                raise ReadModelNotFound("bound artifact metadata is missing") from error
+        seen, after, examined = set(), None, 0
+        for _ in range(10):
+            page = self.bindings.binding_page(instance=instance_id, after=after, limit=100)
+            for binding in page:
+                try:
+                    queue = deque(self._roots(instance_id, binding))
+                except _READ_ERRORS:
+                    continue
+                while queue and examined < MAX_SCOPE_RECORDS:
+                    ref = queue.popleft()
+                    identity = (ref.artifact_id, ref.sha256, ref.kind, ref.schema_id)
+                    if identity in seen:
+                        continue
+                    seen.add(identity)
+                    examined += 1
+                    try:
+                        envelope = self.artifacts.catalog(ref)
+                    except _READ_ERRORS:
+                        continue
+                    if ref.artifact_id == artifact_id:
+                        return envelope
+                    queue.extend(envelope.parent_refs[:max(0, MAX_SCOPE_RECORDS - examined - len(queue))])
+                    if envelope.supersedes_ref:
+                        queue.append(envelope.supersedes_ref)
+                if examined >= MAX_SCOPE_RECORDS:
+                    raise ReadModelScopeError("artifact scope could not be established within the lineage read bound")
+            if len(page) < 100:
+>               raise ReadModelScopeError("artifact is outside this instance's recorded scope")
+E               scidiscovery.artifact_agent.approval_ui.read_model.ReadModelScopeError: artifact is outside this instance's recorded scope
+
+src/scidiscovery/artifact_agent/approval_ui/read_model.py:599: ReadModelScopeError
+____ test_pending_approval_original_rows_nonce_and_access_are_history_only _____
+
+archive_system = (ArtifactAgentRuntime(project_root=PosixPath('/tmp/pytest-of-da/pytest-38/test_pending_approval_original0/project'), s...tanceArchive object at 0x7fa43589c080>, 'ins_129e7c10480a4c47897d7faa52fa8ec8', 'ins_8d35beadbaf14d99b1c47281a1c26530')
+
+    def test_pending_approval_original_rows_nonce_and_access_are_history_only(archive_system):
+        from scidiscovery.artifact_agent.schema.approval import approval_options_template
+        runtime, service, first, _ = archive_system
+        subject = artifact(runtime, first, "subject")
+>       launch = runtime.approvals.create_request(approval_id="apr_archive", kind="run_request", subject_refs=(subject.ref,),
+            question="Frozen request?", options=approval_options_template("run_request"), idempotency_key="archive.approval")
+E       TypeError: ApprovalService.create_request() missing 1 required keyword-only argument: 'requested_by'
+
+tests/operations/test_instance_archive.py:271: TypeError
+=========================== short test summary info ============================
+FAILED tests/operations/test_instance_archive.py::test_arbitrary_scientific_payload_does_not_grant_private_artifact_ownership
+FAILED tests/operations/test_instance_archive.py::test_pending_approval_original_rows_nonce_and_access_are_history_only
+2 failed, 28 passed in 12.37s

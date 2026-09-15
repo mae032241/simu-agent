@@ -1,0 +1,191 @@
+--- before/src/scidiscovery/artifact_agent/approval_ui/home_render.py
++++ after/src/scidiscovery/artifact_agent/approval_ui/home_render.py
+@@ -60,12 +60,20 @@
+                 + hidden("instance_id", instance.instance_id) + hidden("scope", "read") + "<button type='submit'>查看状态与轨迹</button></form>")
+         else:
+             buttons += f"<a href='{path}'>查看基本信息</a><span class='source-note'>状态与轨迹需要实例浏览授权</span>"
+-        if maintenance_available and row["can_manage"]:
+-            buttons += f"<a href='{path}/manage'>资料整理与归档</a>"
+-        elif maintenance_available and token:
+-            buttons += ("<form method='post' action='/instances/access'>" + hidden("capability", token) + hidden("csrf", csrf)
+-                + hidden("instance_id", instance.instance_id) + hidden("scope", "maintenance") + hidden("destination", "manage")
+-                + "<button class='secondary-button' type='submit'>资料整理与归档</button></form>")
++        entries = []
++        if workbench_available:
++            entries.append(("settings", "Agent 设置"))
++        if maintenance_available:
++            entries.append(("manage", "资料整理与归档"))
++        for destination, label in entries:
++            if row["can_manage"]:
++                buttons += f"<a href='{path}/{destination}'>{label}</a>"
++            elif token:
++                buttons += ("<form method='post' action='/instances/access'>" + hidden("capability", token) + hidden("csrf", csrf)
++                    + hidden("instance_id", instance.instance_id) + hidden("scope", "maintenance") + hidden("destination", destination)
++                    + f"<button class='secondary-button' type='submit'>{label}</button></form>")
++            elif destination == "settings" and row["can_read"]:
++                buttons += f"<a href='{path}/settings'>查看 Agent 设置</a>"
+         status = escape(row["status"])
+         cards.append("<article class='instance-directory-card'><div><h2>" + escape(instance.title)
+             + "</h2><span class='workbench-state'>" + escape(row["storage_label"]) + "</span></div>"
+--- before/src/scidiscovery/artifact_agent/approval_ui/app.py
++++ after/src/scidiscovery/artifact_agent/approval_ui/app.py
+@@ -897,8 +897,8 @@
+         except SchedulerBindingError as error:
+             return self._error(handler, HTTPStatus.CONFLICT, str(error))
+         response_headers = {"Location": f"/instance/{instance.instance_id}"}
+-        if action == "access" and maintenance_access and _one(form, "destination") == "manage":
+-            response_headers["Location"] += "/manage"
++        if action == "access" and maintenance_access and _one(form, "destination") in {"manage", "settings"}:
++            response_headers["Location"] += "/" + _one(form, "destination")
+         if self.browser_access is not None:
+             response_headers["Set-Cookie"] = access_cookie(instance.instance_id,
+                 self.browser_access.issue(instance.instance_id, maintenance=maintenance_access))
+@@ -1023,9 +1023,19 @@
+             return ""
+         from .agent_settings import render_settings
+         record = self.bindings.agent_settings(instance.instance_id)
++        storage = self._storage_status(instance.instance_id).get("storage_state")
++        writable = can_manage and instance.state == "active" and self._cache_writable(instance.instance_id)
++        if storage == "archived":
++            readonly_reason = "实例已归档，设置只读；恢复实例后才可修改。"
++        elif storage in {"archiving", "restoring"} or not self._cache_writable(instance.instance_id):
++            readonly_reason = "实例正在维护，暂时不能修改设置。"
++        elif instance.state != "active":
++            readonly_reason = "实例已关闭，设置只读。"
++        else:
++            readonly_reason = "当前浏览授权仅允许查看；请从实例管理中的“Agent 设置”入口取得修改权限。"
+         return render_settings(instance, record, catalog=self.read_model.operation_catalog,
+             global_settings=self.read_model.runs.agent_settings, csrf=self.session_id,
+-            writable=can_manage and instance.state == "active" and self._cache_writable(instance.instance_id),
++            writable=writable, readonly_reason=readonly_reason,
+             selected=selected, standalone=standalone)
+ 
+     def _handle_agent_settings_get(self, handler, instance_id, query):
+@@ -1064,8 +1074,7 @@
+             archive_preview=preview if action == "archive" else None,
+             restore_preview=preview if action == "restore" else None,
+             cleanup_preview=preview if action == "cleanup" else None,
+-            preferences=prefs, csrf_token=self.session_id,
+-            settings_html=self._agent_settings_html(instance, can_manage=True))
++            preferences=prefs, csrf_token=self.session_id)
+         return self._respond(handler, HTTPStatus.OK, body, "text/html; charset=utf-8")
+ 
+     def _handle_management_post(self, handler, instance_id, action):
+@@ -1116,8 +1125,14 @@
+         except Exception as error:
+             LOGGER.exception("maintenance request failed")
+             return self._error(handler, HTTPStatus.SERVICE_UNAVAILABLE, str(error)[:1024])
++        location = f"/instance/{quote(instance_id, safe='')}/manage"
++        if action == "agent-settings":
++            location = f"/instance/{quote(instance_id, safe='')}/settings"
++            selected = _one(form, "operation_id")
++            if selected:
++                location += "?operation=" + quote(selected, safe="")
+         return self._respond(handler, HTTPStatus.SEE_OTHER, b"", "text/plain; charset=utf-8",
+-            extra_headers={"Location": f"/instance/{quote(instance_id, safe='')}/manage"})
++            extra_headers={"Location": location})
+ 
+     def _shared_maintenance(self):
+         return (
+--- before/src/scidiscovery/artifact_agent/approval_ui/management_render.py
++++ after/src/scidiscovery/artifact_agent/approval_ui/management_render.py
+@@ -149,7 +149,6 @@
+     preferences=None,
+     csrf_token: str,
+     error=None,
+-    settings_html="",
+ ) -> bytes:
+     """Offer only service-declared storage actions with exact confirmation data."""
+     metadata = asdict(instance) if is_dataclass(instance) and not isinstance(instance, type) else _dict(instance)
+@@ -203,7 +202,7 @@
+                 status_body += f"<p class='source-gap'>{_ACTIONS[action]}需要当前维护记录的精确版本；请刷新。</p>"
+     if error is not None:
+         header += _section("本次请求未完成", render_json_value(error, max_bytes=4096), class_name="management-error")
+-    panels = [header, settings_html, _section("当前维护状态", status_body)]
++    panels = [header, _section("当前维护状态", status_body)]
+     for action, preview in (("archive", archive_preview), ("restore", restore_preview), ("cleanup", cleanup_preview)):
+         panels.append(_preview(action, preview, instance_id=instance_id, status=status, base=base, csrf_token=csrf_token))
+     cleanup_result = status.get("cleanup_result")
+--- before/src/scidiscovery/artifact_agent/approval_ui/agent_settings.py
++++ after/src/scidiscovery/artifact_agent/approval_ui/agent_settings.py
+@@ -74,7 +74,7 @@
+             f"<small>当前有效：{escape(str(effective))} · {escape(SOURCES.get(source, source))}</small></label>")
+ 
+ 
+-def render_settings(instance, record, *, catalog, global_settings, csrf, writable, selected="", standalone=False):
++def render_settings(instance, record, *, catalog, global_settings, csrf, writable, selected="", standalone=False, readonly_reason="当前没有设置修改权限。"):
+     operations = agent_operations(catalog)
+     if selected and selected not in operations:
+         raise ValueError("所选任务当前未安装。")
+@@ -123,7 +123,7 @@
+                  "<button name='settings_action' value='save'>保存后续任务设置</button> "
+                  "<button name='settings_action' value='reset'>清除本实例全部覆盖，恢复继承</button>")
+     else:
+-        body += "<p class='source-gap'>当前仅可查看设置。归档实例只读；修改需要实例管理权限。</p>"
++        body += "<p class='source-gap'>当前仅可查看设置。" + escape(readonly_reason) + "</p><a href='/instances/manage'>返回实例管理</a>"
+     body += "</form></section>"
+     script = "<script defer src='/static/agent-settings.js'></script>"
+     if standalone:
+--- before/tests/operations/test_agent_settings_ui.py
++++ after/tests/operations/test_agent_settings_ui.py
+@@ -14,10 +14,13 @@
+     status, _, body = _request(ui.base_url, "GET", f"/instance/{target}/settings", cookie=read_cookie)
+     assert status == 200 and "当前仅可查看设置".encode() in body
+     assert b"content='same-origin'" in body
++    assert "当前浏览授权仅允许查看".encode() in body
++    assert "实例已归档".encode() not in body
+     assert _request(ui.base_url, "POST", path, cookie=read_cookie, form=form)[0] == 403
+     assert _request(ui.base_url, "POST", f"/instance/{second.instance_id}/manage/agent-settings", cookie=cookie, form=form)[0] == 403
+     assert _request(ui.base_url, "POST", path, cookie=cookie, form={**form, "csrf_token": "wrong"})[0] == 403
+-    assert _request(ui.base_url, "POST", path, cookie=cookie, form=form)[0] == 303
++    status, headers, _ = _request(ui.base_url, "POST", path, cookie=cookie, form=form)
++    assert status == 303 and headers["Location"] == f"/instance/{target}/settings"
+     assert ui.management._thread is None  # Saving settings does not start maintenance or science.
+     saved = runtime.scheduler_bindings.agent_settings(target)
+     assert saved["settings"]["defaults"]["model"] == "gpt-5.6-luna"
+@@ -28,8 +31,10 @@
+     assert runtime.runs.active_ids(instance_id=target, limit=10) == ()
+     assert runtime.scheduler_bindings.agent_settings(second.instance_id)["revision"] == 0
+     _, _, page = _request(ui.base_url, "GET", f"/instance/{target}/manage", cookie=cookie)
+-    assert "实例默认".encode() in page and b"data-settings-preview" in page
+-    assert b"/static/agent-settings.js" in page
++    assert b"agent-settings-form" not in page and b"data-settings-preview" not in page
++    _, _, settings_page = _request(ui.base_url, "GET", f"/instance/{target}/settings", cookie=cookie)
++    assert "实例默认".encode() in settings_page and b"data-settings-preview" in settings_page
++    assert b"management-confirm" not in settings_page
+ 
+ 
+ def test_operation_override_form_preserves_other_overrides_and_resets(management_ui):
+@@ -44,3 +49,32 @@
+     assert saved["operations"][name] == dict(model="new", reasoning_effort="low")
+     assert saved["operations"]["disabled.operation"]["model"] == "retained"
+     assert apply_form(saved, {"settings_action": ["reset"]}, runtime.operation_catalog) == {}
++
++
++def test_separate_settings_and_archive_entry_grants_do_not_bind_or_start_work(management_ui):
++    from scidiscovery.artifact_agent.service.instance_management import issue_instance_management_capability
++    from scidiscovery.artifact_agent.approval_ui.access import management_cookie
++    runtime, ui, first, _, _ = management_ui
++    token = issue_instance_management_capability(session_key="sch_" + "a" * 32,
++        secret=ui.instance_management_secret)
++    cookie = management_cookie(token, max_age=3600)
++    status, _, page = _request(ui.base_url, "GET", "/instances/manage", cookie=cookie)
++    assert status == 200
++    assert b"name='destination' value='settings'" in page
++    assert b"name='destination' value='manage'" in page
++    before = runtime.scheduler_bindings.session_instance(session_key="sch_" + "a" * 32)
++    for destination in ("settings", "manage"):
++        form = dict(capability=token, csrf=ui.session_id, instance_id=first.instance_id,
++                    scope="maintenance", destination=destination)
++        assert _request(ui.base_url, "POST", "/instances/access", form={**form, "csrf": "bad"})[0] == 403
++        status, headers, _ = _request(ui.base_url, "POST", "/instances/access", form=form)
++        assert status == 303
++        assert headers["Location"] == f"/instance/{first.instance_id}/{destination}"
++        grant = headers["Set-Cookie"].split(";", 1)[0]
++        status, _, page = _request(ui.base_url, "GET", headers["Location"], cookie=grant)
++        assert status == 200
++        assert (b"agent-settings-form" in page) == (destination == "settings")
++        assert ("当前维护状态".encode() in page) == (destination == "manage")
++    assert runtime.scheduler_bindings.session_instance(session_key="sch_" + "a" * 32) == before
++    assert ui.management._thread is None
++    assert runtime.runs.active_ids(instance_id=first.instance_id, limit=10) == ()

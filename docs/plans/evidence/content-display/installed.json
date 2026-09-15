@@ -1,0 +1,34 @@
+{
+  "command": [
+    "python",
+    "docs/plans/evidence/content-display/install_check.py",
+    "content-installed"
+  ],
+  "exit_code": 0,
+  "stop_reason": null,
+  "duration_seconds": 20.467,
+  "peak_tree_rss_mib": 394.85,
+  "budget_mib": 512,
+  "peak_processes": [
+    {
+      "name": "python",
+      "rss_mib": 108.44
+    },
+    {
+      "name": "python",
+      "rss_mib": 108.23
+    },
+    {
+      "name": "python",
+      "rss_mib": 104.93
+    },
+    {
+      "name": "python",
+      "rss_mib": 47.76
+    },
+    {
+      "name": "python",
+      "rss_mib": 25.5
+    }
+  ]
+}

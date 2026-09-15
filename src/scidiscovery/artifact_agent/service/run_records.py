@@ -108,6 +108,7 @@ class RunStatus:
     request_digest: str
     draft_from_run_id: str | None = None
     recovery_policy: dict[str, Any] | None = None
+    execution_profile: dict[str, Any] | None = None
 
 
 def status_from_row(row: sqlite3.Row) -> RunStatus:
@@ -157,6 +158,8 @@ def status_from_row(row: sqlite3.Row) -> RunStatus:
             if row["recovery_draft_json"] is None
             else _json_object(row["recovery_draft_json"], "stored recovery draft")
         ),
+        execution_profile=(None if "execution_profile_json" not in row.keys() or row["execution_profile_json"] is None
+                           else _json_object(row["execution_profile_json"], "stored execution profile")),
         request_digest=str(row["request_digest"]),
         draft_from_run_id=row["draft_from_run_id"],
         recovery_policy=(None if row["recovery_policy_json"] is None else

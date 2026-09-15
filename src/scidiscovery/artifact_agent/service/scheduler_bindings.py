@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import re
+import hashlib
+import json
 import sqlite3
 import uuid
 from dataclasses import dataclass
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
 from ..schema.refs import ArtifactRef
+from ...agent_execution_settings import EXECUTION_SETTINGS_COLUMNS, parse_settings
 
 
 _NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,255}$")
@@ -86,6 +90,7 @@ class SchedulerBindingService:
 
     def __init__(self, database_path: Path | str) -> None:
         self.database_path = Path(database_path).expanduser().absolute()
+        self.client_database_path = self.database_path.with_name(self.database_path.stem + "-clients.sqlite3")
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
         self._initialize()
 
@@ -110,6 +115,7 @@ class SchedulerBindingService:
         name: str,
         title: str,
         objective: str,
+        expected_binding: str | None = None,
     ) -> SchedulerInstance:
         """Atomically create one active instance and bind the exact UI session."""
 
@@ -119,6 +125,7 @@ class SchedulerBindingService:
         _bounded_text(objective, label="research instance objective", maximum=8192)
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
+            self._check_session_snapshot(connection, session_key, None, expected_binding)
             value = self._create_instance_in_connection(
                 connection, name=name, title=title, objective=objective
             )
@@ -131,7 +138,7 @@ class SchedulerBindingService:
         return value
 
     def bind_session_by_name(
-        self, *, session_key: str, name: str
+        self, *, session_key: str, name: str, expected_binding: str | None = None
     ) -> SchedulerInstance:
         """Atomically bind the exact UI session to one named active instance."""
 
@@ -151,6 +158,7 @@ class SchedulerBindingService:
                 raise SchedulerInstanceClosed(
                     f"research instance is closed: {name}"
                 )
+            self._check_session_snapshot(connection, session_key, value.instance_id, expected_binding)
             self._bind_session_in_connection(
                 connection,
                 session_key=session_key,
@@ -158,6 +166,88 @@ class SchedulerBindingService:
             )
             connection.execute("COMMIT")
         return value
+
+    def session_binding_snapshot(self, *, session_key: str, instance_id: str | None = None) -> dict:
+        """Read ownership for a browser confirmation; never infer Agent liveness."""
+        self._validate_session_key(session_key)
+        with self._connect() as connection:
+            return self._session_snapshot(connection, session_key, instance_id)
+
+    def register_client(self, *, session_key: str) -> None:
+        """An MCP client requests connection; reconnect never undoes a UI pause."""
+        self._validate_session_key(session_key)
+        with self._client_connect(create=True) as connection:
+            connection.execute("INSERT OR IGNORE INTO scheduler_clients VALUES (?, 1, ?)",
+                               (session_key, _timestamp()))
+
+    def client_enabled(self, *, session_key: str) -> bool:
+        if not self.client_database_path.exists():
+            return True
+        with self._client_connect() as connection:
+            row = connection.execute("SELECT enabled FROM scheduler_clients WHERE session_key=?", (session_key,)).fetchone()
+        return row is None or bool(row["enabled"])  # Legacy transports retain their existing binding semantics.
+
+    def clients(self, *, offset: int = 0, limit: int = 30) -> list[dict]:
+        if not self.client_database_path.exists():
+            return []
+        with self._client_connect(bindings=True) as connection:
+            return [dict(row) for row in connection.execute(
+                "SELECT c.session_key, c.enabled, c.requested_at, s.instance_id, i.title "
+                "FROM scheduler_clients c LEFT JOIN bindings.scheduler_sessions s USING(session_key) "
+                "LEFT JOIN bindings.scheduler_instances i ON i.instance_id=s.instance_id "
+                "ORDER BY c.requested_at DESC, c.session_key LIMIT ? OFFSET ?", (limit, offset)).fetchall()]
+
+    def set_client_enabled(self, *, session_key: str, enabled: bool, expected: bool) -> None:
+        if not self.client_database_path.exists():
+            raise SchedulerInstanceConflict("会话尚未登记，请先连接科研客户端。")
+        with self._client_connect() as connection:
+            cursor = connection.execute("UPDATE scheduler_clients SET enabled=? WHERE session_key=? AND enabled=?",
+                                        (int(enabled), session_key, int(expected)))
+            if cursor.rowcount != 1:
+                raise SchedulerInstanceConflict("会话状态已变化，请刷新后重试。")
+
+    def active_clients(self, *, instance_id: str) -> tuple[str, ...]:
+        if not self.client_database_path.exists():
+            return ()
+        with self._client_connect(bindings=True) as connection:
+            return tuple(row[0] for row in connection.execute(
+                "SELECT c.session_key FROM scheduler_clients c JOIN bindings.scheduler_sessions s USING(session_key) "
+                "WHERE s.instance_id=? AND c.enabled=1", (instance_id,)).fetchall())
+
+    @contextmanager
+    def _client_connect(self, *, create=False, bindings=False):
+        # Transport requests belong to the server, not to an instance's archive.
+        connection = sqlite3.connect(self.client_database_path, timeout=30)
+        connection.row_factory = sqlite3.Row
+        try:
+            with connection:
+                if create:
+                    connection.execute("CREATE TABLE IF NOT EXISTS scheduler_clients ("
+                        "session_key TEXT PRIMARY KEY, enabled INTEGER NOT NULL CHECK(enabled IN (0,1)), requested_at TEXT NOT NULL)")
+                if bindings:
+                    connection.execute("ATTACH DATABASE ? AS bindings", (str(self.database_path),))
+                yield connection
+        finally:
+            connection.close()
+
+    @staticmethod
+    def _session_snapshot(connection, session_key, instance_id):
+        rows = connection.execute(
+            "SELECT session_key, instance_id, updated_at FROM scheduler_sessions "
+            "WHERE session_key=? OR instance_id=? ORDER BY session_key", (session_key, instance_id),
+        ).fetchall()
+        values = [dict(row) for row in rows]
+        current = next((row for row in values if row["session_key"] == session_key), None)
+        owner = next((row for row in values if row["instance_id"] == instance_id), None)
+        fingerprint = hashlib.sha256(json.dumps([session_key, instance_id, values], sort_keys=True).encode()).hexdigest()
+        return {"current_instance_id": current["instance_id"] if current else None,
+                "target_bound": owner is not None, "target_is_current": owner is not None and owner["session_key"] == session_key,
+                "fingerprint": fingerprint}
+
+    @classmethod
+    def _check_session_snapshot(cls, connection, session_key, instance_id, expected):
+        if expected is not None and cls._session_snapshot(connection, session_key, instance_id)["fingerprint"] != expected:
+            raise SchedulerInstanceConflict("会话绑定已变化，请返回首页重新核对后再确认。")
 
     def select_instance(self, *, name: str) -> SchedulerInstance:
         self._validate_name(name, label="research instance name")
@@ -183,6 +273,40 @@ class SchedulerBindingService:
         if row is None:
             raise SchedulerInstanceNotFound("unknown research instance")
         return _instance(row)
+
+    def agent_settings(self, instance_id: str) -> dict:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT agent_settings_json, agent_settings_revision, agent_settings_updated_at "
+                "FROM scheduler_instances WHERE instance_id=?", (instance_id,),
+            ).fetchone()
+        if row is None:
+            raise SchedulerInstanceNotFound("unknown research instance")
+        return {"settings": parse_settings(json.loads(row[0]) if row[0] else {},
+                                          label="instance agent settings").sparse(),
+                "revision": row[1], "updated_at": row[2]}
+
+    def save_agent_settings(self, instance_id: str, settings: dict, *,
+                            expected_revision: int, maintenance) -> dict:
+        parsed = parse_settings(settings, label="instance agent settings").sparse()
+        if type(expected_revision) is not int or expected_revision < 0:
+            raise ValueError("expected_revision must be a nonnegative integer")
+        with maintenance.guard(instance_id), self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute("SELECT state, agent_settings_revision FROM scheduler_instances "
+                                     "WHERE instance_id=?", (instance_id,)).fetchone()
+            if row is None:
+                raise SchedulerInstanceNotFound("unknown research instance")
+            if row[0] != "active":
+                raise SchedulerInstanceClosed("归档或关闭的实例设置只读。")
+            if row[1] != expected_revision:
+                raise SchedulerInstanceConflict("设置已更新，请刷新。")
+            updated_at = datetime.now(timezone.utc).isoformat()
+            connection.execute("UPDATE scheduler_instances SET agent_settings_json=?, "
+                "agent_settings_revision=agent_settings_revision+1, agent_settings_updated_at=? "
+                "WHERE instance_id=?", (json.dumps(parsed, ensure_ascii=False), updated_at, instance_id))
+            connection.execute("COMMIT")
+        return {"settings": parsed, "revision": expected_revision + 1, "updated_at": updated_at}
 
     def list_instances(self, *, state: str | None = None) -> tuple[SchedulerInstance, ...]:
         if state not in {None, "active", "closed"}:
@@ -645,19 +769,21 @@ class SchedulerBindingService:
         )
 
     def scientific_selections(
-        self, *, instance: str
+        self, *, instance: str, limit: int | None = None
     ) -> tuple[SchedulerScientificSelection, ...]:
         if not isinstance(instance, str) or not instance:
             raise ValueError("research instance identity is invalid")
+        if limit is not None and (type(limit) is not int or not 1 <= limit <= 101):
+            raise ValueError("scientific selection read limit must be between 1 and 101")
         with self._connect() as connection:
             rows = connection.execute(
                 """
                 SELECT kind, logical_name, artifact_ref_json, selected_at
                 FROM scheduler_scientific_selections
                 WHERE instance = ?
-                ORDER BY kind
+                ORDER BY kind LIMIT ?
                 """,
-                (instance,),
+                (instance, -1 if limit is None else limit),
             ).fetchall()
         return tuple(
             SchedulerScientificSelection(
@@ -675,6 +801,21 @@ class SchedulerBindingService:
             for row in rows
         )
 
+    def selection_records(self, *, instance: str, artifact_ref: ArtifactRef) -> tuple[dict, ...]:
+        """Observe exact current selections without evaluating scientific admission."""
+        self.get_instance(instance_id=instance)
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT s.* FROM scheduler_scientific_selections s WHERE s.instance=? AND "
+                "(s.artifact_ref_json=? OR EXISTS (SELECT 1 FROM scheduler_bindings b WHERE "
+                "b.instance=s.instance AND b.namespace='artifact' AND b.object_id=? AND b.logical_name=s.logical_name)) "
+                "ORDER BY s.kind LIMIT 101", (instance, artifact_ref.canonical_json(), artifact_ref.artifact_id),
+            ).fetchall()
+        return tuple({"kind": str(row["kind"]), "logical_name": str(row["logical_name"]),
+            "selected_at": str(row["selected_at"]),
+            "is_selected": row["artifact_ref_json"] == artifact_ref.canonical_json(),
+            "selection_present": row["artifact_ref_json"] is not None} for row in rows)
+
     def instance_bindings(self, *, instance: str) -> tuple[SchedulerBinding, ...]:
         """Return every semantic control-object binding owned by one instance."""
 
@@ -688,6 +829,42 @@ class SchedulerBindingService:
                 """,
                 (instance,),
             ).fetchall()
+        return tuple(_binding(row) for row in rows)
+
+    def binding_page(
+        self, *, instance: str, after: tuple[str, str, str] | None = None,
+        limit: int = 30,
+    ) -> tuple[SchedulerBinding, ...]:
+        """Read a stable, bounded metadata page, including historical revisions."""
+
+        self.get_instance(instance_id=instance)
+        if type(limit) is not int or not 1 <= limit <= 101:
+            raise ValueError("binding page limit must be between 1 and 101")
+        query = "SELECT * FROM scheduler_bindings WHERE instance = ?"
+        parameters: list[object] = [instance]
+        if after is not None:
+            if (not isinstance(after, tuple) or len(after) != 3
+                    or any(not isinstance(item, str) for item in after)):
+                raise ValueError("invalid binding page cursor")
+            query += " AND (created_at < ? OR (created_at = ? AND (namespace, name) > (?, ?)))"
+            parameters.extend((after[0], after[0], after[1], after[2]))
+        query += " ORDER BY created_at DESC, namespace, name LIMIT ?"
+        parameters.append(limit)
+        with self._connect() as connection:
+            rows = connection.execute(query, parameters).fetchall()
+        return tuple(_binding(row) for row in rows)
+
+    def invocation_artifacts(self, *, instance: str, request_fingerprint: str,
+                             after: str = "", limit: int = 101) -> tuple[SchedulerBinding, ...]:
+        """Bounded, instance-local historical bindings for one saved invocation."""
+        if (not _FINGERPRINT.fullmatch(request_fingerprint) or not isinstance(after, str)
+                or type(limit) is not int or not 1 <= limit <= 101):
+            raise ValueError("invalid invocation binding page")
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM scheduler_bindings WHERE instance = ? AND namespace = 'artifact' "
+                "AND request_fingerprint = ? AND name > ? ORDER BY name LIMIT ?",
+                (instance, request_fingerprint, after, limit)).fetchall()
         return tuple(_binding(row) for row in rows)
 
     def object_owner_count(self, *, namespace: str, object_id: str) -> int:
@@ -849,6 +1026,10 @@ class SchedulerBindingService:
                 )
                 """
             )
+            existing = {row[1] for row in connection.execute("PRAGMA table_info(scheduler_instances)")}
+            for name, (definition, _) in EXECUTION_SETTINGS_COLUMNS["scheduler_instances"].items():
+                if name not in existing:
+                    connection.execute(f"ALTER TABLE scheduler_instances ADD COLUMN {name} {definition}")
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS scheduler_bindings (

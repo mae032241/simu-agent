@@ -309,7 +309,7 @@ def test_no_contract_author_review_package_execute_preflight(tmp_path,monkeypatc
             reached.append(True)
         return result
     monkeypatch.setattr(RootMCPRouter,'call_tool',capture)
-    _TCAD['test_materialized_sprocess_author_review_package_preserves_case_anchors'](tmp_path,monkeypatch,True)
+    _TCAD['test_materialized_sprocess_author_review_package_preserves_case_anchors'](tmp_path,monkeypatch,True,with_controls=False)
     assert reached
 
 

@@ -1,0 +1,24 @@
+{
+  "command": [
+    "env",
+    "SCID_SETTINGS_PROBE_ROOT=/tmp/scid-execution-settings-candidate",
+    "/tmp/scid-execution-settings-installed/venv/bin/python",
+    "-I",
+    "docs/plans/evidence/agent-execution-settings/p0_fixture.py",
+    "settings",
+    "gpt-5.6-luna",
+    "low",
+    "zh-CN"
+  ],
+  "exit_code": 0,
+  "stop_reason": null,
+  "duration_seconds": 1.411,
+  "peak_tree_rss_mib": 88.56,
+  "budget_mib": 512,
+  "peak_processes": [
+    {
+      "name": "python",
+      "rss_mib": 88.56
+    }
+  ]
+}

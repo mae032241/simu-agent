@@ -1,0 +1,160 @@
+{
+  "base_head": "da220ce31c8cc9f9a60542a018b279e2f331f4c0",
+  "plan_sha256": "d76e5ee486c1595fa7dc77c5776f3319b0650c9992f1914190b6ed69c9c731ec",
+  "files": {
+    "src/scidiscovery/artifact_agent/runtime.py": {
+      "sha256": "02713d2bea7d8a069c3f23d8a8df2570835f77db20bb9fb8045a4adb4329df7a",
+      "base": "BASELINE.json"
+    },
+    "src/scidiscovery/platforms/codex.py": {
+      "sha256": "3528d67e689ff2ac7f7e2e41717484c8e8cb7191545cdd8d9f140a5bc79d193f",
+      "base": "BASELINE.json"
+    },
+    "src/scidiscovery/operations/invoke.py": {
+      "sha256": "a0784f65b5468914d5cdef30ee661cb227c1daf43c2614ae4e7643e48be50983",
+      "base": "BASELINE.json"
+    },
+    "src/scidiscovery/artifact_agent/interfaces/mcp_local_worker.py": {
+      "sha256": "5c3b048201617bb2ffdf443926e186c514688a83184d29e8d6d5f05462615b27",
+      "base": "BASELINE.json"
+    },
+    "src/scidiscovery/artifact_agent/interfaces/mcp.py": {
+      "sha256": "d7519c75b8e94d3263073b7c63d7c2426d76316f75d3306238af58bc86e3a581",
+      "base": "BASELINE.json"
+    },
+    "src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py": {
+      "sha256": "2e792cd6dd2fad0766c6259c045db47ff9057833d53ec02f076bf9ad0343e06d",
+      "base": "BASELINE.json"
+    },
+    "src/scidiscovery/artifact_agent/interfaces/mcp_root.py": {
+      "sha256": "8ec73d87b2b857bd4686192f8a8bc179842de838136f52d1428c85103d32c173",
+      "base": "BASELINE.json"
+    },
+    "src/scidiscovery/artifact_agent/interfaces/mcp_hardened_worker.py": {
+      "sha256": "0434ccf48931b468c7cb3f8afbbc53f604343c5e07155e9b5ca0f3d3e118e7ac",
+      "base": "BASELINE.json"
+    },
+    "src/scidiscovery/artifact_agent/interfaces/mcp_daemon.py": {
+      "sha256": "6390c922f0ca64c6cc3046698a476e8f525bb965dff4e624140c2d4b2a54ba7e",
+      "base": "BASELINE.json"
+    },
+    "src/scidiscovery/artifact_agent/interfaces/mcp_root_run_routes.py": {
+      "sha256": "4968bd747d3f4f57c1fc2206df826a53691121e507a067c32b330b575aa62925",
+      "base": "BASELINE.json"
+    },
+    "src/scidiscovery/artifact_agent/approval_ui/read_model.py": {
+      "sha256": "72fde3732655100d1a28a0f327410e88475485df82b9fdf641e266ac1fc8c1bd",
+      "base": "BASELINE.json"
+    },
+    "src/scidiscovery/artifact_agent/approval_ui/navigation.py": {
+      "sha256": "ee741c9c640b153e1402a61c8ba9162e35d73bb2510451d94473281af8fd63ed",
+      "base": "BASELINE.json"
+    },
+    "src/scidiscovery/artifact_agent/approval_ui/workbench_render.py": {
+      "sha256": "d2e469334cfe2afd265333e42f04cf2fd3af09b942b18b5119852616b1fb6c6a",
+      "base": "BASELINE.json"
+    },
+    "src/scidiscovery/artifact_agent/approval_ui/app.py": {
+      "sha256": "a75688f8cb36159eeeb8b85f3fe042bfa19a089e02454791b99325df50aee6e7",
+      "base": "BASELINE.json"
+    },
+    "src/scidiscovery/artifact_agent/approval_ui/management_render.py": {
+      "sha256": "335a04508790ab5a53e4c89fd20410b857e1e5b818025d222a99bc7628248323",
+      "base": "BASELINE.json"
+    },
+    "src/scidiscovery/artifact_agent/service/instance_archive.py": {
+      "sha256": "088022a0d7c43963fb16d23707d25effcc10bfdcfa2b8d815a55622289515c3b",
+      "base": "BASELINE.json"
+    },
+    "src/scidiscovery/artifact_agent/service/run_assignment.py": {
+      "sha256": "f2a2318dcff4e00cd34fdd8fbf41d0c3af2d0baf37cc4e2a0d5a2b269f1d4488",
+      "base": "BASELINE.json"
+    },
+    "src/scidiscovery/artifact_agent/service/run_records.py": {
+      "sha256": "5a99f7e1b63a40d64f3dc9a755957381e1a30ffcad1b491bc60ccd923a045ab5",
+      "base": "BASELINE.json"
+    },
+    "src/scidiscovery/artifact_agent/service/scheduler_bindings.py": {
+      "sha256": "c348cd9e1f9a6a634900eef63fefae481f24b950ccbaeb4be3044853d62d9e6c",
+      "base": "BASELINE.json"
+    },
+    "src/scidiscovery/artifact_agent/service/runs.py": {
+      "sha256": "fb194bd1fac0c3adedca03ef54cd07003689460c73076da6509b345869fbebe3",
+      "base": "BASELINE.json"
+    },
+    "src/scidiscovery/artifact_agent/service/instance_archive_records.py": {
+      "sha256": "19d5a887359a20019483bf5ebf265ee34dec9c88ed597c948978ae1e7042ca73",
+      "base": "BASELINE.json"
+    },
+    "src/scidiscovery/artifact_agent/approval_ui/static/style.css": {
+      "sha256": "c334430424f3f319e4265529dd0e840b764fdf738b2797c5c3dcf4ef6d21978b",
+      "base": "BASELINE.json"
+    },
+    "deploy/install.sh": {
+      "sha256": "ff62b288b162c8ccbdfb553cf378da06e6ce4d07ad7513e2897e79b19c709c46",
+      "base": "BASELINE.json"
+    },
+    "deploy/systemd/scidiscovery-approval-ui.service.in": {
+      "sha256": "42a4e404252bcd90914963753b4a1c0a69a0105c44832d09b5196d7753dcab25",
+      "base": "BASELINE.json"
+    },
+    "deploy/systemd/scidiscovery-control.service.in": {
+      "sha256": "17da372a6ec9deee777ac5afe4567b0797264324618ba4ef2789788cc6ab6ba6",
+      "base": "BASELINE.json"
+    },
+    "tests/artifact_agent/test_platform_configuration.py": {
+      "sha256": "30dc5b75eee56bc312c624fbb72a7d9a9dea509ead7e1ee06380787c15b515c6",
+      "base": "BASELINE.json"
+    },
+    "tests/operations/test_independent_codex_worker_launcher.py": {
+      "sha256": "2287a98bb6ede300db3bfca09bda7271242238d30d7ec71d6dc22cbe97ccdd71",
+      "base": "BASELINE.json"
+    },
+    "src/scidiscovery/agent_execution_settings.py": {
+      "sha256": "3e2a8b76811732eb7f05401f341961aac80b840891706e457bcb958d319098df",
+      "base": "new"
+    },
+    "src/scidiscovery/artifact_agent/approval_ui/agent_settings.py": {
+      "sha256": "2ace239819db2cd19a54af8c14b343c15d7e02d01b2a96f4cd6930407affc64f",
+      "base": "new"
+    },
+    "src/scidiscovery/artifact_agent/approval_ui/static/agent-settings.js": {
+      "sha256": "b33505cf83b87999a9fa48ede52b6982a65c6a35c498b4c69bc8480a03076b77",
+      "base": "new"
+    },
+    "tests/operations/test_agent_execution_settings.py": {
+      "sha256": "8cbc9227d888592e8a9c432d0ef73a38cd343781963ccc5c21d06cb7cc826622",
+      "base": "new"
+    },
+    "tests/operations/test_agent_settings_ui.py": {
+      "sha256": "2ef6e33f8b41f0a6ed15cd7fd3ffbb3ffb62c06904c04d2bec5aeca88ef6f389",
+      "base": "new"
+    },
+    "tests/operations/test_agent_settings_install.py": {
+      "sha256": "52d6d071307cd5b9645fabec994a495a9e277d3db78a06190a1438df51fbc083",
+      "base": "new"
+    },
+    "tests/operations/test_execution_settings_archive.py": {
+      "sha256": "3a6481c7184bcdb27286030a32517b525f62a8d45c9351add3862a811b2c8635",
+      "base": "new"
+    },
+    "scripts/run_compiled_codex_worker.py": {
+      "sha256": "98127b1d8f393912fe486e20c6f1474e2c8201a84dd28bd54f56fc68c31ab9f0",
+      "base": "HEAD clean before task"
+    },
+    "scripts/l3_live_review_probe.py": {
+      "sha256": "99c33e005428872f416c1d38e70464dbded1fd55d1fd0cfec36a9d0767b9e943",
+      "base": "HEAD clean before task"
+    },
+    "scripts/l4_live_tcad_agent_probe.py": {
+      "sha256": "75d84c809aff9608ad15eb2636ba1f12f715a6fececf73ea27bd2a428770729c",
+      "base": "HEAD clean before task"
+    }
+  },
+  "documentation": "Only appended execution-settings sections in INSTALL/ARCHITECTURE bilingual docs; current status in plans/README. Prior UI dirty changes are excluded.",
+  "production_file_count": 31,
+  "changes_from_r1": [
+    "src/scidiscovery/artifact_agent/service/instance_archive.py",
+    "tests/operations/test_execution_settings_archive.py"
+  ]
+}

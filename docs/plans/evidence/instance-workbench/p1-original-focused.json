@@ -1,0 +1,18 @@
+{
+  "command": [
+    "python",
+    "-m",
+    "pytest",
+    "-q",
+    "tests/operations/test_r4_approval_ui_renderer.py",
+    "tests/operations/test_r4_execution_approval_identity.py",
+    "tests/operations/test_m6a_direct_instance_management.py",
+    "-k",
+    "not artifact_catalog_parent_limit_never_truncates"
+  ],
+  "exit_code": 0,
+  "stop_reason": null,
+  "duration_seconds": 23.123,
+  "peak_tree_rss_mib": 127.63,
+  "budget_mib": 512
+}

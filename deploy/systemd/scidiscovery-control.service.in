@@ -12,6 +12,7 @@ UMask=0007
 WorkingDirectory=@PROJECT_ROOT@
 Environment="PYTHONPATH=@PYTHONPATH@"
 Environment=PYTHONNOUSERSITE=1
+Environment="SCID_AGENT_SETTINGS_FILE=@AGENT_SETTINGS_FILE@"
 RuntimeDirectory=scidiscovery
 RuntimeDirectoryMode=0770
 ExecStartPre="@PYTHON@" -m scidiscovery.runtime_identity verify --manifest "@RUNTIME_IDENTITY@"

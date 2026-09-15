@@ -1,0 +1,34 @@
+F.......................                                                 [100%]
+=================================== FAILURES ===================================
+_______ test_settings_http_permissions_cas_and_no_research_side_effects ________
+
+management_ui = (ArtifactAgentRuntime(project_root=PosixPath('/tmp/pytest-of-da/pytest-89/test_settings_http_permissions0/project'), s...BdH4eJCKtYkCwRu2ncjIm1Zb35tZKRg3_qH8-QxhX7XDdKVirCKRhtcOiWNt6Ajj_qM; HttpOnly; Max-Age=14400; Path=/; SameSite=Strict')
+
+    def test_settings_http_permissions_cas_and_no_research_side_effects(management_ui):
+        runtime, ui, first, second, cookie = management_ui
+        target = first.instance_id
+        path = f"/instance/{target}/manage/agent-settings"
+        form = dict(csrf_token=ui.session_id, expected_revision="0", settings_action="save", operation_id="",
+                    default_model="gpt-5.6-luna", default_reasoning_effort="low",
+                    default_narrative_language="zh-CN", default_max_attempts="3")
+        read_cookie = access_cookie(target, ui.browser_access.issue(target))
+        status, _, body = _request(ui.base_url, "GET", f"/instance/{target}/settings", cookie=read_cookie)
+        assert status == 200 and "当前仅可查看设置".encode() in body
+        assert _request(ui.base_url, "POST", path, cookie=read_cookie, form=form)[0] == 403
+        assert _request(ui.base_url, "POST", f"/instance/{second.instance_id}/manage/agent-settings", cookie=cookie, form=form)[0] == 403
+        assert _request(ui.base_url, "POST", path, cookie=cookie, form={**form, "csrf_token": "wrong"})[0] == 403
+        assert _request(ui.base_url, "POST", path, cookie=cookie, form=form)[0] == 303
+        assert ui.management._thread is None  # Saving settings does not start maintenance or science.
+        saved = runtime.scheduler_bindings.agent_settings(target)
+        assert saved["settings"]["defaults"]["model"] == "gpt-5.6-luna"
+        assert saved["revision"] == 1
+        assert _request(ui.base_url, "POST", path, cookie=cookie, form=form)[0] == 409
+        assert runtime.scheduler_bindings.agent_settings(target) == saved
+>       assert runtime.scheduler_bindings.session_instance(session_key="sch_" + "a" * 32).instance_id == target
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: 'str' object has no attribute 'instance_id'
+
+tests/operations/test_agent_settings_ui.py:26: AttributeError
+=========================== short test summary info ============================
+FAILED tests/operations/test_agent_settings_ui.py::test_settings_http_permissions_cas_and_no_research_side_effects
+1 failed, 23 passed in 5.58s

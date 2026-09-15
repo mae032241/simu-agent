@@ -1,0 +1,21 @@
+{
+  "command": [
+    "python",
+    "-m",
+    "pytest",
+    "-q",
+    "tests/operations/test_agent_execution_settings.py",
+    "tests/operations/test_independent_codex_worker_launcher.py::test_dynamic_launcher_requires_and_projects_run_model"
+  ],
+  "exit_code": 0,
+  "stop_reason": null,
+  "duration_seconds": 3.519,
+  "peak_tree_rss_mib": 118.14,
+  "budget_mib": 512,
+  "peak_processes": [
+    {
+      "name": "python",
+      "rss_mib": 118.14
+    }
+  ]
+}

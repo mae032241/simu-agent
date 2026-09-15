@@ -1,0 +1,70 @@
+.................F.....F................................................ [ 71%]
+.............................                                            [100%]
+=================================== FAILURES ===================================
+_______ test_parameters_keep_exact_plan_scope_and_review_findings_links ________
+
+system = namespace(actor=ActorRef(schema_version=1, actor_id='fixture', actor_type='service'), artifacts=<scidiscovery.artifact...eadModel object at 0x7f31eadcea50>, a='ins_45753b2c256842b383fad05172502e10', b='ins_e893af2090ac4f0fbf0065d47f75c525')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7f31eadcd610>
+
+    def test_parameters_keep_exact_plan_scope_and_review_findings_links(system, monkeypatch):
+        provider(monkeypatch)
+        s = system
+        payload = {"proposals":[{"variables":[{"variable_key":"depth", "baseline_value":5}]}]}
+        plan = record(s, "bound-plan", "scidiscovery.experiment-portfolio.v1", payload)
+        old = record(s, "historical-plan", "scidiscovery.experiment-portfolio.v1", payload)
+        review = record(s, "review-output", "scidiscovery.scientific-review.v1", {"verdict":"pass", "findings":[{"detail":"scope"}]})
+        run(s, "scoped-review", inputs=(NS(port_name="experiment_plan",artifact_ref=plan.ref),
+            NS(port_name="current_progress",artifact_ref=old.ref)), output=review.ref)
+        context = s.model.node_context(s.a,"run:scoped-review")
+        assert context["task_artifact_ids"] == [plan.artifact_id]
+        value = presentation.build_presentation(context["artifacts"], focus_artifact_ids=context["focus_artifact_ids"],
+            task_artifact_ids=context["task_artifact_ids"])
+        page = render_presentation(value, evidence_href=lambda a,p:"/original/"+a+p, image_href=lambda a:"/image/"+a)
+        main = page.split("<section class='conclusion-card'>",1)[1].split("</section>",1)[0]
+        assert "/original/"+plan.artifact_id in main and old.artifact_id not in main
+        assert "/original/"+review.artifact_id+"/findings" in main
+>       assert "本节点 1 / 关联与历史 1" in page
+E       assert '本节点 1 / 关联与历史 1' in "<div class='research-presentation'><section class='conclusion-card'><p class='eyebrow'>本节点的正式记录</p><h2>独立科学审查</h2><p ...033d79f4248998712e7a86932d3/findings' title='原记录位置：/findings'>查看来源</a></article></div></details></div></details></div>"
+
+tests/operations/test_instance_usability.py:93: AssertionError
+_ test_real_parameter_package_structure_renders_selected_value_source_and_unknowns _
+
+system = namespace(actor=ActorRef(schema_version=1, actor_id='fixture', actor_type='service'), artifacts=<scidiscovery.artifact...eadModel object at 0x7f31e91ac8c0>, a='ins_a127ac0776684b9b8df8a77aceb35e3c', b='ins_9c919c8aea864ab8b7a7c13840b9f8d1')
+installed = ['scidiscovery.instance_views']
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-77/test_real_parameter_package_st0')
+
+    def test_real_parameter_package_structure_renders_selected_value_source_and_unknowns(system, installed, tmp_path):
+        values = _package().model_dump(mode="json")
+        schemas = {"device_parameters": "scidiscovery.device-parameter-set.v1",
+                   "parameter_requirements": "scidiscovery.device-parameter-requirements.v1",
+                   "source_catalog": "scidiscovery.evidence-source-catalog.v1"}
+        records = [register(system, key, schema, values[key]) for key, schema in schemas.items()]
+        launch = approval(system, "parameters", tuple(record.ref for record in records))
+        ui = ApprovalUI(system.approvals, bindings=system.bindings, read_model=system.model,
+                        instance_management_secret=b"s" * 32,
+                        trajectory_store=TrajectoryStore(tmp_path / "ui" / "workbench.sqlite3"))
+        base = ui.start()
+        try:
+            path = f"/review/{launch.approval_id}?" + urlencode({"token": launch.access_token})
+            status, _, body = _request(base, "GET", path)
+            text = body.decode()
+            assert status == 200 and "Scale" in text and "1e+0" in text
+            assert "Frozen source A" in text and "source_a:line-1" in text
+            assert "未提供估计" in text and "网络检索" not in text
+            assert "Use the exact frozen declaration." in text
+            assert "实例管理描述" in text
+            cookie = access_cookie(system.a, ui.browser_access.issue(instance_id=system.a))
+            node_path = f"/instance/{system.a}/nodes/approval%3Aparameters"
+            assert _request(base, "GET", node_path)[0] == 403
+            status, _, node_body = _request(base, "GET", node_path, cookie=cookie)
+            assert status == 200 and "Scale" in node_body.decode()
+>           assert "Frozen source A" in node_body.decode()
+E           assert 'Frozen source A' in "<!doctype html><html lang='zh-CN'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initi...er</dt><dd><span class='value-text'></span></dd></div></dl></li></ol></div></details></div></div></main></body></html>"
+E            +  where "<!doctype html><html lang='zh-CN'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initi...er</dt><dd><span class='value-text'></span></dd></div></dl></li></ol></div></details></div></div></main></body></html>" = <built-in method decode of bytes object at 0x55a79dbb5fd0>()
+E            +    where <built-in method decode of bytes object at 0x55a79dbb5fd0> = b"<!doctype html><html lang='zh-CN'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,init...er</dt><dd><span class='value-text'></span></dd></div></dl></li></ol></div></details></div></div></main></body></html>".decode
+
+tests/operations/test_instance_approval_presentation.py:85: AssertionError
+=========================== short test summary info ============================
+FAILED tests/operations/test_instance_usability.py::test_parameters_keep_exact_plan_scope_and_review_findings_links
+FAILED tests/operations/test_instance_approval_presentation.py::test_real_parameter_package_structure_renders_selected_value_source_and_unknowns
+2 failed, 99 passed in 99.75s (0:01:39)

@@ -1,0 +1,16 @@
+{
+  "instance_name": "M7-test0",
+  "mode": "directory",
+  "live_installed_service": true,
+  "allowed_read_access_posts": 0,
+  "blocked_writes": [],
+  "http_errors": [],
+  "javascript_errors": [],
+  "bound_instance_shown_on_home": true,
+  "current_instance_status": "已记录的排队 / 运行任务：0；未结束的外部执行：0；最近任务：运行完成",
+  "visible_instance_cards": 1,
+  "desktop_height": 900,
+  "mobile_overflow": false,
+  "return_home_keeps_bound_context": true,
+  "pass": true
+}

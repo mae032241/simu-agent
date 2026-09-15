@@ -179,16 +179,36 @@ class HardenedWorkerBackend(LocalTrustedBackend):
                 )
 
     @contextmanager
-    def _run_transport_lock(self, run_id: str):
+    def _run_transport_lock(self, run_id: str, *, blocking: bool = True, create: bool = True):
         digest = hashlib.sha256(run_id.encode("utf-8")).hexdigest()
         path = self.transport_lock_root / f"{digest}.lock"
-        descriptor = os.open(path, os.O_CREAT | os.O_RDWR | os.O_CLOEXEC, 0o600)
+        flags = os.O_RDWR | os.O_CLOEXEC | os.O_NOFOLLOW | (os.O_CREAT if create else 0)
+        descriptor = os.open(path, flags, 0o600)
         try:
-            fcntl.flock(descriptor, fcntl.LOCK_EX)
+            fcntl.flock(descriptor, fcntl.LOCK_EX | (0 if blocking else fcntl.LOCK_NB))
             yield
         finally:
             fcntl.flock(descriptor, fcntl.LOCK_UN)
             os.close(descriptor)
+
+    @contextmanager
+    def quiescence_guard(self, run_id: str):
+        """Observe an inactive exact transport without renewing/deleting a lease."""
+        with self._run_transport_lock(run_id, blocking=False, create=False):
+            if self.dispatch_database.is_symlink():
+                raise WorkspaceError("transport identity is a symlink")
+            connection = sqlite3.connect(self.dispatch_database.as_uri() + "?mode=ro", uri=True, timeout=0)
+            try:
+                row = connection.execute(
+                    "SELECT lease_deadline_at FROM active_transport WHERE run_id = ?", (run_id,)
+                ).fetchone()
+            finally:
+                connection.close()
+            if row is not None:
+                deadline = datetime.fromisoformat(str(row[0]))
+                if deadline.tzinfo is None or deadline > datetime.now(timezone.utc):
+                    raise WorkspaceError("exact Run transport lease is active or unknown")
+            yield
 
     def _connect_dispatch(self) -> sqlite3.Connection:
         return sqlite3.connect(self.dispatch_database, timeout=30.0)

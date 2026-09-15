@@ -160,6 +160,7 @@ class RootRunRoutes:
             **self._binding_value(binding),
             "operation_id": value.operation_id,
             "agent_type": value.agent_type,
+            "execution_profile": value.execution_profile,
             "backend": value.backend_id,
             "state": value.state,
             "output_artifact_name": (

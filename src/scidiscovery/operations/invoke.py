@@ -63,6 +63,7 @@ class BoundOperationCall:
     inputs: tuple[BoundInput, ...]
     instruction: str | None
     executor_plan: EffectExecutorPlan | None = None
+    execution_profile: dict[str, Any] | None = None
 @dataclass(frozen=True, slots=True)
 class ApprovalSubjectSnapshot:
     subject_index: int

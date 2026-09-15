@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from scidiscovery.agent_execution_settings import AgentSettings, load_settings
 from scidiscovery.operations.catalog import CompiledCatalog, compile_installed_catalog
 from .schema.refs import ActorRef
 from .service import (
@@ -20,6 +21,7 @@ from .service import (
     StateMaintenanceLock,
 )
 from .service.local_workspace import LocalTrustedBackend
+from .service.instance_maintenance import InstanceMaintenance
 
 if TYPE_CHECKING:
     from .service.hardened_workspace import HardenedWorkerBackend
@@ -44,6 +46,7 @@ class ArtifactAgentRuntime:
     scheduler_bindings: SchedulerBindingService
     maintenance: StateMaintenanceLock
     operation_catalog: CompiledCatalog
+    instance_maintenance: InstanceMaintenance | None = None
 
 
 def open_runtime(
@@ -55,6 +58,8 @@ def open_runtime(
     shared_group: bool = False,
     worker_backend: str = "local",
     local_workspace_root: Path | str | None = None,
+    agent_settings_file: Path | str | None = None,
+    agent_settings: AgentSettings | None = None,
 ) -> ArtifactAgentRuntime:
     project = Path(project_root).expanduser().resolve()
     state = Path(state_root).expanduser().absolute()
@@ -62,11 +67,13 @@ def open_runtime(
     if worker_backend not in {"local", "hardened"}:
         raise RuntimeConfigurationError("worker backend is invalid")
     operation_catalog = compile_installed_catalog()
+    agent_settings = agent_settings or load_settings(agent_settings_file or os.environ.get("SCID_AGENT_SETTINGS_FILE"))
     scheduler_database_path = state / "database" / "scheduler-bindings.sqlite3"
     actor = ActorRef(actor_id=actor_id, actor_type="service")
     maintenance = StateMaintenanceLock(
         state / "maintenance.lock", shared_group=shared_group
     )
+    instance_maintenance = InstanceMaintenance(state, maintenance=maintenance)
     with maintenance.shared():
         artifacts = ArtifactService.open(
             cas_root=state / "artifacts",
@@ -87,6 +94,8 @@ def open_runtime(
                 operation_catalog=operation_catalog,
                 backend=hardened_backend,
                 scheduler_bindings=scheduler_bindings,
+                instance_maintenance=instance_maintenance,
+                agent_settings=agent_settings,
             )
         else:
             local_backend = LocalTrustedBackend(
@@ -99,6 +108,8 @@ def open_runtime(
                 operation_catalog=operation_catalog,
                 backend=local_backend,
                 scheduler_bindings=scheduler_bindings,
+                instance_maintenance=instance_maintenance,
+                agent_settings=agent_settings,
             )
         intake = SecureIntakeService(
             project_root=project,
@@ -128,6 +139,9 @@ def open_runtime(
             if approvals is not None
             else None
         )
+        if executions is not None:
+            executions.instance_maintenance = instance_maintenance
+            executions.scheduler_bindings = scheduler_bindings
     return ArtifactAgentRuntime(
         project_root=project,
         state_root=state,
@@ -142,6 +156,7 @@ def open_runtime(
         scheduler_bindings=scheduler_bindings,
         maintenance=maintenance,
         operation_catalog=operation_catalog,
+        instance_maintenance=instance_maintenance,
     )
 
 

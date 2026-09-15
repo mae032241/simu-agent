@@ -1,0 +1,12 @@
+{
+  "command": [
+    "python",
+    "docs/plans/evidence/instance-workbench/capture_contracts.py",
+    "docs/plans/evidence/instance-workbench/P1_CONTRACTS.json"
+  ],
+  "exit_code": 0,
+  "stop_reason": null,
+  "duration_seconds": 1.408,
+  "peak_tree_rss_mib": 88.6,
+  "budget_mib": 512
+}

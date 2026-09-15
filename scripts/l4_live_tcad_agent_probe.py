@@ -216,6 +216,13 @@ def _write_dispatch(
 ) -> None:
     compiled = _catalog().operation(operation_id)
     agent_type = operation_agent_type(compiled)
+    runtime = _runtime(root)
+    instance_id = _control(root)["instance_id"]
+    queued = [runtime.runs.status(run_id) for run_id in runtime.runs.active_ids(instance_id=instance_id, limit=100)]
+    queued = [run for run in queued if run.operation_id == operation_id and run.state == "queued"]
+    if len(queued) != 1 or queued[0].execution_profile is None:
+        raise ValueError("probe dispatch requires one exact queued Run with execution profile")
+    profile = queued[0].execution_profile["profile"]
     author_like = (
         operation_id == AUTHOR_OPERATION
         if require_tcad_debug is None
@@ -236,6 +243,8 @@ def _write_dispatch(
         str(root / "project"),
         "--agent-type",
         agent_type,
+        "--model", profile["model"],
+        "--reasoning-effort", profile["reasoning_effort"],
         "--memory-limit-mib",
         str(LAUNCHER_MEMORY_LIMIT_MIB),
         "--receipt-name",

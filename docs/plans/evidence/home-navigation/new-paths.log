@@ -1,0 +1,26 @@
+.....F                                                                   [100%]
+=================================== FAILURES ===================================
+__________ test_navigation_covers_node_evidence_approval_and_metadata __________
+
+home = (namespace(actor=ActorRef(schema_version=1, actor_id='fixture', actor_type='service'), artifacts=<scidiscovery.artifac...33c8a97'), <scidiscovery.artifact_agent.approval_ui.app.ApprovalUI object at 0x7f47004f5340>, 'http://127.0.0.1:46626')
+
+    def test_navigation_covers_node_evidence_approval_and_metadata(home):
+        s,ui,base=home
+        record=artifact(s,'source',{'message':'Immutable source'})
+        launch=approval(s,'approval',(record.ref,))
+        token,cookie,_=enter(ui,base)
+        _,headers,_=request(base,'POST','/instances/access',form={'capability':token,'csrf':ui.session_id,'scope':'read','instance_id':s.a})
+        cookie += '; '+headers['Set-Cookie'].split(';',1)[0]
+        paths=('/', '/instances/manage',f'/instance/{s.a}',f'/instance/{s.a}/nodes/artifact%3Asource',
+            f'/instance/{s.a}/evidence/{record.artifact_id}',launch.review_path,
+            f'/review/{launch.approval_id}/evidence/{record.artifact_id}?'+urlencode({'token':launch.access_token}))
+        for path in paths:
+            status,_,page=request(base,'GET',path,cookie=cookie)
+>           assert status==200,(path,status)
+E           AssertionError: ('/instance/ins_5ff22690b4214615bff2af24f69d39ca/nodes/artifact%3Asource', 403)
+E           assert 403 == 200
+
+tests/operations/test_home_navigation.py:158: AssertionError
+=========================== short test summary info ============================
+FAILED tests/operations/test_home_navigation.py::test_navigation_covers_node_evidence_approval_and_metadata
+1 failed, 5 passed in 4.30s
