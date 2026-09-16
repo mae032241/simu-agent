@@ -17,7 +17,8 @@ from typing import Any, Callable
 from scidiscovery.interfaces.daemon import UnixSocketDaemon
 
 from .mcp import build_root_router
-from .mcp_proxy import SCHEDULER_PROXY_FIELD
+from .mcp_proxy import SCHEDULER_PROXY_FIELD, CLIENT_HEARTBEAT, CLIENT_DISCONNECT
+from ..service.scheduler_bindings import SchedulerBindingService
 from ..service import StateMaintenanceLock
 from ..service.instance_maintenance import InstanceMaintenance
 from ..service.execution_collection import ExecutionCollection, open_collection_executions
@@ -43,10 +44,12 @@ class RootBrokerRouter:
         maintenance: StateMaintenanceLock | None = None,
         instance_maintenance: InstanceMaintenance | None = None,
         max_cached_routers: int = 128,
+        client_bindings: SchedulerBindingService | None = None,
     ) -> None:
         if type(max_cached_routers) is not int or max_cached_routers < 1:
             raise ValueError("max_cached_routers must be positive")
         self.builder = builder
+        self.client_bindings = client_bindings
         self.maintenance = maintenance
         self.instance_maintenance = instance_maintenance
         self.max_cached_routers = max_cached_routers
@@ -84,6 +87,22 @@ class RootBrokerRouter:
                 else self.maintenance.shared()
             )
         with context:
+            method = clean.get("method")
+            if method in (CLIENT_HEARTBEAT, CLIENT_DISCONNECT):
+                if self.client_bindings is not None:
+                    if method == CLIENT_HEARTBEAT:
+                        self.client_bindings.client_heartbeat(session_key=proxy_id)
+                    else:
+                        self.client_bindings.disconnect_client(session_key=proxy_id)
+                if method == CLIENT_DISCONNECT:
+                    with self._lock:
+                        self._routers.pop(proxy_id, None)
+                return {"jsonrpc": "2.0", "id": request_id, "result": {}}
+            if method == "tools/call" and self.client_bindings is not None:
+                # instance_close owns an exclusive gate internally; protect this
+                # short lease write separately to avoid nesting shared -> exclusive.
+                with self.instance_maintenance.global_guard() if exclusive and self.instance_maintenance else nullcontext():
+                    self.client_bindings.register_client(session_key=proxy_id)
             return self._router(proxy_id).handle(clean)
 
     def _router(self, proxy_id: str) -> Any:
@@ -140,6 +159,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     instance_maintenance = InstanceMaintenance(state_root, maintenance=maintenance)
     with maintenance.shared():
+        client_bindings = SchedulerBindingService(state_root / "database" / "scheduler-bindings.sqlite3")
         collection = ExecutionCollection(open_collection_executions(state_root),
             plugin_configs={key: str(value) for key, value in plugin_configs.items()})
     router = RootBrokerRouter(
@@ -159,6 +179,7 @@ def main(argv: list[str] | None = None) -> int:
         ),
         maintenance=maintenance,
         instance_maintenance=instance_maintenance,
+        client_bindings=client_bindings,
     )
     def stop(*_):
         collection.close()

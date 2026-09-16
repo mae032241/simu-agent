@@ -20,6 +20,13 @@ def test_installed_catalog_identity_matches_source(installed_probe, tmp_path, en
 import json
 from scidiscovery.operations.catalog import compile_installed_catalog
 from scidiscovery.operations.tooling import operation_agent_type
+from typing import get_args
+from scidiscovery.artifact_agent.schema.research_cycle import ReviewVerdict
+from scidiscovery.artifact_agent.service.result_materialization import materialize_general_result
+for verdict in get_args(ReviewVerdict):
+    result = dict(payload=dict(verdict=verdict, summary="Installed review projection probe."))
+    materialize_general_result(result, "scidiscovery.scientific-review.v1")
+    assert result["handoff"]["verdict"] == ("blocked" if verdict == "reject" else verdict)
 catalog = compile_installed_catalog()
 print(json.dumps({key: dict(digest=catalog.operation(key).digest,
     agent_type=operation_agent_type(catalog.operation(key)) if catalog.operation(key).spec.executor.kind == "agent" else None)
@@ -196,9 +203,10 @@ class Context:
         return {"alias": alias}
 record = tool.contextual_handler(tool.input_model(record_key="installed", request=request), Context())
 assert record["status"] == "computed", record
-assert record["result"]["aggregate_status"] == "fail"
+assert record["summary"]["aggregate_status"] == "fail"
+assert json.loads(Path(record["calculation_path"]).read_bytes())["result"]["aggregate_status"] == "fail"
 assert json.loads(Context.saved[record["calculation_ref"]])["request"] == request
-replay_calculation(CalculationRecord.model_validate(record), {"curve_bundle": bundle_bytes})
+replay_calculation(CalculationRecord.model_validate_json(Path(record["calculation_path"]).read_bytes()), {"curve_bundle": bundle_bytes})
 diagnostic_tool = next(t for t in operation_worker_tools(compiled) if t.name == "worker_curve_diagnose")
 request["comparison_spec"]["comparisons"] = request["comparison_spec"]["comparisons"][:1]
 request["comparison_spec"]["comparisons"][0]["operators"] = request["comparison_spec"]["comparisons"][0]["operators"][:1]
@@ -319,7 +327,8 @@ def invoke(name, operation_id, inputs):
         assert 'tool_contracts' not in opened and Path(opened['start_here_path']).is_file()
         assert json.loads(Path(opened['tool_contracts_path']).read_bytes())['tool_contracts'] == expected
     else:
-        assert opened['tool_contracts'] == expected
+        contract = json.loads(Path(opened['tool_contracts_path']).read_bytes())
+        assert (contract['tool_contracts'] if opened['tool_contracts_pointer'] else contract) == expected
     return worker, opened
 
 def submit(worker, opened, payload, verdict):
@@ -339,7 +348,7 @@ worker, opened = invoke("analysis", "science.result.diagnose.v1", {
 })
 assert "worker_curve_score" in {item["name"] for item in worker.list_tools()}
 submit(worker, opened, report, "blocked")
-status = root.call_tool("run_status", {"name": "analysis"})
+status = root.call_tool("run_status", {"name": "analysis", "view": "detail"})
 assert status["state"] == "completed"
 assert status["sealed_output"]["payload"]["overall_verdict"] == "invalid_study"
 assert not status["sealed_output"]["payload"]["calculation_records"]
@@ -417,3 +426,64 @@ test_same_worker_rejects_wrong_name_case_or_score(case("name"), "name")
 print("installed raw PLX/CSV Worker scoring and receipt submission verified without replay")
 ''')
     assert output.strip() == "installed raw PLX/CSV Worker scoring and receipt submission verified without replay"
+
+
+def test_installed_hypothesis_feedback_visible_contract_and_sealed_submission(installed_probe):
+    from tests.operations.test_hypothesis_review_routing import _revision_foundation_bytes, _revision_portfolio_bytes
+    from tests.operations.test_general_transform_operations import _intake
+    values = dict(foundation_bytes=_revision_foundation_bytes(), proposal_bytes=_revision_portfolio_bytes(),
+                  problem_bytes=_intake().problem_frame.model_dump_json().encode())
+    installed_probe('full', '\n'.join(f'{key} = {value!r}' for key, value in values.items()) + r'''
+import json, os, tempfile
+from pathlib import Path
+from scidiscovery.operations.catalog import compile_installed_catalog
+from scidiscovery.artifact_agent.runtime import open_runtime
+from scidiscovery.artifact_agent.interfaces.mcp_root import RootToolFacade, RootMCPRouter
+from scidiscovery.artifact_agent.interfaces.mcp_local_worker import LocalWorkerMCPRouter
+from scidiscovery.artifact_agent.schema.artifact import ArtifactRegistration
+from scidiscovery.artifact_agent.schema.common import canonical_json
+catalog = compile_installed_catalog()
+project = Path(tempfile.mkdtemp(prefix='installed-feedback-'))
+runtime = open_runtime(project_root=project, state_root=project/'state', approval_receipt_secret=os.urandom(32))
+instance = runtime.scheduler_bindings.create_instance(name='isolated', title='Engineering fixture', objective='No scientific claims.')
+root = RootMCPRouter(RootToolFacade(runtime.artifacts, runtime.intake, runs=runtime.runs,
+    approvals=runtime.approvals, executions=runtime.executions, bindings=runtime.scheduler_bindings,
+    instance=instance.instance_id, operation_catalog=catalog))
+runtime.approvals.are_subjects_approved_by_provider = lambda *a, **k: True
+compiled = catalog.operation('science.hypothesis.propose.v1')
+for name, raw, schema in [('problem_frame',problem_bytes,'scidiscovery.problem-frame.v1'),
+    ('scientific_foundation',foundation_bytes,'scidiscovery.scientific-foundation.v1'),
+    ('previous_hypotheses',proposal_bytes,'scidiscovery.hypothesis-proposal.v2'),
+    ('result_analysis',b'{"summary":"Limited synthetic analysis; numerical failure, no physical refutation."}','opaque')]:
+    artifact = runtime.artifacts.register(raw, ArtifactRegistration(kind=name, schema_id=schema,
+        payload_schema_version=1, media_type='application/json', creator=runtime.actor), idempotency_key=name)
+    runtime.scheduler_bindings.bind(instance=instance.instance_id, namespace='artifact', name=name, object_id=artifact.artifact_id)
+short = root.call_tool('operation_catalog', {'operation_id':compiled.spec.operation_id})
+assert 'inputs' not in short['operations'][0]
+full = root.call_tool('operation_catalog', {'operation_id':compiled.spec.operation_id, 'view':'detail'})
+assert 'result_analysis' in json.dumps(full['operations'][0]['inputs'])
+request = dict(name='proposal', operation_id=compiled.spec.operation_id, instruction='Read exact observations and preserve their limitations.',
+    inputs=[dict(port=name, artifact_names=[name]) for name in ('problem_frame','scientific_foundation','previous_hypotheses','result_analysis')])
+checked = root.call_tool('operation_preflight', request)
+assert checked['admissible'], checked
+assert root.call_tool('operation_invoke', checked['normalized_request'])['result']['agent_type']
+worker = LocalWorkerMCPRouter(runtime.runs, operation_id=compiled.spec.operation_id, operation_digest=compiled.digest)
+opened = worker.call_tool('worker_open_assignment', {})
+workspace = runtime.runs.backend.open(worker._run_id)
+assert 'Limited synthetic analysis' in workspace.input_paths['result_analysis'].read_text()
+contracts = json.loads(Path(opened['tool_contracts_path']).read_bytes())
+if opened['tool_contracts_pointer']: contracts = contracts['tool_contracts']
+assert set(contracts) == {tool['name'] for tool in worker.list_tools()}
+proposal = json.loads(proposal_bytes)
+proposal['evidence'] = [dict(source_key=key, source_type='frozen_input', locator='exact fixture') for key in ('source_a','result_analysis')]
+Path(opened['output_directory'], 'result.json').write_bytes(canonical_json(dict(schema_version=1, payload=proposal,
+    handoff=dict(verdict='pass', summary='Synthetic engineering result, not scientific behavior acceptance.'))))
+submitted = worker.call_tool('worker_submit_result', {})
+assert submitted['state'] == 'completed', submitted
+short = root.call_tool('run_status', dict(name='proposal'))
+assert 'sealed_output' not in short and 'bound_inputs' not in short
+full = root.call_tool('run_status', dict(name='proposal', view='detail'))
+assert full['sealed_output']['payload']['evidence'] == proposal['evidence']
+assert 'result_analysis' in json.dumps(full['bound_inputs'])
+print('installed feedback contract, exact source aliases and controlled submission passed')
+''')

@@ -59,11 +59,23 @@ def _hypothesis_inputs(sources: dict[str, bytes]) -> None:
         raise OperationInvocationError("input_objective_missing", port="scientific_foundation", field="/objective_contract")
 
 
+def _hypothesis_source_keys(sources):
+    """Bound aliases and the exact foundation's existing provenance; no copied ledger."""
+    allowed = set(sources)
+    raw = sources.get("scientific_foundation")
+    if raw is not None:
+        foundation = parse_bound_json(ScientificFoundation, raw)
+        allowed.update(item.source_key for item in foundation.evidence)
+        allowed.update(key for item in foundation.items for key in item.evidence_keys)
+    return allowed
+
+
 def _critic_portfolio_context(
     payload: dict[str, Any], sources: dict[str, bytes], handoff: dict[str, Any]
 ) -> None:
     portfolio = parse_bound_json(HypothesisProposal, sources["hypothesis_portfolio"])
     review = CriticReview.model_validate_json(canonical_json(payload), strict=True)
+    validate_evidence_source_aliases(payload, _hypothesis_source_keys(sources))
     expected = tuple(item.hypothesis_key for item in portfolio.hypotheses)
     actual = tuple(item.hypothesis_key for item in review.reviews)
     if len(actual) != len(set(actual)) or set(actual) != set(expected):
@@ -136,9 +148,7 @@ def _hypothesis_objective_context(
     foundation = parse_bound_json(ScientificFoundation, sources["scientific_foundation"])
     # Qualified foundation provenance remains usable without copying its source
     # registry into every hypothesis. The exact frozen foundation owns those keys.
-    validate_evidence_source_aliases(payload,
-        set(sources) | {item.source_key for item in foundation.evidence}
-        | {key for item in foundation.items for key in item.evidence_keys})
+    validate_evidence_source_aliases(payload, _hypothesis_source_keys(sources))
     objective = foundation.objective_contract
     if proposal.research_objective_key != objective.objective_key:
         raise SemanticRuleViolation("hypothesis research_objective_key differs from global objective")
@@ -444,7 +454,7 @@ def component_specs() -> tuple[ComponentSpec, ...]:
             getattr(Components, name).kind,
             f"scidiscovery.general_science_components:Components.{name}",
             resources=tuple(ComponentRef(resource) for resource in semantic_resources.get(name, ())),
-            configuration_identity=("input-boundary-r4:v1" if name in {"critic_portfolio_context", "hypothesis_objective_context"} else None),
+            configuration_identity=("hypothesis-feedback-sources:v1" if name in {"critic_portfolio_context", "hypothesis_objective_context"} else None),
             public=name in {
                 "json_codec", "opaque_codec",
                 "intake_validator", "intake_source_context",
@@ -464,7 +474,7 @@ def component_specs() -> tuple[ComponentSpec, ...]:
         "problem_frame_validator", "foundation_validator",
     ):
         values.append(ComponentSpec(name, "validator", f"scidiscovery.general_science_components:Components.{name}", configuration_identity=f"general-transform:{name}:v1"))
-    values.append(ComponentSpec("result_finalizer", "workspace_finalizer", "scidiscovery.general_science_components:RESULT_FINALIZER", configuration_identity="general.result-finalizer.v2:formal-review-summary"))
+    values.append(ComponentSpec("result_finalizer", "workspace_finalizer", "scidiscovery.general_science_components:RESULT_FINALIZER", configuration_identity="general.result-finalizer.v3:blocked-review"))
     values.append(ComponentSpec("workspace", "workspace", "scidiscovery.general_science_components:WORKSPACE", public=True, resources=(ComponentRef("result_finalizer", plugin_id="general_science"),)))
     values.append(ComponentSpec(
         "pdf_extract_tool",

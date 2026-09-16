@@ -57,7 +57,8 @@ def test_server_progress_reaches_author_and_terminal_log_is_readable(tmp_path, m
     pending = worker.call_tool("worker_tcad_debug_run", request)
     assert pending["phase"] == "pending", pending
     assert pending["progress"]["elapsed_seconds"] == 12
-    text = json.dumps(pending["progress"])
+    assert "log_tails" not in pending["progress"]
+    text = json.dumps(json.loads(Path(pending["details_path"]).read_bytes())["progress"])
     assert "Newton iteration 3" in text and "mesh initialization started" in text
     assert "/private/runtime" not in text and "do-not-expose" not in text
     assert len(text.encode()) < 16 * 1024

@@ -23,7 +23,7 @@ def publish_analysis_file(context, raw, *, media_type, kind, sources, suffix, me
     return {"evidence_alias": accepted["alias"], "path": str(path), "sha256": digest}
 
 
-def retain_calculation(context, response):
+def retain_calculation(context, response, *, summary=False):
     """Keep the existing tool reply readable, but remove the need to copy it.
 
     The complete record is a tool output. The added alias is a transport hint,
@@ -33,7 +33,24 @@ def retain_calculation(context, response):
     saved = publish_analysis_file(context, canonical_json(record.model_dump(mode="json")), media_type="application/json",
         kind="calculation_record", sources=tuple(record.input_digests) or ("experiment_plan",),
         suffix=".json", metadata={"record_key": record.record_key})
-    return {**response, "calculation_ref": saved["evidence_alias"]}
+    if not summary:
+        return {**response, "calculation_ref": saved["evidence_alias"]}
+    result = {key: response[key] for key in
+              ("record_key", "status", "reason_code", "algorithm_version", "diagnostics") if key in response}
+    report = response.get("result") or {}
+    metric_report = report.get("metric_report", report)
+    comparisons = metric_report.get("comparisons", [])
+    result["summary"] = {
+        "aggregate_status": metric_report.get("aggregate_status"),
+        "comparison_count": len(comparisons),
+        "comparisons": [{"comparison_key": item["comparison_key"], "status": item["status"],
+            "metrics": [{key: metric[key] for key in ("operator_key", "kind", "status", "value", "unit", "reason_code") if key in metric}
+                        for metric in item.get("metrics", [])[:4]],
+            "omitted_metrics": max(0, len(item.get("metrics", []))-4)} for item in comparisons[:4]],
+        "omitted_comparisons": max(0, len(comparisons)-4),
+        "interpretation_boundary": "deterministic_metrics_only_no_physical_interpretation",
+    }
+    return {**result, "calculation_ref": saved["evidence_alias"], "calculation_path": saved["path"]}
 
 
 def calculation_reference_aliases(records, sources):

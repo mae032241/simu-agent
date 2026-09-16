@@ -46,9 +46,9 @@ def debug_tool_description() -> str:
         "solver failure does not refund it. Repeat the same name/mode to poll without "
         "new reservation; use a new name after source corrections, which do not reset "
         "the budget. Responses report current budget and per-job reservation. "
-        "On updated runners, progress includes observed job elapsed_seconds and bounded "
-        "redacted log_tails while running; collected responses retain manifest timing "
-        "and log_relative_path for the complete bounded log. These are observations, "
+        "On updated runners, summary progress includes observed job elapsed_seconds. "
+        "Read details_path for redacted log_tails and manifest timing; "
+        "log_relative_path locates the complete bounded log. These are observations, "
         "not an ETA or proof of physical initialization. Older runners may omit progress."
     )
 
@@ -72,6 +72,22 @@ def debug_response(context: OperationToolContext, run_name: str, response: dict)
         result["reserved_wall_seconds_for_run"] = record["reserved_wall_seconds"]
     if len(canonical_json(result)) > _MAX_RESPONSE_BYTES:
         raise TCADDebugError("TCAD debug diagnostic response exceeds its bound")
+    return result
+
+
+def debug_summary(context, run_name, response):
+    """Keep the complete engineering snapshot in this Run, not in every poll."""
+    full = debug_response(context, run_name, response)
+    path = write_control_workspace_file(context.workspace,
+        Path(f"deck/reports/response-{run_name}.json"), canonical_json(full),
+        replace=True, mode=0o400, create_parents=True)
+    result = {key: full[key] for key in ("run_name", "mode", "state", "phase", "development_only",
+        "scientific_claim_admissible", "diagnostic_layer", "summary", "exit_code", "diagnostics",
+        "source_diagnostic", "log_relative_path", "budget", "reserved_wall_seconds_for_run") if key in full}
+    if isinstance(full.get("progress"), dict):
+        result["progress"] = {key: full["progress"][key] for key in
+            ("elapsed_seconds", "observed_at", "started_at", "completed_at") if key in full["progress"]}
+    result.update(details_path=str(path), output_count=len(full.get("outputs", [])))
     return result
 
 

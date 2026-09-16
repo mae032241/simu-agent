@@ -667,6 +667,7 @@ def test_run_transaction_rejects_a_second_revision_successor(tmp_path) -> None:
         operation,
         name="first_revision",
         artifacts_by_port={
+            "current_progress": (), "experiment_results": (), "result_analysis": (),
             "user_context": (),
             "prior_draft": (base,),
             "change_request": (request,),
@@ -727,6 +728,7 @@ def test_run_transaction_rejects_a_second_revision_successor(tmp_path) -> None:
         operation,
         name="retry_revision",
         artifacts_by_port={
+            "current_progress": (), "experiment_results": (), "result_analysis": (),
             "user_context": (),
             "prior_draft": (retry_base,),
             "change_request": (request,),

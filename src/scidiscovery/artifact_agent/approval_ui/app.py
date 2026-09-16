@@ -42,7 +42,7 @@ from ..storage import CASIntegrityError
 from .render import ReviewContext, render_review
 from .access import BrowserAccessDenied, BrowserAccessService, access_cookie, management_cookie, management_token
 from .navigation import navigation
-from .home_render import session_controls, instance_directory, confirm_binding, access_page, client_directory
+from .home_render import session_controls, instance_directory, confirm_binding, access_page, client_directory, create_form, page as management_page
 
 if TYPE_CHECKING:
     from .read_model import InstanceReadModel
@@ -217,9 +217,12 @@ class ApprovalUI:
         token = _one(query, "token")
         try:
             if parsed.path in {"/", "/instances", "/instances/manage"}:
-                return self._handle_home(handler, query, directory=parsed.path == "/instances/manage")
+                return self._handle_home(handler, query, directory=parsed.path == "/instances/manage",
+                    session_key="" if parsed.path == "/instances" and "capability" in query else None)
             if parsed.path == "/sessions":
                 return self._handle_clients(handler, query)
+            if len(parts) == 2 and parts[0] == "sessions":
+                return self._handle_home(handler, query, session_key=parts[1])
             if len(parts) == 3 and parts[0] == "instance" and parts[2] == "settings":
                 return self._handle_agent_settings_get(handler, parts[1], query)
             if len(parts) == 3 and parts[0] == "instance" and parts[2] == "manage":
@@ -384,7 +387,7 @@ class ApprovalUI:
             self._stream_slots.release()
             handler.close_connection = True
 
-    def _handle_home(self, handler, query, *, directory=False):
+    def _handle_home(self, handler, query, *, directory=False, session_key=None):
         token = _one(query, "capability")
         capability = None
         if "capability" in query:
@@ -396,7 +399,10 @@ class ApprovalUI:
                     capability = self._instance_capability(token)
                 except InstanceManagementCapabilityError:
                     token = None
-        instances = self.bindings.list_instances() if self.bindings else ()
+        if session_key is not None:
+            if capability is None or (session_key and capability.session_key != session_key):
+                return self._error(handler, HTTPStatus.FORBIDDEN, "请从科研会话列表重新进入对应会话。")
+        instances = self.bindings.list_instances() if self.bindings and (directory or session_key is not None) else ()
         offset = int(_one(query, "offset") or "0")
         if offset < 0:
             raise ValueError("invalid instance page")
@@ -406,14 +412,18 @@ class ApprovalUI:
             body = instance_directory(rows, token=token, csrf=self.session_id, offset=offset, total=len(instances),
                 workbench_available=self.read_model is not None, maintenance_available=self.management is not None,
                 local_access=self.browser_access is not None)
-        else:
+        elif session_key is not None:
             current = None
             if capability and self.bindings:
                 current_id = self.bindings.session_instance(session_key=capability.session_key)
                 current = self.bindings.get_instance(instance_id=current_id) if current_id else None
             controls = session_controls(rows, token=token, csrf=self.session_id, current=current,
-                expires_at=capability.expires_at if capability else None, workbench_available=self.read_model is not None,
-                local_access=self.browser_access is not None)
+                expires_at=capability.expires_at, workbench_available=self.read_model is not None)
+            body = management_page("科研会话 · " + capability.session_key[-8:],
+                "<p><a href='/sessions'>返回会话列表</a></p>" + controls)
+        else:
+            controls = ("<section id='create-instance'>" + create_form(csrf=self.session_id) + "</section>"
+                if self.browser_access is not None else "")
             body = _render_dashboard(self.service.list_requests(status="pending", limit=100,
                 excluded_kinds=_RETIRED_INSTANCE_APPROVAL_KINDS), context_for=self._review_context,
                 csrf_token=self.session_id, home_controls=controls)
@@ -430,9 +440,11 @@ class ApprovalUI:
         if offset < 0:
             raise ValueError("invalid client page")
         rows = self.bindings.clients(offset=offset)
-        links = {row["session_key"]: "/instances?" + urlencode({"capability":
+        links = {row["session_key"]: "/sessions/" + row["session_key"] + "?" + urlencode({"capability":
             issue_instance_management_capability(session_key=row["session_key"], secret=self.instance_management_secret)}) for row in rows}
-        return self._respond(handler, HTTPStatus.OK, client_directory(rows, csrf=self.session_id, links=links, offset=offset),
+        cleared = _one(query, "cleared")
+        cleared = max(0, int(cleared)) if cleared is not None else None
+        return self._respond(handler, HTTPStatus.OK, client_directory(rows, csrf=self.session_id, links=links, offset=offset, cleared=cleared),
                              "text/html; charset=utf-8")
 
     def _home_rows(self, handler, instances, capability, *, read_status):
@@ -780,6 +792,7 @@ class ApprovalUI:
             "create",
             "create-unbound",
             "client-state",
+            "clients-clear",
             "select",
             "access",
         }:
@@ -891,6 +904,10 @@ class ApprovalUI:
                 raise ValueError("local instance management is unavailable")
             maintenance_access = False
             with self._shared_maintenance():
+                if action == "clients-clear":
+                    cleared = self.bindings.clear_offline_clients(can_clear_instance=self._cache_writable)
+                    return self._respond(handler, HTTPStatus.SEE_OTHER, b"", "text/plain; charset=utf-8",
+                                         extra_headers={"Location": "/sessions?" + urlencode({"cleared": cleared})})
                 if action == "client-state":
                     key = _required(form, "session_key")
                     enabled, expected = _required(form, "enabled"), _required(form, "expected_enabled")
@@ -1386,7 +1403,7 @@ def _render_dashboard(
         "<div class='home-entry-grid'><a class='home-entry' href='/instances/manage'><strong>实例管理</strong>"
         "<span>查看实例当前状态、研究轨迹和阶段成果</span></a>"
         "<a class='home-entry' href='/sessions'><strong>科研会话</strong><span>处理客户端绑定申请，暂停或恢复后续调度</span></a>"
-        "<a class='home-entry' href='#session-setup'><strong>创建与绑定</strong><span>选择当前科研会话，或接续已有研究</span></a>"
+        "<a class='home-entry' href='#create-instance'><strong>创建实例</strong><span>建立新的研究实例</span></a>"
         "<a class='home-entry' href='#pending-approvals'><strong>待审批事项</strong><span>审阅原请求并记录决定</span></a></div>"
         + home_controls + "<details class='research-panel' id='pending-approvals'><summary>待审批事项 · " + str(len(rows))
         + "</summary><div class='research-panel-body'>" + content + "</div></details></main></body></html>"

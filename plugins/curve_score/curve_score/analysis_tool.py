@@ -318,11 +318,11 @@ def run_score_tool(request: AnalysisScoreInput, context: OperationToolContext,
         attempt, diagnostics = finished
         response.update(attempt=attempt, diagnostics=list(diagnostics))
     from scidiscovery.artifact_agent.service.analysis_artifacts import retain_calculation
-    return retain_calculation(context, response)
+    return retain_calculation(context, response, summary=True)
 
 
 def score_tool(request: AnalysisScoreInput, context: OperationToolContext) -> dict[str, Any]:
     return run_score_tool(request, context, evaluate_analysis_request)
 
 
-CURVE_SCORE_TOOL = WorkerToolDefinition(name="worker_curve_score", description="Optionally score bound bundle/explicit CSV columns. Cite the returned calculation_ref; the complete record and receipt are saved automatically. Unsupported metrics are never substituted.", input_model=AnalysisScoreInput, capability="analysis.curve_score", contextual_handler=score_tool, record_attempts=True, evidence_ports=("tool_evidence", "recovery_manifest_output"))
+CURVE_SCORE_TOOL = WorkerToolDefinition(name="worker_curve_score", description="Optionally score bound bundle/explicit CSV columns. Returns compact metrics; read calculation_path for the complete record. Cite the returned calculation_ref; the complete record and receipt are saved automatically. Unsupported metrics are never substituted.", input_model=AnalysisScoreInput, capability="analysis.curve_score", contextual_handler=score_tool, record_attempts=True, evidence_ports=("tool_evidence", "recovery_manifest_output"))

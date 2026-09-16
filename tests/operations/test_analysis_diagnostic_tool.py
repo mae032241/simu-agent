@@ -49,7 +49,7 @@ def test_diagnostic_runs_and_seals_with_readable_image_without_contract(tmp_path
     response = mcp_call(worker, name, dict(record_key="local_diagnostic", request=request))
     assert "error" not in response, json.dumps(response, indent=2)
     value = response["result"]["structuredContent"]
-    record = value["record"]
+    record = json.loads(Path(value["record"]["calculation_path"]).read_bytes())
     assert record["status"] == "computed", value
     assert record["attempt"]["manifest_alias"] == "tool_recovery_manifest"
     assert record["attempt"]["attempt_key"]
@@ -88,7 +88,7 @@ def test_diagnostic_receipt_tampering_is_rejected_without_recomputation(tmp_path
     worker, opened = generic_worker(tmp_path)
     value = worker.call_tool("worker_curve_diagnose", dict(
         record_key="detail", request=request_for_diagnostic(score_inputs()[1])))
-    record = value["record"]
+    record = json.loads(Path(value["record"]["calculation_path"]).read_bytes())
     assert record["status"] == "computed", value
     record["result"]["metric_report"]["comparisons"][0]["metrics"][0]["value"] += 1
     report = limited_report()
@@ -109,7 +109,7 @@ def test_budget_failure_still_allows_partial_analysis(tmp_path, monkeypatch):
     assert not value["images"]
     report = limited_report()
     report["source_references"] = []
-    report["calculation_records"] = [value["record"]]
+    report["calculation_records"] = [json.loads(Path(value["record"]["calculation_path"]).read_bytes())]
     assert submit(worker, opened, report)["state"] == "completed"
 
 

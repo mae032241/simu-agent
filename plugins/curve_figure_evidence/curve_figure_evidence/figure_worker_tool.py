@@ -76,13 +76,17 @@ def _inspect(
         _publish_read_only(destination, image.content)
         results.append(image.public_metadata(local_path=str(destination)))
     context.record_activity("deterministic_analysis_completed")
-    return {
+    result = {
         "name": request.name,
         "source_page": request.source_page,
         "source_media_type": media_type,
         "source_sha256": context.input_ref(request.name).sha256,
         "images": results,
     }
+    details = directory / f"inspection_{result['source_sha256']}_{request.source_page}.json"
+    _publish_read_only(details, canonical_json(result))
+    return {**result, "images": results[:8], "omitted_images": max(0, len(results)-8),
+            "details_path": str(details)}
 
 
 FIGURE_SOURCE_INSPECTION_TOOL = WorkerToolDefinition(
@@ -124,13 +128,16 @@ def _preview(
         _publish_read_only(destination, content)
         images.append({"data_item": data_item, "local_path": str(destination)})
     context.record_activity("deterministic_analysis_completed")
-    return {
-        "source_sha256": context.input_ref(request.name).sha256,
-        "request_sha256": request_sha256,
-        "materialized_request": json.loads(request_raw),
-        "images": images,
-        "validation_report": report,
-    }
+    details = {"materialized_request": json.loads(request_raw), "validation_report": report, "images": images}
+    details_path = directory / "details.json"
+    _publish_read_only(details_path, canonical_json(details))
+    return {"source_sha256": context.input_ref(request.name).sha256,
+        "request_sha256": request_sha256, "details_path": str(details_path),
+        "integrity_status": report["integrity_status"], "source_status": report["source_status"],
+        "validated_artifact_count": report["validated_artifact_count"],
+        "metrics": {key: report["metrics"][key] for key in ("curve_table_count", "total_curve_rows",
+            "observed_curve_rows", "eligible_curve_rows", "eligibility_flagged_table_count")},
+        "images": images[:8], "omitted_images": max(0, len(images)-8)}
 
 
 FIGURE_DIGITIZATION_PREVIEW_TOOL = WorkerToolDefinition(

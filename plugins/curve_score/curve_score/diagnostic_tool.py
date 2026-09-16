@@ -187,12 +187,12 @@ def run_diagnostic_tool(
     if finished is not None:
         attempt, attempt_diagnostics = finished
         response.update(attempt=attempt, diagnostics=list(attempt_diagnostics))
-    return {"record": retain_calculation(context, response), "images": images, "details": details}
+    return {"record": retain_calculation(context, response, summary=True), "images": images, "details": details}
 
 
 DIAGNOSTIC_TOOL = WorkerToolDefinition(
     name="worker_curve_diagnose",
-    description="Optionally localize one residual comparison using bound curves or explicit CSV columns. Cite record.calculation_ref; record and receipt are retained automatically. Full details (<=4 MiB) and overlay/residual images have saved evidence aliases and task-local paths. One operator, 2-257 samples; no curve contract or additional Run.",
+    description="Optionally localize one residual comparison using bound curves or explicit CSV columns. Returns compact metrics; read record.calculation_path for the complete record. Cite record.calculation_ref; record and receipt are retained automatically. Full details (<=4 MiB) and overlay/residual images have saved evidence aliases and task-local paths. One operator, 2-257 samples; no curve contract or additional Run.",
     input_model=DiagnosticInput, capability="analysis.curve_diagnose",
     contextual_handler=run_diagnostic_tool, record_attempts=True,
     evidence_ports=("tool_evidence", "recovery_manifest_output"),

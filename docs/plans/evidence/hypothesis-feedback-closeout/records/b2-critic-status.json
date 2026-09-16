@@ -1,0 +1,174 @@
+{
+  "name": "critic",
+  "logical_name": "critic",
+  "revision": 1,
+  "operation_id": "science.hypothesis.criticize.v1",
+  "agent_type": "op_science_hypothesis_criticize_v1_c49822ce88b2",
+  "execution_profile": {
+    "profile": {
+      "model": "gpt-5.6-sol",
+      "reasoning_effort": "medium",
+      "narrative_language": "zh-CN"
+    },
+    "sources": {
+      "model": "request_snapshot",
+      "reasoning_effort": "request_snapshot",
+      "narrative_language": "request_snapshot"
+    }
+  },
+  "backend": "local_trusted",
+  "state": "completed",
+  "output_artifact_name": "critic.output",
+  "reason": null,
+  "created_at": "2026-09-16T07:17:40.015674Z",
+  "started_at": "2026-09-16T07:18:13.891412Z",
+  "deadline_at": "2026-09-16T07:27:40.015674Z",
+  "completed_at": "2026-09-16T07:19:24.651740Z",
+  "last_activity_at": "2026-09-16T07:19:24.651740Z",
+  "candidate_accepted": true,
+  "head_advance": "not_requested",
+  "recovery_available": false,
+  "recovery": {
+    "delivery_preserved": false,
+    "resume_available": false,
+    "draft_available": false,
+    "recovery_pending": false,
+    "attempt_budget": {
+      "used": 1,
+      "limit": 1
+    }
+  },
+  "diagnostic_summary": {
+    "latest_tool_error": null,
+    "recent_errors": [],
+    "rejection_count": 0,
+    "latest_rejection": null,
+    "failure": null,
+    "native_coverage": "unobserved",
+    "latest_native_error": null
+  },
+  "tool_timing": [
+    {
+      "tool_name": "worker_open_assignment",
+      "started_at": "2026-09-16T07:18:13.890445+00:00",
+      "completed_at": "2026-09-16T07:18:13.903725+00:00",
+      "duration_seconds": 0.013298
+    },
+    {
+      "tool_name": "worker_submit_result",
+      "started_at": "2026-09-16T07:19:24.569338+00:00",
+      "completed_at": "2026-09-16T07:19:24.663850+00:00",
+      "duration_seconds": 0.094542
+    }
+  ],
+  "draft_from": null,
+  "diagnostic_events": {
+    "events": [],
+    "next_after": null
+  },
+  "bound_inputs": [
+    {
+      "port": "hypothesis_portfolio",
+      "artifact_names": [
+        "proposal.output"
+      ]
+    },
+    {
+      "port": "scientific_foundation",
+      "artifact_names": [
+        "scientific_foundation"
+      ]
+    },
+    {
+      "port": "experiment_results",
+      "artifact_names": [
+        "experiment_results"
+      ]
+    },
+    {
+      "port": "result_analysis",
+      "artifact_names": [
+        "result_analysis"
+      ]
+    },
+    {
+      "port": "previous_hypotheses",
+      "artifact_names": [
+        "previous_hypotheses"
+      ]
+    }
+  ],
+  "native_execution": {
+    "coverage": "unobserved",
+    "scientific_evidence": false,
+    "reason": "no_records"
+  },
+  "sealed_output_status": "available",
+  "sealed_output": {
+    "artifact_name": "critic.output",
+    "kind": "scientific_review",
+    "schema": "scidiscovery.critic-review.v2",
+    "payload": {
+      "disposition": "ready_for_experiment",
+      "evidence": [
+        {
+          "locator": "scientific_foundation.json#/summary",
+          "source_key": "scientific_foundation",
+          "source_type": "frozen_input"
+        },
+        {
+          "locator": "hypothesis_portfolio.json#/hypotheses",
+          "source_key": "hypothesis_portfolio",
+          "source_type": "frozen_input"
+        },
+        {
+          "locator": "previous_hypotheses.json#/hypotheses/0",
+          "source_key": "previous_hypotheses",
+          "source_type": "frozen_input"
+        },
+        {
+          "locator": "experiment_results.json",
+          "source_key": "experiment_results",
+          "source_type": "runtime_output"
+        },
+        {
+          "locator": "result_analysis.json",
+          "source_key": "result_analysis",
+          "source_type": "inference"
+        }
+      ],
+      "global_issues": [],
+      "reviews": [
+        {
+          "falsifiability": "pass",
+          "finite_discriminability": "pass",
+          "hypothesis_key": "linear",
+          "issues": [],
+          "physical_plausibility": "pass",
+          "smallest_resolving_action": null
+        },
+        {
+          "falsifiability": "pass",
+          "finite_discriminability": "pass",
+          "hypothesis_key": "saturating_gain",
+          "issues": [],
+          "physical_plausibility": "pass",
+          "smallest_resolving_action": null
+        }
+      ],
+      "schema_version": 2
+    }
+  },
+  "scheduler_signal_status": "available",
+  "scheduler_signal": {
+    "schema_version": 1,
+    "verdict": "pass",
+    "summary": "两个机制在限定的合成系统内均具有物理/数学可容许性、逻辑可证伪性和有限可区分性。绑定运行在产生有效输出前即因 Newton 迭代失败，因此既不支持也不反驳任一机制；但这不妨碍以有限的有效响应观测区分候选。",
+    "assumptions": [],
+    "missing_inputs": [],
+    "next_actions": [
+      "取得至少一个预先指定输入点的有效独立响应观测；例如 x=1 已足以在给定误差范围内区分固定线性预测与整个饱和参数区间。"
+    ],
+    "next_action_kind": null
+  }
+}

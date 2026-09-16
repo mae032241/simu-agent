@@ -1,0 +1,153 @@
+FFF                                                                      [100%]
+=================================== FAILURES ===================================
+___________ test_sealed_blocked_review_is_readable_as_exact_feedback ___________
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-137/test_sealed_blocked_review_is_0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7faf36669310>
+experiment_case = ({'study_kind': 'scientific', 'objective_key': 'objective_expected', 'selected_hypothesis_keys': ['hypothesis_a'], 'pr...research_objective_key":"objective_expected","schema_version":2,"stage_objective":"Separate one bounded mechanism."}'})
+
+    def test_sealed_blocked_review_is_readable_as_exact_feedback(tmp_path, monkeypatch, experiment_case) -> None:
+        from scidiscovery.artifact_agent.interfaces.mcp_local_worker import LocalWorkerMCPRouter
+    
+        operation_id = "science.object.review.v1"
+        runtime, instance, root, request, payload = _feedback_root(tmp_path, monkeypatch, experiment_case, operation_id, name="blocked_review")
+        compiled = runtime.runs.operation_catalog.operation(operation_id)
+        root.call_tool("operation_invoke", request)
+        worker = LocalWorkerMCPRouter(runtime.runs, operation_id=operation_id, operation_digest=compiled.digest)
+        opened = worker.call_tool("worker_open_assignment", {})
+        payload["verdict"] = "blocked"
+        Path(opened["output_directory"], "result.json").write_bytes(canonical_json({
+            "schema_version": 1, "payload": payload,
+            "handoff": {"verdict": "blocked", "summary": "The bounded review records an unresolved dependency."},
+        }))
+>       assert worker.call_tool("worker_submit_result", {})["state"] == "completed"
+E       AssertionError: assert 'rejected' == 'completed'
+E         
+E         - completed
+E         + rejected
+
+tests/operations/test_agent_contract_alignment.py:825: AssertionError
+_ test_review_optional_original_is_visible_and_citations_correct_in_same_run[blocked-False-False] _
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-137/test_review_optional_original_0')
+experiment_case = ({'study_kind': 'scientific', 'objective_key': 'objective_expected', 'selected_hypothesis_keys': ['hypothesis_a'], 'pr...research_objective_key":"objective_expected","schema_version":2,"stage_objective":"Separate one bounded mechanism."}'})
+with_objective = False, with_context = False, verdict = 'blocked'
+
+    @pytest.mark.parametrize("with_objective", (False, True))
+    @pytest.mark.parametrize("with_context", (False, True))
+    @pytest.mark.parametrize("verdict", ("pass", "revise", "blocked"))
+    def test_review_optional_original_is_visible_and_citations_correct_in_same_run(
+        tmp_path, experiment_case, with_objective, with_context, verdict,
+    ) -> None:
+        from scidiscovery.artifact_agent.transforms import materialize_experiment_plan
+    
+        intent, inputs = _partial_experiment(experiment_case)
+        plan, _ = materialize_experiment_plan({
+            "experiment_design_intent": canonical_json(intent),
+            "research_objective": inputs["research_objective"],
+            "hypothesis_portfolio": inputs["hypothesis_portfolio"],
+        })
+        sources = {"experiment_plan": plan}
+        if with_objective:
+            sources["research_objective"] = inputs["research_objective"]
+        if with_context:
+            sources["execution_context"] = canonical_json({
+                "schema_version": 1, "domain": "tcad", "implementation_backend": "sprocess",
+                "implementation_kind": "sprocess", "release_label": "R-2020.09",
+                "public_arguments": [], "capability_statements": None, "limitations": None,
+            })
+        runtime, run_id, workspace = _review_run(tmp_path, sources)
+        for name, raw in sources.items():
+            assert workspace.input_paths[name].read_bytes() == raw
+            assert workspace.input_paths[name].stat().st_mode & 0o222 == 0
+        assert ("research_objective" in workspace.input_paths) is with_objective
+        assert ("execution_context" in workspace.input_paths) is with_context
+        payload = {
+            "review_target": "experiment_portfolio", "verdict": verdict,
+            "summary": "Assess current validity and the stated condition for future work.",
+            "evidence": [{"source_key": "unbound_original", "source_type": "frozen_input",
+                          "locator": "objective statement"}],
+            "findings": [{"finding_key": "scope", "statement": "Only current scope was assessed.",
+                          "epistemic_status": "inference", "evidence_keys": ["unbound_original"]}],
+        }
+        output = workspace.output_directory / "result.json"
+        handoff = {"verdict": verdict, "summary": payload["summary"]}
+        output.write_bytes(canonical_json({"schema_version": 1, "payload": payload, "handoff": handoff}))
+        state, diagnostics = runtime.runs.submit(run_id)
+        assert state == "rejected"
+        assert runtime.runs.status(run_id).state == "running"
+>       assert any(item["rule_id"] == "experiment.review.subject_binding" for item in diagnostics)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/operations/test_agent_contract_alignment.py:931: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+.0 = <tuple_iterator object at 0x7faf34d10f10>
+
+>   assert any(item["rule_id"] == "experiment.review.subject_binding" for item in diagnostics)
+               ^^^^^^^^^^^^^^^
+E   KeyError: 'rule_id'
+
+tests/operations/test_agent_contract_alignment.py:931: KeyError
+__ test_collection_declaration_without_trusted_tool_is_rejected_at_both_gates __
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-137/test_collection_declaration_wi0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7faf34d136e0>
+
+    def test_collection_declaration_without_trusted_tool_is_rejected_at_both_gates(tmp_path, monkeypatch):
+        from dataclasses import replace
+        from types import SimpleNamespace
+        from tests.operations.test_tcad_result_analysis import analysis_system
+        from scidiscovery.artifact_agent.service.local_workspace import LocalTrustedBackend
+        from scidiscovery.artifact_agent.service.runs import RunError
+        catalog, runtime, *_ = analysis_system(tmp_path)
+        operation = catalog.operation('tcad.result.analyze.v1')
+        executor = operation.spec.executor.model_copy(update={'tools':()})
+        undeclared = replace(operation,worker_tools=(),spec=operation.spec.model_copy(update={'executor':executor}))
+        assert LocalTrustedBackend.unsupported_requirements(undeclared) == ('agent_collection_outputs',)
+        monkeypatch.setattr(runtime.runs.backend, 'supports_operation', lambda _: True)
+        with pytest.raises(RunError, match='output collections'):
+>           runtime.runs.schedule(SimpleNamespace(compiled=undeclared), instance_id='unused',
+                output_binding_name='unused',output_logical_name='unused',output_revision=1,
+                output_binding_fingerprint='unused')
+
+tests/operations/test_analysis_evidence_recovery.py:568: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <scidiscovery.artifact_agent.service.runs.RunService object at 0x7faf3439f080>
+bound = namespace(compiled=CompiledOperation(plugin_id='tcad_artifact', spec=OperationSpec(operation_id='tcad.result.analyze.v...e canonical payload must fit the compiled output byte limit.', 'output_paths': ('/',), 'required_inputs': ()}))})})})))
+instance_id = 'unused', output_binding_name = 'unused'
+output_logical_name = 'unused', output_revision = 1
+output_binding_fingerprint = 'unused', resume_from = None, draft_from = None
+draft_digest = None, max_attempts = None
+
+    def schedule(
+        self,
+        bound: BoundOperationCall,
+        *,
+        instance_id: str,
+        output_binding_name: str,
+        output_logical_name: str,
+        output_revision: int,
+        output_binding_fingerprint: str,
+        resume_from: str | None = None,
+        draft_from: str | None = None,
+        draft_digest: str | None = None,
+        max_attempts: int | None = None,
+    ) -> str:
+        if resume_from is not None and draft_from is not None:
+            raise RunStateConflict("resume_from and draft_from are mutually exclusive")
+        if draft_digest is not None and draft_from is None:
+            raise RunStateConflict("draft digest requires a source Run")
+        self._validate_attempt_limit(max_attempts)
+        compiled = bound.compiled
+>       execution_profile = bound.execution_profile
+                            ^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: 'types.SimpleNamespace' object has no attribute 'execution_profile'
+
+src/scidiscovery/artifact_agent/service/runs.py:158: AttributeError
+=========================== short test summary info ============================
+FAILED tests/operations/test_agent_contract_alignment.py::test_sealed_blocked_review_is_readable_as_exact_feedback
+FAILED tests/operations/test_agent_contract_alignment.py::test_review_optional_original_is_visible_and_citations_correct_in_same_run[blocked-False-False]
+FAILED tests/operations/test_analysis_evidence_recovery.py::test_collection_declaration_without_trusted_tool_is_rejected_at_both_gates
+3 failed in 3.12s

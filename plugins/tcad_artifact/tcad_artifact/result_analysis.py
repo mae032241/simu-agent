@@ -529,13 +529,13 @@ GUARD = CallableComponent("guard", analysis_parentage)
 CONTEXT = CallableComponent("validator", analysis_context)
 INPUT_VALIDATOR = CallableComponent("validator", validate_analysis_inputs)
 TOOL = WorkerToolDefinition(
-    name="worker_tcad_curve_score", description="Optionally parse bound TCAD PLX/log and explicit CSV columns, then score in this analysis Run. Cite calculation_ref; control saves the record and receipt.",
+    name="worker_tcad_curve_score", description="Optionally parse bound TCAD PLX/log and explicit CSV columns, then score in this analysis Run. Returns compact metrics; read calculation_path for the complete record. Cite calculation_ref; control saves the record and receipt.",
     input_model=TCADScoreInput, capability="tcad.analysis.curve_score", contextual_handler=tcad_score_tool, record_attempts=True,
     evidence_ports=("tool_evidence", "recovery_manifest_output"),
 )
 DIAGNOSTIC_TOOL = WorkerToolDefinition(
     name="worker_tcad_curve_diagnose",
-    description="Optionally localize one residual comparison from bound PLX/log/CSV sources. Cite record.calculation_ref; full details (<=4 MiB) and images have saved evidence aliases and task-local paths. One operator, 2-257 samples; no curve contract or additional Run.",
+    description="Optionally localize one residual comparison from bound PLX/log/CSV sources. Returns compact metrics; read record.calculation_path for the complete record. Cite record.calculation_ref; full details (<=4 MiB) and images have saved evidence aliases and task-local paths. One operator, 2-257 samples; no curve contract or additional Run.",
     input_model=TCADDiagnosticInput, capability="tcad.analysis.curve_diagnose",
     contextual_handler=tcad_diagnostic_tool, record_attempts=True,
     evidence_ports=("tool_evidence", "recovery_manifest_output"),
@@ -577,7 +577,7 @@ INPUTS = (
 COMPONENT_SPECS = (
     ComponentSpec("analysis_execution_schema", "resource", "tcad_artifact.output_recovery:EXECUTION_SCHEMA"),
     ComponentSpec("analysis_recovery_schema", "resource", "tcad_artifact.output_recovery:RECOVERY_SCHEMA"),
-    ComponentSpec("analysis_inspect_tool", "worker_tool", "tcad_artifact.output_recovery:INSPECT_TOOL", configuration_identity="tcad.analysis.inspect.v1"),
+    ComponentSpec("analysis_inspect_tool", "worker_tool", "tcad_artifact.output_recovery:INSPECT_TOOL", configuration_identity="tcad.analysis.inspect.v2:retained-list-summary"),
     ComponentSpec("analysis_accept_tool", "worker_tool", "tcad_artifact.output_recovery:ACCEPT_TOOL", configuration_identity="tcad.analysis.accept.v1"),
     ComponentSpec("tcad_analysis_workspace", "workspace", "tcad_artifact.analysis_bindings:WORKSPACE",
         resources=(_ref("tcad_analysis_materializer"), _ref("tcad_analysis_finalizer"), _ref("tcad_analysis_snapshotter"))),
@@ -591,8 +591,8 @@ COMPONENT_SPECS = (
     ComponentSpec("result_analysis_parentage", "guard", "tcad_artifact.result_analysis:GUARD", configuration_identity="tcad.analysis.exact-parentage.v4"),
     ComponentSpec("result_analysis_input", "validator", "tcad_artifact.result_analysis:INPUT_VALIDATOR", configuration_identity="tcad.analysis.input-binding.v3"),
     ComponentSpec("result_analysis_context", "validator", "tcad_artifact.result_analysis:CONTEXT", resources=(_ref("result_analysis_semantic"),), configuration_identity="tcad.analysis.receipt-integrity.v1"),
-    ComponentSpec("result_analysis_score_tool", "worker_tool", "tcad_artifact.result_analysis:TOOL", configuration_identity="tcad.analysis.raw-score.v1"),
-    ComponentSpec("result_analysis_diagnostic_tool", "worker_tool", "tcad_artifact.result_analysis:DIAGNOSTIC_TOOL"),
+    ComponentSpec("result_analysis_score_tool", "worker_tool", "tcad_artifact.result_analysis:TOOL", configuration_identity="analysis.response-summary:v1"),
+    ComponentSpec("result_analysis_diagnostic_tool", "worker_tool", "tcad_artifact.result_analysis:DIAGNOSTIC_TOOL", configuration_identity="analysis.response-summary:v1"),
 )
 OPERATIONS = (scientific_agent_operation(
     "tcad.result.analyze.v1", "Analyze one exact TCAD execution with optional raw-output scoring.",

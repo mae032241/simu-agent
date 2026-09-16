@@ -278,11 +278,13 @@ COMPONENT_SPECS = (
         "figure_source_inspection_tool",
         "worker_tool",
         "curve_figure_evidence.figure_worker_tool:FIGURE_SOURCE_INSPECTION_TOOL",
+        configuration_identity="figure.inspection-summary:v1",
     ),
     ComponentSpec(
         "figure_digitization_preview_tool",
         "worker_tool",
         "curve_figure_evidence.figure_worker_tool:FIGURE_DIGITIZATION_PREVIEW_TOOL",
+        configuration_identity="figure.preview-summary:v1",
     ),
     ComponentSpec(
         "figure_request_schema",

@@ -33,7 +33,7 @@ from ..runtime_plugin_bindings import (
 from ..schema.refs import ActorRef
 from ..service.artifacts import ArtifactService
 from ..service.local_workspace import LocalTrustedBackend, WorkspaceError
-from ..service.local_workspace import workspace_input_filename, read_control_workspace_file
+from ..service.local_workspace import workspace_input_filename, read_control_workspace_file, write_control_workspace_file
 from ..service.run_outputs import RunCheckerError, RunOutputError
 from ..service.runs import RunService, RunStateConflict
 from ..service.scheduler_bindings import SchedulerBindingService
@@ -386,9 +386,7 @@ class LocalWorkerMCPRouter:
         status = self.runs.status(self._run_id)
         assignment = json.loads(read_control_workspace_file(self._workspace.root,
             Path("assignment.json"), max_bytes=self._workspace.assignment_path.stat().st_size))
-        contracts = ({"tool_contracts_path": str(self._workspace.assignment_path),
-            "tool_contracts_pointer": "/tool_contracts"} if "tool_contracts" in assignment
-            else {"tool_contracts": self._assignment_tool_contracts()})
+        contracts = self._tool_contract_location(assignment)
         if self._workspace.domain_workspace_path is not None:
             try:
                 domain = json.loads(read_control_workspace_file(self._workspace.root,
@@ -415,6 +413,19 @@ class LocalWorkerMCPRouter:
             "remaining_seconds": _remaining(status.deadline_at),
             **({"recovery_evidence": evidence} if (evidence := self.runs.recovery_evidence_status(status)) is not None else {}),
         }
+
+    def _tool_contract_location(self, assignment=None):
+        if assignment is None:
+            assignment = json.loads(read_control_workspace_file(self._workspace.root,
+                Path("assignment.json"), max_bytes=self._workspace.assignment_path.stat().st_size))
+        if "tool_contracts" in assignment:
+            return {"tool_contracts_path": str(self._workspace.assignment_path),
+                    "tool_contracts_pointer": "/tool_contracts"}
+        raw = json.dumps(self._assignment_tool_contracts(), ensure_ascii=False).encode("utf-8")
+        relative = Path(".operation-tools/tool-contracts.json")
+        path = write_control_workspace_file(self._workspace.root, relative, raw,
+            replace=False, mode=0o400, create_parents=True)
+        return {"tool_contracts_path": str(path), "tool_contracts_pointer": ""}
 
     def _assignment_tool_contracts(self) -> dict[str, Any]:
         # Old assignments may lack additive metadata; never replace their files

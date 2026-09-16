@@ -35,16 +35,15 @@ class RootApprovalRoutes:
             )
         return result
 
-    def approval_list(self, *, status: str | None, limit: int) -> dict[str, Any]:
-        items = []
-        for binding in self.bindings.list(instance=self._instance_id(), namespace="approval"):
-            item = self.approval_status(name=binding.name)
-            if status is not None and item["status"] != status:
-                continue
-            items.append(item)
-            if len(items) >= limit:
-                break
-        return {"approvals": items}
+    def approval_list(self, *, status: str | None, limit: int, before: str | None = None) -> dict[str, Any]:
+        from .mcp_response_views import page
+        def values():
+            for binding in self.bindings.list(instance=self._instance_id(), namespace="approval"):
+                item = self.approval_status(name=binding.name)
+                if status is None or item["status"] == status:
+                    yield item
+        items, cursor = page(values(), key="name", limit=limit, before=before)
+        return {"approvals": items, "next_before": cursor}
 
 
 

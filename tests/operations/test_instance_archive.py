@@ -60,7 +60,26 @@ def test_registered_client_must_be_paused_at_preview_and_archive_commit(archive_
     save_archive(service,first)
 
 
-def test_pausing_client_does_not_allow_archiving_queued_or_running_work(tmp_path):
+def test_reconnected_client_blocks_archive_commit_but_disconnect_keeps_history(archive_system):
+    from scidiscovery.artifact_agent.service.instance_maintenance import InstanceMaintenanceBusy
+    runtime, service, first, _ = archive_system
+    bindings = runtime.scheduler_bindings
+    key = "sch_" + "a" * 32
+    bindings.register_client(session_key=key)
+    with sqlite3.connect(bindings.client_database_path) as db:
+        db.execute("UPDATE scheduler_clients SET last_seen=0")
+    ready = service.preview(first)
+    assert ready["ready"], ready
+    bindings.client_heartbeat(session_key=key)
+    with pytest.raises(InstanceMaintenanceBusy):
+        service.archive(first, ready["fingerprint"])
+    bindings.disconnect_client(session_key=key)
+    assert bindings.session_instance(session_key=key) == first
+    save_archive(service, first)
+
+
+@pytest.mark.parametrize("presence", ["paused", "disconnected", "expired", "cleared"])
+def test_pausing_client_does_not_allow_archiving_queued_or_running_work(tmp_path, presence):
     from tests.operations.test_instance_archive_continuation import _hardened_system
     from tests.operations.test_l5_hardened_run_backend import _invoke, _worker
     catalog,runtime,instance,root=_hardened_system(tmp_path)
@@ -68,7 +87,15 @@ def test_pausing_client_does_not_allow_archiving_queued_or_running_work(tmp_path
     runtime.scheduler_bindings.register_client(session_key=key)
     runtime.scheduler_bindings.bind_session(session_key=key,instance_id=instance.instance_id)
     _invoke(root,'still_active')
-    runtime.scheduler_bindings.set_client_enabled(session_key=key,enabled=False,expected=True)
+    if presence == 'paused':
+        runtime.scheduler_bindings.set_client_enabled(session_key=key,enabled=False,expected=True)
+    elif presence == 'disconnected':
+        runtime.scheduler_bindings.disconnect_client(session_key=key)
+    else:
+        with sqlite3.connect(runtime.scheduler_bindings.client_database_path) as db:
+            db.execute('UPDATE scheduler_clients SET last_seen=0')
+    if presence == 'cleared':
+        assert runtime.scheduler_bindings.clear_offline_clients() == 1
     service=InstanceArchive(runtime)
     for expected in ('queued','running'):
         view=service.preview(instance.instance_id)

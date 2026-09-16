@@ -46,11 +46,24 @@ keys that support it. Creative hypotheses are allowed but are not established
 facts. Prefer whole-response tests and few degrees of freedom; never select or
 qualify a candidate.
 
+When feedback is bound, compare it with previous_hypotheses and the original
+problem frame. Read relevant original results and sealed analyses on demand.
+Distinguish observations, interpretations, numerical/implementation failures,
+and evidence that can support or weaken a mechanism. New results need not be
+repackaged into the old foundation. Explain changed or retained judgments in
+contradiction/stage_objective with exact evidence; do not reproduce all history.
+A new proposal may add, replace or remove hypotheses, or retain competitors when
+indistinguishable. No new result forces a changed hypothesis set. If the current
+model set is insufficient and no supported candidate can be delivered, report
+the bounded gap without inventing a mechanism or inheriting an old review.
+
 When the assignment includes a prior_draft and change_request, output/result.json
 is a copy-on-write draft of that portfolio. Read it first, edit only the fields
 required by the exact critic request, and complete the new handoff. Submit the
 entire revised HypothesisProposal, not a patch object; preserve the exact
 hypothesis_key set and sound hypotheses, and do not inherit the critic verdict.
+Read rebound feedback relevant to that correction. Genuinely new evidence that
+requires reorganizing candidates belongs to a new proposal, not this correction.
 """
 
 
@@ -62,9 +75,15 @@ principle. Do not require numerical thresholds, extraction algorithms,
 interpolation rules, or uncertainty propagation here; those belong to
 experiment design. Record an issue once and give the smallest resolving action
 only for an unresolved dimension. Also enforce the boundary of the qualified
-scientific foundation: factual premises must be present there, inferences must
-be labelled as inference, and missing inputs or historical observations must
-not be restated as established mechanisms. Choose exactly one disposition. Use
+scientific foundation and exact bound experimental feedback: factual premises
+must have a supplied source, inferences must remain explicit, and simulated
+observations are not independent measurements. Read the relevant originals as
+needed; an author's analysis alone is not independent verification. Distinguish
+implementation/numerical failure from mechanism counterevidence. A bound new
+observation need not already occur in the original foundation. Missing inputs
+or historical observations must not be restated as established mechanisms.
+State missing originals and limit the affected judgment instead of passing
+unsupported claims. Do not require the entire author input set to be repeated. Choose exactly one disposition. Use
 ready_for_experiment when the mechanisms are sound and a finite discriminator
 exists even though no discriminating result exists yet; revise_hypothesis only
 for a defect in the mechanism statement; revise_evidence for a missing factual
@@ -130,7 +149,7 @@ class Resources:
         "Report a bounded resolving action when one is known; an unresolved question does not require inventing a remedy. The critic judges the portfolio disposition rather than deriving it from every dimension status.",
         "The critic owns mechanism plausibility, falsifiability, and finite discriminability in principle; experiment design owns thresholds, extraction algorithms, and uncertainty propagation.",
         "The structured disposition is the scientific finding; only ready-for-experiment and model-counterfactual-design dispositions pass this review edge.",
-        "The critic checks that factual premises stay inside the already qualified foundation and that inferences remain explicit.",
+        "The critic checks factual premises against the exact foundation or bound experimental feedback; simulations, measurements and interpretations remain distinct. A new bound observation need not appear in the old foundation; unavailable originals limit the judgment. Evidence may cite bound aliases or provenance registered in the exact foundation, without copying a source ledger.",
         "The disposition distinguishes unsupported premises from missing model counterfactuals without selecting a successor Operation.",
         "Current evidence need not already distinguish competitors when a finite discriminating action exists.",
         "Inconclusive is a valid terminal scientific result when no bounded resolving action is available.",

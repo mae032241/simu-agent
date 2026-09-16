@@ -260,6 +260,7 @@ def _hypothesis_output(*context_sources: str) -> OutputPortSpec:
         max_item_bytes=64 * 1024,
         context_validator="hypothesis_objective_context",
         context_sources=context_sources,
+        evidence_paths=(),
     )
 def _audit_output(*context_sources: str) -> OutputPortSpec:
     return _output(
@@ -273,6 +274,21 @@ def _audit_output(*context_sources: str) -> OutputPortSpec:
         context_sources=context_sources,
     )
 
+
+_HYPOTHESIS_FEEDBACK = tuple(
+    _input(name, description, "*", media_types=("*/*",), min_items=0,
+           max_items=4, max_item_bytes=bound, exposure="on_demand", usage="evidence_inventory")
+    for name, description, bound in (
+        ("experiment_results", "Exact observations, original outputs or failed executions; not automatic mechanism evidence.", 8*1024*1024),
+        ("result_analysis", "Sealed interpretations with their validity limits; negative and inconclusive reports remain readable.", 128*1024),
+        ("current_progress", "Relevant exact plans, prior reviews and bounded history, read only when needed.", 2*1024*1024),
+    )
+)
+_PREVIOUS_HYPOTHESES = _input("previous_hypotheses",
+    "Optional earlier portfolio for evidence-driven comparison, not a revision base or inherited review.",
+    "scidiscovery.hypothesis-proposal.v2", min_items=0, max_item_bytes=128*1024,
+    exposure="on_demand", usage="evidence_inventory")
+_HYPOTHESIS_FEEDBACK_NAMES = tuple(port.name for port in _HYPOTHESIS_FEEDBACK)
 
 OPERATIONS = (
     _agent(
@@ -420,6 +436,8 @@ OPERATIONS = (
                 "Exact scientific foundation used to challenge the proposal.",
                 "scidiscovery.scientific-foundation.v1",
             ),
+            *_HYPOTHESIS_FEEDBACK,
+            _PREVIOUS_HYPOTHESES,
         ),
         outputs=(
             _output(
@@ -430,19 +448,20 @@ OPERATIONS = (
                 "critic_validator",
                 max_item_bytes=32 * 1024,
                 context_validator="critic_portfolio_context",
-                context_sources=("hypothesis_portfolio",),
+                context_sources=("hypothesis_portfolio", "scientific_foundation", "previous_hypotheses", *_HYPOTHESIS_FEEDBACK_NAMES),
+                evidence_paths=(),
             ),
         ),
         timeout=600,
-        max_input_bytes=2 * 1024 * 1024,
+        max_input_bytes=48 * 1024 * 1024,
         max_output_bytes=32 * 1024,
         max_files=1,
         input_admission=_FOUNDATION_ADMISSION,
     ),
     _agent(
         "science.hypothesis.propose.v1",
-        "Propose a small falsifiable portfolio for the current contradiction.",
-        "A problem frame and scientific foundation expose an unresolved mechanism.",
+        "Propose or evolve a bounded hypothesis portfolio using the current contradiction and any bound experiment feedback.",
+        "A problem frame and scientific foundation, optionally with prior hypotheses and results, expose an unresolved question.",
         "Reviewing, selecting, or qualifying hypotheses.",
         input_validation=InputValidationSpec(ComponentRef("hypothesis_inputs"), "science.hypothesis.propose.v1.inputs", "The scientific foundation must contain its explicit original objective."),
         agent="ideator_agent",
@@ -460,10 +479,12 @@ OPERATIONS = (
                 "Exact evidence-bearing scientific foundation.",
                 "scidiscovery.scientific-foundation.v1",
             ),
+            *_HYPOTHESIS_FEEDBACK,
+            _PREVIOUS_HYPOTHESES,
         ),
-        outputs=(_hypothesis_output("problem_frame", "scientific_foundation"),),
+        outputs=(_hypothesis_output("problem_frame", "scientific_foundation", "previous_hypotheses", *_HYPOTHESIS_FEEDBACK_NAMES),),
         timeout=900,
-        max_input_bytes=2 * 1024 * 1024,
+        max_input_bytes=48 * 1024 * 1024,
         max_output_bytes=64 * 1024,
         max_files=1,
         input_admission=_FOUNDATION_ADMISSION,
@@ -635,10 +656,11 @@ REVISION_OPERATIONS = (
                 "Exact approved scientific foundation bounding the revised portfolio.",
                 "scidiscovery.scientific-foundation.v1",
             ),
+            *_HYPOTHESIS_FEEDBACK,
         ),
-        outputs=(_hypothesis_output("prior_draft", "scientific_foundation"),),
+        outputs=(_hypothesis_output("prior_draft", "scientific_foundation", *_HYPOTHESIS_FEEDBACK_NAMES),),
         timeout=900,
-        max_input_bytes=10 * 1024 * 1024,
+        max_input_bytes=48 * 1024 * 1024,
         max_output_bytes=64 * 1024,
         max_files=1,
         input_admission=_FOUNDATION_ADMISSION,

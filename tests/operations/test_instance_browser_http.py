@@ -88,7 +88,7 @@ def test_instance_browser_grants_read_without_rebinding_or_cross_instance_access
         ui.stop()
 
 
-def test_client_registers_at_transport_start_and_pause_blocks_only_new_work(tmp_path):
+def test_discovery_does_not_register_client_and_pause_blocks_only_new_work(tmp_path):
     from scidiscovery.artifact_agent.interfaces.mcp import build_root_router
     from scidiscovery.artifact_agent.interfaces.mcp_root import RootToolError
     runtime,state,secret,ui,base=_setup(tmp_path)
@@ -98,6 +98,14 @@ def test_client_registers_at_transport_start_and_pause_blocks_only_new_work(tmp_
     try:
         transport=build_root_router(project_root=tmp_path/'project',state_root=state,
             approval_secret_file=secret_file,approval_base_url=base,scheduler_session_key=key,worker_backend='hardened')
+        from scidiscovery.artifact_agent.interfaces.mcp_daemon import RootBrokerRouter
+        from scidiscovery.artifact_agent.interfaces.mcp_proxy import SCHEDULER_PROXY_FIELD
+        broker=RootBrokerRouter(lambda _: transport, client_bindings=runtime.scheduler_bindings)
+        for method in ('initialize', 'tools/list'):
+            broker.handle({'jsonrpc':'2.0','id':1,'method':method,SCHEDULER_PROXY_FIELD:key})
+        assert runtime.scheduler_bindings.clients()==[]
+        broker.handle({'jsonrpc':'2.0','id':2,'method':'tools/call',
+            'params':{'name':'instance_current','arguments':{}},SCHEDULER_PROXY_FIELD:key})
         assert any(x['session_key']==key for x in runtime.scheduler_bindings.clients())
         root=transport.router
         assert root.call_tool('instance_current',{})['state']=='unbound'

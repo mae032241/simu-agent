@@ -53,7 +53,7 @@ def test_tcad_compact_report_seals_and_preserves_scientific_claim(tmp_path, verd
     worker, opened = open_analysis(system)
     payload = compact_report(verdict=verdict)
     submit_compact(worker, opened, payload)
-    status = system[2].call_tool('run_status', {'name': 'analysis'})
+    status = system[2].call_tool('run_status', {'name': 'analysis', 'view': 'detail'})
     envelope = status['sealed_output']
     report = LayeredDiagnosisReport.model_validate_json(canonical_json(envelope['payload']))
     assert report.summary == payload['summary'] and report.gates is None
@@ -75,7 +75,7 @@ def test_tcad_compact_report_seals_and_preserves_scientific_claim(tmp_path, verd
     _, new_opened = open_analysis((*system[:3], request, *system[4:]))
     start = json.loads(Path(new_opened['start_here_path']).read_bytes())
     assert any(item['pointer'] == '/limitations' and 'bound fixture' in item['text'] for item in start['excerpts'])
-    assert system[2].call_tool('run_status', {'name': 'analysis'})['sealed_output'] == envelope
+    assert system[2].call_tool('run_status', {'name': 'analysis', 'view': 'detail'})['sealed_output'] == envelope
 
 
 @pytest.mark.parametrize('kind', ['generic', 'curve_error'])

@@ -268,7 +268,11 @@ def test_preview_and_formal_materialization_use_identical_outputs(tmp_path: Path
         )
     }
     assert preview_images == formal_images
-    assert preview["validation_report"] == json.loads(formal["validation_report"][0])
+    full_report = json.loads(formal["validation_report"][0])
+    assert preview["source_status"] == full_report["source_status"]
+    assert preview["integrity_status"] == full_report["integrity_status"]
+    assert all(full_report["metrics"][key] == value for key, value in preview["metrics"].items())
+    assert json.loads(Path(preview["details_path"]).read_bytes())["validation_report"] == json.loads(formal["validation_report"][0])
     assert all(Path(item["local_path"]).stat().st_mode & 0o222 == 0 for item in preview["images"])
     assert context.activities == ["deterministic_analysis_completed"]
 

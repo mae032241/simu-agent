@@ -44,7 +44,7 @@ def home(system):
 
 def enter(ui,base,session=A):
     token=issue_instance_management_capability(session_key=session,secret=SECRET)
-    status,headers,page=request(base,'GET','/instances?'+urlencode({'capability':token}))
+    status,headers,page=request(base,'GET','/sessions/'+session+'?'+urlencode({'capability':token}))
     assert status==200
     return token,headers['Set-Cookie'].split(';',1)[0],page
 
@@ -56,10 +56,12 @@ def test_home_cookie_and_independent_directory_do_not_bind(home):
     run(s,'working',state='running')
     before=s.bindings.session_binding_snapshot(session_key=A,instance_id=s.b)
     token,cookie,page=enter(ui,base)
-    assert "href='/instances/manage'" in page and '科研工作台' in page
+    assert '科研会话 · aaaaaaaa' in page and "action='/instances/select'" in page
+    assert "action='/instances/create'" not in page
     assert '进入当前实例工作台' in page
     status,_,page=request(base,'GET','/',cookie=cookie)
-    assert status==200 and "action='/instances/create'" in page
+    assert status==200 and "action='/instances/create-unbound'" in page
+    assert "action='/instances/select'" not in page and "action='/instances/create'" not in page
     status,_,page=request(base,'GET','/instances/manage',cookie=cookie)
     assert status==200 and '当前会话已绑定' in page and '已被其他会话绑定' in page
     assert '已记录的排队 / 运行任务：1' in page and '最近任务：运行中' in page
@@ -135,7 +137,7 @@ def test_expired_or_forged_home_context_cannot_create_or_extend_access(home):
     expired=issue_instance_management_capability(session_key=A,secret=SECRET,now=datetime.now(timezone.utc)-timedelta(hours=2))
     status,headers,page=request(base,'GET','/',cookie='scid_management='+expired)
     assert status==200 and "action='/instances/create'" not in page
-    assert '尚未选择科研会话' in page and '尚未绑定实例' not in page
+    assert '创建实例' in page and '实例绑定' not in page
     assert 'Set-Cookie' not in headers
     for token in (expired,'forged'):
         status,_,page=request(base,'GET','/instances?'+urlencode({'capability':token}),accept='text/html')
@@ -175,7 +177,7 @@ def test_local_workbench_without_conversation_preserves_science_and_bindings(hom
     decision=approval(s,'local_decision',(source.ref,))
     before=s.bindings.session_binding_snapshot(session_key=A,instance_id=s.b)
     status,headers,page=request(base,'GET','/')
-    assert status==200 and '尚未选择科研会话' in page
+    assert status==200 and '创建实例' in page
     assert "action='/instances/create-unbound'" in page
     assert "action='/instances/select'" not in page
     assert 'Set-Cookie' not in headers  # Reading a page is not a grant.
@@ -244,3 +246,45 @@ def test_workbench_manages_registered_clients_without_a_conversation_cookie(home
     assert request(base,'POST','/instances/client-state',form={**form,'enabled':'1','expected_enabled':'0'})[0]==303
     assert s.bindings.client_enabled(session_key=A)
     assert s.bindings.session_instance(session_key=B) is None
+
+
+def test_scoped_session_page_rejects_other_session_and_supports_legacy_entry(home):
+    s,ui,base=home
+    token,cookie,page=enter(ui,base,A)
+    assert "action='/instances/select'" in page
+    assert request(base,'GET','/sessions/'+B+'?'+urlencode({'capability':token}))[0]==403
+    assert request(base,'GET','/sessions/'+B,cookie=cookie)[0]==403
+    status,_,legacy=request(base,'GET','/instances?'+urlencode({'capability':token}))
+    assert status==200 and '科研会话 · aaaaaaaa' in legacy
+    assert '创建与绑定' not in legacy
+
+
+def test_clear_offline_clients_removes_only_transient_rows_and_bindings(home):
+    import sqlite3
+    s,ui,base=home
+    s.bindings.bind_session(session_key=A,instance_id=s.a)
+    s.bindings.bind_session(session_key=B,instance_id=s.b)
+    s.bindings.register_client(session_key=A)
+    s.bindings.register_client(session_key=B)
+    task=run(s,'survives_cleanup',state='running')
+    source=artifact(s,'survives_cleanup',instance=s.a)
+    pending=approval(s,'survives_cleanup',(source.ref,))
+    s.bindings.disconnect_client(session_key=A)
+    writable = ui._cache_writable
+    ui._cache_writable = lambda instance_id: False
+    assert request(base,'POST','/instances/clients-clear',form={'csrf':ui.session_id})[0]==303
+    assert s.bindings.session_instance(session_key=A)==s.a
+    ui._cache_writable = writable
+    status,_,_=request(base,'POST','/instances/clients-clear',form={'csrf':'bad'})
+    assert status==403 and s.bindings.session_instance(session_key=A)==s.a
+    status,headers,_=request(base,'POST','/instances/clients-clear',form={'csrf':ui.session_id})
+    assert status==303 and headers['Location']=='/sessions?cleared=1'
+    assert '已清理 1 个离线会话' in request(base,'GET',headers['Location'])[2]
+    with sqlite3.connect(s.bindings.client_database_path) as db:
+        assert [row[0] for row in db.execute('SELECT session_key FROM scheduler_clients')]==[B]
+    assert s.bindings.session_instance(session_key=A) is None
+    assert s.bindings.session_instance(session_key=B)==s.b
+    assert len(s.bindings.list_instances())==2
+    assert task.state=='running' and s.approvals.status(pending.approval_id).status=='pending'
+    s.bindings.client_heartbeat(session_key=A)
+    assert [row['session_key'] for row in s.bindings.clients()]==[B]

@@ -1,0 +1,262 @@
+{
+  "name": "proposal_retry",
+  "logical_name": "proposal_retry",
+  "revision": 1,
+  "operation_id": "science.hypothesis.propose.v1",
+  "agent_type": "op_science_hypothesis_propose_v1_61021608412d",
+  "execution_profile": {
+    "profile": {
+      "model": "gpt-5.6-sol",
+      "reasoning_effort": "medium",
+      "narrative_language": "zh-CN"
+    },
+    "sources": {
+      "model": "request_snapshot",
+      "reasoning_effort": "request_snapshot",
+      "narrative_language": "request_snapshot"
+    }
+  },
+  "backend": "local_trusted",
+  "state": "completed",
+  "output_artifact_name": "proposal_retry.output",
+  "reason": null,
+  "created_at": "2026-09-16T06:59:38.064944Z",
+  "started_at": "2026-09-16T07:01:02.338586Z",
+  "deadline_at": "2026-09-16T07:14:38.064944Z",
+  "completed_at": "2026-09-16T07:02:25.254416Z",
+  "last_activity_at": "2026-09-16T07:02:25.254416Z",
+  "candidate_accepted": true,
+  "head_advance": "not_requested",
+  "recovery_available": false,
+  "recovery": {
+    "delivery_preserved": false,
+    "resume_available": false,
+    "draft_available": false,
+    "recovery_pending": false,
+    "tool_evidence": {
+      "preserved_count": 0,
+      "adopted_count": 0,
+      "not_adopted_record_indices": [],
+      "note": "Unadopted receipts remain in the original recovery manifest; draft files are not current scientific evidence."
+    },
+    "attempt_budget": {
+      "used": 2,
+      "limit": 2
+    }
+  },
+  "diagnostic_summary": {
+    "latest_tool_error": null,
+    "recent_errors": [],
+    "rejection_count": 0,
+    "latest_rejection": null,
+    "failure": null,
+    "native_coverage": "unobserved",
+    "latest_native_error": null
+  },
+  "tool_timing": [
+    {
+      "tool_name": "worker_open_assignment",
+      "started_at": "2026-09-16T07:01:02.337286+00:00",
+      "completed_at": "2026-09-16T07:01:02.349470+00:00",
+      "duration_seconds": 0.012202
+    },
+    {
+      "tool_name": "worker_submit_result",
+      "started_at": "2026-09-16T07:02:25.162177+00:00",
+      "completed_at": "2026-09-16T07:02:25.266574+00:00",
+      "duration_seconds": 0.104421
+    }
+  ],
+  "draft_from": null,
+  "diagnostic_events": {
+    "events": [],
+    "next_after": null
+  },
+  "bound_inputs": [
+    {
+      "port": "problem_frame",
+      "artifact_names": [
+        "problem_frame"
+      ]
+    },
+    {
+      "port": "scientific_foundation",
+      "artifact_names": [
+        "scientific_foundation"
+      ]
+    },
+    {
+      "port": "experiment_results",
+      "artifact_names": [
+        "experiment_results"
+      ]
+    },
+    {
+      "port": "result_analysis",
+      "artifact_names": [
+        "result_analysis"
+      ]
+    },
+    {
+      "port": "previous_hypotheses",
+      "artifact_names": [
+        "previous_hypotheses"
+      ]
+    }
+  ],
+  "native_execution": {
+    "coverage": "unobserved",
+    "scientific_evidence": false,
+    "reason": "no_records"
+  },
+  "sealed_output_status": "available",
+  "sealed_output": {
+    "artifact_name": "proposal_retry.output",
+    "kind": "hypothesis_portfolio",
+    "schema": "scidiscovery.hypothesis-proposal.v2",
+    "payload": {
+      "contradiction": "旧候选 y=2x 预测 x=0、1、2 时 y=0、2、4，而独立记录为 y=1、3、5，重复记录为 1.001、2.999、5.001；每点约 1 的系统性偏差远超 0.02 绝对误差界，不能归因于记录误差。新记录与整数节点上的 y=1+2x 一致，但仅含整数 x，因此连续仿射机制与在整数节点取相同值的输入量化机制仍不可区分；先前分析的 inconclusive 结论仅表明当时尚未完成候选比较，并不支持任一机制。",
+      "evidence": [
+        {
+          "locator": "scientific_foundation.summary, scientific_foundation.objective_contract, and scientific_foundation.items[target]",
+          "source_key": "benchmark_spec",
+          "source_type": "frozen_input"
+        },
+        {
+          "locator": "experiment_results.points, experiment_results.repeated_points, experiment_results.absolute_error_bound, and experiment_results.calibration",
+          "source_key": "experiment_results",
+          "source_type": "runtime_output"
+        },
+        {
+          "locator": "previous_hypotheses.hypotheses[linear]",
+          "source_key": "previous_hypotheses",
+          "source_type": "frozen_input"
+        },
+        {
+          "locator": "result_analysis.overall_verdict, result_analysis.summary, and result_analysis.limitations",
+          "source_key": "result_analysis",
+          "source_type": "frozen_input"
+        }
+      ],
+      "hypotheses": [
+        {
+          "competing_hypothesis_keys": [
+            "unit_quantized_staircase"
+          ],
+          "evidence_keys": [
+            "benchmark_spec",
+            "experiment_results"
+          ],
+          "falsifiers": [
+            {
+              "falsifier_key": "affine_noninteger_mismatch",
+              "observable": "response",
+              "rejection_condition": "任一输入已核对且有效的非整数点，其观测 y 与 1+2x 的绝对差超过 0.02；例如 x=0.25 时 y 不在 [1.48,1.52]。"
+            }
+          ],
+          "hypothesis_key": "affine_continuous",
+          "mechanism": "系统具有与输入无关的真实基线响应 b，并在该范围内以恒定增益 a 连续叠加输入贡献；该基线属于被测响应而非零参考读数偏移。",
+          "parameters": [
+            {
+              "basis": "由绑定观测 x=0 时 y=1 及重复值 1.001 约束；校准零参考为 0.0，故不将其解释为仪器零点漂移。",
+              "name": "b",
+              "range_description": "本候选固定为 1。",
+              "role": "fixed",
+              "unit": "无量纲"
+            },
+            {
+              "basis": "绑定观测从 x=0 到 1、从 1 到 2 的响应增量均为 2。",
+              "name": "a",
+              "range_description": "本候选固定为 2。",
+              "role": "fixed",
+              "unit": "无量纲响应/无量纲输入"
+            }
+          ],
+          "predictions": [
+            {
+              "expected_outcome": "整个范围满足 y=1+2x；特别地，x=0.25 时 y=1.5，x=0.75 时 y=2.5，且不存在跳变。",
+              "observable": "response",
+              "prediction_key": "affine_full_response"
+            }
+          ],
+          "scope": "仅限无量纲 x in [-1,2] 的当前合成系统；不外推到真实物理系统，也不声称范围外仍为仿射。",
+          "statement": "在 x in [-1,2] 内，响应为连续仿射函数 y=b+a*x，其中 b=1、a=2。"
+        },
+        {
+          "competing_hypothesis_keys": [
+            "affine_continuous"
+          ],
+          "evidence_keys": [
+            "benchmark_spec",
+            "experiment_results"
+          ],
+          "falsifiers": [
+            {
+              "falsifier_key": "staircase_interior_mismatch",
+              "observable": "response",
+              "rejection_condition": "在远离半整数阈值的有效点观测不落入对应平台预测的 0.02 误差带；例如 x=0.25 时 y 不在 [0.98,1.02]。"
+            },
+            {
+              "falsifier_key": "staircase_smooth_ramp",
+              "observable": "response",
+              "rejection_condition": "同一量化区间内两个有效观测呈现超过误差界的连续输入依赖；例如 x=0 与 x=0.25 的响应差绝对值超过 0.04。"
+            }
+          ],
+          "hypothesis_key": "unit_quantized_staircase",
+          "mechanism": "响应通道只读取最接近的整数输入档位，因此相邻半整数阈值之间保持常值，并在阈值处发生幅度为 2 的跳变；整数节点恰与连续仿射候选重合。",
+          "parameters": [
+            {
+              "basis": "作为与三个整数采样点相容且自由度最少的离散输入机制，步长固定为 1；现有记录并未独立确立该机制。",
+              "name": "quantization_step",
+              "range_description": "本候选固定为 1。",
+              "role": "fixed",
+              "unit": "无量纲输入"
+            },
+            {
+              "basis": "量化档位 q=0 对应绑定响应 y=1。",
+              "name": "baseline",
+              "range_description": "本候选固定为 1。",
+              "role": "fixed",
+              "unit": "无量纲"
+            },
+            {
+              "basis": "相邻已测整数档位的绑定响应增量为 2。",
+              "name": "level_increment",
+              "range_description": "本候选固定为 2。",
+              "role": "fixed",
+              "unit": "无量纲响应/档位"
+            }
+          ],
+          "predictions": [
+            {
+              "expected_outcome": "在 -0.5<=x<0.5 时 y=1，在 0.5<=x<1.5 时 y=3，在 1.5<=x<=2 时 y=5；特别地，x=0.25 时 y=1，x=0.75 时 y=3。",
+              "observable": "response",
+              "prediction_key": "staircase_full_response"
+            }
+          ],
+          "scope": "仅限无量纲 x in [-1,2] 的当前合成系统；半整数阈值按右侧档位定义，且不主张真实系统存在量化器。",
+          "statement": "在 x in [-1,2] 内，系统先按单位步长将输入量化为 q(x)=floor(x+0.5)，再产生 y=1+2*q(x)。"
+        }
+      ],
+      "research_objective_key": "objective_expected",
+      "schema_version": 2,
+      "stage_objective": "利用绑定的整数输入观测淘汰已失配的过原点模型，并提出能由单个非整数输入观测区分的最小竞争机制组合。"
+    }
+  },
+  "scheduler_signal_status": "available",
+  "scheduler_signal": {
+    "schema_version": 1,
+    "verdict": "pass",
+    "summary": "已形成两个有界且可证伪的竞争机制。绑定结果使旧的过原点线性模型在 x=0、1、2 处均出现约 1 的偏差，远超 0.02 绝对误差界，因此从本轮组合移除。现有数据仍不能区分连续仿射响应与整数输入量化阶梯响应；在 x=0.25 取得一个有效响应即可给出相差 0.5 的直接判别。",
+    "assumptions": [
+      "绑定基础所述的 0.02 绝对误差界适用于后续取得的每个有效响应观测。",
+      "输入 x 可被设定为范围内的非整数值，且设定误差相对两个候选在 x=0.25 处的 0.5 预测差异可忽略。"
+    ],
+    "missing_inputs": [],
+    "next_actions": [
+      "在 x=0.25 获取一个独立有效响应，并按 0.02 绝对误差界分别比较 y=1.5 与 y=1.0。",
+      "若首点因输入设定或边界解释无效，可在 x=0.75 复测；两个候选分别预测 y=2.5 与 y=3.0。"
+    ],
+    "next_action_kind": null
+  }
+}

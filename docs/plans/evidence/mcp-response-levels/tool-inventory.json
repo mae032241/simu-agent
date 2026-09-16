@@ -1,0 +1,634 @@
+{
+  "root": [
+    {
+      "name": "diagnostic_read",
+      "purpose": "Read bounded engineering error details visible to the current instance or session.",
+      "owner": "Root",
+      "category": "显式诊断读取",
+      "previous_default": "有界原文",
+      "decision": "保持：调用者已经选择 section/offset/max_bytes，不能二次摘要",
+      "detail_access": "同工具按范围续读；scoped diagnostic 权限不变"
+    },
+    {
+      "name": "instance_current",
+      "purpose": "Read the bound research instance or return its direct local management URL.",
+      "owner": "Root",
+      "category": "实例状态/回执",
+      "previous_default": "可能含完整目标",
+      "decision": "修改：名称、状态、管理 URL；目标不再重复",
+      "detail_access": "instance_current view=detail；不增加写权限"
+    },
+    {
+      "name": "instance_list",
+      "purpose": "List research instances without exposing internal identity.",
+      "owner": "Root",
+      "category": "目录列表",
+      "previous_default": "全部实例属性",
+      "decision": "修改：有限页与名称、标题、状态",
+      "detail_access": "view=detail + limit/before"
+    },
+    {
+      "name": "instance_close",
+      "purpose": "Close the current research instance against further writes.",
+      "owner": "Root",
+      "category": "实例状态/回执",
+      "previous_default": "可能含完整目标",
+      "decision": "修改：名称、状态、管理 URL；目标不再重复",
+      "detail_access": "instance_current view=detail；不增加写权限"
+    },
+    {
+      "name": "scientific_inventory",
+      "purpose": "List current immutable scientific objects without suggesting a workflow or capability.",
+      "owner": "Root",
+      "category": "科研目录",
+      "previous_default": "全成果+完整操作目录",
+      "decision": "修改：有限成果元数据页，独立目录入口",
+      "detail_access": "limit/before；operation_catalog 按 ID detail"
+    },
+    {
+      "name": "scientific_current",
+      "purpose": "Read explicit current scientific-object selections for this research instance.",
+      "owner": "Root",
+      "category": "当前选择目录",
+      "previous_default": "全部选择",
+      "decision": "修改：稳定 kind 游标分页，保留选择事实",
+      "detail_access": "limit/before"
+    },
+    {
+      "name": "scientific_current_select",
+      "purpose": "Compare-and-set one immutable scientific object as the explicit current selection.",
+      "owner": "Root",
+      "category": "变更回执",
+      "previous_default": "语义名/状态",
+      "decision": "保持：无正文，无复制科学内容",
+      "detail_access": "原对象通过 artifact_catalog；变更授权保持"
+    },
+    {
+      "name": "lifecycle_events",
+      "purpose": "Return persistent semantic task, approval, and execution state changes for this scheduler process.",
+      "owner": "Root",
+      "category": "持久事件轮询",
+      "previous_default": "全差异并移动观察记录",
+      "decision": "修改：有界页，未交付事件不移动观察记录；poll_again",
+      "detail_access": "继续轮询；保持既有消费语义"
+    },
+    {
+      "name": "artifact_ingest_file",
+      "purpose": "Freeze and bind one project file under a semantic name.",
+      "owner": "Root",
+      "category": "变更回执",
+      "previous_default": "语义名/状态",
+      "decision": "保持：无正文，无复制科学内容",
+      "detail_access": "原对象通过 artifact_catalog；变更授权保持"
+    },
+    {
+      "name": "artifact_ingest_text",
+      "purpose": "Freeze original user text and bind it under a semantic name in the current instance; does not create a Run.",
+      "owner": "Root",
+      "category": "变更回执",
+      "previous_default": "语义名/状态",
+      "decision": "保持：无正文，无复制科学内容",
+      "detail_access": "原对象通过 artifact_catalog；变更授权保持"
+    },
+    {
+      "name": "artifact_catalog",
+      "purpose": "Read sanitized metadata for one bound semantic input.",
+      "owner": "Root",
+      "category": "单对象元数据",
+      "previous_default": "有序 parents 与 labels",
+      "decision": "修改：身份、schema、大小、parent_count",
+      "detail_access": "view=detail 取原顺序 parents/null aliases；不替换缺失对象"
+    },
+    {
+      "name": "operation_catalog",
+      "purpose": "List bounded operation summaries; select operation_id with view=detail for its full compiled contract.",
+      "owner": "Root",
+      "category": "完整合同目录",
+      "previous_default": "所有完整操作声明",
+      "decision": "修改：有限摘要目录，按 operation_id 选择完整项",
+      "detail_access": "operation_id + view=detail；同一编译目录"
+    },
+    {
+      "name": "operation_preflight",
+      "purpose": "Check one exact operation call without writing control state.",
+      "owner": "Root",
+      "category": "准入",
+      "previous_default": "精确 normalized_request 或错误",
+      "decision": "保持：一次性完整 normalized_request 必须可原样 invoke；完整具体错误",
+      "detail_access": "无缩减机器请求；失败诊断原入口"
+    },
+    {
+      "name": "operation_invoke",
+      "purpose": "Create one Agent, Transform, or Effect through the compiled operation catalog.",
+      "owner": "Root",
+      "category": "创建回执",
+      "previous_default": "Agent 返回整个 Run",
+      "decision": "修改：Agent 名、类型、profile、恢复预算；其他执行器本来只返登记回执",
+      "detail_access": "named status detail；保留审批 URL 和精确派发配置"
+    },
+    {
+      "name": "run_list",
+      "purpose": "List minimal Runs in this research instance.",
+      "owner": "Root",
+      "category": "对象列表",
+      "previous_default": "部分未分页/较长行",
+      "decision": "修改：有限页、短行、next_before",
+      "detail_access": "各自 named status view=detail"
+    },
+    {
+      "name": "run_status",
+      "purpose": "Read a compact Run summary; use output_paths for sealed fields or view=detail for exact bindings and full output.",
+      "owner": "Root",
+      "category": "运行状态",
+      "previous_default": "正文、绑定、计时、历史细节",
+      "decision": "修改：恢复/错误/输出身份；status 默认至多 summary 原文片段",
+      "detail_access": "output_paths 精确选择，view=detail 恢复原记录，diagnostic_after 分页"
+    },
+    {
+      "name": "run_record_failure",
+      "purpose": "Record failure of one running minimal Run.",
+      "owner": "Root",
+      "category": "运行状态",
+      "previous_default": "正文、绑定、计时、历史细节",
+      "decision": "修改：恢复/错误/输出身份；status 默认至多 summary 原文片段",
+      "detail_access": "output_paths 精确选择，view=detail 恢复原记录，diagnostic_after 分页"
+    },
+    {
+      "name": "approval_list",
+      "purpose": "List named reviews in this scheduler instance.",
+      "owner": "Root",
+      "category": "对象列表",
+      "previous_default": "部分未分页/较长行",
+      "decision": "修改：有限页、短行、next_before",
+      "detail_access": "各自 named status view=detail"
+    },
+    {
+      "name": "approval_status",
+      "purpose": "Read one named human-review state.",
+      "owner": "Root",
+      "category": "审批状态",
+      "previous_default": "状态、URL、理由原文",
+      "decision": "修改：保持决定/URL；长理由明示 excerpt",
+      "detail_access": "view=detail；不能替代 UI 决策"
+    },
+    {
+      "name": "execution_capabilities",
+      "purpose": "List sanitized execution capabilities for one compiled Effect operation.",
+      "owner": "Root",
+      "category": "能力目录",
+      "previous_default": "全部 public arguments",
+      "decision": "修改：有界能力摘要；完整选中参数可读取",
+      "detail_access": "view=detail + limit/before；不得据局部页声称能力不存在"
+    },
+    {
+      "name": "execution_capability_bind",
+      "purpose": "Freeze one capability selected through a compiled Effect under a semantic artifact name.",
+      "owner": "Root",
+      "category": "变更回执",
+      "previous_default": "语义名/状态",
+      "decision": "保持：无正文，无复制科学内容",
+      "detail_access": "原对象通过 artifact_catalog；变更授权保持"
+    },
+    {
+      "name": "execution_abandon",
+      "purpose": "Abandon one named unsubmitted execution.",
+      "owner": "Root",
+      "category": "执行状态/回执",
+      "previous_default": "progress 含重复日志尾部",
+      "decision": "修改：状态、观测耗时、具体错误、收集状态；不回显日志",
+      "detail_access": "execution_status view=detail；sync 可同次请求 detail"
+    },
+    {
+      "name": "execution_cancel",
+      "purpose": "Request cancellation of one named submitted execution.",
+      "owner": "Root",
+      "category": "执行状态/回执",
+      "previous_default": "progress 含重复日志尾部",
+      "decision": "修改：状态、观测耗时、具体错误、收集状态；不回显日志",
+      "detail_access": "execution_status view=detail；sync 可同次请求 detail"
+    },
+    {
+      "name": "execution_list",
+      "purpose": "List named executions in this scheduler instance.",
+      "owner": "Root",
+      "category": "对象列表",
+      "previous_default": "部分未分页/较长行",
+      "decision": "修改：有限页、短行、next_before",
+      "detail_access": "各自 named status view=detail"
+    },
+    {
+      "name": "execution_status",
+      "purpose": "Read one named execution state.",
+      "owner": "Root",
+      "category": "执行状态/回执",
+      "previous_default": "progress 含重复日志尾部",
+      "decision": "修改：状态、观测耗时、具体错误、收集状态；不回显日志",
+      "detail_access": "execution_status view=detail；sync 可同次请求 detail"
+    },
+    {
+      "name": "execution_outputs",
+      "purpose": "Bind and list logical outputs from one named execution.",
+      "owner": "Root",
+      "category": "产品元数据目录",
+      "previous_default": "全部产物元数据",
+      "decision": "修改：output_label 游标分页，不读产品正文",
+      "detail_access": "limit/before；登记语义不变"
+    },
+    {
+      "name": "execution_start",
+      "purpose": "Submit one named execution after its exact local review authorizes it.",
+      "owner": "Root",
+      "category": "执行状态/回执",
+      "previous_default": "progress 含重复日志尾部",
+      "decision": "修改：状态、观测耗时、具体错误、收集状态；不回显日志",
+      "detail_access": "execution_status view=detail；sync 可同次请求 detail"
+    },
+    {
+      "name": "execution_sync",
+      "purpose": "Refresh bounded solver status and logs; never collect artifacts.",
+      "owner": "Root",
+      "category": "执行状态/回执",
+      "previous_default": "progress 含重复日志尾部",
+      "decision": "修改：状态、观测耗时、具体错误、收集状态；不回显日志",
+      "detail_access": "execution_status view=detail；sync 可同次请求 detail"
+    },
+    {
+      "name": "execution_collect",
+      "purpose": "Start or resume terminal artifact collection; returns immediately. Other active collection returns busy without queuing.",
+      "owner": "Root",
+      "category": "异步收集回执",
+      "previous_default": "接受/忙/失败/预算和计数",
+      "decision": "保持：无产品正文，既有短回执与错误",
+      "detail_access": "execution_status view=detail；不重启求解器"
+    }
+  ],
+  "worker": [
+    {
+      "name": "worker_curve_contract_compile",
+      "purpose": "Compile the complete v1 curve contract from one experiment key, exact objective-target/reference-series bindings, candidate case keys, and one supported residual metric. The tool copies axes and units, calculates support domains and counts, creates identifiers and operators, writes output/result.json, and validates it.",
+      "operations": [
+        "science.curve.contract.design.v1"
+      ],
+      "owner": "curve-score Worker tool",
+      "category": "确定性编译回执",
+      "previous_default": "合同/请求/编译消息文件路径和计数",
+      "decision": "保持：无完整科学对象内联；非分析前置门禁",
+      "detail_access": "原工具返回的本 Run 文件"
+    },
+    {
+      "name": "worker_file_write_begin",
+      "purpose": "Begin a bounded new-file creation or chunked Codex patch. Omit expected_bytes for server-counted UTF-8; do not use TextEncoder. Existing files cannot be replaced wholesale.",
+      "operations": [
+        "science.curve.contract.review.v1",
+        "science.evidence.audit.intake.v1",
+        "science.evidence.audit.v1",
+        "science.evidence.extract.figure.v2",
+        "science.evidence.extract.v1",
+        "science.evidence.revise-from-critic.v1",
+        "science.experiment.design.v1",
+        "science.experiment.revise.v1",
+        "science.figure.evidence.audit.v1",
+        "science.figure.request.prepare.v1",
+        "science.hypothesis.criticize.v1",
+        "science.hypothesis.propose.v1",
+        "science.hypothesis.revise.v1",
+        "science.intake.revise.v1",
+        "science.object.review.v1",
+        "science.result.diagnose.curve-error.v1",
+        "science.result.diagnose.v1",
+        "tcad.deck.author.initial.v1",
+        "tcad.deck.author.revise.v1",
+        "tcad.deck.author.runtime-failure.v1",
+        "tcad.deck.review.v1",
+        "tcad.parameter.evidence.audit.v1",
+        "tcad.parameter.evidence.extract.v1",
+        "tcad.result.analyze.v1"
+      ],
+      "owner": "builtin Worker tool",
+      "category": "文件编辑",
+      "previous_default": "路径/字节/摘要校验值或错误",
+      "decision": "保持：不回显整个正文或 diff；具体错误不改成泛化文本",
+      "detail_access": "当前工作区文件；权限及原子编辑不变"
+    },
+    {
+      "name": "worker_file_write_chunk",
+      "purpose": "Append one bounded UTF-8 or base64 chunk. Pass source as ordinary quoted strings or arrays of lines, never a JavaScript template literal containing Tcl ${...}.",
+      "operations": [
+        "science.curve.contract.review.v1",
+        "science.evidence.audit.intake.v1",
+        "science.evidence.audit.v1",
+        "science.evidence.extract.figure.v2",
+        "science.evidence.extract.v1",
+        "science.evidence.revise-from-critic.v1",
+        "science.experiment.design.v1",
+        "science.experiment.revise.v1",
+        "science.figure.evidence.audit.v1",
+        "science.figure.request.prepare.v1",
+        "science.hypothesis.criticize.v1",
+        "science.hypothesis.propose.v1",
+        "science.hypothesis.revise.v1",
+        "science.intake.revise.v1",
+        "science.object.review.v1",
+        "science.result.diagnose.curve-error.v1",
+        "science.result.diagnose.v1",
+        "tcad.deck.author.initial.v1",
+        "tcad.deck.author.revise.v1",
+        "tcad.deck.author.runtime-failure.v1",
+        "tcad.deck.review.v1",
+        "tcad.parameter.evidence.audit.v1",
+        "tcad.parameter.evidence.extract.v1",
+        "tcad.result.analyze.v1"
+      ],
+      "owner": "builtin Worker tool",
+      "category": "文件编辑",
+      "previous_default": "路径/字节/摘要校验值或错误",
+      "decision": "保持：不回显整个正文或 diff；具体错误不改成泛化文本",
+      "detail_access": "当前工作区文件；权限及原子编辑不变"
+    },
+    {
+      "name": "worker_file_write_commit",
+      "purpose": "Atomically publish the complete active create-or-patch operation.",
+      "operations": [
+        "science.curve.contract.review.v1",
+        "science.evidence.audit.intake.v1",
+        "science.evidence.audit.v1",
+        "science.evidence.extract.figure.v2",
+        "science.evidence.extract.v1",
+        "science.evidence.revise-from-critic.v1",
+        "science.experiment.design.v1",
+        "science.experiment.revise.v1",
+        "science.figure.evidence.audit.v1",
+        "science.figure.request.prepare.v1",
+        "science.hypothesis.criticize.v1",
+        "science.hypothesis.propose.v1",
+        "science.hypothesis.revise.v1",
+        "science.intake.revise.v1",
+        "science.object.review.v1",
+        "science.result.diagnose.curve-error.v1",
+        "science.result.diagnose.v1",
+        "tcad.deck.author.initial.v1",
+        "tcad.deck.author.revise.v1",
+        "tcad.deck.author.runtime-failure.v1",
+        "tcad.deck.review.v1",
+        "tcad.parameter.evidence.audit.v1",
+        "tcad.parameter.evidence.extract.v1",
+        "tcad.result.analyze.v1"
+      ],
+      "owner": "builtin Worker tool",
+      "category": "文件编辑",
+      "previous_default": "路径/字节/摘要校验值或错误",
+      "decision": "保持：不回显整个正文或 diff；具体错误不改成泛化文本",
+      "detail_access": "当前工作区文件；权限及原子编辑不变"
+    },
+    {
+      "name": "worker_file_apply_patch",
+      "purpose": "Apply one native Codex `*** Begin Patch`/`*** Update File` patch without hunk line counts, or one legacy standard unified diff, to an existing Run-relative text file; reject stale or ambiguous context atomically, then require a fresh read before another patch.",
+      "operations": [
+        "science.curve.contract.review.v1",
+        "science.evidence.audit.intake.v1",
+        "science.evidence.audit.v1",
+        "science.evidence.extract.figure.v2",
+        "science.evidence.extract.v1",
+        "science.evidence.revise-from-critic.v1",
+        "science.experiment.design.v1",
+        "science.experiment.revise.v1",
+        "science.figure.evidence.audit.v1",
+        "science.figure.request.prepare.v1",
+        "science.hypothesis.criticize.v1",
+        "science.hypothesis.propose.v1",
+        "science.hypothesis.revise.v1",
+        "science.intake.revise.v1",
+        "science.object.review.v1",
+        "science.result.diagnose.curve-error.v1",
+        "science.result.diagnose.v1",
+        "tcad.deck.author.initial.v1",
+        "tcad.deck.author.revise.v1",
+        "tcad.deck.author.runtime-failure.v1",
+        "tcad.deck.review.v1",
+        "tcad.parameter.evidence.audit.v1",
+        "tcad.parameter.evidence.extract.v1",
+        "tcad.result.analyze.v1"
+      ],
+      "owner": "builtin Worker tool",
+      "category": "文件编辑",
+      "previous_default": "路径/字节/摘要校验值或错误",
+      "decision": "保持：不回显整个正文或 diff；具体错误不改成泛化文本",
+      "detail_access": "当前工作区文件；权限及原子编辑不变"
+    },
+    {
+      "name": "worker_extract_pdf_text",
+      "purpose": "Freeze a bounded PDF page range and return its exact local read-only path for native inspection.",
+      "operations": [
+        "science.evidence.audit.intake.v1",
+        "science.evidence.audit.v1",
+        "science.evidence.extract.figure.v2",
+        "science.evidence.extract.v1",
+        "science.evidence.revise-from-critic.v1",
+        "science.figure.evidence.audit.v1",
+        "science.figure.request.prepare.v1",
+        "science.intake.revise.v1",
+        "tcad.parameter.evidence.audit.v1",
+        "tcad.parameter.evidence.extract.v1"
+      ],
+      "owner": "general-science Worker tool",
+      "category": "证据读取",
+      "previous_default": "所选页面提取后的只读路径、字符计数",
+      "decision": "保持：不是把 max_chars 全量文本塞进响应，无需降低取证能力",
+      "detail_access": "精确本 Run 只读正文路径"
+    },
+    {
+      "name": "worker_curve_figure_inspect_source",
+      "purpose": "Recover original embedded images from one exact Agent-located PDF page, or canonicalize one exact raster source, and return only read-only source previews and deterministic source metadata. OCR and plot detection are not performed.",
+      "operations": [
+        "science.figure.request.prepare.v1"
+      ],
+      "owner": "figure-evidence Worker tool",
+      "category": "取证预览",
+      "previous_default": "最多32张源图元数据/完整提取请求及报告",
+      "decision": "修改：首8个图引用和遗漏数量；完整 JSON 保存到只读详情",
+      "detail_access": "details_path + 图文件；不摘要原始图片"
+    },
+    {
+      "name": "worker_curve_figure_preview",
+      "purpose": "Run the same deterministic curve digitizer used by materialization for one draft request. Return read-only source-overlay and numeric-redraw paths for the current Agent to inspect before submitting the request.",
+      "operations": [
+        "science.figure.request.prepare.v1"
+      ],
+      "owner": "figure-evidence Worker tool",
+      "category": "取证预览",
+      "previous_default": "最多32张源图元数据/完整提取请求及报告",
+      "decision": "修改：首8个图引用和遗漏数量；完整 JSON 保存到只读详情",
+      "detail_access": "details_path + 图文件；不摘要原始图片"
+    },
+    {
+      "name": "worker_curve_score",
+      "purpose": "Optionally score bound bundle/explicit CSV columns. Returns compact metrics; read calculation_path for the complete record. Cite the returned calculation_ref; the complete record and receipt are saved automatically. Unsupported metrics are never substituted.",
+      "operations": [
+        "science.result.diagnose.v1"
+      ],
+      "owner": "curve-score/TCAD Worker tool",
+      "category": "计算",
+      "previous_default": "完整 CalculationRecord 含请求和多比较",
+      "decision": "修改：原件先封存，再返回少量实际指标、计数与引用",
+      "detail_access": "calculation_path 完整只读记录，calculation_ref 正式引用"
+    },
+    {
+      "name": "worker_curve_diagnose",
+      "purpose": "Optionally localize one residual comparison using bound curves or explicit CSV columns. Returns compact metrics; read record.calculation_path for the complete record. Cite record.calculation_ref; record and receipt are retained automatically. Full details (<=4 MiB) and overlay/residual images have saved evidence aliases and task-local paths. One operator, 2-257 samples; no curve contract or additional Run.",
+      "operations": [
+        "science.result.diagnose.v1"
+      ],
+      "owner": "curve-score/TCAD Worker tool",
+      "category": "残差诊断",
+      "previous_default": "完整记录 + 图/详情引用",
+      "decision": "修改：record 为计算摘要；图像权限、详情/证据保留",
+      "detail_access": "record.calculation_path、details.path、images 原图"
+    },
+    {
+      "name": "worker_analysis_publish_files",
+      "purpose": "Retain a task-local analysis script and derived CSV/JSON/text/PNG files with declared source lineage. Returns reusable evidence aliases; does not execute code or attest its result. Script <=1 MiB; files <=16 MiB each, <=32 MiB per call, within the Run collection budget.",
+      "operations": [
+        "science.result.diagnose.v1",
+        "tcad.result.analyze.v1"
+      ],
+      "owner": "curve-score Worker tool",
+      "category": "证据发布",
+      "previous_default": "1脚本+最多8文件收据",
+      "decision": "保持：短 alias/path/hash 收据；每个实际发布文件均需可定位",
+      "detail_access": "既有受控工作区文件和 tool evidence；不证明脚本执行"
+    },
+    {
+      "name": "worker_file_json_patch",
+      "purpose": "Atomically apply bounded JSON Pointer test/add/replace/remove operations to one existing Run-relative JSON file. Guard the update with the current content digest or a test operation; no textual context matching is used.",
+      "operations": [
+        "tcad.deck.author.initial.v1",
+        "tcad.deck.author.revise.v1",
+        "tcad.deck.author.runtime-failure.v1"
+      ],
+      "owner": "builtin Worker tool",
+      "category": "文件编辑",
+      "previous_default": "路径/字节/摘要校验值或错误",
+      "decision": "保持：不回显整个正文或 diff；具体错误不改成泛化文本",
+      "detail_access": "当前工作区文件；权限及原子编辑不变"
+    },
+    {
+      "name": "worker_file_delete",
+      "purpose": "Delete one optional Run-relative output file.",
+      "operations": [
+        "tcad.deck.author.initial.v1",
+        "tcad.deck.author.revise.v1",
+        "tcad.deck.author.runtime-failure.v1"
+      ],
+      "owner": "builtin Worker tool",
+      "category": "文件编辑",
+      "previous_default": "路径/字节/摘要校验值或错误",
+      "decision": "保持：不回显整个正文或 diff；具体错误不改成泛化文本",
+      "detail_access": "当前工作区文件；权限及原子编辑不变"
+    },
+    {
+      "name": "worker_file_move",
+      "purpose": "Move one optional Run-relative output file without rewriting its content.",
+      "operations": [
+        "tcad.deck.author.initial.v1",
+        "tcad.deck.author.revise.v1",
+        "tcad.deck.author.runtime-failure.v1"
+      ],
+      "owner": "builtin Worker tool",
+      "category": "文件编辑",
+      "previous_default": "路径/字节/摘要校验值或错误",
+      "decision": "保持：不回显整个正文或 diff；具体错误不改成泛化文本",
+      "detail_access": "当前工作区文件；权限及原子编辑不变"
+    },
+    {
+      "name": "worker_tcad_debug_run",
+      "purpose": "Submit or poll one bounded TCAD development diagnostic; never scientific evidence. Budget: 360s reserved wall time and 6 created run names. Mode caps: initialization 120s, preflight 60s, smoke 180s. Each submitted job reserves its capped wall limit once, further clamped by project limits, remaining debug budget and Run time; solver failure does not refund it. Repeat the same name/mode to poll without new reservation; use a new name after source corrections, which do not reset the budget. Responses report current budget and per-job reservation. On updated runners, summary progress includes observed job elapsed_seconds. Read details_path for redacted log_tails and manifest timing; log_relative_path locates the complete bounded log. These are observations, not an ETA or proof of physical initialization. Older runners may omit progress.",
+      "operations": [
+        "tcad.deck.author.initial.v1",
+        "tcad.deck.author.revise.v1",
+        "tcad.deck.author.runtime-failure.v1"
+      ],
+      "owner": "TCAD Worker tool",
+      "category": "工程调试",
+      "previous_default": "日志和完整诊断随轮询重复",
+      "decision": "修改：状态、耗时、预算、具体错误和完整快照路径",
+      "detail_access": "details_path 同 Run 快照；log_relative_path 原日志；不授科学资格"
+    },
+    {
+      "name": "worker_tcad_curve_score",
+      "purpose": "Optionally parse bound TCAD PLX/log and explicit CSV columns, then score in this analysis Run. Returns compact metrics; read calculation_path for the complete record. Cite calculation_ref; control saves the record and receipt.",
+      "operations": [
+        "tcad.result.analyze.v1"
+      ],
+      "owner": "curve-score/TCAD Worker tool",
+      "category": "计算",
+      "previous_default": "完整 CalculationRecord 含请求和多比较",
+      "decision": "修改：原件先封存，再返回少量实际指标、计数与引用",
+      "detail_access": "calculation_path 完整只读记录，calculation_ref 正式引用"
+    },
+    {
+      "name": "worker_tcad_curve_diagnose",
+      "purpose": "Optionally localize one residual comparison from bound PLX/log/CSV sources. Returns compact metrics; read record.calculation_path for the complete record. Cite record.calculation_ref; full details (<=4 MiB) and images have saved evidence aliases and task-local paths. One operator, 2-257 samples; no curve contract or additional Run.",
+      "operations": [
+        "tcad.result.analyze.v1"
+      ],
+      "owner": "curve-score/TCAD Worker tool",
+      "category": "残差诊断",
+      "previous_default": "完整记录 + 图/详情引用",
+      "decision": "修改：record 为计算摘要；图像权限、详情/证据保留",
+      "detail_access": "record.calculation_path、details.path、images 原图"
+    },
+    {
+      "name": "worker_tcad_inspect_outputs",
+      "purpose": "Optionally list or inspect original files of the bound terminal execution_result. No solver, editing or renaming. A selected file yields a controlled evidence alias and read-only copy; unavailable inspection permits limited analysis.",
+      "operations": [
+        "tcad.result.analyze.v1"
+      ],
+      "owner": "TCAD Worker tool",
+      "category": "原执行文件检查",
+      "previous_default": "全文件候选目录",
+      "decision": "修改：目录首10项+遗漏计数；显式单文件检查保持",
+      "detail_access": "details_path 完整目录；单文件受控证据原件"
+    },
+    {
+      "name": "worker_tcad_accept_output",
+      "purpose": "Accept a previously inspected file as one declared output using an explicit evidence-backed mapping. Rechecks bytes; preserves source path and old execution. Read returned evidence alias for scoring and report references. No scientific success is granted.",
+      "operations": [
+        "tcad.result.analyze.v1"
+      ],
+      "owner": "TCAD Worker tool",
+      "category": "精确产物接收",
+      "previous_default": "证据映射回执/文件位置",
+      "decision": "保持：只有一个已检查文件的短回执；身份和 lineage 必须完整",
+      "detail_access": "返回当前受控证据文件；同 execution 约束不变"
+    }
+  ],
+  "lifecycle": [
+    {
+      "name": "worker_open_assignment",
+      "purpose": "Open the exact Run assignment and materialize its private read-only inputs.",
+      "owner": "Worker local+hardened",
+      "category": "任务/合同读取",
+      "previous_default": "部分旧工作区和 hardened 内联工具目录",
+      "decision": "Local 返回冻结合同路径/指针；Hardened 无 native 读取能力，保留原内联合同必要例外，避免返回不可读路径或新增通用读取权限。",
+      "detail_access": "本 Run 只读文件；legacy 同 identity 的受控原合同"
+    },
+    {
+      "name": "worker_heartbeat",
+      "purpose": "Record bounded liveness without extending the absolute budget.",
+      "owner": "Worker local+hardened",
+      "category": "生命周期",
+      "previous_default": "状态和剩余预算",
+      "decision": "保持：短回执，不能延长绝对预算",
+      "detail_access": "assignment 与状态"
+    },
+    {
+      "name": "worker_submit_result",
+      "purpose": "Validate, seal, and submit the complete result bundle, or return bounded correction diagnostics.",
+      "owner": "Worker local+hardened",
+      "category": "提交",
+      "previous_default": "完成状态或有界纠错诊断",
+      "decision": "保持：不回显科学 JSON；没有可读详情引用时保留全部具体诊断，允许超体积目标",
+      "detail_access": "同 Run 纠错；Root diagnostic_after 翻查历史"
+    }
+  ]
+}

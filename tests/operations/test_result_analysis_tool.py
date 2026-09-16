@@ -154,7 +154,7 @@ def test_multiple_controlled_records_submit_without_recalculation(tmp_path, monk
     from tests.operations.test_analysis_claim_scope import generic_worker, submit
     worker, opened = generic_worker(tmp_path)
     request = score_inputs()[1]
-    records = [worker.call_tool('worker_curve_score', dict(record_key=f'score_{i}', request=request))
+    records = [json.loads(Path(worker.call_tool('worker_curve_score', dict(record_key=f'score_{i}', request=request))["calculation_path"]).read_bytes())
                for i in range(8)]
     assert all(item['status'] == 'computed' for item in records)
     def never(*args, **kwargs):
@@ -310,7 +310,7 @@ def test_deadline_stops_reading_more_inputs_and_error_can_be_replayed(monkeypatc
     raw = tool.score_tool(AnalysisScoreInput.model_validate_json(canonical_json(dict(record_key='timed', request=request))),
         SimpleNamespace(remaining_seconds=10, read_evidence=read, finish_attempt=lambda **kwargs: None,
             workspace=tmp_path, accept_evidence=lambda **kwargs: {'alias': 'tool_evidence_001'}))
-    record = CalculationRecord.model_validate_json(canonical_json(raw))
+    record = CalculationRecord.model_validate_json(Path(raw["calculation_path"]).read_bytes())
     assert record.status == 'error' and record.result is None
     assert reads == ['curve_bundle']
     replay_calculation(record, sources)

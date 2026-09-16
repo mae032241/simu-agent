@@ -473,16 +473,15 @@ class RootExecutionRoutes:
             scope="instance:" + self._instance_id(), total_seconds=total_seconds)
         return {"execution_name": name, "collection": result}
 
-    def execution_list(self, *, state: str | None, limit: int) -> dict[str, Any]:
-        items = []
-        for binding in self.bindings.list(instance=self._instance_id(), namespace="execution"):
-            item = self.execution_status(name=binding.name)
-            if state is not None and item["state"] != state:
-                continue
-            items.append(item)
-            if len(items) >= limit:
-                break
-        return {"executions": items}
+    def execution_list(self, *, state: str | None, limit: int, before: str | None = None) -> dict[str, Any]:
+        from .mcp_response_views import page
+        def values():
+            for binding in self.bindings.list(instance=self._instance_id(), namespace="execution"):
+                item = self.execution_status(name=binding.name)
+                if state is None or item["state"] == state:
+                    yield item
+        items, cursor = page(values(), key="name", limit=limit, before=before)
+        return {"executions": items, "next_before": cursor}
 
     def execution_outputs(self, *, name: str) -> dict[str, Any]:
         execution_id = self._resolve("execution", name)

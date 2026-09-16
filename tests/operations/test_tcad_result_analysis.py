@@ -104,7 +104,7 @@ def analysis_system(tmp_path, *, state='succeeded', mapped=True, bind_names=('A'
         handoff=dict(verdict='pass',summary='Fixture plan is bounded.'),
         payload=dict(review_target='experiment_portfolio',verdict='pass',summary='Independent fixture review.'))))
     assert reviewer.call_tool('worker_submit_result',{})['state'] == 'completed'
-    review_name = root.call_tool('run_status',{'name':'plan_review'})['output_artifact_name']
+    review_name = root.call_tool('run_status',{"view": "detail", 'name':'plan_review'})['output_artifact_name']
     package_artifact = register('package',canonical_json(package.model_dump(mode="json")),'tcad.reviewed-deck-package.v2',parents=(plan_artifact.ref,))
     manifest_artifact = register('manifest',manifest,'opaque',parents=(package_artifact.ref,))
     for name in ('A','B'):
@@ -138,7 +138,7 @@ def write_analysis(opened,report):
 def test_raw_plx_csv_same_worker_score_and_submit(tmp_path):
     system = analysis_system(tmp_path)
     worker,opened = open_analysis(system)
-    record = worker.call_tool('worker_tcad_curve_score',dict(record_key='raw_score',request=raw_request()))
+    record = json.loads(Path(worker.call_tool('worker_tcad_curve_score',dict(record_key='raw_score',request=raw_request()))["calculation_path"]).read_bytes())
     assert record['status'] == 'computed',record
     report = analysis_report(alias='solver_outputs_001',output_name='A',mapped=True)
     report['source_references'] = []
@@ -155,7 +155,7 @@ def test_raw_plx_csv_same_worker_score_and_submit(tmp_path):
         analysis.evaluate_tcad_request = original
     assert result['state'] == 'completed',result
     _,_,root,_,_,_ = system
-    status = root.call_tool('run_status',{'name':'analysis'})
+    status = root.call_tool('run_status',{"view": "detail", 'name':'analysis'})
     assert status['sealed_output']['payload']['calculation_records'][0] == record
 
 
@@ -177,7 +177,7 @@ def test_same_worker_rejects_wrong_name_case_or_score(tmp_path,tamper):
     elif tamper=='case':
         report['source_references'][0]['case_key']='other_case'
     else:
-        record=worker.call_tool('worker_tcad_curve_score',dict(record_key='score',request=raw_request(alias='solver_outputs')))
+        record=json.loads(Path(worker.call_tool('worker_tcad_curve_score',dict(record_key='score',request=raw_request(alias='solver_outputs')))["calculation_path"]).read_bytes())
         assert record['status']=='computed',record
         record['result']['comparisons'][0]['metrics'][0]['value']+=1
         report['calculation_records']=[record]
@@ -211,7 +211,7 @@ def test_conflicting_citation_sources_repair_without_forbidding_repeated_citatio
         report['evidence'][0]['locator'] = 'solver_outputs_002:row1'
     write_analysis(opened, report)
     assert worker.call_tool('worker_submit_result', {})['state'] == 'completed'
-    sealed = system[2].call_tool('run_status', {'name': 'analysis'})['sealed_output']['payload']
+    sealed = system[2].call_tool('run_status', {"view": "detail", 'name': 'analysis'})['sealed_output']['payload']
     assert sealed['source_references'][0]['output_name'] == ('A' if explicit_reference else 'B')
 
 
@@ -235,14 +235,14 @@ def test_source_conflict_does_not_leave_a_control_mapping_to_repair(tmp_path, so
     report['evidence'][1]['locator'] = 'solver_outputs_001:row2'
     write_analysis(opened, report)
     assert worker.call_tool('worker_submit_result', {})['state'] == 'completed'
-    sealed = system[2].call_tool('run_status', {'name': 'analysis'})['sealed_output']['payload']
+    sealed = system[2].call_tool('run_status', {"view": "detail", 'name': 'analysis'})['sealed_output']['payload']
     assert sealed['source_references'][0]['output_name'] == 'A'
 
 
 def test_inline_calculation_source_conflict_can_be_corrected_without_changing_the_receipt(tmp_path):
     system = analysis_system(tmp_path)
     worker, opened = open_analysis(system)
-    record = worker.call_tool('worker_tcad_curve_score', {'record_key': 'score', 'request': raw_request()})
+    record = json.loads(Path(worker.call_tool('worker_tcad_curve_score', {'record_key': 'score', 'request': raw_request()})["calculation_path"]).read_bytes())
     assert record['status'] == 'computed'
     report = analysis_report(alias='solver_outputs_001')
     report['source_references'] = []
@@ -257,7 +257,7 @@ def test_inline_calculation_source_conflict_can_be_corrected_without_changing_th
     report['evidence'][1]['source_key'] = 'score_evidence'
     write_analysis(opened, report)
     assert worker.call_tool('worker_submit_result', {})['state'] == 'completed'
-    sealed = system[2].call_tool('run_status', {'name': 'analysis'})['sealed_output']['payload']
+    sealed = system[2].call_tool('run_status', {"view": "detail", 'name': 'analysis'})['sealed_output']['payload']
     assert sealed['calculation_records'] == [record]
     assert sealed['source_references'][0]['output_name'] == 'A'
 
@@ -362,7 +362,7 @@ def test_malformed_mapping_is_rejected_and_limited_analysis_can_still_seal(tmp_p
     request=raw_request()
     request['sources']=mapping
     with pytest.raises(WorkerToolError) as rejected:
-        worker.call_tool('worker_tcad_curve_score',dict(record_key='bad_request',request=request))
+        json.loads(Path(worker.call_tool('worker_tcad_curve_score',dict(record_key='bad_request',request=request))["calculation_path"]).read_bytes())
     assert all(item['phase'] == 'tool_arguments' for item in rejected.value.details)
     report=analysis_report()
     write_analysis(opened,report)
@@ -373,7 +373,7 @@ def test_malformed_mapping_is_rejected_and_limited_analysis_can_still_seal(tmp_p
 @pytest.mark.parametrize('mapping',[None,4,[None],[{}]])
 def test_forged_computed_mapping_is_correctable_not_checker_failure(tmp_path,mapping):
     worker,opened=open_analysis(analysis_system(tmp_path))
-    record=worker.call_tool('worker_tcad_curve_score',dict(record_key='score',request=raw_request()))
+    record=json.loads(Path(worker.call_tool('worker_tcad_curve_score',dict(record_key='score',request=raw_request()))["calculation_path"]).read_bytes())
     assert record['status']=='computed'
     record['request']['sources']=mapping
     report=analysis_report()
@@ -407,7 +407,7 @@ def test_near_input_limit_record_is_not_reparsed_on_submit(tmp_path, monkeypatch
     worker,opened=open_analysis(system)
     score_request=raw_request()
     score_request['comparison_spec']['comparisons'][0]['evaluation_points']=4096
-    records=[worker.call_tool('worker_tcad_curve_score',dict(record_key='large_score',request=score_request))]
+    records=[json.loads(Path(worker.call_tool('worker_tcad_curve_score',dict(record_key='large_score',request=score_request))["calculation_path"]).read_bytes())]
     assert all(record['status']=='computed' for record in records),records
     assert all(len(canonical_json(record))<=32*1024 for record in records)
     report=analysis_report()

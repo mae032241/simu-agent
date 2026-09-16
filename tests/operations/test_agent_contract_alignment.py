@@ -124,7 +124,12 @@ def test_open_delivers_frozen_contracts_and_same_identity_legacy_fallback(tmp_pa
     path = Path(opened['assignment_path'])
     frozen = path.read_bytes()
     assignment = json.loads(frozen)
-    contracts = assignment['tool_contracts'] if backend_kind == 'local' and not legacy else opened['tool_contracts']
+    if backend_kind == 'hardened':
+        contracts = opened['tool_contracts']  # No native file read: necessary inline contract.
+    else:
+        contracts = json.loads(Path(opened['tool_contracts_path']).read_bytes())
+        if opened['tool_contracts_pointer']:
+            contracts = contracts['tool_contracts']
     if backend_kind == 'local' and not legacy:
         assert 'tool_contracts' not in opened
         assert opened['tool_contracts_pointer'] == '/tool_contracts'
@@ -142,7 +147,7 @@ def test_open_delivers_frozen_contracts_and_same_identity_legacy_fallback(tmp_pa
     else:
         assert 'worker_file_write_chunk' in contracts
     reopened = worker.call_tool('worker_open_assignment', {})
-    if backend_kind == 'local' and not legacy:
+    if backend_kind == 'local':
         assert reopened['tool_contracts_path'] == opened['tool_contracts_path']
     else:
         assert reopened['tool_contracts'] == contracts
@@ -820,14 +825,20 @@ def test_sealed_blocked_review_is_readable_as_exact_feedback(tmp_path, monkeypat
     payload["verdict"] = "blocked"
     Path(opened["output_directory"], "result.json").write_bytes(canonical_json({
         "schema_version": 1, "payload": payload,
-        "handoff": {"verdict": "blocked", "summary": "The bounded review records an unresolved dependency."},
     }))
-    assert worker.call_tool("worker_submit_result", {})["state"] == "completed"
-    blocked = root.call_tool("run_status", {"name": request["name"]})
+    submitted = worker.call_tool("worker_submit_result", {})
+    assert submitted["state"] == "completed", submitted
+    blocked = root.call_tool("run_status", {"name": request["name"], "view": "detail"})
     assert blocked["sealed_output"]["payload"]["verdict"] == "blocked"
     output_name = blocked["output_artifact_name"]
     output_id = runtime.scheduler_bindings.resolve(instance=instance.instance_id, namespace="artifact", name=output_name)
     envelope = runtime.artifacts.get_by_id(output_id)
+    assert blocked["scheduler_signal"]["verdict"] == "blocked"
+    plan_id = runtime.scheduler_bindings.resolve(instance=instance.instance_id, namespace="artifact", name="experiment_plan")
+    review_match = dict(reviewer_operation=operation_id, reviewer_input_port="experiment_plan",
+                        subject_ref=runtime.artifacts.get_by_id(plan_id).ref)
+    assert runtime.runs.is_exact_reviewer_output(envelope.ref, accepted_verdicts=("blocked",), **review_match)
+    assert not runtime.runs.is_exact_reviewer_output(envelope.ref, accepted_verdicts=("pass",), **review_match)
     request = {**request, "name": "review_with_blocked_feedback", "inputs": [
         *request["inputs"], {"port": "current_progress", "artifact_names": [output_name]},
     ]}
@@ -837,7 +848,7 @@ def test_sealed_blocked_review_is_readable_as_exact_feedback(tmp_path, monkeypat
     reader.call_tool("worker_open_assignment", {})
     run_id = runtime.scheduler_bindings.resolve(instance=instance.instance_id, namespace="run", name=request["name"])
     assert runtime.runs.backend.open(run_id).input_paths["current_progress"].read_bytes() == runtime.artifacts.read(envelope.ref)
-    assert root.call_tool("run_status", {"name": "blocked_review"})["sealed_output"]["payload"]["verdict"] == "blocked"
+    assert root.call_tool("run_status", {"name": "blocked_review", "view": "detail"})["sealed_output"]["payload"]["verdict"] == "blocked"
 
 
 def test_partial_goal_submission_corrects_same_run_then_preserves_intent(tmp_path, experiment_case) -> None:
@@ -887,7 +898,7 @@ def _review_run(tmp_path, sources, *, operation_id="science.object.review.v1"):
 
 @pytest.mark.parametrize("with_objective", (False, True))
 @pytest.mark.parametrize("with_context", (False, True))
-@pytest.mark.parametrize("verdict", ("pass", "revise", "blocked"))
+@pytest.mark.parametrize("verdict", ("pass", "revise", "reject", "blocked", "inconclusive"))
 def test_review_optional_original_is_visible_and_citations_correct_in_same_run(
     tmp_path, experiment_case, with_objective, with_context, verdict,
 ) -> None:

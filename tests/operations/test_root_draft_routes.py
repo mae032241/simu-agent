@@ -29,11 +29,11 @@ def test_root_projects_exact_bindings_and_ordered_parent_metadata_without_payloa
     second = register('another_plan', runtime.artifacts.read(artifacts['plan'].ref), artifacts['plan'].schema_id)
     register('many_parents', b'{}', 'opaque', parents=(artifacts['plan'].ref, second.ref))
     monkeypatch.setattr(runtime.artifacts, 'read', lambda *a: pytest.fail('metadata query read scientific payload'))
-    parents = root.call_tool('artifact_catalog', {'name': 'many_parents'})
+    parents = root.call_tool('artifact_catalog', {'name': 'many_parents', 'view': 'detail'})
     assert [p['artifact_name'] for p in parents['parents']] == parents['parent_artifact_names']
     assert [p['schema'] for p in parents['parents']] == [artifacts['plan'].schema_id] * 2
     before = runtime.runs.status(worker._run_id)
-    status = root.call_tool('run_status', {'name': 'analysis'})
+    status = root.call_tool('run_status', {'name': 'analysis', 'view': 'detail', 'output_paths': []})
     expected = {}
     for item in before.inputs:
         expected.setdefault(item.port_name, []).append(item.artifact_name)
@@ -43,12 +43,12 @@ def test_root_projects_exact_bindings_and_ordered_parent_metadata_without_payloa
     original_find = runtime.scheduler_bindings.find_name
     monkeypatch.setattr(runtime.scheduler_bindings, 'find_name', lambda **kw:
         None if kw['object_id'] == second.artifact_id else original_find(**kw))
-    missing = root.call_tool('artifact_catalog', {'name': 'many_parents'})['parents'][1]
+    missing = root.call_tool('artifact_catalog', {'name': 'many_parents', 'view': 'detail'})['parents'][1]
     assert missing == dict(artifact_name=None, schema=None, kind=None, producer=None)
     original_list = runtime.scheduler_bindings.list
     monkeypatch.setattr(runtime.scheduler_bindings, 'list', lambda **kw:
         tuple(b for b in original_list(**kw) if b.name != before.inputs[0].artifact_name))
-    assert root.call_tool('run_status', {'name': 'analysis'})['bound_inputs'][0]['artifact_names'] == [None]
+    assert root.call_tool('run_status', {'name': 'analysis', 'view': 'detail', 'output_paths': []})['bound_inputs'][0]['artifact_names'] == [None]
 
 
 def _failed_source(catalog, runtime, root):
@@ -68,7 +68,7 @@ def _failed_source(catalog, runtime, root):
 def test_root_draft_source_handoff_is_not_scientific_output(tmp_path):
     catalog, runtime, _, _, root = _system(tmp_path)
     status = _failed_source(catalog, runtime, root)
-    assert status["sealed_output"] is None
+    assert "sealed_output" not in status
     assert status["recovery"]["delivery_preserved"]
     assert status["recovery"]["draft_available"]
     assert "PRIVATE_UNACCEPTED_DRAFT" not in json.dumps(status)
@@ -77,7 +77,7 @@ def test_root_draft_source_handoff_is_not_scientific_output(tmp_path):
     assert root.call_tool("operation_preflight", request)["admissible"]
     result = root.call_tool("operation_invoke", request)["result"]
     assert result["draft_from"] == "draft_source"
-    assert result["sealed_output"] is None
+    assert "sealed_output" not in result
     opened = _worker(catalog, runtime).call_tool("worker_open_assignment", {})
     assignment = json.loads(Path(opened["assignment_path"]).read_text())
     assert assignment["recovery_draft"]["scientific_evidence"] is False
@@ -96,7 +96,7 @@ def test_root_draft_rejection_creates_no_run(tmp_path, extra, reason):
     assert root.call_tool("operation_preflight", request)["reason_code"] == reason
     with pytest.raises(RootToolError, match=reason):
         root.call_tool("operation_invoke", request)
-    assert root.call_tool("run_list", {}) == {"runs": []}
+    assert root.call_tool("run_list", {}) == {"runs": [], "next_before": None}
 
 
 def test_root_draft_fingerprint_binds_controlled_digest(tmp_path, monkeypatch):
@@ -105,7 +105,7 @@ def test_root_draft_fingerprint_binds_controlled_digest(tmp_path, monkeypatch):
     request = OperationCallInput.model_validate(_request("new_run", draft_from="draft_source"))
     values = request.model_dump()
     values["inputs"] = request.inputs
-    bound = root.facade._prepare_operation_call(**values)
+    bound, _ = root.facade._configured_operation_call(values)
     first = root.facade._prepare_local_run(
         bound, "reject", resume_from=None, draft_from="draft_source"
     )
@@ -201,7 +201,7 @@ def test_schedule_rechecks_attempt_budget_after_another_run_consumes_it(tmp_path
     _failed_source(catalog, runtime, root)
     request = OperationCallInput.model_validate(_request("stale", draft_from="draft_source", max_attempts=2))
     values = request.model_dump(); values["inputs"] = request.inputs
-    bound = root.facade._prepare_operation_call(**values)
+    bound, _ = root.facade._configured_operation_call(values)
     assert root.call_tool("operation_preflight", request.model_dump())["admissible"]
     root.call_tool("operation_invoke", _request("winner", draft_from="draft_source"))
     source_id = runtime.scheduler_bindings.resolve(instance=instance.instance_id, namespace="run", name="draft_source")
@@ -228,7 +228,7 @@ def test_attempt_budget_mcp_contract_and_non_agent_applicability(tmp_path):
         contract = next(t for t in schema if t['name'] == name)['inputSchema']
         assert contract['properties']['max_attempts']['anyOf'][0] == dict(type='integer',minimum=1)
         assert 'max_attempts' not in contract.get('required', [])
-    items = root.call_tool('operation_catalog', {'scope':'all'})['operations']
+    items = root.call_tool('operation_catalog', {'scope':'all', 'operation_id':'blind.csv.observe.v1', 'view':'detail'})['operations']
     assert next(i for i in items if i['operation_id'] == 'blind.csv.observe.v1')['default_max_attempts'] == 2
     operation = next(catalog.operation(key) for key in catalog.operation_ids()
         if catalog.operation(key).spec.executor.kind != 'agent')

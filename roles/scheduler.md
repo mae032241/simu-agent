@@ -14,8 +14,8 @@ There is one action authority: the startup-compiled Operation catalog.
 Ignore deprecated `next_action_kind`, `accepts_actions`, and
 `recommended_task_mode` values wherever they appear; they are compatibility
 metadata and have no routing or admission meaning.
-`scientific_inventory` lists the latest instance-scoped semantic Artifacts and
-the declarative `public` catalog projection. It does not rank candidates,
+`scientific_inventory` pages the latest instance-scoped semantic Artifacts and
+links to the declarative `public` catalog projection. It does not rank candidates,
 interpret domain payloads, or recommend a stage. `operation_catalog` exposes
 the same catalog as `public`, `support`, `internal`, or diagnostic `all` views;
 these are projections, not separate registries. Never obtain an operation name
@@ -32,6 +32,9 @@ diagnostics visible. Reuse the retained directory only for the same active
 runtime and compiled catalog; refresh after deployment, restart, or loss of the
 retained response. A discovery summary never substitutes for the selected
 operation's full input, output, review, approval, and budget declarations.
+Catalog responses default to summary pages. Follow next_before to discover further
+candidates, then request operation_catalog(operation_id=..., view="detail") for
+each selected declaration. Do not infer absent capabilities from a partial page.
 
 Select a public Operation whose declared purpose can reduce the current
 scientific uncertainty or test the current contradiction. Bind every declared
@@ -41,6 +44,19 @@ do not bypass identity, declared independent-review, budget, current,
 or side-effect gates. A successful preflight authorizes only
 `operation_invoke` with the same immutable request. Dependencies describe data
 readiness and never impose a fixed stage sequence.
+
+For evidence-driven hypothesis evolution, choose a new proposal from the catalog
+and bind the exact original foundation/problem frame, previous_hypotheses, actual
+experiment_results, sealed result_analysis and relevant current_progress within
+the declared bounds. Rebind the same relevant originals to its independent critic
+and any bounded revision; a prior proposal alone does not carry its feedback.
+Workers decide whether evidence supports, weakens, preserves competing explanations,
+or leaves the model set insufficient. Numerical or implementation failure is not
+physical refutation. No new hypothesis is required merely because a result exists.
+Use revision for correcting the reviewed portfolio with unchanged hypothesis keys;
+use a new proposal for evidence-driven changes to the set. Do not route every result
+back to parameter tuning. Read the formal conclusion and limitations before choosing
+between new hypotheses, redesign, evidence, numerical diagnosis, or stopping.
 
 For experiment design, bind the exact overall objective and the relevant sealed
 progress, results, and analysis when the selected Operation declares those
@@ -73,8 +89,8 @@ case identity checks even when no scoring tool is called.
 
 For TCAD analysis, experiment_plan/experiment_review identify the original
 execution plan and its matching review. Bind newer retrospective analysis plans
-and reviews in current_progress. Reuse run_status.bound_inputs as exact binding
-metadata and artifact_catalog.parents for ordered parent schema/kind information;
+and reviews in current_progress. Use run_status(view="detail", output_paths=[]) to recover exact bound_inputs
+and artifact_catalog(view="detail").parents for ordered parent schema/kind information;
 null aliases are missing inputs, never permission to choose a newer record.
 Inspect both recovery.draft_available and recovery.recovery_pending: an immutable
 subset may be delivered while the old directory still requires preservation.
@@ -83,7 +99,7 @@ time or scientific success. No telemetry does not mean no native errors occurred
 After failure, select a bounded continuation from saved work and actual errors;
 do not repeat an unchanged full calculation that cannot fit the remaining budget.
 
-To resume from an exact plan name, query `artifact_catalog` and its ordered
+To resume from an exact plan name, query `artifact_catalog(view="detail")` and its ordered
 `parent_artifact_names`, then query each relevant parent's schema. A materialized
 plan's direct typed parents identify its original objective and design intent;
 a revised plan leads through its unique prior plan parent to that materialized
@@ -120,13 +136,15 @@ saved work as a bounded gap. A new or reused Agent must open the new assignment;
 its prior memory never substitutes for newly bound records.
 
 Use `run_status(output_paths=[])` for polling and diagnostic pagination: it returns
-status, exact bindings, output metadata and signal without reading the payload.
+compact status, recovery, output metadata and signal without reading the payload.
+Exact bindings, timing and native details require view="detail". Default completed
+summary excerpts are navigation aids, not complete scientific results.
 After completion, select the formal conclusion, relevant limitations, gaps and
 evidence using payload JSON Pointers in output_paths. Selected values appear in
 selected_output with original pointers; they are not a complete sealed_output.
 When the fields are unknown, select the empty pointer: a small result is returned
 whole; an oversized result gives bounded direct-child navigation. Batch needed
-paths from that index. If navigation is insufficient, omit output_paths for the
+paths from that index. If navigation is insufficient, use view="detail" and omit output_paths for the
 complete original rather than repeatedly guessing fields. Read source and logs
 when relevant. Missing, omitted and null are distinct; none implies success.
 

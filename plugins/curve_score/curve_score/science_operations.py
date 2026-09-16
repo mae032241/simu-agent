@@ -1036,8 +1036,8 @@ def component_specs() -> tuple[ComponentSpec, ...]:
         ComponentSpec("curve_diagnosis_inputs", "validator", "curve_score.science_operations:Components.curve_diagnosis_inputs"),
         ComponentSpec("diagnosis_identity", "guard", "curve_score.science_operations:Components.diagnosis_identity", configuration_identity="historical-analysis-r2:v1"),
         ComponentSpec("diagnosis_inputs", "validator", "curve_score.science_operations:Components.diagnosis_inputs", configuration_identity="historical-analysis-r2:v1"),
-        ComponentSpec("analysis_score_tool", "worker_tool", "curve_score.analysis_tool:CURVE_SCORE_TOOL"),
-        ComponentSpec("analysis_diagnostic_tool", "worker_tool", "curve_score.diagnostic_tool:DIAGNOSTIC_TOOL"),
+        ComponentSpec("analysis_score_tool", "worker_tool", "curve_score.analysis_tool:CURVE_SCORE_TOOL", configuration_identity="analysis.response-summary:v1"),
+        ComponentSpec("analysis_diagnostic_tool", "worker_tool", "curve_score.diagnostic_tool:DIAGNOSTIC_TOOL", configuration_identity="analysis.response-summary:v1"),
         ComponentSpec("analysis_files_tool", "worker_tool", "curve_score.analysis_files:TOOL", public=True),
         ComponentSpec(
             "diagnosis_validator",

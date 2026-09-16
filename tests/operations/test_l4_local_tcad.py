@@ -1206,7 +1206,7 @@ def test_local_tcad_author_debug_and_independent_review_share_one_operation_path
         )
     )
     assert reviewer.call_tool("worker_submit_result", {})["state"] == "completed"
-    review_status = root.call_tool("run_status", {"name": "deck_review"})
+    review_status = root.call_tool("run_status", {"name": "deck_review", "view": "detail"})
     assert review_status["state"] == "completed"
     assert review_status["sealed_output"]["payload"]["verdict"] == verdict
     assert review_status["sealed_output"]["payload"]["execution_ready"] is (verdict == "pass")
@@ -2089,7 +2089,7 @@ def test_materialized_sprocess_author_review_package_preserves_case_anchors(tmp_
         )
         assert proof_id in {ref.artifact_id for ref in envelope.parent_refs}
     package = json.loads(runtime.artifacts.read(envelope.ref))
-    author_project = root.call_tool("run_status", {"name": "process"})["sealed_output"]["payload"]
+    author_project = root.call_tool("run_status", {"name": "process", "view": "detail"})["sealed_output"]["payload"]
     assert len(author_project["case_parameter_bindings"]) == (2 if with_controls else 0)
     assert author_project["case_anchors"] == declarations["case_anchors"]
     assert package["project"]["case_anchors"] == declarations["case_anchors"]

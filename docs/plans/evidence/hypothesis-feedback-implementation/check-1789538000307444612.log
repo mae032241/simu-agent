@@ -1,0 +1,9 @@
+Traceback (most recent call last):
+  File "/home/da/project/ai4s/tcad/git_release/scidiscovery-agent/123/scidiscovery-e5.2/docs/plans/evidence/hypothesis-feedback-implementation/measure_responses.py", line 25, in <module>
+    runtime, _, adapter, _, root, _ = _setup(base/'execution')
+                                      ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/da/project/ai4s/tcad/git_release/scidiscovery-agent/123/scidiscovery-e5.2/tests/operations/test_r4_execution_approval_identity.py", line 112, in _setup
+    project.mkdir()
+  File "/home/da/miniconda3/lib/python3.12/pathlib.py", line 1311, in mkdir
+    os.mkdir(self, mode)
+FileNotFoundError: [Errno 2] No such file or directory: '/tmp/scid-response-measure-9xeqksq1/execution/project'

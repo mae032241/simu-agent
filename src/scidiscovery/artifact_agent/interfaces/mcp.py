@@ -137,8 +137,6 @@ def build_root_router(
         local_workspace_root=local_workspace_root,
         agent_settings=agent_settings,
     )
-    if scheduler_session_key is not None:
-        runtime.scheduler_bindings.register_client(session_key=scheduler_session_key)
     facade = RootToolFacade(
         runtime.artifacts,
         runtime.intake,

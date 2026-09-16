@@ -6,6 +6,7 @@ import re
 import hashlib
 import json
 import sqlite3
+import time
 import uuid
 from dataclasses import dataclass
 from contextlib import contextmanager
@@ -20,6 +21,7 @@ _NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,255}$")
 _FINGERPRINT = re.compile(r"^[0-9a-f]{64}$")
 _NAMESPACES = {"artifact", "run", "approval", "execution"}
 _EXPECTED_REF_UNSET = object()
+CLIENT_LEASE_SECONDS = 90
 
 
 class SchedulerBindingError(RuntimeError):
@@ -174,11 +176,25 @@ class SchedulerBindingService:
             return self._session_snapshot(connection, session_key, instance_id)
 
     def register_client(self, *, session_key: str) -> None:
-        """An MCP client requests connection; reconnect never undoes a UI pause."""
+        """Actual Root use activates a client without undoing a workbench pause."""
         self._validate_session_key(session_key)
-        with self._client_connect(create=True) as connection:
-            connection.execute("INSERT OR IGNORE INTO scheduler_clients VALUES (?, 1, ?)",
-                               (session_key, _timestamp()))
+        with self._client_connect() as connection:
+            connection.execute(
+                "INSERT INTO scheduler_clients (session_key, enabled, requested_at, last_seen, disconnected) "
+                "VALUES (?, 1, ?, ?, 0) ON CONFLICT(session_key) DO UPDATE SET "
+                "last_seen=excluded.last_seen, disconnected=0", (session_key, _timestamp(), time.time()))
+
+    def client_heartbeat(self, *, session_key: str) -> None:
+        # A heartbeat alone never creates a research client or revives a closed transport.
+        if self.client_database_path.exists():
+            with self._client_connect() as connection:
+                connection.execute("UPDATE scheduler_clients SET last_seen=? WHERE session_key=? AND disconnected=0",
+                                   (time.time(), session_key))
+
+    def disconnect_client(self, *, session_key: str) -> None:
+        if self.client_database_path.exists():
+            with self._client_connect() as connection:
+                connection.execute("UPDATE scheduler_clients SET disconnected=1 WHERE session_key=?", (session_key,))
 
     def client_enabled(self, *, session_key: str) -> bool:
         if not self.client_database_path.exists():
@@ -195,7 +211,9 @@ class SchedulerBindingService:
                 "SELECT c.session_key, c.enabled, c.requested_at, s.instance_id, i.title "
                 "FROM scheduler_clients c LEFT JOIN bindings.scheduler_sessions s USING(session_key) "
                 "LEFT JOIN bindings.scheduler_instances i ON i.instance_id=s.instance_id "
-                "ORDER BY c.requested_at DESC, c.session_key LIMIT ? OFFSET ?", (limit, offset)).fetchall()]
+                "WHERE c.disconnected=0 AND c.last_seen>=? "
+                "ORDER BY c.requested_at DESC, c.session_key LIMIT ? OFFSET ?",
+                (time.time()-CLIENT_LEASE_SECONDS, limit, offset)).fetchall()]
 
     def set_client_enabled(self, *, session_key: str, enabled: bool, expected: bool) -> None:
         if not self.client_database_path.exists():
@@ -206,24 +224,57 @@ class SchedulerBindingService:
             if cursor.rowcount != 1:
                 raise SchedulerInstanceConflict("会话状态已变化，请刷新后重试。")
 
+    def clear_offline_clients(self, *, can_clear_instance=None) -> int:
+        """Remove transient clients and their bindings, never instance records.
+
+        Lock both attached databases before selecting candidates: a concurrent
+        heartbeat, registration or binding must not race the cleanup selection.
+        """
+        if not self.client_database_path.exists():
+            return 0
+        with self._client_connect(bindings=True) as connection:
+            # Finish any sidecar migration before locking both attached databases.
+            connection.commit()
+            connection.execute("BEGIN IMMEDIATE")
+            rows = connection.execute(
+                "SELECT c.session_key, s.instance_id FROM scheduler_clients c "
+                "LEFT JOIN bindings.scheduler_sessions s USING(session_key) "
+                "WHERE c.disconnected=1 OR c.last_seen IS NULL OR c.last_seen<?",
+                (time.time()-CLIENT_LEASE_SECONDS,)).fetchall()
+            keys = [key for key, instance_id in rows
+                    if instance_id is None or can_clear_instance is None or can_clear_instance(instance_id)]
+            connection.executemany("DELETE FROM bindings.scheduler_sessions WHERE session_key=?", ((key,) for key in keys))
+            connection.executemany("DELETE FROM scheduler_clients WHERE session_key=?", ((key,) for key in keys))
+            return len(keys)
+
     def active_clients(self, *, instance_id: str) -> tuple[str, ...]:
         if not self.client_database_path.exists():
             return ()
         with self._client_connect(bindings=True) as connection:
             return tuple(row[0] for row in connection.execute(
                 "SELECT c.session_key FROM scheduler_clients c JOIN bindings.scheduler_sessions s USING(session_key) "
-                "WHERE s.instance_id=? AND c.enabled=1", (instance_id,)).fetchall())
+                "WHERE s.instance_id=? AND c.enabled=1 AND c.disconnected=0 AND c.last_seen>=?",
+                (instance_id, time.time()-CLIENT_LEASE_SECONDS)).fetchall())
 
     @contextmanager
-    def _client_connect(self, *, create=False, bindings=False):
+    def _client_connect(self, *, bindings=False):
         # Transport requests belong to the server, not to an instance's archive.
         connection = sqlite3.connect(self.client_database_path, timeout=30)
         connection.row_factory = sqlite3.Row
         try:
             with connection:
-                if create:
+                columns = {row[1] for row in connection.execute("PRAGMA table_info(scheduler_clients)")}
+                if "disconnected" not in columns:
+                    # Serialize additive migration across UI and control processes. Old rows
+                    # have unknown liveness, not a fabricated fresh lease.
+                    connection.execute("BEGIN IMMEDIATE")
                     connection.execute("CREATE TABLE IF NOT EXISTS scheduler_clients ("
                         "session_key TEXT PRIMARY KEY, enabled INTEGER NOT NULL CHECK(enabled IN (0,1)), requested_at TEXT NOT NULL)")
+                    columns = {row[1] for row in connection.execute("PRAGMA table_info(scheduler_clients)")}
+                    if "last_seen" not in columns:
+                        connection.execute("ALTER TABLE scheduler_clients ADD COLUMN last_seen REAL")
+                    if "disconnected" not in columns:
+                        connection.execute("ALTER TABLE scheduler_clients ADD COLUMN disconnected INTEGER NOT NULL DEFAULT 0")
                 if bindings:
                     connection.execute("ATTACH DATABASE ? AS bindings", (str(self.database_path),))
                 yield connection
@@ -904,6 +955,7 @@ class SchedulerBindingService:
         instance: str,
         observer_key: str,
         states: tuple[tuple[str, str, str], ...],
+        limit: int | None = None,
     ) -> tuple[SchedulerStateChange, ...]:
         """Persist a service-side cursor and return only changed semantic states."""
 
@@ -938,6 +990,8 @@ class SchedulerBindingService:
                 previous = str(row["state"]) if row is not None else None
                 if previous == state:
                     continue
+                if limit is not None and len(changes) >= limit:
+                    break
                 connection.execute(
                     """
                     INSERT INTO scheduler_observations (

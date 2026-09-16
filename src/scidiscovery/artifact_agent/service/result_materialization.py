@@ -92,7 +92,7 @@ def materialize_general_result(value: dict, schema_id: str) -> None:
             if isinstance(objectives, list) and all(isinstance(item, str) for item in objectives) and isinstance(payload.get('objective'), str):
                 proposal['objectives'] = list(dict.fromkeys([payload['objective'], *objectives]))
     elif schema_id == 'scidiscovery.scientific-review.v1':
-        verdict = {'pass': 'pass', 'revise': 'revise', 'reject': 'blocked', 'inconclusive': 'inconclusive'}.get(str(payload.get('verdict')))
+        verdict = {'pass': 'pass', 'revise': 'revise', 'reject': 'blocked', 'blocked': 'blocked', 'inconclusive': 'inconclusive'}.get(str(payload.get('verdict')))
         materialize_summary_handoff(value, verdict)
     elif schema_id == 'scidiscovery.critic-review.v2':
         verdict = {'ready_for_experiment': 'pass', 'revise_hypothesis': 'revise',

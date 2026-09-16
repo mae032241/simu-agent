@@ -51,12 +51,38 @@ class EmptyInput(RootToolInput):
     pass
 
 
-class OperationCatalogInput(RootToolInput):
+class ReadInput(RootToolInput):
+    view: Literal["summary", "detail"] = Field(default="summary",
+        description="Default compact view. Request detail only for exact bindings, original logs or full metadata.")
+
+
+class PageInput(ReadInput):
+    limit: int = Field(default=20, ge=1, le=100)
+    before: str | None = Field(default=None, max_length=256,
+        description="Continue after the exact next_before cursor from this same query.")
+
+
+class OperationCatalogInput(PageInput):
+    operation_id: str | None = Field(default=None, max_length=256,
+        description="Select one exact operation; use view=detail to read its complete contract before binding.")
     scope: Literal["public", "support", "internal", "all"] = "public"
 
 
 class NamedInput(RootToolInput):
     name: str = Field(pattern=_NAME_PATTERN)
+
+
+class NamedReadInput(NamedInput, ReadInput):
+    pass
+
+
+class NamedPageInput(NamedInput, PageInput):
+    pass
+
+
+class LifecycleEventsInput(RootToolInput):
+    limit: int = Field(default=20, ge=1, le=100,
+        description="Consume at most this many changed states; poll again if poll_again is true.")
 
 
 class DiagnosticReadInput(RootToolInput):
@@ -71,7 +97,7 @@ class ExecutionCollectInput(NamedInput):
         description="Total collection attempt budget, including transfer, registration and cleanup. A running attempt is never extended by a duplicate call.")
 
 
-class InstanceListInput(RootToolInput):
+class InstanceListInput(PageInput):
     state: Literal["active", "closed"] | None = None
 
 
@@ -130,21 +156,21 @@ class ScientificCurrentSelectInput(NamedInput):
     expected_artifact_name: str | None = Field(pattern=_NAME_PATTERN)
 
 
-class RunListInput(RootToolInput):
+class RunListInput(PageInput):
     state: Literal["queued", "running", "completed", "failed"] | None = None
-    limit: int = Field(default=50, ge=1, le=100)
+    limit: int = Field(default=20, ge=1, le=100)
     before: str | None = Field(default=None, pattern=_NAME_PATTERN,
         description="Continue after this semantic Run name, returned as next_before by the previous page.")
 
 
-class RunStatusInput(NamedInput):
+class RunStatusInput(NamedReadInput):
     output_paths: list[Annotated[str, Field(pattern=r"^(?:/(?:[^~]|~[01])*)?$")]] | None = Field(
         default=None, max_length=8,
-        description="Sealed payload JSON Pointers: omit/null for the legacy full result; [] for status/signal/metadata without reading the payload. Select up to 8 paths (32 KiB values total). Empty pointer selects the root. Oversized subtrees are omitted with bounded direct-child navigation (32 items, 8 KiB total); missing paths are explicit. selected_output is a reading projection, never a complete sealed_output.",
+        description="Sealed payload JSON Pointers: omit/null for a bounded summary excerpt (view=detail gives the complete original); [] skips scientific payload. view=detail also reveals exact bindings and timing. Select up to 8 paths (32 KiB values total). Empty pointer selects the root. Oversized subtrees are omitted with bounded direct-child navigation (32 items, 8 KiB total); missing paths are explicit. selected_output is a reading projection, never a complete sealed_output.",
     )
     diagnostic_after: int | None = Field(default=None, ge=0,
         description="Set to 0 for the first page of saved errors, then use diagnostic_events.next_after. Omit for the compact status.")
-    diagnostic_limit: int = Field(default=50, ge=1, le=100)
+    diagnostic_limit: int = Field(default=20, ge=1, le=100)
 
 
 class RunFailureInput(NamedInput):
@@ -154,12 +180,12 @@ class RunFailureInput(NamedInput):
     timed_out: bool = False
 
 
-class ApprovalListInput(RootToolInput):
+class ApprovalListInput(PageInput):
     status: Literal["pending", "decided", "expired", "cancelled_by_human"] | None = None
-    limit: int = Field(default=50, ge=1, le=100)
+    limit: int = Field(default=20, ge=1, le=100)
 
 
-class ExecutionCapabilitiesInput(RootToolInput):
+class ExecutionCapabilitiesInput(PageInput):
     operation_id: str = Field(min_length=1, max_length=256)
 
 
@@ -168,7 +194,7 @@ class ExecutionCapabilityBindInput(NamedInput, RevisionInput):
     profile: str = Field(pattern=_NAME_PATTERN)
 
 
-class ExecutionListInput(RootToolInput):
+class ExecutionListInput(PageInput):
     state: Literal[
         "created",
         "authorized",
@@ -181,7 +207,7 @@ class ExecutionListInput(RootToolInput):
         "collected",
         "abandoned",
     ] | None = None
-    limit: int = Field(default=50, ge=1, le=100)
+    limit: int = Field(default=20, ge=1, le=100)
 
 
 @dataclass(frozen=True)
@@ -200,33 +226,33 @@ class RootTool:
 
 ROOT_TOOLS = (
     RootTool("diagnostic_read", "Read bounded engineering error details visible to the current instance or session.", DiagnosticReadInput),
-    RootTool("instance_current", "Read the bound research instance or return its direct local management URL.", EmptyInput),
+    RootTool("instance_current", "Read the bound research instance or return its direct local management URL.", ReadInput),
     RootTool("instance_list", "List research instances without exposing internal identity.", InstanceListInput),
     RootTool("instance_close", "Close the current research instance against further writes.", EmptyInput),
-    RootTool("scientific_inventory", "List current immutable scientific objects without suggesting a workflow or capability.", EmptyInput),
-    RootTool("scientific_current", "Read explicit current scientific-object selections for this research instance.", EmptyInput),
+    RootTool("scientific_inventory", "List current immutable scientific objects without suggesting a workflow or capability.", PageInput),
+    RootTool("scientific_current", "Read explicit current scientific-object selections for this research instance.", PageInput),
     RootTool("scientific_current_select", "Compare-and-set one immutable scientific object as the explicit current selection.", ScientificCurrentSelectInput),
-    RootTool("lifecycle_events", "Return persistent semantic task, approval, and execution state changes for this scheduler process.", EmptyInput),
+    RootTool("lifecycle_events", "Return persistent semantic task, approval, and execution state changes for this scheduler process.", LifecycleEventsInput),
     RootTool("artifact_ingest_file", "Freeze and bind one project file under a semantic name.", IngestFileInput),
     RootTool("artifact_ingest_text", "Freeze original user text and bind it under a semantic name in the current instance; does not create a Run.", IngestTextInput),
-    RootTool("artifact_catalog", "Read sanitized metadata for one bound semantic input.", NamedInput),
-    RootTool("operation_catalog", "List one view of installed compiled operations without implementation identity.", OperationCatalogInput),
+    RootTool("artifact_catalog", "Read sanitized metadata for one bound semantic input.", NamedReadInput),
+    RootTool("operation_catalog", "List bounded operation summaries; select operation_id with view=detail for its full compiled contract.", OperationCatalogInput),
     RootTool("operation_preflight", "Check one exact operation call without writing control state.", OperationCallInput),
     RootTool("operation_invoke", "Create one Agent, Transform, or Effect through the compiled operation catalog.", OperationCallInput),
     RootTool("run_list", "List minimal Runs in this research instance.", RunListInput),
-    RootTool("run_status", "Read one minimal Run and optional paginated error history; completed Runs include their sealed scientific output.", RunStatusInput),
+    RootTool("run_status", "Read a compact Run summary; use output_paths for sealed fields or view=detail for exact bindings and full output.", RunStatusInput),
     RootTool("run_record_failure", "Record failure of one running minimal Run.", RunFailureInput),
     RootTool("approval_list", "List named reviews in this scheduler instance.", ApprovalListInput),
-    RootTool("approval_status", "Read one named human-review state.", NamedInput),
+    RootTool("approval_status", "Read one named human-review state.", NamedReadInput),
     RootTool("execution_capabilities", "List sanitized execution capabilities for one compiled Effect operation.", ExecutionCapabilitiesInput),
     RootTool("execution_capability_bind", "Freeze one capability selected through a compiled Effect under a semantic artifact name.", ExecutionCapabilityBindInput),
     RootTool("execution_abandon", "Abandon one named unsubmitted execution.", NamedInput),
     RootTool("execution_cancel", "Request cancellation of one named submitted execution.", NamedInput),
     RootTool("execution_list", "List named executions in this scheduler instance.", ExecutionListInput),
-    RootTool("execution_status", "Read one named execution state.", NamedInput),
-    RootTool("execution_outputs", "Bind and list logical outputs from one named execution.", NamedInput),
+    RootTool("execution_status", "Read one named execution state.", NamedReadInput),
+    RootTool("execution_outputs", "Bind and list logical outputs from one named execution.", NamedPageInput),
     RootTool("execution_start", "Submit one named execution after its exact local review authorizes it.", NamedInput),
-    RootTool("execution_sync", "Refresh bounded solver status and logs; never collect artifacts.", NamedInput),
+    RootTool("execution_sync", "Refresh bounded solver status and logs; never collect artifacts.", NamedReadInput),
     RootTool("execution_collect", "Start or resume terminal artifact collection; returns immediately. Other active collection returns busy without queuing.", ExecutionCollectInput),
 )
 
@@ -508,7 +534,20 @@ class RootMCPRouter:
                     details=validation_diagnostics(error, schema=tool.schema()["inputSchema"])) from error
         values = {field: getattr(parsed, field) for field in type(parsed).model_fields}
         try:
-            return getattr(self.facade, name)(**values)
+            # Presentation options are never part of an immutable operation request.
+            query = dict(values)
+            query.pop("view", None)
+            if name in {"operation_catalog", "scientific_inventory", "scientific_current", "instance_list", "execution_outputs", "execution_capabilities"}:
+                query.pop("limit", None)
+                query.pop("before", None)
+            if name == "operation_catalog":
+                query.pop("operation_id", None)
+            if name == "scientific_inventory":
+                query["include_operations"] = False
+            if name == "run_status" and values["view"] == "summary" and values.get("output_paths") is None:
+                query["output_paths"] = ["/summary"]
+            from .mcp_response_views import root_response
+            return root_response(name, getattr(self.facade, name)(**query), values)
         except Exception as error:
             from ..service.instance_maintenance import InstanceMaintenanceBusy, InstanceMaintenanceUnavailable
             if isinstance(error, (InstanceMaintenanceBusy, InstanceMaintenanceUnavailable)):

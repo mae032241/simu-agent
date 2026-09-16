@@ -1,0 +1,156 @@
+FF                                                                       [100%]
+=================================== FAILURES ===================================
+__ test_feedback_proposal_critic_revision_and_design_seal_exact_cohort[False] __
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-134/test_feedback_proposal_critic_0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7f34ca5fe750>
+experiment_case = ({'study_kind': 'scientific', 'objective_key': 'objective_wrong', 'selected_hypothesis_keys': ['hypothesis_a'], 'propo...research_objective_key":"objective_expected","schema_version":2,"stage_objective":"Separate one bounded mechanism."}'})
+feedback = False
+
+    @pytest.mark.parametrize('feedback', [False, True])
+    def test_feedback_proposal_critic_revision_and_design_seal_exact_cohort(tmp_path, monkeypatch, experiment_case, feedback):
+        runtime, instance, root = _root(tmp_path, catalog=_catalog())
+        intent, prior_sources = deepcopy(experiment_case)
+        intent['objective_key'] = 'objective_expected'
+        foundation_payload = _intake().scientific_foundation.model_dump(mode='json')
+        foundation_payload['objective_contract'] = json.loads(prior_sources['research_objective'])
+        foundation_payload['objective'] = foundation_payload['objective_contract']['statement']
+        foundation = _register(runtime, instance, name='scientific_foundation', raw=canonical_json(foundation_payload),
+            kind='scientific_foundation', schema='scidiscovery.scientific-foundation.v1')
+        for port, schema in (('research_objective', 'scidiscovery.research-objective.v1'),
+                             ('hypothesis_portfolio', 'scidiscovery.hypothesis-proposal.v2')):
+            _register(runtime, instance, name=port, raw=prior_sources[port], kind=port, schema=schema, parents=(foundation.ref,))
+        monkeypatch.setattr(runtime.approvals, 'are_subjects_approved_by_provider', lambda *a, **k: True)
+        # Only the existing foundation human decision is stubbed. Every new scientific
+        # proposal, review and design below is submitted through the real Worker.
+        foundation_id = runtime.scheduler_bindings.resolve(instance=instance.instance_id, namespace='artifact', name='scientific_foundation')
+        foundation = runtime.artifacts.get_by_id(foundation_id)
+        source = json.loads(runtime.artifacts.read(foundation.ref))['evidence'][0]['source_key']
+        _register(runtime, instance, name='problem_frame', raw=canonical_json(_intake().problem_frame.model_dump(mode="json")),
+            kind='problem_frame', schema='scidiscovery.problem-frame.v1', parents=(foundation.ref,))
+        extra = {}
+        if feedback:
+            for name in ('failed_result', 'limited_analysis', 'history'):
+                _feedback_record(runtime, instance, name, state='nonclaiming',
+                    raw=canonical_json({'summary':'Synthetic failed/limited observation; no physical refutation.', 'overall_verdict':'invalid_study'}))
+            extra = {'experiment_results':'failed_result', 'result_analysis':'limited_analysis', 'current_progress':'history'}
+        proposal = json.loads(experiment_case[1]['hypothesis_portfolio'])
+        # New proposal may replace keys. Revision below must preserve this new set.
+        proposal['hypotheses'][0]['hypothesis_key'] = 'hypothesis_new'
+        proposal['evidence'] = [dict(source_key=k, source_type='frozen_input', locator='Exact supplied record')
+                                for k in (source, 'scientific_foundation', *extra)]
+        inputs = dict(problem_frame='problem_frame', scientific_foundation='scientific_foundation', **extra)
+        if feedback:
+            inputs['previous_hypotheses'] = 'hypothesis_portfolio'
+        worker, opened = start(runtime, root, request('proposal', 'science.hypothesis.propose.v1', inputs))
+        workspace = runtime.runs.backend.open(worker._run_id)
+        for port, name in extra.items():
+            item = next(i for i in runtime.runs.status(worker._run_id).inputs if i.port_name == port)
+            assert item.artifact_name == name and item.exposure == 'on_demand' and item.usage == 'evidence_inventory'
+            assert workspace.input_paths[port].read_bytes() == runtime.artifacts.read(item.artifact_ref)
+        bad = deepcopy(proposal); bad['evidence'][0]['source_key'] = 'unbound_source'
+        rejected = seal(worker, opened, bad)
+        assert rejected['state'] == 'rejected', rejected
+        assert any('source' in str(d) and d.get('path') for d in rejected['diagnostics'])
+        assert seal(worker, opened, proposal)['state'] == 'completed'
+    
+        review = _critic(disposition='revise_hypothesis').model_dump(mode='json')
+        review['reviews'][0]['hypothesis_key'] = 'hypothesis_new'
+        review['evidence'] = deepcopy(proposal['evidence'])
+        critic_inputs = dict(hypothesis_portfolio='proposal.output', scientific_foundation='scientific_foundation', **extra)
+        if feedback:
+            critic_inputs['previous_hypotheses'] = 'hypothesis_portfolio'
+        worker, opened = start(runtime, root, request('critic', 'science.hypothesis.criticize.v1', critic_inputs))
+        assert seal(worker, opened, review, 'revise')['state'] == 'completed'
+        revision_inputs = dict(prior_draft='proposal.output', change_request='critic.output', scientific_foundation='scientific_foundation', **extra)
+        worker, opened = start(runtime, root, request('revision', 'science.hypothesis.revise.v1', revision_inputs))
+        bad = deepcopy(proposal); bad['hypotheses'][0]['hypothesis_key'] = 'different'
+        rejected = seal(worker, opened, bad)
+        assert rejected['state'] == 'rejected', rejected
+        assert 'cannot add, remove, or rename' in str(rejected)
+>       assert seal(worker, opened, proposal)['state'] == 'completed'
+E       AssertionError: assert 'rejected' == 'completed'
+E         
+E         - completed
+E         + rejected
+
+tests/operations/test_hypothesis_feedback_flow.py:103: AssertionError
+__ test_feedback_proposal_critic_revision_and_design_seal_exact_cohort[True] ___
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-134/test_feedback_proposal_critic_1')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7f34ca5fea80>
+experiment_case = ({'study_kind': 'scientific', 'objective_key': 'objective_wrong', 'selected_hypothesis_keys': ['hypothesis_a'], 'propo...research_objective_key":"objective_expected","schema_version":2,"stage_objective":"Separate one bounded mechanism."}'})
+feedback = True
+
+    @pytest.mark.parametrize('feedback', [False, True])
+    def test_feedback_proposal_critic_revision_and_design_seal_exact_cohort(tmp_path, monkeypatch, experiment_case, feedback):
+        runtime, instance, root = _root(tmp_path, catalog=_catalog())
+        intent, prior_sources = deepcopy(experiment_case)
+        intent['objective_key'] = 'objective_expected'
+        foundation_payload = _intake().scientific_foundation.model_dump(mode='json')
+        foundation_payload['objective_contract'] = json.loads(prior_sources['research_objective'])
+        foundation_payload['objective'] = foundation_payload['objective_contract']['statement']
+        foundation = _register(runtime, instance, name='scientific_foundation', raw=canonical_json(foundation_payload),
+            kind='scientific_foundation', schema='scidiscovery.scientific-foundation.v1')
+        for port, schema in (('research_objective', 'scidiscovery.research-objective.v1'),
+                             ('hypothesis_portfolio', 'scidiscovery.hypothesis-proposal.v2')):
+            _register(runtime, instance, name=port, raw=prior_sources[port], kind=port, schema=schema, parents=(foundation.ref,))
+        monkeypatch.setattr(runtime.approvals, 'are_subjects_approved_by_provider', lambda *a, **k: True)
+        # Only the existing foundation human decision is stubbed. Every new scientific
+        # proposal, review and design below is submitted through the real Worker.
+        foundation_id = runtime.scheduler_bindings.resolve(instance=instance.instance_id, namespace='artifact', name='scientific_foundation')
+        foundation = runtime.artifacts.get_by_id(foundation_id)
+        source = json.loads(runtime.artifacts.read(foundation.ref))['evidence'][0]['source_key']
+        _register(runtime, instance, name='problem_frame', raw=canonical_json(_intake().problem_frame.model_dump(mode="json")),
+            kind='problem_frame', schema='scidiscovery.problem-frame.v1', parents=(foundation.ref,))
+        extra = {}
+        if feedback:
+            for name in ('failed_result', 'limited_analysis', 'history'):
+                _feedback_record(runtime, instance, name, state='nonclaiming',
+                    raw=canonical_json({'summary':'Synthetic failed/limited observation; no physical refutation.', 'overall_verdict':'invalid_study'}))
+            extra = {'experiment_results':'failed_result', 'result_analysis':'limited_analysis', 'current_progress':'history'}
+        proposal = json.loads(experiment_case[1]['hypothesis_portfolio'])
+        # New proposal may replace keys. Revision below must preserve this new set.
+        proposal['hypotheses'][0]['hypothesis_key'] = 'hypothesis_new'
+        proposal['evidence'] = [dict(source_key=k, source_type='frozen_input', locator='Exact supplied record')
+                                for k in (source, 'scientific_foundation', *extra)]
+        inputs = dict(problem_frame='problem_frame', scientific_foundation='scientific_foundation', **extra)
+        if feedback:
+            inputs['previous_hypotheses'] = 'hypothesis_portfolio'
+        worker, opened = start(runtime, root, request('proposal', 'science.hypothesis.propose.v1', inputs))
+        workspace = runtime.runs.backend.open(worker._run_id)
+        for port, name in extra.items():
+            item = next(i for i in runtime.runs.status(worker._run_id).inputs if i.port_name == port)
+            assert item.artifact_name == name and item.exposure == 'on_demand' and item.usage == 'evidence_inventory'
+            assert workspace.input_paths[port].read_bytes() == runtime.artifacts.read(item.artifact_ref)
+        bad = deepcopy(proposal); bad['evidence'][0]['source_key'] = 'unbound_source'
+        rejected = seal(worker, opened, bad)
+        assert rejected['state'] == 'rejected', rejected
+        assert any('source' in str(d) and d.get('path') for d in rejected['diagnostics'])
+        assert seal(worker, opened, proposal)['state'] == 'completed'
+    
+        review = _critic(disposition='revise_hypothesis').model_dump(mode='json')
+        review['reviews'][0]['hypothesis_key'] = 'hypothesis_new'
+        review['evidence'] = deepcopy(proposal['evidence'])
+        critic_inputs = dict(hypothesis_portfolio='proposal.output', scientific_foundation='scientific_foundation', **extra)
+        if feedback:
+            critic_inputs['previous_hypotheses'] = 'hypothesis_portfolio'
+        worker, opened = start(runtime, root, request('critic', 'science.hypothesis.criticize.v1', critic_inputs))
+        assert seal(worker, opened, review, 'revise')['state'] == 'completed'
+        revision_inputs = dict(prior_draft='proposal.output', change_request='critic.output', scientific_foundation='scientific_foundation', **extra)
+        worker, opened = start(runtime, root, request('revision', 'science.hypothesis.revise.v1', revision_inputs))
+        bad = deepcopy(proposal); bad['hypotheses'][0]['hypothesis_key'] = 'different'
+        rejected = seal(worker, opened, bad)
+        assert rejected['state'] == 'rejected', rejected
+        assert 'cannot add, remove, or rename' in str(rejected)
+>       assert seal(worker, opened, proposal)['state'] == 'completed'
+E       AssertionError: assert 'rejected' == 'completed'
+E         
+E         - completed
+E         + rejected
+
+tests/operations/test_hypothesis_feedback_flow.py:103: AssertionError
+=========================== short test summary info ============================
+FAILED tests/operations/test_hypothesis_feedback_flow.py::test_feedback_proposal_critic_revision_and_design_seal_exact_cohort[False]
+FAILED tests/operations/test_hypothesis_feedback_flow.py::test_feedback_proposal_critic_revision_and_design_seal_exact_cohort[True]
+2 failed in 2.94s

@@ -138,7 +138,9 @@ def test_instance_current_is_pure_and_ui_directly_creates_and_binds(
     before_artifacts = _row_count(artifact_db, "artifact_envelopes")
     try:
         capability, csrf, page = _management_page(root, base)
-        assert "创建实例".encode("utf-8") in page
+        assert "实例绑定".encode("utf-8") in page
+        assert b"action='/instances/create'" not in page
+        assert "/sessions/" in root.call_tool("instance_current", {})["management_url"]
         assert scheduler_db.read_bytes() == before_scheduler
 
         status, headers, _ = _request(

@@ -78,7 +78,7 @@ class RootInstanceRoutes:
         )
         return (
             self.approval_base_url.rstrip("/")
-            + "/instances?"
+            + "/sessions/" + self.session_key + "?"
             + urlencode({"capability": capability})
         )
 
@@ -138,7 +138,7 @@ class RootInstanceRoutes:
             "selected_at": selected.selected_at,
         }
 
-    def scientific_inventory(self) -> dict[str, Any]:
+    def scientific_inventory(self, *, include_operations: bool = True) -> dict[str, Any]:
         """Return only latest scientific records and explicit current selections."""
 
         instance_id = self._instance_id()
@@ -176,14 +176,14 @@ class RootInstanceRoutes:
             )
         return {
             "objects": objects,
-            "public_operations": self.operation_catalog(scope="public")["operations"],
+            **({"public_operations": self.operation_catalog(scope="public")["operations"]} if include_operations else {}),
             "current_selections": [
                 {"kind": kind, "logical_name": logical_name}
                 for kind, logical_name in sorted(selections.items())
             ],
         }
 
-    def lifecycle_events(self) -> dict[str, Any]:
+    def lifecycle_events(self, *, limit: int | None = None) -> dict[str, Any]:
         """Read changed lifecycle states through a durable service-owned cursor."""
 
         instance_id = self._instance_id()
@@ -205,8 +205,10 @@ class RootInstanceRoutes:
             instance=instance_id,
             observer_key=observer,
             states=tuple(states),
+            limit=limit,
         )
         return {
+            "poll_again": limit is not None and len(changes) == limit,
             "events": [
                 {
                     "object_type": item.object_type,

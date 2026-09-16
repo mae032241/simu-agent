@@ -51,7 +51,7 @@ from scidiscovery.artifact_agent.operation_tool_context import OperationToolCont
 from .execution_control import SolverCapabilitySnapshot
 from .role_pack import role_prompt
 from .debug_contract import TCADDebugError
-from .local_debug_service import debug_response, debug_tool_description
+from .local_debug_service import debug_summary, debug_tool_description
 from .project_packager import (
     DeckProjectDraft,
     DeckAuthorResult,
@@ -196,9 +196,9 @@ def _debug_tool(
             )
             context.record_activity("output_rejected")
             response = {"state": "rejected", "diagnostics": list(details)}
-        return debug_response(context, request.run_name, response)
+        return debug_summary(context, request.run_name, response)
     except TCADDebugError as error:
-        return debug_response(context, request.run_name, {
+        return debug_summary(context, request.run_name, {
             "state": "rejected",
             "diagnostics": [
                 {
@@ -545,7 +545,7 @@ PLUGIN = PluginDefinition(
             resources=(_ref("workspace_materializer"), _ref("review_result_finalizer")),
             configuration_identity="tcad.deck-review-workspace.v2",
         ),
-        ComponentSpec("debug_tool", "worker_tool", "tcad_artifact.plugin:DEBUG_TOOL", configuration_identity="tcad.debug-tool.v5:service=tcad.development_debug:observed-progress"),
+        ComponentSpec("debug_tool", "worker_tool", "tcad_artifact.plugin:DEBUG_TOOL", configuration_identity="tcad.debug-tool.v6:retained-response-summary"),
         ComponentSpec("runtime_configuration_schema", "resource", "tcad_artifact.runtime_plugin:CONFIGURATION_SCHEMA"),
         ComponentSpec("runtime_factory", "runtime_factory", "tcad_artifact.runtime_plugin:RUNTIME_FACTORY", configuration_identity="tcad.runtime-factory.v3:run-local-tool-service"),
         ComponentSpec("study_execute", "effect", "tcad_artifact.runtime_plugin:EXECUTE_EFFECT", configuration_identity="tcad.execution-adapter:tcad:reviewed-deck-package.v2"),

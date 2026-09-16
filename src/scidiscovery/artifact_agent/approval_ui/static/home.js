@@ -3,7 +3,7 @@
 // Home cards reveal their destination; they never submit a management action.
 function revealHomeSection() {
   const id = window.location.hash.slice(1);
-  if (id !== "session-setup" && id !== "pending-approvals") return;
+  if (id !== "create-instance" && id !== "pending-approvals") return;
   const section = document.getElementById(id);
   if (!section) return;
   if (section instanceof HTMLDetailsElement) section.open = true;

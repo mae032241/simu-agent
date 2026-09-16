@@ -28,7 +28,7 @@ def test_unpublished_analysis_survives_failure_and_new_assignment(tmp_path, reus
     value = runtime.runs.status(worker._run_id)
     runtime.runs.record_failure(value.run_id, reason='fixture interrupted',
         expected_state=value.state, expected_last_activity_at=value.last_activity_at)
-    recovery = root.call_tool('run_status', {'name': 'analysis'})['recovery']
+    recovery = root.call_tool('run_status', {"view": "detail", 'name': 'analysis'})['recovery']
     assert recovery['draft_available'] and recovery['recovery_pending']
     assert (scratch / 'analysis.py').read_bytes() == script
     request = deepcopy(system[3]); request.update(name='continued_work', draft_from='analysis')
@@ -168,14 +168,14 @@ def test_recovered_bytes_score_and_seal_in_same_run(tmp_path):
     accepted=worker.call_tool('worker_tcad_accept_output',dict(evidence_alias=inspected['evidence_alias'],output_name='A',rationale='Fixture content and exact case declaration match.',evidence_aliases=[inspected['evidence_alias']]))
     assert accepted['status']=='accepted',accepted
     alias=accepted['evidence_alias']
-    record=worker.call_tool('worker_tcad_curve_score',dict(record_key='recovered_score',request=raw_request(alias=alias)))
+    record=json.loads(Path(worker.call_tool('worker_tcad_curve_score',dict(record_key='recovered_score',request=raw_request(alias=alias)))["calculation_path"]).read_bytes())
     assert record['status']=='computed',record
     report=analysis_report(alias=alias,output_name='A',mapped=True)
     report['calculation_records']=[record]
     write_analysis(opened,report)
     submitted=worker.call_tool('worker_submit_result',{})
     assert submitted['state']=='completed',submitted
-    status=system[2].call_tool('run_status',{'name':'analysis'})
+    status=system[2].call_tool('run_status',{"view": "detail", 'name':'analysis'})
     assert len(status['evidence_outputs'])==4  # inspection, accepted raw file, calculation, manifest
     assert status['sealed_output']['payload']['calculation_records']==[record]
     assert (directory/'work/A_actual.plx').exists()
@@ -188,7 +188,7 @@ def test_new_run_replays_original_record_from_sealed_evidence(tmp_path):
     inspected=worker.call_tool('worker_tcad_inspect_outputs',{'relative_path':'A_actual.plx'})
     accepted=worker.call_tool('worker_tcad_accept_output',dict(evidence_alias=inspected['evidence_alias'],output_name='A',rationale='Exact fixture mapping.',evidence_aliases=[inspected['evidence_alias']]))
     alias=accepted['evidence_alias']
-    calculation=worker.call_tool('worker_tcad_curve_score',dict(record_key='original',request=raw_request(alias=alias)))
+    calculation=json.loads(Path(worker.call_tool('worker_tcad_curve_score',dict(record_key='original',request=raw_request(alias=alias)))["calculation_path"]).read_bytes())
     report=analysis_report(alias=alias,output_name='A',mapped=True); report['calculation_records']=[calculation]
     write_analysis(opened,report)
     assert worker.call_tool('worker_submit_result',{})['state']=='completed'
@@ -214,22 +214,21 @@ def test_new_run_replays_original_record_from_sealed_evidence(tmp_path):
     preflight=root.call_tool('operation_preflight',request)
     assert preflight['admissible'],preflight
     next_worker,next_opened=open_analysis((catalog,runtime,root,request,artifacts,register))
-    import json
     from scidiscovery.operation_contract import DiagnosticError
     assignment=json.loads(Path(next_opened['assignment_path']).read_text())
     current_alias=assignment['prior_source_bindings'][alias]
     assert current_alias != alias
     with pytest.raises(DiagnosticError) as rejected:
-        next_worker.call_tool('worker_tcad_curve_score',dict(record_key='old_alias',request=calculation['request']))
+        json.loads(Path(next_worker.call_tool('worker_tcad_curve_score',dict(record_key='old_alias',request=calculation['request']))["calculation_path"]).read_bytes())
     assert rejected.value.details[0]['code']=='source_unavailable'
     # B scores the bound A file under its current alias, without accepting it again.
-    replay=next_worker.call_tool('worker_tcad_curve_score',dict(record_key='second',request=raw_request(alias=current_alias)))
+    replay=json.loads(Path(next_worker.call_tool('worker_tcad_curve_score',dict(record_key='second',request=raw_request(alias=current_alias)))["calculation_path"]).read_bytes())
     second_report=analysis_report(alias=current_alias,output_name='A',mapped=True)
     second_report['calculation_records']=[replay]
     write_analysis(next_opened,second_report)
     submitted=next_worker.call_tool('worker_submit_result',{})
     assert submitted['state']=='completed',submitted
-    second_status=root.call_tool('run_status', {'name':'next_analysis'})
+    second_status=root.call_tool('run_status', {"view": "detail", 'name':'next_analysis'})
     assert len(second_status['evidence_outputs'])==2  # saved calculation and manifest
     assert [item['metadata']['kind'] for item in json.loads(runtime.runs._evidence_snapshot(next_worker._run_id))['records']]==['calculation_record']
     # C needs B's calculation proof and A's original collection proof separately.
@@ -319,7 +318,7 @@ def test_failed_run_preserves_tool_evidence_for_new_bound_run(tmp_path):
     original_receipts=system[1].runs.tool_evidence(worker._run_id)
     write_analysis(opened,report)
     catalog,runtime,root,request,artifacts,register=system
-    status=root.call_tool('run_status',{'name':'analysis'})
+    status=root.call_tool('run_status',{"view": "detail", 'name':'analysis'})
     failed=root.call_tool('run_record_failure',dict(name='analysis',reason='fixture transport interruption',expected_state='running',expected_last_activity_at=status['last_activity_at']))
     assert failed['recovery']['draft_available'], (failed['recovery'], runtime.runs.status(worker._run_id).recovery_draft)
     assert not failed.get('evidence_outputs')
@@ -330,7 +329,6 @@ def test_failed_run_preserves_tool_evidence_for_new_bound_run(tmp_path):
     assert len(runtime.runs.tool_evidence(next_worker._run_id))==2
     assert runtime.runs.tool_evidence(next_worker._run_id)==original_receipts
     # Old attempt proof is retained in the old draft, not renamed a current call.
-    import json
     proofs=list((Path(next_opened['workspace_path'])/'recovery-draft').rglob('tool-evidence.json'))
     assert len(proofs)==1
     assert json.loads(proofs[0].read_text())['attempts'][0]['state']=='rejected'
@@ -376,7 +374,6 @@ def test_tool_evidence_cannot_change_after_candidate_acceptance(tmp_path):
 
 @pytest.mark.parametrize('remote', [False, True])
 def test_worker_preserves_solver_success_and_collection_failure(tmp_path, remote):
-    import json
     import subprocess
     import sys
     from tcad_artifact import worker, remote_runner_py36
@@ -401,7 +398,6 @@ def test_worker_preserves_solver_success_and_collection_failure(tmp_path, remote
 
 
 def test_command_ssh_remote_inspection_roundtrip(tmp_path):
-    import json
     import os
     import sys
     from tcad_artifact.command_adapter import CommandAdapterConfig, CommandTCADExecutorAdapter
@@ -446,13 +442,12 @@ def test_forged_workspace_receipt_cannot_publish_evidence(tmp_path):
     (output/'tool-evidence.json').write_text('{"schema_version":1,"records":[{"alias":"forged"}]}')
     write_analysis(opened, analysis_report())
     assert worker.call_tool('worker_submit_result', {})['state'] == 'completed'
-    evidence=system[2].call_tool('run_status', {'name':'analysis'})['evidence_outputs']
+    evidence=system[2].call_tool('run_status', {"view": "detail", 'name':'analysis'})['evidence_outputs']
     assert evidence==[dict(artifact_name='analysis.output.recovery_manifest',schema='scidiscovery.tool-evidence-manifest.v1')]
     assert json.loads(system[1].runs._evidence_snapshot(worker._run_id))['records']==[]
 
 
 def test_ssh_inspection_download_streams_through_remote_protocol(tmp_path, monkeypatch):
-    import json
     import subprocess
     import sys
     from tcad_artifact.ssh_transport import SSHRemoteClient, SSHTCADTransportConfig
@@ -476,7 +471,6 @@ def test_ssh_inspection_download_streams_through_remote_protocol(tmp_path, monke
 
 @pytest.mark.parametrize('short_budget', [False, True])
 def test_socket_inspection_uses_existing_execution_router(tmp_path, monkeypatch, short_budget):
-    import json
     import multiprocessing
     import time
     from scidiscovery.interfaces.daemon import UnixSocketDaemon
@@ -565,7 +559,7 @@ def test_collection_declaration_without_trusted_tool_is_rejected_at_both_gates(t
     assert LocalTrustedBackend.unsupported_requirements(undeclared) == ('agent_collection_outputs',)
     monkeypatch.setattr(runtime.runs.backend, 'supports_operation', lambda _: True)
     with pytest.raises(RunError, match='output collections'):
-        runtime.runs.schedule(SimpleNamespace(compiled=undeclared), instance_id='unused',
+        runtime.runs.schedule(SimpleNamespace(compiled=undeclared, execution_profile=None), instance_id='unused',
             output_binding_name='unused',output_logical_name='unused',output_revision=1,
             output_binding_fingerprint='unused')
 
@@ -581,7 +575,7 @@ def test_corrupt_retained_evidence_is_engineering_failure(tmp_path, monkeypatch)
     write_analysis(opened, analysis_report(alias=inspected['evidence_alias']))
     monkeypatch.setattr(system[1].artifacts, 'read', read)
     assert worker.call_tool('worker_submit_result', {})['state'] == 'failed'
-    assert system[2].call_tool('run_status', {'name':'analysis'})['recovery']['delivery_preserved']
+    assert system[2].call_tool('run_status', {"view": "detail", 'name':'analysis'})['recovery']['delivery_preserved']
 
 
 def test_old_runner_tool_error_allows_limited_report(tmp_path):
@@ -698,7 +692,6 @@ def test_unmapped_inspection_remains_readable_as_next_run_background(tmp_path):
 
 @pytest.mark.parametrize('solver_code,terminal', [(None,'failed'),(0,'failed'),(1,'failed'),(0,'cancelled')])
 def test_collection_97_preserves_solver_facts_without_deciding_local_findings(tmp_path, solver_code, terminal):
-    import json
     from scidiscovery.artifact_agent.schema.common import canonical_json
     from tcad_artifact.project_packager import TCADRuntimeManifest
     from tests.operations.test_tcad_result_analysis import analysis_system,analysis_report,open_analysis,write_analysis
@@ -726,7 +719,6 @@ def test_collection_97_preserves_solver_facts_without_deciding_local_findings(tm
 
 
 def test_native_plx_declared_as_text_plain_scores_without_relabeling(tmp_path):
-    import json
     from scidiscovery.artifact_agent.schema.common import canonical_json
     from tests.operations.test_tcad_result_analysis import analysis_system,analysis_report,open_analysis,write_analysis,raw_request
     system=analysis_system(tmp_path)
@@ -745,7 +737,7 @@ def test_native_plx_declared_as_text_plain_scores_without_relabeling(tmp_path):
         if item['port'] in replacements:
             item['artifact_names']=[replacements[item['port']]]
     worker,opened=open_analysis(system)
-    record=worker.call_tool('worker_tcad_curve_score',dict(record_key='plain',request=raw_request(alias='solver_outputs')))
+    record=json.loads(Path(worker.call_tool('worker_tcad_curve_score',dict(record_key='plain',request=raw_request(alias='solver_outputs')))["calculation_path"]).read_bytes())
     assert record['status']=='computed',record
     report=analysis_report(alias='solver_outputs',output_name='A',mapped=True)
     report['calculation_records']=[record]
@@ -761,7 +753,7 @@ def test_corrupt_preserved_receipt_fails_successor_open_explicitly(tmp_path, mon
     catalog,runtime,root,request,artifacts,register=system
     record=runtime.runs.tool_evidence(worker._run_id)[0]
     write_analysis(opened,analysis_report())
-    status=root.call_tool('run_status',{'name':'analysis'})
+    status=root.call_tool('run_status',{"view": "detail", 'name':'analysis'})
     root.call_tool('run_record_failure',dict(name='analysis',reason='fixture interruption',expected_state='running',expected_last_activity_at=status['last_activity_at']))
     original_read=runtime.artifacts.read
     monkeypatch.setattr(runtime.artifacts,'read',lambda ref: b'corrupt' if ref.model_dump(mode='json')==record['artifact_ref'] else original_read(ref))
@@ -769,7 +761,7 @@ def test_corrupt_preserved_receipt_fails_successor_open_explicitly(tmp_path, mon
     request.update(name='corrupt_successor',draft_from='analysis')
     with pytest.raises(Exception,match='preserved tool evidence integrity failure'):
         open_analysis((catalog,runtime,root,request,artifacts,register))
-    assert root.call_tool('run_status',{'name':'corrupt_successor'})['state']=='failed'
+    assert root.call_tool('run_status',{"view": "detail", 'name':'corrupt_successor'})['state']=='failed'
 
 
 @pytest.mark.parametrize('second_calculates', [False, True])
@@ -785,7 +777,7 @@ def test_three_run_recovery_keeps_colliding_attempt_scopes_and_seals_without_rec
             current['draft_from'] = source
         worker,opened = open_analysis((catalog,runtime,root,current,artifacts,register))
         if source is None or second_calculates:
-            record = worker.call_tool('worker_tcad_curve_score', dict(record_key=name, request=raw_request()))
+            record = json.loads(Path(worker.call_tool('worker_tcad_curve_score', dict(record_key=name, request=raw_request()))["calculation_path"]).read_bytes())
             assert record['status'] == 'computed', record
             records.append(record)
         report = analysis_report(alias='solver_outputs_001', output_name='A', mapped=True)
@@ -812,7 +804,7 @@ def test_three_run_recovery_keeps_colliding_attempt_scopes_and_seals_without_rec
     submitted = worker.call_tool('worker_submit_result', {})
     assert submitted['state'] == 'completed', submitted
     assert runtime.runs.tool_attempts(worker._run_id) == []
-    status = root.call_tool('run_status', {'name':'third'})
+    status = root.call_tool('run_status', {"view": "detail", 'name':'third'})
     assert status['sealed_output']['payload']['calculation_records'] == records
     # A later ordinary analysis reads the completed proof without restarting a chain.
     later = deepcopy(request); later['name'] = 'historical'

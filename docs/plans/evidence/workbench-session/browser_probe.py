@@ -31,7 +31,7 @@ with tempfile.TemporaryDirectory(prefix='scid-workbench-client-') as temporary:
             errors = []
             page.on('pageerror', lambda error: errors.append(str(error)))
             page.goto(ui.base_url)
-            page.locator('a[href="#session-setup"]').click()
+            page.locator('a[href="#create-instance"]').click()
             expect(page.locator('form[action="/instances/create-unbound"]')).to_be_visible()
             page.locator('input[name="name"]').fill('browser.standalone')
             page.locator('input[name="title"]').fill('浏览器独立创建')
@@ -52,6 +52,8 @@ with tempfile.TemporaryDirectory(prefix='scid-workbench-client-') as temporary:
             page.goto(ui.base_url + '/sessions')
             client = page.locator('article').filter(has_text='bbbbbbbb')
             client.get_by_role('link', name='处理绑定申请').click()
+            assert '/sessions/' + b in page.url
+            expect(page.locator('form[action="/instances/select"]')).to_be_visible()
             page.locator('select[name="name"]').select_option(second.name)
             page.get_by_role('button', name='绑定到当前会话', exact=True).click()
             page.wait_for_load_state('networkidle')
@@ -61,6 +63,22 @@ with tempfile.TemporaryDirectory(prefix='scid-workbench-client-') as temporary:
             page.locator('article').filter(has_text='aaaaaaaa').get_by_role('button', name='暂停后续调度').click()
             page.wait_for_load_state('networkidle')
             assert not runtime.scheduler_bindings.client_enabled(session_key=a)
+            page.goto(ui.base_url)
+            expect(page.locator('form[action="/instances/select"]')).to_have_count(0)
+            expect(page.locator('form[action="/instances/create"]')).to_have_count(0)
+            expect(page.locator('form[action="/instances/create-unbound"]')).to_have_count(1)
+            # Offline clients leave the directory; their instances stay accessible.
+            runtime.scheduler_bindings.disconnect_client(session_key=b)
+            page.goto(ui.base_url + '/sessions')
+            expect(page.locator('article').filter(has_text='bbbbbbbb')).to_have_count(0)
+            expect(page.locator('article').filter(has_text='aaaaaaaa')).to_be_visible()
+            assert runtime.scheduler_bindings.session_instance(session_key=b) == second.instance_id
+            page.get_by_role('button', name='清理离线会话', exact=True).click()
+            page.wait_for_load_state('networkidle')
+            expect(page.get_by_role('status')).to_have_text('已清理 1 个离线会话。')
+            assert runtime.scheduler_bindings.session_instance(session_key=b) is None
+            assert runtime.scheduler_bindings.get_instance(instance_id=second.instance_id).name == second.name
+            expect(page.locator('article').filter(has_text='aaaaaaaa')).to_be_visible()
             # A fresh browser recovers access directly without any client link.
             page.context.clear_cookies()
             page.goto(ui.base_url + f'/instance/{first.instance_id}/settings')
@@ -71,7 +89,7 @@ with tempfile.TemporaryDirectory(prefix='scid-workbench-client-') as temporary:
             assert runtime.runs.active_ids(instance_id=first.instance_id, limit=10) == ()
             browser.close()
             print(json.dumps({'browser': 'pass', 'unbound_creation': True, 'settings_without_conversation': True,
-                'client_request_binding': True, 'pause': True, 'expired_browser_reentry': True,
+                'client_request_binding': True, 'pause': True, 'offline_hidden_instance_retained': True, 'session_subpage': True, 'offline_cleanup': True, 'expired_browser_reentry': True,
                 'javascript_errors': errors, 'scientific_runs_started': 0}))
     finally:
         fixture.close()

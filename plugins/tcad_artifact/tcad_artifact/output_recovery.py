@@ -122,7 +122,17 @@ def inspect_tool(request,context):
         return {'status':'available','evidence_alias':record['alias'],'relative_path':reply['relative_path'],
                 'sha256':descriptor['sha256'],'size_bytes':len(raw),'local_path':_file(raw,context,record['alias'])}
     try:
-        return _inspect(context,request.execution_result,request.relative_path,run_deadline=run_deadline,consume=consume)
+        response = _inspect(context,request.execution_result,request.relative_path,run_deadline=run_deadline,consume=consume)
+        if request.relative_path is None and response.get('status') == 'available':
+            raw = canonical_json(response)
+            details = _file(raw, context, 'inspection-' + hashlib.sha256(raw).hexdigest() + '.json')
+            response = dict(response)
+            for field in ('files', 'declared_outputs'):
+                items = response.get(field, [])
+                response[field] = items[:10]
+                response[field + '_omitted'] = max(0, len(items)-10)
+            response['details_path'] = details
+        return response
     except RunCheckerError:
         raise
     except Exception as error:
