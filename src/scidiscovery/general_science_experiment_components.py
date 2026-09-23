@@ -24,6 +24,8 @@ from .artifact_agent.schema.experiment import ExperimentPortfolio, validate_expe
 from .artifact_agent.schema.execution_context import ExecutionContext
 from .artifact_agent.schema.experiment_intent import (
     ExperimentDesignIntent,
+    ExperimentScientificSkeleton,
+    HistoricalExperimentDesignIntent,
     ExperimentPlanMaterializationReport,
     validate_experiment_design_intent,
     validate_experiment_design_intent_task_output,
@@ -58,7 +60,7 @@ blanket implementation gate. Do not perform all missing research yourself: defer
 narrow, change a supported method, or report infeasibility with reasons. A revision
 must substantively address the gap, not rename it or transfer it to another role.
 Return exactly one RoleResultEnvelope whose payload is
-the scientific object required by output.schema.json. Without prior_draft,
+the scientific object required by the schema identified by assignment.output.schema_path. Without prior_draft,
 produce the compact ExperimentDesignIntent: select only reviewed hypotheses and
 design the smallest bounded study that states controls, interventions,
 observables, predictions, falsifiers, numerical decision criteria, extraction
@@ -72,8 +74,9 @@ of the exact prior ExperimentPortfolio. Edit only fields required by the bounded
 review, complete its new handoff, and submit the entire revised object, not a
 patch. Preserve supported fields; never inherit a verdict or invent candidates.
 For each proposal preserve the complete objectives and select a nonempty exact
-current_objectives subset. A complete ExperimentPortfolio must include its exact
-overall objective in every proposal's objectives. Expand only this round's
+current_objectives subset. For a complete ExperimentPortfolio, the workspace
+finalizer copies its overall objective into each proposal's objectives and derives
+resource_estimate.case_count from cases. Expand only this round's
 current objectives into cases, variables, observables, resources, and validation;
 do not put placeholders for future work into execution fields. In
 value_assessment.rationale explain coverage, deferred objectives, minimality,
@@ -95,18 +98,30 @@ capability statements, and limitations. Treat it as declared capability data,
 not permission to execute tools. If it is absent or does not declare a required
 capability, state that unresolved feasibility condition in the existing
 resource judgment and handoff; do not invent execution support.
+Separate declared execution support from registered analysis tools and development
+diagnostics: availability of one does not establish the others. A finite mathematical
+model, an installed Skill, or an author role does not establish a registered executor.
+Do not transfer a missing execution route to the author as an implementation task.
+Narrow or defer that part of the design, or deliver the implementation gap in the
+existing feasibility fields; unknown support is not physical counterevidence.
+Concrete source implementation and numerical validation belong to later authoring
+and diagnostics; do not claim them established by a capability declaration.
 Choose an installed Skill whose description matches the task and execution
 context. Skills explain methods, while execution_context declares environment
 support. If a required Skill is unavailable, record that feasibility gap in the
 resource judgment and handoff.
 """
 
-OBJECT_REVIEW_PROMPT = """Independently assess task deliverability from the inputs actually handed downstream.
+OBJECT_REVIEW_PROMPT = """If scientific_skeleton is bound, review its scientific adequacy as experiment_scientific_skeleton; concrete cases, code and numerical checklists belong to the later author and are not required now. This optional early verdict cannot replace the later comprehensive project review.
+For a legacy experiment_plan, independently assess task deliverability from the inputs actually handed downstream.
 If a necessary implementation input or supported method is missing, request correction;
 do not PASS while transferring that unresolved obligation to the author. Ordinary
 later initialization, numerical checks and execution approval remain later actions.
+A faithfully bounded implementation gap is reviewable; judge whether the proposed
+claims and next action respect it. Do not require runtime evidence for source code
+that has not yet been authored, or treat an unknown executor as a failed mechanism.
 Return exactly one RoleResultEnvelope whose payload is
-the ScientificReview required by output.schema.json. Independently review the
+the ScientificReview required by the schema identified by assignment.output.schema_path. Independently review the
 complete supplied experiment plan without mutating it. The verdict is a
 scientific assessment, not human approval or qualification. Report the
 smallest bounded correction for each material defect.
@@ -189,6 +204,24 @@ def _experiment_context(
     validate_experiment_design_intent_task_output(payload, sources, handoff)
 
 
+def _skeleton_inputs(sources):
+    _experiment_inputs(sources)
+    prior = sources.get("prior_skeleton")
+    change = sources.get("skeleton_change_basis")
+    if (prior is None) != (change is None):
+        raise OperationInvocationError("input_skeleton_revision_pair_required", port="prior_skeleton")
+    if prior is not None:
+        parse_bound_json(ExperimentScientificSkeleton, prior, admission_port="prior_skeleton")
+
+
+def _skeleton_context(payload, sources, handoff):
+    from .artifact_agent.schema.cognitive import HypothesisProposal
+    skeleton = ExperimentScientificSkeleton.model_validate_json(canonical_json(payload), strict=True)
+    hypotheses = HypothesisProposal.model_validate_json(sources["hypothesis_portfolio"], strict=True)
+    if not set(skeleton.selected_hypothesis_keys) <= {h.hypothesis_key for h in hypotheses.hypotheses}:
+        raise SemanticRuleViolation("skeleton selects a hypothesis absent from the supplied portfolio")
+
+
 def _experiment_revision_inputs(sources: dict[str, bytes]) -> None:
     review = parse_bound_json(ScientificReview, sources["change_request"], admission_port="change_request")
     if review.review_target != "experiment_portfolio":
@@ -205,8 +238,6 @@ def _experiment_revision_context(
     prior = parse_bound_json(ExperimentPortfolio, sources["prior_draft"])
     if (
         revised.study_kind != prior.study_kind
-        or revised.objective_key != prior.objective_key
-        or revised.objective != prior.objective
         or set(revised.selected_hypothesis_keys)
         != set(prior.selected_hypothesis_keys)
         or {item.experiment_key for item in revised.proposals}
@@ -218,16 +249,16 @@ def _experiment_revision_context(
 
 
 def _object_review_inputs(sources: dict[str, bytes]) -> None:
-    plan = parse_bound_json(ExperimentPortfolio, sources["experiment_plan"], admission_port="experiment_plan")
+    if ("experiment_plan" in sources) == ("scientific_skeleton" in sources):
+        raise OperationInvocationError("input_review_subject_exact_one", port="experiment_plan")
+    if "scientific_skeleton" in sources:
+        parse_bound_json(ExperimentScientificSkeleton, sources["scientific_skeleton"], admission_port="scientific_skeleton")
+    else:
+        parse_bound_json(ExperimentPortfolio, sources["experiment_plan"], admission_port="experiment_plan")
     raw_objective = sources.get("research_objective")
     if raw_objective is not None:
-        objective = parse_bound_json(ResearchObjectiveContract, raw_objective,
-                                     admission_port="research_objective")
-        if (
-            plan.objective_key != objective.objective_key
-            or plan.objective != objective.statement
-        ):
-            raise OperationInvocationError("input_plan_objective_mismatch", port="research_objective")
+        parse_bound_json(ResearchObjectiveContract, raw_objective,
+                         admission_port="research_objective")
     execution_context = sources.get("execution_context")
     if execution_context is not None:
         parse_bound_json(ExecutionContext, execution_context, admission_port="execution_context")
@@ -237,7 +268,8 @@ def _object_review_context(
     payload: dict[str, Any], sources: dict[str, bytes], handoff: dict[str, Any]
 ) -> None:
     review = ScientificReview.model_validate_json(canonical_json(payload), strict=True)
-    if review.review_target != "experiment_portfolio":
+    expected_target = "experiment_scientific_skeleton" if "scientific_skeleton" in sources else "experiment_portfolio"
+    if review.review_target != expected_target:
         raise SemanticRuleViolation("scientific review target differs from the bound object")
     expected_verdict = "blocked" if review.verdict == "reject" else review.verdict
     if handoff.get("verdict") != expected_verdict:
@@ -280,11 +312,37 @@ def _experiment_materialize(
 
 
 class ExperimentResources:
+    experiment_skeleton_schema = schema_resource(ExperimentScientificSkeleton, "scidiscovery.experiment-scientific-skeleton.v1")
+    experiment_skeleton_prompt = OPERATION_AGENT_PREAMBLE + """Design a scientific skeleton for the exact original research objective and this round's current objectives.
+State competing explanations, controls, changed and held conditions, observables,
+discrimination criteria with necessary thresholds and evidence or reproducible basis,
+immutable scientific conditions, stop conditions and unresolved feasibility limits.
+Select only reviewed hypotheses. Do not enumerate engineering cases, raw paths or
+numerical checklists merely to make the skeleton executable. The author owns the
+concrete ExperimentPortfolio, source, discretization, initialization and authorized
+development validation. A scientific variable remains scientific even if it is a time
+step or mesh. Do not invent facts or execution support. Bound prior_skeleton and
+skeleton_change_basis identify an intentional new design; explain the change in the
+handoff without inheriting any old review. A semantic conflict first requires a bounded
+scientific judgment about its effect; do not turn an unsupported requirement into
+repeated implementation searches. Deliver the assigned scientific skeleton only.
+"""
+    experiment_skeleton_semantic_contract = scientific_semantic_contract(
+        "experiment.skeleton", "State the scientific decision without preassigning author implementation choices.",
+        "The skeleton grants no execution or scientific claim permission.",
+        required_inputs=("research_objective", "hypothesis_portfolio", "critic_review"),
+        payload_constraint="State current objectives, scientific comparisons, criteria and basis, frozen conditions and stops; concrete cases and numerical implementation belong to the author.",
+        context_constraint="Select hypotheses only from the bound portfolio; preserve the original objective through immutable inputs. Explain any intentional change from the exact prior skeleton and change basis.",
+        payload_rule_id="experiment.skeleton.structure", context_rule_id="experiment.skeleton.binding",
+    )
     research_objective_schema = schema_resource(
         ResearchObjectiveContract, "scidiscovery.research-objective.v1"
     )
     experiment_intent_schema = schema_resource(
         ExperimentDesignIntent, "scidiscovery.experiment-design-intent.v1"
+    )
+    experiment_intent_read_schema = schema_resource(
+        HistoricalExperimentDesignIntent, "scidiscovery.experiment-design-intent.v1"
     )
     execution_context_schema = schema_resource(
         ExecutionContext, "scidiscovery.execution-context.v1"
@@ -307,7 +365,7 @@ class ExperimentResources:
     experiment_design_semantic_contract = scientific_semantic_contract(
         "experiment.design",
         "Bind a new intent or complete revised plan to its exact scientific context.",
-        "The intent selects only hypotheses from the bound portfolio and preserves the exact research objective.",
+        "The intent selects only hypotheses from the bound portfolio; control retains the original research objective reference.",
         required_inputs=(
             "research_objective",
             "hypothesis_portfolio",
@@ -331,8 +389,9 @@ class ExperimentResources:
             "declared comparison; distinct blocks need their own stated scope."
         ),
         context_constraint=(
-            "The objective key and selected hypothesis keys must match the exact "
-            "objective, portfolio, and critic review inputs. When an optional "
+            "Selected hypothesis keys must refer to the bound portfolio. Control "
+            "projects the global objective reference during materialization; the "
+            "Agent need not copy its key or statement. When an optional "
             "execution context is bound, it must match its declared strict schema. "
             "The Agent judges the effect of uncovered original targets on current "
             "validity, identifiability and claims; full target coverage is not a "
@@ -351,8 +410,8 @@ class ExperimentResources:
             "Study kind, objective and hypothesis keys, proposal keys, case settings, "
             "changed factors, intended comparison variables, validation plans, "
             "threshold units, and priority order must remain mutually consistent. "
-            "Every proposal's objectives include the exact overall objective "
-            "and its nonempty current_objectives are an exact subset. "
+            "Each proposal's nonempty current_objectives are a subset of its "
+            "declared goals; the overall objective is available by bound reference. "
             "Explain selection changes, coverage, deferral, minimality and later "
             "conditions in value_assessment.rationale and priority_rationale; expand "
             "only current goals into cases and validation. A comparison may select "
@@ -374,14 +433,14 @@ class ExperimentResources:
         "experiment.review",
         "Review the complete supplied experiment without mutating it.",
         "The review verdict is not a human approval decision.",
-        required_inputs=("experiment_plan",),
+        required_inputs=(),
         payload_constraint=(
             "The review must satisfy its declared structural Schema and use "
             "unambiguous hypothesis identities. Source references do not require "
             "duplicated citation ledger entries."
         ),
         context_constraint=(
-            "The review must assess the exact supplied experiment without mutating it. "
+            "The review_target is experiment_scientific_skeleton when scientific_skeleton is bound, otherwise experiment_portfolio. A skeleton review assesses scientific choices without requiring author-owned concrete cases or numerical checklists. The review must assess the exact supplied experiment without mutating it. "
             "Input objective and execution-context compatibility belong to preflight. "
             "Every evidence.source_key and findings[].evidence_keys reference must name an actual visible input alias, "
             "including actual collection aliases. Independently assess original "
@@ -399,6 +458,9 @@ class ExperimentResources:
 
 
 class ExperimentComponents:
+    skeleton_inputs = CallableComponent("validator", _skeleton_inputs)
+    skeleton_validator = CallableComponent("validator", _strict_validator(ExperimentScientificSkeleton))
+    skeleton_context = CallableComponent("validator", _skeleton_context)
     experiment_inputs = CallableComponent("validator", _experiment_inputs)
     experiment_revision_inputs = CallableComponent("validator", _experiment_revision_inputs)
     object_review_inputs = CallableComponent("validator", _object_review_inputs)
@@ -445,6 +507,8 @@ class ExperimentComponents:
 def component_specs() -> tuple[ComponentSpec, ...]:
     values: list[ComponentSpec] = []
     semantic_resources = {
+        "skeleton_validator": ("experiment_skeleton_semantic_contract",),
+        "skeleton_context": ("experiment_skeleton_semantic_contract",),
         "experiment_validator": ("experiment_design_semantic_contract",),
         "review_validator": ("scientific_review_semantic_contract",),
         "experiment_context": ("experiment_design_semantic_contract",),
@@ -453,6 +517,7 @@ def component_specs() -> tuple[ComponentSpec, ...]:
         "experiment_portfolio_validator": ("experiment_revision_semantic_contract",),
     }
     for name in (
+        "skeleton_inputs", "skeleton_validator", "skeleton_context",
         "experiment_inputs", "experiment_revision_inputs", "object_review_inputs",
         "experiment_validator",
         "review_validator",
@@ -489,14 +554,17 @@ def component_specs() -> tuple[ComponentSpec, ...]:
             )
         )
     public_resources = {
+        "experiment_skeleton_schema",
         "execution_context_schema",
         "experiment_portfolio_schema",
         "research_objective_schema",
         "scientific_review_schema",
     }
     for name in (
+        "experiment_skeleton_schema", "experiment_skeleton_prompt", "experiment_skeleton_semantic_contract",
         "research_objective_schema",
         "experiment_intent_schema",
+        "experiment_intent_read_schema",
         "execution_context_schema",
         "experiment_portfolio_schema",
         "scientific_review_schema",

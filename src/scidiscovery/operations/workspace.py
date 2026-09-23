@@ -90,6 +90,8 @@ class WorkspaceFinalizationRequest:
     output_limit_bytes: int
     final_submission: bool = True
     output_schema_id: str = ""
+    run_id: str = ""
+    trusted_tool_records: Mapping[str, tuple[bytes, ...]] = field(default_factory=dict)
     binding_descriptors: Mapping[str, InputBindingDescriptor] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -97,6 +99,8 @@ class WorkspaceFinalizationRequest:
             self, "input_paths", MappingProxyType(dict(self.input_paths))
         )
         object.__setattr__(self, "binding_descriptors", MappingProxyType(dict(self.binding_descriptors)))
+        object.__setattr__(self, "trusted_tool_records", MappingProxyType({
+            key: tuple(value) for key, value in self.trusted_tool_records.items()}))
 
 
 @dataclass(frozen=True, slots=True)

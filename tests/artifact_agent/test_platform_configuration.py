@@ -11,7 +11,7 @@ from blind_csv_plugin.plugin import PLUGIN as BLIND_CSV_PLUGIN
 from curve_score.plugin import PLUGIN as CURVE_SCORE_PLUGIN
 from scidiscovery.builtin_plugin import CORE_PLUGIN
 from scidiscovery.general_science_plugin import PLUGIN as GENERAL_SCIENCE_PLUGIN
-from scidiscovery.artifact_agent.interfaces.mcp_root import root_tools_for_backend
+from scidiscovery.artifact_agent.interfaces.mcp_gateway import GATEWAY_TOOLS
 from scidiscovery.artifact_agent.interfaces.cli import build_parser
 from scidiscovery.artifact_agent.service.hardened_workspace import (
     HardenedWorkerBackend,
@@ -22,11 +22,11 @@ from scidiscovery.operations.catalog import compile_catalog, compile_installed_c
 from scidiscovery.operations.tooling import (
     operation_agent_type,
     operation_local_worker_tool_names,
-    operation_worker_server_name,
     operation_worker_tool_names,
 )
 from scidiscovery.platforms import PlatformConflictError, initialize_platform
 from scidiscovery.platforms.codex import _operation_toml, validate_installation_profile
+from scidiscovery.platforms.scheduler_prompt import load_scheduler_guides
 
 
 def test_control_daemon_passes_backend_choice_to_the_only_root_runtime(
@@ -72,6 +72,7 @@ def test_control_daemon_passes_backend_choice_to_the_only_root_runtime(
         ]
     ) == 0
     assert captured["worker_backend"] == "local"
+    assert captured["unified"] is True
     assert captured["local_workspace_root"] == local_workspace_root
 
 
@@ -156,13 +157,13 @@ def test_local_tcad_runtime_config_is_bound_only_to_operations_that_need_it(
     config = tomllib.loads((project / ".codex/config.toml").read_text("utf-8"))
     author = catalog.operation("tcad.deck.author.initial.v1")
     reviewer = catalog.operation("tcad.deck.review.v1")
-    author_args = config["mcp_servers"][operation_worker_server_name(author)]["args"]
-    reviewer_args = config["mcp_servers"][operation_worker_server_name(reviewer)]["args"]
-    assert author_args[-2:] == [
-        "--plugin-config",
-        f"tcad_artifact={config_path}",
-    ]
-    assert "--plugin-config" not in reviewer_args
+    assert set(config["mcp_servers"]) == {"scidiscovery"}
+    from scidiscovery.artifact_agent.interfaces import mcp_local_worker as worker_module
+    from unittest.mock import patch
+    # A reviewer with no TCAD runtime capability must not even load its adapter.
+    with patch.object(worker_module, "load_runtime_plugin_contributions", side_effect=AssertionError("unused adapter")):
+        assert worker_module._load_operation_services(catalog, reviewer.spec.operation_id,
+            {"tcad_artifact": config_path}, tmp_path / "state") == {}
     validate_installation_profile(
         project,
         workspace=project / "workspace",
@@ -217,7 +218,7 @@ def test_codex_profile_contains_root_and_compiled_operation_boundaries(
         )
     )
     worker_server_names = set(config["mcp_servers"]) - {"scidiscovery"}
-    assert len(worker_server_names) == len(operations)
+    assert worker_server_names == set()
     assert config["mcp_servers"]["scidiscovery"]["args"] == [
         "-m",
         "scidiscovery.artifact_agent.interfaces.mcp_proxy",
@@ -229,9 +230,7 @@ def test_codex_profile_contains_root_and_compiled_operation_boundaries(
         "PYTHONPATH": str(Path(__file__).resolve().parents[2] / "src"),
         "SCIDISCOVERY_PRINCIPAL": "service",
     }
-    assert config["mcp_servers"]["scidiscovery"]["enabled_tools"] == [
-        tool.name for tool in root_tools_for_backend("local")
-    ]
+    assert config["mcp_servers"]["scidiscovery"]["enabled_tools"] == list(GATEWAY_TOOLS)
     all_roles = sorted((config_root / "agents").glob("*.toml"))
     operation_roles = tuple(path for path in all_roles if path.stem.startswith("op_"))
     assert {path.stem for path in operation_roles} == {
@@ -246,20 +245,19 @@ def test_codex_profile_contains_root_and_compiled_operation_boundaries(
             )
         )
         assert "model" not in role and "model_reasoning_effort" not in role
-        assert role["web_search"] == "disabled"
+        assert role["web_search"] == compiled.spec.executor.native_tools.web_search
         assert "default_permissions" not in role
         assert "permissions" not in role
-        assert role["features"]["shell_tool"] is True
-        assert role["features"]["unified_exec"] is True
-        assert role["tools"]["view_image"] is True
-        operation_server_names = tuple(role["mcp_servers"])
-        assert len(operation_server_names) == 1
-        operation_server_name = operation_server_names[0]
-        assert operation_server_name in worker_server_names
-        assert role["mcp_servers"][operation_server_name]["enabled_tools"] == [
-            *operation_local_worker_tool_names(compiled),
-        ]
-        assert role["mcp_servers"][operation_server_name]["required"] is True
+        assert role["features"]["shell_tool"] is (compiled.spec.executor.native_tools.shell != "none")
+        assert role["features"]["unified_exec"] is (compiled.spec.executor.native_tools.shell != "none")
+        assert role["tools"]["view_image"] is compiled.spec.executor.native_tools.view_image
+        assert not role.get("mcp_servers")
+        assert "scid_call" in role["developer_instructions"]
+        assert "tools/read_input.py" in role["developer_instructions"]
+        assert "role_instructions_sha256" not in role["developer_instructions"]
+        assert "--repeat" in role["developer_instructions"]
+        assert "workspace/.read-input" in role["developer_instructions"]
+        assert "inputs/objective reference" in role["developer_instructions"]
         assert "spawned Operation worker, not the interactive scheduler" in role[
             "developer_instructions"
         ]
@@ -267,7 +265,8 @@ def test_codex_profile_contains_root_and_compiled_operation_boundaries(
         instructions = role["developer_instructions"]
         if compiled.spec.operation_id.startswith("tcad.deck.author."):
             from tcad_artifact.role_pack import role_prompt
-            assert role_prompt("author") in instructions
+            assert role_prompt("author") not in instructions
+            assert "role_instructions" in instructions
             assert "worker_tcad_debug_run" in operation_local_worker_tool_names(compiled)
         elif compiled.spec.operation_id == "tcad.deck.review.v1":
             assert "worker_tcad_debug_run" not in operation_local_worker_tool_names(compiled)
@@ -282,31 +281,11 @@ def test_codex_profile_contains_root_and_compiled_operation_boundaries(
         assert "skills" not in role
         assert "the only permitted chat" in role["developer_instructions"]
         assert "已完成受控提交。" in role["developer_instructions"]
-        matching_parent_servers = [
-            server
-            for name, server in config["mcp_servers"].items()
-            if name in worker_server_names
-            and server["env"]["SCIDISCOVERY_ROLE"] == agent_type
-        ]
-        assert len(matching_parent_servers) == 1
-        assert matching_parent_servers[0]["required"] is False
-        assert matching_parent_servers[0]["enabled_tools"] == role["mcp_servers"][
-            operation_server_name
-        ]["enabled_tools"]
-        assert matching_parent_servers[0]["args"][:2] == [
-            "-m",
-            "scidiscovery.artifact_agent.interfaces.mcp_local_worker",
-        ]
-        assert matching_parent_servers[0]["args"][2:6] == [
-            "--state-root",
-            str(project / ".scidiscovery-state"),
-            "--local-workspace-root",
-            str(local_workspace_root),
-        ]
-        assert str(project / ".scidiscovery-state") in matching_parent_servers[0]["args"]
     scheduler_prompt = (project / "AGENTS.md").read_text(encoding="utf-8")
-    assert "Local Workers may read discovered" in scheduler_prompt
+    assert "Local Workers retain their declared workspace/Skill/native permissions" in scheduler_prompt
     assert "skills belonging to its selected OperationSpec" not in scheduler_prompt
+    assert 'scid_describe(name=..., view="invoke")' in scheduler_prompt
+    assert 'run_status(response_profile="poll", output_paths=[])' in scheduler_prompt
     discriminator = scheduler_prompt.index(
         "This section applies only to the interactive parent scheduler."
     )
@@ -315,6 +294,19 @@ def test_codex_profile_contains_root_and_compiled_operation_boundaries(
     )
     assert discriminator < scheduler_rule
     assert "do not call `instance_current`" in scheduler_prompt[discriminator:scheduler_rule]
+    guide_root = config_root / "scidiscovery-guides"
+    assert str(guide_root) in scheduler_prompt
+    assert "{{SCHEDULER_GUIDE_ROOT}}" not in scheduler_prompt
+    for name, content in load_scheduler_guides().items():
+        assert name in scheduler_prompt
+        assert (guide_root / name).read_text() == content
+        assert content.strip() not in scheduler_prompt
+    assert "worker_attach" not in scheduler_prompt
+    assert "worker_attach" in (guide_root / "dispatch.md").read_text()
+    assert "invoke the immutable request" in (guide_root / "inputs.md").read_text()
+    assert 'artifact_catalog(view="producer_inputs")' in (guide_root / "inputs.md").read_text()
+    assert 'response_profile="decision"' in (guide_root / "results.md").read_text()
+    assert "source manifest" in (guide_root / "evidence.md").read_text()
 
 
 def test_codex_hardened_profile_remains_explicitly_compilable(tmp_path: Path) -> None:
@@ -341,15 +333,10 @@ def test_codex_hardened_profile_remains_explicitly_compilable(tmp_path: Path) ->
                     worker_backend="hardened",
             )
         )
-        server = profile["mcp_servers"][operation_worker_server_name(compiled)]
+        assert not profile.get("mcp_servers")
+        assert "scid_call" in profile["developer_instructions"]
         assert "skills, apps or plugins" in profile["developer_instructions"]
         assert "TMPDIR=<workspace>/scratch" not in profile["developer_instructions"]
-        assert server["args"][:2] == [
-            "-m",
-            "scidiscovery.artifact_agent.interfaces.mcp_hardened_worker",
-        ]
-        assert "--local-workspace-root" not in server["args"]
-        assert server["enabled_tools"] == list(operation_worker_tool_names(compiled))
     report = initialize_platform(
         "codex",
         project,
@@ -394,16 +381,18 @@ def test_codex_installation_profile_probe_uses_the_compiled_catalog(
     )
 
     catalog = compile_installed_catalog()
-    operation_count = sum(
-        catalog.operation(operation_id).spec.executor.kind == "agent"
-        and LocalTrustedBackend.supports_operation(
-            catalog.operation(operation_id)
-        )
+    operation_count = len({operation_agent_type(catalog.operation(operation_id))
         for operation_id in catalog.operation_ids()
-    )
+        if catalog.operation(operation_id).spec.executor.kind == "agent"
+        and LocalTrustedBackend.supports_operation(catalog.operation(operation_id))})
     assert validate_installation_profile(
         project, workspace=project / "workspace", python_path=module_path
-    ) == (1 + operation_count, operation_count)
+    ) == (1, operation_count)
+    (project / ".codex/scidiscovery-guides/dispatch.md").unlink()
+    with pytest.raises(PlatformConflictError, match="scheduler guide is missing or stale"):
+        validate_installation_profile(
+            project, workspace=project / "workspace", python_path=module_path
+        )
 
 
 def test_codex_framework_profile_is_available_above_nested_workspace(
@@ -427,13 +416,10 @@ def test_codex_framework_profile_is_available_above_nested_workspace(
 
     assert (framework / ".codex/config.toml").is_file()
     catalog = compile_installed_catalog()
-    operation_count = sum(
-        catalog.operation(operation_id).spec.executor.kind == "agent"
-        and LocalTrustedBackend.supports_operation(
-            catalog.operation(operation_id)
-        )
+    operation_count = len({operation_agent_type(catalog.operation(operation_id))
         for operation_id in catalog.operation_ids()
-    )
+        if catalog.operation(operation_id).spec.executor.kind == "agent"
+        and LocalTrustedBackend.supports_operation(catalog.operation(operation_id))})
     assert len(tuple((framework / ".codex/agents").glob("*.toml"))) == operation_count
     assert "<!-- BEGIN SCIDISCOVERY SCHEDULER -->" in (
         framework / "AGENTS.md"
@@ -443,8 +429,7 @@ def test_codex_framework_profile_is_available_above_nested_workspace(
         workspace / "AGENTS.md"
     ).read_text(encoding="utf-8")
 
-
-def test_external_workspace_validation_rejects_worker_root_drift(
+def test_external_workspace_validation_rejects_unified_socket_drift(
     tmp_path: Path,
 ) -> None:
     framework = tmp_path / "framework"
@@ -470,7 +455,7 @@ def test_external_workspace_validation_rejects_worker_root_drift(
     external_config = workspace / ".codex/config.toml"
     external_config.write_text(
         external_config.read_text(encoding="utf-8").replace(
-            str(local_workspace_root), str(tmp_path / "state/local-runs")
+            str(tmp_path / "control.sock"), str(tmp_path / "wrong-control.sock")
         ),
         encoding="utf-8",
     )

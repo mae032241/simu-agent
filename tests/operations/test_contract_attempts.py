@@ -1,6 +1,7 @@
 """Controlled failure receipts through the actual MCP and sealed Run boundary."""
 import hashlib
 import json
+from pathlib import Path
 
 import pytest
 
@@ -41,6 +42,7 @@ def test_receipt_budget_finalizes_reply_log_and_history_before_correction(tmp_pa
     worker._registered[name] = original
     good = worker.call_tool(name, dict(record_key='corrected', request=request))
     assert good['status'] == 'computed'
+    good = json.loads(Path(good['calculation_path']).read_bytes())
     failed = dict(record_key='failed', request=request, input_digests={}, algorithm_version=ALGORITHM_VERSION,
         status='unavailable', reason_code='invalid_arguments', attempt=data['attempt'], diagnostics=data['diagnostics'])
     report = analysis_report(alias='solver_outputs_001', output_name='A', mapped=True)
@@ -156,8 +158,12 @@ def test_pre_dispatch_input_fault_is_recorded_with_its_declared_category(tmp_pat
     assert failed['diagnostic_summary']['failure']['category'] == 'admission_defect'
     assert failed['diagnostic_summary']['rejection_count'] == 0
     assert failed['sealed_output'] is None
-    assert call('run_status', {'name': 'preparation_fault'}) == failed
-    listed = call('run_list', {})['runs']
+    status = call('run_status', {'name': 'preparation_fault', 'view': 'detail', 'output_paths': []})
+    assert status['state'] == failed['state']
+    assert status['reason'] == failed['reason']
+    assert status['diagnostic_summary']['failure'] == failed['diagnostic_summary']['failure']
+    assert status['sealed_output'] is None
+    listed = call('run_list', {'view': 'detail'})['runs']
     assert len(listed) == 1 and listed[0]['reason'] == failed['reason']
     assert call('operation_invoke', request)['result'] == failed
     assert len(attempts) == 1  # An identical request reads the failed Run; it does not retry it.
@@ -166,7 +172,10 @@ def test_pre_dispatch_input_fault_is_recorded_with_its_declared_category(tmp_pat
     monkeypatch.setattr(owner, method, original)
     successor = call('operation_invoke', {**changed, 'on_conflict': 'create_revision'})['result']
     assert successor['state'] == 'queued'
-    assert call('run_status', {'name': 'preparation_fault'}) == failed
+    prior = call('run_status', {'name': 'preparation_fault', 'view': 'detail', 'output_paths': []})
+    assert prior['state'] == failed['state']
+    assert prior['reason'] == failed['reason']
+    assert prior['diagnostic_summary']['failure'] == failed['diagnostic_summary']['failure']
     assert len(call('run_list', {})['runs']) == 2
 
 
@@ -231,7 +240,7 @@ def test_argument_rejection_is_receipted_before_read_and_sealed_without_raw_file
     submitted = worker.call_tool("worker_submit_result", {})
     assert submitted["state"] == "completed", submitted
     # Completion publishes the same manifest, even with no collected raw files.
-    status = system[2].call_tool("run_status", {"name":"analysis"})
+    status = system[2].call_tool("run_status", {"name":"analysis", "view":"detail", "output_paths": []})
     assert len(status["evidence_outputs"]) == 1
     assert json.loads(runs._evidence_snapshot(worker._run_id)) == json.loads(snapshot)
     with pytest.raises(RunStateConflict):

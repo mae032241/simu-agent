@@ -74,3 +74,10 @@ code, inputs, parameters, and raw TDR/PLX/PLT/log output declarations. Curve
 resampling, masks, derived metrics, observed-data eligibility, thresholds, and
 scientific verdicts must be implemented by a separately versioned domain
 transform/scorer after execution; they are never deck responsibilities.
+
+New SProcess studies may use a scientific skeleton instead of a pre-reviewed detailed
+plan. The author owns `deck/execution-plan.json`; the sealed project's embedded Portfolio
+is the only execution plan. Project it with `tcad.execution-plan.project.v1`, then obtain
+one independent scientific/implementation review. Package and analysis require that exact
+plan, skeleton and review. Early skeleton review is optional. Legacy plan witnesses,
+SDevice contracts, development budgets and production approval remain unchanged.

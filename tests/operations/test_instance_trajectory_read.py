@@ -1,10 +1,12 @@
 """Exact trajectory relationships and observations, with no solver execution."""
 
+from copy import deepcopy
 import json
 from types import SimpleNamespace
 
 import pytest
 
+from scidiscovery.artifact_agent.approval_ui import presentation
 from scidiscovery.artifact_agent.approval_ui.read_model import ReadModelScopeError
 from scidiscovery.artifact_agent.approval_ui.view_models import MAX_RESPONSE_BYTES, json_size
 from scidiscovery.artifact_agent.schema.artifact import ArtifactRegistration
@@ -13,6 +15,7 @@ from scidiscovery.artifact_agent.schema.refs import ArtifactRef
 from scidiscovery.artifact_agent.service.engineering_diagnostics import EngineeringDiagnostics
 from scidiscovery.artifact_agent.service.local_process_observation import RECORD_DIR
 from scidiscovery.artifact_agent.service.runs import RunService
+from scidiscovery.general_science_views import build_presentation as general_presentation
 from tests.operations.test_instance_read_model import system, bind, approval
 
 
@@ -212,6 +215,158 @@ def test_revision_objective_navigation_ignores_newer_same_schema_feedback(trajec
     assert [item["artifact_id"] for item in view["objective_refs"]] == [original.artifact_id]
     context = s.model.node_context(s.a, "artifact:revised_plan")
     assert {item["artifact_id"] for item in context["artifacts"]} == {revised.artifact_id, first.artifact_id, original.artifact_id, newer.artifact_id}
+
+
+def test_completed_run_prioritizes_exact_runtime_figure_before_wide_inputs(trajectory, monkeypatch):
+    s = trajectory
+    run_id = "wide_figure"
+    operation = "fixture.operation"
+    digest = "a" * 64
+    labels = {"operation_id": operation, "operation_version": "1",
+              "operation_digest": digest, "tool_producer_run": run_id}
+    evidence_labels = {"operation_version": "1", "operation_digest": digest,
+                       "tool_producer_run": "timed-out-attempt"}
+    wide = tuple((f"source_{index:02d}", artifact(
+        s, f"wide_{index:02d}", {"value": "wide input " * 2600}).ref)
+        for index in range(12))
+    image = s.artifacts.register(b"\x89PNG\r\n\x1a\nfixture", ArtifactRegistration(
+        kind="tool_evidence", schema_id="opaque", payload_schema_version=1,
+        media_type="image/png", creator=s.actor,
+        parent_refs=tuple(ref for _, ref in wide),
+        labels={**evidence_labels, "operation_output_port": "tool_evidence"}),
+        idempotency_key="wide.figure.image")
+    unreferenced_records, unreferenced_images = [], []
+    for index in range(1, 32):
+        saved = s.artifacts.register(b"\x89PNG\r\n\x1a\n" + str(index).encode(), ArtifactRegistration(
+            kind="tool_evidence", schema_id="opaque", payload_schema_version=1,
+            media_type="image/png", creator=s.actor,
+            parent_refs=tuple(ref for _, ref in wide),
+            labels={**evidence_labels, "operation_output_port": "tool_evidence"}),
+            idempotency_key=f"wide.figure.unreferenced.{index:03d}")
+        alias = f"tool_evidence_{index:03d}"
+        unreferenced_images.append(saved)
+        unreferenced_records.append({"alias": alias,
+            "artifact_ref": saved.ref.model_dump(mode="json"), "source_ref": None,
+            "media_type": "image/png", "size_bytes": saved.size_bytes,
+            "metadata": {"file_name": f"exploratory-{index:03d}.png"},
+            "tool_name": "fixture_plot"})
+    record = {"alias": "tool_evidence_032", "artifact_ref": image.ref.model_dump(mode="json"),
+              "source_ref": None, "media_type": "image/png", "size_bytes": image.size_bytes,
+              "metadata": {"file_name": "comparison.png"}, "tool_name": "fixture_plot"}
+    bindings = {item["alias"]: {"schema_version": 1, "artifact_ref": item["artifact_ref"],
+                                "port_name": "tool_evidence"}
+                for item in (*unreferenced_records, record)}
+    manifest = artifact(s, "wide.figure.manifest", {
+        "records": [*unreferenced_records, record], "bindings": bindings},
+        schema="scidiscovery.tool-evidence-manifest.v1",
+        parents=tuple(ref for _, ref in wide) + tuple(
+            item.ref for item in (*unreferenced_images, image)),
+        labels={**labels, "operation_output_port": "recovery_manifest_output"})
+    report = artifact(s, "wide.figure.report", {
+        "summary": "The nonuniform profile remains visible.", "overall_verdict": "inconclusive",
+        "claim_allowed": False, "evidence": [{"source_key": "tool_evidence_032",
+            "source_type": "runtime_output", "title": "Nonuniform concentration profile",
+            "locator": "tool_evidence_032"}]},
+        schema="scidiscovery.layered-diagnosis.v1",
+        parents=tuple(ref for _, ref in wide) + (manifest.ref,),
+        labels={"operation_id": operation, "operation_version": "1", "operation_digest": digest,
+                "operation_output_port": "layered_diagnosis"})
+    stored_run(s, run_id, inputs=wide, output=report.ref, operation=operation, digest=digest)
+    monkeypatch.setattr(presentation, "entry_points", lambda **_: (
+        SimpleNamespace(name="general", load=lambda: general_presentation),))
+
+    context = s.model.node_context(s.a, "run:" + run_id)
+    ids = [item["artifact_id"] for item in context["artifacts"]]
+    assert ids[:3] == [report.artifact_id, manifest.artifact_id, image.artifact_id]
+    assert "operation_id" not in context["artifacts"][2]["family"]
+    run_report = context["artifacts"][0]
+    assert run_report["family"]["presentation_manifest_scan_complete"] is True
+    assert run_report["family"]["presentation_manifest_match_count"] == 1
+    assert {"context_byte_limit", "lineage_read_limit"}.issubset(
+        {item["code"] for item in context["gaps"]})
+    rendered = presentation.build_presentation(tuple(context["artifacts"]),
+        focus_artifact_ids=context["focus_artifact_ids"])
+    assert rendered["figures"] == [{"artifact_id": image.artifact_id,
+        "label": "Nonuniform concentration profile",
+        "source": {"artifact_id": report.artifact_id, "json_pointer": "/evidence/0"}}]
+    assert not {item.artifact_id for item in unreferenced_images} & {
+        figure["artifact_id"] for figure in rendered["figures"]}
+
+    bind(s, s.a, "artifact", "wide.figure.report", report.artifact_id)
+    artifact_context = s.model.node_context(s.a, "artifact:wide.figure.report")
+    artifact_rendered = presentation.build_presentation(tuple(artifact_context["artifacts"]),
+        focus_artifact_ids=artifact_context["focus_artifact_ids"])
+    assert artifact_rendered["figures"] == rendered["figures"]
+    artifact_report = next(item for item in artifact_context["artifacts"]
+        if item["artifact_id"] == report.artifact_id)
+    assert artifact_report["family"]["presentation_manifest_scan_complete"] is True
+    assert artifact_report["family"]["presentation_manifest_match_count"] == 1
+
+    prior_image = s.artifacts.register(b"\x89PNG\r\n\x1a\nprior", ArtifactRegistration(
+        kind="tool_evidence", schema_id="opaque", payload_schema_version=1,
+        media_type="image/png", creator=s.actor,
+        labels={**evidence_labels, "tool_producer_run": "prior-run",
+                "operation_output_port": "tool_evidence"}),
+        idempotency_key="wide.figure.prior.image")
+    prior_record = {"alias": "tool_evidence_032",
+        "artifact_ref": prior_image.ref.model_dump(mode="json"), "source_ref": None,
+        "media_type": "image/png", "size_bytes": prior_image.size_bytes,
+        "metadata": {"file_name": "prior.png"}, "tool_name": "fixture_plot"}
+    prior_manifest = artifact(s, "wide.figure.prior.manifest", {
+        "records": [prior_record], "bindings": {"tool_evidence_032": {"schema_version": 1,
+            "artifact_ref": prior_record["artifact_ref"], "port_name": "tool_evidence"}}},
+        schema="scidiscovery.tool-evidence-manifest.v1", parents=(prior_image.ref,),
+        labels={**labels, "tool_producer_run": "prior-run",
+                "operation_output_port": "recovery_manifest_output"})
+    ambiguous_report = artifact(s, "wide.figure.ambiguous.report", {
+        "summary": "Ambiguous saved manifests.", "overall_verdict": "inconclusive",
+        "claim_allowed": False, "evidence": [{"source_key": "tool_evidence_032",
+            "source_type": "runtime_output", "title": "Must remain hidden",
+            "locator": "tool_evidence_032"}]},
+        schema="scidiscovery.layered-diagnosis.v1",
+        parents=(prior_manifest.ref, prior_image.ref, *(ref for _, ref in wide), manifest.ref),
+        labels={"operation_id": operation, "operation_version": "1", "operation_digest": digest,
+                "operation_output_port": "layered_diagnosis"})
+    bind(s, s.a, "artifact", "wide.figure.ambiguous.report", ambiguous_report.artifact_id)
+    ambiguous_context = s.model.node_context(s.a, "artifact:wide.figure.ambiguous.report")
+    failed = presentation.build_presentation(tuple(ambiguous_context["artifacts"]),
+        focus_artifact_ids=ambiguous_context["focus_artifact_ids"])
+    assert failed["figures"] == []
+    ambiguous_view = next(item for item in ambiguous_context["artifacts"]
+        if item["artifact_id"] == ambiguous_report.artifact_id)
+    assert ambiguous_view["family"]["presentation_manifest_match_count"] == 2
+
+    ambiguous = deepcopy(context["artifacts"])
+    manifest_view = next(item for item in ambiguous if item["artifact_id"] == manifest.artifact_id)
+    cited_record = next(item for item in manifest_view["payload"]["records"]
+        if item["alias"] == "tool_evidence_032")
+    manifest_view["payload"]["records"].append(deepcopy(cited_record))
+    failed = presentation.build_presentation(tuple(ambiguous),
+        focus_artifact_ids=context["focus_artifact_ids"])
+    assert failed["figures"] == []
+    assert any(item["code"] == "runtime_figure_record_ambiguous" for item in failed["gaps"])
+
+    incomplete = tuple(item for item in context["artifacts"] if item["artifact_id"] != image.artifact_id)
+    failed = presentation.build_presentation(incomplete,
+        focus_artifact_ids=context["focus_artifact_ids"])
+    assert failed["figures"] == []
+    assert any(item["code"] == "runtime_figure_artifact_missing_or_ambiguous" for item in failed["gaps"])
+
+    recovered_labels = deepcopy(context["artifacts"])
+    image_view = next(item for item in recovered_labels if item["artifact_id"] == image.artifact_id)
+    image_view["family"]["operation_version"] = "2"
+    image_view["family"]["operation_digest"] = "b" * 64
+    image_view["family"]["operation_output_port"] = "legacy_tool_evidence"
+    recovered = presentation.build_presentation(tuple(recovered_labels),
+        focus_artifact_ids=context["focus_artifact_ids"])
+    assert recovered["figures"] == rendered["figures"]
+
+    recovered_attempt = deepcopy(context["artifacts"])
+    image_view = next(item for item in recovered_attempt if item["artifact_id"] == image.artifact_id)
+    image_view["family"]["tool_producer_run"] = "another-prior-attempt"
+    recovered = presentation.build_presentation(tuple(recovered_attempt),
+        focus_artifact_ids=context["focus_artifact_ids"])
+    assert recovered["figures"] == rendered["figures"]
 
 
 def test_completed_inconclusive_and_selected_nonadmissible_are_distinct(trajectory, monkeypatch):

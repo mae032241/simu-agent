@@ -26,7 +26,12 @@ READ_VIEW_LIMIT = 32 * 1024
 REPORT_GUIDANCE = """Concentrate the scientific conclusion in payload.summary and overall_verdict.
 Cite key evidence; use optional limitations for restrictions and actual anomalies.
 Write remaining_contradiction and next_action only when needed. Gates and separate
-objective/hypothesis assessments are optional, not a required six-layer form.
+hypothesis assessments are optional, not a required six-layer form. For a new
+diagnosis, use its exact scoped plan (the bound experiment_plan, or the plan inside
+the fixed curve-analysis package): when objective_key is non-null, include
+objective_assessment with that exact key; when it is null, the assessment is optional
+and no key may be invented. not_evaluable is valid when the evidence or task scope
+cannot assess the objective. next_action is non-authoritative Worker advice.
 Keep claim_allowed explicit; no omitted gate implies success. Detailed numbers,
 scripts and plots belong in controlled evidence files. For a LayeredDiagnosisReport
 draft, handoff may be omitted: the finalizer generates its verdict and a short
@@ -37,6 +42,8 @@ patch_contract identifies them. Other handoff explanations remain optional.
 GUIDANCE = """If the workspace provides analysis-start.json, read it first. It contains
 bounded verbatim excerpts and exact source pointers, not a new scientific authority.
 Check the current input index and read this Run's user_context originals first.
+Each artifact_name is navigation-only context; tools, evidence and reports must use
+the corresponding source_name. An artifact_name never grants access as a second alias.
 If the index omits inputs, follow omission_source to the complete assignment input
 index. Then follow the bound objective, current method and
 relevant progress to their originals as needed. Do not print complete packages or
@@ -49,8 +56,8 @@ assumptions against this Run's inputs. Reuse valid saved numbers for plot-only r
 Historical runtime observations remain in recovery-draft, separate from this Run.
 When the manifest's local_compute launcher is available, use it for analysis
 scripts and preparation/check commands so failures and bounded logs remain visible.
-Its --command mode runs an argv command from the workspace root and returns bounded
-stdout/stderr; script mode keeps paths relative to scratch/. Direct platform calls
+Its --command mode runs an argv command from the workspace root and returns a short
+observation with log paths; --display raw is for stdout data consumers; script mode keeps paths relative to scratch/. Direct platform calls
 are outside this observation coverage. Missing telemetry never blocks submission.
 """
 
@@ -181,7 +188,8 @@ def _start_file(request, restored, limit=START_LIMIT):
     for item in inputs:
         descriptor = request.binding_descriptors.get(item["source_name"])
         append("inputs", {**{key: item[key] for key in
-            ("source_name", "port", "relative_path", "historical", "media_type", "source_origin") if key in item},
+            ("source_name", "artifact_name", "artifact_name_usage", "port", "relative_path",
+             "historical", "media_type", "source_origin") if key in item},
             "schema_id": descriptor.artifact_ref.schema_id if descriptor else None,
             "size_bytes": descriptor.size_bytes if descriptor else None})
     # Purpose is a port declaration, shared by its files; do not repeat it per curve.
@@ -240,7 +248,7 @@ def materialize(request, *, start_limit=START_LIMIT):
         paths={"start_here": START, "scratch": "scratch", "recovery_manifest": restored["coverage_path"],
             "local_compute": {"path": tool if available else None, "available": available,
                 "example": "python tools/local_process_observation.py --timeout 240 --submission-reserve 120 analysis.py",
-                "command_example": "python tools/local_process_observation.py --timeout 20 --command cat analysis-start.json",
+                "command_example": "python tools/local_process_observation.py --timeout 20 --display raw --command cat analysis-start.json",
                 "script_base": "scratch", "optional": True,
                 "budget": "Timeout is clipped to the Run deadline minus the selected submission reserve. Reserve is adjustable; timing is not required to submit."}},
         read_paths=(START, "scratch", "recovery-draft", "tools"),

@@ -27,6 +27,7 @@ class TCADDebugSource:
 class PreparedTCADDebugRun:
     submission: LocalFileDescriptor
     wall_time_seconds: int
+    arguments: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -68,6 +69,8 @@ class TCADDevelopmentDebugAdapter(Protocol):
         sources: tuple[TCADDebugSource, ...],
         exchange_directory: Path,
         mode: str,
+        output_names: tuple[str, ...] = (),
+        output_budget_bytes: int | None = None,
     ) -> PreparedTCADDebugRun: ...
 
     def clamp_wall_time(

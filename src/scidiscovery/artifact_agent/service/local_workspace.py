@@ -159,6 +159,15 @@ class LocalTrustedBackend:
         assignment_path = run_root / "assignment.json"
         _write_new(assignment_path, assignment, mode=0o400)
         _write_new(schema_root / "result.schema.json", result_schema, mode=0o400)
+        from . import input_reader, output_schema_reader, tool_contract_reader
+        tool_root = run_root / "tools"
+        tool_root.mkdir(mode=0o700)
+        _write_new(tool_root / "read_tool_contract.py",
+                   Path(tool_contract_reader.__file__).read_bytes(), mode=0o400)
+        _write_new(tool_root / "read_output_schema.py",
+                   Path(output_schema_reader.__file__).read_bytes(), mode=0o400)
+        _write_new(tool_root / "read_input.py",
+                   Path(input_reader.__file__).read_bytes(), mode=0o400)
         if initial_output is not None:
             _write_new(output_root / "result.json", initial_output, mode=0o600)
         if recovery_digest is not None:

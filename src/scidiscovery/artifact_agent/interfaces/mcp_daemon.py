@@ -22,6 +22,7 @@ from ..service.scheduler_bindings import SchedulerBindingService
 from ..service import StateMaintenanceLock
 from ..service.instance_maintenance import InstanceMaintenance
 from ..service.execution_collection import ExecutionCollection, open_collection_executions
+from ..runtime import open_runtime
 from scidiscovery.operations.catalog import compile_installed_catalog
 from ..runtime_plugin_bindings import (
     load_runtime_plugin_contributions,
@@ -73,7 +74,10 @@ class RootBrokerRouter:
         exclusive = (
             clean.get("method") == "tools/call"
             and isinstance(clean.get("params"), dict)
-            and clean["params"].get("name") == "instance_close"
+            and (clean["params"].get("name") == "instance_close" or (
+                clean["params"].get("name") == "scid_call"
+                and isinstance(clean["params"].get("arguments"), dict)
+                and clean["params"]["arguments"].get("name") == "instance_close"))
         )
         context = nullcontext()
         if self.instance_maintenance is not None:
@@ -98,7 +102,9 @@ class RootBrokerRouter:
                     with self._lock:
                         self._routers.pop(proxy_id, None)
                 return {"jsonrpc": "2.0", "id": request_id, "result": {}}
-            if method == "tools/call" and self.client_bindings is not None:
+            worker_call = (clean.get("params", {}).get("_meta", {})
+                           .get("x-codex-turn-metadata", {}).get("thread_source") == "subagent")
+            if method == "tools/call" and self.client_bindings is not None and not worker_call:
                 # instance_close owns an exclusive gate internally; protect this
                 # short lease write separately to avoid nesting shared -> exclusive.
                 with self.instance_maintenance.global_guard() if exclusive and self.instance_maintenance else nullcontext():
@@ -162,6 +168,16 @@ def main(argv: list[str] | None = None) -> int:
         client_bindings = SchedulerBindingService(state_root / "database" / "scheduler-bindings.sqlite3")
         collection = ExecutionCollection(open_collection_executions(state_root),
             plugin_configs={key: str(value) for key, value in plugin_configs.items()})
+    startup_runtime = open_runtime(
+        project_root=project_root,
+        state_root=state_root,
+        shared_group=True,
+        worker_backend=args.worker_backend,
+        local_workspace_root=args.local_workspace_root,
+        agent_settings=agent_settings,
+    )
+    with maintenance.shared():
+        startup_runtime.runs.reconcile_expired_active()
     router = RootBrokerRouter(
         lambda proxy_id: build_root_router(
             project_root=project_root,
@@ -176,6 +192,8 @@ def main(argv: list[str] | None = None) -> int:
             local_workspace_root=args.local_workspace_root,
             execution_collection=collection,
             agent_settings=agent_settings,
+            unified=True,
+            worker_plugin_configs=plugin_configs,
         ),
         maintenance=maintenance,
         instance_maintenance=instance_maintenance,

@@ -30,7 +30,7 @@ _SCHEMA_RESOURCES = {
     "scidiscovery.critic-review.v2": "critic_review_schema",
     "scidiscovery.evidence-audit.v1": "evidence_audit_schema",
     "scidiscovery.research-objective.v1": "research_objective_schema",
-    "scidiscovery.experiment-design-intent.v1": "experiment_intent_schema",
+    "scidiscovery.experiment-design-intent.v1": "experiment_intent_read_schema",
     "scidiscovery.experiment-portfolio.v1": "experiment_portfolio_schema",
     "scidiscovery.experiment-plan-materialization.v1": "materialization_report_schema",
 }

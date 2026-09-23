@@ -55,7 +55,7 @@ _FEEDBACK_INPUTS = tuple(
 AGENT_OPERATIONS = (
     _agent(
         "science.experiment.design.v1",
-        "Design the smallest bounded experiment that discriminates reviewed hypotheses.",
+        "Design a legacy detailed-plan intent that discriminates reviewed hypotheses.",
         "A research objective, hypothesis portfolio, and independent critic review are available.",
         "Expanding the complete execution plan or implementing domain code.",
         input_validation=InputValidationSpec(ComponentRef("experiment_inputs"), "science.experiment.design.v1.inputs", "The hypothesis portfolio must match the exact research objective; critic disposition must support design; optional execution context must be structurally valid."),
@@ -133,17 +133,19 @@ AGENT_OPERATIONS = (
     ),
     _agent(
         "science.object.review.v1",
-        "Review one complete materialized experiment plan without changing it.",
-        "A complete experiment portfolio needs independent scientific review.",
+        "Independently review exactly one legacy plan or scientific skeleton without changing it.",
+        "A complete legacy portfolio or scientific skeleton needs independent scientific review.",
         "Reviewing an unmaterialized intent or granting human approval.",
-        input_validation=InputValidationSpec(ComponentRef("object_review_inputs"), "science.object.review.v1.inputs", "The bound plan and optional original research objective must have matching identity and statement."),
+        input_validation=InputValidationSpec(ComponentRef("object_review_inputs"), "science.object.review.v1.inputs", "Bind exactly one experiment_plan or scientific_skeleton; validate that subject and optional research objective/execution context structures. The reviewer judges the plan's relation to the original goal; stage objectives need not repeat its key or statement."),
         agent="critic_agent",
         prompt="object_review_prompt",
         inputs=(
+            _agent_input("scientific_skeleton", "Optional scientific skeleton under review; exactly one subject is required.", "scidiscovery.experiment-scientific-skeleton.v1", min_items=0, usage="prior_signal", max_item_bytes=64 * 1024),
             _agent_input(
                 "experiment_plan",
-                "Complete experiment portfolio under review.",
+                "Complete experiment portfolio under review (legacy branch).",
                 "scidiscovery.experiment-portfolio.v1",
+                min_items=0,
                 max_item_bytes=2 * 1024 * 1024,
                 usage="prior_signal",
             ),
@@ -175,7 +177,7 @@ AGENT_OPERATIONS = (
                 max_item_bytes=64 * 1024,
                 context_validator="object_review_context",
                 context_sources=(
-                    "experiment_plan", "research_objective", "execution_context",
+                    "experiment_plan", "scientific_skeleton", "research_objective", "execution_context",
                     "current_progress", "experiment_results", "result_analysis",
                 ),
                 evidence_paths=(),
@@ -188,7 +190,7 @@ AGENT_OPERATIONS = (
     ),
     _agent(
         "science.experiment.revise.v1",
-        "Revise one complete immutable experiment plan.",
+        "Revise one complete immutable legacy experiment plan.",
         "An exact prior experiment and independent review are available.",
         "Producing a patch, inheriting review qualification, or changing unsupported science.",
         input_validation=InputValidationSpec(ComponentRef("experiment_revision_inputs"), "science.experiment.revise.v1.inputs", "The change request must review the experiment portfolio."),
@@ -334,6 +336,27 @@ TRANSFORM_OPERATIONS = (
 )
 
 
-OPERATIONS = AGENT_OPERATIONS + TRANSFORM_OPERATIONS
 
 __all__ = ["AGENT_OPERATIONS", "OPERATIONS", "TRANSFORM_OPERATIONS"]
+
+
+# A new design, including intentional revisions, uses normal foundation admission.
+# It has one primary output and intentionally no mandatory review edge.
+AGENT_OPERATIONS += (
+    _agent(
+        "science.experiment.skeleton.v1",
+        "Design the scientific skeleton; the TCAD author owns its concrete implementation plan.",
+        "Reviewed hypotheses and an approved foundation support a bounded scientific decision.",
+        "Enumerating implementation cases, writing code or granting execution permission.",
+        input_validation=InputValidationSpec(ComponentRef("skeleton_inputs"), "science.experiment.skeleton.v1.inputs", "Normal design inputs and paired optional exact prior skeleton/change basis are required."),
+        agent="experiment_agent", prompt="experiment_skeleton_prompt",
+        inputs=(*(p for p in AGENT_OPERATIONS[0].inputs if p.name != "user_context"),
+            _agent_input("prior_skeleton", "Exact prior skeleton for an intentional new design.", "scidiscovery.experiment-scientific-skeleton.v1", min_items=0, usage="prior_signal", max_item_bytes=64 * 1024),
+            _agent_input("skeleton_change_basis", "Exact formal change evidence; pair with prior_skeleton.", "*", media_types=("*/*",), min_items=0, exposure="on_demand", usage="evidence_inventory", max_item_bytes=2 * 1024 * 1024)),
+        outputs=(_agent_output("scientific_skeleton", "Scientific choices without compulsory engineering cases.", "experiment_scientific_skeleton", "scidiscovery.experiment-scientific-skeleton.v1", "skeleton_validator", max_item_bytes=64 * 1024, context_validator="skeleton_context", context_sources=tuple(p.name for p in AGENT_OPERATIONS[0].inputs if p.exposure != "handoff_only" and p.name != "user_context") + ("prior_skeleton", "skeleton_change_basis")),),
+        timeout=900, max_input_bytes=32 * 1024 * 1024, max_output_bytes=64 * 1024,
+        max_files=1, input_admission=_FOUNDATION_ADMISSION, guards=("experiment_science_cohort",),
+    ),
+)
+
+OPERATIONS = AGENT_OPERATIONS + TRANSFORM_OPERATIONS

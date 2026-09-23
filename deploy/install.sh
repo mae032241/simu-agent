@@ -134,6 +134,8 @@ require_sources() {
     )
     for path in \
         pyproject.toml \
+        src/scidiscovery/default_agent_settings.json \
+        deploy/agent_settings_previous_default.json \
         deploy/plugin_selection.py \
         deploy/systemd/scidiscovery-control.service.in \
         deploy/systemd/scidiscovery-approval-ui.service.in
@@ -506,6 +508,53 @@ normalize_database_ownership() {
     done
 }
 
+validate_distribution_cohort() {
+    local stage="$1" selected_distributions
+    [[ -d "$stage" ]] || die "package cohort stage is unavailable: ${stage}"
+    selected_distributions="$(IFS=,; printf '%s' "${SELECTED_PLUGIN_DISTRIBUTIONS[*]}")"
+    SCID_SELECTED_DISTRIBUTIONS="$selected_distributions" \
+        PYTHONNOUSERSITE=1 PYTHONPATH="$stage" "$PYTHON" - "$stage" <<'PY'
+import os
+from importlib.metadata import PackageNotFoundError, distribution
+from pathlib import Path
+
+from packaging.requirements import Requirement
+from packaging.utils import canonicalize_name
+
+stage = Path(__import__('sys').argv[1]).resolve()
+names = ('scidiscovery', *(name for name in os.environ[
+    'SCID_SELECTED_DISTRIBUTIONS'].split(',') if name))
+cohort = {canonicalize_name(name) for name in names}
+packages = {}
+for name in names:
+    try:
+        package = distribution(name)
+    except PackageNotFoundError as error:
+        raise SystemExit(f'missing staged distribution: {name}') from error
+    location = Path(package.locate_file('')).resolve()
+    if not location.is_relative_to(stage):
+        raise SystemExit(f'staged distribution resolved outside package stage: {name}={location}')
+    packages[canonicalize_name(name)] = package
+
+for source_name, package in packages.items():
+    for raw in package.requires or ():
+        requirement = Requirement(raw)
+        target = canonicalize_name(requirement.name)
+        if target not in cohort or (
+            requirement.marker is not None and not requirement.marker.evaluate()
+        ):
+            continue
+        observed = packages[target].version
+        if requirement.specifier and observed not in requirement.specifier:
+            raise SystemExit(
+                'incompatible staged distribution cohort: '
+                f'{package.metadata["Name"]}=={package.version} requires {requirement}; '
+                f'found {packages[target].metadata["Name"]}=={observed}'
+            )
+print('staged distribution cohort: pass')
+PY
+}
+
 install_packages() {
     local stage source_stage source_root plugin plugin_root selected_distributions
     local -a package_roots
@@ -547,10 +596,13 @@ PY
         validate_figure_dependencies "$stage"
     fi
     selected_distributions="$(IFS=,; printf '%s' "${SELECTED_PLUGIN_DISTRIBUTIONS[*]}")"
+    validate_distribution_cohort "$stage"
     SCID_SELECTED_DISTRIBUTIONS="$selected_distributions" \
         PYTHONNOUSERSITE=1 PYTHONPATH="$stage" "$PYTHON" - <<'PY'
 import os
 from importlib.metadata import distribution, entry_points
+from scidiscovery.artifact_agent.interfaces.mcp_gateway import DescribeInput
+from scidiscovery.artifact_agent.interfaces.mcp_root import ArtifactCatalogInput, RunStatusInput
 from scidiscovery.artifact_agent.interfaces.mcp_root import ROOT_TOOLS
 from scidiscovery.operations.catalog import compile_installed_catalog
 selected = tuple(
@@ -578,6 +630,11 @@ assert not {
 } & root_names
 catalog = compile_installed_catalog()
 assert len(catalog.operation_ids()) == len(set(catalog.operation_ids()))
+assert DescribeInput.model_json_schema()['properties']['view']['enum'] == ['full', 'invoke']
+assert RunStatusInput.model_json_schema()['properties']['response_profile']['enum'] == [
+    'compat', 'poll', 'navigation', 'decision'
+]
+assert 'producer_inputs' in ArtifactCatalogInput.model_json_schema()['properties']['view']['enum']
 print('installed package probe: pass')
 PY
     PYTHONNOUSERSITE=1 PYTHONPATH="$stage" "$PYTHON" -m \
@@ -917,24 +974,133 @@ probe_mcp() {
     [[ -z "$worker_id" ]] || arguments+=(--worker-id "$worker_id")
     printf '{"jsonrpc":"2.0","id":1,"method":"tools/list"}\n' | \
         PYTHONNOUSERSITE=1 PYTHONPATH="$SITE_ROOT" "$PYTHON" -m "$module" "${arguments[@]}" | \
-        "$PYTHON" -c '
+        PYTHONNOUSERSITE=1 PYTHONPATH="$SITE_ROOT" "$PYTHON" -c '
 import json, sys
 names = {item["name"] for item in json.load(sys.stdin)["result"]["tools"]}
 mode = sys.argv[1]
 required = {
-    "root": {"operation_catalog", "operation_preflight", "operation_invoke"},
     "worker": {"worker_open_assignment", "worker_heartbeat",
                "worker_submit_result"},
 }.get(mode, set())
-retired = {"task_schedule", "artifact_transform",
-           "approval_request_create", "execution_request_create",
-           "execution_approval_request_create"}
+if mode == "root":
+    from scidiscovery.artifact_agent.interfaces.mcp_gateway import GATEWAY_TOOLS
+    required = set(GATEWAY_TOOLS)
 if mode.isdigit() and len(names) != int(mode):
     raise SystemExit(f"tool count mismatch: expected={mode} observed={len(names)}")
-if not required <= names or (mode == "root" and retired & names):
-    raise SystemExit(f"MCP tool authority mismatch: {mode}")
+if not required <= names or (mode == "root" and names != required):
+    raise SystemExit(f"MCP tool authority mismatch: {mode}; "
+                     f"missing={sorted(required - names)}; unexpected={sorted(names - required)}")
 print(f"MCP tool probe: pass ({mode}, {len(names)})")
 ' "$mode"
+}
+
+probe_root_context_contract() {
+    local module="$1" socket="$2"
+    PYTHONNOUSERSITE=1 PYTHONPATH="$SITE_ROOT" "$PYTHON" - "$module" "$socket" <<'PY'
+import json
+import select
+import subprocess
+import sys
+
+module, socket = sys.argv[1:]
+metadata = {
+    "session_id": "installation_probe",
+    "thread_id": "installation_probe",
+    "thread_source": "user",
+}
+process = subprocess.Popen(
+    [sys.executable, "-m", module, "--socket", socket],
+    stdin=subprocess.PIPE,
+    stdout=subprocess.PIPE,
+    stderr=subprocess.PIPE,
+    text=True,
+    bufsize=1,
+)
+request_id = 0
+
+def call(stage, name, arguments):
+    global request_id
+    request_id += 1
+    request = {
+        "jsonrpc": "2.0", "id": request_id, "method": "tools/call",
+        "params": {
+            "name": name,
+            "arguments": arguments,
+            "_meta": {"x-codex-turn-metadata": metadata},
+        },
+    }
+    if process.stdin is None or process.stdout is None:
+        raise SystemExit("Root context proxy pipes are unavailable")
+    try:
+        process.stdin.write(json.dumps(request) + "\n")
+        process.stdin.flush()
+    except BrokenPipeError:
+        stderr = process.stderr.read() if process.stderr is not None else ""
+        raise SystemExit(stderr or "Root context proxy exited before request delivery")
+    ready, _, _ = select.select([process.stdout], [], [], 10)
+    if not ready:
+        process.terminate()
+        raise SystemExit(json.dumps({"stage": stage, "entry": name,
+            "operation_id": arguments.get("name") if arguments.get("view") == "invoke" else None,
+            "error": "Root context proxy response timed out"}))
+    line = process.stdout.readline()
+    if not line:
+        stderr = process.stderr.read() if process.stderr is not None else ""
+        raise SystemExit(stderr or "Root context proxy returned no response")
+    response = json.loads(line)
+    if response.get("id") != request_id:
+        raise SystemExit(json.dumps({"stage": stage, "entry": name,
+            "error": "Root context proxy response id mismatch"}))
+    if "error" in response:
+        raise SystemExit(json.dumps({"stage": stage, "entry": name,
+            "operation_id": arguments.get("name") if arguments.get("view") == "invoke" else None,
+            "error": response["error"]}, ensure_ascii=False))
+    return response["result"]["structuredContent"]
+
+try:
+    describe = call("describe_gateway", "scid_describe", {"name": "scid_describe"})
+    assert describe["inputSchema"]["properties"]["view"]["enum"] == ["full", "invoke"]
+    run_status = call("describe_run_status", "scid_describe", {"name": "run_status"})
+    assert run_status["inputSchema"]["properties"]["response_profile"]["enum"] == [
+        "compat", "poll", "navigation", "decision"
+    ]
+    artifact_catalog = call("describe_artifact_catalog", "scid_describe", {"name": "artifact_catalog"})
+    assert "producer_inputs" in artifact_catalog["inputSchema"]["properties"]["view"]["enum"]
+    catalog = call("catalog_public", "scid_catalog", {})
+    operation_id = catalog["operations"][0]["operation_id"]
+    invoke = call("describe_first_public_invoke", "scid_describe", {
+        "name": operation_id, "view": "invoke"})
+    operation = invoke["operations"][0]
+    assert invoke["view"] == "invoke"
+    assert operation["operation_id"] == operation_id
+    assert len(operation["operation_digest"]) == 64
+    assert "inputs" in operation and "revision_policy" in operation
+    print(f"Root context contract probe: pass ({operation_id}, {operation['operation_digest']})")
+finally:
+    if process.stdin is not None:
+        process.stdin.close()
+        process.stdin = None
+    try:
+        returncode = process.wait(timeout=3)
+    except subprocess.TimeoutExpired:
+        process.terminate()
+        returncode = process.wait(timeout=3)
+    if returncode:
+        stderr = process.stderr.read() if process.stderr is not None else ""
+        raise SystemExit(stderr or f"Root context proxy exited with status {returncode}")
+PY
+}
+
+probe_approval_ui() {
+    local status
+    printf 'Checking approval UI: http://127.0.0.1:%s/ (10s timeout)...\n' "$APPROVAL_PORT"
+    if ! status="$(curl --noproxy '*' --connect-timeout 3 --max-time 10 \
+        -sS -o /dev/null -w '%{http_code}' "http://127.0.0.1:${APPROVAL_PORT}/")"; then
+        journalctl -u scidiscovery-approval-ui.service -n 12 --no-pager >&2 || true
+        die "approval UI health probe connection failed or timed out on port ${APPROVAL_PORT}"
+    fi
+    [[ "$status" == 200 ]] || die "approval UI health probe failed: HTTP ${status}"
+    printf 'Approval UI health probe: pass\n'
 }
 
 verify_installation() {
@@ -953,12 +1119,13 @@ verify_installation() {
     done
     wait_for_socket "$CONTROL_SOCKET" scidiscovery-control.service
     probe_mcp scidiscovery.artifact_agent.interfaces.mcp_proxy "$CONTROL_SOCKET" "" root
+    probe_root_context_contract scidiscovery.artifact_agent.interfaces.mcp_proxy "$CONTROL_SOCKET"
     if [[ "$TCAD_LOCAL_SERVICE" -eq 1 ]]; then
         wait_for_socket "$TCAD_SOCKET" tcad-control.service
         probe_mcp tcad_artifact.execution_mcp "$TCAD_SOCKET" "" 5
     fi
-    [[ "$(curl -sS -o /dev/null -w '%{http_code}' "http://127.0.0.1:${APPROVAL_PORT}/")" == 200 ]] || \
-        die "approval UI health probe failed"
+    probe_approval_ui
+    printf 'Checking Codex installation profiles...\n'
     PYTHONNOUSERSITE=1 PYTHONPATH="$SITE_ROOT" "$PYTHON" - \
         "$SOURCE_ROOT" "$WORKSPACE" "$SITE_ROOT" "$PLATFORM" \
         "$SCID_STATE" "$LOCAL_WORKSPACE_ROOT" "$WORKER_BACKEND" "$TCAD_ENABLED" \
@@ -1147,16 +1314,34 @@ ensure_agent_settings() {
     local target="${CONFIG_ROOT}/agent-settings.json"
     if [[ -e "$target" || -L "$target" ]]; then
         [[ -f "$target" && ! -L "$target" ]] || die "agent settings must be a regular non-symlink file"
+        if cmp -s "$target" "${SOURCE_ROOT}/deploy/agent_settings_previous_default.json"; then
+            "$PYTHON" - "$target" "${SOURCE_ROOT}/src/scidiscovery/default_agent_settings.json" <<'PYSETTINGS'
+import os, stat, sys, tempfile
+from pathlib import Path
+target = Path(sys.argv[1])
+replacement = Path(sys.argv[2]).read_bytes()
+original = target.stat()
+fd, staged = tempfile.mkstemp(prefix=".agent-settings-", dir=target.parent)
+try:
+    os.fchmod(fd, stat.S_IMODE(original.st_mode))
+    os.fchown(fd, original.st_uid, original.st_gid)
+    with os.fdopen(fd, "wb") as stream:
+        stream.write(replacement)
+    os.replace(staged, target)
+except BaseException:
+    os.unlink(staged)
+    raise
+PYSETTINGS
+        fi
         return 0
     fi
-    "$PYTHON" - "$target" <<'PYSETTINGS'
-import json, os, sys
-value = {"schema_version": 1, "defaults": {"narrative_language": "zh-CN",
-    "model": "gpt-5.6-sol", "reasoning_effort": "medium"}, "operations": {}}
+    "$PYTHON" - "$target" "${SOURCE_ROOT}/src/scidiscovery/default_agent_settings.json" <<'PYSETTINGS'
+import os, sys
+with open(sys.argv[2], encoding="utf-8") as source:
+    contents = source.read()
 fd = os.open(sys.argv[1], os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o640)
 with os.fdopen(fd, "w", encoding="utf-8") as stream:
-    json.dump(value, stream, ensure_ascii=False, indent=2)
-    stream.write("\n")
+    stream.write(contents)
 PYSETTINGS
     chown root:"$SERVICE_GROUP" "$target"
 }

@@ -132,14 +132,19 @@ def test_generic_analysis_source_resolution_is_independent_of_optional_citation_
 
 
 def test_parameter_sources_need_neither_unused_sources_nor_a_second_foundation_ledger():
+    from types import SimpleNamespace
+    from scidiscovery.operations.input_validation import ValidationSources
     from tcad_artifact.parameter_operations import ParameterEvidencePackage, validate_extract_context
     from tests.operations.test_m2_parameter_package import _package
     raw = _package('source_material_001').model_dump(mode='json')
     raw['scientific_intake']['scientific_foundation']['evidence'] = []
     ParameterEvidencePackage.model_validate_json(canonical_json(raw), strict=True)
-    validate_extract_context(raw, {'source_material_001': b'data', 'source_material_002': b'unused'}, {})
+    def bound_sources(values):
+        return ValidationSources(values, {name: SimpleNamespace(port_name='source_material')
+            for name in values})
+    validate_extract_context(raw, bound_sources({'source_material_001': b'data', 'source_material_002': b'unused'}), {})
     with pytest.raises(SemanticRuleViolation) as caught:
-        validate_extract_context(raw, {'source_material_002': b'other'}, {})
+        validate_extract_context(raw, bound_sources({'source_material_002': b'other'}), {})
     assert caught.value.details[0]['path'] == '$.source_catalog.sources[0].source_key'
 
 

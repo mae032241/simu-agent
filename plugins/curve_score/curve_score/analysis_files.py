@@ -74,49 +74,48 @@ def publish_files(request, context):
 
 
 GUIDANCE = """
-Cite a scoring/diagnostic tool's returned calculation_ref directly in evidence_keys,
-or use it as the source_key/locator of an optional evidence item.
-The control layer has already saved its complete record and receipt;
-do not copy requests, digests, attempt metadata or result arrays into the report.
-Keep calculation_records empty for new calls. A separate evidence or source_references
-entry is optional; multiple locators for one source are allowed. Legacy inline records
-remain readable. If a request is rejected before a calculation_ref exists, cite
-tool_recovery_manifest and explain the reported failure; do not construct a
-calculation record or copy the attempt receipt. To reuse a prior calculation, bind its saved calculation file
-and the paired prior analysis/manifest with the original sources, then cite the
-current file alias; receipt and historical alias handling belong to control.
-When built-in tools cannot express a needed row selection, weighting or other
-analysis method, use the allowed bounded native analysis tools. Preserve the
-script and derived tables/results with worker_analysis_publish_files; its paths
-are relative to the workspace root (scratch/analysis.py, scratch/results.csv),
-files are at most 16 MiB each and 32 MiB per call,
-and the script is at most 1 MiB. Cite source aliases and describe the scientific
-method once. Returned derived-data aliases are readable by the scoring and
-diagnostic tools immediately and can be bound in a later Run's reference_material
-inventory; they are derived analysis data, not original solver_outputs. Publication
-preserves bytes and declared derivation, not proof of execution or scientific
-validity. Report weighting/selection rules and limitations; do not relabel an
-exploratory curve statistic as a different preregistered statistic.
+Cite returned calculation_ref in evidence_keys or optional evidence source_key/locator.
+Control retains complete records, requests, digests, attempts and arrays: keep
+calculation_records empty for new calls; do not copy receipts or source mappings.
+Multiple locators per source are allowed; legacy inline records remain readable.
+If rejection precedes a calculation_ref, cite tool_recovery_manifest and the exact
+error; it does not prove an unsupported format. Historical reuse needs the saved
+calculation, paired prior analysis/manifest and original sources; cite its current
+alias. Control owns historical alias and receipt handling.
 
-Preserve completed numerical work before optional plotting. Test parsing and one
-small independent work unit first; atomically write each complete unit using a
-temporary file followed by replace. Keep compute and plot entry points separate:
-plot reads saved numbers and must never implicitly restart fitting. Check only the
-plot library actually used, or choose an available implementation. A plot import
-or rendering error permits a limited report with saved numbers and the concrete
-error; repair and retry plotting alone. Missing plots do not erase numerical work.
-Reuse a complete checkpoint only when its inputs, numerical method and parameters
-still match. Plot-only changes do not invalidate numbers; numerical changes require
-recomputing affected units and preserving the old version. Do not count partial
-writes or process exit success as a completed scientific result.
-Read domain-workspace.json for the optional local computation launcher. Its request
-timeout is clipped to the current Run deadline minus your adjustable submission
-reserve. Use measured work-unit time to choose the next bounded batch. Do not start
-a retry that cannot fit; publish completed units and explain remaining work instead.
-Timing, this launcher, scoring and plotting are not prerequisites to submission.
-On a new Run, read assignment.recovery_draft and its coverage manifest before
-continuing; use only that immutable subset, copied into the new scratch directory.
-An empty new scratch directory says nothing about whether recovery was delivered.
+When built-in methods cannot express required selection or weighting, use permitted
+bounded native analysis. Preserve scripts and derived results with
+worker_analysis_publish_files; read its contract for workspace-relative paths and
+size limits. Cite sources and explain method/selection/weighting and limits once.
+Returned data aliases are immediately usable for scoring/diagnostics and later
+reference_material, not original solver_outputs. Publication proves retained bytes
+and lineage, not execution or scientific validity. Do not relabel exploratory
+statistics as preregistered tests.
+
+When the scientific judgment compares reference and candidate curves and bound data
+and an available plotting implementation are sufficient, publish a reference/candidate
+overlay PNG by default. Add a residual plot only when its distribution affects the
+judgment. Choose the scale and residual definition scientifically. Axes must state
+units, legends must bind curve identities, and plotted bounds must equal the actual
+comparison domain. Cite each returned image evidence alias in the formal report and
+state which conclusion or limitation it supports. Plots supplement numerical records,
+sources and the formal conclusion; they never replace them.
+
+Before plotting, test parsing and one small work unit; atomically save each completed
+unit (temporary file then replace). Separate compute from plot: plot reads saved
+numbers, never implicitly refits. Check only needed plotting dependencies or use an
+available implementation. On import/render failure preserve numbers and the exact
+error; report why the figure is absent, then retry plotting alone or deliver limited
+findings. Reuse checkpoints only when inputs/method/parameters match; numerical changes
+recompute affected units and retain old versions. Partial writes and process exit
+success are not completed science.
+
+Read domain-workspace.json for the optional observed computation launcher. Timeout is
+clipped to the Run deadline minus adjustable submission reserve. Use measured unit
+time for bounded batches; if retry cannot fit, publish completed units and gaps.
+Timing, launcher, scoring and plots are not submission prerequisites. On continuation,
+read assignment.recovery_draft and its coverage manifest; use only that immutable
+subset copied to new scratch. Empty scratch does not establish missing recovery.
 """
 
 TOOL = WorkerToolDefinition(name="worker_analysis_publish_files",

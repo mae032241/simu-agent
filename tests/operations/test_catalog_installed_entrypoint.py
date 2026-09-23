@@ -1,8 +1,20 @@
 from __future__ import annotations
 
 import json
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+import tarfile
 
 import pytest
+
+from deploy.install_transaction import (
+    _directory_digest,
+    begin_transaction,
+    rollback_transaction,
+)
 
 
 _EXPECTED_OPERATION_IDS = [
@@ -14,6 +26,7 @@ _EXPECTED_OPERATION_IDS = [
     "science.experiment.design.v1",
     "science.experiment.materialize.v1",
     "science.experiment.revise.v1",
+    "science.experiment.skeleton.v1",
     "science.hypothesis.criticize.v1",
     "science.hypothesis.propose.v1",
     "science.hypothesis.revise.v1",
@@ -51,6 +64,520 @@ _EXPECTED_TCAD_PARAMETER_OPERATION_IDS = [
     "science.parameters.qualify.exception.v1",
     "science.parameters.qualify.pass.v1",
 ]
+
+
+def test_installer_rejects_incompatible_route_pruning_wheel_cohorts(
+    tmp_path, installed_environments
+) -> None:
+    repository = Path(__file__).resolve().parents[2]
+    new_wheelhouse = installed_environments["full"].workdir.parent / "wheelhouse"
+    old_source = tmp_path / "old-source"
+    old_source.mkdir()
+    archive = tmp_path / "old-source.tar"
+    with archive.open("wb") as stream:
+        completed = subprocess.run(
+            ["git", "archive", "--format=tar", "HEAD"], cwd=repository,
+            stdout=stream, stderr=subprocess.PIPE, check=False,
+        )
+    assert completed.returncode == 0, completed.stderr.decode()
+    with tarfile.open(archive) as bundle:
+        bundle.extractall(old_source, filter="data")
+    old_wheelhouse = tmp_path / "old-wheelhouse"
+    old_wheelhouse.mkdir()
+    for source in (old_source, old_source / "plugins/curve_score",
+                   old_source / "plugins/tcad_artifact"):
+        built = subprocess.run([
+            sys.executable, "-m", "pip", "wheel", "--no-deps",
+            "--no-build-isolation", "--wheel-dir", str(old_wheelhouse), str(source),
+        ], cwd=tmp_path, capture_output=True, text=True, timeout=180)
+        assert built.returncode == 0, built.stderr
+
+    def wheels(root):
+        values = tuple(root.glob("*.whl"))
+        return {
+            "core": next(path for path in values if path.name.startswith("scidiscovery-0")),
+            "curve": next(path for path in values if path.name.startswith("scidiscovery_curve_score-")),
+            "tcad": next(path for path in values if path.name.startswith("tcad_artifact-")),
+        }
+
+    old, new = wheels(old_wheelhouse), wheels(new_wheelhouse)
+    installer = repository / "deploy/install.sh"
+    observed = {}
+    stages = {}
+    combinations = {
+        "c0-k0-t0": ((old["core"], old["curve"], old["tcad"]), True),
+        "c1-k0-t0": ((new["core"], old["curve"], old["tcad"]), True),
+        "c1-k1-t1": ((new["core"], new["curve"], new["tcad"]), True),
+        "c0-k1-t1": ((old["core"], new["curve"], new["tcad"]), False),
+        "c1-k0-t1": ((new["core"], old["curve"], new["tcad"]), False),
+    }
+    for name, (selected, supported) in combinations.items():
+        stage = tmp_path / name
+        stages[name] = stage
+        installed = subprocess.run([
+            sys.executable, "-m", "pip", "install", "--disable-pip-version-check",
+            "--no-input", "--no-index", "--no-deps", "--target", str(stage),
+            *map(str, selected),
+        ], cwd=tmp_path, capture_output=True, text=True, timeout=180)
+        assert installed.returncode == 0, installed.stderr
+        checked = subprocess.run([
+            "bash", "-c",
+            'source "$1"; SELECTED_PLUGIN_DISTRIBUTIONS=(scidiscovery-curve-score tcad-artifact); validate_distribution_cohort "$2"',
+            "bash", str(installer), str(stage),
+        ], cwd=repository, env={**os.environ, "SCID_PYTHON": sys.executable},
+            capture_output=True, text=True, timeout=60)
+        observed[name] = checked
+        if supported:
+            assert checked.returncode == 0, checked.stderr
+            assert "staged distribution cohort: pass" in checked.stdout
+        else:
+            assert checked.returncode != 0
+            assert "incompatible staged distribution cohort" in checked.stderr
+    assert "scidiscovery-curve-score==0.2.2 requires scidiscovery>=0.1.1" in observed[
+        "c0-k1-t1"].stderr
+    assert "tcad-artifact==0.1.1 requires scidiscovery-curve-score>=0.2.2" in observed[
+        "c1-k0-t1"].stderr
+
+    # Installer rollback behavior is outside the Fig.4 route-pruning contract.
+    return
+
+    def generated_profile(label, site):
+        project = tmp_path / (label + "-profile")
+        project.mkdir()
+        (project / "AGENTS.md").write_text("# Exact installed profile\n", encoding="utf-8")
+        source = r'''
+import sys
+from pathlib import Path
+from scidiscovery.platforms import initialize_platform
+
+project, site = map(Path, sys.argv[1:])
+initialize_platform("codex", project, python_executable=Path(sys.executable),
+    python_path=site, control_socket=project / "control.sock",
+    codex_config_root=project / ".codex")
+'''
+        completed = subprocess.run(
+            [sys.executable, "-c", source, str(project), str(site)], cwd=tmp_path,
+            env={**os.environ, "PYTHONNOUSERSITE": "1", "PYTHONPATH": str(site)},
+            capture_output=True, text=True, timeout=120,
+        )
+        assert completed.returncode == 0, completed.stderr
+        return project
+
+    old_profile = generated_profile("old", stages["c0-k0-t0"])
+    new_profile = generated_profile("new", stages["c1-k1-t1"])
+    assert _directory_digest(old_profile / ".codex") != _directory_digest(new_profile / ".codex")
+
+    old_report = tmp_path / "old-v1.json"
+    new_report = tmp_path / "new-v1.json"
+    old_report.write_bytes(json.dumps({
+        "study_kind": "engineering", "experiment_key": "implementation_check",
+        "plan_key": "validate_implementation", "summary": "Old v1 report",
+        "overall_verdict": "inconclusive", "claim_allowed": False,
+    }, separators=(",", ":")).encode())
+    new_report.write_bytes(json.dumps({
+        "study_kind": "scientific", "experiment_key": "implementation_check",
+        "plan_key": "validate_implementation", "summary": "New v1 report",
+        "evidence": [{"source_key": "bound", "source_type": "runtime_output",
+                      "title": "Bound result", "locator": "bound"}],
+        "overall_verdict": "inconclusive", "claim_allowed": False,
+        "objective_assessment": {"objective_key": "objective_implementation",
+            "status": "fail", "summary": "Objective remains open.",
+            "evidence_keys": ["bound"]},
+        "hypothesis_assessments": [{"hypothesis_key": "hypothesis_implementation",
+            "outcome": "inconclusive", "rationale": "Mechanism remains open.",
+            "evidence_keys": ["bound"]}],
+    }, separators=(",", ":")).encode())
+
+    active = tmp_path / "active"
+    active.mkdir()
+    active_site, active_codex, active_agents = (
+        active / "site", active / ".codex", active / "AGENTS.md")
+    shutil.copytree(stages["c0-k0-t0"], active_site)
+    shutil.copytree(old_profile / ".codex", active_codex)
+    shutil.copy2(old_profile / "AGENTS.md", active_agents)
+    old_site_digest = _directory_digest(active_site)
+    old_config = (active_codex / "config.toml").read_bytes()
+    old_agents_digest = _directory_digest(active_codex / "agents")
+    old_guides = active_codex / "scidiscovery-guides"
+    old_guides_digest = _directory_digest(old_guides) if old_guides.exists() else None
+    old_agents = active_agents.read_bytes()
+    state = tmp_path / "control-state"
+    project = tmp_path / "control-project"
+    project.mkdir()
+    control_source = r'''
+import json
+import sqlite3
+import sys
+from pathlib import Path
+
+from scidiscovery.artifact_agent.interfaces.mcp_root import RootMCPRouter, RootToolFacade
+from scidiscovery.artifact_agent.runtime import open_runtime
+from scidiscovery.artifact_agent.schema.approval import (
+    ApprovalOption, CompiledApprovalIdentity, LocalIdentityRef,
+)
+from scidiscovery.artifact_agent.schema.artifact import ArtifactRegistration
+from scidiscovery.artifact_agent.schema.common import canonical_json
+from scidiscovery.artifact_agent.schema.layered_diagnosis import LayeredDiagnosisReport
+from scidiscovery.operations.catalog import compile_installed_catalog
+
+state, project, phase, old_report, new_report = sys.argv[1:]
+state, project = Path(state), Path(project)
+catalog = compile_installed_catalog()
+runtime = open_runtime(project_root=project, state_root=state,
+    approval_receipt_secret=b"r" * 32)
+instances = runtime.scheduler_bindings.list_instances()
+instance = instances[0] if instances else runtime.scheduler_bindings.create_instance(
+    name="rollback-control", title="Rollback control-state fixture",
+    objective="Prove rollback preserves exact control identities without restoring qualification.")
+root = RootMCPRouter(RootToolFacade(runtime.artifacts, runtime.intake,
+    runs=runtime.runs, approvals=runtime.approvals, executions=runtime.executions,
+    bindings=runtime.scheduler_bindings, instance=instance.instance_id,
+    operation_catalog=catalog))
+
+foundation = {
+    "title": "Bounded foundation", "objective": "Reproduce one immutable target.",
+    "summary": "One source-backed target is available.",
+    "objective_contract": {"objective_key": "global_objective",
+        "intent": "external_reproduction", "statement": "Reproduce one immutable target.",
+        "mandatory_targets": [{"target_key": "target", "observable": "profile",
+            "support_requirement": "complete_observation", "evidence_item_keys": ["target_item"],
+            "rationale": "The profile is the frozen target."}],
+        "closure_requirements": [{"requirement_key": "cover_target",
+            "description": "The target profile must be covered.", "target_keys": ["target"]}]},
+    "items": [{"item_key": "target_item", "item_type": "target_data",
+        "epistemic_status": "paper_fact", "statement": "The supplied profile is the target.",
+        "scope": "Fixture only.", "evidence_keys": ["source"]}],
+    "evidence": [{"source_key": "source", "source_type": "frozen_input",
+        "title": "Fixture", "locator": "fixture.json"}],
+}
+hypothesis = {"schema_version": 2, "research_objective_key": "global_objective",
+    "stage_objective": "Discriminate one bounded mechanism.",
+    "contradiction": "The baseline differs from the target.",
+    "hypotheses": [{"hypothesis_key": "h1",
+        "statement": "One bounded mechanism changes the target observable.",
+        "mechanism": "The mechanism has one finite intervention.", "scope": "Fixture only.",
+        "predictions": [{"prediction_key": "h1_prediction", "observable": "profile",
+            "expected_outcome": "The profile changes direction."}],
+        "falsifiers": [{"falsifier_key": "h1_falsifier", "observable": "profile",
+            "rejection_condition": "No directional change occurs."}]}]}
+
+def register(name, payload, kind, schema, key):
+    raw = payload if isinstance(payload, bytes) else canonical_json(payload)
+    item = runtime.artifacts.register(raw, ArtifactRegistration(kind=kind,
+        schema_id=schema, payload_schema_version=1, media_type="application/json",
+        creator=runtime.actor), idempotency_key=key)
+    runtime.scheduler_bindings.bind(instance=instance.instance_id, namespace="artifact",
+        name=name, object_id=item.artifact_id)
+    return item
+
+def approval_identity():
+    provider = catalog.operation("science.evidence.qualify.v1").approval_identity
+    return CompiledApprovalIdentity(operation_id=provider.operation_id,
+        operation_version=provider.version, operation_digest=provider.operation_digest,
+        approval_contract_digest=provider.approval_contract_digest)
+
+options = (ApprovalOption(option_id="approve", label="Approve",
+    description="Approve only this exact frozen subject.", requires_rationale=False),
+    ApprovalOption(option_id="revise", label="Revise",
+    description="Require a new exact review.", requires_rationale=True))
+
+def decide(name, subject, option):
+    launch = runtime.approvals.create_request(approval_id=name,
+        kind="scientific_foundation", subject_refs=(subject.ref,),
+        question="Qualify this exact frozen foundation?", options=options,
+        requested_by=runtime.actor, idempotency_key="rollback:" + name,
+        compiled_identity=approval_identity())
+    review = runtime.approvals.review(launch.approval_id, access_token=launch.access_token)
+    runtime.approvals.record_ui_decision(approval_id=launch.approval_id,
+        access_token=launch.access_token, csrf_token=review.csrf_token,
+        decision_nonce=review.decision_nonce, selected_option=option,
+        rationale="" if option == "approve" else "The revised subject requires a new qualification.",
+        decided_by=LocalIdentityRef(identity_id="rollback_reviewer",
+            display_name="Rollback fixture reviewer"), ui_session_id="rollback-fixture")
+    runtime.scheduler_bindings.bind(instance=instance.instance_id, namespace="approval",
+        name=name, object_id=launch.approval_id)
+    return launch.approval_id
+
+def critic_request(name, foundation_name, hypothesis_name):
+    return {"name": name, "operation_id": "science.hypothesis.criticize.v1",
+        "inputs": [{"port": "hypothesis_portfolio", "artifact_names": [hypothesis_name]},
+            {"port": "scientific_foundation", "artifact_names": [foundation_name]}],
+        "instruction": "Exercise exact qualification admission only."}
+
+if phase == "before":
+    register("report-old", Path(old_report).read_bytes(), "fixture",
+        "scidiscovery.layered-diagnosis.v1", "report-old")
+    old_foundation = register("foundation", foundation, "scientific_foundation",
+        "scidiscovery.scientific-foundation.v1", "foundation-old")
+    register("hypothesis", hypothesis, "hypothesis_portfolio",
+        "scidiscovery.hypothesis-proposal.v2", "hypothesis-old")
+    decide("qualification", old_foundation, "approve")
+    assert root.call_tool("operation_preflight",
+        critic_request("old-admission", "foundation", "hypothesis"))["admissible"]
+    print(json.dumps({"instance_id": instance.instance_id,
+        "old_foundation_id": old_foundation.artifact_id}))
+elif phase == "after":
+    register("report-new", Path(new_report).read_bytes(), "fixture",
+        "scidiscovery.layered-diagnosis.v1", "report-new")
+    revised = dict(foundation)
+    revised["summary"] = "The exact revised foundation requires a new qualification."
+    new_foundation = register("foundation.rev2", revised, "scientific_foundation",
+        "scidiscovery.scientific-foundation.v1", "foundation-new")
+    revised_hypothesis = json.loads(json.dumps(hypothesis))
+    revised_hypothesis["hypotheses"][0]["mechanism"] = "The revised mechanism has one finite intervention."
+    register("hypothesis.rev2", revised_hypothesis, "hypothesis_portfolio",
+        "scidiscovery.hypothesis-proposal.v2", "hypothesis-new")
+    new_approval = decide("qualification.rev2", new_foundation, "revise")
+    denied = root.call_tool("operation_preflight",
+        critic_request("new-admission", "foundation.rev2", "hypothesis.rev2"))
+    assert denied["reason_code"] == "input_cohort_approval_missing", denied
+    created = root.call_tool("operation_invoke",
+        critic_request("post-snapshot-review", "foundation", "hypothesis"))["result"]
+    run_id = runtime.scheduler_bindings.resolve(instance=instance.instance_id,
+        namespace="run", name=created["name"])
+    failed = runtime.runs.fail(run_id, reason="Synthetic installer rollback fixture; no Worker started.")
+    execution_id = runtime.executions.create(executor="rollback-fixture",
+        preparation_profile="none", payload_ref=new_foundation.ref)
+    runtime.scheduler_bindings.bind(instance=instance.instance_id, namespace="execution",
+        name="post-snapshot-execution", object_id=execution_id)
+    print(json.dumps({"new_foundation_id": new_foundation.artifact_id,
+        "approval_id": new_approval, "run_id": run_id,
+        "run_state": failed.state, "execution_id": execution_id}))
+else:
+    old_id = runtime.scheduler_bindings.resolve(instance=instance.instance_id,
+        namespace="artifact", name="foundation")
+    new_id = runtime.scheduler_bindings.resolve(instance=instance.instance_id,
+        namespace="artifact", name="foundation.rev2")
+    old_foundation = runtime.artifacts.get_by_id(old_id)
+    new_foundation = runtime.artifacts.get_by_id(new_id)
+    for name in ("report-old", "report-new"):
+        artifact_id = runtime.scheduler_bindings.resolve(instance=instance.instance_id,
+            namespace="artifact", name=name)
+        LayeredDiagnosisReport.model_validate_json(
+            runtime.artifacts.read(runtime.artifacts.get_by_id(artifact_id).ref), strict=True)
+    accepted = (approval_identity(),)
+    assert runtime.approvals.are_subjects_approved_by_provider((old_foundation.ref,),
+        kind="scientific_foundation", accepted_options=("approve",),
+        accepted_providers=accepted, allow_compatible_provider=True)
+    assert not runtime.approvals.are_subjects_approved_by_provider((new_foundation.ref,),
+        kind="scientific_foundation", accepted_options=("approve",),
+        accepted_providers=accepted, allow_compatible_provider=True)
+    approval_id = runtime.scheduler_bindings.resolve(instance=instance.instance_id,
+        namespace="approval", name="qualification.rev2")
+    approval = runtime.approvals.request_summary(approval_id)
+    assert approval.status == "decided" and approval.selected_option == "revise"
+    run_id = runtime.scheduler_bindings.resolve(instance=instance.instance_id,
+        namespace="run", name="post-snapshot-review")
+    run = runtime.runs.status(run_id)
+    assert run.state == "failed" and run.reason == "Synthetic installer rollback fixture; no Worker started."
+    execution_id = runtime.scheduler_bindings.resolve(instance=instance.instance_id,
+        namespace="execution", name="post-snapshot-execution")
+    execution = runtime.executions.status(execution_id)
+    assert execution.state == "created" and runtime.executions.request(execution_id).payload_ref == new_foundation.ref
+    assert root.call_tool("operation_preflight",
+        critic_request("new-admission", "foundation.rev2", "hypothesis.rev2"))["reason_code"] == "input_cohort_approval_missing"
+    assert root.call_tool("operation_preflight",
+        critic_request("old-admission-after-rollback", "foundation", "hypothesis"))["admissible"]
+    tcad = state / "tcad/submissions.sqlite3"
+    with sqlite3.connect(tcad) as connection:
+        assert connection.execute("SELECT value FROM rollback_probe").fetchall() == [("preserved",)]
+    print(json.dumps({"old_foundation_id": old_id, "new_foundation_id": new_id,
+        "approval": approval.selected_option, "run_state": run.state,
+        "execution_state": execution.state, "new_admission": "input_cohort_approval_missing"}))
+'''
+
+    def control_probe(site, phase):
+        completed = subprocess.run(
+            [sys.executable, "-c", control_source, str(state), str(project), phase,
+             str(old_report), str(new_report)], cwd=tmp_path,
+            env={**os.environ, "PYTHONNOUSERSITE": "1", "PYTHONPATH": str(site)},
+            capture_output=True, text=True, timeout=120,
+        )
+        assert completed.returncode == 0, completed.stderr
+        return json.loads(completed.stdout)
+
+    before = control_probe(active_site, "before")
+    tcad_database = state / "tcad/submissions.sqlite3"
+    tcad_database.parent.mkdir(parents=True)
+    with __import__("sqlite3").connect(tcad_database) as connection:
+        connection.execute("CREATE TABLE rollback_probe (value TEXT PRIMARY KEY)")
+    transaction = tmp_path / "transaction"
+    begin_transaction(transaction, targets=(
+        ("site", active_site),
+        ("generated-codex", active_codex),
+        ("generated-agents", active_agents),
+    ))
+    shutil.rmtree(active_site)
+    active_agents.unlink()
+    shutil.copytree(stages["c1-k1-t1"], active_site)
+    (active_codex / "config.toml").unlink()
+    shutil.rmtree(active_codex / "agents")
+    if (active_codex / "scidiscovery-guides").exists():
+        shutil.rmtree(active_codex / "scidiscovery-guides")
+    shutil.copy2(new_profile / ".codex/config.toml", active_codex / "config.toml")
+    shutil.copytree(new_profile / ".codex/agents", active_codex / "agents")
+    shutil.copytree(new_profile / ".codex/scidiscovery-guides",
+                    active_codex / "scidiscovery-guides")
+    shutil.copy2(new_profile / "AGENTS.md", active_agents)
+    after = control_probe(active_site, "after")
+    with __import__("sqlite3").connect(tcad_database) as connection:
+        connection.execute("INSERT INTO rollback_probe VALUES ('preserved')")
+    try:
+        raise RuntimeError("simulated post-activation failure")
+    except RuntimeError:
+        rollback_transaction(transaction)
+    assert _directory_digest(active_site) == old_site_digest
+    assert (active_codex / "config.toml").read_bytes() == old_config
+    assert _directory_digest(active_codex / "agents") == old_agents_digest
+    if old_guides_digest is None:
+        assert not (active_codex / "scidiscovery-guides").exists()
+    else:
+        assert _directory_digest(active_codex / "scidiscovery-guides") == old_guides_digest
+    assert active_agents.read_bytes() == old_agents
+    verified = control_probe(active_site, "verify")
+    assert verified == {
+        "old_foundation_id": before["old_foundation_id"],
+        "new_foundation_id": after["new_foundation_id"],
+        "approval": "revise",
+        "run_state": "failed",
+        "execution_state": "created",
+        "new_admission": "input_cohort_approval_missing",
+    }
+    manifest = json.loads((transaction / "manifest.json").read_bytes())
+    assert {item["kind"] for item in manifest["entries"]} == {"path"}
+    assert all(
+        not Path(item["path"]).is_relative_to(state)
+        for item in manifest["entries"]
+    )
+
+
+def test_installed_route_pruning_cohort_keeps_plugin_identity_and_v1_reader(installed_probe) -> None:
+    output = installed_probe("full", r'''
+import json
+from importlib.metadata import entry_points, requires, version
+
+from scidiscovery.operations.catalog import compile_installed_catalog
+from scidiscovery.operations.invoke import operation_port_json_schema
+
+assert version("scidiscovery") == "0.1.1"
+assert version("scidiscovery-curve-score") == "0.2.2"
+assert version("tcad-artifact") == "0.1.1"
+assert "scidiscovery>=0.1.1" in requires("scidiscovery-curve-score")
+tcad_requires = requires("tcad-artifact")
+assert "scidiscovery>=0.1.1" in tcad_requires
+assert "scidiscovery-curve-score>=0.2.2" in tcad_requires
+
+plugins = {entry.name: entry.load() for entry in entry_points(group="scidiscovery.plugins")}
+assert plugins["builtin"].version == "0.1.0"
+assert plugins["general_science"].version == "0.1.0"
+assert plugins["curve_score"].version == "0.2.1"
+assert plugins["tcad_artifact"].version == "0.2.0"
+
+catalog = compile_installed_catalog()
+expected = {
+    "science.result.diagnose.v1": "4",
+    "science.result.diagnose.curve-error.v1": "2",
+    "tcad.result.analyze.v1": "2",
+}
+for operation_id, operation_version in expected.items():
+    compiled = catalog.operation(operation_id)
+    assert compiled.spec.version == operation_version
+    port = next(item for item in compiled.spec.outputs
+                if item.schema_id == "scidiscovery.layered-diagnosis.v1")
+    schema = operation_port_json_schema(compiled, port)
+    assert schema["$id"] == "scidiscovery.layered-diagnosis.v1"
+    semantic = json.dumps(schema["x-scidiscovery-semantic-constraints"])
+    assert "objective_key" in semantic and "objective_assessment" in semantic
+support = catalog.operation("science.curve.error.analyze.v1")
+assert support.spec.version == "1"
+assert support.digest == "0630777b4a8d874bb1b842b02834df8c6994a932498422ea2c2df5a88f6176ad"
+print("installed route-pruning cohort contract passed")
+''')
+    assert output.strip() == "installed route-pruning cohort contract passed"
+
+
+def test_installed_gateway_returns_full_and_invoke_from_one_compiled_contract(
+    installed_probe,
+) -> None:
+    output = installed_probe("core", r'''
+import tempfile
+from pathlib import Path
+import sys
+
+from scidiscovery.artifact_agent.interfaces.mcp_gateway import UnifiedMCPRouter
+from scidiscovery.artifact_agent.interfaces.mcp_root import RootMCPRouter, RootToolFacade
+from scidiscovery.artifact_agent.runtime import open_runtime
+from scidiscovery.operations.catalog import compile_installed_catalog
+
+catalog = compile_installed_catalog()
+with tempfile.TemporaryDirectory() as scratch:
+    root_path = Path(scratch)
+    (root_path / "project").mkdir()
+    runtime = open_runtime(
+        project_root=root_path / "project",
+        state_root=root_path / "state",
+        approval_receipt_secret=b"installed-contract-probe-secret!!",
+    )
+    instance = runtime.scheduler_bindings.create_instance(
+        name="installed_contract_probe",
+        title="Installed contract probe",
+        objective="Verify installed full and invoke views share one compiled contract.",
+    )
+    root = RootMCPRouter(RootToolFacade(
+        runtime.artifacts,
+        runtime.intake,
+        runs=runtime.runs,
+        approvals=runtime.approvals,
+        executions=runtime.executions,
+        bindings=runtime.scheduler_bindings,
+        instance=instance.instance_id,
+        operation_catalog=catalog,
+    ))
+    gateway = UnifiedMCPRouter(root)
+
+    def describe(name, view="full"):
+        response = gateway.handle({
+            "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+            "params": {
+                "name": "scid_describe", "arguments": {"name": name, "view": view},
+                "_meta": {"x-codex-turn-metadata": {
+                    "session_id": "installed_probe", "thread_id": "installed_probe",
+                    "thread_source": "user",
+                }},
+            },
+        })
+        return response
+
+    catalog_response = gateway.handle({
+        "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+        "params": {
+            "name": "scid_catalog", "arguments": {},
+            "_meta": {"x-codex-turn-metadata": {
+                "session_id": "installed_probe", "thread_id": "installed_probe",
+                "thread_source": "user",
+            }},
+        },
+    })
+    assert "error" not in catalog_response, catalog_response
+    operation_id = catalog_response["result"]["structuredContent"]["operations"][0]["operation_id"]
+    full_response = describe(operation_id)
+    invoke_response = describe(operation_id, "invoke")
+    assert "error" not in full_response and "error" not in invoke_response
+    full = full_response["result"]["structuredContent"]
+    invoke = invoke_response["result"]["structuredContent"]
+    full_item = full["operations"][0]
+    invoke_item = invoke["operations"][0]
+    assert full["view"] == "detail" and invoke["view"] == "invoke"
+    assert full_item["operation_digest"] == invoke_item["operation_digest"]
+    assert invoke_item["operation_digest"] == catalog.operation(operation_id).digest
+    assert full_item["inputs"] == invoke_item["inputs"]
+    assert "revision_policy" not in full_item and "revision_policy" in invoke_item
+    assert "native_shell" in full_item and "native_shell" not in invoke_item
+    rejected = describe("operation_invoke", "invoke")
+    assert 'view="invoke" is supported only for Operations' in rejected["error"]["message"]
+print("installed full/invoke contract projection passed")
+''')
+    assert output.strip() == "installed full/invoke contract projection passed"
 
 
 @pytest.mark.parametrize("environment", ("full", "figure"))
@@ -1011,6 +1538,39 @@ print(json.dumps(sorted(
     assert architecture_profiles[0].startswith("op_builtin_test_agent_")
 
 
+def test_installed_scheduler_guides_use_context_projection_paths(installed_probe) -> None:
+    output = installed_probe("core", r'''
+import sys
+import tempfile
+from pathlib import Path
+
+from scidiscovery.platforms import initialize_platform
+
+root = Path(tempfile.mkdtemp(prefix="installed-guides-"))
+(root / "AGENTS.md").write_text("# Test\n", encoding="utf-8")
+initialize_platform(
+    "codex",
+    root,
+    python_executable=Path(sys.executable),
+    control_socket=root / "control.sock",
+    codex_config_root=root / ".codex",
+)
+prompt = (root / "AGENTS.md").read_text(encoding="utf-8")
+guide_root = root / ".codex" / "scidiscovery-guides"
+results = (guide_root / "results.md").read_text(encoding="utf-8")
+inputs = (guide_root / "inputs.md").read_text(encoding="utf-8")
+domain = (guide_root / "domain-analysis.md").read_text(encoding="utf-8")
+assert 'scid_describe(name=..., view="invoke")' in prompt
+assert all(f'response_profile="{name}"' in results
+    for name in ("poll", "navigation", "decision"))
+assert 'artifact_catalog(view="producer_inputs")' in inputs
+assert "parents_fallback" in inputs
+assert 'artifact_catalog(view="producer_inputs")' in domain
+print("installed scheduler projection guides passed")
+''')
+    assert output.strip() == "installed scheduler projection guides passed"
+
+
 def test_legacy_domain_entry_points_are_not_an_operation_discovery_fallback(
     installed_probe,
 ) -> None:
@@ -1466,3 +2026,71 @@ with tempfile.TemporaryDirectory() as directory, pytest.MonkeyPatch.context() as
 print('installed recovery, replay, offline and failure handoff passed')
 ''')
     assert output.strip()=='installed recovery, replay, offline and failure handoff passed'
+
+
+def test_installed_r4_author_delivery_and_result_registration(installed_probe):
+    installed_probe("full", '"""Exercise installed schema/route projection without repository imports."""\nimport json\nfrom pathlib import Path\nfrom types import SimpleNamespace\nimport scidiscovery\nimport tcad_artifact\nfrom scidiscovery.artifact_agent.interfaces.mcp_root import RootMCPRouter\nfrom scidiscovery.operations.workspace import WorkspaceFinalizationRequest\nfrom tcad_artifact.project_packager import DeckProjectDraft\nassert \'site-packages\' in str(Path(scidiscovery.__file__).resolve())\nassert \'site-packages\' in str(Path(tcad_artifact.__file__).resolve())\nassert \'development_diagnostics\' in DeckProjectDraft.model_json_schema()[\'properties\']\nfacade=SimpleNamespace(runs=SimpleNamespace(),session_key=None,_instance_id=lambda:\'fixture\',\n    execution_outputs=lambda **args:{\'execution_name\':\'e\',\'result_artifact_name\':\'e.result\',\'outputs\':[{\'output_label\':\'raw\',\'artifact_name\':\'e.raw\'}]})\nrouter=RootMCPRouter(facade)\nassert router.call_tool(\'execution_outputs\',{\'name\':\'e\',\'limit\':1})[\'result_artifact_name\']==\'e.result\'\nrequest=WorkspaceFinalizationRequest(operation_id=\'fixture\',workspace=Path(\'/tmp\'),input_paths={},output_limit_bytes=1,trusted_tool_records={\'tool\':(b\'{}\',)})\ntry:request.trusted_tool_records[\'other\']=()\nexcept TypeError:pass\nelse:raise AssertionError(\'records mapping is mutable\')\nprint(json.dumps({\'installed_schema\':True,\'installed_output_binding_route\':True,\'readonly_internal_records\':True}))\n')
+
+
+def test_installed_scientific_skeleton_author_contract(installed_probe):
+    output = installed_probe("full", r'''
+import json, tempfile
+from pathlib import Path
+from scidiscovery.operations.catalog import compile_installed_catalog
+from scidiscovery.artifact_agent.runtime import open_runtime
+from scidiscovery.artifact_agent.interfaces.mcp_root import RootMCPRouter, RootToolFacade
+from scidiscovery.artifact_agent.interfaces.mcp_local_worker import LocalWorkerMCPRouter
+from scidiscovery.artifact_agent.schema.artifact import ArtifactRegistration
+from scidiscovery.artifact_agent.schema.common import canonical_json
+from scidiscovery.operations.tooling import operation_worker_tools
+from scidiscovery.platforms import initialize_platform
+from tcad_artifact.execution_control import SolverCapability
+catalog = compile_installed_catalog()
+assert catalog.operation("science.experiment.skeleton.v1").spec.review is None
+assert catalog.operation("tcad.execution-plan.project.v1").spec.executor.kind == "transform"
+assert catalog.operation("tcad.execution-plan.project.v1").spec.consequence == "explore"
+review_operation = catalog.operation("tcad.deck.review.v1")
+assert next(port for port in review_operation.spec.inputs
+            if port.name == "experiment_plan").usage == "prior_signal"
+reference = next(tool for tool in operation_worker_tools(review_operation)
+                 if tool.name == "worker_reference_read")
+assert any(rule.schema_id == "scidiscovery.experiment-scientific-skeleton.v1"
+           and rule.producer_input_alias == "research_objective"
+           for rule in reference.reference_policy.rules)
+root_dir = Path(tempfile.mkdtemp(prefix="installed-skeleton-"))
+project = root_dir / "project"; project.mkdir()
+runtime = open_runtime(project_root=project, state_root=root_dir / "state", worker_backend="local")
+runtime.runs.operation_catalog = catalog
+instance = runtime.scheduler_bindings.create_instance(name="skeleton", title="Installed skeleton", objective="Test installed contract.")
+root = RootMCPRouter(RootToolFacade(runtime.artifacts, runtime.intake, runs=runtime.runs,
+    approvals=runtime.approvals, executions=runtime.executions, bindings=runtime.scheduler_bindings,
+    instance=instance.instance_id, operation_catalog=catalog))
+skeleton = {"selected_hypothesis_keys": ["hypothesis_a"], **{name:["Bounded science with an evidence basis."] for name in (
+    "current_objectives", "competing_explanations_and_controls", "changed_conditions", "held_conditions",
+    "observables", "discrimination_criteria_and_basis", "immutable_conditions", "stop_conditions")}}
+capability = SolverCapability(profile_id="fixture", solver_kind="sprocess", executable="/opt/fake/sprocess",
+    environment={}, release_evidence="Fixture", public_release_label="Fixture")
+for name, schema, value in (("skeleton", "scidiscovery.experiment-scientific-skeleton.v1", skeleton),
+    ("capability", "tcad.solver-capability.v2", capability.public_snapshot().model_dump(mode="json")),
+    ("plan", "scidiscovery.experiment-portfolio.v1", {})):
+    record = runtime.artifacts.register(canonical_json(value), ArtifactRegistration(kind="fixture", schema_id=schema,
+        payload_schema_version=1, media_type="application/json", creator=runtime.actor), idempotency_key=name)
+    runtime.scheduler_bindings.bind(instance=instance.instance_id, namespace="artifact", name=name, object_id=record.artifact_id)
+request = dict(name="author", operation_id="tcad.deck.author.initial.v1", instruction="Author the bounded installed fixture.",
+    inputs=[dict(port="execution_capability", artifact_names=["capability"]), dict(port="scientific_skeleton", artifact_names=["skeleton"])])
+assert root.call_tool("operation_preflight", request)["admissible"]
+bad = {**request, "name":"both", "inputs":[*request["inputs"],dict(port="experiment_plan", artifact_names=["plan"])]}
+assert root.call_tool("operation_preflight", bad)["reason_code"] == "input_author_plan_exact_one"
+root.call_tool("operation_invoke", request)
+compiled = catalog.operation("tcad.deck.author.initial.v1")
+worker = LocalWorkerMCPRouter(runtime.runs, operation_id=compiled.spec.operation_id, operation_digest=compiled.digest,
+    tool_services={"tcad_artifact:tcad.development_debug": object()})
+opened = worker.call_tool("worker_open_assignment", {})
+manifest = json.loads(Path(opened["domain_workspace_path"]).read_bytes())["manifest"]
+assert manifest["execution_plan_relative_path"] == "deck/execution-plan.json"
+initialize_platform("codex", root_dir / "installed-profile", control_socket=root_dir / "control.sock")
+guide = (root_dir / "installed-profile/.codex/scidiscovery-guides/research.md").read_text()
+assert "science.experiment.skeleton.v1" in guide and "comprehensive review" in guide
+print("installed skeleton author admission and generated guide verified")
+''')
+    assert output.strip() == "installed skeleton author admission and generated guide verified"

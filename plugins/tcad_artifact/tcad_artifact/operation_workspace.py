@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import base64
 import json
+import hashlib
 import os
 import stat
 import tempfile
@@ -12,6 +14,7 @@ from typing import Any
 from pydantic import ValidationError
 
 from scidiscovery.artifact_agent.schema.common import canonical_json, canonical_sha256
+from scidiscovery.artifact_agent.service.local_workspace import WorkspaceError, write_control_workspace_file
 from scidiscovery.artifact_agent.service.run_outputs import RunCheckerError, _validation_details
 from scidiscovery.artifact_agent.schema.role_result import (
     RoleHandoff,
@@ -39,7 +42,7 @@ from .project_materializer import (
 )
 from .project_packager import (
     DeckProjectDraft,
-    DeckFile,
+    AttemptFile,
     ImplementationGap,
     parse_author_result,
     validate_implementation_gap,
@@ -78,6 +81,9 @@ def _protocol_error(message: str, error: Exception | None = None, *, path: str =
         schema = {"allOf": [DeckProjectDraft.model_json_schema(), ImplementationGap.model_json_schema()]}
         details = tuple(DeclaredDiagnostic({**item, "path": path + item["path"][1:]})
             for item in _validation_details(error, schema=schema, phase="output_payload"))
+    elif isinstance(error, WorkspaceProtocolError) and not details:
+        details = (DeclaredDiagnostic(contract_diagnostic("output_invalid", phase="output_payload", affected_action="submit",
+            path=path, repairable=True, message=str(error))),)
     return WorkspaceProtocolError(message, details=details)
 
 
@@ -135,7 +141,8 @@ def _input(request: WorkspaceMaterializationRequest | WorkspaceFinalizationReque
         raise RunCheckerError("TCAD bound input is unavailable in the workspace", category="integrity_failure") from error
 
 
-def _source_files(root: Path, *, max_bytes: int = _MAX_SOURCE_TOTAL_BYTES, max_files: int = _MAX_SOURCE_FILES) -> list[dict[str, str]]:
+def _source_files(root: Path, *, max_bytes: int = _MAX_SOURCE_TOTAL_BYTES, max_files: int = _MAX_SOURCE_FILES,
+                  allow_binary: bool = False) -> list[dict[str, str]]:
     try:
         root_details = os.lstat(root)
     except OSError as error:
@@ -157,14 +164,24 @@ def _source_files(root: Path, *, max_bytes: int = _MAX_SOURCE_TOTAL_BYTES, max_f
             total += len(raw)
             if total > max_bytes or len(values) >= max_files:
                 raise WorkspaceProtocolError("deck source tree exceeds its bound")
+            encoding = {}
             try:
                 content = raw.decode("utf-8")
             except UnicodeDecodeError as error:
-                raise WorkspaceProtocolError("deck source file is not UTF-8") from error
+                if not allow_binary:
+                    relative = path.relative_to(root).as_posix()
+                    raise WorkspaceProtocolError("deck source file is not UTF-8", details=(
+                        DeclaredDiagnostic(contract_diagnostic("output_invalid", phase="output_payload", affected_action="submit",
+                            path=f"$.deck.{root.name}", repairable=True,
+                            message=f"Source file is not UTF-8: {relative}; invalid byte at offset {error.start}.")),
+                    )) from error
+                content = base64.b64encode(raw).decode("ascii")
+                encoding = {"encoding": "base64"}
             values.append(
                 {
                     "relative_path": path.relative_to(root).as_posix(),
                     "content": content,
+                    **encoding,
                 }
             )
     values.sort(key=lambda item: item["relative_path"])
@@ -203,7 +220,7 @@ def _restore_retry(request: WorkspaceMaterializationRequest) -> tuple[DeckProjec
 
 def _author_metadata(metadata: dict[str, Any], *, deterministic: bool) -> dict[str, Any]:
     metadata = dict(metadata)
-    for field in ("materialization_report", "preflight_attestation", "initialization_attestation"):
+    for field in ("materialization_report", "preflight_attestation", "initialization_attestation", "development_diagnostics"):
         metadata.pop(field, None)
     if deterministic:
         for field in (
@@ -234,29 +251,37 @@ def _restore_retry_tree(
     return False
 
 
-def _attempt_files(deck: Path) -> tuple[DeckFile, ...]:
+def _attempt_files(deck: Path) -> tuple[AttemptFile, ...]:
     """Capture bounded source and diagnostics, without granting execution readiness."""
     values = []
-    for name in ("project.json", "declarations.json", "attempts.md"):
+    for name in ("project.json", "execution-plan.json", "declarations.json", "attempts.md"):
         if (deck / name).exists():
-            values.append(DeckFile(
+            values.append(AttemptFile(
                 relative_path=name,
                 content=_read(deck / name, max_bytes=8 * 1024 * 1024).decode("utf-8"),
             ))
     for directory in ("files", "reports"):
         root = deck / directory
         if root.exists():
-            for item in _source_files(root, max_bytes=16 * 1024 * 1024, max_files=128):
-                values.append(DeckFile(relative_path=f"{directory}/{item['relative_path']}", content=item["content"]))
+            for item in _source_files(root, max_bytes=16 * 1024 * 1024, max_files=128,
+                                      allow_binary=directory == "reports"):
+                values.append(AttemptFile(**{**item, "relative_path": f"{directory}/{item['relative_path']}"}))
     if len(values) > 128 or sum(len(item.content.encode("utf-8")) for item in values) > 16 * 1024 * 1024:
         raise WorkspaceProtocolError("attempt record exceeds its file or byte limit")
     return tuple(values)
 
 
-def _restore_attempt(deck: Path, files: tuple[DeckFile, ...], *, author: bool, deterministic: bool) -> None:
+def _restored_report_path(path: str, content: str, *, author: bool) -> str:
+    if author and path.startswith("reports/") and not path.startswith("reports/history/"):
+        # Historical diagnostics stay separate from this Run's completion proofs.
+        return f"reports/history/{canonical_sha256(content)}_{Path(path).name}"
+    return path
+
+
+def _restore_attempt(deck: Path, files: tuple[AttemptFile, ...], *, author: bool, deterministic: bool) -> None:
     for item in files:
         path = item.relative_path
-        content = item.content.encode("utf-8")
+        content = item.raw_bytes()
         if author and path == "project.json":
             try:
                 metadata = json.loads(content)
@@ -269,10 +294,7 @@ def _restore_attempt(deck: Path, files: tuple[DeckFile, ...], *, author: bool, d
                 # prevent creation of the repair workspace.
                 path = f"reports/history/{canonical_sha256(item.content)}_project.json"
 
-        if author and path.startswith("reports/") and not path.startswith("reports/history/"):
-            # Historical diagnostics remain readable; fresh completion proofs must
-            # be generated at the current reports/preflight|initialization paths.
-            path = f"reports/history/{canonical_sha256(item.content)}_{Path(path).name}"
+        path = _restored_report_path(path, item.content, author=author)
         _write(deck / path, content, editable=author and not path.startswith("reports/") and (path != "project.json" or not deterministic))
 
 
@@ -322,6 +344,7 @@ def _review_template(project: DeckProjectDraft | ImplementationGap) -> bytes:
                 "next_actions": [],
             },
             "payload": {
+                **({"scientific_assessment": "unknown"} if isinstance(project, DeckProjectDraft) and project.execution_plan is not None else {}),
                 "verdict": "blocked",
                 "capability_sha256": None if isinstance(project, ImplementationGap) else project.capability_sha256,
                 "summary": "结构模板；尚未形成科学审查结论。",
@@ -357,9 +380,10 @@ def materialize_workspace(
     capability_raw = _input(request, "execution_capability")
     plan_raw = request.input_paths.get("experiment_plan")
     capability = _capability_snapshot(capability_raw)
+    skeleton = "scientific_skeleton" in request.input_paths
     deterministic = (
         author
-        and plan_raw is not None
+        and (plan_raw is not None or skeleton)
         and capability.get("solver_kind") == "sprocess"
     )
     mode = "review"
@@ -437,6 +461,8 @@ def materialize_workspace(
         else:
             metadata = base.model_dump(mode="json")
             metadata.pop("files", None)
+            metadata.pop("development_diagnostics", None)
+            _restore_attempt(deck, base.development_diagnostics, author=author, deterministic=deterministic)
             if author:
                 # Retry/revision inherits authored content, never old control proofs.
                 metadata = _author_metadata(metadata, deterministic=deterministic)
@@ -448,7 +474,18 @@ def materialize_workspace(
                 )
         _write(metadata_path, _pretty(metadata), editable=author and not deterministic)
 
-    if deterministic:
+    if author and skeleton:
+        if base is not None and base.execution_plan is not None and not (deck / "execution-plan.json").exists():
+            _write(deck / "execution-plan.json", _pretty(base.execution_plan.model_dump(mode="json")), editable=True)
+        _write(contract / "scientific-skeleton.json", _input(request, "scientific_skeleton"), editable=False)
+        _write(contract / "capability.json", capability_raw, editable=False)
+        if not declarations_path.exists():
+            if base is not None and base.execution_plan is not None:
+                draft = declarations_template_json(canonical_json(base.execution_plan.model_dump(mode="json")), base_project=base)
+            else:
+                draft = _pretty({"schema_version": 2, "profile": "tcad.project-declaration-contract.v2", "entrypoint": None, "case_anchors": [], "raw_outputs": []})
+            _write(declarations_path, draft, editable=True)
+    if deterministic and not skeleton:
         assert plan_raw is not None
         plan = _read(plan_raw, max_bytes=16 * 1024 * 1024)
         contract.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -516,6 +553,11 @@ def materialize_workspace(
         "canonical_output_relative_path": "output/result.json",
         "control_builds_canonical_project": author,
     }
+    if base is not None and isinstance(base, DeckProjectDraft):
+        manifest["development_diagnostic_paths"] = [
+            "deck/" + _restored_report_path(item.relative_path, item.content, author=author)
+            for item in base.development_diagnostics
+        ]
     if not author:
         manifest["review_template_relative_path"] = "deck/review-template.json"
     if deterministic:
@@ -527,6 +569,9 @@ def materialize_workspace(
                 "project_metadata_access": "control_read_only",
             }
         )
+    if author and skeleton:
+        manifest["execution_plan_relative_path"] = "deck/execution-plan.json"
+        manifest["execution_plan_schema"] = "scidiscovery.experiment-portfolio.v1"
     if author:
         manifest["handoff_relative_path"] = "deck/handoff.json"
         manifest["gap_relative_path"] = "deck/gap.json"
@@ -557,6 +602,11 @@ def materialize_workspace(
             )
     else:
         paths["deck_review_template_path"] = str(deck / "review-template.json")
+    if author and skeleton:
+        paths["deck_execution_plan_path"] = str(deck / "execution-plan.json")
+        if not (contract / "materialization-spec.json").exists():
+            paths.pop("deck_materialization_spec_path", None)
+        manifest["materialization_contract_refresh"] = "Derived from execution-plan.json before each diagnostic or submission; absent until the first concrete plan."
     return WorkspaceMaterializationResult(
         manifest_name="domain_workspace",
         manifest=manifest,
@@ -588,6 +638,8 @@ def workspace_file_policy(request: WorkspaceFileRequest) -> WorkspaceFileRule | 
     if not request.operation_id.startswith(_AUTHOR_PREFIX):
         return None
     relative = request.relative_path
+    if relative == Path("deck/execution-plan.json") and (request.workspace / "deck/contract/scientific-skeleton.json").is_file():
+        return WorkspaceFileRule(2 * 1024 * 1024)
     if relative == Path("deck/project.json"):
         if (request.workspace / "deck/declarations.json").exists():
             raise WorkspaceProtocolError("deck/project.json is control-generated and read-only")
@@ -629,6 +681,32 @@ def finalize_review_workspace(request: WorkspaceFinalizationRequest) -> bytes:
 REVIEW_FINALIZER_COMPONENT = CallableComponent("workspace_finalizer", finalize_review_workspace)
 
 
+def _verified_diagnostics(request, project, mode, declarations_sha):
+    """Seal only bytes matched against the tool-process record, never file claims."""
+    records = request.trusted_tool_records.get("worker_tcad_debug_run", ())
+    proof = next((json.loads(raw) for raw in records if json.loads(raw).get("mode") == mode), None)
+    if (proof is None or not proof.get("collection_complete")
+            or proof.get("run_id") != request.run_id
+            or proof.get("operation_id") != request.operation_id
+            or proof.get("project_sha256") != project_debug_sha256(project)
+            or proof.get("declarations_sha256") != declarations_sha):
+        raise WorkspaceProtocolError(f"{mode} trusted development record is missing, stale, or belongs to another Run; workspace reports cannot restore provenance")
+    result = {}
+    for item in proof["files"]:
+        path = item["relative_path"]
+        if not path.startswith("reports/") or ".." in Path(path).parts:
+            raise WorkspaceProtocolError("trusted development record has an unsafe report path")
+        raw = _read(request.workspace / "deck" / path, max_bytes=8 * 1024 * 1024)
+        if len(raw) != item["size_bytes"] or hashlib.sha256(raw).hexdigest() != item["sha256"]:
+            raise WorkspaceProtocolError(f"development diagnostic bytes differ from the trusted collection: {path}")
+        try:
+            content, encoding = raw.decode("utf-8"), "utf8"
+        except UnicodeDecodeError:
+            content, encoding = base64.b64encode(raw).decode("ascii"), "base64"
+        result[path] = AttemptFile(relative_path=path, content=content, encoding=encoding)
+    return result
+
+
 def finalize_workspace(request: WorkspaceFinalizationRequest) -> bytes:
     if not request.operation_id.startswith(_AUTHOR_PREFIX):
         raise WorkspaceProtocolError("this operation has no TCAD author finalizer")
@@ -649,7 +727,8 @@ def finalize_workspace(request: WorkspaceFinalizationRequest) -> bytes:
         except (ValidationError, ValueError) as error:
             raise _protocol_error("TCAD handoff is invalid", error, path="$.deck.handoff") from error
         try:
-            inputs = {"experiment_plan": _input(request, "experiment_plan")}
+            subject = "scientific_skeleton" if "scientific_skeleton" in request.input_paths else "experiment_plan"
+            inputs = {subject: _input(request, subject)}
             # The finalizer owns captured files; never trust an authored snapshot.
             gap = gap.model_copy(update={"attempt_files": _attempt_files(deck)})
             validate_implementation_gap(gap, inputs, handoff.model_dump(mode="json"))
@@ -661,16 +740,32 @@ def finalize_workspace(request: WorkspaceFinalizationRequest) -> bytes:
         return raw
     try:
         metadata = json.loads(_read(deck / "project.json", max_bytes=8 * 1024 * 1024))
-        handoff = RoleHandoff.model_validate_json(
+        handoff = (RoleHandoff.model_validate_json(
             _read(deck / "handoff.json", max_bytes=64 * 1024), strict=True
-        )
+        ) if request.final_submission else RoleHandoff(
+            verdict="inconclusive",
+            summary="Development candidate only; no scientific handoff has been submitted.",
+        ))
     except (ValidationError, json.JSONDecodeError) as error:
         raise _protocol_error("TCAD deck workspace is invalid", error) from error
     if not isinstance(metadata, dict) or "files" in metadata:
         raise WorkspaceProtocolError("deck/project.json must not embed source files")
-    for field in ("preflight_attestation", "initialization_attestation"):
+    for field in ("preflight_attestation", "initialization_attestation", "development_diagnostics"):
         if metadata.pop(field, None) is not None:
             raise WorkspaceProtocolError(f"{field} is control-owned and cannot be authored")
+    skeleton = "scientific_skeleton" in request.input_paths
+    if skeleton:
+        from scidiscovery.artifact_agent.schema.experiment import ExperimentPortfolio
+        try:
+            local_plan = ExperimentPortfolio.model_validate_json(_read(deck / "execution-plan.json", max_bytes=2 * 1024 * 1024), strict=True)
+        except (ValidationError, ValueError) as error:
+            raise _protocol_error("author execution plan is incomplete", error, path="$.deck.execution-plan") from error
+        plan_bytes = canonical_json(local_plan.model_dump(mode="json"))
+        metadata["execution_plan"] = local_plan.model_dump(mode="json")
+        for name, data in (("experiment-controls.json", plan_bytes), ("materialization-spec.json", materialization_contract_json(plan_bytes))):
+            write_control_workspace_file(request.workspace, Path("deck/contract") / name, data, replace=True, mode=0o400, create_parents=True)
+    else:
+        plan_bytes = _input(request, "experiment_plan") if "experiment_plan" in request.input_paths else None
     files = _source_files(deck / "files")
     deterministic = (deck / "declarations.json").is_file()
     declarations_sha = None
@@ -684,22 +779,27 @@ def finalize_workspace(request: WorkspaceFinalizationRequest) -> bytes:
                 metadata=metadata,
                 declarations=declarations,
                 files=files,
-                experiment_plan=_input(request, "experiment_plan"),
+                experiment_plan=plan_bytes,
                 execution_capability=_input(request, "execution_capability"),
             )
         except ProjectMaterializationError as error:
-            report_path = deck / "reports/materialization.json"
-            _write(report_path, report_json(error.report), editable=False)
+            details = error.details
+            try:
+                write_control_workspace_file(request.workspace, Path("deck/reports/materialization.json"),
+                    report_json(error.report), replace=True, mode=0o400, create_parents=True)
+            except (WorkspaceError, OSError) as report_error:
+                details = (*details, {
+                    "path": "$.deck.reports.materialization",
+                    "message": f"Materialization diagnostics could not be saved: {report_error}",
+                    "type": "materialization_report_write_failed",
+                })
             raise WorkspaceProtocolError(
                 "TCAD deck deterministic materialization failed",
-                details=error.details,
+                details=details,
             ) from error
         assert project.materialization_report is not None
-        report_path = deck / "reports/materialization.json"
-        if report_path.exists():
-            report_path.chmod(0o600)
-            report_path.unlink()
-        _write(report_path, report_json(project.materialization_report), editable=False)
+        write_control_workspace_file(request.workspace, Path("deck/reports/materialization.json"),
+            report_json(project.materialization_report), replace=True, mode=0o400, create_parents=True)
     else:
         try:
             project = DeckProjectDraft.model_validate_json(
@@ -707,6 +807,7 @@ def finalize_workspace(request: WorkspaceFinalizationRequest) -> bytes:
             )
         except (ValidationError, json.JSONDecodeError) as error:
             raise _protocol_error("TCAD deck workspace is invalid", error) from error
+    diagnostics = {}
     for mode, model in (
         ("preflight", ProjectPreflightAttestation),
         ("initialization", ProjectInitializationAttestation),
@@ -727,6 +828,8 @@ def finalize_workspace(request: WorkspaceFinalizationRequest) -> bytes:
                     and report.project_sha256 == project_debug_sha256(project)
                     and report.declarations_sha256 == declarations_sha
                 ):
+                    if request.final_submission:
+                        diagnostics.update(_verified_diagnostics(request, project, mode, declarations_sha))
                     # Validate both source and project bindings before exposing the report.
                     project = DeckProjectDraft.model_validate_json(canonical_json({
                         **project.model_dump(mode="json"),
@@ -774,6 +877,8 @@ def finalize_workspace(request: WorkspaceFinalizationRequest) -> bytes:
                     for name in changed
                 ),
             )
+    if diagnostics:
+        project = project.model_copy(update={"development_diagnostics": tuple(diagnostics.values())})
     raw = RoleResultEnvelope[Any](
         schema_version=1, handoff=handoff, payload=project
     ).canonical_json()
@@ -789,7 +894,9 @@ def snapshot_workspace(root: Path) -> tuple[WorkspaceSnapshotFile, ...]:
         if (deck / name).exists():
             values.append(WorkspaceSnapshotFile(relative_path=f"deck/{name}", media_type="application/json", content=_read(deck / name, max_bytes=64 * 1024)))
     for item in _attempt_files(deck):
-        values.append(WorkspaceSnapshotFile(relative_path=f"deck/{item.relative_path}", media_type="text/plain", content=item.content.encode("utf-8")))
+        values.append(WorkspaceSnapshotFile(relative_path=f"deck/{item.relative_path}",
+            media_type="application/octet-stream" if item.encoding == "base64" else "text/plain",
+            content=item.raw_bytes()))
     return tuple(values)
 
 

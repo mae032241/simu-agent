@@ -416,8 +416,6 @@ class ExperimentPortfolio(SchemaModel):
             raise ValueError("priority_order must contain every experiment exactly once")
         selected = set(self.selected_hypothesis_keys)
         for proposal in self.proposals:
-            if self.objective not in proposal.objectives:
-                raise declared_violation("every proposal must contain the exact portfolio objective")
             if not set(proposal.hypothesis_keys).issubset(selected):
                 raise ValueError("proposal references an unselected hypothesis")
         if {item.experiment_key for item in self.validation_plans} != set(proposal_keys):
@@ -425,8 +423,6 @@ class ExperimentPortfolio(SchemaModel):
         if self.study_kind == "scientific":
             if not selected:
                 raise ValueError("scientific portfolio requires selected hypotheses")
-            if self.objective_key is None:
-                raise ValueError("scientific portfolio requires objective_key")
         return self
 
 
@@ -464,7 +460,7 @@ def validate_experiment_design_task_output(
     inputs: dict[str, bytes],
     handoff: dict[str, object],
 ) -> None:
-    """Bind a scientific plan to the exact approved objective when supplied."""
+    """Check selected hypotheses against the bound portfolio without goal copying."""
 
     del handoff
     portfolio = ExperimentPortfolio.model_validate_json(
@@ -490,14 +486,6 @@ def validate_experiment_design_task_output(
     if not selected.issubset(hypothesis_keys):
         raise SemanticRuleViolation(
             "experiment portfolio selects a hypothesis absent from the supplied portfolio"
-        )
-    if portfolio.objective_key != objective.objective_key:
-        raise declared_violation(
-            "experiment portfolio objective_key differs from research objective"
-        )
-    if portfolio.objective != objective.statement:
-        raise SemanticRuleViolation(
-            "experiment portfolio objective statement differs from research objective"
         )
 
 

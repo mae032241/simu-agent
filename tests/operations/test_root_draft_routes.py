@@ -20,6 +20,83 @@ def _request(name: str, **extra):
     }
 
 
+def test_producer_inputs_projects_frozen_ports_with_paging_and_instance_name_boundary(tmp_path, monkeypatch):
+    catalog, runtime, instance, source, root = _system(tmp_path)
+    _invoke(root, "observation")
+    worker = _worker(catalog, runtime)
+    opened = worker.call_tool("worker_open_assignment", {})
+    Path(opened["output_directory"], "result.json").write_bytes(_envelope())
+    assert worker.call_tool("worker_submit_result", {})["state"] == "completed"
+    run_id = runtime.scheduler_bindings.resolve(
+        instance=instance.instance_id, namespace="run", name="observation")
+    before_run = runtime.runs.status(run_id)
+    before_bindings = runtime.scheduler_bindings.list(
+        instance=instance.instance_id, namespace="artifact")
+
+    projection = root.call_tool("artifact_catalog", {
+        "name": "observation.output", "view": "producer_inputs"})
+    assert projection["producer"] == {
+        "kind": "run", "operation_id": before_run.operation_id,
+        "operation_version": before_run.operation_version,
+        "operation_digest": before_run.operation_digest,
+        "availability": "current", "unavailable_reason": None}
+    assert projection["producer_input_count"] == 1 and projection["next_offset"] is None
+    assert projection["producer_inputs"] == [{
+        "port_name": "source_table", "item_index": 1,
+        "artifact_ref": source.ref.model_dump(mode="json"),
+        "artifact_name": "source_csv", "source_name": "source_table",
+        "current_access_name": "source_csv", "kind": source.ref.kind,
+        "schema": source.ref.schema_id}]
+    assert root.call_tool("artifact_catalog", {"name": "observation.output",
+        "view": "producer_inputs", "parent_offset": 1})["producer_inputs"] == []
+    with pytest.raises(RootToolError, match="producer_input_count"):
+        root.call_tool("artifact_catalog", {"name": "observation.output",
+            "view": "producer_inputs", "parent_offset": 2})
+    assert runtime.runs.status(run_id) == before_run
+    assert runtime.scheduler_bindings.list(
+        instance=instance.instance_id, namespace="artifact") == before_bindings
+
+    original_find = runtime.scheduler_bindings.find_name
+    monkeypatch.setattr(runtime.scheduler_bindings, "find_name", lambda **values:
+        None if values["object_id"] == source.artifact_id else original_find(**values))
+    unbound = root.call_tool("artifact_catalog", {
+        "name": "observation.output", "view": "producer_inputs"})
+    assert unbound["producer_inputs"][0]["artifact_name"] == "source_csv"
+    assert unbound["producer_inputs"][0]["current_access_name"] is None
+    monkeypatch.setattr(runtime.scheduler_bindings, "find_name", original_find)
+
+    output_id = runtime.scheduler_bindings.resolve(
+        instance=instance.instance_id, namespace="artifact", name="observation.output")
+    other = runtime.scheduler_bindings.create_instance(
+        name="other", title="Other", objective="Cross-instance read boundary")
+    runtime.scheduler_bindings.bind(
+        instance=other.instance_id, namespace="artifact", name="local_alias",
+        object_id=output_id)
+    runtime.scheduler_bindings.bind(
+        instance=other.instance_id, namespace="artifact", name="local_source",
+        object_id=source.artifact_id)
+    root.facade.instance = other.instance_id
+    cross = root.call_tool("artifact_catalog", {
+        "name": "local_alias", "view": "producer_inputs"})
+    assert cross["producer"]["availability"] == "cross_instance"
+    assert cross["producer"]["unavailable_reason"] == "cross_instance"
+    assert cross["producer_inputs"][0]["artifact_name"] is None
+    assert cross["producer_inputs"][0]["source_name"] is None
+    assert cross["producer_inputs"][0]["current_access_name"] == "local_source"
+
+
+def test_producer_inputs_imported_artifact_is_explicitly_unavailable(tmp_path):
+    _, _, _, source, root = _system(tmp_path)
+    projection = root.call_tool("artifact_catalog", {
+        "name": "source_csv", "view": "producer_inputs"})
+    assert projection["subject"]["artifact_ref"] == source.ref.model_dump(mode="json")
+    assert projection["producer"]["availability"] == "unavailable"
+    assert projection["producer"]["unavailable_reason"] == "producer_unavailable"
+    assert projection["producer_inputs"] == []
+    assert projection["parents_fallback"] == {
+        "tool": "artifact_catalog", "name": "source_csv", "view": "parents"}
+
+
 def test_root_projects_exact_bindings_and_ordered_parent_metadata_without_payload_reads(tmp_path, monkeypatch):
     from tests.operations.test_tcad_result_analysis import analysis_system, open_analysis
     system = analysis_system(tmp_path)
@@ -32,6 +109,14 @@ def test_root_projects_exact_bindings_and_ordered_parent_metadata_without_payloa
     parents = root.call_tool('artifact_catalog', {'name': 'many_parents', 'view': 'detail'})
     assert [p['artifact_name'] for p in parents['parents']] == parents['parent_artifact_names']
     assert [p['schema'] for p in parents['parents']] == [artifacts['plan'].schema_id] * 2
+    first = root.call_tool('artifact_catalog', {'name': 'many_parents', 'view': 'parents', 'parent_limit': 1})
+    second_page = root.call_tool('artifact_catalog', {'name': 'many_parents', 'view': 'parents',
+        'parent_limit': 1, 'parent_offset': first['next_offset']})
+    assert first['parents'] + second_page['parents'] == parents['parents']
+    assert first['parent_count'] == 2 and second_page['next_offset'] is None
+    assert 'parent_artifact_names' not in first
+    with pytest.raises(RootToolError, match='parent_offset'):
+        root.call_tool('artifact_catalog', {'name': 'many_parents', 'view': 'parents', 'parent_offset': 3})
     before = runtime.runs.status(worker._run_id)
     status = root.call_tool('run_status', {'name': 'analysis', 'view': 'detail', 'output_paths': []})
     expected = {}

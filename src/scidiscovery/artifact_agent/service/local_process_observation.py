@@ -199,8 +199,47 @@ def _stop_group(process):
     return not _group_exists(process.pid)
 
 
-def run(workspace, script, arguments=(), *, timeout, submission_reserve=None, command=False, policy="analysis"):
+def display_summary(workspace, name, record, *, return_code):
+    """Worker display only; the existing on-disk observation remains the original."""
+    result = {"state": record["state"], "return_code": return_code,
+        "exit_code": record.get("exit_code"), "timed_out": record["timed_out"],
+        "cancelled": record["cancelled"], "elapsed_seconds": record.get("elapsed_seconds"),
+        "reason": record.get("reason"), "error_type": record.get("error_type"),
+        "record_path": str(RECORD_DIR / (name + ".json")), "streams": {}}
+    for key in ("stdout", "stderr"):
+        total = record.get("launch_" + key + "_bytes", 0)
+        saved = record.get("saved_" + key + "_bytes", 0)
+        path = record.get(key + "_log")
+        excerpts = []
+        if path:
+            # Only normalized, already retained logs; never retry the command for text.
+            for line_no, line in enumerate((workspace / path).read_text().splitlines(), 1):
+                if re.search(r"Traceback|Error|Exception|warning|failed", line, re.I):
+                    fragment = line[:320]
+                    excerpts.append({"line": line_no, "text": fragment, "line_truncated": len(line) > 320})
+                    if len(excerpts) == 3:
+                        break
+        displayed = sum(len(item["text"].encode("utf-8")) for item in excerpts)
+        result["streams"][key] = {"total_bytes": total, "saved_bytes": saved,
+            "capture_truncated": total > saved, "displayed_normalized_bytes": displayed,
+            "display_is_excerpt": True, "log_path": path,
+            "raw_path": str(RECORD_DIR / (name + "." + key + ".raw")) if (workspace / RECORD_DIR / (name + "." + key + ".raw")).is_file() else None,
+            "excerpts": excerpts}
+    result["cause"] = "inspect referenced logs; snippets are not a root-cause diagnosis"
+    payload = json.dumps(result, ensure_ascii=False, separators=(",", ":")) + "\n"
+    # Quotes/control characters may expand. Keep paths/coverage; omit excerpts explicitly.
+    if len(payload.encode()) > 8192:
+        for stream in result["streams"].values():
+            stream.update(excerpts=[], displayed_normalized_bytes=0, excerpts_omitted="reply_budget")
+        payload = json.dumps(result, ensure_ascii=False, separators=(",", ":")) + "\n"
+    sys.stdout.write(payload)
+
+
+def run(workspace, script, arguments=(), *, timeout, submission_reserve=None, command=False, policy="analysis", display=None):
     """Observe Worker execution; argv mode has the same native permissions."""
+    display = display or ("summary" if policy == "analysis" else "raw")
+    if display not in {"summary", "raw"}:
+        raise ValueError("display must be summary or raw")
     if submission_reserve is None:
         submission_reserve = 120 if policy == "analysis" else 0
     workspace = Path(workspace).absolute()
@@ -232,6 +271,8 @@ def run(workspace, script, arguments=(), *, timeout, submission_reserve=None, co
         if seconds <= 0 or (directory / "stop").exists():
             record.update(reason="insufficient_budget" if seconds <= 0 else "interrupted", ended_at=_now())
             _save_finished(directory, name, record)
+            if display == "summary":
+                display_summary(workspace, name, record, return_code=124)
             return 124
         started = time.monotonic()
         record.update(state="running", started_at=_now())
@@ -271,7 +312,9 @@ def run(workspace, script, arguments=(), *, timeout, submission_reserve=None, co
                         available = max(0, LOG_LIMIT - log.tell())
                         log.write(data[:available]); truncated |= len(data) > available
                         record["total_" + key.data + "_bytes"] += len(data)
-                        if command and (available or policy != "analysis"):
+                        field = "launch_" + key.data + "_bytes"
+                        record[field] = record.get(field, 0) + len(data)
+                        if command and display == "raw" and (available or policy != "analysis"):
                             stream = sys.stdout.buffer if key.data == "stdout" else sys.stderr.buffer
                             stream.write(data[:available] if policy == "analysis" else data); stream.flush()
                 if process.poll() is None:
@@ -290,7 +333,8 @@ def run(workspace, script, arguments=(), *, timeout, submission_reserve=None, co
                 raw = (type(error).__name__ + ": " + str(error) + "\n").encode("utf-8")[:LOG_LIMIT]
                 raw_logs["stderr"].write(raw)
                 record["total_stderr_bytes"] += len(raw)
-                if command:
+                record["launch_stderr_bytes"] = len(raw)
+                if command and display == "raw":
                     sys.stderr.buffer.write(raw); sys.stderr.buffer.flush()
         finally:
             if process:
@@ -302,6 +346,7 @@ def run(workspace, script, arguments=(), *, timeout, submission_reserve=None, co
                 log.close()
                 raw_path = Path(log.name)
                 raw = raw_path.read_bytes()  # Bounded during capture, at most LOG_LIMIT.
+                record["saved_" + key + "_bytes"] = len(raw)
                 if key == "stderr":
                     kinds = re.findall(rb"(?m)^([A-Za-z]+):", raw)
                     record["error_type"] = next((kind.decode() for kind in reversed(kinds)
@@ -318,6 +363,8 @@ def run(workspace, script, arguments=(), *, timeout, submission_reserve=None, co
                 exit_code=process.returncode if process else None, logs_truncated=truncated,
                 peak_rss_kib=resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss if sys.platform.startswith("linux") else None)
             _save_finished(directory, name, record)
+        if display == "summary":
+            display_summary(workspace, name, record, return_code=rc)
         return rc
 
 
@@ -325,8 +372,10 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--timeout", type=float, required=True)
     parser.add_argument("--submission-reserve", type=float, default=None)
+    parser.add_argument("--display", choices=("summary", "raw"), default=None,
+        help="Analysis defaults to a short observation; raw preserves stdout consumers.")
     parser.add_argument("--command", action="store_true",
-        help="Run an argv command from the workspace root and return bounded stdout/stderr.")
+        help="Run an argv command from the workspace root and return a short observation (or explicit raw stdout/stderr).")
     parser.add_argument("script")
     parser.add_argument("arguments", nargs=argparse.REMAINDER)
     args = parser.parse_args()
@@ -334,7 +383,7 @@ def main():
     policy_file = workspace / "tools/local_process_policy.json"
     policy = _read_json(policy_file).get("policy", "analysis") if policy_file.exists() else "analysis"
     return run(workspace, args.script, args.arguments, timeout=args.timeout,
-        submission_reserve=args.submission_reserve, command=args.command, policy=policy)
+        submission_reserve=args.submission_reserve, command=args.command, policy=policy, display=args.display)
 
 
 if __name__ == "__main__":

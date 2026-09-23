@@ -443,7 +443,8 @@ def test_compiled_contracts_have_no_self_digest_and_run_projections_are_isolated
             from scidiscovery.operation_contract import _evidence_source_projection_version
             if _evidence_source_projection_version(compiled.spec, port) is None:
                 continue
-            source = next(p for p in compiled.spec.inputs if p.usage == 'evidence_inventory' and p.exposure != 'handoff_only')
+            source = next(p for p in compiled.spec.inputs if p.exposure != 'handoff_only'
+                and p.name in port.context_sources)
             a = operation_port_json_schema(compiled, port, input_source_ports={'first': source.name})
             b = operation_port_json_schema(compiled, port, input_source_ports={'second': source.name})
             assert a != b

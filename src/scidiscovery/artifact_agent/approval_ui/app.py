@@ -548,7 +548,14 @@ class ApprovalUI:
         access = self._browser_grant(handler, instance_id)
         model = self._model(instance_id)
         if len(parts) == 2:
+            try:
+                page = int(_one(query, "page") or "1")
+                if page < 1:
+                    raise ValueError("page must be positive")
+            except ValueError:
+                return self._error(handler, HTTPStatus.BAD_REQUEST, "轨迹页码必须是正整数。")
             view = model.overview(instance_id)
+            view["trajectory"] = model.trajectory(instance_id, page=page)
             view["storage"] = self._storage_status(instance_id)
             store = self._view_store(instance_id)
             try:
@@ -560,6 +567,7 @@ class ApprovalUI:
             if cursor:
                 view["nodes"] = model.nodes(instance_id, cursor=cursor)
             selected_key = _one(query, "node")
+            view["navigation_query"] = {key: value for key, value in {"node": selected_key, "cursor": cursor}.items() if value}
             display = (model.node_metadata(instance_id, selected_key) if selected_key
                        else view.get("selected_node") or view.get("recent_node"))
             if display:

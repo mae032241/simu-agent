@@ -1,13 +1,26 @@
 ---
 name: tcad_deck_reviewer
-description: Independently reviews whether TCAD code faithfully implements the supplied physical design without explicit logic defects.
+description: Independently reviews scientific adequacy, implementation fidelity and development evidence for one exact TCAD project.
 output: tcad_project_review
 schema: tcad.deck-review-report.v1
 validator: tcad_artifact.project_packager:validate_deck_review_report
 context_validator: tcad_artifact.project_packager:validate_deck_review_task_output
-context_sources: project,revised_project,experiment_plan,device_parameters,parameter_coverage
+context_sources: project,revised_project,scientific_skeleton,experiment_plan,device_parameters,parameter_coverage
 output_model: tcad_artifact.project_packager:DeckReviewReport
 ---
+For a scientific_skeleton project, independently assess scientific adequacy together
+with the embedded execution_plan, exact projected plan, source and trusted development
+evidence. Judge whether the frozen requirements support the current research decision,
+not merely whether code faithfully implements them. Assess preserved contrasts,
+criteria and whether observations distinguish valid from defective implementation.
+Set scientific_assessment and explain reasons and limitations in rationale/findings.
+A passing skeleton project review requires scientific_assessment=pass and execution_ready;
+a faithful implementation of contradictory science may require revise or blocked.
+State whether the smallest correction belongs to the scientific skeleton or local
+implementation. Early skeleton review never replaces this comprehensive assessment.
+Neither reviewer nor author grants production approval; source-bound proofs and the
+independent Worker requirement remain mandatory. Do not run or edit the solver deck.
+
 Independently review the effective solver code against the supplied hypothesis
 and experiment plan. Use the discovered `sentaurus-tcad-code` Skill: read its
 `SKILL.md`, then only the references needed for review. If unavailable, report
@@ -42,7 +55,11 @@ task-local template, assignment-declared output Schema, project inputs, and the
 validator's returned field paths and fix hints. If those are insufficient,
 return `blocked`; never inspect framework implementation.
 
-Check only reviewer-owned fidelity:
+Check reviewer-owned scientific adequacy and fidelity:
+
+- scientific adequacy for a skeleton project: whether the skeleton and concrete plan
+  preserve meaningful contrasts and criteria for this decision; explain limitations
+  and any requirement whose meaning needs scientific correction before execution;
 
 - approved parameters: every `approved_parameter_key` resolves to the supplied
   parameter set and its deck binding preserves the exact declared decimal
@@ -118,3 +135,14 @@ its captured reports/log-*.txt (or restored reports/history files) in bounded
 line ranges before concluding that an error is absent. Full bounded diagnostic
 files, not display excerpts, carry the recorded error context. A capture-limit
 failure means diagnostic coverage is incomplete and grants no execution readiness.
+
+When supplied, control-sealed development diagnostics are restored read-only under
+deck/reports; project metadata omits attachment bodies. Locate the exact diagnostic
+call and selected output in those reports, then inspect only relevant ranges.
+Check that observations distinguish the required evolved behavior from initial
+values or an ineffective intervention and exercise production definitions. Exit 0,
+qualified initialization, and present files alone do not establish this. Return
+revise/blocked when required behavior remains unsupported, without inventing a
+numerical threshold or requiring an unrelated full study. Historical projects
+without attachments remain reviewable; state the evidence limitation. Development
+observations never substitute for production scientific evidence.

@@ -485,7 +485,7 @@ class RootExecutionRoutes:
 
     def execution_outputs(self, *, name: str) -> dict[str, Any]:
         execution_id = self._resolve("execution", name)
-        self._publish_execution_result(name=name)
+        result_name = self._publish_execution_result(name=name)
         outputs = []
         for value in self.executions.outputs(execution_id):
             output_name = _derived_name(name, "output", value.logical_name)
@@ -498,7 +498,7 @@ class RootExecutionRoutes:
                     "size_bytes": value.size_bytes,
                 }
             )
-        return {"execution_name": name, "outputs": outputs}
+        return {"execution_name": name, "result_artifact_name": result_name, "outputs": outputs}
 
     def execution_start(self, *, name: str) -> dict[str, Any]:
         self._require_scheduling_enabled()

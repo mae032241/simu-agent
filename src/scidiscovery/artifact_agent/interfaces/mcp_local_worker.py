@@ -35,7 +35,7 @@ from ..service.artifacts import ArtifactService
 from ..service.local_workspace import LocalTrustedBackend, WorkspaceError
 from ..service.local_workspace import workspace_input_filename, read_control_workspace_file, write_control_workspace_file
 from ..service.run_outputs import RunCheckerError, RunOutputError
-from ..service.runs import RunService, RunStateConflict
+from ..service.runs import RunService, RunStateConflict, RunNotFound
 from ..service.scheduler_bindings import SchedulerBindingService
 from ..service.instance_maintenance import InstanceMaintenanceBusy, InstanceMaintenanceUnavailable
 from .mcp import MCPRouter, parse_rpc_line, rpc_error
@@ -52,6 +52,7 @@ class LocalWorkerMCPRouter:
         operation_id: str,
         operation_digest: str,
         tool_services: dict[str, object] | None = None,
+        run_id: str | None = None,
     ) -> None:
         compiled = runs.operation_catalog.operation(operation_id)
         if compiled.digest != operation_digest or compiled.spec.executor.kind != "agent":
@@ -61,6 +62,8 @@ class LocalWorkerMCPRouter:
         self.operation_id = operation_id
         self.operation_digest = operation_digest
         self.tool_services = dict(tool_services or {})
+        self._bound_run_id = run_id
+        self._previous_run_id = None
         self._tools = {tool.name: tool for tool in LIFECYCLE_WORKER_TOOLS}
         self._registered: dict[str, WorkerToolDefinition] = {}
         for tool in operation_local_worker_tools(compiled):
@@ -247,6 +250,12 @@ class LocalWorkerMCPRouter:
                 engineering["category"], phase="tool_execution", affected_action="tool_call",
                 message=engineering["causes"][0]["message"], error_type=type(error).__name__),))
         failure.engineering = engineering
+        if failure is not error:
+            failure.public_engineering = {
+                key: engineering[key]
+                for key in ("category", "reference", "available_sections")
+                if key in engineering
+            }
         return failure
 
     def _finish_attempt(self, **values):
@@ -254,7 +263,7 @@ class LocalWorkerMCPRouter:
         reference, diagnostics = self.runs.finish_tool_attempt(self._run_id, self._active_attempt,
             sources=self._attempt_sources, **values)
         self._attempt_finished = True
-        if values.get("result_status") not in {None, "computed"}:
+        if not values.get("successful") and values.get("result_status") not in {None, "computed"}:
             self.runs.record_activity(self._run_id, "tool_not_computed", diagnostic={
                 "category":"tool_failed", "tool_name":self._active_attempt["tool_name"],
                 "details":diagnostics})
@@ -310,7 +319,11 @@ class LocalWorkerMCPRouter:
                 status = self.runs.heartbeat(self._run_id)
                 return {"state": status.state, "remaining_seconds": _remaining(status.deadline_at)}
             if name == "worker_submit_result":
-                state, diagnostics = self.runs.submit(self._run_id)
+                state, diagnostics = self.runs.submit(self._run_id, trusted_tool_records={
+                    name: tuple(records.values())
+                    for name, state in self._tool_state.items()
+                    if isinstance(records := state.get("finalization_records"), dict)
+                })
                 self._completed = state == "completed"
                 return self._completed_result() if self._completed else {
                     "state": state,
@@ -361,9 +374,11 @@ class LocalWorkerMCPRouter:
         terminal = self._run_id is not None and self.runs.status(self._run_id).state in {"completed", "failed"}
         if self._run_id is None or terminal:
             try:
-                status, workspace = self.runs.open(
+                opener = self.runs.reopen if self._bound_run_id else self.runs.open
+                status, workspace = opener(
                     operation_id=self.operation_id,
                     operation_digest=self.operation_digest,
+                    **({"run_id": self._bound_run_id} if self._bound_run_id else {}),
                 )
             except RunStateConflict as error:
                 if error.run_id is not None:
@@ -372,10 +387,13 @@ class LocalWorkerMCPRouter:
                     self._check_opened_instance()
                     self._opened_call_run_id = self._run_id
                     return {"state": self.runs.status(self._run_id).state}
-                from ...operations.tooling import tool_evidence_ports
-                if not tool_evidence_ports(self.compiled) or str(error) != "no exact queued Run is available":
+                # Read-only provenance output does not grant implicit reattachment.
+                resumable_tools = any(tool.evidence_ports or tool.record_attempts
+                                      for tool in self.compiled.worker_tools)
+                if not resumable_tools or str(error) != "no exact queued Run is available":
                     raise WorkerToolError(str(error)) from error
-                status, workspace = self.runs.reopen(operation_id=self.operation_id, operation_digest=self.operation_digest)
+                status, workspace = self.runs.reopen(operation_id=self.operation_id, operation_digest=self.operation_digest,
+                    **({"run_id": self._bound_run_id} if self._bound_run_id else {}))
             self._run_id = status.run_id
             self._opened_call_run_id = status.run_id
             self._workspace = workspace
@@ -403,6 +421,8 @@ class LocalWorkerMCPRouter:
                 status.execution_profile["profile"] if status.execution_profile else None),
             "workspace_path": str(self._workspace.root),
             "assignment_path": str(self._workspace.assignment_path),
+            **self._input_reading_hint(),
+            **self._reading_guidance(assignment),
             **contracts,
             "output_directory": str(self._workspace.output_directory),
             "domain_workspace_path": (
@@ -413,6 +433,86 @@ class LocalWorkerMCPRouter:
             "remaining_seconds": _remaining(status.deadline_at),
             **({"recovery_evidence": evidence} if (evidence := self.runs.recovery_evidence_status(status)) is not None else {}),
         }
+
+    def _reading_guidance(self, assignment):
+        if self._previous_run_id is None:
+            return {}
+        reuse, read = [], []
+        old = None
+        try:
+            previous = self.runs.backend.open(self._previous_run_id)
+            old = json.loads(read_control_workspace_file(previous.root, Path("assignment.json"),
+                max_bytes=2 * 1024 * 1024))
+            for key in ("role_instructions", "tool_contracts"):
+                (reuse if key in old and key in assignment and old[key] == assignment[key]
+                 else read).append(key)
+            schema_path = Path("schema/result.schema.json")
+            before = json.loads(read_control_workspace_file(previous.root, schema_path,
+                max_bytes=2 * 1024 * 1024))
+            after = json.loads(read_control_workspace_file(self._workspace.root, schema_path,
+                max_bytes=2 * 1024 * 1024))
+            (reuse if before == after else read).append("output_schema")
+        except (OSError, ValueError, TypeError, WorkspaceError):
+            read = [key for key in ("role_instructions", "tool_contracts", "output_schema") if key not in reuse]
+        return {"reading_guidance": {"reuse_if_retained": reuse, "read": read,
+            "inputs": self._input_changes(assignment, old),
+            "instruction": "Same Worker continuation. Unchanged means exact bindings and uses, not remembered or previously read. Reassess this task using retained originals; do not reprint unchanged material merely to review it again. Read new, changed or unknown inputs; reread missing context or targeted details needed for verification. Always read this task, objective/input index, language, budget and output/recovery instructions. Reuse retained complete contracts listed unchanged; refresh schema after new tool evidence."}}
+
+    def _input_changes(self, assignment, old):
+        inputs = assignment.get("inputs", [])
+        changes = [{"source_name": item["source_name"], "status": "unknown"} for item in inputs]
+        if old is None or not isinstance(old.get("inputs"), list):
+            return changes
+        try:
+            before = {item.source_name: item for item in self.runs.status(self._previous_run_id).inputs}
+            after = {item.source_name: item for item in self.runs.status(self._run_id).inputs}
+        except (KeyError, ValueError, RunStateConflict, RunNotFound):
+            return changes
+        if any(not isinstance(item, dict) or item.get("source_name") not in before
+               for item in old["inputs"]):
+            return changes
+        semantics = ("port", "media_type", "usage", "exposure", "historical")
+        for item, change in zip(inputs, changes):
+            current = after.get(item["source_name"])
+            if current is None or any(key not in item for key in semantics):
+                continue
+            # Persisted bindings own identity; workspace descriptors supply presentation semantics.
+            candidates = [prior for prior in old.get("inputs", [])
+                          if prior.get("source_name") in before]
+            equal = []
+            for prior in candidates:
+                binding = before[prior["source_name"]]
+                if (binding.artifact_ref == current.artifact_ref
+                        and all(getattr(binding, key) == getattr(current, key)
+                                for key in ("port_name", "media_type", "usage", "exposure", "require_current"))
+                        and all(key in prior and prior[key] == item[key] for key in semantics)
+                        and all(prior.get(key) == item.get(key)
+                                for key in ("source_origin", "source_provenance"))):
+                    equal.append(prior)
+            if len(equal) == 1:
+                change["status"] = "unchanged"
+                if equal[0]["source_name"] != item["source_name"]:
+                    change["previous_source_name"] = equal[0]["source_name"]
+            elif not equal:
+                change["status"] = "changed" if any(
+                    prior.get("port") == item["port"] or prior.get("source_name") == item["source_name"]
+                    or before[prior["source_name"]].artifact_ref == current.artifact_ref
+                    for prior in candidates) else "new"
+        return changes
+
+    def _input_reading_hint(self):
+        # Installed workspaces retain their frozen helper. Do not hot-rewrite it
+        # or ask the Worker to compare versions or echo legacy cursors.
+        try:
+            helper = read_control_workspace_file(self._workspace.root,
+                Path("tools/read_input.py"), max_bytes=64 * 1024)
+            if b"\nREAD_INPUT_NAVIGATION = 2\n" in helper:
+                return {}
+            if b"\nREAD_INPUT_NAVIGATION = 1\n" in helper:
+                return {"input_reading": "Older reader: repeat the same source, --file and --pointer selection with --next/--repeat/--restart; bare navigation is unavailable."}
+        except (OSError, ValueError, WorkspaceError):
+            pass
+        return {"input_reading": "Legacy workspace: use targeted standard-library reads of assignment and input files; do not use reader offsets or hashes."}
 
     def _tool_contract_location(self, assignment=None):
         if assignment is None:
@@ -471,6 +571,13 @@ class LocalWorkerMCPRouter:
                 raise ValueError("tool requested an undeclared Run input") from error
 
         def input_path(source_name: str) -> Path:
+            if source_name not in {item.source_name for item in status.inputs}:
+                from ..service.local_workspace import write_control_workspace_file
+                raw = self.runs.read_tool_evidence(status, source_name)
+                descriptor = self.runs.source_descriptor(status, source_name)
+                relative = Path(".operation-tools/sources") / workspace_input_filename(source_name, descriptor.media_type)
+                write_control_workspace_file(self._workspace.root, relative, raw, mode=0o400, replace=True, create_parents=True)
+                return self._workspace.root / relative
             item = input_binding(source_name)
             path = self._workspace.root / "inputs" / workspace_input_filename(
                 source_name, item.media_type
@@ -510,6 +617,9 @@ class LocalWorkerMCPRouter:
                 if key in self.tool_services
             },
             state=self._tool_state.setdefault(name, {}),
+            run_id=self._run_id,
+            operation_id=self.compiled.spec.operation_id,
+            _reserve_network_request=(lambda url: self.runs.reserve_network_request(self._run_id, tool, url)) if tool.network_access else None,
             workspace=self._workspace.root,
             output_directory=self._workspace.output_directory,
             output_collections=tuple(
@@ -517,6 +627,7 @@ class LocalWorkerMCPRouter:
             ),
             remaining_seconds=_remaining(status.deadline_at),
             _io_budget=(lambda **values: self.runs.tool_io_budget(self._run_id, **values)) if tool.evidence_ports else None,
+            _read_reference=(lambda request: self.runs.reference_read(self._run_id, request, tool.reference_policy)) if tool.reference_policy is not None else None,
             _read_evidence=read_evidence,
             _prior_source_bindings=lambda: self.runs.prior_source_bindings(status),
             _source_descriptor=lambda alias: self.runs.source_descriptor(status, alias),
@@ -527,7 +638,7 @@ class LocalWorkerMCPRouter:
             _accept_evidence=(lambda **values: self.runs.accept_tool_evidence(self._run_id, tool_name=tool.name, allowed_ports=tool.evidence_ports, **values)) if tool.evidence_ports else None,
             _read_input=read_input,
             _input_path=input_path,
-            _input_media_type=lambda source_name: input_binding(source_name).media_type,
+            _input_media_type=lambda source_name: self.runs.source_descriptor(status, source_name).media_type,
             _input_ref=lambda source_name: input_binding(source_name).artifact_ref,
             _validate_outputs=lambda: self.runs.validate_candidate(self._run_id) and None,
             _record_activity=lambda activity: self.runs.record_activity(self._run_id, activity),
@@ -581,6 +692,8 @@ def _load_operation_services(catalog, operation_id, assignments, state_root):
     optional = {name.partition(':')[0] for tool in tools for name in tool.optional_services}
     services = {}
     for plugin_id, path in assignments.items():
+        if plugin_id not in required | optional:
+            continue
         try:
             loaded = load_runtime_plugin_contributions(catalog, {plugin_id: path},
                 mode='local_worker', state_root=state_root)

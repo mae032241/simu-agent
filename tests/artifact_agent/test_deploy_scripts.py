@@ -5,6 +5,7 @@ import hashlib
 import os
 import re
 import shutil
+import sqlite3
 import subprocess
 import sys
 import venv
@@ -438,6 +439,57 @@ def test_complete_tcad_skill_install_integrity_removal_and_rollback(tmp_path: Pa
     rollback_transaction(transaction)
     _verify_managed_directory(skill, name=name)
     assert _directory_digest(skill) == _directory_digest(source)
+
+
+
+
+def test_install_transaction_sqlite_snapshot_restore_remains_compatible(
+    tmp_path: Path,
+) -> None:
+    existing = tmp_path / "database/existing.sqlite3"
+    existing.parent.mkdir(parents=True)
+    with sqlite3.connect(existing) as connection:
+        connection.execute("CREATE TABLE records (value TEXT PRIMARY KEY)")
+        connection.execute("INSERT INTO records VALUES ('before')")
+    missing = tmp_path / "database/missing.sqlite3"
+    outside = tmp_path / "outside-launcher"
+    outside.write_text("old launcher\n", encoding="utf-8")
+    launcher = tmp_path / "bin/launcher"
+    launcher.parent.mkdir()
+    launcher.symlink_to(outside)
+    missing_config = tmp_path / "config/new.json"
+    transaction = tmp_path / "transaction"
+    begin_transaction(
+        transaction,
+        targets=(("launcher", launcher), ("missing-config", missing_config)),
+        databases=(("existing", existing), ("missing", missing)),
+    )
+    launcher.unlink()
+    launcher.write_text("new launcher\n", encoding="utf-8")
+    missing_config.parent.mkdir()
+    missing_config.write_text("new config\n", encoding="utf-8")
+    with sqlite3.connect(existing) as connection:
+        connection.execute("INSERT INTO records VALUES ('after')")
+    with sqlite3.connect(missing) as connection:
+        connection.execute("CREATE TABLE records (value TEXT PRIMARY KEY)")
+        connection.execute("INSERT INTO records VALUES ('after')")
+    for database in (existing, missing):
+        for suffix in ("-wal", "-shm"):
+            Path(str(database) + suffix).write_bytes(suffix.encode())
+
+    rollback_transaction(transaction)
+
+    with sqlite3.connect(existing) as connection:
+        assert connection.execute("SELECT value FROM records").fetchall() == [("before",)]
+    assert not missing.exists()
+    assert launcher.is_symlink()
+    assert launcher.read_text(encoding="utf-8") == "old launcher\n"
+    assert not missing_config.exists()
+    for database in (existing, missing):
+        assert not Path(str(database) + "-wal").exists()
+        assert not Path(str(database) + "-shm").exists()
+
+
 
 
 def test_core_install_retires_and_rollback_restores_tcad_surfaces(
@@ -1024,6 +1076,8 @@ def test_installer_probes_compiled_operation_authority_without_fixed_counts() ->
     project_root = Path(__file__).resolve().parents[2]
     script = (project_root / "deploy/install.sh").read_text(encoding="utf-8")
     assert "probe_mcp()" in script
+    assert "probe_root_context_contract()" in script
+    assert "probe_root_context_contract scidiscovery.artifact_agent.interfaces.mcp_proxy" in script
     assert '"$CONTROL_SOCKET" "" root' in script
     assert '"$WORKER_SOCKET" "$worker_id" worker' not in script
     retired = script.split("retire_old_deployment()", 1)[1].split(
@@ -1036,6 +1090,11 @@ def test_installer_probes_compiled_operation_authority_without_fixed_counts() ->
         "operation_invoke",
     ):
         assert operation_tool in script
+    assert "DescribeInput.model_json_schema()" in script
+    assert "RunStatusInput.model_json_schema()" in script
+    assert "ArtifactCatalogInput.model_json_schema()" in script
+    assert "'compat', 'poll', 'navigation', 'decision'" in script
+    assert "'producer_inputs'" in script
     for retired in (
         "task_schedule",
         "artifact_transform",
@@ -1046,8 +1105,106 @@ def test_installer_probes_compiled_operation_authority_without_fixed_counts() ->
         assert retired in script
     assert "assert len(ROOT_TOOLS)" not in script
     assert "assert len(WORKER_TOOLS)" not in script
+    probe = script.split("probe_mcp() {", 1)[1].split("verify_installation()", 1)[0]
+    assert "from scidiscovery.artifact_agent.interfaces.mcp_gateway import GATEWAY_TOOLS" in probe
+    assert '"operation_catalog"' not in probe
     assert "--worker-id ideator" not in script
-    assert 'http://127.0.0.1:${APPROVAL_PORT}/")" == 200' in script
+    assert 'probe_approval_ui' in script
+    assert 'http://127.0.0.1:${APPROVAL_PORT}/' in script
+
+
+def test_actual_install_root_context_probe_checks_installed_gateway_views(tmp_path):
+    project = Path(__file__).resolve().parents[2]
+    site = tmp_path / "install/site"
+    site.mkdir(parents=True)
+    fixture = site / "context_probe_fixture.py"
+    fixture.write_text(r'''
+import json
+import sys
+
+catalog_seen = False
+for line in sys.stdin:
+    request = json.loads(line)
+    name = request["params"]["name"]
+    arguments = request["params"]["arguments"]
+    if name == "scid_catalog":
+        catalog_seen = True
+        value = {"operations": [{"operation_id": "science.fixture.v1"}]}
+    elif arguments["name"] == "scid_describe":
+        value = {"inputSchema": {"properties": {"view": {"enum": ["full", "invoke"]}}}}
+    elif arguments["name"] == "run_status":
+        value = {"inputSchema": {"properties": {"response_profile": {
+            "enum": ["compat", "poll", "navigation", "decision"]
+        }}}}
+    elif arguments["name"] == "artifact_catalog":
+        value = {"inputSchema": {"properties": {"view": {
+            "enum": ["summary", "detail", "parents", "producer_inputs"]
+        }}}}
+    elif not catalog_seen:
+        print(json.dumps({"jsonrpc": "2.0", "id": request["id"], "error": {
+            "code": -32000, "message": "operation crossed installation probe sessions"}}), flush=True)
+        continue
+    else:
+        value = {"view": "invoke", "operations": [{
+            "operation_id": arguments["name"], "operation_digest": "a" * 64,
+            "inputs": [], "revision_policy": {"max_revisions": 0},
+        }]}
+    print(json.dumps({"jsonrpc": "2.0", "id": request["id"],
+        "result": {"structuredContent": value}}), flush=True)
+''', encoding="utf-8")
+    completed = subprocess.run(
+        [
+            "bash", "-c",
+            'source "$1"; probe_root_context_contract context_probe_fixture unused',
+            "bash", str(project / "deploy/install.sh"),
+        ],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        timeout=15,
+        env={
+            **os.environ,
+            "SCID_PYTHON": sys.executable,
+            "SCID_INSTALL_ROOT": str(site.parent),
+            "PYTHONPATH": str(tmp_path / "unrelated"),
+        },
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert "Root context contract probe: pass (science.fixture.v1" in completed.stdout
+
+
+@pytest.mark.parametrize("case,accepted", [
+    ("unified", True), ("legacy", False), ("missing", False), ("extra", False), ("tcad", True),
+])
+def test_actual_install_mcp_probe_uses_installed_gateway_contract(tmp_path, case, accepted):
+    from scidiscovery.artifact_agent.interfaces.mcp_gateway import GATEWAY_TOOLS
+    project = Path(__file__).resolve().parents[2]
+    site = tmp_path / "install/site"
+    site.mkdir(parents=True)
+    (site / "scidiscovery").symlink_to(project / "src/scidiscovery", target_is_directory=True)
+    names = list(GATEWAY_TOOLS)
+    if case == "legacy":
+        names = ["operation_catalog", "operation_preflight", "operation_invoke"]
+    elif case == "missing":
+        names.remove("scid_call")
+    elif case == "extra":
+        names.append("worker_open_assignment")
+    elif case == "tcad":
+        names = [f"tcad_{i}" for i in range(5)]
+    payload = {"jsonrpc": "2.0", "id": 1, "result": {"tools": [{"name": n} for n in names]}}
+    (site / "probe_fixture.py").write_text("import json\nprint(json.dumps(" + repr(payload) + "))\n")
+    completed = subprocess.run([
+        "bash", "-c", 'source "$1"; probe_mcp probe_fixture unused "" "$2"',
+        "bash", str(project / "deploy/install.sh"), "5" if case == "tcad" else "root",
+    ], cwd=tmp_path, capture_output=True, text=True, timeout=15,
+       env={**os.environ, "SCID_PYTHON": sys.executable, "SCID_INSTALL_ROOT": str(site.parent),
+            "PYTHONPATH": str(tmp_path / "unrelated")})
+    assert (completed.returncode == 0) is accepted, completed.stderr
+    if accepted:
+        assert "MCP tool probe: pass" in completed.stdout
+    else:
+        assert "MCP tool authority mismatch: root; missing=" in completed.stderr
+        assert "unexpected=" in completed.stderr
 
 
 def test_installer_activates_only_explicitly_selected_domain_skills() -> None:
@@ -1531,7 +1688,7 @@ require_sources
 render_units "$WORKSPACE/units"
 for fn in require_root validate_source validate_base_python validate_figure_dependencies \
     install_packages retire_old_deployment retire_inactive_tcad_surfaces activate_packages \
-    create_local_workspace_root ensure_secret configure_tcad_runtime install_units \
+    create_local_workspace_root ensure_secret ensure_agent_settings configure_tcad_runtime install_units \
     configure_platform verify_installation complete_install_transaction; do
     eval "$fn() { :; }"
 done
@@ -1856,3 +2013,26 @@ def test_git_release_builder_emits_clean_manifested_source(tmp_path: Path) -> No
         if path.is_file() and path != manifest
     }
     assert output.with_suffix(".tar.gz").is_file()
+
+
+@pytest.mark.parametrize('status,exit_code,accepted', [('200', 0, True), ('503', 0, False), ('000', 28, False)])
+def test_approval_health_probe_has_timeout_and_reports_failure(tmp_path, status, exit_code, accepted):
+    script = Path(__file__).resolve().parents[2] / 'deploy/install.sh'
+    command = '''source "$1"
+curl() {
+    [[ "$*" == *'--connect-timeout 3'* && "$*" == *'--max-time 10'* && "$*" == *'--noproxy *'* ]] || return 99
+    printf '%s' "$PROBE_STATUS"
+    return "$PROBE_EXIT"
+}
+journalctl() { printf 'fixture: Address already in use\n'; }
+probe_approval_ui
+'''
+    result = subprocess.run(['bash', '-c', command, 'bash', str(script)], cwd=tmp_path,
+        capture_output=True, text=True, timeout=5,
+        env={**os.environ, 'PROBE_STATUS': status, 'PROBE_EXIT': str(exit_code)})
+    assert (result.returncode == 0) is accepted, result.stderr
+    assert '(10s timeout)' in result.stdout
+    if exit_code:
+        assert 'timed out' in result.stderr and 'Address already in use' in result.stderr
+    elif not accepted:
+        assert 'HTTP 503' in result.stderr

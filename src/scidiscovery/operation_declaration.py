@@ -18,6 +18,7 @@ from .operations.spec import (
     InputPortSpec,
     LimitsSpec,
     NativeToolPolicy,
+    NetworkPolicy,
     OperationDescription,
     OperationSpec,
     OutputPortSpec,
@@ -27,61 +28,62 @@ from .operations.spec import (
 )
 
 
-RESEARCH_WORK_CONTEXT = """Research context and responsibilities:
+RESEARCH_WORK_CONTEXT = """Research responsibilities (composable, not a mandatory sequence):
 Evidence establishes source-bound facts; hypotheses propose falsifiable explanations;
-design selects a feasible current objective and retains later objectives and conditions.
-Independent review checks scientific validity and whether the task is deliverable from
-its declared inputs. Authors implement the exact plan within available capabilities;
-execution requires its own authorization; analysis interprets actual results and may
-return limited or inconclusive findings for the next design. These are composable
-responsibilities, not a mandatory stage sequence. Only the scheduler selects Operations.
+design selects feasible current objectives and retains later goals and conditions.
+Independent review checks validity and deliverability from declared inputs. Authors
+implement the exact plan within available capabilities. Execution requires separate
+authorization; analysis interprets actual results, including limited or inconclusive
+findings. Only the scheduler selects Operations.
 
-Read the bound overall objective, current plan/task, and relevant progress before
-judging or implementing. Read large evidence on demand through declared input tools.
-Background and past verdicts do not override the current exact subject or grant claim
-or execution qualification. A producer's handoff is not automatically part of its payload.
-Never assume shared chat, unbound files, or another role's tools are available.
-Report unavailable context precisely without inventing facts or replacement inputs.
-Read any bound user_context originals before judging the task. These are user
-requirements, suggestions or factual claims relayed by the scheduler; assess their
-meaning and evidential weight within your role. They are not independent review,
-verified evidence or execution approval. Report a scope or input gap when needed;
-no acknowledgment form or proof of adopting every suggestion is required.
+Read the bound overall objective, exact task and relevant progress. Background and
+past verdicts grant no current claim or execution qualification; a producer's handoff
+is not automatically in its payload. Never assume shared chat, unbound files or
+another role's tools. Report missing context without inventing replacements.
+Read bound user_context originals and judge their meaning and evidential weight:
+requirements, suggestions and claims are not verified evidence, independent review
+or execution approval. Report scope/input gaps; no acknowledgment form is needed.
 
-Distinguish missing implementation inputs, responsibility/capability mismatch, and
-conditions affecting only later analysis. Do not turn all later conditions into authoring
-prerequisites. Redesign may defer work, change a supported method, narrow the current
-objective, or explain infeasibility; it need not perform every missing task itself.
-Do not repeat an unchanged impossible assignment or create placeholder success.
-Independent reviewers assess the exact subject themselves, not the author's hidden
-reasoning. Global awareness grants no extra access, scientific authority, or tools.
+Distinguish missing implementation inputs, capability/responsibility mismatch and
+later analysis conditions. Later conditions need not block authoring. Redesign may
+defer work, narrow objectives, change a supported method or explain infeasibility;
+it need not do every missing task. Do not repeat impossible assignments unchanged
+or create placeholder success. Independent reviewers assess the exact subject,
+not hidden author reasoning. Global awareness grants no extra authority or access.
+
+Keep local detail proportional to the current research decision. Pursue additional
+checks only when they can materially change the conclusion, next action or execution
+validity; judge precision against evidence uncertainty and the intended claim.
+Once evidence supports a scoped conclusion, deliver it with limitations instead of
+refining indefinitely. Reviewers distinguish material defects from optional polish;
+do not turn the latter into blockers. Use existing evidence and tools before adding
+experiments. Never silently relax a frozen requirement: explain disproportionate
+requirements through the existing redesign path. Preserve required review and approval.
 
 """
 
 
 OPERATION_AGENT_PREAMBLE = RESEARCH_WORK_CONTEXT + """This is one bounded compiled scientific Operation.
-Read only the exact assignment, declared inputs, and output contract returned by
-the selected runtime backend. Do not search the project repository, installed
-package, framework source, historical runs, or sibling workspaces. Treat missing
-task-local evidence as a bounded gap rather than permission to find substitutes.
+Read its exact assignment, declared inputs, registered tool evidence and output contract.
+External discovery requires explicit current-Operation permission; preserve new factual
+support with its declared source tool before citing it. Do not search
+the project repository, framework source, installed packages, historical runs or
+sibling workspaces. Missing task-local evidence is a bounded gap.
+The runtime appends authoritative backend lifecycle, filesystem and tool rules;
+visibility is not authorization. Correct output rejections using rule_id, field
+paths, the compiled Schema and its two contract pointers in assignment.json;
+never reverse engineer the validator from framework source.
 
-The runtime appends the authoritative backend-specific lifecycle, filesystem,
-and tool instructions. A tool being visible is not authorization to use it. If
-output validation fails, correct the reported rule_id and field paths against
-the compiled Schema and its two contract pointers declared in assignment.json;
-never inspect framework implementation to reverse engineer a validator.
-The output Schema describes the sealed result. Existing workspace finalizers fill
-mechanical copies before validation: proposal resource case_count from cases, the
-portfolio objective in proposal objectives, and Intake objective text from its formal
-objective_contract.statement (or foundation objective when no contract exists).
-Write the authoritative scientific field once; its generated copies may be omitted.
-For ScientificReview, the finalizer projects handoff verdict and a short reference
-to the formal payload.summary; these transport fields or the whole handoff may be
-omitted in the draft. Explicit handoff notes remain. CriticReview and EvidenceAudit
-only project verdict: their handoff summary and any needed next actions remain authored.
-Scientific choices, findings, current/later goals and evidence are never generated.
-Scientific content must be delivered through the backend's declared submit
-action, not through chat.
+Read for a concrete task question: use the compact entry and input index first,
+then needed original sections, JSON paths, curves or images. Do not print entire
+assignments, tool maps, directories or logs just to discover their contents.
+Retain already-read contracts within this assignment; refresh after a new assignment
+or contract loss/change. Do not truncate a contract or required scientific evidence.
+
+Write scientific fields once; workspace finalizers supply the mechanical copies
+specified by the role and output contract, never scientific choices, findings,
+goals or evidence. Deliver scientific content through the declared submit action,
+not chat.
 
 """
 
@@ -154,6 +156,37 @@ def scientific_semantic_contract(
     )
 
 
+def with_reference_access(operation: OperationSpec) -> OperationSpec:
+    """Declare the common read-only capability, never an executor or input port."""
+    if operation.executor.kind != "agent":
+        return operation
+    from .operations.spec import CollectionSpec
+    tool = ComponentRef("reference_read_tool", "builtin")
+    tools = operation.executor.tools
+    if tool not in tools:
+        tools = (*tools, tool)
+    outputs = operation.outputs
+    added = not any(port.name == "recovery_manifest_output" for port in outputs)
+    if added:
+        outputs = (*outputs, OutputPortSpec(
+            name="recovery_manifest_output", description="Control-owned exact tool and read-only access receipts.",
+            kind="tool_evidence_manifest", schema="scidiscovery.tool-evidence-manifest.v1",
+            media_types=("application/json",),
+            codec=ComponentRef("json_codec", "general_science"),
+            schema_resource=ComponentRef("tool_evidence_schema", "general_science"),
+            min_items=0, max_items=1, max_item_bytes=1024 * 1024,
+            collection=CollectionSpec(max_total_bytes=1024 * 1024),
+        ))
+    return operation.model_copy(update={
+        "executor": operation.executor.model_copy(update={"tools": tools}),
+        "outputs": outputs,
+        "limits": operation.limits.model_copy(update={
+            "max_files": operation.limits.max_files + int(added),
+            "max_output_bytes": operation.limits.max_output_bytes + (1024 * 1024 if added else 0),
+        }),
+    })
+
+
 def with_user_context(operation: OperationSpec) -> OperationSpec:
     """Declare optional original user text on a public scientific Agent."""
     port = InputPortSpec(
@@ -166,6 +199,7 @@ def with_user_context(operation: OperationSpec) -> OperationSpec:
         usage="prior_signal", exposure="on_demand",
         min_items=0, max_items=4, max_item_bytes=32768,
     )
+    operation = with_reference_access(operation)
     return operation.model_copy(update={
         "inputs": (*operation.inputs, port),
         "outputs": tuple(
@@ -198,6 +232,8 @@ def scientific_agent_operation(
     max_attempts: int | None = None,
     native_shell: str = "inherited_prototype",
     native_view_image: bool = False,
+    native_web_search: str = "disabled",
+    network: NetworkPolicy = NetworkPolicy(),
     input_admission: InputAdmissionSpec | None = None,
     input_validation: InputValidationSpec | None = None,
     complete_transform_family: CompleteTransformFamilySpec | None = None,
@@ -221,9 +257,8 @@ def scientific_agent_operation(
             workspace=workspace,
             tools=tools,
             prompt=prompt,
-            model="gpt-5.6-sol",
             native_tools=NativeToolPolicy(
-                shell=native_shell, view_image=native_view_image
+                shell=native_shell, view_image=native_view_image, web_search=native_web_search
             ),
         ),
         inputs=inputs,
@@ -236,6 +271,7 @@ def scientific_agent_operation(
         guards=guards,
         accepts_actions=accepts_actions,
         limits=LimitsSpec(
+            network=network,
             timeout_seconds=timeout,
             max_input_bytes=max_input_bytes,
             max_output_bytes=max_output_bytes,

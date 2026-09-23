@@ -168,6 +168,14 @@ def analysis_calculations(report, sources):
         is_current = any(item["alias"] == alias and item["artifact_ref"] == descriptor.artifact_ref.model_dump(mode="json")
                          for item in current)
         proof = current_proof
+        if not is_current and any(item["alias"] == alias
+                and item["artifact_ref"] == descriptor.artifact_ref.model_dump(mode="json")
+                for item in current_proof.get("accesses", ())):
+            # An accessed calculation keeps its producer's proof namespace. The
+            # control resolver verifies that exact receipt, without binding its
+            # internal sources as new Worker inputs or current products.
+            records.append(record.model_copy(update={"calculation_ref": alias}))
+            continue
         if not is_current:
             prior = prior_analysis_sources(sources)
             if prior is None:

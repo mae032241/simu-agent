@@ -63,6 +63,7 @@ def validate_run_output(
     input_binding_descriptors: Mapping[str, InputBindingDescriptor] | None = None,
     validation_deadline: float | None = None,
     tool_snapshot: bytes | None = None,
+    reference_calculation_resolver=None,
 ) -> ValidatedRunOutput:
     """Validate the one primary result without changing control state."""
 
@@ -214,10 +215,12 @@ def validate_run_output(
             f"{port.context_validator.plugin_id or compiled.plugin_id}:"
             f"{port.context_validator.component_id}"
         )
+        from ...operations.tooling import reference_source_ports
+        readable_tool_ports = reference_source_ports(compiled)
         source_bytes = {
             name: content
             for name, content in input_bytes.items()
-            if input_source_ports[name] in port.context_sources
+            if input_source_ports[name] in port.context_sources or input_source_ports[name] in readable_tool_ports
         }
         sources = ValidationSources(
             source_bytes,
@@ -228,6 +231,7 @@ def validate_run_output(
             },
             validation_deadline=validation_deadline,
             tool_snapshot=tool_snapshot,
+            reference_calculation_resolver=reference_calculation_resolver,
         )
         try:
             compiled.implementations[key](

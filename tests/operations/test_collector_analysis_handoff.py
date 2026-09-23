@@ -112,7 +112,7 @@ def test_collected_log_and_missing_products_allow_limited_analysis(tmp_path, sta
     write_analysis(opened, analysis_report(alias="diagnostics"))
     submitted = worker.call_tool("worker_submit_result", {})
     assert submitted["state"] == "completed", submitted
-    sealed = system[2].call_tool("run_status", {"name": "analysis"})["sealed_output"]
+    sealed = system[2].call_tool("run_status", {"name": "analysis", "view": "detail"})["sealed_output"]
     assert sealed["payload"]["source_references"][0]["input_alias"] == "diagnostics"
 
 
@@ -231,7 +231,7 @@ def test_historical_review_reaches_new_analysis_without_current_authority(tmp_pa
     write_analysis(opened, report)
     submitted = worker.call_tool("worker_submit_result", {})
     assert submitted["state"] == "completed", submitted
-    assert root.call_tool("run_status", {"name": "analysis"})["sealed_output"]["payload"]["claim_allowed"] is False
+    assert root.call_tool("run_status", {"name": "analysis", "view": "detail"})["sealed_output"]["payload"]["claim_allowed"] is False
     # Analysis completion does not renew the old review's authoring authority.
     import json
     package = json.loads(runtime.artifacts.read(artifacts["package"].ref))
@@ -242,7 +242,7 @@ def test_historical_review_reaches_new_analysis_without_current_authority(tmp_pa
         dict(port="experiment_review", artifact_names=["materialized_review.output"]),
         dict(port="execution_capability", artifact_names=["capability"])])
     denied = root.call_tool("operation_preflight", author)
-    assert not denied["admissible"] and denied["reason_code"] == "input_producer_contract_changed"
+    assert not denied["admissible"] and denied["reason_code"] == "input_independent_review_incompatible"
     assert denied["port"] == "experiment_plan"
 
 
@@ -279,8 +279,10 @@ def test_historical_analysis_rejects_wrong_or_unsealed_witness(tmp_path, operati
     next(item for item in request["inputs"] if item["port"] == port)["artifact_names"] = [name]
     before = root.call_tool("run_list", {})
     refused = root.call_tool("operation_preflight", request)
-    assert not refused["admissible"] and refused["reason_code"] == "guard_rejected"
-    with pytest.raises(Exception, match="guard_rejected"):
+    expected_code = ("input_review_plan_mismatch" if operation_id == "science.result.diagnose.v1"
+        else "guard_rejected")
+    assert not refused["admissible"] and refused["reason_code"] == expected_code
+    with pytest.raises(Exception, match=expected_code):
         root.call_tool("operation_invoke", request)
     assert root.call_tool("run_list", {}) == before
 
@@ -292,8 +294,10 @@ def test_historical_analysis_rejects_wrong_or_unsealed_witness(tmp_path, operati
     ("review_target", "experiment_review", "input_review_target_mismatch"),
     ("review_verdict", "experiment_review", "input_review_verdict_mismatch"),
 ))
-def test_history_input_schema_errors_identify_the_port(operation_id, wrong, port, code):
-    from scidiscovery.operations.input_validation import OperationInvocationError
+def test_history_input_schema_errors_identify_the_port(tmp_path, operation_id, wrong, port, code):
+    from scidiscovery.operations.input_validation import (
+        InputBindingDescriptor, OperationInvocationError, ValidationSources,
+    )
     from tcad_artifact.result_analysis import validate_analysis_inputs
     from curve_score.science_operations import Components
     from tests.operations.test_tcad_result_analysis import analysis_materials
@@ -304,6 +308,22 @@ def test_history_input_schema_errors_identify_the_port(operation_id, wrong, port
     elif wrong == "review_verdict":
         review["verdict"] = "revise"
     sources = {"experiment_plan": plan.canonical_json(), "experiment_review": canonical_json(review)}
+    if operation_id == "tcad.result.analyze.v1":
+        _, runtime, root, request, _, _ = analysis_system(tmp_path)
+        descriptors = {}
+        for binding in request["inputs"]:
+            alias = binding["port"]
+            if alias not in {"experiment_plan", "experiment_review", "reviewed_package", "runtime_manifest"}:
+                continue
+            artifact = runtime.artifacts.get_by_id(root.facade._resolve("artifact", binding["artifact_names"][0]))
+            sources[alias] = runtime.artifacts.read(artifact.ref)
+            descriptors[alias] = InputBindingDescriptor(
+                source_name=alias, port_name=alias, artifact_ref=artifact.ref,
+                media_type=artifact.media_type, size_bytes=artifact.size_bytes,
+                sha256=artifact.sha256, parent_refs=artifact.parent_refs,
+            )
+        sources["experiment_review"] = canonical_json(review)
+        sources = ValidationSources(sources, descriptors)
     if wrong.endswith("_shape"):
         sources[port] = b'{}'
     checker = validate_analysis_inputs if operation_id == "tcad.result.analyze.v1" else Components.diagnosis_inputs.implementation

@@ -214,7 +214,7 @@ def test_one_tool_field_change_reaches_compiled_mcp_assignment_and_execution(tmp
             reply = router.handle(call)
         assert json.loads(reply['result']['content'][0]['text'])['status'] == 'computed'
     assert identities[0][0] != identities[1][0]
-    assert identities[0][1] != identities[1][1]
+    assert identities[0][1] == identities[1][1]  # shared native profile; contract digest still changes
 
 
 def test_root_parameters_and_catalog_inputs_share_declared_constraints():
@@ -246,6 +246,32 @@ def test_root_parameters_and_catalog_inputs_share_declared_constraints():
         expected = port.model_dump(mode='json')
         assert {k: projected[k] for k in keys} == {k: expected[k] for k in keys}
     assert all(not set(keys).intersection(port) for port in view['outputs'])
+
+
+def test_analysis_producer_versions_publish_one_keyed_scope_rule_without_changing_support_transform():
+    catalog = _catalog()
+    expected = {
+        'science.result.diagnose.v1': ('4', 'curve.diagnosis.input_binding'),
+        'science.result.diagnose.curve-error.v1': ('2', 'curve.diagnosis.input_binding'),
+        'tcad.result.analyze.v1': ('2', 'tcad.result_analysis.context_binding'),
+    }
+    for operation_id, (version, rule_id) in expected.items():
+        compiled = catalog.operation(operation_id)
+        output = next(port for port in compiled.spec.outputs
+                      if port.schema_id == 'scidiscovery.layered-diagnosis.v1')
+        assert compiled.spec.version == version
+        assert output.context_rule_id == rule_id
+        assert output.schema_id == 'scidiscovery.layered-diagnosis.v1'
+        contract = operation_port_json_schema(compiled, output)
+        semantic = json.dumps(contract['x-scidiscovery-semantic-constraints'])
+        assert 'objective_key' in semantic and 'objective_assessment' in semantic
+        assert 'non-null' in semantic
+        assert all(term not in semantic for term in ('route fingerprint', 'stop pointer', 'prune enum'))
+    support = catalog.operation('science.curve.error.analyze.v1')
+    assert support.spec.version == '1'
+    assert support.digest == '0630777b4a8d874bb1b842b02834df8c6994a932498422ea2c2df5a88f6176ad'
+    assert all(port.semantic_contract.component_id == 'diagnosis_semantic_contract'
+               for port in support.spec.outputs)
 
 
 def test_declared_output_relationship_reports_the_visible_rule_and_missing_field():
@@ -514,11 +540,19 @@ def experiment_case():
     }
 
 
-def test_experiment_context_reports_validation_as_a_correctable_rule(experiment_case) -> None:
+@pytest.mark.parametrize('key', [None, 'legacy_display_key'])
+def test_experiment_context_does_not_require_copying_global_key(experiment_case, key) -> None:
     intent, sources = experiment_case
+    intent['objective_key'] = key
     ExperimentDesignIntent.model_validate_json(canonical_json(intent), strict=True)
-    with pytest.raises(SemanticRuleViolation, match="objective_key differs"):
-        _experiment_context(intent, sources, {})
+    _experiment_context(intent, sources, {})
+    from scidiscovery.artifact_agent.transforms import materialize_experiment_plan
+    raw, _ = materialize_experiment_plan({
+        'experiment_design_intent': canonical_json(intent),
+        'research_objective': sources['research_objective'],
+        'hypothesis_portfolio': sources['hypothesis_portfolio'],
+    })
+    assert json.loads(raw)['objective_key'] == json.loads(sources['research_objective'])['objective_key']
 
 
 @pytest.mark.parametrize("model_kind,limit", (("intent", 16), ("proposal", 17)))
@@ -605,6 +639,15 @@ def _feedback_root(tmp_path, monkeypatch, experiment_case, operation_id, *, name
     foundation = _intake().scientific_foundation.model_dump(mode="json")
     foundation["objective"] = json.loads(sources["research_objective"])["statement"]
     foundation["objective_contract"] = json.loads(sources["research_objective"])
+    # The partial-goal fixture replaced the intake objective; supply its actual
+    # referenced items too, rather than relying on an admission stub to hide them.
+    known = {item["item_key"] for item in foundation["items"]}
+    for target in foundation["objective_contract"]["mandatory_targets"]:
+        for key in target["evidence_item_keys"]:
+            if key not in known:
+                foundation["items"].append({**foundation["items"][0], "item_key": key,
+                    "statement": target["rationale"]})
+                known.add(key)
     content = {"scientific_foundation": canonical_json(foundation), **sources}
     envelopes = {}
     for port in ("scientific_foundation", "research_objective", "hypothesis_portfolio", "critic_review"):
@@ -709,7 +752,10 @@ def test_exact_optional_feedback_reaches_root_run_local_worker_and_output_parent
     output_id = runtime.scheduler_bindings.resolve(instance=instance.instance_id, namespace="artifact", name=result["output_artifact_name"])
     output = runtime.artifacts.get_by_id(output_id)
     assert {record.ref for record, _ in records.values()}.issubset(output.parent_refs)
-    assert {item.artifact_ref for item in status.inputs} == set(output.parent_refs)
+    manifest_refs = {ref for ref in output.parent_refs
+                     if ref.schema_id == "scidiscovery.tool-evidence-manifest.v1"}
+    assert len(manifest_refs) == 1
+    assert {item.artifact_ref for item in status.inputs} == set(output.parent_refs) - manifest_refs
 
 
 def test_feedback_changes_the_immutable_request_fingerprint(tmp_path, monkeypatch, experiment_case) -> None:
@@ -962,7 +1008,8 @@ def test_review_contract_declares_optional_original_and_execution_inputs() -> No
     contract = operation_port_json_schema(compiled, output)["x-scidiscovery-validation-contract"]
     checker = next(item for item in contract["checkers"] if item["phase"] == "context")
     assert set(checker["optional_inputs"]) == {
-        "research_objective", "execution_context", "current_progress",
+        "experiment_plan", "scientific_skeleton", "research_objective",
+        "execution_context", "current_progress",
         "experiment_results", "result_analysis", "user_context",
     }
 
@@ -1005,10 +1052,8 @@ def test_materialization_and_revision_preserve_goal_text_and_rationales(
     assert revised["proposals"][0]["value_assessment"]["rationale"] == proposal["value_assessment"]["rationale"]
     assert revised["priority_rationale"] == intent["priority_rationale"]
     revised["proposals"][0]["objectives"].remove(global_objective)
-    with pytest.raises(ValidationError, match="exact portfolio objective"):
-        ExperimentPortfolio.model_validate_json(canonical_json(revised), strict=True)
-    with pytest.raises(ValidationError, match="exact portfolio objective"):
-        _experiment_revision_context(revised, sources, {})
+    ExperimentPortfolio.model_validate_json(canonical_json(revised), strict=True)
+    _experiment_revision_context(revised, sources, {})
 
 
 @pytest.mark.parametrize("mismatch", ("objective_key", "statement", "execution_context", "unbound_citation"))
@@ -1030,7 +1075,9 @@ def test_review_validates_bound_original_context_and_actual_source_aliases(exper
         objective = json.loads(sources["research_objective"])
         objective[mismatch] = "different_objective"
         sources["research_objective"] = canonical_json(objective)
-        error, message = OperationInvocationError, "input_plan_objective_mismatch"
+        # A bound goal is available for scientific review, not a text/key-copy gate.
+        _object_review_inputs(sources)
+        return
     elif mismatch == "execution_context":
         sources["execution_context"] = b"{}"
         error, message = OperationInvocationError, "input_content_incompatible: execution_context"
@@ -1193,12 +1240,13 @@ def test_experiment_submission_rejects_corrupt_immutable_inputs_as_system_failur
 
 def test_experiment_submission_preserves_declared_rule_id(tmp_path, experiment_case) -> None:
     intent, sources = experiment_case
+    intent['selected_hypothesis_keys'].append('unbound_hypothesis')
     with pytest.raises(RunOutputError) as error:
         _validate_experiment_submission(tmp_path, intent, sources)
     assert {item["rule_id"] for item in error.value.details} == {
         "experiment.design.objective_and_hypothesis_binding"
     }
-    assert any("objective_key differs" in item["message"] for item in error.value.details)
+    assert any("hypothesis absent" in item["message"] for item in error.value.details)
 
 
 @pytest.mark.parametrize(

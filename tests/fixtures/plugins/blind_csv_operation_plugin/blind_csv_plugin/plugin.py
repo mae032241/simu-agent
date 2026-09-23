@@ -212,4 +212,17 @@ PLUGIN = PluginDefinition(
     components=COMPONENTS, operations=(AUTHOR, REVIEWER),
 )
 
-__all__ = ["PLUGIN"]
+_hardened_native = REVIEWER.executor.native_tools.model_copy(update={"shell": "none"})
+HARDENED_PLUGIN = PLUGIN.model_copy(update={"operations": (
+    AUTHOR,
+    REVIEWER.model_copy(update={"executor":
+        REVIEWER.executor.model_copy(update={"native_tools": _hardened_native})}),
+)})
+
+# The stdio transport regression imports this fixture in a fresh interpreter.
+# Select the exact same test contract there as in its parent process.
+import os as _os
+if _os.environ.get("SCID_TEST_HARDENED_CSV_PLUGIN") == "1":
+    PLUGIN = HARDENED_PLUGIN
+
+__all__ = ["PLUGIN", "HARDENED_PLUGIN"]

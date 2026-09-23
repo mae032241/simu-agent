@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "scidiscovery"
-version = "0.1.0"
+version = "0.1.1"
 description = "Portable, evidence-bound scientific discovery orchestration"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -36,11 +36,13 @@ general_science = "scidiscovery.general_science_views:build_presentation"
 where = ["src"]
 
 [tool.setuptools.package-data]
+"scidiscovery" = ["default_agent_settings.json"]
 "scidiscovery.artifact_agent.storage" = ["migrations/*.sql"]
 "scidiscovery.artifact_agent.approval_ui" = ["static/*.css", "static/*.js"]
 
 [tool.setuptools.data-files]
 "share/scidiscovery/roles" = ["roles/scheduler.md"]
+"share/scidiscovery/roles/scheduler" = ["roles/scheduler/*.md"]
 "share/scidiscovery/deploy/systemd" = ["deploy/systemd/*.in"]
 
 [tool.pytest.ini_options]

@@ -47,6 +47,10 @@ def debug_tool_description() -> str:
         "new reservation; use a new name after source corrections, which do not reset "
         "the budget. Responses report current budget and per-job reservation. "
         "On updated runners, summary progress includes observed job elapsed_seconds. "
+        "For initialization, select output_names from the staged project's expected_outputs; "
+        "only those diagnostic files are collected, never the entire production output set. "
+        "Read details_path.outputs for file metadata and workspace relative_path, then read files as needed; "
+        "file bytes are not included in this summary. Omit output_names on polls to retain the selection. "
         "Read details_path for redacted log_tails and manifest timing; "
         "log_relative_path locates the complete bounded log. These are observations, "
         "not an ETA or proof of physical initialization. Older runners may omit progress."
@@ -70,6 +74,7 @@ def debug_response(context: OperationToolContext, run_name: str, response: dict)
     record = runs.get(run_name)
     if record is not None:
         result["reserved_wall_seconds_for_run"] = record["reserved_wall_seconds"]
+        result["delivery_budget"] = record.get("delivery_budget")
     if len(canonical_json(result)) > _MAX_RESPONSE_BYTES:
         raise TCADDebugError("TCAD debug diagnostic response exceeds its bound")
     return result
@@ -83,7 +88,7 @@ def debug_summary(context, run_name, response):
         replace=True, mode=0o400, create_parents=True)
     result = {key: full[key] for key in ("run_name", "mode", "state", "phase", "development_only",
         "scientific_claim_admissible", "diagnostic_layer", "summary", "exit_code", "diagnostics",
-        "source_diagnostic", "log_relative_path", "budget", "reserved_wall_seconds_for_run") if key in full}
+        "source_diagnostic", "log_relative_path", "delivery_budget", "budget", "reserved_wall_seconds_for_run", "missing_outputs") if key in full}
     if isinstance(full.get("progress"), dict):
         result["progress"] = {key: full["progress"][key] for key in
             ("elapsed_seconds", "observed_at", "started_at", "completed_at") if key in full["progress"]}
@@ -104,11 +109,14 @@ class LocalTCADDebugService:
             raise ValueError("local TCAD debug exchange must be a real directory")
 
     def run(
-        self, context: OperationToolContext, *, run_name: str, mode: str
+        self, context: OperationToolContext, *, run_name: str, mode: str, output_names: list[str] | None = None
     ) -> dict[str, object]:
         call_started = time.monotonic()
         if _RUN_NAME.fullmatch(run_name) is None or mode not in _MODES:
             raise TCADDebugError("TCAD development debug request is invalid")
+        if output_names and mode != "initialization":
+            raise TCADDebugError("output_names is only available for initialization")
+        selected = tuple(sorted(set(output_names or ())))
         runs = context.state.setdefault("runs", {})
         if not isinstance(runs, dict):
             raise TCADDebugError("local TCAD debug state is invalid")
@@ -116,10 +124,12 @@ class LocalTCADDebugService:
         if record is None:
             if len(runs) >= _MAX_RUNS:
                 raise TCADDebugError("TCAD development debug run limit is exhausted")
-            record = self._start(context, run_name, mode)
+            record = self._start(context, run_name, mode, selected)
             runs[run_name] = record
         if not isinstance(record, dict) or record.get("mode") != mode:
             raise TCADDebugError("TCAD debug run_name is bound to another mode")
+        if output_names is not None and tuple(record.get("output_names", ())) != selected:
+            raise TCADDebugError("debug run_name is bound to another output selection; poll without output_names")
         if isinstance(record.get("response"), dict):
             return dict(record["response"])
         state = _state(str(record["state"]))
@@ -163,7 +173,7 @@ class LocalTCADDebugService:
         return response
 
     def _start(
-        self, context: OperationToolContext, run_name: str, mode: str
+        self, context: OperationToolContext, run_name: str, mode: str, output_names: tuple[str, ...]
     ) -> dict[str, object]:
         used = context.state.get("reserved_wall_seconds", 0)
         if type(used) is not int or used < 0:
@@ -172,6 +182,10 @@ class LocalTCADDebugService:
         if remaining < 1:
             raise TCADDebugError("TCAD development debug budget is exhausted")
         project, source_sha, sources = _candidate(context)
+        delivery = _delivery_budget(context, project, mode, output_names)
+        capability = context.read_input("execution_capability")
+        draft = DeckProjectDraft.model_validate_json(project, strict=True)
+        entrypoint = draft.development_initialization_entrypoint if mode == "initialization" else draft.entrypoint
         declarations_path = context.workspace / "deck/declarations.json"
         declarations_sha = (
             canonical_sha256(json.loads(declarations_path.read_bytes()))
@@ -182,17 +196,21 @@ class LocalTCADDebugService:
         try:
             prepared = self.adapter.prepare(
                 project=project,
-                capability=context.read_input("execution_capability"),
+                capability=capability,
                 sources=sources,
                 exchange_directory=exchange,
                 mode=mode,
+                output_budget_bytes=delivery["effective_collection_bytes"],
+                **({"output_names": output_names} if output_names else {}),
             )
             prepared = self.adapter.clamp_wall_time(prepared, wall_time_seconds=remaining)
             submission = self.adapter.prepare_submission(prepared)
             external_run_id, state = self.adapter.submit(submission)
+        except TCADDebugError:
+            raise
         except ValueError as error:
             raise TCADDebugError(
-                "staged TCAD project is not eligible for development debug"
+                "staged TCAD project is not eligible for development debug: " + str(error)
             ) from error
         except Exception as error:
             raise RuntimeError("TCAD development debug startup failed") from error
@@ -202,6 +220,13 @@ class LocalTCADDebugService:
         context.record_activity("tcad_debug_submitted")
         return {
             "mode": mode,
+            "delivery_budget": delivery,
+            "run_id": context.run_id,
+            "operation_id": context.operation_id,
+            "backend_release": json.loads(capability).get("public_release_label"),
+            "entrypoint": entrypoint,
+            "arguments": prepared.arguments,
+            "output_names": output_names,
             "reserved_wall_seconds": prepared.wall_time_seconds,
             "external_run_id": external_run_id,
             "state": _state(state),
@@ -219,9 +244,11 @@ class LocalTCADDebugService:
             if directory.is_symlink() or not directory.is_dir():
                 raise TCADDebugError("TCAD debug private directory is unsafe")
         outputs = []
+        retained = []
         for item in collected.files:
             if budget: budget.remaining_seconds()
-            _write_private(root / item.name, item.content)
+            if mode != "initialization" or item.name == "debug.log.txt":
+                _write_private(root / item.name, item.content)
             if item.name == "debug.log.txt":
                 write_control_workspace_file(
                     context.workspace,
@@ -229,9 +256,19 @@ class LocalTCADDebugService:
                     item.content, replace=False, mode=0o400, create_parents=True,
                 )
             if item.name != "debug.log.txt":
-                outputs.append(
-                    {"name": item.name, "media_type": item.media_type, "size_bytes": len(item.content)}
-                )
+                entry = {"name": item.name, "media_type": item.media_type, "size_bytes": len(item.content)}
+                if mode == "initialization":
+                    relative = Path("deck/reports") / run_name / item.name
+                    try:
+                        write_control_workspace_file(context.workspace, relative, item.content,
+                            replace=False, mode=0o400, create_parents=True)
+                    except WorkspaceError as error:
+                        raise TCADDebugError(f"initialization output path is unsafe: {relative}") from error
+                    entry["relative_path"] = relative.as_posix()
+                entry["sha256"] = hashlib.sha256(item.content).hexdigest()
+                outputs.append(entry)
+                if mode == "initialization" and item.name in record.get("output_names", ()):
+                    retained.append(_file_identity(relative.relative_to("deck").as_posix(), item.content, item.media_type))
         response: dict[str, object] = {
             "run_name": run_name,
             "mode": mode,
@@ -253,6 +290,13 @@ class LocalTCADDebugService:
             "exit_code": collected.exit_code,
             "outputs": outputs,
         }
+        present = {item["name"] for item in outputs if item["size_bytes"] > 0}
+        missing = sorted(set(record.get("output_names", ())) - present)
+        if missing:
+            response["missing_outputs"] = missing
+            if collected.diagnostic_layer in {"complete", "output_contract"}:
+                response.update(diagnostic_layer="collection",
+                    summary="Initialization diagnostic outputs missing or empty: " + ", ".join(missing))
         if collected.source_diagnostic is not None:
             response["source_diagnostic"] = asdict(collected.source_diagnostic)
         if collected.timing is not None:
@@ -265,13 +309,17 @@ class LocalTCADDebugService:
         # workspace record tied to the exact submitted source and declarations.
         diagnostic = {key: value for key, value in response.items() if key != "run_name"}
         diagnostic.update({key: record[key] for key in (
-            "source_tree_sha256", "project_sha256", "declarations_sha256"
+            "source_tree_sha256", "project_sha256", "declarations_sha256",
+            "run_id", "operation_id", "backend_release", "entrypoint", "arguments", "output_names", "delivery_budget"
         )})
+        diagnostic["run_name"] = run_name
+        diagnostic_bytes = canonical_json(diagnostic)
+        retained.append(_file_identity(f"reports/diagnostic-{run_name}.json", diagnostic_bytes, "application/json"))
         try:
             write_control_workspace_file(
                 context.workspace,
                 Path(f"deck/reports/diagnostic-{run_name}.json"),
-                canonical_json(diagnostic), replace=False, mode=0o400, create_parents=True,
+                diagnostic_bytes, replace=False, mode=0o400, create_parents=True,
             )
         except WorkspaceError as error:
             raise TCADDebugError("TCAD diagnostic record path is unsafe") from error
@@ -281,11 +329,7 @@ class LocalTCADDebugService:
                 if mode == "preflight"
                 else "tcad.project-initialization.v1"
             )
-            try:
-                write_control_workspace_file(
-                    context.workspace,
-                    Path(f"deck/reports/{mode}.json"),
-                    canonical_json(
+            report_bytes = canonical_json(
                         {
                             "schema_version": 1,
                             "profile": profile,
@@ -295,22 +339,76 @@ class LocalTCADDebugService:
                             "mode": mode,
                             "terminal_state": collected.terminal_state,
                             "exit_code": collected.exit_code,
-                            "diagnostic_layer": collected.diagnostic_layer,
+                            "diagnostic_layer": response["diagnostic_layer"],
                             "qualified": (
                                 collected.terminal_state == "succeeded"
                                 and collected.exit_code == 0
-                                and collected.diagnostic_layer == "complete"
+                                and response["diagnostic_layer"] == "complete"
+                                and not missing
                             ),
-                            "summary": collected.summary,
+                            "summary": response["summary"],
                         }
-                    ),
+                    )
+            try:
+                write_control_workspace_file(
+                    context.workspace,
+                    Path(f"deck/reports/{mode}.json"),
+                    report_bytes,
                     replace=True,
                     mode=0o400,
                     create_parents=True,
                 )
             except WorkspaceError as error:
                 raise TCADDebugError("TCAD debug report path is unsafe") from error
+            retained.append(_file_identity(f"reports/{mode}.json", report_bytes, "application/json"))
+            proof = {**diagnostic, "files": retained, "collection_complete": (
+                collected.terminal_state == "succeeded" and collected.exit_code == 0
+                and response["diagnostic_layer"] == "complete" and not missing)}
+            context.state.setdefault("finalization_records", {})[mode] = canonical_json(proof)
         return response
+
+
+def _file_identity(path, raw, media_type):
+    return {"relative_path": path, "media_type": media_type, "size_bytes": len(raw),
+            "sha256": hashlib.sha256(raw).hexdigest()}
+
+
+def _delivery_budget(context, project, mode, output_names):
+    """Budget encoding before reservation; a generous contract maximum is not a prediction."""
+    from .project_packager import AttemptFile
+    import base64
+    envelope = json.loads((context.output_directory / "result.json").read_bytes())
+    handoff = context.workspace / "deck/handoff.json"
+    if handoff.is_file():
+        envelope["handoff"] = json.loads(handoff.read_bytes())
+    existing = {}
+    for raw in context.state.get("finalization_records", {}).values():
+        proof = json.loads(raw)
+        if not proof.get("collection_complete") or proof["mode"] == mode or proof["project_sha256"] != project_debug_sha256(DeckProjectDraft.model_validate_json(project)):
+            continue
+        for item in proof["files"]:
+            content = (context.workspace / "deck" / item["relative_path"]).read_bytes()
+            if hashlib.sha256(content).hexdigest() != item["sha256"]:
+                raise TCADDebugError("existing selected development diagnostic was changed: " + item["relative_path"])
+            try:
+                text, encoding = content.decode("utf-8"), "utf8"
+            except UnicodeDecodeError:
+                text, encoding = base64.b64encode(content).decode("ascii"), "base64"
+            existing[item["relative_path"]] = AttemptFile(relative_path=item["relative_path"], content=text, encoding=encoding).model_dump(mode="json")
+    envelope["payload"]["development_diagnostics"] = list(existing.values())
+    known = len(canonical_json(envelope))
+    # Two reports and future attestation/envelope metadata. Worst-case UTF-8 JSON
+    # escaping costs six bytes/raw byte (also covers binary base64 expansion).
+    reserve = 256 * 1024 + 1024 * len(output_names)
+    remaining = 8 * 1024 * 1024 - known - reserve
+    if remaining <= 0:
+        raise TCADDebugError(f"development delivery budget exhausted before startup: known_bytes={known}, report_reserve_bytes={reserve}, remaining_bytes={remaining}, outputs={list(output_names)}; shrink the diagnostic/source or selected output_names")
+    effective = min(DeckProjectDraft.model_validate_json(project).resource_limits.max_output_bytes, _development_limits(mode)[1], remaining // 6)
+    return {"envelope_limit_bytes": 8 * 1024 * 1024, "known_encoded_bytes": known,
+            "report_reserve_bytes": reserve, "remaining_encoded_bytes": remaining,
+            "effective_collection_bytes": effective, "unknown_output_sizes": list(output_names),
+            "final_delivery_guaranteed": False,
+            "overflow_action": "retain collection error and diagnostic paths; shrink diagnostic or deliver implementation_gap; final envelope is checked again"}
 
 
 def _candidate(

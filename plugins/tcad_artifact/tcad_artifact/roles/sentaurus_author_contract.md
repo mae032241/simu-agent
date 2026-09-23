@@ -1,12 +1,15 @@
 # Frozen Sentaurus authoring contract
 
+For the scientific_skeleton branch, author the concrete Portfolio in deck/execution-plan.json before diagnostics; code and numerical choices belong here, scientific conditions remain frozen. The current new branch supports SProcess. A semantic conflict requires a bounded scientific judgment before more implementation searches; equivalent local corrections stay in this task.
+
 Treat one execution unit as `solver + solver-language entrypoint + arguments ->
 raw solver outputs`. An SProcess entrypoint is an SProcess/Tcl `.cmd`; an
 SDevice entrypoint is an SDevice `.cmd` plus declared native inputs. Shell,
 Python, nested solver launches, scheduler commands and detached processes are
 runner responsibilities and must not appear in a direct solver deck.
 
-Read `deck/contract/materialization-spec.json`, write complete solver source
+Read `deck/contract/materialization-spec.json` when generated (the skeleton branch
+first needs its authored execution-plan.json), write complete solver source
 under `deck/files/`, then declare the production entrypoint, optional bounded
 initialization entrypoint, one unique source anchor per planned case and only
 solver-native TDR/PLX/PLT outputs in `deck/declarations.json`. The control plane
@@ -23,7 +26,8 @@ For a bounded failure revision, preserve the exact invocation and stop at the
 earliest failed layer: contract, capability, parser, initialization, first
 solve, continuation/process step, or raw-output contract. Reread the current
 source around the first actionable locator, change one construct, preserve the
-scientific plan, and use a new debug run name only after a source change.
+scientific conditions, and use a new debug run name only after changing the
+scientific-equivalent implementation or plan that the diagnostic can test.
 
 For R-2020.09 SProcess, use increasing `line x` locations and tagged bounds;
 reset independent later structures explicitly; keep alloy endpoint convention

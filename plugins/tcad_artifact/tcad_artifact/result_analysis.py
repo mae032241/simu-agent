@@ -42,7 +42,7 @@ from scidiscovery.operations.tooling import WorkerToolDefinition
 
 from .curve_normalizer import SProcessLogSourceSpec, SProcessPointLimitError, SProcessSeriesSpec, normalize_sprocess_log
 from .plx_normalizer import SProcessPLXSourceSpec, normalize_sprocess_plx
-from .project_packager import ReviewedDeckPackage, TCADRuntimeManifest
+from .project_packager import DeckReviewReport, ReviewedDeckPackage, TCADRuntimeManifest
 from .analysis_bindings import source_bindings, JSON_PORTS
 
 
@@ -93,16 +93,41 @@ def analysis_parentage(inputs: tuple[Any, ...], parameters: Mapping[str, Any]) -
     for item in inputs:
         grouped.setdefault(item.port_name, []).append(item.artifact)
     if any(len(grouped.get(name, ())) != 1 for name in (
-        "experiment_plan", "experiment_review", "reviewed_package", "runtime_manifest"
+        "experiment_plan", "reviewed_package", "runtime_manifest"
     )):
-        reject(None, "Bind exactly one experiment_plan, experiment_review, reviewed_package and runtime_manifest.")
-    plan, review, package, manifest = (grouped[name][0] for name in (
-        "experiment_plan", "experiment_review", "reviewed_package", "runtime_manifest"
+        reject(None, "Bind exactly one original experiment_plan, reviewed_package and runtime_manifest.")
+    plan, package, manifest = (grouped[name][0] for name in (
+        "experiment_plan", "reviewed_package", "runtime_manifest"
     ))
-    if not (plan.ref in review.parent_refs and review.handoff_verdict == "pass"
-        and dict(review.labels).get("operation_id") == "science.object.review.v1"
-        and dict(review.labels).get("operation_output_port") == "scientific_review"):
-        reject("experiment_review", "experiment_review must be the passing science.object.review.v1 scientific_review for the exact experiment_plan.")
+    legacy = grouped.get("experiment_review", ())
+    execution = grouped.get("execution_review", ())
+    if bool(legacy) == bool(execution):
+        reject("execution_review", "Bind the one review type required by the actual package branch.")
+    review = (legacy or execution)[0]
+    if legacy:
+        if not (plan.ref in review.parent_refs and review.handoff_verdict == "pass"
+            and dict(review.labels).get("operation_id") == "science.object.review.v1"
+            and dict(review.labels).get("operation_output_port") == "scientific_review"):
+            reject("experiment_review", "experiment_review must be the passing science.object.review.v1 scientific_review for the exact experiment_plan.")
+    else:
+        labels = dict(review.labels)
+        skeletons = grouped.get("scientific_skeleton", ())
+        if (review.producer_run_id is None or len(skeletons) != 1 or review.ref not in package.parent_refs
+            or plan.ref not in review.parent_refs or review.handoff_verdict != "pass"
+            or labels.get("operation_id") != "tcad.deck.review.v1"
+            or labels.get("operation_output_port") != "review" or labels.get("operation_version") != "3"):
+            reject("execution_review", "Bind the exact comprehensive review retained by the executed package.")
+        if (dict(plan.labels).get("operation_id") != "tcad.execution-plan.project.v1"
+            or len(plan.parent_refs) != 1 or plan.parent_refs[0] not in package.parent_refs
+            or plan.parent_refs[0] not in review.parent_refs):
+            reject("experiment_plan", "The execution plan must be projected from the exact package/review project.")
+        exact_inputs = dict(review.producer_inputs or ())
+        if (exact_inputs.get("project") != plan.parent_refs[0]
+            or exact_inputs.get("experiment_plan") != plan.ref
+            or exact_inputs.get("scientific_skeleton") != skeletons[0].ref):
+            reject("execution_review", "The completed review Run must bind the exact project, plan and skeleton on their declared ports.")
+        if skeletons[0].ref not in package.parent_refs or skeletons[0].ref not in review.parent_refs:
+            reject("scientific_skeleton", "Bind the original scientific skeleton of the execution package.")
     if plan.ref not in package.parent_refs:
         reject("experiment_plan", "experiment_plan must be the original plan parent of reviewed_package. Bind a newer retrospective analysis plan through current_progress.")
     if package.ref not in manifest.parent_refs:
@@ -331,14 +356,23 @@ def validate_analysis_inputs(sources: Mapping[str, bytes]) -> None:
     """Deterministic input premises, invoked only before a Run is created."""
     from scidiscovery.operations.input_validation import prior_analysis_sources
     prior_analysis_sources(sources)
-    for port, model in (("experiment_plan", ExperimentPortfolio), ("experiment_review", ScientificReview)):
-        parsed = parse_bound_json(model, sources[port], admission_port=port)
-        if port == "experiment_review":
-            if parsed.review_target != "experiment_portfolio":
-                raise OperationInvocationError("input_review_target_mismatch", port=port, field="/review_target")
-            if parsed.verdict != "pass":
-                raise OperationInvocationError("input_review_verdict_mismatch", port=port, field="/verdict")
     plan, package, manifest, descriptors, _ = _identity_context(sources, admitting=True)
+    if package.project.execution_plan is None:
+        if "execution_review" in sources or "scientific_skeleton" in sources or "experiment_review" not in sources:
+            raise OperationInvocationError("input_analysis_review_branch_mismatch", port="experiment_review")
+        review = parse_bound_json(ScientificReview, sources["experiment_review"], admission_port="experiment_review")
+        if review.review_target != "experiment_portfolio":
+            raise OperationInvocationError("input_review_target_mismatch", port="experiment_review", field="/review_target")
+        if review.verdict != "pass":
+            raise OperationInvocationError("input_review_verdict_mismatch", port="experiment_review", field="/verdict")
+    else:
+        if "experiment_review" in sources or "execution_review" not in sources or "scientific_skeleton" not in sources:
+            raise OperationInvocationError("input_analysis_review_branch_mismatch", port="execution_review")
+        review = parse_bound_json(DeckReviewReport, sources["execution_review"], admission_port="execution_review")
+        if review != package.review or review.verdict != "pass" or review.scientific_assessment != "pass":
+            raise OperationInvocationError("input_comprehensive_review_mismatch", port="execution_review")
+        if plan != package.project.execution_plan:
+            raise OperationInvocationError("input_project_execution_plan_mismatch", port="experiment_plan")
     records = {record.name: record for record in manifest.outputs}
     expected = {output.name: output for output in package.project.expected_outputs}
     cases = {(proposal.experiment_key, case.case_key) for proposal in plan.proposals for case in proposal.cases}
@@ -462,66 +496,60 @@ def analysis_context(payload: dict[str, Any], sources: Mapping[str, bytes], hand
     validate_analysis_report(report, plan, calculations=calculations)
 
 
-PROMPT = OPERATION_AGENT_PREAMBLE + """Read analysis-start.json first for the input index and full continuation guidance.\nRead domain-workspace.json /patch_contract for the complete draft/report instructions.\nAnalyze this exact TCAD execution in one Run.
-Read the compact project and scientific case matrix in analysis-bindings.json first;
-follow its original source pointers for implementation details. The control-generated
-case_parameter_bindings ledger is not a required reading or reporting task.
-Optionally use worker_tcad_inspect_outputs and worker_tcad_accept_output with the bound execution_result to inspect and collect original terminal products. These tools cannot run a solver or edit files. Missing services or ambiguous correspondence permit a limited report. State mapping reasons; a successful collection is not scientific success. Tool-returned evidence aliases and the updated schema/result.schema.json may be used in source_references and scoring in this same Run. Tool evidence includes recovered original files and identified analysis derivatives; it does not change startup inputs. Up to 32 evidence files, 32 MiB each, 256 MiB total, 120s I/O within the Run budget. A declaration/source correction goes back to author; do not alter the scientific task. Old aggregate 97 does not establish solver success: use explicit solver status when present and cite actual step evidence and uncertainty when absent.
-Return LayeredDiagnosisReport in the declared RoleResultEnvelope. Read bound raw
-files and logs; scoring is optional. The diagnostics port contains controlled runner
-logs; solver_outputs contains manifest-declared products. Diagnostics may support
-execution diagnosis but must not be represented as registered solver products. A failed/cancelled execution or missing
-outputs may yield invalid_study or limited inconclusive analysis. Preserve the
-plan's scientific tests, deferred goals, method changes and conclusion limits.
-Cite bound input/tool aliases directly in evidence_keys. Optional evidence items may
-use the bound alias as source_key with a local locator. With a local source_key,
-use source_references.input_alias or an alias-prefixed locator to identify the input.
-Do not repeat a binding already established by source_key or source_references. Source identity
-comes from the bound input; source_references is optional for additional scientific
-case correspondence. Control fills absent mechanical fields from declared bindings or
-an unambiguous exact prior_analysis mapping shown in analysis-bindings.json. Historical
-mappings remain conditional claims; do not repeat their basis table. New or ambiguous
-associations still need your scientific judgment and explicit basis. Tool requests keep
-case_key/series/axes selections, while already-known output/experiment/basis need not
-be copied; the raw request and its receipt are unchanged. Explicit output_name and experiment_key/case_key must agree
-with the bound project. If a case is not
-declared, you may propose case_mapping_basis(kind=evidence, evidence_refs of exact
-input_alias/locator, rationale) where you first make that scientific mapping.
-Calculation evidence cites the returned record; do not duplicate its source mapping
-in source_references. Cite the plan/source/log correspondence and explain the conditional
-conclusion; this does not independently establish scientific sufficiency. Original
-declared cases cannot be overridden. Global logs need no single case mapping.
-Do not infer case from filenames or matching bytes. A calculation evidence item
-uses the returned calculation_ref as locator and a scientific source_key of your
-choice. Unsupported/error records are limits,
-not evidence of success. Never claim an unbound output was read.
-Optionally call worker_tcad_curve_score with record_key and request containing
-comparison_spec and sources. Each source mapping supplies input_alias, format,
-series_key, case_key, role, x_axis and y_axis. PLX mappings additionally require
-explicit dataset_name; output_name and experiment_key need not repeat an identity
-already declared by the bound project. Log mappings use format sprocess_log. CSV mappings use format csv
-and explicit x_column/y_column. Formats sprocess_plx and sprocess_log use the
-existing TCAD parsers; no curve contract or prebound bundle is needed. Cite the
-returned calculation_ref as an evidence locator; control saves the full record,
-attempt and diagnostics. Do not copy them into calculation_records. For a rejected
-request, cite tool_recovery_manifest and explain its actual error; it does not
-establish an unsupported data format or require a manually written calculation record.
-Use current input aliases for new calls. assignment.json prior_source_bindings
-maps old aliases for reference; it never adds old aliases to the current namespace.
-For historical calculations, bind prior_analysis and its own manifest. If that
-manifest is also the original recovery_manifest, bind it once there; otherwise
-use prior_analysis_manifest and recovery_manifest separately. Cite the saved
-calculation file's current alias; control handles the historical receipt.
-Preserved files from a failed Run remain engineering history, not a new computation.
-Match each operator
-validation_check_key to the exact selected plan check; document any changed method
-and resulting conclusion limits in analysis_method and method_changes. Submission verifies
-the controlled calculation receipt and exact output references; it does not rerun scoring.
-Do not use unavailable quantitative comparisons as successful objective evidence.
+PROMPT = OPERATION_AGENT_PREAMBLE + """Analyze this exact TCAD execution in one Run. Read analysis-start.json, then
+its needed originals and domain-workspace.json /patch_contract for draft/report rules.
+analysis-bindings.json indexes the project and scientific cases; follow its source
+pointers for implementation details. The case_parameter_bindings ledger is not a
+reading or reporting task. Return LayeredDiagnosisReport in RoleResultEnvelope.
+Preserve planned tests, deferred goals, method changes and conclusion limits.
+
+Read actual bound results: diagnostics are runner logs; solver_outputs are declared
+products. Logs can explain execution but cannot substitute for solver products.
+Failed/cancelled execution or missing products permits invalid_study or bounded
+inconclusive findings, not fabricated success. Old aggregate 97 is not solver success:
+use explicit solver status and actual step evidence; state uncertainty when absent.
+Use the original bound experiment_plan as the exact report scope. When it declares
+a non-null objective_key, objective_assessment is required and must use that exact
+key; pass, fail, inconclusive, and not_evaluable remain scientific choices. When the
+key is null, the assessment remains optional and must not be invented. next_action
+remains optional Worker advice, not a scheduling command.
+
+For terminal product recovery, worker_tcad_inspect_outputs and worker_tcad_accept_output
+use bound execution_result. Read the selected tool's complete contract before use.
+Recovery allows up to 32 evidence files, 32 MiB each, 256 MiB total and 120s I/O
+within the Run budget. They inspect/collect originals, never run a
+solver or edit files. Explain correspondence; collection is not scientific success.
+Missing services or ambiguous correspondence allow limited analysis. New evidence
+aliases and the refreshed schema/result.schema.json can be used immediately, without
+changing frozen startup inputs. Declaration/source correction belongs to the author.
+
+Cite bound aliases in evidence_keys, or as optional evidence.source_key with local
+locators. Local scientific source_keys use source_references.input_alias or an
+alias-prefixed locator; do not repeat a binding already established. source_references
+is optional. Control fills declared identities and unambiguous prior mappings from
+analysis-bindings.json; historical mappings remain conditional claims, not proof.
+Do not infer cases from names/equal bytes, override declared cases, or require a case
+for global logs. New ambiguous associations require scientific case_mapping_basis
+(kind=evidence, exact input_alias/locator evidence_refs and rationale); do not repeat
+existing basis tables. Explicit output_name and experiment_key/case_key must agree
+with the project. Tool requests retain scientific case/series/axes choices; do not
+copy already-known output/experiment/basis or duplicate calculation source mappings.
+Never claim unread or unbound products were inspected.
+
+worker_tcad_curve_score is optional. Read its exact contract for PLX, log or CSV
+source selection, dataset/column names, axes and comparison_spec; no prebound curve
+bundle/contract is needed. Match validation_check_key to the selected plan check;
+record changed methods and their limits. Unavailable/error calculations limit the
+quantitative claim, never support success. Receipt checks do not rerun calculations.
+Use current aliases only; assignment.prior_source_bindings is historical navigation,
+not an extension of the current namespace. Prior calculations require their original
+sources, prior_analysis and its own manifest: bind it once as recovery_manifest when
+it serves both roles, otherwise separately as prior_analysis_manifest. Files preserved
+from failed Runs remain engineering history, not newly completed computations.
 """ + DIAGNOSTIC_GUIDANCE.format(diagnostic_tool="worker_tcad_curve_diagnose") + ANALYSIS_FILES_GUIDANCE
 SEMANTIC_CONTRACT = scientific_semantic_contract(
     "tcad.result_analysis", "Scoring is optional and occurs after execution.",
-    context_constraint="The report must identify the bound plan and use exact input aliases for solver claims. A source key must resolve to one bound input or calculation record. Inline and saved representations of the same complete controlled calculation receipt share one identity. A bound input alias retains its identity even in an optional source mapping. Repeated citations and local locators are allowed; an explicit locator naming another bound input conflicts with that mapping. Calculation records must match their controlled receipts or exact sealed historical records; no repeated source mapping or scoring is required at submission. Missing products and failed execution limit claims, not submission of a limited report.",
+    context_constraint="The report must identify the original bound experiment_plan and use exact input aliases for solver claims. When that exact plan declares a non-null objective_key, objective_assessment is required and must use the exact key; a null key does not require or authorize inventing an assessment identity. A source key must resolve to one bound input or calculation record. Inline and saved representations of the same complete controlled calculation receipt share one identity. A bound input alias retains its identity even in an optional source mapping. Repeated citations and local locators are allowed; an explicit locator naming another bound input conflicts with that mapping. Calculation records must match their controlled receipts or exact sealed historical records; no repeated source mapping or scoring is required at submission. Missing products and failed execution limit claims, not submission of a limited report.",
 )
 DIAGNOSIS_AGENT = Components.diagnosis_agent
 DIAGNOSIS_VALIDATOR = Components.diagnosis_validator
@@ -565,7 +593,9 @@ INPUTS = (
     _input("prior_analysis", "scidiscovery.layered-diagnosis.v1", _ref("diagnosis_schema", "curve_score"), optional=True, max_bytes=128*1024).model_copy(update={"usage":"evidence_inventory", "description":"Optional exact prior analysis. Bind its own same-producer manifest as prior_analysis_manifest, or bind recovery_manifest once when that same manifest proves both roles."}),
     _input("prior_analysis_manifest", "scidiscovery.tool-evidence-manifest.v1", _ref("analysis_recovery_schema"), optional=True, max_bytes=1024*1024).model_copy(update={"usage":"evidence_inventory", "description":"Same-producer direct manifest parent of prior_analysis. A wrong explicit pair is rejected; use recovery_manifest alone when both purposes use the identical artifact. Bind every reused raw source separately."}),
     _input("experiment_plan", "scidiscovery.experiment-portfolio.v1", _ref("experiment_portfolio_schema", "general_science"), max_bytes=2*1024*1024).model_copy(update={"usage": "evidence_inventory", "description": "Original execution plan: exact parent of reviewed_package. Put newer retrospective analysis plans in current_progress."}),
-    _input("experiment_review", "scidiscovery.scientific-review.v1", _ref("scientific_review_schema", "general_science"), max_bytes=64*1024, exposure="on_demand").model_copy(update={"usage": "evidence_inventory", "description": "Exact independent passing review of the original experiment_plan used for execution. New analysis-plan reviews belong in current_progress."}),
+    _input("experiment_review", "scidiscovery.scientific-review.v1", _ref("scientific_review_schema", "general_science"), optional=True, max_bytes=64*1024, exposure="on_demand").model_copy(update={"usage": "evidence_inventory", "description": "Exact independent passing review of the original experiment_plan used for execution. New analysis-plan reviews belong in current_progress."}),
+    _input("execution_review", "tcad.deck-review-report.v1", _ref("review_schema"), optional=True, max_bytes=128*1024),
+    _input("scientific_skeleton", "scidiscovery.experiment-scientific-skeleton.v1", _ref("experiment_skeleton_schema", "general_science"), optional=True, max_bytes=64*1024),
     _input("reviewed_package", "tcad.reviewed-deck-package.v2", _ref("reviewed_package_schema"), max_bytes=64*1024*1024),
     _input("runtime_manifest", "opaque", _ref("opaque_schema", "general_science"), max_bytes=4*1024*1024),
     _input("runtime_attestation", "tcad.runtime-attestation.v1", _ref("runtime_attestation_schema"), optional=True, max_bytes=4*1024*1024),
@@ -603,7 +633,7 @@ OPERATIONS = (scientific_agent_operation(
     native_view_image=True,
     input_validation=InputValidationSpec(validator=_ref("result_analysis_input"),
         rule_id="tcad.result_analysis.input_binding",
-        description="Before creating a Run, bind a structurally valid historical plan and its exact completed science.object.review.v1 scientific_review output, with matching plan parent and passing experiment_portfolio verdict; history grants no current authoring or execution authority. Original solver outputs must match manifest names/media/bytes and declared project paths/cases. Recovered solver outputs instead require the explicitly bound sealed recovery_manifest and execution_result, with exact receipt membership, original execution/project, declared output/case, actual path and byte identity. Same-Run registered tool evidence is admitted by the tool, not by submission. Bind the additional controlled tcad_log to diagnostics, not solver_outputs; diagnostics must share the exact execution lineage. Missing execution products permit limited analysis."),
+        description="For a skeleton project, bind its original projected plan, scientific_skeleton and exact comprehensive execution_review (version 3) retained by the package; reject legacy-review substitution. For a legacy project, before creating a Run bind a structurally valid historical plan and its exact completed science.object.review.v1 scientific_review output, with matching plan parent and passing experiment_portfolio verdict; history grants no current authoring or execution authority. Original solver outputs must match manifest names/media/bytes and declared project paths/cases. Recovered solver outputs instead require the explicitly bound sealed recovery_manifest and execution_result, with exact receipt membership, original execution/project, declared output/case, actual path and byte identity. Same-Run registered tool evidence is admitted by the tool, not by submission. Bind the additional controlled tcad_log to diagnostics, not solver_outputs; diagnostics must share the exact execution lineage. Missing execution products permit limited analysis."),
     inputs=INPUTS, outputs=(OutputPortSpec(
         name="layered_diagnosis", description="Sealed bounded result analysis and optional replayable calculations.",
         schema="scidiscovery.layered-diagnosis.v1", media_types=("application/json",),
@@ -617,4 +647,4 @@ OPERATIONS = (scientific_agent_operation(
     ), OutputPortSpec(name='tool_evidence', description='Tool-retained original runtime files, calculation records and declared analysis derivatives.', schema='opaque', media_types=('*/*',), codec=_ref('opaque_codec','general_science'), schema_resource=_ref('opaque_schema','general_science'), kind='tool_evidence', min_items=0, max_items=32, max_item_bytes=32*1024*1024, collection=CollectionSpec(max_total_bytes=256*1024*1024)),
     OutputPortSpec(name='recovery_manifest_output', description='Service-generated immutable evidence receipts and source mappings.', schema='scidiscovery.tool-evidence-manifest.v1',media_types=('application/json',),codec=_ref('json_codec','general_science'),schema_resource=_ref('analysis_recovery_schema'),kind='tool_evidence_manifest',min_items=0,max_items=1,max_item_bytes=1024*1024,collection=CollectionSpec(max_total_bytes=1024*1024))), guards=(_ref("result_analysis_parentage"),), timeout=900, max_attempts=2,
     max_input_bytes=512*1024*1024, max_output_bytes=257*1024*1024+128*1024, max_files=34,
-),)
+).model_copy(update={"version": "2"}),)

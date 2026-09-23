@@ -153,8 +153,9 @@ def submit(worker, opened, report):
     return mcp_call(worker, 'worker_submit_result', {})['result']['structuredContent']
 
 
-def generic_worker(tmp_path):
-    catalog, runtime, root, _, artifacts, register = analysis_system(tmp_path)
+def generic_worker(tmp_path, *, plan=None, return_system=False):
+    system = analysis_system(tmp_path, plan=plan)
+    catalog, runtime, root, _, artifacts, register = system
     bundle = curve._bundle().model_dump(mode='json')
     bundle['series'][1]['points'] = deepcopy(bundle['series'][0]['points'])
     register('generic_results', b'Execution finished with the bounded output.', 'opaque', parents=(artifacts['plan'].ref,))
@@ -166,7 +167,8 @@ def generic_worker(tmp_path):
         dict(port='experiment_results', artifact_names=['generic_results']), dict(port='curve_bundle', artifact_names=['generic_bundle'])]))
     compiled = catalog.operation('science.result.diagnose.v1')
     worker = LocalWorkerMCPRouter(runtime.runs, operation_id=compiled.spec.operation_id, operation_digest=compiled.digest)
-    return worker, worker.call_tool('worker_open_assignment', {})
+    opened = worker.call_tool('worker_open_assignment', {})
+    return (worker, opened, system) if return_system else (worker, opened)
 
 
 @pytest.mark.parametrize('tamper', [None, 'alias', 'record_key', 'metric'])
@@ -181,8 +183,10 @@ def test_generic_two_calculations_from_one_source_use_independent_evidence_keys_
             current['sources'][0]['input_alias'] = 'absent'
         response = mcp_call(worker, 'worker_curve_score', dict(record_key=name, request=current))
         assert 'error' not in response, response
-        record = response['result']['structuredContent']
-        assert record['status'] == ('unavailable' if failed else 'computed') and record['attempt']
+        summary = response['result']['structuredContent']
+        assert summary['status'] == ('unavailable' if failed else 'computed')
+        record = json.loads(Path(summary['calculation_path']).read_text())
+        assert record['attempt']
         records.append(record)
     report = curve._passing_diagnosis().model_dump(mode='json')
     report['calculation_records'] = records
@@ -208,7 +212,7 @@ def fixed_package():
     return result['curve_analysis_package'][0]
 
 
-def precomputed_worker(tmp_path, package):
+def precomputed_worker(tmp_path, package, *, return_system=False):
     catalog, runtime, instance, root = curve._root(tmp_path)
     artifact = runtime.artifacts.register(package, ArtifactRegistration(kind='fixture',
         schema_id='scidiscovery.curve-diagnostic-analysis.v1', payload_schema_version=1,
@@ -220,7 +224,9 @@ def precomputed_worker(tmp_path, package):
     compiled = catalog.operation(curve.DIAGNOSE_OPERATION)
     worker = LocalWorkerMCPRouter(runtime.runs, operation_id=compiled.spec.operation_id, operation_digest=compiled.digest)
     assert not any(item['name'] == 'worker_curve_score' for item in worker.list_tools())
-    return worker, worker.call_tool('worker_open_assignment', {})
+    opened = worker.call_tool('worker_open_assignment', {})
+    system = (catalog, runtime, instance, root)
+    return (worker, opened, system) if return_system else (worker, opened)
 
 
 @pytest.mark.parametrize('tamper', [None, 'pass', 'calculation', 'computed_calculation', 'external', 'pointer'])
@@ -228,6 +234,7 @@ def test_precomputed_schema_and_mcp_submit_accept_only_exact_package_evidence(tm
     worker, opened = precomputed_worker(tmp_path, fixed_package)
     schema = json.loads(Resources.curve_diagnosis_schema)
     assert schema['properties']['calculation_records']['maxItems'] == 0
+    assert 'CalculationRecord' not in schema['$defs']
     report = curve._diagnosis().model_dump(mode='json')
     report['overall_verdict'] = 'inconclusive'
     report['gates']['observation'] = dict(status='fail', summary='The finite residual comparison failed.', evidence_keys=['metric_report'])

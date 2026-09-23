@@ -8,7 +8,7 @@ from .navigation import hidden, navigation
 
 LABELS = {"narrative_language": "科学报告语言", "model": "模型", "reasoning_effort": "推理强度",
           "max_attempts": "恢复链最多 Run 数（包含首轮）"}
-SOURCES = {"operation_default": "任务原有默认", "compatibility_default": "兼容默认",
+SOURCES = {"operation_default": "任务原有默认", "package_default": "安装包默认", "compatibility_default": "兼容默认",
            "global.defaults": "公共默认", "global.operation": "公共任务覆盖",
            "instance.defaults": "实例默认", "instance.operation": "实例任务覆盖"}
 

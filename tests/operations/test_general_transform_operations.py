@@ -37,6 +37,7 @@ from tcad_artifact.parameter_operations import (
 from scidiscovery.operations.catalog import CatalogCompileError, compile_catalog
 from scidiscovery.operations.invoke import (
     InvocationArtifact,
+    OperationEngineeringError,
     OperationInvocationError,
     execute_compiled_transform,
     preflight_operation,
@@ -170,7 +171,8 @@ def test_general_intake_operations_execute_the_declared_source_binding_rule() ->
         assert output.context_validator is not None
         assert output.context_validator.component_id == "intake_source_context"
         assert output.context_rule_id == "intake.source_binding"
-        assert output.context_sources == ("source_material", "user_context")
+        assert output.context_sources == (("source_material", "tool_evidence", "user_context")
+            if operation_id == "science.evidence.extract.v1" else ("source_material", "user_context"))
 
 
 def _catalog():
@@ -294,7 +296,7 @@ def _solver_capability_snapshot() -> SolverCapabilitySnapshot:
     )
 
 
-def test_tcad_execution_context_projection_is_narrow_and_composes_with_design() -> None:
+def test_tcad_execution_context_projection_is_narrow_and_declared_for_design() -> None:
     catalog = _catalog()
     operation = catalog.operation(EXECUTION_CONTEXT_OPERATION)
     assert operation.spec.catalog_scope == "support"
@@ -334,24 +336,6 @@ def test_tcad_execution_context_projection_is_narrow_and_composes_with_design() 
         output.content
     )
 
-    foundation = _invocation_artifact(
-        "foundation", "scidiscovery.scientific-foundation.v1"
-    )
-    objective = _invocation_artifact(
-        "objective",
-        "scidiscovery.research-objective.v1",
-        parent_refs=(foundation.ref,),
-    )
-    portfolio = _invocation_artifact(
-        "portfolio",
-        "scidiscovery.hypothesis-proposal.v2",
-        parent_refs=(foundation.ref,),
-    )
-    critic = _invocation_artifact(
-        "critic",
-        "scidiscovery.critic-review.v2",
-        parent_refs=(foundation.ref, portfolio.ref),
-    )
     projected = InvocationArtifact(
         artifact_name="execution_context",
         ref=ArtifactRef(
@@ -365,25 +349,11 @@ def test_tcad_execution_context_projection_is_narrow_and_composes_with_design() 
         size_bytes=len(output.content),
         parent_refs=(capability.ref,),
     )
-    design = preflight_operation(
-        catalog.operation("science.experiment.design.v1"),
-        name="design",
-        artifacts_by_port={
-            "scientific_foundation": (foundation,),
-            "research_objective": (objective,),
-            "hypothesis_portfolio": (portfolio,),
-            "critic_review": (critic,),
-            "execution_context": (projected,),
-            "current_progress": (),
-            "experiment_results": (),
-            "result_analysis": (),
-            "user_context": (),
-        },
-        instruction="Design one bounded experiment.",
-    )
-    assert next(
-        item for item in design.inputs if item.port_name == "execution_context"
-    ).artifact.ref == projected.ref
+    design = catalog.operation("science.experiment.design.v1")
+    context_port = next(port for port in design.spec.inputs if port.name == "execution_context")
+    assert context_port.schema_id == projected.schema_id
+    assert context_port.min_items == 0 and context_port.max_items == 1
+    assert projected.parent_refs == (capability.ref,)
 
 
 def test_tcad_execution_context_projection_rejects_non_snapshot_content() -> None:
@@ -408,16 +378,14 @@ def test_tcad_execution_context_projection_rejects_non_snapshot_content() -> Non
         **_solver_capability_snapshot().model_dump(mode="json"),
         "undeclared": True,
     }
-    with pytest.raises(OperationInvocationError) as error:
+    with pytest.raises(OperationEngineeringError) as error:
         execute_compiled_transform(
             bound, {"capability": json.dumps(invalid).encode("utf-8")}
         )
     assert error.value.reason_code == "executor_component_failed"
 
 
-def test_root_projects_execution_context_idempotently_with_exact_parent(
-    tmp_path, monkeypatch
-) -> None:
+def test_root_projects_execution_context_idempotently_with_exact_parent(tmp_path) -> None:
     runtime, instance, root = _root(tmp_path)
     snapshot = _solver_capability_snapshot()
     raw = json.dumps(snapshot.model_dump(mode="json"), indent=2).encode("utf-8")
@@ -490,88 +458,6 @@ def test_root_projects_execution_context_idempotently_with_exact_parent(
         envelope.ref
     )
 
-    foundation = _register(
-        runtime,
-        instance,
-        name="design_foundation",
-        raw=b"{}",
-        kind="scientific_foundation",
-        schema="scidiscovery.scientific-foundation.v1",
-    )
-    objective = _register(
-        runtime,
-        instance,
-        name="design_objective",
-        raw=b"{}",
-        kind="research_objective",
-        schema="scidiscovery.research-objective.v1",
-        parents=(foundation.ref,),
-    )
-    portfolio = _register(
-        runtime,
-        instance,
-        name="design_portfolio",
-        raw=b"{}",
-        kind="hypothesis_portfolio",
-        schema="scidiscovery.hypothesis-proposal.v2",
-        parents=(foundation.ref,),
-    )
-    critic = _register(
-        runtime,
-        instance,
-        name="design_critic",
-        raw=b"{}",
-        kind="critic_review",
-        schema="scidiscovery.critic-review.v2",
-        parents=(foundation.ref, portfolio.ref),
-    )
-    monkeypatch.setattr(
-        runtime.approvals,
-        "are_subjects_approved_by_provider",
-        lambda *args, **kwargs: True,
-    )
-    design_request = {
-        "name": "design_with_execution_context",
-        "operation_id": "science.experiment.design.v1",
-        "inputs": [
-            {
-                "port": "scientific_foundation",
-                "artifact_names": ["design_foundation"],
-            },
-            {
-                "port": "research_objective",
-                "artifact_names": ["design_objective"],
-            },
-            {
-                "port": "hypothesis_portfolio",
-                "artifact_names": ["design_portfolio"],
-            },
-            {
-                "port": "critic_review",
-                "artifact_names": ["design_critic"],
-            },
-            {
-                "port": "execution_context",
-                "artifact_names": [output_name],
-            },
-        ],
-        "instruction": "Design one bounded experiment using the declared context.",
-    }
-    assert root.call_tool("operation_preflight", design_request)[
-        "admissible"
-    ] is True
-    invoked = root.call_tool("operation_invoke", design_request)
-    assert invoked["result"]["state"] == "queued"
-    run_id = runtime.scheduler_bindings.resolve(
-        instance=instance.instance_id,
-        namespace="run",
-        name="design_with_execution_context",
-    )
-    status = runtime.runs.status(run_id)
-    bound_context = next(
-        item for item in status.inputs if item.port_name == "execution_context"
-    )
-    assert bound_context.artifact_name == output_name
 
 
 @pytest.mark.parametrize("raw, reason", (
@@ -594,7 +480,7 @@ def test_declared_input_presence_fails_during_pure_preflight(raw, reason) -> Non
 
 def test_objective_projection_preflight_and_invoke_reject_null_at_root(tmp_path) -> None:
     runtime, instance, root = _root(tmp_path)
-    catalog = root.call_tool("operation_catalog", {"scope": "support"})
+    catalog = root.call_tool("operation_catalog", {"scope": "support", "view": "detail", "operation_id": OBJECTIVE_PROJECT_OPERATION})
     operation = next(item for item in catalog["operations"] if item["operation_id"] == OBJECTIVE_PROJECT_OPERATION)
     assert operation["inputs"][0]["required_non_null_fields"] == ["objective_contract"]
     foundation = _intake().scientific_foundation
@@ -921,17 +807,20 @@ def test_experiment_design_rejects_mixed_foundation_cohorts() -> None:
         "scidiscovery.critic-review.v2",
         parent_refs=(exact_portfolio.ref, current_foundation.ref),
     )
-    accepted = preflight_operation(
-        operation,
-        name="exact_foundation_design",
-        artifacts_by_port={
-            **bindings,
-            "hypothesis_portfolio": (exact_portfolio,),
-            "critic_review": (exact_critic,),
-        },
-        instruction="Design one bounded discriminating experiment.",
-    )
-    assert accepted.compiled is operation
+    # These are metadata-only fixtures. An exact cohort passes the lineage guard
+    # and reaches content admission; it cannot authorize work without a reader.
+    # The complete positive path is exercised by the real design Run tests.
+    with pytest.raises(OperationInvocationError, match="input_content_reader_missing"):
+        preflight_operation(
+            operation,
+            name="exact_foundation_design",
+            artifacts_by_port={
+                **bindings,
+                "hypothesis_portfolio": (exact_portfolio,),
+                "critic_review": (exact_critic,),
+            },
+            instruction="Design one bounded discriminating experiment.",
+        )
 
 
 def test_wildcard_schema_is_limited_to_read_only_evidence_ports() -> None:

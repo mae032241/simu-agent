@@ -1,5 +1,7 @@
 # Frozen Sentaurus independent-review contract
 
+For a skeleton project, one review jointly judges scientific adequacy, implementation and development evidence. A passing result requires scientific_assessment=pass, with reasons and limitations in existing rationale/findings. Faithfully implementing contradictory requirements is grounds for a bounded scientific correction. Earlier design review grants no implementation or execution approval.
+
 Reconstruct the direct solver invocation and match the solver to its entrypoint
 language. Resolve every native include/input, trace every case-varying value to
 effective source, and trace every declared raw output to a solver statement.

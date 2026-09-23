@@ -55,6 +55,17 @@ without a duplicate case-role label. Compact intent can omit that key when
 exactly one declared baseline/control supplies it; ambiguity remains a located
 missing input. Unknown cases and contradictory variable values remain errors.
 
+Legacy detailed experiment-design output contracts require `validation_intent`; the obsolete
+`validation_plan` branch and its exclusive definitions are not shown to authors.
+Historical intents use a dedicated input reader at the existing materialization
+boundary, preserving the original exclusive-choice and experiment-identity checks.
+Reading compatibility neither rewrites old artifacts nor renews qualification.
+Reader and writer share the current scientific fields and constraints; the output
+Schema and submission model come from the same definition.
+The precomputed curve-diagnosis writer declares an empty calculation-record tuple;
+its Schema therefore omits unreachable calculation-record definitions. General
+analysis and historical readers retain their existing record support.
+
 ## 2. Registration, compilation, and catalog views
 
 Scientific actions have one entry-point group, `scidiscovery.plugins`. Each entry returns
@@ -113,7 +124,8 @@ one catalog, not separate registries:
 Domain artifact kinds are format-constrained plugin identifiers, not core-owned
 domain enums. Structured Worker findings and suggested next actions are sealed
 scientific results, not scheduling commands. The scheduler selects an exact
-Operation from the compiled catalog and unified preflight decides executability.
+Operation from the compiled catalog; invoke checks admission before creation.
+Preflight is an optional check without creation, not an authorization or reservation.
 
 ## 3. Scheduler and Operations
 
@@ -121,8 +133,9 @@ The interactive Root Agent reads immutable scientific inputs, the compiled
 catalog, and bounded readiness advice. It selects the shortest defensible
 public Operation from the current contradiction. Dependencies express
 admission requirements, not a fixed stage DAG. Root binds instance-scoped
-semantic Artifact names and calls the same `operation_preflight` used for
-identity, qualification, review, budget, and side-effect gates.
+semantic Artifact names and calls `operation_invoke` directly. Control enforces
+identity, qualification, review, budget, and side-effect gates before creation;
+`operation_preflight` remains an optional read-only check of the same request.
 
 A Worker does not emit an authoritative successor Operation name. The scheduler
 may reason over sealed verdicts, domain dispositions, missing inputs, and
@@ -141,7 +154,7 @@ cannot reconstruct an earlier failed source. Diagnostic excerpts retain their
 existing truncation bounds; the gap still obeys the Operation output byte limit.
 The trusted-local Worker router can claim a new queued Run of the same compiled
 Operation after its previous Run terminates, clearing all per-Run tool state.
-Codex may reuse an idle matching Agent; different compiled roles, catalog
+Codex may reuse an idle matching Agent; different Operation IDs or compiled digests, catalog
 generations and independent review of its own work require a fresh Agent.
 Agent memory grants no permission to access old workspaces or use unbound facts.
 
@@ -155,10 +168,20 @@ ranges; captured logs travel with implementation gaps. Replies remain short and
 debug time budgets are unchanged. Launcher, transport and PDF failure diagnostics
 are retained in their existing run/result directories. This is file-based reading,
 not a new logging service or a grant to read unbound historical workspaces.
-A completed Run's `run_status` includes its validated sealed scientific payload
-by default. `output_paths=[]` returns status, exact bindings, signal and output metadata
-without reading the payload. Explicit payload JSON Pointers return exact values in
+A completed Run's default `run_status` provides a bounded summary excerpt;
+`view=detail` with omitted `output_paths` returns the complete sealed original. `output_paths=[]` returns status, exact bindings, signal and output metadata
+without reading the payload. This default `compat` profile preserves existing clients.
+An explicit request-time profile avoids assembling unrelated context: `poll` requires
+an empty values selection, `navigation` returns a bounded index without signal text,
+and `decision` returns requested exact values and the signal only after completion.
+Compact failed responses retain exact safe diagnostics and a mechanical recovery-gate
+projection; full bindings, native/tool records and recovery detail remain available
+through the compatibility detail path. Explicit payload JSON Pointers return exact values in
 `selected_output`, never a partial `sealed_output`: up to 8 paths and 32 KiB of values.
+Pointers start inside the payload: `/summary`, not `/payload/summary`. An empty
+pointer selects the whole payload; `/` selects an empty key. A `selected` value
+is exact and can be used directly, including when it is the whole payload; only
+unread information needed for a decision requires another fetch.
 Oversized subtrees have bounded direct-child navigation (32 entries, 8 KiB total);
 missing, null and omitted values remain distinct. Full reading is always available
 by omitting the parameter. Signal availability is independent of payload delivery.
@@ -256,7 +279,11 @@ checks those statements with the sealed project. Comments are not execution proo
 
 `LayeredDiagnosisReport` concentrates conclusions in `summary` and `overall_verdict`,
 with evidence and optional `limitations`. Its complete legacy `gates` object,
-remaining contradiction, next action and additional assessments are optional.
+remaining contradiction, next action and hypothesis assessments are optional. For
+new outputs of the supported generic, fixed curve-error and TCAD analysis producer
+versions, an exact scoped plan with a non-null `objective_key` requires the existing
+`objective_assessment`; a null key keeps it optional and does not authorize inventing
+one. This is a producer context rule, not a v1 reader or prior-admission migration.
 `claim_allowed` remains an explicit scientific judgment; absent numerical gates
 project to `not_evaluable`. For these analysis reports, the existing finalizer
 creates handoff verdict and a short reference to the formal summary before sealing.
@@ -264,6 +291,10 @@ The workspace `patch_contract` declares draft omissions; Root reads the sealed
 payload and scheduler signal together. TCAD, generic and fixed curve-error analysis
 share this behavior on their supported local backend. Old Artifact bytes remain
 unchanged; these reading and delivery changes do not add a scoring prerequisite.
+The scheduler distinguishes the completed Run's scope and sealed facts from its own
+value judgment under user cost constraints. Reported next actions remain advice, not
+catalog authority; stopping further work does not rewrite an inconclusive or invalid
+study into physical refutation and requires no persistent route state.
 
 ScientificReview, DeckReviewReport and ImplementationGap also author their formal
 summary once. Their finalizers fill omitted handoff verdict/summary, retaining explicit
@@ -282,6 +313,11 @@ causes an explicit error. The query neither writes state nor recursively searche
 history. A new scheduler follows plan revisions to the materialized plan's typed
 parents to recover its original objective, then explicitly binds relevant context
 to the next Worker. This continuation path adds no progress object or stage machine.
+The `producer_inputs` view first projects one immediate producer's frozen port/item
+mapping and exact refs from the same producer-family record used by admission. It
+does not recurse or select replacements. Historical, cross-instance, unavailable
+and ambiguous producers remain explicit and carry a `parents` fallback; frozen names
+outside the current instance are not exposed.
 
 Behavior is created through `operation_invoke`. The TCAD plugin
 registers the device-parameter schemas, extraction/audit Agents, deterministic
@@ -411,14 +447,23 @@ declarations. The former structured-patch Artifact, patch-application
 Operation, diff receipt, retired Task projection, and recursive Root family
 remain deleted.
 
-There is one explicit prototype limitation. Codex may expose parent-visible
-Worker MCP servers to spawned Agents. The compiled prompt names allowed and
-forbidden domain tools and server-side handlers reject undeclared domain tools,
-but native file capabilities follow the soft-isolation contract rather than a
-platform-enforced isolation guarantee.
-Documentation and qualification reports must not overstate this prompt
-constraint as a sandbox fact.
+Codex registers one `scidiscovery` MCP exposing `scid_catalog`, `scid_describe`
+and `scid_call`. Discovery returns names and purposes; selected contracts are
+read on demand and calls delegate to the existing Root/Worker handlers. Operation
+describe defaults to the compatible full contract and also exposes an `invoke` view
+projected from that same compiled item. It retains digest, complete input/admission,
+review, revision, attempts and runtime applicability while omitting executor details
+that cannot change a legal call. Interface describe remains full-only.
+After spawning, Root uses `worker_attach` to bind the returned child thread ID
+to the exact queued Run, then asks the child to begin. Server routing consumes
+platform session/thread metadata, not a caller-selected role or Run.
+Bindings live in the Run database and follow instance archival. Thread reuse
+requires the same compiled Operation, model and reasoning effort for the new Run.
+Native files, shell and Skills retain their existing soft-isolation limits;
+this is not a security boundary against a hostile user sharing the OS account.
 The only connected dispatch path is currently `spawn_agent`.
+The legacy `run_compiled_codex_worker.py` direct-CLI probe explicitly rejects
+new unified profiles; it is not a production dispatch path.
 The dormant process-isolation base and its focused tests now live under
 `experiments/worker_process_v2/` and are not packaged as product code. Their
 results are not production-isolation proof.
@@ -604,12 +649,122 @@ append-only triggers; the maintenance journal is not disposable UI cache. See th
 [implementation record](plans/evidence/instance-workbench/IMPLEMENTATION.zh-CN.md)
 for scope, failure evidence and deployment limits.
 
+## Native capability profiles and external evidence
+
+Root startup instructions come from `roles/scheduler.md`: core authority, approval,
+binding and bounded-reading rules plus a conditional reading index. Detailed guides
+in `roles/scheduler/` ship in the wheel and install under `.codex/scidiscovery-guides/`;
+the generated prompt records their absolute directory. Root reads the relevant guide
+before its action and refreshes after deployment. Guides are not additional roles,
+tools or routing authority, and are not appended to catalog/describe responses.
+They do not change Worker instructions or scientific admission. Installation preserves
+unmanaged project prose and verifies guide availability in each generated profile.
+
+Local workspaces include the read-only `tools/read_tool_contract.py`. It reads only
+the frozen assignment's tool contracts. The reader owns a disposable scratch receipt
+of its last complete response; callers supply only the tool name. Related reads can
+return a lossless JSON Patch against that full response, never another patch.
+Changed assignment/workspace/contracts, missing or stale receipts and larger patches
+fall back to full text. Use `--full` after context loss: a delivery receipt cannot
+prove the model still retains the base. Receipt failures do not reject scientific work.
+This adds no MCP capability, contract registry, scientific state or authority, and
+changes no executable schema or scientific output. Old workspaces retain direct
+reading; Hardened permissions do not gain native execution.
+
+Local workspaces also provide `tools/read_output_schema.py`, a read-only view of
+`schema/result.schema.json`. It retains envelope/payload structure and all shared
+rules, expands required references and selected `--field` closures, and lists exact
+pointers for unexpanded definitions. `--definitions-only` supplements a retained
+current overview; `--full` returns the original. This view is not a validation schema.
+Nested resource IDs and recursive local references are resolved against that same
+file; unsupported/dynamic/external references fall back to full reading, with an
+explicit reason. The CLI keeps disposable schema-reading metadata under `.read-input/` to avoid
+repeating the overview and shared definitions; repeated `--field` options are merged.
+Later reads supplement retained sections, while `--full` restores originals after a
+lost reply or context loss. Missing/corrupt/unwritable caches fall back to a complete
+required view. The cache is not scientific state or proof of memory. Schema refreshes
+are read on every call. Unsupported envelope shapes and old workspaces retain full reading.
+The submit validator and all scientific fields remain unchanged.
+
+Local workspaces also install `tools/read_input.py` for exact text/JSON-pointer
+reading with a 4 KiB default and 8 KiB maximum complete reply. Callers select a
+bound source alias or unique input port, optionally repeated `--pointer` fields;
+`--file` selects explicit task-local files such as assignment or schema. Replies
+contain exact text and short end/continuation markers, not escaped fragment wrappers,
+paths, hashes or offsets. Numeric lexemes remain exact; fragments are not complete JSON.
+Installed input/schema readers alone maintain disposable reading metadata under `.read-input/`,
+outside output/scratch recovery scanning; other helper caches remain in scratch.
+After specifying a selection, bare `--next`, `--repeat` and `--restart` reuse its
+file/alias mode, pointers and budget. Explicit reads switch the current selection;
+failed reads do not. Use `--repeat` for an uncertain latest reply or `--restart`
+when earlier material is missing; missing navigation requires an explicit selection. Locks protect cache
+updates, not delivery order or proof of reading. The cache does not cross Runs or
+become scientific state. It detects changes since that selection's first read,
+not mismatches against a sealed-input hash; control retains input binding/initialization.
+Old workspaces receive a targeted direct-reading hint without rewriting frozen helpers.
+This helper neither limits arbitrary native shell output nor adds submission gates.
+Analysis launchers default to a short observation with retained log paths; explicit
+`--display raw` preserves stdout data consumers, and native inherit policy keeps
+its raw default. Capture remains bounded separately from display. Recovery status
+summarizes coverage and omission counts; `run_status(view="detail", output_paths=[])`
+retains the original omission list.
+
+Codex platform roles group identical declared `NativeToolPolicy` values (shell,
+image viewing, web search). Scientific Operations retain their identities and
+contracts. The generated role is a lifecycle bootstrap; each assignment provides
+its compiled `role_instructions`, including on Agent reuse. Control checks matching
+Operation/compiled digest/frozen profile at attachment and actual model/effort at
+the Worker gateway; the Agent does not compare role hashes. Local open derives
+`reading_guidance` from the preceding thread binding and actual old/new role, schema
+and tool-contract bytes, without a new registry. It identifies unchanged contracts
+for reuse only while retained; unavailable originals require reading. Dynamic schema
+changes are compared separately from compiled identity. Control-admitted reuse
+also receives input equivalence derived from persisted immutable bindings and usage
+descriptors: unchanged, changed, new or unknown, with aliases only. This is navigation,
+not a reading ledger or memory claim; incomplete history falls back to unknown.
+Reassessment may reuse retained originals, with targeted rereading for missing context
+or scientific verification. Exact originals and the overall objective remain available.
+No submission gate depends on these hints. Control-admitted reuse
+permits skipping reprinting only while complete instructions remain in context;
+first use, uncertain continuity or context loss requires reading. Each new task, objective/input binding,
+language and budget must still be read. Worker MCP capabilities
+still come only from the attached Operation. A shared platform role does not permit
+cross-Operation reuse or independent review of that Agent's own work. Installation
+removes obsolete managed role files without rewriting historical Runs or Artifacts.
+
+`science.evidence.extract.v1` declares live native web discovery and the optional
+`worker_capture_source` capability. Captured public HTTPS originals enter the existing
+tool-evidence store with automatic aliases, URL and retrieval time. They are external
+sources, not derived simulation results. The source manifest and exact originals may
+be bound to intake audit and bounded revision. Discovery snippets are not preserved
+scientific evidence; unavailable sources limit the claim. Existing fixed-source
+extraction and review Operations do not gain search permission implicitly.
+
+Capture limits are eight originals, 16 MiB per original, and 24 HTTP requests per Run
+including redirects. Transfers, DNS and redirects are bounded; failed attempts retain
+engineering diagnostics. Native web discovery remains governed by the Run budget and
+platform policy, not this HTTP counter. Trusted-local filesystem restrictions remain
+prompt boundaries; native profiles do not create an additional OS sandbox.
+
 ## Execution preferences and scientific contracts
 
 Global defaults are loaded once at service startup; sparse instance overrides live on scheduler instance rows. One resolver merges instance Operation overrides, instance defaults, global Operation overrides, global defaults, then Operation compatibility defaults. Narrative language is instance-wide. There is no second model registry or automatic model fallback.
 
-Preflight produces a complete `normalized_request`. Each new Run freezes model, reasoning effort and narrative language; behavior values participate in request identity while source annotations do not. Scheduler dispatch, Worker assignment and UI project that snapshot. Submission never rereads current preferences. Language affects newly authored prose only, preserving identifiers, code, units, quotations and required exact copies; output validation does not enforce language. Existing recovery policy remains the attempt authority: explicit values win, recovery inherits its saved scheduler budget, and new instance defaults do not extend a chain automatically.
+Invoke resolves and freezes configuration during creation. Optional preflight produces a complete `normalized_request` that callers can reuse unchanged; it does not reserve dynamic admission conditions. Each new Run freezes model, reasoning effort and narrative language; behavior values participate in request identity while source annotations do not. Scheduler dispatch, Worker assignment and UI project that snapshot. Submission never rereads current preferences. Language affects newly authored prose only, preserving identifiers, code, units, quotations and required exact copies; output validation does not enforce language. Existing recovery policy remains the attempt authority: explicit values win, recovery inherits its saved scheduler budget, and new instance defaults do not extend a chain automatically.
 
-`ExecutorRef.model` and permission model retain their legacy compiled-digest role as compatibility defaults. Runtime overrides never recompile scientific Operations. Generated Codex roles omit fixed model/effort; dispatch supplies both explicitly. Agent reuse requires the same compiled role and known matching actual model/effort, while preserving independent-review rules. New assignments supply language. Unknown configuration is not a match; interruption is not closure.
+`ExecutorRef.model` and permission model retain their legacy compiled-digest role as compatibility defaults. Runtime overrides never recompile scientific Operations. Generated Codex roles omit fixed model/effort; dispatch supplies both explicitly. Agent reuse requires the same Operation ID and compiled digest, compatible native profile, and known matching actual model/effort, while preserving independent-review rules. New assignments supply language. Unknown configuration is not a match; interruption is not closure.
 
 Only four additive columns are introduced: `scheduler_instances.agent_settings_json`, `agent_settings_revision`, `agent_settings_updated_at`, and `runs.execution_profile_json`. Historical NULL means unrecorded. Legacy archive bytes remain immutable. Restore projects exactly these installation ALTER definitions, using fixed NULL/0 for absent values, through preview, transactional import and interrupted completion. Unrelated schema/index/trigger or record conflicts remain rejected. Cache cleanup does not remove execution settings. No new scientific artifact, state machine, translation role or model-specific role pool is introduced.
+
+For new supported SProcess studies, `science.experiment.skeleton.v1` delivers scientific
+comparisons, criteria and frozen conditions without mandatory engineering cases. The
+author writes a concrete `ExperimentPortfolio` inside the sole project output and
+performs authorized development validation. `tcad.execution-plan.project.v1` extracts
+that same plan unchanged for downstream ports; it grants no qualification. An optional
+early skeleton review does not replace the independent comprehensive project review.
+Packaging and TCAD analysis bind the exact project, projected plan, skeleton and
+comprehensive review. Legacy detailed plans retain their separate scientific review
+witness; legacy SDevice and other plugins keep their existing contracts. Production
+approval and execution permissions are unchanged. Scientific semantic conflicts are
+resolved before repeated implementation searches; equivalent local engineering choices
+remain with the author. Fixture checks do not establish model behavior or token savings.

@@ -33,12 +33,24 @@ def submit_compact(worker, opened, payload):
     start = json.loads(Path(opened['start_here_path']).read_bytes())
     assert start['guidance'] == GUIDANCE
     assert domain['patch_contract']['instruction'] == REPORT_GUIDANCE
+    assert 'objective_key is non-null' in REPORT_GUIDANCE
+    assert 'no key may be invented' in REPORT_GUIDANCE
+    assert 'non-authoritative Worker advice' in REPORT_GUIDANCE
     profile = tomllib.loads(_operation_toml(worker.compiled, python=Path(sys.executable),
         python_path=None, state_root=Path(opened['workspace_path']),
         local_workspace_root=Path(opened['workspace_path']), worker_backend='local'))
     prompt = profile['developer_instructions']
     assert GUIDANCE not in prompt and REPORT_GUIDANCE not in prompt
-    assert 'analysis-start.json' in prompt and '/patch_contract' in prompt
+    role = json.loads(Path(opened['assignment_path']).read_bytes())['role_instructions']
+    assert 'role_instructions' in prompt
+    assert 'analysis-start.json' in role and '/patch_contract' in role
+    tool_names = {item['name'] for item in worker.list_tools()}
+    if 'worker_analysis_publish_files' in tool_names:
+        assert 'reference/candidate\noverlay PNG by default' in role
+        assert 'Axes must state\nunits' in role and 'returned image evidence alias' in role
+    else:
+        assert 'reference/candidate\noverlay PNG by default' not in role
+        assert 'returned image evidence alias' not in role
     assert domain['patch_contract']['draft_may_omit'] == ['/handoff']
     Path(opened['output_directory'], 'result.json').write_bytes(canonical_json(
         dict(schema_version=1, payload=payload)))
@@ -64,6 +76,7 @@ def test_tcad_compact_report_seals_and_preserves_scientific_claim(tmp_path, verd
     handoff = status['scheduler_signal']
     assert handoff['verdict'] == {'fail': 'blocked', 'invalid_study': 'blocked'}.get(verdict, verdict)
     assert 'payload.summary' in handoff['summary']
+    assert 'run_status.' not in handoff['summary']
     assert len(handoff['summary']) < 256 < len(report.summary)
     # Reuse both compact history and its precise receipts, without rewriting the old Artifact.
     request = deepcopy(system[3]); request['name'] = 'next_analysis'
@@ -98,7 +111,10 @@ def test_handoff_normalizes_only_duplicate_fields_and_unknown_claims_still_fail(
     from scidiscovery.artifact_agent.service.result_materialization import materialize_general_result
     value = dict(payload=compact_report(verdict='fail'), handoff=dict(verdict='pass', summary='Old copy',
         missing_inputs=['Separate input note'], assumptions=['Conditional premise'], next_actions=['Historical extra']))
+    original_payload = deepcopy(value['payload'])
     materialize_general_result(value, 'scidiscovery.layered-diagnosis.v1')
+    assert value['payload'] == original_payload
+    assert 'run_status.' not in value['handoff']['summary']
     assert value['handoff']['verdict'] == 'blocked'
     assert value['handoff']['missing_inputs'] == ['Separate input note']
     assert value['handoff']['assumptions'] == ['Conditional premise']

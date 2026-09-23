@@ -3,10 +3,65 @@
 from __future__ import annotations
 
 import json
+from itertools import islice
 from typing import Any
 
 from ..schema.approval import parse_json_pointer
 from ..schema.common import canonical_json
+from .mcp_response_views import validate_run_status_profile
+from .mcp_root_shared import RootToolError
+
+
+def _pointer_value(value: Any, pointer: str) -> Any:
+    for token in parse_json_pointer(pointer):
+        if isinstance(value, dict):
+            value = value[token]
+        elif isinstance(value, list) and (token == "0" or (
+            token.isascii() and token.isdigit() and not token.startswith("0")
+        )):
+            value = value[int(token)]
+        else:
+            raise KeyError(token)
+    return value
+
+
+def _output_index(output: dict[str, Any], pointer: str, offset: int, limit: int) -> dict[str, Any]:
+    """Bound the whole directory, including origin and pointer, without scientific values."""
+    budget = 8 * 1024
+    result = {key: output[key] for key in ("artifact_name", "kind", "schema")}
+    result.update(pointer=pointer, status="available", children=[], total_children=0, next_offset=None)
+    if len(canonical_json(result)) > budget:
+        raise RootToolError("output index metadata exceeds 8192 bytes; select a shorter ancestor path")
+    try:
+        value = _pointer_value(output["payload"], pointer)
+    except (KeyError, IndexError, ValueError):
+        result["status"] = "missing"
+        return result
+    def metadata(value):
+        kind = ("null" if value is None else "boolean" if isinstance(value, bool)
+            else "object" if isinstance(value, dict) else "array" if isinstance(value, list)
+            else "string" if isinstance(value, str) else "number")
+        return {"type": kind, "size_bytes": len(canonical_json(value))}
+    result.update(metadata(value))
+    total = len(value) if isinstance(value, (dict, list)) else 0
+    result["total_children"] = total
+    if len(canonical_json(result)) > budget:
+        raise RootToolError("output index metadata exceeds 8192 bytes; select a shorter ancestor path")
+    if offset > total:
+        raise RootToolError(f"index_offset {offset} exceeds total_children {total}")
+    candidates = value.items() if isinstance(value, dict) else enumerate(value) if isinstance(value, list) else ()
+    for position, (key, child) in enumerate(islice(candidates, offset, offset + limit), offset):
+        child_pointer = pointer + "/" + str(key).replace("~", "~0").replace("/", "~1")
+        entry = {"pointer": child_pointer, **metadata(child)}
+        result["children"].append(entry)
+        result["next_offset"] = position + 1 if position + 1 < total else None
+        if len(canonical_json(result)) > budget:
+            result["children"].pop()
+            if not result["children"]:
+                raise RootToolError(f"output index entry at offset {position} exceeds 8192 bytes; read this parent in values mode")
+            result["next_offset"] = position
+            break
+    return result
 
 
 def _output_selection(output: dict[str, Any], pointers: list[str]) -> dict[str, Any]:
@@ -17,15 +72,7 @@ def _output_selection(output: dict[str, Any], pointers: list[str]) -> dict[str, 
     for pointer in pointers:
         value = output["payload"]
         try:
-            for token in parse_json_pointer(pointer):
-                if isinstance(value, dict):
-                    value = value[token]
-                elif isinstance(value, list) and (token == "0" or (
-                    token.isascii() and token.isdigit() and not token.startswith("0")
-                )):
-                    value = value[int(token)]
-                else:
-                    raise KeyError(token)
+            value = _pointer_value(value, pointer)
         except (KeyError, IndexError, ValueError):
             items.append({"pointer": pointer, "status": "missing"})
             continue
@@ -80,10 +127,29 @@ class RootRunRoutes:
 
     def run_status(self, *, name: str, diagnostic_after: int | None = None,
                    diagnostic_limit: int = 50,
-                   output_paths: list[str] | None = None) -> dict[str, Any]:
+                   output_paths: list[str] | None = None, output_mode: str = "values",
+                   index_offset: int = 0, index_limit: int = 16,
+                   response_profile: str = "compat") -> dict[str, Any]:
         if self.runs is None:
             raise RuntimeError("minimal Run service is unavailable")
+        validate_run_status_profile(
+            response_profile=response_profile,
+            view="summary",
+            output_mode=output_mode,
+            output_paths=output_paths,
+        )
         value = self.runs.status(self._resolve("run", name))
+        if response_profile != "compat":
+            return self._compact_run_status(
+                name=name,
+                value=value,
+                response_profile=response_profile,
+                diagnostic_after=diagnostic_after,
+                diagnostic_limit=diagnostic_limit,
+                output_paths=output_paths,
+                index_offset=index_offset,
+                index_limit=index_limit,
+            )
         result = self._run_status_value(name, value)
         if diagnostic_after is not None:
             result["diagnostic_events"] = self.runs.diagnostic_events(
@@ -111,8 +177,13 @@ class RootRunRoutes:
                 iter(reversed(native.get("recent_errors", []))), None)
         output_status, output = self._sealed_output(value, include_payload=output_paths != [])
         result["sealed_output_status"] = output_status
-        result["sealed_output"] = output if output_paths is None else None
-        if output_paths is not None:
+        result["sealed_output"] = output if output_paths is None and output_mode == "values" else None
+        if output_mode == "index":
+            result["output_delivery"] = "index"
+            result["output_index"] = (
+                _output_index(output, (output_paths or [""])[0], index_offset, index_limit)
+                if output is not None else None)
+        elif output_paths is not None:
             result["output_delivery"] = "selected" if output_paths else "omitted"
             result["output_metadata"] = (
                 {key: output[key] for key in ("artifact_name", "kind", "schema")}
@@ -132,6 +203,101 @@ class RootRunRoutes:
         evidence = self.runs.evidence_output_refs(value)
         if evidence:
             result["evidence_outputs"] = [{"artifact_name": value.output_binding_name+"."+alias, "schema": ref.schema_id} for alias, ref in evidence]
+        return result
+
+    def _compact_run_status(
+        self,
+        *,
+        name: str,
+        value: Any,
+        response_profile: str,
+        diagnostic_after: int | None,
+        diagnostic_limit: int,
+        output_paths: list[str] | None,
+        index_offset: int,
+        index_limit: int,
+    ) -> dict[str, Any]:
+        include_payload = response_profile in {"navigation", "decision"}
+        output_status, output = self._sealed_output(value, include_payload=include_payload)
+        recovery = (
+            self.runs.compact_recovery_status(value)
+            if value.state == "failed"
+            else None
+        )
+        try:
+            compiled = self._operation_catalog.operation(value.operation_id)
+        except KeyError:
+            contract_status = "historical"
+        else:
+            contract_status = (
+                "current"
+                if compiled.spec.version == value.operation_version
+                and compiled.digest == value.operation_digest
+                else "historical"
+            )
+        result = {
+            "name": name,
+            "operation_id": value.operation_id,
+            "operation_version": value.operation_version,
+            "operation_digest": value.operation_digest,
+            "operation_contract_status": contract_status,
+            "state": value.state,
+            "reason": value.reason,
+            "created_at": value.created_at,
+            "started_at": value.started_at,
+            "deadline_at": value.deadline_at,
+            "completed_at": value.completed_at,
+            "last_activity_at": value.last_activity_at,
+            "recovery_available": (
+                recovery["resume_available"]
+                if recovery is not None
+                else self.runs.recovery_available(value)
+            ),
+            "sealed_output_status": output_status,
+            "scheduler_signal_status": (
+                "available"
+                if output is not None and value.signal is not None
+                else "unavailable"
+            ),
+        }
+        if value.state != "completed":
+            result["diagnostic_summary"] = self.runs.diagnostic_summary(value)
+        if recovery is not None:
+            result["compact_recovery_status"] = recovery
+        if diagnostic_after is not None:
+            result["diagnostic_events"] = self.runs.diagnostic_events(
+                value, after=diagnostic_after, limit=diagnostic_limit
+            )
+        if response_profile == "navigation":
+            result["output_delivery"] = "index"
+            result["output_index"] = (
+                _output_index(
+                    output,
+                    (output_paths or [""])[0],
+                    index_offset,
+                    index_limit,
+                )
+                if output is not None
+                else None
+            )
+        elif response_profile == "decision" and value.state == "completed":
+            result["output_delivery"] = "selected"
+            result["output_metadata"] = (
+                {key: output[key] for key in ("artifact_name", "kind", "schema")}
+                if output is not None
+                else None
+            )
+            result["selected_output"] = (
+                _output_selection(output, output_paths or [])
+                if output is not None
+                else None
+            )
+            result["scheduler_signal"] = (
+                value.signal.model_dump(mode="json")
+                if output_status in {"available", "historical"}
+                and value.signal is not None
+                else None
+            )
         return result
 
     def run_record_failure(

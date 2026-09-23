@@ -2,6 +2,7 @@
 from copy import deepcopy
 from decimal import Decimal
 import json
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -140,7 +141,7 @@ def test_curve_labels_do_not_block_valid_operator_or_its_sealed_result(tmp_path,
     record = worker.call_tool('worker_tcad_curve_score', {'record_key': 'local_crossing', 'request': request})
     assert record['status'] == 'computed', record
     report = analysis_report()
-    report['calculation_records'] = [record]
+    report['calculation_records'] = [json.loads(Path(record['calculation_path']).read_bytes())]
     write_analysis(opened, report)
     result = worker.call_tool('worker_submit_result', {})
     assert result['state'] == 'completed', result

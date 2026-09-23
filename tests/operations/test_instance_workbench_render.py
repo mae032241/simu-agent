@@ -72,6 +72,24 @@ def test_workbench_has_separate_branches_exact_goals_and_native_pagination() -> 
     assert "工作台导航" in page
 
 
+def test_numbered_trajectory_shows_every_card_and_preserves_selected_node() -> None:
+    overview = _overview()
+    overview["trajectory"] = {"items": [_metadata("run", f"step-{i}", "completed") for i in range(10)],
+                              "page": 4, "total_pages": 20, "total": 195, "page_size": 10}
+    overview["navigation_query"] = {"node": "run:branch-a"}
+    page = render_workbench(overview, browse_base="/instance/instance-a", csrf_token="csrf").decode()
+    trajectory = page.split("id='trajectory'", 1)[1].split("</section>", 1)[0]
+    assert trajectory.count("class='trajectory-node") == 10
+    assert "step-9" in trajectory and "第 4 / 20 页 · 共 195 个节点" in trajectory
+    for number in (1, 3, 5, 20):
+        assert f"node=run%3Abranch-a&amp;page={number}#trajectory" in trajectory
+    assert "aria-current='page'>4" in trajectory
+    assert "name='page' min='1' max='20'" in trajectory
+    assert "name='node' value='run:branch-a'" in trajectory
+    assert "method='get'" in trajectory
+    assert "node=run%3Abranch-a&amp;page=4' data-workbench-refresh" in page
+
+
 def test_closed_or_empty_instance_does_not_invent_scientific_objective() -> None:
     overview = _overview()
     overview.update(objective_refs=[], active_tasks=[], presentation=None, display_node=None)

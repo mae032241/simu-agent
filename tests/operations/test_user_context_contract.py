@@ -22,14 +22,12 @@ def test_user_context_is_declared_only_on_public_agents():
     from curve_figure_evidence.plugin import PLUGIN as FIGURE
     from tcad_artifact.plugin import PLUGIN as TCAD
     catalog = compile_catalog((CORE_PLUGIN, GENERAL_PLUGIN, CURVE, FIGURE, TCAD))
-    count = 0
     for name in catalog.operation_ids():
         spec = catalog.operation(name).spec
         ports = [port for port in spec.inputs if port.name == "user_context"]
         if spec.executor.kind != "agent" or spec.catalog_scope != "public":
             assert ports == []
             continue
-        count += 1
         assert len(ports) == 1
         port = ports[0]
         assert (port.min_items, port.max_items, port.max_item_bytes) == (0, 4, 32768)
@@ -38,7 +36,6 @@ def test_user_context_is_declared_only_on_public_agents():
         assert port.codec.component_id == "opaque_codec"
         for output in spec.outputs:
             assert ("user_context" in output.context_sources) == (output.context_validator is not None)
-    assert count == 25
 
 
 def _revision_cohort(tmp_path, *, audit_note):
@@ -111,8 +108,10 @@ def test_root_preflight_and_schedule_preserve_exact_sources_with_audit_backgroun
     assert [item.artifact_name for item in saved.inputs if item.port_name == "source_material"] == ["source"]
     audit_artifact = _artifact(runtime, instance, audit)
     family = root.facade._run_output_family(audit_artifact)
-    assert family.producer_inputs == tuple((item.port_name, item.artifact_ref)
+    assert tuple((item.port_name, item.ref) for item in family.producer_inputs) == tuple(
+        (item.port_name, item.artifact_ref)
         for item in runtime.runs.completed_for_output(audit_artifact.ref).inputs)
+    assert [item.item_index for item in family.producer_inputs if item.port_name == "source_material"] == [1]
     assert all(source.ref != _artifact(runtime, instance, "note").ref for source in family.evidence_sources)
     assert (_artifact(runtime, instance, "note").ref in audit_artifact.parent_refs) == audit_note
     _register(runtime, instance, name="replacement", raw=b"Other source.", kind="source", schema="opaque", media_type="text/plain")

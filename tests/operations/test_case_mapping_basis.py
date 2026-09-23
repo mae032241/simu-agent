@@ -1,5 +1,6 @@
 """Conditional case correspondence is a report claim, not mutable file metadata."""
 import json
+from pathlib import Path
 import pytest
 
 from scidiscovery.artifact_agent.interfaces.mcp import MCPRouter
@@ -22,8 +23,9 @@ def test_undeclared_case_records_mapping_once_without_submit_replay(tmp_path, mo
     request['sources'][0]['case_mapping_basis'] = basis
     reply = score(request)
     assert 'result' in reply, reply
-    record = reply['result']['structuredContent']
-    assert record['status'] == 'computed', record
+    summary = reply['result']['structuredContent']
+    assert summary['status'] == 'computed', summary
+    record = json.loads(Path(summary['calculation_path']).read_text())
     report = analysis_report(alias='solver_outputs_001', output_name='A', mapped=True)
     report['calculation_records'] = [record]
     report['evidence'].append(dict(source_key='independent_calculation_evidence',

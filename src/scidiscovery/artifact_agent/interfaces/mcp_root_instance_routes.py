@@ -285,11 +285,31 @@ class RootInstanceRoutes:
                 binding = self._binding("artifact", target.name)
         return {**self._binding_value(binding), "state": "bound"}
 
-    def artifact_catalog(self, *, name: str) -> dict[str, Any]:
+    def artifact_catalog(self, *, name: str, view: str = "detail",
+                         parent_offset: int = 0, parent_limit: int = 16) -> dict[str, Any]:
         binding = self._binding("artifact", name)
         envelope = self.artifacts.get_by_id(binding.object_id)
         if len(envelope.parent_refs) > 4096:
             raise RootToolError("artifact_catalog direct parent limit exceeded (4096)")
+        metadata = {
+            **self._binding_value(binding), "kind": envelope.kind, "schema": envelope.schema_id,
+            "payload_schema_version": envelope.payload_schema_version, "media_type": envelope.media_type,
+            "size_bytes": envelope.size_bytes,
+        }
+        if view == "producer_inputs":
+            return self._producer_inputs_catalog(
+                name=name,
+                envelope=envelope,
+                offset=parent_offset,
+                limit=parent_limit,
+            )
+        total = len(envelope.parent_refs)
+        if view == "summary":
+            return {**metadata, "parent_count": total}
+        if view == "parents" and parent_offset > total:
+            raise RootToolError(f"parent_offset {parent_offset} exceeds parent_count {total}")
+        refs = (envelope.parent_refs[parent_offset:parent_offset + parent_limit]
+                if view == "parents" else envelope.parent_refs)
         instance_id = self._instance_id()
         parent_artifact_names = [
             self.bindings.find_name(
@@ -297,7 +317,7 @@ class RootInstanceRoutes:
                 namespace="artifact",
                 object_id=parent.artifact_id,
             )
-            for parent in envelope.parent_refs
+            for parent in refs
         ]
         labels = {
             key: value
@@ -305,13 +325,20 @@ class RootInstanceRoutes:
             if not _identity_word(key)
         }
         parents = []
-        for parent, parent_name in zip(envelope.parent_refs, parent_artifact_names):
+        for parent, parent_name in zip(refs, parent_artifact_names):
             metadata = self.artifacts.catalog(parent) if parent_name is not None else None
             parents.append({"artifact_name": parent_name,
                 "schema": metadata.schema_id if metadata else None,
                 "kind": metadata.kind if metadata else None,
                 "producer": {key: metadata.labels[key] for key in
                     ("operation_id", "operation_output_port") if key in metadata.labels} if metadata else None})
+        if view == "parents":
+            end = parent_offset + len(parents)
+            result = {"name": name, "schema": envelope.schema_id, "parents": parents,
+                      "parent_count": total, "next_offset": end if end < total else None}
+            if envelope.schema_id == "scidiscovery.tool-evidence-manifest.v1":
+                self._project_manifest_parents(envelope, refs, parents, result)
+            return result
         return {
             **self._binding_value(binding),
             "kind": envelope.kind,
@@ -323,6 +350,149 @@ class RootInstanceRoutes:
             "labels": labels,
             "parent_artifact_names": parent_artifact_names,
             "parents": parents,
+        }
+
+    def _producer_inputs_catalog(
+        self, *, name: str, envelope: Any, offset: int, limit: int
+    ) -> dict[str, Any]:
+        family = self._producer_output_family_from_envelope(name, envelope)
+        subject = {
+            "artifact_name": name,
+            "artifact_ref": envelope.ref.model_dump(mode="json"),
+            "kind": envelope.kind,
+            "schema": envelope.schema_id,
+        }
+        fallback = {"tool": "artifact_catalog", "name": name, "view": "parents"}
+        if family is None:
+            if offset:
+                raise RootToolError(
+                    f"parent_offset {offset} exceeds producer_input_count 0"
+                )
+            return {
+                "subject": subject,
+                "producer": {
+                    "kind": None,
+                    "operation_id": None,
+                    "operation_version": None,
+                    "operation_digest": None,
+                    "availability": "unavailable",
+                    "unavailable_reason": "producer_unavailable",
+                },
+                "producer_inputs": [],
+                "producer_input_count": 0,
+                "next_offset": None,
+                "parents_fallback": fallback,
+            }
+        cross_instance = (
+            family.producer_instance_id is not None
+            and family.producer_instance_id != self._instance_id()
+        )
+        ordered = tuple(
+            sorted(
+                family.producer_inputs,
+                key=lambda item: (item.port_name, item.item_index),
+            )
+        )
+        if offset > len(ordered):
+            raise RootToolError(
+                f"parent_offset {offset} exceeds producer_input_count {len(ordered)}"
+            )
+        page = ordered[offset : offset + limit]
+        inputs = []
+        for item in page:
+            current_access_name = self.bindings.find_name(
+                instance=self._instance_id(),
+                namespace="artifact",
+                object_id=item.ref.artifact_id,
+            )
+            inputs.append(
+                {
+                    "port_name": item.port_name,
+                    "item_index": item.item_index,
+                    "artifact_ref": item.ref.model_dump(mode="json"),
+                    "artifact_name": None if cross_instance else item.artifact_name,
+                    "source_name": None if cross_instance else item.source_name,
+                    "current_access_name": current_access_name,
+                    "kind": item.ref.kind,
+                    "schema": item.ref.schema_id,
+                }
+            )
+        end = offset + len(inputs)
+        availability = (
+            "cross_instance" if cross_instance else family.contract_availability
+        )
+        reason = "cross_instance" if cross_instance else family.unavailable_reason
+        return {
+            "subject": subject,
+            "producer": {
+                "kind": family.producer_kind,
+                "operation_id": family.operation_id,
+                "operation_version": family.operation_version,
+                "operation_digest": family.operation_digest,
+                "availability": availability,
+                "unavailable_reason": reason,
+            },
+            "producer_inputs": inputs,
+            "producer_input_count": len(ordered),
+            "next_offset": end if end < len(ordered) else None,
+            "parents_fallback": fallback,
+        }
+
+    def _project_manifest_parents(
+        self, envelope: Any, refs: tuple[Any, ...], parents: list[dict[str, Any]],
+        result: dict[str, Any],
+    ) -> None:
+        """Join sealed manifest aliases to current names by exact direct-parent refs."""
+        from ..schema.refs import ArtifactRef
+        from ..service.tool_evidence import ToolEvidenceManifest
+        try:
+            manifest = ToolEvidenceManifest.model_validate_json(
+                self.artifacts.read(envelope.ref)
+            )
+        except (KeyError, TypeError, ValueError, UnicodeError):
+            result["manifest_projection"] = {"status": "unavailable",
+                "reason": "manifest_invalid"}
+            return
+        invalid_records = 0
+        parsed_records = []
+        for record in manifest.records:
+            try:
+                ref = ArtifactRef.model_validate(record.get("artifact_ref"))
+            except (AttributeError, ValueError):
+                invalid_records += 1
+                continue
+            parsed_records.append((ref, {key: record.get(key) for key in
+                ("alias", "tool_name", "media_type", "size_bytes", "metadata")}))
+        page_records = 0
+        for ref, parent in zip(refs, parents):
+            bindings = [{"source_alias": alias, "port_name": binding.port_name}
+                for alias, binding in manifest.bindings.items()
+                if binding.artifact_ref == ref]
+            records = [record for identity, record in parsed_records if identity == ref]
+            if bindings:
+                parent["manifest_bindings"] = bindings
+            if records:
+                parent["manifest_records"] = records
+                page_records += len(records)
+        unmapped_bindings = sum(
+            binding.artifact_ref not in envelope.parent_refs
+            for binding in manifest.bindings.values()
+        )
+        unmapped_records = sum(
+            identity not in envelope.parent_refs for identity, _ in parsed_records
+        )
+        result["manifest_projection"] = {
+            "status": (
+                "complete"
+                if not invalid_records and not unmapped_bindings and not unmapped_records
+                else "partial"
+            ),
+            "binding_count": len(manifest.bindings),
+            "record_count": len(manifest.records),
+            "invalid_record_count": invalid_records,
+            "unmapped_binding_count": unmapped_bindings,
+            "unmapped_record_count": unmapped_records,
+            "page_record_count": page_records,
         }
 
 

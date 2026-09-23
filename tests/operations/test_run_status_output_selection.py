@@ -26,7 +26,7 @@ def gap_run(tmp_path):
 @pytest.mark.parametrize('historical', [False, True])
 def test_omitted_status_and_diagnostic_pages_do_not_read_the_payload(tmp_path, monkeypatch, historical):
     runtime, root, _ = gap_run(tmp_path)
-    full = root.call_tool('run_status', dict(name='gap'))
+    full = root.call_tool('run_status', dict(name='gap', view='detail'))
     if historical:
         def absent(_):
             raise KeyError('retired operation')
@@ -36,7 +36,7 @@ def test_omitted_status_and_diagnostic_pages_do_not_read_the_payload(tmp_path, m
             pytest.fail('status-only query read an Artifact payload')
         patch.setattr(runtime.artifacts, 'read', forbidden)
         for cursor in (None, 0):
-            status = root.call_tool('run_status', dict(name='gap', output_paths=[], diagnostic_after=cursor))
+            status = root.call_tool('run_status', dict(name='gap', view='detail', output_paths=[], diagnostic_after=cursor))
             assert status['sealed_output'] is status['selected_output'] is None
             assert status['output_delivery'] == 'omitted'
             assert status['sealed_output_status'] == ('historical' if historical else 'available')
@@ -45,19 +45,19 @@ def test_omitted_status_and_diagnostic_pages_do_not_read_the_payload(tmp_path, m
             assert status['bound_inputs'] == full['bound_inputs']
             assert status['output_metadata']['artifact_name'] == full['output_artifact_name']
             assert b'LARGE_LOG_MARKER' not in canonical_json(status)
-    selected = root.call_tool('run_status', dict(name='gap', output_paths=['/summary', '/missing_inputs']))
+    selected = root.call_tool('run_status', dict(name='gap', view='detail', output_paths=['/summary', '/missing_inputs']))
     assert selected['scheduler_signal_status'] == 'available'
     assert selected['sealed_output_status'] == status['sealed_output_status']
     assert selected['sealed_output'] is None
     for item in selected['selected_output']['items']:
         assert item['value'] == full['sealed_output']['payload'][item['pointer'][1:]]
-    restored = root.call_tool('run_status', dict(name='gap', output_paths=None))
+    restored = root.call_tool('run_status', dict(name='gap', view='detail', output_paths=None))
     assert restored['sealed_output'] == full['sealed_output']
 
 
 def test_large_unknown_result_can_be_navigated_without_guessing_fields(tmp_path):
     _, root, _ = gap_run(tmp_path)
-    full = root.call_tool('run_status', dict(name='gap'))
+    full = root.call_tool('run_status', dict(name='gap', view='detail'))
     status = root.call_tool('run_status', dict(name='gap', output_paths=[]))
     navigation = root.call_tool('run_status', dict(name='gap', output_paths=['']))
     item = navigation['selected_output']['items'][0]
@@ -86,10 +86,24 @@ def test_unsealed_runs_do_not_expose_drafts(tmp_path, state):
             runtime.runs.record_failure(value.run_id, reason='fixture interrupted', expected_state='running',
                 expected_last_activity_at=value.last_activity_at)
     for paths in ([], ['/summary']):
-        status = root.call_tool('run_status', dict(name='pending', output_paths=paths))
+        status = root.call_tool('run_status', dict(name='pending', view='detail', output_paths=paths))
         assert status['state'] == state
         assert status['sealed_output_status'] == status['scheduler_signal_status'] == 'unavailable'
         assert status['sealed_output'] is status['selected_output'] is status['output_metadata'] is None
+    if state == 'failed':
+        compact = root.call_tool('run_status', dict(name='pending', response_profile='poll', output_paths=[]))
+        assert compact['state'] == 'failed' and 'diagnostic_events' not in compact
+        assert compact['diagnostic_summary']['failure']['category'] == 'runtime_failure'
+        recovery = compact['compact_recovery_status']
+        assert set(recovery) >= {'delivery_preserved', 'resume_available', 'draft_available',
+            'recovery_pending', 'reason_code'}
+        assert recovery['reason_code'] in {None, 'backend_unavailable', 'contract_unavailable',
+            'isolation_incomplete', 'snapshot_unavailable', 'writers_unconfirmed', 'other'}
+        diagnostic_page = root.call_tool('run_status', dict(name='pending', response_profile='poll',
+            output_paths=[], diagnostic_after=0, diagnostic_limit=1))
+        assert diagnostic_page['diagnostic_events']['events'][0]['activity'] == 'framework_failure'
+        assert 'engineering' not in diagnostic_page['diagnostic_events']['events'][0]['diagnostic'] or isinstance(
+            diagnostic_page['diagnostic_events']['events'][0]['diagnostic']['engineering'], dict)
 
 
 def test_pointer_values_and_navigation_remain_exact_and_bounded():

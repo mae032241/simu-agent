@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from ...agent_execution_settings import EXECUTION_SETTINGS_COLUMNS
+from .worker_connections import WORKER_CONNECTION_SCHEMA
 
 import base64
 import gzip
@@ -26,7 +27,7 @@ DATABASES = {
 TABLES = {
     "scheduler": ("scheduler_instances", "scheduler_bindings", "scheduler_observations",
                   "scheduler_scientific_selections", "scheduler_sessions"),
-    "runs": ("runs", "run_activity", "run_tool_evidence", "run_activity_sequence"),
+    "runs": ("runs", "run_activity", "run_tool_evidence", "run_activity_sequence", "worker_connections"),
     "approvals": ("approval_requests", "approval_decisions", "used_nonces", "decision_attempts"),
     "executions": ("executions",),
     "artifacts": ("artifact_envelopes", "artifact_links", "idempotency_records", "artifact_events"),
@@ -168,7 +169,7 @@ def schema(connection, alias="main"):
 
 
 def execution_settings_restore_view(data):
-    """Project only this release's four additive columns; never rewrite archive bytes.
+    """Project additive settings and Worker bindings; never rewrite archive bytes.
 
     SQLite itself applies the same ALTER statements used by installation, preserving
     original table SQL, constraints and every unrelated index/trigger definition.
@@ -195,7 +196,19 @@ def execution_settings_restore_view(data):
         for row in result["tables"].get(table, []):
             for name, (_, default) in missing.items():
                 row[name] = default
-    return data if result is None else result
+    projected = data if result is None else result
+    if "runs" in projected["schema"]["tables"] and "worker_connections" not in projected["schema"]["tables"]:
+        projected = deepcopy(projected)
+        # Use the installation DDL; no invented historical thread bindings.
+        with sqlite3.connect(":memory:") as transient:
+            transient.row_factory = sqlite3.Row
+            transient.executescript(WORKER_CONNECTION_SCHEMA)
+            addition = schema(transient)
+        projected["schema"]["objects"] = sorted(
+            [*projected["schema"]["objects"], *addition["objects"]], key=lambda item: (item["type"], item["name"]))
+        projected["schema"]["tables"].update(addition["tables"])
+        projected["tables"]["worker_connections"] = []
+    return projected
 
 
 def execution_settings_tombstone(row):

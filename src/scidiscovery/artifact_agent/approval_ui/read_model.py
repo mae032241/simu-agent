@@ -142,6 +142,19 @@ class InstanceReadModel:
             recent["next_cursor"] = self._cursor(instance_id, last)
         return result
 
+    def trajectory(self, instance_id: str, page: int = 1) -> dict[str, Any]:
+        limit = 10
+        records, total, page = self.bindings.trajectory_page(instance=instance_id, page=page, limit=limit)
+        # Cards need metadata only; scientific payloads remain behind the node links.
+        fields = ("key", "kind", "name", "title", "state", "created_at", "source_time",
+                  "last_activity_at", "completed_at", "collection_status", "operation_id")
+        items = []
+        for record in records:
+            metadata = self._metadata(instance_id, record)
+            items.append({key: metadata[key] for key in fields if key in metadata})
+        return {"items": items, "page": page, "total": total,
+                "total_pages": max(1, (total + limit - 1) // limit), "page_size": limit}
+
     def nodes(self, instance_id: str, cursor: str | None = None, limit: int = 30) -> NodePage:
         if type(limit) is not int or not 1 <= limit <= 100:
             raise ValueError("node limit must be between 1 and 100")
@@ -218,13 +231,20 @@ class InstanceReadModel:
             roots = self._roots(instance_id, binding)
             focus = ()
             task_refs = ()
+            priority_refs = ()
+            presentation_controls = {}
+            selected_run_id = None
             if binding.namespace == "run":
                 run = self._run(instance_id, binding.object_id)
                 task_refs = tuple(item.artifact_ref for item in run.inputs if item.port_name == "experiment_plan")
                 if run.state == "completed" and run.output_ref is not None:
                     focus = (run.output_ref,)
+                    selected_run_id = run.run_id
+                    priority_refs, presentation_controls = self._run_presentation_refs(run)
             elif binding.namespace == "artifact":
                 focus = roots[:1]
+                if focus and focus[0].schema_id == "scidiscovery.layered-diagnosis.v1":
+                    priority_refs, presentation_controls = self._focused_presentation_refs(focus)
             elif binding.namespace == "approval":
                 # The request and decision describe this approval; ancestor
                 # reviews remain evidence, never its current decision.
@@ -233,7 +253,17 @@ class InstanceReadModel:
                 result_ref = self.executions.record_references(binding.object_id).get("result_ref")
                 focus = (result_ref,) if result_ref else ()
             ordered = tuple(dict.fromkeys((*focus, *task_refs, *roots)))
-            views, gaps = self._lineage_views(instance_id, ordered, presentation=True)
+            views, gaps = self._lineage_views(
+                instance_id, ordered, presentation=True, priority_refs=priority_refs
+            )
+            for view in views:
+                if view["artifact_id"] in presentation_controls:
+                    view["family"].update(presentation_controls[view["artifact_id"]])
+            if selected_run_id is not None:
+                for view in views:
+                    if view["artifact_id"] == focus[0].artifact_id:
+                        view["family"]["selected_run_id"] = selected_run_id
+                        break
             # Ordinary instance browsing may associate same-invocation siblings.
             # Frozen approval_context deliberately does not take this path.
             from .presentation import _provider_entries, entry_points
@@ -272,6 +302,140 @@ class InstanceReadModel:
                     "gaps": gaps, "scope": "exact_node_roots_and_envelope_provenance"}
         except _READ_ERRORS as error:
             return {"artifacts": [], "gaps": [self._read_gap(error)], "scope": "exact_node_roots_and_envelope_provenance"}
+
+    def _run_presentation_refs(self, run):
+        """Prioritize only the selected Run's exact published evidence family."""
+        output = self.artifacts.catalog(run.output_ref)
+        operation = (run.operation_id, run.operation_version, run.operation_digest)
+        if output.schema_id != "scidiscovery.layered-diagnosis.v1":
+            return (run.output_ref,), {}
+        manifests, scan_complete = [], len(output.parent_refs) <= 100
+        for manifest_ref in output.parent_refs[:100]:
+            if manifest_ref.schema_id != "scidiscovery.tool-evidence-manifest.v1":
+                continue
+            try:
+                manifest = self.artifacts.catalog(manifest_ref)
+            except _READ_ERRORS:
+                scan_complete = False
+                continue
+            labels = manifest.labels
+            if (labels.get("tool_producer_run") != run.run_id
+                    or labels.get("operation_output_port") != "recovery_manifest_output"
+                    or tuple(labels.get(key) for key in (
+                        "operation_id", "operation_version", "operation_digest")) != operation):
+                continue
+            manifests.append((manifest_ref, manifest))
+        controls = {output.artifact_id: {
+            "presentation_manifest_match_count": len(manifests),
+            "presentation_manifest_scan_complete": scan_complete,
+        }}
+        if not scan_complete or len(manifests) != 1:
+            return (run.output_ref,), controls
+        manifest_ref, manifest = manifests[0]
+        result = [run.output_ref, manifest_ref]
+        result.extend(self._cited_presentation_image_refs(output, manifest))
+        return tuple(dict.fromkeys(result)), controls
+
+    def _cited_presentation_image_refs(self, report, manifest):
+        """Resolve only uniquely cited runtime images through one exact manifest."""
+        if (report.content_encoding != "identity" or manifest.content_encoding != "identity"
+                or report.size_bytes > MAX_SOURCE_BYTES or manifest.size_bytes > MAX_SOURCE_BYTES
+                or len(manifest.parent_refs) > 100):
+            return ()
+        try:
+            report_payload = json.loads(self.artifacts.read(report.ref), parse_constant=_reject_constant)
+            manifest_payload = json.loads(self.artifacts.read(manifest.ref), parse_constant=_reject_constant)
+        except (ValueError, UnicodeError, RecursionError, *_READ_ERRORS):
+            return ()
+        if not isinstance(report_payload, dict) or not isinstance(manifest_payload, dict):
+            return ()
+        citations = {}
+        evidence = report_payload.get("evidence")
+        if isinstance(evidence, list):
+            for item in evidence:
+                if (not isinstance(item, dict) or item.get("source_type") != "runtime_output"
+                        or not isinstance(item.get("source_key"), str)
+                        or re.fullmatch(r"tool_evidence_[0-9]+", item["source_key"]) is None):
+                    continue
+                citations.setdefault(item["source_key"], []).append(item)
+        records, bindings = manifest_payload.get("records"), manifest_payload.get("bindings")
+        if not isinstance(records, list) or not isinstance(bindings, dict):
+            return ()
+        by_alias = {}
+        for record in records:
+            if isinstance(record, dict) and isinstance(record.get("alias"), str):
+                by_alias.setdefault(record["alias"], []).append(record)
+        result = []
+        for alias, references in citations.items():
+            matches = by_alias.get(alias, ())
+            if len(references) != 1 or len(matches) != 1:
+                continue
+            record = matches[0]
+            media = (record.get("media_type", "").split(";", 1)[0].lower()
+                     if isinstance(record.get("media_type"), str) else "")
+            reference = record.get("artifact_ref")
+            binding = bindings.get(alias)
+            parent_matches = [parent for parent in manifest.parent_refs
+                              if parent.model_dump(mode="json") == reference]
+            if (media not in {"image/png", "image/jpeg"} or not isinstance(reference, dict)
+                    or len(parent_matches) != 1 or not isinstance(binding, dict)
+                    or binding.get("port_name") != "tool_evidence"
+                    or binding.get("artifact_ref") != reference):
+                continue
+            try:
+                image = self.artifacts.catalog(parent_matches[0])
+            except _READ_ERRORS:
+                continue
+            if (image.media_type.split(";", 1)[0].lower() != media
+                    or image.size_bytes != record.get("size_bytes")):
+                continue
+            result.append(parent_matches[0])
+        return tuple(result)
+
+    def _focused_presentation_refs(self, subject_refs):
+        """Prioritize exact focused reports with uniquely bound evidence."""
+        # Frozen/direct subjects are always read before any lineage expansion.
+        result, controls = list(dict.fromkeys(subject_refs)), {}
+        for subject_ref in subject_refs:
+            try:
+                report = self.artifacts.catalog(subject_ref)
+            except _READ_ERRORS:
+                continue
+            if report.schema_id != "scidiscovery.layered-diagnosis.v1":
+                continue
+            operation = tuple(report.labels.get(key) for key in (
+                "operation_id", "operation_version", "operation_digest"))
+            if not all(operation):
+                controls[report.artifact_id] = {
+                    "presentation_manifest_match_count": 0,
+                    "presentation_manifest_scan_complete": False,
+                }
+                continue
+            manifests, scan_complete = [], len(report.parent_refs) <= 100
+            for manifest_ref in report.parent_refs[:100]:
+                if manifest_ref.schema_id != "scidiscovery.tool-evidence-manifest.v1":
+                    continue
+                try:
+                    manifest = self.artifacts.catalog(manifest_ref)
+                except _READ_ERRORS:
+                    scan_complete = False
+                    continue
+                labels = manifest.labels
+                if (labels.get("operation_output_port") == "recovery_manifest_output"
+                        and isinstance(labels.get("tool_producer_run"), str)
+                        and tuple(labels.get(key) for key in (
+                            "operation_id", "operation_version", "operation_digest")) == operation):
+                    manifests.append((manifest_ref, manifest))
+            controls[report.artifact_id] = {
+                "presentation_manifest_match_count": len(manifests),
+                "presentation_manifest_scan_complete": scan_complete,
+            }
+            if not scan_complete or len(manifests) != 1:
+                continue
+            manifest_ref, manifest = manifests[0]
+            result.append(manifest_ref)
+            result.extend(self._cited_presentation_image_refs(report, manifest))
+        return tuple(dict.fromkeys(result)), controls
 
     def _family_views(self, instance_id, artifact_id):
         envelope = self.artifacts.get_by_id(artifact_id)
@@ -413,7 +577,13 @@ class InstanceReadModel:
     def approval_context(self, instance_id: str, review: ApprovalReview, *, presentation=False) -> dict[str, Any]:
         """Read only the authenticated review's frozen cohort, never latest heads."""
         name = self._approval_scope(instance_id, review)
-        subjects, gaps = self._lineage_views(instance_id, review.request.subject_refs, presentation=presentation)
+        priority_refs, controls = (self._focused_presentation_refs(
+            review.request.subject_refs) if presentation else ((), {}))
+        subjects, gaps = self._lineage_views(instance_id, review.request.subject_refs,
+            presentation=presentation, priority_refs=priority_refs)
+        for subject in subjects:
+            if subject["artifact_id"] in controls:
+                subject["family"].update(controls[subject["artifact_id"]])
         result = {"approval_key": "approval:" + name,
                 "request_ref": review.request_ref.model_dump(mode="json"),
                 "subject_refs": [self._ref(instance_id, ref, f"/subject_refs/{i}") for i, ref in enumerate(review.request.subject_refs)],
@@ -790,7 +960,8 @@ class InstanceReadModel:
                   "schema_id": envelope.schema_id, "size_bytes": envelope.size_bytes,
                   "family": {key: envelope.labels[key] for key in (
                       "operation_invocation_fingerprint", "transform_profile", "operation_id",
-                      "operation_version", "operation_digest", "output_label", "operation_output_port")
+                      "operation_version", "operation_digest", "output_label", "operation_output_port",
+                      "tool_producer_run")
                       if key in envelope.labels},
                   "media_type": envelope.media_type,
                   "source": {"artifact_id": ref.artifact_id, "json_pointer": pointer or ""},
@@ -877,11 +1048,13 @@ class InstanceReadModel:
         view["gaps"] = [item for item in view["gaps"] if item["code"] != "payload_too_large"]
         return view
 
-    def _lineage_views(self, instance_id, refs, *, presentation=False):
+    def _lineage_views(self, instance_id, refs, *, presentation=False, priority_refs=()):
+        priority = deque((ref, None) for ref in priority_refs)
         queue = deque((ref, None) for ref in refs)
         seen, views, gaps, budget = set(), [], [], 0
-        while queue and len(seen) < 100:
-            ref, origin = queue.popleft()
+        while (priority or queue) and len(seen) < 100:
+            current = priority if priority else queue
+            ref, origin = current.popleft()
             identity = (ref.artifact_id, ref.sha256, ref.kind, ref.schema_id)
             if identity in seen:
                 continue
@@ -896,14 +1069,14 @@ class InstanceReadModel:
                     gaps.append(gap("context_byte_limit", artifact_id=ref.artifact_id))
                     break
                 views.append(view)
-                queue.extend((parent, {"artifact_id": ref.artifact_id, "json_pointer": f"/parent_refs/{i}"}) for i, parent in enumerate(envelope.parent_refs[:100]))
+                current.extend((parent, {"artifact_id": ref.artifact_id, "json_pointer": f"/parent_refs/{i}"}) for i, parent in enumerate(envelope.parent_refs[:100]))
                 if len(envelope.parent_refs) > 100:
                     gaps.append(gap("lineage_branch_limit", artifact_id=ref.artifact_id))
                 if envelope.supersedes_ref:
-                    queue.append((envelope.supersedes_ref, {"artifact_id": ref.artifact_id, "json_pointer": "/supersedes_ref"}))
+                    current.append((envelope.supersedes_ref, {"artifact_id": ref.artifact_id, "json_pointer": "/supersedes_ref"}))
             except _READ_ERRORS as error:
                 gaps.append(self._read_gap(error, artifact_id=ref.artifact_id, reached_from=origin))
-        if queue:
+        if priority or queue:
             gaps.append(gap("lineage_read_limit"))
         return views, gaps
 

@@ -92,6 +92,7 @@ class ScientificReview(SchemaModel):
         "problem_frame",
         "hypothesis_portfolio",
         "experiment_portfolio",
+        "experiment_scientific_skeleton",
         "domain_contract",
         "observation",
         "realization",

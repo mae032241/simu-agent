@@ -8,7 +8,7 @@ import threading
 from dataclasses import dataclass
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, ValidationInfo
 
 from ...operation_contract import validation_diagnostics, contract_diagnostic
 from ...operations.tooling import parse_tool_arguments
@@ -53,7 +53,7 @@ class EmptyInput(RootToolInput):
 
 class ReadInput(RootToolInput):
     view: Literal["summary", "detail"] = Field(default="summary",
-        description="Default compact view. Request detail only for exact bindings, original logs or full metadata.")
+        description="Default compact view with explicit omission and original-detail navigation. Detail preserves exact bindings, original logs and full metadata.")
 
 
 class PageInput(ReadInput):
@@ -139,7 +139,7 @@ class OperationCallInput(NamedInput, RevisionInput):
     instruction: str | None = Field(default=None, max_length=65536)
     parameters: EmptyOperationParameters = Field(default_factory=dict)
     execution_profile: ExecutionProfile | None = Field(default=None,
-        description="Complete control-owned model, reasoning effort and narrative language snapshot. Reuse the normalized_request returned by preflight for invoke; settings changes then cannot alter this request. Not scientific parameters.")
+        description="Control-owned model, reasoning effort and narrative language snapshot. Invoke resolves and freezes defaults when omitted. Optional preflight returns normalized_request; reuse it unchanged to preserve that snapshot. Not scientific parameters.")
     max_attempts: int | None = Field(
         default=None, ge=1, strict=True,
         description="Scheduler-selected total Run budget for this recovery chain, including its first Run. An explicit value supersedes earlier attempt budgets for this new request; omission inherits the last scheduler budget or the Operation default. Other resource and identity limits are unchanged.",
@@ -163,11 +163,41 @@ class RunListInput(PageInput):
         description="Continue after this semantic Run name, returned as next_before by the previous page.")
 
 
+class ArtifactCatalogInput(NamedReadInput):
+    view: Literal["summary", "detail", "parents", "producer_inputs"] = Field(default="summary",
+        description="summary gives metadata; parents gives one page of direct parents and, for a recovery manifest, mechanically joins sealed source aliases/records to those exact parents; producer_inputs gives one page of the exact immediate producer's frozen input ports without recursive traversal; detail is the legacy full metadata view. parents and producer_inputs share parent_offset/parent_limit. Direct-parent limit remains 4096.")
+    parent_offset: int = Field(default=0, ge=0,
+        description="parents or producer_inputs view: continue at next_offset for the same artifact.")
+    parent_limit: int = Field(default=16, ge=1, le=32)
+
+
 class RunStatusInput(NamedReadInput):
+    response_profile: Literal["compat", "poll", "navigation", "decision"] = Field(
+        default="compat",
+        description=(
+            "Request-time read projection only. compat preserves existing summary/detail and output "
+            "semantics. poll requires summary + values + output_paths=[]; navigation requires summary "
+            "+ index with zero or one path; decision requires summary + values with one or more paths. "
+            "Compact profiles may page durable diagnostics with diagnostic_after; they reject detail."
+        ),
+    )
+    output_mode: Literal["values", "index"] = Field(default="values",
+        description='Use values directly for known paths; [""] for most/all payload fields. Use index only to discover unknown paths, never as a required first step; it returns no values, even with view=detail. Omit output_paths for the root index.')
     output_paths: list[Annotated[str, Field(pattern=r"^(?:/(?:[^~]|~[01])*)?$")]] | None = Field(
         default=None, max_length=8,
-        description="Sealed payload JSON Pointers: omit/null for a bounded summary excerpt (view=detail gives the complete original); [] skips scientific payload. view=detail also reveals exact bindings and timing. Select up to 8 paths (32 KiB values total). Empty pointer selects the root. Oversized subtrees are omitted with bounded direct-child navigation (32 items, 8 KiB total); missing paths are explicit. selected_output is a reading projection, never a complete sealed_output.",
+        description='JSON Pointers relative to the sealed payload, e.g. /summary, not /payload/summary. Omit/null for a summary excerpt (view=detail returns the complete original); [] skips payload. Up to 8 paths, 32 KiB values total. [""] selects the whole payload; "/" selects an empty key. status=selected returns the exact value: reuse it, including a whole payload, without fetching its fields again. Oversized values have status=omitted with direct-child paths (32 items, 8 KiB); batch needed paths. Missing paths are explicit. view=detail also reveals bindings and timing. selected_output retains origin but is not the sealed_output envelope.',
     )
+    index_offset: int = Field(default=0, ge=0,
+        description="Index mode only: continue at output_index.next_offset for the same immutable object and path.")
+    index_limit: int = Field(default=16, ge=1, le=32,
+        description="Index mode only: maximum direct children; the complete output_index is limited to 8 KiB UTF-8 JSON.")
+
+    @field_validator("output_paths")
+    @classmethod
+    def index_has_one_path(cls, value, info: ValidationInfo):
+        if info.data.get("output_mode") == "index" and value is not None and len(value) != 1:
+            raise ValueError("index mode requires exactly one output path or null for the root")
+        return value
     diagnostic_after: int | None = Field(default=None, ge=0,
         description="Set to 0 for the first page of saved errors, then use diagnostic_events.next_after. Omit for the compact status.")
     diagnostic_limit: int = Field(default=20, ge=1, le=100)
@@ -235,12 +265,12 @@ ROOT_TOOLS = (
     RootTool("lifecycle_events", "Return persistent semantic task, approval, and execution state changes for this scheduler process.", LifecycleEventsInput),
     RootTool("artifact_ingest_file", "Freeze and bind one project file under a semantic name.", IngestFileInput),
     RootTool("artifact_ingest_text", "Freeze original user text and bind it under a semantic name in the current instance; does not create a Run.", IngestTextInput),
-    RootTool("artifact_catalog", "Read sanitized metadata for one bound semantic input.", NamedReadInput),
+    RootTool("artifact_catalog", "Read metadata or paged direct parents for one bound semantic input.", ArtifactCatalogInput),
     RootTool("operation_catalog", "List bounded operation summaries; select operation_id with view=detail for its full compiled contract.", OperationCatalogInput),
-    RootTool("operation_preflight", "Check one exact operation call without writing control state.", OperationCallInput),
-    RootTool("operation_invoke", "Create one Agent, Transform, or Effect through the compiled operation catalog.", OperationCallInput),
+    RootTool("operation_preflight", "Optional check without creating. Invoke independently checks admission; this does not reserve resources or authorize execution.", OperationCallInput),
+    RootTool("operation_invoke", "Validate and create one Agent, Transform, Effect or Approval from the compiled catalog; no prior preflight required. Success preserves dispatch configuration, exact outputs or approval URLs by executor kind; use the returned detail entry for Run context.", OperationCallInput),
     RootTool("run_list", "List minimal Runs in this research instance.", RunListInput),
-    RootTool("run_status", "Read a compact Run summary; use output_paths for sealed fields or view=detail for exact bindings and full output.", RunStatusInput),
+    RootTool("run_status", "Read Run state and selected output_paths together; only completed Runs expose sealed fields. Use [] for polling, view=detail for bindings/full output.", RunStatusInput),
     RootTool("run_record_failure", "Record failure of one running minimal Run.", RunFailureInput),
     RootTool("approval_list", "List named reviews in this scheduler instance.", ApprovalListInput),
     RootTool("approval_status", "Read one named human-review state.", NamedReadInput),
@@ -249,8 +279,8 @@ ROOT_TOOLS = (
     RootTool("execution_abandon", "Abandon one named unsubmitted execution.", NamedInput),
     RootTool("execution_cancel", "Request cancellation of one named submitted execution.", NamedInput),
     RootTool("execution_list", "List named executions in this scheduler instance.", ExecutionListInput),
-    RootTool("execution_status", "Read one named execution state.", NamedReadInput),
-    RootTool("execution_outputs", "Bind and list logical outputs from one named execution.", NamedPageInput),
+    RootTool("execution_status", "Read one named execution state. Summary gives a bounded deduplicated log index and exact error fields; view=detail reads the complete existing response.", NamedReadInput),
+    RootTool("execution_outputs", "Bind and list logical outputs and the exact result_artifact_name from this execution; null means not yet bindable. Bind that result before creating analysis; every page preserves the same identity.", NamedPageInput),
     RootTool("execution_start", "Submit one named execution after its exact local review authorizes it.", NamedInput),
     RootTool("execution_sync", "Refresh bounded solver status and logs; never collect artifacts.", NamedReadInput),
     RootTool("execution_collect", "Start or resume terminal artifact collection; returns immediately. Other active collection returns busy without queuing.", ExecutionCollectInput),
@@ -534,9 +564,19 @@ class RootMCPRouter:
                     details=validation_diagnostics(error, schema=tool.schema()["inputSchema"])) from error
         values = {field: getattr(parsed, field) for field in type(parsed).model_fields}
         try:
+            if name == "run_status":
+                from .mcp_response_views import validate_run_status_profile
+                validate_run_status_profile(
+                    response_profile=values["response_profile"],
+                    view=values["view"],
+                    output_mode=values["output_mode"],
+                    output_paths=values.get("output_paths"),
+                )
             # Presentation options are never part of an immutable operation request.
             query = dict(values)
             query.pop("view", None)
+            if name == "artifact_catalog":
+                query["view"] = values["view"]
             if name in {"operation_catalog", "scientific_inventory", "scientific_current", "instance_list", "execution_outputs", "execution_capabilities"}:
                 query.pop("limit", None)
                 query.pop("before", None)
@@ -544,7 +584,7 @@ class RootMCPRouter:
                 query.pop("operation_id", None)
             if name == "scientific_inventory":
                 query["include_operations"] = False
-            if name == "run_status" and values["view"] == "summary" and values.get("output_paths") is None:
+            if name == "run_status" and values["output_mode"] == "values" and values["view"] == "summary" and values.get("output_paths") is None:
                 query["output_paths"] = ["/summary"]
             from .mcp_response_views import root_response
             return root_response(name, getattr(self.facade, name)(**query), values)

@@ -492,6 +492,16 @@ _AUDIT_CHECKS = frozenset(
 )
 
 
+def _matches_run_input_parents(subject, producer_inputs) -> bool:
+    input_refs = tuple(item.ref for item in producer_inputs)
+    parents = subject.parent_refs
+    return parents == input_refs or (
+        len(parents) == len(input_refs) + 1
+        and parents[:len(input_refs)] == input_refs
+        and parents[-1].schema_id == "scidiscovery.tool-evidence-manifest.v1"
+    )
+
+
 def _validate_parameter_qualification(
     context: ApprovalProjectorContext, expected_status: str
 ) -> tuple:
@@ -578,9 +588,9 @@ def _validate_parameter_qualification(
     if extraction_inputs is None:
         raise OperationInvocationError("input_producer_metadata_unavailable", port="parameter_evidence_package",
             message="The exact completed extraction's saved input bindings are unavailable.")
-    if (tuple(ref for _, ref in extraction_inputs) != package_subject.parent_refs
-        or tuple(ref for port, ref in extraction_inputs
-                 if port in {"required_parameter_checklist", "source_material"})
+    if (not _matches_run_input_parents(package_subject, extraction_inputs)
+        or tuple(item.ref for item in extraction_inputs
+                 if item.port_name in {"required_parameter_checklist", "source_material"})
         != (*checklist_refs, *frozen_refs)):
         raise OperationInvocationError("approval_subject_invalid", message="parameter package does not preserve its exact extraction inputs")
 
@@ -649,8 +659,8 @@ def _validate_parameter_qualification(
         raise OperationInvocationError("input_producer_metadata_unavailable", port="parameter_audit",
             message="The exact completed parameter audit's saved input bindings are unavailable.")
     audit_inputs = audit_families[0].producer_inputs
-    if (tuple(ref for _, ref in audit_inputs) != audit_subject.parent_refs
-        or tuple(ref for port, ref in audit_inputs if port in {item.name for item in AUDIT_INPUTS})
+    if (not _matches_run_input_parents(audit_subject, audit_inputs)
+        or tuple(item.ref for item in audit_inputs if item.port_name in {port.name for port in AUDIT_INPUTS})
         != expected_audit_inputs):
         raise OperationInvocationError("approval_subject_invalid", message="parameter audit does not bind the exact ordered review set")
     audit = parse_bound_json(EvidenceAudit, audit_subject.content, admission_port=audit_subject.port_name)
@@ -950,7 +960,6 @@ def _agent(
             workspace=_ref("parameter_workspace"),
             tools=_PARAMETER_TOOLS,
             prompt=_ref(prompt),
-            model="gpt-5.6-sol",
             native_tools=NativeToolPolicy(shell="inherited_prototype", view_image=True),
         ),
         inputs=inputs,

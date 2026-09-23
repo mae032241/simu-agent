@@ -88,17 +88,29 @@ class ProducerEvidenceSource:
     source_name: str
     ref: ArtifactRef
 @dataclass(frozen=True, slots=True)
+class ProducerInputProjection:
+    port_name: str
+    item_index: int
+    ref: ArtifactRef
+    artifact_name: str | None = None
+    source_name: str | None = None
+@dataclass(frozen=True, slots=True)
 class ProducerOutputFamily:
     primary_ref: ArtifactRef
     operation_id: str
     operation_version: str
     operation_digest: str
+    producer_kind: str
+    producer_instance_id: str | None
+    producer_run_id: str | None
+    contract_availability: str
+    unavailable_reason: str | None
     members: tuple[ProducerFamilyMember, ...]
     evidence_sources: tuple[ProducerEvidenceSource, ...]
     reviewer_operation: str | None = None
     review_subject_outputs: tuple[str, ...] = ()
     family_identity: str | None = None
-    producer_inputs: tuple[tuple[str, ArtifactRef], ...] | None = None
+    producer_inputs: tuple[ProducerInputProjection, ...] = ()
 @dataclass(frozen=True, slots=True)
 class ApprovalProjectorContext:
     operation_id: str

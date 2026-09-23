@@ -75,7 +75,8 @@ class MCPRouter:
 
 def rpc_error(request_id: Any, error: Exception) -> dict[str, Any]:
     details = getattr(error, "details", ()) if isinstance(error, DiagnosticError) else ()
-    engineering = getattr(error, "engineering", None)
+    public_engineering = getattr(error, "public_engineering", None)
+    engineering = public_engineering if public_engineering is not None else getattr(error, "engineering", None)
     if not details:
         engineering = engineering or exception_facts(error, layer="mcp", action="tool_call")
         reason = engineering["causes"][0]
@@ -84,6 +85,9 @@ def rpc_error(request_id: Any, error: Exception) -> dict[str, Any]:
             phase="tool_execution", affected_action="tool_call",
             message=f"{reason['type']}: {reason['message']}", error_type=reason["type"],
         ),)
+    if public_engineering is not None:
+        details = tuple({**item, "message": "Tool execution failed; read the diagnostic reference for details."}
+                        for item in details)
     return {
         "jsonrpc": "2.0",
         "id": request_id,
@@ -123,6 +127,8 @@ def build_root_router(
     local_workspace_root: Path | None = None,
     execution_collection=None,
     agent_settings=None,
+    unified: bool = False,
+    worker_plugin_configs=None,
 ) -> MCPRouter:
     approval_secret = read_secret_file(
         approval_secret_file, label="approval receipt"
@@ -165,8 +171,12 @@ def build_root_router(
         operation_catalog=runtime.operation_catalog,
         execution_collection=execution_collection,
     )
+    root = RootMCPRouter(facade)
+    if unified:
+        from .mcp_gateway import UnifiedMCPRouter
+        return UnifiedMCPRouter(root, plugin_configs=worker_plugin_configs, worker_backend=worker_backend)
     return MCPRouter(
-        RootMCPRouter(facade),
+        root,
         name="scidiscovery-root",
     )
 

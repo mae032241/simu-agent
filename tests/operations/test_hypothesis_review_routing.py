@@ -314,6 +314,7 @@ def test_evidence_revision_requires_the_exact_review_lineage() -> None:
         "hypothesis_portfolio": (portfolio,),
         "change_request": (request,),
         "source_material": (source, source_table),
+        "source_manifest": (),
     }
     assert preflight_operation(
         operation,

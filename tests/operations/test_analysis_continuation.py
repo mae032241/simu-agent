@@ -116,6 +116,7 @@ def test_prior_mapping_reused_across_alias_reorder_tool_receipt_and_next_seal(tm
     before = deepcopy(call)
     record = worker.call_tool('worker_tcad_curve_score', dict(record_key='reused', request=call))
     assert record['status'] == 'computed', record
+    record = json.loads(Path(record['calculation_path']).read_bytes())
     assert record['request'] == before == call
     attempts = system[1].runs.tool_attempts(worker._run_id)
     assert attempts[-1]['request_digest'] == hashlib.sha256(canonical_json(call)).hexdigest()
@@ -124,7 +125,7 @@ def test_prior_mapping_reused_across_alias_reorder_tool_receipt_and_next_seal(tm
     report['calculation_records'] = [record]
     write_analysis(opened, report)
     assert worker.call_tool('worker_submit_result', {})['state'] == 'completed'
-    sealed = system[2].call_tool('run_status', {'name':'with_history'})['sealed_output']['payload']
+    sealed = system[2].call_tool('run_status', {'name':'with_history', 'view':'detail'})['sealed_output']['payload']
     assert 'case_mapping_basis' not in known  # Display points to the preserved prior basis.
     origin = known['origin']
     assignment = json.loads(Path(opened['assignment_path']).read_bytes())
@@ -139,7 +140,7 @@ def test_prior_mapping_reused_across_alias_reorder_tool_receipt_and_next_seal(tm
     report['calculation_records'] = []; report['source_references'] = []
     write_analysis(opened, report)
     assert worker.call_tool('worker_submit_result', {})['state'] == 'completed'
-    sealed = system[2].call_tool('run_status', {'name':'history_again'})['sealed_output']['payload']
+    sealed = system[2].call_tool('run_status', {'name':'history_again', 'view':'detail'})['sealed_output']['payload']
     assert sealed['source_references'][0]['case_key'] == 'baseline'
 
 
@@ -147,7 +148,7 @@ def test_native_read_error_survives_success_and_is_visible_in_completed_root_sta
     system = analysis_system(tmp_path); worker, opened = open_analysis(system)
     root = Path(opened['workspace_path'])
     command = [sys.executable, 'tools/local_process_observation.py', '--timeout', '5',
-        '--submission-reserve', '0', '--command', sys.executable, '-c']
+        '--submission-reserve', '0', '--display', 'raw', '--command', sys.executable, '-c']
     failed = subprocess.run(command + ['from pathlib import Path; Path("missing-recovery.json").read_text()'],
         cwd=root, capture_output=True, timeout=10)
     assert failed.returncode == 1 and b'FileNotFoundError' in failed.stderr
@@ -155,7 +156,7 @@ def test_native_read_error_survives_success_and_is_visible_in_completed_root_sta
     report = analysis_report(alias='solver_outputs_001', output_name='A', mapped=True)
     write_analysis(opened, report)
     assert worker.call_tool('worker_submit_result', {})['state'] == 'completed'
-    status = system[2].call_tool('run_status', {'name':'analysis'})
+    status = system[2].call_tool('run_status', {'name':'analysis', 'view':'detail'})
     native, diagnostic = status['native_execution'], status['diagnostic_summary']
     assert native['exit_code'] == 0 and native['attempt_count'] == 2 and native['error_count'] == 1
     error = diagnostic['latest_native_error']

@@ -335,7 +335,8 @@ def direct_revision_ports(
         or base_cardinality not in {(0, 1), (1, 1)}
         or bases[0].exposure == "handoff_only"
         or len(primary) != 1
-        or any(port.collection is not None for port in spec.outputs)
+        or any(port.collection is not None and port.name != "recovery_manifest_output"
+               for port in spec.outputs)
         or review is None
         or review.reviewer_operation is None
         or review.reviewer_input_port is None
@@ -527,8 +528,8 @@ def operation_port_json_schema(
     """Return the exact Worker-visible schema and its derived contracts."""
 
     schema = json_projection(compiled.output_contracts[port.name])
-    from .operations.tooling import tool_evidence_ports
-    evidence_ports = tool_evidence_ports(compiled)
+    from .operations.tooling import tool_evidence_ports, reference_source_ports
+    evidence_ports = set(tool_evidence_ports(compiled)) | set(reference_source_ports(compiled))
     if evidence_ports and input_source_ports is not None:
         schema['x-scidiscovery-readable-evidence'] = [
             {'alias': name, 'port': source_port,

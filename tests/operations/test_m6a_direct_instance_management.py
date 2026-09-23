@@ -687,12 +687,12 @@ def test_artifact_catalog_projects_exact_ordered_local_parents_without_writes(tm
               parents=(local.ref, old.ref, foreign.ref))
     databases = tuple((tmp_path / "state" / "database").glob("*.sqlite3"))
     before = {path: path.read_bytes() for path in databases}
-    first = root.call_tool("artifact_catalog", {"name": "plan"})
+    first = root.call_tool("artifact_catalog", {"name": "plan", "view": "detail"})
     assert first["parent_artifact_names"] == ["analysis", "objective.rev1", None]
-    assert root.call_tool("artifact_catalog", {"name": "objective.rev1"})[
+    assert root.call_tool("artifact_catalog", {"name": "objective.rev1", "view": "detail"})[
         "parent_artifact_names"
     ] == []
-    assert root.call_tool("artifact_catalog", {"name": "plan"}) == first
+    assert root.call_tool("artifact_catalog", {"name": "plan", "view": "detail"}) == first
     assert {path: path.read_bytes() for path in databases} == before
     assert not {"parent_refs", "artifact_id", "sha256", "workspace"} & first.keys()
 
@@ -713,7 +713,7 @@ def test_artifact_catalog_parent_limit_never_truncates(tmp_path):
         _register(runtime, instance, name=name, raw=b"bounded query",
                   kind="background", schema="example.background.v1", parents=parents[:count])
         if count == 4096:
-            assert root.call_tool("artifact_catalog", {"name": name})[
+            assert root.call_tool("artifact_catalog", {"name": name, "view": "detail"})[
                 "parent_artifact_names"
             ] == [None] * count
         else:
@@ -802,7 +802,7 @@ def test_cold_root_recovers_original_plan_context_and_delivers_exact_files(
     assert cold.call_tool("instance_current", {})["name"] == instance.name
     cursor = plan_name
     while True:
-        names = cold.call_tool("artifact_catalog", {"name": cursor})["parent_artifact_names"]
+        names = cold.call_tool("artifact_catalog", {"name": cursor, "view": "detail"})["parent_artifact_names"]
         parents = [(name, cold.call_tool("artifact_catalog", {"name": name})["schema"]) for name in names]
         previous = [name for name, schema in parents if schema == "scidiscovery.experiment-portfolio.v1"]
         if not previous:
@@ -812,7 +812,7 @@ def test_cold_root_recovers_original_plan_context_and_delivers_exact_files(
     recovered = [name for name, schema in parents if schema == original.schema_id]
     assert recovered == ["research_objective"]
     recovered_intent = next(name for name, schema in parents if schema == "scidiscovery.experiment-design-intent.v1")
-    feedback = cold.call_tool("artifact_catalog", {"name": recovered_intent})["parent_artifact_names"]
+    feedback = cold.call_tool("artifact_catalog", {"name": recovered_intent, "view": "detail"})["parent_artifact_names"]
     assert "research_objective.rev2" in feedback
     complete(cold, {"name": "cold_review", "operation_id": "science.object.review.v1",
                     "inputs": [{"port": "experiment_plan", "artifact_names": [plan_name]},

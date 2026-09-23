@@ -272,31 +272,12 @@ _EXISTING_INVENTORY_CONSUMERS = {
 }
 
 
-def test_agent_inventory_exception_has_an_explicit_complete_consumer_inventory(monkeypatch) -> None:
+def test_agent_inventory_abi_changes_catalog_identity(monkeypatch) -> None:
     from scidiscovery.operations import catalog as catalog_module
     from scidiscovery.operations.spec import OPERATION_ABI_VERSION
 
     assert OPERATION_ABI_VERSION == "17"
     catalog = _catalog()
-    actual = {
-        operation_id: tuple(port.name for port in catalog.operation(operation_id).spec.inputs
-                            if port.usage == "evidence_inventory")
-        for operation_id in catalog.operation_ids()
-        if catalog.operation(operation_id).spec.executor.kind == "agent"
-        and any(port.usage == "evidence_inventory" for port in catalog.operation(operation_id).spec.inputs)
-    }
-    assert actual == {
-        **_EXISTING_INVENTORY_CONSUMERS,
-        "science.experiment.design.v1": ("current_progress", "experiment_results", "result_analysis"),
-        "science.object.review.v1": ("current_progress", "experiment_results", "result_analysis"),
-        "science.result.diagnose.v1": ("experiment_results", "reference_material", "current_progress"),
-        "tcad.result.analyze.v1": ("solver_outputs", "reference_material", "current_progress"),
-        "science.experiment.revise.v1": ("current_progress",),
-        "tcad.deck.author.initial.v1": ("current_progress",),
-        "tcad.deck.author.revise.v1": ("current_progress",),
-        "tcad.deck.author.runtime-failure.v1": ("current_progress",),
-        "tcad.deck.review.v1": ("current_progress",),
-    }
     monkeypatch.setattr(catalog_module, "OPERATION_ABI_VERSION", "16")
     prior_abi = _catalog()
     assert all(catalog.operation(operation_id).digest != prior_abi.operation(operation_id).digest

@@ -131,6 +131,8 @@ def package_reviewed_project(
     project = DeckProjectDraft.model_validate_json(
         inputs["project"], strict=True
     )
+    if project.execution_plan is not None and project.execution_plan != portfolio:
+        raise ValueError("project execution_plan differs from the projected plan")
     if project.materialization_report is None:
         raise ValueError(
             "reviewed deck package requires a control-materialized project"
@@ -205,6 +207,8 @@ def package_reviewed_project(
             legacy_case_bindings_only=project.case_anchors is None,
         )
         rebuilt_value = rematerialized.model_dump(mode="json")
+        if project.development_diagnostics:
+            rebuilt_value["development_diagnostics"] = [item.model_dump(mode="json") for item in project.development_diagnostics]
         rebuilt_value["initialization_attestation"] = (
             project.initialization_attestation.model_dump(mode="json")
             if project.initialization_attestation is not None

@@ -180,6 +180,7 @@ class HardenedWorkerMCPRouter(LocalWorkerMCPRouter):
                 status, workspace = self.runs.reopen(
                     operation_id=self.operation_id,
                     operation_digest=self.operation_digest,
+                    **({"run_id": self._bound_run_id} if self._bound_run_id else {}),
                 )
             except RunStateConflict as error:
                 raise WorkerToolError(str(error)) from error
@@ -200,6 +201,7 @@ class HardenedWorkerMCPRouter(LocalWorkerMCPRouter):
         status = self.runs.status(self._run_id)
         return {
             "state": "opened",
+            "role_instructions": json.loads(self._workspace.assignment_path.read_bytes()).get("role_instructions", ""),
             "narrative_instruction": narrative_instruction(
                 status.execution_profile["profile"] if status.execution_profile else None),
             "workspace_path": str(self._workspace.root),

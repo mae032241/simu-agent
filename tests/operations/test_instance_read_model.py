@@ -95,9 +95,10 @@ def run(system, name, *, state="completed", inputs=(), output=None, instance=Non
     return value
 
 
-def approval(system, name, subjects, *, instance=None, kind="run_request", now=None, expires_at=None):
+def approval(system, name, subjects, *, instance=None, kind="run_request", now=None, expires_at=None,
+             question="Authorize the frozen objects?"):
     launch = system.approvals.create_request(approval_id=name, kind=kind, subject_refs=subjects,
-        question="Authorize the frozen objects?", options=approval_options_template("run_request"),
+        question=question, options=approval_options_template("run_request"),
         requested_by=system.actor, idempotency_key=name, now=now, expires_at=expires_at)
     bind(system, instance or system.a, "approval", name, name)
     return launch
@@ -157,6 +158,33 @@ def test_binding_cursor_has_no_duplicates_and_is_instance_scoped(system):
     for limit in (0, 101, True):
         with pytest.raises(ValueError):
             system.model.nodes(system.a, limit=limit)
+
+
+def test_numbered_trajectory_has_no_gaps_and_excludes_registration_noise(system):
+    source = artifact(system, "source")
+    for i in range(23):
+        run(system, f"step_{i:03d}")
+        bind(system, system.a, "artifact", f"artifact_{i:03d}", source.artifact_id)
+    run(system, "other_instance", instance=system.b)
+    pages = [system.model.trajectory(system.a, page=i) for i in (1, 2, 3)]
+    assert [len(page["items"]) for page in pages] == [10, 10, 3]
+    assert all(page["total"] == 23 and page["total_pages"] == 3 for page in pages)
+    keys = [item["key"] for page in pages for item in page["items"]]
+    assert len(set(keys)) == 23 and all(key.startswith("run:step_") for key in keys)
+    assert keys == ["run:" + row.name for row in system.bindings.binding_page(instance=system.a, limit=100)
+                    if row.namespace == "run"]
+    assert system.model.trajectory(system.a, page=10**100) == pages[-1]
+    assert system.model.trajectory(system.b)["total"] == 1
+    assert system.runs.diagnostic_reads == []
+    assert all("inputs" not in item and "outputs" not in item for page in pages for item in page["items"])
+
+
+def test_numbered_trajectory_handles_empty_history_and_bad_page(system):
+    page = system.model.trajectory(system.a)
+    assert page == {"items": [], "page": 1, "total": 0, "total_pages": 1, "page_size": 10}
+    for invalid in (0, -1, True, "2"):
+        with pytest.raises(ValueError):
+            system.model.trajectory(system.a, page=invalid)
 
 
 def test_historical_result_does_not_revalidate_or_claim_current_qualification(system):

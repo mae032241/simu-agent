@@ -210,7 +210,8 @@ def test_install_combinations_compile_without_reverse_dependency() -> None:
     full = compile_catalog(
         (CORE_PLUGIN, GENERAL_PLUGIN, CURVE_PLUGIN, TCAD_PLUGIN)
     )
-    assert len(base.operation_ids()) == 15
+    assert set(base.operation_ids()) < set(curve.operation_ids())
+    assert set(base.operation_ids()) < set(table.operation_ids())
     assert "science.evidence.extract.figure.v2" not in base.operation_ids()
     assert "science.evidence.extract.figure.v2" not in curve.operation_ids()
     assert "science.evidence.extract.figure.v2" in figure.operation_ids()

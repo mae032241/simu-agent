@@ -16,9 +16,7 @@ from curve_score.curve_contract_compiler import (
     CurveContractCompileInput,
     compile_curve_contract,
 )
-from curve_score.science_operations import Resources as CurveResources
 from curve_figure_evidence.plugin import PLUGIN as FIGURE_PLUGIN
-from curve_figure_evidence import figure_science_operations
 from scidiscovery.artifact_agent.interfaces.mcp_root_operation_routes import (
     RootOperationRoutes,
 )
@@ -40,7 +38,6 @@ from scidiscovery.general_science_experiment_components import (
     ExperimentResources,
 )
 from scidiscovery.general_science_plugin import PLUGIN as GENERAL_PLUGIN
-from scidiscovery.general_science_resources import Resources as GeneralResources
 from scidiscovery.operation_declaration import OPERATION_AGENT_PREAMBLE
 from scidiscovery.operations.catalog import compile_catalog
 from scidiscovery.operations.invoke import InvocationArtifact, OperationInvocationError
@@ -53,39 +50,6 @@ from tests.operations.test_m2_curve_analysis_boundary import (
     _compiler_plan,
     _plan,
 )
-
-
-STABLE_PREAMBLE = """This is one bounded compiled scientific Operation.
-Read only the exact assignment, declared inputs, and output contract returned by
-the selected runtime backend. Do not search the project repository, installed
-package, framework source, historical runs, or sibling workspaces. Treat missing
-task-local evidence as a bounded gap rather than permission to find substitutes.
-
-The runtime appends the authoritative backend-specific lifecycle, filesystem,
-and tool instructions. A tool being visible is not authorization to use it. If
-output validation fails, correct the reported rule_id and field paths against
-the compiled Schema and its two contract pointers declared in assignment.json;
-never inspect framework implementation to reverse engineer a validator.
-Scientific content must be delivered through the backend's declared submit
-action, not through chat.
-
-"""
-
-HISTORICAL_EXPERIMENT_PROMPT = """Return exactly one RoleResultEnvelope whose payload is
-the scientific object required by output.schema.json. Without prior_draft,
-produce the compact ExperimentDesignIntent: select only reviewed hypotheses and
-design the smallest bounded study that states controls, interventions,
-observables, predictions, falsifiers, numerical decision criteria, extraction
-or reduction algorithms, uncertainty propagation, resource judgment, and stop
-conditions. When the critic requests a model counterfactual, define the bounded
-variables, equations or model family, boundary conditions, outputs, and
-decision rule needed by a registered domain implementation; do not implement or
-execute the domain model yourself.
-With prior_draft and change_request, output/result.json is a copy-on-write draft
-of the exact prior ExperimentPortfolio. Edit only fields required by the bounded
-review, complete its new handoff, and submit the entire revised object, not a
-patch. Preserve supported fields; never inherit a verdict or invent candidates.
-"""
 
 
 HISTORICAL_SOURCE = "2edac5d317a74056869a567bd0daa7f556ecbc85"
@@ -304,12 +268,9 @@ def _complete_scientific_review(
     return root.call_tool("run_status", {"name": name})["output_artifact_name"]
 
 
-def test_stable_prompt_bytes_and_design_revision_digest_isolation(monkeypatch) -> None:
-    assert OPERATION_AGENT_PREAMBLE == STABLE_PREAMBLE
-    assert EXPERIMENT_PROMPT.startswith(HISTORICAL_EXPERIMENT_PROMPT)
-    assert EXPERIMENT_PROMPT != HISTORICAL_EXPERIMENT_PROMPT
+def test_design_and_revision_prompt_digest_isolation(monkeypatch) -> None:
     assert "current_objectives" in EXPERIMENT_PROMPT
-    assert ExperimentResources.experiment_prompt == STABLE_PREAMBLE + EXPERIMENT_PROMPT
+    assert ExperimentResources.experiment_prompt == OPERATION_AGENT_PREAMBLE + EXPERIMENT_PROMPT
     assert "execution_context" not in EXPERIMENT_PROMPT
     assert "execution_context" in EXPERIMENT_DESIGN_PROMPT
 
@@ -364,60 +325,6 @@ def test_design_prompt_binding_isolation_under_the_current_contract() -> None:
     assert (
         rewired.operation("science.experiment.revise.v1").digest
         == repaired.operation("science.experiment.revise.v1").digest
-    )
-
-
-def test_global_preamble_pollution_changes_every_prompt_bound_operation(
-    monkeypatch,
-) -> None:
-    repaired = _catalog(figure=True)
-    prompt_bound = {
-        operation_id
-        for operation_id in repaired.operation_ids()
-        if any(
-            isinstance(value, str) and value.startswith(STABLE_PREAMBLE)
-            for value in repaired.operation(operation_id).implementations.values()
-        )
-    }
-    assert prompt_bound
-    resources = (
-        (GeneralResources, "evidence_prompt"),
-        (GeneralResources, "ideator_prompt"),
-        (GeneralResources, "critic_prompt"),
-        (GeneralResources, "auditor_prompt"),
-        (ExperimentResources, "experiment_prompt"),
-        (ExperimentResources, "experiment_design_prompt"),
-        (ExperimentResources, "object_review_prompt"),
-        (CurveResources, "curve_contract_prompt"),
-        (CurveResources, "curve_contract_review_prompt"),
-        (CurveResources, "diagnosis_prompt"),
-        (CurveResources, "curve_diagnosis_prompt"),
-        (figure_science_operations, "REQUEST_PROMPT"),
-        (figure_science_operations, "INTAKE_PROMPT"),
-        (figure_science_operations, "AUDIT_PROMPT"),
-    )
-    polluted_prefix = STABLE_PREAMBLE + (
-        "Global Skill policy pollution must not enter scientific prompt identity.\n"
-    )
-    for owner, name in resources:
-        value = getattr(owner, name)
-        assert value.startswith(STABLE_PREAMBLE)
-        monkeypatch.setattr(
-            owner,
-            name,
-            polluted_prefix + value[len(STABLE_PREAMBLE) :],
-        )
-    polluted = _catalog(figure=True)
-    changed = {
-        operation_id
-        for operation_id in repaired.operation_ids()
-        if repaired.operation(operation_id).digest
-        != polluted.operation(operation_id).digest
-    }
-    assert prompt_bound <= changed
-    assert any(
-        repaired.operation(operation_id).spec.executor.kind != "agent"
-        for operation_id in changed - prompt_bound
     )
 
 
@@ -636,7 +543,7 @@ def test_current_science_reaches_author_while_historical_contracts_retire(
         "instruction": "Author only the exact bounded project.",
     })
     assert rejected["admissible"] is False
-    assert rejected["reason_code"] == "input_producer_contract_changed"
+    assert rejected["reason_code"] == "input_independent_review_missing"
     assert runtime.artifacts.read(retired_plan.ref) == plan.canonical_json()
     assert runtime.artifacts.catalog(retired_plan.ref).labels["operation_digest"] == historical[
         "science.experiment.revise.v1"

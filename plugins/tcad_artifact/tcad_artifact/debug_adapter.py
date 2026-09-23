@@ -136,8 +136,19 @@ class TCADDevelopmentDebugBridge:
         sources: tuple[TCADDebugSource, ...],
         exchange_directory: Path,
         mode: str,
+        output_names: tuple[str, ...] = (),
+        output_budget_bytes: int | None = None,
     ) -> PreparedTCADDebugRun:
         draft = DeckProjectDraft.model_validate_json(project, strict=True)
+        if output_names and mode != "initialization":
+            raise ValueError("diagnostic outputs are only available in initialization mode")
+        if len(output_names) > _MAX_OUTPUT_FILES:
+            raise ValueError("too many initialization diagnostic outputs")
+        declared = {item.name: item for item in draft.expected_outputs}
+        for name in output_names:
+            _validate_output_name(name)
+            if name not in declared or declared[name].capture != "workspace_file":
+                raise ValueError(f"initialization output is not a declared workspace file: {name}")
         snapshot = SolverCapabilitySnapshot.model_validate_json(
             capability, strict=True
         )
@@ -145,6 +156,10 @@ class TCADDevelopmentDebugBridge:
             raise ValueError("development debug requires a direct TCAD solver")
         release = _manual_backed_release(snapshot)
         mode_wall, mode_output, mode_processes = _development_limits(mode)
+        if output_budget_bytes is not None:
+            if output_budget_bytes < 1:
+                raise ValueError("development output budget is exhausted")
+            mode_output = min(mode_output, output_budget_bytes)
         mode_arguments = _development_arguments(
             release=release,
             solver_kind=draft.solver_kind,
@@ -272,7 +287,11 @@ class TCADDevelopmentDebugBridge:
                 update={
                     "execution_purpose": "development_debug",
                     "arguments": mode_arguments,
-                    "expected_outputs": (),
+                    "expected_outputs": tuple(
+                        item.model_copy(update={"required": True,
+                            "max_bytes": min(item.max_bytes, _MAX_OUTPUT_FILE_BYTES, limits.max_output_bytes)})
+                        for item in packaged.job_spec.expected_outputs if item.name in output_names
+                    ),
                     "limits": limits,
                 }
             )
@@ -288,6 +307,7 @@ class TCADDevelopmentDebugBridge:
                     "development_debug_submission", job_path, "application/json"
                 ),
                 wall_time_seconds=limits.wall_time_seconds,
+                arguments=mode_arguments,
             )
         except Exception as error:
             raise ValueError(
@@ -328,6 +348,7 @@ class TCADDevelopmentDebugBridge:
                 "development_debug_submission", path, "application/json"
             ),
             wall_time_seconds=bounded,
+            arguments=prepared.arguments,
         )
 
     def submit(self, submission: LocalFileDescriptor) -> tuple[str, str]:
@@ -363,7 +384,10 @@ class TCADDevelopmentDebugBridge:
             raise ValueError("development debug submission purpose changed")
         if (
             job.solver_kind not in {"sprocess", "sdevice"}
-            or job.expected_outputs
+            or (job.expected_outputs and _development_mode(job) != "initialization")
+            or len(job.expected_outputs) > _MAX_OUTPUT_FILES
+            or any(item.capture != "workspace_file" or item.max_bytes > min(_MAX_OUTPUT_FILE_BYTES, job.limits.max_output_bytes)
+                   for item in job.expected_outputs)
             or _development_mode(job)
             not in {"preflight", "smoke", "initialization"}
         ):

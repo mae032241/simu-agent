@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 
 from deploy.install_transaction import _directory_digest
-from scidiscovery.operation_declaration import OPERATION_AGENT_PREAMBLE
+from scidiscovery.operation_declaration import OPERATION_AGENT_PREAMBLE, RESEARCH_WORK_CONTEXT
 from tcad_artifact import role_pack
 
 
@@ -20,11 +20,11 @@ SKILL = REPOSITORY / "skills/sentaurus-tcad-code"
 
 
 def test_role_prompts_use_only_packaged_role_resources():
-    assert "Read only the exact assignment, declared inputs" in OPERATION_AGENT_PREAMBLE
+    assert "declared inputs" in OPERATION_AGENT_PREAMBLE
     assert "Skill" not in OPERATION_AGENT_PREAMBLE
     for role in ("author", "reviewer"):
         prompt = role_pack.role_prompt(role)
-        assert prompt == (role_pack.role_directory() / f"tcad_deck_{role}.md").read_text("utf-8")
+        assert prompt == RESEARCH_WORK_CONTEXT + (role_pack.role_directory() / f"tcad_deck_{role}.md").read_text("utf-8")
         assert (SKILL / "SKILL.md").read_text("utf-8") not in prompt
         assert "sentaurus-tcad-code" in prompt
         assert "frozen Sentaurus" not in prompt

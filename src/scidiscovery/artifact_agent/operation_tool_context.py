@@ -26,6 +26,9 @@ class OperationToolContext:
     _record_activity: Callable[[str], None]
     _candidate_snapshot: Callable[[], tuple[str, ...]]
 
+    run_id: str = ""
+    operation_id: str = ""
+
     _read_evidence: Callable[[str], bytes] | None = None
     _accept_evidence: Callable[..., dict] | None = None
     _list_evidence: Callable[[], list[dict]] | None = None
@@ -35,6 +38,20 @@ class OperationToolContext:
     _source_descriptor: Callable[[str], object] | None = None
     _finish_attempt: Callable[..., tuple[dict, tuple[dict, ...]] | None] | None = None
     _prior_source_bindings: Callable[[], Mapping[str, str]] | None = None
+
+    _read_reference: Callable[..., dict] | None = None
+
+    def read_reference(self, request):
+        if self._read_reference is None:
+            raise ValueError("tool has no reference access permission")
+        return self._read_reference(request)
+
+    _reserve_network_request: Callable[[str], None] | None = None
+
+    def reserve_network_request(self, url: str) -> None:
+        if self._reserve_network_request is None:
+            raise ValueError("tool has no network permission")
+        self._reserve_network_request(url)
 
     @property
     def prior_source_bindings(self) -> Mapping[str, str]:

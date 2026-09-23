@@ -25,6 +25,12 @@ def cite(report, alias, key="calculation"):
     return report
 
 
+
+def full_record(reply):
+    """Read the exact original behind the compact tool response."""
+    return json.loads(Path(reply["calculation_path"]).read_bytes())
+
+
 def test_plot_failure_preserves_numbers_and_later_bound_plot_does_not_recompute(tmp_path):
     """A tiny staged task through publish, partial submit, exact binding and new Run."""
     system = analysis_system(tmp_path)
@@ -63,6 +69,20 @@ else: plot()
     assert submit(worker, opened, cite(analysis_report(), published['files'][0]['evidence_alias']))['state'] == 'completed'
     # A new controlled task binds the actual sealed files, not another Agent's memory.
     catalog, runtime, facade, request, artifacts, register = system
+    manifest = facade.call_tool('artifact_catalog', {
+        'name': 'analysis.output.recovery_manifest', 'view': 'parents', 'parent_limit': 16})
+    projection = manifest['manifest_projection']
+    assert projection['status'] == 'complete' and projection['binding_count'] >= 3
+    assert projection['record_count'] == projection['page_record_count'] == 3
+    assert projection['invalid_record_count'] == projection['unmapped_record_count'] == 0
+    script_parent = next(parent for parent in manifest['parents']
+        if any(record['alias'] == published['script']['evidence_alias']
+               for record in parent.get('manifest_records', ())))
+    record = script_parent['manifest_records'][0]
+    assert script_parent['artifact_name'] == 'analysis.output.' + published['script']['evidence_alias']
+    assert record['tool_name'] == 'worker_analysis_publish_files'
+    assert record['metadata']['method'] == 'Tiny fixture unit; optional plot unavailable.'
+    assert 'artifact_ref' not in json.dumps(manifest)
     request = deepcopy(request); request['name'] = 'plot_continuation'
     reference = next(i for i in request['inputs'] if i['port'] == 'reference_material')
     retained = [published['script'], *published['files']]
@@ -71,6 +91,9 @@ else: plot()
     next_root = Path(reopened['workspace_path']); next_scratch = next_root / 'scratch'
     bindings = runtime.runs.status(following._run_id).inputs
     assignment = json.loads(Path(reopened['assignment_path']).read_text())
+    navigation = next(item for item in assignment['inputs']
+        if item['artifact_name'] == 'analysis.output.' + published['script']['evidence_alias'])
+    assert navigation['artifact_name_usage'] == 'navigation_only'
     for name, item in zip(('analysis.py', 'numbers.json', 'calls.txt'), retained):
         ref = runtime.runs.source_descriptor(runtime.runs.status(worker._run_id), item['evidence_alias']).artifact_ref
         alias = next(i.source_name for i in bindings if i.artifact_ref == ref)
@@ -82,6 +105,11 @@ else: plot()
     subprocess.run([sys.executable, '-B', 'analysis.py', 'plot'], cwd=next_scratch, check=True, timeout=5)
     assert (next_scratch / 'numbers.json').read_bytes() == numbers
     assert (next_scratch / 'calls.txt').read_text() == '1'
+    with pytest.raises(DiagnosticError):
+        following.call_tool('worker_analysis_publish_files', dict(
+            source_aliases=[navigation['artifact_name']], script_path='scratch/analysis.py',
+            files=[dict(path='scratch/plot.png', media_type='image/png')],
+            method='Navigation names are not tool aliases.'))
     data_alias = next(i.source_name for i in bindings if i.artifact_ref == runtime.runs.source_descriptor(
         runtime.runs.status(worker._run_id), published['files'][0]['evidence_alias']).artifact_ref)
     plotted = following.call_tool('worker_analysis_publish_files', dict(source_aliases=[data_alias], script_path='scratch/analysis.py',
@@ -106,7 +134,7 @@ def test_reference_only_report_resolves_saved_score_without_copy_or_recalculatio
     alias = reply["calculation_ref"]
     saved = json.loads(worker.runs.read_tool_evidence(worker.runs.status(worker._run_id), alias))
     assert saved["request"] == request
-    assert saved["attempt"] == CalculationRecord.model_validate_json(canonical_json(reply)).attempt.model_dump(mode="json")
+    assert saved["attempt"] == CalculationRecord.model_validate_json(canonical_json(full_record(reply))).attempt.model_dump(mode="json")
     assert "calculation_ref" not in saved
     monkeypatch.setattr("curve_score.analysis_tool.evaluate_analysis_request", lambda **kw: pytest.fail("recomputed during submission"))
     report = cite(report, alias)
@@ -141,7 +169,7 @@ def test_full_257_point_diagnostic_does_not_shrink_to_fit_report(tmp_path):
         source["case_mapping_basis"] = dict(kind="evidence", rationale="bounded fixture rationale " * 70,
             evidence_refs=[dict(input_alias="experiment_plan", locator="fixture " * 30) for _ in range(8)])
     value = worker.call_tool("worker_tcad_curve_diagnose", dict(record_key="full_detail", request=request))
-    record = value["record"]
+    record = full_record(value["record"])
     assert record["status"] == "computed", value
     details = json.loads(Path(value["details"]["path"]).read_text())
     assert len(details["localization"]["analyses"][0]["residual_trace"]) == 257
@@ -149,7 +177,7 @@ def test_full_257_point_diagnostic_does_not_shrink_to_fit_report(tmp_path):
     with pytest.raises(ValueError, match="exceeds 32 KiB"):
         CalculationRecord.model_validate_json(canonical_json(old_layout))
     assert len(canonical_json(record)) < 32 * 1024
-    assert submit(worker, opened, cite(analysis_report(), record["calculation_ref"]))["state"] == "completed"
+    assert submit(worker, opened, cite(analysis_report(), value["record"]["calculation_ref"]))["state"] == "completed"
 
 
 def test_saved_calculations_use_artifact_identity_when_names_repeat(tmp_path):
@@ -182,7 +210,7 @@ def test_inline_and_saved_citations_share_identity_only_for_the_same_receipt(tmp
         saved = worker.call_tool(tool, {"record_key": "same_name", "request": request})
         assert saved["status"] == "computed" and saved["calculation_ref"] != first["calculation_ref"]
     report = cite(report, saved["calculation_ref"], "one_calculation")
-    report["calculation_records"] = [first]
+    report["calculation_records"] = [full_record(first)]
     report["evidence"].append(dict(source_key="one_calculation", title="Inline representation",
         source_type="runtime_output", locator="calculation_records:same_name"))
     result = submit(worker, opened, report)
@@ -298,8 +326,9 @@ def test_identical_calculation_bytes_from_different_runs_keep_their_receipt_scop
     assert prior_descriptor.sha256 == current_descriptor.sha256
     assert prior_descriptor.artifact_ref != current_descriptor.artifact_ref
     report = cite(analysis_report(), "current_progress", "old_calculation")
+    current = full_record(current)
     if mode == "same_historical_receipt":
-        current = deepcopy(first)
+        current = full_record(first)
         current["attempt"]["manifest_alias"] = "prior_analysis_manifest"
     report["calculation_records"] = [current]
     report["evidence"].append(dict(source_key="new_calculation" if mode == "separate_runs" else "old_calculation",
@@ -345,7 +374,7 @@ def test_saved_calculation_survives_failed_run_without_manual_receipt_rewriting(
     if also_inline:
         # Legacy inline consumption still uses its existing recovery spelling;
         # the preferred saved-file citation above needs no manual rewrite.
-        inline = deepcopy(result)
+        inline = full_record(result)
         inline["attempt"]["proof_kind"] = "recovery"
         report["calculation_records"] = [inline]
         report["evidence"].append(dict(source_key="calculation", title="Recovered inline receipt",

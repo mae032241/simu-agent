@@ -54,7 +54,7 @@ def _review_gate_catalog():
             ),
             "inputs": (REVIEWER.inputs[0], reviewed_observation, optional_review,
                        *tuple(port for port in REVIEWER.inputs if port.name == "user_context")),
-            "outputs": (output,),
+            "outputs": (output, *(port for port in REVIEWER.outputs if port.collection is not None)),
         }
     )
     plugin = BLIND_CSV_PLUGIN.model_copy(
@@ -272,7 +272,7 @@ def test_default_local_exploration_has_no_qualification_or_approval_state(
     assert runtime.scheduler_bindings.list(
         instance=instance.instance_id, namespace="approval"
     ) == ()
-    assert root.call_tool("approval_list", {}) == {"approvals": []}
+    assert root.call_tool("approval_list", {}) == {"approvals": [], "next_before": None}
     root_tools = {tool["name"] for tool in root.list_tools()}
     assert "approval_status" in root_tools
     assert not any("decide" in name or "record_decision" in name for name in root_tools)

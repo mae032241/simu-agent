@@ -75,4 +75,5 @@ def test_retained_generic_transform_corpus_matches_the_complete_catalog(tmp_path
         *(item["operation_id"] for item in current["operations"]),
         "science.figure.evidence.materialize.v1",
         "scidiscovery.curve-bundle.figure-evidence.v2",
+        "tcad.execution-plan.project.v1",
     }

@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import html
 import json
+import re
 from collections.abc import Callable
+from decimal import Decimal, InvalidOperation
 from itertools import islice
 from urllib.parse import urlsplit
 
@@ -17,6 +19,53 @@ EvidenceHref = Callable[[str, str], str]
 ImageHref = Callable[[str], str]
 MAX_PRESENTATION_BYTES = 80 * 1024
 _OMITTED = "<p class='bounded-note'>仅显示有界预览；请通过来源查看完整原文。</p>"
+_SCIENTIFIC_NUMBER = re.compile(
+    r"(?P<literal>`[^`]*(?:`|$)|(?:https?://|www\.)[^\s<>]+)|"
+    r"(?<![A-Za-z0-9_./:+-])(?P<number>[+-]?(?:\d+\.\d*|\.\d+|\d+[eE][+-]?\d+)"
+    r"(?:[eE][+-]?\d+)?)(?![A-Za-z0-9_./])"
+)
+
+
+def render_scientific_text(value: object, limit: int = 512, *, max_bytes: int | None = None) -> str:
+    """Round display numerals only; exact originals remain in accessible tooltips.
+
+    Identifiers, URLs and inline code are not scientific scalar values. This is
+    opt-in for science previews, never used by raw evidence or download routes.
+    """
+    if not isinstance(value, (str, float)):
+        return _text(value, limit)
+    text = value if isinstance(value, str) else str(value)
+    preview = text[:limit]
+    parts, end = [], 0
+    for match in _SCIENTIFIC_NUMBER.finditer(preview):
+        parts.append(html.escape(preview[end:match.start()], quote=True))
+        if (match.group("number") and match.end() == len(preview) and len(text) > limit
+                and text[limit] in "0123456789.eE+-"):
+            # Never round a clipped mantissa/exponent into a different value.
+            preview = preview[:match.start()]
+            end = len(preview)
+            break
+        raw = match.group()
+        shown = raw
+        coefficient = re.split("[eE]", raw)[0].lstrip("+-").replace(".", "").lstrip("0")
+        if match.group("number") and len(raw) <= 128 and (len(coefficient) > 6 or len(raw) > 12):
+            try:
+                shown = format(Decimal(raw), ".5e" if "e" in raw.lower() else ".6g")
+            except InvalidOperation:
+                pass
+        if shown != raw:
+            exact = html.escape(raw, quote=True)
+            parts.append("<span class='rounded-number' tabindex='0' title='显示最多 6 位有效数字；原始值："
+                         + exact + "' aria-label='显示约值 " + html.escape(shown, quote=True)
+                         + "；原始值 " + exact + "'>" + html.escape(shown, quote=True) + "</span>")
+        else:
+            parts.append(html.escape(raw, quote=True))
+        end = match.end()
+    parts.append(html.escape(preview[end:], quote=True))
+    result = "".join(parts) + ("…（预览）" if len(text) > limit else "")
+    if max_bytes is not None and len(result.encode("utf-8")) > max_bytes and limit > 1:
+        return render_scientific_text(value, limit // 2, max_bytes=max_bytes)
+    return result
 
 
 def _text(value: object, limit: int = 512) -> str:
@@ -31,7 +80,7 @@ def _text(value: object, limit: int = 512) -> str:
     return html.escape(text[:limit], quote=True) + ("…（预览）" if len(text) > limit else "")
 
 
-def render_json_value(value: object, *, max_bytes: int = 8192) -> str:
+def render_json_value(value: object, *, max_bytes: int = 8192, compact_numbers: bool = False) -> str:
     """Show JSON as readable fields without embedding an unbounded subtree."""
     nodes = [0]
 
@@ -43,7 +92,10 @@ def render_json_value(value: object, *, max_bytes: int = 8192) -> str:
             if current is None:
                 return "<span class='value-null'>null（原记录空值）</span>"
             css = "value-text value-number" if type(current) in (int, float) else "value-text"
-            return "<span class='" + css + "'>" + _text(current, min(2048, (budget - 192) // 6)) + "</span>"
+            limit = min(2048, (budget - 192) // 6)
+            text = (render_scientific_text(current, limit, max_bytes=budget - 192)
+                    if compact_numbers else _text(current, limit))
+            return "<span class='" + css + "'>" + text + "</span>"
         if not current:
             return "<span class='value-empty'>" + ("{}（空对象）" if isinstance(current, dict) else "[]（空列表）") + "</span>"
         mapping = isinstance(current, dict)
@@ -173,24 +225,24 @@ def _conditions(value: object, evidence_href: EvidenceHref) -> str:
     if not isinstance(value, list):
         value = [value] if isinstance(value, dict) else value
     if not isinstance(value, list):
-        return render_json_value(value, max_bytes=1536)
+        return render_json_value(value, max_bytes=1536, compact_numbers=True)
     if not value:
         return "<span class='value-empty'>原记录未列出条件（空列表）</span>"
     parts, used = [], 0
     for item in value[:8]:
         if isinstance(item, dict):
             if "name" in item and "value" in item:
-                body = _text(item["name"], 96) + "：" + _text(item["value"], 180)
+                body = _text(item["name"], 96) + "：" + render_scientific_text(item["value"], 180)
                 if "unit" in item:
                     body += " " + _text(item["unit"], 48)
                 if set(item) - {"name", "value", "unit", "source"}:
                     body += "（其他条件字段见原件）"
             else:
-                body = render_json_value({key: child for key, child in islice(item.items(), 24) if key != "source"}, max_bytes=768)
+                body = render_json_value({key: child for key, child in islice(item.items(), 24) if key != "source"}, max_bytes=768, compact_numbers=True)
             if "source" in item:
                 body += " " + render_source(item["source"], evidence_href)
         else:
-            body = _text(item, 256)
+            body = render_scientific_text(item, 256)
         if used + len(body.encode("utf-8")) > 1280:
             parts.append(_OMITTED)
             break
@@ -203,14 +255,14 @@ def _conditions(value: object, evidence_href: EvidenceHref) -> str:
 
 def _reported_values(value: object, evidence_href: EvidenceHref) -> str:
     if not isinstance(value, (list, dict)):
-        return render_json_value(value, max_bytes=1536)
+        return render_json_value(value, max_bytes=1536, compact_numbers=True)
     values = value if isinstance(value, list) else [value]
     if not values:
         return "<span class='value-empty'>原记录未列出报告值（空列表）</span>"
     parts, used = [], 0
     for item in values[:8]:
         if isinstance(item, dict):
-            body = "<p>" + (_text(item["value"], 256) if "value" in item else "报告值未提供")
+            body = "<p>" + (render_scientific_text(item["value"], 256) if "value" in item else "报告值未提供")
             if "unit" in item:
                 body += " " + _text(item["unit"], 64)
             body += "</p>"
@@ -224,9 +276,9 @@ def _reported_values(value: object, evidence_href: EvidenceHref) -> str:
             extra = {key: child for key, child in islice(item.items(), 24)
                      if key not in {"value", "unit", "conditions", "evidence_mode", "source"}}
             if extra:
-                body += render_json_value(extra, max_bytes=1024)
+                body += render_json_value(extra, max_bytes=1024, compact_numbers=True)
         else:
-            body = "<p>" + _text(item, 256) + "</p>"
+            body = "<p>" + render_scientific_text(item, 256) + "</p>"
         body = "<div class='parameter-reported-value'>" + body + "</div>"
         if used + len(body.encode("utf-8")) > 3584:
             parts.append(_OMITTED)
@@ -289,17 +341,17 @@ def fold_panel(title: str, body: str, *, count: int | None = None, class_name: s
 
 def _compact_parameter(row: dict, evidence_href: EvidenceHref) -> str:
     selected = row.get("selected_value", "未记录")
-    value = (render_json_value(selected, max_bytes=768) if not isinstance(selected, (dict, list))
-             else fold_panel("查看结构化取值", render_json_value(selected, max_bytes=1536)))
+    value = (render_json_value(selected, max_bytes=768, compact_numbers=True) if not isinstance(selected, (dict, list))
+             else fold_panel("查看结构化取值", render_json_value(selected, max_bytes=1536, compact_numbers=True)))
     status = _evidence_label(row.get("epistemic_status", "原记录未声明科学分类"))
     uncertainty = row.get("uncertainty")
     uncertainty_html = ("<span class='uncertainty-flag'>不确定性未提供估计</span>" if uncertainty is None
-                        else "<span class='uncertainty-flag'>不确定性：</span>" + render_json_value(uncertainty, max_bytes=768))
+                        else "<span class='uncertainty-flag'>不确定性：</span>" + render_json_value(uncertainty, max_bytes=768, compact_numbers=True))
     detail = ("<p class='field-label'>原记录报告值</p>" + _reported_values(row.get("reported_values"), evidence_href)
         + "<p class='field-label'>适用条件</p>" + _conditions(row.get("conditions"), evidence_href)
         + "<p class='field-label'>案例与变量范围</p>" + render_json_value(row.get("case_scope"), max_bytes=1024)
         + "<p class='field-label'>获得方式</p>" + render_json_value(row.get("acquisition", "未记录"), max_bytes=768)
-        + "<p class='field-label'>选择理由</p>" + render_json_value(row.get("rationale", "未记录"), max_bytes=1536)
+        + "<p class='field-label'>选择理由</p>" + render_json_value(row.get("rationale", "未记录"), max_bytes=1536, compact_numbers=True)
         + "<p class='source-note'>" + _text(row.get("source_status", "该原记录未直接列出出处")) + "</p>"
         + _sources(row.get("sources"), evidence_href))
     rendered = ("<tr><th scope='row'>" + _text(row.get("name", "未命名参数"), 100) + "</th>"
@@ -347,7 +399,7 @@ def render_presentation(presentation: dict | None, *, evidence_href: EvidenceHre
                 continue
             value = item["value"]
             rendered = ("<article class='presentation-item'><h3>" + _text(item.get("label", "原记录"), 160)
-                + "</h3>" + render_json_value(value, max_bytes=4096)
+                + "</h3>" + render_json_value(value, max_bytes=4096, compact_numbers=True)
                 + render_source(item.get("source"), evidence_href) + "</article>")
             if size + len(rendered.encode("utf-8")) > 20 * 1024:
                 rows.append(_OMITTED + render_source(item.get("source"), evidence_href))
@@ -378,10 +430,10 @@ def render_presentation(presentation: dict | None, *, evidence_href: EvidenceHre
             elif label in prose_labels and isinstance(value, str):
                 chinese = any('\u4e00' <= c <= '\u9fff' for c in value)
                 if chinese and len(value) <= 240 and not brief:
-                    brief.append("<p class='conclusion-brief'>" + _text(value, 240) + "</p>" + render_source(source, evidence_href))
+                    brief.append("<p class='conclusion-brief'>" + render_scientific_text(value, 240) + "</p>" + render_source(source, evidence_href))
                 else:
                     title = label + ("（报告原文）" if chinese else "（英文原文）")
-                    originals.append(fold_panel(title, render_json_value(value, max_bytes=8192) + render_source(source, evidence_href), class_name="report-original"))
+                    originals.append(fold_panel(title, render_json_value(value, max_bytes=8192, compact_numbers=True) + render_source(source, evidence_href), class_name="report-original"))
             elif label in count_labels and isinstance(value, (list, dict)):
                 badges.append("<div class='conclusion-count'><span>" + _text(label) + "</span><strong>" + str(len(value))
                     + "</strong>" + render_source(source, evidence_href) + "</div>")
@@ -437,7 +489,8 @@ def render_presentation(presentation: dict | None, *, evidence_href: EvidenceHre
             cards.append("<figure class='figure-card'><div class='figure-number'>图件 " + str(index+1) + "</div>" + picture
                 + "<figcaption>" + label + render_source(figure.get("source"), evidence_href) + "</figcaption></figure>")
         figure_body = "<div class='figure-grid'>" + "".join(cards) + "</div>"
-        append("<section class='research-panel figures-panel'><h2>图件与结果对照</h2>" + figure_body + "</section>")
+        append(fold_panel("图件与结果对照", figure_body,
+                          count=min(len(figures), 8), class_name="figures-panel"))
 
     curve_sections = [section for section in sections if section.get("kind") == "curve_evidence"]
     if curve_sections:
@@ -452,7 +505,7 @@ def render_presentation(presentation: dict | None, *, evidence_href: EvidenceHre
                         rows.append("<p><a class='csv-download' href='" + html.escape(href, quote=True) + "'>下载 CSV：" + _text(item["value"]) + "</a></p>")
                 else:
                     rows.append("<div class='curve-fact'><strong>" + _text(item.get("label")) + "</strong>"
-                        + render_json_value(item.get("value"), max_bytes=2048) + render_source(item.get("source"), evidence_href) + "</div>")
+                        + render_json_value(item.get("value"), max_bytes=2048, compact_numbers=True) + render_source(item.get("source"), evidence_href) + "</div>")
         append(fold_panel("论文曲线提取 · 坐标、身份与 CSV", "".join(rows), class_name="curve-evidence-panel"))
         primary = [section for section in primary if section.get("kind") != "curve_evidence"]
         background = [section for section in background if section.get("kind") != "curve_evidence"]
@@ -477,7 +530,11 @@ def render_presentation(presentation: dict | None, *, evidence_href: EvidenceHre
     if gaps:
         append(fold_panel("资料读取说明", "<p>部分原记录缺少展示字段或超出预览范围；原件入口保留。</p>"
             + render_json_value(gaps, max_bytes=4096), count=len(gaps), class_name="presentation-gaps"))
-    return "<div class='research-presentation'>" + "".join(parts) + "</div>"
+    body = "".join(parts)
+    if "class='rounded-number'" in body:
+        body = ("<p class='source-note'>长数值按最多 6 位有效数字近似显示；悬停可查看原始值。"
+                "阈值比较与判定以原始记录为准。</p>" + body)
+    return "<div class='research-presentation'>" + body + "</div>"
 
 
 __all__ = ["render_presentation"]

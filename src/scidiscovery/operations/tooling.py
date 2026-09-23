@@ -46,9 +46,18 @@ class WorkerToolDefinition:
     evidence_ports: tuple[str, ...] = ()
     network_access: bool = False
     record_attempts: bool = False
+    reference_policy: Any = None
     _input_schema: Any = field(default=None, repr=False, compare=False)
 
     def issue(self) -> str | None:
+        if self.reference_policy is not None:
+            from ..reference_tools import ReferencePolicy
+            if (not isinstance(self.reference_policy, ReferencePolicy)
+                    or self.contextual_handler is None
+                    or any(type(getattr(self.reference_policy, name)) is not int
+                           or getattr(self.reference_policy, name) <= 0
+                           for name in ReferencePolicy.__dataclass_fields__ if name != 'rules')):
+                return "worker_reference_policy_invalid"
         if not _TOOL_NAME.fullmatch(self.name) or not self.description:
             return "worker_tool_definition_invalid"
         if not isinstance(self.input_model, type) or not issubclass(
@@ -84,11 +93,14 @@ class WorkerToolDefinition:
         return None
 
     def schema(self) -> dict[str, Any]:
+        from dataclasses import asdict
         return {
             "name": self.name,
             "description": self.description,
-            "inputSchema": (json_projection(self._input_schema) if self._input_schema is not None
+            "inputSchema": {**(json_projection(self._input_schema) if self._input_schema is not None
                             else self.input_model.model_json_schema()),
+                **({"x-scidiscovery-reference-policy": json_projection(freeze_json(asdict(self.reference_policy)))}
+                   if self.reference_policy is not None else {})},
         }
 
 
@@ -100,16 +112,32 @@ def parse_tool_arguments(model: type[BaseModel], arguments: Any) -> BaseModel:
 
 
 def operation_agent_type(compiled: CompiledOperation) -> str:
-    """Return the precompiled Codex type tied to one exact operation digest."""
+    """Platform role groups native capabilities; Run retains exact Operation identity."""
+    native = compiled.spec.executor.native_tools
+    return "op_worker_" + "_".join((native.shell, "image" if native.view_image else "text", native.web_search))
 
-    stem = re.sub(r"[^a-z0-9_]+", "_", compiled.spec.operation_id.lower()).strip("_")
-    return f"op_{stem[:72]}_{compiled.digest[:12]}"
+
+def operation_agent_description(compiled: CompiledOperation) -> str:
+    native = compiled.spec.executor.native_tools
+    return (f"Controlled scientific Worker; shell={native.shell}, "
+            f"images={str(native.view_image).lower()}, web={native.web_search}. Open the attached assignment.")
+
+
+def operation_role_instructions(compiled: CompiledOperation) -> str:
+    reference = compiled.spec.executor.prompt
+    if reference is None:
+        raise ValueError("compiled Agent operation has no prompt")
+    prompt = compiled.implementations[f"{reference.plugin_id or compiled.plugin_id}:{reference.component_id}"]
+    if isinstance(prompt, bytes):
+        prompt = prompt.decode("utf-8")
+    if not isinstance(prompt, str):
+        raise ValueError("compiled operation prompt is not text")
+    return prompt
 
 
 def operation_worker_server_name(compiled: CompiledOperation) -> str:
-    """Return the sole Worker MCP namespace authorized for this Operation."""
-
-    stem = operation_agent_type(compiled)[3:].rsplit("_", 1)[0]
+    """Legacy per-Operation namespace, independent of shared platform role names."""
+    stem = re.sub(r"[^a-z0-9_]+", "_", compiled.spec.operation_id.lower()).strip("_")
     return f"scid_worker_{stem[:32]}_{compiled.digest[:12]}"
 
 
@@ -136,6 +164,8 @@ def compile_worker_tools(
                 ),
             )
         )
+    if sum(tool.reference_policy is not None for tool in values) > 1:
+        raise ValueError("Operation declares multiple reference access policies")
     return tuple(values)
 
 
@@ -299,7 +329,7 @@ __all__ = [
 def declared_tool_output_names(tools):
     """Ancillary output authority is declared separately from raw-byte access."""
     names = {name for tool in tools for name in tool.evidence_ports}
-    if any(tool.record_attempts for tool in tools):
+    if any(tool.record_attempts or tool.reference_policy is not None for tool in tools):
         names.add("recovery_manifest_output")
     return names
 
@@ -308,3 +338,16 @@ def tool_evidence_ports(compiled):
     ports = {p.name: p for p in compiled.spec.outputs if p.collection is not None}
     enabled = declared_tool_output_names(operation_worker_tools(compiled))
     return ports if enabled and enabled == set(ports) and enabled <= {"tool_evidence", "recovery_manifest_output"} else {}
+
+
+def reference_policy(compiled):
+    policies = [tool.reference_policy for tool in operation_worker_tools(compiled)
+                if tool.reference_policy is not None]
+    if len(policies) > 1:
+        raise ValueError("Operation declares multiple reference access policies")
+    return policies[0] if policies else None
+
+
+def reference_source_ports(compiled):
+    """One authority for schema projection and context-checker source access."""
+    return frozenset({'reference_access'}) if reference_policy(compiled) is not None else frozenset()

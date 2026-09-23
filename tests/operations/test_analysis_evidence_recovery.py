@@ -13,6 +13,8 @@ def test_unpublished_analysis_survives_failure_and_new_assignment(tmp_path, reus
     from scidiscovery.artifact_agent.interfaces.mcp_local_worker import LocalWorkerMCPRouter
     system, worker, opened, _ = recovery_system(tmp_path)
     workspace = Path(opened['workspace_path'])
+    from scidiscovery.artifact_agent.service.input_reader import read, CACHE_DIRECTORY
+    read(workspace, 'assignment.json', file=True, pointers=['/role_instructions'])
     scratch = workspace / 'scratch'
     scratch.mkdir(exist_ok=True)
     script = b'from pathlib import Path\nPath("numbers.json").write_text("{\\"value\\": 3}")\nraise ModuleNotFoundError("No module named fixture_plotter")\n'
@@ -38,12 +40,17 @@ def test_unpublished_analysis_survives_failure_and_new_assignment(tmp_path, reus
         operation_id=op.spec.operation_id, operation_digest=op.digest)
     next_opened = following.call_tool('worker_open_assignment', {})
     assignment = json.loads(Path(next_opened['assignment_path']).read_text())
+    assert 'role_instructions_sha256' not in opened and 'role_instructions_sha256' not in next_opened
+    assert assignment['role_instructions'] == json.loads(Path(opened['assignment_path']).read_text())['role_instructions']
+    assert next_opened['assignment_path'] != opened['assignment_path']
     draft = Path(next_opened['workspace_path']) / assignment['recovery_draft']['relative_path']
     assert (draft / 'scratch/analysis.py').read_bytes() == script
     assert (draft / 'scratch/numbers.json').read_bytes() == numbers
     log = (draft / 'scratch/error.log').read_text()
     assert 'ModuleNotFoundError' in log and str(workspace) not in log
     assert not list(draft.rglob('*.pyc'))
+    assert not (Path(next_opened['workspace_path']) / CACHE_DIRECTORY).exists()
+    assert not list(draft.rglob(CACHE_DIRECTORY))
     coverage = json.loads((draft / 'analysis-recovery.json').read_text())
     assert coverage['omitted_count'] >= 1 and coverage['normalized_count'] == 1
 
@@ -103,6 +110,10 @@ def test_recovery_filters_bad_files_individually_and_rejects_changed_copy(tmp_pa
     retained.write_text('changed')
     request = deepcopy(system[3]); request.update(name='tampered_resume', draft_from='analysis')
     assert not system[2].call_tool('operation_preflight', request)['admissible']
+    for view in ('summary', 'detail'):
+        damaged = system[2].call_tool('run_status', {'name':'analysis', 'view':view, 'output_paths':[]})
+        assert damaged['recovery']['delivery_preserved'] is False
+        assert damaged['recovery'].get('coverage', {}).get('complete') is not True
     assert (scratch / 'complete.csv').read_text() == 'x,y\n0,3\n'
 
 
@@ -252,6 +263,19 @@ def test_new_run_replays_original_record_from_sealed_evidence(tmp_path):
     write_analysis(third_opened,third_report)
     submitted=third_worker.call_tool('worker_submit_result',{})
     assert submitted['state']=='completed',submitted
+    # A later reader follows the retained calculation's exact prior proof,
+    # rather than looking for its attempt in C's empty current manifest.
+    fourth=deepcopy(request);fourth['name']='read_retained_calculation'
+    next(i for i in fourth['inputs'] if i['port']=='reference_material')['artifact_names'].append('third_analysis.output')
+    reader,_=open_analysis((catalog,runtime,root,fourth,artifacts,register))
+    report_ref=runtime.runs.status(third_worker._run_id).output_ref
+    source=next(i.source_name for i in runtime.runs.status(reader._run_id).inputs if i.artifact_ref==report_ref)
+    listed=reader.call_tool('worker_reference_read',dict(source=source,action='list',pointer='/calculation_records/0'))
+    dependency=next(i for i in listed['references'] if i.get('alias')==current_alias)
+    original=reader.call_tool('worker_reference_read',dict(source=source,action='read',reference=dependency['reference']))
+    descriptor=runtime.runs.source_descriptor(runtime.runs.status(reader._run_id),original['source'])
+    expected=next(i.artifact_ref for i in runtime.runs.status(next_worker._run_id).inputs if i.source_name==current_alias)
+    assert descriptor.artifact_ref==expected
 
 
 
@@ -815,3 +839,15 @@ def test_three_run_recovery_keeps_colliding_attempt_scopes_and_seals_without_rec
         record['attempt']['manifest_alias'] = 'prior_analysis_manifest'
     write_analysis(opened, report)
     assert worker.call_tool('worker_submit_result', {})['state'] == 'completed'
+
+
+def test_missing_execution_binding_reports_exact_repair_without_discovery():
+    from types import SimpleNamespace
+    from tcad_artifact.output_recovery import _inspect
+    def missing(name):
+        raise ValueError('tool requested an undeclared Run input')
+    context=SimpleNamespace(input_ref=missing)
+    result=_inspect(context,'execution_result',None,run_deadline=1)
+    assert result['reason']=='execution_result_not_bound'
+    assert result['message']=='tool requested an undeclared Run input'
+    assert 'result_artifact_name' in result['repair'] and 'Frozen inputs' in result['repair']

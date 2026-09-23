@@ -3,10 +3,12 @@ from __future__ import annotations
 import hashlib
 import importlib.metadata
 import json
+import multiprocessing
 import os
 import subprocess
 import sys
 import sqlite3
+import time
 from pathlib import Path
 from types import MappingProxyType
 
@@ -33,7 +35,6 @@ from scidiscovery.operations.tooling import (
     operation_local_worker_missing_tools,
     operation_local_worker_tool_names,
     operation_local_worker_tools,
-    operation_worker_server_name,
 )
 from scidiscovery.artifact_agent.operation_tool_context import OperationToolContext
 from scidiscovery.artifact_agent.service.local_workspace import (
@@ -103,7 +104,7 @@ def _catalog(*, require_current: bool = False):
         plugin = plugin.model_copy(
             update={
                 "operations": (
-                    author.model_copy(update={"inputs": (author_input,)}),
+                    author.model_copy(update={"inputs": (author_input, *author.inputs[1:])}),
                     reviewer.model_copy(update={"inputs": reviewer_inputs}),
                 )
             }
@@ -889,7 +890,7 @@ def test_source_projection_generation_handles_old_run_without_reusing_it(
         if old_state != "queued":
             assert (retained.output_directory / "result.json").read_bytes() == _audit_envelope()
     elif old_state == "failed":
-        retired = new_root.call_tool("run_status", {"name": name})
+        retired = new_root.call_tool("run_status", {"name": name, "view": "detail"})
         assert retired["recovery_available"] is False
         before_runs = new_root.call_tool("run_list", {})
         rejected = new_root.call_tool(
@@ -912,7 +913,7 @@ def test_source_projection_generation_handles_old_run_without_reusing_it(
         assert rejected["reason_code"] == "recovery_source_unavailable"
         assert new_root.call_tool("run_list", {}) == before_runs
     else:
-        retired = new_root.call_tool("run_status", {"name": name})
+        retired = new_root.call_tool("run_status", {"name": name, "view": "detail"})
         assert retired["sealed_output_status"] == "historical"
         assert retired["sealed_output"] is not None
         assert retired["scheduler_signal"] is not None
@@ -977,6 +978,120 @@ def test_timeout_reconcile_uses_activity_compare_and_set(tmp_path: Path) -> None
     assert runtime.runs.diagnostic_summary(status)['failure']['category'] == 'run_timeout'
 
 
+@pytest.mark.parametrize(
+    ("opened", "deadline_expired"),
+    [(False, True), (True, True), (False, False)],
+    ids=("expired-queued", "expired-running", "unexpired-queued"),
+)
+def test_control_startup_reconciles_only_expired_active_runs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, opened: bool, deadline_expired: bool
+) -> None:
+    from scidiscovery.artifact_agent.interfaces import mcp_daemon
+
+    catalog, runtime, instance, _, root = _system(tmp_path)
+    _invoke(root, "startup_timeout")
+    if opened:
+        _worker(catalog, runtime).call_tool("worker_open_assignment", {})
+    run_id = runtime.scheduler_bindings.resolve(
+        instance=instance.instance_id, namespace="run", name="startup_timeout"
+    )
+    if deadline_expired:
+        with sqlite3.connect(runtime.runs.database_path) as connection:
+            connection.execute(
+                "UPDATE runs SET deadline_at = ? WHERE run_id = ?",
+                ("2000-01-01T00:00:00.000000Z", run_id),
+            )
+
+    class FakeDaemon:
+        def __init__(self, _socket, _router, **_values):
+            pass
+
+        def serve_forever(self) -> None:
+            expected = "failed" if deadline_expired else "queued"
+            assert runtime.runs.status(run_id).state == expected
+
+    monkeypatch.setattr(mcp_daemon, "compile_installed_catalog", lambda: catalog)
+    monkeypatch.setattr(mcp_daemon, "UnixSocketDaemon", FakeDaemon)
+    secret = tmp_path / "approval.key"
+    secret.write_bytes(b"x" * 32)
+    assert mcp_daemon.main(
+        [
+            "--project-root", str(tmp_path / "project"),
+            "--state-root", str(tmp_path / "state"),
+            "--socket", str(tmp_path / "control.sock"),
+            "--approval-secret-file", str(secret),
+            "--worker-backend", "local",
+            "--local-workspace-root", str(tmp_path / "project" / ".scidiscovery-runs"),
+            "--runtime-summary", str(tmp_path / "summary.json"),
+        ]
+    ) == 0
+    status = runtime.runs.status(run_id)
+    if deadline_expired:
+        assert status.state == "failed"
+        assert status.reason == "Run deadline expired during control startup reconciliation"
+        assert runtime.runs.diagnostic_summary(status)["failure"]["category"] == "run_timeout"
+        assert runtime.runs.reconcile_expired_active() == 0
+        assert _invoke(root, "after_startup_timeout")["result"]["state"] == "queued"
+    else:
+        assert status.state == "queued"
+        assert runtime.runs.reconcile_expired_active() == 0
+
+
+def test_real_control_daemon_reconciles_expired_run_before_proxy_serves(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from scidiscovery.artifact_agent.interfaces import mcp_daemon
+
+    catalog, runtime, instance, _, root = _system(tmp_path)
+    _invoke(root, "expired_before_restart")
+    run_id = runtime.scheduler_bindings.resolve(
+        instance=instance.instance_id, namespace="run", name="expired_before_restart"
+    )
+    with sqlite3.connect(runtime.runs.database_path) as connection:
+        connection.execute(
+            "UPDATE runs SET deadline_at = ? WHERE run_id = ?",
+            ("2000-01-01T00:00:00.000000Z", run_id),
+        )
+    monkeypatch.setattr(mcp_daemon, "compile_installed_catalog", lambda: catalog)
+    secret = tmp_path / "approval.key"
+    secret.write_bytes(b"x" * 32)
+    secret.chmod(0o600)
+    socket_path = tmp_path / "control.sock"
+    args = [
+        "--project-root", str(tmp_path / "project"),
+        "--state-root", str(tmp_path / "state"),
+        "--socket", str(socket_path),
+        "--approval-secret-file", str(secret),
+        "--worker-backend", "local",
+        "--local-workspace-root", str(tmp_path / "project" / ".scidiscovery-runs"),
+        "--runtime-summary", str(tmp_path / "summary.json"),
+    ]
+    process = multiprocessing.get_context("fork").Process(target=mcp_daemon.main, args=(args,))
+    process.start()
+    try:
+        deadline = time.monotonic() + 10
+        while not socket_path.exists() and process.is_alive() and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert socket_path.exists() and process.is_alive()
+        probe = subprocess.run(
+            [sys.executable, "-m", "scidiscovery.artifact_agent.interfaces.mcp_proxy",
+             "--socket", str(socket_path)],
+            input=json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}) + "\n",
+            text=True, capture_output=True, timeout=10,
+            env=dict(os.environ, PYTHONPATH=os.pathsep.join(sys.path)),
+        )
+        assert probe.returncode == 0, probe.stderr
+        assert "result" in json.loads(probe.stdout)
+        assert runtime.runs.status(run_id).state == "failed"
+        assert _invoke(root, "after_real_restart")["result"]["state"] == "queued"
+    finally:
+        process.terminate()
+        process.join(3)
+        if process.is_alive():
+            process.kill()
+            process.join(3)
+
+
 def test_tool_projection_identity_independent_path_and_publication_gate(
     tmp_path: Path,
 ) -> None:
@@ -1015,8 +1130,10 @@ def test_tool_projection_identity_independent_path_and_publication_gate(
         (project / ".codex/agents" / f"{operation_agent_type(compiled)}.toml")
         .read_text("utf-8")
     )
-    server = profile["mcp_servers"][operation_worker_server_name(compiled)]
-    assert tuple(sorted(server["enabled_tools"])) == router_tools
+    config = tomllib.loads((project / ".codex/config.toml").read_text("utf-8"))
+    assert not profile.get("mcp_servers")
+    assert set(config["mcp_servers"]["scidiscovery"]["enabled_tools"]) == {
+        "scid_catalog", "scid_describe", "scid_call"}
     prompt = profile["developer_instructions"]
     assert "Never use native file writes" not in prompt
     assert "worker_file_write_begin" not in prompt
@@ -1095,9 +1212,9 @@ def test_untrusted_input_content_cannot_expand_compiled_run_authority(
         sorted(operation_local_worker_tool_names(catalog.operation("blind.csv.observe.v1")))
     )
     assert "worker_tcad_debug_run" not in assignment["tools"]
-    assert root.call_tool("approval_list", {}) == {"approvals": []}
+    assert root.call_tool("approval_list", {}) == {"approvals": [], "next_before": None}
     assert root.call_tool("execution_list", {"state": None, "limit": 50}) == {
-        "executions": []
+        "executions": [], "next_before": None
     }
 
     profile_root = tmp_path / "untrusted-profile"
@@ -1120,7 +1237,9 @@ def test_untrusted_input_content_cannot_expand_compiled_run_authority(
         ).read_text("utf-8")
     )
     assert profile["web_search"] == "disabled"
-    assert set(profile["mcp_servers"]) == {operation_worker_server_name(compiled)}
+    assert "mcp_servers" not in profile
+    config = tomllib.loads(profile_root.joinpath(".codex/config.toml").read_text("utf-8"))
+    assert set(config["mcp_servers"]) == {"scidiscovery"}
 
 
 def test_real_stdio_worker_process_opens_calls_registered_tool_and_submits(

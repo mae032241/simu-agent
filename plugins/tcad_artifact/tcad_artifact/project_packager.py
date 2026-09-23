@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from scidiscovery.operations.input_validation import parse_bound_json
 
+import base64
 import hashlib
 import io
 import json
@@ -440,7 +441,27 @@ class RealizationRequirement(StrictModel):
         return self
 
 
+class AttemptFile(DeckFile):
+    """Control-captured source or diagnostic bytes; legacy records are UTF-8."""
+
+    content: str = Field(max_length=4 * ((8 * 1024 * 1024 + 2) // 3))
+    encoding: Literal["utf8", "base64"] = "utf8"
+
+    def raw_bytes(self) -> bytes:
+        return (base64.b64decode(self.content, validate=True)
+                if self.encoding == "base64" else self.content.encode("utf-8"))
+
+    @model_validator(mode="after")
+    def _bounded_bytes(self) -> AttemptFile:
+        if self.encoding == "base64" and not self.relative_path.startswith("reports/"):
+            raise ValueError("binary attempt files must be diagnostic reports")
+        if len(self.raw_bytes()) > 8 * 1024 * 1024:
+            raise ValueError("attempt file exceeds its byte limit")
+        return self
+
+
 class DeckProjectDraft(StrictModel):
+    execution_plan: ExperimentPortfolio | None = None
     schema_version: Annotated[int, Field(ge=1, le=1)] = 1
     tool_profile: str = Field(
         min_length=1,
@@ -475,11 +496,24 @@ class DeckProjectDraft(StrictModel):
     materialization_report: ProjectMaterializationReport | None = None
     preflight_attestation: ProjectPreflightAttestation | None = None
     initialization_attestation: ProjectInitializationAttestation | None = None
+    development_diagnostics: tuple[AttemptFile, ...] = Field(default=(), max_length=128)
     resource_limits: ProjectResourceLimits
+
+    @field_validator("development_diagnostics")
+    @classmethod
+    def _diagnostic_paths(cls, values):
+        paths = [item.relative_path for item in values]
+        if len(set(paths)) != len(paths) or any(not path.startswith("reports/") for path in paths):
+            raise ValueError("development diagnostics require unique report paths")
+        return values
 
     @model_serializer(mode="wrap")
     def _preserve_historical_payload(self, handler):
         value = handler(self)
+        if self.execution_plan is None:
+            value.pop("execution_plan", None)
+        if not self.development_diagnostics:
+            value.pop("development_diagnostics", None)
         if self.case_anchors is None:
             value.pop("case_anchors", None)
         return value
@@ -677,7 +711,7 @@ def project_debug_sha256(project: DeckProjectDraft) -> str:
     """Bind diagnostic results to source, invocation, and materialized declarations."""
     return hashlib.sha256(canonical_json(project.model_dump(
         mode="json",
-        exclude={"preflight_attestation", "initialization_attestation", "materialization_report"},
+        exclude={"preflight_attestation", "initialization_attestation", "materialization_report", "development_diagnostics"},
     ))).hexdigest()
 
 
@@ -711,8 +745,10 @@ class DeckReviewFinding(StrictModel):
 
 
 class GapAffectedWork(StrictModel):
-    plan_locator: str = Field(min_length=1, max_length=512, pattern=r"^/")
+    plan_locator: str = Field(min_length=1, max_length=512, pattern=r"^/", description="Existing JSON pointer in the bound scientific_skeleton (new path) or experiment_plan (legacy path).")
     impact: str = Field(min_length=1, max_length=2048)
+
+
 
 
 class ImplementationGap(StrictModel):
@@ -724,16 +760,16 @@ class ImplementationGap(StrictModel):
     missing_inputs: tuple[Annotated[str, Field(min_length=1, max_length=2048)], ...] = Field(max_length=16)
     affected_work: tuple[GapAffectedWork, ...] = Field(min_length=1, max_length=16)
     suggested_resolution: str = Field(min_length=1, max_length=2048)
-    attempt_files: tuple[DeckFile, ...] = Field(default=(), max_length=128)
+    attempt_files: tuple[AttemptFile, ...] = Field(default=(), max_length=128)
 
     @field_validator("attempt_files")
     @classmethod
-    def _attempt_paths(cls, files: tuple[DeckFile, ...]) -> tuple[DeckFile, ...]:
+    def _attempt_paths(cls, files: tuple[AttemptFile, ...]) -> tuple[AttemptFile, ...]:
         paths = [item.relative_path for item in files]
         if len(set(paths)) != len(paths):
             raise ValueError("duplicate attempt file path")
         for path in paths:
-            if path not in {"project.json", "declarations.json", "attempts.md"} and not path.startswith(("files/", "reports/")):
+            if path not in {"project.json", "execution-plan.json", "declarations.json", "attempts.md"} and not path.startswith(("files/", "reports/")):
                 raise ValueError("attempt file is outside the declared source and diagnostic paths")
         return files
 
@@ -751,7 +787,8 @@ def validate_implementation_gap(
 ) -> None:
     if handoff.get("verdict") != "blocked":
         raise SemanticRuleViolation("implementation gap requires a blocked handoff")
-    plan = json.loads(inputs["experiment_plan"])
+    subject = "scientific_skeleton" if "scientific_skeleton" in inputs else "experiment_plan"
+    plan = json.loads(inputs[subject])
     for index, item in enumerate(gap.affected_work):
         current = plan
         try:
@@ -764,13 +801,14 @@ def validate_implementation_gap(
                 else:
                     current = current[token]
         except (KeyError, IndexError, TypeError, ValueError) as error:
-            raise declared_violation("gap plan_locator must be an existing JSON pointer in experiment_plan",
+            raise declared_violation("gap plan_locator must be an existing JSON pointer in the bound scientific_skeleton or experiment_plan",
                 path=f"$.affected_work[{index}].plan_locator") from error
 
 
 class DeckReviewReport(StrictModel):
     """Independent physical and implementation review of one complete project."""
 
+    scientific_assessment: Literal["pass", "fail", "unknown"] | None = None
     verdict: Literal["pass", "revise", "blocked"]
     capability_sha256: str | None = Field(
         default=None, min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$"
@@ -793,6 +831,8 @@ class DeckReviewReport(StrictModel):
 
     @model_validator(mode="after")
     def _verdict_matches_review(self) -> DeckReviewReport:
+        if self.verdict == "pass" and self.scientific_assessment not in {None, "pass"}:
+            raise ValueError("passing comprehensive review requires passing scientific assessment")
         keys = tuple(item.requirement_key for item in self.requirement_reviews)
         if len(keys) != len(set(keys)):
             raise ValueError("deck requirement reviews must be unique")
@@ -823,6 +863,14 @@ class DeckReviewReport(StrictModel):
         elif self.execution_ready:
             raise declared_violation("non-passing deck review cannot be execution_ready", path="$.execution_ready")
         return self
+
+
+    @model_serializer(mode="wrap")
+    def _preserve_historical_review(self, handler):
+        value = handler(self)
+        if self.scientific_assessment is None:
+            value.pop("scientific_assessment", None)
+        return value
 
 
 def validate_gap_review(gap: ImplementationGap, report: DeckReviewReport) -> None:
@@ -1287,6 +1335,12 @@ def validate_deck_author_task_output(
         return
     project = DeckProjectDraft.model_validate_json(_canonical(value), strict=True)
     experiment_plan = inputs.get("experiment_plan")
+    if "scientific_skeleton" in inputs:
+        if project.execution_plan is None:
+            raise SemanticRuleViolation("skeleton author project requires its concrete execution_plan")
+        experiment_plan = canonical_json(project.execution_plan.model_dump(mode="json"))
+    elif project.execution_plan is not None:
+        raise SemanticRuleViolation("legacy author cannot introduce an unbound skeleton execution plan")
     if experiment_plan is not None:
         if project.solver_kind == "sprocess" and project.materialization_report is None:
             raise SemanticRuleViolation(
@@ -1335,7 +1389,8 @@ def validate_deck_review_task_output(
         validate_gap_review(project, report)
         if handoff.get("verdict") != report.verdict:
             raise SemanticRuleViolation("deck review handoff verdict differs from its report")
-        parse_bound_json(ExperimentPortfolio, inputs["experiment_plan"])
+        if "experiment_plan" in inputs:
+            parse_bound_json(ExperimentPortfolio, inputs["experiment_plan"])
         capability = json.loads(inputs["execution_capability"])
         if report.capability_sha256 is not None and report.capability_sha256 != capability.get("capability_sha256"):
             raise SemanticRuleViolation("gap review capability differs from its exact input")
@@ -1560,6 +1615,8 @@ def validate_deck_review_against_project(
 ) -> None:
     """Check that an independent review covers the exact embedded manifest."""
 
+    if project.execution_plan is not None and report.verdict == "pass" and report.scientific_assessment != "pass":
+        raise SemanticRuleViolation("skeleton project requires a comprehensive scientific assessment")
     expected = {item.requirement_key for item in project.realization_manifest}
     observed = {item.requirement_key for item in report.requirement_reviews}
     if project.materialization_report is None:

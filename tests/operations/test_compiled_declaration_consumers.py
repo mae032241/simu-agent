@@ -8,6 +8,10 @@ import architecture_operation_test_plugin.plugin as fixture
 from scidiscovery.artifact_agent.interfaces.mcp import MCPRouter
 from scidiscovery.artifact_agent.interfaces.mcp_local_worker import LocalWorkerMCPRouter
 from scidiscovery.artifact_agent.interfaces.mcp_root import RootToolError
+from scidiscovery.artifact_agent.interfaces.mcp_response_views import (
+    operation_invoke_contract,
+    operation_revision_policy,
+)
 from scidiscovery.artifact_agent.schema.common import canonical_json
 from scidiscovery.operations.catalog import compile_catalog
 from scidiscovery.operations.spec import CallableComponent, ComponentRef, InputValidationSpec
@@ -51,6 +55,46 @@ def _submit(worker, opened, payload):
     return reply["result"]["structuredContent"]
 
 
+def test_every_public_invoke_view_is_one_projection_of_its_compiled_contract(tmp_path):
+    from tests.operations.test_agent_contract_alignment import _catalog
+
+    catalog = _catalog()
+    _, _, root = _root(tmp_path, catalog=catalog)
+    full_items = root.call_tool(
+        "operation_catalog", {"scope": "public", "view": "detail", "limit": 100}
+    )["operations"]
+    assert full_items
+    for full in full_items:
+        compiled = catalog.operation(full["operation_id"])
+        policy = operation_revision_policy(compiled.spec)
+        invoke = operation_invoke_contract(full, revision_policy=policy)
+        assert full["version"] == compiled.spec.version
+        assert full["operation_digest"] == invoke["operation_digest"] == compiled.digest
+        assert "revision_policy" not in full
+        assert invoke["revision_policy"] == policy
+        for field in (
+            "inputs", "outputs", "input_admission", "input_validation",
+            "complete_transform_family", "consequence", "review_edge",
+            "requires_independent_review", "requires_human_approval",
+            "timeout_seconds", "max_input_bytes",
+        ):
+            if field in full:
+                assert invoke[field] == full[field]
+        for internal in (
+            "native_shell", "native_view_image", "network_mode",
+            "max_network_requests", "max_output_bytes", "max_files",
+            "optional_runtime_services",
+        ):
+            assert internal not in invoke
+
+    invoke_schema = next(
+        item["inputSchema"] for item in root.list_tools() if item["name"] == "operation_invoke"
+    )
+    assert {
+        "on_conflict", "execution_profile", "max_attempts", "resume_from", "draft_from"
+    } <= set(invoke_schema["properties"])
+
+
 def test_one_input_cardinality_change_reaches_catalog_preflight_and_root_invoke(tmp_path, monkeypatch):
     plugin, admission, _ = _probe_plugin(monkeypatch)
     digests = []
@@ -68,7 +112,7 @@ def test_one_input_cardinality_change_reaches_catalog_preflight_and_root_invoke(
         runtime, instance, root = _root(directory, catalog=catalog)
         runtime.runs.operation_catalog = catalog
         _register(runtime, instance, name="source", raw=b"{}", kind="fixture_input", schema=port.schema_id)
-        view = next(item for item in root.call_tool("operation_catalog", {"scope": "public"})["operations"]
+        view = next(item for item in root.call_tool("operation_catalog", {"scope": "public", "view": "detail"})["operations"]
                     if item["operation_id"] == agent.operation_id)
         assert view["inputs"][0]["min_items"] == minimum
         request = {"name": "cardinality", "operation_id": agent.operation_id,

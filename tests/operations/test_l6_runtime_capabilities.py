@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from curve_score.plugin import PLUGIN as CURVE_PLUGIN
+from curve_score.science_operations import Components
+from tests.operations import test_m2_curve_analysis_boundary as curve
 from scidiscovery.artifact_agent.interfaces.mcp_root import RootMCPRouter, RootToolFacade
 from scidiscovery.artifact_agent.runtime import open_runtime
 from scidiscovery.artifact_agent.schema.artifact import ArtifactRegistration
@@ -42,16 +44,22 @@ def test_curve_error_agent_is_local_runnable_after_collection_is_moved_to_transf
     )
     operation_id = "science.result.diagnose.curve-error.v1"
     compiled = catalog.operation(operation_id)
+    materials = Components.curve_error_analysis.implementation(
+        {name: (raw,) for name, raw in curve._inputs().items()}
+    )
     inputs: list[dict[str, object]] = []
     for index, port in enumerate(compiled.spec.inputs):
+        if port.name not in materials:
+            assert port.min_items == 0
+            continue
         name = f"input_{index}"
         artifact = runtime.artifacts.register(
-            b"{}",
+            materials[port.name][0],
             ArtifactRegistration(
                 kind=port.name,
                 schema_id=port.schema_id,
                 payload_schema_version=1,
-                media_type="application/json",
+                media_type=port.media_types[0],
                 creator=runtime.actor,
             ),
             idempotency_key=f"collection-capability:{port.name}",
@@ -66,7 +74,7 @@ def test_curve_error_agent_is_local_runnable_after_collection_is_moved_to_transf
 
     item = next(
         value
-        for value in root.call_tool("operation_catalog", {"scope": "all"})[
+        for value in root.call_tool("operation_catalog", {"scope": "all", "operation_id": operation_id})[
             "operations"
         ]
         if value["operation_id"] == operation_id
@@ -78,7 +86,11 @@ def test_curve_error_agent_is_local_runnable_after_collection_is_moved_to_transf
         "inputs": inputs,
         "instruction": "Exercise the declared Run v1 boundary.",
     }
-    assert root.call_tool("operation_preflight", request) == {
+    result = root.call_tool("operation_preflight", request)
+    normalized = result.pop("normalized_request")
+    assert normalized["operation_id"] == operation_id
+    assert normalized["inputs"] == inputs
+    assert result == {
         "admissible": True,
         "reason_code": None,
         "port": None,

@@ -126,14 +126,17 @@ def test_argv_launch_failure_history_and_bounded_output(tmp_path):
         '--submission-reserve', '0', '--command']
     failed = subprocess.run(command + ['no-such-observation-executable'],
         cwd=root, capture_output=True, timeout=8)
-    assert failed.returncode == 1 and b'FileNotFoundError' in failed.stderr
+    assert failed.returncode == 1 and json.loads(failed.stdout)['error_type'] == 'FileNotFoundError'
     first = observation.read_summary(root)
     assert first['recent_errors'][0]['reason'] == 'launch_failed'
     assert first['recent_errors'][0]['error_type'] == 'FileNotFoundError'
     assert (root / first['stderr_log']).is_file()
     ok = subprocess.run(command + [sys.executable, '-c', 'print("x"*300000)'],
         cwd=root, capture_output=True, timeout=8)
-    assert ok.returncode == 0 and len(ok.stdout) == observation.LOG_LIMIT
+    assert ok.returncode == 0 and len(ok.stdout) <= 8192
+    shown = json.loads(ok.stdout)["streams"]["stdout"]
+    assert shown["total_bytes"] == 300001 and shown["saved_bytes"] == observation.LOG_LIMIT
+    assert shown["capture_truncated"] and shown["display_is_excerpt"]
     summary = observation.read_summary(root)
     assert summary['attempt_count'] == 2 and summary['error_count'] == 1
     assert summary['exit_code'] == 0 and summary['logs_truncated'] is True
@@ -160,3 +163,28 @@ def test_argv_timeout_and_history_are_bounded_and_do_not_expose_raw_values(tmp_p
     summary = observation.read_summary(root)
     assert len(summary['recent_errors']) == 8
     assert 'private' not in json.dumps(summary)
+
+
+def test_summary_locates_middle_error_and_raw_data_consumer(tmp_path):
+    root = workspace(tmp_path, 'pass', remaining=30)
+    command = [sys.executable, 'tools/local_process_observation.py', '--timeout', '5',
+               '--submission-reserve', '0']
+    program = 'import sys; print("ok"); sys.stderr.write("before\\n"*1000+"ValueError: /secret/host/input invalid\\n"+"after\\n"*1000); sys.exit(7)'
+    result = subprocess.run(command + ['--command', sys.executable, '-c', program], cwd=root, capture_output=True, timeout=8)
+    assert result.returncode == 7 and not result.stderr and len(result.stdout) <= 8192
+    summary = json.loads(result.stdout)
+    error = summary['streams']['stderr']['excerpts'][0]
+    assert error['line'] == 1002 and 'ValueError' in error['text']
+    assert '/secret/host/input' not in result.stdout.decode()
+    assert '/secret/host/input' in (root/summary['streams']['stderr']['raw_path']).read_text()
+    assert (root/summary['record_path']).is_file()
+    raw = subprocess.run(command + ['--display', 'raw', '--command', sys.executable, '-c', 'print("data")'], cwd=root, capture_output=True, timeout=8)
+    assert raw.returncode == 0 and raw.stdout == b'data\n'
+
+
+def test_inherit_policy_keeps_native_raw_default(tmp_path):
+    root = workspace(tmp_path, 'pass', remaining=30)
+    (root/'tools/local_process_policy.json').write_text('{"policy":"inherit"}')
+    result = subprocess.run([sys.executable, 'tools/local_process_observation.py', '--timeout', '5', '--command',
+                             sys.executable, '-c', 'print("x"*150000)'], cwd=root, capture_output=True, timeout=8)
+    assert result.returncode == 0 and len(result.stdout) == 150001

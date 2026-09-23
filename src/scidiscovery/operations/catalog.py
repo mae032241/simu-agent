@@ -1,5 +1,5 @@
 import re
-from dataclasses import replace
+from dataclasses import asdict, replace
 import json
 from hashlib import sha256
 from functools import lru_cache
@@ -145,6 +145,8 @@ def _resource_digest(spec: ComponentSpec, implementation: Any, plugin_id: str) -
                 "evidence_ports": implementation.evidence_ports,
                 "network_access": implementation.network_access,
                 "record_attempts": implementation.record_attempts,
+                "reference_policy": (asdict(implementation.reference_policy)
+                                     if implementation.reference_policy is not None else None),
             })
         if spec.kind == "workspace":
             return canonical_digest(implementation)
@@ -477,7 +479,7 @@ def _validate_operation_contracts(plugin_map: dict[str, PluginDefinition], compo
                 )
             permission: PermissionTemplate | None = None
             if executor.kind == "agent":
-                if not executor.workspace or not executor.prompt or not executor.model: _fail("agent_authority_incomplete", plugin.plugin_id, op_id)
+                if not executor.workspace or not executor.prompt: _fail("agent_authority_incomplete", plugin.plugin_id, op_id)
                 tool_ports = declared_tool_output_names(tuple(components[_qualified(plugin.plugin_id, ref)].implementation for ref in executor.tools))
                 if tool_ports and (tool_ports not in ({'recovery_manifest_output'}, {'tool_evidence', 'recovery_manifest_output'})
                         or tool_ports != {port.name for port in operation.outputs if port.collection is not None}):
@@ -517,7 +519,7 @@ def _validate_operation_contracts(plugin_map: dict[str, PluginDefinition], compo
                 network_bound = any(
                     components[_qualified(plugin.plugin_id, ref)].implementation.network_access
                     for ref in executor.tools)
-                if network_bound != (operation.limits.network.mode == "restricted"):
+                if network_bound != (operation.limits.network.mode != "none"):
                     code = ("network_tool_scope_missing" if network_bound
                             else "network_scope_without_tool")
                     _fail(code, plugin.plugin_id, op_id, "limits")

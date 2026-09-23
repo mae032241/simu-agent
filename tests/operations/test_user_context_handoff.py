@@ -21,12 +21,15 @@ def _context_entry(opened, *, origin):
     assignment_raw = Path(opened["assignment_path"]).read_bytes()
     assignment = json.loads(assignment_raw)
     item, = [item for item in assignment["inputs"] if item["port"] == "user_context"]
-    expected_keys = {"source_name", "port", "description", "relative_path", "media_type",
+    expected_keys = {"source_name", "artifact_name", "artifact_name_usage", "port",
+        "description", "relative_path", "media_type", "reference_availability",
         "usage", "exposure", "historical"}
     if origin is not None:
         expected_keys.add("source_origin")
         assert item["source_origin"] == origin
     assert set(item) == expected_keys
+    assert item["artifact_name_usage"] == "navigation_only"
+    assert item["reference_availability"] == "unknown"
     assert item["usage"] == "prior_signal" and item["exposure"] == "on_demand"
     assert b"private-label-marker" not in assignment_raw
     original = Path(opened["workspace_path"], item["relative_path"]).read_bytes()
@@ -37,6 +40,8 @@ def _context_entry(opened, *, origin):
         indexed, = [entry for entry in start["inputs"] if entry["port"] == "user_context"]
         assert indexed["relative_path"] == item["relative_path"]
         assert indexed["source_name"] == item["source_name"]
+        assert indexed["artifact_name"] == item["artifact_name"]
+        assert indexed["artifact_name_usage"] == "navigation_only"
         assert indexed["media_type"] == item["media_type"]
         assert indexed["size_bytes"] == len(original)
         assert indexed["schema_id"] == "opaque"
@@ -72,7 +77,7 @@ def test_new_and_reused_local_workers_open_new_context_assignment(tmp_path, reus
     old_assignment = Path(opened["assignment_path"]).read_bytes()
     write_analysis(opened, analysis_report())
     assert worker.call_tool("worker_submit_result", {})["state"] == "completed"
-    old_status = root.call_tool("run_status", {"name": "analysis"})
+    old_status = root.call_tool("run_status", {"name": "analysis", "view": "detail"})
 
     registered = root.call_tool("artifact_ingest_text", dict(name="supplement", text=USER_TEXT))
     following = deepcopy(request)
@@ -96,7 +101,7 @@ def test_new_and_reused_local_workers_open_new_context_assignment(tmp_path, reus
     assert runtime.artifacts.read(legacy.ref) == legacy_text
     write_analysis(new_opened, analysis_report())
     assert worker.call_tool("worker_submit_result", {})["state"] == "completed"
-    assert root.call_tool("run_status", {"name": "analysis"})["sealed_output"] == old_status["sealed_output"]
+    assert root.call_tool("run_status", {"name": "analysis", "view": "detail"})["sealed_output"] == old_status["sealed_output"]
 
 
 def test_hardened_assignment_preserves_user_context_original(tmp_path):

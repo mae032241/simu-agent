@@ -56,8 +56,9 @@ def test_optional_plugin_adds_the_complete_figure_vertical_slice(extra_plugins) 
     }
 
     extraction = optional.operation("science.evidence.extract.figure.v2")
-    assert len(extraction.spec.outputs) == 1
-    intake_output = extraction.spec.outputs[0]
+    primary_outputs = tuple(port for port in extraction.spec.outputs if port.collection is None)
+    assert len(primary_outputs) == 1
+    intake_output = primary_outputs[0]
     assert intake_output.context_validator is not None
     assert intake_output.context_validator.component_id == "intake_source_context"
     assert intake_output.context_rule_id == "intake.source_binding"
@@ -69,6 +70,7 @@ def test_optional_plugin_adds_the_complete_figure_vertical_slice(extra_plugins) 
         "source_panels",
         "audit_overlays",
         "curve_tables",
+        "user_context",
     )
     assert extraction.spec.review is not None
     assert extraction.spec.review.reviewer_operation == (
@@ -93,7 +95,8 @@ def test_optional_plugin_adds_the_complete_figure_vertical_slice(extra_plugins) 
     direct = direct_revision_ports(extraction)
     assert direct is not None
     assert active_direct_revision_ports(
-        extraction, (port.name for port in extraction.spec.inputs[:-2])
+        extraction, (port.name for port in extraction.spec.inputs
+                     if port.usage not in {"revision_base", "change_request"})
     ) is None
     assert active_direct_revision_ports(
         extraction, (port.name for port in extraction.spec.inputs)

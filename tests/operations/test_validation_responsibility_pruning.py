@@ -1,5 +1,7 @@
 """Scientific choices remain reviewable; control still verifies recorded facts."""
 from copy import deepcopy
+import json
+from pathlib import Path
 
 import pytest
 
@@ -64,11 +66,12 @@ def test_known_output_identity_need_not_be_retyped_and_forged_score_still_reject
     for gate in report['gates'].values():
         if isinstance(gate, dict):
             gate['evidence_keys'] = [record['record_key']]
-    report['calculation_records'] = [deepcopy(record)]
+    complete = json.loads(Path(record['calculation_path']).read_bytes())
+    report['calculation_records'] = [deepcopy(complete)]
     report['calculation_records'][0]['result']['comparisons'][0]['metrics'][0]['value'] += 1
     write_analysis(opened, report)
     assert worker.call_tool('worker_submit_result', {})['state'] == 'rejected'
-    report['calculation_records'] = [record]
+    report['calculation_records'] = [complete]
     write_analysis(opened, report)
     assert worker.call_tool('worker_submit_result', {})['state'] == 'completed'
 

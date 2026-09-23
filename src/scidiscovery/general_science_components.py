@@ -482,6 +482,10 @@ def component_specs() -> tuple[ComponentSpec, ...]:
         "scidiscovery.artifact_agent.interfaces.mcp_worker_protocol:EXTRACT_PDF_TEXT_TOOL",
         public=True,
     ))
+    values.extend((
+        ComponentSpec("source_capture_tool", "worker_tool", "scidiscovery.source_capture:SOURCE_CAPTURE_TOOL"),
+        ComponentSpec("tool_evidence_schema", "resource", "scidiscovery.artifact_agent.service.tool_evidence:TOOL_EVIDENCE_SCHEMA", public=True),
+    ))
     for name in (
         "opaque_schema", "intake_semantic_contract", "hypothesis_semantic_contract",
         "critic_semantic_contract", "evidence_audit_semantic_contract",

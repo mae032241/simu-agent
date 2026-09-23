@@ -59,7 +59,7 @@ class HardenedWorkerBackend(LocalTrustedBackend):
     @staticmethod
     def unsupported_requirements(compiled: object) -> tuple[str, ...]:
         from ...operations.invoke import direct_revision_ports
-        from ...operations.tooling import operation_worker_tool_names
+        from ...operations.tooling import operation_worker_tool_names, tool_evidence_ports
 
         native = compiled.spec.executor.native_tools
         required_file_tools = {
@@ -73,9 +73,11 @@ class HardenedWorkerBackend(LocalTrustedBackend):
             for name, unsupported in (
                 ("native_shell", native.shell != "none"),
                 ("native_view_image", native.view_image),
+                ("native_web_search", native.web_search != "disabled"),
                 (
                     "agent_collection_outputs",
-                    any(port.collection is not None for port in compiled.spec.outputs),
+                    any(port.collection is not None and not (port.name == "recovery_manifest_output"
+                        and port.name in tool_evidence_ports(compiled)) for port in compiled.spec.outputs),
                 ),
                 (
                     "server_file_create",

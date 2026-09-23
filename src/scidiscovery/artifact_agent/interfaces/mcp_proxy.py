@@ -66,7 +66,9 @@ def main(argv: list[str] | None = None) -> int:
             try:
                 request = parse_rpc_line(line)
                 request_id = request.get("id")
-                if request.get("method") == "tools/call" and heartbeat is None:
+                worker_call = (request.get("params", {}).get("_meta", {})
+                               .get("x-codex-turn-metadata", {}).get("thread_source") == "subagent")
+                if request.get("method") == "tools/call" and heartbeat is None and not worker_call:
                     heartbeat = threading.Thread(target=_heartbeat, args=(args.socket, proxy_id, stopped), daemon=True)
                     heartbeat.start()
                 response = forward_request(

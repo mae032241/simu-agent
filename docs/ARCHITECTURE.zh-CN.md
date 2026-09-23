@@ -40,6 +40,13 @@ observable 描述是科学文字，不是第二份身份登记表；设计、物
 仅当恰好一个已声明 baseline/control 能确定它才自动补全；存在歧义时返回具体字段缺口。
 未知案例和变量数值自相矛盾仍是错误。
 
+旧详细实验设计的写入合同只提供必填 `validation_intent`，不再展示不能提交的旧
+`validation_plan` 及其专用定义。历史意图由独立读取模型在原物化入口解析，
+两种历史表示沿用原有互斥和实验身份检查；读取兼容不改写原件，也不更新其资格。
+写入与读取共享当前科学字段和约束，Schema 与提交模型来自同一定义。
+预计算曲线诊断的写入模型明确声明空的计算记录元组，因此其 Schema 不再携带
+不可使用的计算记录定义；通用分析和历史读取仍保留原有记录能力。
+
 ## 2. 注册、编译与三种视图
 
 科学行动只有一个 entry-point group `scidiscovery.plugins`；每个入口返回一个 `PluginDefinition`，
@@ -80,22 +87,28 @@ verdict，也不按科学／工程标签限定案例数量。历史计算经配�
 - `all`：诊断联合视图。
 
 领域产物种类使用格式受限的插件标识，不是核心维护的领域枚举。Worker 的结构化结论和后续建议是
-封存科学结果，不是调度命令；具体行为只由调度 Agent 从编译目录选择，并经统一 preflight 决定能否执行。
+封存科学结果，不是调度命令；具体行为只由调度 Agent 从编译目录选择，invoke 在创建前检查准入。
+preflight 是不创建对象的可选检查，不构成授权或资源预留。
 
 ## 3. 调度 Agent 与 Operation
 
 交互式 Root Agent 读取当前实例的不可变科学输入、编译目录和有界 readiness 建议，从真实科学
 矛盾中选择一个最短可辩护的 public Operation。依赖只表达准入条件，不定义固定阶段 DAG。
-创建前由 Root 绑定实例内语义 Artifact 名称并调用同一 `operation_preflight`；真正身份、资格、
-审查、预算和副作用门仍由控制面执行。
+Root 绑定实例内语义 Artifact 名称并直接调用 `operation_invoke`；身份、资格、审查、预算和
+副作用门由控制面在创建前执行。`operation_preflight` 保留为同一请求的可选只读检查。
 
 Worker 不输出具有控制权威的后继 Operation 名称。调度 Agent 可以利用封存的 verdict、领域处置、
 缺失输入和建议进行判断，但仍须独立选择目录中的 Operation。`change_request` 与 `review_signal` 只
 证明精确独立审查和来源关系，不预先指定下一阶段或后继操作。
 旧 `next_action_kind`、`accepts_actions` 与 `recommended_task_mode` 字段暂时保留为可解析兼容数据，
 所有控制路径均忽略其值；它们不是第二行动目录，也不能导致调用被接受或拒绝。
-单个完成 Run 的 `run_status` 默认返回已校验、已封存的科学载荷。`output_paths=[]` 只返回状态、
-精确绑定、signal 和结果元数据，不读取正文。显式 payload JSON Pointer 在 `selected_output` 中
+单个完成 Run 的 `run_status` 默认返回有界摘要摘录；`view=detail` 且不指定 `output_paths` 返回完整封存原件。`output_paths=[]` 只返回状态、
+精确绑定、signal 和结果元数据，不读取正文；默认 `compat` profile 保持旧客户端语义。显式请求时投影不组装无关上下文：
+`poll` 要求空 values 选择，`navigation` 返回有界索引但不返回 signal 正文，`decision` 仅在完成后返回请求的准确原文和 signal。
+失败 compact 响应保留准确的安全诊断和机械 recovery gate 投影；完整绑定、native/tool 记录和 recovery detail 仍由兼容 detail 路径读取。
+路径从 payload 内部起算：`/summary` 而非 `/payload/summary`。空字符串选择整个 payload，`/` 选择空键。
+`selected` 值是准确原文，包含整个 payload 时直接使用；仅在决策需要尚未读到的信息时补读。
+显式 payload JSON Pointer 在 `selected_output` 中
 返回原值，不把部分结果装入 `sealed_output`；最多 8 个指针、累计 32 KiB 原值。超预算子树提供
 有界的一层导航（32 项、累计 8 KiB）；missing、null 和 omitted 分开表达。不传参数仍可读取
 完整原件。signal 是否可用与正文是否展开无关。运行中 Run 和批量 `run_list` 不暴露科学载荷。若 Run 保存的 Operation 版本或摘要不再匹配当前编译目录，状态
@@ -156,11 +169,17 @@ TCAD 作者在最后一次源码诊断前，把初始化覆盖与未测试 reset
 到达审查者；审查者独立核对说明与实际源码、证明。源码注释本身不是执行证明。
 
 `LayeredDiagnosisReport` 以 `summary` 和 `overall_verdict` 集中表达结论，附证据和可选
-`limitations`。旧完整 `gates` 对象、剩余矛盾、下一步和额外评估均可省略。`claim_allowed`
+`limitations`。旧完整 `gates` 对象、剩余矛盾、下一步和逐假设评估均可省略。受支持的通用、固定
+曲线误差与 TCAD 分析 producer 新版本在 exact scope plan 的 `objective_key` 非空时，要求填写
+既有 `objective_assessment`；key 为空时仍可省略，也不得据此发明身份。这是 producer context
+规则，不是 v1 reader 或 prior 准入迁移。`claim_allowed`
 仍由科学 Agent 明确判断；缺少数值诊断层时，声明投影为 `not_evaluable`。这类分析报告由
 既有 finalizer 在封存前生成 handoff 状态及正式摘要的短引用；工作区 `patch_contract` 声明
 草稿可省略字段，Root 同时读取封存正文与调度信号。TCAD、通用和固定曲线误差分析在其支持的
 local backend 共用此行为。历史 Artifact 字节保持不变，也不新增评分前提。
+Scheduler 把 completed Run 的实际 scope、封存科学事实与用户成本约束下的工作价值判断分开；
+报告中的下一步只是建议，不是目录行动权威。停止继续工作不会把 inconclusive 或 invalid study
+改写成物理反证，也不需要新增持久路线状态。
 
 ScientificReview、DeckReviewReport 和 ImplementationGap 同样只要求写一份正式摘要；finalizer
 补齐省略的 handoff verdict/summary，保留显式旧说明，封存 envelope Schema 不放宽。通用审查
@@ -174,7 +193,7 @@ TCAD 实现缺口可携带控制端捕获的有界源码、声明、尝试记录
 产生当前源码的完成证明。旧缺口若未捕获文件仍可读取，但不能重建先前失败源码。日志摘录维持
 现有截断上限，整个缺口仍受 Operation 输出字节上限约束。trusted-local Worker 路由器在前一
 Run 终结后可领取同一编译 Operation 的新排队 Run，并清空逐 Run 工具状态。Codex 可复用匹配的
-空闲 Agent；不同编译角色、不同目录代次、对自身工作的独立审查仍须新 Agent。记忆不授予访问
+空闲 Agent；不同 Operation ID 或编译摘要、不同目录代次、对自身工作的独立审查仍须新 Agent。记忆不授予访问
 旧工作区或使用未绑定事实的权限。
 
 框架管理的诊断日志统一遵循：有界保留原始文件，另行生成展示摘要，在展示截断前定位错误。
@@ -189,6 +208,9 @@ Run/结果目录中。本机制复用文件读取，不新增日志服务，也�
 既有首次创建时间和名称排序。直接父件超过 4096 项时明确报错，查询不写状态、不递归搜索历史。
 新调度者沿修订计划追溯到物化计划，从其强类型直接父件恢复原始目标，再将相关上下文显式绑定给
 下一 Worker；此路径不增加进度对象或阶段状态机。
+`producer_inputs` view 优先从准入共用的同一 producer-family 记录投影即时生产者的冻结端口、项序和准确 ref；
+它不递归，也不选择替代对象。历史、跨实例、不可用或歧义生产者均显式标记并提供 `parents` fallback，
+当前实例之外不暴露冻结名称。
 
 行为都通过 `operation_invoke` 创建。设备参数 Schema、提取/审查 Agent、覆盖与不确定性
 变换以及资格审批均由 TCAD 插件一次注册；通用核心不再导入该 Schema 或编译参数 Operation。
@@ -243,11 +265,18 @@ JSON 对象把基对象 payload 预置为可编辑的 `output/result.json`，同
 原结构化补丁 Artifact、补丁应用 Operation、
 差异收据、旧 Task 投影和 Root 递归生产者族仍保持删除。
 
-当前 Codex 原型的工具可见性仍有明确限制：父会话可见的 Worker MCP 可能暴露给子 Agent；编译提示
-会显式列出允许和禁止的领域工具，服务端会拒绝未声明的领域工具，但原生文件能力只受软隔离约束。
-文档和资格报告不得把提示约束夸大为沙箱事实。
+Codex 只注册一个 `scidiscovery` MCP，公开 `scid_catalog`、`scid_describe`、`scid_call`。
+目录仅给名称与用途，选中后按需取得合同；实际调用复用原 Root/Worker 处理器。Operation describe 默认返回兼容的 full 合同，
+也可从同一编译项投影 `invoke` view：保留 digest、完整输入/准入、审查、修订、attempts 和 runtime 适用性，
+移除不会改变合法调用的执行器细节；interface describe 仍只支持 full。
+Root 派发子 Agent 后，以平台返回的线程 ID 调用 `worker_attach`，绑定准确的新 Run，随后通知子 Agent 开始。
+服务器根据平台随调用提供的会话/线程元数据解析绑定；Worker 不能通过参数自选角色、Run 或 Root 权限。
+绑定持久化于已有 Run 数据库并随实例归档；新 Run 的编译 Operation、模型与推理强度必须匹配才可复用线程。
+本地文件、终端和 Skills 仍遵守原有软隔离边界。这不是针对同一操作系统恶意用户的强安全隔离，
+也不把提示约束夸大为沙箱事实。
 当前唯一接入的派发路径是 `spawn_agent`。未启用的独立进程基座及专项测试已移至
 `experiments/worker_process_v2/`，不进入产品包；其实验结果不能作为当前生产隔离证明。
+旧 `run_compiled_codex_worker.py` 独立 CLI 探针不能运行新的统一入口角色，会明确报错；它不属于生产派发路径。
 
 ### Transform Operation
 
@@ -392,12 +421,81 @@ UI 内只有一个有界观测器，订阅时轮询节点元数据并通过 SSE 
 Operation 和工具合同保持不变；归档定向事务恢复原 append-only 触发器，维护清单不属于可清缓存。
 范围、故障证据和部署边界见[实施记录](plans/evidence/instance-workbench/IMPLEMENTATION.zh-CN.md)。
 
+## 原生权限角色与外部证据
+
+Root 启动指令来自 `roles/scheduler.md`，只常驻权威、审批、绑定、有界读取规则和条件式阅读索引。
+`roles/scheduler/` 中的细则随 wheel 发布，安装到 `.codex/scidiscovery-guides/`，生成的提示词
+记录其绝对目录。Root 在执行对应动作前按需读取，部署后刷新。细则不是新增角色、工具或路由
+权威，也不附加到 catalog/describe 返回值；Worker 指令和科学准入不变。安装保留非受管项目
+说明，并核验每份生成配置引用的细则可用。
+
+Local 工作区包含只读的 `tools/read_tool_contract.py`，仅读取冻结 assignment 中的工具合同。
+读取器在 scratch 自动保存可丢弃的阅读回执，调用者只指定工具名。后续相关合同可返回精确
+JSON Patch，始终引用最近一次完整响应，不引用前次差异。工作区、assignment 或合同变化，
+回执缺失/过期或差异更长时退回全文。上下文丢失后用 `--full` 重读：阅读回执不能证明模型
+仍然保留基准。回执故障不拒绝科研任务。不新增 MCP、合同注册表、科研状态或权限，不改变
+实际 Schema 和成果。旧工作区仍可直接读原合同；Hardened 不新增原生执行权限。
+
+Local 工作区还提供 `tools/read_output_schema.py`，仅读取当前 `schema/result.schema.json`。
+默认保留 envelope/payload 字段结构、所有公共约束，展开必填引用以及 `--field` 选择字段的完整
+引用闭包，并列出未展开定义的原文位置。`--definitions-only` 为已保留的当前总览补读字段；
+`--full` 返回完整原文。阅读视图不是新的校验 Schema。嵌套资源 ID 与循环本地引用从同一原件
+解析；不支持、动态或外部引用说明原因并退回全文。CLI 在 `.read-input/` 保存可丢弃的 Schema 阅读元数据，多 --field 合并处理，后续只补充
+未返回的定义、不重印总览；回复或上下文丢失时 --full 恢复原文。缓存缺失、损坏或不可写
+退回完整所需视图，不建立科研状态或记忆证明；每次读取当前文件。
+不支持的 envelope 形状与旧工作区沿全文读取路径；提交校验和所有科学字段保持不变。
+
+Local 工作区还安装 `tools/read_input.py`，按原文或 JSON Pointer 精确读取，完整回复默认
+4 KiB、最大 8 KiB。调用者选择输入别名或唯一端口，可重复 `--pointer` 选取多个字段；
+`--file` 选择 assignment、schema 等明确的任务内文件。回复只有精确正文与简短结束/续读
+标识，不重复输出转义后的 fragment 包装、路径、哈希或偏移；数字保留原词形，片段不冒充
+完整 JSON。仅安装的输入/Schema reader 在 `.read-input/` 内维护可丢弃阅读缓存，避开 output/scratch
+恢复扫描；其他 helper 缓存仍放 scratch。首次指定选择后，裸 `--next`、`--repeat`、
+`--restart` 沿用当前材料/文件模式、字段和预算。显式读取切换选择，失败不切换；无导航时
+须明确选择。最近回复不确定时 repeat，更早内容缺失时 restart。锁保证缓存更新，不保证交付顺序或已读状态。
+缓存不跨 Run、不成为科研状态，只检测本次选择首次读取后的内容变化，不核验封存原件哈希；
+控制层继续负责输入绑定与工作区初始化。旧工作区收到定向原文读取指引，不热换冻结 helper。
+该工具不限制任意原生 shell 输出、不新增提交门禁。analysis launcher 默认返回短观测与日志路径，stdout 数据消费者显式用
+`--display raw`，原生 inherit 策略保持 raw 默认。采集上限与展示预算分离。恢复状态只显示
+覆盖与遗漏数量，原遗漏清单由 `run_status(view="detail", output_paths=[])` 读取。
+
+Codex 平台角色按 `NativeToolPolicy` 声明的 shell、识图和网页搜索权限组合共享。
+科学 Operation 保留各自身份和合同。角色文件仅提供生命周期引导；每轮 assignment
+携带当前编译的 `role_instructions`；控制层在 attach 检查 Operation、编译 digest 与封存
+profile，在 Worker gateway 检查实际 model/effort，Agent 不再比较角色哈希。Local open
+从前一线程绑定及前后工作区实际角色、Schema、工具合同生成 reading_guidance，提示未变
+且仍保留时可复用，不建立新登记表；原件不可用则要求读取，动态 Schema 独立比较。
+同时依据持久化不可变绑定和用途描述，按别名给出输入未变、变化、新增或未知的信息；
+历史不完整时回退为未知。这只是导航，不是阅读登记或模型记忆证明，也不参与提交准入。
+重新判断可复用仍保留的原文；缺失上下文或需要科学复核时定向补读。精确原件与总体目标始终可访问。仅受控复用且
+完整正文仍在上下文时可跳过重印；首次、续接关系不确定、上下文丢失后必须重读。每轮仍读取新任务、
+总体目标/输入绑定、语言与预算。Worker MCP 能力仍由
+实际绑定的 Operation 决定。平台角色相同不允许跨 Operation 复用，也不允许审核自己的
+成果。安装只移除过时的受管角色文件，不改写历史 Run 或 Artifact。
+
+`science.evidence.extract.v1` 声明实时网页检索及可选的 `worker_capture_source`。
+抓取的公共 HTTPS 原文复用现有工具证据存储，由控制层生成引用别名、保存 URL 和抓取时间；
+它们是外部来源，不冒充仿真派生产物。来源清单和原文可绑定给 intake 审查及有界修订。
+搜索摘要不等于已保存的科学证据；无法取得原文时，应限制结论。其他固定来源的提取与
+审查 Operation 不会隐式获得搜索权限。
+
+每轮抓取最多八份原文，每份 16 MiB，最多 24 次 HTTP 请求（含重定向）。传输、DNS 和
+重定向均有界，失败保留工程诊断。原生网页检索受 Run 预算及平台策略约束，不计入此 HTTP
+计数器。trusted-local 文件系统限制仍是提示边界；权限角色不新增操作系统沙箱。
+
 ## Agent 执行配置与科学合同的边界
 
 公共默认在服务启动时加载一次；实例稀疏覆盖保存在 scheduler 数据库的实例行，由同一个配置解析器逐字段合并。优先级为实例任务覆盖、实例默认、公共任务覆盖、公共默认、Operation 兼容默认。语言只按实例统一设置。模型名称不维护第二份目录；平台不可用时保留原错误，不自动替换模型。
 
-预检生成完整 `normalized_request`。新 Run 冻结模型、推理强度和语言，行为值进入请求指纹，来源说明不参与幂等身份。Run 快照投影给调度方、Worker assignment 和页面，提交不读取最新配置。新写科学叙述遵守语言偏好，字段、代码、单位、引述和要求精确复制的文字不改；输出校验不检查语言。尝试次数仍由原恢复策略管理：显式值优先，恢复链沿用已有调度预算，新的实例默认不会自动延长恢复。
+invoke 在创建时解析并冻结配置。可选预检生成完整 `normalized_request`，可原样用于 invoke，但不预留动态准入条件。新 Run 冻结模型、推理强度和语言，行为值进入请求指纹，来源说明不参与幂等身份。Run 快照投影给调度方、Worker assignment 和页面，提交不读取最新配置。新写科学叙述遵守语言偏好，字段、代码、单位、引述和要求精确复制的文字不改；输出校验不检查语言。尝试次数仍由原恢复策略管理：显式值优先，恢复链沿用已有调度预算，新的实例默认不会自动延长恢复。
 
-`ExecutorRef.model` 及 permission 模型保留为旧编译摘要中的兼容默认；动态覆盖不重编译科学 Operation。Codex 角色文件不再固定模型/强度，调度使用同一角色显式传参；只有编译角色、实际模型/强度匹配且符合独立审查规则时复用 Agent。语言从新 assignment 读取。未观测配置不声明匹配，interrupt 不等于关闭。
+`ExecutorRef.model` 及 permission 模型保留为旧编译摘要中的兼容默认；动态覆盖不重编译科学 Operation。Codex 角色文件不再固定模型/强度，调度使用同一角色显式传参；只有 Operation ID、编译摘要、原生权限组合、实际模型/强度匹配且符合独立审查规则时复用 Agent。语言从新 assignment 读取。未观测配置不声明匹配，interrupt 不等于关闭。
 
 仅增加 `scheduler_instances.agent_settings_json/agent_settings_revision/agent_settings_updated_at` 和 `runs.execution_profile_json` 四列。历史 NULL 表示未记录。旧归档原件不改；恢复采用与安装相同的四列 ALTER 定义生成期望视图，缺失值固定为 NULL/0，并在预检、事务导入和续接收尾应用。无关结构、索引、触发器和记录差异仍冲突；缓存清理不能删执行配置。没有新增状态机、科学 Artifact 类型、翻译角色或模型角色池。
+
+新的受支持 SProcess 研究由 `science.experiment.skeleton.v1` 交付科学对照、判据和冻结条件，
+不强制先枚举工程案例。作者在唯一项目主输出内写入具体 `ExperimentPortfolio` 并完成授权开发验证。
+`tcad.execution-plan.project.v1` 仅原样提取同一方案给下游端口，不授予资格。可选提前骨架审查不能替代
+独立的项目综合科学与实现审查。打包及 TCAD 分析绑定精确项目、投影计划、骨架和综合审查。
+旧详细计划仍要求原科学审查见证；旧 SDevice 和其他插件保留原合同。生产审批与执行权限不变。
+科学语义冲突应在反复搜索实现前处理，科学等价的工程选择留在作者任务内。夹具验证不证明模型行为或 token 收益。

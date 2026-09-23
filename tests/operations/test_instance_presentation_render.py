@@ -52,8 +52,14 @@ def test_readable_sections_parameter_dimensions_and_exact_sources() -> None:
     assert "loading='lazy'" in page
     assert "rel='noreferrer noopener' referrerpolicy='no-referrer'" in page
     assert page.index("总体与本轮目标") < page.index("关键参数与条件") < page.index("图件与结果对照") < page.index("<span>执行范围</span>")
+    assert "<details class='research-panel figures-panel'>" in page
+    assert "<span class='panel-count'>1</span>" in page
     assert "<details class='parameter-sources'>" in page
     assert "<details class='parameter-sources' open>" not in page
+    without_figures = _presentation()
+    without_figures["figures"] = []
+    assert "图件与结果对照" not in render_presentation(
+        without_figures, evidence_href=_evidence, image_href=_image)
 
 
 def test_reported_values_and_conditions_are_compact_with_exact_original_links() -> None:
@@ -143,3 +149,59 @@ def test_broken_optional_callbacks_and_malformed_provider_fields_are_visible() -
     assert "原件入口不可用" in page
     assert "安全预览未提供" in page
     assert render_presentation(None, evidence_href=_evidence, image_href=_image) == ""
+
+
+def test_scientific_previews_compact_numbers_without_mutating_evidence() -> None:
+    from copy import deepcopy
+    from html import unescape
+
+    source = {"artifact_id": "original", "json_pointer": "/summary"}
+    original = "初始化偏差 1.2332352444688333e-5，浓度 6.76862812233398e19，深度 0.49988384999999996 μm。"
+    presentation = {
+        "sections": [{"title": "结果分析", "items": [
+            {"label": "正式摘要", "value": original, "source": source},
+            {"label": "指标", "value": {"error": 1.2332352444688333e-5}, "source": source},
+        ]}],
+        "parameters": [{"name": "浓度", "selected_value": 6.76862812233398e19,
+                        "reported_values": [{"value": "6.76862812233398e19", "unit": "cm^-3"}],
+                        "conditions": [{"name": "深度", "value": "0.49988384999999996", "unit": "μm"}],
+                        "source": source}],
+    }
+    before = deepcopy(presentation)
+    page = render_presentation(presentation, evidence_href=_evidence, image_href=_image)
+    visible = unescape(re.sub(r"<[^>]*>", "", page))
+    assert "初始化偏差 1.23324e-5，浓度 6.76863e+19，深度 0.499884 μm。" in visible
+    assert "原始值：1.2332352444688333e-5" in page
+    assert "原始值：6.76862812233398e19" in page
+    assert "阈值比较与判定以原始记录为准" in visible
+    assert "1.2332352444688333" not in visible
+    assert presentation == before
+    # A raw field/evidence preview remains exact unless explicitly opted in.
+    assert original in render_json_value(original)
+
+
+def test_scientific_numeric_display_preserves_identifiers_code_and_exact_comparisons() -> None:
+    from scidiscovery.artifact_agent.approval_ui.presentation_render import render_scientific_text
+
+    literal = ("run_1.23456789 /data/1.23456789.csv https://example.org/1.23456789 "
+               "`threshold=1.23456789` 2026-09-18T12:34:56.123456789Z 1.12e0 3.0e2 2029 "
+               "v1.23456789 1.23456789.2 12345678901234567890 www.example.org/?v=1.23456789")
+    assert render_scientific_text(literal) == literal
+    page = render_scientific_text("误差 1.0000001e-6 超过阈值 1.0000000e-6")
+    assert "原始值：1.0000001e-6" in page
+    assert "原始值：1.0000000e-6" in page
+    assert "aria-label='显示约值" in page
+    assert ">1.23457e+6</span>" in render_scientific_text("1234567.8")
+    assert "&lt;script&gt;" in render_scientific_text("<script>1.23456789</script>")
+    assert "<script>" not in render_scientific_text("<script>1.23456789</script>")
+    assert "rounded-number" not in render_scientific_text("`threshold=1.23456789123", limit=22)
+    clipped = render_scientific_text("误差 1.23456789123e-50，", limit=19)
+    assert "rounded-number" not in clipped and "预览" in clipped
+    assert "1.23456789e9999999999999999999" == render_scientific_text("1.23456789e9999999999999999999")
+
+
+def test_number_rich_preview_keeps_existing_byte_bound() -> None:
+    page = render_json_value(["数值 1.234567891234e-9 " * 100] * 20, max_bytes=8192, compact_numbers=True)
+    assert len(page.encode("utf-8")) <= 8192
+    assert "rounded-number" in page
+    assert "预览" in page

@@ -28,7 +28,8 @@ CORE_PLUGIN = PluginDefinition(
             ("file_delete_tool", "FILE_DELETE_TOOL"),
             ("file_move_tool", "FILE_MOVE_TOOL"),
         )
-    ),
+    ) + (ComponentSpec("reference_read_tool", "worker_tool",
+        "scidiscovery.reference_tools:REFERENCE_READ_TOOL", public=True),),
     operations=(),
 )
 

@@ -66,7 +66,9 @@ def test_exact_prior_proof_maps_identity_without_alias_collision(fallback, legac
         sources.prior_source_bindings["old_curve"] = "old_curve"
 
 
-@pytest.mark.parametrize("defect", ["producer", "parent", "missing_prior", "unproven_binding", "explicit_mismatch"])
+@pytest.mark.parametrize("defect", ["producer", "parent", "missing_producer", "port",
+                                     "missing_prior", "missing_manifest", "unproven_binding",
+                                     "explicit_mismatch"])
 @pytest.mark.parametrize("legacy", [False, True])
 def test_wrong_pair_never_falls_back_or_matches_only_digest(defect, legacy):
     contents, descriptors = bindings(legacy=legacy)
@@ -74,16 +76,31 @@ def test_wrong_pair_never_falls_back_or_matches_only_digest(defect, legacy):
         descriptors["proof"] = replace(descriptors["proof"], producer_run_id="another_run")
     elif defect == "parent":
         descriptors["previous"] = replace(descriptors["previous"], parent_refs=())
+    elif defect == "missing_producer":
+        descriptors["previous"] = replace(descriptors["previous"], producer_run_id=None)
+    elif defect == "port":
+        descriptors["proof"] = replace(descriptors["proof"], labels=())
     elif defect == "missing_prior":
         descriptors.pop("previous")
+    elif defect == "missing_manifest":
+        descriptors.pop("proof")
+        contents.pop("proof")
     elif defect == "unproven_binding":
         descriptors["proof"] = replace(descriptors["proof"], parent_refs=())
     else:
         descriptors["fallback"] = replace(descriptors["proof"], source_name="fallback", port_name="recovery_manifest")
         contents["fallback"] = contents["proof"]
         descriptors["proof"] = replace(descriptors["proof"], producer_run_id="another_run")
-    with pytest.raises(OperationInvocationError):
+    with pytest.raises(OperationInvocationError) as rejected:
         prior_analysis_sources(ValidationSources(contents, descriptors))
+    message = rejected.value.details[0]["message"]
+    expected = {
+        "producer": "same_producer", "parent": "direct_parent",
+        "missing_producer": "prior_producer", "port": "recovery_output_port",
+        "missing_prior": "prior analysis primary", "missing_manifest": "direct recovery manifest",
+        "unproven_binding": "not its direct parent", "explicit_mismatch": "same_producer",
+    }[defect]
+    assert expected in message
 
 
 @pytest.mark.parametrize("exact_identity", [True, False])
@@ -142,5 +159,6 @@ def test_legacy_conflicting_record_aliases_are_rejected():
     manifest["records"].append({"alias":"old_curve", "artifact_ref":copy.model_dump(mode="json")})
     replace_manifest(contents, descriptors, manifest)
     descriptors["proof"] = replace(descriptors["proof"], parent_refs=(descriptors["new_curve"].artifact_ref, copy))
-    with pytest.raises(OperationInvocationError, match="prior_manifest_binding_mismatch"):
+    with pytest.raises(OperationInvocationError, match="prior_manifest_binding_mismatch") as rejected:
         prior_analysis_sources(ValidationSources(contents, descriptors))
+    assert "conflicting exact artifacts" in rejected.value.details[0]["message"]

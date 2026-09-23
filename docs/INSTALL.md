@@ -474,10 +474,13 @@ Controlled analysis evidence recovery requires matching control/Worker packages 
 
 The instance directory has separate Agent Settings and archive-management entries. Agent Settings obtains editing access and opens the dedicated settings page; saving stays on that page.
 
-The installer creates `${SCID_CONFIG_ROOT}/agent-settings.json` (default `/etc/scidiscovery/agent-settings.json`) only when absent, with `zh-CN`, `gpt-5.6-sol`, and `medium` defaults. Upgrades preserve the file and include it in installation-transaction backups. Control and UI services use the same `SCID_AGENT_SETTINGS_FILE`; global-file edits require restarting both services. Missing files retain compatibility defaults; malformed existing files report their path and fields.
+The installer creates `${SCID_CONFIG_ROOT}/agent-settings.json` (default `/etc/scidiscovery/agent-settings.json`) only when absent, with `zh-CN`, `gpt-6-sol`, and `medium` defaults. An existing file that exactly matches the previous generated default is upgraded transactionally to the new default; customized files are preserved. Control and UI services use the same `SCID_AGENT_SETTINGS_FILE`; global-file edits require restarting both services. Missing files retain compatibility defaults; malformed existing files report their path and fields.
+The initial model value comes from the packaged `scidiscovery/default_agent_settings.json`; Agent Operation declarations do not pin a model.
+
+The current M7 configuration matches the previous generated default, so reinstalling upgrades its `defaults.model` to `gpt-6-sol`. If a customized installation keeps an older model, edit that file separately and restart the control and approval UI services. Instance-level model overrides still take precedence; already created Runs retain their frozen execution profiles.
 
 ```json
-{"schema_version":1,"defaults":{"narrative_language":"zh-CN","model":"gpt-5.6-sol","reasoning_effort":"medium"},"operations":{}}
+{"schema_version":1,"defaults":{"narrative_language":"zh-CN","model":"gpt-6-sol","reasoning_effort":"medium"},"operations":{}}
 ```
 
 Instance management exposes sparse overrides for narrative language, model, effort and recovery-chain total Run count. The latter three also support installed Operation IDs. Blank fields inherit; resetting removes instance overrides only. Read-only and archived instances cannot save. Saving affects future preflights only: it does not dispatch, execute, approve or rebind a session. Historical reports are not translated and missing historical Run profiles are not backfilled.

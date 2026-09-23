@@ -56,7 +56,7 @@ PDF_TOOL = _general("pdf_extract_tool")
 
 REQUEST_PROMPT = OPERATION_AGENT_PREAMBLE + """Return exactly one
 RoleResultEnvelope whose payload is the FigureDigitizationRequest required by
-output.schema.json. Inspect the bound paper_source and optional research_objective.
+the schema identified by assignment.output.schema_path. Inspect the bound paper_source and optional research_objective.
 If the research objective or assignment instruction identifies an exact figure,
 that target is fixed: do not substitute another figure. For PDFs first call
 worker_extract_pdf_text to locate the target's PDF page from original text and
@@ -94,13 +94,15 @@ original source identity and any known partial fields; omit unknown recovery met
 
 INTAKE_PROMPT = OPERATION_AGENT_PREAMBLE + """Return exactly one
 RoleResultEnvelope whose payload is the ScientificIntake required by
-output.schema.json. Consume the exact paper_source, typed figure_request,
+the schema identified by assignment.output.schema_path. Consume the exact paper_source, typed figure_request,
 manifest, deterministic validation report, source panel, audit overlay, and
 curve tables as one immutable family. State only what the supplied family
 supports, preserve every unresolved identity, occlusion, gap, and qualification
 limit, and distinguish digitized observations from author-supplied raw data.
 The declared family may contain zero tables, or zero recovered images and tables.
 These are complete unresolved results; preserve their limits in a full Intake.
+Workspace finalizers copy objective text from objective_contract.statement, or the
+foundation objective when absent; the draft may omit problem_frame.objective.
 
 Use exact assignment source names in evidence keys. Do not create or modify
 curve points, reinterpret a failed deterministic report, grant qualification,
@@ -118,7 +120,7 @@ new evidence or redigitization.
 
 AUDIT_PROMPT = OPERATION_AGENT_PREAMBLE + """Return exactly one
 RoleResultEnvelope whose payload is the EvidenceAudit required by
-output.schema.json. Independently audit the exact ScientificIntake against its
+the schema identified by assignment.output.schema_path. Independently audit the exact ScientificIntake against its
 bound paper source, typed request, manifest, deterministic validation report,
 source panel, overlays, and every curve table. Check source/object identity,
 axis calibration, legend or annotation binding, visible support, gaps,
@@ -138,6 +140,8 @@ not apply. A faithful statement of limited evidence can pass this audit without
 granting quantitative qualification.
 Explicitly declared zero-table or zero-image families can be faithfully audited;
 absence of an attachment declared by the manifest is a different integrity defect.
+The workspace finalizer derives only handoff.verdict. Author the handoff summary
+and needed next actions; do not omit the entire handoff.
 """
 
 

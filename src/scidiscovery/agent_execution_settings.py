@@ -2,13 +2,19 @@
 from __future__ import annotations
 
 import json
+from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 Language = Literal["zh-CN", "en"]
 ReasoningEffort = Literal["low", "medium", "high", "xhigh", "max", "ultra"]
+
+
+def canonical_model_id(value: str | None) -> str | None:
+    """Use the platform's case-insensitive model identity without changing punctuation."""
+    return value.casefold() if value is not None else None
 
 # These exact ALTER definitions also delimit old archive compatibility.
 EXECUTION_SETTINGS_COLUMNS = {
@@ -49,6 +55,11 @@ class ExecutionProfile(SettingsValue):
     reasoning_effort: ReasoningEffort
     narrative_language: Language
 
+    @field_validator("model")
+    @classmethod
+    def normalize_model_identity(cls, value: str) -> str:
+        return canonical_model_id(value) or value
+
 
 def parse_settings(value: dict, *, label: str = "agent settings") -> AgentSettings:
     """Missing fields inherit; explicit null is never another spelling of missing."""
@@ -82,13 +93,23 @@ def load_settings(path: Path | str | None) -> AgentSettings:
     return parse_settings(value, label=str(source))
 
 
+@lru_cache(maxsize=1)
+def packaged_default_model() -> str:
+    source = Path(__file__).with_name("default_agent_settings.json")
+    settings = parse_settings(json.loads(source.read_text(encoding="utf-8")), label=str(source))
+    if settings.defaults.model is None:
+        raise ValueError(f"{source}: defaults.model is required")
+    return settings.defaults.model
+
+
 def resolve_settings(global_settings: AgentSettings, instance_settings: AgentSettings,
-                     *, operation_id: str, operation_model: str,
+                     *, operation_id: str, operation_model: str | None,
                      operation_max_attempts: int) -> dict:
-    values = dict(model=operation_model, reasoning_effort="medium",
+    values = dict(model=operation_model or packaged_default_model(), reasoning_effort="medium",
                   narrative_language="en", max_attempts=operation_max_attempts)
-    sources = {key: "operation_default" if key in {"model", "max_attempts"}
-               else "compatibility_default" for key in values}
+    sources = dict(model="operation_default" if operation_model else "package_default",
+                   reasoning_effort="compatibility_default",
+                   narrative_language="compatibility_default", max_attempts="operation_default")
     for source, settings in (("global", global_settings), ("instance", instance_settings)):
         for suffix, item in (("defaults", settings.defaults),
                              ("operation", settings.operations.get(operation_id))):

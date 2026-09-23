@@ -1389,16 +1389,17 @@ def main() -> None:
         for operation_id in catalog.operation_ids()
         if catalog.operation(operation_id).spec.executor.kind == "transform"
     }
-    # Figure transforms have dedicated family/review tests; all catalog entries
+    # These transforms have dedicated lifecycle tests; all catalog entries
     # still belong to an explicit expected set (no unknown-entry filtering).
-    figure_transforms = {
+    separately_tested_transforms = {
         "science.figure.evidence.materialize.v1",
         "scidiscovery.curve-bundle.figure-evidence.v2",
+        "tcad.execution-plan.project.v1",
     }
     declared = {scenario.operation_id for scenario in scenarios}
-    if actual != declared | figure_transforms:
+    if actual != declared | separately_tested_transforms:
         raise AssertionError(
-            f"transform corpus differs from catalog: {actual ^ (declared | figure_transforms)}"
+            f"transform corpus differs from catalog: {actual ^ (declared | separately_tested_transforms)}"
         )
     guarded = {
         item.operation_id

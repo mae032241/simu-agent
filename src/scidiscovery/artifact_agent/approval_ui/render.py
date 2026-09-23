@@ -19,6 +19,7 @@ from .presentation_render import (
     ImageHref,
     render_json_value,
     render_presentation,
+    render_scientific_text,
     render_source,
     fold_panel,
     approval_heading,
@@ -100,9 +101,9 @@ def render_review(
         if document is not None
         else _render_fallback_notice(request.kind)
     ))
-    question_preview = "<p>" + _preview_text(request.question, limit=320) + "</p>"
+    question_preview = "<p>" + render_scientific_text(request.question, limit=320) + "</p>"
     if len(request.question) > 320:
-        question_preview += fold_panel("展开审批问题原文", "<p>" + _preview_text(request.question, limit=1024) + "</p>")
+        question_preview += fold_panel("展开审批问题预览", "<p>" + render_scientific_text(request.question, limit=1024) + "</p>")
     action_title, action_prompt = approval_heading(request.kind)
     request_download = (
         f"<a class='source-link' href='{_request_href(review, access_token)}'>"

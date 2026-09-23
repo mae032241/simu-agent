@@ -905,6 +905,21 @@ class SchedulerBindingService:
             rows = connection.execute(query, parameters).fetchall()
         return tuple(_binding(row) for row in rows)
 
+    def trajectory_page(self, *, instance: str, page: int = 1, limit: int = 10):
+        """Read a numbered page of control nodes without loading the full history."""
+        self.get_instance(instance_id=instance)
+        if type(page) is not int or page < 1 or type(limit) is not int or not 1 <= limit <= 100:
+            raise ValueError("invalid trajectory page bounds")
+        where = "FROM scheduler_bindings WHERE instance = ? AND namespace IN ('run', 'approval', 'execution')"
+        with self._connect() as connection:
+            connection.execute("BEGIN")
+            total = connection.execute("SELECT COUNT(*) " + where, (instance,)).fetchone()[0]
+            page = min(page, max(1, (total + limit - 1) // limit))
+            rows = connection.execute("SELECT * " + where
+                + " ORDER BY created_at DESC, namespace, name LIMIT ? OFFSET ?",
+                (instance, limit, (page - 1) * limit)).fetchall()
+        return tuple(_binding(row) for row in rows), total, page
+
     def invocation_artifacts(self, *, instance: str, request_fingerprint: str,
                              after: str = "", limit: int = 101) -> tuple[SchedulerBinding, ...]:
         """Bounded, instance-local historical bindings for one saved invocation."""

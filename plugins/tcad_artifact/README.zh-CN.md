@@ -42,3 +42,8 @@ solver 命令语法，也不生成 `.cmd` scaffold。独立 reviewer 直接阅�
 `remote_runner_py36.py`。Runner 不要求在仿真主机安装 Python 包或 systemd 服务。
 
 本插件不分发或替代 Synopsys 软件和许可证。
+
+新 SProcess 研究可以科学骨架代替预审详细计划。作者维护 `deck/execution-plan.json`，封存项目内的
+Portfolio 是唯一执行计划。通过 `tcad.execution-plan.project.v1` 原样提取后，进行一次独立科学与实现
+综合审查；打包和分析绑定该精确计划、原骨架与综合审查。提前骨架审查可选。旧计划见证、SDevice 合同、
+开发预算与生产审批不变。

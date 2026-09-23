@@ -44,7 +44,7 @@ def test_gap_records_reach_fresh_revision_worker(tmp_path, broken_metadata, comp
     snapshot = snapshot_workspace(Path(opened['workspace_path']))
     assert {'deck/gap.json', 'deck/handoff.json', 'deck/files/main.cmd', 'deck/reports/failure.log'} <= {x.relative_path for x in snapshot}
     assert worker.call_tool('worker_submit_result', {})['state'] == 'completed'
-    status = root.call_tool('run_status', {'name': 'probe_author'})
+    status = root.call_tool('run_status', {'name': 'probe_author', 'view': 'detail'})
     assert status['sealed_output']['payload']['result_kind'] == 'implementation_gap'
     assert status['sealed_output']['payload']['missing_inputs'] == gap['missing_inputs']
     assert not status['recovery_available']
@@ -92,7 +92,7 @@ def test_gap_records_reach_fresh_revision_worker(tmp_path, broken_metadata, comp
     else:
         fixture._write_gap(fresh)
     assert revision.call_tool('worker_submit_result', {})['state'] == 'completed'
-    result = root.call_tool('run_status', {'name': 'probe_revision'})['sealed_output']['payload']
+    result = root.call_tool('run_status', {'name': 'probe_revision', 'view': 'detail'})['sealed_output']['payload']
     if complete_project:
         assert result['materialization_report']['status'] == 'pass'
         assert result['preflight_attestation']['qualified']

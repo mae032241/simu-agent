@@ -28,8 +28,8 @@ _TCAD = runpy.run_path(str(Path(__file__).with_name('test_l4_local_tcad.py')))
 _CURVE = runpy.run_path(str(Path(__file__).with_name('test_m2_curve_analysis_boundary.py')))
 
 
-def analysis_materials(*, mapped=True, state='succeeded', output_names=('A', 'B')):
-    plan = _CURVE['_plan']()
+def analysis_materials(*, mapped=True, state='succeeded', output_names=('A', 'B'), plan=None):
+    plan = plan or _CURVE['_plan']()
     project, raw, review = _TCAD['_review_context_fixture']('unmodified')
     value = project.model_dump(mode='json')
     value['expected_outputs'] = [dict(name=name, relative_path=name+'.plx',
@@ -75,7 +75,7 @@ def raw_request(*, alias='solver_outputs_001'):
     ])
 
 
-def analysis_system(tmp_path, *, state='succeeded', mapped=True, bind_names=('A','B')):
+def analysis_system(tmp_path, *, state='succeeded', mapped=True, bind_names=('A','B'), plan=None):
     catalog = compile_catalog((CORE_PLUGIN, GENERAL_PLUGIN, CURVE_PLUGIN, TCAD_PLUGIN))
     project_root = tmp_path/'project'
     project_root.mkdir()
@@ -93,7 +93,7 @@ def analysis_system(tmp_path, *, state='succeeded', mapped=True, bind_names=('A'
         runtime.scheduler_bindings.bind(instance=instance.instance_id,namespace='artifact',name=name,object_id=artifact.artifact_id)
         artifacts[name] = artifact
         return artifact
-    plan, package, manifest, plx, csv = analysis_materials(state=state,mapped=mapped)
+    plan, package, manifest, plx, csv = analysis_materials(state=state,mapped=mapped,plan=plan)
     plan_artifact = register('plan',plan.canonical_json(),'scidiscovery.experiment-portfolio.v1')
     # The plan review is a genuinely sealed independent Worker fixture, not a label pretending PASS.
     root.call_tool('operation_invoke',dict(name='plan_review',operation_id='science.object.review.v1',instruction='Review the fixture plan.',inputs=[dict(port='experiment_plan',artifact_names=['plan'])]))
@@ -162,10 +162,36 @@ def test_raw_plx_csv_same_worker_score_and_submit(tmp_path):
 @pytest.mark.parametrize('state',['failed','cancelled'])
 def test_failed_execution_zero_outputs_no_score_can_seal(tmp_path,state):
     system = analysis_system(tmp_path,state=state,bind_names=())
+    missing_review=deepcopy(system[3]); missing_review['name']='analysis_without_legacy_review'
+    missing_review['inputs']=[item for item in missing_review['inputs'] if item['port']!='experiment_review']
+    rejected=system[2].call_tool('operation_preflight',missing_review)
+    assert rejected['admissible'] is False and rejected['reason_code']=='guard_rejected',rejected
     worker,opened = open_analysis(system)
     write_analysis(opened,analysis_report())
     result=worker.call_tool('worker_submit_result',{})
     assert result['state']=='completed',result
+
+
+def test_keyed_tcad_scope_rejects_missing_assessment_then_accepts_not_evaluable(tmp_path):
+    plan = _CURVE['_compiler_plan']()
+    system = analysis_system(tmp_path, state='failed', bind_names=(), plan=plan)
+    worker, opened = open_analysis(system)
+    report = analysis_report()
+    report['study_kind'] = 'scientific'
+    write_analysis(opened, report)
+    rejected = worker.call_tool('worker_submit_result', {})
+    assert rejected['state'] == 'rejected', rejected
+    diagnostic = next(item for item in rejected['diagnostics']
+                      if 'objective assessment is required' in item['message'])
+    assert diagnostic['path'] == '$.payload.objective_assessment'
+    assert diagnostic['rule_id'] == 'tcad.result_analysis.context_binding'
+    report['objective_assessment'] = {
+        'objective_key': plan.objective_key,
+        'status': 'not_evaluable',
+        'summary': 'The failed execution produced no solver output for the planned objective.',
+    }
+    write_analysis(opened, report)
+    assert worker.call_tool('worker_submit_result', {})['state'] == 'completed'
 
 
 @pytest.mark.parametrize('tamper',['name','case','metric'])

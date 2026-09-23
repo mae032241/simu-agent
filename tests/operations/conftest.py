@@ -58,7 +58,7 @@ def _supply_runtime_dependencies(environment_root: Path) -> None:
 def installed_environments(
     tmp_path_factory: pytest.TempPathFactory,
 ) -> dict[str, InstalledEnvironment]:
-    """Build wheels once and expose source-independent core/full runtimes."""
+    """Build wheels once; install only the source-independent runtimes used."""
 
     repository = Path(__file__).resolve().parents[2]
     root = tmp_path_factory.mktemp("r0-installed")
@@ -97,7 +97,6 @@ def installed_environments(
         fixture_plugins / "m7_effect_operation_plugin",
         fixture_plugins / "broken_operation_plugin",
         fixture_plugins / "invalid_unicode_operation_plugin",
-        fixture_plugins / "producer_family_operation_plugin",
     ):
         subprocess.run(
             [
@@ -156,13 +155,7 @@ def installed_environments(
         for name, path in wheels.items()
         if name.startswith("scidiscovery_m7_effect_test_plugin-")
     )
-    producer_family = next(
-        path for name, path in wheels.items()
-        if name.startswith("scidiscovery_producer_family_test_plugin-")
-    )
-
-    environments: dict[str, InstalledEnvironment] = {}
-    for name, selected in {
+    selections = {
         "core": (core,),
         "curve": (core, curve),
         "figure": (core, curve, figure),
@@ -172,14 +165,18 @@ def installed_environments(
         "m7_effect": (core, m7_effect),
         "full": (core, tcad, curve),
         "all_domains": (core, tcad, curve, figure),
-        "producer_family": (core, producer_family),
         "broken": (core, broken),
         "invalid_unicode": (core, invalid_unicode),
-    }.items():
+    }
+
+    def create_environment(name: str) -> InstalledEnvironment:
+        if name not in selections and name != "tcad_resolved":
+            raise KeyError(name)
         environment_root = root / name
         venv.EnvBuilder(with_pip=True, system_site_packages=False).create(environment_root)
         _supply_runtime_dependencies(environment_root)
         python = environment_root / "bin/python"
+        selected = selections[name] if name != "tcad_resolved" else (core,)
         subprocess.run(
             [
                 str(python),
@@ -196,59 +193,29 @@ def installed_environments(
             text=True,
             timeout=180,
         )
+        if name == "tcad_resolved":
+            subprocess.run(
+                [
+                    str(python), "-m", "pip", "install", "--no-index",
+                    "--find-links", str(wheelhouse), str(tcad),
+                ],
+                cwd=root,
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=180,
+            )
         workdir = root / f"{name}-workdir"
         workdir.mkdir()
-        environments[name] = InstalledEnvironment(python=python, workdir=workdir)
+        return InstalledEnvironment(python=python, workdir=workdir)
 
-    # H3-A proof environment: retain only the exact current runtime packages,
-    # without inheriting PyYAML or any other base-environment site package.
-    environment_root = root / "core_no_yaml"
-    venv.EnvBuilder(with_pip=True, system_site_packages=False).create(environment_root)
-    python = environment_root / "bin/python"
-    subprocess.run(
-        [str(python), "-m", "pip", "install", "--no-index", "--no-deps", str(core)],
-        cwd=root,
-        check=True,
-        capture_output=True,
-        text=True,
-        timeout=180,
-    )
-    _supply_runtime_dependencies(environment_root)
-    workdir = root / "core_no_yaml-workdir"
-    workdir.mkdir()
-    environments["core_no_yaml"] = InstalledEnvironment(
-        python=python, workdir=workdir
-    )
+    class LazyEnvironments(dict[str, InstalledEnvironment]):
+        def __missing__(self, name: str) -> InstalledEnvironment:
+            environment = create_environment(name)
+            self[name] = environment
+            return environment
 
-    environment_root = root / "tcad_resolved"
-    venv.EnvBuilder(with_pip=True, system_site_packages=False).create(environment_root)
-    _supply_runtime_dependencies(environment_root)
-    python = environment_root / "bin/python"
-    subprocess.run(
-        [str(python), "-m", "pip", "install", "--no-index", "--no-deps", str(core)],
-        cwd=root,
-        check=True,
-        capture_output=True,
-        text=True,
-        timeout=180,
-    )
-    subprocess.run(
-        [
-            str(python), "-m", "pip", "install", "--no-index",
-            "--find-links", str(wheelhouse), str(tcad),
-        ],
-        cwd=root,
-        check=True,
-        capture_output=True,
-        text=True,
-        timeout=180,
-    )
-    workdir = root / "tcad_resolved-workdir"
-    workdir.mkdir()
-    environments["tcad_resolved"] = InstalledEnvironment(
-        python=python, workdir=workdir
-    )
-    return environments
+    return LazyEnvironments()
 
 
 @pytest.fixture

@@ -5,9 +5,25 @@ output: tcad_project
 schema: tcad.deck-project.v1
 validator: tcad_artifact.project_packager:validate_deck_project_output
 context_validator: tcad_artifact.project_packager:validate_deck_author_task_output
-context_sources: prior_project,experiment_plan,device_parameters,parameter_coverage
+context_sources: prior_project,scientific_skeleton,experiment_plan,device_parameters,parameter_coverage
 output_model: tcad_artifact.project_packager:DeckProjectDraft
 ---
+When scientific_skeleton is bound, own the concrete ExperimentPortfolio in
+`deck/execution-plan.json`, source, discretization, initialization and authorized
+development checks. The final project retains that plan as its sole execution fact;
+control derives case bindings and refreshes the materialization contract from it.
+The new path supports SProcess only. Legacy experiment_plan remains immutable and
+retains its prior scientific review contract. Never supply both author inputs.
+Keep physical facts, contrasts and success criteria frozen by the skeleton; ordinary
+scientifically equivalent implementation corrections remain in this author task.
+Before another diagnostic, state which scientific or execution-validity decision it
+can change. If time semantics, boundary order or solver representation contradict a
+scientific requirement, report the evidence, effect and smallest proposed scientific
+change in the existing gap/handoff; do not silently change the criterion or repeat
+uninformative searches. For a skeleton gap, plan_locator addresses the skeleton.
+A gap needs no invented concrete cases or execution plan. A plan change invalidates
+development proofs bound to the former project; old receipts are not new attestations.
+
 Author or revise the solver project in the task-private deck workspace. Follow
 the discovered `sentaurus-tcad-code` Skill: read its `SKILL.md`, then only the
 references needed for this task. If unavailable, report the knowledge gap.
@@ -28,7 +44,9 @@ After `worker_open_assignment`, use normal Codex read/search tools for:
 
 - `deck/contract/materialization-spec.json`: immutable cases, values, and units
   only when the returned assignment explicitly contains
-  `deck_materialization_spec_path`; otherwise use the exact
+  `deck_materialization_spec_path`. In the skeleton branch author
+  `deck/execution-plan.json` first; the contract is generated before diagnostics
+  and refreshed when the plan changes. In legacy non-declaration mode use
   `inputs/experiment_plan.json` and editable `deck/project.json`;
 - `deck/files/`: effective solver source;
 - `deck/declarations.json`: entrypoint, optional development initialization
@@ -53,6 +71,10 @@ The control plane scans the real files and builds the canonical
 `DeckProjectDraft`. Do not serialize the deck into `output/result.json`, create
 a parallel cross-Artifact edit payload, or edit generated capability,
 parameter/case bindings, realization manifest, runtime assertions, or diffs.
+In declaration mode, each `raw_outputs` item contains only `name`,
+`relative_path`, and `media_type`. Control generates `expected_outputs`, including
+`capture`, `max_bytes`, and the solver log. Development preflight does not require
+`handoff.json`; write its scientific verdict and summary before final submission.
 There is no separate deck-reviser role.
 
 ## Modes
@@ -61,6 +83,10 @@ In create mode, write the smallest complete solver-only source first, then add
 unique case locators and raw solver outputs to `declarations.json`. No
 control-generated `.cmd` scaffold exists. Match declarations to the filenames actually
 produced by the solver, checking permitted development diagnostics when available.
+Declare each structure output with the complete filename actually written by the
+selected solver release, including solver-generated suffixes. Establish that name
+from the release behavior and exact source/output evidence; do not infer the final
+path from the text of a `struct` argument.
 A historical analysis mapping does not change these declarations; source changes
 require the existing controlled revision task.
 
@@ -183,13 +209,16 @@ the failed implementation.
 
 
 ## Diagnostic logs
-Poll the same run_name/mode to read progress.log_tails and observed job
-elapsed_seconds on updated runners. Compare the last log update and known steps
+Poll the same run_name/mode for short progress and observed elapsed_seconds.
+For diagnosis open details_path, then read /progress/log_tails and /log_excerpt
+when present; they are not inline in the short response. The saved response may
+change on a subsequent poll, so restart chunked reading if its version changes.
+Compare the last log update and known steps
 with the job limit to decide whether to keep polling or correct a failure.
 Elapsed wall time is not solver CPU time, an ETA, or proof of initialization;
 missing progress on an older runner is not itself a failed experiment.
 Collected progress retains the manifest's start/end times and elapsed wall time.
-The debug response's log_excerpt is display-only. Read the complete bounded,
+The saved detail's log_excerpt is display-only. Read the complete bounded,
 redacted log at log_relative_path in chunks (for example a limited line range),
 especially when no source error appears in the excerpt. Do not rerun the solver
 merely to obtain omitted display text. These read-only logs are retained in
@@ -197,3 +226,21 @@ implementation-gap attempt_files and restored as historical reports in a new
 Run. A capture-limit failure is explicit missing diagnostic coverage, not a
 qualified initialization. Original process streams remain at the runner; never
 use unbound paths to reach them.
+
+For changes to time updates, coupled state, or output sampling, first solve and
+exit 0 do not establish evolving behavior. Choose the smallest permitted
+observation that distinguishes initial-only or ineffective intervention from the
+intended update. Reuse production procedures/definitions, select only necessary
+raw output_names, and explain the correspondence and uncovered behavior in source
+comments and the existing handoff. SProcess initialization can run its declared
+bounded .cmd; SDevice -i must not be described as a dynamic solve. Stay within the
+compiled development capability and reservations; never start a solver via shell
+or expand to production batches. If this cannot establish the required behavior,
+deliver implementation_gap through the existing path.
+
+The tool reports a locally tightened collection allowance and unknown output
+sizes, not a promise that the final 8 MiB envelope will fit. Read overflow facts
+and the original diagnostics; do not remove unfavorable observations to fit.
+Control seals the current accepted calls and all their selected raw outputs into
+development_diagnostics. Do not author that field or edit its report copies.
+Locate keys/sections before reading; after truncation request a smaller range.

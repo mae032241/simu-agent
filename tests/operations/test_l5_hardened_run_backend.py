@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 
 from blind_csv_plugin.contracts import CSV_SCHEMA_PROBE
-from blind_csv_plugin.plugin import PLUGIN as BLIND_CSV_PLUGIN
+from blind_csv_plugin.plugin import HARDENED_PLUGIN, PLUGIN as BLIND_CSV_PLUGIN
 from scidiscovery.artifact_agent.interfaces.mcp_hardened_worker import (
     HardenedWorkerMCPRouter,
 )
@@ -47,6 +47,21 @@ def _system(
     blind_plugin=BLIND_CSV_PLUGIN,
     worker_backend="hardened",
 ):
+    if worker_backend == "hardened":
+        # This transport fixture needs an available review edge, even though it
+        # exercises only the author Run. The shared review fixture requires a
+        # local native shell unless narrowed for this backend.
+        if blind_plugin is BLIND_CSV_PLUGIN:
+            blind_plugin = HARDENED_PLUGIN
+        else:
+            operations = []
+            for operation in blind_plugin.operations:
+                if operation.operation_id == "blind.csv.review.v1":
+                    native = operation.executor.native_tools.model_copy(update={"shell": "none"})
+                    operation = operation.model_copy(update={"executor":
+                        operation.executor.model_copy(update={"native_tools": native})})
+                operations.append(operation)
+            blind_plugin = blind_plugin.model_copy(update={"operations": tuple(operations)})
     if with_text_patch:
         author = blind_plugin.operations[0]
         executor = author.executor.model_copy(
@@ -191,14 +206,8 @@ def test_hardened_transport_completes_the_same_run_without_task_science(
             ".codex/agents", f"{operation_agent_type(compiled)}.toml"
         ).read_text("utf-8")
     )
-    profile_tools = tuple(
-        sorted(
-            profile["mcp_servers"][operation_worker_server_name(compiled)][
-                "enabled_tools"
-            ]
-        )
-    )
-    assert assignment_tools == profile_tools
+    assert not profile.get("mcp_servers")
+    assert "scid_call" in profile["developer_instructions"]
     assert {
         "worker_file_write_begin",
         "worker_file_write_chunk",
@@ -206,7 +215,7 @@ def test_hardened_transport_completes_the_same_run_without_task_science(
     }.issubset(assignment_tools)
     _write_result(worker)
     assert worker.call_tool("worker_submit_result", {})["state"] == "completed"
-    status = root.call_tool("run_status", {"name": "observation"})
+    status = root.call_tool("run_status", {"name": "observation", "view": "detail", "output_paths": []})
     assert status["backend"] == "hardened_worker"
     assert status["state"] == "completed"
     with pytest.raises(ValueError, match="namespace is invalid"):
@@ -473,6 +482,7 @@ def test_hardened_stdio_process_recovers_the_exact_running_run(
         {
             "PYTHONNOUSERSITE": "1",
             "PYTHONDONTWRITEBYTECODE": "1",
+            "SCID_TEST_HARDENED_CSV_PLUGIN": "1",
             "PYTHONPATH": os.pathsep.join(
                 (
                         str(site),
@@ -606,7 +616,8 @@ def test_hardened_codex_profile_uses_run_worker_not_legacy_proxy(
         worker_backend="hardened",
     )
     config = (project / ".codex/config.toml").read_text(encoding="utf-8")
-    assert "mcp_hardened_worker" in config
+    assert "mcp_proxy" in config
+    assert "scid_worker_" not in config
     assert "mcp_worker_proxy" not in config
     generated = {
         path.stem: path.read_text(encoding="utf-8")
@@ -714,7 +725,7 @@ def test_root_mcp_argument_diagnostics_exclude_rejected_values():
     from unittest.mock import Mock
     from scidiscovery.artifact_agent.interfaces.mcp import MCPRouter
     called = Mock()
-    mcp = MCPRouter(RootMCPRouter(SimpleNamespace(run_list=called)), name="root-test")
+    mcp = MCPRouter(RootMCPRouter(SimpleNamespace(runs=None, run_list=called)), name="root-test")
     response = mcp.handle({"jsonrpc":"2.0", "id":1, "method":"tools/call", "params":{
         "name":"run_list", "arguments":{"limit":"/tmp/secret-token-do-not-echo"},
     }})

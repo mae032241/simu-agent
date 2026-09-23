@@ -317,6 +317,11 @@ textarea { border: 1px solid #aebbc2; min-height: 112px; padding: 9px; resize: v
 .relationship-columns > div { min-width: 0; }
 .pagination-next { border: 1px solid #87a4b3; display: inline-block; font-weight: 700; margin-top: 12px; padding: 9px 13px; }
 .pagination-end { color: #60717c; font-size: 12px; }
+.trajectory-pagination { border-top: 1px solid #dce4e9; margin-top: 12px; padding-top: 10px; font-size: 13px; }
+.trajectory-pagination .page-links, .trajectory-pagination form { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 8px 0; }
+.trajectory-pagination .page-links a, .trajectory-pagination [aria-current] { padding: 5px 8px; border: 1px solid #aabcc7; border-radius: 4px; }
+.trajectory-pagination [aria-current] { background: #e2edf4; font-weight: 700; }
+.trajectory-pagination input[type=number] { width: 5rem; padding: 5px; }
 .diagnostic-events { list-style: none; margin: 0; padding: 0; }
 .diagnostic-event { border-left: 3px solid #a77939; margin: 18px 0; padding: 12px 16px; }
 .diagnostic-event > a { display: inline-block; margin: 12px 0 0; }

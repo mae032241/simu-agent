@@ -597,7 +597,8 @@ def test_execution_status_and_list_do_not_publish_collected_result(
 
     assert status["state"] == "collected"
     assert status["result_artifact_name"] is None
-    assert listed["executions"] == [status]
+    assert listed["executions"] == [{"name": status["name"], "state": status["state"]}]
+    assert "result_artifact_name" not in listed["executions"][0]
     assert before == after
     assert facade._optional("artifact", "pure_execution_query.result") is None
 

@@ -548,14 +548,12 @@ def test_revision_workspace_is_copy_on_write_and_publishes_new_snapshot(
     )
     unchanged = worker.call_tool("worker_submit_result", {})
     assert unchanged["state"] == "rejected"
-    assert unchanged["diagnostics"] == [
-        {
-            "path": "$.payload",
-            "message": "change at least one reviewed scientific field",
-            "type": "revision_unchanged",
-            "rule_id": "runtime.revision",
-        }
-    ]
+    assert len(unchanged["diagnostics"]) == 1
+    diagnostic = unchanged["diagnostics"][0]
+    assert (diagnostic["path"], diagnostic["type"], diagnostic["rule_id"]) == (
+        "$.payload", "revision_unchanged", "runtime.revision",
+    )
+    assert diagnostic["code"] == "output_invalid" and diagnostic["phase"] == "output_payload"
 
     draft["payload"]["interpretation"] = (
         "The bounded arithmetic mean is two; this is descriptive, not causal."
@@ -741,7 +739,7 @@ def test_revision_recovery_status_matches_exact_resume_preflight(tmp_path: Path)
         },
     )
     assert preflight["admissible"] is False
-    assert preflight["reason_code"] == "recovery_source_unavailable"
+    assert preflight["reason_code"] == "recovery_attempt_limit_reached"
 
 
 def test_revision_recovery_is_unavailable_after_backend_change(tmp_path: Path) -> None:
@@ -844,7 +842,8 @@ def test_revision_base_must_be_materializable_and_hardened_requires_patch_tool()
 
     no_patch_revision = REVISION.model_copy(
         update={
-            "executor": REVISION.executor.model_copy(update={"tools": FILE_TOOLS})
+            "executor": REVISION.executor.model_copy(update={"tools": FILE_TOOLS}),
+            "outputs": tuple(port for port in REVISION.outputs if port.collection is None),
         }
     )
     no_patch_plugin = PLUGIN.model_copy(

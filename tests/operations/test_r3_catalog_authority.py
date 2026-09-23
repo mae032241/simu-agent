@@ -25,7 +25,7 @@ def test_public_actions_are_a_direct_projection_of_the_compiled_catalog() -> Non
     )
 
 
-def test_production_agent_operations_use_the_selected_codex_model() -> None:
+def test_production_agent_operations_resolve_model_from_settings() -> None:
     catalog = compile_installed_catalog()
     agent_models = {
         catalog.operation(operation_id).spec.executor.model
@@ -33,7 +33,7 @@ def test_production_agent_operations_use_the_selected_codex_model() -> None:
         if catalog.operation(operation_id).spec.executor.kind == "agent"
     }
 
-    assert agent_models == {"gpt-5.6-sol"}
+    assert agent_models == {None}
 
 
 def test_scheduler_prompt_has_no_retired_generic_creation_path() -> None:
@@ -127,10 +127,9 @@ def test_device_parameter_audit_is_owned_only_by_the_compiled_tcad_plugin() -> N
     assert extraction.plugin_id == expansion.plugin_id == audit.plugin_id == "tcad_artifact"
     assert extraction.spec.executor.kind == audit.spec.executor.kind == "agent"
     assert expansion.spec.executor.kind == "transform"
-    assert tuple(port.name for port in extraction.spec.outputs) == (
+    assert tuple(port.name for port in extraction.spec.outputs if port.collection is None) == (
         "parameter_evidence_package",
     )
-    assert all(port.collection is None for port in extraction.spec.outputs)
     assert tuple(port.name for port in expansion.spec.outputs) == (
         "scientific_intake",
         "parameter_requirements",
@@ -151,6 +150,7 @@ def test_device_parameter_audit_is_owned_only_by_the_compiled_tcad_plugin() -> N
         "source_catalog",
         "parameter_coverage",
         "source_material",
+        "user_context",
     )
     assert audit.spec.review is None
     assert "device_parameter_evidence_auditor" not in {

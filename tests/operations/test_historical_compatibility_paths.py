@@ -74,10 +74,11 @@ def test_historical_hypothesis_reaches_new_plan_review_author_and_revision(tmp_p
     request = {"name": "new_plan", "operation_id": "science.experiment.materialize.v1",
                "inputs": [{"port": key, "artifact_names": [value]} for key, value in
                           {"experiment_design_intent": design, **cohort}.items()]}
-    assert root.call_tool("operation_preflight", request)["admissible"]
+    qualification = root.call_tool("operation_preflight", request)
+    assert qualification["admissible"], qualification
     materialized = root.call_tool("operation_invoke", request)
     plan = materialized["result"]["outputs"][0]["artifact_name"]
-    assert set(root.call_tool("artifact_catalog", {"name": plan})["parent_artifact_names"]) == {design, *cohort.values()}
+    assert {p["artifact_name"] for p in root.call_tool("artifact_catalog", {"name": plan, "view": "parents"})["parents"]} == {design, *cohort.values()}
     review = _complete(runtime, root, "plan_review", "science.object.review.v1", {"experiment_plan": plan},
         {"review_target": "experiment_portfolio", "verdict": "pass", "summary": "Exact new plan reviewed."})
     from tests.operations.test_general_transform_operations import _register
@@ -121,7 +122,8 @@ def test_historical_intake_can_request_new_qualification_after_fresh_audit(tmp_p
     from tcad_artifact.plugin import PLUGIN as TCAD_PLUGIN
     from scidiscovery.operations.catalog import compile_catalog
 
-    runtime, instance, root = _root(tmp_path, catalog=_catalog())
+    initial_catalog = _catalog()
+    runtime, instance, root = _root(tmp_path, catalog=initial_catalog)
     _register(runtime, instance, name="source", raw=b"Frozen fixture source.",
               kind="source", schema="opaque", media_type="text/plain")
     intake_payload = json.loads(_intake().canonical_json().replace(b'"paper"', b'"source_material"'))
@@ -150,12 +152,26 @@ def test_historical_intake_can_request_new_qualification_after_fresh_audit(tmp_p
     family = root.facade._run_output_family(original)
     assert family.operation_digest == original.labels["operation_digest"]
     assert family.operation_digest != current.operation(producer_id).digest
+    assert family.contract_availability == "historical"
+    assert family.unavailable_reason == "producer_contract_unavailable"
+    projection = root.call_tool("artifact_catalog", {
+        "name": intake_name, "view": "producer_inputs"})
+    assert projection["producer"]["availability"] == "historical"
+    assert projection["producer"]["operation_digest"] == original.labels["operation_digest"]
+    assert projection["producer"]["unavailable_reason"] == "producer_contract_unavailable"
+    assert {item["port_name"] for item in projection["producer_inputs"]} == {"source_material"}
     request = {"name": "new_qualification", "operation_id": "science.evidence.qualify.v1", "inputs": [
         {"port": "scientific_foundation", "artifact_names": ["split.scientific_foundation"]},
         {"port": "extraction_primary", "artifact_names": [intake_name]},
         {"port": "evidence_audit", "artifact_names": [audit]},
         {"port": "frozen_sources", "artifact_names": ["source"]}]}
-    assert root.call_tool("operation_preflight", request)["admissible"]
+    historical_qualification = root.call_tool("operation_preflight", request)
+    assert not historical_qualification["admissible"]
+    assert historical_qualification["reason_code"] == "approval_subject_invalid"
+    runtime.runs.operation_catalog = initial_catalog
+    root.facade._operation_catalog = initial_catalog
+    qualification = root.call_tool("operation_preflight", request)
+    assert qualification["admissible"], qualification
     result = root.call_tool("operation_invoke", request)
     assert result["executor_kind"] == "approval"
     # Updating only the auditor must not renew its old PASS for qualification.
@@ -197,6 +213,24 @@ def test_transform_history_preserves_identity_and_requires_all_siblings(tmp_path
         {"port": k, "artifact_names": [v]} for k, v in {"experiment_design_intent": design, **cohort}.items()]}
     root.call_tool("operation_invoke", request)
     primary = _artifact(runtime, instance, "plan")
+    current_projection = root.call_tool("artifact_catalog", {
+        "name": "plan", "view": "producer_inputs", "parent_limit": 2})
+    assert current_projection["producer"]["availability"] == "current"
+    collected = list(current_projection["producer_inputs"])
+    while current_projection["next_offset"] is not None:
+        current_projection = root.call_tool("artifact_catalog", {
+            "name": "plan", "view": "producer_inputs", "parent_limit": 2,
+            "parent_offset": current_projection["next_offset"]})
+        collected.extend(current_projection["producer_inputs"])
+    assert "research_objective" in {item["port_name"] for item in collected}
+    assert all(item["artifact_name"] is None and item["source_name"] is None for item in collected)
+    assert all(item["current_access_name"] is not None for item in collected)
+    with monkeypatch.context() as patch:
+        patch.setattr(root.facade, "_transform_input_groups", lambda *args: None)
+        ambiguous = root.call_tool("artifact_catalog", {
+            "name": "plan", "view": "producer_inputs"})
+        assert ambiguous["producer"]["unavailable_reason"] == "producer_input_mapping_ambiguous"
+        assert ambiguous["producer_inputs"] == []
     changed = GENERAL_PLUGIN.model_copy(update={"operations": tuple(
         op.model_copy(update={"version": "new-generation"}) if op.operation_id == operation else op
         for op in GENERAL_PLUGIN.operations)})
@@ -207,11 +241,18 @@ def test_transform_history_preserves_identity_and_requires_all_siblings(tmp_path
     assert family is not None
     assert family.operation_digest == primary.labels["operation_digest"]
     assert family.operation_digest != current.operation(operation).digest
-    assert len(family.members) == 2
+    assert family.contract_availability == "historical"
+    assert family.unavailable_reason == "producer_contract_unavailable"
+    assert family.members == family.producer_inputs == ()
+    projection = root.call_tool("artifact_catalog", {"name": "plan", "view": "producer_inputs"})
+    assert projection["producer"]["availability"] == "historical"
+    assert projection["producer"]["unavailable_reason"] == "producer_contract_unavailable"
+    assert projection["producer_inputs"] == []
+    assert projection["parents_fallback"]["view"] == "parents"
     original_list = runtime.scheduler_bindings.list
     monkeypatch.setattr(runtime.scheduler_bindings, "list", lambda **kwargs: tuple(
         b for b in original_list(**kwargs) if b.name != "plan.materialization_report"))
-    assert root.facade._transform_output_family("plan", primary) is None
+    assert root.facade._transform_output_family("plan", primary) == family
 
 
 def test_historical_structure_error_is_located_before_run_creation(tmp_path, monkeypatch, experiment_case):

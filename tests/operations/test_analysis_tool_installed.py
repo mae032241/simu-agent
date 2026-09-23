@@ -112,17 +112,25 @@ else:
     domain = catalog.operation("tcad.result.analyze.v1")
     domain_ports = {p.name: p for p in domain.spec.inputs}
     assert {name for name, p in domain_ports.items() if p.min_items} == {
-        "experiment_plan", "experiment_review", "reviewed_package", "runtime_manifest",
+        "experiment_plan", "reviewed_package", "runtime_manifest",
     }
+    assert all(domain_ports[name].min_items == 0 and domain_ports[name].max_items == 1
+        for name in ("experiment_review", "execution_review", "scientific_skeleton"))
+    assert domain_ports["experiment_review"].schema_id == "scidiscovery.scientific-review.v1"
+    assert domain_ports["execution_review"].schema_id == "tcad.deck-review-report.v1"
+    assert domain_ports["scientific_skeleton"].schema_id == "scidiscovery.experiment-scientific-skeleton.v1"
     assert domain_ports["solver_outputs"].min_items == 0
     assert domain_ports["solver_outputs"].max_items == 32
     assert "curve_bundle" not in domain_ports and "metric_report" not in domain_ports
     assert "worker_tcad_curve_score" in operation_local_worker_tool_names(domain)
     assert "worker_tcad_curve_diagnose" in operation_local_worker_tool_names(domain)
     assert "worker_analysis_publish_files" in operation_local_worker_tool_names(domain)
-    from scidiscovery.platforms.codex import _operation_runtime_plugin_configs
-    configured = {"tcad_artifact": Path("/fixture/tcad.json")}
-    assert _operation_runtime_plugin_configs(domain, configured) == tuple(configured.items())
+    from scidiscovery.artifact_agent.interfaces import mcp_local_worker as worker_module
+    from unittest.mock import patch
+    reviewer = catalog.operation("tcad.deck.review.v1")
+    with patch.object(worker_module, "load_runtime_plugin_contributions", side_effect=AssertionError("unused adapter")):
+        assert worker_module._load_operation_services(catalog, reviewer.spec.operation_id,
+            {"tcad_artifact": Path("/fixture/tcad.json")}, Path(tempfile.mkdtemp())) == {}
     assert {"worker_tcad_inspect_outputs", "worker_tcad_accept_output"} <= set(operation_local_worker_tool_names(domain))
     operations.append(domain)
     from scidiscovery.operation_declaration import RESEARCH_WORK_CONTEXT
@@ -141,7 +149,7 @@ else:
             assert "experiment_review" in item.spec.outputs[0].context_sources
     author = catalog.operation("tcad.deck.author.initial.v1")
     schema = operation_port_json_schema(author, author.spec.outputs[0])
-    assert "ImplementationGap" in schema["$defs"] and author.spec.version == "2"
+    assert "ImplementationGap" in schema["$defs"] and author.spec.version == "3"
 project = Path(tempfile.mkdtemp(prefix="installed-analysis-projection-"))
 (project / "AGENTS.md").write_text("# Installed analysis projection\n")
 initialize_platform(
@@ -149,12 +157,14 @@ initialize_platform(
     control_socket=project / "control.sock", worker_backend="local",
     operation_catalog=catalog,
 )
+config = tomllib.loads((project / ".codex/config.toml").read_text())
+assert set(config["mcp_servers"]) == {"scidiscovery"}
 for compiled in operations:
     assert compiled.spec.executor.native_tools.view_image
     profile = tomllib.loads((project / ".codex" / "agents" /
         (operation_agent_type(compiled) + ".toml")).read_text())
-    server = profile["mcp_servers"][operation_worker_server_name(compiled)]
-    assert set(server["enabled_tools"]) == set(operation_local_worker_tool_names(compiled))
+    assert not profile.get("mcp_servers")
+    assert "scid_call" in profile["developer_instructions"]
     assert 'tool_contracts' in profile['developer_instructions']
     assert 'native view_image for task-local images' in profile['developer_instructions']
 print("installed analysis projection verified")
@@ -406,7 +416,8 @@ from scidiscovery.operations.catalog import compile_installed_catalog
 from tcad_artifact.project_packager import ReviewedDeckPackage
 for module in (installed_runs, installed_analysis):
     assert Path(module.__file__).resolve().is_relative_to(Path(sys.prefix).resolve())
-def analysis_materials(*, mapped=True, state="succeeded"):
+def analysis_materials(*, mapped=True, state="succeeded", plan=None):
+    assert plan is None
     plan, package, manifest, plx, csv = materials[(mapped, state)]
     return (ExperimentPortfolio.model_validate_json(plan, strict=True),
         ReviewedDeckPackage.model_validate_json(package, strict=True), manifest, plx, csv)

@@ -177,6 +177,11 @@ def materialization_contract(experiment_plan: bytes) -> dict[str, object]:
             "solver_syntax_parsing": False,
         },
         "raw_output_fields": ["name", "relative_path", "media_type"],
+        "control_generated_output_fields": ["capture", "max_bytes"],
+        "output_instruction": (
+            "Declare raw_outputs with name, relative_path and media_type only. "
+            "Control builds expected_outputs, including capture, max_bytes and the solver log."
+        ),
         "proposals": proposals,
     }
 
@@ -480,6 +485,7 @@ def materialize_deck_project(
         solver_kind=capability.solver_kind,
         capability_sha256=capability.capability_sha256,
         files=deck_files,
+        execution_plan=(portfolio if metadata.get("execution_plan") is not None else None),
         input_slots=tuple(metadata.get("input_slots", ())),
         entrypoint=declared.entrypoint,
         development_initialization_entrypoint=(

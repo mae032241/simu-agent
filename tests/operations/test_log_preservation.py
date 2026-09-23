@@ -103,8 +103,9 @@ def test_complete_debug_log_is_published_with_the_gap(tmp_path, monkeypatch):
         ),
     ))
     result = worker_router.call_tool("worker_tcad_debug_run", {"run_name": "full", "mode": "preflight"})
-    assert result["log_excerpt"] == "short display"
-    assert result["log_excerpt_is_complete"] is False
+    details = json.loads(Path(result["details_path"]).read_bytes())
+    assert details["log_excerpt"] == "short display"
+    assert details["log_excerpt_is_complete"] is False
     log = Path(opened["workspace_path"]) / result["log_relative_path"]
     assert log.read_bytes() == raw
     fixture._write_gap(opened)

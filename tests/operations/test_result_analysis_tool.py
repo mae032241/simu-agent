@@ -119,9 +119,34 @@ def test_no_score_limited_analysis_uses_actual_bound_results():
     Components.diagnosis_context.implementation(limited_report(), {'experiment_plan': _FIXTURES['_plan']().canonical_json(), 'experiment_results': b'Execution failed before observable output.'}, {})
 
 
+def test_keyed_generic_scope_requires_objective_assessment_but_accepts_not_evaluable():
+    plan = _FIXTURES['_compiler_plan']()
+    report = limited_report()
+    report['study_kind'] = 'scientific'
+    with pytest.raises(SemanticRuleViolation, match='objective assessment is required') as caught:
+        Components.diagnosis_context.implementation(
+            report,
+            {'experiment_plan': plan.canonical_json(),
+             'experiment_results': b'Execution failed before observable output.'},
+            {},
+        )
+    assert caught.value.details[0]['path'] == '$.objective_assessment'
+    report['objective_assessment'] = {
+        'objective_key': plan.objective_key,
+        'status': 'not_evaluable',
+        'summary': 'The failed bounded execution did not produce the planned observable.',
+    }
+    Components.diagnosis_context.implementation(
+        report,
+        {'experiment_plan': plan.canonical_json(),
+         'experiment_results': b'Execution failed before observable output.'},
+        {},
+    )
+
+
 def test_generic_compiled_preflight_accepts_no_score_and_rejects_wrong_round():
     compiled = compile_catalog((CORE_PLUGIN, GENERAL, PLUGIN)).operation('science.result.diagnose.v1')
-    assert compiled.spec.version == '3'
+    assert compiled.spec.version == '4'
     assert 'curve_contract' not in {item.name for item in compiled.spec.inputs}
     raw_by_hash = {}
     def artifact(name, schema, parents=(), verdict=None):
@@ -139,14 +164,19 @@ def test_generic_compiled_preflight_accepts_no_score_and_rejects_wrong_round():
     preflight_operation(compiled, name='analysis', artifacts_by_port=inputs, instruction='Analyze available evidence.', read_artifact=lambda ref: raw_by_hash[ref.sha256])
     from dataclasses import replace
     invalid_inputs = [
-        {**inputs, port: (replace(inputs[port][0], parent_refs=()),)}
-        for port in ('experiment_results', 'experiment_review')
+        ({**inputs, 'experiment_results': (replace(result, parent_refs=()),)},
+         'input_result_plan_mismatch'),
+        ({**inputs, 'experiment_review': (replace(review, parent_refs=()),)},
+         'input_review_plan_mismatch'),
     ]
     for key, value in (('operation_id', 'science.curve.contract.review.v1'), ('operation_output_port', 'other_review')):
         labels = {**dict(review.labels), key: value}
-        invalid_inputs.append({**inputs, 'experiment_review': (replace(review, labels=tuple(labels.items())),)})
-    for invalid in invalid_inputs:
-        with pytest.raises(OperationInvocationError, match='guard_rejected'):
+        invalid_inputs.append((
+            {**inputs, 'experiment_review': (replace(review, labels=tuple(labels.items())),)},
+            'input_review_plan_mismatch',
+        ))
+    for invalid, reason in invalid_inputs:
+        with pytest.raises(OperationInvocationError, match=reason):
             preflight_operation(compiled, name='wrong_round', artifacts_by_port=invalid, instruction='Analyze.')
 
 
@@ -183,10 +213,10 @@ def test_no_score_real_review_worker_submit_then_next_design_reads_sealed_report
         request = {'name': name, 'operation_id': operation_id, 'inputs': [{'port': key, 'artifact_names': [value]} for key, value in inputs.items()], 'instruction': 'Analyze only the supplied fixture evidence.'}
         preflight = root.call_tool('operation_preflight', request)
         assert preflight['admissible'] is True, preflight
-        root.call_tool('operation_invoke', request)
+        invoked = root.call_tool('operation_invoke', request)
         operation = catalog.operation(operation_id)
         worker = LocalWorkerMCPRouter(runtime.runs, operation_id=operation_id, operation_digest=operation.digest)
-        return worker, worker.call_tool('worker_open_assignment', {})
+        return worker, worker.call_tool('worker_open_assignment', {}), request, preflight, invoked
 
     def submit(worker, opened, payload, verdict):
         run_id = next(item.run_id for item in runtime.runs.list(instance_id=instance.instance_id) if item.state == 'running')
@@ -196,21 +226,42 @@ def test_no_score_real_review_worker_submit_then_next_design_reads_sealed_report
         return next(item for item in runtime.runs.list(instance_id=instance.instance_id) if item.run_id == run_id)
 
     plan = register('plan', 'scidiscovery.experiment-portfolio.v1', _FIXTURES['_plan']().canonical_json())
-    worker, opened = invoke_worker('review', 'science.object.review.v1', {'experiment_plan': 'plan'})
+    worker, opened, _, _, _ = invoke_worker('review', 'science.object.review.v1', {'experiment_plan': 'plan'})
     review = submit(worker, opened, {'review_target': 'experiment_portfolio', 'verdict': 'pass', 'summary': 'Bounded fixture plan is coherent.'}, 'pass')
     register('actual_result', 'opaque', b'Execution failed before observable output.', (plan.ref,))
-    worker, opened = invoke_worker('analysis', 'science.result.diagnose.v1', {'experiment_plan': 'plan', 'experiment_review': review.output_binding_name, 'experiment_results': 'actual_result'})
-    analysis = submit(worker, opened, limited_report(), 'blocked')
-    artifact_id = runtime.scheduler_bindings.resolve(instance=instance.instance_id, namespace='artifact', name=analysis.output_binding_name)
-    sealed = runtime.artifacts.get_by_id(artifact_id)
-    sealed_bytes = runtime.artifacts.read(sealed.ref)
-    assert b'remaining_contradiction' in sealed_bytes
+    analyses = []
+    sealed_outputs = []
+    for suffix, suggestion in (('a', 'Inspect one bounded failure cause.'),
+                               ('b', 'A different untrusted follow-up suggestion.')):
+        worker, opened, _, _, _ = invoke_worker(
+            'analysis_' + suffix,
+            'science.result.diagnose.v1',
+            {'experiment_plan': 'plan', 'experiment_review': review.output_binding_name,
+             'experiment_results': 'actual_result'},
+        )
+        report = limited_report()
+        report['next_action'] = suggestion
+        analysis = submit(worker, opened, report, 'blocked')
+        artifact_id = runtime.scheduler_bindings.resolve(
+            instance=instance.instance_id, namespace='artifact',
+            name=analysis.output_binding_name,
+        )
+        sealed = runtime.artifacts.get_by_id(artifact_id)
+        sealed_bytes = runtime.artifacts.read(sealed.ref)
+        assert b'remaining_contradiction' in sealed_bytes
+        analyses.append(analysis)
+        sealed_outputs.append((sealed, sealed_bytes))
+    payloads = [json.loads(raw) for _, raw in sealed_outputs]
+    suggestions = [payload.pop('next_action') for payload in payloads]
+    assert suggestions[0] != suggestions[1]
+    assert payloads[0] == payloads[1]
 
     # Foundation qualification is fixture-only; the analysis/feedback route itself
     # uses unchanged Root admission, actual Run outputs, and the installed reader.
     from tests.operations.test_agent_contract_alignment import experiment_case
     from tests.operations.test_hypothesis_objective_boundary import _foundation
-    _, design_sources = experiment_case.__wrapped__()
+    design_payload, design_sources = experiment_case.__wrapped__()
+    design_payload['objective_key'] = 'objective_expected'
     foundation_value = json.loads(_foundation())
     foundation_value['objective_contract'] = json.loads(design_sources['research_objective'])
     foundation = register('foundation', 'scidiscovery.scientific-foundation.v1', canonical_json(foundation_value))
@@ -218,14 +269,41 @@ def test_no_score_real_review_worker_submit_then_next_design_reads_sealed_report
     hypothesis = register('hypotheses', 'scidiscovery.hypothesis-proposal.v2', design_sources['hypothesis_portfolio'], (foundation.ref,))
     register('critic', 'scidiscovery.critic-review.v2', design_sources['critic_review'], (foundation.ref, hypothesis.ref))
     monkeypatch.setattr(runtime.approvals, 'are_subjects_approved_by_provider', lambda *a, **k: True)
-    worker, opened = invoke_worker('next_design', 'science.experiment.design.v1', {'scientific_foundation': 'foundation', 'research_objective': 'objective', 'hypothesis_portfolio': 'hypotheses', 'critic_review': 'critic', 'result_analysis': analysis.output_binding_name})
-    # Exact sealed bytes are delivered to the next design's bound inventory.
-    next_run = next(item for item in runtime.runs.list(instance_id=instance.instance_id) if item.operation_id == 'science.experiment.design.v1')
-    binding = next(item for item in next_run.inputs if item.port_name == 'result_analysis')
-    assert binding.artifact_ref == sealed.ref
-    assert runtime.artifacts.read(binding.artifact_ref) == sealed_bytes
-    delivered = next((Path(opened['workspace_path']) / 'inputs').glob('result_analysis.*'))
-    assert delivered.read_bytes() == sealed_bytes
+    design_admission = []
+    design_runs = []
+    first_opened = None
+    for index, analysis in enumerate(analyses):
+        inputs = {'scientific_foundation': 'foundation', 'research_objective': 'objective',
+            'hypothesis_portfolio': 'hypotheses', 'critic_review': 'critic',
+            'result_analysis': analysis.output_binding_name}
+        name = 'next_design_' + str(index)
+        request = {'name': name, 'operation_id': 'science.experiment.design.v1',
+            'inputs': [{'port': key, 'artifact_names': [value]} for key, value in inputs.items()],
+            'instruction': 'Analyze only the supplied fixture evidence.'}
+        preflight = root.call_tool('operation_preflight', request)
+        invoked = root.call_tool('operation_invoke', request) if preflight['admissible'] else None
+        design_admission.append((preflight['admissible'], preflight.get('reason_code'), invoked is not None))
+        run_id = runtime.scheduler_bindings.resolve(instance=instance.instance_id, namespace='run', name=name)
+        design_runs.append(runtime.runs.status(run_id))
+        if index == 0:
+            operation = catalog.operation('science.experiment.design.v1')
+            designer = LocalWorkerMCPRouter(runtime.runs, operation_id=operation.spec.operation_id,
+                operation_digest=operation.digest)
+            first_opened = designer.call_tool('worker_open_assignment', {})
+            Path(first_opened['output_directory'], 'result.json').write_bytes(canonical_json({
+                'schema_version': 1,
+                'handoff': {'verdict': 'pass', 'summary': 'Bounded fixture design.'},
+                'payload': design_payload,
+            }))
+            assert designer.call_tool('worker_submit_result', {})['state'] == 'completed'
+    assert design_admission == [(True, None, True), (True, None, True)]
+    for index, next_run in enumerate(design_runs):
+        binding = next(item for item in next_run.inputs if item.port_name == 'result_analysis')
+        sealed, sealed_bytes = sealed_outputs[index]
+        assert binding.artifact_ref == sealed.ref
+        assert runtime.artifacts.read(binding.artifact_ref) == sealed_bytes
+    delivered = next((Path(first_opened['workspace_path']) / 'inputs').glob('result_analysis.*'))
+    assert delivered.read_bytes() == sealed_outputs[0][1]
 
 
 @pytest.mark.parametrize('record_kind', ['unsupported', 'failed', 'unrelated'])

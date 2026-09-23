@@ -190,6 +190,8 @@ def test_completed_manifest_checkpoint_registers_in_real_child(tmp_path, monkeyp
         assert status["result_artifact_name"] is None  # status remains a pure read
         outputs = root.call_tool("execution_outputs", {"name": "collected"})
         assert outputs["outputs"][0]["output_label"] == "profile"
+        assert outputs["result_artifact_name"] == root.call_tool("execution_status", {"name": "collected"})["result_artifact_name"]
+        assert root.call_tool("execution_outputs", {"name":"collected", "limit":1})["result_artifact_name"] == outputs["result_artifact_name"]
         assert root.call_tool("execution_status", {"name": "collected"})["result_artifact_name"]
         assert root.call_tool("execution_collect", {"name": "collected"})["collection"]["state"] == "completed"
         assert adapter.submit_count == 1

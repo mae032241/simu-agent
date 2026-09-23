@@ -20,8 +20,13 @@ def test_settings_first_create_upgrade_preserve_and_symlink_rejection(tmp_path):
     assert run().returncode == 0
     path = config / "agent-settings.json"
     assert json.loads(path.read_text())["defaults"]["narrative_language"] == "zh-CN"
+    assert json.loads(path.read_text())["defaults"]["model"] == "gpt-6-sol"
     assert path.stat().st_mode & 0o777 == 0o640
-    user_bytes = b'{"defaults":{"model":"custom-model","narrative_language":"en"}}\n'
+    path.write_bytes((ROOT / "deploy/agent_settings_previous_default.json").read_bytes())
+    assert run().returncode == 0
+    assert path.read_bytes() == (ROOT / "src/scidiscovery/default_agent_settings.json").read_bytes()
+    assert path.stat().st_mode & 0o777 == 0o640
+    user_bytes = b'{"defaults":{"model":"gpt-5.6-sol","narrative_language":"en"}}\n'
     path.write_bytes(user_bytes)
     assert run().returncode == 0
     assert path.read_bytes() == user_bytes

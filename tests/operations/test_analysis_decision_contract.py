@@ -1,0 +1,227 @@
+"""Synthetic cross-boundary checks for bounded analysis decisions.
+
+These fixtures prove engineering expression and reading behavior only. They are not
+Fig.4 evidence, a scientific verdict, or a scheduler-quality measurement.
+"""
+
+from copy import deepcopy
+import json
+
+import pytest
+
+from curve_score.science_operations import Components
+from scidiscovery.artifact_agent.schema.common import canonical_json
+from scidiscovery.general_science_views import build_presentation
+from tests.operations import test_m2_curve_analysis_boundary as curve
+from tests.operations.test_analysis_claim_scope import (
+    generic_worker,
+    precomputed_worker,
+    submit,
+)
+from tests.operations.test_result_analysis_tool import limited_report
+from tests.operations.test_m2_curve_analysis_boundary import _compiler_plan
+from tests.operations.test_tcad_result_analysis import (
+    analysis_report,
+    analysis_system,
+    open_analysis,
+    write_analysis,
+)
+
+
+DECISION_PATHS = [
+    "/summary", "/overall_verdict", "/claim_allowed",
+    "/objective_assessment", "/hypothesis_assessments", "/limitations",
+    "/remaining_contradiction", "/next_action",
+]
+
+
+def _keyed_worker(tmp_path, kind):
+    plan = _compiler_plan()
+    if kind == "generic":
+        worker, opened, system = generic_worker(
+            tmp_path, plan=plan, return_system=True
+        )
+        runtime, root, name = system[1], system[2], "generic_analysis"
+        report, evidence_key = limited_report(), "experiment_results"
+    elif kind == "curve_error":
+        inputs = curve._inputs()
+        inputs["experiment_plan"] = plan.canonical_json()
+        package = Components.curve_error_analysis.implementation(
+            {name: (raw,) for name, raw in inputs.items()}
+        )["curve_analysis_package"][0]
+        worker, opened, system = precomputed_worker(
+            tmp_path, package, return_system=True
+        )
+        runtime, root, name = system[1], system[3], "precomputed"
+        report, evidence_key = curve._diagnosis().model_dump(mode="json"), "metric_report"
+    else:
+        system = analysis_system(
+            tmp_path, state="failed", bind_names=(), plan=plan
+        )
+        worker, opened = open_analysis(system)
+        runtime, root, name = system[1], system[2], "analysis"
+        report, evidence_key = analysis_report(), "raw_evidence"
+    report["study_kind"] = "scientific"
+    return plan, worker, opened, runtime, root, name, report, evidence_key
+
+
+def _submit(worker, opened, report, kind):
+    if kind == "tcad":
+        write_analysis(opened, report)
+        return worker.call_tool("worker_submit_result", {})
+    return submit(worker, opened, report)
+
+
+def test_synthetic_keyed_report_preserves_scientific_fields_without_route_state() -> None:
+    plan = _compiler_plan()
+    report = limited_report()
+    report.update(
+        study_kind="scientific",
+        overall_verdict="inconclusive",
+        claim_allowed=False,
+        objective_assessment={
+            "objective_key": plan.objective_key,
+            "status": "fail",
+            "summary": "The scoped objective was not reached by this bounded failed execution.",
+            "evidence_keys": ["experiment_results"],
+        },
+        hypothesis_assessments=[{
+            "hypothesis_key": "hypothesis_implementation",
+            "outcome": "inconclusive",
+            "rationale": "The missing observable leaves the mechanism unresolved.",
+            "evidence_keys": ["experiment_results"],
+        }],
+        next_action="Unregistered fixture suggestion that has no command authority.",
+    )
+    sources = {
+        "experiment_plan": plan.canonical_json(),
+        "experiment_results": b"Execution failed before observable output.",
+    }
+    Components.diagnosis_context.implementation(report, sources, {})
+    without_suggestion = deepcopy(report)
+    without_suggestion.pop("next_action")
+    Components.diagnosis_context.implementation(without_suggestion, sources, {})
+
+    artifact = {
+        "artifact_id": "synthetic-analysis",
+        "schema_id": "scidiscovery.layered-diagnosis.v1",
+        "payload": report,
+        "source": {"artifact_id": "synthetic-analysis", "json_pointer": ""},
+    }
+    presentation = build_presentation((artifact,))
+    facts = [item for section in presentation["sections"] for item in section["items"]]
+    by_pointer = {item["source"]["json_pointer"]: item for item in facts}
+    assert by_pointer["/objective_assessment"]["value"]["status"] == "fail"
+    assert by_pointer["/hypothesis_assessments"]["value"][0]["outcome"] == "inconclusive"
+    assert by_pointer["/next_action"]["label"] == "原报告建议（非调度命令）"
+    assert all(key not in report for key in (
+        "prune", "continuation_assessment", "route_key", "route_fingerprint", "stop_pointer"
+    ))
+
+
+@pytest.mark.parametrize("kind", ["generic", "curve_error", "tcad"])
+def test_real_keyed_producer_rejects_then_seals_complete_decision_contract(
+    tmp_path, kind
+) -> None:
+    plan, worker, opened, runtime, root, name, report, evidence_key = (
+        _keyed_worker(tmp_path, kind)
+    )
+    rejected = _submit(worker, opened, report, kind)
+    assert rejected["state"] == "rejected", rejected
+    diagnostic = next(
+        item for item in rejected["diagnostics"]
+        if "objective assessment is required" in item["message"]
+    )
+    assert diagnostic["path"] == "$.payload.objective_assessment"
+
+    report.update(
+        summary="The bounded evidence leaves the selected mechanism unresolved.",
+        overall_verdict="inconclusive",
+        claim_allowed=False,
+        objective_assessment={
+            "objective_key": plan.objective_key,
+            "status": "fail",
+            "summary": "The selected objective was not reached in this bounded result.",
+            "evidence_keys": [evidence_key],
+        },
+        hypothesis_assessments=[{
+            "hypothesis_key": "hypothesis_implementation",
+            "outcome": "inconclusive",
+            "rationale": "The cited evidence does not distinguish the selected mechanism.",
+            "evidence_keys": [evidence_key],
+        }],
+        limitations=["Only the exact bound fixture evidence was assessed."],
+        remaining_contradiction="The selected mechanism remains unresolved.",
+        next_action="Optional bounded follow-up; this text has no command authority.",
+    )
+    completed = _submit(worker, opened, report, kind)
+    assert completed["state"] == "completed", completed
+
+    decision = root.call_tool("run_status", {
+        "name": name,
+        "response_profile": "decision",
+        "output_paths": DECISION_PATHS,
+    })
+    assert decision["state"] == "completed"
+    assert decision["scheduler_signal_status"] == "available"
+    assert decision["scheduler_signal"]["verdict"] == "inconclusive"
+    assert decision["output_metadata"]["schema"] == "scidiscovery.layered-diagnosis.v1"
+    selected = decision["selected_output"]
+    assert selected["artifact_name"] == decision["output_metadata"]["artifact_name"]
+    by_pointer = {item["pointer"]: item for item in selected["items"]}
+    assert tuple(by_pointer) == tuple(DECISION_PATHS)
+    for pointer in DECISION_PATHS:
+        key = pointer.removeprefix("/")
+        assert by_pointer[pointer]["status"] == "selected"
+        assert by_pointer[pointer]["value"] == report[key]
+
+    artifact_id = runtime.scheduler_bindings.resolve(
+        instance=runtime.scheduler_bindings.list_instances()[0].instance_id,
+        namespace="artifact",
+        name=selected["artifact_name"],
+    )
+    sealed = json.loads(runtime.artifacts.read(runtime.artifacts.get_by_id(artifact_id).ref))
+    assert {key: sealed[key] for key in (path[1:] for path in DECISION_PATHS)} == {
+        key: report[key] for key in (path[1:] for path in DECISION_PATHS)
+    }
+
+
+def test_synthetic_completed_decision_read_can_stop_without_creating_work(tmp_path) -> None:
+    catalog, runtime, root, request, artifacts, register = analysis_system(
+        tmp_path, state="failed", bind_names=()
+    )
+    worker, opened = open_analysis(
+        (catalog, runtime, root, request, artifacts, register)
+    )
+    report = analysis_report()
+    report["next_action"] = "Optional report advice; the fixture client will stop."
+    write_analysis(opened, report)
+    assert worker.call_tool("worker_submit_result", {})["state"] == "completed"
+
+    instance_id = runtime.scheduler_bindings.list_instances()[0].instance_id
+    def side_effect_counts():
+        return {
+            "runs": tuple(item.run_id for item in runtime.runs.list(instance_id=instance_id)),
+            "execution_bindings": tuple(item.object_id for item in runtime.scheduler_bindings.list(
+                instance=instance_id, namespace="execution")),
+            "approval_bindings": tuple(item.object_id for item in runtime.scheduler_bindings.list(
+                instance=instance_id, namespace="approval")),
+            "artifacts": tuple(item.artifact_id for item in runtime.artifacts.list_artifacts(limit=100)),
+        }
+    before = side_effect_counts()
+    decision = root.call_tool("run_status", {
+        "name": "analysis",
+        "response_profile": "decision",
+        "output_paths": [
+            "/summary", "/overall_verdict", "/claim_allowed",
+            "/objective_assessment", "/hypothesis_assessments", "/limitations",
+            "/remaining_contradiction", "/next_action",
+        ],
+    })
+    assert decision["state"] == "completed"
+    selected = {item["pointer"]: item for item in decision["selected_output"]["items"]}
+    assert selected["/overall_verdict"]["value"] == report["overall_verdict"]
+    assert selected["/next_action"]["value"] == report["next_action"]
+    assert selected["/objective_assessment"]["status"] == "selected"
+    assert selected["/objective_assessment"]["value"] is None
+    assert side_effect_counts() == before

@@ -1,9 +1,10 @@
-"""Load the one static scheduler prompt without discovering scientific roles."""
+"""Load the compact scheduler prompt and its separately installed reading guides."""
 
 from __future__ import annotations
 
 from importlib.metadata import PackageNotFoundError, distribution
 from pathlib import Path
+import re
 
 
 def load_scheduler_prompt() -> str:
@@ -12,6 +13,16 @@ def load_scheduler_prompt() -> str:
     if not text.strip():
         raise ValueError(f"scheduler prompt is empty: {path}")
     return text.strip() + "\n"
+
+
+def load_scheduler_guides() -> dict[str, str]:
+    directory = _scheduler_prompt_path().parent / "scheduler"
+    # The prompt's reading index is the sole file list; missing wheel data must
+    # fail installation instead of leaving dangling instructions in AGENTS.md.
+    return {
+        name: (directory / name).read_text(encoding="utf-8")
+        for name in re.findall(r"^- .*: ([\w-]+\.md)\.", load_scheduler_prompt(), re.MULTILINE)
+    }
 
 
 def _scheduler_prompt_path() -> Path:
@@ -33,4 +44,4 @@ def _scheduler_prompt_path() -> Path:
     raise FileNotFoundError("installed scheduler prompt is unavailable")
 
 
-__all__ = ["load_scheduler_prompt"]
+__all__ = ["load_scheduler_prompt", "load_scheduler_guides"]

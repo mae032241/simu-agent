@@ -205,7 +205,7 @@ def test_transform_engineering_failure_and_unavailable_are_distinct(tmp_path, mo
     values = _inputs()
     _register_inputs(runtime, instance, values)
     typed = OperationCallInput.model_validate(_analysis_request())
-    bound = root.facade._prepare_operation_call(**{**typed.model_dump(exclude={'inputs'}), 'inputs': typed.inputs})
+    bound = root.facade._prepare_operation_call(**{**typed.model_dump(exclude={'inputs', 'execution_profile'}), 'inputs': typed.inputs})
     def bug(_):
         raise ValueError('unexpected internal value')
     monkeypatch.setattr(invoke, '_executor_callable', lambda _: bug)

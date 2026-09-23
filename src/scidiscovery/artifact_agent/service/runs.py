@@ -39,6 +39,7 @@ from ..schema.common import canonical_json, canonical_sha256
 from ..schema.refs import ActorRef, ArtifactRef
 from ..schema.run_signal import SchedulerSignal
 from .artifacts import ArtifactService
+from .worker_connections import WORKER_CONNECTION_SCHEMA
 from .local_workspace import (
     OpenWorkspace,
     WorkspaceBackend,
@@ -77,6 +78,17 @@ from .scheduler_bindings import SchedulerBindingService
 
 
 from .tool_evidence import ToolEvidenceMixin
+
+
+_COMPACT_RECOVERY_REASON_CODES = frozenset(
+    {
+        "backend_unavailable",
+        "contract_unavailable",
+        "isolation_incomplete",
+        "snapshot_unavailable",
+        "writers_unconfirmed",
+    }
+)
 
 
 class RunService(ToolEvidenceMixin):
@@ -465,16 +477,17 @@ class RunService(ToolEvidenceMixin):
             )
 
     def open(
-        self, *, operation_id: str, operation_digest: str
+        self, *, operation_id: str, operation_digest: str, run_id: str | None = None
     ) -> tuple[RunStatus, OpenWorkspace]:
         return self._open_exact(
             operation_id=operation_id,
             operation_digest=operation_digest,
             allow_running=False,
+            run_id=run_id,
         )
 
     def reopen(
-        self, *, operation_id: str, operation_digest: str
+        self, *, operation_id: str, operation_digest: str, run_id: str | None = None
     ) -> tuple[RunStatus, OpenWorkspace]:
         """Open the exact slot or reattach its running Run after transport restart."""
 
@@ -482,6 +495,7 @@ class RunService(ToolEvidenceMixin):
             operation_id=operation_id,
             operation_digest=operation_digest,
             allow_running=True,
+            run_id=run_id,
         )
 
     def _open_exact(
@@ -490,6 +504,7 @@ class RunService(ToolEvidenceMixin):
         operation_id: str,
         operation_digest: str,
         allow_running: bool,
+        run_id: str | None = None,
     ) -> tuple[RunStatus, OpenWorkspace]:
         # Select before taking the instance lock, and reselect the same row in
         # the write transaction. Opening a reused Agent must guard its NEW Run.
@@ -497,8 +512,8 @@ class RunService(ToolEvidenceMixin):
             with self._connect() as connection:
                 selected = connection.execute(
                     "SELECT run_id, instance_id FROM runs WHERE operation_id = ? AND operation_digest = ? "
-                    "AND state IN ('queued', 'running') ORDER BY created_at LIMIT 1",
-                    (operation_id, operation_digest),
+                    "AND state IN ('queued', 'running') AND (? IS NULL OR run_id=?) ORDER BY created_at LIMIT 1",
+                    (operation_id, operation_digest, run_id, run_id),
                 ).fetchone()
             if selected is None:
                 raise RunStateConflict("no exact queued Run is available")
@@ -608,13 +623,13 @@ class RunService(ToolEvidenceMixin):
                 raise RunStateConflict("Run activity changed concurrently")
         return self.status(run_id)
 
-    def submit(self, run_id: str) -> tuple[str, tuple[dict[str, str], ...]]:
+    def submit(self, run_id: str, *, trusted_tool_records=None) -> tuple[str, tuple[dict[str, str], ...]]:
         value = self.status(run_id)
         if value.state == "completed":
             return "completed", ()
         value = self._require_running(run_id)
         try:
-            sealed, validated = self._validated_candidate(value)
+            sealed, validated = self._validated_candidate(value, trusted_tool_records=trusted_tool_records)
         except (RunCheckerError, RunContractUnavailable) as error:
             from .engineering_diagnostics import EngineeringDiagnostics
             engineering = EngineeringDiagnostics(self.database_path.parent.parent / "engineering-diagnostics").capture(
@@ -812,6 +827,35 @@ class RunService(ToolEvidenceMixin):
             expected_last_activity_at=value.last_activity_at,
         )
 
+    def reconcile_expired_active(self) -> int:
+        """Fail expired active Runs at an explicit lifecycle coordination point."""
+        with self._connect() as connection:
+            run_ids = [row[0] for row in connection.execute(
+                "SELECT run_id FROM runs WHERE state IN ('queued','running') "
+                "ORDER BY deadline_at, run_id"
+            )]
+        failed = 0
+        for run_id in run_ids:
+            for _ in range(3):
+                value = self.status(run_id)
+                if value.state not in {"queued", "running"} or not expired(value.deadline_at):
+                    break
+                try:
+                    self.record_failure(
+                        run_id,
+                        reason="Run deadline expired during control startup reconciliation",
+                        expected_state=value.state,
+                        expected_last_activity_at=value.last_activity_at,
+                        timed_out=True,
+                    )
+                except RunStateConflict:
+                    continue
+                failed += 1
+                break
+            else:
+                raise RunStateConflict("expired Run changed during startup reconciliation", run_id=run_id)
+        return failed
+
     def status(self, run_id: str) -> RunStatus:
         """Pure read: observing an expired Run never changes control state."""
 
@@ -940,7 +984,8 @@ class RunService(ToolEvidenceMixin):
     @staticmethod
     def _safe_diagnostic(category: str, *, repairable: bool) -> dict[str, Any]:
         allowed = {"output_rejected", "integrity_failure", "admission_defect", "checker_failure",
-                   "tool_failed", "runtime_failure", "run_timeout", "tool_timeout"}
+                   "tool_failed", "runtime_failure", "run_timeout", "tool_timeout",
+                   "worker_profile_mismatch"}
         category = category if category in allowed else "runtime_failure"
         return {"category": category, "code": category,
                 "repairable_by_output": repairable}
@@ -1155,13 +1200,13 @@ class RunService(ToolEvidenceMixin):
         )
 
     def _validated_candidate(
-        self, value: RunStatus, *, final_submission: bool = True
+        self, value: RunStatus, *, final_submission: bool = True, trusted_tool_records=None
     ) -> tuple[Any, ValidatedRunOutput]:
         compiled = self._compiled(value)
         assert compiled.spec.limits is not None
         try:
             if value.accepted_candidate_digest is None:
-                self._finalize_workspace(compiled, value.run_id, final_submission=final_submission)
+                self._finalize_workspace(compiled, value.run_id, final_submission=final_submission, trusted_tool_records=trusted_tool_records)
                 self._prepare_evidence_snapshot(value.run_id)
             sealed = self.backend.seal(
                 value.run_id,
@@ -1189,6 +1234,7 @@ class RunService(ToolEvidenceMixin):
         validation_deadline = time.monotonic() + max(0, remaining) / 2
         try:
             input_bytes, descriptors = self._validation_inputs(value)
+            reference_validation_budget = {}
             validated = validate_run_output(
                 compiled,
                 sealed,
@@ -1197,6 +1243,7 @@ class RunService(ToolEvidenceMixin):
                 input_binding_descriptors=descriptors,
                 validation_deadline=validation_deadline,
                 tool_snapshot=self._evidence_snapshot(value.run_id) if tool_evidence_ports(compiled) else None,
+                reference_calculation_resolver=lambda alias: self.reference_calculation_sources(value, alias, validation_deadline=validation_deadline, validation_budget=reference_validation_budget),
             )
         except WorkspaceError as error:
             failure = RunCheckerError("sealed candidate integrity failed", category="integrity_failure")
@@ -1301,7 +1348,7 @@ class RunService(ToolEvidenceMixin):
             raise RunError(str(error)) from error
 
     def _finalize_workspace(
-        self, compiled: Any, run_id: str, *, final_submission: bool
+        self, compiled: Any, run_id: str, *, final_submission: bool, trusted_tool_records=None
     ) -> None:
         finalizer = operation_workspace_hooks(compiled).get("workspace_finalizer")
         if finalizer is None:
@@ -1316,6 +1363,8 @@ class RunService(ToolEvidenceMixin):
                     input_paths=workspace.input_paths,
                     output_limit_bytes=compiled.spec.limits.max_output_bytes,
                     final_submission=final_submission,
+                    run_id=run_id,
+                    trusted_tool_records=trusted_tool_records or {},
                     output_schema_id=operation_primary_output(compiled).schema_id,
                     binding_descriptors={alias: self.source_descriptor(value, alias)
                         for alias in (*workspace.input_paths,
@@ -1378,7 +1427,7 @@ class RunService(ToolEvidenceMixin):
                 schema_id=validated.schema_id,
                 payload_schema_version=validated.payload_schema_version,
                 media_type=validated.media_type,
-                creator=ActorRef(actor_id=value.agent_type, actor_type="agent_worker"),
+                creator=ActorRef(actor_id=f"{value.operation_id[:96]}.{value.operation_digest[:12]}", actor_type="agent_worker"),
                 parent_refs=tuple(item.artifact_ref for item in value.inputs) + extra_parents,
                 labels={
                     "operation_id": value.operation_id,
@@ -1667,7 +1716,9 @@ class RunService(ToolEvidenceMixin):
         if budget["used"] >= budget["limit"]:
             raise RunAttemptLimit(budget["used"], budget["limit"])
 
-    def recovery_status(self, value: RunStatus) -> dict[str, Any]:
+    def _recovery_gate_status(
+        self, value: RunStatus
+    ) -> tuple[dict[str, Any], bool, Any | None]:
         preserved = False
         draft = None
         try:
@@ -1690,6 +1741,24 @@ class RunService(ToolEvidenceMixin):
                 "draft_available": draft_available,
                 "recovery_pending": value.state == "failed" and (
                     not preserved or (value.recovery_draft or {}).get("recovery_pending", False))}
+        return result, preserved, draft
+
+    def compact_recovery_status(self, value: RunStatus) -> dict[str, Any]:
+        """Project only recovery gates and a controlled stored reason code."""
+        result, _, _ = self._recovery_gate_status(value)
+        recovery = value.recovery_draft or {}
+        if "original_retained" in recovery:
+            result["original_retained"] = recovery["original_retained"]
+        code = recovery.get("code")
+        result["reason_code"] = (
+            code if code in _COMPACT_RECOVERY_REASON_CODES
+            else "other" if code is not None
+            else None
+        )
+        return result
+
+    def recovery_status(self, value: RunStatus) -> dict[str, Any]:
+        result, preserved, draft = self._recovery_gate_status(value)
         evidence = self.recovery_evidence_status(value)
         if evidence is not None:
             result["tool_evidence"] = evidence
@@ -1819,6 +1888,7 @@ class RunService(ToolEvidenceMixin):
                 );
                 """
             )
+            connection.executescript(WORKER_CONNECTION_SCHEMA)
             for table, columns in {
                 "runs": {"draft_from_run_id": "TEXT", "recovery_policy_json": "BLOB",
                          **{name: value[0] for name, value in EXECUTION_SETTINGS_COLUMNS["runs"].items()}},
@@ -1828,6 +1898,10 @@ class RunService(ToolEvidenceMixin):
                 for name, kind in columns.items():
                     if name not in existing:
                         connection.execute(f"ALTER TABLE {table} ADD COLUMN {name} {kind}")
+            connection.execute("""CREATE INDEX IF NOT EXISTS run_reference_budget_scope
+                ON run_activity(json_extract(CAST(diagnostic_json AS TEXT),'$.budget_scope'))
+                WHERE activity IN ('reference_read_reserved','reference_read_settled',
+                                   'reference_material_reserved','reference_io_reserved')""")
             connection.execute(
                 "INSERT INTO run_activity_sequence(slot,high_water) "
                 "VALUES (1, (SELECT COALESCE(MAX(rowid), 0) FROM run_activity)) "

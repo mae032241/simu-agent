@@ -353,7 +353,7 @@ def test_local_run_uses_native_files_one_domain_tool_and_one_terminal_authority(
 
     observe_view = next(
         item
-        for item in root.call_tool("operation_catalog", {"scope": "public"})[
+        for item in root.call_tool("operation_catalog", {"scope": "public", "view": "detail", "operation_id": "blind.csv.observe.v1"})[
             "operations"
         ]
         if item["operation_id"] == "blind.csv.observe.v1"
@@ -388,6 +388,7 @@ def test_local_run_uses_native_files_one_domain_tool_and_one_terminal_authority(
         "worker_heartbeat",
         "worker_submit_result",
         "worker_csv_summarize",
+        "worker_reference_read",
     }
     opened = worker.call_tool("worker_open_assignment", {})
     workspace = Path(opened["workspace_path"])
@@ -452,7 +453,7 @@ def test_local_run_uses_native_files_one_domain_tool_and_one_terminal_authority(
     assert {item["rule_id"] for item in rejected["diagnostics"]} == {
         "blind.context_binding"
     }
-    running = root.call_tool("run_status", {"name": "observe"})
+    running = root.call_tool("run_status", {"name": "observe", "view": "detail"})
     assert running["state"] == "running"
     assert running["sealed_output_status"] == "unavailable"
     assert running["sealed_output"] is None
@@ -471,7 +472,7 @@ def test_local_run_uses_native_files_one_domain_tool_and_one_terminal_authority(
     completed = worker.call_tool("worker_submit_result", {})
     assert completed["state"] == "completed"
     assert completed["receipt"]["head_advance"] == "not_requested"
-    author_status = root.call_tool("run_status", {"name": "observe"})
+    author_status = root.call_tool("run_status", {"name": "observe", "view": "detail"})
     assert author_status["state"] == "completed"
     assert author_status["output_artifact_name"] == "observe.output"
     assert author_status["sealed_output_status"] == "available"
@@ -560,7 +561,7 @@ def test_local_run_uses_native_files_one_domain_tool_and_one_terminal_authority(
     )
     root.facade._operation_catalog = retired_catalog
     runtime.runs.operation_catalog = retired_catalog
-    retired_compatible = root.call_tool("run_status", {"name": "observe"})
+    retired_compatible = root.call_tool("run_status", {"name": "observe", "view": "detail"})
     assert retired_compatible["sealed_output_status"] == "historical"
     assert retired_compatible["sealed_output"]["payload"] == observation.model_dump(mode="json")
     assert retired_compatible["scheduler_signal"] is not None
@@ -599,7 +600,7 @@ def test_local_run_uses_native_files_one_domain_tool_and_one_terminal_authority(
     assert root.call_tool("run_status", {"name": "review_historical"})[
         "sealed_output_status"
     ] == "available"
-    assert root.call_tool("run_status", {"name": "observe"}) == retired_compatible
+    assert root.call_tool("run_status", {"name": "observe", "view": "detail"}) == retired_compatible
     review_ref = runtime.runs.status(runtime.scheduler_bindings.resolve(
         instance=instance.instance_id, namespace="run", name="review_historical"
     )).output_ref
@@ -623,7 +624,7 @@ def test_local_run_uses_native_files_one_domain_tool_and_one_terminal_authority(
     assert not runtime.runs.is_exact_reviewer_output(review_ref, **review_check)
     runtime.runs.operation_catalog = retired_catalog
     root.facade._operation_catalog = compile_catalog((CORE_PLUGIN, GENERAL_PLUGIN))
-    assert root.call_tool("run_status", {"name": "observe"}) == retired_compatible
+    assert root.call_tool("run_status", {"name": "observe", "view": "detail"}) == retired_compatible
     root.facade._operation_catalog = retired_catalog
     run_id = runtime.scheduler_bindings.resolve(
         instance=instance.instance_id,
@@ -648,7 +649,7 @@ def test_local_run_uses_native_files_one_domain_tool_and_one_terminal_authority(
                 run_id,
             ),
         )
-    retired = root.call_tool("run_status", {"name": "observe"})
+    retired = root.call_tool("run_status", {"name": "observe", "view": "detail"})
     assert retired["state"] == "completed"
     assert retired["sealed_output_status"] == "historical"
     assert retired["sealed_output"]["payload"] == observation.model_dump(mode="json")
@@ -656,17 +657,17 @@ def test_local_run_uses_native_files_one_domain_tool_and_one_terminal_authority(
     with sqlite3.connect(runtime.runs.database_path) as connection:
         connection.execute("UPDATE runs SET signal_json = ? WHERE run_id = ?",
                            (b'{"verdict":"invalid-wire-value"}', run_id))
-    unreadable_signal = root.call_tool("run_status", {"name": "observe"})
+    unreadable_signal = root.call_tool("run_status", {"name": "observe", "view": "detail"})
     assert unreadable_signal["sealed_output"] == retired["sealed_output"]
     assert unreadable_signal["sealed_output_status"] == "historical"
     assert unreadable_signal["scheduler_signal"] is None
     assert unreadable_signal["scheduler_signal_status"] == "unavailable"
 
 
-def test_operation_tool_context_contains_no_control_identity() -> None:
+def test_operation_tool_context_contains_no_control_authority() -> None:
     names = {item.name for item in fields(OperationToolContext)}
     assert not names.intersection(
-        {"run", "run_id", "task", "task_id", "session", "session_token", "proxy", "worker_id", "database", "current"}
+        {"run", "task", "task_id", "session", "session_token", "proxy", "worker_id", "database", "current"}
     )
 
 

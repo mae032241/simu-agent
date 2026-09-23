@@ -225,7 +225,7 @@ def test_parameter_agent_is_local_runnable_and_has_one_package_output() -> None:
     catalog = compile_catalog((CORE_PLUGIN, GENERAL_PLUGIN, CURVE_PLUGIN, TCAD_PLUGIN))
     extraction = catalog.operation("tcad.parameter.evidence.extract.v1")
 
-    assert tuple(port.name for port in extraction.spec.outputs) == (
+    assert tuple(port.name for port in extraction.spec.outputs if port.collection is None) == (
         "parameter_evidence_package",
     )
     assert LocalTrustedBackend.supports_operation(extraction)
@@ -251,13 +251,10 @@ def test_parameter_catalog_and_preflight_share_local_capability(tmp_path) -> Non
         name="parameter_source",
         object_id=source.artifact_id,
     )
-    item = next(
-        value
-        for value in root.call_tool("operation_catalog", {"scope": "public"})[
-            "operations"
-        ]
-        if value["operation_id"] == "tcad.parameter.evidence.extract.v1"
-    )
+    item = root.call_tool(
+        "operation_catalog",
+        {"scope": "public", "operation_id": "tcad.parameter.evidence.extract.v1", "view": "detail"},
+    )["operations"][0]
 
     assert "runtime_binding" not in item
     assert root.call_tool(
@@ -512,7 +509,8 @@ def test_real_parameter_run_reaches_expansion_audit_and_qualification(
         "operation_id": PASS_APPROVAL_OPERATION,
         "inputs": approval_inputs,
     }
-    assert root.call_tool("operation_preflight", approval_request)["admissible"] is True
+    approval_preflight = root.call_tool("operation_preflight", approval_request)
+    assert approval_preflight["admissible"] is True, approval_preflight.get("diagnostics")
     approval = root.call_tool("operation_invoke", approval_request)
     assert approval["result"]["status"] == "pending"
 
@@ -520,7 +518,7 @@ def test_real_parameter_run_reaches_expansion_audit_and_qualification(
     from scidiscovery.operations.input_validation import OperationInvocationError
     from scidiscovery.artifact_agent.interfaces.mcp_root import OperationCallInput
     typed = OperationCallInput.model_validate(approval_request)
-    values = {**typed.model_dump(exclude={"inputs"}), "inputs": typed.inputs}
+    values = {**typed.model_dump(exclude={"inputs", "execution_profile"}), "inputs": typed.inputs}
     bound = root.facade._prepare_operation_call(**values)
     changed = TCAD_PLUGIN.model_copy(update={"operations": tuple(
         op.model_copy(update={"version": "auditor-upgrade"})
@@ -530,7 +528,7 @@ def test_real_parameter_run_reaches_expansion_audit_and_qualification(
     with pytest.raises(OperationInvocationError, match="approval_subject_invalid") as failure:
         root.facade._prepare_approval_projection(bound)
     assert failure.value.details[0]["phase"] == "input_admission"
-    assert "independent passing" in failure.value.details[0]["message"]
+    assert "invalid review contract" in failure.value.details[0]["message"]
     old_request = {**approval_request, "name": "old_audit_parameters"}
     before = runtime.scheduler_bindings.list(instance=instance.instance_id, namespace="approval")
     assert not root.call_tool("operation_preflight", old_request)["admissible"]
@@ -849,7 +847,7 @@ def test_parameter_run_rejects_package_with_invented_source_alias(tmp_path) -> N
     projected_source = foundation_schema["properties"]["evidence"]["items"][
         "allOf"
     ][-1]["properties"]["source_key"]
-    assert projected_source["enum"] == ["source_material"]
+    assert projected_source["enum"] == ["source_material", "tool_recovery_manifest"]
     Path(opened["output_directory"], "result.json").write_bytes(
         _envelope(_package("invented_source").model_dump(mode="json"))
     )

@@ -132,7 +132,7 @@ def _load_launch_snapshot(project_root: Path, agent_type: str) -> dict[str, Any]
     features = profile.get("features")
     tools = profile.get("tools")
     if (
-        profile.get("web_search") != "disabled"
+        profile.get("web_search") not in {"disabled", "cached", "live"}
         or not isinstance(features, dict)
         or set(features) != {"shell_tool", "unified_exec"}
         or type(features.get("shell_tool")) is not bool
@@ -143,6 +143,8 @@ def _load_launch_snapshot(project_root: Path, agent_type: str) -> dict[str, Any]
     ):
         raise ValueError("generated Operation profile has unsupported native tools")
     role_servers = profile.get("mcp_servers", {})
+    if not role_servers and "scidiscovery" in config.get("mcp_servers", {}):
+        raise ValueError("legacy direct-CLI probe cannot launch unified MCP roles; use native spawn_agent and Root worker_attach")
     if len(role_servers) != 1:
         raise ValueError("generated Operation profile must declare one Worker MCP")
     target_server, target = next(iter(role_servers.items()))
@@ -371,7 +373,7 @@ def verify_receipt(
         and projection.get("target_worker_config_sha256") == _canonical_digest(target)
         and set(projected_tools or ()) == allowed_worker_tools
         and required_worker_tools.issubset(set(projected_tools or ()))
-        and projection.get("web_search") == "disabled"
+        and projection.get("web_search") == profile.get("web_search")
         and type(receipt.get("exit_code")) is int
         and receipt.get("exit_code") == 0
         and type(receipt.get("aggregate_memory_limit_mib")) is int

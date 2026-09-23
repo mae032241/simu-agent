@@ -82,6 +82,12 @@ def test_instance_browser_grants_read_without_rebinding_or_cross_instance_access
         status, _, body = _request(base, "GET", f"/api/instances/{second.instance_id}/overview", cookie=cookie)
         assert status == 200 and json.loads(body)["instance"]["name"] == second.name
         assert _request(base, "GET", f"/api/instances/{first.instance_id}/overview", cookie=cookie)[0] == 403
+        status, _, body = _request(base, "GET", f"/instance/{second.instance_id}?page=999", cookie=cookie)
+        assert status == 200 and "第 1 / 1 页 · 共 0 个节点" in body.decode()
+        _, _, ungranted = _request(base, "GET", f"/instance/{first.instance_id}?page=1", cookie=cookie)
+        assert "研究轨迹分页" not in ungranted.decode()  # Existing metadata landing page, no workbench access.
+        for invalid in ("0", "-1", "oops"):
+            assert _request(base, "GET", f"/instance/{second.instance_id}?page={invalid}", cookie=cookie)[0] == 400
         assert runtime.scheduler_bindings.session_instance(session_key=session) == first.instance_id
         assert _snapshot(state) == before
     finally:

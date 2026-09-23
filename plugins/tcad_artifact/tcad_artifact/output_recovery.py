@@ -51,6 +51,14 @@ def _file(raw, context, alias):
 
 
 def _inspect(context, source_alias, path, *, run_deadline, consume=None):
+    try:
+        context.input_ref(source_alias)
+    except ValueError as error:
+        if str(error) != "tool requested an undeclared Run input":
+            raise
+        return {"status": "unavailable", "reason": "execution_result_not_bound",
+                "message": str(error), "source_alias": source_alias,
+                "repair": "Root must register this exact execution with execution_outputs, then bind its result_artifact_name to the declared execution_result port in a new analysis Run. Frozen inputs cannot be amended; bounded analysis may state this limitation."}
     service=context.services.get('tcad.output_inspection')
     if service is None:
         return {'status':'unavailable','reason':'inspection_service_unavailable'}

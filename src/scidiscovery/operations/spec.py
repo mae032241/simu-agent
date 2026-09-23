@@ -159,10 +159,12 @@ class OutputPortSpec(PortSpec):
 class NativeToolPolicy(FrozenSpec):
     shell: str = "none"
     view_image: bool = False
+    web_search: str = "disabled"
     def issue(self) -> str | None:
         return (
             None
-            if self.shell in {"none", "sandboxed", "inherited_prototype"}
+            if (self.shell in {"none", "sandboxed", "inherited_prototype"}
+                and self.web_search in {"disabled", "cached", "live"})
             else "native_tool_policy_unsupported"
         )
 class ExecutorRef(FrozenSpec):
@@ -181,6 +183,8 @@ class NetworkPolicy(FrozenSpec):
     def issue(self) -> str | None:
         if self.mode == "none":
             return "network_not_default_deny" if self.allowed_domains or self.max_requests else None
+        if self.mode == "public_web":
+            return None if not self.allowed_domains and self.max_requests > 0 else "network_scope_invalid"
         if self.mode != "restricted":
             return "network_mode_invalid"
         domains = self.allowed_domains
@@ -405,7 +409,7 @@ class PermissionTemplate:
     workspace: str
     tools: tuple[str, ...]
     resources: tuple[str, ...]
-    model: str
+    model: str | None
     native_tools: NativeToolPolicy
     limits: LimitsSpec
     lifecycle: AgentLifecycleProtocol

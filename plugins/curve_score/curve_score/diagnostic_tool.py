@@ -63,24 +63,17 @@ DIAGNOSTIC_PLOT_OUTPUT = OutputPortSpec(
 )
 
 DIAGNOSTIC_GUIDANCE = """
-Choose analysis methods to answer the current uncertainty, not only to classify
-planned thresholds. When a scalar cannot explain a discrepancy, consider
-{diagnostic_tool} for local residuals,
-error contributions and an overlay/residual image. These are optional tools,
-not another stage or a required check. They use the same sources/comparison_spec
-format as scoring, with one comparison, one residual operator and 2-257 samples
-per call. No curve contract or new independent review is needed.
-Use record.calculation_ref as an evidence locator; the full record and receipt
-are already retained. Do not copy them into calculation_records. Full residual
-traces and segments are retained separately under the returned details alias/path.
-Read returned images with native view_image when useful; the images
-are read-only task-local previews; their registered evidence is sealed with this Run.
-A residual segment boundary is not a gradient change point or a physical interface.
-Crossing/width metrics remain available through the scoring tool. Separate
-exploratory diagnostics from preregistered tests, report method changes and decide
-whether the available evidence supports a next step or a bounded stopping reason.
-No diagnostic is compulsory, and unavailable diagnostics do not prevent a limited
-analysis. Do not replace an unsupported statistic with a different metric.
+Choose methods for the current uncertainty. If a scalar cannot explain a discrepancy,
+consider {diagnostic_tool} for local residuals, contributions and overlay/residual
+images; read its exact contract before calling. No new curve contract/review or
+mandatory diagnostic stage is required. Full traces and segments remain at returned
+details aliases/paths. Use native view_image when helpful: previews are read-only,
+task-local, and their evidence is sealed with the Run. A residual segment boundary
+is not a gradient change point or physical interface. Crossing/width metrics remain
+available through scoring. Distinguish exploration from preregistered tests, record
+method changes, and choose a justified next step or bounded stopping reason.
+Unavailable diagnostics allow limited conclusions; never substitute another metric
+for an unsupported statistic. Calculation citation rules below apply to both tools.
 """
 
 

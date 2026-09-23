@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from scidiscovery.artifact_agent.interfaces.mcp import MCPRouter, parse_rpc_line
+from scidiscovery.artifact_agent.interfaces.mcp_gateway import GATEWAY_TOOLS, UnifiedMCPRouter
 from scidiscovery.artifact_agent.interfaces.mcp_root import (
     ROOT_TOOLS,
     RootMCPRouter,
@@ -86,13 +87,20 @@ def test_text_schema_and_generated_scheduler_tools_share_root_declaration(ingres
 
     declared_names = tuple(tool.name for tool in ROOT_TOOLS)
     assert tuple(tool["name"] for tool in tools) == declared_names
-    assert SCHEDULER_TOOLS == declared_names
+    assert SCHEDULER_TOOLS == GATEWAY_TOOLS
+    gateway = UnifiedMCPRouter(root)
+    # The logical text-ingress contract remains reachable through the new public help.
+    described = gateway.handle({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {
+        "name": "scid_describe", "arguments": {"name": "artifact_ingest_text"},
+        "_meta": {"x-codex-turn-metadata": {
+            "session_id": "ingress-root", "thread_id": "ingress-root", "thread_source": "user"}}}})
+    assert described["result"]["structuredContent"]["inputSchema"] == schema
     generated = tomllib.loads(_proxy_server_toml(
         python=Path(sys.executable),
         socket_path=Path("/tmp/user-text-ingress.sock"),
         python_path=None,
     ))
-    assert generated["mcp_servers"]["scidiscovery"]["enabled_tools"] == list(declared_names)
+    assert generated["mcp_servers"]["scidiscovery"]["enabled_tools"] == list(GATEWAY_TOOLS)
 
 
 def test_original_unicode_and_whitespace_are_frozen_without_project_files_or_runs(ingress):
@@ -123,7 +131,7 @@ def test_original_unicode_and_whitespace_are_frozen_without_project_files_or_run
         assert envelope.creator == runtime.actor
         assert envelope.creator.actor_type == "service"
         assert envelope.parent_refs == ()
-        metadata = root.call_tool("artifact_catalog", {"name": name})
+        metadata = root.call_tool("artifact_catalog", {"name": name, "view": "detail"})
         assert metadata["labels"] == {"source_origin": "user_via_scheduler"}
     assert _envelope(runtime, instance_id, "original_4").size_bytes == 32768
     assert tuple(sorted(runtime.project_root.rglob("*"))) == before_files

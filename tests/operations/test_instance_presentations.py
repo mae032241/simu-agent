@@ -58,13 +58,21 @@ def test_general_objective_plan_review_and_analysis_preserve_original_facts(inst
                 "comparison_contract": {"variables": [{"variable_key": "temperature", "scientific_path": "device.temperature", "unit": "K", "rationale": "Thermal control",
                     "expectations": [{"case_key": "cold", "value": 280}, {"case_key": "warm", "value": 300}]}]}}]}),
         view("review", "scidiscovery.scientific-review.v1", {"verdict": "revise", "summary": "The scope remains limited", "global_confounders": ["Original uncertainty"]}),
-        view("analysis", "scidiscovery.layered-diagnosis.v1", {"summary": "A sealed partial result", "overall_verdict": "inconclusive", "claim_allowed": False, "limitations": ["No fit evidence"]}),
+        view("analysis", "scidiscovery.layered-diagnosis.v1", {"summary": "A sealed partial result", "overall_verdict": "inconclusive", "claim_allowed": False,
+            "evidence": [{"source_key": "bounded_result", "source_type": "runtime_output", "title": "Bounded result", "locator": "bounded_result"}],
+            "objective_assessment": {"objective_key": "overall", "status": "fail", "summary": "The scoped objective was not reached.", "evidence_keys": ["bounded_result"]},
+            "hypothesis_assessments": [{"hypothesis_key": "candidate", "outcome": "inconclusive", "rationale": "The mechanism remains unresolved.", "evidence_keys": ["bounded_result"]}],
+            "limitations": ["No fit evidence"], "next_action": "Inspect one bounded numerical premise."}),
     )
     original = deepcopy(artifacts)
     result = presentation.build_presentation(artifacts)
     facts = [item for section in result["sections"] for item in section["items"]]
     assert any(item["value"] == ["now", "later"] and item["source"]["json_pointer"] == "/proposals/0/objectives" for item in facts)
     assert any(item["value"] is False and item["source"]["artifact_id"] == "analysis" for item in facts)
+    assert any(item["label"] == "逐假设评估" and item["source"]["json_pointer"] == "/hypothesis_assessments"
+               and item["value"][0]["hypothesis_key"] == "candidate" for item in facts)
+    assert any(item["label"] == "原报告建议（非调度命令）" and item["source"]["json_pointer"] == "/next_action"
+               and item["value"] == "Inspect one bounded numerical premise." for item in facts)
     assert [row["selected_value"] for row in result["parameters"]] == [280, 300]
     assert [row["case_scope"]["case_key"] for row in result["parameters"]] == ["cold", "warm"]
     assert result["parameters"][1]["field_sources"]["selected_value"]["json_pointer"] == "/proposals/0/comparison_contract/variables/0/expectations/1/value"
@@ -154,7 +162,7 @@ def test_markup_stays_text_urls_are_filtered_and_only_authorized_images_are_list
     artifacts = list(parameter_family(source_type="web_snapshot"))
     artifacts[1]["payload"]["sources"][0].update(title="<script>alert(1)</script>", final_url="javascript:alert(1)")
     artifacts.extend((view("figure", "opaque", media_type="image/png"), view("active_svg", "opaque", media_type="image/svg+xml")))
-    result = presentation.build_presentation(tuple(artifacts))
+    result = presentation.build_presentation(tuple(artifacts), focus_artifact_ids=["figure"])
     assert result["parameters"][0]["sources"][0]["title"] == "<script>alert(1)</script>"
     assert result["parameters"][0]["sources"][0]["url"] is None
     assert {figure["artifact_id"] for figure in result["figures"]} == {"figure"}

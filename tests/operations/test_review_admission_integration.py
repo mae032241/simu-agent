@@ -15,7 +15,7 @@ def test_shared_review_requires_every_exact_subject_across_producer_runs(tmp_pat
     plugin = _plan_producer_plugin()
     producer = next(op for op in plugin.operations if op.operation_id == "science.fixture.plan.v1")
     reviewer = next(op for op in plugin.operations if op.operation_id == "science.object.review.v1")
-    plan_port = reviewer.inputs[0].model_copy(update={"max_items": 2})
+    plan_port = next(port for port in reviewer.inputs if port.name == "experiment_plan").model_copy(update={"max_items": 2})
     # This fixture isolates control-plane identity, without a single-plan domain checker.
     review_output = reviewer.outputs[0].model_copy(update={
         "context_validator": None, "context_rule_id": None, "context_sources": (),
@@ -23,7 +23,8 @@ def test_shared_review_requires_every_exact_subject_across_producer_runs(tmp_pat
     reviewer = reviewer.model_copy(update={
         "operation_id": "science.fixture.collection-review.v1",
         "input_validation": None,
-        "inputs": (plan_port, *reviewer.inputs[1:]), "outputs": (review_output,),
+        "inputs": tuple(plan_port if port.name == "experiment_plan" else port for port in reviewer.inputs),
+        "outputs": (review_output, *reviewer.outputs[1:]),
     })
     producer = producer.model_copy(update={
         "review": producer.review.model_copy(update={"reviewer_operation": reviewer.operation_id}),

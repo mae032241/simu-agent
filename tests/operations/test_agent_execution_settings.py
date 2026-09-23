@@ -4,7 +4,9 @@ from pathlib import Path
 
 import pytest
 
-from scidiscovery.agent_execution_settings import load_settings, parse_settings, resolve_settings
+from scidiscovery.agent_execution_settings import (
+    AgentSettings, ExecutionProfile, load_settings, packaged_default_model, parse_settings, resolve_settings,
+)
 from scidiscovery.artifact_agent.service.scheduler_bindings import (
     SchedulerBindingService, SchedulerInstanceConflict,
 )
@@ -26,6 +28,25 @@ def test_sparse_precedence_and_unknown_operation_retention():
     cleared = resolve_settings(global_settings, parse_settings({}), operation_id="fixture",
                                operation_model="legacy", operation_max_attempts=2)
     assert cleared["profile"].model == "global-op"
+
+
+def test_execution_profile_uses_canonical_platform_model_identity():
+    profile = ExecutionProfile(
+        model="gpt-6-Astra", reasoning_effort="high", narrative_language="zh-CN"
+    )
+    assert profile.model == "gpt-6-astra"
+
+
+def test_packaged_model_default_is_configured_and_overridable():
+    assert packaged_default_model() == "gpt-6-sol"
+    baseline = resolve_settings(AgentSettings(), AgentSettings(), operation_id="fixture",
+        operation_model=None, operation_max_attempts=2)
+    assert baseline["profile"].model == "gpt-6-sol"
+    assert baseline["sources"]["model"] == "package_default"
+    overridden = resolve_settings(parse_settings({"defaults": {"model": "global"}}),
+        AgentSettings(), operation_id="fixture", operation_model=None, operation_max_attempts=2)
+    assert overridden["profile"].model == "global"
+    assert overridden["sources"]["model"] == "global.defaults"
 
 
 @pytest.mark.parametrize("value,field", [
@@ -108,6 +129,9 @@ def test_preflight_snapshot_survives_settings_change_and_submission(tmp_path, ba
     assert "简体中文" in opened["narrative_instruction"]
     assignment = json.loads(Path(opened["assignment_path"]).read_text())
     assert assignment["narrative_instruction"] == opened["narrative_instruction"]
+    if backend == "local":
+        assert "role_instructions_sha256" not in opened
+        assert "input_reading" not in opened
     if backend == "hardened":
         _write_result(worker)  # English is accepted: language is not scientific validation.
     else:
@@ -154,10 +178,90 @@ def test_recovery_inherits_source_budget_and_profile_not_current_defaults(tmp_pa
     assert check["admissible"], check
     normalized = check["normalized_request"]
     assert normalized["max_attempts"] is None  # Inheritance must not become an explicit budget extension.
-    assert normalized["execution_profile"]["model"] == (catalog.operation(request["operation_id"]).spec.executor.model if legacy else "gpt-5.6-luna")
+    assert normalized["execution_profile"]["model"] == (packaged_default_model() if legacy else "gpt-5.6-luna")
     assert normalized["execution_profile"]["narrative_language"] == ("en" if legacy else "zh-CN")
     result = root.call_tool("operation_invoke", normalized)["result"]
     binding = settings.get_binding(instance=instance.instance_id, namespace="run", name=result["name"])
     status = runtime.runs.status(binding.object_id)
     assert status.recovery_policy["scheduler_max_attempts"] == 3
     assert status.execution_profile["profile"] == normalized["execution_profile"]
+
+
+def test_direct_invoke_freezes_once_replays_and_reports_changed_defaults(tmp_path, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from tests.operations.test_l5_hardened_run_backend import _system
+    from scidiscovery.artifact_agent.interfaces.mcp_root import RootToolError
+    _, runtime, instance, root = _system(tmp_path, worker_backend="local")
+    bindings = runtime.scheduler_bindings
+    bindings.save_agent_settings(instance.instance_id,
+        {"defaults": {"model": "gpt-5.6-luna", "max_attempts": 3}},
+        expected_revision=0, maintenance=runtime.instance_maintenance)
+    request = dict(name="direct", operation_id="blind.csv.observe.v1",
+        instruction="Inspect the CSV.", inputs=[dict(port="source_table", artifact_names=["source_csv"])])
+    original = bindings.agent_settings
+    reads = []
+    def read_once(*args, **kwargs):
+        reads.append(1)
+        return original(*args, **kwargs)
+    monkeypatch.setattr(bindings, "agent_settings", read_once)
+    created = root.call_tool("operation_invoke", request)["result"]
+    assert len(reads) == 1  # schedule must not resolve settings a second time.
+    profile = created["execution_profile"]["profile"]
+    assert profile["model"] == "gpt-5.6-luna"
+    from tests.operations.test_l2_run_invariants import _worker, _envelope
+    worker = _worker(runtime.runs.operation_catalog, runtime)
+    opened = worker.call_tool("worker_open_assignment", {})
+    Path(opened["output_directory"], "result.json").write_bytes(_envelope())
+    assert worker.call_tool("worker_submit_result", {})["state"] == "completed"
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        replies = list(pool.map(lambda _: root.call_tool("operation_invoke", {**request, "name": "concurrent"}), range(2)))
+    assert all(reply["result"]["name"] == "concurrent" for reply in replies)
+    assert len(root.call_tool("run_list", {})["runs"]) == 2
+    bindings.save_agent_settings(instance.instance_id,
+        {"defaults": {"model": "gpt-5.6-sol", "max_attempts": 5}},
+        expected_revision=1, maintenance=runtime.instance_maintenance)
+    with pytest.raises(RootToolError, match="semantic_name_conflict"):
+        root.call_tool("operation_invoke", request)
+    assert len(root.call_tool("run_list", {})["runs"]) == 2
+    replay = root.call_tool("operation_invoke", {**request, "execution_profile": profile, "max_attempts": 3})
+    assert replay["result"]["execution_profile"]["profile"] == profile
+
+
+def test_direct_invoke_bad_inputs_do_not_create_run(tmp_path):
+    from tests.operations.test_l5_hardened_run_backend import _system
+    from scidiscovery.artifact_agent.interfaces.mcp_root import RootToolError
+    _, _, _, root = _system(tmp_path, worker_backend="local")
+    request = dict(name="invalid", operation_id="blind.csv.observe.v1", inputs=[])
+    checked = root.call_tool("operation_preflight", request)
+    assert not checked["admissible"]
+    with pytest.raises(RootToolError) as error:
+        root.call_tool("operation_invoke", request)
+    assert checked["reason_code"] in str(error.value)
+    assert root.call_tool("run_list", {})["runs"] == []
+
+
+@pytest.mark.parametrize('helper_state', ['missing', 'legacy', 'explicit_selection'])
+def test_local_open_directs_legacy_reader_without_rewriting_workspace(tmp_path, helper_state):
+    from tests.operations.test_l5_hardened_run_backend import _system, _invoke
+    from scidiscovery.artifact_agent.interfaces.mcp_local_worker import LocalWorkerMCPRouter
+    catalog, runtime, instance, root = _system(tmp_path, worker_backend='local')
+    _invoke(root)
+    compiled=catalog.operation('blind.csv.observe.v1')
+    worker=LocalWorkerMCPRouter(runtime.runs, operation_id=compiled.spec.operation_id,
+                                operation_digest=compiled.digest)
+    opened=worker.call_tool('worker_open_assignment', {})
+    assignment=Path(opened['assignment_path']); original=assignment.read_bytes()
+    helper=assignment.parent/'tools/read_input.py'
+    helper.unlink()
+    if helper_state == 'explicit_selection':
+        helper.write_text('\nREAD_INPUT_NAVIGATION = 1\n')
+    if helper_state == 'legacy':
+        helper.write_text('"""Legacy helper: --offset and --version."""\n')
+    reopened=worker.call_tool('worker_open_assignment', {})
+    assert ('bare navigation is unavailable' if helper_state == 'explicit_selection' else
+            'targeted standard-library reads') in reopened['input_reading']
+    assert 'role_instructions_sha256' not in reopened
+    assert assignment.read_bytes() == original
+    assert helper.exists() is (helper_state != 'missing')
+    if helper_state == 'legacy':
+        assert helper.read_text() == '"""Legacy helper: --offset and --version."""\n'

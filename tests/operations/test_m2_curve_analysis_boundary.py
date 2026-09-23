@@ -916,7 +916,7 @@ def test_curve_contract_worker_tool_writes_the_compiled_result(tmp_path, future_
     ("defect", "message"),
     (
         ("unknown_target", "unknown objective target_key"),
-        ("unplanned_observable", "observable is absent"),
+        ("unplanned_observable", "did not bind every curve-score validation check"),
         ("unknown_reference", "missing reference series"),
         ("unknown_case", "unknown experiment case"),
         ("unknown_check", "must cover every curve-score validation check"),
@@ -1005,9 +1005,11 @@ def test_curve_contract_operation_keeps_v1_and_exposes_only_compiler_write_path(
         "experiment_plan",
         "experiment_review",
         "reference_bundle",
+        "user_context",
     }
     assert tuple(item.component_id for item in compiled.spec.executor.tools) == (
         "curve_contract_compiler_tool",
+        "reference_read_tool",
     )
     tool = compiled.implementations["curve_score:curve_contract_compiler_tool"]
     assert tool.name == "worker_curve_contract_compile"
@@ -1132,10 +1134,11 @@ def test_curve_analysis_transform_and_single_file_agent_complete_real_run(
     assert tuple(port.name for port in agent.spec.inputs) == (
         "curve_analysis_package",
         "curve_analysis_plots",
+        "user_context",
     )
     assert agent.spec.inputs[1].min_items == 0
     assert agent.spec.executor.native_tools.view_image
-    assert tuple(port.name for port in agent.spec.outputs) == ("layered_diagnosis",)
+    assert tuple(port.name for port in agent.spec.outputs) == ("layered_diagnosis", "recovery_manifest_output")
     assert LocalTrustedBackend.supports_operation(agent)
     assert "worker_curve_analyze" not in operation_local_worker_tool_names(agent)
 
@@ -1251,6 +1254,34 @@ def test_curve_analysis_package_and_plot_bundle_fail_closed_on_tampering() -> No
         Components.curve_diagnosis_inputs.implementation({
             "curve_analysis_package": canonical_json(package),
         })
+
+
+def test_keyed_curve_package_requires_objective_assessment_but_accepts_not_evaluable() -> None:
+    artifacts = Components.curve_error_analysis.implementation(
+        {name: (content,) for name, content in _inputs().items()}
+    )
+    package = json.loads(artifacts["curve_analysis_package"][0])
+    plan = _compiler_plan()
+    package["experiment_plan"] = plan.model_dump(mode="json")
+    package_raw = canonical_json(package)
+    Components.curve_diagnosis_inputs.implementation({
+        "curve_analysis_package": package_raw,
+    })
+    report = _diagnosis().model_dump(mode="json")
+    report["study_kind"] = "scientific"
+    with pytest.raises(SemanticRuleViolation, match="objective assessment is required") as caught:
+        Components.curve_diagnosis_context.implementation(
+            report, {"curve_analysis_package": package_raw}, {}
+        )
+    assert caught.value.details[0]["path"] == "$.objective_assessment"
+    report["objective_assessment"] = {
+        "objective_key": plan.objective_key,
+        "status": "not_evaluable",
+        "summary": "The immutable package does not resolve the overall objective.",
+    }
+    Components.curve_diagnosis_context.implementation(
+        report, {"curve_analysis_package": package_raw}, {}
+    )
 
 
 def test_obsolete_curve_analysis_worker_tool_is_removed() -> None:

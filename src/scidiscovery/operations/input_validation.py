@@ -52,7 +52,7 @@ class InputBindingDescriptor:
 class ValidationSources(dict[str, bytes]):
     """Legacy byte mapping with an immutable projection of exact Run bindings."""
 
-    __slots__ = ("__binding_descriptors", "__validation_deadline", "__tool_snapshot")
+    __slots__ = ("__binding_descriptors", "__validation_deadline", "__tool_snapshot", "__reference_calculation_resolver")
 
     def __init__(
         self,
@@ -60,11 +60,16 @@ class ValidationSources(dict[str, bytes]):
         binding_descriptors: Mapping[str, InputBindingDescriptor],
         validation_deadline: float | None = None,
         tool_snapshot: bytes | None = None,
+        reference_calculation_resolver: Callable | None = None,
     ) -> None:
         super().__init__(sources)
         self.__binding_descriptors = MappingProxyType(dict(binding_descriptors))
         self.__validation_deadline = validation_deadline
         self.__tool_snapshot = tool_snapshot
+        self.__reference_calculation_resolver = reference_calculation_resolver
+
+    def reference_calculation_sources(self, alias):
+        return self.__reference_calculation_resolver(alias) if self.__reference_calculation_resolver else None
 
     @property
     def tool_snapshot(self) -> bytes | None:
@@ -152,15 +157,26 @@ def prior_analysis_sources(sources: Mapping[str, bytes]) -> Mapping[str, Any] | 
     prior, explicit = port("prior_analysis"), port("prior_analysis_manifest")
     if prior is None:
         if explicit is not None:
-            raise OperationInvocationError("prior_analysis_missing", port="prior_analysis")
+            raise OperationInvocationError("prior_analysis_missing", port="prior_analysis",
+                message="Bind the prior analysis primary together with its recovery manifest.")
         return None
     proof = explicit or port("recovery_manifest")
     if proof is None:
-        raise OperationInvocationError("prior_manifest_missing", port="prior_analysis_manifest")
-    if (proof.artifact_ref not in prior.parent_refs or not prior.producer_run_id
-            or proof.producer_run_id != prior.producer_run_id
-            or dict(proof.labels).get("operation_output_port") != "recovery_manifest_output"):
-        raise OperationInvocationError("prior_manifest_pair_mismatch", port=proof.port_name)
+        raise OperationInvocationError("prior_manifest_missing", port="prior_analysis_manifest",
+            message="Bind the prior analysis primary's direct recovery manifest.")
+    pair_failures = []
+    if proof.artifact_ref not in prior.parent_refs:
+        pair_failures.append("direct_parent")
+    if not prior.producer_run_id:
+        pair_failures.append("prior_producer")
+    if proof.producer_run_id != prior.producer_run_id:
+        pair_failures.append("same_producer")
+    if dict(proof.labels).get("operation_output_port") != "recovery_manifest_output":
+        pair_failures.append("recovery_output_port")
+    if pair_failures:
+        raise OperationInvocationError("prior_manifest_pair_mismatch", port=proof.port_name,
+            message=("Bind the direct recovery manifest produced with the prior analysis primary; "
+                     "mismatched facts: " + ", ".join(pair_failures) + "."))
     from ..artifact_agent.service.tool_evidence import ToolEvidenceManifest
     try:
         manifest = ToolEvidenceManifest.model_validate_json(sources[proof.source_name])
@@ -178,12 +194,14 @@ def prior_analysis_sources(sources: Mapping[str, bytes]) -> Mapping[str, Any] | 
             except ValueError:
                 continue
             if old in identities and identities[old] != identity:
-                raise OperationInvocationError("prior_manifest_binding_mismatch", port=proof.port_name)
+                raise OperationInvocationError("prior_manifest_binding_mismatch", port=proof.port_name,
+                    message="The recovery manifest maps one source alias to conflicting exact artifacts.")
             identities[old] = identity
     mapped = {}
     for old, identity in identities.items():
         if identity not in proof.parent_refs:
-            raise OperationInvocationError("prior_manifest_binding_mismatch", port=proof.port_name)
+            raise OperationInvocationError("prior_manifest_binding_mismatch", port=proof.port_name,
+                message="The recovery manifest names an exact source that is not its direct parent.")
         matches = [d.source_name for d in descriptors.values() if d.artifact_ref == identity]
         if len(matches) > 1:
             raise OperationInvocationError("input_artifact_duplicate")

@@ -1,6 +1,7 @@
 """Typed score requests reach parsing only after admission, preserving raw JSON."""
 from copy import deepcopy
 import json
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -107,7 +108,8 @@ def test_supported_log_and_linear_metrics_have_independent_known_values(tmp_path
         read_evidence=sources.__getitem__, finish_attempt=lambda **kwargs: None,
         workspace=tmp_path, accept_evidence=lambda **kwargs: {'alias': 'tool_evidence_001'}))
     assert record['status'] == 'computed', record
-    metrics = record['result']['comparisons'][0]['metrics']
+    complete = json.loads(Path(record['calculation_path']).read_bytes())
+    metrics = complete['result']['comparisons'][0]['metrics']
     assert {item['operator_key']: item['value'] for item in metrics} == {'linear': 900.0, 'log10': 1.0}
 
 
@@ -170,11 +172,12 @@ def test_generic_tool_uses_defaults_without_rewriting_the_raw_receipt(explicit_d
         read_evidence=sources.__getitem__, finish_attempt=lambda **kwargs: None,
         workspace=tmp_path, accept_evidence=lambda **kwargs: {'alias': 'tool_evidence_001'}))
     assert response['status'] == 'computed'
-    assert response['request'] == original
-    record = CalculationRecord.model_validate_json(canonical_json(response))
+    complete = json.loads(Path(response['calculation_path']).read_bytes())
+    assert complete['request'] == original
+    record = CalculationRecord.model_validate_json(canonical_json(complete))
     replay_calculation(record, sources)
     # Control receipts are checked separately; they do not change numeric replay.
-    enriched = {**response, 'attempt': {'manifest_alias': 'tool_recovery_manifest', 'attempt_key': 'attempt_001'}}
+    enriched = {**complete, 'attempt': {'manifest_alias': 'tool_recovery_manifest', 'attempt_key': 'attempt_001'}}
     replay_calculation(CalculationRecord.model_validate_json(canonical_json(enriched)), sources)
 
 
@@ -236,7 +239,8 @@ def test_unknown_calculator_failures_are_not_reported_as_bad_data(monkeypatch, e
 
 def test_unknown_parser_failure_remains_a_framework_error(tmp_path, monkeypatch):
     import tcad_artifact.result_analysis as analysis
-    worker, _ = open_analysis(analysis_system(tmp_path))
+    system = analysis_system(tmp_path)
+    worker, _ = open_analysis(system)
     def broken(*args, **kwargs):
         raise RuntimeError('DO_NOT_ECHO_PARSER_INTERNALS')
     monkeypatch.setattr(analysis, 'normalize_sprocess_plx', broken)
@@ -244,3 +248,6 @@ def test_unknown_parser_failure_remains_a_framework_error(tmp_path, monkeypatch)
     diagnostic = response['error']['data']['diagnostics'][0]
     assert diagnostic['code'] == 'runtime_failure' and diagnostic['phase'] == 'tool_execution'
     assert 'DO_NOT_ECHO_PARSER_INTERNALS' not in json.dumps(response)
+    reference = response['error']['data']['engineering']['reference']
+    assert 'DO_NOT_ECHO_PARSER_INTERNALS' in system[2].call_tool(
+        'diagnostic_read', {'reference': reference})['text']

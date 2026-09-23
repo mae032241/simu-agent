@@ -5,7 +5,7 @@ from __future__ import annotations
 from scidiscovery.operations.input_validation import parse_bound_json
 
 import json
-from typing import Any, Callable
+from typing import Annotated, Any, Callable
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -98,6 +98,46 @@ def _author_context(
 
 
 def _parameter_inputs(sources: dict[str, bytes]) -> None:
+    from .project_packager import DeckAuthorResult, ImplementationGap
+    from scidiscovery.artifact_agent.schema.experiment_intent import ExperimentScientificSkeleton
+    from scidiscovery.artifact_agent.schema.experiment import ExperimentPortfolio
+    skeleton = sources.get("scientific_skeleton")
+    plan = sources.get("experiment_plan")
+    if "project" not in sources and (skeleton is None) == (plan is None):
+        raise OperationInvocationError("input_author_plan_exact_one", port="scientific_skeleton")
+    if skeleton is not None:
+        parse_bound_json(ExperimentScientificSkeleton, skeleton, admission_port="scientific_skeleton")
+        capability = json.loads(sources["execution_capability"])
+        if capability.get("solver_kind") != "sprocess":
+            raise OperationInvocationError("input_skeleton_solver_unsupported", port="execution_capability", message="The scientific skeleton author path currently supports sprocess only; legacy sdevice retains its plan contract.")
+    descriptors = getattr(sources, "binding_descriptors", {})
+    if "project" not in sources and plan is not None and "experiment_plan" in descriptors and dict(descriptors["experiment_plan"].labels).get("operation_id") == "tcad.execution-plan.project.v1":
+        raise OperationInvocationError("input_projected_plan_not_author_design", port="experiment_plan", message="Use the original scientific skeleton for authoring; the extracted plan is only a project-derived consumer view.")
+    for subject in ("project", "prior_project"):
+        if subject not in sources:
+            continue
+        project = parse_bound_json(DeckAuthorResult, sources[subject], admission_port=subject).root
+        descriptor = descriptors.get(subject)
+        if skeleton is not None and descriptor is not None:
+            if descriptors["scientific_skeleton"].artifact_ref not in descriptor.parent_refs:
+                raise OperationInvocationError("input_project_skeleton_mismatch", port="scientific_skeleton")
+        if isinstance(project, ImplementationGap):
+            if subject == "project" and (skeleton is None) == (plan is None):
+                raise OperationInvocationError("input_gap_subject_exact_one", port="scientific_skeleton")
+            continue
+        if project.execution_plan is not None and descriptor is not None:
+            from .operation_transforms import require_skeleton_project_origin
+            require_skeleton_project_origin(descriptor, port=subject)
+        if (project.execution_plan is not None) != (skeleton is not None):
+            raise OperationInvocationError("input_project_plan_branch_mismatch", port=subject)
+        if subject == "project" and project.execution_plan is not None:
+            if plan is None or parse_bound_json(ExperimentPortfolio, plan, admission_port="experiment_plan") != project.execution_plan:
+                raise OperationInvocationError("input_project_execution_plan_mismatch", port="experiment_plan")
+            projected = descriptors.get("experiment_plan")
+            if projected is not None and (descriptor.artifact_ref not in projected.parent_refs or dict(projected.labels).get("operation_id") != "tcad.execution-plan.project.v1"):
+                raise OperationInvocationError("input_execution_plan_projection_mismatch", port="experiment_plan")
+        elif subject == "project" and plan is None:
+            raise OperationInvocationError("input_legacy_plan_missing", port="experiment_plan")
     parameter_raw = sources.get("device_parameters")
     coverage_raw = sources.get("parameter_coverage")
     if parameter_raw is None and coverage_raw is None:
@@ -142,6 +182,8 @@ class TCADDebugInput(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
     run_name: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
     mode: str = Field(pattern=r"^(preflight|smoke|initialization)$")
+    output_names: list[Annotated[str, Field(min_length=1, max_length=256)]] | None = Field(default=None, max_length=63,
+        description="Initialization only: names from the staged project's expected_outputs to collect for diagnostic reading. Omit when polling to retain the original selection; never production evidence.")
 
 
 def _parameter_cohort_guard(inputs: tuple[Any, ...], parameters: dict[str, object]) -> bool:
@@ -189,12 +231,14 @@ def _debug_tool(
         raise RuntimeError("TCAD development debug service has no run method")
     try:
         try:
-            response = run(context, run_name=request.run_name, mode=request.mode)
+            response = run(context, run_name=request.run_name, mode=request.mode,
+                **({"output_names": request.output_names} if request.output_names is not None else {}))
         except (RunOutputError, WorkspaceError) as error:
             details = getattr(error, "details", ()) or (
                 {"path": "$", "message": str(error), "type": "value_error"},
             )
-            context.record_activity("output_rejected")
+            if not getattr(error, "recorded", False):
+                context.record_activity("output_rejected")
             response = {"state": "rejected", "diagnostics": list(details)}
         return debug_summary(context, request.run_name, response)
     except TCADDebugError as error:
@@ -361,7 +405,7 @@ def _author_operation(
     names = tuple(item.name for item in inputs if item.exposure != "handoff_only")
     return with_user_context(OperationSpec(
         operation_id=operation_id,
-        version="2",
+        version="3",
         catalog_scope="public",
         description=description,
         executor=ExecutorRef(
@@ -370,7 +414,6 @@ def _author_operation(
             workspace=_ref("deck_workspace"),
             tools=_AUTHOR_TOOLS,
             prompt=_ref("author_prompt"),
-            model="gpt-5.6-sol",
             native_tools=NativeToolPolicy(shell="inherited_prototype"),
         ),
         inputs=inputs,
@@ -388,7 +431,7 @@ def _author_operation(
         ),
         consequence="scientific",
         input_admission=DECK_PARAMETER_ADMISSION,
-        input_validation=input_validation or InputValidationSpec(_ref("parameter_inputs"), "tcad.author.parameter_inputs", "Bound parameter set and coverage must be paired and identify the same set; scientific deficiencies remain reviewable."),
+        input_validation=input_validation or InputValidationSpec(_ref("parameter_inputs"), "tcad.author.parameter_inputs", "Bind exactly one scientific_skeleton (SProcess only) or legacy experiment_plan; project-derived plan projections are not new author designs. Revisions retain the exact original skeleton binding. Bound parameter set and coverage must be paired and identify the same set; scientific deficiencies remain reviewable."),
         review=ReviewSpec(
             reviewer_operation="tcad.deck.review.v1",
             reviewer_input_port="project",
@@ -457,7 +500,8 @@ CURRENT_PROGRESS_INPUT = InputPortSpec(
 INITIAL_INPUTS = (
     CURRENT_PROGRESS_INPUT,
     _input("execution_capability", "tcad.solver-capability.v2", "capability_schema", max_bytes=64 * 1024),
-    _input("experiment_plan", "scidiscovery.experiment-portfolio.v1", "experiment_portfolio_schema", schema_plugin="general_science", max_bytes=2 * 1024 * 1024),
+    _input("experiment_plan", "scidiscovery.experiment-portfolio.v1", "experiment_portfolio_schema", schema_plugin="general_science", max_bytes=2 * 1024 * 1024, min_items=0),
+    _input("scientific_skeleton", "scidiscovery.experiment-scientific-skeleton.v1", "experiment_skeleton_schema", schema_plugin="general_science", max_bytes=64 * 1024, min_items=0),
     _input("curve_contract", "scidiscovery.curve-experiment-contract.v1", "curve_contract_schema", schema_plugin="curve_score", usage="prior_signal", max_bytes=2 * 1024 * 1024, min_items=0),
     _input("experiment_review", "scidiscovery.scientific-review.v1", "scientific_review_schema", schema_plugin="general_science", usage="prior_signal", exposure="on_demand", max_bytes=512 * 1024, min_items=0),
     _input("curve_contract_review", "scidiscovery.scientific-review.v1", "scientific_review_schema", schema_plugin="general_science", usage="prior_signal", exposure="handoff_only", max_bytes=512 * 1024, min_items=0),
@@ -483,7 +527,8 @@ RUNTIME_INPUTS = (
 )
 REVIEW_INPUTS = (
     _input("project", "tcad.deck-project.v1", "project_schema", usage="prior_signal"),
-    *INITIAL_INPUTS,
+    *(item.model_copy(update={"usage": "prior_signal"})
+      if item.name == "experiment_plan" else item for item in INITIAL_INPUTS),
 )
 
 
@@ -521,10 +566,10 @@ PLUGIN = PluginDefinition(
         ComponentSpec("review_validator", "validator", "tcad_artifact.plugin:REVIEW_VALIDATOR_COMPONENT", resources=(_ref("semantic_contract"),)),
         ComponentSpec("review_context", "validator", "tcad_artifact.plugin:REVIEW_CONTEXT_COMPONENT", configuration_identity="output-responsibility:v1", resources=(_ref("semantic_contract"),)),
         ComponentSpec("parameter_cohort_guard", "guard", "tcad_artifact.plugin:PARAMETER_COHORT_GUARD", configuration_identity="tcad.approved-parameter-cohort.v1"),
-        ComponentSpec("workspace_materializer", "workspace_materializer", "tcad_artifact.operation_workspace:MATERIALIZER_COMPONENT", configuration_identity="tcad.workspace-materializer.v5:formal-handoff"),
+        ComponentSpec("workspace_materializer", "workspace_materializer", "tcad_artifact.operation_workspace:MATERIALIZER_COMPONENT", configuration_identity="tcad.workspace-materializer.v6:author-output-fields"),
         ComponentSpec("workspace_file_policy", "workspace_file_policy", "tcad_artifact.operation_workspace:FILE_POLICY_COMPONENT", configuration_identity="tcad.workspace-file-policy.v1"),
         ComponentSpec("review_result_finalizer", "workspace_finalizer", "tcad_artifact.operation_workspace:REVIEW_FINALIZER_COMPONENT", configuration_identity="tcad.review-finalizer.v2:formal-summary"),
-        ComponentSpec("workspace_finalizer", "workspace_finalizer", "tcad_artifact.operation_workspace:FINALIZER_COMPONENT", configuration_identity="tcad.workspace-finalizer.v5:formal-gap-summary"),
+        ComponentSpec("workspace_finalizer", "workspace_finalizer", "tcad_artifact.operation_workspace:FINALIZER_COMPONENT", configuration_identity="tcad.workspace-finalizer.v6:development-candidate-lifecycle"),
         ComponentSpec("workspace_snapshotter", "workspace_snapshotter", "tcad_artifact.operation_workspace:SNAPSHOTTER_COMPONENT", configuration_identity="tcad.workspace-snapshotter.v2"),
         ComponentSpec(
             "deck_workspace",
@@ -545,7 +590,7 @@ PLUGIN = PluginDefinition(
             resources=(_ref("workspace_materializer"), _ref("review_result_finalizer")),
             configuration_identity="tcad.deck-review-workspace.v2",
         ),
-        ComponentSpec("debug_tool", "worker_tool", "tcad_artifact.plugin:DEBUG_TOOL", configuration_identity="tcad.debug-tool.v6:retained-response-summary"),
+        ComponentSpec("debug_tool", "worker_tool", "tcad_artifact.plugin:DEBUG_TOOL", configuration_identity="tcad.debug-tool.v7:single-rejection-observation"),
         ComponentSpec("runtime_configuration_schema", "resource", "tcad_artifact.runtime_plugin:CONFIGURATION_SCHEMA"),
         ComponentSpec("runtime_factory", "runtime_factory", "tcad_artifact.runtime_plugin:RUNTIME_FACTORY", configuration_identity="tcad.runtime-factory.v3:run-local-tool-service"),
         ComponentSpec("study_execute", "effect", "tcad_artifact.runtime_plugin:EXECUTE_EFFECT", configuration_identity="tcad.execution-adapter:tcad:reviewed-deck-package.v2"),
@@ -564,7 +609,7 @@ PLUGIN = PluginDefinition(
             "tcad.deck.author.initial.v1",
             OperationDescription(
                 purpose="Author one new TCAD solver project from an exact experiment plan.",
-                applies_when="A reviewed plan and solver capability are available.",
+                applies_when="An exact scientific skeleton (SProcess) or legacy reviewed plan and solver capability are available.",
                 not_for="Postprocessing, scientific diagnosis, or external execution.",
             ),
             INITIAL_INPUTS,
@@ -589,14 +634,14 @@ PLUGIN = PluginDefinition(
             ),
             RUNTIME_INPUTS,
             "runtime_author_context",
-            input_validation=InputValidationSpec(_ref("runtime_author_inputs"), "tcad.author.runtime_failure.inputs", "The bound runtime attestation must report failure."),
+            input_validation=InputValidationSpec(_ref("runtime_author_inputs"), "tcad.author.runtime_failure.inputs", "The bound runtime attestation must report failure; author exact-one plan branch, original skeleton binding and supported SProcess scope also apply."),
         ),
         with_user_context(OperationSpec(
             operation_id="tcad.deck.review.v1",
-            version="2",
+            version="3",
             catalog_scope="public",
             description=OperationDescription(
-                purpose="Independently review an exact TCAD project for physical and code fidelity.",
+                purpose="Independently assess scientific adequacy, implementation and development evidence for the exact TCAD project.",
                 applies_when="A structurally readable exact author project, plan, and capability are available, including a blocked project or implementation gaps.",
                 not_for="Editing the project or running a solver.",
             ),
@@ -606,7 +651,6 @@ PLUGIN = PluginDefinition(
                 workspace=_ref("review_workspace"),
                 tools=_REVIEW_TOOLS,
                 prompt=_ref("reviewer_prompt"),
-                model="gpt-5.6-sol",
                 native_tools=NativeToolPolicy(shell="inherited_prototype"),
             ),
             inputs=REVIEW_INPUTS,
@@ -624,7 +668,7 @@ PLUGIN = PluginDefinition(
             ),
             consequence="scientific",
             input_admission=DECK_PARAMETER_ADMISSION,
-            input_validation=InputValidationSpec(_ref("parameter_inputs"), "tcad.review.parameter_inputs", "Bound parameter set and coverage must be paired and identify the same set; failed coverage remains independently reviewable."),
+            input_validation=InputValidationSpec(_ref("parameter_inputs"), "tcad.review.parameter_inputs", "For skeleton projects bind the original skeleton and exact project-derived execution plan; a gap needs only its scientific subject. Legacy projects retain their plan and review witness. Bound parameter set and coverage must identify the same set; failed coverage remains independently reviewable."),
             guards=(_ref("parameter_cohort_guard"),),
             limits=LimitsSpec(
                 timeout_seconds=600,

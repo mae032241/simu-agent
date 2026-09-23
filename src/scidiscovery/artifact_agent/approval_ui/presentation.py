@@ -349,7 +349,10 @@ def build_presentation(artifacts, *, focus_artifact_ids=None, task_artifact_ids=
     covered.update(item["source"]["artifact_id"] for item in result["parameters"])
     pictured = {item["artifact_id"] for item in result["figures"]}
     for artifact in cohort:
-        if artifact["artifact_id"] not in pictured and artifact.get("media_type", "").split(";", 1)[0] in {"image/png", "image/jpeg"}:
+        # A raw image is self-describing only when it is the selected subject.
+        # Ancestor images require a provider's exact manifest/report mapping.
+        if (artifact["artifact_id"] in focus and artifact["artifact_id"] not in pictured
+                and artifact.get("media_type", "").split(";", 1)[0] in {"image/png", "image/jpeg"}):
             result["figures"].append({"artifact_id": artifact["artifact_id"], "label": "已封存图件", "source": source(artifact)})
         if artifact["artifact_id"] in covered:
             continue

@@ -206,9 +206,7 @@ class HardenedFileEditor:
             if rule is not None:
                 return path, rule.max_bytes, rule.removable
         assert self.compiled.spec.limits is not None
-        if path == Path("output/result.json") and operation_workspace_hooks(
-            self.compiled
-        ).get("workspace_finalizer") is None:
+        if path == Path("output/result.json"):
             return path, self.compiled.spec.limits.max_output_bytes, False
         if len(path.parts) >= 3 and path.parts[:2] == ("output", "collections"):
             return path, self.compiled.spec.limits.max_output_bytes, True

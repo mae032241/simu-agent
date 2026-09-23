@@ -226,9 +226,12 @@ def _output(
     semantic_contract: ComponentRef | None = None,
 ) -> OutputPortSpec:
     opaque = schema == "opaque"
-    contract = semantic_contract or ComponentRef("diagnosis_semantic_contract")
+    contract = semantic_contract or ComponentRef("diagnosis_report_semantic_contract")
     payload_rule, context_rule = {
         "diagnosis_semantic_contract": (
+            "curve.diagnosis.report_consistency", "curve.diagnosis.input_binding"
+        ),
+        "diagnosis_report_semantic_contract": (
             "curve.diagnosis.report_consistency", "curve.diagnosis.input_binding"
         ),
         "curve_contract_semantic_contract": (
@@ -280,10 +283,15 @@ def _diagnosis_identity(inputs: tuple[Any, ...], parameters: Any) -> bool:
     if (plan.ref not in review.parent_refs or review.handoff_verdict != "pass"
             or dict(review.labels).get("operation_id") != "science.object.review.v1"
             or dict(review.labels).get("operation_output_port") != "scientific_review"):
-        return False
+        raise OperationInvocationError("input_review_plan_mismatch", port="experiment_review",
+            message="Bind the passing science.object.review.v1 scientific_review output whose direct parent is the exact experiment_plan.")
     # Generic results require explicit direct plan parentage. Runtime package chains
     # belong to the TCAD entry, whose guard checks the complete declared chain.
-    return all(plan.ref in item.parent_refs for item in by_port["experiment_results"])
+    for index, item in enumerate(by_port["experiment_results"]):
+        if plan.ref not in item.parent_refs:
+            raise OperationInvocationError("input_result_plan_mismatch", port="experiment_results", field=str(index),
+                message="This result has no direct parent matching experiment_plan. Generic analysis requires direct plan parentage; TCAD runtime package chains use tcad.result.analyze.v1.")
+    return True
 
 
 def _diagnosis_inputs(sources: dict[str, bytes]) -> None:
@@ -337,7 +345,7 @@ def _diagnosis_operation(operation_id: str, purpose: str, applies_when: str, *, 
         guards=(ComponentRef("diagnosis_identity"),), timeout=900,
         max_input_bytes=272 * 1024 * 1024, max_output_bytes=1152 * 1024 + 64 * 1024 * 1024,
         max_files=34, consequence="scientific",
-    ).model_copy(update={"version": "3"})
+    ).model_copy(update={"version": "4"})
 
 
 def _curve_error_diagnosis_operation() -> OperationSpec:
@@ -379,7 +387,7 @@ def _curve_error_diagnosis_operation() -> OperationSpec:
         max_output_bytes=128 * 1024,
         max_files=1,
         consequence="scientific",
-    )
+    ).model_copy(update={"version": "2"})
 
 
 CURVE_CONTRACT_PROMPT = """Do not author output/result.json or fill mechanical
@@ -404,7 +412,7 @@ worker_submit_result. Do not treat convergence-only cases as target-fit candidat
 """
 
 CURVE_CONTRACT_REVIEW_PROMPT = """Return exactly one RoleResultEnvelope whose
-payload is the ScientificReview required by output.schema.json. Independently
+payload is the ScientificReview required by the schema identified by assignment.output.schema_path. Independently
 review the curve-domain contract against the exact generic experiment plan.
 Use review_target domain_contract. Check series identity, case binding, units,
 domains, operator semantics, exact reference-bundle support, and the exact binding
@@ -580,6 +588,11 @@ def validate_analysis_report(diagnosis: LayeredDiagnosisReport, portfolio: Exper
     if len(plans) != 1 or diagnosis.study_kind != portfolio.study_kind:
         raise declared_violation("analysis must identify the exact study and validation plan")
     assessment = diagnosis.objective_assessment
+    if portfolio.objective_key is not None and assessment is None:
+        raise declared_violation(
+            "analysis objective assessment is required when the exact scoped plan declares objective_key",
+            path="$.objective_assessment",
+        )
     if assessment is not None and assessment.objective_key != portfolio.objective_key:
         raise declared_violation("analysis objective differs from plan", path="$.objective_assessment")
     records = diagnosis.calculation_records if calculations is None else calculations
@@ -792,6 +805,11 @@ No score is a normal path: report valid findings, missing conditions, current ob
 limits, remaining overall targets, and next steps, according to the evidence and the
 plan's actual dependencies. A missing comparison may leave the overall
 result inconclusive while other evidence supports finite findings or a local objective.
+Use the exact experiment_plan as the report scope. When that plan declares a non-null
+objective_key, objective_assessment is required and must use that exact key; pass,
+fail, inconclusive, and not_evaluable remain scientific choices. When the key is null,
+the assessment remains optional and must not be invented. next_action remains optional
+Worker advice, not a scheduling command.
 A partial metric pass does not establish unperformed comparisons or overall closure.
 Link computed operators to the selected plan using exact validation_check_key values,
 and cite their saved calculation_ref in evidence.
@@ -801,9 +819,14 @@ The optional curve-error helper is never a required next stage.
 """ + DIAGNOSTIC_GUIDANCE.format(diagnostic_tool="worker_curve_diagnose") + ANALYSIS_FILES_GUIDANCE
 
 
+class PrecomputedDiagnosisReport(LayeredDiagnosisReport):
+    """This writer consumes saved calculations and cannot author new records."""
+
+    calculation_records: tuple[()] = ()
+
+
 def _curve_diagnosis_schema() -> str:
-    schema = json.loads(schema_resource(LayeredDiagnosisReport, "scidiscovery.layered-diagnosis.v1"))
-    schema["properties"]["calculation_records"]["maxItems"] = 0
+    schema = json.loads(schema_resource(PrecomputedDiagnosisReport, "scidiscovery.layered-diagnosis.v1"))
     schema["$defs"]["AnalysisSourceReference"]["properties"]["input_alias"]["const"] = "curve_analysis_package"
     return canonical_json(schema).decode("utf-8")
 
@@ -823,6 +846,23 @@ class Resources:
         "Bind analysis to the exact plan, results, evidence and optional calculations.",
         "Report findings and limitations; verify controlled calculation receipts without rerunning scoring.",
         context_constraint="Output identities and references must agree with the exact declared context sources that are present. A source key must resolve to one bound input or calculation record. Inline and saved representations of the same complete controlled calculation receipt share one identity. A bound input alias retains its identity even in an optional source mapping. Repeated citations and local locators are allowed; an explicit locator naming another bound input conflicts with that mapping.",
+        payload_rule_id="curve.diagnosis.report_consistency",
+        context_rule_id="curve.diagnosis.input_binding",
+    )
+    diagnosis_report_semantic_contract = scientific_semantic_contract(
+        "curve.diagnosis",
+        "Bind analysis to the exact plan, results, evidence and optional calculations.",
+        "Report findings and limitations; verify controlled calculation receipts without rerunning scoring.",
+        context_constraint=(
+            "Output identities and references must agree with the exact declared context sources that are present. "
+            "For generic diagnosis the scope is the exact experiment_plan; for fixed curve-error diagnosis it is "
+            "curve_analysis_package.experiment_plan. When that scope declares a non-null objective_key, "
+            "objective_assessment is required and must use the exact key. A null key does not require or authorize "
+            "inventing an assessment identity. A source key must resolve to one bound input or calculation record. "
+            "Inline and saved representations of the same complete controlled calculation receipt share one identity. "
+            "A bound input alias retains its identity even in an optional source mapping. Repeated citations and local "
+            "locators are allowed; an explicit locator naming another bound input conflicts with that mapping."
+        ),
         payload_rule_id="curve.diagnosis.report_consistency",
         context_rule_id="curve.diagnosis.input_binding",
     )
@@ -880,7 +920,7 @@ class Resources:
     diagnosis_prompt = OPERATION_AGENT_PREAMBLE + DIAGNOSIS_PROMPT
     curve_diagnosis_prompt = OPERATION_AGENT_PREAMBLE + """Read analysis-start.json first for the input index and full continuation guidance.\nRead domain-workspace.json /patch_contract for the complete draft/report instructions.\nRead any bound curve_analysis_plots with native view_image when useful; these images supplement the fixed package, never supply unbound scientific facts.\nReturn exactly one
 RoleResultEnvelope whose payload is the LayeredDiagnosisReport required by
-output.schema.json. Interpret the supplied immutable curve-analysis package,
+the schema identified by assignment.output.schema_path. Interpret the supplied immutable curve-analysis package,
 using the evidence and actual dependencies of each conclusion. The package's metric values,
 localized residuals, and plot identities are deterministic facts: do not
 recompute or alter them. Do not mutate evidence or author state transitions.
@@ -891,6 +931,11 @@ that image. Source identity needs no duplicate entry in another citation table.
 No scoring tool or external evidence is available in this Operation. Distinguish
 declared check coverage from actual passing metrics and thresholds. Missing or
 failed checks limit complete success; they do not erase independently supported facts.
+Use curve_analysis_package.experiment_plan as the exact report scope. When its
+objective_key is non-null, objective_assessment is required and must use that exact
+key; not_evaluable remains valid when this fixed package cannot assess the objective.
+When the key is null, the assessment remains optional and must not be invented.
+next_action remains optional Worker advice, not a scheduling command.
 """
 
 
@@ -1002,6 +1047,7 @@ def _curve_error_analysis_operation() -> OperationSpec:
                 media_types=("image/png",),
                 min_items=1,
                 max_items=8,
+                semantic_contract=ComponentRef("diagnosis_semantic_contract"),
                 collection=CollectionSpec(
                     max_total_bytes=8 * 1024 * 1024,
                 ),
@@ -1043,21 +1089,21 @@ def component_specs() -> tuple[ComponentSpec, ...]:
             "diagnosis_validator",
             "validator",
             "curve_score.science_operations:Components.diagnosis_validator",
-            resources=(ComponentRef("diagnosis_semantic_contract"),),
+            resources=(ComponentRef("diagnosis_report_semantic_contract"),),
         ),
         ComponentSpec(
             "diagnosis_context",
             "validator",
             "curve_score.science_operations:Components.diagnosis_context",
             configuration_identity="analysis-receipt-integrity:v1",
-            resources=(ComponentRef("diagnosis_semantic_contract"),),
+            resources=(ComponentRef("diagnosis_report_semantic_contract"),),
         ),
         ComponentSpec(
             "curve_diagnosis_context",
             "validator",
             "curve_score.science_operations:Components.curve_diagnosis_context",
             configuration_identity="input-boundary-r4:v1",
-            resources=(ComponentRef("diagnosis_semantic_contract"),),
+            resources=(ComponentRef("diagnosis_report_semantic_contract"),),
         ),
         ComponentSpec(
             "curve_analysis_package_validator",
@@ -1124,6 +1170,7 @@ def component_specs() -> tuple[ComponentSpec, ...]:
         "tool_evidence_schema",
         "curve_analysis_package_schema",
         "diagnosis_semantic_contract",
+        "diagnosis_report_semantic_contract",
         "diagnosis_prompt",
         "curve_diagnosis_prompt",
         "curve_contract_semantic_contract",

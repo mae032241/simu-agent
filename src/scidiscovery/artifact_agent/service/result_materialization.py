@@ -53,7 +53,7 @@ def materialize_analysis_handoff(value: dict) -> None:
     handoff = value.setdefault('handoff', {})
     if isinstance(handoff, dict):
         handoff['verdict'] = verdict
-        handoff['summary'] = 'Read run_status.sealed_output.payload.summary for the scientific conclusion; payload.next_action contains any scientific recommendation.'
+        handoff['summary'] = 'Scientific conclusion: payload.summary; recommendations: payload.next_action.'
 
 
 def materialize_summary_handoff(value: dict, verdict: str | None) -> None:

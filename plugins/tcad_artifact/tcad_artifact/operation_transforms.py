@@ -105,6 +105,64 @@ def package(values: Mapping[str, tuple[bytes, ...]]) -> dict[str, tuple[bytes, .
     return package_reviewed_project(inputs)
 
 
+def project_execution_plan(values):
+    project = DeckProjectDraft.model_validate_json(_one(values, "project"), strict=True)
+    if project.execution_plan is None:
+        raise ValueError("Only a sealed project with an embedded execution_plan can be projected")
+    return {"experiment_plan": (canonical_json(project.execution_plan.model_dump(mode="json")),)}
+
+
+def require_skeleton_project_origin(descriptor, *, port="project"):
+    labels = dict(descriptor.labels)
+    if (descriptor.producer_run_id is None
+        or labels.get("operation_id") not in {"tcad.deck.author.initial.v1", "tcad.deck.author.revise.v1", "tcad.deck.author.runtime-failure.v1"}
+        or labels.get("operation_version") != "3"):
+        raise OperationInvocationError("input_skeleton_project_producer_required", port=port,
+            message="A new skeleton project must be the sealed output of a completed supported author Run; added fields or labels cannot upgrade legacy/imported projects.")
+
+
+def projection_inputs(sources):
+    project = parse_bound_json(DeckProjectDraft, sources["project"], admission_port="project")
+    if project.execution_plan is None:
+        raise OperationInvocationError("input_embedded_plan_missing", port="project")
+    require_skeleton_project_origin(sources.binding_descriptors["project"])
+
+
+def package_inputs(sources):
+    project = parse_bound_json(DeckProjectDraft, sources["project"], admission_port="project")
+    plan = parse_bound_json(ExperimentPortfolio, sources["experiment_plan"], admission_port="experiment_plan")
+    if project.execution_plan is None:
+        if dict(sources.binding_descriptors["experiment_plan"].labels).get("operation_id") == "tcad.execution-plan.project.v1":
+            raise OperationInvocationError("input_projected_plan_legacy_mismatch", port="experiment_plan")
+        if "scientific_skeleton" in sources:
+            raise OperationInvocationError("input_package_plan_branch_mismatch", port="scientific_skeleton")
+        return
+    if "scientific_skeleton" not in sources or "experiment_review" in sources:
+        raise OperationInvocationError("input_package_review_branch_mismatch", port="scientific_skeleton")
+    if project.execution_plan != plan:
+        raise OperationInvocationError("input_project_execution_plan_mismatch", port="experiment_plan")
+    report = parse_bound_json(DeckReviewReport, sources["review"], admission_port="review")
+    if report.verdict != "pass" or report.scientific_assessment != "pass":
+        raise OperationInvocationError("input_comprehensive_review_required", port="review")
+    descriptors = sources.binding_descriptors
+    projected = descriptors["experiment_plan"]
+    subject = descriptors["project"]
+    require_skeleton_project_origin(subject)
+    skeleton = descriptors["scientific_skeleton"]
+    review = descriptors["review"]
+    skeleton_labels = dict(skeleton.labels)
+    if (skeleton.producer_run_id is None
+        or skeleton_labels.get("operation_id") != "science.experiment.skeleton.v1"):
+        raise OperationInvocationError("input_skeleton_objective_source_required", port="scientific_skeleton",
+            message="A skeleton project can be packaged only when its skeleton came from the completed design Operation that sealed the exact research objective source.")
+    if subject.artifact_ref not in projected.parent_refs or dict(projected.labels).get("operation_id") != "tcad.execution-plan.project.v1":
+        raise OperationInvocationError("input_execution_plan_projection_mismatch", port="experiment_plan")
+    if skeleton.artifact_ref not in subject.parent_refs or skeleton.artifact_ref not in review.parent_refs:
+        raise OperationInvocationError("input_project_skeleton_mismatch", port="scientific_skeleton")
+    if review.producer_run_id is None or dict(review.labels).get("operation_version") != "3":
+        raise OperationInvocationError("input_comprehensive_review_contract_required", port="review")
+
+
 def runtime_inputs(sources: Mapping[str, bytes]) -> None:
     manifest = parse_bound_json(TCADRuntimeManifest, sources["runtime_manifest"], admission_port="runtime_manifest")
     parse_bound_json(ReviewedDeckPackage, sources["reviewed_package"], admission_port="reviewed_package")
@@ -344,7 +402,14 @@ def _operation(
     )
 
 
+EXECUTION_PLAN_COMPONENT = CallableComponent("transform", project_execution_plan)
+PROJECTION_INPUTS_COMPONENT = CallableComponent("validator", projection_inputs)
+PACKAGE_INPUTS_COMPONENT = CallableComponent("validator", package_inputs)
+
 COMPONENT_SPECS = (
+    ComponentSpec("execution_plan_project", "transform", "tcad_artifact.operation_transforms:EXECUTION_PLAN_COMPONENT", configuration_identity="tcad.execution-plan.project:v1"),
+    ComponentSpec("execution_plan_inputs", "validator", "tcad_artifact.operation_transforms:PROJECTION_INPUTS_COMPONENT"),
+    ComponentSpec("package_inputs", "validator", "tcad_artifact.operation_transforms:PACKAGE_INPUTS_COMPONENT"),
     ComponentSpec("runtime_inputs", "validator", "tcad_artifact.operation_transforms:RUNTIME_INPUT_VALIDATOR"),
     ComponentSpec("deck_compare", "transform", "tcad_artifact.operation_transforms:COMPARE_COMPONENT"),
     ComponentSpec("review_validate", "transform", "tcad_artifact.operation_transforms:REVIEW_VALIDATION_COMPONENT"),
@@ -381,6 +446,13 @@ COMPONENT_SPECS = (
 
 
 OPERATIONS = (
+    _operation(
+        "tcad.execution-plan.project.v1", "execution_plan_project",
+        "Extract the sealed project's sole execution plan unchanged; grants no scientific or execution qualification.",
+        (_input("project", "tcad.deck-project.v1", "project_schema", usage="evidence_inventory"),),
+        (_output("experiment_plan", "experiment_portfolio", "scidiscovery.experiment-portfolio.v1", "project_schema", max_bytes=2 * 1024 * 1024).model_copy(update={"schema_resource": _ref("experiment_portfolio_schema", "general_science")}),),
+        input_validation=InputValidationSpec(_ref("execution_plan_inputs"), "tcad.execution_plan.project.inputs", "Only a sealed project with a concrete embedded Portfolio; gaps and legacy projects cannot be projected."),
+    ).model_copy(update={"catalog_scope": "public", "consequence": "explore"}),
     _operation(
         EXECUTION_CONTEXT_OPERATION,
         "execution_context_project",
@@ -435,8 +507,9 @@ OPERATIONS = (
             _input("project", "tcad.deck-project.v1", "project_schema"),
             _input("review", "tcad.deck-review-report.v1", "review_schema", usage="prior_signal"),
             _input("capability", "tcad.solver-capability.v2", "capability_schema", usage="prior_signal"),
-            _input("experiment_plan", "scidiscovery.experiment-portfolio.v1", _ref("experiment_portfolio_schema", "general_science")),
+            _input("experiment_plan", "scidiscovery.experiment-portfolio.v1", _ref("experiment_portfolio_schema", "general_science"), usage="prior_signal"),
             _input("experiment_review", "scidiscovery.scientific-review.v1", _ref("scientific_review_schema", "general_science"), min_items=0, usage="prior_signal"),
+            _input("scientific_skeleton", "scidiscovery.experiment-scientific-skeleton.v1", _ref("experiment_skeleton_schema", "general_science"), min_items=0, max_bytes=64 * 1024),
         ),
         (_output(
             "reviewed_package",
@@ -447,6 +520,7 @@ OPERATIONS = (
             payload_schema_version=2,
         ),),
         guards=(_ref("package_parentage"),),
+        input_validation=InputValidationSpec(_ref("package_inputs"), "tcad.package.inputs", "Legacy plan review witness or exact project-derived plan and comprehensive independent review; skeleton, project, plan and review must share exact lineage."),
     ),
     _operation(
         RUNTIME_ATTESTATION_OPERATION,

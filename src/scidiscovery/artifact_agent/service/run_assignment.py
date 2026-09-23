@@ -13,7 +13,7 @@ from ...operations.invoke import (
     operation_port_json_schema,
     operation_primary_output,
 )
-from ...operations.tooling import operation_tool_contracts
+from ...operations.tooling import operation_tool_contracts, operation_role_instructions
 from ..schema.common import canonical_json
 from ..schema.role_result import RoleResultEnvelope
 from .local_workspace import workspace_input_filename
@@ -39,6 +39,14 @@ def assignment_json(
         if item.port_name == "user_context"
         and dict(item.artifact.labels).get("source_origin") == "user_via_scheduler"
     }
+    source_provenance = {}
+    for item in bound.inputs:
+        labels = dict(item.artifact.labels)
+        if labels.get("source_origin") == "public_web":
+            source_provenance[item.source_name] = {"source_provenance": {
+                "origin": "public_web", "original_source_alias": labels.get("original_source_alias"),
+                "instruction": "Original fetched bytes. Cite the current source_name; source_manifest contains URL and retrieval time.",
+            }}
     return canonical_json(
         {
             "schema_version": 1,
@@ -48,12 +56,15 @@ def assignment_json(
                 "digest": bound.compiled.digest,
             },
             "instruction": bound.instruction or "",
+            "role_instructions": operation_role_instructions(bound.compiled),
             "narrative_instruction": narrative_instruction(
                 bound.execution_profile["profile"] if bound.execution_profile else None),
             "budget": {"deadline_at": deadline_at, "source": "control"} if deadline_at else None,
             "inputs": [
                 {
                     "source_name": item.source_name,
+                    "artifact_name": item.artifact_name,
+                    "artifact_name_usage": "navigation_only",
                     "port": item.port_name,
                     "description": next(port.description for port in bound.compiled.spec.inputs
                         if port.name == item.port_name),
@@ -62,9 +73,11 @@ def assignment_json(
                         + workspace_input_filename(item.source_name, item.media_type)
                     ),
                     "media_type": item.media_type,
+                    **({"reference_availability": "unknown"} if "worker_reference_read" in tool_names else {}),
                     "usage": item.usage,
                     "exposure": item.exposure,
                     **user_context_origins.get(item.source_name, {}),
+                    **source_provenance.get(item.source_name, {}),
                     "historical": next(
                         value.artifact.historical for value in bound.inputs
                         if value.source_name == item.source_name
@@ -85,6 +98,8 @@ def assignment_json(
             },
             "revision": revision,
             "prior_source_bindings": prior_source_bindings or {},
+            **({"reference_access": "Bound input originals are readable at their relative_path; reference availability is unknown until checked, not absent. Use worker_reference_read to list one selected bound report’s direct citations and read selected originals. Select a calculation before its inputs. Do not expand all history; unresolved references remain explicit gaps."}
+               if "worker_reference_read" in tool_names else {}),
             "tools": list(tool_names),
             "tool_contracts": operation_tool_contracts(bound.compiled, tool_names),
             "recovery_draft": (

@@ -42,6 +42,25 @@ def _values_equal(left: ScalarValue, right: ScalarValue) -> bool:
     return type(left) is type(right) and left == right
 
 
+ScientificText = Annotated[str, Field(min_length=1, max_length=4096)]
+ScientificStatements = Annotated[tuple[ScientificText, ...], Field(min_length=1, max_length=64)]
+
+
+class ExperimentScientificSkeleton(SchemaModel):
+    """Scientific choices only; the author owns the concrete execution Portfolio."""
+
+    selected_hypothesis_keys: Annotated[tuple[Identifier, ...], Field(min_length=1, max_length=32)]
+    current_objectives: ScientificStatements
+    competing_explanations_and_controls: ScientificStatements
+    changed_conditions: ScientificStatements
+    held_conditions: ScientificStatements
+    observables: ScientificStatements
+    discrimination_criteria_and_basis: ScientificStatements
+    immutable_conditions: ScientificStatements
+    stop_conditions: ScientificStatements
+    feasibility_limitations: Annotated[tuple[ScientificText, ...], Field(max_length=64)] = ()
+
+
 class IntentCase(SchemaModel):
     case_key: Identifier
     scientific_role: Literal[
@@ -163,8 +182,7 @@ class ExperimentProposalIntent(SchemaModel):
     prediction_tests: Annotated[
         tuple[PredictionTest, ...], Field(max_length=128)
     ] = ()
-    validation_plan: ValidationPlan | None = None
-    validation_intent: IntentValidationPlan | None = None
+    validation_intent: IntentValidationPlan
     resource_estimate: IntentResourceEstimate
     stop_conditions: Annotated[tuple[str, ...], Field(min_length=1, max_length=64)]
     value_assessment: ExperimentValueAssessment
@@ -181,15 +199,6 @@ class ExperimentProposalIntent(SchemaModel):
                 raise ValueError(f"{label} must be unique")
         if not set(self.current_objectives).issubset(self.objectives):
             raise ValueError("current_objectives must be an exact subset of objectives")
-        if (self.validation_plan is None) == (self.validation_intent is None):
-            raise ValueError(
-                "intent requires exactly one complete validation_plan or compact validation_intent"
-            )
-        if (
-            self.validation_plan is not None
-            and self.validation_plan.experiment_key != self.experiment_key
-        ):
-            raise ValueError("intent validation plan experiment_key differs")
         known_cases = set(case_keys)
         if self.baseline_case_key is None and self.variables:
             baselines = tuple(item.case_key for item in self.cases
@@ -259,20 +268,47 @@ class ExperimentDesignIntent(SchemaModel):
             if not set(proposal.hypothesis_keys).issubset(selected):
                 raise ValueError("intent proposal references an unselected hypothesis")
         if self.study_kind == "scientific":
-            if self.objective_key is None or not selected:
-                raise ValueError("scientific intent requires objective and hypotheses")
+            if not selected:
+                raise ValueError("scientific intent requires hypotheses")
             if self.engineering_objective is not None:
                 raise ValueError("scientific intent cannot declare engineering_objective")
         else:
             if (
-                self.objective_key is not None
-                or selected
+                selected
                 or self.engineering_objective is None
             ):
                 raise ValueError(
                     "engineering intent requires only an engineering objective"
                 )
         return self
+
+
+class HistoricalExperimentProposalIntent(ExperimentProposalIntent):
+    """Read sealed intents from before compact validation became mandatory."""
+
+    validation_intent: IntentValidationPlan | None = None
+    validation_plan: ValidationPlan | None = None
+
+    @model_validator(mode="after")
+    def _historical_validation_choice(self) -> HistoricalExperimentProposalIntent:
+        if (self.validation_plan is None) == (self.validation_intent is None):
+            raise ValueError(
+                "intent requires exactly one complete validation_plan or compact validation_intent"
+            )
+        if (
+            self.validation_plan is not None
+            and self.validation_plan.experiment_key != self.experiment_key
+        ):
+            raise ValueError("intent validation plan experiment_key differs")
+        return self
+
+
+class HistoricalExperimentDesignIntent(ExperimentDesignIntent):
+    """Historical input reader, never the contract for a new Worker output."""
+
+    proposals: Annotated[
+        tuple[HistoricalExperimentProposalIntent, ...], Field(min_length=1, max_length=16)
+    ]
 
 
 class ExperimentPlanMaterializationReport(SchemaModel):
@@ -307,10 +343,6 @@ def materialize_experiment_design_intent(
     if intent.study_kind == "scientific":
         if objective is None:
             raise ValueError("scientific experiment intent requires research objective")
-        if intent.objective_key != objective.objective_key:
-            raise ValueError(
-                "experiment intent objective_key differs from research objective"
-            )
         objective_statement = objective.statement
     else:
         if objective is not None:
@@ -387,7 +419,8 @@ def materialize_experiment_design_intent(
         )
         validation_plan = (
             proposal_intent.validation_plan
-            if proposal_intent.validation_plan is not None
+            if isinstance(proposal_intent, HistoricalExperimentProposalIntent)
+            and proposal_intent.validation_plan is not None
             else _materialize_validation_plan(
                 proposal_intent.experiment_key,
                 proposal_intent.validation_intent,
@@ -420,7 +453,7 @@ def materialize_experiment_design_intent(
         plans.append(validation_plan)
     portfolio = ExperimentPortfolio(
         study_kind=intent.study_kind,
-        objective_key=intent.objective_key,
+        objective_key=objective.objective_key if intent.study_kind == "scientific" else None,
         objective=objective_statement,
         selected_hypothesis_keys=intent.selected_hypothesis_keys,
         proposals=tuple(proposals),
@@ -445,10 +478,6 @@ def validate_experiment_design_intent_task_output(
     intent = ExperimentDesignIntent.model_validate_json(
         canonical_json(value), strict=True
     )
-    if any(proposal.validation_plan is not None for proposal in intent.proposals):
-        raise SemanticRuleViolation(
-            "new experiment design output must use compact validation_intent"
-        )
     objective = None
     if intent.study_kind == "scientific":
         raw_objective = inputs.get("research_objective")
@@ -457,10 +486,6 @@ def validate_experiment_design_intent_task_output(
         objective = ResearchObjectiveContract.model_validate_json(
             raw_objective, strict=True
         )
-        if intent.objective_key != objective.objective_key:
-            raise declared_violation(
-                "experiment intent objective_key differs from research objective"
-            )
     try:
         portfolio = materialize_experiment_design_intent(intent, objective)
     except ValidationError as error:
@@ -484,7 +509,7 @@ def materialize_experiment_design_inputs(
 ) -> tuple[ExperimentPortfolio, ExperimentPlanMaterializationReport]:
     if "experiment_design_intent" not in inputs:
         raise ValueError("experiment plan materialization requires intent")
-    intent = ExperimentDesignIntent.model_validate_json(
+    intent = HistoricalExperimentDesignIntent.model_validate_json(
         inputs["experiment_design_intent"], strict=True
     )
     if intent.study_kind == "engineering":

@@ -6,7 +6,7 @@ import html
 import json
 from urllib.parse import quote, urlencode
 
-from .presentation_render import render_json_value, render_presentation, safe_local_href, render_source, fold_panel, human_value, approval_heading
+from .presentation_render import render_json_value, render_presentation, safe_local_href, render_source, fold_panel, human_value, approval_heading, render_scientific_text
 from .navigation import navigation
 
 
@@ -137,7 +137,7 @@ def _goal_panel(view: dict, instance_id: str) -> str:
     for record in records[:2]:
         value = record.get("payload") if isinstance(record, dict) else None
         if isinstance(value, str):
-            original = "<p class='goal-statement'>" + _text(value, 260) + "</p>"
+            original = "<p class='goal-statement'>" + render_scientific_text(value, 260) + "</p>"
             source = render_source(record.get("source"), lambda artifact, pointer: _evidence_href(instance_id, artifact, pointer))
             if any('\u4e00' <= char <= '\u9fff' for char in value):
                 statements.append(original + source)
@@ -208,12 +208,36 @@ def _observations(observations: object, instance_id: str, *, node_key: str | Non
         + render_json_value(rows, max_bytes=6144) + _link(url, "读取更多观察记录", class_name="source-link"))
 
 
+def _trajectory_pagination(trajectory: dict, base: str, query: dict) -> str:
+    page, pages, total = trajectory["page"], trajectory["total_pages"], trajectory["total"]
+    def link(target: int, label: str) -> str:
+        return _link(base + "?" + urlencode({**query, "page": target}) + "#trajectory", label)
+    links = []
+    if page > 1:
+        links.extend((link(1, "首页"), link(page - 1, "上一页")))
+    for number in range(max(1, page - 2), min(pages, page + 2) + 1):
+        links.append("<span aria-current='page'>" + str(number) + "</span>" if number == page else link(number, str(number)))
+    if page < pages:
+        links.extend((link(page + 1, "下一页"), link(pages, "末页")))
+    fields = "".join("<input type='hidden' name='" + html.escape(str(key), quote=True)
+        + "' value='" + html.escape(str(value), quote=True) + "'>" for key, value in query.items())
+    return ("<nav class='trajectory-pagination' aria-label='研究轨迹分页'><p>第 " + str(page) + " / " + str(pages)
+        + " 页 · 共 " + str(total) + " 个节点</p><div class='page-links'>" + "".join(links) + "</div>"
+        + ("<form method='get' action='" + html.escape(base, quote=True) + "#trajectory'>" + fields
+            + "<label>跳至 <input type='number' name='page' min='1' max='" + str(pages) + "' value='"
+            + str(page) + "' required aria-label='轨迹页码'> 页</label><button type='submit'>跳转</button></form>" if pages > 1 else "")
+        + "</nav>")
+
+
 def render_workbench(overview: dict, *, browse_base: str, csrf_token: str, can_manage: bool = False) -> bytes:
     instance = _dict(overview.get("instance"))
     instance_id = str(instance.get("instance_id", ""))
     base = safe_local_href(browse_base) or _path(instance_id)
     storage_state = _dict(overview.get("storage")).get("storage_state")
-    navigation = _link(base, "刷新记录", extra=" data-workbench-refresh")
+    trajectory = _dict(overview.get("trajectory"))
+    query = _dict(overview.get("navigation_query"))
+    refresh_query = {**query, **({"page": trajectory["page"]} if trajectory else {})}
+    navigation = _link(base + ("?" + urlencode(refresh_query) if refresh_query else ""), "刷新记录", extra=" data-workbench-refresh")
     if can_manage:
         navigation += _link(base + "/manage", "整理与管理")
     header = ("<header class='workbench-header'><div class='workspace-brand'>科研工作台 <span>实例视图</span></div>"
@@ -227,15 +251,16 @@ def render_workbench(overview: dict, *, browse_base: str, csrf_token: str, can_m
         visible = [n for n in rows if n.get("kind") != "artifact"]
         hidden_count = len(rows) - len(visible)
         rows = visible
-    important = [n for n in rows if n.get("kind") != "artifact"]
+    important = trajectory["items"] if trajectory else [n for n in rows if n.get("kind") != "artifact"]
     cursor = nodes.get("next_cursor")
-    more = _link(base + "?" + urlencode({"cursor":cursor}), "更早的研究记录 →", class_name="pagination-next") if cursor else "<p class='source-note'>本页已到记录末尾。</p>"
+    more = _link(base + "?" + urlencode({**refresh_query, "cursor":cursor}), "更早的研究记录 →", class_name="pagination-next") if cursor else "<p class='source-note'>本页已到记录末尾。</p>"
+    trajectory_navigation = _trajectory_pagination(trajectory, base, query) if trajectory else more
     active = [n for n in _list(overview.get("active_tasks")) if isinstance(n, dict)]
     timeline = ("<section class='trajectory-panel' id='trajectory'><div class='panel-heading'><h2>研究轨迹</h2>"
         + "<span class='panel-count'>" + str(len(important)) + " 个节点</span></div>"
-        + "<p class='source-note'>按记录时间排列；状态各自保留。</p><ol class='trajectory-list'>"
-        + "".join(_node_card(n, instance_id, compact=True) for n in important[:8]) + "</ol>"
-        + ("<p>本页为成果登记记录，请查看全部记录或继续翻页。</p>" if not important else "") + more + "</section>")
+        + "<p class='source-note'>按登记时间从新到旧排列；成果登记见下方全部记录。新增记录后页码可能移动。</p><ol class='trajectory-list'>"
+        + "".join(_node_card(n, instance_id, compact=True) for n in important) + "</ol>"
+        + ("<p>暂无任务、审批或执行节点；成果可在下方全部记录查看。</p>" if not important else "") + trajectory_navigation + "</section>")
     active_panel = (fold_panel("多个活动分支", "<ul class='active-branches'>" + "".join(_node_card(n, instance_id, compact=True) for n in active) + "</ul>", count=len(active))
         if active else "<p class='source-note active-note'><span class='quiet-dot'></span>当前没有正在运行的任务</p>")
     display = _dict(overview.get("display_node"))
@@ -342,8 +367,8 @@ def render_node(node: dict, *, instance_id: str, presentation: dict | None = Non
         approval = ("<section class='conclusion-card approval-readonly'><p class='eyebrow'>原审批记录 · 只读</p><h2>" + kind
             + "</h2><div class='conclusion-value'><span>人工决定</span><strong>"
             + _text(human_value(decision.get("selected_option")) if decision else "尚无决定") + "</strong></div>"
-            + "<p class='conclusion-brief'>" + _text(question, 320) + "</p>"
-            + fold_panel("审批事项与原问题", render_json_value(question, max_bytes=8192)) + "</section>")
+            + "<p class='conclusion-brief'>" + render_scientific_text(question, 320) + "</p>"
+            + fold_panel("审批事项与原问题", render_json_value(question, max_bytes=8192, compact_numbers=True)) + "</section>")
         review_url = safe_local_href(node.get("review_url"))
         if review_url:
             approval += _link(review_url, "打开原审批请求", class_name="download-button")

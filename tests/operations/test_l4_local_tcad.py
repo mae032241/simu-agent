@@ -92,7 +92,7 @@ class _ImmediateDebugAdapter:
     def __init__(self) -> None:
         self.submissions = 0
 
-    def prepare(self, *, project, capability, sources, exchange_directory, mode):
+    def prepare(self, *, project, capability, sources, exchange_directory, mode, output_budget_bytes=None):
         del capability, sources, mode
         path = exchange_directory / "candidate.json"
         path.write_bytes(project)
@@ -239,13 +239,9 @@ def test_experiment_revision_changes_content_without_replacing_identity() -> Non
 
     replacement = revised.model_copy(
         update={
-            "objective": "Replace the experiment with another objective.",
-            "proposals": (revised.proposals[0].model_copy(update={
-                "objectives": (
-                    "Replace the experiment with another objective.",
-                    *revised.proposals[0].objectives,
-                ),
-            }),),
+            "selected_hypothesis_keys": (
+                *revised.selected_hypothesis_keys, "replacement_hypothesis",
+            ),
         }
     )
     with pytest.raises(SemanticRuleViolation, match="experiment identity"):
@@ -671,7 +667,9 @@ def test_hardened_v1_rejects_tcad_native_shell_before_run_creation(
     tmp_path: Path,
 ) -> None:
     _, runtime, root, _ = _system(tmp_path, worker_backend="hardened")
-    catalog = root.call_tool("operation_catalog", {"scope": "all"})
+    catalog = root.call_tool("operation_catalog", {
+        "scope": "all", "operation_id": "tcad.deck.author.initial.v1", "view": "detail",
+    })
     author = next(
         item
         for item in catalog["operations"]
@@ -946,7 +944,7 @@ def test_local_tcad_budget_covers_pending_failure_cache_and_exhaustion(tmp_path)
     diagnostic = json.loads((reports / "diagnostic-i1.json").read_bytes())
     assert diagnostic["state"] == "failed" and diagnostic["exit_code"] != 0
     assert diagnostic["source_tree_sha256"] and diagnostic["project_sha256"]
-    assert "log_excerpt" in diagnostic and "run_name" not in diagnostic
+    assert "log_excerpt" in diagnostic and diagnostic["run_name"] == "i1"
     assert len(tuple(reports.glob("diagnostic-*.json"))) == 4
     cached = worker.call_tool("worker_tcad_debug_run", {"run_name": "p1", "mode": "preflight"})
     assert cached["state"] == "succeeded"
@@ -1517,7 +1515,7 @@ def test_local_tcad_debug_rejects_a_private_output_symlink(
     )
     assert rejected["state"] == "rejected"
     assert any(
-        "unavailable" in item["message"] for item in rejected["diagnostics"]
+        "private directory is unsafe" in item["message"] for item in rejected["diagnostics"]
     )
     assert not (outside / "preflight/profile.tdr").exists()
 
@@ -1849,7 +1847,7 @@ def test_local_review_rejects_false_pass_then_seals_missing_case_report(tmp_path
         "payload": report,
     }))
     assert worker.call_tool("worker_submit_result", {})["state"] == "completed"
-    status = root.call_tool("run_status", {"name": "case_review"})
+    status = root.call_tool("run_status", {"name": "case_review", "view": "detail"})
     assert status["state"] == "completed"
     assert status["sealed_output"]["payload"]["missing_inputs"] == report["missing_inputs"]
     assert status["sealed_output"]["payload"]["execution_ready"] is False
@@ -1879,7 +1877,7 @@ def _plan_producer_plugin():
             "validator": ComponentRef("fixture_plan_validator"),
             "validator_rule_id": "fixture.plan.schema",
             "context_validator": None, "context_rule_id": None, "context_sources": (),
-        }),),
+        }), *revision.outputs[1:]),
     })
     reviewer = next(op for op in SCIENCE_PLUGIN.operations
                     if op.operation_id == "science.object.review.v1")
@@ -2114,6 +2112,7 @@ def test_materialized_sprocess_author_review_package_preserves_case_anchors(tmp_
     # Emulate the pre-fix producer which never retained case_anchors.
     legacy = dict(author_project)
     legacy.pop("case_anchors")
+    legacy.pop("development_diagnostics", None)
     legacy_digest = hashlib.sha256(canonical_json({
         key: value for key, value in legacy.items()
         if key not in {"preflight_attestation", "initialization_attestation", "materialization_report"}
@@ -2204,7 +2203,10 @@ def test_author_gap_submits_without_source_and_has_independent_review(tmp_path):
     assert rejected['state'] == 'rejected'
     detail = rejected['diagnostics'][0]
     assert detail['path'] == '$.deck.gap.affected_work[0].plan_locator'
-    assert detail['message'] == 'gap plan_locator must be an existing JSON pointer in experiment_plan'
+    assert detail['message'] == (
+        'gap plan_locator must be an existing JSON pointer in the bound '
+        'scientific_skeleton or experiment_plan'
+    )
     assert runtime.runs.diagnostic_summary(runtime.runs.status(worker._run_id))['latest_rejection']['details'] == rejected['diagnostics']
     _write_gap(opened)
     # No source, materialization or solver diagnostics are necessary for a negative result.
