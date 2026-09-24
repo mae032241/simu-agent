@@ -75,6 +75,7 @@ class DeckSourceDeclarations(StrictModel):
     )
     case_anchors: tuple[DeclaredCaseAnchor, ...] = Field(max_length=100000)
     raw_outputs: tuple[DeclaredRawOutput, ...] = Field(default=(), max_length=4096)
+    collect_generated_outputs: bool | None = None
 
     _safe_entrypoint = field_validator("entrypoint")(_safe_relative_path)
 
@@ -164,7 +165,7 @@ def materialization_contract(experiment_plan: bytes) -> dict[str, object]:
             "or generate solver-language code."
         ),
         "declaration_file": "deck/declarations.json",
-        "required_fields": ["entrypoint", "case_anchors", "raw_outputs"],
+        "required_fields": ["entrypoint", "case_anchors"],
         "case_anchor_fields": [
             "experiment_key",
             "case_key",
@@ -176,11 +177,12 @@ def materialization_contract(experiment_plan: bytes) -> dict[str, object]:
             "locator_interpretation": "independent_deck_review",
             "solver_syntax_parsing": False,
         },
-        "raw_output_fields": ["name", "relative_path", "media_type"],
+        "raw_output_fields": [],
+        "generated_output_collection": "all changed regular files in the isolated work directory, bounded by job limits",
         "control_generated_output_fields": ["capture", "max_bytes"],
         "output_instruction": (
-            "Declare raw_outputs with name, relative_path and media_type only. "
-            "Control builds expected_outputs, including capture, max_bytes and the solver log."
+            "Generated solver files are collected from the isolated work directory. "
+            "Do not enumerate adaptive frames in raw_outputs; control builds a hashed file manifest."
         ),
         "proposals": proposals,
     }
@@ -228,19 +230,7 @@ def declarations_template(
             else base_project.development_initialization_entrypoint
         ),
         "case_anchors": anchors,
-        "raw_outputs": (
-            []
-            if base_project is None
-            else [
-                {
-                    "name": item.name,
-                    "relative_path": item.relative_path,
-                    "media_type": item.media_type,
-                }
-                for item in base_project.expected_outputs
-                if item.capture == "workspace_file"
-            ]
-        ),
+        "collect_generated_outputs": True,
     }
 
 
@@ -431,6 +421,11 @@ def materialize_deck_project(
             # A locator proves source presence, not physical implementation.
 
     limits = _resource_limits(metadata)
+    collect_generated = (
+        declared.collect_generated_outputs
+        if declared.collect_generated_outputs is not None
+        else not declared.raw_outputs
+    )
     declared_output_names = tuple(item.name for item in declared.raw_outputs)
     declared_output_paths = tuple(item.relative_path for item in declared.raw_outputs)
     if len(declared_output_names) != len(set(declared_output_names)):
@@ -449,7 +444,18 @@ def materialize_deck_project(
                 fix="Keep one declaration for each raw output path.",
             )
         )
-    process_log_path = f"{Path(declared.entrypoint).stem}.log"
+    if collect_generated and declared.raw_outputs:
+        findings.append(
+            _finding(
+                "duplicate_control_anchor",
+                "generated-output collection does not use per-file raw output declarations",
+                fix="Remove raw_outputs; generated files are discovered and hashed after execution.",
+            )
+        )
+    process_log_path = (
+        "scid_capture/solver_stdout.log"
+        if collect_generated else f"{Path(declared.entrypoint).stem}.log"
+    )
     if "solver_log" in set(declared_output_names) or process_log_path in set(
         declared_output_paths
     ):
@@ -511,6 +517,7 @@ def materialize_deck_project(
                 for item in declared.raw_outputs
             ),
         ),
+        collect_generated_outputs=collect_generated,
         parameter_bindings=(),
         case_parameter_bindings=tuple(bindings),
         case_anchors=None if legacy_case_bindings_only else declared.case_anchors,

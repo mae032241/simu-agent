@@ -23,7 +23,7 @@ def _proofs(tmp_path):
 def test_delivery_seals_selected_bytes_and_restores_independent_reviewer(tmp_path):
     worker, adapter, workspace, reply = _proofs(tmp_path)
     assert reply['delivery_budget']['final_delivery_guaranteed'] is False
-    assert adapter.jobs[-1].limits.max_output_bytes < 8*1024*1024
+    assert 20*1024*1024 < adapter.jobs[-1].limits.max_output_bytes <= 64*1024*1024
     assert worker.call_tool('worker_submit_result', {})['state']=='completed'
     status=worker.runs.status(worker._run_id)
     sealed=json.loads(worker.runs.artifacts.read(status.output_ref))
@@ -102,23 +102,26 @@ def test_control_preserves_both_dynamic_observations_without_scientific_gate(tmp
     assert AttemptFile.model_validate(item).raw_bytes()==raw
 
 
-def test_fixed_known_encoded_bytes_refuse_before_reservation(tmp_path):
+def test_fixed_known_encoded_bytes_refuse_before_reservation(tmp_path, monkeypatch):
     from types import SimpleNamespace
-    from tcad_artifact.local_debug_service import _delivery_budget
+    from tcad_artifact import local_debug_service
     from tcad_artifact.debug_contract import TCADDebugError
     worker, adapter, workspace = setup_case(tmp_path)
     worker.runs.validate_candidate(worker._run_id)
     output = worker.runs.backend.open(worker._run_id).output_directory
     envelope=json.loads((output/'result.json').read_bytes())
     project=canonical_json(envelope['payload'])
-    envelope['handoff']['summary']='\x00'*(8*1024*1024//6)
+    reserve = 256 * 1024 + 1024
+    monkeypatch.setattr(local_debug_service, 'DEVELOPMENT_ARTIFACT_LIMIT_BYTES',
+                        len(canonical_json(envelope)) + reserve + 128)
+    envelope['handoff']['summary']+='\x00'*25
     (output/'result.json').chmod(0o600)
     (output/'result.json').write_bytes(canonical_json(envelope))
     # No handoff: use the fixed encoded candidate, including escaping inflation.
     (workspace/'deck/handoff.json').unlink()
     context=SimpleNamespace(state={},workspace=workspace,output_directory=output)
     with pytest.raises(TCADDebugError,match='before startup.*known_bytes=.*remaining_bytes='):
-        _delivery_budget(context,project,'initialization',('coarse_pre',))
+        local_debug_service._delivery_budget(context,project,'initialization',('coarse_pre',))
     assert adapter.jobs==[] and context.state=={}
 
 
@@ -135,6 +138,64 @@ def test_failed_diagnostic_is_not_charged_as_adopted_attachment(tmp_path):
     context=SimpleNamespace(state=state,workspace=workspace,output_directory=output)
     budget=_delivery_budget(context,project,'initialization',('coarse_pre',))
     assert budget['effective_collection_bytes']>0 and adapter.jobs==[]
+
+
+def test_initialization_budget_can_collect_first_hold_state_sequence(tmp_path):
+    from types import SimpleNamespace
+    from tcad_artifact.debug_contract import DEVELOPMENT_ARTIFACT_LIMIT_BYTES
+    from tcad_artifact.local_debug_service import _delivery_budget
+    worker, adapter, workspace = setup_case(tmp_path)
+    worker.runs.validate_candidate(worker._run_id)
+    output = worker.runs.backend.open(worker._run_id).output_directory
+    payload = json.loads((output/'result.json').read_bytes())['payload']
+    payload['resource_limits']['max_output_bytes'] = DEVELOPMENT_ARTIFACT_LIMIT_BYTES
+    project = canonical_json(payload)
+    context = SimpleNamespace(state={}, workspace=workspace, output_directory=output)
+    names = tuple(f'state_{index}' for index in range(48))
+    budget = _delivery_budget(context, project, 'initialization', names)
+    assert budget['envelope_limit_bytes'] == DEVELOPMENT_ARTIFACT_LIMIT_BYTES
+    assert budget['effective_collection_bytes'] > 20 * 1024 * 1024
+    assert adapter.jobs == []
+
+
+def test_large_initialization_state_sequence_is_sealed_for_review(tmp_path, monkeypatch):
+    import tests.operations.test_tcad_initialization_outputs as fixture
+    monkeypatch.setattr(fixture, 'RAW', b'\xff' * 400_000)
+    worker, adapter, workspace = setup_case(tmp_path)
+    names = [f'state_{index}' for index in range(48)]
+    declarations_path = workspace/'deck/declarations.json'
+    declarations = json.loads(declarations_path.read_bytes())
+    declarations['raw_outputs'] = [
+        {'name': name, 'relative_path': f'results/{name}.tdr',
+         'media_type': 'application/octet-stream'} for name in names
+    ]
+    declarations_path.write_bytes(canonical_json(declarations))
+    assert worker.call_tool('worker_tcad_debug_run', {'run_name': 'syntax', 'mode': 'preflight'})['state'] == 'succeeded'
+    result = worker.call_tool('worker_tcad_debug_run', {
+        'run_name': 'first_hold', 'mode': 'initialization', 'output_names': names,
+    })
+    assert result['state'] == 'succeeded', result
+    assert result['output_count'] == len(names)
+    assert worker.call_tool('worker_submit_result', {})['state'] == 'completed'
+    sealed = worker.runs.artifacts.read(worker.runs.status(worker._run_id).output_ref)
+    assert len(sealed) > 8 * 1024 * 1024
+    project = DeckProjectDraft.model_validate_json(sealed, strict=True)
+    selected = {item.relative_path: item.raw_bytes() for item in project.development_diagnostics}
+    assert len([name for name in selected if name.startswith('reports/first_hold/')]) == len(names)
+    assert selected['reports/first_hold/state_47'] == fixture.RAW
+    review = adapter.catalog.operation('tcad.deck.review.v1')
+    assert next(port for port in review.spec.inputs if port.name == 'project').max_item_bytes >= len(sealed)
+    root = adapter.root
+    project_name = root.call_tool('run_status', {'name': 'initialization_outputs'})['output_artifact_name']
+    _invoke(root, 'large_state_review', 'tcad.deck.review.v1', [
+        {'port': 'project', 'artifact_names': [project_name]},
+        {'port': 'execution_capability', 'artifact_names': ['execution_capability']},
+        {'port': 'experiment_plan', 'artifact_names': ['experiment_plan']},
+    ])
+    reviewer = LocalWorkerMCPRouter(worker.runs, operation_id=review.spec.operation_id,
+                                    operation_digest=review.digest)
+    opened = reviewer.call_tool('worker_open_assignment', {})
+    assert (Path(opened['workspace_path'])/'deck/reports/first_hold/state_47').read_bytes() == fixture.RAW
 
 
 def test_author_revision_navigates_readonly_originals_at_restored_history_paths(tmp_path):

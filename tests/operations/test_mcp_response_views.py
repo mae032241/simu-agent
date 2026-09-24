@@ -7,6 +7,7 @@ import pytest
 
 from scidiscovery.artifact_agent.interfaces.mcp import MCPRouter
 from scidiscovery.artifact_agent.interfaces.mcp_root import RootMCPRouter, RootToolError
+from scidiscovery.artifact_agent.interfaces.mcp_root_operation_routes import RootOperationRoutes
 from scidiscovery.artifact_agent.interfaces.mcp_response_views import (
     operation_invoke_contract,
     page,
@@ -45,16 +46,15 @@ def test_run_default_never_requests_full_output_and_keeps_explicit_pointer_seman
     call = Mock(side_effect=status)
     root = router(run_status=call)
     short = root.call_tool("run_status", {"name": "run"})
-    assert call.call_args.kwargs["output_paths"] == ["/summary"]
+    assert call.call_args.kwargs["output_paths"] == []
     assert "bound_inputs" not in short and "sealed_output" not in short
-    assert short["selected_output"]["items"][0]["status"] == "excerpt"
-    assert short["scheduler_signal"]["verdict"] == "blocked"
+    assert "selected_output" not in short and "scheduler_signal" not in short
     root.call_tool("run_status", {"name": "run", "output_paths": []})
     assert call.call_args.kwargs["output_paths"] == []
     detail = root.call_tool("run_status", {"name": "run", "view": "detail", "output_paths": []})
     assert detail["bound_inputs"][0]["artifact_names"] == [None]
-    assert "view" not in call.call_args.kwargs
-    selected = root.call_tool("run_status", {"name": "run", "output_paths": ["/summary"]})
+    assert call.call_args.kwargs["view"] == "detail"
+    selected = root.call_tool("run_status", {"name": "run", "response_profile": "decision", "output_paths": ["/summary"]})
     assert selected["selected_output"]["items"][0]["status"] == "selected"
 
 
@@ -96,14 +96,13 @@ def test_run_compact_profile_golden_fields_keep_diagnostics_and_hide_payloads():
     }
     without_events = run_profile_projection(full, response_profile="poll")
     with_events = run_profile_projection(full, response_profile="poll", diagnostics_requested=True)
-    assert without_events["compact_recovery_status"]["reason_code"] == "writers_unconfirmed"
-    assert without_events["diagnostic_summary"]["recent_errors"][0]["engineering"]["reference"] == "diag_exact"
+    assert "compact_recovery_status" not in without_events
+    assert "diagnostic_summary" not in without_events and "reason" not in without_events
     assert "diagnostic_events" not in without_events
-    assert with_events["diagnostic_events"] == full["diagnostic_events"]
+    assert "diagnostic_events" not in with_events
     for hidden in ("scheduler_signal", "bound_inputs", "native_execution", "tool_timing", "recovery", "selected_output"):
         assert hidden not in without_events
-    assert without_events["detail"] == {"tool": "run_status", "name": "run",
-        "response_profile": "compat", "view": "detail", "output_paths": []}
+    assert "detail" not in without_events
 
 
 @pytest.mark.parametrize("state", ["queued", "running", "failed", "timed_out"])
@@ -156,6 +155,8 @@ def test_catalog_selects_full_exact_contract_and_paginates_without_hiding_tools(
                    "inputs": [{"name": "evidence"}], "timeout_seconds": 900} for i in range(5)]
     root = router(operation_catalog=lambda **args: {"scope": args["scope"], "operations": operations})
     first = root.call_tool("operation_catalog", {"limit": 2})
+    assert set(first) == {"scope", "view", "operations", "total", "next_before", "returned", "complete"}
+    assert set(first["operations"][0]) == {"operation_id", "purpose"}
     assert "inputs" not in first["operations"][0]
     found = first["operations"]
     cursor = first["next_before"]
@@ -168,6 +169,224 @@ def test_catalog_selects_full_exact_contract_and_paginates_without_hiding_tools(
     assert detail["operations"] == [operations[3]]
     with pytest.raises(RootToolError, match="not available"):
         root.call_tool("operation_catalog", {"operation_id": "missing", "view": "detail"})
+
+
+def test_public_navigation_index_facets_matches_and_zero_match_are_bounded():
+    operations = [
+        {"operation_id": f"operation{i}", "operation_digest": str(i) * 64,
+         "purpose": "Investigate " + "x" * 200, "executor_kind": "effect" if i == 4 else "agent",
+         "consequence": "explore" if i < 3 else "scientific",
+         "inputs": [{"schema": "source.v1" if i % 2 else "report.v1"}],
+         "runtime_binding": {"status": "available"}}
+        for i in range(5)
+    ]
+    state = {"items": operations}
+
+    def catalog(**args):
+        return {"scope": args["scope"], "operations": state["items"],
+            "catalog_digest": "a" * 64,
+            "navigation_state": [{"operation_id": item["operation_id"], "available": True}
+                for item in state["items"]]}
+
+    root = router(operation_catalog=catalog)
+    default = root.call_tool("operation_catalog", {})
+    assert default["view"] == "summary" and "navigation_snapshot_digest" not in default
+    found = []
+    cursor = None
+    while True:
+        part = root.call_tool("operation_catalog", {"view": "index", "limit": 2, "before": cursor})
+        assert len(json.dumps(part, ensure_ascii=False).encode("utf-8")) <= 8192
+        found.extend(item["operation_id"] for item in part["operations"])
+        assert part["describe"] == {"tool": "scid_describe", "name": "<selected operation_id>", "view": "invoke"}
+        assert all("describe" not in item for item in part["operations"])
+        cursor = part["next_before"]
+        if cursor is None:
+            assert part["complete"] is True
+            break
+    assert found == [item["operation_id"] for item in operations]
+    assert part["omitted_fields"] == ["purpose_tail"]
+    dimensions = root.call_tool("operation_catalog", {"view": "facets"})
+    assert dimensions["semantic_labels_available"] is False
+    assert {entry["name"] for entry in dimensions["dimensions"]} == {
+        "consequence", "executor_kind", "input_schema"}
+    assert "facets" not in dimensions
+    first_facet = root.call_tool("operation_catalog", {"view": "facets", "dimension": "consequence", "limit": 1})
+    assert first_facet["total"] == 2 and first_facet["omitted_count"] == 1
+    next_facet = root.call_tool("operation_catalog", {"view": "facets", "dimension": "consequence",
+        "limit": 1, "before": first_facet["next_before"]})
+    assert next_facet["complete"] and next_facet["omitted_count"] == 0
+    matched = root.call_tool("operation_catalog", {"view": "matches", "where": {
+        "consequence": ["explore"], "input_schema": "source.v1"}})
+    assert matched["matched_total"] == 1 and matched["visible_total"] == 5
+    assert matched["coverage"] == "filtered_subset"
+    assert matched["describe"]["name"] == "<selected operation_id>"
+    assert "describe" not in matched["operations"][0]
+    zero = root.call_tool("operation_catalog", {"view": "matches", "where": {
+        "consequence": "explore", "executor_kind": "effect"}})
+    assert zero["matched_total"] == 0 and zero["operations"] == []
+    assert zero["complete"] and zero["fallback"]["view"] == "index"
+    absent = root.call_tool("operation_catalog", {"view": "matches", "where": {"consequence": "external"}})
+    assert absent["matched_total"] == 0 and absent["operations"] == []
+    assert absent["complete"] and absent["fallback"]["view"] == "index"
+    unknown_schema = root.call_tool("operation_catalog", {"view": "matches", "where": {
+        "input_schema": "schema.not.in.current.catalog"}})
+    assert unknown_schema["matched_total"] == 0 and unknown_schema["complete"]
+
+
+def test_navigation_cursor_binds_snapshot_query_and_scope():
+    item = lambda number: {"operation_id": f"operation{number}", "operation_digest": "a" * 64,
+        "purpose": "test", "executor_kind": "agent", "consequence": "scientific", "inputs": []}
+    state = {"items": [item(1), item(2), item(3)], "backend_state": "ready"}
+
+    def catalog(**args):
+        return {"scope": args["scope"], "operations": state["items"],
+            "catalog_digest": "a" * 64,
+            "navigation_state": [{"operation_id": entry["operation_id"], "available": True,
+                "backend_state": state["backend_state"]}
+                for entry in state["items"]]}
+
+    root = router(operation_catalog=catalog)
+    first = root.call_tool("operation_catalog", {"view": "index", "limit": 1})
+    cursor = first["next_before"]
+    with pytest.raises(RootToolError, match="cursor_query_mismatch"):
+        root.call_tool("operation_catalog", {"view": "matches", "limit": 1, "before": cursor,
+            "where": {"consequence": "scientific"}})
+    with pytest.raises(RootToolError, match="navigation cursor"):
+        root.call_tool("operation_catalog", {"view": "index", "before": "operation1"})
+    state["backend_state"] = "changed"
+    with pytest.raises(RootToolError, match="catalog_changed"):
+        root.call_tool("operation_catalog", {"view": "index", "limit": 1, "before": cursor})
+    state["items"] = [item(1), item(3)]
+    with pytest.raises(RootToolError, match="catalog_changed"):
+        root.call_tool("operation_catalog", {"view": "index", "limit": 1, "before": cursor})
+    with pytest.raises(RootToolError, match="scope=public"):
+        root.call_tool("operation_catalog", {"scope": "support", "view": "index"})
+    with pytest.raises(RootToolError, match="do not accept operation_id"):
+        root.call_tool("operation_catalog", {"view": "index", "operation_id": "operation1"})
+
+
+def test_navigation_byte_budget_pages_without_losing_entries():
+    operations = [{"operation_id": f"operation{i:03d}", "operation_digest": "a" * 64,
+        "purpose": "many " + "x" * 200, "executor_kind": "agent", "consequence": "scientific",
+        "inputs": [{"schema": "source.v1"}]} for i in range(100)]
+    root = router(operation_catalog=lambda **args: {"scope": args["scope"],
+        "operations": operations, "catalog_digest": "a" * 64,
+        "navigation_state": [{"operation_id": item["operation_id"], "available": True}
+            for item in operations]})
+    collected = []
+    cursor = None
+    while True:
+        part = root.call_tool("operation_catalog", {"view": "index", "limit": 100, "before": cursor})
+        assert part["returned"] > 0
+        assert len(json.dumps(part, ensure_ascii=False, separators=(",", ":")).encode("utf-8")) <= 8192
+        collected.extend(item["operation_id"] for item in part["operations"])
+        cursor = part["next_before"]
+        if cursor is None:
+            break
+    assert collected == [item["operation_id"] for item in operations]
+
+
+def test_navigation_oversized_minimum_entry_fails_without_empty_progress_page():
+    item = {"operation_id": "oversized", "operation_digest": "a" * 64,
+        "purpose": "test", "executor_kind": "agent", "consequence": "scientific",
+        "inputs": [{"schema": "s" * 9000}]}
+    root = router(operation_catalog=lambda **args: {"scope": args["scope"],
+        "operations": [item], "catalog_digest": "a" * 64,
+        "navigation_state": [{"operation_id": "oversized", "available": True}]})
+    with pytest.raises(RootToolError, match="navigation_entry_too_large"):
+        root.call_tool("operation_catalog", {"view": "facets", "dimension": "input_schema"})
+
+
+def test_matches_omits_oversized_schema_list_explicitly_but_keeps_candidate():
+    item = {"operation_id": "many_inputs", "operation_digest": "a" * 64,
+        "purpose": "test", "executor_kind": "agent", "consequence": "scientific",
+        "inputs": [{"schema": "wanted.v1"}] + [{"schema": f"extra{i}.v1"} for i in range(40)]}
+    root = router(operation_catalog=lambda **args: {"scope": args["scope"],
+        "operations": [item], "catalog_digest": "a" * 64,
+        "navigation_state": [{"operation_id": "many_inputs", "available": True}]})
+    result = root.call_tool("operation_catalog", {"view": "matches",
+        "where": {"input_schema": "wanted.v1"}})
+    assert result["matched_total"] == 1 and result["operations"][0]["operation_id"] == "many_inputs"
+    assert result["omitted_fields"] == ["input_schemas"] and result["omitted_count"] == 1
+    assert result["operations"][0]["omitted_fields"] == ["input_schemas"]
+    assert "input_schemas" not in result["operations"][0]
+    assert len(json.dumps(result["operations"][0], ensure_ascii=False,
+        separators=(",", ":")).encode("utf-8")) <= 320
+
+
+def test_navigation_cursor_stays_bounded_for_long_keys():
+    operations = [{"operation_id": str(i) + "o" * 255, "operation_digest": "a" * 64,
+        "purpose": "test", "executor_kind": "agent", "consequence": "scientific",
+        "inputs": [{"schema": letter * 900}]}
+        for i, letter in enumerate(("s", "t"))]
+    root = router(operation_catalog=lambda **args: {"scope": args["scope"],
+        "operations": operations, "catalog_digest": "a" * 64,
+        "navigation_state": [{"operation_id": item["operation_id"], "available": True}
+            for item in operations]})
+    for view, dimension in (("index", None), ("facets", "input_schema")):
+        query = {"view": view, "limit": 1}
+        if dimension is not None:
+            query["dimension"] = dimension
+        first = root.call_tool("operation_catalog", query)
+        assert len(first["next_before"]) <= 512
+        second = root.call_tool("operation_catalog", {**query, "before": first["next_before"]})
+        assert second["complete"] and second["returned"] == 1
+
+
+def test_public_unavailability_diagnostic_uses_the_same_visibility_rule():
+    compiled = SimpleNamespace(spec=SimpleNamespace(catalog_scope="public",
+        executor=SimpleNamespace(kind="agent"), review=None))
+    route = RootOperationRoutes()
+    route._operation_catalog = SimpleNamespace(
+        scheduler_projection=lambda: (SimpleNamespace(operation_id="blocked", catalog_scope="public"),),
+        operation=lambda operation_id: compiled, digest=lambda: "a" * 64)
+    route._operation_catalog_item = lambda item: {"operation_id": item.operation_id}
+    route.runs = SimpleNamespace(backend=SimpleNamespace(
+        supports_operation=lambda item: False,
+        unsupported_requirements=lambda item: ("native_shell",)))
+    result = route.operation_catalog(scope="public", navigation=True)
+    assert result["operations"] == []
+    assert result["navigation_state"] == [{"operation_id": "blocked", "available": False,
+        "unavailable_reason": {"reason_code": "backend_requirements_unavailable",
+            "operation_id": "blocked", "required": ["native_shell"]},
+        "runtime_binding": None}]
+    assert route._scheduler_operation_available("blocked") is False
+
+
+def test_public_reviewer_and_effect_unavailability_reuse_catalog_gate(monkeypatch):
+    from scidiscovery.artifact_agent.interfaces import mcp_root_operation_routes as routes
+    monkeypatch.setattr(routes, "operation_local_worker_missing_tools", lambda compiled: ())
+    monkeypatch.setattr(routes, "effect_operation_plan",
+        lambda compiled: SimpleNamespace(executor="solver_adapter"))
+    specs = {
+        "proposal": SimpleNamespace(catalog_scope="public", executor=SimpleNamespace(kind="agent"),
+            review=SimpleNamespace(reviewer_operation="reviewer")),
+        "reviewer": SimpleNamespace(catalog_scope="support", executor=SimpleNamespace(kind="agent"),
+            review=None),
+        "execution": SimpleNamespace(catalog_scope="public", executor=SimpleNamespace(kind="effect"),
+            review=None),
+    }
+    compiled = {name: SimpleNamespace(spec=spec) for name, spec in specs.items()}
+    route = RootOperationRoutes()
+    route._operation_catalog = SimpleNamespace(
+        scheduler_projection=lambda: tuple(SimpleNamespace(operation_id=name,
+            catalog_scope=spec.catalog_scope) for name, spec in specs.items()),
+        operation=lambda name: compiled[name], digest=lambda: "a" * 64)
+    route._operation_catalog_item = lambda item: {"operation_id": item.operation_id}
+    route.runs = SimpleNamespace(backend=SimpleNamespace(
+        supports_operation=lambda item: item is not compiled["reviewer"],
+        unsupported_requirements=lambda item: ("native_shell",)))
+    route.execution_bridge = None
+    assert route.operation_catalog(scope="public")["operations"] == []
+    result = route.operation_catalog(scope="public", navigation=True)
+    reasons = {entry["operation_id"]: entry["unavailable_reason"]
+        for entry in result["navigation_state"]}
+    assert reasons["proposal"] == {"reason_code": "reviewer_unavailable",
+        "operation_id": "proposal", "reviewer": {"reason_code": "backend_requirements_unavailable",
+            "operation_id": "reviewer", "required": ["native_shell"]}}
+    assert reasons["execution"] == {"reason_code": "effect_adapter_unavailable",
+        "operation_id": "execution", "required": ["solver_adapter"]}
+    assert all(not entry["available"] for entry in result["navigation_state"])
 
 
 def test_catalog_removes_only_obsolete_routing_and_repeated_port_lists():
@@ -309,19 +528,8 @@ def test_recovery_short_view_retains_detail_without_mutating_history(coverage):
     short=root.call_tool('run_status',{'name':'r','output_paths':[]})
     detail=root.call_tool('run_status',{'name':'r','view':'detail','output_paths':[]})
     assert detail == before and full == before
-    assert short['recovery']['resume_available']
-    if coverage is None:
-        assert 'coverage' not in short['recovery']
-    else:
-        compact=short['recovery']['coverage']
-        assert 'omitted' not in compact
-        assert compact.get('complete') == coverage.get('complete')
-        if 'omitted' in coverage:
-            assert compact['omitted_listed_count'] == len(coverage['omitted'])
-        if coverage.get('omitted_count') == 100:
-            assert compact['omitted_count'] == 100 and compact['omission_reasons'] == ['byte_limit']
-            assert len(json.dumps(short)) < 1800
-            assert len(json.dumps(detail)) > 10000
+    assert 'recovery' not in short
+    assert len(json.dumps(short)) < 1800
 
 
 def test_log_summary_deduplicates_sources_and_keeps_distinct_error_navigation():

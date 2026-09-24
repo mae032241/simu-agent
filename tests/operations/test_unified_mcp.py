@@ -75,19 +75,59 @@ def test_gateway_scopes_actual_worker_lifecycle_and_sealed_result(tmp_path, back
         gateway_contract = result(rpc(gateway, "scid_describe", {"name": name}))
         assert gateway_contract["name"] == name
         assert gateway_contract["inputSchema"] == listed["result"]["tools"][index]["inputSchema"]
+        if name == "scid_catalog":
+            fields = gateway_contract["inputSchema"]["properties"]
+            assert "summary = IDs + exact purposes" in fields["view"]["description"]
+            assert "index/facets/matches = structural navigation" in fields["view"]["description"]
+            assert "omit for P1 structural dimensions/counts" in fields["dimension"]["description"]
+            assert "consequence, executor_kind, input_schema" in fields["where"]["description"]
+            assert "AND keys, OR values" in fields["where"]["description"]
         rejected = rpc(gateway, "scid_describe", {"name": name, "view": "invoke"})
         assert 'view="invoke" is supported only for Operations' in rejected["error"]["message"]
     assert "inputSchema" not in json.dumps(result(rpc(gateway, "scid_catalog")))
+    summary = result(rpc(gateway, "scid_catalog"))
+    index = result(rpc(gateway, "scid_catalog", {"view": "index"}))
+    assert {item["operation_id"] for item in index["operations"]} == {
+        item["operation_id"] for item in summary["operations"]}
+    assert index["complete"] and index["visible_total"] == len(index["operations"])
+    assert index["describe"] == {"tool": "scid_describe", "name": "<selected operation_id>", "view": "invoke"}
+    assert all("describe" not in item for item in index["operations"])
+    facets = result(rpc(gateway, "scid_catalog", {"view": "facets"}))
+    assert {item["name"] for item in facets["dimensions"]} == {
+        "consequence", "executor_kind", "input_schema"}
+    consequence = facets["dimensions"][0]["name"]
+    value = result(rpc(gateway, "scid_catalog", {"view": "facets", "dimension": consequence}))
+    if value["facets"]:
+        matches = result(rpc(gateway, "scid_catalog", {"view": "matches", "where": {
+            consequence: value["facets"][0]["value"]}}))
+        assert matches["matched_total"] > 0 and matches["coverage"] == "filtered_subset"
+    absent_schema = result(rpc(gateway, "scid_catalog", {"view": "matches", "where": {
+        "input_schema": "schema.not.in.current.catalog"}}))
+    assert absent_schema["matched_total"] == 0 and absent_schema["complete"]
+    assert absent_schema["fallback"]["view"] == "index"
+    if consequence == "consequence" and value["complete"] and not any(
+        item["value"] == "external" for item in value["facets"]
+    ):
+        absent = result(rpc(gateway, "scid_catalog", {"view": "matches", "where": {
+            "consequence": "external"}}))
+        assert absent["matched_total"] == 0 and absent["complete"]
+        assert absent["fallback"]["view"] == "index"
+    invalid_field = rpc(gateway, "scid_catalog", {"view": "matches", "where": {"x" * 10000: "x"}})
+    assert "unsupported P1 filter field" in invalid_field["error"]["message"]
+    assert len(json.dumps(invalid_field)) < 1000
     assert result(rpc(gateway, "scid_describe", {"name": "operation_invoke"}))["inputSchema"]
     operation_id = "blind.csv.observe.v1"
-    full_contract = result(rpc(gateway, "scid_describe", {"name": operation_id}))
+    full_contract = result(rpc(gateway, "scid_describe", {"name": operation_id, "view": "full"}))
     invoke_contract = result(rpc(gateway, "scid_describe", {
         "name": operation_id, "view": "invoke"}))
     full_item = full_contract["operations"][0]
     invoke_item = invoke_contract["operations"][0]
     assert full_contract["view"] == "detail" and invoke_contract["view"] == "invoke"
     assert invoke_item["operation_digest"] == full_item["operation_digest"] == catalog.operation(operation_id).digest
-    assert invoke_item["inputs"] == full_item["inputs"]
+    assert [{**invoke_item.get("defaults", {}).get("inputs", {}), **port}
+        for port in invoke_item["inputs"]] == full_item["inputs"]
+    assert invoke_item["contract_view_version"] == "invoke.compact.v1"
+    assert result(rpc(gateway, "scid_describe", {"name": operation_id})) == invoke_contract
     assert invoke_item["revision_policy"]["max_revisions"] == (
         catalog.operation(operation_id).spec.review.max_revisions
         if catalog.operation(operation_id).spec.review else 0
@@ -98,6 +138,8 @@ def test_gateway_scopes_actual_worker_lifecycle_and_sealed_result(tmp_path, back
     assert 'view="invoke" is supported only for Operations' in unsupported["error"]["message"]
     child = {"child": "child-1", "profile": profile}
     assert [x['name'] for x in result(rpc(gateway, "scid_catalog", **child))['entries']] == ['worker_identity']
+    assert "navigation views are available only for Root" in rpc(
+        gateway, "scid_catalog", {"view": "index"}, **child)["error"]["message"]
     result(rpc(gateway, "scid_describe", {"name": "worker_identity"}, **child))
     identity = result(call(gateway, "worker_identity", **child))
     assert identity == {"thread_id": "child-1", "model": profile['model'],
@@ -109,6 +151,9 @@ def test_gateway_scopes_actual_worker_lifecycle_and_sealed_result(tmp_path, back
     result(call(gateway, "worker_attach", {"name": "observation", "thread_id": identity['thread_id']}))
     names = {x["name"] for x in result(rpc(gateway, "scid_catalog", **child))["entries"]}
     assert "worker_csv_summarize" in names and "operation_invoke" not in names
+    assert "navigation views are available only for Root" in rpc(
+        gateway, "scid_catalog", {"view": "matches", "where": {"consequence": "scientific"}},
+        **child)["error"]["message"]
     for name in ("operation_invoke", "worker_attach", "worker_tcad_debug_run"):
         assert "error" in call(gateway, name, **child)
         assert "error" in rpc(gateway, "scid_describe", {"name": name}, **child)
@@ -226,12 +271,12 @@ def test_irreparable_attached_profile_mismatch_fails_run_and_releases_slot(
         profile={**profile, **profile_override},
     )
     assert "Worker platform model/effort do not match" in rejected["error"]["message"]
-    failed = root.facade.run_status(name="observation")
+    failed = root.facade.run_status(name="observation", view="detail")
     assert failed["state"] == "failed"
     assert "expected=" in failed["reason"] and "observed=" in failed["reason"]
     assert failed["diagnostic_summary"]["failure"]["category"] == "worker_profile_mismatch"
     diagnostic_page = root.call_tool(
-        "run_status", {"name": "observation", "diagnostic_after": 0, "diagnostic_limit": 10}
+        "run_status", {"name": "observation", "view": "detail", "diagnostic_after": 0, "diagnostic_limit": 10}
     )
     assert diagnostic_page["diagnostic_events"]["events"][-1]["diagnostic"]["code"] == "worker_profile_mismatch"
     with runtime.runs._connect() as connection:
@@ -339,6 +384,53 @@ def test_real_proxy_daemon_preserves_scope_and_worker_does_not_register_client(t
         # deadlocking while upgrading a broker shared lock to the Root exclusive lock.
         closed = request("scid_call", {"name":"instance_close"})
         assert "active scientific Run" in closed["error"]["message"]
+    finally:
+        process.terminate(); process.join(3)
+        if process.is_alive():
+            process.kill(); process.join()
+
+
+def test_tcad_install_probe_checks_exact_declared_tool_set_through_proxy(tmp_path):
+    from types import SimpleNamespace
+    from scidiscovery.artifact_agent.interfaces.mcp import MCPRouter
+    from scidiscovery.interfaces.daemon import UnixSocketDaemon
+    from tcad_artifact.execution_control import TCADExecutionRouter
+
+    project = Path(__file__).resolve().parents[2]
+    install_root = tmp_path / "install"
+    site = install_root / "site"
+    site.mkdir(parents=True)
+    (site / "scidiscovery").symlink_to(project / "src/scidiscovery", target_is_directory=True)
+    (site / "tcad_artifact").symlink_to(
+        project / "plugins/tcad_artifact/tcad_artifact", target_is_directory=True)
+    declared = TCADExecutionRouter(SimpleNamespace()).list_tools()
+    assert len(declared) > 1
+    removed_name = declared[-1]["name"]
+    corrupt = multiprocessing.get_context("fork").Value("b", 0)
+    socket = tmp_path / "tcad.sock"
+    tools = SimpleNamespace(list_tools=lambda: declared[:-1] + [{**declared[-1],
+        "name": "unexpected_tcad_tool"}] if corrupt.value else declared)
+    process = multiprocessing.get_context("fork").Process(target=lambda: UnixSocketDaemon(
+        socket, MCPRouter(tools, name="tcad-control")).serve_forever())
+    process.start()
+    try:
+        deadline = time.monotonic() + 5
+        while not socket.exists() and time.monotonic() < deadline:
+            time.sleep(.02)
+        assert socket.exists()
+        command = ["bash", "-c", 'source "$1"; probe_mcp tcad_artifact.execution_mcp "$2" "" tcad',
+            "bash", str(project / "deploy/install.sh"), str(socket)]
+        environment = dict(os.environ, SCID_INSTALL_ROOT=str(install_root), SCID_PYTHON=sys.executable)
+        passed = subprocess.run(command, cwd=tmp_path, env=environment,
+            capture_output=True, text=True, timeout=15)
+        assert passed.returncode == 0, passed.stderr
+        assert f"MCP tool probe: pass (tcad, {len(declared)})" in passed.stdout
+        corrupt.value = 1
+        rejected = subprocess.run(command, cwd=tmp_path, env=environment,
+            capture_output=True, text=True, timeout=15)
+        assert rejected.returncode != 0
+        assert removed_name in rejected.stderr
+        assert "unexpected_tcad_tool" in rejected.stderr
     finally:
         process.terminate(); process.join(3)
         if process.is_alive():

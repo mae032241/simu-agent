@@ -142,7 +142,7 @@ def _input(request: WorkspaceMaterializationRequest | WorkspaceFinalizationReque
 
 
 def _source_files(root: Path, *, max_bytes: int = _MAX_SOURCE_TOTAL_BYTES, max_files: int = _MAX_SOURCE_FILES,
-                  allow_binary: bool = False) -> list[dict[str, str]]:
+                  allow_binary: bool = False, skip_generated_frames: bool = False) -> list[dict[str, str]]:
     try:
         root_details = os.lstat(root)
     except OSError as error:
@@ -160,6 +160,10 @@ def _source_files(root: Path, *, max_bytes: int = _MAX_SOURCE_TOTAL_BYTES, max_f
                 raise WorkspaceProtocolError("deck/files cannot contain symlinks")
         for name in sorted(files):
             path = current_path / name
+            if (skip_generated_frames and current_path != root
+                and len(name) == 74 and name.startswith("generated_")
+                and all(character in "0123456789abcdef" for character in name[10:])):
+                continue
             raw = _read(path, max_bytes=_MAX_SOURCE_FILE_BYTES)
             total += len(raw)
             if total > max_bytes or len(values) >= max_files:
@@ -264,7 +268,8 @@ def _attempt_files(deck: Path) -> tuple[AttemptFile, ...]:
         root = deck / directory
         if root.exists():
             for item in _source_files(root, max_bytes=16 * 1024 * 1024, max_files=128,
-                                      allow_binary=directory == "reports"):
+                                      allow_binary=directory == "reports",
+                                      skip_generated_frames=directory == "reports"):
                 values.append(AttemptFile(**{**item, "relative_path": f"{directory}/{item['relative_path']}"}))
     if len(values) > 128 or sum(len(item.content.encode("utf-8")) for item in values) > 16 * 1024 * 1024:
         raise WorkspaceProtocolError("attempt record exceeds its file or byte limit")
@@ -483,7 +488,7 @@ def materialize_workspace(
             if base is not None and base.execution_plan is not None:
                 draft = declarations_template_json(canonical_json(base.execution_plan.model_dump(mode="json")), base_project=base)
             else:
-                draft = _pretty({"schema_version": 2, "profile": "tcad.project-declaration-contract.v2", "entrypoint": None, "case_anchors": [], "raw_outputs": []})
+                draft = _pretty({"schema_version": 2, "profile": "tcad.project-declaration-contract.v2", "entrypoint": None, "case_anchors": [], "collect_generated_outputs": True})
             _write(declarations_path, draft, editable=True)
     if deterministic and not skeleton:
         assert plan_raw is not None

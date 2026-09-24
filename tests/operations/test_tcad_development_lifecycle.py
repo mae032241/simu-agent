@@ -36,6 +36,7 @@ def test_development_failures_are_recorded_once_and_recover_without_handoff(tmp_
     declarations = json.loads(declarations_path.read_bytes())
     declarations.update({
         "entrypoint": "main.cmd", "development_initialization_entrypoint": "initialize.cmd",
+        "collect_generated_outputs": False,
         "case_anchors": [{"experiment_key": "entrypoint_smoke", "case_key": "smoke",
                           "relative_path": "absent.cmd", "locator": "set case_smoke 1"}],
         "raw_outputs": [{"name": "profile", "relative_path": "profile.tdr",
@@ -43,7 +44,8 @@ def test_development_failures_are_recorded_once_and_recover_without_handoff(tmp_
     })
     assert "expected_outputs" not in json.loads((deck / "project.json").read_bytes())
     contract = json.loads((deck / "contract/materialization-spec.json").read_bytes())
-    assert contract["raw_output_fields"] == ["name", "relative_path", "media_type"]
+    assert contract["raw_output_fields"] == []
+    assert "Do not enumerate adaptive frames" in contract["output_instruction"]
     assert contract["control_generated_output_fields"] == ["capture", "max_bytes"]
     errors = []
     reports = []

@@ -8,14 +8,19 @@ and needed fields in one run_status call; check that response's state before usi
 its scientific content. Unfinished Runs expose no sealed results. Do not precede a
 result read with an empty-path status check. Use
 `run_status(response_profile="poll", output_paths=[])` only for necessary polling
-or status-only diagnostics. It keeps lifecycle, exact safe diagnostics and recovery
-gate status without expanding bindings, native/tool records, recovery detail or signal text.
+or status checks. Omitted arguments also give short status for every state. It keeps
+mechanical state and the frozen Agent dispatch profile, never diagnostic prose or signal text.
+For saved failure diagnostics use view="detail", response_profile="compat", output_paths=[],
+diagnostic_after=0, then diagnostic_events.next_after. This reads only persisted,
+accessible diagnostics: saved reason may already be capped at 4096 characters and
+each event projects at most 16 details; paging events does not recover unsaved tails.
 For every MCP reply, handle the transport `isError` result before parsing its JSON payload;
 preserve the returned code, path and message instead of turning it into a parse failure.
-Fetch exact bindings with view="detail" when constructing or recovering a task
+Fetch exact terminal bindings with view="detail" when constructing or recovering a task
 requires them, or to resolve a specific provenance question. Expand timing, native records and logs for an actual
-diagnostic question, not routine polling. Default completed
-summary excerpts are navigation aids, not complete scientific results.
+diagnostic question, not routine polling. Active Run status and list detail stay short;
+recover the original agent_type, execution_profile.profile and deadline_at by Run name,
+never by consulting changed model defaults. Completed defaults contain no scientific values.
 When the response reports completed, read the formal conclusion, limitations, remaining contradiction
 and next-action rationale together with scheduler_signal. Choose the read once:
 use known paths directly; index only an unknown structure; read the whole payload
@@ -38,12 +43,17 @@ to another role. Bind the sealed original for that role's own reading. Selected 
 selected_output with original pointers; they are not a complete sealed_output.
 Pointers start inside the payload: /summary, not /payload/summary. Only when needed
 paths are unknown, use response_profile="navigation" with output_mode="index" for
-the root field directory. Navigation returns signal availability without signal text.
+the root field directory. Navigation returns no signal text.
 Follow output_index.next_offset with index_offset on the same path; nested objects
 can be indexed by their exact pointer. The directory has no field values. Read
-needed originals with selected output_paths. For most/all fields, use
-output_paths=[""] once instead of directory-plus-nearly-full selection. Use
-view="detail" only when exact bindings/timing or an uncapped original are needed.
+needed originals with explicit response_profile="decision" and selected output_paths.
+For most/all fields, use view="detail", response_profile="compat", include_full_output=true
+with output_paths omitted/null. Only this positive opt-in returns whole sealed output;
+detail alone never does. Values-mode paths containing the empty root pointer are rejected.
+Full output cannot be combined with a paths array, decision, or index/navigation.
+Use terminal detail for exact bindings/timing. A selected scalar larger than 32 KiB
+has no child continuation; the explicit full-output escape hatch retains it within
+the existing transport limit. Never describe its empty index as a complete value read.
 Retain values already read; never refetch their constituent fields or expand the
 handoff/status to repeat the same scientific conclusion. The formal payload is the
 scientific content authority; use scheduler_signal for control context. Keep exact

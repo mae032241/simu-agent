@@ -8,7 +8,7 @@ from typing import Any
 
 from ..schema.approval import parse_json_pointer
 from ..schema.common import canonical_json
-from .mcp_response_views import validate_run_status_profile
+from .mcp_response_views import run_is_terminal, run_profile_projection
 from .mcp_root_shared import RootToolError
 
 
@@ -106,7 +106,10 @@ def _output_selection(output: dict[str, Any], pointers: list[str]) -> dict[str, 
 
 
 class RootRunRoutes:
-    def run_list(self, *, state: str | None, limit: int, before: str | None = None) -> dict[str, Any]:
+    def run_list(self, *, state: str | None, limit: int, before: str | None = None,
+                 view: str = "summary") -> dict[str, Any]:
+        if view not in {"summary", "detail"}:
+            raise RootToolError('run_list view must be "summary" or "detail"')
         if self.runs is None:
             return {"runs": [], "next_before": None}
         if before is not None:
@@ -122,30 +125,28 @@ class RootRunRoutes:
                 continue
             if len(items) == limit:
                 return {"runs": items, "next_before": items[-1]["name"]}
-            items.append(self._run_status_value(binding.name, value))
+            items.append(self._run_status_value(binding.name, value)
+                if view == "detail" and run_is_terminal(value.state)
+                else self._compact_run_status(name=binding.name, value=value,
+                    response_profile="poll", output_paths=[], index_offset=0, index_limit=16))
         return {"runs": items, "next_before": None}
 
-    def run_status(self, *, name: str, diagnostic_after: int | None = None,
-                   diagnostic_limit: int = 50,
-                   output_paths: list[str] | None = None, output_mode: str = "values",
-                   index_offset: int = 0, index_limit: int = 16,
-                   response_profile: str = "compat") -> dict[str, Any]:
+    def run_status(self, *, name: str, **arguments) -> dict[str, Any]:
+        from .mcp_root import parse_run_status_arguments
+        request = parse_run_status_arguments({"name": name, **arguments})
+        response_profile = request["response_profile"]
+        diagnostic_after, diagnostic_limit = request["diagnostic_after"], request["diagnostic_limit"]
+        output_paths, output_mode = request["output_paths"], request["output_mode"]
+        index_offset, index_limit = request["index_offset"], request["index_limit"]
+        include_full_output = request["include_full_output"]
         if self.runs is None:
             raise RuntimeError("minimal Run service is unavailable")
-        validate_run_status_profile(
-            response_profile=response_profile,
-            view="summary",
-            output_mode=output_mode,
-            output_paths=output_paths,
-        )
         value = self.runs.status(self._resolve("run", name))
-        if response_profile != "compat":
+        if response_profile != "compat" or not run_is_terminal(value.state):
             return self._compact_run_status(
                 name=name,
                 value=value,
                 response_profile=response_profile,
-                diagnostic_after=diagnostic_after,
-                diagnostic_limit=diagnostic_limit,
                 output_paths=output_paths,
                 index_offset=index_offset,
                 index_limit=index_limit,
@@ -175,16 +176,17 @@ class RootRunRoutes:
             result["diagnostic_summary"]["native_coverage"] = native["coverage"]
             result["diagnostic_summary"]["latest_native_error"] = next(
                 iter(reversed(native.get("recent_errors", []))), None)
-        output_status, output = self._sealed_output(value, include_payload=output_paths != [])
+        output_status, output = self._sealed_output(value, include_payload=(
+            include_full_output or output_mode == "index" or bool(output_paths)))
         result["sealed_output_status"] = output_status
-        result["sealed_output"] = output if output_paths is None and output_mode == "values" else None
+        result["sealed_output"] = output if include_full_output else None
         if output_mode == "index":
             result["output_delivery"] = "index"
             result["output_index"] = (
                 _output_index(output, (output_paths or [""])[0], index_offset, index_limit)
                 if output is not None else None)
-        elif output_paths is not None:
-            result["output_delivery"] = "selected" if output_paths else "omitted"
+        else:
+            result["output_delivery"] = "full" if include_full_output else ("selected" if output_paths else "omitted")
             result["output_metadata"] = (
                 {key: output[key] for key in ("artifact_name", "kind", "schema")}
                 if output is not None else None
@@ -197,7 +199,8 @@ class RootRunRoutes:
         )
         result["scheduler_signal"] = (
             value.signal.model_dump(mode="json")
-            if output_status in {"available", "historical"} and value.signal is not None
+            if (include_full_output or bool(output_paths)) and output_mode == "values"
+            and output_status in {"available", "historical"} and value.signal is not None
             else None
         )
         evidence = self.runs.evidence_output_refs(value)
@@ -211,19 +214,12 @@ class RootRunRoutes:
         name: str,
         value: Any,
         response_profile: str,
-        diagnostic_after: int | None,
-        diagnostic_limit: int,
         output_paths: list[str] | None,
         index_offset: int,
         index_limit: int,
     ) -> dict[str, Any]:
         include_payload = response_profile in {"navigation", "decision"}
         output_status, output = self._sealed_output(value, include_payload=include_payload)
-        recovery = (
-            self.runs.compact_recovery_status(value)
-            if value.state == "failed"
-            else None
-        )
         try:
             compiled = self._operation_catalog.operation(value.operation_id)
         except KeyError:
@@ -242,17 +238,13 @@ class RootRunRoutes:
             "operation_digest": value.operation_digest,
             "operation_contract_status": contract_status,
             "state": value.state,
-            "reason": value.reason,
-            "created_at": value.created_at,
-            "started_at": value.started_at,
+            "agent_type": value.agent_type,
+            "execution_profile": value.execution_profile,
             "deadline_at": value.deadline_at,
-            "completed_at": value.completed_at,
             "last_activity_at": value.last_activity_at,
-            "recovery_available": (
-                recovery["resume_available"]
-                if recovery is not None
-                else self.runs.recovery_available(value)
-            ),
+            "output_artifact_name": value.output_binding_name if value.output_ref is not None else None,
+            "recovery_available": self.runs.recovery_available(value),
+            "diagnostics_available": run_is_terminal(value.state) and value.state != "completed",
             "sealed_output_status": output_status,
             "scheduler_signal_status": (
                 "available"
@@ -260,15 +252,9 @@ class RootRunRoutes:
                 else "unavailable"
             ),
         }
-        if value.state != "completed":
-            result["diagnostic_summary"] = self.runs.diagnostic_summary(value)
-        if recovery is not None:
-            result["compact_recovery_status"] = recovery
-        if diagnostic_after is not None:
-            result["diagnostic_events"] = self.runs.diagnostic_events(
-                value, after=diagnostic_after, limit=diagnostic_limit
-            )
-        if response_profile == "navigation":
+        if response_profile != "poll" and value.state != "completed":
+            result["content_unavailable"] = "run_not_completed"
+        if response_profile == "navigation" and value.state == "completed":
             result["output_delivery"] = "index"
             result["output_index"] = (
                 _output_index(
@@ -298,7 +284,8 @@ class RootRunRoutes:
                 and value.signal is not None
                 else None
             )
-        return result
+        return run_profile_projection(result, response_profile=(
+            "poll" if response_profile == "compat" else response_profile))
 
     def run_record_failure(
         self,

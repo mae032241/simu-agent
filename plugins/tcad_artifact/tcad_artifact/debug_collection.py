@@ -14,7 +14,12 @@ import threading
 from scidiscovery.artifact_agent.service.execution_collection import CollectionContext, run_bounded, watch_parent
 from scidiscovery.artifact_agent.service.engineering_diagnostics import exception_facts
 from scidiscovery.operations.runtime_plugins import RuntimePluginContext
-from .debug_contract import CollectedTCADDebugRun, CollectedTCADDebugFile, TCADSourceDiagnostic
+from .debug_contract import (
+    DEVELOPMENT_ARTIFACT_LIMIT_BYTES,
+    CollectedTCADDebugRun,
+    CollectedTCADDebugFile,
+    TCADSourceDiagnostic,
+)
 
 
 def collect(runtime: RuntimePluginContext, external_run_id: str, *, context: CollectionContext):
@@ -25,7 +30,7 @@ def collect(runtime: RuntimePluginContext, external_run_id: str, *, context: Col
             "external_run_id": external_run_id, "budget": context.wire(), "parent_fd": reader}
         response = run_bounded([sys.executable, "-m", __name__], input=json.dumps(packet).encode(),
             timeout=context.remaining_seconds(), context=context, pass_fds=(reader,),
-            max_output_bytes=16 * 1024 * 1024, timeout_kind="debug_collection_total")
+            max_output_bytes=DEVELOPMENT_ARTIFACT_LIMIT_BYTES, timeout_kind="debug_collection_total")
         if response.returncode:
             error = subprocess.CalledProcessError(response.returncode, "TCAD debug collection",
                 output=response.stdout, stderr=response.stderr)

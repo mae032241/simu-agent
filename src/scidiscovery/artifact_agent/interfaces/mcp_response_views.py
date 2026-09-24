@@ -1,7 +1,10 @@
 """Read projections for MCP clients; services and sealed records stay complete."""
 from __future__ import annotations
 
+import base64
+import binascii
 import hashlib
+import json
 
 from .mcp_root_shared import RootToolError
 
@@ -9,8 +12,18 @@ from .mcp_root_shared import RootToolError
 RUN_RESPONSE_PROFILES = ("compat", "poll", "navigation", "decision")
 
 
-def validate_run_status_profile(*, response_profile, view, output_mode, output_paths):
+def validate_run_status_profile(*, response_profile, view, output_mode, output_paths,
+                                include_full_output=False):
     """Keep the model-visible profile matrix and both runtime checks identical."""
+    if include_full_output and not (
+        view == "detail" and response_profile == "compat" and output_mode == "values"
+        and output_paths is None
+    ):
+        raise RootToolError('include_full_output=true requires view="detail", '
+            'response_profile="compat", output_mode="values" and omitted/null output_paths')
+    if output_mode == "values" and output_paths and "" in output_paths:
+        raise RootToolError('root output pointer requires include_full_output=true with '
+            'view="detail", response_profile="compat" and omitted/null output_paths')
     if response_profile == "compat":
         return
     if view != "summary":
@@ -22,7 +35,8 @@ def validate_run_status_profile(*, response_profile, view, output_mode, output_p
         output_mode == "values" and output_paths == []
     ):
         raise RootToolError(
-            'run_status response_profile="poll" requires output_mode="values" and output_paths=[]'
+            'run_status response_profile="poll" requires output_mode="values" and output_paths=[]; '
+            'use explicit response_profile="decision" for selected non-root values'
         )
     if response_profile == "navigation" and not (
         output_mode == "index"
@@ -53,28 +67,19 @@ def run_profile_projection(value, *, response_profile, diagnostics_requested=Fal
         "operation_digest",
         "operation_contract_status",
         "state",
-        "reason",
-        "created_at",
-        "started_at",
+        "agent_type",
+        "execution_profile",
         "deadline_at",
-        "completed_at",
         "last_activity_at",
+        "output_artifact_name",
         "recovery_available",
         "sealed_output_status",
-        "scheduler_signal_status",
+        "diagnostics_available",
+        "content_unavailable",
     )
-    if value.get("state") != "completed":
-        result["diagnostic_summary"] = pick(
-            value.get("diagnostic_summary") or {},
-            "failure",
-            "latest_rejection",
-            "latest_tool_error",
-            "recent_errors",
-            "rejection_count",
-        )
-    if value.get("state") == "failed" and "compact_recovery_status" in value:
-        result["compact_recovery_status"] = value["compact_recovery_status"]
-    if response_profile == "navigation":
+    if isinstance(result.get("execution_profile"), dict):
+        result["execution_profile"] = pick(result["execution_profile"], "profile")
+    if response_profile == "navigation" and value.get("state") == "completed":
         result.update(pick(value, "output_delivery", "output_index", "output_metadata"))
     elif response_profile == "decision" and value.get("state") == "completed":
         result.update(
@@ -84,18 +89,15 @@ def run_profile_projection(value, *, response_profile, diagnostics_requested=Fal
                 "output_metadata",
                 "selected_output",
                 "scheduler_signal",
+                "scheduler_signal_status",
             )
         )
-    if diagnostics_requested and "diagnostic_events" in value:
-        result["diagnostic_events"] = value["diagnostic_events"]
-    result["detail"] = {
-        "tool": "run_status",
-        "name": value.get("name"),
-        "response_profile": "compat",
-        "view": "detail",
-        "output_paths": [],
-    }
     return result
+
+
+def run_is_terminal(state):
+    # Unknown lifecycle values fail closed; they cannot opt into long details.
+    return state in {"completed", "failed", "timed_out", "cancelled", "canceled"}
 
 
 def pick(value, *keys):
@@ -116,6 +118,184 @@ def page(items, *, key, limit=20, before=None):
     if not found:
         raise RootToolError("page cursor is not present in this query; restart the listing")
     return selected, None
+
+
+_NAV_DIMENSIONS = ("consequence", "executor_kind", "input_schema")
+_NAV_BUDGET = {"index": 8192, "facets": 4096, "matches": 8192}
+
+
+def _nav_digest(value):
+    return hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=True,
+        allow_nan=False, separators=(",", ":")).encode("utf-8")).hexdigest()
+
+
+def _nav_values(item, dimension):
+    if dimension == "input_schema":
+        return sorted({port["schema"] for port in item.get("inputs", ())})
+    value = item.get(dimension)
+    return [] if value is None else [value]
+
+
+def _nav_cursor(snapshot_digest, query_digest, offset, last_key):
+    data = json.dumps([1, snapshot_digest, query_digest, offset, _nav_digest(last_key)],
+        separators=(",", ":")).encode("utf-8")
+    return base64.urlsafe_b64encode(data).decode("ascii").rstrip("=")
+
+
+def _nav_start(items, before, snapshot_digest, query_digest, key):
+    if before is None:
+        return 0
+    try:
+        data = base64.urlsafe_b64decode(before + "=" * (-len(before) % 4))
+        version, cursor_snapshot, cursor_query, offset, last_key_digest = json.loads(data)
+    except (ValueError, TypeError, UnicodeDecodeError, binascii.Error) as error:
+        raise RootToolError("invalid navigation cursor; restart_query") from error
+    if version != 1 or type(offset) is not int or not isinstance(last_key_digest, str):
+        raise RootToolError("invalid navigation cursor; restart_query")
+    if cursor_snapshot != snapshot_digest:
+        raise RootToolError("catalog_changed; restart_query")
+    if cursor_query != query_digest:
+        raise RootToolError("cursor_query_mismatch; restart_query")
+    if not 1 <= offset < len(items) or _nav_digest(items[offset - 1][key]) != last_key_digest:
+        raise RootToolError("cursor item is no longer present; restart_query")
+    return offset
+
+
+def _nav_page(items, *, key, limit, before, snapshot_digest, query_digest, budget, response):
+    start = _nav_start(items, before, snapshot_digest, query_digest, key)
+    remaining = items[start:]
+    field = "facets" if key == "value" else "operations"
+    for count in range(min(limit, len(remaining)), -1, -1):
+        selected = remaining[:count]
+        next_before = (_nav_cursor(snapshot_digest, query_digest, start + count, selected[-1][key])
+            if start + count < len(items) and selected else None)
+        candidate = {**response, field: selected, "returned": count,
+            "next_before": next_before, "complete": next_before is None}
+        if field == "facets":
+            candidate["omitted_count"] = len(items) - start - count
+        if len(json.dumps(candidate, ensure_ascii=False, separators=(",", ":")).encode("utf-8")) <= budget:
+            if count == 0 and remaining:
+                raise RootToolError("navigation_entry_too_large; cannot return a progressing page")
+            return candidate
+    raise RootToolError("navigation_response_too_large; cannot return required metadata")
+
+
+def operation_navigation(value, arguments):
+    view = arguments["view"]
+    if value["scope"] != "public":
+        raise RootToolError("navigation views require scope=public")
+    if arguments.get("operation_id") is not None:
+        raise RootToolError("navigation views do not accept operation_id; use view=detail")
+    dimension = arguments.get("dimension")
+    where = arguments.get("where")
+    if view != "facets" and dimension is not None:
+        raise RootToolError("dimension is available only for view=facets")
+    if view != "matches" and where is not None:
+        raise RootToolError("where is available only for view=matches")
+    if view == "facets" and where is not None:
+        raise RootToolError("facets do not accept filters")
+    items = sorted(value["operations"], key=lambda item: item["operation_id"])
+    snapshot_digest = _nav_digest({"version": 1, "catalog_digest": value["catalog_digest"],
+        "state": value["navigation_state"],
+        "visible": [(item["operation_id"], item["operation_digest"], item.get("purpose"),
+            item.get("consequence"), item.get("executor_kind"),
+            _nav_values(item, "input_schema"), item.get("runtime_binding")) for item in items]})
+    filters = {}
+    if view == "matches":
+        if not isinstance(where, dict) or not where:
+            raise RootToolError("matches requires nonempty where; use view=index for the full public set")
+        if len(where) > len(_NAV_DIMENSIONS):
+            raise RootToolError("too many P1 filter fields; use consequence, executor_kind or input_schema")
+        unknown_fields = sorted(set(where) - set(_NAV_DIMENSIONS))
+        if unknown_fields:
+            raise RootToolError(f"unsupported P1 filter field; available: {list(_NAV_DIMENSIONS)}")
+        for field in sorted(where):
+            raw = where[field]
+            requested = [raw] if isinstance(raw, str) else raw
+            if (not isinstance(requested, list) or not 1 <= len(requested) <= 8
+                or any(not isinstance(entry, str) or not entry or len(entry) > 4096 for entry in requested)):
+                raise RootToolError(f"invalid {field} filter; use one to eight nonempty strings of at most 4096 characters")
+            filters[field] = sorted(set(requested))
+    query_digest = _nav_digest({"version": 1, "scope": "public", "view": view,
+        "dimension": dimension, "where": filters, "sort": "ascending", "projection": "root"})
+    common = {"scope": "public", "view": view,
+        "catalog_digest": value["catalog_digest"],
+        "navigation_snapshot_digest": snapshot_digest, "query_digest": query_digest,
+        "visible_total": len(items), "semantic_labels_available": False}
+    if view == "facets":
+        if dimension is None:
+            if arguments.get("before") is not None:
+                raise RootToolError("facets without dimension do not accept before")
+            result = {**common, "dimensions": [{"name": name,
+                "value_count": len({entry for item in items for entry in _nav_values(item, name)}),
+                "unclassified_count": sum(not _nav_values(item, name) for item in items)}
+                for name in _NAV_DIMENSIONS], "returned": len(_NAV_DIMENSIONS),
+                "next_before": None, "complete": True}
+            if len(json.dumps(result, ensure_ascii=False).encode("utf-8")) > _NAV_BUDGET[view]:
+                raise RootToolError("navigation_response_too_large; cannot return dimension index")
+            return result
+        counts = {entry: sum(entry in _nav_values(item, dimension) for item in items)
+            for entry in sorted({entry for item in items for entry in _nav_values(item, dimension)})}
+        facets = [{"value": entry, "count": count} for entry, count in counts.items()]
+        return _nav_page(facets, key="value", limit=min(arguments["limit"], 12),
+            before=arguments.get("before"), snapshot_digest=snapshot_digest,
+            query_digest=query_digest, budget=_NAV_BUDGET[view], response={**common,
+                "dimension": dimension, "total": len(facets),
+                "unclassified_count": sum(not _nav_values(item, dimension) for item in items)})
+    if view == "matches":
+        matched = [item for item in items if all(
+            set(_nav_values(item, field)) & set(requested)
+            for field, requested in filters.items())]
+        projected = [_nav_entry(item, matches=True) for item in matched]
+        omitted = _nav_projected_omissions(projected)
+        return _nav_page(projected, key="operation_id", limit=min(arguments["limit"], 20),
+            before=arguments.get("before"), snapshot_digest=snapshot_digest,
+            query_digest=query_digest, budget=_NAV_BUDGET[view], response={**common, **omitted,
+                "matched_total": len(matched), "filtered_out_count": len(items) - len(matched),
+                "unclassified_count": None, "coverage": "filtered_subset", "filters_applied": filters,
+                "fallback": {"kind": "operations", "view": "index"},
+                "describe": {"tool": "scid_describe", "name": "<selected operation_id>", "view": "invoke"}})
+    projected = [_nav_entry(item) for item in items]
+    return _nav_page(projected, key="operation_id", limit=arguments["limit"],
+        before=arguments.get("before"), snapshot_digest=snapshot_digest,
+        query_digest=query_digest, budget=_NAV_BUDGET[view], response={**common,
+            **_nav_omissions(items),
+            "describe": {"tool": "scid_describe", "name": "<selected operation_id>", "view": "invoke"}})
+
+
+def _nav_omissions(items):
+    count = sum(len(item.get("purpose") or "") > 120 for item in items)
+    return {"omitted_fields": ["purpose_tail"], "omitted_count": count} if count else {}
+
+
+def _nav_projected_omissions(items):
+    omitted = [item["omitted_fields"] for item in items if "omitted_fields" in item]
+    return {"omitted_fields": sorted({field for fields in omitted for field in fields}),
+        "omitted_count": len(omitted)} if omitted else {}
+
+
+def _nav_entry(item, *, matches=False):
+    purpose = item.get("purpose") or ""
+    entry = {"operation_id": item["operation_id"], "purpose": purpose[:120]}
+    if matches:
+        omitted = ["purpose_tail"] if len(purpose) > 120 else []
+        entry.update(consequence=item.get("consequence"), executor_kind=item.get("executor_kind"),
+            input_schemas=_nav_values(item, "input_schema"),
+            runtime_status=(item.get("runtime_binding") or {}).get("status", "available"))
+        size = lambda: len(json.dumps(entry, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+        if size() > 320:
+            entry.pop("input_schemas")
+            omitted.append("input_schemas")
+        if omitted:
+            entry["omitted_fields"] = omitted
+        while size() > 320 and entry["purpose"]:
+            entry["purpose"] = entry["purpose"][:-1]
+            if "purpose_tail" not in omitted:
+                omitted.append("purpose_tail")
+                entry["omitted_fields"] = omitted
+        if size() > 320:
+            raise RootToolError(f"navigation_entry_too_large: {item['operation_id']}")
+    return entry
 
 
 def operation_detail(value):
@@ -147,33 +327,46 @@ def operation_revision_policy(spec):
     }
 
 
-def operation_invoke_contract(value, *, revision_policy):
+def operation_invoke_contract(value, *, revision_policy, representation="compact"):
     """Project one callable contract from the same compiled catalog item."""
-    result = pick(
-        value,
-        "operation_id",
-        "version",
-        "operation_digest",
-        "executor_kind",
-        "catalog_scope",
-        "purpose",
-        "applies_when",
-        "not_for",
-        "inputs",
-        "outputs",
-        "input_admission",
-        "input_validation",
-        "complete_transform_family",
-        "consequence",
-        "review_edge",
-        "requires_independent_review",
-        "requires_human_approval",
-        "timeout_seconds",
-        "max_input_bytes",
-        "default_max_attempts",
-        "runtime_binding",
-    )
+    # Strip only reviewed execution-only fields. Unknown future constraints are
+    # retained, including unknown fields inside every input and output port.
+    execution_only = {"native_shell", "native_view_image", "network_mode",
+        "max_network_requests", "max_output_bytes", "max_files",
+        "optional_runtime_services", "executor_model_usage", "accepts_actions"}
+    result = {key: item for key, item in value.items() if key not in execution_only}
     result["revision_policy"] = revision_policy
+    if representation == "legacy":
+        return result
+    result["contract_view_version"] = "invoke.compact.v1"
+    defaults = {}
+    for collection in ("inputs", "outputs"):
+        ports = [dict(port) for port in result.get(collection, [])]
+        shared = {}
+        for field in ("min_items", "max_items", "required_non_null_fields", "usage",
+                      "exposure", "require_current", "media_types", "max_item_bytes"):
+            # Only factor a value when at least two ports actually carry it.
+            values = [port[field] for port in ports if field in port]
+            if len(values) < 2:
+                continue
+            candidate = max(values, key=lambda value: values.count(value))
+            if values.count(candidate) < 2:
+                continue
+            # Missing fields in the source must not acquire implicit defaults.
+            if any(field not in port for port in ports):
+                continue
+            shared[field] = candidate
+            for port in ports:
+                if port[field] == candidate:
+                    del port[field]
+        if shared:
+            defaults[collection] = shared
+        if collection in result:
+            result[collection] = ports
+    if defaults:
+        result["defaults"] = defaults
+        result["defaults_rule"] = "For each input/output port, merge defaults[collection] then the port; explicit port fields override. No other defaults."
+    result["full"] = {"tool": "scid_describe", "name": value["operation_id"], "view": "full"}
     return result
 
 
@@ -266,13 +459,16 @@ def root_response(name, value, arguments):
     """Never replace a scientific object, precise request, or error with a verdict."""
     detail = arguments.get("view") == "detail"
     if name == "run_status":
-        response_profile = arguments.get("response_profile", "compat")
+        response_profile = arguments.get("response_profile", "poll")
         validate_run_status_profile(
             response_profile=response_profile,
             view=arguments.get("view", "summary"),
             output_mode=arguments.get("output_mode", "values"),
             output_paths=arguments.get("output_paths"),
+            include_full_output=arguments.get("include_full_output", False),
         )
+        if not run_is_terminal(value.get("state")):
+            return run_profile_projection(value, response_profile="poll")
         if response_profile != "compat":
             return run_profile_projection(
                 value,
@@ -294,6 +490,7 @@ def root_response(name, value, arguments):
             return value
         if kind == "agent":
             result = pick(result, "name", "state", "operation_id", "agent_type", "execution_profile",
+                "operation_version", "operation_digest",
                 "deadline_at", "output_artifact_name", "draft_from", "recovery", "normalized_request",
                 "diagnostics", "missing_inputs", "review_url", "approval_name")
             result["detail"] = {"tool": "run_status", "name": result.get("name"), "view": "detail", "output_paths": []}
@@ -302,6 +499,10 @@ def root_response(name, value, arguments):
     if name == "run_record_failure":
         return run_summary(value)
     if name == "operation_catalog":
+        if arguments["view"] in _NAV_BUDGET:
+            return operation_navigation(value, arguments)
+        if arguments.get("dimension") is not None or arguments.get("where") is not None:
+            raise RootToolError("dimension and where require an explicit navigation view")
         items = value["operations"]
         selected = arguments.get("operation_id")
         if selected is not None:
@@ -309,11 +510,17 @@ def root_response(name, value, arguments):
             if not items:
                 raise RootToolError("operation is not available in the selected catalog scope")
         total = len(items)
-        items, cursor = page(items, key="operation_id", limit=arguments["limit"], before=arguments.get("before"))
         if not detail:
-            items = [pick(item, "operation_id", "purpose", "executor_kind", "catalog_scope", "runtime_binding") for item in items]
-        else:
-            items = [operation_detail(item) for item in items]
+            items = sorted(items, key=lambda item: item["operation_id"])
+            snapshot = _nav_digest({"version": "summary.v2", "catalog": value.get("catalog_digest"),
+                "state": value.get("navigation_state"), "items": items})
+            query = _nav_digest({"version": "summary.v2", "scope": value["scope"], "operation_id": selected})
+            return _nav_page([pick(item, "operation_id", "purpose") for item in items],
+                key="operation_id", limit=arguments["limit"], before=arguments.get("before"),
+                snapshot_digest=snapshot, query_digest=query, budget=8192,
+                response={"scope": value["scope"], "view": "summary", "total": total})
+        items, cursor = page(items, key="operation_id", limit=arguments["limit"], before=arguments.get("before"))
+        items = [operation_detail(item) for item in items]
         return {"scope": value["scope"], "view": "detail" if detail else "summary",
                 "operations": items, "total": total, "next_before": cursor,
                 "detail": {"tool": "operation_catalog", "scope": value["scope"], "view": "detail", "operation_id": "<selected operation_id>"}}
@@ -336,6 +543,9 @@ def root_response(name, value, arguments):
         return result
     if name in {"run_list", "execution_list", "approval_list"}:
         field = {"run_list": "runs", "execution_list": "executions", "approval_list": "approvals"}[name]
+        if name == "run_list":
+            return {**value, field: [item if detail and run_is_terminal(item.get("state"))
+                else run_profile_projection(item, response_profile="poll") for item in value[field]]}
         if not detail:
             value = {**value, field: [pick(item, "name", "state", "status", "operation_id",
                         "output_artifact_name", "selected_option") for item in value[field]]}

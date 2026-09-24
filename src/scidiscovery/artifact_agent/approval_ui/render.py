@@ -350,8 +350,7 @@ def _render_decision(
         return (
             "<section class='decision-panel terminal'><p class='eyebrow'>历史记录</p>"
             "<h2>该审批入口已停用</h2>"
-            "<p>实例创建和会话选择已迁移到直接本地管理页；"
-            "此旧请求不能再写入决定。</p></section>"
+            "<p>此历史请求仅可读取，不能按当前合同写入决定。</p></section>"
         )
     if review.status != "pending":
         decision_value = (

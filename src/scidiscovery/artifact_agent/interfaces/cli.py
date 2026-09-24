@@ -233,12 +233,19 @@ def _run(args: argparse.Namespace) -> Any:
             return facade.approval_status(name=args.name)
     if args.command == "serve-approval-ui":
         assert runtime.approvals is not None
+        from ..approval_ui.legacy_artifacts import UIReadableArtifactRegistry
+        from ..approval_ui.legacy_tasks import LegacyTaskReader
         from ..approval_ui.read_model import InstanceReadModel
         from ..approval_ui.trajectory import TrajectoryStore
         from ..service.engineering_diagnostics import EngineeringDiagnostics
         from ..service.execution_collection import ExecutionCollection
         from ..service.instance_archive import InstanceArchive
         from ..runtime_plugin_bindings import parse_plugin_config_assignments
+        # The UI process may display old immutable Task-era envelopes. Control
+        # processes keep the current strict Artifact schema and admission rules.
+        registry = runtime.artifacts.registry
+        runtime.artifacts.registry = UIReadableArtifactRegistry(
+            registry.database_path, deadline_monotonic=registry.deadline_monotonic)
         plugin_configs = parse_plugin_config_assignments(tuple(args.plugin_config))
         ui = ApprovalUI(
             runtime.approvals,
@@ -253,7 +260,9 @@ def _run(args: argparse.Namespace) -> Any:
                 runs=runtime.runs, approvals=runtime.approvals, executions=runtime.executions,
                 operation_catalog=runtime.operation_catalog,
                 engineering_diagnostics=EngineeringDiagnostics(state / "engineering-diagnostics"),
-                execution_collection=ExecutionCollection(runtime.executions, plugin_configs={})),
+                execution_collection=ExecutionCollection(runtime.executions, plugin_configs={}),
+                legacy_tasks=LegacyTaskReader(task_database_path=state / "database" / "tasks.sqlite3",
+                    binding_database_path=runtime.scheduler_bindings.database_path, artifacts=runtime.artifacts)),
             local_identity=LocalIdentityRef(
                 identity_id=args.identity_id,
                 display_name=args.display_name,

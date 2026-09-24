@@ -186,6 +186,7 @@ def package_reviewed_project(
                 "development_initialization_entrypoint": (
                     project.development_initialization_entrypoint
                 ),
+                "collect_generated_outputs": project.collect_generated_outputs,
                 "case_anchors": list(anchors.values()),
                 "raw_outputs": [
                     {

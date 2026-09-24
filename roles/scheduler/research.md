@@ -96,6 +96,13 @@ Catalog summary is navigation. Read the selected complete contract only if it
 has not already been retained for this installed version; refresh after a
 contract/deployment change or loss. Never print all candidate contracts or a
 full review before selecting the decision-relevant fields.
+Default catalog entries contain only ID and exact purpose; follow next_before until
+complete for the same query. Changed snapshots require restart_query. Structural
+index/facets/matches do not prove semantic recall or cover support Operations;
+use operation_catalog(scope="support") when the selected public contract requires it.
+For compact invoke, merge defaults.inputs/defaults.outputs into each corresponding
+port before its explicit fields. Unknown fields and optional binding semantics still
+apply. representation="legacy" expands the same call constraints when needed.
 
 For new supported SProcess work, prefer science.experiment.skeleton.v1: design owns
 the scientific comparisons, criteria and frozen conditions; the author owns its

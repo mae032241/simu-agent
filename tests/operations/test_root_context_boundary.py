@@ -93,9 +93,9 @@ def test_combined_status_and_values_waits_for_sealing(tmp_path):
     navigation = result(call(gateway, 'run_status', {
         'name': 'observation', 'response_profile': 'navigation', 'output_mode': 'index'}))
     assert navigation['output_index']['pointer'] == '' and 'scheduler_signal' not in navigation
-    compat = result(call(gateway, 'run_status', {'name': 'observation', 'output_paths': []}))
-    assert compat['scheduler_signal'] == completed['scheduler_signal']
-    assert 'operation_version' not in compat and 'operation_digest' not in compat
+    poll = result(call(gateway, 'run_status', {'name': 'observation', 'output_paths': []}))
+    assert 'scheduler_signal' not in poll
+    assert poll['operation_version'] and poll['operation_digest']
 
 
 def test_gateway_index_does_not_read_summary_or_leak_full_output(tmp_path):
@@ -110,16 +110,17 @@ def test_gateway_index_does_not_read_summary_or_leak_full_output(tmp_path):
     assert worker.call_tool("worker_submit_result", {})["state"] == "completed"
     gateway = UnifiedMCPRouter(root, worker_backend="local")
     for view in ("summary", "detail"):
-        page = result(call(gateway, "run_status", {"name": "observation", "view": view, "output_mode": "index"}))
+        page = result(call(gateway, "run_status", {"name": "observation", "view": view,
+            "response_profile": "compat", "output_mode": "index"}))
         assert not page.get("sealed_output") and not page.get("selected_output")
         assert page["output_index"]["pointer"] == ""
         assert "/limitations" in [i["pointer"] for i in page["output_index"]["children"]]
-    exact = result(call(gateway, "run_status", {"name": "observation", "output_paths": ["/limitations"]}))
+    exact = result(call(gateway, "run_status", {"name": "observation", "response_profile": "decision", "output_paths": ["/limitations"]}))
     assert exact["selected_output"]["items"][0]["value"] == ["Two rows do not establish causality."]
     for paths in ([], ["/limitations", "/structure"]):
         error = call(gateway, "run_status", {"name": "observation", "output_mode": "index", "output_paths": paths})
         assert error["error"]["data"]["diagnostics"][0]["path"] == "$.output_paths"
-    full = result(call(gateway, "run_status", {"name": "observation", "view": "detail"}))
+    full = result(call(gateway, "run_status", {"name": "observation", "view": "detail", "include_full_output": True}))
     assert full["sealed_output"]["payload"]["limitations"] == ["Two rows do not establish causality."]
     compact_detail = call(gateway, "run_status", {"name": "observation", "response_profile": "poll",
         "view": "detail", "output_paths": []})

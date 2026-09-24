@@ -11,7 +11,7 @@ from .navigation import navigation
 
 
 _MAX_PAGE_BYTES = 256 * 1024
-_KINDS = {"run": "任务", "artifact": "成果 / 转换", "approval": "人工审批", "execution": "外部执行"}
+_KINDS = {"run": "任务", "task": "历史任务", "artifact": "成果 / 转换", "approval": "人工审批", "execution": "外部执行"}
 _STATES = {
     "queued": "排队中", "running": "运行中", "completed": "运行完成", "failed": "失败",
     "registered": "已登记", "pending": "待审批", "decided": "已决定", "expired": "已过期",
@@ -89,6 +89,8 @@ def _state(value: object) -> str:
 
 
 def _record_title(node: dict) -> str:
+    if node.get("kind") == "task":
+        return "历史任务 · " + str(node.get("name") or "未命名")
     schema = node.get("schema_id")
     outputs = _list(node.get("outputs"))
     if not schema and outputs:
@@ -376,6 +378,12 @@ def render_node(node: dict, *, instance_id: str, presentation: dict | None = Non
         "操作":node.get("operation_id"), "原记录科学可用性声明":node.get("recorded_scientific_claim_admissible"),
         "当前资格记录":node.get("qualification"), "当前选择记录":node.get("current_selection"),
         "创建时间":node.get("created_at"), "完成时间":node.get("completed_at")}
+    if node.get("kind") == "task":
+        metadata["历史任务角色"] = node.get("legacy_role")
+        metadata["封存 Task Ref"] = _dict(node.get("record")).get("task_ref")
+        metadata["历史只读"] = True
+    if node.get("legacy_task_ref"):
+        metadata["历史生产 Task Ref"] = node["legacy_task_ref"]
     logs = _diagnostics(node, instance_id) if "diagnostics" in node else ""
     if node.get("kind") == "run":
         profile = _dict(_dict(node.get("execution_profile")).get("profile"))

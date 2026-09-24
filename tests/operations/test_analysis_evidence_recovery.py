@@ -110,10 +110,9 @@ def test_recovery_filters_bad_files_individually_and_rejects_changed_copy(tmp_pa
     retained.write_text('changed')
     request = deepcopy(system[3]); request.update(name='tampered_resume', draft_from='analysis')
     assert not system[2].call_tool('operation_preflight', request)['admissible']
-    for view in ('summary', 'detail'):
-        damaged = system[2].call_tool('run_status', {'name':'analysis', 'view':view, 'output_paths':[]})
-        assert damaged['recovery']['delivery_preserved'] is False
-        assert damaged['recovery'].get('coverage', {}).get('complete') is not True
+    damaged = system[2].call_tool('run_status', {'name':'analysis', 'view':'detail', 'response_profile':'compat', 'output_paths':[]})
+    assert damaged['recovery']['delivery_preserved'] is False
+    assert damaged['recovery'].get('coverage', {}).get('complete') is not True
     assert (scratch / 'complete.csv').read_text() == 'x,y\n0,3\n'
 
 
@@ -186,7 +185,7 @@ def test_recovered_bytes_score_and_seal_in_same_run(tmp_path):
     write_analysis(opened,report)
     submitted=worker.call_tool('worker_submit_result',{})
     assert submitted['state']=='completed',submitted
-    status=system[2].call_tool('run_status',{"view": "detail", 'name':'analysis'})
+    status=system[2].call_tool('run_status',{"view": "detail", "response_profile":"compat", "include_full_output":True, 'name':'analysis'})
     assert len(status['evidence_outputs'])==4  # inspection, accepted raw file, calculation, manifest
     assert status['sealed_output']['payload']['calculation_records']==[record]
     assert (directory/'work/A_actual.plx').exists()
@@ -344,7 +343,7 @@ def test_failed_run_preserves_tool_evidence_for_new_bound_run(tmp_path):
     catalog,runtime,root,request,artifacts,register=system
     status=root.call_tool('run_status',{"view": "detail", 'name':'analysis'})
     failed=root.call_tool('run_record_failure',dict(name='analysis',reason='fixture transport interruption',expected_state='running',expected_last_activity_at=status['last_activity_at']))
-    assert failed['recovery']['draft_available'], (failed['recovery'], runtime.runs.status(worker._run_id).recovery_draft)
+    assert runtime.runs.status(worker._run_id).recovery_draft is not None
     assert not failed.get('evidence_outputs')
     # Remote bytes are no longer needed to use the already accepted, preserved copy.
     (directory/'work/A_actual.plx').unlink()
@@ -828,7 +827,7 @@ def test_three_run_recovery_keeps_colliding_attempt_scopes_and_seals_without_rec
     submitted = worker.call_tool('worker_submit_result', {})
     assert submitted['state'] == 'completed', submitted
     assert runtime.runs.tool_attempts(worker._run_id) == []
-    status = root.call_tool('run_status', {"view": "detail", 'name':'third'})
+    status = root.call_tool('run_status', {"view": "detail", "response_profile":"compat", "include_full_output":True, 'name':'third'})
     assert status['sealed_output']['payload']['calculation_records'] == records
     # A later ordinary analysis reads the completed proof without restarting a chain.
     later = deepcopy(request); later['name'] = 'historical'

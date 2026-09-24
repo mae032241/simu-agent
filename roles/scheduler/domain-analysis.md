@@ -5,7 +5,7 @@ execution plan and its matching review. Bind newer retrospective analysis plans
 and reviews in current_progress. Use artifact_catalog(view="producer_inputs") to
 recover exact immediate producer ports and current access names. Use its explicit
 parents_fallback for historical, cross-instance, unavailable or ambiguous producers.
-Read run_status(view="detail", output_paths=[]) only for a real binding, native or
+Read run_status(view="detail", response_profile="compat", output_paths=[]) only for a terminal binding, native or
 recovery diagnostic, and use artifact_catalog(view="parents") for the indicated
 ordered parent schema/kind fallback;
 null aliases are missing inputs, never permission to choose a newer record.

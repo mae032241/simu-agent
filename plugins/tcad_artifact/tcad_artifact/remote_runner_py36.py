@@ -335,6 +335,8 @@ def _submit(config, descriptor):
             "executable": tool["executable"],
             "execution_purpose": job["execution_purpose"],
             "expected_outputs": job["expected_outputs"],
+            "collect_generated_outputs": job.get("collect_generated_outputs", False),
+            "archive_entries": job["archive_entries"],
             "limits": job["limits"],
         }
         _write_new(os.path.join(run_dir, "runtime.json"), _canonical(runtime), 0o440)
@@ -485,6 +487,8 @@ def _run_worker(config, run_dir):
             runtime["expected_outputs"],
             runtime["limits"],
             outputs, collection_errors,
+            archive_entries=runtime.get("archive_entries", ()),
+            collect_generated_outputs=runtime.get("collect_generated_outputs", False),
         )
         if collection_errors:
             error = "; ".join(collection_errors)[:8192]
@@ -546,8 +550,10 @@ def _runtime_environment(run_dir):
 
 def _validate_job(job):
     expected = {"schema_version", "execution_purpose", "tool_profile", "solver_kind", "capability_sha256", "input_archive", "archive_entries", "arguments", "expected_outputs", "limits"}
-    if not isinstance(job, dict) or set(job) != expected or job["schema_version"] != 2:
+    if not isinstance(job, dict) or not (expected <= set(job) <= expected | {"collect_generated_outputs"}) or job["schema_version"] != 2:
         raise ValueError("job specification has unexpected fields")
+    if not isinstance(job.get("collect_generated_outputs", False), bool):
+        raise ValueError("job generated-output collection flag is invalid")
     if job["execution_purpose"] not in {"production", "development_debug"}:
         raise ValueError("job execution_purpose is invalid")
     if not isinstance(job["archive_entries"], list) or not job["archive_entries"]:
@@ -603,7 +609,7 @@ def _extract_archive(raw, entries, destination):
         raise ValueError("archive is missing declared members")
 
 
-def _collect_expected(root, expected, limits, records=None, errors=None):
+def _collect_expected(root, expected, limits, records=None, errors=None, *, archive_entries=(), collect_generated_outputs=False):
     records = [] if records is None else records
     total = sum(int(item["size_bytes"]) for item in records)
     failures = [] if errors is None else errors
@@ -642,9 +648,74 @@ def _collect_expected(root, expected, limits, records=None, errors=None):
             if "total output" in str(failure):
                 failures[-1] += "; %d later outputs not inspected" % (len(expected)-index-1)
                 break
+    if collect_generated_outputs and not failures:
+        try:
+            _collect_generated(root, archive_entries, expected, limits, records)
+        except (OSError, RuntimeError, ValueError) as failure:
+            failures.append(str(failure)[:1024])
     if errors is None and failures:
         raise RuntimeError("; ".join(failures)[:8192])
     return records
+
+
+def _collect_generated(root, archive_entries, expected, limits, records):
+    originals = dict((item["relative_path"], item) for item in archive_entries)
+    reserved = set(item["relative_path"] for item in expected)
+    total = sum(int(item["size_bytes"]) for item in records)
+    generated = 0
+    def fail_walk(error):
+        raise error
+
+    for directory, dirs, files in os.walk(root, followlinks=False, onerror=fail_walk):
+        dirs.sort()
+        files.sort()
+        for name in dirs:
+            if not stat.S_ISDIR(os.lstat(os.path.join(directory, name)).st_mode):
+                raise RuntimeError("generated output directory is not a real directory")
+        for name in files:
+            path = os.path.join(directory, name)
+            relative = _safe_relative(os.path.relpath(path, root).replace(os.sep, "/"))
+            if len(relative) > 1024:
+                raise RuntimeError("generated output path exceeds contract")
+            if relative in reserved:
+                continue
+            flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+            descriptor = os.open(path, flags)
+            try:
+                metadata = os.fstat(descriptor)
+                if not stat.S_ISREG(metadata.st_mode):
+                    raise RuntimeError("generated output is not a regular file: " + relative)
+                if total + metadata.st_size > limits["max_output_bytes"]:
+                    raise RuntimeError("total output exceeds job limit")
+                digest = hashlib.sha256()
+                size = 0
+                with os.fdopen(descriptor, "rb", closefd=False) as stream:
+                    while True:
+                        chunk = stream.read(1024 * 1024)
+                        if not chunk:
+                            break
+                        size += len(chunk)
+                        if total + size > limits["max_output_bytes"]:
+                            raise RuntimeError("total output exceeds job limit")
+                        digest.update(chunk)
+            finally:
+                os.close(descriptor)
+            original = originals.get(relative)
+            if original is not None and size == original["size_bytes"] and digest.hexdigest() == original["sha256"]:
+                continue
+            generated += 1
+            if len(records) >= 4092:
+                raise RuntimeError("collected solver output count exceeds 4092")
+            total += size
+            suffix = os.path.splitext(path)[1].lower()
+            media_type = {".plx": "application/x-synopsys-plx", ".json": "application/json",
+                          ".csv": "text/csv", ".txt": "text/plain", ".log": "text/plain",
+                          ".png": "image/png"}.get(suffix, "application/octet-stream")
+            records.append({"name": "generated_" + hashlib.sha256(relative.encode("utf-8")).hexdigest(),
+                            "relative_path": relative, "media_type": media_type,
+                            "sha256": digest.hexdigest(), "size_bytes": size})
+    if not generated:
+        raise RuntimeError("solver produced no generated output files")
 
 
 def _augment_development_debug_log(run_dir, runtime):

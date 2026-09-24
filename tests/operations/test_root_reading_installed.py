@@ -42,7 +42,7 @@ facade = SimpleNamespace(runs=SimpleNamespace(), session_key=None,
     engineering_diagnostics=SimpleNamespace(capture=Mock()), _instance_id=lambda:'fixture', run_status=status)
 router = MCPRouter(RootMCPRouter(facade), name='installed')
 reply = router.handle(dict(jsonrpc='2.0', id=1, method='tools/call', params=dict(
-    name='run_status', arguments=dict(name='report', output_mode='index', index_limit=1))))
+    name='run_status', arguments=dict(name='report', response_profile='navigation', output_mode='index', index_limit=1))))
 directory = reply['result']['structuredContent']['output_index']
 assert directory['children'][0]['pointer'] == '/summary'
 assert 'Do not expand' not in json.dumps(directory)

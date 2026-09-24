@@ -634,6 +634,9 @@ assert DescribeInput.model_json_schema()['properties']['view']['enum'] == ['full
 assert RunStatusInput.model_json_schema()['properties']['response_profile']['enum'] == [
     'compat', 'poll', 'navigation', 'decision'
 ]
+assert RunStatusInput.model_json_schema()['properties']['response_profile']['default'] == 'poll'
+assert RunStatusInput.model_json_schema()['properties']['include_full_output']['default'] is False
+assert DescribeInput.model_json_schema()['properties']['representation']['enum'] == ['compact', 'legacy']
 assert 'producer_inputs' in ArtifactCatalogInput.model_json_schema()['properties']['view']['enum']
 print('installed package probe: pass')
 PY
@@ -976,7 +979,8 @@ probe_mcp() {
         PYTHONNOUSERSITE=1 PYTHONPATH="$SITE_ROOT" "$PYTHON" -m "$module" "${arguments[@]}" | \
         PYTHONNOUSERSITE=1 PYTHONPATH="$SITE_ROOT" "$PYTHON" -c '
 import json, sys
-names = {item["name"] for item in json.load(sys.stdin)["result"]["tools"]}
+listed_names = [item["name"] for item in json.load(sys.stdin)["result"]["tools"]]
+names = set(listed_names)
 mode = sys.argv[1]
 required = {
     "worker": {"worker_open_assignment", "worker_heartbeat",
@@ -985,12 +989,17 @@ required = {
 if mode == "root":
     from scidiscovery.artifact_agent.interfaces.mcp_gateway import GATEWAY_TOOLS
     required = set(GATEWAY_TOOLS)
-if mode.isdigit() and len(names) != int(mode):
-    raise SystemExit(f"tool count mismatch: expected={mode} observed={len(names)}")
-if not required <= names or (mode == "root" and names != required):
+if mode == "tcad":
+    from tcad_artifact.execution_control import EXECUTION_TOOLS
+    required = {tool.name for tool in EXECUTION_TOOLS}
+if mode.isdigit() and len(listed_names) != int(mode):
+    raise SystemExit(f"tool count mismatch: expected={mode} observed={len(listed_names)}")
+if not required <= names or (mode in {"root", "tcad"} and
+        (names != required or len(listed_names) != len(required))):
     raise SystemExit(f"MCP tool authority mismatch: {mode}; "
-                     f"missing={sorted(required - names)}; unexpected={sorted(names - required)}")
-print(f"MCP tool probe: pass ({mode}, {len(names)})")
+                     f"missing={sorted(required - names)}; unexpected={sorted(names - required)}; "
+                     f"observed_count={len(listed_names)}")
+print(f"MCP tool probe: pass ({mode}, {len(listed_names)})")
 ' "$mode"
 }
 
@@ -1064,6 +1073,9 @@ try:
     assert run_status["inputSchema"]["properties"]["response_profile"]["enum"] == [
         "compat", "poll", "navigation", "decision"
     ]
+    assert run_status["inputSchema"]["properties"]["response_profile"]["default"] == "poll"
+    assert run_status["inputSchema"]["properties"]["include_full_output"]["default"] is False
+    assert describe["inputSchema"]["properties"]["representation"]["enum"] == ["compact", "legacy"]
     artifact_catalog = call("describe_artifact_catalog", "scid_describe", {"name": "artifact_catalog"})
     assert "producer_inputs" in artifact_catalog["inputSchema"]["properties"]["view"]["enum"]
     catalog = call("catalog_public", "scid_catalog", {})
@@ -1075,6 +1087,9 @@ try:
     assert operation["operation_id"] == operation_id
     assert len(operation["operation_digest"]) == 64
     assert "inputs" in operation and "revision_policy" in operation
+    assert operation["contract_view_version"] == "invoke.compact.v1"
+    assert all(set(item) == {"operation_id", "purpose"} for item in catalog["operations"])
+    assert catalog["complete"] == (catalog["next_before"] is None)
     print(f"Root context contract probe: pass ({operation_id}, {operation['operation_digest']})")
 finally:
     if process.stdin is not None:
@@ -1122,7 +1137,7 @@ verify_installation() {
     probe_root_context_contract scidiscovery.artifact_agent.interfaces.mcp_proxy "$CONTROL_SOCKET"
     if [[ "$TCAD_LOCAL_SERVICE" -eq 1 ]]; then
         wait_for_socket "$TCAD_SOCKET" tcad-control.service
-        probe_mcp tcad_artifact.execution_mcp "$TCAD_SOCKET" "" 5
+        probe_mcp tcad_artifact.execution_mcp "$TCAD_SOCKET" "" tcad
     fi
     probe_approval_ui
     printf 'Checking Codex installation profiles...\n'

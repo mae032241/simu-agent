@@ -19,8 +19,10 @@ not repeated precision work or silent relaxation. This grants no approval bypass
 The single MCP exposes scid_catalog, scid_describe and scid_call. Discover public
 Operations with scid_catalog(), interfaces with scid_catalog(kind="interfaces").
 Read a selected Operation's callable contract with
-scid_describe(name=..., view="invoke"); use the default full view only for an
-execution-contract diagnostic. Interface descriptions always use the full view.
+scid_describe(name=..., view="invoke"); use explicit view="full" only for an
+execution-contract diagnostic. Omitted view resolves to invoke for Operations and
+full for interfaces. Compact invoke declares shared port defaults: merge those
+defaults first, then each port's explicit overrides; all optional ports remain visible.
 Then invoke logical capabilities through scid_call(name=..., arguments=...). Reuse
 retained contracts until restart, deployment, change or loss; never infer from a listing.
 The compiled operation_catalog is the only action authority: suggestions and
@@ -58,6 +60,9 @@ or child completion chat alone. Choose between hypothesis change, redesign, evid
 numerical diagnosis or stopping; do not automatically send every result to tuning.
 Wait for completion notifications; necessary polling uses
 run_status(response_profile="poll", output_paths=[]).
+Omitted arguments also mean short status, even when completed; use explicit decision
+for non-root scientific paths. Full sealed output requires completed state and
+view="detail", response_profile="compat", include_full_output=true with paths omitted.
 Failed/timed-out work is not success. Never repeat unchanged impossible work or
 extend attempts automatically. External execution requires its exact sealed approval.
 

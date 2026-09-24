@@ -50,7 +50,7 @@ from scidiscovery.artifact_agent.operation_tool_context import OperationToolCont
 
 from .execution_control import SolverCapabilitySnapshot
 from .role_pack import role_prompt
-from .debug_contract import TCADDebugError
+from .debug_contract import DEVELOPMENT_ARTIFACT_LIMIT_BYTES, TCADDebugError
 from .local_debug_service import debug_summary, debug_tool_description
 from .project_packager import (
     DeckProjectDraft,
@@ -426,7 +426,7 @@ def _author_operation(
                 "project_validator",
                 context_validator,
                 names,
-                max_bytes=8 * 1024 * 1024,
+                max_bytes=DEVELOPMENT_ARTIFACT_LIMIT_BYTES,
             ),
         ),
         consequence="scientific",
@@ -440,8 +440,8 @@ def _author_operation(
         guards=(_ref("parameter_cohort_guard"),),
         limits=LimitsSpec(
             timeout_seconds=1200,
-            max_input_bytes=64 * 1024 * 1024,
-            max_output_bytes=8 * 1024 * 1024,
+            max_input_bytes=128 * 1024 * 1024,
+            max_output_bytes=DEVELOPMENT_ARTIFACT_LIMIT_BYTES,
             max_files=1,
             max_attempts=2,
         ),
@@ -514,19 +514,19 @@ INITIAL_INPUTS = (
     _input("parameter_uncertainty", "scidiscovery.parameter-uncertainty.v1", "parameter_uncertainty_schema", usage="prior_signal", max_bytes=512 * 1024, min_items=0),
 )
 REVISION_INPUTS = (
-    _input("prior_project", "tcad.deck-project.v1", "project_schema", usage="revision_base"),
+    _input("prior_project", "tcad.deck-project.v1", "project_schema", usage="revision_base", max_bytes=DEVELOPMENT_ARTIFACT_LIMIT_BYTES),
     _input("change_request", "tcad.deck-review-report.v1", "review_schema", usage="change_request", max_bytes=512 * 1024),
     DEVICE_GRID_INPUT,
     *INITIAL_INPUTS,
 )
 RUNTIME_INPUTS = (
-    _input("prior_project", "tcad.deck-project.v1", "project_schema", usage="revision_base"),
+    _input("prior_project", "tcad.deck-project.v1", "project_schema", usage="revision_base", max_bytes=DEVELOPMENT_ARTIFACT_LIMIT_BYTES),
     _input("runtime_attestation", "tcad.runtime-attestation.v1", "runtime_attestation_schema", usage="prior_signal", max_bytes=512 * 1024),
     _input("solver_log", "opaque", "opaque_schema", schema_plugin="general_science", usage="prior_signal", media_types=("text/plain", "text/plain; charset=utf-8"), max_bytes=32 * 1024 * 1024),
     *INITIAL_INPUTS,
 )
 REVIEW_INPUTS = (
-    _input("project", "tcad.deck-project.v1", "project_schema", usage="prior_signal"),
+    _input("project", "tcad.deck-project.v1", "project_schema", usage="prior_signal", max_bytes=DEVELOPMENT_ARTIFACT_LIMIT_BYTES),
     *(item.model_copy(update={"usage": "prior_signal"})
       if item.name == "experiment_plan" else item for item in INITIAL_INPUTS),
 )
@@ -672,7 +672,7 @@ PLUGIN = PluginDefinition(
             guards=(_ref("parameter_cohort_guard"),),
             limits=LimitsSpec(
                 timeout_seconds=600,
-                max_input_bytes=32 * 1024 * 1024,
+                max_input_bytes=128 * 1024 * 1024,
                 max_output_bytes=128 * 1024,
                 max_files=1,
             ),

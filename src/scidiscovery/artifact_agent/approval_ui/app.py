@@ -599,6 +599,13 @@ class ApprovalUI:
         return self._respond(handler, HTTPStatus.OK, body, "text/html; charset=utf-8")
 
     def _render_review_page(self, review, token):
+        from .legacy_artifacts import LegacyUIArtifactEnvelope
+        # Archived approvals are already read-only and their request may exist
+        # only in the archive, not in the active Artifact registry.
+        read_only = (review.request.kind in _RETIRED_INSTANCE_APPROVAL_KINDS
+            or self._approval_frozen(review.request.approval_id))
+        if not read_only:
+            read_only = isinstance(self.service.artifacts.catalog(review.request_ref), LegacyUIArtifactEnvelope)
         presentation, evidence_href, image_href = None, None, None
         if self.read_model is not None and self.bindings is not None:
             try:
@@ -618,7 +625,7 @@ class ApprovalUI:
                 presentation = {"gaps": [{"code": "approval_presentation_unavailable", "error_type": type(error).__name__}]}
         return render_review(review, access_token=token, identity=self.identity,
             context=self._review_context(review.request.approval_id),
-            read_only=review.request.kind in _RETIRED_INSTANCE_APPROVAL_KINDS or self._approval_frozen(review.request.approval_id),
+            read_only=read_only,
             presentation=presentation, evidence_href=evidence_href, image_href=image_href)
 
     def _handle_evidence(self, handler, parts, query):
@@ -837,6 +844,10 @@ class ApprovalUI:
                 if self._approval_frozen(parts[1]):
                     return self._error(handler, HTTPStatus.CONFLICT, "实例正在维护或已经归档；此审批只可读取。")
                 review = self.service.review(parts[1], access_token=token)
+                from .legacy_artifacts import LegacyUIArtifactEnvelope
+                if isinstance(self.service.artifacts.catalog(review.request_ref), LegacyUIArtifactEnvelope):
+                    return self._error(handler, HTTPStatus.CONFLICT,
+                        "历史 Task 代际审批仅可读取，不能按当前合同写入决定。")
                 if review.request.kind in _RETIRED_INSTANCE_APPROVAL_KINDS:
                     return self._error(
                         handler,

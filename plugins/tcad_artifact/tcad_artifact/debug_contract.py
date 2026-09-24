@@ -11,6 +11,9 @@ from scidiscovery.artifact_agent.schema.refs import ArtifactRef
 from scidiscovery.artifact_agent.service.execution_collection import CollectionContext
 
 
+DEVELOPMENT_ARTIFACT_LIMIT_BYTES = 64 * 1024 * 1024
+
+
 class TCADDebugError(RuntimeError):
     pass
 
@@ -35,6 +38,7 @@ class CollectedTCADDebugFile:
     name: str
     media_type: str
     content: bytes
+    relative_path: str | None = None
 
 
 @dataclass(frozen=True)

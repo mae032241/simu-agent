@@ -67,23 +67,41 @@ def _attempt_limit_error(error: RunAttemptLimit) -> OperationInvocationError:
 
 
 class RootOperationRoutes:
-    def operation_catalog(self, *, scope: str) -> dict[str, Any]:
-        projection = self._operation_catalog.scheduler_projection()
+    def operation_catalog(self, *, scope: str, navigation: bool = False,
+                          operation_id: str | None = None) -> dict[str, Any]:
+        if operation_id is None:
+            projection = self._operation_catalog.scheduler_projection()
+        else:
+            from ...operations.spec import scheduler_operation_view
+            try:
+                compiled = self._operation_catalog.operation(operation_id)
+            except KeyError:
+                projection = ()
+            else:
+                projection = (scheduler_operation_view(compiled.spec),)
         items = [
             self._operation_catalog_item(item)
             for item in projection
             if scope == "all" or item.catalog_scope == scope
         ]
+        navigation_state = []
         if scope == "public":
-            items = [
-                item
-                for item in items
-                if self._scheduler_operation_available(item["operation_id"])
-            ]
-        return {
-            "scope": scope,
-            "operations": items,
-        }
+            if navigation:
+                for item in items:
+                    reason = self._scheduler_operation_unavailability(item["operation_id"])
+                    navigation_state.append({
+                        "operation_id": item["operation_id"],
+                        "available": reason is None,
+                        "unavailable_reason": reason,
+                        "runtime_binding": item.get("runtime_binding"),
+                    })
+                items = [item for item, state in zip(items, navigation_state) if state["available"]]
+            else:
+                items = [item for item in items if self._scheduler_operation_available(item["operation_id"])]
+        result = {"scope": scope, "operations": items}
+        if navigation:
+            result.update(catalog_digest=self._operation_catalog.digest(), navigation_state=navigation_state)
+        return result
 
     def _operation_catalog_item(self, item: Any) -> dict[str, Any]:
         value = item.model_dump(mode="json", by_alias=True)
@@ -150,40 +168,53 @@ class RootOperationRoutes:
     def _scheduler_operation_available(
         self, operation_id: str, seen: frozenset[str] = frozenset()
     ) -> bool:
+        return self._scheduler_operation_unavailability(operation_id, seen) is None
+
+    def _scheduler_operation_unavailability(
+        self, operation_id: str, seen: frozenset[str] = frozenset()
+    ) -> dict[str, Any] | None:
         if operation_id in seen:
-            return False
+            return {"reason_code": "reviewer_cycle", "operation_id": operation_id}
         try:
             compiled = self._operation_catalog.operation(operation_id)
         except KeyError:
-            return False
+            return {"reason_code": "operation_missing", "operation_id": operation_id}
         if compiled.spec.catalog_scope == "internal":
-            return False
-        if compiled.spec.executor.kind == "agent" and (
-            self.runs is None
-            or not self.runs.backend.supports_operation(compiled)
-            or bool(operation_local_worker_missing_tools(compiled))
-        ):
-            return False
+            return {"reason_code": "internal_operation", "operation_id": operation_id}
+        if compiled.spec.executor.kind == "agent":
+            if self.runs is None:
+                return {"reason_code": "runtime_backend_unavailable", "operation_id": operation_id}
+            if not self.runs.backend.supports_operation(compiled):
+                return {"reason_code": "backend_requirements_unavailable", "operation_id": operation_id,
+                        "required": list(self.runs.backend.unsupported_requirements(compiled))}
+            missing = operation_local_worker_missing_tools(compiled)
+            if missing:
+                return {"reason_code": "worker_tools_unavailable", "operation_id": operation_id,
+                        "required": list(missing)}
         if compiled.spec.executor.kind == "effect":
             try:
                 plan = effect_operation_plan(compiled)
             except OperationInvocationError:
-                return False
+                return {"reason_code": "effect_declaration_invalid", "operation_id": operation_id}
             if (
                 self.execution_bridge is None
                 or not self.execution_bridge.has_adapter(plan.executor)
             ):
-                return False
+                return {"reason_code": "effect_adapter_unavailable", "operation_id": operation_id,
+                        "required": [plan.executor]}
         review = compiled.spec.review
         if (
             compiled.spec.catalog_scope == "public"
             and review is not None
             and review.reviewer_operation is not None
         ):
-            return self._scheduler_operation_available(
+            reviewer_reason = self._scheduler_operation_unavailability(
                 review.reviewer_operation, seen | {operation_id}
             )
-        return True
+            if reviewer_reason is not None:
+                return {"reason_code": "reviewer_unavailable", "operation_id": operation_id,
+                        "reviewer": reviewer_reason}
+        return None
 
     def _configured_operation_call(self, values):
         self._require_scheduling_enabled()

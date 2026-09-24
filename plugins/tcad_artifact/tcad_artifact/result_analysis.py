@@ -386,15 +386,24 @@ def validate_analysis_inputs(sources: Mapping[str, bytes]) -> None:
         if recovered is not None:
             original = descriptors.get('execution_result')
             declaration = expected.get(recovered['metadata'].get('output_name'))
+            generated = records.get(recovered['metadata'].get('output_name'))
+            if generated is not None and not (
+                package.project.collect_generated_outputs
+                and generated.name == "generated_" + hashlib.sha256(generated.relative_path.encode("utf-8")).hexdigest()
+            ):
+                generated = None
             if recovered['metadata'].get('output_name') is None:
                 if (original is None or recovered['source_ref'] != original.artifact_ref.model_dump(mode='json')
                         or descriptor.output_name is not None or recovered['size_bytes'] != descriptor.size_bytes
                         or recovered['media_type'] != descriptor.media_type):
                     raise OperationInvocationError('input_recovery_origin_mismatch', port='recovery_manifest')
                 continue
-            if original is None or recovered['source_ref'] != original.artifact_ref.model_dump(mode='json') or declaration is None:
+            if original is None or recovered['source_ref'] != original.artifact_ref.model_dump(mode='json') or (declaration is None and generated is None):
                 raise OperationInvocationError('input_recovery_origin_mismatch', port='recovery_manifest')
-            if declaration.relative_path != recovered['metadata'].get('declared_path') or declaration.name != descriptor.output_name or recovered['size_bytes'] != descriptor.size_bytes or recovered['media_type'] != descriptor.media_type or (declaration.experiment_key, declaration.case_key) != (recovered['metadata'].get('experiment_key'), recovered['metadata'].get('case_key')):
+            expected_path = declaration.relative_path if declaration is not None else generated.relative_path
+            expected_name = declaration.name if declaration is not None else generated.name
+            expected_case = (declaration.experiment_key, declaration.case_key) if declaration is not None else (None, None)
+            if expected_path != recovered['metadata'].get('declared_path') or (declaration is None and expected_path != recovered['metadata'].get('relative_path')) or expected_name != descriptor.output_name or recovered['size_bytes'] != descriptor.size_bytes or recovered['media_type'] != descriptor.media_type or (declaration is None and (descriptor.sha256 != generated.sha256 or descriptor.size_bytes != generated.size_bytes)) or expected_case != (recovered['metadata'].get('experiment_key'), recovered['metadata'].get('case_key')):
                 raise OperationInvocationError('input_recovery_output_mismatch', port='recovery_manifest')
             continue
         record = records.get(descriptor.output_name)
@@ -405,6 +414,11 @@ def validate_analysis_inputs(sources: Mapping[str, bytes]) -> None:
         declaration = expected.get(record.name)
         if declaration is not None and (declaration.relative_path != record.relative_path
                 or declaration.media_type != record.media_type):
+            raise OperationInvocationError("input_project_output_mismatch", port="runtime_manifest", field="outputs")
+        if declaration is None and not (
+            package.project.collect_generated_outputs
+            and record.name == "generated_" + hashlib.sha256(record.relative_path.encode("utf-8")).hexdigest()
+        ):
             raise OperationInvocationError("input_project_output_mismatch", port="runtime_manifest", field="outputs")
 
 
@@ -503,8 +517,9 @@ pointers for implementation details. The case_parameter_bindings ledger is not a
 reading or reporting task. Return LayeredDiagnosisReport in RoleResultEnvelope.
 Preserve planned tests, deferred goals, method changes and conclusion limits.
 
-Read actual bound results: diagnostics are runner logs; solver_outputs are declared
-products. Logs can explain execution but cannot substitute for solver products.
+Read actual bound results: diagnostics are runner logs; solver_outputs are exact
+manifested generated files or legacy declared products. Logs can explain execution
+but cannot substitute for solver products.
 Failed/cancelled execution or missing products permits invalid_study or bounded
 inconclusive findings, not fabricated success. Old aggregate 97 is not solver success:
 use explicit solver status and actual step evidence; state uncertainty when absent.

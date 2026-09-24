@@ -22,7 +22,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_serializer, model_validator
 
 
 def _validate_relative_path(value: str) -> str:
@@ -124,7 +124,15 @@ class TCADJobSpec(StrictModel):
     archive_entries: tuple[ArchiveEntry, ...] = Field(min_length=1, max_length=4096)
     arguments: tuple[str, ...] = Field(default=(), max_length=256)
     expected_outputs: tuple[ExpectedOutput, ...] = Field(max_length=4096)
+    collect_generated_outputs: bool = False
     limits: ResourceLimits
+
+    @model_serializer(mode="wrap")
+    def _preserve_legacy_job(self, handler):
+        value = handler(self)
+        if not self.collect_generated_outputs:
+            value.pop("collect_generated_outputs", None)
+        return value
 
     @model_validator(mode="after")
     def _unique_paths(self) -> TCADJobSpec:
@@ -485,6 +493,8 @@ class TCADExecutionFacade:
                 "expected_outputs": [
                     item.model_dump(mode="python") for item in job.expected_outputs
                 ],
+                "collect_generated_outputs": job.collect_generated_outputs,
+                "archive_entries": [item.model_dump(mode="python") for item in job.archive_entries],
                 "limits": job.limits.model_dump(mode="python"),
             }
             _write_new(run_dir / "job.json", _canonical(runtime), mode=0o440)

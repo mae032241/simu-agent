@@ -1204,7 +1204,7 @@ def test_local_tcad_author_debug_and_independent_review_share_one_operation_path
         )
     )
     assert reviewer.call_tool("worker_submit_result", {})["state"] == "completed"
-    review_status = root.call_tool("run_status", {"name": "deck_review", "view": "detail"})
+    review_status = root.call_tool("run_status", {"name": "deck_review", "view": "detail", "response_profile": "compat", "include_full_output": True})
     assert review_status["state"] == "completed"
     assert review_status["sealed_output"]["payload"]["verdict"] == verdict
     assert review_status["sealed_output"]["payload"]["execution_ready"] is (verdict == "pass")
@@ -1230,7 +1230,7 @@ def test_local_tcad_author_debug_and_independent_review_share_one_operation_path
         })
         assert denied["admissible"] is False
         assert denied["reason_code"] == "input_schema_mismatch"
-        assert root.call_tool("run_status", {"name": "deck"})["scheduler_signal"]["verdict"] == "blocked"
+        assert root.call_tool("run_status", {"name": "deck", "view": "detail", "response_profile": "compat", "include_full_output": True})["scheduler_signal"]["verdict"] == "blocked"
     assert not hasattr(runtime, "tasks") and not hasattr(runtime, "tokens")
 
 
@@ -1472,7 +1472,7 @@ def test_local_tcad_debug_treats_checker_failure_as_terminal(
         "worker_tcad_debug_run", {"run_name": "preflight", "mode": "preflight"}
     )
     assert debug == {"state": "failed", "diagnostics": []}
-    status = root.call_tool("run_status", {"name": "broken_checker_deck"})
+    status = root.call_tool("run_status", {"name": "broken_checker_deck", "view": "detail", "response_profile": "compat"})
     assert status["state"] == "failed"
     assert status["reason"] == "Run validation framework failure: fixture checker defect"
 
@@ -1847,7 +1847,7 @@ def test_local_review_rejects_false_pass_then_seals_missing_case_report(tmp_path
         "payload": report,
     }))
     assert worker.call_tool("worker_submit_result", {})["state"] == "completed"
-    status = root.call_tool("run_status", {"name": "case_review", "view": "detail"})
+    status = root.call_tool("run_status", {"name": "case_review", "view": "detail", "response_profile": "compat", "include_full_output": True})
     assert status["state"] == "completed"
     assert status["sealed_output"]["payload"]["missing_inputs"] == report["missing_inputs"]
     assert status["sealed_output"]["payload"]["execution_ready"] is False
@@ -2087,7 +2087,7 @@ def test_materialized_sprocess_author_review_package_preserves_case_anchors(tmp_
         )
         assert proof_id in {ref.artifact_id for ref in envelope.parent_refs}
     package = json.loads(runtime.artifacts.read(envelope.ref))
-    author_project = root.call_tool("run_status", {"name": "process", "view": "detail"})["sealed_output"]["payload"]
+    author_project = root.call_tool("run_status", {"name": "process", "view": "detail", "response_profile": "compat", "include_full_output": True})["sealed_output"]["payload"]
     assert len(author_project["case_parameter_bindings"]) == (2 if with_controls else 0)
     assert author_project["case_anchors"] == declarations["case_anchors"]
     assert package["project"]["case_anchors"] == declarations["case_anchors"]
@@ -2222,7 +2222,7 @@ def test_author_gap_submits_without_source_and_has_independent_review(tmp_path):
     handoff_path.write_bytes(canonical_json({"verdict": "pass", "summary": "The task has an implementation gap.", "missing_inputs": []}))
     submitted = worker.call_tool("worker_submit_result", {})
     assert submitted["state"] == "completed", json.dumps(submitted, indent=2)
-    status = root.call_tool("run_status", {"name": "gap_author"})
+    status = root.call_tool("run_status", {"name": "gap_author", "view": "detail", "response_profile": "compat", "include_full_output": True})
     assert status["scheduler_signal"]["verdict"] == "blocked"
     name = status["output_artifact_name"]
     review_request = {"name": "gap_review", "operation_id": "tcad.deck.review.v1",
@@ -2310,7 +2310,6 @@ def test_domain_snapshot_rejects_symlinked_deck_root(tmp_path):
         "expected_state": "running", "expected_last_activity_at": status["last_activity_at"],
     })
     assert failed["state"] == "failed" and not failed["recovery_available"]
-    assert failed["recovery"]["recovery_pending"] is True
     assert runtime.runs.status(worker._run_id).recovery_draft["code"] == "snapshot_unavailable"
     assert (outside / "gap.json").read_bytes() == canonical_json(_task_gap())
 

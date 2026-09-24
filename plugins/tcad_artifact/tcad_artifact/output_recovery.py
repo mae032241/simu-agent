@@ -12,7 +12,7 @@ from scidiscovery.artifact_agent.schema.common import canonical_json
 from scidiscovery.artifact_agent.schema.refs import ArtifactRef
 from scidiscovery.artifact_agent.service.run_outputs import RunCheckerError
 from scidiscovery.artifact_agent.service.local_workspace import write_control_workspace_file
-from .project_packager import ReviewedDeckPackage
+from .project_packager import ReviewedDeckPackage, TCADRuntimeManifest
 
 class InspectRequest(BaseModel):
     model_config=ConfigDict(extra='forbid')
@@ -159,23 +159,37 @@ def accept_tool(request,context):
             return {'status':'not_found','reason':'candidate_not_inspected'}
         package=ReviewedDeckPackage.model_validate_json(context.read_input('reviewed_package'),strict=True)
         expected=next((e for e in package.project.expected_outputs if e.name==request.output_name),None)
-        if expected is None:
-            return {'status':'not_found','reason':'output_not_declared'}
+        generated = None
+        if expected is None and package.project.collect_generated_outputs:
+            manifest=TCADRuntimeManifest.model_validate_json(context.read_input('runtime_manifest'),strict=True)
+            generated=next((item for item in manifest.outputs if item.name==request.output_name
+                and item.name=='generated_'+hashlib.sha256(item.relative_path.encode('utf-8')).hexdigest()),None)
+        if expected is None and generated is None:
+            return {'status':'not_found','reason':'output_not_in_capture_manifest'}
+        declared_path=expected.relative_path if expected is not None else generated.relative_path
+        media_type=expected.media_type if expected is not None else generated.media_type
+        byte_limit=expected.max_bytes if expected is not None else package.project.resource_limits.max_output_bytes
+        experiment_key=expected.experiment_key if expected is not None else None
+        case_key=expected.case_key if expected is not None else None
+        if generated is not None and prior['metadata']['relative_path']!=declared_path:
+            return {'status':'not_found','reason':'output_path_mismatch'}
         def consume(reply,check_budget):
             for alias in request.evidence_aliases:
                 check_budget(); context.read_evidence(alias)
             check_budget()
             raw=context.read_evidence(prior['alias'])
             check_budget()
-            if len(raw)>expected.max_bytes:
+            if len(raw)>byte_limit:
                 return {'status':'limit_exceeded','reason':'project_output_bytes'}
             if reply['file']['sha256']!=prior['artifact_ref']['sha256'] or reply['file']['size_bytes']!=len(raw):
                 return {'status':'changed_since_inspection','reason':'candidate_changed'}
-            record=context.accept_evidence(raw=raw,media_type=expected.media_type,metadata={**prior['metadata'],
-                'output_name':expected.name,'declared_path':expected.relative_path,'rationale':request.rationale,
-                'evidence_aliases':request.evidence_aliases,'experiment_key':expected.experiment_key,'case_key':expected.case_key})
+            if generated is not None and (len(raw)!=generated.size_bytes or hashlib.sha256(raw).hexdigest()!=generated.sha256):
+                return {'status':'changed_since_capture','reason':'manifest_digest_mismatch'}
+            record=context.accept_evidence(raw=raw,media_type=media_type,metadata={**prior['metadata'],
+                'output_name':request.output_name,'declared_path':declared_path,'rationale':request.rationale,
+                'evidence_aliases':request.evidence_aliases,'experiment_key':experiment_key,'case_key':case_key})
             check_budget()
-            return {'status':'accepted','evidence_alias':record['alias'],'output_name':expected.name,
+            return {'status':'accepted','evidence_alias':record['alias'],'output_name':request.output_name,
                     'local_path':_file(raw,context,record['alias']),'size_bytes':len(raw)}
         return _inspect(context,'execution_result',prior['metadata']['relative_path'],run_deadline=run_deadline,consume=consume)
     except ValueError as error:
@@ -192,4 +206,4 @@ def accept_tool(request,context):
         raise
 
 INSPECT_TOOL=WorkerToolDefinition(name='worker_tcad_inspect_outputs',description='Optionally list or inspect original files of the bound terminal execution_result. No solver, editing or renaming. A selected file yields a controlled evidence alias and read-only copy; unavailable inspection permits limited analysis.',input_model=InspectRequest,capability='tcad.analysis.inspect_outputs',contextual_handler=inspect_tool,optional_services=('tcad.output_inspection',),evidence_ports=('tool_evidence','recovery_manifest_output'))
-ACCEPT_TOOL=WorkerToolDefinition(name='worker_tcad_accept_output',description='Accept a previously inspected file as one declared output using an explicit evidence-backed mapping. Rechecks bytes; preserves source path and old execution. Read returned evidence alias for scoring and report references. No scientific success is granted.',input_model=AcceptRequest,capability='tcad.analysis.accept_output',contextual_handler=accept_tool,optional_services=('tcad.output_inspection',),evidence_ports=('tool_evidence','recovery_manifest_output'))
+ACCEPT_TOOL=WorkerToolDefinition(name='worker_tcad_accept_output',description='Accept a previously inspected file from the exact output capture manifest or a legacy declaration. Rechecks bytes and source path; no scientific success is granted.',input_model=AcceptRequest,capability='tcad.analysis.accept_output',contextual_handler=accept_tool,optional_services=('tcad.output_inspection',),evidence_ports=('tool_evidence','recovery_manifest_output'))

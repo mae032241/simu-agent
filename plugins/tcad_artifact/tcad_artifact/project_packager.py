@@ -480,6 +480,7 @@ class DeckProjectDraft(StrictModel):
     )
     arguments: tuple[str, ...] = Field(default=(), max_length=256)
     expected_outputs: tuple[ProjectExpectedOutput, ...] = Field(max_length=4096)
+    collect_generated_outputs: bool = False
     parameter_bindings: tuple[ParameterBinding, ...] = Field(default=(), max_length=4096)
     case_parameter_bindings: tuple[CaseParameterBinding, ...] = Field(
         default=(), max_length=100000
@@ -516,6 +517,8 @@ class DeckProjectDraft(StrictModel):
             value.pop("development_diagnostics", None)
         if self.case_anchors is None:
             value.pop("case_anchors", None)
+        if not self.collect_generated_outputs:
+            value.pop("collect_generated_outputs", None)
         return value
 
     _safe_entrypoint = field_validator("entrypoint")(_safe_relative_path)
@@ -1096,6 +1099,7 @@ def deck_project_diff(
         "entrypoint",
         "development_initialization_entrypoint",
         "arguments",
+        "collect_generated_outputs",
         "resource_limits",
     )
     return {
@@ -1197,6 +1201,7 @@ def package_deck_project(
             archive_entries=entries,
             arguments=(project.entrypoint, *project.arguments),
             expected_outputs=project.expected_outputs,
+            collect_generated_outputs=project.collect_generated_outputs,
             limits=project.resource_limits,
         )
         job_path = temporary / "job.json"
@@ -1318,7 +1323,8 @@ def solver_deck_scope_violations(project: DeckProjectDraft | Mapping[str, Any]) 
     violations.extend(
         f"non_solver_native_output:{item['name']}:{item['relative_path']}"
         for item in project.get("expected_outputs", ())
-        if Path(item["relative_path"]).suffix.lower() not in suffixes
+        if item.get("capture", "workspace_file") == "workspace_file"
+        and Path(item["relative_path"]).suffix.lower() not in suffixes
     )
     return tuple(sorted(violations))
 
@@ -1748,13 +1754,29 @@ def attest_runtime_contract(
         name
         for name, item in observed.items()
         if item.output_class == "solver_native" and name not in declared
+        and not (
+            reviewed.project.collect_generated_outputs
+            and name == "generated_" + hashlib.sha256(item.relative_path.encode("utf-8")).hexdigest()
+        )
+    )
+    generated_count = sum(
+        item.output_class == "solver_native"
+        and item.name.startswith("generated_")
+        and item.name not in declared
+        for item in manifest.outputs
     )
     checks.append(
         RuntimeContractCheck(
             check_key="undeclared_outputs",
-            status="pass" if not undeclared else "fail",
+            status="pass" if not undeclared and (
+                not reviewed.project.collect_generated_outputs or generated_count
+            ) else "fail",
             rationale=(
-                "No undeclared solver outputs were collected."
+                "Generated solver outputs match their manifest paths and hashes."
+                if not undeclared and reviewed.project.collect_generated_outputs and generated_count
+                else "No undeclared solver outputs were collected."
+                if not undeclared and not reviewed.project.collect_generated_outputs
+                else "Generated-output collection contains no solver files."
                 if not undeclared
                 else "Undeclared outputs were collected: " + ", ".join(undeclared)
             ),
@@ -1792,7 +1814,7 @@ def attest_runtime_contract(
             item.output_class == "parser_derived" for item in manifest.outputs
         ),
         rationale=(
-            "This attestation covers only solver termination and the declared output "
+            "This attestation covers only solver termination and the captured output "
             "contract; it does not establish physical correctness or agreement with data."
         ),
     )

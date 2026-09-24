@@ -40,6 +40,7 @@ from .project_packager import (
     TCADRuntimeManifest,
 )
 from .execution_control import SolverCapabilitySnapshot
+from .debug_contract import DEVELOPMENT_ARTIFACT_LIMIT_BYTES
 from .transform_adapter import (
     attest_runtime as attest_runtime_payload,
     compare_projects,
@@ -449,7 +450,7 @@ OPERATIONS = (
     _operation(
         "tcad.execution-plan.project.v1", "execution_plan_project",
         "Extract the sealed project's sole execution plan unchanged; grants no scientific or execution qualification.",
-        (_input("project", "tcad.deck-project.v1", "project_schema", usage="evidence_inventory"),),
+        (_input("project", "tcad.deck-project.v1", "project_schema", usage="evidence_inventory", max_bytes=DEVELOPMENT_ARTIFACT_LIMIT_BYTES),),
         (_output("experiment_plan", "experiment_portfolio", "scidiscovery.experiment-portfolio.v1", "project_schema", max_bytes=2 * 1024 * 1024).model_copy(update={"schema_resource": _ref("experiment_portfolio_schema", "general_science")}),),
         input_validation=InputValidationSpec(_ref("execution_plan_inputs"), "tcad.execution_plan.project.inputs", "Only a sealed project with a concrete embedded Portfolio; gaps and legacy projects cannot be projected."),
     ).model_copy(update={"catalog_scope": "public", "consequence": "explore"}),
@@ -489,14 +490,14 @@ OPERATIONS = (
         DECK_COMPARE_OPERATION,
         "deck_compare",
         "Compare two exact TCAD project revisions deterministically.",
-        (_input("base_project", "tcad.deck-project.v1", "project_schema"), _input("revised_project", "tcad.deck-project.v1", "project_schema")),
+        (_input("base_project", "tcad.deck-project.v1", "project_schema", max_bytes=DEVELOPMENT_ARTIFACT_LIMIT_BYTES), _input("revised_project", "tcad.deck-project.v1", "project_schema", max_bytes=DEVELOPMENT_ARTIFACT_LIMIT_BYTES)),
         (_output("project_diff", "tcad_project_diff", "tcad.deck-project-diff.v1", "project_diff_schema"),),
     ),
     _operation(
         DECK_REVIEW_VALIDATION_OPERATION,
         "review_validate",
         "Validate one independent TCAD review against its exact project.",
-        (_input("project", "tcad.deck-project.v1", "project_schema"), _input("review", "tcad.deck-review-report.v1", "review_schema", usage="prior_signal")),
+        (_input("project", "tcad.deck-project.v1", "project_schema", max_bytes=DEVELOPMENT_ARTIFACT_LIMIT_BYTES), _input("review", "tcad.deck-review-report.v1", "review_schema", usage="prior_signal")),
         (_output("review_attestation", "tcad_deck_review_attestation", "tcad.deck-review-attestation.v1", "review_attestation_schema"),),
     ),
     _operation(
@@ -504,7 +505,7 @@ OPERATIONS = (
         "reviewed_package",
         "Package one qualified reviewed TCAD project for controlled execution.",
         (
-            _input("project", "tcad.deck-project.v1", "project_schema"),
+            _input("project", "tcad.deck-project.v1", "project_schema", max_bytes=DEVELOPMENT_ARTIFACT_LIMIT_BYTES),
             _input("review", "tcad.deck-review-report.v1", "review_schema", usage="prior_signal"),
             _input("capability", "tcad.solver-capability.v2", "capability_schema", usage="prior_signal"),
             _input("experiment_plan", "scidiscovery.experiment-portfolio.v1", _ref("experiment_portfolio_schema", "general_science"), usage="prior_signal"),

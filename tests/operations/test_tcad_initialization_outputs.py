@@ -8,6 +8,7 @@ import pytest
 from scidiscovery.artifact_agent.schema.common import canonical_json
 from tcad_artifact.debug_adapter import TCADDevelopmentDebugBridge
 from tcad_artifact.execution_control import TCADJobSpec
+from tcad_artifact.project_packager import DeckProjectDraft, package_deck_project
 from tcad_artifact import remote_runner_py36 as runner
 from tests.operations.test_l4_local_tcad import _system, _invoke, _project, _write_author_workspace, _write_sprocess_workspace, _debug_worker
 from tests.operations.test_log_preservation import _descriptor
@@ -45,9 +46,15 @@ class RunnerFixture:
             path = work / item.relative_path
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(b"" if self.failure == "empty" else b"x"*(item.max_bytes+1) if self.failure == "oversize" else RAW)
+        if job.collect_generated_outputs:
+            for index in range(79):
+                path = work / f"frames/movie_{index:04d}.tdr"
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(RAW)
         errors = []
         records = runner._collect_expected(str(work), [x.model_dump(mode="json") for x in job.expected_outputs],
-            job.limits.model_dump(mode="json"), errors=errors)
+            job.limits.model_dump(mode="json"), errors=errors,
+            collect_generated_outputs=job.collect_generated_outputs)
         log = work / 'runner.log'; log.write_text('Initialization finished\n')
         manifest = work / 'manifest.json'; manifest.write_text(json.dumps({
             'terminal_state': 'failed' if errors else 'succeeded', 'exit_code':124 if self.failure == 'timeout' else 0,
@@ -74,11 +81,48 @@ def setup_case(tmp_path, *, solver='sprocess', failure=None, output_name='coarse
         _write_sprocess_workspace(opened)
         path = Path(opened['workspace_path'])/'deck/declarations.json'
         declarations = json.loads(path.read_bytes())
+        declarations['collect_generated_outputs'] = False
         declarations['raw_outputs'] = [dict(name=x.name,relative_path=x.relative_path,media_type=x.media_type) for x in (first,later)]
         path.write_bytes(canonical_json(declarations))
     else:
         _write_author_workspace(opened, project)
     return worker, transport, Path(opened['workspace_path'])
+
+
+def test_generated_initialization_needs_no_frame_declarations(tmp_path):
+    catalog, runtime, root, capability = _system(tmp_path, solver_kind='sprocess')
+    _invoke(root, 'generated_initialization', 'tcad.deck.author.initial.v1', [
+        {'port': 'execution_capability', 'artifact_names': ['execution_capability']},
+        {'port': 'experiment_plan', 'artifact_names': ['experiment_plan']}])
+    transport = RunnerFixture(tmp_path / 'runner', capability)
+    worker = _debug_worker(catalog, runtime, TCADDevelopmentDebugBridge(transport), tmp_path / 'exchange')
+    opened = worker.call_tool('worker_open_assignment', {})
+    _write_sprocess_workspace(opened)
+    workspace = Path(opened['workspace_path'])
+    declarations_path = workspace / 'deck/declarations.json'
+    declarations = json.loads(declarations_path.read_bytes())
+    declarations['raw_outputs'] = []
+    declarations['collect_generated_outputs'] = True
+    declarations_path.write_bytes(canonical_json(declarations))
+    assert worker.call_tool('worker_tcad_debug_run', dict(run_name='preflight', mode='preflight'))['state'] == 'succeeded'
+    reply = worker.call_tool('worker_tcad_debug_run', dict(run_name='init', mode='initialization'))
+    assert reply['state'] == 'succeeded', reply
+    assert reply['output_count'] == 79
+    assert transport.jobs[1].collect_generated_outputs
+    assert transport.jobs[1].expected_outputs == ()
+    detail = json.loads(Path(reply['details_path']).read_bytes())
+    assert {item['source_path'] for item in detail['outputs']} == {
+        f'frames/movie_{index:04d}.tdr' for index in range(79)
+    }
+    assert worker.call_tool('worker_submit_result', {})['state'] == 'completed'
+    sealed = root.call_tool('run_status', {'name': 'generated_initialization',
+        'view': 'detail', 'response_profile': 'compat', 'include_full_output': True})
+    project = DeckProjectDraft.model_validate_json(canonical_json(sealed['sealed_output']['payload']), strict=True)
+    assert project.collect_generated_outputs
+    assert [item.name for item in project.expected_outputs] == ['solver_log']
+    production = package_deck_project(project, capability=capability,
+        output_root=tmp_path / 'production-package')
+    assert production.job_spec.collect_generated_outputs
 
 
 @pytest.mark.parametrize('solver', ['sprocess','sdevice'])

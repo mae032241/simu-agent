@@ -44,7 +44,8 @@ def test_gap_records_reach_fresh_revision_worker(tmp_path, broken_metadata, comp
     snapshot = snapshot_workspace(Path(opened['workspace_path']))
     assert {'deck/gap.json', 'deck/handoff.json', 'deck/files/main.cmd', 'deck/reports/failure.log'} <= {x.relative_path for x in snapshot}
     assert worker.call_tool('worker_submit_result', {})['state'] == 'completed'
-    status = root.call_tool('run_status', {'name': 'probe_author', 'view': 'detail'})
+    status = root.call_tool('run_status', {'name': 'probe_author', 'view': 'detail',
+                                          'response_profile': 'compat', 'include_full_output': True})
     assert status['sealed_output']['payload']['result_kind'] == 'implementation_gap'
     assert status['sealed_output']['payload']['missing_inputs'] == gap['missing_inputs']
     assert not status['recovery_available']
@@ -92,7 +93,8 @@ def test_gap_records_reach_fresh_revision_worker(tmp_path, broken_metadata, comp
     else:
         fixture._write_gap(fresh)
     assert revision.call_tool('worker_submit_result', {})['state'] == 'completed'
-    result = root.call_tool('run_status', {'name': 'probe_revision', 'view': 'detail'})['sealed_output']['payload']
+    result = root.call_tool('run_status', {'name': 'probe_revision', 'view': 'detail',
+                                          'response_profile': 'compat', 'include_full_output': True})['sealed_output']['payload']
     if complete_project:
         assert result['materialization_report']['status'] == 'pass'
         assert result['preflight_attestation']['qualified']
@@ -218,7 +220,7 @@ def test_formal_gap_and_review_need_no_mechanical_summary_edits(tmp_path, handof
     assert worker.call_tool('worker_submit_result', {})['state'] == 'completed'
     if handoff_mode == 'untouched':
         assert (deck / 'handoff.json').read_bytes() == automatic
-    status = root.call_tool('run_status', dict(name='formal_gap', output_paths=['/summary']))
+    status = root.call_tool('run_status', dict(name='formal_gap', response_profile='decision', output_paths=['/summary']))
     assert status['selected_output']['items'][0]['value'] == gap['summary']
     assert status['scheduler_signal']['verdict'] == 'blocked'
     if handoff_mode == 'explicit':
@@ -240,7 +242,7 @@ def test_formal_gap_and_review_need_no_mechanical_summary_edits(tmp_path, handof
         value['payload']['verdict'] = 'revise'
     Path(reviewed['output_directory'], 'result.json').write_bytes(canonical_json(value))
     assert reviewer.call_tool('worker_submit_result', {})['state'] == 'completed'
-    review_status = root.call_tool('run_status', dict(name='formal_review', output_paths=['/summary']))
+    review_status = root.call_tool('run_status', dict(name='formal_review', response_profile='decision', output_paths=['/summary']))
     assert review_status['scheduler_signal']['verdict'] == 'revise'
     assert review_status['selected_output']['items'][0]['value'] == value['payload']['summary']
 

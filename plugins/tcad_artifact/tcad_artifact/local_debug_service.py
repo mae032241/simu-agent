@@ -22,7 +22,12 @@ from scidiscovery.artifact_agent.service.run_outputs import (
     RunOutputError,
 )
 
-from .debug_contract import TCADDebugError, TCADDebugSource, TCADDevelopmentDebugAdapter
+from .debug_contract import (
+    DEVELOPMENT_ARTIFACT_LIMIT_BYTES,
+    TCADDebugError,
+    TCADDebugSource,
+    TCADDevelopmentDebugAdapter,
+)
 from .debug_adapter import _development_limits
 from .project_packager import DeckProjectDraft, project_debug_sha256
 
@@ -227,6 +232,7 @@ class LocalTCADDebugService:
             "entrypoint": entrypoint,
             "arguments": prepared.arguments,
             "output_names": output_names,
+            "collect_generated_outputs": DeckProjectDraft.model_validate_json(project).collect_generated_outputs,
             "reserved_wall_seconds": prepared.wall_time_seconds,
             "external_run_id": external_run_id,
             "state": _state(state),
@@ -257,6 +263,8 @@ class LocalTCADDebugService:
                 )
             if item.name != "debug.log.txt":
                 entry = {"name": item.name, "media_type": item.media_type, "size_bytes": len(item.content)}
+                if item.relative_path is not None:
+                    entry["source_path"] = item.relative_path
                 if mode == "initialization":
                     relative = Path("deck/reports") / run_name / item.name
                     try:
@@ -267,7 +275,10 @@ class LocalTCADDebugService:
                     entry["relative_path"] = relative.as_posix()
                 entry["sha256"] = hashlib.sha256(item.content).hexdigest()
                 outputs.append(entry)
-                if mode == "initialization" and item.name in record.get("output_names", ()):
+                if mode == "initialization" and (
+                    item.name in record.get("output_names", ())
+                    or (record.get("collect_generated_outputs") and item.name.startswith("generated_"))
+                ):
                     retained.append(_file_identity(relative.relative_to("deck").as_posix(), item.content, item.media_type))
         response: dict[str, object] = {
             "run_name": run_name,
@@ -397,14 +408,15 @@ def _delivery_budget(context, project, mode, output_names):
             existing[item["relative_path"]] = AttemptFile(relative_path=item["relative_path"], content=text, encoding=encoding).model_dump(mode="json")
     envelope["payload"]["development_diagnostics"] = list(existing.values())
     known = len(canonical_json(envelope))
-    # Two reports and future attestation/envelope metadata. Worst-case UTF-8 JSON
-    # escaping costs six bytes/raw byte (also covers binary base64 expansion).
+    # Two reports and future attestation/envelope metadata. Binary snapshots use
+    # base64; this twofold estimate is not a guarantee for arbitrary text, so the
+    # final envelope check remains authoritative.
     reserve = 256 * 1024 + 1024 * len(output_names)
-    remaining = 8 * 1024 * 1024 - known - reserve
+    remaining = DEVELOPMENT_ARTIFACT_LIMIT_BYTES - known - reserve
     if remaining <= 0:
         raise TCADDebugError(f"development delivery budget exhausted before startup: known_bytes={known}, report_reserve_bytes={reserve}, remaining_bytes={remaining}, outputs={list(output_names)}; shrink the diagnostic/source or selected output_names")
-    effective = min(DeckProjectDraft.model_validate_json(project).resource_limits.max_output_bytes, _development_limits(mode)[1], remaining // 6)
-    return {"envelope_limit_bytes": 8 * 1024 * 1024, "known_encoded_bytes": known,
+    effective = min(DeckProjectDraft.model_validate_json(project).resource_limits.max_output_bytes, _development_limits(mode)[1], remaining // 2)
+    return {"envelope_limit_bytes": DEVELOPMENT_ARTIFACT_LIMIT_BYTES, "known_encoded_bytes": known,
             "report_reserve_bytes": reserve, "remaining_encoded_bytes": remaining,
             "effective_collection_bytes": effective, "unknown_output_sizes": list(output_names),
             "final_delivery_guaranteed": False,

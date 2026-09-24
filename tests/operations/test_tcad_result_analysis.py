@@ -155,7 +155,7 @@ def test_raw_plx_csv_same_worker_score_and_submit(tmp_path):
         analysis.evaluate_tcad_request = original
     assert result['state'] == 'completed',result
     _,_,root,_,_,_ = system
-    status = root.call_tool('run_status',{"view": "detail", 'name':'analysis'})
+    status = root.call_tool('run_status',{"view": "detail", "response_profile": "compat", "include_full_output": True, 'name':'analysis'})
     assert status['sealed_output']['payload']['calculation_records'][0] == record
 
 
@@ -237,7 +237,7 @@ def test_conflicting_citation_sources_repair_without_forbidding_repeated_citatio
         report['evidence'][0]['locator'] = 'solver_outputs_002:row1'
     write_analysis(opened, report)
     assert worker.call_tool('worker_submit_result', {})['state'] == 'completed'
-    sealed = system[2].call_tool('run_status', {"view": "detail", 'name': 'analysis'})['sealed_output']['payload']
+    sealed = system[2].call_tool('run_status', {"view": "detail", "response_profile": "compat", "include_full_output": True, 'name': 'analysis'})['sealed_output']['payload']
     assert sealed['source_references'][0]['output_name'] == ('A' if explicit_reference else 'B')
 
 
@@ -261,7 +261,7 @@ def test_source_conflict_does_not_leave_a_control_mapping_to_repair(tmp_path, so
     report['evidence'][1]['locator'] = 'solver_outputs_001:row2'
     write_analysis(opened, report)
     assert worker.call_tool('worker_submit_result', {})['state'] == 'completed'
-    sealed = system[2].call_tool('run_status', {"view": "detail", 'name': 'analysis'})['sealed_output']['payload']
+    sealed = system[2].call_tool('run_status', {"view": "detail", "response_profile": "compat", "include_full_output": True, 'name': 'analysis'})['sealed_output']['payload']
     assert sealed['source_references'][0]['output_name'] == 'A'
 
 
@@ -283,7 +283,7 @@ def test_inline_calculation_source_conflict_can_be_corrected_without_changing_th
     report['evidence'][1]['source_key'] = 'score_evidence'
     write_analysis(opened, report)
     assert worker.call_tool('worker_submit_result', {})['state'] == 'completed'
-    sealed = system[2].call_tool('run_status', {"view": "detail", 'name': 'analysis'})['sealed_output']['payload']
+    sealed = system[2].call_tool('run_status', {"view": "detail", "response_profile": "compat", "include_full_output": True, 'name': 'analysis'})['sealed_output']['payload']
     assert sealed['calculation_records'] == [record]
     assert sealed['source_references'][0]['output_name'] == 'A'
 

@@ -71,22 +71,20 @@ The control plane scans the real files and builds the canonical
 `DeckProjectDraft`. Do not serialize the deck into `output/result.json`, create
 a parallel cross-Artifact edit payload, or edit generated capability,
 parameter/case bindings, realization manifest, runtime assertions, or diffs.
-In declaration mode, each `raw_outputs` item contains only `name`,
-`relative_path`, and `media_type`. Control generates `expected_outputs`, including
-`capture`, `max_bytes`, and the solver log. Development preflight does not require
+In declaration mode, do not enumerate solver output files or adaptive frames in
+`raw_outputs`. Control collects generated files from the isolated work directory,
+excluding unchanged staged inputs, and seals a per-file path/size/hash manifest.
+Do not add `raw_outputs`; keep `collect_generated_outputs` true in new declarations.
+Development preflight does not require
 `handoff.json`; write its scientific verdict and summary before final submission.
 There is no separate deck-reviser role.
 
 ## Modes
 
 In create mode, write the smallest complete solver-only source first, then add
-unique case locators and raw solver outputs to `declarations.json`. No
-control-generated `.cmd` scaffold exists. Match declarations to the filenames actually
-produced by the solver, checking permitted development diagnostics when available.
-Declare each structure output with the complete filename actually written by the
-selected solver release, including solver-generated suffixes. Establish that name
-from the release behavior and exact source/output evidence; do not infer the final
-path from the text of a `struct` argument.
+unique case locators to `declarations.json`. No control-generated `.cmd` scaffold
+exists. Check actual generated paths and frame/time correspondence in development
+diagnostics; no guessed filename list is needed for collection.
 A historical analysis mapping does not change these declarations; source changes
 require the existing controlled revision task.
 

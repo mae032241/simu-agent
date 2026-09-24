@@ -13,6 +13,7 @@ from pathlib import Path
 from scidiscovery.artifact_agent.execution_bridge import ExecutionAdapter
 from scidiscovery.artifact_agent.schema.execution import LocalFileDescriptor
 from .debug_contract import (
+    DEVELOPMENT_ARTIFACT_LIMIT_BYTES,
     CollectedTCADDebugFile,
     CollectedTCADDebugRun,
     PreparedTCADDebugRun,
@@ -38,12 +39,12 @@ _SMOKE_WALL_SECONDS = 180
 _INITIALIZATION_WALL_SECONDS = 120
 _MAX_MEMORY_BYTES = 2 * 1024 * 1024 * 1024
 _PREFLIGHT_OUTPUT_BYTES = 2 * 1024 * 1024
-_SMOKE_OUTPUT_BYTES = 8 * 1024 * 1024
+_SMOKE_OUTPUT_BYTES = DEVELOPMENT_ARTIFACT_LIMIT_BYTES
 _MAX_OUTPUT_FILE_BYTES = 8 * 1024 * 1024
-_MAX_OUTPUT_FILES = 63
+_MAX_OUTPUT_FILES = 120
 _MAX_PROCESSES = 8
 _MAX_LOG_BYTES = 512 * 1024
-_MAX_MANIFEST_BYTES = 1024 * 1024
+_MAX_MANIFEST_BYTES = 4 * 1024 * 1024
 _MAX_RESPONSE_LOG_CHARS = 8192
 _MAX_RAW_OUTPUT_BYTES = _SMOKE_OUTPUT_BYTES - _MAX_RESPONSE_LOG_CHARS
 _MANUAL_BACKED_RELEASE = "R-2020.09"
@@ -292,6 +293,7 @@ class TCADDevelopmentDebugBridge:
                             "max_bytes": min(item.max_bytes, _MAX_OUTPUT_FILE_BYTES, limits.max_output_bytes)})
                         for item in packaged.job_spec.expected_outputs if item.name in output_names
                     ),
+                    "collect_generated_outputs": mode == "initialization" and draft.collect_generated_outputs,
                     "limits": limits,
                 }
             )
@@ -385,6 +387,7 @@ class TCADDevelopmentDebugBridge:
         if (
             job.solver_kind not in {"sprocess", "sdevice"}
             or (job.expected_outputs and _development_mode(job) != "initialization")
+            or (job.collect_generated_outputs and _development_mode(job) != "initialization")
             or len(job.expected_outputs) > _MAX_OUTPUT_FILES
             or any(item.capture != "workspace_file" or item.max_bytes > min(_MAX_OUTPUT_FILE_BYTES, job.limits.max_output_bytes)
                    for item in job.expected_outputs)
@@ -464,6 +467,7 @@ class TCADDevelopmentDebugBridge:
             raise ValueError("development debug manifest is invalid")
         files = []
         total = 0
+        paths = {item["name"]: item["relative_path"] for item in manifest.get("outputs", ())}
         for name, descriptor in sorted(by_name.items()):
             if context: context.remaining_seconds()
             content = _read_descriptor(
@@ -477,6 +481,7 @@ class TCADDevelopmentDebugBridge:
                     name=name,
                     media_type=descriptor.media_type,
                     content=content,
+                    relative_path=paths.get(name),
                 )
             )
         error = str(manifest.get("error", ""))[:4096]

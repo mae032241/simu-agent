@@ -63,9 +63,15 @@ class PageInput(ReadInput):
 
 
 class OperationCatalogInput(PageInput):
+    view: Literal["summary", "detail", "index", "facets", "matches"] = "summary"
     operation_id: str | None = Field(default=None, max_length=256,
         description="Select one exact operation; use view=detail to read its complete contract before binding.")
     scope: Literal["public", "support", "internal", "all"] = "public"
+    before: str | None = Field(default=None, max_length=512,
+        description="Continue after the exact next_before cursor from this same query and navigation snapshot.")
+    dimension: Literal["consequence", "executor_kind", "input_schema"] | None = None
+    where: dict[str, str | list[str]] | None = Field(default=None,
+        description="matches only: AND across consequence, executor_kind and input_schema; multiple values within one field are OR.")
 
 
 class NamedInput(RootToolInput):
@@ -173,19 +179,21 @@ class ArtifactCatalogInput(NamedReadInput):
 
 class RunStatusInput(NamedReadInput):
     response_profile: Literal["compat", "poll", "navigation", "decision"] = Field(
-        default="compat",
+        default="poll",
         description=(
-            "Request-time read projection only. compat preserves existing summary/detail and output "
-            "semantics. poll requires summary + values + output_paths=[]; navigation requires summary "
+            "Omitted request is short poll for every state. Explicit detail defaults to compat; "
+            "active Runs always stay short. poll requires summary + values + output_paths=[]; navigation requires summary "
             "+ index with zero or one path; decision requires summary + values with one or more paths. "
-            "Compact profiles may page durable diagnostics with diagnostic_after; they reject detail."
+            "Read durable diagnostics with compat + detail + output_paths=[] + diagnostic_after."
         ),
     )
+    include_full_output: Annotated[bool, Field(strict=True)] = Field(default=False,
+        description="Explicit true is the only whole sealed-output escape hatch: completed Run, detail + compat + values, omitted/null paths. Never grants access to active drafts or failed science.")
     output_mode: Literal["values", "index"] = Field(default="values",
-        description='Use values directly for known paths; [""] for most/all payload fields. Use index only to discover unknown paths, never as a required first step; it returns no values, even with view=detail. Omit output_paths for the root index.')
+        description='Use decision + values for known non-root paths; navigation + index discovers unknown paths without values. Omit output_paths for the root index.')
     output_paths: list[Annotated[str, Field(pattern=r"^(?:/(?:[^~]|~[01])*)?$")]] | None = Field(
         default=None, max_length=8,
-        description='JSON Pointers relative to the sealed payload, e.g. /summary, not /payload/summary. Omit/null for a summary excerpt (view=detail returns the complete original); [] skips payload. Up to 8 paths, 32 KiB values total. [""] selects the whole payload; "/" selects an empty key. status=selected returns the exact value: reuse it, including a whole payload, without fetching its fields again. Oversized values have status=omitted with direct-child paths (32 items, 8 KiB); batch needed paths. Missing paths are explicit. view=detail also reveals bindings and timing. selected_output retains origin but is not the sealed_output envelope.',
+        description='JSON Pointers relative to sealed payload, e.g. /summary. Omit/null or [] does not read values. Non-root paths require explicit decision or compat; up to 8 paths, 32 KiB values total. Empty root pointer is forbidden in values mode; use include_full_output=true. "/" selects an empty key. selected values are exact. Oversized values are omitted; object/array children support navigation, oversized scalars require the explicit full-output escape hatch. Detail reveals terminal bindings, diagnostics and timing.',
     )
     index_offset: int = Field(default=0, ge=0,
         description="Index mode only: continue at output_index.next_offset for the same immutable object and path.")
@@ -201,6 +209,24 @@ class RunStatusInput(NamedReadInput):
     diagnostic_after: int | None = Field(default=None, ge=0,
         description="Set to 0 for the first page of saved errors, then use diagnostic_events.next_after. Omit for the compact status.")
     diagnostic_limit: int = Field(default=20, ge=1, le=100)
+
+
+def parse_run_status_arguments(arguments):
+    """One omission-aware validation boundary for router and direct facade."""
+    try:
+        parsed = parse_tool_arguments(RunStatusInput, arguments)
+    except ValidationError as error:
+        raise RootToolError("tool arguments do not satisfy the declared model",
+            details=validation_diagnostics(error, schema=RunStatusInput.model_json_schema())) from error
+    values = parsed.model_dump()
+    if "response_profile" not in parsed.model_fields_set and values["view"] == "detail":
+        values["response_profile"] = "compat"
+    if values["response_profile"] == "poll" and values["output_paths"] is None:
+        values["output_paths"] = []
+    from .mcp_response_views import validate_run_status_profile
+    validate_run_status_profile(**{key: values[key] for key in (
+        "response_profile", "view", "output_mode", "output_paths", "include_full_output")})
+    return values
 
 
 class RunFailureInput(NamedInput):
@@ -270,7 +296,7 @@ ROOT_TOOLS = (
     RootTool("operation_preflight", "Optional check without creating. Invoke independently checks admission; this does not reserve resources or authorize execution.", OperationCallInput),
     RootTool("operation_invoke", "Validate and create one Agent, Transform, Effect or Approval from the compiled catalog; no prior preflight required. Success preserves dispatch configuration, exact outputs or approval URLs by executor kind; use the returned detail entry for Run context.", OperationCallInput),
     RootTool("run_list", "List minimal Runs in this research instance.", RunListInput),
-    RootTool("run_status", "Read Run state and selected output_paths together; only completed Runs expose sealed fields. Use [] for polling, view=detail for bindings/full output.", RunStatusInput),
+    RootTool("run_status", "Default is short state. Explicit decision/navigation read completed sealed fields; terminal detail reads diagnostics. Only include_full_output=true opts into whole output.", RunStatusInput),
     RootTool("run_record_failure", "Record failure of one running minimal Run.", RunFailureInput),
     RootTool("approval_list", "List named reviews in this scheduler instance.", ApprovalListInput),
     RootTool("approval_status", "Read one named human-review state.", NamedReadInput),
@@ -565,27 +591,24 @@ class RootMCPRouter:
         values = {field: getattr(parsed, field) for field in type(parsed).model_fields}
         try:
             if name == "run_status":
-                from .mcp_response_views import validate_run_status_profile
-                validate_run_status_profile(
-                    response_profile=values["response_profile"],
-                    view=values["view"],
-                    output_mode=values["output_mode"],
-                    output_paths=values.get("output_paths"),
-                )
+                values = parse_run_status_arguments(arguments)
             # Presentation options are never part of an immutable operation request.
             query = dict(values)
             query.pop("view", None)
-            if name == "artifact_catalog":
+            if name in {"artifact_catalog", "run_status", "run_list"}:
                 query["view"] = values["view"]
             if name in {"operation_catalog", "scientific_inventory", "scientific_current", "instance_list", "execution_outputs", "execution_capabilities"}:
                 query.pop("limit", None)
                 query.pop("before", None)
             if name == "operation_catalog":
-                query.pop("operation_id", None)
+                if values["view"] != "detail":
+                    query.pop("operation_id", None)
+                query.pop("dimension", None)
+                query.pop("where", None)
+                if values["view"] in {"summary", "index", "facets", "matches"}:
+                    query["navigation"] = True
             if name == "scientific_inventory":
                 query["include_operations"] = False
-            if name == "run_status" and values["output_mode"] == "values" and values["view"] == "summary" and values.get("output_paths") is None:
-                query["output_paths"] = ["/summary"]
             from .mcp_response_views import root_response
             return root_response(name, getattr(self.facade, name)(**query), values)
         except Exception as error:

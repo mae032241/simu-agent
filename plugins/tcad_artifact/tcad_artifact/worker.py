@@ -79,6 +79,8 @@ def main(argv: list[str] | None = None) -> int:
             run_dir / "work",
             job["expected_outputs"],
             job["limits"],
+            archive_entries=job.get("archive_entries", ()),
+            collect_generated_outputs=job.get("collect_generated_outputs", False),
             records=outputs, errors=collection_errors,
         )
         if collection_errors:
@@ -127,6 +129,8 @@ def _collect_outputs(
     expected: list[dict],
     limits: dict,
     *,
+    archive_entries: list[dict] | tuple[dict, ...] = (),
+    collect_generated_outputs: bool = False,
     records: list[dict[str, object]] | None = None,
     errors: list[str] | None = None,
 ) -> list[dict[str, object]]:
@@ -176,9 +180,71 @@ def _collect_outputs(
             if "total output" in str(failure):
                 failures[-1] += "; %d later outputs not inspected" % (len(expected)-index-1)
                 break
+    if collect_generated_outputs and not failures:
+        try:
+            _collect_generated(root, archive_entries, expected, limits, records)
+        except (OSError, RuntimeError, ValueError) as failure:
+            failures.append(str(failure)[:1024])
     if errors is None and failures:
         raise RuntimeError("; ".join(failures)[:8192])
     return records
+
+
+def _collect_generated(root, archive_entries, expected, limits, records):
+    originals = {item["relative_path"]: item for item in archive_entries}
+    reserved = {item["relative_path"] for item in expected}
+    total = sum(int(item["size_bytes"]) for item in records)
+    generated = 0
+    def fail_walk(error):
+        raise error
+
+    for directory, dirs, files in os.walk(root, followlinks=False, onerror=fail_walk):
+        dirs.sort()
+        files.sort()
+        for name in dirs:
+            if not stat.S_ISDIR(os.lstat(Path(directory) / name).st_mode):
+                raise RuntimeError("generated output directory is not a real directory")
+        for name in files:
+            path = Path(directory) / name
+            relative = path.relative_to(root).as_posix()
+            if len(relative) > 1024:
+                raise RuntimeError("generated output path exceeds contract")
+            if relative in reserved:
+                continue
+            flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+            descriptor = os.open(path, flags)
+            try:
+                metadata = os.fstat(descriptor)
+                if not stat.S_ISREG(metadata.st_mode):
+                    raise RuntimeError("generated output is not a regular file: " + relative)
+                if total + metadata.st_size > limits["max_output_bytes"]:
+                    raise RuntimeError("total output exceeds job limit")
+                digest = hashlib.sha256()
+                size = 0
+                with os.fdopen(descriptor, "rb", closefd=False) as stream:
+                    for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                        size += len(chunk)
+                        if total + size > limits["max_output_bytes"]:
+                            raise RuntimeError("total output exceeds job limit")
+                        digest.update(chunk)
+            finally:
+                os.close(descriptor)
+            original = originals.get(relative)
+            if original is not None and size == original["size_bytes"] and digest.hexdigest() == original["sha256"]:
+                continue
+            generated += 1
+            if len(records) >= 4092:
+                raise RuntimeError("collected solver output count exceeds 4092")
+            total += size
+            suffix = path.suffix.lower()
+            media_type = {".plx": "application/x-synopsys-plx", ".json": "application/json",
+                          ".csv": "text/csv", ".txt": "text/plain", ".log": "text/plain",
+                          ".png": "image/png"}.get(suffix, "application/octet-stream")
+            records.append({"name": "generated_" + hashlib.sha256(relative.encode("utf-8")).hexdigest(),
+                            "relative_path": relative, "media_type": media_type,
+                            "sha256": digest.hexdigest(), "size_bytes": size})
+    if not generated:
+        raise RuntimeError("solver produced no generated output files")
 
 
 def _augment_development_debug_log(run_dir: Path, job: dict) -> None:

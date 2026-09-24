@@ -32,22 +32,30 @@ class _Input(BaseModel):
 
 class CatalogInput(_Input):
     kind: Literal["operations", "interfaces"] = "operations"
+    view: Literal["summary", "index", "facets", "matches"] = Field(default="summary",
+        description="Root: summary = IDs + exact purposes; index/facets/matches = structural navigation.")
     limit: int = Field(default=20, ge=1, le=100)
-    before: str | None = Field(default=None, max_length=256)
+    before: str | None = Field(default=None, max_length=512)
+    dimension: Literal["consequence", "executor_kind", "input_schema"] | None = Field(default=None,
+        description="facets: omit for P1 structural dimensions/counts; set to page values.")
+    where: dict[str, str | list[str]] | None = Field(default=None,
+        description="matches: P1 keys consequence, executor_kind, input_schema; AND keys, OR values.")
 
 
 class DescribeInput(_Input):
     name: str = Field(min_length=1, max_length=256)
     view: Literal["full", "invoke"] = Field(
-        default="full",
-        description="full preserves the existing complete interface or Operation contract; invoke is available only for Operations and retains every field needed to prepare and interpret a legal call.",
+        default="invoke",
+        description="Omit: Operations use invoke, interfaces use full. full adds execution diagnostics.",
     )
+    representation: Literal["compact", "legacy"] = Field(default="compact",
+        description="Invoke: compact declares shared port defaults; legacy expands them.")
 
 
 class CallInput(_Input):
     name: str = Field(min_length=1, max_length=256)
     arguments: dict[str, Any] = Field(default_factory=dict,
-        description="Arguments matching this entry's exact scid_describe contract.")
+        description="Match the exact scid_describe contract.")
 
 
 class AttachInput(_Input):
@@ -57,9 +65,9 @@ class AttachInput(_Input):
 
 
 _DECLARATIONS = (
-    ("scid_catalog", "List authorized capabilities by name and purpose; no full contracts.", CatalogInput),
+    ("scid_catalog", "List authorized names and purposes; no full contracts.", CatalogInput),
     ("scid_describe", "Read one capability's exact contract before calling it.", DescribeInput),
-    ("scid_call", "Call an authorized capability using its exact contract; return its ordinary result.", CallInput),
+    ("scid_call", "Call an authorized capability by its exact contract.", CallInput),
 )
 _ATTACH = {"name": "worker_attach", "description": "Bind the actual spawned child thread to an exact queued Run; Root only.",
            "inputSchema": AttachInput.model_json_schema()}
@@ -161,7 +169,10 @@ class UnifiedMCPRouter:
     def catalog(self, context, values):
         if not context.worker and values.kind == "operations":
             return self.root.call_tool("operation_catalog", {
-                "limit": values.limit, "before": values.before, "view": "summary"})
+                "limit": values.limit, "before": values.before, "view": values.view,
+                "dimension": values.dimension, "where": values.where})
+        if values.view != "summary" or values.dimension is not None or values.where is not None:
+            raise DiagnosticError("navigation views are available only for Root operations; Worker and interface catalogs are unchanged")
         entries = sorted(self._interfaces(context), key=lambda item: item["name"])
         if values.before is not None:
             entries = [x for x in entries if x["name"] > values.before]
@@ -171,20 +182,21 @@ class UnifiedMCPRouter:
 
     def describe(self, context, values):
         name = values.name
+        interface_view = values.view if "view" in values.model_fields_set else "full"
         declaration = next((item for item in _DECLARATIONS if item[0] == name), None)
         if declaration is not None:
-            if values.view != "full":
+            if interface_view != "full":
                 raise DiagnosticError('scid_describe view="invoke" is supported only for Operations')
             entry_name, description, model = declaration
             return {"name": entry_name, "description": description,
                     "inputSchema": model.model_json_schema()}
         if context.worker and name == "worker_identity":
-            if values.view != "full":
+            if interface_view != "full":
                 raise DiagnosticError('scid_describe view="invoke" is supported only for Operations')
             return _IDENTITY
         for tool in self._interfaces(context):
             if tool["name"] == name:
-                if values.view != "full":
+                if interface_view != "full":
                     raise DiagnosticError('scid_describe view="invoke" is supported only for Operations')
                 return tool
         if not context.worker:
@@ -205,7 +217,8 @@ class UnifiedMCPRouter:
                 **full,
                 "view": "invoke",
                 "operations": [operation_invoke_contract(
-                    operations[0], revision_policy=operation_revision_policy(compiled.spec)
+                    operations[0], revision_policy=operation_revision_policy(compiled.spec),
+                    representation=values.representation,
                 )],
             }
         raise DiagnosticError("capability is not available in this Worker assignment")
