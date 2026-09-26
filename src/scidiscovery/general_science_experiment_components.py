@@ -221,10 +221,6 @@ def _skeleton_context(payload, sources, handoff):
         raise SemanticRuleViolation("skeleton selects a hypothesis absent from the supplied portfolio")
 
 
-def _experiment_revision_inputs(sources: dict[str, bytes]) -> None:
-    review = parse_bound_json(ScientificReview, sources["change_request"], admission_port="change_request")
-    if review.review_target != "experiment_portfolio":
-        raise OperationInvocationError("input_review_target_invalid", port="change_request", field="/review_target")
 
 
 def _experiment_revision_context(
@@ -247,20 +243,6 @@ def _experiment_revision_context(
         )
 
 
-def _object_review_inputs(sources: dict[str, bytes]) -> None:
-    if ("experiment_plan" in sources) == ("scientific_skeleton" in sources):
-        raise OperationInvocationError("input_review_subject_exact_one", port="experiment_plan")
-    if "scientific_skeleton" in sources:
-        parse_bound_json(ExperimentScientificSkeleton, sources["scientific_skeleton"], admission_port="scientific_skeleton")
-    else:
-        parse_bound_json(ExperimentPortfolio, sources["experiment_plan"], admission_port="experiment_plan")
-    raw_objective = sources.get("research_objective")
-    if raw_objective is not None:
-        parse_bound_json(ResearchObjectiveContract, raw_objective,
-                         admission_port="research_objective")
-    execution_context = sources.get("execution_context")
-    if execution_context is not None:
-        parse_bound_json(ExecutionContext, execution_context, admission_port="execution_context")
 
 
 def _object_review_context(
@@ -458,8 +440,6 @@ class ExperimentComponents:
     skeleton_validator = CallableComponent("validator", _strict_validator(ExperimentScientificSkeleton))
     skeleton_context = CallableComponent("validator", _skeleton_context)
     experiment_inputs = CallableComponent("validator", _experiment_inputs)
-    experiment_revision_inputs = CallableComponent("validator", _experiment_revision_inputs)
-    object_review_inputs = CallableComponent("validator", _object_review_inputs)
     experiment_validator = CallableComponent(
         "validator", payload_validator(validate_experiment_design_intent)
     )

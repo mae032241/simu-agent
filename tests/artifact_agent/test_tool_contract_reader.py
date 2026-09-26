@@ -115,3 +115,16 @@ def test_receipt_is_disposable_scoped_and_invalidated_by_contract_changes(tmp_pa
     blocked.write_text("file")
     save_receipt(blocked / "receipt.json", first.receipt)
     assert load_receipt(blocked / "receipt.json") is None
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
+def test_tool_reader_rejects_nonfinite_contract_json(value):
+    with pytest.raises(ValueError, match="Out of range float"):
+        read_contract({"tool": {"inputSchema": {"default": value}}}, "tool")
+
+
+def test_finite_unicode_reading_identity_preserves_existing_bytes():
+    import hashlib
+    expected = '{"default":1.5,"title":"温度"}'.encode("utf-8")
+    result = read_contract({"tool": {"default": 1.5, "title": "温度"}}, "tool")
+    assert result["sha256"] == hashlib.sha256(expected).hexdigest()

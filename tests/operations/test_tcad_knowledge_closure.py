@@ -10,23 +10,9 @@ from pathlib import Path
 import pytest
 
 from deploy.install_transaction import _directory_digest
-from scidiscovery.operation_declaration import OPERATION_AGENT_PREAMBLE, RESEARCH_WORK_CONTEXT
-from tcad_artifact import role_pack
-
 
 REPOSITORY = Path(__file__).resolve().parents[2]
 SKILL = REPOSITORY / "skills/sentaurus-tcad-code"
-
-
-def test_role_prompts_use_only_packaged_role_resources():
-    assert "declared inputs" in OPERATION_AGENT_PREAMBLE
-    assert "Skill" not in OPERATION_AGENT_PREAMBLE
-    for role in ("author", "reviewer"):
-        prompt = role_pack.role_prompt(role)
-        assert prompt == RESEARCH_WORK_CONTEXT + (role_pack.role_directory() / f"tcad_deck_{role}.md").read_text("utf-8")
-        assert (SKILL / "SKILL.md").read_text("utf-8") not in prompt
-        assert "sentaurus-tcad-code" in prompt
-        assert "frozen Sentaurus" not in prompt
 
 
 def test_installed_tcad_resources_and_experiment_capability(installed_probe):
@@ -34,14 +20,17 @@ def test_installed_tcad_resources_and_experiment_capability(installed_probe):
     installed_probe("all_domains", r'''
 from pathlib import Path
 from scidiscovery.operations.catalog import compile_installed_catalog
-from tcad_artifact import plugin, role_pack
+from tcad_artifact import plugin
+from tcad_artifact.experiment_capability import CAPABILITY
+from tcad_artifact.parameter_operations import EXTRACT_PROMPT
+from scidiscovery.operation_declaration import OPERATION_AGENT_PREAMBLE
 import sys
 assert Path(plugin.__file__).resolve().is_relative_to(Path(sys.prefix).resolve())
 Path.home = lambda: (_ for _ in ()).throw(AssertionError("host skill lookup"))
 catalog = compile_installed_catalog()
 assert catalog.operation("science.experiment.v1").digest
-for role in ("author", "reviewer"):
-    assert role_pack.role_prompt(role)
+assert "sentaurus-tcad-code" in CAPABILITY.instructions
+assert EXTRACT_PROMPT == OPERATION_AGENT_PREAMBLE + (Path(plugin.__file__).parent / "roles/parameter_evidence_extractor.md").read_text()
 assert not (Path(plugin.__file__).parent / "SKILL.md").exists()
 ''')
 

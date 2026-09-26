@@ -25,7 +25,7 @@ ARRAYS = {'allOf', 'anyOf', 'oneOf', 'prefixItems'}
 
 
 def canonical(value):
-    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(',', ':'))
+    return json.dumps(value, ensure_ascii=False, allow_nan=False, sort_keys=True, separators=(',', ':'))
 
 
 def pointer(key):

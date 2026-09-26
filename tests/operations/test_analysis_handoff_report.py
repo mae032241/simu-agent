@@ -6,8 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from scidiscovery.artifact_agent.schema.claim import project_claim_decision
-from scidiscovery.artifact_agent.schema.common import canonical_json, SchemaModel
+from scidiscovery.artifact_agent.schema.common import canonical_json
 from scidiscovery.artifact_agent.schema.layered_diagnosis import LayeredDiagnosisReport
 from tests.operations.test_tcad_result_analysis import analysis_materials, analysis_report, analysis_system, open_analysis
 from tests.operations.test_analysis_claim_scope import generic_worker, mcp_call
@@ -51,9 +50,8 @@ def test_analysis_verdict_projection_preserves_the_formal_report(verdict, expect
     assert value['payload'] == payload
     assert value['handoff']['verdict'] == expected
     report = LayeredDiagnosisReport.model_validate_json(canonical_json(payload))
-    decision = project_claim_decision(report)
-    assert decision.numerical_verdict == 'not_evaluable'
-    assert decision.overall_verdict == verdict and decision.claim_allowed == payload['claim_allowed']
+    assert report.gates is None
+    assert report.overall_verdict == verdict and report.claim_allowed == payload['claim_allowed']
 
 
 def test_handoff_normalizes_only_duplicate_fields_and_unknown_claims_still_fail():
@@ -71,10 +69,6 @@ def test_handoff_normalizes_only_duplicate_fields_and_unknown_claims_still_fail(
     invalid = dict(payload={'summary': 'Missing scientific verdict'})
     materialize_general_result(invalid, 'scidiscovery.layered-diagnosis.v1')
     assert 'handoff' not in invalid
-    with pytest.raises(TypeError, match='supported report'):
-        project_claim_decision(SchemaModel())
-    legacy = LayeredDiagnosisReport.model_validate_json(canonical_json(analysis_report()))
-    assert project_claim_decision(legacy).numerical_verdict == legacy.gates.numerical_validity.status
 
 
 

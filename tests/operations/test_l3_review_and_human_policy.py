@@ -63,8 +63,8 @@ def _review_gate_catalog():
     return compile_catalog((CORE_PLUGIN, GENERAL_PLUGIN, plugin))
 
 
-def _system(tmp_path: Path):
-    catalog = _review_gate_catalog()
+def _system(tmp_path: Path, *, catalog=None):
+    catalog = catalog or _review_gate_catalog()
     project = tmp_path / "project"
     project.mkdir()
     runtime = open_runtime(
@@ -122,7 +122,7 @@ def _envelope(payload: object, *, verdict: str = "pass") -> bytes:
     )
 
 
-def _complete_author(catalog, runtime, root, *, instruction: str, conflict: str):
+def _complete_author(catalog, runtime, root, *, instruction: str, conflict: str, verdict="pass"):
     created = root.call_tool(
         "operation_invoke",
         {
@@ -145,7 +145,7 @@ def _complete_author(catalog, runtime, root, *, instruction: str, conflict: str)
         limitations=("Two rows do not establish causality.",),
     )
     Path(opened["output_directory"], "result.json").write_bytes(
-        _envelope(observation.model_dump(mode="json"))
+        _envelope(observation.model_dump(mode="json"), verdict=verdict)
     )
     assert worker.call_tool("worker_submit_result", {})["state"] == "completed"
     return root.call_tool("run_status", {"name": name})["output_artifact_name"]

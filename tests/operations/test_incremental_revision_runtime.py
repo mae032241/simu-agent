@@ -188,8 +188,8 @@ DUAL_AUTHOR = scientific_agent_operation(
 )
 
 
-def _catalog(*, hardened: bool = False):
-    operations = PLUGIN.operations if hardened else (DUAL_AUTHOR, REVIEWER)
+def _catalog(*, hardened: bool = False, reviewer=REVIEWER, revision=REVISION):
+    operations = PLUGIN.operations if hardened else (DUAL_AUTHOR, reviewer)
     if hardened:
         operations = tuple(
             operation.model_copy(
@@ -221,7 +221,7 @@ def _catalog(*, hardened: bool = False):
                     else ()
                 ),
             ),
-            "operations": (*operations, REVISION),
+            "operations": (*operations, revision),
         }
     )
     return compile_catalog((CORE_PLUGIN, GENERAL_PLUGIN, plugin))
@@ -832,3 +832,32 @@ def test_revision_base_must_be_materializable_and_hardened_requires_patch_tool()
     assert HardenedWorkerBackend.unsupported_requirements(
         catalog.operation("blind.csv.revise.v1")
     ) == ("server_file_read", "server_file_patch")
+
+
+@pytest.mark.parametrize("change, reason", [
+    ("review_contract", "input_revision_review_contract_mismatch"),
+    ("reviewer_version", "input_independent_review_incompatible"),
+])
+def test_direct_revision_public_admission_rejects_incompatible_review(tmp_path, change, reason):
+    from scidiscovery.artifact_agent.interfaces.mcp_root import RootToolError
+    catalog, runtime, instance, root = _system(tmp_path)
+    _create_reviewed_base(catalog, runtime, instance, root)
+    request = _revision_request("revision")
+    assert root.call_tool("operation_preflight", request)["admissible"]
+    if change == "review_contract":
+        revised = REVISION.model_copy(update={"review": REVISION.review.model_copy(
+            update={"accepted_verdicts": ("pass", "inconclusive")})})
+        changed_catalog = _catalog(revision=revised)
+    else:
+        changed_catalog = _catalog(reviewer=REVIEWER.model_copy(update={"version": "2"}))
+    runtime.runs.operation_catalog = changed_catalog
+    changed_root = RootMCPRouter(RootToolFacade(
+        runtime.artifacts, runtime.intake, runs=runtime.runs, approvals=runtime.approvals,
+        executions=runtime.executions, bindings=runtime.scheduler_bindings,
+        instance=instance.instance_id, operation_catalog=changed_catalog))
+    rejected = changed_root.call_tool("operation_preflight", request)
+    assert rejected["reason_code"] == reason, rejected
+    with pytest.raises(RootToolError, match=reason):
+        changed_root.call_tool("operation_invoke", request)
+    runtime.runs.operation_catalog = catalog
+    assert root.call_tool("operation_invoke", request)["result"]["state"] == "queued"

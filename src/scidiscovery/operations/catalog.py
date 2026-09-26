@@ -358,8 +358,7 @@ def _validate_operation_contracts(plugin_map: dict[str, PluginDefinition], compo
             ):
                 _fail("operation_ports_empty", plugin.plugin_id, op_id)
             names = [port.name for port in (*operation.inputs, *operation.outputs)]
-            if (len(operation.independent_review_ports) != len(set(operation.independent_review_ports))
-                    or not set(operation.independent_review_ports) <= {port.name for port in operation.inputs}):
+            if not set(operation.independent_review_ports) <= {port.name for port in operation.inputs}:
                 _fail("independent_review_subject_invalid", plugin.plugin_id, op_id)
             if len(names) != len(set(names)): _fail("operation_port_duplicate", plugin.plugin_id, op_id)
             if operation.input_validation is not None:
@@ -901,6 +900,8 @@ def compile_catalog(plugins: Iterable[PluginDefinition], *, capability_selection
     review_subjects = {}
     for plugin in plugin_map.values():
         for operation in plugin.operations:
+            if len(operation.independent_review_ports) != len(set(operation.independent_review_ports)):
+                _fail("independent_review_subject_invalid", plugin.plugin_id, operation.operation_id)
             edge = operation.review
             if edge is not None and edge.reviewer_operation and edge.reviewer_input_port:
                 review_subjects.setdefault(edge.reviewer_operation, set()).add(edge.reviewer_input_port)

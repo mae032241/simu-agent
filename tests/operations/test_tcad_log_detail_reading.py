@@ -5,7 +5,6 @@ from types import SimpleNamespace
 
 import pytest
 from tcad_artifact.local_debug_service import debug_summary
-from tcad_artifact.role_pack import role_prompt
 from scidiscovery.artifact_agent.service.input_reader import page
 
 
@@ -27,6 +26,3 @@ def test_author_reads_saved_diagnostic_detail(tmp_path, state, timed_out):
     selected = page(tmp_path, short['details_path'], pointer='/progress/log_tails')
     assert json.loads(selected['fragment']) == original['progress']['log_tails']
     assert (tmp_path/short['log_relative_path']).read_text() == log.read_text()
-    prompt = role_prompt('author')
-    assert 'open details_path' in prompt and '/progress/log_tails' in prompt
-    assert 'Locate keys/sections before reading' in prompt

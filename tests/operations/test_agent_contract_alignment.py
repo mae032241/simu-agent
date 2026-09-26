@@ -587,42 +587,6 @@ def test_materialization_and_revision_preserve_goal_text_and_rationales(
     _experiment_revision_context(revised, sources, {})
 
 
-@pytest.mark.parametrize("mismatch", ("objective_key", "statement", "execution_context", "unbound_citation"))
-def test_review_validates_bound_original_context_and_actual_source_aliases(experiment_case, mismatch) -> None:
-    from scidiscovery.artifact_agent.transforms import materialize_experiment_plan
-    from scidiscovery.general_science_experiment_components import _object_review_context, _object_review_inputs
-    from scidiscovery.operations.input_validation import OperationInvocationError
-
-    intent, inputs = _partial_experiment(experiment_case)
-    plan, _ = materialize_experiment_plan({
-        "experiment_design_intent": canonical_json(intent),
-        "research_objective": inputs["research_objective"],
-        "hypothesis_portfolio": inputs["hypothesis_portfolio"],
-    })
-    sources = {"experiment_plan": plan, "research_objective": inputs["research_objective"]}
-    payload = {"review_target": "experiment_portfolio", "verdict": "revise",
-               "summary": "Assess the exact original contract."}
-    if mismatch in {"objective_key", "statement"}:
-        objective = json.loads(sources["research_objective"])
-        objective[mismatch] = "different_objective"
-        sources["research_objective"] = canonical_json(objective)
-        # A bound goal is available for scientific review, not a text/key-copy gate.
-        _object_review_inputs(sources)
-        return
-    elif mismatch == "execution_context":
-        sources["execution_context"] = b"{}"
-        error, message = OperationInvocationError, "input_content_incompatible: execution_context"
-    else:
-        payload["evidence"] = [{"source_key": "experiment_plan_aux", "source_type": "frozen_input",
-                                "locator": "absent input"}]
-        error, message = SemanticRuleViolation, "source bound to this task"
-    with pytest.raises(error, match=message):
-        if mismatch == "unbound_citation":
-            _object_review_context(payload, sources, {"verdict": "revise"})
-        else:
-            _object_review_inputs(sources)
-
-
 def test_experiment_materialized_constraints_are_correctable(experiment_case) -> None:
     intent, sources = experiment_case
     intent["objective_key"] = "objective_expected"

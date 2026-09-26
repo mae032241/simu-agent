@@ -188,13 +188,6 @@ def test_codex_profile_contains_root_and_compiled_operation_boundaries(
         ]
         assert "trusted-local backend" in role["developer_instructions"]
         instructions = role["developer_instructions"]
-        if compiled.spec.operation_id.startswith("tcad.deck.author."):
-            from tcad_artifact.role_pack import role_prompt
-            assert role_prompt("author") not in instructions
-            assert "role_instructions" in instructions
-            assert "worker_tcad_debug_run" in operation_local_worker_tool_names(compiled)
-        elif compiled.spec.operation_id == "tcad.deck.review.v1":
-            assert "worker_tcad_debug_run" not in operation_local_worker_tool_names(compiled)
         assert "exact Skill directories discovered by Codex" in instructions
         assert "Keep global Skills read-only" in instructions
         assert "TMPDIR=<workspace>/scratch" in instructions

@@ -132,3 +132,18 @@ def test_workspace_schema_cache_recovery_and_independent_field_calls(tmp_path):
     assert 'overview' in workspace_view(tmp_path,['evidence'])  # cache failure never blocks reading
     with pytest.raises(ValueError,match='Unknown payload field'):
         workspace_view(tmp_path,['does_not_exist'])
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
+def test_output_schema_reader_rejects_nonfinite_json(value):
+    original = schema()
+    original["properties"]["payload"]["properties"]["optional"]["default"] = value
+    with pytest.raises(ValueError, match="Out of range float"):
+        read_schema(original, full=True)
+
+
+def test_finite_unicode_reading_identity_preserves_existing_bytes():
+    import hashlib
+    expected = '{"default":1.5,"title":"温度"}'.encode("utf-8")
+    result = read_schema({"default": 1.5, "title": "温度"})
+    assert result["sha256"] == hashlib.sha256(expected).hexdigest()

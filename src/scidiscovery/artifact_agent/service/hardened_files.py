@@ -81,7 +81,10 @@ class HardenedFileEditor:
 
     def commit(self) -> dict[str, Any]:
         upload = self._require_upload()
+        # A commit consumes the upload even when validation or atomic writing fails.
+        self._upload = None
         content = bytes(upload.content)
+        upload.content.clear()
         if upload.expected_bytes is not None and len(content) != upload.expected_bytes:
             raise WorkspaceError("file upload byte count differs")
         if upload.operation == "patch":
@@ -96,7 +99,6 @@ class HardenedFileEditor:
             mode=0o600,
             create_parents=True,
         )
-        self._upload = None
         return {
             "state": "committed",
             "relative_path": upload.path.as_posix(),
@@ -317,7 +319,7 @@ def _apply_text_patch(original: str, patch: str, relative_path: str) -> str:
 
 def _pointer_tokens(path: str) -> tuple[str, ...]:
     if not path.startswith("/"):
-        raise ValueError("JSON patch path must be non-root")
+        raise ValueError("JSON patch path must be a nonempty slash-prefixed pointer; whole-document patching is unsupported")
     values = []
     for raw in path[1:].split("/"):
         token = raw.replace("~1", "/").replace("~0", "~")

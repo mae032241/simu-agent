@@ -517,6 +517,44 @@ def test_hardened_json_patch_accepts_array_bounds_and_object_pointer_keys(tmp_pa
     }
 
 
+@pytest.mark.parametrize("failure", ["byte_count", "patch", "existing_file"])
+def test_hardened_failed_commit_releases_upload_for_fresh_write(tmp_path: Path, failure: str) -> None:
+    catalog, runtime, _, root = _system(tmp_path)
+    _invoke(root)
+    worker = _worker(catalog, runtime)
+    opened = worker.call_tool("worker_open_assignment", {})
+    target = Path(opened["workspace_path"], "output/result.json")
+    original = b'{"original":true}\n'
+    if failure == "patch":
+        target.write_bytes(original)
+    worker.call_tool("worker_file_write_begin", {
+        "relative_path": "output/result.json",
+        "operation": "patch" if failure == "patch" else "create",
+        "expected_bytes": 100 if failure == "byte_count" else 2,
+    })
+    worker.call_tool("worker_file_write_chunk", {"content": "{}"})
+    if failure == "existing_file":
+        target.write_bytes(original)
+    buffer = worker._editor._upload.content
+    with pytest.raises(WorkerToolError, match="server-side workspace edit failed"):
+        worker.call_tool("worker_file_write_commit", {})
+    if failure == "byte_count":
+        assert not target.exists()
+    else:
+        assert target.read_bytes() == original
+    assert worker._editor._upload is None
+    assert not buffer
+    assert runtime.runs.status(worker._run_id).state == "running"
+    destination = "output/collections/fresh.json"
+    worker.call_tool("worker_file_write_begin", {"relative_path": destination, "expected_bytes": 2})
+    worker.call_tool("worker_file_write_chunk", {"content": "{}"})
+    assert worker.call_tool("worker_file_write_commit", {})["state"] == "committed"
+    fresh = Path(opened["workspace_path"], destination)
+    assert fresh.read_bytes() == b"{}"
+    assert fresh.stat().st_mode & 0o777 == 0o600
+    assert worker._editor._upload is None
+
+
 def test_hardened_server_write_rejects_parent_symlink_escape(tmp_path: Path) -> None:
     catalog, runtime, _, root = _system(tmp_path)
     _invoke(root)
