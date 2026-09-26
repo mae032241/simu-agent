@@ -17,7 +17,7 @@ from scidiscovery.operation_contract import (
     operation_port_json_schema,
 )
 from .input_validation import (
-    OperationEngineeringError, OperationInvocationError, read_validation_sources, validate_operation_inputs,
+    InputBindingDescriptor, ValidationSources, OperationEngineeringError, OperationInvocationError, read_validation_sources, validate_operation_inputs,
 )
 from .spec import (
     CompiledOperation,
@@ -56,6 +56,7 @@ class EffectExecutorPlan:
     executor: str
     preparation_profile: str
     payload_port: str
+    budget_subject_schemas: tuple[str, ...] = ()
 @dataclass(frozen=True, slots=True)
 class BoundOperationCall:
     compiled: CompiledOperation
@@ -186,7 +187,8 @@ def preflight_operation(
     for port in spec.inputs:
         artifacts = artifacts_by_port[port.name]
         _validate_port_binding(port, artifacts)
-        total_bytes += sum(item.size_bytes for item in artifacts)
+        if port.exposure != "file_reference":
+            total_bytes += sum(item.size_bytes for item in artifacts)
         for index, artifact in enumerate(artifacts, start=1):
             if artifact.ref in seen_refs:
                 raise OperationInvocationError("input_artifact_duplicate", port=port.name)
@@ -307,7 +309,7 @@ def preflight_result(action: Any) -> dict[str, Any]:
             "executor_kind": bound.compiled.spec.executor.kind}
 def effect_executor_plan(bound: BoundOperationCall) -> EffectExecutorPlan:
     value = effect_operation_plan(bound.compiled)
-    if value.payload_port not in {item.port_name for item in bound.inputs}:
+    if bound.compiled.spec.executor.preparation is None and value.payload_port not in {item.port_name for item in bound.inputs}:
         raise OperationInvocationError(
             "effect_payload_port_missing", port=value.payload_port
         )
@@ -325,7 +327,9 @@ def effect_operation_plan(compiled: CompiledOperation) -> EffectExecutorPlan:
         raise OperationEngineeringError("effect_executor_result_invalid")
     if _RUNTIME_BINDING.fullmatch(value.executor) is None:
         raise OperationEngineeringError("effect_executor_result_invalid")
-    if value.payload_port not in {item.name for item in compiled.spec.inputs}:
+    payload_ports = (compiled.spec.outputs[1:] if compiled.spec.executor.preparation is not None
+                     else compiled.spec.inputs)
+    if value.payload_port not in {item.name for item in payload_ports}:
         raise OperationInvocationError(
             "effect_payload_port_missing", port=value.payload_port
         )
@@ -333,7 +337,55 @@ def effect_operation_plan(compiled: CompiledOperation) -> EffectExecutorPlan:
         executor=f"{compiled.plugin_id}:{value.executor}",
         preparation_profile=value.preparation_profile,
         payload_port=value.payload_port,
+        budget_subject_schemas=value.budget_subject_schemas,
     )
+def prepare_effect_payload(bound: BoundOperationCall, read_artifact) -> TransformOutput:
+    """Pure, compiled deterministic preparation; never register or bind artifacts."""
+    plan = effect_executor_plan(bound)
+    reference = bound.compiled.spec.executor.preparation
+    if reference is None:
+        raise OperationInvocationError("effect_preparation_missing")
+    grouped, descriptors = {}, {}
+    for item in bound.inputs:
+        # File references carry metadata only. The preparer must not materialize
+        # potentially gigabyte scientific inputs into this in-memory mapping.
+        raw = b"" if item.exposure == "file_reference" else read_artifact(item.artifact.ref)
+        grouped.setdefault(item.port_name, []).append(raw)
+        descriptors[item.source_name] = InputBindingDescriptor(
+            source_name=item.source_name, port_name=item.port_name,
+            artifact_ref=item.artifact.ref, media_type=item.artifact.media_type,
+            size_bytes=item.artifact.size_bytes, sha256=item.artifact.ref.sha256,
+            parent_refs=item.artifact.parent_refs, labels=item.artifact.labels,
+            producer_run_id=item.artifact.producer_run_id)
+    key = f"{reference.plugin_id or bound.compiled.plugin_id}:{reference.component_id}"
+    try:
+        values = bound.compiled.implementations[key](ValidationSources(
+            {name: tuple(items) for name, items in grouped.items()}, descriptors))
+        if set(values) != {plan.payload_port}:
+            raise ValueError("effect preparation must produce exactly its payload port")
+        items = values[plan.payload_port]
+        if not isinstance(items, tuple) or len(items) != 1 or not isinstance(items[0], bytes):
+            raise ValueError("effect preparation payload must be one bytes item")
+        port = next(p for p in bound.compiled.spec.outputs if p.name == plan.payload_port)
+        raw = items[0]
+        if len(raw) > bound.compiled.spec.limits.max_output_bytes:
+            raise ValueError("effect preparation exceeds operation output bound")
+        _validate_transform_item(bound.compiled, port, raw)
+        if port.schema_resource is not None:
+            from jsonschema.validators import validator_for
+            resource = port.schema_resource
+            schema = json.loads(bound.compiled.implementations[
+                f"{resource.plugin_id or bound.compiled.plugin_id}:{resource.component_id}"])
+            validator_for(schema)(schema).validate(json.loads(raw))
+        return TransformOutput(label=port.name, port_name=port.name, content=raw,
+            kind=port.kind, schema=port.schema_id, media_type=port.media_types[0],
+            payload_schema_version=port.payload_schema_version)
+    except (OperationInvocationError, DiagnosticError):
+        raise
+    except Exception as error:
+        raise OperationInvocationError("effect_preparation_invalid", message=str(error)) from error
+
+
 def operation_primary_output(compiled: CompiledOperation) -> OutputPortSpec:
     return next(port for port in compiled.spec.outputs if port.collection is None)
 
@@ -354,7 +406,13 @@ def execute_compiled_transform(
         grouped.setdefault(item.port_name, []).append(inputs[item.source_name])
     try:
         value = _executor_callable(bound.compiled)(
-            MappingProxyType({key: tuple(items) for key, items in grouped.items()})
+            ValidationSources({key: tuple(items) for key, items in grouped.items()}, {
+                item.source_name: InputBindingDescriptor(source_name=item.source_name, port_name=item.port_name,
+                    artifact_ref=item.artifact.ref, media_type=item.artifact.media_type,
+                    size_bytes=item.artifact.size_bytes, sha256=item.artifact.ref.sha256,
+                    parent_refs=item.artifact.parent_refs, labels=item.artifact.labels,
+                    producer_run_id=item.artifact.producer_run_id) for item in bound.inputs
+            })
         )
     except (OperationInvocationError, DiagnosticError):
         raise

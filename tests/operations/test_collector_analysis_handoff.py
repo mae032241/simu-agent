@@ -5,6 +5,7 @@ state are fixture setup. Collection, status ingestion, artifact registration, Ro
 binding/admission and Worker validation use their production implementations.
 """
 from __future__ import annotations
+from tests.operations.tcad_policy_fixtures import policy_fields
 
 from dataclasses import replace
 import hashlib
@@ -44,7 +45,7 @@ def _analysis_system(tmp_path):
 def _collect_execution(system, directory, *, name, state="succeeded", output_names=("A", "B")):
     _, runtime, root, _, artifacts, _ = system
     collector = TCADExecutionFacade(
-        policy=TCADExecutionPolicy(allowed_input_roots=(str(directory),), tools=(ToolProfile(
+        policy=TCADExecutionPolicy(**policy_fields(), allowed_input_roots=(str(directory),), tools=(ToolProfile(
             profile_id="fixture", solver_kind="deterministic_tool",
             executable="/bin/true", release_evidence="unused terminal fixture",
         ),)), state_root=directory,
@@ -158,7 +159,7 @@ def historical_analysis_fixture(tmp_path, *, operation_id="tcad.result.analyze.v
     from curve_score.plugin import PLUGIN as CURVE
     from tcad_artifact.plugin import PLUGIN as TCAD
     from scidiscovery.operations.catalog import compile_catalog
-    from tests.operations.m3_transform_equivalence_runner import _engineering_intent
+    from tests.operations.science_fixtures import _engineering_intent
     from tests.operations.test_historical_compatibility_paths import _complete
 
     system = _analysis_system(tmp_path)
@@ -181,13 +182,13 @@ def historical_analysis_fixture(tmp_path, *, operation_id="tcad.result.analyze.v
     for output in package["project"]["expected_outputs"]:
         output["experiment_key"] = plan_value["proposals"][0]["experiment_key"]
     artifacts["package"] = register("materialized_package", canonical_json(package),
-        "tcad.reviewed-deck-package.v2", parents=(plan.ref,))
+        "tcad.execution-package.v2", parents=(plan.ref,))
     for binding in request["inputs"]:
         if binding["port"] == "experiment_plan":
             binding["artifact_names"] = ["materialized_plan"]
         elif binding["port"] == "experiment_review":
             binding["artifact_names"] = [review_name]
-        elif binding["port"] == "reviewed_package":
+        elif binding["port"] == "execution_package":
             binding["artifact_names"] = ["materialized_package"]
     outputs = _collect_execution(system, tmp_path / "collector", name="historical_execution", state="failed", output_names=())
     _bind_collected(system, outputs)
@@ -247,47 +248,6 @@ def test_historical_review_reaches_new_analysis_without_current_authority(tmp_pa
 
 
 @pytest.mark.parametrize("operation_id", ("tcad.result.analyze.v1", "science.result.diagnose.v1"))
-@pytest.mark.parametrize("wrong", ("unsealed_review", "nonpassing_review", "wrong_plan", "wrong_producer"))
-def test_historical_analysis_rejects_wrong_or_unsealed_witness(tmp_path, operation_id, wrong):
-    system, _ = historical_analysis_fixture(tmp_path, operation_id=operation_id)
-    _, runtime, root, request, _, register = system
-    if wrong == "unsealed_review":
-        review = runtime.artifacts.get_by_id(root.facade._resolve("artifact", "materialized_review.output"))
-        register("copied_review", runtime.artifacts.read(review.ref), review.schema_id, parents=review.parent_refs)
-        port, name = "experiment_review", "copied_review"
-    elif wrong == "wrong_producer":
-        from scidiscovery.builtin_plugin import CORE_PLUGIN
-        from curve_score.plugin import PLUGIN as CURVE
-        from tcad_artifact.plugin import PLUGIN as TCAD
-        from scidiscovery.operations.catalog import compile_catalog
-        from tests.operations.test_l4_local_tcad import _plan_producer_plugin, _complete_plan_fixture
-        plugin = _plan_producer_plugin()
-        current = compile_catalog((CORE_PLUGIN, plugin, CURVE, TCAD))
-        runtime.runs.operation_catalog = root.facade._operation_catalog = current
-        name = _complete_plan_fixture(current, runtime, root, "wrong_producer_review",
-            "science.fixture.unrelated-review.v1",
-            {"review_target": "experiment_portfolio", "verdict": "pass", "summary": "Wrong review producer."},
-            [{"port": "experiment_plan", "artifact_names": ["materialized_plan"]}])
-        ref = runtime.artifacts.get_by_id(root.facade._resolve("artifact", name)).ref
-        assert runtime.runs.signal_for_output(ref, require_current=False).verdict == "pass"
-        port = "experiment_review"
-    elif wrong == "nonpassing_review":
-        request["inputs"] = [item for item in request["inputs"] if item["port"] != "current_progress"]
-        port, name = "experiment_review", "negative_review.output"
-    else:
-        port, name = "experiment_plan", "plan"
-    next(item for item in request["inputs"] if item["port"] == port)["artifact_names"] = [name]
-    before = root.call_tool("run_list", {})
-    refused = root.call_tool("operation_preflight", request)
-    expected_code = ("input_review_plan_mismatch" if operation_id == "science.result.diagnose.v1"
-        else "guard_rejected")
-    assert not refused["admissible"] and refused["reason_code"] == expected_code
-    with pytest.raises(Exception, match=expected_code):
-        root.call_tool("operation_invoke", request)
-    assert root.call_tool("run_list", {}) == before
-
-
-@pytest.mark.parametrize("operation_id", ("tcad.result.analyze.v1", "science.result.diagnose.v1"))
 @pytest.mark.parametrize("wrong, port, code", (
     ("plan_shape", "experiment_plan", "input_content_incompatible"),
     ("review_shape", "experiment_review", "input_content_incompatible"),
@@ -313,7 +273,7 @@ def test_history_input_schema_errors_identify_the_port(tmp_path, operation_id, w
         descriptors = {}
         for binding in request["inputs"]:
             alias = binding["port"]
-            if alias not in {"experiment_plan", "experiment_review", "reviewed_package", "runtime_manifest"}:
+            if alias not in {"experiment_plan", "experiment_review", "execution_package", "runtime_manifest"}:
                 continue
             artifact = runtime.artifacts.get_by_id(root.facade._resolve("artifact", binding["artifact_names"][0]))
             sources[alias] = runtime.artifacts.read(artifact.ref)

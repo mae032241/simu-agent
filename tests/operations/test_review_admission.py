@@ -11,7 +11,7 @@ def _catalog(tcad=TCAD):
 
 
 def test_receiver_diagnostic_detects_missing_plan_review_without_blocking_catalog():
-    package_id = "tcad.reviewed-deck-package.v2"
+    package_id = "tcad.study.execute"
     old = TCAD.model_copy(update={"operations": tuple(
         op.model_copy(update={"inputs": tuple(p for p in op.inputs if p.name != "experiment_review")})
         if op.operation_id == package_id else op for op in TCAD.operations
@@ -48,7 +48,7 @@ def test_receiver_diagnostics_preserve_review_revision_and_background_modes():
 def test_wildcard_inventory_can_receive_a_review_but_is_not_a_review_subject():
     inventory = next(p for op in TCAD.operations for p in op.inputs
                      if p.name == "current_progress" and p.schema_id == "*")
-    package_id = "tcad.reviewed-deck-package.v2"
+    package_id = "tcad.study.execute"
     plugin = TCAD.model_copy(update={"operations": tuple(
         op.model_copy(update={"inputs": tuple(p for p in op.inputs
                                              if p.name != "experiment_review")

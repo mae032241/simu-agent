@@ -12,7 +12,7 @@ PARAMETERS = "scidiscovery.device-parameter-set.v1"
 REQUIREMENTS = "scidiscovery.device-parameter-requirements.v1"
 CATALOG = "scidiscovery.evidence-source-catalog.v1"
 PROJECT = "tcad.deck-project.v1"
-PACKAGE = "tcad.reviewed-deck-package.v2"
+PACKAGE = "tcad.execution-package.v2"
 REVIEW = "tcad.deck-review-report.v1"
 _REVIEW_FIELDS = (("verdict", "实现审查结论"), ("summary", "正式摘要"), ("rationale", "审查理由"),
     ("physical_fidelity", "物理忠实性"), ("implementation_fidelity", "实现忠实性"),

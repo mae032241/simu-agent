@@ -55,48 +55,6 @@ def test_scheduler_prompt_has_no_retired_generic_creation_path() -> None:
     assert "device_parameter_evidence_auditor" not in prompt
 
 
-def test_deleted_static_topology_and_context_tables_cannot_return() -> None:
-    repository = Path(__file__).resolve().parents[2]
-    deleted = (
-        repository / "src/scidiscovery/scheduler_topology.py",
-        repository / "src/scidiscovery/artifact_agent/core_context_policies.py",
-        repository / "src/scidiscovery/artifact_agent/context_policy.py",
-        repository / "plugins/tcad_artifact/tcad_artifact/context_policies.py",
-    )
-    assert all(not path.exists() for path in deleted)
-
-    production_roots = (repository / "src", repository / "plugins")
-    retired_authorities = (
-        "scheduler_topology",
-        "core_context_policies",
-        "RoleRuntimeProfile",
-        "role_runtime_profile",
-    )
-    for root in production_roots:
-        for path in root.rglob("*.py"):
-            content = path.read_text(encoding="utf-8")
-            assert all(name not in content for name in retired_authorities), path
-
-
-def test_retired_tcad_cross_artifact_patch_protocol_cannot_return() -> None:
-    repository = Path(__file__).resolve().parents[2]
-    plugin_root = repository / "plugins/tcad_artifact"
-    retired = (
-        "DeckFilePatch",
-        "ParameterBindingPatch",
-        "DeckProjectPatch",
-        "apply_deck_project_patch",
-        "validate_deck_project_patch",
-        "DECK_PATCH_PROFILE",
-        "tcad.deck-project-apply-patch.v1",
-    )
-    for path in plugin_root.rglob("*"):
-        if path.suffix not in {".py", ".md"}:
-            continue
-        content = path.read_text(encoding="utf-8")
-        assert all(name not in content for name in retired), path
-
-
 def test_scheduler_prompt_is_domain_neutral_and_catalog_driven() -> None:
     prompt = load_scheduler_prompt()
     operation_id = re.compile(

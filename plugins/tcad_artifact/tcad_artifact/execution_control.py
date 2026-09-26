@@ -22,7 +22,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_serializer, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
+
+from .execution_policy import AgentExecutionPolicy, RunnerPolicy, DebugPolicy, ExecutionPolicySnapshot
+from scidiscovery.artifact_agent.schema.execution import ExecutionAdmission
 
 
 def _validate_relative_path(value: str) -> str:
@@ -77,11 +80,7 @@ class ResourceLimits(StrictModel):
     cpu_time_seconds: int = Field(ge=1, le=604800)
     max_memory_bytes: int = Field(ge=1, le=2**50)
     max_output_bytes: int = Field(ge=1, le=2**50)
-    max_processes: int = Field(
-        ge=1,
-        le=4096,
-        description="Legacy wire-compatible hint; runners do not inspect solver child-process counts.",
-    )
+    max_storage_bytes: int = Field(ge=1, le=2**50)
 
 
 class ArchiveEntry(StrictModel):
@@ -113,7 +112,7 @@ class ExpectedOutput(StrictModel):
 
 
 class TCADJobSpec(StrictModel):
-    schema_version: Annotated[int, Field(ge=2, le=2)] = 2
+    schema_version: Literal[4] = 4
     execution_purpose: ExecutionPurpose
     tool_profile: str = Field(min_length=1, max_length=256)
     solver_kind: SolverKind
@@ -127,12 +126,6 @@ class TCADJobSpec(StrictModel):
     collect_generated_outputs: bool = False
     limits: ResourceLimits
 
-    @model_serializer(mode="wrap")
-    def _preserve_legacy_job(self, handler):
-        value = handler(self)
-        if not self.collect_generated_outputs:
-            value.pop("collect_generated_outputs", None)
-        return value
 
     @model_validator(mode="after")
     def _unique_paths(self) -> TCADJobSpec:
@@ -147,6 +140,13 @@ class TCADJobSpec(StrictModel):
             raise ValueError("job argument is invalid")
         if sum(item.capture == "process_log" for item in self.expected_outputs) > 1:
             raise ValueError("job can declare at most one process-log output")
+        if any(path.startswith(".scid-capture/") for path in inputs):
+            raise ValueError("input archive uses the reserved control capture directory")
+        for item in self.expected_outputs:
+            if item.capture == "process_log" and item.relative_path != ".scid-capture/solver_stdout.log":
+                raise ValueError("process log must use the reserved stdout mirror path")
+            if item.capture != "process_log" and item.relative_path.startswith(".scid-capture/"):
+                raise ValueError("solver output uses the reserved control capture directory")
         return self
 
 
@@ -259,6 +259,9 @@ class ToolProfile(SolverCapability):
 
 
 class TCADExecutionPolicy(StrictModel):
+    agent_execution_policy: AgentExecutionPolicy
+    runner: RunnerPolicy
+    debug: DebugPolicy
     allowed_input_roots: tuple[str, ...] = Field(min_length=1, max_length=32)
     tools: tuple[ToolProfile, ...] = Field(min_length=1, max_length=128)
     max_concurrent_runs: int = Field(default=1, ge=1, le=128)
@@ -279,55 +282,11 @@ class TCADExecutionPolicy(StrictModel):
                 return profile
         raise ExecutionToolError("TCAD tool profile is not allowed")
 
+    def snapshot(self) -> ExecutionPolicySnapshot:
+        return ExecutionPolicySnapshot(agent_execution_policy=self.agent_execution_policy,
+            runner=self.runner, debug=self.debug)
 
-def migrate_execution_policy_json(raw: bytes) -> tuple[bytes, bool]:
-    """Migrate only the unambiguous legacy deployment-smoke policy."""
 
-    try:
-        TCADExecutionPolicy.model_validate_json(raw, strict=True)
-        return raw, False
-    except (ValidationError, ValueError):
-        pass
-
-    try:
-        payload = json.loads(raw)
-    except (json.JSONDecodeError, UnicodeDecodeError) as error:
-        raise ValueError("existing TCAD execution policy is not valid JSON") from error
-    if not isinstance(payload, dict) or not isinstance(payload.get("tools"), list):
-        raise ValueError("existing TCAD execution policy has no tool list")
-
-    migrated = False
-    true_executable = Path("/bin/true").resolve()
-    for tool in payload["tools"]:
-        if not isinstance(tool, dict):
-            raise ValueError("existing TCAD execution policy has an invalid tool")
-        missing = {"solver_kind", "release_evidence"}.difference(tool)
-        if not missing:
-            continue
-        executable = tool.get("executable")
-        unambiguous_smoke = (
-            tool.get("profile_id") == "deployment_smoke"
-            and isinstance(executable, str)
-            and Path(executable).resolve() == true_executable
-            and tool.get("arguments", []) == []
-            and tool.get("environment", {}) == {}
-        )
-        if not unambiguous_smoke:
-            raise ValueError(
-                "legacy TCAD tool requires explicit solver_kind and "
-                "release_evidence: " + str(tool.get("profile_id", "<unknown>"))
-            )
-        tool.setdefault("solver_kind", "deterministic_tool")
-        tool.setdefault(
-            "release_evidence",
-            "SciDiscovery legacy deployment-smoke profile using /bin/true",
-        )
-        migrated = True
-
-    if not migrated:
-        raise ValueError("existing TCAD execution policy does not match a supported migration")
-    policy = TCADExecutionPolicy.model_validate_json(_canonical(payload), strict=True)
-    return _canonical(policy.model_dump(mode="json")), True
 
 
 class ExecutionToolError(RuntimeError):
@@ -344,6 +303,7 @@ class EmptyInput(ExecutionToolInput):
 
 class SubmitInput(ExecutionToolInput):
     submission: FileDescriptor
+    authorization: ExecutionAdmission | None = None
 
 
 class RunIdInput(ExecutionToolInput):
@@ -351,7 +311,7 @@ class RunIdInput(ExecutionToolInput):
 
 
 class InspectOutputsInput(RunIdInput):
-    max_bytes: int = Field(default=32*1024*1024, ge=0, le=32*1024*1024)
+    max_bytes: int = Field(default=32*1024*1024, ge=0)
     relative_path: str | None = Field(default=None, max_length=1024)
     deadline_monotonic: float | None = None
 
@@ -386,6 +346,7 @@ class ExecutionTool:
 
 
 EXECUTION_TOOLS = (
+    ExecutionTool("tcad_execution_policy", "Return active administrator execution policy.", EmptyInput),
     ExecutionTool(
         "tcad_capabilities",
         "Return bounded public snapshots of configured TCAD capabilities.",
@@ -428,7 +389,10 @@ class TCADExecutionFacade:
             ]
         }
 
-    def tcad_submit(self, *, submission: FileDescriptor) -> dict[str, Any]:
+    def tcad_execution_policy(self) -> dict[str, Any]:
+        return self.policy.snapshot().model_dump(mode="json")
+
+    def tcad_submit(self, *, submission: FileDescriptor, authorization: ExecutionAdmission | None = None) -> dict[str, Any]:
         raw = self._read_input(submission)
         try:
             job = TCADJobSpec.model_validate_json(raw, strict=True)
@@ -446,7 +410,30 @@ class TCADExecutionFacade:
             raise ExecutionToolError(
                 "TCAD job capability differs from the configured tool capability"
             )
-        archive = self._read_input(job.input_archive)
+        snapshot = self.policy.snapshot()
+        budget = {"max_storage_bytes": job.limits.max_storage_bytes,
+                  "wall_time_seconds": job.limits.wall_time_seconds}
+        if sum(item.size_bytes for item in job.archive_entries) > job.limits.max_storage_bytes:
+            raise ExecutionToolError("declared inputs exceed task storage limit")
+        if job.execution_purpose == "production":
+            if authorization is None:
+                raise ExecutionToolError("production submission requires control authorization")
+            current = snapshot.admission(budget=budget, budget_key=authorization.budget_key)
+            if (authorization.reason == "cumulative_budget_exceeded"
+                    and authorization.outcome == "require_human_approval"
+                    and current.outside_allowance == "require_human_approval"):
+                current = current.model_copy(update={"outcome": authorization.outcome,
+                    "reason": authorization.reason})
+            if current != authorization or current.outcome == "deny":
+                raise ExecutionToolError("execution policy changed before submission; reauthorize exact request")
+        elif (job.limits.wall_time_seconds > snapshot.debug.total_wall_seconds
+              or job.limits.max_storage_bytes > snapshot.debug.max_storage_bytes):
+            raise ExecutionToolError("development job exceeds configured debug allowance")
+        archive = Path(job.input_archive.local_path).absolute()
+        if not any(_within(archive, Path(root)) for root in self.policy.allowed_input_roots):
+            raise ExecutionToolError("TCAD archive is outside allowed roots")
+        if _file_identity(archive, self.policy.runner.transfer_chunk_bytes) != (job.input_archive.sha256, job.input_archive.size_bytes):
+            raise ExecutionToolError("archive differs from its descriptor")
         digest = hashlib.sha256(job_raw).hexdigest()
         self._reconcile_active()
         submitted_at = _timestamp()
@@ -484,7 +471,7 @@ class TCADExecutionFacade:
         try:
             run_dir.mkdir(mode=0o770)
             work_dir = run_dir / "work"
-            _extract_archive(archive, job.archive_entries, work_dir)
+            _extract_archive(archive, job.archive_entries, work_dir, self.policy.runner.transfer_chunk_bytes)
             runtime = {
                 "arguments": [*tool.arguments, *job.arguments],
                 "environment": dict(tool.environment),
@@ -496,6 +483,8 @@ class TCADExecutionFacade:
                 "collect_generated_outputs": job.collect_generated_outputs,
                 "archive_entries": [item.model_dump(mode="python") for item in job.archive_entries],
                 "limits": job.limits.model_dump(mode="python"),
+                "runner_policy": self.policy.runner.model_dump(mode="json"),
+                "authorization": None if authorization is None else authorization.model_dump(mode="json"),
             }
             _write_new(run_dir / "job.json", _canonical(runtime), mode=0o440)
             _write_new(run_dir / "submitted_at", (submitted_at + "\n").encode("ascii"), mode=0o440)
@@ -595,6 +584,7 @@ class TCADExecutionFacade:
             return {
                 "run_id": run_id,
                 "state": manifest["terminal_state"],
+                "consumed_budget": _consumed_budget(manifest),
                 "accepted_at": submitted,
                 "exit_code": manifest["exit_code"],
                 "done": True,
@@ -694,6 +684,7 @@ class TCADExecutionFacade:
             return {
                 "run_id": run_id,
                 "state": manifest["terminal_state"],
+                "consumed_budget": _consumed_budget(manifest),
                 "accepted_at": submitted,
                 "exit_code": manifest["exit_code"],
                 "done": True,
@@ -741,7 +732,7 @@ class TCADExecutionFacade:
         context = CollectionContext(deadline_monotonic, deadline_monotonic) if deadline_monotonic is not None else None
         if context: context.remaining_seconds()
         self.tcad_status(run_id=run_id)
-        result = _inspect_directory(str(self._run_dir(run_id)), relative_path, max_bytes,
+        result = _inspect_directory(str(self._run_dir(run_id)), relative_path, min(max_bytes, self.policy.runner.max_preview_bytes),
             deadline_monotonic=deadline_monotonic)
         if context: context.remaining_seconds()
         return result
@@ -866,29 +857,50 @@ class TCADExecutionRouter:
         return getattr(self.facade, name)(**values)
 
 
-def _extract_archive(raw: bytes, entries: tuple[ArchiveEntry, ...], destination: Path) -> None:
-    expected = {item.relative_path: item for item in entries}
-    destination.mkdir(mode=0o750)
-    seen: set[str] = set()
-    try:
-        with tarfile.open(fileobj=io.BytesIO(raw), mode="r:*") as archive:
-            for member in archive.getmembers():
-                name = _validate_relative_path(member.name)
-                if name in seen or name not in expected or not member.isfile():
-                    raise ExecutionToolError("TCAD archive contains an undeclared member")
-                item = expected[name]
-                source = archive.extractfile(member)
-                content = source.read(item.size_bytes + 1) if source is not None else b""
-                if len(content) != item.size_bytes or hashlib.sha256(content).hexdigest() != item.sha256:
-                    raise ExecutionToolError("TCAD archive member differs from its manifest")
-                target = destination.joinpath(*name.split("/"))
-                target.parent.mkdir(parents=True, exist_ok=True)
-                _write_new(target, content, mode=0o440)
-                seen.add(name)
-    except (tarfile.TarError, OSError) as error:
-        raise ExecutionToolError("TCAD archive extraction failed") from error
+def _file_identity(path, chunk_bytes):
+    descriptor = os.open(str(path), os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    with os.fdopen(descriptor, "rb") as stream:
+        if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+            raise ValueError("scientific file is not regular")
+        digest, size = hashlib.sha256(), 0
+        for chunk in iter(lambda: stream.read(chunk_bytes), b""):
+            digest.update(chunk)
+            size += len(chunk)
+    return digest.hexdigest(), size
+
+
+def _extract_archive(archive_path, entries, destination, chunk_bytes):
+    expected = {item.relative_path: item.model_dump(mode="python") for item in entries}
+    if not os.path.isdir(str(destination)):
+        os.makedirs(str(destination), mode=0o750)
+    seen = set()
+    with tarfile.open(str(archive_path), "r:*") as archive:
+        for member in archive:
+            name = _validate_relative_path(member.name)
+            if name in seen or name not in expected or not member.isfile():
+                raise ValueError("archive contains an undeclared member")
+            item = expected[name]
+            if member.size != item["size_bytes"]:
+                raise ValueError("archive member size differs from manifest")
+            source = archive.extractfile(member)
+            target = os.path.join(str(destination), *name.split("/"))
+            os.makedirs(os.path.dirname(target), exist_ok=True)
+            digest, size = hashlib.sha256(), 0
+            with source, open(target, "xb") as output:
+                for chunk in iter(lambda: source.read(chunk_bytes), b""):
+                    size += len(chunk)
+                    if size > item["size_bytes"]:
+                        raise ValueError("archive member exceeds manifest")
+                    digest.update(chunk)
+                    output.write(chunk)
+                output.flush()
+                os.fsync(output.fileno())
+            if size != item["size_bytes"] or digest.hexdigest() != item["sha256"]:
+                raise ValueError("archive member differs from manifest")
+            os.chmod(target, 0o440)
+            seen.add(name)
     if seen != set(expected):
-        raise ExecutionToolError("TCAD archive is missing declared members")
+        raise ValueError("archive is missing declared members")
 
 
 def _read_descriptor(descriptor: FileDescriptor) -> bytes:
@@ -1060,10 +1072,19 @@ __all__ = [
     "SolverCapability",
     "SolverCapabilitySnapshot",
     "SolverKind",
-    "migrate_execution_policy_json",
     "TCADExecutionFacade",
     "TCADExecutionPolicy",
     "TCADExecutionRouter",
     "TCADJobSpec",
     "ToolProfile",
 ]
+
+
+def _consumed_budget(manifest):
+    import math
+    usage = manifest.get("resource_usage", {})
+    elapsed = usage.get("elapsed_seconds")
+    storage = usage.get("observed_storage_high_water_bytes")
+    if not isinstance(elapsed, (int, float)) or not math.isfinite(elapsed) or elapsed < 0 or type(storage) is not int or storage < 0:
+        return None
+    return {"wall_time_seconds": int(math.ceil(elapsed)), "max_storage_bytes": storage}

@@ -20,9 +20,6 @@ HypothesisAssessmentOutcome = Literal[
     "invalid_study",
     "not_tested",
 ]
-# Deprecated compatibility metadata. Scientific reports may retain it, but
-# neither control admission nor the scheduler selects an Operation from it.
-RecommendedTaskMode = str
 class HypothesisAssessment(SchemaModel):
     """A diagnostician's evidence-bound judgment about one tested hypothesis."""
 
@@ -126,7 +123,6 @@ class ValidationReport(SchemaModel):
         tuple[HypothesisAssessment, ...], Field(max_length=32)
     ] = ()
     remaining_contradiction: Annotated[str, Field(min_length=1, max_length=8192)] | None = None
-    recommended_task_mode: RecommendedTaskMode | None = None
 
     @model_validator(mode="after")
     def _verdict_is_derived_from_dimensions(self) -> ValidationReport:
@@ -278,7 +274,6 @@ def validate_validation_report(value: dict[str, object]) -> dict[str, object]:
 __all__ = [
     "HypothesisAssessment",
     "HypothesisAssessmentOutcome",
-    "RecommendedTaskMode",
     "ValidationCheckResult",
     "ValidationDimensionReport",
     "ValidationEvidence",

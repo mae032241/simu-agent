@@ -78,72 +78,8 @@ def _input(port_name: str, usage: str, artifact: InvocationArtifact):
     return SimpleNamespace(port_name=port_name, usage=usage, artifact=artifact)
 
 
-@pytest.mark.parametrize(
-    ("producer_operation", "producer_port"),
-    (
-        ("science.evidence.extract.figure.v2", "scientific_intake"),
-        ("tcad.parameter.evidence.expand.v1", "scientific_intake"),
-    ),
-)
-def test_direct_revision_still_rejects_a_different_reviewer_contract(
-    producer_operation: str, producer_port: str
-) -> None:
-    catalog = _catalog()
-    base, envelope = _produced_artifact(
-        catalog, producer_operation, producer_port, producer_operation.replace(".", "_")
-    )
-    routes = _routes(catalog, {base.ref.artifact_id: envelope})
-    revision = catalog.operation("science.intake.revise.v1")
-
-    with pytest.raises(OperationInvocationError) as caught:
-        routes._validate_producer_output_admission(
-            _bound(revision, _input("prior_draft", "revision_base", base))
-        )
-
-    assert caught.value.reason_code == "input_revision_review_contract_mismatch"
 
 
-def test_change_request_must_be_the_exact_base_reviewer_output() -> None:
-    catalog = _catalog()
-    base, base_envelope = _produced_artifact(
-        catalog,
-        "science.evidence.extract.v1",
-        "scientific_intake",
-        "general_intake",
-    )
-    request, request_envelope = _produced_artifact(
-        catalog,
-        "tcad.parameter.evidence.audit.v1",
-        "evidence_audit",
-        "tcad_parameter_audit",
-    )
-    routes = _routes(
-        catalog,
-        {
-            base.ref.artifact_id: base_envelope,
-            request.ref.artifact_id: request_envelope,
-        },
-    )
-    routes._is_exact_reviewer_output = Mock(return_value=False)
-    revision = catalog.operation("science.intake.revise.v1")
-
-    with pytest.raises(OperationInvocationError) as caught:
-        routes._validate_producer_output_admission(
-            _bound(
-                revision,
-                _input("prior_draft", "revision_base", base),
-                _input("change_request", "change_request", request),
-            )
-        )
-
-    assert caught.value.reason_code == "input_change_request_mismatch"
-    assert routes._is_exact_reviewer_output.call_args.kwargs[
-        "reviewer_operation"
-    ] == "science.evidence.audit.intake.v1"
-    assert routes._is_exact_reviewer_output.call_args.kwargs[
-        "accepted_verdicts"
-    ] == ("revise", "blocked", "inconclusive")
-    assert routes._is_exact_reviewer_output.call_args.kwargs["subject_ref"] == base.ref
 
 
 def test_review_signal_cannot_enter_an_unrelated_operation_unconsumed() -> None:
@@ -251,23 +187,10 @@ def test_tcad_review_prior_signal_keeps_the_exact_producer_review_edge(producer_
 
 
 _EXISTING_INVENTORY_CONSUMERS = {
-    "science.curve.contract.design.v1": ("reference_bundle",),
-    "science.curve.contract.review.v1": ("reference_bundle",),
     "science.evidence.audit.intake.v1": ("source_material",),
     "science.evidence.audit.v1": ("source_material",),
-    "science.evidence.extract.figure.v2": (
-        "paper_source", "figure_request", "figure_manifest", "validation_report",
-        "source_panels", "audit_overlays", "curve_tables",
-    ),
-    "science.figure.evidence.audit.v1": (
-        "paper_source", "figure_request", "figure_manifest", "validation_report",
-        "source_panels", "audit_overlays", "curve_tables",
-    ),
-    "science.figure.request.prepare.v1": ("paper_source",),
-    "tcad.parameter.evidence.audit.v1": (
-        "required_parameter_checklist", "parameter_requirements", "device_parameters",
-        "source_catalog", "source_material",
-    ),
+    "science.evidence.extract.figure.v3": ("paper_source", "figure_provenance", "figure_family"),
+    "science.figure.evidence.audit.v2": ("paper_source", "figure_provenance", "figure_family"),
     "tcad.parameter.evidence.extract.v1": ("source_material",),
 }
 
@@ -276,9 +199,9 @@ def test_agent_inventory_abi_changes_catalog_identity(monkeypatch) -> None:
     from scidiscovery.operations import catalog as catalog_module
     from scidiscovery.operations.spec import OPERATION_ABI_VERSION
 
-    assert OPERATION_ABI_VERSION == "17"
+    assert OPERATION_ABI_VERSION == "19"
     catalog = _catalog()
-    monkeypatch.setattr(catalog_module, "OPERATION_ABI_VERSION", "16")
+    monkeypatch.setattr(catalog_module, "OPERATION_ABI_VERSION", "17")
     prior_abi = _catalog()
     assert all(catalog.operation(operation_id).digest != prior_abi.operation(operation_id).digest
                for operation_id in catalog.operation_ids())

@@ -35,9 +35,10 @@ AGENT_LIFECYCLE_PROTOCOL = AgentLifecycleProtocol(
         ),
         AgentLifecycleTool(
             name="worker_submit_result",
+            owner_only=True,
             description=(
                 "Validate, seal, and submit the complete result bundle, or return "
-                "bounded correction diagnostics."
+                "bounded correction diagnostics. The task owner integrates helper work before submission; submission ends helper tool access."
             ),
             input_schema_sha256=_INPUT_SCHEMA_DIGEST,
             capability="run.submit_result",

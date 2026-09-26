@@ -27,6 +27,7 @@ from ..service.scheduler_bindings import (
     SchedulerNameNotFound,
 )
 from ..service.runs import RunService
+from ..service.stage_deliveries import StageReadQuery
 from ...operations.catalog import CompiledCatalog, compile_installed_catalog
 from .mcp_root_shared import (
     CreationTarget as _CreationTarget,
@@ -177,13 +178,13 @@ class ArtifactCatalogInput(NamedReadInput):
     parent_limit: int = Field(default=16, ge=1, le=32)
 
 
-class RunStatusInput(NamedReadInput):
+class RunStatusInput(NamedReadInput, StageReadQuery):
     response_profile: Literal["compat", "poll", "navigation", "decision"] = Field(
-        default="poll",
+        default="decision",
         description=(
-            "Omitted request is short poll for every state. Explicit detail defaults to compat; "
-            "active Runs always stay short. poll requires summary + values + output_paths=[]; navigation requires summary "
-            "+ index with zero or one path; decision requires summary + values with one or more paths. "
+            "Omitted request gives bounded completed conclusions, limitations and remaining questions; active Runs stay short. Explicit poll reads no scientific payload. Explicit detail defaults to compat; "
+            "active Runs stay short unless sealed stages are explicitly requested. poll requires summary + values + output_paths=[]; navigation requires summary "
+            "+ index with zero or one path; decision requires summary + values; omitted paths use the declared decision fields. "
             "Read durable diagnostics with compat + detail + output_paths=[] + diagnostic_after."
         ),
     )
@@ -193,8 +194,9 @@ class RunStatusInput(NamedReadInput):
         description='Use decision + values for known non-root paths; navigation + index discovers unknown paths without values. Omit output_paths for the root index.')
     output_paths: list[Annotated[str, Field(pattern=r"^(?:/(?:[^~]|~[01])*)?$")]] | None = Field(
         default=None, max_length=8,
-        description='JSON Pointers relative to sealed payload, e.g. /summary. Omit/null or [] does not read values. Non-root paths require explicit decision or compat; up to 8 paths, 32 KiB values total. Empty root pointer is forbidden in values mode; use include_full_output=true. "/" selects an empty key. selected values are exact. Oversized values are omitted; object/array children support navigation, oversized scalars require the explicit full-output escape hatch. Detail reveals terminal bindings, diagnostics and timing.',
+        description='JSON Pointers relative to sealed payload, e.g. /summary. Omit/null or [] uses declared decision fields for decision; compat reads no values without explicit paths. Non-root paths require explicit decision or compat; up to 8 paths, 32 KiB values total. Empty root pointer is forbidden in values mode; use include_full_output=true. "/" selects an empty key. selected values are exact. Oversized values are omitted; object/array children support navigation, oversized scalars require the explicit full-output escape hatch. Detail reveals scientific input names and bounded safe diagnostics; private control bindings and engineering records remain internal.',
     )
+    output_fields: list[str] | None = Field(default=None, max_length=8, description="Select named top-level scientific fields; omit for declared decision fields. No JSON Pointer is needed.")
     index_offset: int = Field(default=0, ge=0,
         description="Index mode only: continue at output_index.next_offset for the same immutable object and path.")
     index_limit: int = Field(default=16, ge=1, le=32,
@@ -207,7 +209,7 @@ class RunStatusInput(NamedReadInput):
             raise ValueError("index mode requires exactly one output path or null for the root")
         return value
     diagnostic_after: int | None = Field(default=None, ge=0,
-        description="Set to 0 for the first page of saved errors, then use diagnostic_events.next_after. Omit for the compact status.")
+        description="For terminal compat + detail, set to 0 for the first bounded page of safe saved errors, then use diagnostic_events.next_after. Declared field paths and repair guidance are preserved; private engineering records are excluded. Omit for the compact status.")
     diagnostic_limit: int = Field(default=20, ge=1, le=100)
 
 
@@ -219,6 +221,11 @@ def parse_run_status_arguments(arguments):
         raise RootToolError("tool arguments do not satisfy the declared model",
             details=validation_diagnostics(error, schema=RunStatusInput.model_json_schema())) from error
     values = parsed.model_dump()
+    fields = values.pop("output_fields")
+    if fields is not None:
+        if values["output_paths"] is not None:
+            raise RootToolError("Choose output_fields or output_paths, not both.")
+        values["output_paths"] = ["/" + field.replace("~", "~0").replace("/", "~1") for field in fields]
     if "response_profile" not in parsed.model_fields_set and values["view"] == "detail":
         values["response_profile"] = "compat"
     if values["response_profile"] == "poll" and values["output_paths"] is None:
@@ -296,7 +303,7 @@ ROOT_TOOLS = (
     RootTool("operation_preflight", "Optional check without creating. Invoke independently checks admission; this does not reserve resources or authorize execution.", OperationCallInput),
     RootTool("operation_invoke", "Validate and create one Agent, Transform, Effect or Approval from the compiled catalog; no prior preflight required. Success preserves dispatch configuration, exact outputs or approval URLs by executor kind; use the returned detail entry for Run context.", OperationCallInput),
     RootTool("run_list", "List minimal Runs in this research instance.", RunListInput),
-    RootTool("run_status", "Default is short state. Explicit decision/navigation read completed sealed fields; terminal detail reads diagnostics. Only include_full_output=true opts into whole output.", RunStatusInput),
+    RootTool("run_status", "Default is short state. Explicit decision/navigation read completed sealed fields; terminal detail reads diagnostics. Only include_full_output=true opts into whole output. Explicit stage_offset=0 reads sealed experiment deliveries even while running; stage_reference reads one material by its returned name. Stages never establish final completion or qualification.", RunStatusInput),
     RootTool("run_record_failure", "Record failure of one running minimal Run.", RunFailureInput),
     RootTool("approval_list", "List named reviews in this scheduler instance.", ApprovalListInput),
     RootTool("approval_status", "Read one named human-review state.", NamedReadInput),
@@ -355,6 +362,10 @@ class RootToolFacade(
         self.execution_bridge = execution_bridge
         self.execution_collection = execution_collection
         self.approval_base_url = approval_base_url
+        if runs is not None and executions is not None and execution_bridge is not None:
+            from ..service.experiment_execution import ExperimentExecution
+            runs.experiment_executions = ExperimentExecution(runs=runs, executions=executions, bridge=execution_bridge,
+                collection=execution_collection, approval_base_url=approval_base_url)
         self.instance_management_secret = instance_management_secret
         self._operation_catalog = operation_catalog or compile_installed_catalog()
         self._create_lock = creation_lock or threading.RLock()
@@ -384,10 +395,17 @@ class RootToolFacade(
             request_fingerprint=request_fingerprint,
         )
 
+    def _task_managed_execution(self, execution_id: str) -> bool:
+        references = self.executions.record_references(execution_id)
+        return bool(self.executions.artifacts.catalog(references["payload_ref"]).labels.get("experiment_task"))
+
     def _resolve(self, namespace: str, name: str) -> str:
-        return self.bindings.resolve(
+        object_id = self.bindings.resolve(
             instance=self._instance_id(), namespace=namespace, name=name
         )
+        if namespace == "execution" and self._task_managed_execution(object_id):
+            raise RootToolError("Execution is managed within its scientific task; read the task's scientific materials.")
+        return object_id
 
     def _resolve_input_artifact(
         self, name: str, *, allow_nonqualifying: bool = False
@@ -414,6 +432,8 @@ class RootToolFacade(
         return self.runs.is_exact_reviewer_output(reference, **values)
 
     def _binding(self, namespace: str, name: str) -> SchedulerBinding:
+        if namespace == "execution":
+            self._resolve(namespace, name)
         return self.bindings.get_binding(
             instance=self._instance_id(), namespace=namespace, name=name
         )

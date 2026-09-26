@@ -108,8 +108,7 @@ def test_supported_log_and_linear_metrics_have_independent_known_values(tmp_path
         read_evidence=sources.__getitem__, finish_attempt=lambda **kwargs: None,
         workspace=tmp_path, accept_evidence=lambda **kwargs: {'alias': 'tool_evidence_001'}))
     assert record['status'] == 'computed', record
-    complete = json.loads(Path(record['calculation_path']).read_bytes())
-    metrics = complete['result']['comparisons'][0]['metrics']
+    metrics = record['summary']['comparisons'][0]['metrics']
     assert {item['operator_key']: item['value'] for item in metrics} == {'linear': 900.0, 'log10': 1.0}
 
 
@@ -168,17 +167,10 @@ def test_generic_tool_uses_defaults_without_rewriting_the_raw_receipt(explicit_d
     original = deepcopy(request)
     parsed = AnalysisScoreInput.model_validate_json(canonical_json(dict(record_key='score', request=request)))
     assert parsed.request.comparison_spec.comparisons[0].evaluation_points == 257
-    response = score_tool(parsed, SimpleNamespace(remaining_seconds=60,
-        read_evidence=sources.__getitem__, finish_attempt=lambda **kwargs: None,
-        workspace=tmp_path, accept_evidence=lambda **kwargs: {'alias': 'tool_evidence_001'}))
-    assert response['status'] == 'computed'
-    complete = json.loads(Path(response['calculation_path']).read_bytes())
-    assert complete['request'] == original
-    record = CalculationRecord.model_validate_json(canonical_json(complete))
+    record = evaluate_analysis_request(record_key='score', request=original, sources=sources)
+    assert record.status == 'computed'
+    assert record.request == original
     replay_calculation(record, sources)
-    # Control receipts are checked separately; they do not change numeric replay.
-    enriched = {**complete, 'attempt': {'manifest_alias': 'tool_recovery_manifest', 'attempt_key': 'attempt_001'}}
-    replay_calculation(CalculationRecord.model_validate_json(canonical_json(enriched)), sources)
 
 
 @pytest.mark.parametrize('kind', ['sprocess_plx', 'sprocess_log'])

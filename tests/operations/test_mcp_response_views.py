@@ -389,8 +389,8 @@ def test_public_reviewer_and_effect_unavailability_reuse_catalog_gate(monkeypatc
     assert all(not entry["available"] for entry in result["navigation_state"])
 
 
-def test_catalog_removes_only_obsolete_routing_and_repeated_port_lists():
-    declaration = {"operation_id": "operation", "accepts_actions": ["legacy"],
+def test_catalog_preserves_unknown_fields_and_removes_repeated_port_lists():
+    declaration = {"operation_id": "operation", "future_constraint": {"exact": True},
         "inputs": [{"name": "evidence", "min_items": 1, "max_items": 2}],
         "outputs": [{"name": "result"}], "review_edge": {"operation_id": "review"},
         "input_validation": {"required_inputs": ["evidence"], "optional_inputs": [],
@@ -400,7 +400,7 @@ def test_catalog_removes_only_obsolete_routing_and_repeated_port_lists():
     root = router(operation_catalog=lambda **args: {"scope": args["scope"], "operations": [declaration]})
     result = root.call_tool("operation_catalog", {"operation_id": "operation", "view": "detail"})["operations"][0]
     assert declaration == original
-    assert "accepts_actions" not in result
+    assert result["future_constraint"] == {"exact": True}
     assert set(result["input_validation"]) == {"rule_id", "phase", "description"}
     for key in ("inputs", "outputs", "review_edge", "input_admission", "timeout_seconds"):
         assert result[key] == declaration[key]

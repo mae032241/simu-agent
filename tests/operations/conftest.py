@@ -62,121 +62,65 @@ def installed_environments(
 
     repository = Path(__file__).resolve().parents[2]
     root = tmp_path_factory.mktemp("r0-installed")
-    release_source = root / "source-release"
-    subprocess.run(
-        [
-            sys.executable,
-            str(repository / "scripts/build_git_release.py"),
-            "--source",
-            str(repository),
-            "--output",
-            str(release_source),
-        ],
-        cwd=root,
-        check=True,
-        capture_output=True,
-        text=True,
-        timeout=180,
-    )
     wheelhouse = root / "wheelhouse"
     wheelhouse.mkdir()
-    fixture_plugins = root / "fixture-plugins"
-    shutil.copytree(
-        repository / "tests/fixtures/plugins",
-        fixture_plugins,
-        ignore=shutil.ignore_patterns("build", "*.egg-info", "__pycache__", "*.pyc"),
-    )
-    for source in (
-        release_source,
-        release_source / "plugins/tcad_artifact",
-        release_source / "plugins/curve_score",
-        release_source / "plugins/curve_figure_evidence",
-        fixture_plugins / "table_observation_plugin",
-        fixture_plugins / "blind_csv_operation_plugin",
-        fixture_plugins / "architecture_operation_plugin",
-        fixture_plugins / "m7_effect_operation_plugin",
-        fixture_plugins / "broken_operation_plugin",
-        fixture_plugins / "invalid_unicode_operation_plugin",
-    ):
-        subprocess.run(
-            [
-                sys.executable,
-                "-m",
-                "pip",
-                "wheel",
-                "--no-deps",
-                "--no-build-isolation",
-                "--wheel-dir",
-                str(wheelhouse),
-                str(source),
-            ],
-            cwd=root,
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=180,
-        )
-
-    wheels = {path.name: path for path in wheelhouse.glob("*.whl")}
-    core = next(
-        path for name, path in wheels.items() if name.startswith("scidiscovery-0")
-    )
-    tcad = next(path for name, path in wheels.items() if name.startswith("tcad_artifact-"))
-    curve = next(
-        path for name, path in wheels.items() if name.startswith("scidiscovery_curve_score-")
-    )
-    figure = next(
-        path
-        for name, path in wheels.items()
-        if name.startswith("scidiscovery_curve_figure_evidence-")
-    )
-    table = next(
-        path for name, path in wheels.items()
-        if name.startswith("scidiscovery_table_observation-")
-    )
-    blind_csv = next(
-        path for name, path in wheels.items()
-        if name.startswith("scidiscovery_blind_csv_test_plugin-")
-    )
-    broken = next(
-        path for name, path in wheels.items()
-        if name.startswith("scidiscovery_broken_operation_test_plugin-")
-    )
-    invalid_unicode = next(
-        path for name, path in wheels.items()
-        if name.startswith("scidiscovery_invalid_unicode_operation_test_plugin-")
-    )
-    architecture = next(
-        path for name, path in wheels.items()
-        if name.startswith("scidiscovery_architecture_operation_test_plugin-")
-    )
-    m7_effect = next(
-        path
-        for name, path in wheels.items()
-        if name.startswith("scidiscovery_m7_effect_test_plugin-")
-    )
-    selections = {
-        "core": (core,),
-        "curve": (core, curve),
-        "figure": (core, curve, figure),
-        "table": (core, table),
-        "blind_csv": (core, blind_csv),
-        "architecture": (core, architecture),
-        "m7_effect": (core, m7_effect),
-        "full": (core, tcad, curve),
-        "all_domains": (core, tcad, curve, figure),
-        "broken": (core, broken),
-        "invalid_unicode": (core, invalid_unicode),
+    fixture_plugins = repository / "tests/fixtures/plugins"
+    sources = {
+        "core": (repository, "scidiscovery-"),
+        "tcad": (repository / "plugins/tcad_artifact", "tcad_artifact-"),
+        "curve": (repository / "plugins/curve_score", "scidiscovery_curve_score-"),
+        "figure": (repository / "plugins/curve_figure_evidence", "scidiscovery_curve_figure_evidence-"),
+        "architecture": (fixture_plugins / "architecture_operation_plugin", "scidiscovery_architecture_operation_test_plugin-"),
+        "blind_csv": (fixture_plugins / "blind_csv_operation_plugin", "scidiscovery_blind_csv_test_plugin-"),
+        "m7_effect": (fixture_plugins / "m7_effect_operation_plugin", "scidiscovery_m7_effect_test_plugin-"),
+        "broken": (fixture_plugins / "broken_operation_plugin", "scidiscovery_broken_operation_test_plugin-"),
+        "invalid_unicode": (fixture_plugins / "invalid_unicode_operation_plugin", "scidiscovery_invalid_unicode_operation_test_plugin-"),
     }
+    selections = {
+        "core": ("core",),
+        "curve": ("core", "curve"),
+        "architecture": ("core", "architecture"),
+        "blind_csv": ("core", "blind_csv"),
+        "m7_effect": ("core", "m7_effect"),
+        "all_domains": ("core", "tcad", "curve", "figure"),
+        "broken": ("core", "broken"),
+        "invalid_unicode": ("core", "invalid_unicode"),
+        "tcad_resolved": ("core", "curve", "tcad"),
+    }
+    built = {}
+
+    def wheel(name):
+        if name not in built:
+            source, prefix = sources[name]
+            stage = root / "sources" / name
+            ignored = shutil.ignore_patterns("build", "dist", "*.egg-info", "__pycache__", "*.pyc")
+            if name == "core":
+                # Exactly the package/readme/data roots declared by pyproject.toml.
+                # Release assembly and bundled manual scans have their own tests.
+                stage.mkdir(parents=True)
+                for relative in ("pyproject.toml", "README.md"):
+                    shutil.copy2(source / relative, stage / relative)
+                for relative in ("src", "roles", "deploy/systemd"):
+                    shutil.copytree(source / relative, stage / relative, ignore=ignored)
+            else:
+                shutil.copytree(source, stage, ignore=ignored)
+            subprocess.run([
+                sys.executable, "-m", "pip", "wheel", "--no-deps",
+                "--no-build-isolation", "--wheel-dir", str(wheelhouse), str(stage),
+            ], cwd=root, check=True, capture_output=True, text=True, timeout=180)
+            built[name] = next(path for path in wheelhouse.glob("*.whl") if path.name.startswith(prefix))
+        return built[name]
 
     def create_environment(name: str) -> InstalledEnvironment:
-        if name not in selections and name != "tcad_resolved":
+        if name not in selections:
             raise KeyError(name)
+        selected = tuple(wheel(package) for package in selections[name])
         environment_root = root / name
         venv.EnvBuilder(with_pip=True, system_site_packages=False).create(environment_root)
         _supply_runtime_dependencies(environment_root)
         python = environment_root / "bin/python"
-        selected = selections[name] if name != "tcad_resolved" else (core,)
+        if name == "tcad_resolved":
+            selected = (wheel("core"),)
         subprocess.run(
             [
                 str(python),
@@ -197,7 +141,7 @@ def installed_environments(
             subprocess.run(
                 [
                     str(python), "-m", "pip", "install", "--no-index",
-                    "--find-links", str(wheelhouse), str(tcad),
+                    "--find-links", str(wheelhouse), str(wheel("tcad")),
                 ],
                 cwd=root,
                 check=True,

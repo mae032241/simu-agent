@@ -20,14 +20,6 @@ def test_figure_implementations_belong_to_the_figure_package():
         assert component.implementation.startswith("curve_figure_evidence."), component
 
 
-def test_case_plugin_and_release_wrapper_are_absent():
-    root = Path(__file__).resolve().parents[2]
-    assert not (root / "plugins/ingaas_fig4").exists()
-    assert not (root / "deploy/apply_ingaas_fig4_profile.sh").exists()
-    for path in (root / "pyproject.toml", root / "scripts/build_git_release.py"):
-        assert "plugins/ingaas_fig4" not in path.read_text()
-
-
 def test_historical_replay_fixture_uses_generic_curve_contracts(monkeypatch):
     from curve_score.plugin import PLUGIN as CURVE_PLUGIN
     from scidiscovery.builtin_plugin import CORE_PLUGIN

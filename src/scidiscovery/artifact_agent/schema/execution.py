@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Literal
+from typing import Annotated, Literal, Any
 
 from pydantic import Field
 
@@ -15,6 +15,19 @@ from .common import (
     canonical_json as encode_canonical_json,
 )
 from .refs import ArtifactRef
+
+
+class ExecutionAdmission(SchemaModel):
+    """Domain adapter judgment over administrator configuration and exact budget."""
+
+    outcome: Literal["policy", "require_human_approval", "deny"]
+    policy_digest: Sha256
+    policy: dict[str, Any]
+    budget: dict[str, int]
+    allowance: dict[str, int]
+    outside_allowance: Literal["require_human_approval", "deny"]
+    budget_key: Sha256
+    reason: Annotated[str, Field(min_length=1, max_length=1024)]
 
 
 class ExecutionRequest(SchemaModel):

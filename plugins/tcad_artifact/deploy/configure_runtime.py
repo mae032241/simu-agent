@@ -9,7 +9,7 @@ import os
 from pathlib import Path
 from typing import Sequence
 
-from tcad_artifact.execution_control import migrate_execution_policy_json
+from tcad_artifact.execution_control import TCADExecutionPolicy
 
 
 def _replace(path: Path, content: bytes) -> None:
@@ -26,31 +26,11 @@ def configure(
     socket_path: Path,
     command_config: Path | None,
 ) -> None:
-    if policy.exists():
-        content, migrated = migrate_execution_policy_json(policy.read_bytes())
-        if migrated:
-            _replace(policy, content)
-    else:
-        payload = {
-            "allowed_input_roots": [
-                str(state_root.joinpath("execution-exchange").absolute())
-            ],
-            "max_concurrent_runs": 1,
-            "tools": [{
-                "arguments": [],
-                "environment": {},
-                "executable": str(Path("/bin/true").resolve()),
-                "profile_id": "deployment_smoke",
-                "public_arguments": [],
-                "public_release_label": "Deployment smoke capability",
-                "release_evidence": "deployment smoke executable",
-                "solver_kind": "deterministic_tool",
-            }],
-        }
-        _replace(
-            policy,
-            json.dumps(payload, sort_keys=True, separators=(",", ":")).encode(),
-        )
+    # Installation never invents execution authority. The administrator supplies
+    # the complete policy (the repository ships editable examples).
+    if not policy.is_file():
+        raise ValueError("execution policy is missing; supply the administrator configuration")
+    TCADExecutionPolicy.model_validate_json(policy.read_bytes(), strict=True)
     transport = (
         {"transport": "command", "command_config_path": str(command_config)}
         if command_config is not None

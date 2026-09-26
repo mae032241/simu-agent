@@ -22,7 +22,6 @@ from .artifact_agent.schema.cognitive import (
     CriticReview,
     EvidenceAudit,
     HypothesisProposal,
-    critic_progress_fingerprint,
     validate_critic_review,
     validate_evidence_audit,
     validate_hypothesis_proposal,
@@ -102,38 +101,6 @@ def _intake_source_context(
     validate_evidence_source_aliases(payload, sources)
 
 
-def _evidence_revision_cohort(
-    inputs: tuple[Any, ...], parameters: Mapping[str, Any]
-) -> bool:
-    if parameters:
-        return False
-    by_port = {item.port_name: item.artifact for item in inputs}
-    required = {"prior_draft", "intake_audit", "scientific_foundation",
-                "hypothesis_portfolio", "change_request"}
-    if not required <= set(by_port):
-        return False
-    prior = by_port["prior_draft"]
-    audit = by_port["intake_audit"]
-    foundation = by_port["scientific_foundation"]
-    portfolio = by_port["hypothesis_portfolio"]
-    request = by_port["change_request"]
-    if audit.producer_inputs is None:
-        raise OperationInvocationError("input_producer_metadata_unavailable", port="intake_audit",
-            message="The exact completed intake audit's saved input bindings are unavailable.")
-    frozen_sources = {ref for port, ref in audit.producer_inputs if port == "source_material"}
-    bound_sources = {item.artifact.ref for item in inputs
-                     if item.port_name == "source_material"}
-    return bool(
-        frozen_sources
-        and bound_sources == frozen_sources
-        and prior.ref in audit.parent_refs
-        and audit.handoff_verdict == "pass"
-        and prior.ref in foundation.parent_refs
-        and audit.ref in foundation.parent_refs
-        and foundation.ref in portfolio.parent_refs
-        and portfolio.ref in request.parent_refs
-        and foundation.ref in request.parent_refs
-    )
 
 
 def _hypothesis_objective_context(
@@ -152,14 +119,6 @@ def _hypothesis_objective_context(
     objective = foundation.objective_contract
     if proposal.research_objective_key != objective.objective_key:
         raise SemanticRuleViolation("hypothesis research_objective_key differs from global objective")
-    raw_prior = sources.get("prior_draft")
-    if raw_prior is not None:
-        prior = parse_bound_json(HypothesisProposal, raw_prior)
-        if proposal.research_objective_key != prior.research_objective_key:
-            raise SemanticRuleViolation("hypothesis revision cannot change the global objective")
-        prior_keys = {item.hypothesis_key for item in prior.hypotheses}
-        if {item.hypothesis_key for item in proposal.hypotheses} != prior_keys:
-            raise SemanticRuleViolation("hypothesis revision cannot add, remove, or rename hypotheses")
 
 
 def _validate_audit_handoff_and_sources(
@@ -348,11 +307,7 @@ def _validate_evidence_qualification(
     members = family.members
     if not members or members[0].ref != primary_subject.ref:
         raise OperationInvocationError("approval_subject_invalid", message="producer family has no unique leading primary")
-    bound_siblings = tuple(
-        item.ref
-        for name in ("producer_outputs", "validation_results")
-        for item in grouped.get(name, ())
-    )
+    bound_siblings = tuple(item.ref for item in grouped.get("producer_outputs", ()))
     expected_siblings = tuple(item.ref for item in members[1:])
     if (
         len(bound_siblings) != len(set(bound_siblings))
@@ -407,10 +362,6 @@ class Components:
     critic_validator = CallableComponent("validator", payload_validator(validate_critic_review))
     audit_validator = CallableComponent("validator", payload_validator(validate_evidence_audit))
     critic_portfolio_context = CallableComponent("validator", _critic_portfolio_context)
-    critic_progress_fingerprint = CallableComponent(
-        "transform", critic_progress_fingerprint
-    )
-    evidence_revision_cohort = CallableComponent("guard", _evidence_revision_cohort)
     evidence_audit_context = CallableComponent("validator", _evidence_audit_context)
     evidence_agent = CallableComponent("agent", _agent_marker)
     ideator_agent = CallableComponent("agent", _agent_marker)
@@ -462,14 +413,9 @@ def component_specs() -> tuple[ComponentSpec, ...]:
                 "evidence_agent", "auditor_agent",
             },
         ))
-    for name in ("intake_split", "critic_progress_fingerprint"):
+    for name in ("intake_split",):
         values.append(ComponentSpec(name, "transform", f"scidiscovery.general_science_components:Components.{name}", configuration_identity=f"general-transform:{name}:v1"))
-    values.append(ComponentSpec(
-        "evidence_revision_cohort",
-        "guard",
-        "scidiscovery.general_science_components:Components.evidence_revision_cohort",
-        configuration_identity="general-guard:evidence-revision-cohort:v2:producer-inputs",
-    ))
+
     for name in (
         "problem_frame_validator", "foundation_validator",
     ):

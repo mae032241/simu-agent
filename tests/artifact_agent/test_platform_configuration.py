@@ -158,11 +158,11 @@ def test_local_tcad_runtime_config_is_bound_only_to_operations_that_need_it(
     author = catalog.operation("tcad.deck.author.initial.v1")
     reviewer = catalog.operation("tcad.deck.review.v1")
     assert set(config["mcp_servers"]) == {"scidiscovery"}
-    from scidiscovery.artifact_agent.interfaces import mcp_local_worker as worker_module
+    from scidiscovery.artifact_agent import worker_services as worker_module
     from unittest.mock import patch
     # A reviewer with no TCAD runtime capability must not even load its adapter.
     with patch.object(worker_module, "load_runtime_plugin_contributions", side_effect=AssertionError("unused adapter")):
-        assert worker_module._load_operation_services(catalog, reviewer.spec.operation_id,
+        assert worker_module.load_operation_services(catalog, reviewer.spec.operation_id,
             {"tcad_artifact": config_path}, tmp_path / "state") == {}
     validate_installation_profile(
         project,

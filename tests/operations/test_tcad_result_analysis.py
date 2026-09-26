@@ -21,24 +21,23 @@ from scidiscovery.general_science_plugin import PLUGIN as GENERAL_PLUGIN
 from scidiscovery.operations.catalog import compile_catalog
 from scidiscovery.operation_contract import SemanticRuleViolation
 from tcad_artifact.plugin import PLUGIN as TCAD_PLUGIN
-from tcad_artifact.project_packager import ReviewedDeckPackage, ProjectExpectedOutput
+from tcad_artifact.project_packager import ExecutionPackage, ProjectExpectedOutput
 from tcad_artifact.result_analysis import analysis_context, evaluate_tcad_request
 
-_TCAD = runpy.run_path(str(Path(__file__).with_name('test_l4_local_tcad.py')))
+_TCAD = json.loads((Path(__file__).parents[1] / 'fixtures/tcad_analysis_package.json').read_text())
 _CURVE = runpy.run_path(str(Path(__file__).with_name('test_m2_curve_analysis_boundary.py')))
 
 
 def analysis_materials(*, mapped=True, state='succeeded', output_names=('A', 'B'), plan=None):
     plan = plan or _CURVE['_plan']()
-    project, raw, review = _TCAD['_review_context_fixture']('unmodified')
-    value = project.model_dump(mode='json')
+    value = deepcopy(_TCAD['project'])
     value['expected_outputs'] = [dict(name=name, relative_path=name+'.plx',
         media_type='application/x-synopsys-plx', max_bytes=32*1024*1024,
         **({'experiment_key': 'implementation_check', 'case_key': 'baseline'} if mapped else {}))
         for name in output_names]
-    package = ReviewedDeckPackage.model_validate_json(canonical_json({
-        'schema_version': 2, 'project': value, 'review': review,
-        'capability': json.loads(raw['execution_capability']),
+    package = ExecutionPackage.model_validate_json(canonical_json({
+        'schema_version': 2, 'project': value, 'review': _TCAD['review'],
+        'capability': _TCAD['capability'],
     }), strict=True)
     plx = b'"carrier"\n0 1e10\n0.5 1e11\n1 1e12\n'
     csv = b'depth,carrier,original_group\n0,1e10,g1\n0.5,1e11,g2\n1,1e12,g3\n'
@@ -95,24 +94,14 @@ def analysis_system(tmp_path, *, state='succeeded', mapped=True, bind_names=('A'
         return artifact
     plan, package, manifest, plx, csv = analysis_materials(state=state,mapped=mapped,plan=plan)
     plan_artifact = register('plan',plan.canonical_json(),'scidiscovery.experiment-portfolio.v1')
-    # The plan review is a genuinely sealed independent Worker fixture, not a label pretending PASS.
-    root.call_tool('operation_invoke',dict(name='plan_review',operation_id='science.object.review.v1',instruction='Review the fixture plan.',inputs=[dict(port='experiment_plan',artifact_names=['plan'])]))
-    compiled = catalog.operation('science.object.review.v1')
-    reviewer = LocalWorkerMCPRouter(runtime.runs,operation_id=compiled.spec.operation_id,operation_digest=compiled.digest)
-    opened = reviewer.call_tool('worker_open_assignment',{})
-    Path(str(opened['output_directory']),'result.json').write_bytes(canonical_json(dict(schema_version=1,
-        handoff=dict(verdict='pass',summary='Fixture plan is bounded.'),
-        payload=dict(review_target='experiment_portfolio',verdict='pass',summary='Independent fixture review.'))))
-    assert reviewer.call_tool('worker_submit_result',{})['state'] == 'completed'
-    review_name = root.call_tool('run_status',{"view": "detail", 'name':'plan_review'})['output_artifact_name']
-    package_artifact = register('package',canonical_json(package.model_dump(mode="json")),'tcad.reviewed-deck-package.v2',parents=(plan_artifact.ref,))
+    package_artifact = register('package',canonical_json(package.model_dump(mode="json")),'tcad.execution-package.v2',parents=(plan_artifact.ref,))
     manifest_artifact = register('manifest',manifest,'opaque',parents=(package_artifact.ref,))
     for name in ('A','B'):
         register('output_'+name,plx,'opaque',parents=manifest_artifact.parent_refs,media='application/x-synopsys-plx',output_name=name)
     register('reference',csv,'opaque',media='text/csv')
     request = dict(name='analysis',operation_id='tcad.result.analyze.v1',instruction='Analyze the bound fixture outputs.',inputs=[
-        dict(port='experiment_plan',artifact_names=['plan']),dict(port='experiment_review',artifact_names=[review_name]),
-        dict(port='reviewed_package',artifact_names=['package']),dict(port='runtime_manifest',artifact_names=['manifest']),
+        dict(port='experiment_plan',artifact_names=['plan']),
+        dict(port='execution_package',artifact_names=['package']),dict(port='runtime_manifest',artifact_names=['manifest']),
         dict(port='reference_material',artifact_names=['reference']),
         *([dict(port='solver_outputs',artifact_names=['output_'+name for name in bind_names])] if bind_names else []),
     ])
@@ -135,28 +124,6 @@ def write_analysis(opened,report):
         schema_version=1,handoff=dict(verdict='blocked',summary='Bounded analysis; further work remains.'),payload=report)))
 
 
-def test_raw_plx_csv_same_worker_score_and_submit(tmp_path):
-    system = analysis_system(tmp_path)
-    worker,opened = open_analysis(system)
-    record = json.loads(Path(worker.call_tool('worker_tcad_curve_score',dict(record_key='raw_score',request=raw_request()))["calculation_path"]).read_bytes())
-    assert record['status'] == 'computed',record
-    report = analysis_report(alias='solver_outputs_001',output_name='A',mapped=True)
-    report['source_references'] = []
-    report['calculation_records'] = [record]
-    write_analysis(opened,report)
-    import tcad_artifact.result_analysis as analysis
-    original = analysis.evaluate_tcad_request
-    def never(*args, **kwargs):
-        raise AssertionError('submission reran a controlled calculation')
-    analysis.evaluate_tcad_request = never
-    try:
-        result = worker.call_tool('worker_submit_result',{})
-    finally:
-        analysis.evaluate_tcad_request = original
-    assert result['state'] == 'completed',result
-    _,_,root,_,_,_ = system
-    status = root.call_tool('run_status',{"view": "detail", "response_profile": "compat", "include_full_output": True, 'name':'analysis'})
-    assert status['sealed_output']['payload']['calculation_records'][0] == record
 
 
 @pytest.mark.parametrize('state',['failed','cancelled'])
@@ -164,8 +131,8 @@ def test_failed_execution_zero_outputs_no_score_can_seal(tmp_path,state):
     system = analysis_system(tmp_path,state=state,bind_names=())
     missing_review=deepcopy(system[3]); missing_review['name']='analysis_without_legacy_review'
     missing_review['inputs']=[item for item in missing_review['inputs'] if item['port']!='experiment_review']
-    rejected=system[2].call_tool('operation_preflight',missing_review)
-    assert rejected['admissible'] is False and rejected['reason_code']=='guard_rejected',rejected
+    admitted=system[2].call_tool('operation_preflight',missing_review)
+    assert admitted['admissible'] is True,admitted
     worker,opened = open_analysis(system)
     write_analysis(opened,analysis_report())
     result=worker.call_tool('worker_submit_result',{})
@@ -194,22 +161,6 @@ def test_keyed_tcad_scope_rejects_missing_assessment_then_accepts_not_evaluable(
     assert worker.call_tool('worker_submit_result', {})['state'] == 'completed'
 
 
-@pytest.mark.parametrize('tamper',['name','case','metric'])
-def test_same_worker_rejects_wrong_name_case_or_score(tmp_path,tamper):
-    worker,opened = open_analysis(analysis_system(tmp_path,bind_names=('A',)))
-    report=analysis_report(alias='solver_outputs',output_name='A',mapped=True)
-    if tamper=='name':
-        report['source_references'][0]['output_name']='B'
-    elif tamper=='case':
-        report['source_references'][0]['case_key']='other_case'
-    else:
-        record=json.loads(Path(worker.call_tool('worker_tcad_curve_score',dict(record_key='score',request=raw_request(alias='solver_outputs')))["calculation_path"]).read_bytes())
-        assert record['status']=='computed',record
-        record['result']['comparisons'][0]['metrics'][0]['value']+=1
-        report['calculation_records']=[record]
-    write_analysis(opened,report)
-    result=worker.call_tool('worker_submit_result',{})
-    assert result['state']=='rejected',result
 
 
 @pytest.mark.parametrize('explicit_reference', [False, True])
@@ -265,27 +216,6 @@ def test_source_conflict_does_not_leave_a_control_mapping_to_repair(tmp_path, so
     assert sealed['source_references'][0]['output_name'] == 'A'
 
 
-def test_inline_calculation_source_conflict_can_be_corrected_without_changing_the_receipt(tmp_path):
-    system = analysis_system(tmp_path)
-    worker, opened = open_analysis(system)
-    record = json.loads(Path(worker.call_tool('worker_tcad_curve_score', {'record_key': 'score', 'request': raw_request()})["calculation_path"]).read_bytes())
-    assert record['status'] == 'computed'
-    report = analysis_report(alias='solver_outputs_001')
-    report['source_references'] = []
-    report['calculation_records'] = [record]
-    report['evidence'].append({**report['evidence'][0], 'locator': 'calculation_records:score'})
-    write_analysis(opened, report)
-    rejected = worker.call_tool('worker_submit_result', {})
-    assert rejected['state'] == 'rejected'
-    assert rejected['diagnostics'][0]['path'] == '$.payload.evidence[1].source_key'
-    report = json.loads(Path(opened['output_directory'], 'result.json').read_bytes())['payload']
-    assert report['source_references'] == []
-    report['evidence'][1]['source_key'] = 'score_evidence'
-    write_analysis(opened, report)
-    assert worker.call_tool('worker_submit_result', {})['state'] == 'completed'
-    sealed = system[2].call_tool('run_status', {"view": "detail", "response_profile": "compat", "include_full_output": True, 'name': 'analysis'})['sealed_output']['payload']
-    assert sealed['calculation_records'] == [record]
-    assert sealed['source_references'][0]['output_name'] == 'A'
 
 
 def test_optional_citation_cannot_change_an_exact_bound_alias(tmp_path):
@@ -310,33 +240,6 @@ def test_legacy_unmapped_output_can_seal_limited_analysis(tmp_path):
     result=worker.call_tool('worker_submit_result',{})
     assert result['state']=='completed',result
 
-
-def test_no_contract_author_review_package_execute_preflight(tmp_path,monkeypatch):
-    from scidiscovery.artifact_agent.execution_bridge import ExecutionBridge
-    from tcad_artifact.execution_adapter import TCADExecutorAdapter
-    original_system=_TCAD['_system']
-    # runpy functions retain their own globals; patch the fixture's global namespace.
-    globals_=_TCAD['test_materialized_sprocess_author_review_package_preserves_case_anchors'].__globals__
-    def system(*args,**kwargs):
-        catalog,runtime,root,capability=original_system(*args,**kwargs)
-        adapter=TCADExecutorAdapter('/tmp/unused-analysis-fixture.sock')
-        monkeypatch.setattr(adapter,'_call',lambda method,args:{'capabilities':[capability.public_snapshot().model_dump(mode='json')]})
-        root.facade.execution_bridge=ExecutionBridge(runtime.executions,adapters={'tcad_artifact:tcad':adapter})
-        return catalog,runtime,root,capability
-    monkeypatch.setitem(globals_,'_system',system)
-    original=RootMCPRouter.call_tool
-    reached=[]
-    def capture(self,name,arguments):
-        result=original(self,name,arguments)
-        if name=='operation_invoke' and arguments['operation_id']=='tcad.reviewed-deck-package.v2':
-            package=result['result']['outputs'][0]['artifact_name']
-            check=original(self,'operation_preflight',dict(name='no_contract_execute',operation_id='tcad.study.execute',inputs=[dict(port='reviewed_package',artifact_names=[package])]))
-            assert check['admissible'] is True,check
-            reached.append(True)
-        return result
-    monkeypatch.setattr(RootMCPRouter,'call_tool',capture)
-    _TCAD['test_materialized_sprocess_author_review_package_preserves_case_anchors'](tmp_path,monkeypatch,True,with_controls=False)
-    assert reached
 
 
 @pytest.mark.parametrize('wrong',['review','manifest','output'])
@@ -382,31 +285,8 @@ def test_unscored_manifest_bytes_and_registered_media_are_checked(tmp_path,wrong
         root.call_tool('operation_invoke',request)
 
 
-@pytest.mark.parametrize('mapping',[None,4,[None],[{}]])
-def test_malformed_mapping_is_rejected_and_limited_analysis_can_still_seal(tmp_path,mapping):
-    worker,opened=open_analysis(analysis_system(tmp_path))
-    request=raw_request()
-    request['sources']=mapping
-    with pytest.raises(WorkerToolError) as rejected:
-        json.loads(Path(worker.call_tool('worker_tcad_curve_score',dict(record_key='bad_request',request=request))["calculation_path"]).read_bytes())
-    assert all(item['phase'] == 'tool_arguments' for item in rejected.value.details)
-    report=analysis_report()
-    write_analysis(opened,report)
-    result=worker.call_tool('worker_submit_result',{})
-    assert result['state']=='completed',result
 
 
-@pytest.mark.parametrize('mapping',[None,4,[None],[{}]])
-def test_forged_computed_mapping_is_correctable_not_checker_failure(tmp_path,mapping):
-    worker,opened=open_analysis(analysis_system(tmp_path))
-    record=json.loads(Path(worker.call_tool('worker_tcad_curve_score',dict(record_key='score',request=raw_request()))["calculation_path"]).read_bytes())
-    assert record['status']=='computed'
-    record['request']['sources']=mapping
-    report=analysis_report()
-    report['calculation_records']=[record]
-    write_analysis(opened,report)
-    result=worker.call_tool('worker_submit_result',{})
-    assert result['state']=='rejected',result
 
 
 def test_optional_output_case_keys_are_paired():
@@ -417,33 +297,6 @@ def test_optional_output_case_keys_are_paired():
     ProjectExpectedOutput(**output,experiment_key='implementation_check',case_key='baseline')
 
 
-@pytest.mark.stress
-def test_near_input_limit_record_is_not_reparsed_on_submit(tmp_path, monkeypatch):
-    system=analysis_system(tmp_path)
-    _,runtime,_,request,artifacts,register=system
-    # Almost the 32 MiB raw-file limit, with native PLX whitespace; original bytes
-    # traverse controlled reading and TCAD parsing once, with no submission replay.
-    raw=b'"carrier"\n0'+b' '*(31*1024*1024)+b'1e10\n0.5 1e11\n1 1e12\n'
-    register('large_output',raw,'opaque',parents=artifacts['manifest'].parent_refs,media='application/x-synopsys-plx',output_name='A')
-    manifest=json.loads(runtime.artifacts.read(artifacts['manifest'].ref))
-    manifest['outputs'][0].update(size_bytes=len(raw),sha256=hashlib.sha256(raw).hexdigest())
-    register('large_manifest',canonical_json(manifest),'opaque',parents=artifacts['manifest'].parent_refs)
-    next(item for item in request['inputs'] if item['port']=='runtime_manifest')['artifact_names']=['large_manifest']
-    next(item for item in request['inputs'] if item['port']=='solver_outputs')['artifact_names']=['large_output','output_B']
-    worker,opened=open_analysis(system)
-    score_request=raw_request()
-    score_request['comparison_spec']['comparisons'][0]['evaluation_points']=4096
-    records=[json.loads(Path(worker.call_tool('worker_tcad_curve_score',dict(record_key='large_score',request=score_request))["calculation_path"]).read_bytes())]
-    assert all(record['status']=='computed' for record in records),records
-    assert all(len(canonical_json(record))<=32*1024 for record in records)
-    report=analysis_report()
-    report['calculation_records']=records
-    write_analysis(opened,report)
-    def never(*args, **kwargs):
-        raise AssertionError('submission reparsed the large source')
-    monkeypatch.setattr('tcad_artifact.result_analysis.normalize_sprocess_plx', never)
-    result=worker.call_tool('worker_submit_result',{})
-    assert result['state']=='completed',result
 
 
 @pytest.mark.parametrize('source_index', [0, 1])

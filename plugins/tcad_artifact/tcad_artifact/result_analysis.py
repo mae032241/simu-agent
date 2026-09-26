@@ -1,5 +1,6 @@
 """TCAD result analysis with optional, same-Run raw-output curve scoring."""
 from __future__ import annotations
+from scidiscovery.operations.spec import InputDerivationSpec
 
 from scidiscovery.operations.input_validation import BoundSourceError, parse_bound_json
 
@@ -17,18 +18,19 @@ from curve_score.analysis_tool import (
 )
 from curve_score.schema import CurveBundle
 from curve_score.diagnostic_tool import (
+    CHECKPOINT_DESCRIPTION,
     DIAGNOSTIC_GUIDANCE, DiagnosticComparisonSpec,
     run_diagnostic_tool,
 )
 from curve_score.science_operations import BASE_TOOLS, Components, validate_analysis_report
 from curve_score.analysis_files import GUIDANCE as ANALYSIS_FILES_GUIDANCE
-from scidiscovery.artifact_agent.service.analysis_artifacts import analysis_calculations, analysis_evidence_aliases, calculation_reference_aliases
+from scidiscovery.artifact_agent.service.analysis_artifacts import analysis_calculations, analysis_evidence_aliases
 from scidiscovery.artifact_agent.operation_tool_context import OperationToolContext
 from scidiscovery.artifact_agent.schema.common import Identifier, canonical_json
 from scidiscovery.artifact_agent.schema.experiment import ExperimentPortfolio
 from scidiscovery.artifact_agent.schema.research_cycle import ScientificReview
 from scidiscovery.artifact_agent.schema.layered_diagnosis import CaseMappingBasis, LayeredDiagnosisReport
-from scidiscovery.artifact_agent.schema.layered_diagnosis import CalculationRecord
+from scidiscovery.artifact_agent.service.calculation_proof import ControlledCalculationRecord as CalculationRecord
 from scidiscovery.artifact_agent.service.run_outputs import RunCheckerError
 from scidiscovery.operation_contract import SemanticRuleViolation, declared_violation, validation_diagnostics
 from scidiscovery.operations.input_validation import OperationInvocationError
@@ -42,7 +44,7 @@ from scidiscovery.operations.tooling import WorkerToolDefinition
 
 from .curve_normalizer import SProcessLogSourceSpec, SProcessPointLimitError, SProcessSeriesSpec, normalize_sprocess_log
 from .plx_normalizer import SProcessPLXSourceSpec, normalize_sprocess_plx
-from .project_packager import DeckReviewReport, ReviewedDeckPackage, TCADRuntimeManifest
+from .project_packager import DeckReviewReport, ExecutionPackage, TCADRuntimeManifest
 from .analysis_bindings import source_bindings, JSON_PORTS
 
 
@@ -92,46 +94,11 @@ def analysis_parentage(inputs: tuple[Any, ...], parameters: Mapping[str, Any]) -
     grouped: dict[str, list[Any]] = {}
     for item in inputs:
         grouped.setdefault(item.port_name, []).append(item.artifact)
-    if any(len(grouped.get(name, ())) != 1 for name in (
-        "experiment_plan", "reviewed_package", "runtime_manifest"
-    )):
-        reject(None, "Bind exactly one original experiment_plan, reviewed_package and runtime_manifest.")
-    plan, package, manifest = (grouped[name][0] for name in (
-        "experiment_plan", "reviewed_package", "runtime_manifest"
-    ))
-    legacy = grouped.get("experiment_review", ())
-    execution = grouped.get("execution_review", ())
-    if bool(legacy) == bool(execution):
-        reject("execution_review", "Bind the one review type required by the actual package branch.")
-    review = (legacy or execution)[0]
-    if legacy:
-        if not (plan.ref in review.parent_refs and review.handoff_verdict == "pass"
-            and dict(review.labels).get("operation_id") == "science.object.review.v1"
-            and dict(review.labels).get("operation_output_port") == "scientific_review"):
-            reject("experiment_review", "experiment_review must be the passing science.object.review.v1 scientific_review for the exact experiment_plan.")
-    else:
-        labels = dict(review.labels)
-        skeletons = grouped.get("scientific_skeleton", ())
-        if (review.producer_run_id is None or len(skeletons) != 1 or review.ref not in package.parent_refs
-            or plan.ref not in review.parent_refs or review.handoff_verdict != "pass"
-            or labels.get("operation_id") != "tcad.deck.review.v1"
-            or labels.get("operation_output_port") != "review" or labels.get("operation_version") != "3"):
-            reject("execution_review", "Bind the exact comprehensive review retained by the executed package.")
-        if (dict(plan.labels).get("operation_id") != "tcad.execution-plan.project.v1"
-            or len(plan.parent_refs) != 1 or plan.parent_refs[0] not in package.parent_refs
-            or plan.parent_refs[0] not in review.parent_refs):
-            reject("experiment_plan", "The execution plan must be projected from the exact package/review project.")
-        exact_inputs = dict(review.producer_inputs or ())
-        if (exact_inputs.get("project") != plan.parent_refs[0]
-            or exact_inputs.get("experiment_plan") != plan.ref
-            or exact_inputs.get("scientific_skeleton") != skeletons[0].ref):
-            reject("execution_review", "The completed review Run must bind the exact project, plan and skeleton on their declared ports.")
-        if skeletons[0].ref not in package.parent_refs or skeletons[0].ref not in review.parent_refs:
-            reject("scientific_skeleton", "Bind the original scientific skeleton of the execution package.")
-    if plan.ref not in package.parent_refs:
-        reject("experiment_plan", "experiment_plan must be the original plan parent of reviewed_package. Bind a newer retrospective analysis plan through current_progress.")
+    if any(len(grouped.get(name, ())) != 1 for name in ("execution_package", "runtime_manifest")):
+        reject(None, "Bind exactly one execution_package and runtime_manifest.")
+    package, manifest = (grouped[name][0] for name in ("execution_package", "runtime_manifest"))
     if package.ref not in manifest.parent_refs:
-        reject("runtime_manifest", "runtime_manifest must have the exact reviewed_package parent.")
+        reject("runtime_manifest", "runtime_manifest must have the exact execution_package parent.")
     diagnostics = grouped.get("diagnostics", ())
     manifest_labels = dict(manifest.labels)
     if any(
@@ -144,26 +111,26 @@ def analysis_parentage(inputs: tuple[Any, ...], parameters: Mapping[str, Any]) -
     ):
         reject("diagnostics", "diagnostics must be text/plain tcad_log with the same execution_id and parent refs as runtime_manifest.")
     outputs = grouped.get("solver_outputs", ())
-    recovered = grouped.get('recovery_manifest', ())
+    recovered = grouped.get('prior_analysis_manifest', ())
     execution = grouped.get('execution_result', ())
     if execution and (package.ref not in execution[0].parent_refs or manifest.ref not in execution[0].parent_refs):
-        reject("execution_result", "execution_result must have the exact reviewed_package and runtime_manifest parents.")
+        reject("execution_result", "execution_result must have the exact execution_package and runtime_manifest parents.")
     if recovered and (not execution or recovered[0].handoff_verdict is None
             or execution[0].ref not in recovered[0].parent_refs or package.ref not in recovered[0].parent_refs
             or dict(recovered[0].labels).get('operation_output_port') != 'recovery_manifest_output'):
-        reject("recovery_manifest", "recovery_manifest must be a sealed recovery_manifest_output with the exact execution_result and reviewed_package parents.")
+        reject("recovery_manifest", "recovery_manifest must be a sealed recovery_manifest_output with the exact execution_result and execution_package parents.")
     direct = [output for output in outputs if output.parent_refs == manifest.parent_refs]
     for output in outputs:
         if output in direct:
             continue
         if not recovered or output.ref not in recovered[0].parent_refs:
-            reject("solver_outputs", "Each solver output must share runtime_manifest parents or be an exact parent of the bound recovery_manifest.")
+            reject("solver_outputs", "Each solver output must share runtime_manifest parents or be an exact parent of the exact prior-analysis receipt.")
     if not all(
         package.ref in audit.parent_refs and manifest.ref in audit.parent_refs
         and all(output.ref in audit.parent_refs for output in direct)
         for audit in grouped.get("runtime_attestation", ())
     ):
-        reject("runtime_attestation", "runtime_attestation must cover the exact reviewed_package, runtime_manifest and direct solver outputs.")
+        reject("runtime_attestation", "runtime_attestation must cover the exact execution_package, runtime_manifest and direct solver outputs.")
     return True
 
 
@@ -248,8 +215,8 @@ def evaluate_tcad_request(*, record_key: str, request: dict[str, Any], sources: 
 def _check_score_sources(request: TCADScoreInput, context: OperationToolContext) -> None:
     from scidiscovery.operation_contract import DiagnosticError, contract_diagnostic
     from scidiscovery.operations.input_validation import ValidationSources
-    plan = parse_bound_json(ExperimentPortfolio, context.read_input("experiment_plan"))
-    package = parse_bound_json(ReviewedDeckPackage, context.read_input("reviewed_package"))
+    package = parse_bound_json(ExecutionPackage, context.read_input("execution_package"))
+    plan = package.project.execution_plan or parse_bound_json(ExperimentPortfolio, context.read_input("experiment_plan"))
     history = None
     for index, source in enumerate(request.request.sources):
         aliases = [source.input_alias]
@@ -313,6 +280,7 @@ class TCADDiagnosticRequest(TCADScoreRequest):
 
 class TCADDiagnosticInput(TCADScoreInput):
     request: TCADDiagnosticRequest
+    checkpoint_alias: Annotated[str | None, Field(min_length=1, description=CHECKPOINT_DESCRIPTION)] = None
 
 
 def tcad_diagnostic_tool(request: TCADDiagnosticInput, context: OperationToolContext) -> dict[str, Any]:
@@ -325,10 +293,10 @@ def _identity_context(sources: Mapping[str, bytes], *, admitting: bool = False):
     descriptors = getattr(sources, "binding_descriptors", None)
     if descriptors is None or set(descriptors) != set(sources):
         raise RunCheckerError("TCAD analysis requires exact input binding descriptors")
-    plan = parse_bound_json(ExperimentPortfolio, sources["experiment_plan"],
+    package = parse_bound_json(ExecutionPackage, sources["execution_package"],
+        admission_port="execution_package" if admitting else None)
+    plan = package.project.execution_plan or parse_bound_json(ExperimentPortfolio, sources["experiment_plan"],
         admission_port="experiment_plan" if admitting else None)
-    package = parse_bound_json(ReviewedDeckPackage, sources["reviewed_package"],
-        admission_port="reviewed_package" if admitting else None)
     manifest = parse_bound_json(TCADRuntimeManifest, sources["runtime_manifest"],
         admission_port="runtime_manifest" if admitting else None)
     expected = {output.name: output for output in package.project.expected_outputs}
@@ -339,7 +307,7 @@ def _identity_context(sources: Mapping[str, bytes], *, admitting: bool = False):
 
 def _recovery_records(sources):
     records = []
-    for alias in ('recovery_manifest', 'tool_recovery_manifest'):
+    for alias in ('prior_analysis_manifest', 'tool_recovery_manifest'):
         if alias in sources:
             value = json.loads(sources[alias])
             if value.get('schema_version') != 1 or not isinstance(value.get('records'), list) or len(value['records']) > 32:
@@ -357,28 +325,12 @@ def validate_analysis_inputs(sources: Mapping[str, bytes]) -> None:
     from scidiscovery.operations.input_validation import prior_analysis_sources
     prior_analysis_sources(sources)
     plan, package, manifest, descriptors, _ = _identity_context(sources, admitting=True)
-    if package.project.execution_plan is None:
-        if "execution_review" in sources or "scientific_skeleton" in sources or "experiment_review" not in sources:
-            raise OperationInvocationError("input_analysis_review_branch_mismatch", port="experiment_review")
-        review = parse_bound_json(ScientificReview, sources["experiment_review"], admission_port="experiment_review")
-        if review.review_target != "experiment_portfolio":
-            raise OperationInvocationError("input_review_target_mismatch", port="experiment_review", field="/review_target")
-        if review.verdict != "pass":
-            raise OperationInvocationError("input_review_verdict_mismatch", port="experiment_review", field="/verdict")
-    else:
-        if "experiment_review" in sources or "execution_review" not in sources or "scientific_skeleton" not in sources:
-            raise OperationInvocationError("input_analysis_review_branch_mismatch", port="execution_review")
-        review = parse_bound_json(DeckReviewReport, sources["execution_review"], admission_port="execution_review")
-        if review != package.review or review.verdict != "pass" or review.scientific_assessment != "pass":
-            raise OperationInvocationError("input_comprehensive_review_mismatch", port="execution_review")
-        if plan != package.project.execution_plan:
-            raise OperationInvocationError("input_project_execution_plan_mismatch", port="experiment_plan")
     records = {record.name: record for record in manifest.outputs}
     expected = {output.name: output for output in package.project.expected_outputs}
     cases = {(proposal.experiment_key, case.case_key) for proposal in plan.proposals for case in proposal.cases}
     for output in expected.values():
         if output.case_key is not None and (output.experiment_key, output.case_key) not in cases:
-            raise OperationInvocationError("input_package_case_unknown", port="reviewed_package", field="expected_outputs")
+            raise OperationInvocationError("input_package_case_unknown", port="execution_package", field="expected_outputs")
     for descriptor in descriptors.values():
         if descriptor.port_name not in {"solver_outputs", "tool_evidence"}:
             continue
@@ -481,32 +433,18 @@ def analysis_context(payload: dict[str, Any], sources: Mapping[str, bytes], hand
         references[reference.source_key] = reference
         resolve_case_mapping(plan, package, descriptors, reference,
             known=view["sources"].get(reference.input_alias), path=f"$.source_references[{index}]")
-    records = {record.record_key: record for record in report.calculation_records}
-    aliases = analysis_evidence_aliases(report.evidence, report.source_references, descriptors,
-        calculation_reference_aliases(report.calculation_records, sources))
+    aliases = analysis_evidence_aliases(report.evidence, report.source_references, descriptors)
     for index, evidence in enumerate(report.evidence):
-        if evidence.locator.startswith("calculation_records:"):
-            if evidence.locator.split(":", 1)[1] not in records:
-                raise declared_violation("calculation evidence references an unknown record", path=f"$.evidence[{index}].locator")
-            continue
         alias = aliases[evidence.source_key]
         if alias not in descriptors:
             raise declared_violation("TCAD evidence requires a bound input alias with an optional local locator", path=f"$.evidence[{index}].locator")
     from scidiscovery.operation_contract import validate_evidence_source_aliases
     validate_evidence_source_aliases(payload,
-        set(sources) | set(references) | set(records) | {item.source_key for item in report.evidence})
+        set(sources) | set(references) | {item.source_key for item in report.evidence})
     calculations = analysis_calculations(report, sources)
-    for index, record in enumerate(calculations):
+    for record in calculations:
         from scidiscovery.artifact_agent.service.tool_evidence import calculation_sources
-        try:
-            calculation_sources(record, sources)
-        except SemanticRuleViolation as error:
-            if index >= len(report.calculation_records):
-                raise
-            # calculation_sources emits fixed control-owned reasons, without
-            # interpolating caller values. Preserve that specific conflict.
-            raise declared_violation(str(error),
-                path=f"$.calculation_records[{index}]") from error
+        calculation_sources(record, sources)
     validate_analysis_report(report, plan, calculations=calculations)
 
 
@@ -523,7 +461,7 @@ but cannot substitute for solver products.
 Failed/cancelled execution or missing products permits invalid_study or bounded
 inconclusive findings, not fabricated success. Old aggregate 97 is not solver success:
 use explicit solver status and actual step evidence; state uncertainty when absent.
-Use the original bound experiment_plan as the exact report scope. When it declares
+Use execution_package.project.execution_plan for skeleton execution, or the original bound experiment_plan for the detailed-plan branch, as the exact report scope. When it declares
 a non-null objective_key, objective_assessment is required and must use that exact
 key; pass, fail, inconclusive, and not_evaluable remain scientific choices. When the
 key is null, the assessment remains optional and must not be invented. next_action
@@ -556,15 +494,14 @@ source selection, dataset/column names, axes and comparison_spec; no prebound cu
 bundle/contract is needed. Match validation_check_key to the selected plan check;
 record changed methods and their limits. Unavailable/error calculations limit the
 quantitative claim, never support success. Receipt checks do not rerun calculations.
-Use current aliases only; assignment.prior_source_bindings is historical navigation,
-not an extension of the current namespace. Prior calculations require their original
-sources, prior_analysis and its own manifest: bind it once as recovery_manifest when
-it serves both roles, otherwise separately as prior_analysis_manifest. Files preserved
-from failed Runs remain engineering history, not newly completed computations.
+Use current scientific aliases only. Select the exact prior analysis to reuse its
+calculations; control resolves original sources and sealed receipts automatically.
+Files preserved from failed tasks remain engineering history, not newly completed
+computations.
 """ + DIAGNOSTIC_GUIDANCE.format(diagnostic_tool="worker_tcad_curve_diagnose") + ANALYSIS_FILES_GUIDANCE
 SEMANTIC_CONTRACT = scientific_semantic_contract(
     "tcad.result_analysis", "Scoring is optional and occurs after execution.",
-    context_constraint="The report must identify the original bound experiment_plan and use exact input aliases for solver claims. When that exact plan declares a non-null objective_key, objective_assessment is required and must use the exact key; a null key does not require or authorize inventing an assessment identity. A source key must resolve to one bound input or calculation record. Inline and saved representations of the same complete controlled calculation receipt share one identity. A bound input alias retains its identity even in an optional source mapping. Repeated citations and local locators are allowed; an explicit locator naming another bound input conflicts with that mapping. Calculation records must match their controlled receipts or exact sealed historical records; no repeated source mapping or scoring is required at submission. Missing products and failed execution limit claims, not submission of a limited report.",
+    context_constraint="The report must identify the exact plan embedded in execution_package or the original bound detailed experiment_plan and use exact input aliases for solver claims. When that exact plan declares a non-null objective_key, objective_assessment is required and must use the exact key; a null key does not require or authorize inventing an assessment identity. A source key must resolve to one bound input or calculation record. Cite the tool-returned calculation_ref; control resolves the registered scientific record and its private receipt. A bound input alias retains its identity even in an optional source mapping. Repeated citations and local locators are allowed; an explicit locator naming another bound input conflicts with that mapping. Calculation records must match their controlled receipts or exact sealed historical records; no repeated source mapping or scoring is required at submission. Missing products and failed execution limit claims, not submission of a limited report.",
 )
 DIAGNOSIS_AGENT = Components.diagnosis_agent
 DIAGNOSIS_VALIDATOR = Components.diagnosis_validator
@@ -572,13 +509,13 @@ GUARD = CallableComponent("guard", analysis_parentage)
 CONTEXT = CallableComponent("validator", analysis_context)
 INPUT_VALIDATOR = CallableComponent("validator", validate_analysis_inputs)
 TOOL = WorkerToolDefinition(
-    name="worker_tcad_curve_score", description="Optionally parse bound TCAD PLX/log and explicit CSV columns, then score in this analysis Run. Returns compact metrics; read calculation_path for the complete record. Cite calculation_ref; control saves the record and receipt.",
+    name="worker_tcad_curve_score", description="Optionally parse bound TCAD PLX/log and explicit CSV columns, then score in this analysis Run. Returns compact metrics; read calculation_ref with the evidence reader for the scientific record. Cite calculation_ref; control saves the record and receipt.",
     input_model=TCADScoreInput, capability="tcad.analysis.curve_score", contextual_handler=tcad_score_tool, record_attempts=True,
     evidence_ports=("tool_evidence", "recovery_manifest_output"),
 )
 DIAGNOSTIC_TOOL = WorkerToolDefinition(
     name="worker_tcad_curve_diagnose",
-    description="Optionally localize one residual comparison from bound PLX/log/CSV sources. Returns compact metrics; read record.calculation_path for the complete record. Cite record.calculation_ref; full details (<=4 MiB) and images have saved evidence aliases and task-local paths. One operator, 2-257 samples; no curve contract or additional Run.",
+    description="Optionally localize one residual comparison from bound PLX/log/CSV sources. Returns compact metrics; read record.calculation_ref with the evidence reader for the scientific record. Cite record.calculation_ref; numbers are checkpointed (<=4 MiB) before rendering. Use checkpoint_alias for a plot-only retry with unchanged request and exact sources; rendering failure preserves computed metrics. Full details (<=4 MiB) and images have saved evidence aliases and task-local paths. One operator, 2-257 samples; no curve contract or additional Run.",
     input_model=TCADDiagnosticInput, capability="tcad.analysis.curve_diagnose",
     contextual_handler=tcad_diagnostic_tool, record_attempts=True,
     evidence_ports=("tool_evidence", "recovery_manifest_output"),
@@ -604,14 +541,11 @@ def _input(name: str, schema: str, resource: ComponentRef, *, count: int = 1,
 
 INPUTS = (
     _input("execution_result", "scidiscovery.execution-result", _ref("analysis_execution_schema"), optional=True, max_bytes=2*1024*1024).model_copy(update={"usage":"evidence_inventory"}),
-    _input("recovery_manifest", "scidiscovery.tool-evidence-manifest.v1", _ref("analysis_recovery_schema"), optional=True, max_bytes=1024*1024).model_copy(update={"usage":"evidence_inventory"}),
-    _input("prior_analysis", "scidiscovery.layered-diagnosis.v1", _ref("diagnosis_schema", "curve_score"), optional=True, max_bytes=128*1024).model_copy(update={"usage":"evidence_inventory", "description":"Optional exact prior analysis. Bind its own same-producer manifest as prior_analysis_manifest, or bind recovery_manifest once when that same manifest proves both roles."}),
-    _input("prior_analysis_manifest", "scidiscovery.tool-evidence-manifest.v1", _ref("analysis_recovery_schema"), optional=True, max_bytes=1024*1024).model_copy(update={"usage":"evidence_inventory", "description":"Same-producer direct manifest parent of prior_analysis. A wrong explicit pair is rejected; use recovery_manifest alone when both purposes use the identical artifact. Bind every reused raw source separately."}),
-    _input("experiment_plan", "scidiscovery.experiment-portfolio.v1", _ref("experiment_portfolio_schema", "general_science"), max_bytes=2*1024*1024).model_copy(update={"usage": "evidence_inventory", "description": "Original execution plan: exact parent of reviewed_package. Put newer retrospective analysis plans in current_progress."}),
-    _input("experiment_review", "scidiscovery.scientific-review.v1", _ref("scientific_review_schema", "general_science"), optional=True, max_bytes=64*1024, exposure="on_demand").model_copy(update={"usage": "evidence_inventory", "description": "Exact independent passing review of the original experiment_plan used for execution. New analysis-plan reviews belong in current_progress."}),
-    _input("execution_review", "tcad.deck-review-report.v1", _ref("review_schema"), optional=True, max_bytes=128*1024),
-    _input("scientific_skeleton", "scidiscovery.experiment-scientific-skeleton.v1", _ref("experiment_skeleton_schema", "general_science"), optional=True, max_bytes=64*1024),
-    _input("reviewed_package", "tcad.reviewed-deck-package.v2", _ref("reviewed_package_schema"), max_bytes=64*1024*1024),
+
+    _input("prior_analysis", "scidiscovery.layered-diagnosis.v1", _ref("diagnosis_schema", "curve_score"), optional=True, max_bytes=128*1024).model_copy(update={"usage":"evidence_inventory", "description":"Optional exact prior analysis for original calculation reuse."}),
+    _input("prior_analysis_manifest", "scidiscovery.tool-evidence-manifest.v1", _ref("analysis_recovery_schema"), optional=True, max_bytes=1024*1024).model_copy(update={"agent_visible":False,"derivation":InputDerivationSpec(anchor_port="prior_analysis", producer_output_port="recovery_manifest_output")}),
+    _input("experiment_plan", "scidiscovery.experiment-portfolio.v1", _ref("experiment_portfolio_schema", "general_science"), optional=True, max_bytes=2*1024*1024).model_copy(update={"usage": "evidence_inventory", "description": "Detailed-plan branch only: exact original plan parent of execution_package. Skeleton branch reads execution_package.project.execution_plan directly; omit this port. New analysis plans belong in current_progress."}),
+    _input("execution_package", "tcad.execution-package.v2", _ref("execution_package_schema"), max_bytes=64*1024*1024),
     _input("runtime_manifest", "opaque", _ref("opaque_schema", "general_science"), max_bytes=4*1024*1024),
     _input("runtime_attestation", "tcad.runtime-attestation.v1", _ref("runtime_attestation_schema"), optional=True, max_bytes=4*1024*1024),
     _input("solver_outputs", "*", _ref("opaque_schema", "general_science"), optional=True, count=32, max_bytes=32*1024*1024, inventory=True, exposure="on_demand"),
@@ -637,18 +571,18 @@ COMPONENT_SPECS = (
     ComponentSpec("result_analysis_input", "validator", "tcad_artifact.result_analysis:INPUT_VALIDATOR", configuration_identity="tcad.analysis.input-binding.v3"),
     ComponentSpec("result_analysis_context", "validator", "tcad_artifact.result_analysis:CONTEXT", resources=(_ref("result_analysis_semantic"),), configuration_identity="tcad.analysis.receipt-integrity.v1"),
     ComponentSpec("result_analysis_score_tool", "worker_tool", "tcad_artifact.result_analysis:TOOL", configuration_identity="analysis.response-summary:v1"),
-    ComponentSpec("result_analysis_diagnostic_tool", "worker_tool", "tcad_artifact.result_analysis:DIAGNOSTIC_TOOL", configuration_identity="analysis.response-summary:v1"),
+    ComponentSpec("result_analysis_diagnostic_tool", "worker_tool", "tcad_artifact.result_analysis:DIAGNOSTIC_TOOL", configuration_identity="analysis.diagnostic-checkpoint:v3"),
 )
 OPERATIONS = (scientific_agent_operation(
     "tcad.result.analyze.v1", "Analyze one exact TCAD execution with optional raw-output scoring.",
-    "An exact reviewed plan, package and terminal execution manifest exist, including failed runs.",
+    "An exact plan, execution package and terminal execution manifest exist, including failed runs.",
     "Solver execution, mandatory pre-experiment curve contracts, or changing raw evidence.",
     agent=_ref("result_analysis_agent"), workspace=_ref("tcad_analysis_workspace"),
     prompt=_ref("result_analysis_prompt"), tools=(*BASE_TOOLS, _ref("result_analysis_score_tool"), _ref("result_analysis_diagnostic_tool"), _ref("analysis_files_tool", "curve_score"), _ref("analysis_inspect_tool"), _ref("analysis_accept_tool")),
     native_view_image=True,
     input_validation=InputValidationSpec(validator=_ref("result_analysis_input"),
         rule_id="tcad.result_analysis.input_binding",
-        description="For a skeleton project, bind its original projected plan, scientific_skeleton and exact comprehensive execution_review (version 3) retained by the package; reject legacy-review substitution. For a legacy project, before creating a Run bind a structurally valid historical plan and its exact completed science.object.review.v1 scientific_review output, with matching plan parent and passing experiment_portfolio verdict; history grants no current authoring or execution authority. Original solver outputs must match manifest names/media/bytes and declared project paths/cases. Recovered solver outputs instead require the explicitly bound sealed recovery_manifest and execution_result, with exact receipt membership, original execution/project, declared output/case, actual path and byte identity. Same-Run registered tool evidence is admitted by the tool, not by submission. Bind the additional controlled tcad_log to diagnostics, not solver_outputs; diagnostics must share the exact execution lineage. Missing execution products permit limited analysis."),
+        description="Use the exact implementation plan embedded in the execution package, or its bound historical detailed plan. Independent review is optional. Original solver outputs must match manifest names/media/bytes and declared project paths/cases. Recovered solver outputs instead require the automatically derived prior-analysis receipt and execution_result, with exact receipt membership, original execution/project, declared output/case, actual path and byte identity. Same-Run registered tool evidence is admitted by the tool, not by submission. Bind the additional controlled tcad_log to diagnostics, not solver_outputs; diagnostics must share the exact execution lineage. Missing execution products permit limited analysis."),
     inputs=INPUTS, outputs=(OutputPortSpec(
         name="layered_diagnosis", description="Sealed bounded result analysis and optional replayable calculations.",
         schema="scidiscovery.layered-diagnosis.v1", media_types=("application/json",),

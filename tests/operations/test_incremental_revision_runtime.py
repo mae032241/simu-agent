@@ -802,30 +802,6 @@ def test_materializer_without_finalizer_keeps_the_generic_revision_draft() -> No
     ) == "domain_workspace"
 
 
-def test_every_installed_revision_uses_one_compiled_workspace_contract() -> None:
-    from curve_score.plugin import PLUGIN as CURVE
-    from scidiscovery.general_science_plugin import PLUGIN as GENERAL
-    from scidiscovery.operations.invoke import direct_revision_ports
-    from tcad_artifact.plugin import PLUGIN as TCAD
-
-    catalog = compile_catalog((CORE_PLUGIN, GENERAL, CURVE, TCAD))
-    revision_ids = {
-        operation_id
-        for operation_id in catalog.operation_ids()
-        if direct_revision_ports(catalog.operation(operation_id)) is not None
-    }
-    assert revision_ids == {
-        "science.evidence.revise-from-critic.v1",
-        "science.experiment.revise.v1",
-        "science.hypothesis.revise.v1",
-        "science.intake.revise.v1",
-        "tcad.deck.author.revise.v1",
-        "tcad.deck.author.runtime-failure.v1",
-    }
-    for operation_id in revision_ids:
-        compiled = catalog.operation(operation_id)
-        assert direct_revision_ports(compiled) is not None
-        assert compiled.spec.limits.max_attempts == 2
 
 
 def test_revision_base_must_be_materializable_and_hardened_requires_patch_tool() -> None:

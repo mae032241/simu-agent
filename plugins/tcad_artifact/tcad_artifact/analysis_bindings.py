@@ -16,7 +16,7 @@ from scidiscovery.operations.input_validation import ValidationSources, prior_an
 from scidiscovery.operations.spec import CallableComponent
 
 
-JSON_PORTS = {"experiment_plan", "reviewed_package", "prior_analysis",
+JSON_PORTS = {"experiment_plan", "execution_package", "prior_analysis",
     "prior_analysis_manifest", "recovery_manifest"}
 VIEW_PATH = "analysis-bindings.json"
 
@@ -29,8 +29,8 @@ def source_bindings(sources):
     """
     descriptors = sources.binding_descriptors
     by_port = {d.port_name: alias for alias, d in descriptors.items() if d.port_name in JSON_PORTS}
-    package = json.loads(sources[by_port["reviewed_package"]])
-    plan = json.loads(sources[by_port["experiment_plan"]])
+    package = json.loads(sources[by_port["execution_package"]])
+    plan = package["project"].get("execution_plan") or json.loads(sources[by_port["experiment_plan"]])
     expected = {item["name"]: item for item in package["project"]["expected_outputs"]}
     cases = {(p["experiment_key"], c["case_key"]) for p in plan["proposals"] for c in p["cases"]}
     view = {"sources": {}, "unavailable": []}
@@ -41,14 +41,14 @@ def source_bindings(sources):
         declaration = expected.get(descriptor.output_name, {})
         if declaration.get("case_key") is not None:
             item.update(experiment_key=declaration.get("experiment_key"), case_key=declaration["case_key"],
-                origin={"input_alias": by_port["reviewed_package"], "kind": "declared"})
+                origin={"input_alias": by_port["execution_package"], "kind": "declared"})
         view["sources"][alias] = item
     prior = prior_analysis_sources(sources)
     if prior is None:
         return view
     mapped = prior["source_bindings"]
     manifest = json.loads(sources[prior["manifest_alias"]])
-    for port in ("experiment_plan", "reviewed_package"):
+    for port in (("execution_package",) if package["project"].get("execution_plan") is not None else ("experiment_plan", "execution_package")):
         old = [alias for alias, binding in manifest.get("bindings", {}).items() if binding.get("port_name") == port]
         if len(old) != 1 or mapped.get(old[0]) != by_port[port]:
             view["unavailable"].append({"reason": "prior_execution_cohort_not_bound"})
@@ -91,6 +91,9 @@ def source_bindings(sources):
 
 
 def workspace_sources(request):
+    if request.input_contents:
+        return ValidationSources({alias: raw for alias, raw in request.input_contents.items()
+            if request.binding_descriptors[alias].port_name in JSON_PORTS}, request.binding_descriptors)
     # Paths are already scoped to this workspace; descriptors contain no new
     # file capabilities. Only the small declared JSON sources are read here.
     contents = {alias: read_control_workspace_file(request.workspace,
@@ -122,10 +125,13 @@ def reading_view(request, sources, limit):
     """A bounded display copy; tools and finalization retain source_bindings in full."""
     by_port = {d.port_name: alias for alias, d in sources.binding_descriptors.items()
         if d.port_name in JSON_PORTS}
-    plan_alias, package_alias = by_port["experiment_plan"], by_port["reviewed_package"]
-    plan = json.loads(sources[plan_alias])
+    package_alias = by_port["execution_package"]
     package = json.loads(sources[package_alias])
     project = package["project"]
+    embedded = project.get("execution_plan") is not None
+    plan_alias = package_alias if embedded else by_port["experiment_plan"]
+    plan = project["execution_plan"] if embedded else json.loads(sources[plan_alias])
+    plan_pointer = "/project/execution_plan" if embedded else ""
     originals = {alias: {"relative_path": request.input_paths[alias].relative_to(request.workspace).as_posix(),
         "pointer": ""} for alias in (plan_alias, package_alias)}
     view = {"sources": {}, "unavailable": [], "project_index": [], "case_matrix": [],
@@ -162,7 +168,7 @@ def reading_view(request, sources, limit):
     for entry in complete["unavailable"]:
         analysis_workspace.append_view(view, "unavailable", entry, limit)
     for index, proposal in enumerate(plan.get("proposals", ())):
-        pointer = f"/proposals/{index}"
+        pointer = f"{plan_pointer}/proposals/{index}"
         append("case_matrix", plan_alias, {"pointer": pointer, "experiment_key": proposal["experiment_key"],
             "cases_pointer": pointer + "/cases", "case_count": len(proposal["cases"])})
         for entry in _case_matrix(proposal, pointer):

@@ -46,11 +46,9 @@ Assignments without this capability remain limited to their supplied originals.
 For audits/revisions, source_provenance in the assignment maps preserved original
 aliases to current input names; cite the current names in the new output.
 
-When the assignment includes a prior_draft and change_request, output/result.json
-is a copy-on-write draft of that intake. Read it first, edit only the fields
-required by the exact request, and complete the new handoff. Submit the entire
-revised ScientificIntake, not a patch object; preserve unchallenged support and
-do not inherit qualification.
+When prior evidence and feedback are supplied, extract and revise within this same
+task. Retain sound evidence, update affected claims, and submit a complete intake.
+Prior review or qualification is not inherited.
 """
 
 
@@ -78,13 +76,9 @@ indistinguishable. No new result forces a changed hypothesis set. If the current
 model set is insufficient and no supported candidate can be delivered, report
 the bounded gap without inventing a mechanism or inheriting an old review.
 
-When the assignment includes a prior_draft and change_request, output/result.json
-is a copy-on-write draft of that portfolio. Read it first, edit only the fields
-required by the exact critic request, and complete the new handoff. Submit the
-entire revised HypothesisProposal, not a patch object; preserve the exact
-hypothesis_key set and sound hypotheses, and do not inherit the critic verdict.
-Read rebound feedback relevant to that correction. Genuinely new evidence that
-requires reorganizing candidates belongs to a new proposal, not this correction.
+Proposal and revision use this same task. Use previous_hypotheses and relevant
+feedback to retain, replace or remove mechanisms according to the evidence.
+Submit the complete portfolio; prior reviews are not inherited.
 """
 
 

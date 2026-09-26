@@ -9,6 +9,7 @@ from .operations.spec import (
     ExecutorRef,
     InputAdmissionSpec,
     InputPortSpec,
+    InputDerivationSpec,
     LimitsSpec,
     OperationDescription,
     OperationSpec,
@@ -30,7 +31,7 @@ _SCHEMA_RESOURCES = {
     "scidiscovery.critic-review.v2": "critic_review_schema",
     "scidiscovery.evidence-audit.v1": "evidence_audit_schema",
     "scidiscovery.research-objective.v1": "research_objective_schema",
-    "scidiscovery.experiment-design-intent.v1": "experiment_intent_read_schema",
+    "scidiscovery.experiment-design-intent.v1": "experiment_intent_schema",
     "scidiscovery.experiment-portfolio.v1": "experiment_portfolio_schema",
     "scidiscovery.experiment-plan-materialization.v1": "materialization_report_schema",
 }
@@ -48,12 +49,15 @@ def _input(
     usage: str = "claim_evidence",
     exposure: str = "full",
     required_non_null_fields: tuple[str, ...] = (),
+    derivation: InputDerivationSpec | None = None,
 ) -> InputPortSpec:
     wildcard = schema == "*"
     return InputPortSpec(
         name=name,
         description=description,
         schema=schema,
+        derivation=derivation,
+        agent_visible=derivation is None,
         media_types=(
             media_types
             if media_types is not None
@@ -220,28 +224,19 @@ EVIDENCE_APPROVAL_INPUTS = (
         "Exact final ScientificIntake primary under qualification.",
         "scidiscovery.scientific-intake.v1",
         usage="prior_signal",
+        derivation=InputDerivationSpec(anchor_port="scientific_foundation", producer_input_path=("scientific_intake",)),
     ),
     _input(
         "producer_outputs",
-        "Complete non-validation sibling output family.",
+        "Complete sibling output family, including declared deterministic validation materials.",
         "*",
         media_types=("*/*",),
         min_items=0,
-        max_items=177,
+        max_items=193,
         max_item_bytes=32 * 1024 * 1024,
         exposure="handoff_only",
         usage="evidence_inventory",
-    ),
-    _input(
-        "validation_results",
-        "Complete deterministic validation result set when applicable.",
-        "*",
-        media_types=("*/*",),
-        min_items=0,
-        max_items=16,
-        max_item_bytes=32 * 1024 * 1024,
-        exposure="handoff_only",
-        usage="evidence_inventory",
+        derivation=InputDerivationSpec(anchor_port="extraction_primary", select="siblings"),
     ),
     _input(
         "frozen_sources",
@@ -253,12 +248,14 @@ EVIDENCE_APPROVAL_INPUTS = (
         max_item_bytes=32 * 1024 * 1024,
         exposure="handoff_only",
         usage="evidence_inventory",
+        derivation=InputDerivationSpec(anchor_port="extraction_primary", select="sources"),
     ),
     _input(
         "evidence_audit",
         "Independent audit of the exact final evidence family.",
         "scidiscovery.evidence-audit.v1",
         usage="prior_signal",
+        derivation=InputDerivationSpec(anchor_port="scientific_foundation", producer_input_path=("evidence_audit",)),
     ),
 )
 
@@ -268,7 +265,7 @@ APPROVAL_OPERATIONS = (
         "science.evidence.qualify.v1",
         OperationDescription(
             purpose="Create one human qualification review for a complete evidence family.",
-            applies_when="Extraction, deterministic validation, and an independent audit are complete.",
+            applies_when="Major-node policy: adopting this exact evidence foundation for consumers that declare scientific_foundation approval requires an independent source audit and this human qualification decision. Ordinary task completion does not require it.",
             not_for="Extracting evidence, repairing a provisional bundle, or granting execution authority.",
         ),
         projector="evidence_qualification_projector",

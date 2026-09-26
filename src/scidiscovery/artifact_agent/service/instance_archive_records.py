@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from ...agent_execution_settings import EXECUTION_SETTINGS_COLUMNS
-from .worker_connections import WORKER_CONNECTION_SCHEMA
+from .worker_connections import WORKER_CONNECTION_SCHEMA, WORKER_PARTICIPANT_SCHEMA
 
 import base64
 import gzip
@@ -27,7 +27,7 @@ DATABASES = {
 TABLES = {
     "scheduler": ("scheduler_instances", "scheduler_bindings", "scheduler_observations",
                   "scheduler_scientific_selections", "scheduler_sessions"),
-    "runs": ("runs", "run_activity", "run_tool_evidence", "run_activity_sequence", "worker_connections"),
+    "runs": ("runs", "run_activity", "run_tool_evidence", "run_activity_sequence", "worker_connections", "worker_participants"),
     "approvals": ("approval_requests", "approval_decisions", "used_nonces", "decision_attempts"),
     "executions": ("executions",),
     "artifacts": ("artifact_envelopes", "artifact_links", "idempotency_records", "artifact_events"),
@@ -37,7 +37,8 @@ TABLES = {
 CONTROL_PAYLOADS = {
     "scidiscovery.approval-request", "scidiscovery.review-manifest", "scidiscovery.human-decision",
     "scidiscovery.execution-request", "scidiscovery.execution-result",
-    "scidiscovery.tool-evidence-manifest.v1", "tcad.reviewed-deck-package.v2",
+    "scidiscovery.tool-evidence-manifest.v1", "tcad.execution-package.v2",
+    "tcad.reviewed-deck-package.v2",  # Historical archive reachability only.
 }
 MAX_RECORD_BYTES = 16 * 1024 * 1024
 MAX_CONTROL_PAYLOAD_BYTES = 16 * 1024 * 1024
@@ -197,17 +198,19 @@ def execution_settings_restore_view(data):
             for name, (_, default) in missing.items():
                 row[name] = default
     projected = data if result is None else result
-    if "runs" in projected["schema"]["tables"] and "worker_connections" not in projected["schema"]["tables"]:
-        projected = deepcopy(projected)
-        # Use the installation DDL; no invented historical thread bindings.
-        with sqlite3.connect(":memory:") as transient:
-            transient.row_factory = sqlite3.Row
-            transient.executescript(WORKER_CONNECTION_SCHEMA)
-            addition = schema(transient)
-        projected["schema"]["objects"] = sorted(
-            [*projected["schema"]["objects"], *addition["objects"]], key=lambda item: (item["type"], item["name"]))
-        projected["schema"]["tables"].update(addition["tables"])
-        projected["tables"]["worker_connections"] = []
+    if "runs" in projected["schema"]["tables"]:
+        for table, ddl in (("worker_connections", WORKER_CONNECTION_SCHEMA), ("worker_participants", WORKER_PARTICIPANT_SCHEMA)):
+            if table in projected["schema"]["tables"]:
+                continue
+            projected = deepcopy(projected)
+            with sqlite3.connect(":memory:") as transient:
+                transient.row_factory = sqlite3.Row
+                transient.executescript(ddl)
+                addition = schema(transient)
+            projected["schema"]["objects"] = sorted(
+                [*projected["schema"]["objects"], *addition["objects"]], key=lambda item: (item["type"], item["name"]))
+            projected["schema"]["tables"].update(addition["tables"])
+            projected["tables"][table] = []
     return projected
 
 

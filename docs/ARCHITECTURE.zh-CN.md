@@ -2,13 +2,9 @@
 
 简体中文 | [English](ARCHITECTURE.md)
 
-本文描述 R5-L Run v1 上经 R5-M 裁剪、并由 R5-N 收敛调度权威后的当前架构。历史设计与失败审查
-保留在 `docs/plans/`；当前实施权威是
-`docs/plans/R5_N_SCHEDULER_ACTION_AUTHORITY_SIMPLIFICATION.zh-CN.md`，R5-L 与 R5-M 计划保留为
-已通过的历史基线。
-设计宪章和33项当前
-行为约束分别位于 `docs/architecture/SCIENTIFIC_AGENT_DESIGN_CHARTER.zh-CN.md` 与
-`docs/architecture/SCIENTIFIC_AGENT_CONSTRAINTS.yaml`。
+本文描述当前通用插件平台和完整科研任务。实施与验收进度以
+[R4 主计划](plans/RESEARCH_TASK_REFACTOR_R4.zh-CN.md) 为准。
+历史计划与审计仅描述其记录的候选，不覆盖当前合同；静态实现不代表运行验收通过。
 
 ## 1. 设计原则
 
@@ -17,7 +13,7 @@ SciDiscovery 的基本行为原子是 `OperationSpec`。它是一份不可变、
 独立审查、人工审批与副作用要求；具体 codec、validator、guard、projector、workspace hook、
 Worker tool 和 runtime factory 由插件内的窄组件实现。
 
-当前 Operation ABI 17 要求 Agent 输出引用结构化语义合同。每条不能由 JSON Schema 表达的规则
+当前 Operation ABI 20 要求 Agent 输出引用结构化语义合同。每条不能由 JSON Schema 表达的规则
 具有稳定 `rule_id`、说明、输出路径和所需输入；编译器拒绝未知输入以及把可选端口暗中声明为必需
 输入的规则。每个 Python 内容或上下文校验器必须绑定其中一个已声明 `rule_id`，否则目录编译失败。
 编译器把这份合同和从端口、校验器绑定及修订形状机械派生的校验合同嵌入同一份
@@ -27,25 +23,24 @@ Worker tool 和 runtime factory 由插件内的窄组件实现。
 科学判断属于调度 Agent 和专业 Worker；控制面只拥有身份、不可变记录、最小上下文投影、生命周期、
 资格与副作用门禁；确定性代码只做可重放的机械变换；领域 adapter 只做外部副作用。
 
-每份实验保留有序 `objectives` 及其非空精确子集 `current_objectives`。物化时将原始总体目标放入
-每份实验，只展开已经声明的本轮 case；选择理由、后续目标和条件保留在既有 rationale 字段。
-未覆盖目标是否妨碍本轮实验，包括同一 observable 下的多个目标，由设计者和独立审查者判断。
-需要曲线合同时使用显式 target bindings，局部成功不代表未覆盖的总体目标已经闭合。
-曲线评分是结果分析的可选工具，不是 author 或执行的前置条件。通用分析与 TCAD 分析是替代入口，
-TCAD 工具在同一 Run 中解析已绑定原始输出并评分。评分不受支持只限制相应定量结论，不阻止受限分析。
-即使不调用评分工具，计划、审查、执行、文件与 case 的确切身份检查仍然适用。
+Root 根据研究问题选择完整的证据、假设、实验或分析任务。这是职责类别，不是固定流水线或四个
+常驻 Agent。`science.experiment.v1` 在同一 Run 内负责设计、实现、局部调试、执行、收集、有效性
+判断和交付，TCAD 是该通用任务的领域能力。普通子环节不强制独立审查或审批；适用的资格规则和
+外部执行授权仍由明确合同规定。
 
-observable 描述是科学文字，不是第二份身份登记表；设计、物化、审查和曲线编译不要求原文重复。
-比较中明确的 baseline key 已标识基线，不要求案例角色标签重复声明。紧凑意图缺省该 key 时，
-仅当恰好一个已声明 baseline/control 能确定它才自动补全；存在歧义时返回具体字段缺口。
-未知案例和变量数值自相矛盾仍是错误。
+任务随工作进展封存阶段科学结论和材料引用，UI 读取同一阶段投影，不触发调度。阶段预览不是最终
+完成：最终报告选择采用的阶段版本，保留限制。控制层核对精确科学来源、实际采集执行与采用实现，
+不增加固定科学检查表。
 
-旧详细实验设计的写入合同只提供必填 `validation_intent`，不再展示不能提交的旧
-`validation_plan` 及其专用定义。历史意图由独立读取模型在原物化入口解析，
-两种历史表示沿用原有互斥和实验身份检查；读取兼容不改写原件，也不更新其资格。
-写入与读取共享当前科学字段和约束，Schema 与提交模型来自同一定义。
-预计算曲线诊断的写入模型明确声明空的计算记录元组，因此其 Schema 不再携带
-不可使用的计算记录定义；通用分析和历史读取仍保留原有记录能力。
+任务负责人可按需使用原生助手完成有意义的有界子问题。助手使用新上下文，保留负责人的原生权限、
+Skill 和任务工作区能力；Worker 工具只准入负责人预先登记的真实子线程。助手不能选择实例、调度
+Root 任务、封存负责人阶段、提交父任务或形成正式独立审查。负责人等待并整合发现与文件，然后释放
+助手工具访问。默认只准入一个活动助手、一层委派，恢复链共用累计次数。释放 Run 工具权限不等于
+停止原生工具或证明线程退出；原生等待、停止、关闭和模型消耗属于平台职责。框架不声称对这些原生
+线程提供聚合内存或 Token 硬上限。
+
+结果分析可在同一任务调用领域评分和解析工具。计算保留精确输入与工具证据身份；评分不可用限制
+相应定量结论，不引入作者/审查者的固定调度链。
 
 ## 2. 注册、编译与三种视图
 
@@ -79,6 +74,12 @@ Root 与 lifecycle 工具保留各自声明，共用严格 JSON 参数解析和�
 verdict，也不按科学／工程标签限定案例数量。历史计算经配对清单和完整 Artifact 身份核验来源；
 文件接收收据与科学案例对应关系分别保留。新的计算记录必须有控制层收据；提交不重算。
 
+残差诊断先封存受控数值 checkpoint，再尝试绘图。同一个 Worker 工具可用 `checkpoint_alias`
+只重试绘图：请求、算法和完整输入 Artifact 身份必须一致，checkpoint 必须是本轮或经控制层
+接续接纳的证据；可编辑工作区副本不能充当 checkpoint。绘图失败保留已完成指标、已保存残差
+及具体诊断，`computed` 不意味着图片已生成。失败接续复用现有收据接纳路径；科学输入或方法
+改变须重新计算。报告修正在封存前留在当前 Run，已封存报告始终保持不可变。
+
 `public`、`support`、`internal` 和诊断用 `all` 是同一目录的只读投影，不是四套注册表：
 
 - `public`：调度 Agent 可选择的科学行为；
@@ -100,18 +101,27 @@ Root 绑定实例内语义 Artifact 名称并直接调用 `operation_invoke`；�
 Worker 不输出具有控制权威的后继 Operation 名称。调度 Agent 可以利用封存的 verdict、领域处置、
 缺失输入和建议进行判断，但仍须独立选择目录中的 Operation。`change_request` 与 `review_signal` 只
 证明精确独立审查和来源关系，不预先指定下一阶段或后继操作。
-旧 `next_action_kind`、`accepts_actions` 与 `recommended_task_mode` 字段暂时保留为可解析兼容数据，
-所有控制路径均忽略其值；它们不是第二行动目录，也不能导致调用被接受或拒绝。
-单个完成 Run 的 `run_status` 默认返回有界摘要摘录；`view=detail` 且不指定 `output_paths` 返回完整封存原件。`output_paths=[]` 只返回状态、
-精确绑定、signal 和结果元数据，不读取正文；默认 `compat` profile 保持旧客户端语义。显式请求时投影不组装无关上下文：
-`poll` 要求空 values 选择，`navigation` 返回有界索引但不返回 signal 正文，`decision` 仅在完成后返回请求的准确原文和 signal。
-失败 compact 响应保留准确的安全诊断和机械 recovery gate 投影；完整绑定、native/tool 记录和 recovery detail 仍由兼容 detail 路径读取。
-路径从 payload 内部起算：`/summary` 而非 `/payload/summary`。空字符串选择整个 payload，`/` 选择空键。
-`selected` 值是准确原文，包含整个 payload 时直接使用；仅在决策需要尚未读到的信息时补读。
-显式 payload JSON Pointer 在 `selected_output` 中
-返回原值，不把部分结果装入 `sealed_output`；最多 8 个指针、累计 32 KiB 原值。超预算子树提供
-有界的一层导航（32 项、累计 8 KiB）；missing、null 和 omitted 分开表达。不传参数仍可读取
-完整原件。signal 是否可用与正文是否展开无关。运行中 Run 和批量 `run_list` 不暴露科学载荷。若 Run 保存的 Operation 版本或摘要不再匹配当前编译目录，状态
+旧 `next_action_kind`、`accepts_actions` 与 `recommended_task_mode` 字段及其透传代码已移除；
+严格模型不再接受这些额外字段。科学建议通过 `next_actions` 表达，行动仍由唯一编译目录授权。
+完成 Run 的 `run_status` 默认使用 `response_profile="decision"`，返回声明的有界结论、限制、
+剩余问题和 scheduler signal。使用 `output_fields` 选择具名科学字段，或在 `output_paths` 中
+选择非根 payload JSON Pointer，两者不同时填写。decision 中缺省路径或 `[]` 都读取声明的
+决策字段。活动 Run 保持短状态，除非显式请求已封存阶段预览。
+
+`poll` 不读正文（`output_paths=[]`）；`navigation` 使用 `output_mode="index"` 返回有界结构
+索引。显式 `view="detail"` 且未选 profile 时使用 compat，但不会自动返回完整正文。完整封存
+输出只适用于 completed Run，必须显式 `include_full_output=true`、`view="detail"`、
+`response_profile="compat"`、`output_mode="values"`，并省略或设 null 的 `output_paths`。
+compat + detail + `output_paths=[]` 读取记录元数据，不展开完整正文；`diagnostic_after` 选择
+持久化诊断的有界页。
+
+JSON Pointer 原值放在 `selected_output`，不将部分内容放入 `sealed_output`；最多 8 个指针、
+累计 32 KiB。路径从 payload 内部起算，例如 `/summary`，不是 `/payload/summary`。values 模式
+禁止空字符串根指针；`/` 代表空成员键。已选准确值无需重复读取；超预算子树提供有界一层导航
+（32 项、8 KiB），missing、null 与 omitted 分开。完整输出始终需要显式 full-output 标志；
+signal 可用性与正文展开分开。失败短响应保留安全诊断与恢复信息，扩大视图不把失败任务变成
+已完成科学证据。
+运行中 Run 和批量 `run_list` 不暴露科学载荷。若 Run 保存的 Operation 版本或摘要不再匹配当前编译目录，状态
 报告 `historical` 并返回封存载荷和可解析的交接摘要，但不恢复资格；生产者插件卸载也不抹去完成记录。
 交接不可解析也不遮蔽可独立核验的封存载荷，其限制由 `scheduler_signal_status` 单独报告。
 清单和 Worker 输入描述明确标记 historical。`evidence_inventory` 允许历史背景读取；`prior_signal`
@@ -133,13 +143,9 @@ verdict），因此独立审查也只从同一编译目录调度，不查角色�
 引用 public reviewer；reviewer 当前不可用时，生产者同步从公开可用集合移除并在 preflight 失败。
 Root 调用入口拒绝 internal Operation；support 只保留给已选择 public 行为所需的确定性辅助变换。
 
-设计和计划审查可选绑定 `current_progress`、`experiment_results`、`result_analysis` 三组原件，
-每组零到四项、每项至多 8 MiB，使用原 32 MiB 输入额度及下述用户文本附加额度。它们是 `on_demand` 只读
-`evidence_inventory` 文件。仅 Agent 的 inventory 输入跳过 producer-output 资格检查；实例、
-大小、current、完整 family、cohort、claim、revision 和 effect 门禁仍走原路径。Schema/media
-通配对仅允许用于 `handoff_only` 或 `on_demand` inventory。读取历史不恢复退休资格。
-Deck review 将精确 project 作为 `prior_signal`，实现不完整时可以封存负面审查；通过审查、
-包装和执行仍须满足原实现要求。
+科学任务通过编译声明的科学输入端口绑定相关证据原件与前序结果。inventory 是只读上下文；读取
+历史材料不恢复资格。机械派生端口不进入 Agent 合同、assignment 或输入文件；控制层沿声明的科学
+锚点查回精确来源。缺失或歧义返回可定位的修复提示，不要求 Agent 补填身份表。
 
 Root 的 `artifact_ingest_text(name, text, on_conflict)` 将 1—8,192 个有效 Unicode
 码点按原样 UTF-8 登记，保留空白和换行。不可变 `opaque` 文本在元数据中记录
@@ -300,10 +306,11 @@ Approval Operation 的插件 projector 只把精确 subjects 投影成核心固�
 
 ### Effect Operation
 
-Effect Operation 的 `operation_invoke` 在创建精确副作用请求后，直接按同一编译审批合同建立待人工
-决定的请求并返回精确回环 UI 地址；它不会写决定或启动副作用。UI 决定后，调度器显式调用
-`execution_start`，再做有界 `execution_sync`。唯一 Execution 生命周期负责幂等、状态映射、未知
-提交恢复和原始输出登记；已编译 runtime factory 提供的领域 adapter 不能修改科学对象或批准自己。
+Effect Operation 的 `operation_invoke` 创建不可变执行请求；编译合同显式允许时，可由管理员配置
+授权。TCAD 同时不超过配置的总存储和墙钟额度时，不创建人工 approval；其他请求按配置进入
+人工审批或拒绝。独立科学审查和精确身份仍然有效。`execution_start` 在提交前重判当前策略；
+未知提交先查询原冻结描述符，不能重复启动或通过重命名再次取得同一项目额度。状态与实例 UI
+展示 `authorization.source`（policy/human/none）、策略摘要及冻结预算。
 
 `execution_sync` 仅刷新求解状态和有界日志，终态也可刷新；`execution_status` 只读已保存观测，
 不联系适配器。产物传输由显式 `execution_collect` 启动，收集完成后由 `execution_outputs`
@@ -352,15 +359,16 @@ Worker 也不直接写控制元数据。默认 `LocalTrustedBackend` 只管理 R
 | 固定安全审批文档与 UI | 审批内容投影，不提供 HTML/脚本 |
 | 通用 preflight/invoke | 确定性变换、runtime factory 和副作用 adapter |
 
-TCAD 插件目前注册 deck author/reviewer、工程工作区与调试工具、打包/运行证明/控制等价变换和
-求解器执行 Effect；curve-score 插件注册曲线合同、规范曲线、评分与诊断。TCAD 结果分析组合本插件
-的原始输出解析器与曲线插件的确定性评分函数，不增加反向依赖。最终分析校验核验工具收据、计算记录
-和精确来源引用，不重跑评分。原始证据直接引用绑定别名，计算证据引用工具返回的记录，无需再次填写
-同一份案例映射；只读绑定描述符按登记身份区分同内容文件。可选
-curve-figure-evidence 插件注册论文曲线图证据提取/独立审查及其工具，并复用曲线插件的确定性
-算法；InGaAs Fig.4 项目插件只注册项目冻结评分能力。核心
-不识别曲线 manifest、固定脚本名或图证据集合；原生工具和领域工具均由编译 Operation 投影。
-插件不得复制控制面的身份或生命周期。
+TCAD 插件通过 `ExperimentCapability` 提供求解器项目声明、实现准备、调试、原始结果分析与
+内部执行 Effect，不再注册独立的公开作者/修订/审查流水线。控制层生成 `ExecutionPackage`
+（`tcad.execution-package.v2`），绑定精确源码、文件和能力；可选审查是独立事实，嵌入报告本身
+不授予执行权限。SProcess 与 SDevice 共用通用实验任务。
+
+curve-score 向完整分析任务提供确定性评分/诊断工具；curve-figure-evidence 提供图证据提取、
+独立证据审查及所需算法；InGaAs Fig.4 插件提供项目评分器。核心拥有生命周期、绑定和资格，插件
+拥有领域算法与声明组件。组件配置身份、catalog ABI 与摘要、public/support/internal 可见性和
+带版本的 Schema ID 均保留为平台合同。当前真实插件的依赖边界仍需专门审查，不能因此宣称所有
+插件已经不依赖核心内部实现。
 
 确定性 Transform 组件从按端口分组的精确输入字节一次性产生全部输出；涉及多个输出之间关系的
 约束，由拥有算法的可信插件组件在返回前闭合。通用调用器只执行编译端口的 Schema、媒体类型、
@@ -423,11 +431,9 @@ Operation 和工具合同保持不变；归档定向事务恢复原 append-only 
 
 ## 原生权限角色与外部证据
 
-Root 启动指令来自 `roles/scheduler.md`，只常驻权威、审批、绑定、有界读取规则和条件式阅读索引。
-`roles/scheduler/` 中的细则随 wheel 发布，安装到 `.codex/scidiscovery-guides/`，生成的提示词
-记录其绝对目录。Root 在执行对应动作前按需读取，部署后刷新。细则不是新增角色、工具或路由
-权威，也不附加到 catalog/describe 返回值；Worker 指令和科学准入不变。安装保留非受管项目
-说明，并核验每份生成配置引用的细则可用。
+Root 启动指令来自 `roles/scheduler.md` 及项目 `AGENTS.md` 的受管 scheduler 区块。正常操作读取
+自足的 catalog 与所选可调用合同，不要求打开指南。`roles/scheduler/` 仍随安装提供，限异常维护
+按需使用，不是正常阅读 gate 或第二套路由权威。安装保留非受管项目说明。
 
 Local 工作区包含只读的 `tools/read_tool_contract.py`，仅读取冻结 assignment 中的工具合同。
 读取器在 scratch 自动保存可丢弃的阅读回执，调用者只指定工具名。后续相关合同可返回精确
@@ -493,9 +499,18 @@ invoke 在创建时解析并冻结配置。可选预检生成完整 `normalized_
 
 仅增加 `scheduler_instances.agent_settings_json/agent_settings_revision/agent_settings_updated_at` 和 `runs.execution_profile_json` 四列。历史 NULL 表示未记录。旧归档原件不改；恢复采用与安装相同的四列 ALTER 定义生成期望视图，缺失值固定为 NULL/0，并在预检、事务导入和续接收尾应用。无关结构、索引、触发器和记录差异仍冲突；缓存清理不能删执行配置。没有新增状态机、科学 Artifact 类型、翻译角色或模型角色池。
 
-新的受支持 SProcess 研究由 `science.experiment.skeleton.v1` 交付科学对照、判据和冻结条件，
-不强制先枚举工程案例。作者在唯一项目主输出内写入具体 `ExperimentPortfolio` 并完成授权开发验证。
-`tcad.execution-plan.project.v1` 仅原样提取同一方案给下游端口，不授予资格。可选提前骨架审查不能替代
-独立的项目综合科学与实现审查。打包及 TCAD 分析绑定精确项目、投影计划、骨架和综合审查。
-旧详细计划仍要求原科学审查见证；旧 SDevice 和其他插件保留原合同。生产审批与执行权限不变。
-科学语义冲突应在反复搜索实现前处理，科学等价的工程选择留在作者任务内。夹具验证不证明模型行为或 token 收益。
+新实验任务绑定科学材料和可选科学文件；控制层准备精确执行包并解析私有执行绑定，不要求负责人
+填写 capability ID、审查 witness 或路由字段。Effect 的可选 preparation 仍属于编译 ABI：变换、
+输出 Schema 和 validator 都进入身份。外部副作用受适用策略或 UI 授权、精确提交查询和累计执行
+预算约束。内容改变产生新对象，不自动继承旧审查资格。
+
+`agent-settings.json` 还配置 `helpers` 与 `execution_io`。公共值与实例显式字段合并，在创建 Run
+时冻结，恢复沿用原快照；实例显式写入与包默认相同的值仍能覆盖公共配置。这些是控制配置，不是
+科学端口或 Agent 表单。`execution_io` 默认值为 `max_export_bytes=2000000000`、
+`read_page_bytes=16384`、`collection_timeout_seconds=600`、`file_timeout_seconds=120`、
+`idle_timeout_seconds=30`，容量单位为字节，时间为秒。实验文本分页、流式导出和收集使用冻结值；
+导出与收集还受 Run 剩余时限约束。它们与插件配置的求解器存储/墙钟自主授权、RAM 上限分开，
+修改这些值不授予求解器执行资格，也不延长正在运行任务的截止时间。
+
+科学语义冲突先回到科学决策；等价的局部工程修正在作者任务内完成。四模块是完整任务职责，
+不是固定流程。静态实现/审查不能证明线上运行能力、耗时或 token 收益；本轮未运行测试或部署。

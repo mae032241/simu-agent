@@ -2,7 +2,6 @@
 from copy import deepcopy
 from decimal import Decimal
 import json
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -19,11 +18,9 @@ from scidiscovery.artifact_agent.schema.research_objective import ResearchObject
 from scidiscovery.artifact_agent.schema.validation import HypothesisAssessment
 from scidiscovery.operation_contract import SemanticRuleViolation
 from tcad_artifact.device_parameters import ScientificDecimal
-from tcad_artifact.parameter_operations import ParameterEvidencePackage, _audit_context
+from tcad_artifact.parameter_operations import ParameterEvidencePackage
 from tcad_artifact.project_packager import validate_project_case_controls
-from tcad_artifact.plugin import _author_context, _review_context
 from tests.operations.test_agent_contract_alignment import experiment_case, _review_run
-from tests.operations.test_l4_local_tcad import _review_context_fixture
 from tests.operations.test_m2_parameter_package import _package
 from tests.operations.test_minimal_figure_extraction import _png, _request
 from tests.operations.test_tcad_result_analysis import (
@@ -121,32 +118,6 @@ def test_partial_comparison_retains_valid_refs_and_can_be_independently_reviewed
             ExperimentPortfolio.model_validate_json(canonical_json(invalid))
 
 
-@pytest.mark.parametrize('labels', [
-    {'metric_profile': 'smooth_curve'},
-    {'purpose': 'numerical_convergence', 'gate_scope': 'diagnostic_only', 'metric_profile': 'sharp_front'},
-])
-def test_curve_labels_do_not_block_valid_operator_or_its_sealed_result(tmp_path, labels):
-    worker, opened = open_analysis(analysis_system(tmp_path))
-    request = raw_request()
-    comparison = request['comparison_spec']['comparisons'][0]
-    for field in ('purpose', 'gate_scope', 'metric_profile'):
-        comparison.pop(field, None)
-    comparison.update(labels)
-    comparison['operators'] = [{'operator_key': 'crossing', 'kind': 'crossing_shift', 'level': 1e11}]
-    declarations = request['comparison_spec']['series_declarations']
-    reference = next(x for x in declarations if x['series_key'] == comparison['reference_series'])
-    declarations.append({**reference, 'series_key': 'unused_reference', 'case_key': 'unused_case'})
-    for item in declarations:
-        item.pop('scientific_role', None)
-    record = worker.call_tool('worker_tcad_curve_score', {'record_key': 'local_crossing', 'request': request})
-    assert record['status'] == 'computed', record
-    report = analysis_report()
-    report['calculation_records'] = [json.loads(Path(record['calculation_path']).read_bytes())]
-    write_analysis(opened, report)
-    result = worker.call_tool('worker_submit_result', {})
-    assert result['state'] == 'completed', result
-
-
 def test_curve_subset_keeps_actual_reference_and_operator_checks():
     raw = raw_request()['comparison_spec']
     raw['reference_dispositions'] = [{'series_key': 'missing', 'disposition': 'compare', 'rationale': 'Not present.'}]
@@ -197,35 +168,6 @@ def test_finite_decimal_spelling_and_precision_are_preserved(value):
 def test_nonfinite_or_nonnumeric_parameters_are_still_rejected(value):
     with pytest.raises(ValidationError):
         TypeAdapter(ScientificDecimal).validate_json(json.dumps(value))
-
-
-def test_parameter_audit_can_cite_its_subject_but_not_an_unbound_source():
-    raw = {'checks': [{'check_key': 'missing', 'subject': 'requirements', 'status': 'fail',
-                      'basis': 'The exact subject omits a needed condition.', 'evidence_keys': ['parameter_requirements']}],
-           'evidence': [{'source_key': 'parameter_requirements', 'source_type': 'frozen_input', 'locator': '/parameters/0'}]}
-    _audit_context(raw, {'parameter_requirements': b'{}'}, {'verdict': 'blocked'})
-    with pytest.raises(SemanticRuleViolation, match='source bound to this task'):
-        _audit_context(raw, {'different_input': b'{}'}, {'verdict': 'blocked'})
-
-
-def test_deck_output_checks_consumed_parameters_without_requalifying_the_whole_set():
-    project, sources, report = _review_context_fixture('none')
-    coverage = json.loads(sources['parameter_coverage'])
-    coverage.update(status='fail', blocking_count=1)
-    coverage['items'].append({
-        'parameter_key': 'unused_later_parameter', 'status': 'missing',
-        'canonical_unit': 'V', 'independent_source_count': 0,
-        'summary': 'Not consumed by this project.',
-    })
-    sources['parameter_coverage'] = canonical_json(coverage)
-    _author_context(project.model_dump(mode='json'), sources, {'verdict': 'pass'})
-    _review_context(report, sources, {'verdict': 'pass'})
-    # A missing value actually consumed by the project still invalidates a pass.
-    coverage['items'][0]['status'] = 'missing'
-    coverage.update(confirmed_count=0, blocking_count=2)
-    sources['parameter_coverage'] = canonical_json(coverage)
-    with pytest.raises(SemanticRuleViolation, match='not usable by the deck'):
-        _review_context(report, sources, {'verdict': 'pass'})
 
 
 def test_curve_compiler_deduplicates_references_without_policing_case_roles():

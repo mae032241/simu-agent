@@ -283,34 +283,6 @@ class ExperimentDesignIntent(SchemaModel):
         return self
 
 
-class HistoricalExperimentProposalIntent(ExperimentProposalIntent):
-    """Read sealed intents from before compact validation became mandatory."""
-
-    validation_intent: IntentValidationPlan | None = None
-    validation_plan: ValidationPlan | None = None
-
-    @model_validator(mode="after")
-    def _historical_validation_choice(self) -> HistoricalExperimentProposalIntent:
-        if (self.validation_plan is None) == (self.validation_intent is None):
-            raise ValueError(
-                "intent requires exactly one complete validation_plan or compact validation_intent"
-            )
-        if (
-            self.validation_plan is not None
-            and self.validation_plan.experiment_key != self.experiment_key
-        ):
-            raise ValueError("intent validation plan experiment_key differs")
-        return self
-
-
-class HistoricalExperimentDesignIntent(ExperimentDesignIntent):
-    """Historical input reader, never the contract for a new Worker output."""
-
-    proposals: Annotated[
-        tuple[HistoricalExperimentProposalIntent, ...], Field(min_length=1, max_length=16)
-    ]
-
-
 class ExperimentPlanMaterializationReport(SchemaModel):
     schema_id: Literal["scidiscovery.experiment-plan-materialization.v1"] = (
         "scidiscovery.experiment-plan-materialization.v1"
@@ -417,16 +389,9 @@ def materialize_experiment_design_intent(
                 identifiability_claims=proposal_intent.identifiability_claims,
             )
         )
-        validation_plan = (
-            proposal_intent.validation_plan
-            if isinstance(proposal_intent, HistoricalExperimentProposalIntent)
-            and proposal_intent.validation_plan is not None
-            else _materialize_validation_plan(
-                proposal_intent.experiment_key,
-                proposal_intent.validation_intent,
-            )
+        validation_plan = _materialize_validation_plan(
+            proposal_intent.experiment_key, proposal_intent.validation_intent
         )
-        assert validation_plan is not None
         proposals.append(
             ExperimentProposal(
                 experiment_key=proposal_intent.experiment_key,
@@ -509,7 +474,7 @@ def materialize_experiment_design_inputs(
 ) -> tuple[ExperimentPortfolio, ExperimentPlanMaterializationReport]:
     if "experiment_design_intent" not in inputs:
         raise ValueError("experiment plan materialization requires intent")
-    intent = HistoricalExperimentDesignIntent.model_validate_json(
+    intent = ExperimentDesignIntent.model_validate_json(
         inputs["experiment_design_intent"], strict=True
     )
     if intent.study_kind == "engineering":

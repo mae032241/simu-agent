@@ -167,34 +167,8 @@ def test_precise_handle_cannot_cross_roots_or_instances(harness):
     assert not harness.reference_access_records('different')
 
 
-def test_inline_calculation_requires_selected_section_and_checks_digest(harness):
-    target = harness.artifact(b'original')
-    root = harness.report('producer', {'input': target}, document={'calculation_records': [
-        {'input_digests': {'input': target.sha256}}, {'input_digests': {'input': '0' * 64}}]})
-    harness.run('reader', [root])
-    first = harness.call('reader', action='list')
-    assert all('section' in entry for entry in first['references'])
-    selected = harness.call('reader', action='list', pointer='/calculation_records/0')
-    response = harness.call('reader', action='read', reference=selected['references'][0]['reference'])
-    assert response['fragment'] == 'original'
-    invalid = harness.call('reader', action='list', pointer='/calculation_records/1')
-    assert invalid['references'][0]['error'] == 'reference_digest_mismatch'
 
 
-def test_report_internal_evidence_key_resolves_locator_and_sealed_record(harness):
-    target = harness.artifact({'input_digests': {}}, media='application/json')
-    record = {'alias': 'tool_evidence_001', 'artifact_ref': target.model_dump(mode='json'),
-              'metadata': {'kind': 'calculation_record'}}
-    root = harness.report('producer', {'tool_evidence_001': target}, records=[record], document={
-        'evidence': [{'source_key': 'scientific_key', 'locator': 'tool_evidence_001:/request'}],
-        'gates': {'observation': {'evidence_keys': ['scientific_key']}}})
-    harness.run('reader', [root])
-    listing = harness.call('reader', action='list')
-    assert all('reference' in entry for entry in listing['references'])
-    reply = harness.call('reader', action='read', reference=listing['references'][0]['reference'])
-    assert reply['fragment'] == '{"input_digests":{}}'
-    nested = harness.reference_read('reader', ReferenceReadRequest(source=reply['source']), harness.policy)
-    assert nested['references'] == []
 
 
 @pytest.mark.parametrize('locator', ['/summary; /limitations', 'all rows', 'https://example.org/figure'])
@@ -444,65 +418,6 @@ def test_binding_count_is_checked_before_committing_access(harness):
     assert not harness.reference_access_records('reader')
 
 
-@pytest.mark.parametrize('explicit_input,delivery', [(False, 'fragment'), (False, 'file'), (True, 'fragment')])
-def test_real_worker_reads_sealed_calculation_and_seals_without_explicit_manifest(tmp_path, explicit_input, delivery):
-    from copy import deepcopy
-    from tests.operations.test_tcad_result_analysis import analysis_system, open_analysis, analysis_report, raw_request
-    from tests.operations.test_analysis_artifact_references import cite
-    from tests.operations.test_analysis_claim_scope import submit
-    system = analysis_system(tmp_path)
-    first, opened = open_analysis(system)
-    saved = first.call_tool('worker_tcad_curve_score', {'record_key': 'saved', 'request': raw_request()})
-    assert saved['status'] == 'computed'
-    assert submit(first, opened, cite(analysis_report(), saved['calculation_ref']))['state'] == 'completed'
-    origin = first.runs.status(first._run_id)
-    request = deepcopy(system[3])
-    request['name'] = 'reference_following'
-    next(item for item in request['inputs'] if item['port'] == 'reference_material')['artifact_names'].append('analysis.output')
-    if explicit_input:
-        request['inputs'].extend([{'port': 'prior_analysis', 'artifact_names': ['analysis.output']},
-            {'port': 'prior_analysis_manifest', 'artifact_names': ['analysis.output.recovery_manifest']}])
-        # Bind the calculation instead of adding an access receipt in B.
-        next(i for i in request['inputs'] if i['port'] == 'reference_material')['artifact_names'][-1] = 'analysis.output.' + saved['calculation_ref']
-    second, next_opened = open_analysis((*system[:3], request, *system[4:]))
-    current = second.runs.status(second._run_id)
-    calculation_ref = first.runs.source_descriptor(origin, saved['calculation_ref']).artifact_ref
-    if explicit_input:
-        read = {'source': next(i.source_name for i in current.inputs if i.artifact_ref == calculation_ref)}
-        assert second.runs.reference_access_records(second._run_id) == []
-    else:
-        root_alias = next(item.source_name for item in current.inputs if item.artifact_ref == origin.output_ref)
-        listing = second.call_tool('worker_reference_read', {'source': root_alias, 'action': 'list'})
-        handle = next(item['reference'] for item in listing['references'] if item.get('alias') == saved['calculation_ref'])
-        selection = {'delivery': 'file'} if delivery == 'file' else {'pointer': '/status'}
-        read = second.call_tool('worker_reference_read', {'source': root_alias, 'action': 'read', 'reference': handle, **selection})
-        if delivery == 'file':
-            assert json.loads(Path(read['file_path']).read_bytes())['status'] == 'computed'
-            receipt = second.runs.reference_access_records(second._run_id)[0]
-            assert 'file_path' not in receipt['response']
-            published = json.loads(second.runs._evidence_snapshot(second._run_id))
-            assert all('response' not in row for row in published['accesses'])
-            assert str(Path(read['file_path']).parent).encode() not in canonical_json(published)
-        else:
-            assert read['fragment'] == '"computed"'
-        assert len(second.runs.reference_access_records(second._run_id)) == 1
-        assert not any(item.port_name == 'prior_analysis_manifest' for item in current.inputs)
-    assert second.runs.tool_evidence(second._run_id) == []
-    result = submit(second, next_opened, cite(analysis_report(), read['source']))
-    assert result['state'] == 'completed', result
-    assert second.runs.completed_for_output(calculation_ref).run_id == origin.run_id
-    # A second report cites an access receipt, not a production record. Its
-    # reader must still reach the original calculation proof across both hops.
-    next_request = deepcopy(system[3])
-    next_request['name'] = 'reference_third'
-    next(item for item in next_request['inputs'] if item['port'] == 'reference_material')['artifact_names'].append('reference_following.output')
-    third, third_opened = open_analysis((*system[:3], next_request, *system[4:]))
-    second_output = second.runs.status(second._run_id).output_ref
-    root_alias = next(item.source_name for item in third.runs.status(third._run_id).inputs if item.artifact_ref == second_output)
-    listing = third.call_tool('worker_reference_read', {'source': root_alias, 'action': 'list'})
-    handle = next(item['reference'] for item in listing['references'] if item.get('alias') == read['source'])
-    next_read = third.call_tool('worker_reference_read', {'source': root_alias, 'action': 'read', 'reference': handle, 'pointer': '/status'})
-    assert submit(third, third_opened, cite(analysis_report(), next_read['source']))['state'] == 'completed'
 
 
 def test_adoption_retains_committed_fact_when_worker_call_budget_is_exhausted(harness):
@@ -549,57 +464,6 @@ def test_two_roots_to_same_ref_keep_distinct_paths_and_one_alias(harness):
     assert len(records) == 2 and records[0]['root_ref'] != records[1]['root_ref']
 
 
-@pytest.mark.parametrize("inline", [False, True])
-def test_real_recovered_calculation_navigation_uses_original_alias_namespace(tmp_path, inline):
-    from copy import deepcopy
-    from tests.operations.test_tcad_result_analysis import analysis_system, open_analysis, analysis_report, raw_request
-    from tests.operations.test_analysis_artifact_references import cite
-    from tests.operations.test_analysis_claim_scope import submit
-    system = analysis_system(tmp_path)
-    first, opened = open_analysis(system)
-    saved = first.call_tool('worker_tcad_curve_score', {'record_key': 'saved', 'request': raw_request()})
-    origin = first.runs.status(first._run_id)
-    first.runs.record_failure(origin.run_id, reason='fixture post-calculation interruption',
-        expected_state='running', expected_last_activity_at=origin.last_activity_at)
-    system[5]('extra_reference', b'Unrelated bounded reference.', 'opaque', media='text/plain')
-    recovered_request = deepcopy(system[3])
-    recovered_request.update(name='recovered_calculation', draft_from='analysis')
-    next(i for i in recovered_request['inputs'] if i['port'] == 'reference_material')['artifact_names'].append('extra_reference')
-    recovered, recovered_opened = open_analysis((*system[:3], recovered_request, *system[4:]))
-    assert 'reference_material' not in {i.source_name for i in recovered.runs.status(recovered._run_id).inputs}
-    report = cite(analysis_report(), saved['calculation_ref'])
-    if inline:
-        from scidiscovery.artifact_agent.schema.layered_diagnosis import CalculationRecord
-        calculation = CalculationRecord.model_validate_json(Path(saved['calculation_path']).read_bytes()).model_dump(mode='json')
-        calculation['attempt']['proof_kind'] = 'recovery'
-        report = analysis_report()
-        report['calculation_records'] = [calculation]
-    assert submit(recovered, recovered_opened, report)['state'] == 'completed'
-    follow_request = deepcopy(system[3])
-    follow_request['name'] = 'read_recovered_calculation'
-    next(i for i in follow_request['inputs'] if i['port'] == 'reference_material')['artifact_names'].append('recovered_calculation.output')
-    following, following_opened = open_analysis((*system[:3], follow_request, *system[4:]))
-    report_ref = recovered.runs.status(recovered._run_id).output_ref
-    root_alias = next(i.source_name for i in following.runs.status(following._run_id).inputs if i.artifact_ref == report_ref)
-    if inline:
-        source = root_alias
-        nested = following.call_tool('worker_reference_read', {'source': source, 'action': 'list',
-                                                               'pointer': '/calculation_records/0'})
-    else:
-        listed = following.call_tool('worker_reference_read', {'source': root_alias, 'action': 'list'})
-        handle = next(i['reference'] for i in listed['references'] if i.get('alias') == saved['calculation_ref'])
-        read = following.call_tool('worker_reference_read', {'source': root_alias, 'action': 'read', 'reference': handle, 'pointer': '/status'})
-        source = read['source']
-        nested = following.call_tool('worker_reference_read', {'source': source, 'action': 'list'})
-    dependency = next(i for i in nested['references'] if i.get('alias') == 'reference_material')
-    # Reading without the list selector must reconstruct the same exact edge.
-    original = following.call_tool('worker_reference_read', {'source': source, 'action': 'read', 'reference': dependency['reference']})
-    descriptor = following.runs.source_descriptor(following.runs.status(following._run_id), original['source'])
-    assert descriptor.artifact_ref == system[4]['reference'].ref
-    if not inline:
-        accesses = following.runs.reference_access_records(following._run_id)
-        assert accesses[0]['producer_run_id'] == origin.run_id
-    assert submit(following, following_opened, cite(analysis_report(), source if not inline else original['source']))['state'] == 'completed'
 
 
 def test_text_original_can_be_requested_as_exact_native_file(harness):

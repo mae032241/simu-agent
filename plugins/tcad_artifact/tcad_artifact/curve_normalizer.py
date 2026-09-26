@@ -74,7 +74,7 @@ class SeriesNormalizationCount(SchemaModel):
 
 
 class SProcessNormalizationAudit(SchemaModel):
-    record_grammar: Literal["scid_curve_v1", "legacy_case_csv_v1"]
+    record_grammar: Literal["scid_curve_v1"]
     input_sha256: Sha256
     input_bytes: Annotated[int, Field(ge=0, le=MAX_LOG_BYTES)]
     total_lines: Annotated[int, Field(ge=0, le=10_000_000)]
@@ -106,9 +106,6 @@ def normalize_sprocess_log(
     last_lines: dict[tuple[str, str], int] = {}
     ended: set[tuple[str, str]] = set()
     matched = 0
-    record_grammar: Literal["scid_curve_v1", "legacy_case_csv_v1"] = (
-        "scid_curve_v1"
-    )
     lines = text.splitlines()
     for line_number, source_line in enumerate(lines, start=1):
         line = source_line.strip()
@@ -167,21 +164,9 @@ def normalize_sprocess_log(
             continue
         raise ValueError("SProcess curve record kind is unsupported")
 
-    if matched == 0:
-        matched = _parse_legacy_case_csv(
-            lines,
-            expected=expected,
-            points=points,
-            first_lines=first_lines,
-            last_lines=last_lines,
-            ended=ended,
-        )
-        if matched:
-            record_grammar = "legacy_case_csv_v1"
-
     if ended != set(expected):
         missing = sorted(f"{case}/{series}" for case, series in set(expected) - ended)
-        diagnostic = _legacy_record_diagnostic(lines, expected)
+        diagnostic = _unsupported_record_diagnostic(lines, expected)
         raise ValueError(
             "SProcess curve log is missing completed series: "
             + ", ".join(missing)
@@ -230,7 +215,7 @@ def normalize_sprocess_log(
             series=tuple(series),
         ),
         SProcessNormalizationAudit(
-            record_grammar=record_grammar,
+            record_grammar="scid_curve_v1",
             input_sha256=digest,
             input_bytes=len(raw),
             total_lines=len(lines),
@@ -240,97 +225,7 @@ def normalize_sprocess_log(
     )
 
 
-def _parse_legacy_case_csv(
-    lines: list[str],
-    *,
-    expected: dict[tuple[str, str], SProcessSeriesSpec],
-    points: dict[tuple[str, str], list[CurvePoint]],
-    first_lines: dict[tuple[str, str], int],
-    last_lines: dict[tuple[str, str], int],
-    ended: set[tuple[str, str]],
-) -> int:
-    """Parse the historical five-field case/index/x/y log contract."""
-
-    by_case: dict[str, tuple[tuple[str, str], SProcessSeriesSpec]] = {}
-    for key, series_spec in expected.items():
-        if series_spec.case_key in by_case:
-            raise ValueError(
-                "legacy SProcess curve records cannot disambiguate multiple "
-                "series for one case"
-            )
-        by_case[series_spec.case_key] = (key, series_spec)
-
-    matched = 0
-    record_tag: str | None = None
-    completion_lines: dict[tuple[str, str], int] = {}
-    for line_number, source_line in enumerate(lines, start=1):
-        fields = tuple(item.strip() for item in source_line.strip().split(","))
-        if len(fields) == 5 and fields[1] in by_case:
-            tag, case_key, raw_index, raw_x, raw_y = fields
-            if not re.fullmatch(r"[A-Z][A-Z0-9_]{0,63}", tag) or not any(
-                marker in tag for marker in ("CURVE", "NODE", "POINT", "PROFILE")
-            ):
-                raise ValueError("legacy SProcess curve record tag is unsupported")
-            if record_tag is None:
-                record_tag = tag
-            elif tag != record_tag:
-                raise ValueError("legacy SProcess curve record tags are inconsistent")
-            key, series_spec = by_case[case_key]
-            try:
-                index = int(raw_index)
-                x = float(raw_x)
-                y = float(raw_y)
-            except ValueError as error:
-                raise ValueError(
-                    "legacy SProcess curve point is not numeric"
-                ) from error
-            if index != len(points[key]):
-                raise ValueError(
-                    "legacy SProcess curve indexes must be contiguous from zero"
-                )
-            if not math.isfinite(x) or not math.isfinite(y):
-                raise ValueError("legacy SProcess curve point must be finite")
-            if len(points[key]) >= series_spec.max_points:
-                raise SProcessPointLimitError("legacy SProcess curve series exceeds its point limit")
-            points[key].append(CurvePoint(x=x, y=y))
-            first_lines.setdefault(key, line_number)
-            last_lines[key] = line_number
-            matched += 1
-            continue
-        if (
-            len(fields) == 4
-            and fields[0] == "SOLVE_COMPLETED"
-            and fields[1] in by_case
-        ):
-            key, series_spec = by_case[fields[1]]
-            if key in completion_lines:
-                raise ValueError("legacy SProcess case completion is duplicated")
-            try:
-                completion_values = tuple(float(item) for item in fields[2:])
-            except ValueError as error:
-                raise ValueError(
-                    "legacy SProcess completion fields are not numeric"
-                ) from error
-            if not all(math.isfinite(item) for item in completion_values):
-                raise ValueError("legacy SProcess completion fields must be finite")
-            completion_lines[key] = line_number
-            first_lines.setdefault(key, line_number)
-            last_lines[key] = line_number
-            matched += 1
-    for key, completion_line in completion_lines.items():
-        series_spec = expected[key]
-        point_count = len(points[key])
-        if not series_spec.min_points <= point_count <= series_spec.max_points:
-            raise ValueError(
-                "legacy SProcess point count violates its source spec"
-            )
-        ended.add(key)
-        first_lines[key] = min(first_lines.get(key, completion_line), completion_line)
-        last_lines[key] = max(last_lines.get(key, completion_line), completion_line)
-    return matched
-
-
-def _legacy_record_diagnostic(
+def _unsupported_record_diagnostic(
     lines: list[str], expected: dict[tuple[str, str], SProcessSeriesSpec]
 ) -> str:
     """Return bounded value-free evidence of an unsupported record layout."""

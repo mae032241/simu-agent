@@ -23,11 +23,17 @@ from curve_figure_evidence.figure_worker_tool import (
 from curve_figure_evidence.operation_transforms import (
     bundle_figure_evidence,
     figure_parentage,
-    materialize_figure_evidence,
 )
 from curve_score.schema import CurveBundle
 from scidiscovery.artifact_agent.schema.common import canonical_json
 from scidiscovery.artifact_agent.schema.refs import ArtifactRef
+
+
+def _digitized_outputs(source, request):
+    files, _ = build_digitized_figure_bundle(source, request)
+    return {port: tuple(content for name, (content, _) in sorted(files.items()) if name.startswith(prefix + "/"))
+        for port, prefix in (("figure_manifest", "figure_manifest"), ("source_panels", "source_panels"),
+            ("audit_overlays", "audit_overlays"), ("curve_tables", "curve_tables"), ("validation_report", "validation_reports"))}
 
 
 def _png(*, shared: bool = False) -> bytes:
@@ -127,6 +133,16 @@ class _Context:
         self.source = source
         self.remaining_seconds = 30
         self.activities: list[str] = []
+
+    def read_input(self, name: str) -> bytes:
+        return self.input_path(name).read_bytes()
+
+    def source_descriptor(self, name: str):
+        assert name == "paper_source"
+        return SimpleNamespace(port_name="paper_source")
+
+    def finish_attempt(self, **values):
+        assert values["successful"]
 
     def input_path(self, name: str) -> Path:
         assert name == "paper_source"
@@ -253,9 +269,7 @@ def test_preview_and_formal_materialization_use_identical_outputs(tmp_path: Path
         ),
         context,
     )
-    formal = materialize_figure_evidence(
-        {"paper_source": (source,), "figure_request": (request,)}
-    )
+    formal = _digitized_outputs(source, request)
 
     preview_images = {
         item["data_item"]: Path(item["local_path"]).read_bytes()
@@ -297,9 +311,7 @@ def test_raw_inspection_returns_one_read_only_source_image(tmp_path: Path) -> No
 
 def test_materialized_tables_still_normalize_for_curve_consumers() -> None:
     source = _png(shared=True)
-    materialized = materialize_figure_evidence(
-        {"paper_source": (source,), "figure_request": (_request(source, shared=True),)}
-    )
+    materialized = _digitized_outputs(source, _request(source, shared=True))
     normalized = bundle_figure_evidence(
         {
             "figure_manifest": materialized["figure_manifest"],
@@ -313,52 +325,23 @@ def test_materialized_tables_still_normalize_for_curve_consumers() -> None:
     assert all(item.availability.status == "available" for item in bundle.series)
 
 
-def test_figure_parentage_uses_the_transform_label_emitted_by_control() -> None:
-    def bound(port: str, ref: str, *, parents=(), labels=None, verdict=None):
-        return SimpleNamespace(
-            port_name=port,
-            artifact=SimpleNamespace(
-                ref=ref,
-                parent_refs=tuple(parents),
-                labels=tuple((labels or {}).items()),
-                handoff_verdict=verdict,
-            ),
-        )
-
+def test_figure_parentage_binds_intake_selected_family_and_exact_audit() -> None:
+    def bound(port, ref, *, parents=(), labels=None, verdict=None, producer=None):
+        return SimpleNamespace(port_name=port, artifact=SimpleNamespace(ref=ref, parent_refs=tuple(parents),
+            labels=tuple((labels or {}).items()), handoff_verdict=verdict, producer_run_id=producer))
     source = bound("paper_source", "source")
-    request = bound(
-        "figure_request", "request", parents=("source",),
-        labels={
-            "operation_output_port": "figure_request",
-        },
-    )
-    transform_labels = {
-        "operation_invocation_fingerprint": "materialize-call",
-        "transform_profile": "science.figure.evidence.materialize.v1",
-    }
-    family = [
-        bound("figure_manifest", "manifest", parents=("source", "request"), labels=transform_labels),
-        bound("validation_report", "report", parents=("source", "request"), labels=transform_labels),
-        bound("source_panels", "panel", parents=("source", "request"), labels=transform_labels),
-        bound("audit_overlays", "overlay-1", parents=("source", "request"), labels=transform_labels),
-        bound("audit_overlays", "overlay-2", parents=("source", "request"), labels=transform_labels),
-        bound("curve_tables", "curve-1", parents=("source", "request"), labels=transform_labels),
-    ]
-    family_refs = tuple(item.artifact.ref for item in family)
-    parents = ("source", "request", *family_refs)
-    intake = bound(
-        "scientific_intake", "intake", parents=parents,
-        labels={"operation_output_port": "scientific_intake"},
-    )
-    audit = bound(
-        "evidence_audit", "audit", parents=("intake", *parents),
-        labels={
-            "operation_id": "science.figure.evidence.audit.v1",
-            "operation_output_port": "evidence_audit",
-        },
-        verdict="pass",
-    )
-
-    assert figure_parentage(
-        (source, request, intake, audit, *family), {}
-    )
+    family = [bound("figure_family", "file", parents=("source",), labels={"tool_name": "worker_curve_figure_save"})]
+    proof = bound("figure_provenance", "proof", parents=("source", "file"), labels={
+        "operation_id": "science.evidence.extract.figure.v3", "operation_output_port": "recovery_manifest_output", "tool_producer_run": "author"})
+    intake = bound("scientific_intake", "intake", parents=("source", "proof"), producer="author", labels={
+        "operation_id": "science.evidence.extract.figure.v3", "operation_output_port": "scientific_intake"})
+    audit = bound("evidence_audit", "audit", parents=("source", "proof", "intake", "file"), verdict="pass", labels={
+        "operation_id": "science.figure.evidence.audit.v2", "operation_output_port": "evidence_audit"})
+    cohort = (source, proof, intake, audit, *family)
+    assert figure_parentage(cohort, {})
+    audit.artifact.handoff_verdict = "pass"
+    audit.artifact.parent_refs = ("source", "proof", "old_intake", "file")
+    assert not figure_parentage(cohort, {})
+    audit.artifact.parent_refs = ("source", "proof", "intake", "file")
+    proof.artifact.labels = (*proof.artifact.labels[:-1], ("tool_producer_run", "another_author"))
+    assert not figure_parentage(cohort, {})

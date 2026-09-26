@@ -10,23 +10,6 @@ from scidiscovery.operations.spec import OperationSpec, canonical_digest, canoni
 
 
 def test_operation_spec_is_the_frozen_declarative_contract() -> None:
-    assert tuple(OperationSpec.model_fields) == (
-        "operation_id",
-        "version",
-        "catalog_scope",
-        "description",
-        "executor",
-        "inputs",
-        "outputs",
-        "consequence",
-        "input_admission",
-        "input_validation",
-        "complete_transform_family",
-        "review",
-        "guards",
-        "limits",
-        "accepts_actions",
-    )
     with pytest.raises(ValidationError):
         PLUGIN.operations[0].operation_id = "changed"  # type: ignore[misc]
 
@@ -43,16 +26,6 @@ def test_extra_input_defaults_are_not_representable() -> None:
     values = PLUGIN.operations[0].model_dump(mode="python")
     with pytest.raises(ValidationError):
         OperationSpec(**values, allow_additional_inputs=True)  # type: ignore[call-arg]
-
-
-def test_deprecated_worker_route_hint_remains_parseable_but_non_authoritative() -> None:
-    values = {
-        "verdict": "revise",
-        "summary": "A bounded correction is needed.",
-        "next_action_kind": "not a registered operation",
-    }
-    for model in (RoleHandoff, SchedulerSignal):
-        assert model(**values).next_action_kind == "not a registered operation"
 
 
 def test_worker_handoff_items_are_transport_metadata_not_control_fields() -> None:

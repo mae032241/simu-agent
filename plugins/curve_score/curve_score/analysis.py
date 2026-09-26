@@ -10,7 +10,6 @@ import math
 from dataclasses import dataclass
 from typing import Annotated, Callable, Literal
 
-from PIL import Image, ImageDraw, ImageFont
 from pydantic import Field, model_validator
 
 from scidiscovery.artifact_agent.schema.common import (
@@ -117,7 +116,7 @@ class CurveErrorGlobalScore(SchemaModel):
         return self
 
 
-class CurveErrorComparisonAnalysis(SchemaModel):
+class CurveErrorComparisonNumerics(SchemaModel):
     comparison_key: Identifier
     operator_key: Identifier
     value_space: Literal["linear", "log10"]
@@ -128,6 +127,10 @@ class CurveErrorComparisonAnalysis(SchemaModel):
     residual_trace: Annotated[
         tuple[CurveResidualPoint, ...], Field(min_length=1, max_length=_MAX_TRACE_POINTS)
     ]
+    truncated: bool = False
+
+
+class CurveErrorComparisonAnalysis(CurveErrorComparisonNumerics):
     plot_item: Annotated[
         str,
         Field(
@@ -137,7 +140,6 @@ class CurveErrorComparisonAnalysis(SchemaModel):
         ),
     ]
     plot_sha256: Sha256
-    truncated: bool = False
 
 
 class CurveErrorAnalysisReport(SchemaModel):
@@ -174,8 +176,8 @@ class CurveErrorAnalysisArtifacts:
     plots: tuple[tuple[str, bytes], ...]
 
 
-@dataclass(frozen=True)
-class _ResidualAtom:
+class _ResidualAtom(SchemaModel):
+    """Immutable JSON renderer sample retained inside a numerical checkpoint."""
     x: float
     reference: float | None
     candidate: float | None
@@ -220,18 +222,35 @@ def analyze_curve_error(
     return localize_curve_error(bundle, spec, metric_report, comparison_key=comparison_key)
 
 
-def localize_curve_error(
+class CurveErrorNumericalItem(SchemaModel):
+    """Saved renderer inputs; no plot success or scientific verdict is implied."""
+    analysis: CurveErrorComparisonNumerics
+    atoms: tuple[_ResidualAtom, ...]
+    comparison: CurveComparison
+    reference: CurveSeries
+    candidate: CurveSeries
+
+
+class CurveErrorNumerics(SchemaModel):
+    profile: Literal["scidiscovery.curve-error-numerics.v1"] = "scidiscovery.curve-error-numerics.v1"
+    selection_comparison_key: Identifier | None = None
+    curve_bundle_sha256: Sha256
+    comparison_spec_sha256: Sha256
+    items: Annotated[tuple[CurveErrorNumericalItem, ...], Field(min_length=1, max_length=_MAX_ANALYSES)]
+
+
+def compute_curve_error(
     bundle: CurveBundle,
     spec: CurveComparisonSpec,
     metric_report: CurveConsistencyReport,
     *,
     comparison_key: str | None = None,
     check_budget: Callable[[], None] = lambda: None,
-) -> CurveErrorAnalysisArtifacts:
+) -> CurveErrorNumerics:
     """Localize a freshly computed comparison without experiment-time contracts.
 
     The legacy transform above still verifies its complete-plan inputs. Analysis
-    tools call this same localization/renderer after computing their own metrics.
+    tools save these numerical renderer inputs before attempting optional plots.
     """
     if (canonical_sha256(bundle) != metric_report.curve_bundle_sha256
             or canonical_sha256(spec) != metric_report.comparison_spec_sha256):
@@ -244,8 +263,7 @@ def localize_curve_error(
         raise ValueError("too many failed residual comparisons; select one comparison_key")
 
     by_series = {item.series_key: item for item in bundle.series}
-    report_items: list[CurveErrorComparisonAnalysis] = []
-    plots: list[tuple[str, bytes]] = []
+    items: list[CurveErrorNumericalItem] = []
     reported_by_comparison = {
         item.comparison_key: item for item in metric_report.comparisons
     }
@@ -272,8 +290,7 @@ def localize_curve_error(
             CurveResidualPoint(x=item.x, residual=item.residual, support=item.support)
             for item in _display_atoms(atoms)
         )
-        plot_item = _plot_item(comparison.comparison_key, operator.operator_key)
-        placeholder = CurveErrorComparisonAnalysis(
+        analysis = CurveErrorComparisonNumerics(
             comparison_key=comparison.comparison_key,
             operator_key=operator.operator_key,
             value_space=operator.value_space,
@@ -288,31 +305,48 @@ def localize_curve_error(
             ),
             segments=segments,
             residual_trace=trace,
-            plot_item=plot_item,
-            plot_sha256="0" * 64,
             truncated=truncated,
         )
-        image = _render_curve_error_plot(
-            placeholder,
-            atoms=atoms,
-            comparison=comparison,
-            reference=reference,
-            candidate=candidate,
-        )
-        check_budget()
-        item = placeholder.model_copy(
-            update={"plot_sha256": hashlib.sha256(image).hexdigest()}
-        )
-        report_items.append(item)
-        plots.append((plot_item, image))
+        # Freeze the declared checkpoint types, including CurveOperatorSpec children.
+        # Request-only subclasses keep their admission rules outside this wire model.
+        saved_comparison = CurveComparison.model_validate_json(
+            canonical_json(comparison), strict=True)
+        items.append(CurveErrorNumericalItem(analysis=analysis, atoms=atoms,
+            comparison=saved_comparison, reference=reference, candidate=candidate))
 
-    report = CurveErrorAnalysisReport(
-        selection_comparison_key=comparison_key,
+    return CurveErrorNumerics(selection_comparison_key=comparison_key,
         curve_bundle_sha256=canonical_sha256(bundle),
-        comparison_spec_sha256=canonical_sha256(spec),
-        analyses=tuple(report_items),
-    )
-    return CurveErrorAnalysisArtifacts(report=report, plots=tuple(plots))
+        comparison_spec_sha256=canonical_sha256(spec), items=tuple(items))
+
+
+def render_curve_error(numerics: CurveErrorNumerics, *,
+                       check_budget: Callable[[], None] = lambda: None) -> CurveErrorAnalysisArtifacts:
+    """Render saved numbers without parsing sources, scoring or segment fitting."""
+    report_items, plots = [], []
+    for item in numerics.items:
+        check_budget()
+        name = _plot_item(item.analysis.comparison_key, item.analysis.operator_key)
+        image = _render_curve_error_plot(item.analysis, atoms=item.atoms,
+            comparison=item.comparison, reference=item.reference, candidate=item.candidate)
+        check_budget()
+        report_items.append(CurveErrorComparisonAnalysis(
+            **item.analysis.model_dump(), plot_item=name,
+            plot_sha256=hashlib.sha256(image).hexdigest()))
+        plots.append((name, image))
+    return CurveErrorAnalysisArtifacts(report=CurveErrorAnalysisReport(
+        selection_comparison_key=numerics.selection_comparison_key,
+        curve_bundle_sha256=numerics.curve_bundle_sha256,
+        comparison_spec_sha256=numerics.comparison_spec_sha256,
+        analyses=tuple(report_items)), plots=tuple(plots))
+
+
+def localize_curve_error(bundle: CurveBundle, spec: CurveComparisonSpec,
+                         metric_report: CurveConsistencyReport, *,
+                         comparison_key: str | None = None,
+                         check_budget: Callable[[], None] = lambda: None) -> CurveErrorAnalysisArtifacts:
+    """Complete deterministic transform; tools can checkpoint between its phases."""
+    return render_curve_error(compute_curve_error(bundle, spec, metric_report,
+        comparison_key=comparison_key, check_budget=check_budget), check_budget=check_budget)
 
 
 class CurveDiagnosticAnalysisPackage(SchemaModel):
@@ -357,6 +391,8 @@ def validate_curve_error_plot_collection(
     primary_payload: dict[str, object], items: dict[str, bytes]
 ) -> None:
     """Bind every finalized plot byte-for-byte to the portable analysis report."""
+
+    from PIL import Image
 
     raw_analysis = primary_payload.get("curve_analysis")
     if not isinstance(raw_analysis, dict):
@@ -528,13 +564,13 @@ def _residual_atoms(
                 if reference_duplicate
                 else "candidate_duplicate_x"
             )
-            atoms.append(_ResidualAtom(x, None, None, None, support))
+            atoms.append(_ResidualAtom(x=x, reference=None, candidate=None, residual=None, support=support))
             continue
         try:
             reference_value = _raw_value_at(reference, x, comparison.interpolation)
             candidate_value = _raw_value_at(candidate, x, comparison.interpolation)
         except ValueError:
-            atoms.append(_ResidualAtom(x, None, None, None, "invalid"))
+            atoms.append(_ResidualAtom(x=x, reference=None, candidate=None, residual=None, support="invalid"))
             continue
         support = _support(reference_value, candidate_value, comparison)
         residual: float | None
@@ -585,7 +621,7 @@ def _unavailable_atoms(
             if candidate_duplicate
             else "invalid"
         )
-        atoms.append(_ResidualAtom(x, None, None, None, support))
+        atoms.append(_ResidualAtom(x=x, reference=None, candidate=None, residual=None, support=support))
     return tuple(atoms)
 
 
@@ -831,13 +867,15 @@ def _plot_item(comparison_key: str, operator_key: str) -> str:
 
 
 def _render_curve_error_plot(
-    analysis: CurveErrorComparisonAnalysis,
+    analysis: CurveErrorComparisonNumerics,
     *,
     atoms: tuple[_ResidualAtom, ...],
     comparison: CurveComparison,
     reference: CurveSeries,
     candidate: CurveSeries,
 ) -> bytes:
+    from PIL import Image, ImageDraw, ImageFont
+
     width, height = 1200, 800
     image = Image.new("RGB", (width, height), "white")
     draw = ImageDraw.Draw(image)

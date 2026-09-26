@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from importlib.metadata import PackageNotFoundError, distribution
 from pathlib import Path
-import re
 
 
 def load_scheduler_prompt() -> str:
@@ -17,12 +16,11 @@ def load_scheduler_prompt() -> str:
 
 def load_scheduler_guides() -> dict[str, str]:
     directory = _scheduler_prompt_path().parent / "scheduler"
-    # The prompt's reading index is the sole file list; missing wheel data must
-    # fail installation instead of leaving dangling instructions in AGENTS.md.
-    return {
-        name: (directory / name).read_text(encoding="utf-8")
-        for name in re.findall(r"^- .*: ([\w-]+\.md)\.", load_scheduler_prompt(), re.MULTILINE)
-    }
+    if not directory.is_dir():
+        raise FileNotFoundError("packaged scheduler maintenance guides are unavailable")
+    return {path.name: path.read_text(encoding="utf-8")
+            for path in sorted(directory.glob("*.md"))}
+
 
 
 def _scheduler_prompt_path() -> Path:

@@ -14,7 +14,7 @@ from ..operation_contract import (
     output_checker_contract_issue,
 )
 from .spec import (
-    OPERATION_ABI_VERSION, PLUGIN_PROTOCOL_VERSION, CallableComponent,
+    OPERATION_ABI_VERSION, PLUGIN_PROTOCOL_VERSION, CallableComponent, _JSON_POINTER,
     ApprovalProviderIdentity, CompiledComponent, CompiledDigestEnvelope,
     CompiledOperation, ComponentRef,
     ComponentSpec, OperationSpec, OutputPortSpec,
@@ -27,7 +27,7 @@ from .workspace import WORKSPACE_HOOK_KINDS
 from .runtime_plugins import RuntimePluginFactory
 PLUGIN_ENTRY_POINT_GROUP = "scidiscovery.plugins"
 _ID = re.compile(r"^[a-z][a-z0-9_.-]{0,127}$")
-_COMPONENT_KINDS = frozenset({"codec", "validator", "guard", "agent", "transform", "effect", "workspace", "worker_tool", "projector", "resource", "runtime_factory"}) | WORKSPACE_HOOK_KINDS
+_COMPONENT_KINDS = frozenset({"codec", "validator", "guard", "agent", "transform", "effect", "workspace", "worker_tool", "projector", "resource", "runtime_factory", "experiment_capability"}) | WORKSPACE_HOOK_KINDS
 _CompiledParts = dict[str, tuple[str, OperationSpec, set[str], PermissionTemplate | None]]
 class CatalogCompileError(ValueError):
     def __init__(
@@ -117,6 +117,13 @@ def _load_implementation(spec: ComponentSpec, plugin_id: str) -> Any:
         _fail("component_implementation_missing", plugin_id, field=spec.component_id)
     except Exception:
         _fail("component_implementation_error", plugin_id, field=spec.component_id)
+    if spec.kind == "experiment_capability":
+        from .experiment import ExperimentCapability
+        if (not isinstance(value, ExperimentCapability) or spec.extends is None
+                or type(value.execution_package_schema_version) is not int
+                or value.execution_package_schema_version < 1):
+            _fail("component_protocol_invalid", plugin_id, field=spec.component_id)
+        return value
     if spec.kind == "resource":
         if not isinstance(value, (str, bytes)): _fail("component_protocol_invalid", plugin_id, field=spec.component_id)
         return value
@@ -145,10 +152,11 @@ def _resource_digest(spec: ComponentSpec, implementation: Any, plugin_id: str) -
                 "evidence_ports": implementation.evidence_ports,
                 "network_access": implementation.network_access,
                 "record_attempts": implementation.record_attempts,
+                **({"owner_only": True} if implementation.owner_only else {}),
                 "reference_policy": (asdict(implementation.reference_policy)
                                      if implementation.reference_policy is not None else None),
             })
-        if spec.kind == "workspace":
+        if spec.kind in {"workspace", "experiment_capability"}:
             return canonical_digest(implementation)
         if spec.kind == "resource":
             content = implementation if isinstance(implementation, bytes) else implementation.encode("utf-8")
@@ -212,7 +220,18 @@ def _resolve_component(plugin_map: Mapping[str, PluginDefinition], components: M
     if component is None: _fail("component_reference_missing", owner, field=key)
     if component.plugin_id != owner:
         dependencies = {item.plugin_id for item in plugin_map[owner].dependencies}
-        if component.plugin_id not in dependencies or not component.spec.public: _fail("component_cross_plugin_forbidden", owner, field=key)
+        selected = tuple(op.executor.capability for op in plugin_map[owner].operations
+                         if op.executor.capability is not None)
+        contributed = any(
+            (provider := components.get(_qualified(owner, selection))) is not None
+            and provider.spec.kind == "experiment_capability"
+            and provider.spec.extends is not None
+            and provider.spec.extends.plugin_id == owner
+            and (key == _qualified(owner, selection)
+                 or key in {_qualified(provider.plugin_id, item) for item in provider.spec.resources})
+            for selection in selected)
+        if not contributed and (component.plugin_id not in dependencies or not component.spec.public):
+            _fail("component_cross_plugin_forbidden", owner, field=key)
     if kind is not None and component.spec.kind != kind: _fail("component_kind_mismatch", owner, field=key)
     first_global_use = key not in used
     used.add(key)
@@ -225,7 +244,7 @@ def _resolve_component(plugin_map: Mapping[str, PluginDefinition], components: M
             dependency = _resolve_component(
                 plugin_map, components, used,
                 component.plugin_id, resource,
-                None if component.spec.kind == "workspace" else "resource",
+                None if component.spec.kind in {"workspace", "experiment_capability"} else "resource",
                 reachable)
             if (component.spec.kind == "workspace"
                     and dependency.spec.kind not in WORKSPACE_HOOK_KINDS):
@@ -289,6 +308,9 @@ def _validate_operation_contracts(plugin_map: dict[str, PluginDefinition], compo
         runtime_refs[plugin.plugin_id] = tuple(refs)
         for operation in plugin.operations:
             reachable: set[str] = set()
+            if operation.executor.capability is not None:
+                _resolve_component(plugin_map, components, used, plugin.plugin_id,
+                    operation.executor.capability, "experiment_capability", reachable)
             for runtime_ref in runtime_refs[plugin.plugin_id]:
                 _resolve_component(plugin_map, components, used, plugin.plugin_id, runtime_ref, None, reachable)
             op_id = operation.operation_id
@@ -300,6 +322,25 @@ def _validate_operation_contracts(plugin_map: dict[str, PluginDefinition], compo
                         operation.description.not_for)):
                 _fail("operation_description_invalid", plugin.plugin_id, op_id)
             if op_id in compiled_parts: _fail("operation_duplicate", plugin.plugin_id, op_id)
+            if (not 1 <= len(operation.decision_fields) <= 8
+                    or any(not field or len(field) > 128 or (field.startswith("/") and _JSON_POINTER.fullmatch(field) is None) for field in operation.decision_fields)
+                    or len(set(operation.decision_fields)) != len(operation.decision_fields)):
+                _fail("decision_fields_invalid", plugin.plugin_id, op_id)
+            if any(not port.agent_visible and port.derivation is None for port in operation.inputs):
+                _fail("hidden_input_requires_control_derivation", plugin.plugin_id, op_id)
+            input_ports = {port.name: port for port in operation.inputs}
+            for port in operation.inputs:
+                current, seen = port, set()
+                while current.derivation is not None:
+                    rule = current.derivation
+                    if (current.name in seen or rule.anchor_port not in input_ports
+                            or (rule.producer_output_port is not None and
+                                (not _ID.fullmatch(rule.producer_output_port) or rule.select != "subject"))
+                            or len(rule.producer_input_path) > 8
+                            or any(not _ID.fullmatch(name) for name in rule.producer_input_path)):
+                        _fail("input_derivation_invalid", plugin.plugin_id, op_id)
+                    seen.add(current.name)
+                    current = input_ports[rule.anchor_port]
             if operation.executor.kind == "approval" and (
                 operation.catalog_scope != "public"
                 or operation.consequence == "external"
@@ -317,6 +358,9 @@ def _validate_operation_contracts(plugin_map: dict[str, PluginDefinition], compo
             ):
                 _fail("operation_ports_empty", plugin.plugin_id, op_id)
             names = [port.name for port in (*operation.inputs, *operation.outputs)]
+            if (len(operation.independent_review_ports) != len(set(operation.independent_review_ports))
+                    or not set(operation.independent_review_ports) <= {port.name for port in operation.inputs}):
+                _fail("independent_review_subject_invalid", plugin.plugin_id, op_id)
             if len(names) != len(set(names)): _fail("operation_port_duplicate", plugin.plugin_id, op_id)
             if operation.input_validation is not None:
                 issue = operation.input_validation.issue()
@@ -450,8 +494,14 @@ def _validate_operation_contracts(plugin_map: dict[str, PluginDefinition], compo
                 "projector" if executor.kind == "approval" else executor.kind,
                 reachable,
             )
+            if executor.preparation is not None:
+                if executor.kind != "effect":
+                    _fail("preparation_requires_effect", plugin.plugin_id, op_id)
+                _resolve_component(plugin_map, components, used, plugin.plugin_id,
+                                   executor.preparation, "transform", reachable)
             declared_refs = (
                 executor.component,
+                *((executor.preparation,) if executor.preparation else ()),
                 *((executor.workspace,) if executor.workspace else ()),
                 *executor.tools,
                 *executor.resources,
@@ -586,16 +636,18 @@ def _validate_review_graph(plugin_map: Mapping[str, PluginDefinition], component
                 for name in review.approval.subject_ports
             ) > 256:
                 _fail("approval_subject_limit_invalid", plugin_id, op_id, "review")
-            if operation.consequence == "external" and (
-                len(operation.inputs) != 1
-                or len(operation.outputs) != 1
-                or review.approval.subject_ports
-                != (operation.outputs[0].name, operation.inputs[0].name)
-                or operation.outputs[0].kind != "execution_request"
-                or operation.outputs[0].schema_id
-                != "scidiscovery.execution-request"
-            ):
-                _fail("effect_approval_contract_mismatch", plugin_id, op_id, "review")
+            if operation.consequence == "external":
+                prepared = operation.executor.preparation is not None
+                payload_ports = operation.outputs[1:] if prepared else operation.inputs
+                if (len(payload_ports) != 1 or len(operation.outputs) != (2 if prepared else 1)
+                    or review.approval.subject_ports != (operation.outputs[0].name, payload_ports[0].name)
+                    or operation.outputs[0].kind != "execution_request"
+                    or operation.outputs[0].schema_id != "scidiscovery.execution-request"
+                    or (prepared and (payload_ports[0].validator is None
+                                      or payload_ports[0].min_items != 1
+                                      or payload_ports[0].max_items != 1
+                                      or payload_ports[0].collection is not None))):
+                    _fail("effect_approval_contract_mismatch", plugin_id, op_id, "review")
             _resolve_component(plugin_map, components, used, plugin_id, review.approval.projector, "projector",
                     compiled_parts[op_id][2])
         if review.reviewer_operation is None:
@@ -774,6 +826,12 @@ def _build_compiled_catalog(plugin_map: Mapping[str, PluginDefinition], componen
             )
             digest = canonical_digest({
                 "compiled": envelope,
+                "capability_execution": (
+                    operation_digest(implementations_capability.execution_operation)
+                    if operation.executor.capability is not None
+                    and (implementations_capability := components[_qualified(plugin_id, operation.executor.capability)].implementation)
+                    else None
+                ),
                 "output_contracts": output_contracts[op_id],
                 "output_schema_projection": tuple(
                     (port.name, version) for port in operation.outputs
@@ -836,8 +894,54 @@ def _build_compiled_catalog(plugin_map: Mapping[str, PluginDefinition], componen
         runtime_configuration_digests,
         runtime_identity_digests,
     )
-def compile_catalog(plugins: Iterable[PluginDefinition]) -> CompiledCatalog:
+def compile_catalog(plugins: Iterable[PluginDefinition], *, capability_selections: Mapping[str, str] | None = None) -> CompiledCatalog:
     plugin_map, components = _normalize_declarations(plugins)
+    # Formal reviewer independence derives from the same declared review edges.
+    # The edge offers review; it does not impose review on ordinary consumers.
+    review_subjects = {}
+    for plugin in plugin_map.values():
+        for operation in plugin.operations:
+            edge = operation.review
+            if edge is not None and edge.reviewer_operation and edge.reviewer_input_port:
+                review_subjects.setdefault(edge.reviewer_operation, set()).add(edge.reviewer_input_port)
+    for owner, plugin in tuple(plugin_map.items()):
+        plugin_map[owner] = plugin.model_copy(update={"operations": tuple(
+            operation.model_copy(update={"independent_review_ports": tuple(sorted(
+                set(operation.independent_review_ports) | review_subjects.get(operation.operation_id, set())))})
+            for operation in plugin.operations)})
+    # Resolve an installed extension before computing tools, permissions or the
+    # digest. Never expose every installed provider to the experiment Worker.
+    selections = dict(capability_selections or {})
+    for owner, plugin in tuple(plugin_map.items()):
+        operations = []
+        for operation in plugin.operations:
+            protocol = operation.executor.capability
+            if protocol is not None:
+                protocol_key = _qualified(owner, protocol)
+                candidates = {key: component for key, component in components.items()
+                    if component.spec.kind == "experiment_capability"
+                    and component.spec.extends is not None
+                    and _qualified(component.plugin_id, component.spec.extends) == protocol_key}
+                choice = selections.get(protocol_key)
+                if not candidates and choice is None:
+                    operation = operation.model_copy(update={"executor": operation.executor.model_copy(update={"capability": None})})
+                    operations.append(operation)
+                    continue
+                if choice is None and len(candidates) == 1:
+                    choice = next(iter(candidates))
+                if choice not in candidates:
+                    _fail("experiment_capability_selection_required", owner, operation.operation_id)
+                selected = candidates[choice]
+                if not set(selected.implementation.tools) <= set(selected.spec.resources):
+                    _fail("experiment_capability_tools_undeclared", selected.plugin_id)
+                qualify = lambda ref: ComponentRef(ref.component_id, ref.plugin_id or selected.plugin_id)
+                executor = operation.executor.model_copy(update={
+                    "capability": ComponentRef(selected.spec.component_id, selected.plugin_id),
+                    "tools": operation.executor.tools + tuple(map(qualify, selected.implementation.tools)),
+                })
+                operation = operation.model_copy(update={"executor": executor})
+            operations.append(operation)
+        plugin_map[owner] = plugin.model_copy(update={"operations": tuple(operations)})
     compiled_parts, runtime_factories, runtime_configuration_digests, runtime_identity_digests, used = _validate_operation_contracts(plugin_map, components)
     approval_provider_ids = _validate_review_graph(plugin_map, components, compiled_parts, used)
     return _build_compiled_catalog(plugin_map, components, compiled_parts, approval_provider_ids, runtime_factories, runtime_configuration_digests, runtime_identity_digests, used)

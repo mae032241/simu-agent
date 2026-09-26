@@ -21,11 +21,9 @@ from tcad_artifact.plugin import PLUGIN as TCAD_PLUGIN
 
 
 FIGURE_OPERATIONS = {
-    "scidiscovery.curve-bundle.figure-evidence.v2",
-    "science.figure.request.prepare.v1",
-    "science.figure.evidence.materialize.v1",
-    "science.evidence.extract.figure.v2",
-    "science.figure.evidence.audit.v1",
+    "scidiscovery.curve-bundle.figure-evidence.v3",
+    "science.evidence.extract.figure.v3",
+    "science.figure.evidence.audit.v2",
 }
 
 
@@ -43,64 +41,28 @@ def test_optional_plugin_adds_the_complete_figure_vertical_slice(extra_plugins) 
         for operation_id in FIGURE_OPERATIONS
     } == {"curve_figure_evidence"}
     assert "science.evidence.extract.figure.v1" not in optional.operation_ids()
-    request = optional.operation("science.figure.request.prepare.v1")
-    assert request.spec.outputs[0].schema_id == (
-        "scidiscovery.curve-figure-digitization-request.v2"
-    )
-    assert {
-        item.name for item in operation_worker_tools(request)
-    } >= {
-        "worker_curve_figure_inspect_source",
-        "worker_curve_figure_preview",
-        "worker_extract_pdf_text",
-    }
-
-    extraction = optional.operation("science.evidence.extract.figure.v2")
+    extraction = optional.operation("science.evidence.extract.figure.v3")
     primary_outputs = tuple(port for port in extraction.spec.outputs if port.collection is None)
     assert len(primary_outputs) == 1
     intake_output = primary_outputs[0]
+    assert intake_output.validator.component_id == "figure_intake_validator"
+    assert intake_output.semantic_contract.component_id == "figure_semantic_contract"
     assert intake_output.context_validator is not None
-    assert intake_output.context_validator.component_id == "intake_source_context"
-    assert intake_output.context_rule_id == "intake.source_binding"
-    assert intake_output.context_sources == (
-        "paper_source",
-        "figure_request",
-        "figure_manifest",
-        "validation_report",
-        "source_panels",
-        "audit_overlays",
-        "curve_tables",
-        "user_context",
-    )
+    assert intake_output.context_validator.component_id == "figure_intake_context"
+    assert intake_output.context_rule_id == "curve.figure.evidence_binding"
+    assert intake_output.context_sources == ("paper_source", "tool_evidence", "figure_provenance", "figure_family", "user_context")
+    assert {item.name for item in operation_worker_tools(extraction)} >= {
+        "worker_curve_figure_inspect_source", "worker_curve_figure_preview", "worker_curve_figure_save", "worker_curve_figure_reuse", "worker_extract_pdf_text"}
+    assert optional.operation("science.figure.evidence.audit.v2").spec.input_validation is not None
     assert extraction.spec.review is not None
     assert extraction.spec.review.reviewer_operation == (
-        "science.figure.evidence.audit.v1"
+        "science.figure.evidence.audit.v2"
     )
     assert extraction.spec.review.subject_outputs == ("scientific_intake",)
-    assert extraction.spec.review.max_revisions == 2
-    assert extraction.spec.review.progress_fingerprint is not None
-    assert {
-        port.name: (port.min_items, port.max_items, port.usage)
-        for port in extraction.spec.inputs
-        if port.usage in {"revision_base", "change_request"}
-    } == {
-        "prior_draft": (0, 1, "revision_base"),
-        "change_request": (0, 1, "change_request"),
-    }
-    assert extraction.spec.input_admission is not None
-    assert extraction.spec.input_admission.member_ports == (
-        "prior_draft",
-        "change_request",
-    )
-    direct = direct_revision_ports(extraction)
-    assert direct is not None
-    assert active_direct_revision_ports(
-        extraction, (port.name for port in extraction.spec.inputs
-                     if port.usage not in {"revision_base", "change_request"})
-    ) is None
-    assert active_direct_revision_ports(
-        extraction, (port.name for port in extraction.spec.inputs)
-    ) == direct
+    assert extraction.spec.review.max_revisions == 0
+    assert extraction.spec.review.progress_fingerprint is None
+    assert extraction.spec.input_admission is None
+    assert direct_revision_ports(extraction) is None
     assert "science.intake.revise.figure.v1" not in optional.operation_ids()
     assert all(
         LocalTrustedBackend.unsupported_requirements(optional.operation(operation_id))
@@ -144,35 +106,24 @@ def test_public_and_support_views_expose_one_runnable_figure_topology(
         for item in root.operation_catalog(scope="public")["operations"]
     }
     assert public_ids >= {
-        "science.figure.request.prepare.v1",
-        "science.evidence.extract.figure.v2",
-        "science.figure.evidence.audit.v1",
+        "science.evidence.extract.figure.v3",
+        "science.figure.evidence.audit.v2",
     }
     support_ids = {
         item["operation_id"]
         for item in root.operation_catalog(scope="support")["operations"]
     }
     assert support_ids >= {
-        "science.figure.evidence.materialize.v1",
-        "scidiscovery.curve-bundle.figure-evidence.v2",
+        "scidiscovery.curve-bundle.figure-evidence.v3",
     }
     all_items = {
         item["operation_id"]: item
         for item in root.operation_catalog(scope="all")["operations"]
     }
     assert "science.evidence.extract.figure.v1" not in all_items
-    assert all_items["science.evidence.extract.figure.v2"][
-        "complete_transform_family"
-    ] == {
-        "output_ports": [
-            "figure_manifest",
-            "validation_report",
-            "source_panels",
-            "audit_overlays",
-            "curve_tables",
-        ],
-        "input_ports": ["paper_source", "figure_request"],
-    }
+    assert all_items["science.evidence.extract.figure.v3"].get("complete_transform_family") is None
+    assert "science.figure.request.prepare.v1" not in all_items
+    assert "science.figure.evidence.materialize.v1" not in all_items
     assert all(
         all_items[operation_id].get("runtime_binding", {}).get(
             "status", "available"

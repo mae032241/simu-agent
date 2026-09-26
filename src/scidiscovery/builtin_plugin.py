@@ -29,7 +29,9 @@ CORE_PLUGIN = PluginDefinition(
             ("file_move_tool", "FILE_MOVE_TOOL"),
         )
     ) + (ComponentSpec("reference_read_tool", "worker_tool",
-        "scidiscovery.reference_tools:REFERENCE_READ_TOOL", public=True),),
+        "scidiscovery.reference_tools:REFERENCE_READ_TOOL", public=True),
+        ComponentSpec("helper_tool", "worker_tool",
+        "scidiscovery.helper_tool:HELPER_TOOL", public=True)),
     operations=(),
 )
 

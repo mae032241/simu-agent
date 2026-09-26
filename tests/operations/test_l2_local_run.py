@@ -47,11 +47,8 @@ def _envelope(
     payload: object,
     *,
     verdict: str = "pass",
-    next_action_kind: str | None = None,
 ) -> bytes:
     handoff = {"verdict": verdict, "summary": "Bounded local result."}
-    if next_action_kind is not None:
-        handoff["next_action_kind"] = next_action_kind
     return canonical_json(
         {
             "schema_version": 1,
@@ -466,7 +463,6 @@ def test_local_run_uses_native_files_one_domain_tool_and_one_terminal_authority(
     output.write_bytes(
         _envelope(
             observation.model_dump(mode="json"),
-            next_action_kind="not a registered operation",
         )
     )
     completed = worker.call_tool("worker_submit_result", {})
@@ -482,9 +478,6 @@ def test_local_run_uses_native_files_one_domain_tool_and_one_terminal_authority(
         "schema": "blind.csv-observation.v1",
         "payload": observation.model_dump(mode="json"),
     }
-    assert author_status["scheduler_signal"]["next_action_kind"] == (
-        "not a registered operation"
-    )
 
     review_created = root.call_tool(
         "operation_invoke",
@@ -643,7 +636,6 @@ def test_local_run_uses_native_files_one_domain_tool_and_one_terminal_authority(
                         "assumptions": [],
                         "missing_inputs": [],
                         "next_actions": [],
-                        "next_action_kind": "legacy.route",
                     }
                 ),
                 run_id,

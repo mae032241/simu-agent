@@ -212,7 +212,7 @@ def test_renderer_uses_raw_fallback_without_domain_schema_dispatch(
             {"domain_marker": "visible from the complete frozen object"}
         ),
         name="historical",
-        schema_id="tcad.reviewed-deck-package.v2",
+        schema_id="tcad.execution-package.v2",
         media_type="application/json",
     )
     launch = runtime.approvals.create_request(
@@ -248,7 +248,7 @@ def test_renderer_uses_raw_fallback_without_domain_schema_dispatch(
         "scidiscovery.scientific-foundation.v1",
         "scidiscovery.figure-evidence-manifest.v1",
         "scidiscovery.device-parameter-set.v1",
-        "tcad.reviewed-deck-package.v2",
+        "tcad.execution-package.v2",
         "_render_tcad",
         "_render_device_parameter",
         "_render_figure",

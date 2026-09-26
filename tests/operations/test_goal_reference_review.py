@@ -5,7 +5,7 @@ from pathlib import Path
 from scidiscovery.artifact_agent.schema.common import canonical_json
 from scidiscovery.artifact_agent.transforms import materialize_experiment_plan
 from scidiscovery.artifact_agent.interfaces.mcp_local_worker import LocalWorkerMCPRouter
-from tests.operations.m3_transform_equivalence_runner import _engineering_intent
+from tests.operations.science_fixtures import _engineering_intent
 from tests.operations.test_general_transform_operations import _root, _register, _catalog
 from tests.operations.test_hypothesis_objective_boundary import _foundation
 

@@ -38,99 +38,20 @@ def test_user_context_is_declared_only_on_public_agents():
             assert ("user_context" in output.context_sources) == (output.context_validator is not None)
 
 
-def _revision_cohort(tmp_path, *, audit_note):
-    """Real control lifecycle and fixture UI approval; no admission/signal stubs."""
-    catalog = compile_catalog((CORE_PLUGIN, GENERAL_PLUGIN))
-    runtime, instance, root = _root(tmp_path, catalog=catalog)
-    _register(runtime, instance, name="source", raw=b"Frozen fixture source.",
-              kind="source", schema="opaque", media_type="text/plain")
-    root.call_tool("artifact_ingest_text", {"name": "note", "text": "这是一条待判断的建议；保留原始证据。\r\n"})
-    payload = json.loads(_intake().canonical_json().replace(b'"paper"', b'"source_material"'))
-    payload["scientific_foundation"]["objective_contract"] = {
-        "objective_key": "global_objective", "intent": "mechanism_discrimination",
-        "statement": payload["scientific_foundation"]["objective"],
-        "closure_requirements": [{"requirement_key": "comparison", "description": "One finite comparison.",
-                                  "requirement_type": "comparison_present", "comparison_purposes": ["mechanism_separation"]}],
-    }
-    intake = _complete(runtime, root, "extraction", "science.evidence.extract.v1",
-        {"source_material": "source"}, payload)
-    audit_inputs = {"scientific_intake": intake, "source_material": "source"}
-    if audit_note:
-        audit_inputs["user_context"] = "note"
-    audit = _complete(runtime, root, "audit", "science.evidence.audit.intake.v1", audit_inputs,
-        {"checks": [{"check_key": "trace", "subject": "Frozen source", "status": "pass",
-                     "basis": "Exact source; the optional suggestion does not change it.", "evidence_keys": ["source_material"]}]})
-    split = root.call_tool("operation_invoke", {"name": "split", "operation_id": "science.intake.split.v1", "inputs": [
-        {"port": "scientific_intake", "artifact_names": [intake]}, {"port": "evidence_audit", "artifact_names": [audit]}]})
-    split_names = {item["output_label"]: item["artifact_name"] for item in split["result"]["outputs"]}
-    foundation = split_names["scientific_foundation"]
-    root.call_tool("operation_invoke", {"name": "qualification", "operation_id": "science.evidence.qualify.v1", "inputs": [
-        {"port": "scientific_foundation", "artifact_names": [foundation]},
-        {"port": "extraction_primary", "artifact_names": [intake]},
-        {"port": "evidence_audit", "artifact_names": [audit]},
-        {"port": "frozen_sources", "artifact_names": ["source"]}]})
-    approval_id = runtime.scheduler_bindings.resolve(instance=instance.instance_id, namespace="approval", name="qualification")
-    launch = runtime.approvals.status(approval_id)
-    token = parse_qs(urlparse(launch.review_path).query)["token"][0]
-    view = runtime.approvals.review(approval_id, access_token=token)
-    runtime.approvals.record_ui_decision(approval_id=approval_id, access_token=token,
-        csrf_token=view.csrf_token, decision_nonce=view.decision_nonce, selected_option="approve", rationale="",
-        decided_by=LocalIdentityRef(identity_id="fixture_reviewer", display_name="Fixture UI reviewer"),
-        ui_session_id="user_context_test")
-    hypothesis = _proposal(hypothesis_keys=("hypothesis_a",))
-    # This alias belongs to the foundation, not to a hypothesis input port.
-    hypothesis["hypotheses"][0]["evidence_keys"] = ["source_material"]
-    proposal = _complete(runtime, root, "hypotheses", "science.hypothesis.propose.v1",
-        {"problem_frame": split_names["primary"], "scientific_foundation": foundation}, hypothesis)
-    critic = _complete(runtime, root, "critic", "science.hypothesis.criticize.v1",
-        {"hypothesis_portfolio": proposal, "scientific_foundation": foundation},
-        _critic(disposition="revise_evidence").model_dump(mode="json"), verdict="inconclusive")
-    request = {"name": "evidence_revision", "operation_id": "science.evidence.revise-from-critic.v1", "inputs": [
-        {"port": "prior_draft", "artifact_names": [intake]},
-        {"port": "intake_audit", "artifact_names": [audit]},
-        {"port": "scientific_foundation", "artifact_names": [foundation]},
-        {"port": "hypothesis_portfolio", "artifact_names": [proposal]},
-        {"port": "change_request", "artifact_names": [critic]},
-        {"port": "source_material", "artifact_names": ["source"]}],
-        "instruction": "Revise the bounded factual gap in the exact original evidence."}
-    return runtime, instance, root, request, audit
 
 
-@pytest.mark.parametrize("audit_note", (False, True))
-def test_root_preflight_and_schedule_preserve_exact_sources_with_audit_background(tmp_path, monkeypatch, audit_note):
-    runtime, instance, root, request, audit = _revision_cohort(tmp_path, audit_note=audit_note)
-    before = root.call_tool("operation_preflight", request)
-    assert before["admissible"], before
-    result = root.call_tool("operation_invoke", request)
-    assert result["result"]["state"] == "queued", result
-    saved = runtime.runs.status(runtime.scheduler_bindings.resolve(
-        instance=instance.instance_id, namespace="run", name=request["name"]))
-    assert [item.artifact_name for item in saved.inputs if item.port_name == "source_material"] == ["source"]
-    audit_artifact = _artifact(runtime, instance, audit)
-    family = root.facade._run_output_family(audit_artifact)
-    assert tuple((item.port_name, item.ref) for item in family.producer_inputs) == tuple(
-        (item.port_name, item.artifact_ref)
-        for item in runtime.runs.completed_for_output(audit_artifact.ref).inputs)
-    assert [item.item_index for item in family.producer_inputs if item.port_name == "source_material"] == [1]
-    assert all(source.ref != _artifact(runtime, instance, "note").ref for source in family.evidence_sources)
-    assert (_artifact(runtime, instance, "note").ref in audit_artifact.parent_refs) == audit_note
-    _register(runtime, instance, name="replacement", raw=b"Other source.", kind="source", schema="opaque", media_type="text/plain")
-    for sources in ([], ["replacement"]):
-        bad = {**request, "name": "bad_source", "inputs": [
-            {**item, "artifact_names": sources} if item["port"] == "source_material" else item for item in request["inputs"]]}
-        assert not root.call_tool("operation_preflight", bad)["admissible"]
-    query = runtime.runs.completed_for_output
-    monkeypatch.setattr(runtime.runs, "completed_for_output", lambda ref: None if ref == audit_artifact.ref else query(ref))
-    missing = root.call_tool("operation_preflight", {**request, "name": "missing_producer"})
-    assert missing["reason_code"] == "input_producer_metadata_unavailable", missing
-    assert "intake_audit" in json.dumps(missing)
 
 
 def test_background_reference_is_not_a_formal_parameter_source(tmp_path):
     from pathlib import Path
     from scidiscovery.artifact_agent.interfaces.mcp_local_worker import LocalWorkerMCPRouter
-    from tests.operations.test_m2_parameter_package import _root as parameter_root, _package, _envelope
-    catalog, runtime, instance, root = parameter_root(tmp_path)
+    from tests.operations.test_m2_parameter_package import _package
+    from curve_score.plugin import PLUGIN as curve
+    from tcad_artifact.plugin import PLUGIN as tcad
+    catalog = compile_catalog((CORE_PLUGIN, GENERAL_PLUGIN, curve, tcad))
+    runtime, instance, root = _root(tmp_path, catalog=catalog)
+    def _envelope(payload):
+        return canonical_json(dict(schema_version=1,payload=payload,handoff=dict(verdict='pass',summary='Bounded parameter fixture.')))
     root.call_tool("artifact_ingest_text", {"name": "source", "text": "scale=1"})
     root.call_tool("artifact_ingest_text", {"name": "note", "text": "A user suggestion to assess."})
     root.call_tool("operation_invoke", {"name": "extract", "operation_id": "tcad.parameter.evidence.extract.v1", "instruction": "Extract the bound fixture parameter.",

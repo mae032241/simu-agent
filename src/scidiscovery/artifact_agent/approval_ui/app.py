@@ -571,7 +571,7 @@ class ApprovalUI:
             display = (model.node_metadata(instance_id, selected_key) if selected_key
                        else view.get("selected_node") or view.get("recent_node"))
             if display:
-                view["display_node"] = display
+                view["display_node"] = {**display, "sealed_stages": model.stage_deliveries(instance_id, display["key"])}
                 view["presentation"] = self._workbench_presentation(instance_id, display["key"])
             self._workbench_objectives(model, instance_id, view)
             view["observations"] = self._cache_observations(instance_id, view["nodes"]["items"])
@@ -581,7 +581,11 @@ class ApprovalUI:
             key = unquote(parts[3])
             view = model.node(instance_id, key,
                 diagnostic_after=int(_one(query, "diagnostic_after") or "0"),
-                diagnostic_limit=int(_one(query, "diagnostic_limit") or "50"))
+                diagnostic_limit=int(_one(query, "diagnostic_limit") or "50"),
+                stage_offset=int(_one(query, "stage_offset") or "0"),
+                stage_limit=int(_one(query, "stage_limit") or "4"),
+                stage_reference=_one(query, "stage_reference"),
+                stage_text_offset=int(_one(query, "stage_text_offset") or "0"))
             view["storage"] = self._storage_status(instance_id)
             self._workbench_objectives(model, instance_id, view)
             view["observations"] = self._cache_observations(instance_id,
@@ -599,13 +603,10 @@ class ApprovalUI:
         return self._respond(handler, HTTPStatus.OK, body, "text/html; charset=utf-8")
 
     def _render_review_page(self, review, token):
-        from .legacy_artifacts import LegacyUIArtifactEnvelope
         # Archived approvals are already read-only and their request may exist
         # only in the archive, not in the active Artifact registry.
         read_only = (review.request.kind in _RETIRED_INSTANCE_APPROVAL_KINDS
             or self._approval_frozen(review.request.approval_id))
-        if not read_only:
-            read_only = isinstance(self.service.artifacts.catalog(review.request_ref), LegacyUIArtifactEnvelope)
         presentation, evidence_href, image_href = None, None, None
         if self.read_model is not None and self.bindings is not None:
             try:
@@ -761,7 +762,11 @@ class ApprovalUI:
             elif len(parts) == 5 and parts[3] == "nodes":
                 result = model.node(instance_id, unquote(parts[4]),
                     diagnostic_after=int(_one(query, "diagnostic_after") or "0"),
-                    diagnostic_limit=int(_one(query, "diagnostic_limit") or "50"))
+                    diagnostic_limit=int(_one(query, "diagnostic_limit") or "50"),
+                    stage_offset=int(_one(query, "stage_offset") or "0"),
+                    stage_limit=int(_one(query, "stage_limit") or "4"),
+                    stage_reference=_one(query, "stage_reference"),
+                    stage_text_offset=int(_one(query, "stage_text_offset") or "0"))
             elif len(parts) == 5 and parts[3] == "evidence":
                 result = model.artifact(instance_id, unquote(parts[4]),
                     pointer=_one(query, "pointer"),
@@ -844,10 +849,6 @@ class ApprovalUI:
                 if self._approval_frozen(parts[1]):
                     return self._error(handler, HTTPStatus.CONFLICT, "实例正在维护或已经归档；此审批只可读取。")
                 review = self.service.review(parts[1], access_token=token)
-                from .legacy_artifacts import LegacyUIArtifactEnvelope
-                if isinstance(self.service.artifacts.catalog(review.request_ref), LegacyUIArtifactEnvelope):
-                    return self._error(handler, HTTPStatus.CONFLICT,
-                        "历史 Task 代际审批仅可读取，不能按当前合同写入决定。")
                 if review.request.kind in _RETIRED_INSTANCE_APPROVAL_KINDS:
                     return self._error(
                         handler,

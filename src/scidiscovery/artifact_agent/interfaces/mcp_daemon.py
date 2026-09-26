@@ -15,8 +15,10 @@ from pathlib import Path
 from typing import Any, Callable
 
 from scidiscovery.interfaces.daemon import UnixSocketDaemon
+from ...operation_contract import DiagnosticError
 
-from .mcp import build_root_router
+from .mcp import build_root_router, rpc_error
+from .mcp_platform_context import platform_context
 from .mcp_proxy import SCHEDULER_PROXY_FIELD, CLIENT_HEARTBEAT, CLIENT_DISCONNECT
 from ..service.scheduler_bindings import SchedulerBindingService
 from ..service import StateMaintenanceLock
@@ -102,8 +104,10 @@ class RootBrokerRouter:
                     with self._lock:
                         self._routers.pop(proxy_id, None)
                 return {"jsonrpc": "2.0", "id": request_id, "result": {}}
-            worker_call = (clean.get("params", {}).get("_meta", {})
-                           .get("x-codex-turn-metadata", {}).get("thread_source") == "subagent")
+            try:
+                worker_call = method == "tools/call" and platform_context(clean).worker
+            except DiagnosticError as error:
+                return rpc_error(request_id, error)
             if method == "tools/call" and self.client_bindings is not None and not worker_call:
                 # instance_close owns an exclusive gate internally; protect this
                 # short lease write separately to avoid nesting shared -> exclusive.

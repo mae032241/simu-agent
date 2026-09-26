@@ -273,7 +273,7 @@ def render_workbench(overview: dict, *, browse_base: str, csrf_token: str, can_m
         image_href=lambda artifact: base + "/evidence/" + quote(artifact, safe="") + "?format=image")
     content = ("<div class='workspace-grid'><aside class='workspace-sidebar'>" + _goal_panel(overview, instance_id) + timeline
         + "</aside><div class='workspace-main'><div class='panel-heading'><h2>" + title + "</h2>" + display_link + "</div>"
-        + active_panel + presentation + "</div></div>")
+        + active_panel + presentation + _sealed_stages(display, instance_id) + "</div></div>")
     all_records = "<ol class='trajectory-list all-records'>" + "".join(_node_card(n, instance_id, compact=True) for n in rows) + "</ol>" + more
     footer = fold_panel("全部记录（含成果登记）", all_records, count=len(rows))
     if hidden_count:
@@ -347,6 +347,60 @@ def _diagnostics(node: dict, instance_id: str) -> str:
     return _section("错误与日志", content + pagination, section_id="diagnostics")
 
 
+def _sealed_stages(node: dict, instance_id: str) -> str:
+    page = node.get("sealed_stages")
+    if not isinstance(page, dict):
+        return ""
+    base = _node_href(instance_id, node["key"])
+    def link(query, label):
+        return _link(base + "?" + urlencode(query), label)
+    phases = {"design": "设计", "implementation": "实现", "debug": "调试", "execution": "执行", "validity": "有效性"}
+    kinds = {"author_conclusion": "作者科学结论", "scientific_material": "科学产物", "executor_observation": "执行器事实"}
+    body = "<p>以下材料已封存；阶段交付不代表 Run 完成、科学资格或批准。</p>"
+    if page.get("final_selection") == "sealed":
+        body += "<p>最终报告已明确采用版本：</p>" + render_json_value(page.get("adopted_references"), max_bytes=8192)
+    else:
+        body += "<p>最终采用版本尚未封存。</p>"
+    material = page.get("material")
+    if isinstance(material, dict):
+        body += "<h3>" + _text(material.get("reference")) + " · 科学材料原文</h3>"
+        body += "<pre>" + html.escape(material.get("text", "")) + "</pre>"
+        body += link({"stage_offset": 0}, "返回阶段历史")
+        if material.get("next_text_offset") is not None:
+            body += "<p>原文尚有后续内容。</p>" + link({"stage_reference": material["reference"],
+                "stage_text_offset": material["next_text_offset"]}, "下一段原文")
+    for item in page.get("items", []):
+        body += "<article class='stage-delivery'><h3>" + _text(phases.get(item.get("stage"), item.get("stage")))
+        body += " · " + _text(kinds.get(item.get("delivery_kind"), item.get("delivery_kind"))) + " · v" + str(item["version"]) + "</h3>"
+        if item.get("adopted") is not None:
+            body += "<p>" + ("最终采用" if item["adopted"] else "未被最终报告采用") + "</p>"
+        for key, label in (("conclusion", "结论"), ("remaining_question", "未决问题"), ("summary", "执行摘要")):
+            if item.get(key):
+                body += "<h4>" + label + "</h4><p>" + html.escape(item[key]) + "</p>"
+        facts = {key: item[key] for key in ("limitations", "state", "mode", "exit_code", "terminal_state", "files", "file_count", "outputs", "missing_outputs") if key in item}
+        if facts:
+            body += render_json_value(facts, max_bytes=8192)
+        body += "<p>依据/产物引用：</p><ul>"
+        for source in item.get("materials", []):
+            label = source.get("artifact_name") or source["reference"]
+            target = (link({"stage_reference": source["reference"]}, label)
+                if source["source_kind"] == "sealed_material" else
+                _link(_node_href(instance_id, "artifact:" + label), label) if source.get("artifact_name") else _text(label))
+            body += "<li>" + target + "</li>"
+        body += "</ul>"
+        body += link({"stage_reference": item["reference"]}, item["reference"] + " · 读取科学材料")
+        if item.get("omitted_fields"):
+            body += "<p>预览有省略，请按引用读取分段原文。</p>"
+        body += "</article>"
+    if not page.get("items") and material is None:
+        body += "<p>此页没有已封存阶段材料。</p>"
+    if page.get("offset", 0):
+        body += link({"stage_offset": 0}, "首批阶段")
+    if page.get("next_offset") is not None:
+        body += link({"stage_offset": page["next_offset"]}, "后续阶段版本")
+    return _section("已封存阶段与版本历史", body, section_id="sealed-stages")
+
+
 def render_node(node: dict, *, instance_id: str, presentation: dict | None = None) -> bytes:
     key = str(node.get("key", ""))
     heading = _record_title(node)
@@ -378,12 +432,6 @@ def render_node(node: dict, *, instance_id: str, presentation: dict | None = Non
         "操作":node.get("operation_id"), "原记录科学可用性声明":node.get("recorded_scientific_claim_admissible"),
         "当前资格记录":node.get("qualification"), "当前选择记录":node.get("current_selection"),
         "创建时间":node.get("created_at"), "完成时间":node.get("completed_at")}
-    if node.get("kind") == "task":
-        metadata["历史任务角色"] = node.get("legacy_role")
-        metadata["封存 Task Ref"] = _dict(node.get("record")).get("task_ref")
-        metadata["历史只读"] = True
-    if node.get("legacy_task_ref"):
-        metadata["历史生产 Task Ref"] = node["legacy_task_ref"]
     logs = _diagnostics(node, instance_id) if "diagnostics" in node else ""
     if node.get("kind") == "run":
         profile = _dict(_dict(node.get("execution_profile")).get("profile"))
@@ -408,7 +456,7 @@ def render_node(node: dict, *, instance_id: str, presentation: dict | None = Non
     if node.get("gaps"):
         details += fold_panel("读取缺口",render_json_value(node["gaps"],max_bytes=4096),count=len(node["gaps"]))
     body = header + "<div class='workspace-grid node-workspace'><aside class='workspace-sidebar'>" + _goal_panel(node,instance_id)
-    body += "<p class='source-note'>运行完成、科学结论与人工批准分别记录。</p></aside><div class='workspace-main'>" + approval + science + details + "</div></div>"
+    body += "<p class='source-note'>运行完成、科学结论与人工批准分别记录。</p></aside><div class='workspace-main'>" + approval + science + _sealed_stages(node, instance_id) + details + "</div></div>"
     return _document(heading,body,instance_id=instance_id,live_updates=storage not in ("archived","archiving","restoring"))
 
 

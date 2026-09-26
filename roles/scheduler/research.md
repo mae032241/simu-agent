@@ -102,20 +102,21 @@ index/facets/matches do not prove semantic recall or cover support Operations;
 use operation_catalog(scope="support") when the selected public contract requires it.
 For compact invoke, merge defaults.inputs/defaults.outputs into each corresponding
 port before its explicit fields. Unknown fields and optional binding semantics still
-apply. representation="legacy" expands the same call constraints when needed.
+apply. Use explicit view="full" only for an execution-contract diagnostic.
 
 For new supported SProcess work, prefer science.experiment.skeleton.v1: design owns
 the scientific comparisons, criteria and frozen conditions; the author owns its
 concrete execution plan and code. The skeleton has no compulsory early review.
 Use science.object.review.v1 with scientific_skeleton when scientific ambiguity,
 expensive or irreversible work, or conflicting requirements warrants early judgment.
-After author completion, tcad.execution-plan.project.v1 extracts its sole embedded
-Portfolio without qualification. Bind that exact plan, project, original skeleton
-and capability to one independent tcad.deck.review.v1 comprehensive review, then
-the package and original production approval chain. For tcad.result.analyze.v1 bind
-that package's execution_review and scientific_skeleton, not a substitute legacy
-experiment_review. Legacy/non-TCAD detailed-plan operations retain their contracts;
-legacy SDevice is not silently migrated to the new skeleton author path.
+After author completion, bind the exact project, original skeleton and capability
+to one independent tcad.deck.review.v1 comprehensive review. The reviewer reads the
+project's embedded execution_plan directly; do not create a plan projection.
+Then invoke tcad.study.execute with the exact reviewed cohort. Control owns package
+preparation and configured policy/human authorization. For tcad.result.analyze.v1
+bind that package's execution_review and scientific_skeleton; it reads the embedded
+plan from the package. Detailed-plan operations, including supported SDevice, keep
+the original experiment_plan and matching experiment_review.
 Before another author/diagnostic task, identify the judgment its evidence can change.
 An initialization-time/boundary semantic conflict is a scientific question before it
 is another solver search. Reuse sufficient sealed evidence. Equivalent implementation
@@ -123,3 +124,9 @@ choices stay with the author; changes to contrasts, goals or thresholds require 
 formal new skeleton and fresh comprehensive review. A gap does not automatically
 justify a larger author task, renamed retries or budget growth. Unchanged source may
 be reused, while current attestations must satisfy their existing exact identities.
+
+Choose complete work within evidence, hypothesis, experiment and analysis. These are
+responsibilities, not a fixed workflow or four permanent Agents. Keep inspection,
+calculation, saving and bounded correction within the author task when its scientific
+question is unchanged. Hand off for an independent review, changed scientific decision,
+or execution permission boundary; never add an extra author only to copy fields.

@@ -47,8 +47,7 @@ def assignment_json(
                 "origin": "public_web", "original_source_alias": labels.get("original_source_alias"),
                 "instruction": "Original fetched bytes. Cite the current source_name; source_manifest contains URL and retrieval time.",
             }}
-    return canonical_json(
-        {
+    assignment = {
             "schema_version": 1,
             "operation": {
                 "id": bound.compiled.spec.operation_id,
@@ -73,6 +72,9 @@ def assignment_json(
                         + workspace_input_filename(item.source_name, item.media_type)
                     ),
                     "media_type": item.media_type,
+                    **({"materialization": "controlled_tool_stream_only", "artifact_ref": item.artifact_ref.model_dump(mode="json"),
+                        "size_bytes": next(value.artifact.size_bytes for value in bound.inputs if value.source_name == item.source_name)}
+                       if item.exposure == "file_reference" else {}),
                     **({"reference_availability": "unknown"} if "worker_reference_read" in tool_names else {}),
                     "usage": item.usage,
                     "exposure": item.exposure,
@@ -98,7 +100,7 @@ def assignment_json(
             },
             "revision": revision,
             "prior_source_bindings": prior_source_bindings or {},
-            **({"reference_access": "Bound input originals are readable at their relative_path; reference availability is unknown until checked, not absent. Use worker_reference_read to list one selected bound report’s direct citations and read selected originals. Select a calculation before its inputs. Do not expand all history; unresolved references remain explicit gaps."}
+            **({"reference_access": "Text inputs are readable at their relative_path; file_reference inputs expose metadata only and are streamed by declared control tools; reference availability is unknown until checked, not absent. Use worker_reference_read to list one selected bound report’s direct citations and read selected originals. Select a calculation before its inputs. Do not expand all history; unresolved references remain explicit gaps."}
                if "worker_reference_read" in tool_names else {}),
             "tools": list(tool_names),
             "tool_contracts": operation_tool_contracts(bound.compiled, tool_names),
@@ -117,7 +119,14 @@ def assignment_json(
                 }
             ),
         }
-    )
+    assignment["operation"] = {"purpose": bound.compiled.spec.description.purpose}
+    assignment.pop("prior_source_bindings", None)
+    visible = {port.name: port for port in bound.compiled.spec.inputs if port.agent_visible}
+    assignment["inputs"] = [item for item in assignment["inputs"] if item["port"] in visible]
+    for item in assignment["inputs"]:
+        item.pop("artifact_ref", None)
+        item.pop("port", None)
+    return canonical_json(assignment)
 
 
 def revision_draft_json(
@@ -187,6 +196,9 @@ def result_schema_json(
     *,
     input_source_ports: dict[str, str] | None = None,
 ) -> bytes:
+    if input_source_ports is not None:
+        visible = {item.name for item in (*compiled.spec.inputs, *compiled.spec.outputs) if item.agent_visible}
+        input_source_ports = {alias:name for alias,name in input_source_ports.items() if name in visible}
     port = operation_primary_output(compiled)
     envelope = RoleResultEnvelope[Any].model_json_schema(mode="validation")
     envelope["properties"]["payload"] = operation_port_json_schema(

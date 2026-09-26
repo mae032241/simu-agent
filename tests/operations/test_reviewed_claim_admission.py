@@ -7,7 +7,7 @@ from scidiscovery.artifact_agent.schema.artifact import ArtifactRegistration
 from scidiscovery.artifact_agent.schema.common import canonical_json
 from scidiscovery.artifact_agent.interfaces.mcp_root import RootToolError
 from tcad_artifact.execution_control import SolverCapability
-from tests.operations.m3_transform_equivalence_runner import _engineering_intent
+from tests.operations.science_fixtures import _engineering_intent
 from tests.operations.test_agent_contract_alignment import _feedback_root, experiment_case
 from tests.operations.test_general_transform_operations import _register
 from tests.operations.test_historical_compatibility_paths import _artifact, _complete
@@ -105,27 +105,3 @@ def test_copied_transform_labels_do_not_prove_restriction_origin(tmp_path, monke
     request["inputs"][1]["artifact_names"] = ["copied"]
     rejected = root.call_tool("operation_preflight", _with_review(request, review))
     assert rejected["reason_code"] == "input_scientific_claim_forbidden"
-
-
-def test_installed_restart_admits_the_same_legacy_plan_and_review(
-    tmp_path, monkeypatch, experiment_case, installed_probe,
-):
-    runtime, instance, root, request, _ = _case(tmp_path, monkeypatch, experiment_case)
-    review = _review(runtime, root, "review_pass")
-    request = _with_review(request, review)
-    installed_probe("full", f'''
-from scidiscovery.artifact_agent.runtime import open_runtime
-from scidiscovery.artifact_agent.interfaces.mcp_root import RootToolFacade, RootMCPRouter
-from pathlib import Path
-runtime = open_runtime(project_root=Path({str(tmp_path / 'project')!r}),
-    state_root=Path({str(tmp_path / 'state')!r}), approval_receipt_secret=b"r" * 32)
-root = RootMCPRouter(RootToolFacade(runtime.artifacts, runtime.intake,
-    runs=runtime.runs, approvals=runtime.approvals, executions=runtime.executions,
-    bindings=runtime.scheduler_bindings, instance={instance.instance_id!r},
-    operation_catalog=runtime.runs.operation_catalog))
-request = {request!r}
-result = root.call_tool("operation_preflight", request)
-assert result["admissible"], result
-assert root.call_tool("operation_invoke", result["normalized_request"])["result"]["state"] == "queued"
-assert root.call_tool("artifact_catalog", {{"name": "plan", "view": "detail"}})["labels"]["scientific_claim_admissible"] == "false"
-''')

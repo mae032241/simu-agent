@@ -9,7 +9,6 @@ from pydantic import Field, model_validator
 from .common import ContractDiagnostic, Identifier, SchemaModel, canonical_json
 from .validation import (
     HypothesisAssessment,
-    RecommendedTaskMode,
     ValidationEvidence,
 )
 
@@ -87,12 +86,6 @@ class ObjectiveDiagnosisAssessment(SchemaModel):
         return self
 
 
-class CalculationAttemptReference(SchemaModel):
-    manifest_alias: Identifier
-    attempt_key: Identifier
-    proof_kind: Literal["current", "recovery"] = "current"
-
-
 _COMPUTED_RECORD_RULE = "computed record requires result and no reason"
 _NONCOMPUTED_RECORD_RULE = "noncomputed record requires reason and no numeric result"
 _SOURCE_CASE_PAIR_RULE = "source experiment_key and case_key must be declared together"
@@ -102,15 +95,12 @@ class CalculationRecord(SchemaModel):
     """Bounded, replayable calculation evidence; never a scientific verdict."""
 
     record_key: Identifier
-    input_digests: Annotated[dict[str, str], Field(max_length=40)]
     request: dict[str, Any]
     algorithm_version: Annotated[str, Field(min_length=1, max_length=128)]
     status: Annotated[Literal["computed", "unavailable", "unsupported", "error"],
                       Field(description=f"{_COMPUTED_RECORD_RULE}; {_NONCOMPUTED_RECORD_RULE}.")]
     result: dict[str, Any] | None = None
     reason_code: Identifier | None = None
-    attempt: CalculationAttemptReference | None = None
-    diagnostics: tuple[ContractDiagnostic, ...] = Field(default=(), max_length=8)
     calculation_ref: Identifier | None = Field(default=None, exclude=True,
         description="Tool-returned evidence alias. Cite this alias in evidence; control retains the complete record. Optional transport hint, excluded from calculation identity.")
 
@@ -177,9 +167,6 @@ class LayeredDiagnosisReport(SchemaModel):
     limitations: Annotated[tuple[str, ...], Field(max_length=64)] = ()
     remaining_contradiction: Annotated[str, Field(min_length=1, max_length=8192)] | None = None
     next_action: Annotated[str, Field(min_length=1, max_length=4096)] | None = None
-    recommended_task_mode: RecommendedTaskMode | None = None
-    calculation_records: Annotated[tuple[CalculationRecord, ...], Field(max_length=8)] = Field(default=(),
-        description="Legacy inline calculation records remain readable. For new tool results, cite calculation_ref in evidence instead; tools retain records and receipts automatically.")
     analysis_method: Annotated[str, Field(min_length=1, max_length=4096)] | None = None
     method_changes: Annotated[tuple[str, ...], Field(max_length=16)] = ()
 
@@ -202,11 +189,6 @@ def diagnosis_consistency_issues(report: LayeredDiagnosisReport) -> tuple[dict[s
     issues = []
     def issue(path, message, **suggestion):
         issues.append({"path": path, "message": message, **suggestion})
-    record_keys = tuple(item.record_key for item in report.calculation_records)
-    if len(record_keys) != len(set(record_keys)):
-        issue("/calculation_records", "calculation record keys must be unique")
-    if sum(len(canonical_json(item.model_dump(mode="json"))) for item in report.calculation_records) > 96 * 1024:
-        issue("/calculation_records", "calculation records exceed report byte budget")
     assessment_keys = tuple(item.hypothesis_key for item in report.hypothesis_assessments)
     if len(assessment_keys) != len(set(assessment_keys)):
         issue("/hypothesis_assessments", "a diagnosis may assess each hypothesis once")

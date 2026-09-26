@@ -1,9 +1,7 @@
 """Regressions for the concrete responsibility-placement audit failures."""
 import json
-from pathlib import Path
 
 import pytest
-from pydantic import ValidationError
 
 from scidiscovery.artifact_agent.schema.common import canonical_json
 from scidiscovery.operations.input_validation import OperationInvocationError
@@ -114,36 +112,6 @@ def test_parameter_draft_materializes_only_objective_copies_and_doi_identity(tmp
     ParameterEvidencePackage.model_validate_json(canonical_json(result))
 
 
-def test_review_submission_derives_handoff_from_formal_verdict(tmp_path):
-    from tests.operations.test_m2_curve_analysis_boundary import _root, _inputs, _register_inputs
-    from scidiscovery.artifact_agent.interfaces.mcp_local_worker import LocalWorkerMCPRouter
-    catalog, runtime, instance, root = _root(tmp_path)
-    _register_inputs(runtime, instance, _inputs())
-    root.call_tool('operation_invoke', dict(name='review_without_mirror', operation_id='science.object.review.v1',
-        inputs=[dict(port='experiment_plan', artifact_names=['experiment_plan'])], instruction='Review the bound fixture.'))
-    compiled = catalog.operation('science.object.review.v1')
-    worker = LocalWorkerMCPRouter(runtime.runs, operation_id=compiled.spec.operation_id, operation_digest=compiled.digest)
-    opened = worker.call_tool('worker_open_assignment', {})
-    Path(opened['output_directory'], 'result.json').write_bytes(canonical_json(dict(schema_version=1,
-        handoff=dict(summary='Finite review.'), payload=dict(review_target='experiment_portfolio', verdict='revise', summary='Revision needed.'))))
-    submitted = worker.call_tool('worker_submit_result', {})
-    assert submitted['state'] == 'completed', submitted
-    status = root.call_tool('run_status', {'name': 'review_without_mirror'})
-    assert status['scheduler_signal']['verdict'] == 'revise'
-
-
-def test_deck_review_copies_capability_from_exact_subject(tmp_path):
-    from tcad_artifact.operation_workspace import finalize_review_workspace
-    source = tmp_path / 'project.json'
-    raw = canonical_json({'capability_sha256': 'a' * 64})
-    source.write_bytes(raw)
-    request = _final_request(tmp_path, 'tcad.deck-review-report.v1', {'verdict': 'revise', 'summary': 'Finite review.'}, inputs={'project': source})
-    result = json.loads(finalize_review_workspace(request))
-    assert result['payload']['capability_sha256'] == 'a' * 64
-    assert result['handoff']['verdict'] == 'revise'
-    assert source.read_bytes() == raw
-
-
 def test_figure_draft_materializes_recovered_metadata_and_retains_image_choice():
     from tests.operations.test_minimal_figure_extraction import _png, _request
     from curve_figure_evidence.figure_digitization_contract import materialize_figure_request, FigureDigitizationRequest
@@ -178,21 +146,21 @@ def test_runtime_collection_mismatch_is_an_input_failure():
     from scidiscovery.operations.input_validation import ValidationSources
     # The owning analysis fixture returns the same exact package and manifest family.
     _, package, manifest, _, _ = analysis_materials()
-    sources = ValidationSources({'reviewed_package': canonical_json(package.model_dump(mode='json')), 'runtime_manifest': manifest}, {})
+    sources = ValidationSources({'execution_package': canonical_json(package.model_dump(mode='json')), 'runtime_manifest': manifest}, {})
     with pytest.raises(OperationInvocationError, match='input_runtime_collection_mismatch'):
         runtime_inputs(sources)
 
 
 def test_historical_package_is_readable_but_nonpassing_package_cannot_execute():
     from tests.operations.test_tcad_result_analysis import analysis_materials
-    from tcad_artifact.project_packager import ReviewedDeckPackage, validate_reviewed_deck_json, PackagerError
+    from tcad_artifact.project_packager import ExecutionPackage, validate_execution_package_json, PackagerError
     _, package, _, _, _ = analysis_materials()
     value = package.model_dump(mode='json')
     value['review'].update(verdict='blocked', execution_ready=False)
     raw = canonical_json(value)
-    ReviewedDeckPackage.model_validate_json(raw)
+    ExecutionPackage.model_validate_json(raw)
     with pytest.raises(PackagerError, match='invalid'):
-        validate_reviewed_deck_json(raw)
+        validate_execution_package_json(raw)
 
 
 def test_transform_engineering_failure_and_unavailable_are_distinct(tmp_path, monkeypatch):

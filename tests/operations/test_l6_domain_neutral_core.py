@@ -18,8 +18,6 @@ from scidiscovery.artifact_agent.schema.experiment import (
 from scidiscovery.artifact_agent.schema.research_cycle import (
     ArtifactKind,
 )
-from scidiscovery.artifact_agent.schema.layered_diagnosis import LayeredDiagnosisReport
-from scidiscovery.artifact_agent.schema.validation import ValidationReport
 def test_core_scientific_kinds_accept_plugin_identifiers() -> None:
     assert TypeAdapter(ArtifactKind).validate_python(
         "protein_sequence_review", strict=True
@@ -32,11 +30,6 @@ def test_core_scientific_kinds_accept_plugin_identifiers() -> None:
     ).lower()
     assert "deck" not in schemas
     assert "tcad" not in schemas
-
-
-def test_scientific_diagnosis_does_not_name_a_scheduler_operation() -> None:
-    assert LayeredDiagnosisReport.model_fields["recommended_task_mode"].default is None
-    assert ValidationReport.model_fields["recommended_task_mode"].default is None
 
 
 def test_reviewed_equivalence_is_domain_neutral() -> None:

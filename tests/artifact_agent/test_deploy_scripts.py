@@ -33,36 +33,6 @@ def test_primary_installer_has_valid_shell_syntax() -> None:
     assert completed.returncode == 0, completed.stderr
 
 
-def test_one_backend_value_drives_daemon_platform_and_install_verification() -> None:
-    project_root = Path(__file__).resolve().parents[2]
-    installer = (project_root / "deploy/install.sh").read_text(encoding="utf-8")
-    unit = (
-        project_root / "deploy/systemd/scidiscovery-control.service.in"
-    ).read_text(encoding="utf-8")
-    approval_unit = (
-        project_root / "deploy/systemd/scidiscovery-approval-ui.service.in"
-    ).read_text(encoding="utf-8")
-    daemon = (
-        project_root
-        / "src/scidiscovery/artifact_agent/interfaces/mcp_daemon.py"
-    ).read_text(encoding="utf-8")
-    cli = (
-        project_root / "src/scidiscovery/artifact_agent/interfaces/cli.py"
-    ).read_text(encoding="utf-8")
-
-    assert 'WORKER_BACKEND="${SCID_WORKER_BACKEND:-local}"' in installer
-    assert "SCID_WORKER_BACKEND must be local or hardened" in installer
-    assert "'worker_backend': '$WORKER_BACKEND'" in installer
-    assert 'worker_backend=worker_backend' in installer
-    assert '--worker-backend "@WORKER_BACKEND@"' in unit
-    assert '--worker-backend "@WORKER_BACKEND@"' in approval_unit
-    assert 'choices=("local", "hardened")' in daemon
-    assert "worker_backend=args.worker_backend" in daemon
-    assert 'choices=("local", "hardened")' in cli
-    assert "worker_backend=args.worker_backend" in cli
-    assert 'worker_backend=getattr(args, "worker_backend", "local")' in cli
-
-
 def test_rendered_units_share_only_the_local_run_workspace(tmp_path: Path) -> None:
     project_root = Path(__file__).resolve().parents[2]
     script = project_root / "deploy/install.sh"
@@ -1072,47 +1042,6 @@ raise SystemExit(completed.returncode)
     }
 
 
-def test_installer_probes_compiled_operation_authority_without_fixed_counts() -> None:
-    project_root = Path(__file__).resolve().parents[2]
-    script = (project_root / "deploy/install.sh").read_text(encoding="utf-8")
-    assert "probe_mcp()" in script
-    assert "probe_root_context_contract()" in script
-    assert "probe_root_context_contract scidiscovery.artifact_agent.interfaces.mcp_proxy" in script
-    assert '"$CONTROL_SOCKET" "" root' in script
-    assert '"$WORKER_SOCKET" "$worker_id" worker' not in script
-    retired = script.split("retire_old_deployment()", 1)[1].split(
-        "install_packages()", 1
-    )[0]
-    assert "scidiscovery-worker.service" in retired
-    for operation_tool in (
-        "operation_catalog",
-        "operation_preflight",
-        "operation_invoke",
-    ):
-        assert operation_tool in script
-    assert "DescribeInput.model_json_schema()" in script
-    assert "RunStatusInput.model_json_schema()" in script
-    assert "ArtifactCatalogInput.model_json_schema()" in script
-    assert "'compat', 'poll', 'navigation', 'decision'" in script
-    assert "'producer_inputs'" in script
-    for retired in (
-        "task_schedule",
-        "artifact_transform",
-        "approval_request_create",
-        "execution_request_create",
-        "execution_approval_request_create",
-    ):
-        assert retired in script
-    assert "assert len(ROOT_TOOLS)" not in script
-    assert "assert len(WORKER_TOOLS)" not in script
-    probe = script.split("probe_mcp() {", 1)[1].split("verify_installation()", 1)[0]
-    assert "from scidiscovery.artifact_agent.interfaces.mcp_gateway import GATEWAY_TOOLS" in probe
-    assert '"operation_catalog"' not in probe
-    assert "--worker-id ideator" not in script
-    assert 'probe_approval_ui' in script
-    assert 'http://127.0.0.1:${APPROVAL_PORT}/' in script
-
-
 def test_actual_install_root_context_probe_checks_installed_gateway_views(tmp_path):
     project = Path(__file__).resolve().parents[2]
     site = tmp_path / "install/site"
@@ -1205,48 +1134,6 @@ def test_actual_install_mcp_probe_uses_installed_gateway_contract(tmp_path, case
     else:
         assert "MCP tool authority mismatch: root; missing=" in completed.stderr
         assert "unexpected=" in completed.stderr
-
-
-def test_installer_activates_only_explicitly_selected_domain_skills() -> None:
-    project_root = Path(__file__).resolve().parents[2]
-    script = (project_root / "deploy/install.sh").read_text(encoding="utf-8")
-    assert "install_platform_skills" in script
-    assert "sentaurus-tcad-code" in script
-    assert "scientific-paper-evidence" not in script
-    assert 'source="${SOURCE_ROOT}/skills/${skill}"' in script
-    assert 'target="${skill_root}/${skill}"' in script
-    assert 'for skill in "${PLATFORM_SKILLS[@]}"' in script
-    assert '${service_home}/.codex/skills' in script
-    assert '.claude' not in script
-    assert 'SCID_PLATFORM must be codex' in script
-    assert 'readonly PLUGIN_SPECIFICATION="${SCID_PLUGINS:-}"' in script
-    assert "declare -a PLATFORM_SKILLS=()" in script
-    assert "PLATFORM_SKILLS+=(sentaurus-tcad-code)" in script
-    assert 'if [[ "$TCAD_ENABLED" -eq 1' in script
-    assert "import tcad_artifact" not in script
-    assert "deploy/plugin_selection.py" in script
-    assert 'SCID_ENABLE_INGAAS_FIG4' not in script
-
-
-def test_installer_separates_source_repository_from_project_workspace() -> None:
-    project_root = Path(__file__).resolve().parents[2]
-    script = (project_root / "deploy/install.sh").read_text(encoding="utf-8")
-    assert 'readonly SOURCE_ROOT=' in script
-    assert 'readonly WORKSPACE="${SCID_WORKSPACE:-${SOURCE_ROOT}/workspace/default}"' in script
-    assert 'readonly CODEX_LAUNCH_ROOT="${SCID_CODEX_LAUNCH_ROOT:-}"' in script
-    assert 'readonly LOCAL_WORKSPACE_ROOT="${WORKSPACE}/.scidiscovery-runs"' in script
-    assert '[[ "$WORKSPACE" != "$SOURCE_ROOT" ]]' in script
-    assert '"${SOURCE_ROOT}/deploy/systemd/scidiscovery-control.service.in"' in script
-    assert '"PROJECT_ROOT=${WORKSPACE}"' in script
-    assert 'local_workspace_args="--local-workspace-root \\"${LOCAL_WORKSPACE_ROOT}\\""' in script
-    assert '"LOCAL_WORKSPACE_ARGS=${local_workspace_args}"' in script
-    assert '@LOCAL_WORKSPACE_ARGS@' in (
-        project_root / "deploy/systemd/scidiscovery-control.service.in"
-    ).read_text(encoding="utf-8")
-    assert "'codex', source_root" in script
-    assert "codex_config_root=source_root / '.codex'" in script
-    assert "'claude'" not in script
-    assert 'rm -rf "$WORKSPACE/.codex"' in script
 
 
 def test_installer_previews_an_explicit_codex_launch_root(tmp_path: Path) -> None:
@@ -1526,35 +1413,6 @@ def test_installer_transaction_covers_every_mutated_release_surface() -> None:
     assert "trap 'rollback_install $?' ERR" in script
     assert 'chown "$SERVICE_USER:$SERVICE_GROUP" "$secret"' in script
     assert 'chmod 0600 "$secret"' in script
-
-
-def test_curve_figure_capability_is_plugin_owned_not_a_platform_skill() -> None:
-    project_root = Path(__file__).resolve().parents[2]
-    script = (project_root / "deploy/install.sh").read_text(encoding="utf-8")
-    metadata = (project_root / "pyproject.toml").read_text(encoding="utf-8")
-
-    assert "scientific-paper-evidence" not in script
-    assert "scientific-paper-evidence" not in metadata
-    assert (
-        project_root
-        / "plugins/curve_figure_evidence/curve_figure_evidence/figure_worker_tool.py"
-    ).is_file()
-    optional_metadata = (
-        project_root / "plugins/curve_figure_evidence/pyproject.toml"
-    ).read_text(encoding="utf-8")
-    assert 'curve_figure_evidence = "curve_figure_evidence.plugin:PLUGIN"' in (
-        optional_metadata
-    )
-    assert '"scidiscovery-curve-score>=0.2.1"' in optional_metadata
-    assert (
-        '[[ " ${SELECTED_PLUGINS[*]} " == *" curve_figure_evidence "* ]]'
-        in script
-    )
-    assert 'validate_figure_dependencies' in script
-    assert 'command -v pdfimages' not in script
-    assert 'command -v pdftoppm' not in script
-    assert '"Pillow>=10,<13"' in metadata
-    assert '"jsonschema>=4,<5"' in metadata
 
 
 def test_installer_requires_release_matched_tcad_manual_skill_sources() -> None:
@@ -1845,20 +1703,6 @@ def test_systemd_templates_use_directive_appropriate_path_quoting() -> None:
     assert "printf -v quoted_python '%q' \"$PYTHON\"" in installer
     assert "printf -v quoted_site_root '%q' \"$SITE_ROOT\"" in installer
     assert "PYTHONPATH=${quoted_site_root} ${quoted_python}" in installer
-
-
-def test_default_deployment_has_no_central_worker_service() -> None:
-    project_root = Path(__file__).resolve().parents[2]
-    assert not (
-        project_root / "deploy/systemd/scidiscovery-worker.service.in"
-    ).exists()
-    cleanup = (project_root / "deploy/cleanup_legacy_services.sh").read_text(
-        encoding="utf-8"
-    )
-    current = cleanup.split("readonly -a CURRENT_UNITS=(", 1)[1].split(")", 1)[0]
-    retired = cleanup.split("readonly -a RETIRED_UNITS=(", 1)[1].split(")", 1)[0]
-    assert "scidiscovery-worker.service" not in current
-    assert "scidiscovery-worker.service" in retired
 
 
 def test_control_service_allows_wsl_windows_transport_vsock() -> None:

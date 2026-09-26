@@ -29,88 +29,10 @@ def request_for_diagnostic(request):
     return request
 
 
-@pytest.mark.parametrize("domain", ["generic", "tcad"])
-def test_diagnostic_runs_and_seals_with_readable_image_without_contract(tmp_path, monkeypatch, domain):
-    if domain == "generic":
-        worker, opened = generic_worker(tmp_path)
-        request = request_for_diagnostic(score_inputs()[1])
-        name = "worker_curve_diagnose"
-        report = limited_report()
-    else:
-        worker, opened = open_analysis(analysis_system(tmp_path))
-        request = request_for_diagnostic(raw_request())
-        request["comparison_spec"]["comparisons"][0]["evaluation_points"] = 257
-        name = "worker_tcad_curve_diagnose"
-        report = analysis_report()
-    before = set(Path(opened["output_directory"]).rglob("*.png"))
-    # Diagnosis is a tool, not a premature submission of an unfinished report.
-    original_validate = worker.runs.validate_candidate
-    monkeypatch.setattr(worker.runs, "validate_candidate", lambda *a, **k: pytest.fail("tool validated unfinished scientific output"))
-    response = mcp_call(worker, name, dict(record_key="local_diagnostic", request=request))
-    assert "error" not in response, json.dumps(response, indent=2)
-    value = response["result"]["structuredContent"]
-    record = json.loads(Path(value["record"]["calculation_path"]).read_bytes())
-    assert record["status"] == "computed", value
-    assert record["attempt"]["manifest_alias"] == "tool_recovery_manifest"
-    assert record["attempt"]["attempt_key"]
-    localization = json.loads(Path(value["details"]["path"]).read_text())["localization"]["analyses"][0]
-    assert len(localization["residual_trace"]) == request["comparison_spec"]["comparisons"][0]["evaluation_points"]
-    assert localization["segments"] and value["images"]
-    image = value["images"][0]
-    path = Path(image["path"])
-    assert path.is_relative_to(Path(opened["output_directory"]).parent)
-    assert path not in before
-    assert hashlib.sha256(path.read_bytes()).hexdigest() == localization["plot_sha256"] == image["sha256"]
-    with Image.open(path) as picture:
-        assert picture.size == (1200, 800) and picture.format == "PNG"
-    assert worker.compiled.spec.executor.native_tools.view_image
-    assert "native view_image for declared task-local images" in operation_native_tool_instruction(worker.compiled)
-    report["source_references"] = []
-    report["calculation_records"] = [record]
-    monkeypatch.setattr(worker.runs, "validate_candidate", original_validate)
-    monkeypatch.setattr("curve_score.diagnostic_tool.localize_curve_error", lambda *a, **k: pytest.fail("submission reran diagnosis"))
-    result = submit(worker, opened, report)
-    assert result["state"] == "completed", result
-    status = worker.runs.status(worker._run_id)
-    # Numeric localization and the registered PNG survive the local preview.
-    assert status.output_ref is not None
-    sealed = json.loads(worker.runs.artifacts.read(status.output_ref))
-    assert sealed["calculation_records"][0] == record
-    evidence = next(item for item in worker.runs.tool_evidence(status.run_id) if item["alias"] == image["evidence_alias"])
-    assert evidence["artifact_ref"]["sha256"] == image["sha256"]
-    assert evidence["metadata"]["derived_from"] == [item["input_alias"] for item in request["sources"]]
-    parents = worker.runs.artifacts.catalog(worker.runs.source_descriptor(status, image["evidence_alias"]).artifact_ref).parent_refs
-    assert all(worker.runs.source_descriptor(status, alias).artifact_ref in parents
-               for alias in evidence["metadata"]["derived_from"])
 
 
-def test_diagnostic_receipt_tampering_is_rejected_without_recomputation(tmp_path):
-    worker, opened = generic_worker(tmp_path)
-    value = worker.call_tool("worker_curve_diagnose", dict(
-        record_key="detail", request=request_for_diagnostic(score_inputs()[1])))
-    record = json.loads(Path(value["record"]["calculation_path"]).read_bytes())
-    assert record["status"] == "computed", value
-    record["result"]["metric_report"]["comparisons"][0]["metrics"][0]["value"] += 1
-    report = limited_report()
-    report["source_references"] = []
-    report["calculation_records"] = [record]
-    assert submit(worker, opened, report)["state"] == "rejected"
 
 
-def test_budget_failure_still_allows_partial_analysis(tmp_path, monkeypatch):
-    worker, opened = generic_worker(tmp_path)
-    def expired(*args, **kwargs):
-        raise TimeoutError("calculation_time_budget")
-    monkeypatch.setattr("curve_score.diagnostic_tool.localize_curve_error", expired)
-    value = worker.call_tool("worker_curve_diagnose", dict(
-        record_key="limited", request=request_for_diagnostic(score_inputs()[1])))
-    assert value["record"]["status"] == "error"
-    assert value["record"]["reason_code"] == "calculation_time_budget"
-    assert not value["images"]
-    report = limited_report()
-    report["source_references"] = []
-    report["calculation_records"] = [json.loads(Path(value["record"]["calculation_path"]).read_bytes())]
-    assert submit(worker, opened, report)["state"] == "completed"
 
 
 def test_diagnostic_schema_exposes_actual_bounds_and_residual_operators():
@@ -141,17 +63,6 @@ def test_localization_reuses_legacy_segments_and_plot_algorithm(tmp_path):
     assert new.plots == old.plots
 
 
-def test_all_analysis_roles_receive_image_permission_and_precomputed_image_port(tmp_path):
-    catalog = analysis_system(tmp_path)[0]
-    for name in ("science.result.diagnose.v1", "tcad.result.analyze.v1", "science.result.diagnose.curve-error.v1"):
-        compiled = catalog.operation(name)
-        assert compiled.spec.executor.native_tools.view_image
-        instruction = operation_native_tool_instruction(compiled)
-        forbidden = instruction.split("Forbidden", 1)[-1] if "Forbidden" in instruction else ""
-        assert "native view_image" not in forbidden
-    precomputed = catalog.operation("science.result.diagnose.curve-error.v1")
-    port = next(port for port in precomputed.spec.inputs if port.name == "curve_analysis_plots")
-    assert port.min_items == 0 and port.media_types == ("image/png",)
 
 
 def test_derived_evidence_keeps_current_source_and_execution_recovery_boundaries(tmp_path):

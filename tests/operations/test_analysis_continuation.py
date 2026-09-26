@@ -92,56 +92,6 @@ def test_compact_open_and_editable_nested_recovery_with_fresh_runtime(tmp_path):
     assert json.loads(Path(reopened['tool_contracts_path']).read_bytes())['tool_contracts'] == contracts
 
 
-def test_prior_mapping_reused_across_alias_reorder_tool_receipt_and_next_seal(tmp_path):
-    system = analysis_system(tmp_path, mapped=False)
-    worker, opened = open_analysis(system)
-    report = analysis_report(alias='solver_outputs_001', output_name='A', mapped=True)
-    report['source_references'][0]['case_mapping_basis'] = dict(kind='evidence', evidence_refs=[
-        dict(input_alias='experiment_plan', locator='experiment_plan:/proposals/0/cases/0')],
-        rationale='Conditional fixture association to the exact original plan.')
-    write_analysis(opened, report)
-    assert worker.call_tool('worker_submit_result', {})['state'] == 'completed'
-    request = deepcopy(system[3]); request['name'] = 'with_history'
-    next(item for item in request['inputs'] if item['port'] == 'solver_outputs')['artifact_names'].reverse()
-    request['inputs'].extend([
-        dict(port='prior_analysis', artifact_names=['analysis.output']),
-        dict(port='prior_analysis_manifest', artifact_names=['analysis.output.recovery_manifest'])])
-    worker, opened = open_analysis((*system[:3], request, *system[4:]))
-    view = json.loads((Path(opened['workspace_path']) / 'analysis-bindings.json').read_text())
-    known = view['sources']['solver_outputs_002']
-    assert known['origin']['kind'] == 'prior_conditional_claim'
-    assert known['case_key'] == 'baseline'
-    call = raw_request(alias='solver_outputs_002')
-    call['sources'][0].pop('experiment_key'); call['sources'][0].pop('output_name')
-    before = deepcopy(call)
-    record = worker.call_tool('worker_tcad_curve_score', dict(record_key='reused', request=call))
-    assert record['status'] == 'computed', record
-    record = json.loads(Path(record['calculation_path']).read_bytes())
-    assert record['request'] == before == call
-    attempts = system[1].runs.tool_attempts(worker._run_id)
-    assert attempts[-1]['request_digest'] == hashlib.sha256(canonical_json(call)).hexdigest()
-    report = analysis_report(alias='solver_outputs_002', output_name='A', mapped=False)
-    report['source_references'] = []
-    report['calculation_records'] = [record]
-    write_analysis(opened, report)
-    assert worker.call_tool('worker_submit_result', {})['state'] == 'completed'
-    sealed = system[2].call_tool('run_status', {'name':'with_history', 'view':'detail'})['sealed_output']['payload']
-    assert 'case_mapping_basis' not in known  # Display points to the preserved prior basis.
-    origin = known['origin']
-    assignment = json.loads(Path(opened['assignment_path']).read_bytes())
-    original_input = next(item for item in assignment['inputs'] if item['source_name'] == origin['input_alias'])
-    original = json.loads((Path(opened['workspace_path']) / original_input['relative_path']).read_bytes())
-    reference = original['source_references'][int(origin['pointer'].rsplit('/', 1)[1])]
-    assert sealed['source_references'][0]['case_mapping_basis'] == reference['case_mapping_basis']
-    request['name'] = 'history_again'
-    next(i for i in request['inputs'] if i['port']=='prior_analysis')['artifact_names'] = ['with_history.output']
-    next(i for i in request['inputs'] if i['port']=='prior_analysis_manifest')['artifact_names'] = ['with_history.output.recovery_manifest']
-    worker, opened = open_analysis((*system[:3], request, *system[4:]))
-    report['calculation_records'] = []; report['source_references'] = []
-    write_analysis(opened, report)
-    assert worker.call_tool('worker_submit_result', {})['state'] == 'completed'
-    sealed = system[2].call_tool('run_status', {'name':'history_again', 'view':'detail'})['sealed_output']['payload']
-    assert sealed['source_references'][0]['case_key'] == 'baseline'
 
 
 def test_native_read_error_survives_success_and_is_visible_in_completed_root_status(tmp_path):
@@ -270,7 +220,7 @@ def _mapping_fixture():
     proof = json.loads(contents['proof'])
     for alias, port, value in [
             ('plan', 'experiment_plan', {'proposals':[{'experiment_key':'e','cases':[{'case_key':'one'},{'case_key':'two'}]}]}),
-            ('package', 'reviewed_package', {'project':{'expected_outputs':[{'name':'A','case_key':None}]}})]:
+            ('package', 'execution_package', {'project':{'expected_outputs':[{'name':'A','case_key':None}]}})]:
         raw = canonical_json(value)
         identity = descriptors['new_curve'].artifact_ref.model_copy(update={'artifact_id':'artifact_'+alias, 'sha256':hashlib.sha256(raw).hexdigest()})
         contents[alias] = raw
@@ -370,3 +320,67 @@ def test_explicit_new_scientific_basis_is_not_replaced_by_history():
     before = deepcopy(payload)
     materialize_references(payload, source_bindings(sources), sources.binding_descriptors)
     assert payload == before
+
+
+def test_tcad_prior_analysis_private_sources_open_reference_and_submit(tmp_path, monkeypatch):
+    system = analysis_system(tmp_path)
+    catalog, runtime, root, request, artifacts, register = system
+    from scidiscovery.artifact_agent.schema.execution import ExecutionResultManifest
+    terminal = ExecutionResultManifest(execution_id='fixture_execution', external_run_id='fixture_external',
+        terminal_state='succeeded', output_refs=(artifacts['output_A'].ref, artifacts['output_B'].ref),
+        collected_at='2026-09-09T00:00:00Z')
+    register('execution', canonical_json(terminal.model_dump(mode='json')), 'scidiscovery.execution-result',
+        parents=(artifacts['package'].ref, artifacts['manifest'].ref))
+    request['inputs'].append(dict(port='execution_result', artifact_names=['execution']))
+    worker, opened = open_analysis(system)
+    score = worker.call_tool('worker_tcad_curve_score', {'record_key':'prior_score', 'request':raw_request()})
+    assert score['status'] == 'computed', score
+    report = analysis_report(alias='solver_outputs_001', output_name='A', mapped=True)
+    report['evidence'].append(dict(source_key=score['calculation_ref'], source_type='runtime_output',
+        title='Original calculation', locator=score['calculation_ref']))
+    write_analysis(opened, report)
+    assert worker.call_tool('worker_submit_result', {})['state'] == 'completed'
+    request = deepcopy(request)
+    request.update(name='continued_analysis')
+    request['inputs'].append(dict(port='prior_analysis', artifact_names=['analysis.output']))
+    # A copied report is not a sealed producer, even with the same bytes/parents.
+    previous = runtime.runs.status(worker._run_id)
+    register('unproven_prior', runtime.artifacts.read(previous.output_ref), previous.output_ref.schema_id,
+        parents=runtime.artifacts.catalog(previous.output_ref).parent_refs)
+    wrong = deepcopy(request)
+    wrong['inputs'][-1]['artifact_names'] = ['unproven_prior']
+    rejected = root.call_tool('operation_preflight', wrong)
+    assert not rejected['admissible'] and rejected['reason_code'] == 'input_origin_unavailable', rejected
+    from scidiscovery.operations.catalog import compile_catalog
+    from scidiscovery.builtin_plugin import CORE_PLUGIN
+    from scidiscovery.general_science_plugin import PLUGIN as science
+    from curve_score.plugin import PLUGIN as curve
+    from tcad_artifact.plugin import PLUGIN as tcad
+    changed = tcad.model_copy(update={'operations':tuple(op.model_copy(update={'version':'999.0.0'})
+        if op.operation_id == 'tcad.result.analyze.v1' else op for op in tcad.operations)})
+    changed_catalog = compile_catalog((CORE_PLUGIN, science, curve, changed))
+    with monkeypatch.context() as changed_context:
+        changed_context.setattr(runtime.runs, 'operation_catalog', changed_catalog)
+        changed_context.setattr(root.facade, '_operation_catalog', changed_catalog)
+        rejected = root.call_tool('operation_preflight', request)
+        assert not rejected['admissible'] and rejected['reason_code'] == 'input_origin_unavailable', rejected
+    following, next_opened = open_analysis((*system[:3], request, *system[4:]))
+    current = runtime.runs.status(following._run_id)
+    proof = next(item for item in current.inputs if item.port_name == 'prior_analysis_manifest')
+    workspace = Path(next_opened['workspace_path'])
+    from scidiscovery.artifact_agent.service.local_workspace import workspace_input_filename
+    assert not (workspace/'inputs'/workspace_input_filename(proof.source_name, proof.media_type)).exists()
+    assert proof.source_name not in json.dumps(json.loads(Path(next_opened['assignment_path']).read_bytes())['inputs'])
+    assert all(path.read_bytes() != runtime.artifacts.read(proof.artifact_ref) for path in (workspace/'inputs').iterdir())
+    from scidiscovery.operation_contract import DiagnosticError
+    with pytest.raises(DiagnosticError):
+        following.call_tool('worker_reference_read', {'source':proof.source_name, 'action':'list'})
+    references = following.call_tool('worker_reference_read', {'source':'prior_analysis', 'action':'list'})
+    handle = next(item['reference'] for item in references['references'] if item.get('alias') == score['calculation_ref'])
+    read = following.call_tool('worker_reference_read', {'source':'prior_analysis', 'action':'read', 'reference':handle, 'pointer':'/status'})
+    assert json.loads(read['fragment']) == 'computed'
+    access = runtime.runs.reference_access_records(following._run_id)[0]
+    report['evidence'][-1].update(source_key=access['alias'], locator=access['alias'])
+    write_analysis(next_opened, report)
+    submitted = following.call_tool('worker_submit_result', {})
+    assert submitted['state'] == 'completed', submitted

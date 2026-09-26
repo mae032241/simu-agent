@@ -335,3 +335,17 @@ __all__ = [
     "axis_value",
     "recover_requested_image",
 ]
+
+
+class ScientificFigureSource(_DigitizationModel):
+    source_kind: Literal["pdf_embedded_image", "raster_image"]
+    media_type: Literal["application/pdf", "image/png", "image/jpeg", "image/webp"]
+    page: Annotated[int, Field(ge=1, le=100_000)] | None = None
+    document_image_index: Annotated[int, Field(ge=0, le=1_000_000)] | None = None
+    width: Annotated[int, Field(ge=1)] | None = None
+    height: Annotated[int, Field(ge=1)] | None = None
+
+
+class ScientificFigureRequest(FigureDigitizationRequest):
+    """Scientific choices only; materialization restores source identity internally."""
+    source: ScientificFigureSource

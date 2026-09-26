@@ -19,16 +19,10 @@ from tests.operations.test_tcad_result_analysis import analysis_system, open_ana
 
 def cite(report, alias, key="calculation"):
     report["source_references"] = []
-    report["calculation_records"] = []
     report["evidence"].append(dict(source_key=key, title="Saved analysis evidence",
         source_type="runtime_output", locator=alias))
     return report
 
-
-
-def full_record(reply):
-    """Read the exact original behind the compact tool response."""
-    return json.loads(Path(reply["calculation_path"]).read_bytes())
 
 
 def test_plot_failure_preserves_numbers_and_later_bound_plot_does_not_recompute(tmp_path):
@@ -120,64 +114,8 @@ else: plot()
     assert (next_scratch / 'calls.txt').read_text() == '2'
 
 
-@pytest.mark.parametrize("direct", [False, True])
-@pytest.mark.parametrize("domain", ["generic", "tcad"])
-def test_reference_only_report_resolves_saved_score_without_copy_or_recalculation(tmp_path, monkeypatch, domain, direct):
-    if domain == "generic":
-        worker, opened = generic_worker(tmp_path)
-        request, name, report = score_inputs()[1], "worker_curve_score", limited_report()
-    else:
-        worker, opened = open_analysis(analysis_system(tmp_path))
-        request, name, report = raw_request(), "worker_tcad_curve_score", analysis_report()
-    reply = worker.call_tool(name, dict(record_key="saved", request=request))
-    assert reply["status"] == "computed", reply
-    alias = reply["calculation_ref"]
-    saved = json.loads(worker.runs.read_tool_evidence(worker.runs.status(worker._run_id), alias))
-    assert saved["request"] == request
-    assert saved["attempt"] == CalculationRecord.model_validate_json(canonical_json(full_record(reply))).attempt.model_dump(mode="json")
-    assert "calculation_ref" not in saved
-    monkeypatch.setattr("curve_score.analysis_tool.evaluate_analysis_request", lambda **kw: pytest.fail("recomputed during submission"))
-    report = cite(report, alias)
-    report["objective_assessment"] = dict(objective_key="local_profile", status="inconclusive",
-        comparison_keys=[request["comparison_spec"]["comparisons"][0]["comparison_key"]],
-        evidence_keys=["calculation"], summary="Cited comparison is available without copying its record.")
-    # Use the exact fixture objective, with no scientific mutation by the runtime.
-    plan = json.loads(worker.runs.artifacts.read(next(i.artifact_ref for i in worker.runs.status(worker._run_id).inputs if i.port_name == "experiment_plan")))
-    if plan.get("objective_key"):
-        report["objective_assessment"]["objective_key"] = plan["objective_key"]
-    else:
-        report["objective_assessment"] = None
-    if direct:
-        report["evidence"] = []
-        report["source_references"] = []
-        for gate in report["gates"].values():
-            if isinstance(gate, dict):
-                gate["evidence_keys"] = [alias]
-        if report["objective_assessment"]:
-            report["objective_assessment"]["evidence_keys"] = [alias]
-    assert submit(worker, opened, report)["state"] == "completed"
-    sealed = json.loads(worker.runs.artifacts.read(worker.runs.status(worker._run_id).output_ref))
-    assert sealed == report  # No copying of request, digest, values or receipt into scientific text.
-    assert sealed["calculation_records"] == []
 
 
-def test_full_257_point_diagnostic_does_not_shrink_to_fit_report(tmp_path):
-    worker, opened = open_analysis(analysis_system(tmp_path))
-    request = request_for_diagnostic(raw_request())
-    request["comparison_spec"]["comparisons"][0]["evaluation_points"] = 257
-    for source in request["sources"]:
-        source["case_mapping_basis"] = dict(kind="evidence", rationale="bounded fixture rationale " * 70,
-            evidence_refs=[dict(input_alias="experiment_plan", locator="fixture " * 30) for _ in range(8)])
-    value = worker.call_tool("worker_tcad_curve_diagnose", dict(record_key="full_detail", request=request))
-    record = full_record(value["record"])
-    assert record["status"] == "computed", value
-    details = json.loads(Path(value["details"]["path"]).read_text())
-    assert len(details["localization"]["analyses"][0]["residual_trace"]) == 257
-    old_layout = {**record, "result": details}
-    with pytest.raises(ValueError, match="exceeds 32 KiB"):
-        CalculationRecord.model_validate_json(canonical_json(old_layout))
-    assert len(canonical_json(record)) < 32 * 1024
-    assert submit(worker, opened, cite(analysis_report(), value["record"]["calculation_ref"]))["state"] == "completed"
 
 
 def test_saved_calculations_use_artifact_identity_when_names_repeat(tmp_path):
@@ -193,30 +131,6 @@ def test_saved_calculations_use_artifact_identity_when_names_repeat(tmp_path):
     assert submit(worker, opened, report)["state"] == "completed"
 
 
-@pytest.mark.parametrize("domain", ["generic", "tcad"])
-@pytest.mark.parametrize("different_receipt", [False, True])
-def test_inline_and_saved_citations_share_identity_only_for_the_same_receipt(tmp_path, domain, different_receipt):
-    if domain == "generic":
-        worker, opened = generic_worker(tmp_path)
-        request, tool, report = score_inputs()[1], "worker_curve_score", limited_report()
-    else:
-        worker, opened = open_analysis(analysis_system(tmp_path))
-        request, tool, report = raw_request(), "worker_tcad_curve_score", analysis_report()
-    first = worker.call_tool(tool, {"record_key": "same_name", "request": request})
-    assert first["status"] == "computed"
-    saved = first
-    if different_receipt:
-        request["comparison_spec"]["comparisons"][0]["comparison_key"] = "changed_comparison"
-        saved = worker.call_tool(tool, {"record_key": "same_name", "request": request})
-        assert saved["status"] == "computed" and saved["calculation_ref"] != first["calculation_ref"]
-    report = cite(report, saved["calculation_ref"], "one_calculation")
-    report["calculation_records"] = [full_record(first)]
-    report["evidence"].append(dict(source_key="one_calculation", title="Inline representation",
-        source_type="runtime_output", locator="calculation_records:same_name"))
-    result = submit(worker, opened, report)
-    assert result["state"] == ("rejected" if different_receipt else "completed"), result
-    if different_receipt:
-        assert any("conflicting source mappings" in item["message"] for item in result["diagnostics"])
 
 
 def test_rejected_score_needs_no_manual_failure_record(tmp_path):
@@ -288,95 +202,3 @@ def test_publish_files_rejects_unbound_or_outside_files_without_blocking_analysi
         worker.call_tool("worker_analysis_publish_files", args)
     assert worker.runs.tool_evidence(worker._run_id) == []
     assert submit(worker, opened, limited_report())["state"] == "completed"
-
-
-def test_saved_calculation_can_be_cited_next_round_with_current_alias(tmp_path, monkeypatch):
-    system = analysis_system(tmp_path)
-    catalog, runtime, root, request, _, _ = system
-    worker, opened = open_analysis(system)
-    result = worker.call_tool("worker_tcad_curve_score", dict(record_key="persisted", request=raw_request()))
-    assert submit(worker, opened, cite(analysis_report(), result["calculation_ref"]))["state"] == "completed"
-    second = deepcopy(request); second["name"] = "second_analysis"
-    second["inputs"].extend([dict(port="prior_analysis", artifact_names=["analysis.output"]),
-        dict(port="prior_analysis_manifest", artifact_names=["analysis.output.recovery_manifest"])])
-    reference = next(i for i in second["inputs"] if i["port"] == "reference_material")
-    reference["artifact_names"].append("analysis.output." + result["calculation_ref"])
-    next_worker, next_opened = open_analysis((catalog, runtime, root, second, *system[4:]))
-    monkeypatch.setattr("curve_score.analysis_tool.evaluate_analysis_request", lambda **kw: pytest.fail("historical score rerun"))
-    assert submit(next_worker, next_opened, cite(analysis_report(), "reference_material_002"))["state"] == "completed"
-
-
-@pytest.mark.parametrize("mode", ["separate_runs", "mixed_runs", "same_historical_receipt"])
-def test_identical_calculation_bytes_from_different_runs_keep_their_receipt_scope(tmp_path, mode):
-    system = analysis_system(tmp_path)
-    catalog, runtime, root, request, _, _ = system
-    worker, opened = open_analysis(system)
-    first = worker.call_tool("worker_tcad_curve_score", dict(record_key="same_name", request=raw_request()))
-    assert submit(worker, opened, cite(analysis_report(), first["calculation_ref"]))["state"] == "completed"
-    prior_descriptor = runtime.runs.source_descriptor(runtime.runs.status(worker._run_id), first["calculation_ref"])
-    second = deepcopy(request); second["name"] = "second_analysis"
-    second["inputs"].extend([
-        dict(port="prior_analysis", artifact_names=["analysis.output"]),
-        dict(port="prior_analysis_manifest", artifact_names=["analysis.output.recovery_manifest"]),
-        dict(port="current_progress", artifact_names=["analysis.output." + first["calculation_ref"]])])
-    following, reopened = open_analysis((catalog, runtime, root, second, *system[4:]))
-    current = following.call_tool("worker_tcad_curve_score", dict(record_key="same_name", request=raw_request()))
-    assert current["status"] == "computed"
-    current_descriptor = runtime.runs.source_descriptor(runtime.runs.status(following._run_id), current["calculation_ref"])
-    assert prior_descriptor.sha256 == current_descriptor.sha256
-    assert prior_descriptor.artifact_ref != current_descriptor.artifact_ref
-    report = cite(analysis_report(), "current_progress", "old_calculation")
-    current = full_record(current)
-    if mode == "same_historical_receipt":
-        current = full_record(first)
-        current["attempt"]["manifest_alias"] = "prior_analysis_manifest"
-    report["calculation_records"] = [current]
-    report["evidence"].append(dict(source_key="new_calculation" if mode == "separate_runs" else "old_calculation",
-        title="Current calculation", source_type="runtime_output", locator="calculation_records:same_name"))
-    result = submit(following, reopened, report)
-    assert result["state"] == ("rejected" if mode == "mixed_runs" else "completed"), result
-    if mode == "mixed_runs":
-        assert any("conflicting source mappings" in item["message"] for item in result["diagnostics"])
-
-
-@pytest.mark.parametrize("also_inline", [False, True])
-def test_saved_calculation_survives_failed_run_without_manual_receipt_rewriting(tmp_path, also_inline):
-    from tests.operations.test_tcad_result_analysis import write_analysis
-    system = analysis_system(tmp_path)
-    catalog, runtime, root, request, _, _ = system
-    worker, opened = open_analysis(system)
-    scratch = Path(opened["output_directory"]).parent / "scratch"
-    scratch.mkdir(exist_ok=True)
-    raw = runtime.artifacts.read(system[4]["reference"].ref)
-    (scratch / "analysis.py").write_text("# Identity-copy fixture; publication makes no execution claim.\n")
-    (scratch / "derived.csv").write_bytes(raw)
-    published = worker.call_tool("worker_analysis_publish_files", dict(source_aliases=["reference_material"],
-        script_path="scratch/analysis.py", files=[dict(path="scratch/derived.csv", media_type="text/csv")],
-        method="Identity copy to exercise retained script/data dependencies."))
-    score_request = raw_request()
-    score_request["sources"][1]["input_alias"] = published["files"][0]["evidence_alias"]
-    result = worker.call_tool("worker_tcad_curve_score", dict(record_key="before_interruption", request=score_request))
-    assert result["status"] == "computed", result
-    report = cite(analysis_report(), result["calculation_ref"])
-    write_analysis(opened, report)
-    status = root.call_tool("run_status", {"name": "analysis"})
-    failed = root.call_tool("run_record_failure", dict(name="analysis", reason="fixture interruption",
-        expected_state="running", expected_last_activity_at=status["last_activity_at"]))
-    assert failed["recovery"]["draft_available"]
-    second = deepcopy(request); second.update(name="resumed_analysis", draft_from="analysis")
-    next_worker, next_opened = open_analysis((catalog, runtime, root, second, *system[4:]))
-    # Reopening must preserve dependencies even when every file is already adopted.
-    next_opened = next_worker.call_tool("worker_open_assignment", {})
-    assert next_worker.runs.tool_attempts(next_worker._run_id) == []
-    derived = next_worker.runs.read_tool_evidence(next_worker.runs.status(next_worker._run_id),
-        published["files"][0]["evidence_alias"])
-    assert derived == raw
-    if also_inline:
-        # Legacy inline consumption still uses its existing recovery spelling;
-        # the preferred saved-file citation above needs no manual rewrite.
-        inline = full_record(result)
-        inline["attempt"]["proof_kind"] = "recovery"
-        report["calculation_records"] = [inline]
-        report["evidence"].append(dict(source_key="calculation", title="Recovered inline receipt",
-            source_type="runtime_output", locator="calculation_records:before_interruption"))
-    assert submit(next_worker, next_opened, report)["state"] == "completed"

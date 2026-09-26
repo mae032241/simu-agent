@@ -22,12 +22,12 @@ from .debug_contract import (
 )
 
 
-def collect(runtime: RuntimePluginContext, external_run_id: str, *, context: CollectionContext):
+def collect(runtime: RuntimePluginContext, external_run_id: str, *, context: CollectionContext, limits):
     reader, writer = os.pipe()
     try:
         packet = {"plugin_id": runtime.plugin_id, "config_path": str(runtime.config_path),
             "config": runtime.config_bytes.decode(), "state_root": str(runtime.state_root),
-            "external_run_id": external_run_id, "budget": context.wire(), "parent_fd": reader}
+            "external_run_id": external_run_id, "budget": context.wire(), "limits": limits, "parent_fd": reader}
         response = run_bounded([sys.executable, "-m", __name__], input=json.dumps(packet).encode(),
             timeout=context.remaining_seconds(), context=context, pass_fds=(reader,),
             max_output_bytes=DEVELOPMENT_ARTIFACT_LIMIT_BYTES, timeout_kind="debug_collection_total")
@@ -66,7 +66,7 @@ def main():
         method = getattr(adapter, "collect_with_budget", None)
         descriptors = (method(packet["external_run_id"], context=context) if callable(method)
             else adapter.collect(packet["external_run_id"]))
-        result = TCADDevelopmentDebugBridge(adapter)._collected_run(descriptors, context=context)
+        result = TCADDevelopmentDebugBridge(adapter)._collected_run(descriptors, context=context, limits=packet["limits"])
         value = asdict(result)
         for item in value["files"]:
             item["content"] = base64.b64encode(item["content"]).decode()

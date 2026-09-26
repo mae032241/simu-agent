@@ -241,7 +241,7 @@ def test_large_nested_package_parameters_keep_case_and_value_pointer(system, pro
     payload = {"project": {"files": [{"content": "solver source " * 8000}], "case_parameter_bindings": [
         {"scientific_path": "x", "case_key": f"case{i}", "realized_value": i, "derivation": "original explanation " * 50}
         for i in range(145)]}}
-    original = register(system, "package", "tcad.reviewed-deck-package.v2", payload)
+    original = register(system, "package", "tcad.execution-package.v2", payload)
     context = system.model.parameter_context(system.a, original.artifact_id)
     page = presentation.build_parameter_page(context["artifact"], context["dependencies"], after=136)
     assert page["parameter_page"]["total"] == 145

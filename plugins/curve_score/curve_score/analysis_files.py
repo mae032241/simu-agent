@@ -75,13 +75,11 @@ def publish_files(request, context):
 
 GUIDANCE = """
 Cite returned calculation_ref in evidence_keys or optional evidence source_key/locator.
-Control retains complete records, requests, digests, attempts and arrays: keep
-calculation_records empty for new calls; do not copy receipts or source mappings.
-Multiple locators per source are allowed; legacy inline records remain readable.
-If rejection precedes a calculation_ref, cite tool_recovery_manifest and the exact
-error; it does not prove an unsupported format. Historical reuse needs the saved
-calculation, paired prior analysis/manifest and original sources; cite its current
-alias. Control owns historical alias and receipt handling.
+List the returned alias with worker_reference_read, then read its content reference.
+Numerical evidence is sealed by the tool; reports cite its alias without copying records. If a tool rejects the
+request, report its reason and scientific limitation. For historical reuse, select the
+prior analysis and use its cited scientific materials; original provenance is resolved
+by the service.
 
 When built-in methods cannot express required selection or weighting, use permitted
 bounded native analysis. Preserve scripts and derived results with

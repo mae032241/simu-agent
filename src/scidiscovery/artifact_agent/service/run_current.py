@@ -23,6 +23,7 @@ class RunCurrentGuard:
         connection: sqlite3.Connection,
         instance_id: str,
         inputs: tuple[RunInputBinding, ...],
+        *, input_ports: tuple = (),
     ) -> tuple[RunInputBinding, ...]:
         values: list[RunInputBinding] = []
         for item in inputs:
@@ -35,7 +36,29 @@ class RunCurrentGuard:
                 (instance_id, item.artifact_name),
             ).fetchone()
             if binding is None or str(binding["object_id"]) != item.artifact_ref.artifact_id:
-                raise RunStateConflict("operation input binding changed before Run creation")
+                port = next((port for port in input_ports if port.name == item.port_name), None)
+                rule = port.derivation if port is not None else None
+                # A declared private output has no Agent-visible name binding.
+                # Freeze it only against the exact named subject and its sealed producer.
+                anchors = [source for source in inputs if rule is not None and source.port_name == rule.anchor_port]
+                if (port is None or port.agent_visible or rule is None or not rule.producer_output_port
+                        or rule.producer_input_path or len(anchors) != 1 or item.require_current):
+                    raise RunStateConflict("operation input binding changed before Run creation")
+                origin = connection.execute("SELECT * FROM runs WHERE state='completed' AND instance_id=? AND output_ref_json=?",
+                    (instance_id, anchors[0].artifact_ref.canonical_json())).fetchall()
+                if len(origin) != 1:
+                    raise RunStateConflict("derived private source has no exact completed producer")
+                status = status_from_row(origin[0])
+                envelope = self.artifacts.verify(item.artifact_ref)
+                subject = self.artifacts.verify(anchors[0].artifact_ref)
+                if (binding is None or str(binding["object_id"]) != subject.artifact_id
+                        or item.artifact_ref not in subject.parent_refs
+                        or envelope.labels.get("operation_output_port") != rule.producer_output_port
+                        or envelope.labels.get("tool_producer_run") != status.run_id
+                        or envelope.labels.get("operation_digest") != status.operation_digest):
+                    raise RunStateConflict("derived private source differs from its declared producer output")
+                values.append(replace(item, producer_run_id=status.run_id, current_anchors=()))
+                continue
             producer = connection.execute(
                 """
                 SELECT * FROM runs

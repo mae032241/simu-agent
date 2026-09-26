@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import fcntl
 import json
 import re
 import uuid
@@ -29,50 +30,40 @@ from .debug_contract import (
     TCADDevelopmentDebugAdapter,
 )
 from .debug_adapter import _development_limits
+from .execution_policy import DebugPolicy
 from .project_packager import DeckProjectDraft, project_debug_sha256
 
 
 _RUN_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
 _MODES = frozenset({"preflight", "smoke", "initialization"})
-_TERMINAL = frozenset({"succeeded", "failed", "cancelled"})
+_TERMINAL = frozenset({"succeeded", "failed", "cancelled", "collected"})
 _STATES = frozenset({"accepted", "running", "cancelling", *_TERMINAL})
-_MAX_RUNS = 6
-_TOTAL_WALL_SECONDS = 360
-_MAX_RESPONSE_BYTES = 32 * 1024
-
-
 def debug_tool_description() -> str:
-    modes = ", ".join(f"{mode} {_development_limits(mode)[0]}s" for mode in sorted(_MODES))
     return (
-        "Submit or poll one bounded TCAD development diagnostic; never scientific evidence. "
-        f"Budget: {_TOTAL_WALL_SECONDS}s reserved wall time and {_MAX_RUNS} created run names. "
-        f"Mode caps: {modes}. Each submitted job reserves its capped wall limit once, "
-        "further clamped by project limits, remaining debug budget and Run time; "
-        "solver failure does not refund it. Repeat the same name/mode to poll without "
-        "new reservation; use a new name after source corrections, which do not reset "
-        "the budget. Responses report current budget and per-job reservation. "
-        "On updated runners, summary progress includes observed job elapsed_seconds. "
-        "For initialization, select output_names from the staged project's expected_outputs; "
-        "only those diagnostic files are collected, never the entire production output set. "
-        "Read details_path.outputs for file metadata and workspace relative_path, then read files as needed; "
-        "file bytes are not included in this summary. Omit output_names on polls to retain the selection. "
-        "Read details_path for redacted log_tails and manifest timing; "
-        "log_relative_path locates the complete bounded log. These are observations, "
-        "not an ETA or proof of physical initialization. Older runners may omit progress."
+        "Submit or poll one TCAD development diagnostic under administrator-configured mode, "
+        "attempt, wall-time, storage and delivery limits; never scientific evidence. "
+        "Responses expose the frozen Run budget and each job reservation. Renaming a job "
+        "does not reset the budget; repeating a name polls the same submission. "
+        "For initialization select declared output_names. Read details_path for retained "
+        "diagnostics and file identities; file bytes are not returned in this summary."
     )
+
+
+def _debug_policy(context):
+    return DebugPolicy.model_validate_json(json.dumps(context.state["debug_policy"]), strict=True)
 
 
 def debug_response(context: OperationToolContext, run_name: str, response: dict) -> dict:
     runs = context.state.get("runs", {})
     used = context.state.get("reserved_wall_seconds", 0)
-    remaining = max(0, _TOTAL_WALL_SECONDS - used)
+    remaining = max(0, _debug_policy(context).total_wall_seconds - used)
     result = {**response, "budget": {
-        "total_wall_seconds": _TOTAL_WALL_SECONDS,
+        "total_wall_seconds": _debug_policy(context).total_wall_seconds,
         "reserved_wall_seconds": used,
         "remaining_wall_seconds": remaining,
-        "max_runs": _MAX_RUNS,
-        "created_runs": len(runs),
-        "remaining_runs": max(0, _MAX_RUNS - len(runs)),
+        "max_runs": _debug_policy(context).max_runs,
+        "created_runs": len(context.state.get("reservations", runs)),
+        "remaining_runs": max(0, _debug_policy(context).max_runs - len(context.state.get("reservations", runs))),
         "run_remaining_seconds": context.remaining_seconds,
         "effective_wall_seconds": max(0, min(remaining, context.remaining_seconds)),
     }}
@@ -80,7 +71,7 @@ def debug_response(context: OperationToolContext, run_name: str, response: dict)
     if record is not None:
         result["reserved_wall_seconds_for_run"] = record["reserved_wall_seconds"]
         result["delivery_budget"] = record.get("delivery_budget")
-    if len(canonical_json(result)) > _MAX_RESPONSE_BYTES:
+    if len(canonical_json(result)) > _debug_policy(context).max_response_bytes:
         raise TCADDebugError("TCAD debug diagnostic response exceeds its bound")
     return result
 
@@ -116,6 +107,78 @@ class LocalTCADDebugService:
     def run(
         self, context: OperationToolContext, *, run_name: str, mode: str, output_names: list[str] | None = None
     ) -> dict[str, object]:
+        subject = None
+        for alias in ("research_objective", "scientific_skeleton", "experiment_plan"):
+            try:
+                subject = context.input_ref(alias)
+                break
+            except (KeyError, ValueError):
+                continue
+        if subject is None:
+            raise TCADDebugError("debug budget requires an immutable scientific subject binding")
+        key = canonical_sha256({"subject": subject})
+        root = self.exchange_root / "budgets"
+        root.mkdir(exist_ok=True, mode=0o700)
+        path = root / (key + ".json")
+        from scidiscovery.artifact_agent.service.engineering_diagnostics import atomic_json
+        with (root / (key + ".lock")).open("a+") as lock:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+            if path.exists():
+                context.state.update(json.loads(path.read_bytes()))
+            context.state["budget_ledger_path"] = str(path)
+            try:
+                return self._run_locked(context, run_name=run_name, mode=mode, output_names=output_names)
+            finally:
+                self._save_budget(context)
+
+    def experiment_activity(self, run_ids, inputs, *, cancel=False, name=None):
+        """Observe/cancel persisted jobs without resetting the original allowance."""
+        from scidiscovery.artifact_agent.schema.execution import LocalFileDescriptor
+        from scidiscovery.artifact_agent.service.engineering_diagnostics import atomic_json
+        subject = next((item.artifact_ref for item in inputs if item.port_name == "research_objective"), None)
+        if subject is None:
+            return False
+        key = canonical_sha256({"subject": subject})
+        root = self.exchange_root / "budgets"
+        path = root / (key + ".json")
+        if not path.exists():
+            return False
+        active = False
+        with (root / (key + ".lock")).open("a+") as lock:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+            ledger = json.loads(path.read_bytes())
+            records = ledger.setdefault("runs", {})
+            for alias, reservation in ledger.get("reservations", {}).items():
+                record = records.get(alias, reservation["record"])
+                if record.get("run_id") not in run_ids or (name is not None and alias != name):
+                    continue
+                if record.get("state") in _TERMINAL:
+                    continue
+                external = record.get("external_run_id")
+                if external is None:
+                    found = self.adapter.lookup_submission(LocalFileDescriptor.model_validate_json(json.dumps(reservation["submission"]), strict=True))
+                    if found is None:
+                        # No accepted job; its reservation remains spent.
+                        continue
+                    external, state = found
+                    record = {**record, "external_run_id": external, "state": _state(state)}
+                if cancel and record["state"] not in _TERMINAL:
+                    record["state"] = _state(self.adapter.cancel(external))
+                active = active or record["state"] not in _TERMINAL
+                if cancel:
+                    records[alias] = record
+            if cancel:
+                atomic_json(path, ledger)
+        return active
+
+    @staticmethod
+    def _save_budget(context):
+        from scidiscovery.artifact_agent.service.engineering_diagnostics import atomic_json
+        atomic_json(Path(context.state["budget_ledger_path"]), {key: context.state[key] for key in
+            ("debug_policy", "reserved_wall_seconds", "runs", "reservations") if key in context.state})
+
+    def _run_locked(self, context, *, run_name, mode, output_names):
+        context.state.setdefault("debug_policy", self.adapter.policy.model_dump(mode="json"))
         call_started = time.monotonic()
         if _RUN_NAME.fullmatch(run_name) is None or mode not in _MODES:
             raise TCADDebugError("TCAD development debug request is invalid")
@@ -126,8 +189,18 @@ class LocalTCADDebugService:
         if not isinstance(runs, dict):
             raise TCADDebugError("local TCAD debug state is invalid")
         record = runs.get(run_name)
+        reservations = context.state.setdefault("reservations", {})
+        if record is None and run_name in reservations:
+            from scidiscovery.artifact_agent.schema.execution import LocalFileDescriptor
+            pending = reservations[run_name]
+            found = self.adapter.lookup_submission(LocalFileDescriptor.model_validate_json(
+                json.dumps(pending["submission"]), strict=True))
+            if found is None:
+                raise TCADDebugError("reserved debug submission was not accepted; allowance remains consumed")
+            record = {**pending["record"], "external_run_id": found[0], "state": _state(found[1])}
+            runs[run_name] = record
         if record is None:
-            if len(runs) >= _MAX_RUNS:
+            if len(reservations) >= _debug_policy(context).max_runs:
                 raise TCADDebugError("TCAD development debug run limit is exhausted")
             record = self._start(context, run_name, mode, selected)
             runs[run_name] = record
@@ -135,8 +208,8 @@ class LocalTCADDebugService:
             raise TCADDebugError("TCAD debug run_name is bound to another mode")
         if output_names is not None and tuple(record.get("output_names", ())) != selected:
             raise TCADDebugError("debug run_name is bound to another output selection; poll without output_names")
-        if isinstance(record.get("response"), dict):
-            return dict(record["response"])
+        if isinstance(record.get("response"), dict) or (self._receipt_directory(context, run_name, record["run_id"]) / "receipt.json").is_file():
+            return self._restore_receipt(context, run_name, record)
         state = _state(str(record["state"]))
         if state not in _TERMINAL:
             try:
@@ -161,9 +234,9 @@ class LocalTCADDebugService:
             collect = getattr(self.adapter, "collect_with_budget", None)
             if self.runtime_context is not None:
                 from .debug_collection import collect as collect_in_process
-                collected = collect_in_process(self.runtime_context, str(record["external_run_id"]), context=budget)
+                collected = collect_in_process(self.runtime_context, str(record["external_run_id"]), context=budget, limits=record["collection_limits"])
             elif callable(collect):
-                collected = collect(str(record["external_run_id"]), context=budget)
+                collected = collect(str(record["external_run_id"]), context=budget, limits=record["collection_limits"])
             else:
                 raise RuntimeError("legacy debug collection requires its configured runtime factory")
             budget.remaining_seconds()
@@ -183,12 +256,13 @@ class LocalTCADDebugService:
         used = context.state.get("reserved_wall_seconds", 0)
         if type(used) is not int or used < 0:
             raise TCADDebugError("local TCAD debug budget is invalid")
-        remaining = min(context.remaining_seconds, _TOTAL_WALL_SECONDS - used)
+        remaining = min(context.remaining_seconds, _debug_policy(context).total_wall_seconds - used)
         if remaining < 1:
             raise TCADDebugError("TCAD development debug budget is exhausted")
         project, source_sha, sources = _candidate(context)
         delivery = _delivery_budget(context, project, mode, output_names)
-        capability = context.read_input("execution_capability")
+        capability = (context.state["experiment_capability"] if "experiment_capability" in context.state
+            else context.read_input("execution_capability"))
         draft = DeckProjectDraft.model_validate_json(project, strict=True)
         entrypoint = draft.development_initialization_entrypoint if mode == "initialization" else draft.entrypoint
         declarations_path = context.workspace / "deck/declarations.json"
@@ -210,6 +284,34 @@ class LocalTCADDebugService:
             )
             prepared = self.adapter.clamp_wall_time(prepared, wall_time_seconds=remaining)
             submission = self.adapter.prepare_submission(prepared)
+            pending_record = {
+                "mode": mode,
+                "delivery_budget": delivery,
+                "collection_limits": {"max_output_bytes": delivery["effective_collection_bytes"],
+                    **{key: getattr(_debug_policy(context), key) for key in
+                       ("max_output_file_bytes", "max_output_files", "max_log_bytes", "max_manifest_bytes", "max_response_log_chars")}},
+                "run_id": context.run_id,
+                "operation_id": context.operation_id,
+                "backend_release": json.loads(capability).get("public_release_label"),
+                "entrypoint": entrypoint,
+                "arguments": prepared.arguments,
+                "output_names": output_names,
+                "collect_generated_outputs": DeckProjectDraft.model_validate_json(project).collect_generated_outputs,
+                "reserved_wall_seconds": prepared.wall_time_seconds,
+                "external_run_id": None,
+                "state": "accepted",
+                "source_tree_sha256": source_sha,
+                "project_sha256": project_debug_sha256(
+                    DeckProjectDraft.model_validate_json(project, strict=True)
+                ),
+                **({"implementation_ref": context.state["experiment_implementation_ref"]}
+                    if "experiment_implementation_ref" in context.state else {}),
+                "declarations_sha256": declarations_sha,
+            }
+            context.state["reserved_wall_seconds"] = used + prepared.wall_time_seconds
+            context.state.setdefault("reservations", {})[run_name] = {
+                "submission": submission.model_dump(mode="json"), "record": pending_record}
+            self._save_budget(context)
             external_run_id, state = self.adapter.submit(submission)
         except TCADDebugError:
             raise
@@ -223,25 +325,7 @@ class LocalTCADDebugService:
             raise TCADDebugError("TCAD debug returned an invalid private binding")
         context.state["reserved_wall_seconds"] = used + prepared.wall_time_seconds
         context.record_activity("tcad_debug_submitted")
-        return {
-            "mode": mode,
-            "delivery_budget": delivery,
-            "run_id": context.run_id,
-            "operation_id": context.operation_id,
-            "backend_release": json.loads(capability).get("public_release_label"),
-            "entrypoint": entrypoint,
-            "arguments": prepared.arguments,
-            "output_names": output_names,
-            "collect_generated_outputs": DeckProjectDraft.model_validate_json(project).collect_generated_outputs,
-            "reserved_wall_seconds": prepared.wall_time_seconds,
-            "external_run_id": external_run_id,
-            "state": _state(state),
-            "source_tree_sha256": source_sha,
-            "project_sha256": project_debug_sha256(
-                DeckProjectDraft.model_validate_json(project, strict=True)
-            ),
-            "declarations_sha256": declarations_sha,
-        }
+        return {**pending_record, "external_run_id": external_run_id, "state": _state(state)}
 
     def _finish(self, context, run_name, mode, record, collected, *, budget=None) -> dict[str, object]:
         root = context.workspace / ".operation-tools/tcad" / run_name
@@ -261,6 +345,7 @@ class LocalTCADDebugService:
                     Path(f"deck/reports/log-{run_name}.txt"),
                     item.content, replace=False, mode=0o400, create_parents=True,
                 )
+                retained.append(_file_identity(f"reports/log-{run_name}.txt", item.content, item.media_type))
             if item.name != "debug.log.txt":
                 entry = {"name": item.name, "media_type": item.media_type, "size_bytes": len(item.content)}
                 if item.relative_path is not None:
@@ -321,9 +406,11 @@ class LocalTCADDebugService:
         diagnostic = {key: value for key, value in response.items() if key != "run_name"}
         diagnostic.update({key: record[key] for key in (
             "source_tree_sha256", "project_sha256", "declarations_sha256",
-            "run_id", "operation_id", "backend_release", "entrypoint", "arguments", "output_names", "delivery_budget"
+            "run_id", "operation_id", "backend_release", "entrypoint", "arguments", "output_names", "delivery_budget", "collection_limits"
         )})
         diagnostic["run_name"] = run_name
+        if "implementation_ref" in record:
+            diagnostic["implementation_ref"] = record["implementation_ref"]
         diagnostic_bytes = canonical_json(diagnostic)
         retained.append(_file_identity(f"reports/diagnostic-{run_name}.json", diagnostic_bytes, "application/json"))
         try:
@@ -376,7 +463,84 @@ class LocalTCADDebugService:
                 collected.terminal_state == "succeeded" and collected.exit_code == 0
                 and response["diagnostic_layer"] == "complete" and not missing)}
             context.state.setdefault("finalization_records", {})[mode] = canonical_json(proof)
+        else:
+            proof = {**diagnostic, "files": retained, "collection_complete": False}
+        self._save_receipt(context, run_name, record, proof, response)
         return response
+
+    @staticmethod
+    def _receipt_directory(context, run_name, source_run_id):
+        key = canonical_sha256({"run_id": source_run_id, "run_name": run_name})
+        return Path(context.state["budget_ledger_path"]).parent / "receipts" / key
+
+    def _save_receipt(self, context, run_name, record, proof, response):
+        """Persist control-produced collection identities separately from budgets."""
+        root = self._receipt_directory(context, run_name, record["run_id"])
+        root.mkdir(parents=True, exist_ok=True, mode=0o700)
+        for item in proof["files"]:
+            raw = (context.workspace / "deck" / item["relative_path"]).read_bytes()
+            if len(raw) != item["size_bytes"] or hashlib.sha256(raw).hexdigest() != item["sha256"]:
+                raise TCADDebugError("diagnostic changed before control receipt retention")
+            _write_private(root / item["sha256"], raw)
+        _write_private(root / "receipt.json", canonical_json({"proof": proof, "response": response,
+            "submission": context.state["reservations"][run_name]["submission"]}))
+
+    def _restore_receipt(self, context, run_name, record, *, validate=True):
+        source_run = record["run_id"]
+        if not context.recovery_authorized(source_run):
+            raise TCADDebugError("cached diagnostic belongs to another Run without a control recovery relationship")
+        root = self._receipt_directory(context, run_name, source_run)
+        receipt = json.loads((root / "receipt.json").read_bytes())
+        if receipt["submission"] != context.state["reservations"][run_name]["submission"]:
+            raise TCADDebugError("retained diagnostic submission identity changed")
+        proof = receipt["proof"]
+        if proof["run_id"] != source_run or proof["project_sha256"] != record["project_sha256"]:
+            raise TCADDebugError("retained diagnostic proof identity changed")
+        experiment = "experiment_project" in context.state
+        if experiment:
+            current = DeckProjectDraft.model_validate_json(context.state["experiment_project"], strict=True)
+            if (record.get("implementation_ref") != context.state.get("experiment_implementation_ref")
+                    or proof.get("implementation_ref") != record.get("implementation_ref")
+                    or project_debug_sha256(current) != record["project_sha256"]):
+                raise TCADDebugError("Retained diagnostic does not belong to this sealed implementation.")
+        for item in proof["files"]:
+            relative = Path(item["relative_path"])
+            if relative.is_absolute() or ".." in relative.parts or relative.parts[0] != "reports":
+                raise TCADDebugError("retained diagnostic path is unsafe")
+            raw = (root / item["sha256"]).read_bytes()
+            if len(raw) != item["size_bytes"] or hashlib.sha256(raw).hexdigest() != item["sha256"]:
+                raise TCADDebugError("retained diagnostic bytes changed")
+            target = context.workspace / "deck" / relative
+            if target.exists() and target.read_bytes() != raw:
+                raise TCADDebugError("current diagnostic conflicts with the retained original")
+            write_control_workspace_file(context.workspace, Path("deck") / relative, raw,
+                replace=True, mode=0o400, create_parents=True)
+        restored = {**proof, "run_id": context.run_id, "operation_id": context.operation_id,
+            "recovered_from_run_id": source_run,
+            "original_receipt_sha256": canonical_sha256(receipt)}
+        records = context.state.setdefault("finalization_records", {})
+        previous = dict(records)
+        if record["mode"] in {"preflight", "initialization"}:
+            records[record["mode"]] = canonical_json(restored)
+        if validate and not experiment:
+            try:
+                # Restore all completed modes before the finalizer checks the
+                # current candidate. Each control receipt is independently verified.
+                for other_name, other in context.state.get("runs", {}).items():
+                    if (other_name != run_name and (self._receipt_directory(context, other_name, other["run_id"]) / "receipt.json").is_file()
+                            and other.get("project_sha256") == record["project_sha256"]
+                            and context.recovery_authorized(other["run_id"])):
+                        self._restore_receipt(context, other_name, other, validate=False)
+                context.candidate_snapshot()
+                envelope = json.loads((context.output_directory / "result.json").read_bytes())
+                current = DeckProjectDraft.model_validate_json(canonical_json(envelope["payload"]), strict=True)
+                if project_debug_sha256(current) != record["project_sha256"]:
+                    raise TCADDebugError("recovered diagnostic differs from current project")
+            except Exception:
+                records.clear()
+                records.update(previous)
+                raise
+        return dict(receipt["response"])
 
 
 def _file_identity(path, raw, media_type):
@@ -388,7 +552,8 @@ def _delivery_budget(context, project, mode, output_names):
     """Budget encoding before reservation; a generous contract maximum is not a prediction."""
     from .project_packager import AttemptFile
     import base64
-    envelope = json.loads((context.output_directory / "result.json").read_bytes())
+    envelope = ({"payload": json.loads(project)} if "experiment_project" in context.state
+        else json.loads((context.output_directory / "result.json").read_bytes()))
     handoff = context.workspace / "deck/handoff.json"
     if handoff.is_file():
         envelope["handoff"] = json.loads(handoff.read_bytes())
@@ -415,7 +580,7 @@ def _delivery_budget(context, project, mode, output_names):
     remaining = DEVELOPMENT_ARTIFACT_LIMIT_BYTES - known - reserve
     if remaining <= 0:
         raise TCADDebugError(f"development delivery budget exhausted before startup: known_bytes={known}, report_reserve_bytes={reserve}, remaining_bytes={remaining}, outputs={list(output_names)}; shrink the diagnostic/source or selected output_names")
-    effective = min(DeckProjectDraft.model_validate_json(project).resource_limits.max_output_bytes, _development_limits(mode)[1], remaining // 2)
+    effective = min(DeckProjectDraft.model_validate_json(project).resource_limits.max_output_bytes, _development_limits(mode, _debug_policy(context))[1], remaining // 2)
     return {"envelope_limit_bytes": DEVELOPMENT_ARTIFACT_LIMIT_BYTES, "known_encoded_bytes": known,
             "report_reserve_bytes": reserve, "remaining_encoded_bytes": remaining,
             "effective_collection_bytes": effective, "unknown_output_sizes": list(output_names),
@@ -427,22 +592,22 @@ def _candidate(
     context: OperationToolContext,
 ) -> tuple[bytes, str, tuple[TCADDebugSource, ...]]:
     try:
-        context.candidate_snapshot()
-        envelope = parse_role_result(
-            json.loads((context.output_directory / "result.json").read_bytes())
-        )
-        project = DeckProjectDraft.model_validate_json(
-            canonical_json(envelope.payload), strict=True
-        )
-        sources = tuple(
+        if "experiment_project" in context.state:
+            project = DeckProjectDraft.model_validate_json(context.state["experiment_project"], strict=True)
+            sources = tuple(context.state["experiment_sources"])
+        else:
+            context.candidate_snapshot()
+            envelope = parse_role_result(json.loads((context.output_directory / "result.json").read_bytes()))
+            project = DeckProjectDraft.model_validate_json(canonical_json(envelope.payload), strict=True)
+            sources = tuple(
             TCADDebugSource(
                 source_name=slot.semantic_name,
                 artifact_ref=context.input_ref(slot.semantic_name),
                 media_type=context.input_media_type(slot.semantic_name),
-                content=context.read_input(slot.semantic_name),
+                content=context.input_path(slot.semantic_name),
             )
             for slot in project.input_slots
-        )
+            )
     except (RunCheckerError, RunOutputError, WorkspaceError):
         raise
     except Exception as error:

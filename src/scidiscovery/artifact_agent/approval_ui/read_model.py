@@ -20,8 +20,6 @@ from ..service.executions import ExecutionServiceError
 from ..service.run_records import RunError
 from ..service.scheduler_bindings import SchedulerNameNotFound
 from ..storage import ArtifactNotFoundError, ArtifactRegistryError, CASIntegrityError, CASObjectMissingError
-from .legacy_artifacts import LegacyUIArtifactEnvelope
-from .legacy_tasks import LegacyTaskReadError, LegacyTaskReader
 from .view_models import MAX_PAYLOAD_BYTES, MAX_RESPONSE_BYTES, MAX_SOURCE_BYTES, NodePage, bounded_record, gap, json_size, select_json
 
 
@@ -33,14 +31,14 @@ class ReadModelScopeError(PermissionError):
     pass
 
 
-_READ_ERRORS = (ArtifactRegistryError, CASIntegrityError, RunError, ApprovalError, ExecutionServiceError, LegacyTaskReadError)
-_KINDS = {"run", "task", "approval", "execution", "artifact"}
+_READ_ERRORS = (ArtifactRegistryError, CASIntegrityError, RunError, ApprovalError, ExecutionServiceError)
+_KINDS = {"run", "approval", "execution", "artifact"}
 MAX_SCOPE_RECORDS = 1000
 
 
 class InstanceReadModel:
     def __init__(self, *, artifacts, bindings, runs, approvals, executions, operation_catalog,
-                 engineering_diagnostics=None, execution_collection=None, legacy_tasks: LegacyTaskReader | None = None) -> None:
+                 engineering_diagnostics=None, execution_collection=None) -> None:
         self.artifacts = artifacts
         self.bindings = bindings
         self.runs = runs
@@ -49,7 +47,6 @@ class InstanceReadModel:
         self.operation_catalog = operation_catalog
         self.engineering_diagnostics = engineering_diagnostics
         self.execution_collection = execution_collection
-        self.legacy_tasks = legacy_tasks
 
     def overview(self, instance_id: str) -> dict[str, Any]:
         instance = self.bindings.get_instance(instance_id=instance_id)
@@ -150,9 +147,7 @@ class InstanceReadModel:
         self.bindings.get_instance(instance_id=instance_id)
         if type(page) is not int or page < 1:
             raise ValueError("invalid trajectory page")
-        records, total, page = (self.legacy_tasks.trajectory_page(instance_id, page, limit)
-            if self.legacy_tasks is not None else
-            self.bindings.trajectory_page(instance=instance_id, page=page, limit=limit))
+        records, total, page = self.bindings.trajectory_page(instance=instance_id, page=page, limit=limit)
         # Cards need metadata only; scientific payloads remain behind the node links.
         fields = ("key", "kind", "name", "title", "state", "created_at", "source_time",
                   "last_activity_at", "completed_at", "collection_status", "operation_id")
@@ -179,7 +174,9 @@ class InstanceReadModel:
         return {"items": items,
                 "next_cursor": self._cursor(instance_id, visible[-1]) if len(records) > len(visible) else None}
 
-    def node(self, instance_id: str, key: str, diagnostic_after: int = 0, diagnostic_limit: int = 50) -> dict[str, Any]:
+    def node(self, instance_id: str, key: str, diagnostic_after: int = 0, diagnostic_limit: int = 50,
+             stage_offset: int = 0, stage_limit: int = 4, stage_reference: str | None = None,
+             stage_text_offset: int = 0) -> dict[str, Any]:
         if (type(diagnostic_after) is not int or diagnostic_after < 0
                 or type(diagnostic_limit) is not int or not 1 <= diagnostic_limit <= 100):
             raise ValueError("invalid diagnostic page bounds")
@@ -198,21 +195,16 @@ class InstanceReadModel:
                 result["outputs"] = [] if value.output_ref is None else [self._ref(instance_id, value.output_ref, "/output_ref")]
                 result["diagnostics"] = self.runs.diagnostic_events(value, after=diagnostic_after, limit=diagnostic_limit)
                 self._run_detail(result, value)
+                if value.operation_id == "science.experiment.v1":
+                    from ..service.stage_deliveries import read_stage_deliveries
+                    result["sealed_stages"] = read_stage_deliveries(self.runs, value, instance_id=instance_id,
+                        stage_offset=stage_offset, stage_limit=stage_limit, stage_reference=stage_reference,
+                        stage_text_offset=stage_text_offset)
                 result["signal"] = value.signal.model_dump(mode="json") if value.state == "completed" and value.signal else None
                 if value.state == "completed" and value.output_ref:
                     result["sealed_output"] = self._artifact_view(instance_id, self.artifacts.catalog(value.output_ref))
                 else:
                     result["gaps"].append(gap("sealed_output_not_available", state=value.state))
-            elif binding.namespace == "task":
-                value = self.legacy_tasks.read(binding.object_id)
-                result["record"] = {"task_ref": value.task_ref.model_dump(mode="json"),
-                    "role": value.role, "attempt": value.attempt, "historical_read_only": True}
-                result["inputs"] = [self._ref(instance_id, ref, f"/inputs/{i}/artifact_ref",
-                    port_name=name, artifact_name=name) for i, (name, ref) in enumerate(value.inputs)]
-                result["outputs"] = [] if value.output_ref is None else [
-                    self._ref(instance_id, value.output_ref, "/output_ref")]
-                if value.output_ref is not None:
-                    result["sealed_output"] = self._artifact_view(instance_id, self.artifacts.catalog(value.output_ref))
             elif binding.namespace == "approval":
                 value = self.approvals.status(binding.object_id)
                 result["request"] = self._presentation_view(instance_id, self.artifacts.catalog(value.approval_request_ref))
@@ -239,26 +231,22 @@ class InstanceReadModel:
             result["gaps"].append(self._read_gap(error))
         return self._bounded_node(result)
 
+    def stage_deliveries(self, instance_id: str, key: str, **arguments):
+        binding = self._binding(instance_id, key)
+        if binding.namespace != "run":
+            return None
+        from ..service.stage_deliveries import read_stage_deliveries
+        value = self._run(instance_id, binding.object_id)
+        if value.operation_id != "science.experiment.v1":
+            return None
+        return read_stage_deliveries(self.runs, value, instance_id=instance_id, **arguments)
+
     def node_metadata(self, instance_id: str, key: str) -> dict[str, Any]:
         """Refresh one known node without touching scientific payloads or drafts."""
         return self._metadata(instance_id, self._binding(instance_id, key))
 
     def node_context(self, instance_id: str, key: str) -> dict[str, Any]:
         binding = self._binding(instance_id, key)
-        if binding.namespace == "task":
-            # Task outputs may have private instruction Artifacts as parents.
-            # Present the sealed output itself; exact input/goal Refs are shown
-            # by node(), without expanding that private provenance tree.
-            try:
-                task = self.legacy_tasks.read(binding.object_id)
-                views = ([] if task.output_ref is None else [self._presentation_view(
-                    instance_id, self.artifacts.catalog(task.output_ref))])
-                return {"artifacts": views,
-                    "focus_artifact_ids": [] if task.output_ref is None else [task.output_ref.artifact_id],
-                    "task_artifact_ids": [], "gaps": [], "scope": "exact_legacy_task_output_only"}
-            except _READ_ERRORS as error:
-                return {"artifacts": [], "focus_artifact_ids": [], "task_artifact_ids": [],
-                    "gaps": [self._read_gap(error)], "scope": "exact_legacy_task_output_only"}
         try:
             roots = self._roots(instance_id, binding)
             focus = ()
@@ -675,13 +663,6 @@ class InstanceReadModel:
         namespace, name = key.split(":", 1)
         if namespace not in _KINDS:
             raise ReadModelNotFound("unknown node namespace")
-        if namespace == "task":
-            if self.legacy_tasks is None:
-                raise ReadModelNotFound("legacy Task reader is unavailable")
-            binding = self.legacy_tasks.binding(instance_id, name)
-            if binding is None:
-                raise ReadModelNotFound("node is not bound to this instance")
-            return binding
         try:
             return self.bindings.get_binding(instance=instance_id, namespace=namespace, name=name)
         except SchedulerNameNotFound as error:
@@ -722,16 +703,6 @@ class InstanceReadModel:
                     output = self.artifacts.catalog(value.output_ref)
                     result["recorded_scientific_claim_admissible"] = output.labels.get("scientific_claim_admissible")
                     result["current_selection"] = list(self.bindings.selection_records(instance=instance_id, artifact_ref=value.output_ref))
-            elif binding.namespace == "task":
-                if self.legacy_tasks is None:
-                    result["gaps"] = [gap("legacy_task_record_unavailable")]
-                else:
-                    value = self.legacy_tasks.read(binding.object_id)
-                    result.update(state=value.state, legacy_role=value.role,
-                        last_activity_at=value.last_activity_at, input_count=len(value.inputs))
-                    roots = [(ref, f"/inputs/{i}/artifact_ref") for i, (_, ref) in enumerate(value.inputs[:1])]
-                    if value.output_ref is not None:
-                        result["outputs"] = [self._ref(instance_id, value.output_ref, "/output_ref")]
             elif binding.namespace == "approval":
                 value = self.approvals.status(binding.object_id)
                 result["state"] = value.status
@@ -805,11 +776,6 @@ class InstanceReadModel:
                             result["predecessors"].append(link)
             else:
                 result["gaps"].append(gap("recovery_parent_lookup_unavailable"))
-        elif binding.namespace == "task":
-            task = self.legacy_tasks.read(binding.object_id)
-            prior = [(ref, "input", f"/inputs/{i}/artifact_ref")
-                for i, (_, ref) in enumerate(task.inputs)]
-            targets = [] if task.output_ref is None else [task.output_ref]
         elif binding.namespace == "artifact":
             envelope = self.artifacts.catalog(roots[0])
             prior = [(ref, "parent", f"/parent_refs/{i}") for i, ref in enumerate(envelope.parent_refs)]
@@ -826,8 +792,7 @@ class InstanceReadModel:
         child_reader = getattr(self.artifacts.registry, "linked_children", None)
         for ref in targets[:8]:
             envelope = self.artifacts.catalog(ref)
-            review_edge, review_state = ((None, "not_declared") if binding.namespace == "task"
-                else self._recorded_review_edge(envelope))
+            review_edge, review_state = self._recorded_review_edge(envelope)
             if review_state not in {"available", "not_declared"}:
                 result["gaps"].append(gap("matching_review_" + review_state, artifact_id=ref.artifact_id))
             if related_reader is not None:
@@ -865,7 +830,7 @@ class InstanceReadModel:
             unique = {json.dumps(item, sort_keys=True): item for item in result[key]}
             result[key] = list(unique.values())[:50]
             result["has_more"] |= len(unique) > 50
-        if related_reader is None and binding.namespace != "task":
+        if related_reader is None:
             result["gaps"].append(gap("run_relationship_lookup_unavailable"))
         return result
 
@@ -904,16 +869,6 @@ class InstanceReadModel:
             plans = [item.artifact_ref for item in inputs if item.port_name == "experiment_plan"]
             if plans:
                 roots = tuple(plans)
-        elif binding.namespace == "task":
-            inputs = self.legacy_tasks.read(binding.object_id).inputs
-            explicit = [ref for name, ref in inputs if name in {"objective", "research_objective"}]
-            if explicit:
-                if any(self.artifacts.catalog(ref).schema_id != "scidiscovery.research-objective.v1"
-                       for ref in explicit):
-                    return [], [gap("legacy_objective_ref_schema_mismatch")]
-                return ([self._ref(instance_id, ref, "/inputs") for ref in explicit],
-                    [gap("original_objective_ambiguous")] if len(set(explicit)) > 1 else [])
-            roots = tuple(ref for _, ref in inputs)
         found, queue, seen, gaps = {}, deque(roots), set(), []
         while queue and len(seen) < 128:
             ref = queue.popleft()
@@ -973,11 +928,6 @@ class InstanceReadModel:
         if binding.namespace == "run":
             value = self._run(instance_id, binding.object_id)
             return tuple(item.artifact_ref for item in value.inputs) + (() if value.output_ref is None else (value.output_ref,))
-        if binding.namespace == "task":
-            if self.legacy_tasks is None:
-                raise LegacyTaskReadError("legacy Task record is unavailable")
-            value = self.legacy_tasks.read(binding.object_id)
-            return tuple(ref for _, ref in value.inputs) + (() if value.output_ref is None else (value.output_ref,))
         if binding.namespace == "approval":
             value = self.approvals.status(binding.object_id)
             return (value.approval_request_ref,) + (() if value.decision_ref is None else (value.decision_ref,))
@@ -1040,8 +990,6 @@ class InstanceReadModel:
                   "parent_count": len(envelope.parent_refs),
                   "supersedes": None if envelope.supersedes_ref is None else self._ref(instance_id, envelope.supersedes_ref, "/supersedes_ref"),
                   "payload_state": "unknown", "gaps": []}
-        if isinstance(envelope, LegacyUIArtifactEnvelope) and envelope.task_ref is not None:
-            result["legacy_task_ref"] = envelope.task_ref.model_dump(mode="json")
         if len(envelope.parent_refs) > 100:
             result["gaps"].append(gap("provenance_page_limit", parent_count=len(envelope.parent_refs)))
         source_limit = MAX_PAYLOAD_BYTES if pointer is None else MAX_SOURCE_BYTES
@@ -1180,7 +1128,7 @@ class InstanceReadModel:
         if json_size(result) <= MAX_RESPONSE_BYTES:
             return result
         reduced = ({key: value for key, value in result.items() if key in {
-            "key", "kind", "name", "created_at", "state", "title", "source", "operation_id", "original", "outputs"}}
+            "key", "kind", "name", "created_at", "state", "title", "source", "operation_id", "original", "outputs", "sealed_stages"}}
             | {"payload_state": "too_large", "gaps": [gap("node_byte_limit")]})
         diagnostics = result.get("diagnostics")
         if isinstance(diagnostics, dict):

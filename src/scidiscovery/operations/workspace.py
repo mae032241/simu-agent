@@ -1,7 +1,7 @@
 """Narrow task-private workspace hooks used by operation plugins.
 
 The control plane owns the task root and file lifecycle.  Plugins receive only
-that root plus already-materialized, Run-local input/recovery paths.  They
+that root, Run-local paths, and frozen source bytes for private validation. They
 never receive ArtifactService, RunService, database, or repository handles.
 """
 
@@ -44,12 +44,15 @@ class WorkspaceMaterializationRequest:
     provisional_roots: tuple[Path, ...]
     edit_protocol: Literal["mcp", "native"] = "mcp"
     binding_descriptors: Mapping[str, InputBindingDescriptor] = field(default_factory=dict)
+    # Control-only sources, including private proof; never materialize for Agents.
+    input_contents: Mapping[str, bytes] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         object.__setattr__(
             self, "input_paths", MappingProxyType(dict(self.input_paths))
         )
         object.__setattr__(self, "binding_descriptors", MappingProxyType(dict(self.binding_descriptors)))
+        object.__setattr__(self, "input_contents", MappingProxyType(dict(self.input_contents)))
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,12 +96,15 @@ class WorkspaceFinalizationRequest:
     run_id: str = ""
     trusted_tool_records: Mapping[str, tuple[bytes, ...]] = field(default_factory=dict)
     binding_descriptors: Mapping[str, InputBindingDescriptor] = field(default_factory=dict)
+    # Control-only sources, including private proof; never materialize for Agents.
+    input_contents: Mapping[str, bytes] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         object.__setattr__(
             self, "input_paths", MappingProxyType(dict(self.input_paths))
         )
         object.__setattr__(self, "binding_descriptors", MappingProxyType(dict(self.binding_descriptors)))
+        object.__setattr__(self, "input_contents", MappingProxyType(dict(self.input_contents)))
         object.__setattr__(self, "trusted_tool_records", MappingProxyType({
             key: tuple(value) for key, value in self.trusted_tool_records.items()}))
 

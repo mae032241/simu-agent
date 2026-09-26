@@ -12,7 +12,7 @@ from scidiscovery.artifact_agent.schema.common import canonical_json
 from scidiscovery.artifact_agent.schema.refs import ArtifactRef
 from scidiscovery.artifact_agent.service.run_outputs import RunCheckerError
 from scidiscovery.artifact_agent.service.local_workspace import write_control_workspace_file
-from .project_packager import ReviewedDeckPackage, TCADRuntimeManifest
+from .project_packager import ExecutionPackage, TCADRuntimeManifest
 
 class InspectRequest(BaseModel):
     model_config=ConfigDict(extra='forbid')
@@ -63,9 +63,9 @@ def _inspect(context, source_alias, path, *, run_deadline, consume=None):
     if service is None:
         return {'status':'unavailable','reason':'inspection_service_unavailable'}
     scope=context.execution_scope(source_alias)
-    if scope['payload_ref'] != context.input_ref('reviewed_package'):
+    if scope['payload_ref'] != context.input_ref('execution_package'):
         return {'status':'unavailable','reason':'execution_project_mismatch'}
-    package=ReviewedDeckPackage.model_validate_json(context.read_input('reviewed_package'),strict=True)
+    package=ExecutionPackage.model_validate_json(context.read_input('execution_package'),strict=True)
     budget=context.io_budget(reserve=True)
     started=time.monotonic()
     deadline=min(started+budget['remaining_seconds'],run_deadline)
@@ -157,7 +157,7 @@ def accept_tool(request,context):
         prior=next((r for r in context.evidence() if r['alias']==request.evidence_alias),None)
         if prior is None:
             return {'status':'not_found','reason':'candidate_not_inspected'}
-        package=ReviewedDeckPackage.model_validate_json(context.read_input('reviewed_package'),strict=True)
+        package=ExecutionPackage.model_validate_json(context.read_input('execution_package'),strict=True)
         expected=next((e for e in package.project.expected_outputs if e.name==request.output_name),None)
         generated = None
         if expected is None and package.project.collect_generated_outputs:

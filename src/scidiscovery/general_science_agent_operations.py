@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from .operation_declaration import scientific_agent_operation
-from .operations.spec import CollectionSpec, ComponentRef, NetworkPolicy, InputAdmissionSpec, InputValidationSpec, InputPortSpec, OperationSpec, OutputPortSpec, ReviewSpec
+from .operations.spec import CollectionSpec, ComponentRef, NetworkPolicy, InputAdmissionSpec, InputValidationSpec, InputDerivationSpec, InputPortSpec, OperationSpec, OutputPortSpec, ReviewSpec
 
 JSON_CODEC = ComponentRef("json_codec")
 OPAQUE_CODEC = ComponentRef("opaque_codec")
@@ -219,7 +219,7 @@ def _agent(
     review: ReviewSpec | None = None,
     guards: tuple[str, ...] = (),
     consequence: str = "scientific",
-    accepts_actions: tuple[str, ...] = (),
+    decision_fields: tuple[str, ...] = ("summary", "conclusion", "limitations", "remaining_question", "remaining_contradiction"),
 ) -> OperationSpec:
     return scientific_agent_operation(
         operation_id,
@@ -244,7 +244,7 @@ def _agent(
         review=review,
         guards=tuple(ComponentRef(item) for item in guards),
         consequence=consequence,
-        accepts_actions=accepts_actions,
+        decision_fields=decision_fields,
     )
 
 
@@ -394,9 +394,7 @@ OPERATIONS = (
                 exposure="on_demand",
                 usage="evidence_inventory",
             ),
-            _input("source_manifest", "Optional producer receipt for tool-preserved originals; bind its referenced originals in source_material.",
-                   "scidiscovery.tool-evidence-manifest.v1", min_items=0,
-                   exposure="on_demand", usage="evidence_inventory"),
+
         ),
         outputs=(_audit_output("scientific_intake", "source_material"),),
         timeout=600,
@@ -408,9 +406,10 @@ OPERATIONS = (
     ),
     _agent(
         "science.evidence.extract.v1",
-        "Extract one bounded ScientificIntake from supplied and tool-preserved sources.",
+        "Extract or revise one complete ScientificIntake using sources and optional prior evidence or feedback.",
         "The objective needs a source-backed problem frame and foundation.",
-        "Quantitative raster-figure digitization or parameter-specific extraction.",
+        "Granting qualification. Use a domain evidence task when quantitative extraction tools are needed.",
+        decision_fields=("/scientific_foundation/summary", "/scientific_foundation/missing_inputs", "/scientific_foundation/open_questions", "/problem_frame/current_contradiction"),
         agent="evidence_agent",
         prompt="evidence_prompt",
         inputs=(
@@ -432,8 +431,10 @@ OPERATIONS = (
                 max_items=6,
                 max_item_bytes=16 * 1024 * 1024,
             ),
+            _input("prior_draft", "Optional exact previous intake to reconsider.", "scidiscovery.scientific-intake.v1", min_items=0, exposure="on_demand", usage="evidence_inventory"),
+            _input("feedback", "Optional review, scientific feedback or remaining evidence question.", "*", media_types=("*/*",), min_items=0, max_items=4, exposure="on_demand", usage="evidence_inventory"),
         ),
-        outputs=(INTAKE_OUTPUT.model_copy(update={"context_sources": ("source_material", "tool_evidence")}),
+        outputs=(INTAKE_OUTPUT.model_copy(update={"context_sources": ("source_material", "prior_draft", "feedback", "tool_evidence")}),
                  RETRIEVED_SOURCE_OUTPUT, SOURCE_MANIFEST_OUTPUT),
         timeout=900,
         max_input_bytes=96 * 1024 * 1024,
@@ -455,6 +456,7 @@ OPERATIONS = (
         "A hypothesis portfolio and its scientific foundation are available.",
         "Generating hypotheses or deciding qualification.",
         input_validation=InputValidationSpec(ComponentRef("critic_inputs"), "science.hypothesis.criticize.v1.inputs", "The exact hypothesis portfolio must contain hypotheses."),
+        decision_fields=("disposition", "global_issues", "reviews"),
         agent="critic_agent",
         prompt="critic_prompt",
         inputs=(
@@ -468,7 +470,7 @@ OPERATIONS = (
                 "scientific_foundation",
                 "Exact scientific foundation used to challenge the proposal.",
                 "scidiscovery.scientific-foundation.v1",
-            ),
+            ).model_copy(update={"derivation": InputDerivationSpec(anchor_port="hypothesis_portfolio", producer_input_path=("scientific_foundation",))}),
             *_HYPOTHESIS_FEEDBACK,
             _PREVIOUS_HYPOTHESES,
         ),
@@ -497,6 +499,7 @@ OPERATIONS = (
         "A problem frame and scientific foundation, optionally with prior hypotheses and results, expose an unresolved question.",
         "Reviewing, selecting, or qualifying hypotheses.",
         input_validation=InputValidationSpec(ComponentRef("hypothesis_inputs"), "science.hypothesis.propose.v1.inputs", "The scientific foundation must contain its explicit original objective."),
+        decision_fields=("stage_objective", "contradiction", "hypotheses"),
         agent="ideator_agent",
         prompt="ideator_prompt",
         inputs=(
@@ -530,192 +533,6 @@ OPERATIONS = (
 )
 
 
-
-REVISION_OPERATIONS = (
-    _agent(
-        "science.intake.revise.v1",
-        "Revise one complete ScientificIntake against its exact sources.",
-        "An exact prior intake and independent change request require correction.",
-        "Producing a patch, inheriting qualification, or changing unsupported facts.",
-        agent="evidence_agent",
-        prompt="evidence_prompt",
-        inputs=(
-            _input(
-                "prior_draft",
-                "Exact immutable ScientificIntake to revise.",
-                "scidiscovery.scientific-intake.v1",
-                max_item_bytes=8 * 1024 * 1024,
-                usage="revision_base",
-            ),
-            _input(
-                "change_request",
-                "Exact independent evidence audit requesting correction.",
-                "scidiscovery.evidence-audit.v1",
-                max_item_bytes=512 * 1024,
-                usage="change_request",
-            ),
-            _input(
-                "source_material",
-                "Complete immutable sources supporting the revised intake.",
-                "opaque",
-                media_types=(
-                    "application/json",
-                    "application/pdf",
-                    "image/png",
-                    "image/jpeg",
-                    "image/webp",
-                    "text/plain",
-                    "text/plain; charset=utf-8",
-                    "text/csv",
-                    "text/html",
-                ),
-                max_items=14,
-                max_item_bytes=16 * 1024 * 1024,
-            ),
-            _input("source_manifest", "Optional producer receipt for tool-preserved originals; bind its referenced originals in source_material.",
-                   "scidiscovery.tool-evidence-manifest.v1", min_items=0,
-                   exposure="on_demand", usage="evidence_inventory"),
-        ),
-        outputs=(INTAKE_OUTPUT,),
-        timeout=900,
-        max_input_bytes=233 * 1024 * 1024,
-        max_output_bytes=64 * 1024,
-        max_files=1,
-        tools=BASE_TOOLS + (_ref("pdf_extract_tool"),),
-        native_view_image=True,
-        review=ReviewSpec(
-            reviewer_operation="science.evidence.audit.intake.v1",
-            reviewer_input_port="scientific_intake",
-            subject_outputs=("scientific_intake",),
-        ),
-    ),
-    _agent(
-        "science.evidence.revise-from-critic.v1",
-        "Revise one complete ScientificIntake for an exact hypothesis-review evidence gap.",
-        "A critic identifies a missing factual premise in a reviewed hypothesis portfolio.",
-        "Changing a mechanism, adding or replacing sources, designing a measurement algorithm, or re-running generic intake without the exact review chain.",
-        agent="evidence_agent",
-        prompt="evidence_prompt",
-        inputs=(
-            _input(
-                "prior_draft",
-                "Exact previously audited ScientificIntake to revise.",
-                "scidiscovery.scientific-intake.v1",
-                max_item_bytes=8 * 1024 * 1024,
-                usage="revision_base",
-            ),
-            _input(
-                "intake_audit",
-                "Exact passing audit of the prior ScientificIntake.",
-                "scidiscovery.evidence-audit.v1",
-                max_item_bytes=512 * 1024,
-                usage="prior_signal",
-                exposure="handoff_only",
-            ),
-            _input(
-                "scientific_foundation",
-                "Exact qualified foundation derived from the prior intake.",
-                "scidiscovery.scientific-foundation.v1",
-                usage="prior_signal",
-            ),
-            _input(
-                "hypothesis_portfolio",
-                "Exact hypothesis portfolio whose factual premise was challenged.",
-                "scidiscovery.hypothesis-proposal.v2",
-                usage="prior_signal",
-            ),
-            _input(
-                "change_request",
-                "Exact non-passing critic review that identifies the factual gap addressed by this revision.",
-                "scidiscovery.critic-review.v2",
-                max_item_bytes=512 * 1024,
-                usage="review_signal",
-            ),
-            _input(
-                "source_material",
-                "Complete unchanged source set frozen by the prior ScientificIntake audit; additions require a separate evidence action.",
-                "opaque",
-                media_types=(
-                    "application/json",
-                    "application/pdf",
-                    "image/png",
-                    "image/jpeg",
-                    "image/webp",
-                    "text/plain",
-                    "text/plain; charset=utf-8",
-                    "text/csv",
-                    "text/html",
-                ),
-                max_items=14,
-                max_item_bytes=16 * 1024 * 1024,
-            ),
-            _input("source_manifest", "Optional producer receipt for tool-preserved originals; bind its referenced originals in source_material.",
-                   "scidiscovery.tool-evidence-manifest.v1", min_items=0,
-                   exposure="on_demand", usage="evidence_inventory"),
-        ),
-        outputs=(INTAKE_OUTPUT,),
-        timeout=900,
-        max_input_bytes=244 * 1024 * 1024,
-        max_output_bytes=64 * 1024,
-        max_files=1,
-        tools=BASE_TOOLS + (_ref("pdf_extract_tool"),),
-        native_view_image=True,
-        input_admission=_FOUNDATION_ADMISSION,
-        review=ReviewSpec(
-            reviewer_operation="science.evidence.audit.intake.v1",
-            reviewer_input_port="scientific_intake",
-            subject_outputs=("scientific_intake",),
-        ),
-        guards=("evidence_revision_cohort",),
-        accepts_actions=("science.evidence.revise",),
-    ),
-    _agent(
-        "science.hypothesis.revise.v1",
-        "Revise one complete hypothesis portfolio within the approved foundation.",
-        "An exact prior portfolio and independent critic request require correction.",
-        "Producing a patch, inheriting a critic verdict, or expanding the evidence basis.",
-        input_validation=InputValidationSpec(ComponentRef("hypothesis_inputs"), "science.hypothesis.revise.v1.inputs", "The scientific foundation must contain its explicit original objective."),
-        agent="ideator_agent",
-        prompt="ideator_prompt",
-        inputs=(
-            _input(
-                "prior_draft",
-                "Exact immutable hypothesis portfolio to revise.",
-                "scidiscovery.hypothesis-proposal.v2",
-                max_item_bytes=8 * 1024 * 1024,
-                usage="revision_base",
-            ),
-            _input(
-                "change_request",
-                "Exact independent critic review requesting correction.",
-                "scidiscovery.critic-review.v2",
-                max_item_bytes=512 * 1024,
-                usage="change_request",
-            ),
-            _input(
-                "scientific_foundation",
-                "Exact approved scientific foundation bounding the revised portfolio.",
-                "scidiscovery.scientific-foundation.v1",
-            ),
-            *_HYPOTHESIS_FEEDBACK,
-        ),
-        outputs=(_hypothesis_output("prior_draft", "scientific_foundation", *_HYPOTHESIS_FEEDBACK_NAMES),),
-        timeout=900,
-        max_input_bytes=48 * 1024 * 1024,
-        max_output_bytes=64 * 1024,
-        max_files=1,
-        input_admission=_FOUNDATION_ADMISSION,
-        review=ReviewSpec(
-            reviewer_operation="science.hypothesis.criticize.v1",
-            reviewer_input_port="hypothesis_portfolio",
-            subject_outputs=("hypothesis_portfolio",),
-            max_revisions=2,
-            progress_fingerprint=ComponentRef("critic_progress_fingerprint"),
-        ),
-        accepts_actions=("science.hypothesis.revise",),
-    ),
-)
-
-AGENT_OPERATIONS = OPERATIONS + REVISION_OPERATIONS
+AGENT_OPERATIONS = OPERATIONS
 
 __all__ = ["AGENT_OPERATIONS"]

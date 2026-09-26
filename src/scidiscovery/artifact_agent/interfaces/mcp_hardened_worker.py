@@ -70,6 +70,7 @@ class HardenedWorkerMCPRouter(LocalWorkerMCPRouter):
     def call_tool(self, name: str, arguments: dict[str, Any] | None) -> Any:
         # Include the transport lock, inherited timing/failure handlers, and the
         # final transport release under the same outer maintenance ownership.
+        self._check_participation()
         self._validate_open_call(name, arguments)
         with self._maintenance_call(name, existing_assignment=self._run_id is not None):
             return self._transport_call_tool(name, arguments)
@@ -199,6 +200,11 @@ class HardenedWorkerMCPRouter(LocalWorkerMCPRouter):
         self._check_opened_instance()
         self._opened_call_run_id = self._run_id
         status = self.runs.status(self._run_id)
+        if self.is_helper:
+            reply = self._helper_open_reply(status)
+            reply["tool_contracts"] = {item["name"]: {key: item[key] for key in ("description", "inputSchema")} for item in self.list_tools()}
+            reply["write_protocol"] = "server_file_tools"
+            return reply
         return {
             "state": "opened",
             "role_instructions": json.loads(self._workspace.assignment_path.read_bytes()).get("role_instructions", ""),

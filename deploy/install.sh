@@ -634,9 +634,8 @@ assert DescribeInput.model_json_schema()['properties']['view']['enum'] == ['full
 assert RunStatusInput.model_json_schema()['properties']['response_profile']['enum'] == [
     'compat', 'poll', 'navigation', 'decision'
 ]
-assert RunStatusInput.model_json_schema()['properties']['response_profile']['default'] == 'poll'
+assert RunStatusInput.model_json_schema()['properties']['response_profile']['default'] == 'decision'
 assert RunStatusInput.model_json_schema()['properties']['include_full_output']['default'] is False
-assert DescribeInput.model_json_schema()['properties']['representation']['enum'] == ['compact', 'legacy']
 assert 'producer_inputs' in ArtifactCatalogInput.model_json_schema()['properties']['view']['enum']
 print('installed package probe: pass')
 PY
@@ -1073,9 +1072,8 @@ try:
     assert run_status["inputSchema"]["properties"]["response_profile"]["enum"] == [
         "compat", "poll", "navigation", "decision"
     ]
-    assert run_status["inputSchema"]["properties"]["response_profile"]["default"] == "poll"
+    assert run_status["inputSchema"]["properties"]["response_profile"]["default"] == "decision"
     assert run_status["inputSchema"]["properties"]["include_full_output"]["default"] is False
-    assert describe["inputSchema"]["properties"]["representation"]["enum"] == ["compact", "legacy"]
     artifact_catalog = call("describe_artifact_catalog", "scid_describe", {"name": "artifact_catalog"})
     assert "producer_inputs" in artifact_catalog["inputSchema"]["properties"]["view"]["enum"]
     catalog = call("catalog_public", "scid_catalog", {})
@@ -1085,12 +1083,12 @@ try:
     operation = invoke["operations"][0]
     assert invoke["view"] == "invoke"
     assert operation["operation_id"] == operation_id
-    assert len(operation["operation_digest"]) == 64
+    assert "operation_digest" not in operation
     assert "inputs" in operation and "revision_policy" in operation
-    assert operation["contract_view_version"] == "invoke.compact.v1"
+    assert operation["contract_view_version"] == "invoke.scientific.v2"
     assert all(set(item) == {"operation_id", "purpose"} for item in catalog["operations"])
     assert catalog["complete"] == (catalog["next_before"] is None)
-    print(f"Root context contract probe: pass ({operation_id}, {operation['operation_digest']})")
+    print(f"Root context contract probe: pass ({operation_id})")
 finally:
     if process.stdin is not None:
         process.stdin.close()

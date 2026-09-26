@@ -25,7 +25,6 @@ from .artifact_agent.schema.execution_context import ExecutionContext
 from .artifact_agent.schema.experiment_intent import (
     ExperimentDesignIntent,
     ExperimentScientificSkeleton,
-    HistoricalExperimentDesignIntent,
     ExperimentPlanMaterializationReport,
     validate_experiment_design_intent,
     validate_experiment_design_intent_task_output,
@@ -341,9 +340,6 @@ repeated implementation searches. Deliver the assigned scientific skeleton only.
     experiment_intent_schema = schema_resource(
         ExperimentDesignIntent, "scidiscovery.experiment-design-intent.v1"
     )
-    experiment_intent_read_schema = schema_resource(
-        HistoricalExperimentDesignIntent, "scidiscovery.experiment-design-intent.v1"
-    )
     execution_context_schema = schema_resource(
         ExecutionContext, "scidiscovery.execution-context.v1"
     )
@@ -517,21 +513,21 @@ def component_specs() -> tuple[ComponentSpec, ...]:
         "experiment_portfolio_validator": ("experiment_revision_semantic_contract",),
     }
     for name in (
-        "skeleton_inputs", "skeleton_validator", "skeleton_context",
-        "experiment_inputs", "experiment_revision_inputs", "object_review_inputs",
-        "experiment_validator",
-        "review_validator",
-        "experiment_context",
-        "experiment_revision_context",
-        "object_review_context",
-        "experiment_agent",
+
+
+
+
+
+
+
+
         "objective_project",
-        "experiment_materialize",
+
         "objective_validator",
-        "experiment_portfolio_validator",
-        "materialization_report_validator",
-        "experiment_science_cohort",
-        "experiment_lineage",
+
+
+
+
     ):
         component = getattr(ExperimentComponents, name)
         values.append(
@@ -561,20 +557,19 @@ def component_specs() -> tuple[ComponentSpec, ...]:
         "scientific_review_schema",
     }
     for name in (
-        "experiment_skeleton_schema", "experiment_skeleton_prompt", "experiment_skeleton_semantic_contract",
+        "experiment_skeleton_schema",
         "research_objective_schema",
-        "experiment_intent_schema",
-        "experiment_intent_read_schema",
+
         "execution_context_schema",
         "experiment_portfolio_schema",
         "scientific_review_schema",
-        "materialization_report_schema",
-        "experiment_design_semantic_contract",
-        "experiment_revision_semantic_contract",
-        "scientific_review_semantic_contract",
-        "experiment_prompt",
-        "experiment_design_prompt",
-        "object_review_prompt",
+
+
+
+
+
+
+
     ):
         values.append(
             ComponentSpec(

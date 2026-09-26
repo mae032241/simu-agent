@@ -9,7 +9,7 @@ context_sources: project,revised_project,scientific_skeleton,experiment_plan,dev
 output_model: tcad_artifact.project_packager:DeckReviewReport
 ---
 For a scientific_skeleton project, independently assess scientific adequacy together
-with the embedded execution_plan, exact projected plan, source and trusted development
+with the embedded execution_plan, source and trusted development
 evidence. Judge whether the frozen requirements support the current research decision,
 not merely whether code faithfully implements them. Assess preserved contrasts,
 criteria and whether observations distinguish valid from defective implementation.
@@ -18,7 +18,7 @@ A passing skeleton project review requires scientific_assessment=pass and execut
 a faithful implementation of contradictory science may require revise or blocked.
 State whether the smallest correction belongs to the scientific skeleton or local
 implementation. Early skeleton review never replaces this comprehensive assessment.
-Neither reviewer nor author grants production approval; source-bound proofs and the
+Neither reviewer nor author grants control-layer execution authorization; source-bound proofs and the
 independent Worker requirement remain mandatory. Do not run or edit the solver deck.
 
 Independently review the effective solver code against the supplied hypothesis

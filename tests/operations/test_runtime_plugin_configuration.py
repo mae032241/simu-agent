@@ -67,7 +67,7 @@ from tcad_artifact.project_packager import (
     ProjectPreflightAttestation,
     ProjectResourceLimits,
     ResolvedProjectInput,
-    ReviewedDeckPackage,
+    ExecutionPackage,
     TCADRuntimeManifest,
     attest_runtime_contract,
 )
@@ -75,14 +75,14 @@ from tcad_artifact.project_packager import (
 
 class _CapabilityAdapter:
     def supports_preparation_profile(self, value: str) -> bool:
-        return value == "tcad.reviewed-deck-package.v2"
+        return value == "tcad.execution-package.v2"
 
     def validate_preparation_payload(
         self, raw: bytes, *, preparation_profile: str
     ) -> None:
-        if preparation_profile != "tcad.reviewed-deck-package.v2":
-            raise ValueError("unexpected synthetic reviewed package")
-        ReviewedDeckPackage.model_validate_json(raw, strict=True)
+        if preparation_profile != "tcad.execution-package.v2":
+            raise ValueError("unexpected synthetic execution package")
+        ExecutionPackage.model_validate_json(raw, strict=True)
 
     def capabilities(self) -> tuple[AdapterCapability, ...]:
         content = (
@@ -112,13 +112,13 @@ class _CollectingTCADAdapter:
 
     @staticmethod
     def supports_preparation_profile(value: str) -> bool:
-        return value == "tcad.reviewed-deck-package.v2"
+        return value == "tcad.execution-package.v2"
 
     def validate_preparation_payload(
         self, raw: bytes, *, preparation_profile: str
     ) -> None:
-        assert preparation_profile == "tcad.reviewed-deck-package.v2"
-        ReviewedDeckPackage.model_validate_json(raw, strict=True)
+        assert preparation_profile == "tcad.execution-package.v2"
+        ExecutionPackage.model_validate_json(raw, strict=True)
 
     def prepare(
         self,
@@ -185,7 +185,7 @@ def _catalog():
     return compile_catalog((CORE_PLUGIN, SCIENCE_PLUGIN, CURVE_PLUGIN, TCAD_PLUGIN))
 
 
-def _reviewed_package(resolved_input_count: int = 0) -> bytes:
+def _execution_package(resolved_input_count: int = 0) -> bytes:
     capability = SolverCapability(
         profile_id="r4b-runtime",
         solver_kind="sdevice",
@@ -238,12 +238,11 @@ def _reviewed_package(resolved_input_count: int = 0) -> bytes:
             qualified=True,
             summary="The synthetic direct deck passed bounded preflight.",
         ),
-        resource_limits=ProjectResourceLimits(
+        resource_limits=ProjectResourceLimits(max_storage_bytes=2000000000,
             wall_time_seconds=60,
             cpu_time_seconds=60,
             max_memory_bytes=512 * 1024 * 1024,
             max_output_bytes=1024 * 1024,
-            max_processes=2,
         ),
     )
     review = DeckReviewReport(
@@ -258,7 +257,7 @@ def _reviewed_package(resolved_input_count: int = 0) -> bytes:
         execution_ready=True,
     )
     return canonical_json(
-        ReviewedDeckPackage(
+        ExecutionPackage(
             project=project,
             review=review,
             capability=capability,
@@ -269,17 +268,17 @@ def _reviewed_package(resolved_input_count: int = 0) -> bytes:
 
 def test_tcad_execution_summary_keeps_large_resolved_inputs_approvable() -> None:
     operation = _catalog().operation("tcad.study.execute")
-    package_raw = _reviewed_package(4096)
+    package_raw = _execution_package(4096)
     package_ref = ArtifactRef(
-        artifact_id="art_reviewed_package_large",
+        artifact_id="art_execution_package_large",
         sha256=hashlib.sha256(package_raw).hexdigest(),
         kind="packaged_project",
-        schema_id="tcad.reviewed-deck-package.v2",
+        schema_id="tcad.execution-package.v2",
     )
     request = ExecutionRequest(
         execution_id="exe_large_summary",
         executor="tcad",
-        preparation_profile="tcad.reviewed-deck-package.v2",
+        preparation_profile="tcad.execution-package.v2",
         payload_ref=package_ref,
         created_at="2026-08-31T00:00:00Z",
         compiled_identity=CompiledApprovalIdentity(
@@ -316,7 +315,7 @@ def test_tcad_execution_summary_keeps_large_resolved_inputs_approvable() -> None
             ),
             ApprovalSubjectSnapshot(
                 subject_index=1,
-                port_name="reviewed_package",
+                port_name="execution_package",
                 item_index=0,
                 ref=package_ref,
                 schema_id=package_ref.schema_id,
@@ -398,7 +397,7 @@ def test_abandoned_execution_manifest_remains_attestable(tmp_path: Path) -> None
     manifest = TCADRuntimeManifest.model_validate_json(raw, strict=True)
     assert manifest.started_at is None
     attestation = attest_runtime_contract(
-        ReviewedDeckPackage.model_validate_json(_reviewed_package(), strict=True),
+        ExecutionPackage.model_validate_json(_execution_package(), strict=True),
         manifest,
     )
     assert attestation.verdict == "fail"

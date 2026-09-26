@@ -76,6 +76,7 @@ class DeckSourceDeclarations(StrictModel):
     case_anchors: tuple[DeclaredCaseAnchor, ...] = Field(max_length=100000)
     raw_outputs: tuple[DeclaredRawOutput, ...] = Field(default=(), max_length=4096)
     collect_generated_outputs: bool | None = None
+    resource_limits: ProjectResourceLimits | None = None
 
     _safe_entrypoint = field_validator("entrypoint")(_safe_relative_path)
 
@@ -165,7 +166,8 @@ def materialization_contract(experiment_plan: bytes) -> dict[str, object]:
             "or generate solver-language code."
         ),
         "declaration_file": "deck/declarations.json",
-        "required_fields": ["entrypoint", "case_anchors"],
+        "required_fields": ["entrypoint", "case_anchors", "resource_limits"],
+        "resource_budget_rule": "Declare wall_time_seconds, cpu_time_seconds, max_memory_bytes, max_output_bytes and max_storage_bytes. These are request bounds; administrator execution policy owns autonomous authority.",
         "case_anchor_fields": [
             "experiment_key",
             "case_key",
@@ -230,6 +232,7 @@ def declarations_template(
             else base_project.development_initialization_entrypoint
         ),
         "case_anchors": anchors,
+        "resource_limits": None if base_project is None else base_project.resource_limits.model_dump(mode="json"),
         "collect_generated_outputs": True,
     }
 
@@ -250,7 +253,6 @@ def materialize_deck_project(
     experiment_plan: bytes,
     execution_capability: bytes,
     preflight_attestation: Mapping[str, object] | None = None,
-    legacy_case_bindings_only: bool = False,
 ) -> DeckProjectDraft:
     """Build one project without interpreting solver-language content."""
 
@@ -319,9 +321,7 @@ def materialize_deck_project(
                 fix="Keep one source anchor for each experiment/case pair.",
             )
         )
-    # Old sealed projects retained anchors only through parameter bindings. Missing
-    # anchors for parameter-free cases cannot be reconstructed from that projection.
-    for key in sorted(expected_cases - actual_cases) if not legacy_case_bindings_only else ():
+    for key in sorted(expected_cases - actual_cases):
         findings.append(
             _finding(
                 "missing_control_binding",
@@ -420,7 +420,7 @@ def materialize_deck_project(
                 )
             # A locator proves source presence, not physical implementation.
 
-    limits = _resource_limits(metadata)
+    limits = declared.resource_limits or _resource_limits(metadata)
     collect_generated = (
         declared.collect_generated_outputs
         if declared.collect_generated_outputs is not None
@@ -452,10 +452,7 @@ def materialize_deck_project(
                 fix="Remove raw_outputs; generated files are discovered and hashed after execution.",
             )
         )
-    process_log_path = (
-        "scid_capture/solver_stdout.log"
-        if collect_generated else f"{Path(declared.entrypoint).stem}.log"
-    )
+    process_log_path = ".scid-capture/solver_stdout.log"
     if "solver_log" in set(declared_output_names) or process_log_path in set(
         declared_output_paths
     ):
@@ -520,7 +517,7 @@ def materialize_deck_project(
         collect_generated_outputs=collect_generated,
         parameter_bindings=(),
         case_parameter_bindings=tuple(bindings),
-        case_anchors=None if legacy_case_bindings_only else declared.case_anchors,
+        case_anchors=declared.case_anchors,
         runtime_assertions=(),
         realization_manifest=(),
         materialization_report=report,
@@ -533,13 +530,7 @@ def _resource_limits(metadata: Mapping[str, object]) -> ProjectResourceLimits:
     raw = metadata.get("resource_limits")
     if isinstance(raw, Mapping):
         return ProjectResourceLimits.model_validate(raw, strict=True)
-    return ProjectResourceLimits(
-        wall_time_seconds=7200,
-        cpu_time_seconds=7200,
-        max_memory_bytes=8 * 1024 * 1024 * 1024,
-        max_output_bytes=64 * 1024 * 1024,
-        max_processes=1,
-    )
+    raise ValueError("execution metadata must declare resource_limits, including total storage")
 
 
 def _source_tree_sha256(files: Sequence[DeckFile]) -> str:

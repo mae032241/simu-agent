@@ -7,7 +7,6 @@ from .execution_control import (
     TCADExecutionPolicy,
     TCADExecutionRouter,
     TCADJobSpec,
-    migrate_execution_policy_json,
 )
 
 __all__ = [
@@ -17,5 +16,4 @@ __all__ = [
     "TCADExecutionPolicy",
     "TCADExecutionRouter",
     "TCADJobSpec",
-    "migrate_execution_policy_json",
 ]

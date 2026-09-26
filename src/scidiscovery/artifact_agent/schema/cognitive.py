@@ -143,34 +143,6 @@ class CriticReview(VersionedPayload):
         return self
 
 
-def critic_progress_fingerprint(raw: bytes) -> str:
-    """Fingerprint unresolved scientific dimensions, never reviewer prose."""
-
-    review = CriticReview.model_validate_json(raw, strict=True)
-    unresolved = tuple(
-        (
-            item.hypothesis_key,
-            dimension,
-            status,
-        )
-        for item in sorted(review.reviews, key=lambda value: value.hypothesis_key)
-        for dimension, status in (
-            ("physical_plausibility", item.physical_plausibility),
-            ("falsifiability", item.falsifiability),
-            ("finite_discriminability", item.finite_discriminability),
-        )
-        if status != "pass"
-    )
-    return hashlib.sha256(
-        canonical_json(
-            {
-                "disposition": review.disposition,
-                "unresolved": unresolved,
-            }
-        )
-    ).hexdigest()
-
-
 class EvidenceCheckForm(FormModel):
     check_key: Identifier
     subject: Annotated[str, Field(min_length=1, max_length=1024)]
@@ -223,7 +195,6 @@ __all__ = [
     "PredictionForm",
     "ReviewStatus",
     "SourceReference",
-    "critic_progress_fingerprint",
     "validate_critic_review",
     "validate_evidence_audit",
     "validate_hypothesis_proposal",

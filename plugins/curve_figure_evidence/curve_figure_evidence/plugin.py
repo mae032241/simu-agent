@@ -10,7 +10,6 @@ from .operation_transforms import (
 )
 from scidiscovery.operations.spec import (
     PLUGIN_PROTOCOL_VERSION,
-    ComponentRef,
     ComponentSpec,
     PluginDefinition,
     PluginDependency,
@@ -22,12 +21,6 @@ SHARED_IMPLEMENTATION_COMPONENTS = (
         "figure_semantic_contract",
         "resource",
         "curve_figure_evidence.figure_science_operations:FIGURE_SEMANTIC_CONTRACT",
-    ),
-    ComponentSpec(
-        "nonempty_validator",
-        "validator",
-        "curve_score.science_operations:_NONEMPTY_COMPONENT",
-        resources=(ComponentRef("figure_semantic_contract"),),
     ),
 )
 

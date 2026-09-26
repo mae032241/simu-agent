@@ -117,6 +117,41 @@ class ContentAddressedStore:
         assert content is not None
         return content
 
+    def put_file(self, path: Path | str, *, expected_sha256: str, expected_size: int,
+                 chunk_bytes: int = 1024 * 1024, check_budget=None) -> CASObject:
+        """Publish one exact scientific file without retaining its bytes in RAM."""
+        if chunk_bytes < 1 or expected_size < 0:
+            raise ValueError("invalid streaming CAS bounds")
+        destination = self.path_for(expected_sha256)
+        self._ensure_directory_durable(destination.parent)
+        source_fd = self._open_no_follow(Path(path), directory=False)
+        descriptor, temporary_name = tempfile.mkstemp(prefix=".ingest.", dir=destination.parent)
+        temporary = Path(temporary_name)
+        try:
+            with os.fdopen(source_fd, "rb") as source, os.fdopen(descriptor, "wb") as target:
+                os.fchmod(target.fileno(), self.file_mode)
+                digest, size = hashlib.sha256(), 0
+                while True:
+                    if check_budget is not None:
+                        check_budget()
+                    block = source.read(chunk_bytes)
+                    if not block:
+                        break
+                    size += len(block)
+                    if size > expected_size:
+                        raise CASIntegrityError("streamed source exceeds its descriptor")
+                    digest.update(block)
+                    target.write(block)
+                if size != expected_size or digest.hexdigest() != expected_sha256:
+                    raise CASIntegrityError("streamed source differs from its descriptor")
+                target.flush()
+                os.fsync(target.fileno())
+            self._publish(temporary, destination)
+            self._fsync_directory(destination.parent)
+            return self.verify(expected_sha256, expected_size=expected_size)
+        finally:
+            temporary.unlink(missing_ok=True)
+
     def verify(self, digest: str, *, expected_size: int | None = None) -> CASObject:
         path = self.path_for(digest)
         try:

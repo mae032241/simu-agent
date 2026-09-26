@@ -46,6 +46,7 @@ class WorkerToolDefinition:
     evidence_ports: tuple[str, ...] = ()
     network_access: bool = False
     record_attempts: bool = False
+    owner_only: bool = False
     reference_policy: Any = None
     _input_schema: Any = field(default=None, repr=False, compare=False)
 
@@ -67,6 +68,7 @@ class WorkerToolDefinition:
         if (
             not self.capability
             or not isinstance(self.network_access, bool)
+            or not isinstance(self.owner_only, bool)
             or not isinstance(self.record_attempts, bool)
             or (self.handler is not None and not callable(self.handler))
             or (
@@ -132,6 +134,10 @@ def operation_role_instructions(compiled: CompiledOperation) -> str:
         prompt = prompt.decode("utf-8")
     if not isinstance(prompt, str):
         raise ValueError("compiled operation prompt is not text")
+    capability = compiled.spec.executor.capability
+    if capability is not None:
+        selected = compiled.implementations[f"{capability.plugin_id or compiled.plugin_id}:{capability.component_id}"]
+        prompt += "\n" + selected.instructions
     return prompt
 
 
@@ -268,7 +274,10 @@ def operation_native_tool_instruction(compiled: CompiledOperation) -> str:
     server_name = operation_worker_server_name(compiled)
     tools = operation_worker_tool_names(compiled)
     allowed = ["Worker tools: " + ", ".join(tools)]
+    if "worker_helper" in tools:
+        allowed.append("prepared optional native helpers with fresh context and the same permissions; owner waits and integrates")
     if native.shell != "none":
+        allowed.append("applicable Skills within the parent task permissions")
         allowed.append("Codex code tools for task-local reading and bounded checks")
     if native.view_image:
         allowed.append("native view_image for declared task-local images")
@@ -276,7 +285,7 @@ def operation_native_tool_instruction(compiled: CompiledOperation) -> str:
         "native file writes or patches that bypass the Worker file lifecycle",
         "native network access",
         "Root/control-plane MCP tools",
-        "delegation, skills, apps, plugins, and any undeclared Worker tool",
+        "unprepared or recursive native delegation, apps, plugins, and any undeclared Worker tool",
     ]
     if native.shell == "none":
         forbidden.append("native shell or code execution")

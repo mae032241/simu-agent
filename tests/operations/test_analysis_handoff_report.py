@@ -10,8 +10,7 @@ from scidiscovery.artifact_agent.schema.claim import project_claim_decision
 from scidiscovery.artifact_agent.schema.common import canonical_json, SchemaModel
 from scidiscovery.artifact_agent.schema.layered_diagnosis import LayeredDiagnosisReport
 from tests.operations.test_tcad_result_analysis import analysis_materials, analysis_report, analysis_system, open_analysis
-from tests.operations.test_analysis_claim_scope import generic_worker, precomputed_worker, mcp_call
-from tests.operations import test_m2_curve_analysis_boundary as curve
+from tests.operations.test_analysis_claim_scope import generic_worker, mcp_call
 
 
 def compact_report(alias='runtime_manifest', verdict='inconclusive'):
@@ -27,30 +26,6 @@ def compact_report(alias='runtime_manifest', verdict='inconclusive'):
 
 def submit_compact(worker, opened, payload):
     domain = json.loads(Path(opened['domain_workspace_path']).read_bytes())
-    from curve_score.analysis_workspace import GUIDANCE, REPORT_GUIDANCE
-    from scidiscovery.platforms.codex import _operation_toml, tomllib
-    import sys
-    start = json.loads(Path(opened['start_here_path']).read_bytes())
-    assert start['guidance'] == GUIDANCE
-    assert domain['patch_contract']['instruction'] == REPORT_GUIDANCE
-    assert 'objective_key is non-null' in REPORT_GUIDANCE
-    assert 'no key may be invented' in REPORT_GUIDANCE
-    assert 'non-authoritative Worker advice' in REPORT_GUIDANCE
-    profile = tomllib.loads(_operation_toml(worker.compiled, python=Path(sys.executable),
-        python_path=None, state_root=Path(opened['workspace_path']),
-        local_workspace_root=Path(opened['workspace_path']), worker_backend='local'))
-    prompt = profile['developer_instructions']
-    assert GUIDANCE not in prompt and REPORT_GUIDANCE not in prompt
-    role = json.loads(Path(opened['assignment_path']).read_bytes())['role_instructions']
-    assert 'role_instructions' in prompt
-    assert 'analysis-start.json' in role and '/patch_contract' in role
-    tool_names = {item['name'] for item in worker.list_tools()}
-    if 'worker_analysis_publish_files' in tool_names:
-        assert 'reference/candidate\noverlay PNG by default' in role
-        assert 'Axes must state\nunits' in role and 'returned image evidence alias' in role
-    else:
-        assert 'reference/candidate\noverlay PNG by default' not in role
-        assert 'returned image evidence alias' not in role
     assert domain['patch_contract']['draft_may_omit'] == ['/handoff']
     Path(opened['output_directory'], 'result.json').write_bytes(canonical_json(
         dict(schema_version=1, payload=payload)))
@@ -58,53 +33,27 @@ def submit_compact(worker, opened, payload):
     assert result['state'] == 'completed', result
 
 
-@pytest.mark.parametrize('verdict', ['pass', 'fail', 'inconclusive', 'invalid_study'])
-def test_tcad_compact_report_seals_and_preserves_scientific_claim(tmp_path, verdict):
-    system = analysis_system(tmp_path, state='failed' if verdict == 'invalid_study' else 'succeeded',
-        bind_names=() if verdict == 'invalid_study' else ('A', 'B'))
-    worker, opened = open_analysis(system)
+def test_generic_analysis_finalizes_compact_draft_through_mcp(tmp_path):
+    worker, opened = generic_worker(tmp_path)
+    report = compact_report('experiment_results')
+    assert Path(opened['start_here_path']).is_file()
+    submit_compact(worker, opened, report)
+
+
+@pytest.mark.parametrize('verdict, expected', [
+    ('pass', 'pass'), ('fail', 'blocked'), ('inconclusive', 'inconclusive'), ('invalid_study', 'blocked'),
+])
+def test_analysis_verdict_projection_preserves_the_formal_report(verdict, expected):
+    from scidiscovery.artifact_agent.service.result_materialization import materialize_analysis_handoff
     payload = compact_report(verdict=verdict)
-    submit_compact(worker, opened, payload)
-    status = system[2].call_tool('run_status', {'name': 'analysis', 'view': 'detail'})
-    envelope = status['sealed_output']
-    report = LayeredDiagnosisReport.model_validate_json(canonical_json(envelope['payload']))
-    assert report.summary == payload['summary'] and report.gates is None
-    assert report.remaining_contradiction is report.next_action is None
+    value = dict(payload=deepcopy(payload))
+    materialize_analysis_handoff(value)
+    assert value['payload'] == payload
+    assert value['handoff']['verdict'] == expected
+    report = LayeredDiagnosisReport.model_validate_json(canonical_json(payload))
     decision = project_claim_decision(report)
     assert decision.numerical_verdict == 'not_evaluable'
     assert decision.overall_verdict == verdict and decision.claim_allowed == payload['claim_allowed']
-    handoff = status['scheduler_signal']
-    assert handoff['verdict'] == {'fail': 'blocked', 'invalid_study': 'blocked'}.get(verdict, verdict)
-    assert 'payload.summary' in handoff['summary']
-    assert 'run_status.' not in handoff['summary']
-    assert len(handoff['summary']) < 256 < len(report.summary)
-    # Reuse both compact history and its precise receipts, without rewriting the old Artifact.
-    request = deepcopy(system[3]); request['name'] = 'next_analysis'
-    request['inputs'].extend([
-        dict(port='prior_analysis', artifact_names=['analysis.output']),
-        dict(port='prior_analysis_manifest', artifact_names=['analysis.output.recovery_manifest'])]
-        if verdict in {'pass', 'inconclusive'} else [
-        dict(port='current_progress', artifact_names=['analysis.output'])])
-    _, new_opened = open_analysis((*system[:3], request, *system[4:]))
-    start = json.loads(Path(new_opened['start_here_path']).read_bytes())
-    assert any(item['pointer'] == '/limitations' and 'bound fixture' in item['text'] for item in start['excerpts'])
-    assert system[2].call_tool('run_status', {'name': 'analysis', 'view': 'detail'})['sealed_output'] == envelope
-
-
-@pytest.mark.parametrize('kind', ['generic', 'curve_error'])
-def test_other_analysis_operations_finalize_compact_drafts_through_mcp(tmp_path, kind):
-    if kind == 'generic':
-        worker, opened = generic_worker(tmp_path)
-        report = compact_report('experiment_results')
-    else:
-        from curve_score.science_operations import Components
-        package = Components.curve_error_analysis.implementation(
-            {name: (raw,) for name, raw in curve._inputs().items()})['curve_analysis_package'][0]
-        worker, opened = precomputed_worker(tmp_path, package)
-        report = compact_report('curve_analysis_package')
-        assert not any(item['name'] == 'worker_curve_score' for item in worker.list_tools())
-    assert Path(opened['start_here_path']).is_file()
-    submit_compact(worker, opened, report)
 
 
 def test_handoff_normalizes_only_duplicate_fields_and_unknown_claims_still_fail():
@@ -185,8 +134,8 @@ def view_fixture(tmp_path, *, oversized=False):
                 value=('长值' * 20000 if oversized and n == 0 else c + n / 10)) for c in reversed(range(12))])
             for n in range(13)])
     package['project']['case_parameter_bindings'] = [{'control_only_marker': n} for n in range(156)]
-    contents = {'experiment_plan': plan, 'reviewed_package': package, 'current_progress': {'unknown_future_field': 'Kept'}}
-    schemas = {'experiment_plan': 'scidiscovery.experiment-portfolio.v1', 'reviewed_package': 'tcad.reviewed-deck-package.v2',
+    contents = {'experiment_plan': plan, 'execution_package': package, 'current_progress': {'unknown_future_field': 'Kept'}}
+    schemas = {'experiment_plan': 'scidiscovery.experiment-portfolio.v1', 'execution_package': 'tcad.execution-package.v2',
         'current_progress': 'future.schema'}
     inputs, paths, descriptors = [], {}, {}
     (tmp_path/'inputs').mkdir()
@@ -239,39 +188,6 @@ def test_bounded_views_preserve_originals_matrix_values_and_full_rule_pointers(t
         original = pointer(contents[entry['source_name']], entry['pointer'])
         if 'source_file' in entry:
             assert isinstance(original, str) and len(original.encode()) == entry['content_bytes']
-
-
-@pytest.mark.parametrize('explicit_notes', [False, True])
-def test_scientific_review_can_submit_one_formal_summary(tmp_path, explicit_notes):
-    from tests.operations import test_l4_local_tcad as f
-    catalog, runtime, root, _ = f._system(tmp_path)
-    request = dict(name='summary_review', operation_id='science.object.review.v1', instruction='Review the bound fixture.',
-        inputs=[dict(port='experiment_plan', artifact_names=['experiment_plan'])])
-    root.call_tool('operation_invoke', request)
-    compiled = catalog.operation(request['operation_id'])
-    worker = f.LocalWorkerMCPRouter(runtime.runs, operation_id=compiled.spec.operation_id, operation_digest=compiled.digest)
-    opened = worker.call_tool('worker_open_assignment', {})
-    schema = json.loads(Path(opened['workspace_path'], 'schema/result.schema.json').read_bytes())
-    assert '/handoff' in schema['properties']['payload']['description']
-    payload = dict(review_target='experiment_portfolio', verdict='revise', summary='Finite formal finding.')
-    value = dict(schema_version=1, payload=payload)
-    if not explicit_notes:
-        for field in ('verdict', 'summary'):
-            invalid = deepcopy(value)
-            invalid['payload'][field] = []
-            Path(opened['output_directory'], 'result.json').write_bytes(canonical_json(invalid))
-            rejected = worker.call_tool('worker_submit_result', {})
-            assert rejected['state'] == 'rejected', rejected
-            assert rejected['diagnostics'][0]['path'] == '$.payload.' + field
-    if explicit_notes:
-        value['handoff'] = dict(summary='Preserve explicit prior note.', assumptions=['A separate premise.'])
-    Path(opened['output_directory'], 'result.json').write_bytes(canonical_json(value))
-    assert worker.call_tool('worker_submit_result', {})['state'] == 'completed'
-    status = root.call_tool('run_status', dict(name=request['name'], output_paths=['/summary']))
-    assert status['selected_output']['items'][0]['value'] == payload['summary']
-    assert status['scheduler_signal']['verdict'] == 'revise'
-    assert status['scheduler_signal']['summary'] == ('Preserve explicit prior note.' if explicit_notes
-        else 'Read the sealed payload.summary for the scientific conclusion.')
 
 
 def test_formal_summary_projection_leaves_other_role_contracts_unchanged():

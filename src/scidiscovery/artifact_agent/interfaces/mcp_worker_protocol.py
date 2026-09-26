@@ -82,6 +82,7 @@ class WorkerTool:
     name: str
     description: str
     input_model: type[BaseModel]
+    owner_only: bool = False
 
     def schema(self) -> dict[str, Any]:
         return {
@@ -91,7 +92,7 @@ class WorkerTool:
         }
 
 LIFECYCLE_WORKER_TOOLS = tuple(
-    WorkerTool(item.name, item.description, AgentLifecycleInput)
+    WorkerTool(item.name, item.description, AgentLifecycleInput, item.owner_only)
     for item in AGENT_LIFECYCLE_PROTOCOL.tools
 )
 

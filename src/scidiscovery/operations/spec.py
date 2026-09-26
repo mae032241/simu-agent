@@ -8,7 +8,7 @@ from typing import Any, Literal, Mapping
 from types import MappingProxyType
 from pydantic import BaseModel, ConfigDict, Field
 PLUGIN_PROTOCOL_VERSION = "1"
-OPERATION_ABI_VERSION = "17"
+OPERATION_ABI_VERSION = "20"
 _ID = re.compile(r"^[a-z][a-z0-9_.-]{0,127}$")
 _JSON_POINTER = re.compile(r"^/(?:[^~/]|~[01])*(?:/(?:[^~/]|~[01])*)*$")
 _DOMAIN = re.compile(r"^(?:\*\.)?[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
@@ -33,6 +33,9 @@ class ComponentSpec(FrozenSpec):
     resources: tuple[ComponentRef, ...] = ()
     public: bool = False
     configuration_identity: str | None = None
+    # A provider may implement an explicitly declared host capability. Selection
+    # is performed once by the catalog compiler, before permissions are frozen.
+    extends: ComponentRef | None = None
 
 
 class SemanticRuleSpec(FrozenSpec):
@@ -91,6 +94,7 @@ class PortSpec(FrozenSpec):
     min_items: int = 1
     max_items: int = 1
     max_item_bytes: int = 1024 * 1024
+    agent_visible: bool = True
     def issue(self) -> str | None:
         if (not _ID.fullmatch(self.name) or not all((self.description, self.schema_id))
                 or not self.media_types or len(self.media_types) != len(set(self.media_types))
@@ -99,13 +103,24 @@ class PortSpec(FrozenSpec):
         if self.min_items < 0 or self.max_items < max(1, self.min_items):
             return "port_cardinality_invalid"
         return "port_size_invalid" if self.max_item_bytes <= 0 else None
+class InputDerivationSpec(FrozenSpec):
+    """Exact producer traversal; never schema, recency or content matching."""
+    anchor_port: str
+    producer_input_path: tuple[str, ...] = ()
+    select: Literal["subject", "siblings", "sources"] = "subject"
+    producer_output_port: str | None = None
+
+
 class InputPortSpec(PortSpec):
+    derivation: InputDerivationSpec | None = None
     usage: str = "scientific_input"
     exposure: str = "handoff_only"
     require_current: bool = False
     # Top-level JSON fields that must be present and non-null before invocation.
     required_non_null_fields: tuple[str, ...] = ()
     def issue(self) -> str | None:
+        if self.exposure == "file_reference" and (self.required_non_null_fields or self.media_types != ("application/octet-stream",)):
+            return "file_reference_contract_invalid"
         if self.required_non_null_fields and (
             self.media_types != ("application/json",)
             or len(self.required_non_null_fields) != len(set(self.required_non_null_fields))
@@ -121,7 +136,7 @@ class InputPortSpec(PortSpec):
         ):
             return "input_wildcard_invalid"
         issue = super().issue() or (None if self.exposure in {
-            "full", "on_demand", "handoff_only"
+            "full", "on_demand", "handoff_only", "file_reference"
         } else "input_exposure_invalid")
         if issue is not None:
             return issue
@@ -170,12 +185,14 @@ class NativeToolPolicy(FrozenSpec):
 class ExecutorRef(FrozenSpec):
     kind: str
     component: ComponentRef
+    preparation: ComponentRef | None = None
     workspace: ComponentRef | None = None
     tools: tuple[ComponentRef, ...] = ()
     resources: tuple[ComponentRef, ...] = ()
     prompt: ComponentRef | None = None
     model: str | None = None
     native_tools: NativeToolPolicy = NativeToolPolicy()
+    capability: ComponentRef | None = None
 class NetworkPolicy(FrozenSpec):
     mode: str = "none"
     allowed_domains: tuple[str, ...] = ()
@@ -213,6 +230,7 @@ class ApprovalContract(FrozenSpec):
     options: tuple[ApprovalOption, ...]
     projector: ComponentRef | None = None
     kind: str = "execution_authorization"
+    allow_policy_authorization: bool = False
     def issue(self, port_names: set[str], external: bool) -> str | None:
         subjects = set(self.subject_ports)
         if (not subjects or len(subjects) != len(self.subject_ports)
@@ -348,8 +366,8 @@ def input_validation_projection(spec: OperationSpec) -> dict[str, Any] | None:
         "phase": "input_admission",
         "rule_id": validation.rule_id,
         "description": validation.description,
-        "required_inputs": [port.name for port in spec.inputs if port.min_items > 0],
-        "optional_inputs": [port.name for port in spec.inputs if port.min_items == 0],
+        "required_inputs": [port.name for port in spec.inputs if port.min_items > 0 and port.agent_visible and port.derivation is None],
+        "optional_inputs": [port.name for port in spec.inputs if port.min_items == 0 and port.agent_visible and port.derivation is None],
     }
 
 
@@ -362,13 +380,14 @@ class OperationSpec(FrozenSpec):
     inputs: tuple[InputPortSpec, ...]
     outputs: tuple[OutputPortSpec, ...]
     consequence: str
+    decision_fields: tuple[str, ...] = ("summary", "conclusion", "limitations", "remaining_question", "remaining_contradiction")
+    independent_review_ports: tuple[str, ...] = ()
     input_admission: InputAdmissionSpec | None = None
     input_validation: InputValidationSpec | None = None
     complete_transform_family: CompleteTransformFamilySpec | None = None
     review: ReviewSpec | None = None
     guards: tuple[ComponentRef, ...] = ()
     limits: LimitsSpec | None = None
-    accepts_actions: tuple[str, ...] = ()
     def bounds_issue(self) -> str | None:
         if self.limits is None:
             return "limits_invalid"
@@ -396,6 +415,7 @@ class PluginDefinition(FrozenSpec):
     configuration_schema: ComponentRef | None = None
     runtime_factory: ComponentRef | None = None
 class AgentLifecycleTool(FrozenSpec):
+    owner_only: bool = False
     name: str
     description: str
     input_schema_sha256: str
@@ -450,6 +470,7 @@ class SchedulerInputPortView(SchedulerPortView):
     media_types: tuple[str, ...]
     max_item_bytes: int
 class SchedulerReviewEdgeView(FrozenSpec):
+    policy: Literal["optional"] = "optional"
     reviewer_operation: str; reviewer_input_port: str
     subject_outputs: tuple[str, ...]; accepted_verdicts: tuple[Literal["pass", "inconclusive"], ...]
 class SchedulerOperationView(FrozenSpec):
@@ -462,7 +483,7 @@ class SchedulerOperationView(FrozenSpec):
     not_for: str
     inputs: tuple[SchedulerInputPortView, ...]
     outputs: tuple[SchedulerPortView, ...]
-    input_admission: InputAdmissionSpec | None = None
+    qualification_policy: str | None = None
     input_validation: dict[str, Any] | None = None
     complete_transform_family: CompleteTransformFamilySpec | None = None
     consequence: str
@@ -476,7 +497,7 @@ class SchedulerOperationView(FrozenSpec):
     native_view_image: bool; review_edge: SchedulerReviewEdgeView | None = None
     requires_independent_review: bool
     requires_human_approval: bool
-    accepts_actions: tuple[str, ...]
+    allows_policy_authorization: bool
 @dataclass(frozen=True, slots=True)
 class CompiledDigestEnvelope:
     abi_version: str
@@ -511,9 +532,10 @@ def scheduler_operation_view(spec: OperationSpec) -> SchedulerOperationView:
         catalog_scope=spec.catalog_scope,
         purpose=spec.description.purpose, applies_when=spec.description.applies_when,
         not_for=spec.description.not_for,
-        inputs=tuple(input_port(item) for item in spec.inputs),
-        outputs=tuple(output_port(item) for item in spec.outputs),
-        input_admission=spec.input_admission,
+        inputs=tuple(input_port(item) for item in spec.inputs if item.agent_visible and item.derivation is None),
+        outputs=tuple(output_port(item) for item in spec.outputs if item.agent_visible),
+        qualification_policy=("This action consumes an approved scientific foundation. Control checks the exact bound subject against its declared approval provider; readable historical material does not inherit qualification."
+            if spec.input_admission and spec.input_admission.approval_kind else None),
         input_validation=input_validation_projection(spec),
         complete_transform_family=spec.complete_transform_family,
         consequence=spec.consequence,
@@ -525,9 +547,9 @@ def scheduler_operation_view(spec: OperationSpec) -> SchedulerOperationView:
         native_shell=spec.executor.native_tools.shell,
         native_view_image=spec.executor.native_tools.view_image,
         review_edge=review_edge,
-        requires_independent_review=bool(spec.review and spec.review.reviewer_operation),
-        requires_human_approval=bool(spec.review and spec.review.approval),
-        accepts_actions=spec.accepts_actions,
+        requires_independent_review=False,
+        requires_human_approval=bool(spec.review and spec.review.approval and not spec.review.approval.allow_policy_authorization),
+        allows_policy_authorization=bool(spec.review and spec.review.approval and spec.review.approval.allow_policy_authorization),
     )
 def json_projection(value: Any) -> Any:
     if isinstance(value, BaseModel):

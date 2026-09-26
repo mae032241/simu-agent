@@ -47,11 +47,11 @@ def validate_run_status_profile(*, response_profile, view, output_mode, output_p
             'and zero or one output path'
         )
     if response_profile == "decision" and not (
-        output_mode == "values" and isinstance(output_paths, list) and len(output_paths) > 0
+        output_mode == "values" and (output_paths is None or isinstance(output_paths, list))
     ):
         raise RootToolError(
             'run_status response_profile="decision" requires output_mode="values" '
-            'and one or more output paths'
+            'and optional named output_fields or output_paths'
         )
 
 
@@ -76,6 +76,9 @@ def run_profile_projection(value, *, response_profile, diagnostics_requested=Fal
         "sealed_output_status",
         "diagnostics_available",
         "content_unavailable",
+        "sealed_stages",
+        "dispatch",
+        "reason",
     )
     if isinstance(result.get("execution_profile"), dict):
         result["execution_profile"] = pick(result["execution_profile"], "profile")
@@ -90,6 +93,7 @@ def run_profile_projection(value, *, response_profile, diagnostics_requested=Fal
                 "selected_output",
                 "scheduler_signal",
                 "scheduler_signal_status",
+                "scheduler_signal_omissions",
             )
         )
     return result
@@ -197,7 +201,7 @@ def operation_navigation(value, arguments):
     items = sorted(value["operations"], key=lambda item: item["operation_id"])
     snapshot_digest = _nav_digest({"version": 1, "catalog_digest": value["catalog_digest"],
         "state": value["navigation_state"],
-        "visible": [(item["operation_id"], item["operation_digest"], item.get("purpose"),
+        "visible": [(item["operation_id"], item.get("operation_digest"), item.get("purpose"),
             item.get("consequence"), item.get("executor_kind"),
             _nav_values(item, "input_schema"), item.get("runtime_binding")) for item in items]})
     filters = {}
@@ -299,8 +303,8 @@ def _nav_entry(item, *, matches=False):
 
 
 def operation_detail(value):
-    """One compiled declaration, without obsolete routing or duplicate port lists."""
-    result = {key: item for key, item in value.items() if key != "accepts_actions"}
+    """One compiled declaration, without duplicate port lists."""
+    result = dict(value)
     validation = result.get("input_validation")
     if isinstance(validation, dict):
         # Cardinality and optionality are already explicit on every input port.
@@ -327,52 +331,31 @@ def operation_revision_policy(spec):
     }
 
 
-def operation_invoke_contract(value, *, revision_policy, representation="compact"):
+def operation_invoke_contract(value, *, revision_policy):
     """Project one callable contract from the same compiled catalog item."""
     # Strip only reviewed execution-only fields. Unknown future constraints are
     # retained, including unknown fields inside every input and output port.
     execution_only = {"native_shell", "native_view_image", "network_mode",
         "max_network_requests", "max_output_bytes", "max_files",
-        "optional_runtime_services", "executor_model_usage", "accepts_actions"}
+        "optional_runtime_services", "executor_model_usage"}
     result = {key: item for key, item in value.items() if key not in execution_only}
     result["revision_policy"] = revision_policy
-    if representation == "legacy":
-        return result
-    result["contract_view_version"] = "invoke.compact.v1"
-    defaults = {}
-    for collection in ("inputs", "outputs"):
-        ports = [dict(port) for port in result.get(collection, [])]
-        shared = {}
-        for field in ("min_items", "max_items", "required_non_null_fields", "usage",
-                      "exposure", "require_current", "media_types", "max_item_bytes"):
-            # Only factor a value when at least two ports actually carry it.
-            values = [port[field] for port in ports if field in port]
-            if len(values) < 2:
-                continue
-            candidate = max(values, key=lambda value: values.count(value))
-            if values.count(candidate) < 2:
-                continue
-            # Missing fields in the source must not acquire implicit defaults.
-            if any(field not in port for port in ports):
-                continue
-            shared[field] = candidate
-            for port in ports:
-                if port[field] == candidate:
-                    del port[field]
-        if shared:
-            defaults[collection] = shared
-        if collection in result:
-            result[collection] = ports
-    if defaults:
-        result["defaults"] = defaults
-        result["defaults_rule"] = "For each input/output port, merge defaults[collection] then the port; explicit port fields override. No other defaults."
+    result["contract_view_version"] = "invoke.scientific.v2"
+    result["binding_policy"] = "Choose scientific materials by their instance names. Control resolves declared exact original materials; missing or ambiguous origins require repair of the selected subject. Internal bindings are not caller inputs."
+    result["review_policy"] = "Independent review is optional unless this action explicitly requests qualification or authorization. A review applies only to its exact immutable subject."
+    result["invocation"] = {"tool": "operation_invoke", "required": ["name", "operation_id", "inputs"],
+        "instruction": "Required for Agent tasks: state the scientific question and intended deliverable.",
+        "inputs": "One entry per chosen visible port: {port, artifact_names: [exact semantic names]}. Omit optional ports when irrelevant.",
+        "idempotency": "Reuse a name only for an identical request. An intentional changed request uses on_conflict=create_revision.",
+        "dispatch": "For a queued Agent, use its returned dispatch instructions and frozen execution_profile. Transform and Approval actions complete through their returned result or review_url."}
     result["full"] = {"tool": "scid_describe", "name": value["operation_id"], "view": "full"}
     return result
 
 
 def execution_summary(value):
     result = pick(value, "name", "state", "solver_state", "result_artifact_name",
-                  "status_observed_at", "progress_observed_at", "reason", "observation_error")
+                  "status_observed_at", "progress_observed_at", "reason", "observation_error",
+                  "authorization", "authorization_required")
     progress = value.get("progress") or {}
     if "progress" in value:
         result["progress"] = (None if value["progress"] is None else pick(progress,
@@ -459,7 +442,7 @@ def root_response(name, value, arguments):
     """Never replace a scientific object, precise request, or error with a verdict."""
     detail = arguments.get("view") == "detail"
     if name == "run_status":
-        response_profile = arguments.get("response_profile", "poll")
+        response_profile = arguments.get("response_profile", "decision")
         validate_run_status_profile(
             response_profile=response_profile,
             view=arguments.get("view", "summary"),
@@ -478,6 +461,8 @@ def root_response(name, value, arguments):
         if detail:
             return value
         result = run_summary(value)
+        if "sealed_stages" in value:
+            result["sealed_stages"] = value["sealed_stages"]
         if arguments.get("output_paths") is None:
             _summary_excerpt(result)
         return result
@@ -492,7 +477,7 @@ def root_response(name, value, arguments):
             result = pick(result, "name", "state", "operation_id", "agent_type", "execution_profile",
                 "operation_version", "operation_digest",
                 "deadline_at", "output_artifact_name", "draft_from", "recovery", "normalized_request",
-                "diagnostics", "missing_inputs", "review_url", "approval_name")
+                "diagnostics", "missing_inputs", "review_url", "approval_name", "dispatch")
             result["detail"] = {"tool": "run_status", "name": result.get("name"), "view": "detail", "output_paths": []}
         # Transform/effect/approval returns already expose output identities and exact review URLs.
         return {**value, "result": result}

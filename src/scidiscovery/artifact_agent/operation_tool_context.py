@@ -31,13 +31,21 @@ class OperationToolContext:
 
     _read_evidence: Callable[[str], bytes] | None = None
     _accept_evidence: Callable[..., dict] | None = None
+    _adopt_bound_evidence: Callable[..., list[dict]] | None = None
     _list_evidence: Callable[[], list[dict]] | None = None
+    _list_attempts: Callable[[], list[dict]] | None = None
     _execution_scope: Callable[[str], dict] | None = None
+    _recovery_authorized: Callable[[str], bool] | None = None
     _io_budget: Callable[..., dict] | None = None
     _source_read: Callable[[str], None] | None = None
     _source_descriptor: Callable[[str], object] | None = None
     _finish_attempt: Callable[..., tuple[dict, tuple[dict, ...]] | None] | None = None
     _prior_source_bindings: Callable[[], Mapping[str, str]] | None = None
+
+    _input_names_for_port: Callable[[str], tuple[str, ...]] | None = None
+
+    def input_names_for_port(self, port: str) -> tuple[str, ...]:
+        return self._input_names_for_port(port) if self._input_names_for_port else ()
 
     _read_reference: Callable[..., dict] | None = None
 
@@ -70,6 +78,10 @@ class OperationToolContext:
             raise ValueError("tool has no evidence budget")
         return self._io_budget(**values)
 
+    def tool_attempts(self) -> list[dict]:
+        """Read controlled attempt receipts from this Run, including interrupted work."""
+        return self._list_attempts() if self._list_attempts else []
+
     def evidence(self) -> list[dict]:
         return self._list_evidence() if self._list_evidence else []
 
@@ -83,10 +95,19 @@ class OperationToolContext:
             raise ValueError("tool has no evidence collection permission")
         return self._accept_evidence(**values)
 
+    def adopt_bound_evidence(self, manifest_alias: str) -> list[dict]:
+        """Reuse an exact bound completed tool family without rewriting its receipts."""
+        if self._adopt_bound_evidence is None:
+            raise ValueError("tool has no evidence collection permission")
+        return self._adopt_bound_evidence(manifest_alias=manifest_alias)
+
     def execution_scope(self, alias: str) -> dict:
         if self._execution_scope is None:
             raise ValueError("tool has no execution inspection permission")
         return self._execution_scope(alias)
+
+    def recovery_authorized(self, source_run_id: str) -> bool:
+        return source_run_id == self.run_id or bool(self._recovery_authorized and self._recovery_authorized(source_run_id))
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "services", MappingProxyType(dict(self.services)))

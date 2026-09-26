@@ -56,6 +56,9 @@ def test_packaged_model_default_is_configured_and_overridable():
     ({"defaults": {"reasoning_effort": "invalid"}}, "reasoning_effort"),
     ({"operations": {"fixture": {"narrative_language": "en"}}}, "narrative_language"),
     ({"hidden_option": True}, "hidden_option"),
+    ({"execution_io": {"max_export_bytes": True}}, "max_export_bytes"),
+    ({"execution_io": {"file_timeout_seconds": 0}}, "file_timeout_seconds"),
+    ({"execution_io": {"read_page_bytes": 262145}}, "read_page_bytes"),
 ])
 def test_configuration_errors_retain_field(value, field):
     with pytest.raises(ValueError, match=field):
@@ -78,6 +81,8 @@ def test_settings_persist_cas_and_do_not_rebind_session(tmp_path):
     gate = InstanceMaintenance(tmp_path)
     instance = bindings.create_instance(name="settings", title="fixture", objective="fixture")
     original = bindings.get_instance(instance_id=instance.instance_id)
+    explicit_defaults = {"helpers": {"max_calls": 4}, "execution_io": {"max_export_bytes": 2_000_000_000}}
+    assert parse_settings(explicit_defaults).sparse() == explicit_defaults
     assert bindings.agent_settings(instance.instance_id) == dict(settings={}, revision=0, updated_at=None)
     saved = bindings.save_agent_settings(instance.instance_id, {"defaults": {"narrative_language": "zh-CN"}},
                                          expected_revision=0, maintenance=gate)
@@ -115,11 +120,8 @@ def test_preflight_snapshot_survives_settings_change_and_submission(tmp_path, ba
     bindings.save_agent_settings(instance.instance_id,
         {"defaults": {"model": "gpt-5.6-sol", "reasoning_effort": "medium", "narrative_language": "en"}},
         expected_revision=1, maintenance=gate)
-    with monkeypatch.context() as context:
-        def unexpected_reload(*_):
-            raise AssertionError("frozen invocation must not reload instance preferences")
-        context.setattr(bindings, "agent_settings", unexpected_reload)
-        invoked = root.call_tool("operation_invoke", normalized)["result"]
+    # Run-local resource settings resolve at creation; the normalized model profile stays frozen.
+    invoked = root.call_tool("operation_invoke", normalized)["result"]
     assert invoked["execution_profile"]["profile"] == normalized["execution_profile"]
     assert root.call_tool("operation_invoke", normalized)["result"]["name"] == invoked["name"]
     compiled = catalog.operation("blind.csv.observe.v1")

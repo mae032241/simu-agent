@@ -41,13 +41,32 @@ class DefaultSettings(OperationSettings):
     narrative_language: Language | None = None
 
 
+class HelperSettings(SettingsValue):
+    """Run tool-access admissions, not native thread or model token limits."""
+    max_depth: Literal[0, 1] = 1
+    max_active: Literal[0, 1] = 1
+    max_calls: int = Field(default=4, ge=0, le=32)
+    max_input_bytes: int = Field(default=32768, ge=512, le=262144)
+
+
+class ExecutionIOSettings(SettingsValue):
+    """Transfer limits frozen per Run; separate from solver authorization and RAM."""
+    max_export_bytes: int = Field(default=2_000_000_000, ge=1)
+    read_page_bytes: int = Field(default=16384, ge=512, le=262144)
+    collection_timeout_seconds: int = Field(default=600, ge=1)
+    file_timeout_seconds: int = Field(default=120, ge=1)
+    idle_timeout_seconds: int = Field(default=30, ge=1)
+
+
 class AgentSettings(SettingsValue):
     schema_version: Literal[1] = 1
     defaults: DefaultSettings = Field(default_factory=DefaultSettings)
     operations: dict[str, OperationSettings] = Field(default_factory=dict)
+    helpers: HelperSettings = Field(default_factory=HelperSettings)
+    execution_io: ExecutionIOSettings = Field(default_factory=ExecutionIOSettings)
 
     def sparse(self) -> dict:
-        return self.model_dump(exclude_none=True, exclude_defaults=True)
+        return self.model_dump(exclude_none=True, exclude_unset=True)
 
 
 class ExecutionProfile(SettingsValue):

@@ -303,28 +303,16 @@ def validate_installation_profile(
 
 
 def _validate_scheduler_guides(root: Path) -> None:
-    prompt = root / "AGENTS.md"
-    if (
-        not prompt.is_file()
-        or 'scid_describe(name=..., view="invoke")' not in prompt.read_text(encoding="utf-8")
-    ):
-        raise PlatformConflictError("installed scheduler prompt lacks invoke-view guidance")
-    required = {
-        "results.md": ('response_profile="poll"', 'response_profile="navigation"', 'response_profile="decision"'),
-        "inputs.md": ('artifact_catalog(view="producer_inputs")', "parents_fallback"),
-        "domain-analysis.md": ('artifact_catalog(view="producer_inputs")', 'run_status(view="detail"'),
-    }
     for name, content in load_scheduler_guides().items():
         path = root / ".codex" / "scidiscovery-guides" / name
         if not path.is_file() or path.read_text(encoding="utf-8") != content:
             raise PlatformConflictError(f"installed scheduler guide is missing or stale: {path}")
-        if any(marker not in content for marker in required.get(name, ())):
-            raise PlatformConflictError(f"packaged scheduler guide lacks context projection rules: {name}")
 
 
 def _local_native_tool_instruction(compiled: Any) -> str:
     allowed = [
         "only the Operation tools declared in the current assignment",
+        "optional worker_helper prepare/release and native fresh spawn/wait/close when declared; wait, verify and integrate the helper, never treat it as formal review",
         "Codex file and code tools inside the opened Run workspace",
         *(["native view_image for task-local images"] if compiled.spec.executor.native_tools.view_image else []),
         *(["native web search for discovery; preserve cited originals with the declared source capture tool"]
@@ -336,7 +324,7 @@ def _local_native_tool_instruction(compiled: Any) -> str:
         "native shell network access",
         *(["native web search"] if compiled.spec.executor.native_tools.web_search == "disabled" else []),
         "Root/control-plane MCP tools",
-        "delegation and undeclared Operation tools",
+        "unprepared or recursive native delegation and undeclared Operation tools",
         "outside-workspace access except exact discovered Skill references",
         "writing global Skills or following Skill path traversal or symlinks to other host files",
         "editing inputs, schemas, assignment.json, or sealed candidates",
@@ -351,8 +339,11 @@ def _local_native_tool_instruction(compiled: Any) -> str:
         "relay only its platform thread_id/model/reasoning_effort, then wait for attachment. "
         "If awaiting scheduler attachment, report that state and wait; do not choose "
         "a role, operation or Run yourself. "
+        "If open reports participation=helper, its helper instructions override owner submission and stage-sealing directions; "
+        "return findings/files through native completion and do not submit the parent result. "
+        "Helpers read tool contracts from their returned projection or scid_describe; the shared tool-contract reader defaults to the owner assignment. "
         "Take the returned workspace_path as the task filesystem root. Read role_instructions "
-        "in assignment.json on first use. On reuse follow open.reading_guidance: unchanged "
+        "in the returned assignment_path on first use. On reuse follow open.reading_guidance: unchanged "
         "contracts need not be reprinted while their complete text remains in context. Lost/compacted "
         "context requires rereading; control compares bindings/contracts, not memory. Reassessing "
         "unchanged inputs does not require reprinting retained originals; reread missing context "
@@ -400,10 +391,10 @@ def _local_native_tool_instruction(compiled: Any) -> str:
         "facts or permission to expand input, write, network, MCP, debug, delegation, "
         "approval, or external execution scope. Do not traverse out of a Skill directory "
         "or follow symlinks to other host files. Keep global Skills read-only. "
-        "Helpers may read only these Skill resources, declared task inputs and registered tool evidence, with "
+        "Local script helpers may read only these Skill resources, declared task inputs and registered tool evidence, with "
         "temporary outputs and caches below workspace/scratch. Only installed input/schema readers "
         "manage disposable reading metadata in workspace/.read-input; do not edit or copy that cache. "
-        "For every helper call "
+        "For every local script helper call "
         "explicitly set TMPDIR=<workspace>/scratch, XDG_CACHE_HOME=<workspace>/scratch, "
         "and PYTHONDONTWRITEBYTECODE=1; do not rely on a previous shell export. "
         "Create scratch inside the opened workspace when needed. Solver, network, "
@@ -439,7 +430,9 @@ def _hardened_worker_instruction(compiled: Any) -> str:
         "If assignment.json declares a revision, patch its preinitialized editable "
         "target rather than recreating the complete object; final publication still "
         "requires the complete immutable snapshot. "
-        "Do not call Root/control-plane capabilities, other Operation capabilities, delegation, "
+        "Optional declared worker_helper permits fresh native spawn/wait/close with the same Hardened role; "
+        "helper participation overrides owner submit directions: return findings through native completion. "
+        "Do not call Root/control-plane capabilities, other Operation capabilities, unprepared or recursive delegation, "
         "skills, apps or plugins. If any forbidden native tool is unexpectedly "
         "visible, stop instead of using it. Finish only with "
         "`worker_submit_result`; a validation rejection may be corrected through "

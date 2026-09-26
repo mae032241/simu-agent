@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from ...agent_execution_settings import (EXECUTION_SETTINGS_COLUMNS, AgentSettings, ExecutionProfile,
+from ...agent_execution_settings import (EXECUTION_SETTINGS_COLUMNS, AgentSettings, ExecutionIOSettings, ExecutionProfile,
                                           parse_settings, resolve_settings)
 
 import hashlib
@@ -39,7 +39,7 @@ from ..schema.common import canonical_json, canonical_sha256
 from ..schema.refs import ActorRef, ArtifactRef
 from ..schema.run_signal import SchedulerSignal
 from .artifacts import ArtifactService
-from .worker_connections import WORKER_CONNECTION_SCHEMA
+from .worker_connections import WORKER_CONNECTION_SCHEMA, WORKER_PARTICIPANT_SCHEMA
 from .local_workspace import (
     OpenWorkspace,
     WorkspaceBackend,
@@ -122,6 +122,33 @@ class RunService(ToolEvidenceMixin):
             scheduler_database_path=self.scheduler_database_path,
         )
         self._initialize()
+        from .worker_connections import WorkerConnections
+        self.worker_connections = WorkerConnections(self)
+        self.experiment_executions = None
+
+    def task_lineage(self, run_id):
+        """Current Run through its immutable recovery ancestors, newest first."""
+        lineage, seen = [], set()
+        with self._connect() as connection:
+            while run_id and run_id not in seen and len(seen) < 128:
+                seen.add(run_id)
+                run = self.status(run_id)
+                if lineage and (run.instance_id, run.operation_id) != (lineage[0].instance_id, lineage[0].operation_id):
+                    raise RunStateConflict("Recovery lineage crosses the task boundary")
+                lineage.append(run)
+                row = self._row(connection, run_id)
+                run_id = row["draft_from_run_id"] or row["resume_from_run_id"]
+            if run_id:
+                raise RunStateConflict("Recovery lineage is cyclic or exceeds its bound")
+        return tuple(lineage)
+
+    def compiled_operation(self, run):
+        """Resolve the frozen Run contract, including its identity check."""
+        return self._compiled(run)
+
+    def running_task(self, run_id):
+        """Require the existing task and its original deadline to remain live."""
+        return self._require_running(run_id)
 
     def execution_settings(self, compiled, *, instance_id, profile=None, recovery_source=None, max_attempts=None):
         source = self.status(recovery_source) if recovery_source else None
@@ -179,7 +206,8 @@ class RunService(ToolEvidenceMixin):
         # Reconstruct the call from authoritative records before any Run/workspace write.
         by_port = {port.name: [] for port in compiled.spec.inputs}
         for item in bound.inputs:
-            envelope = self.artifacts.catalog(item.artifact.ref)
+            envelope = (self.artifacts.verify(item.artifact.ref) if item.exposure == "file_reference"
+                        else self.artifacts.catalog(item.artifact.ref))
             producer = self.completed_for_output(envelope.ref)
             by_port.setdefault(item.port_name, []).append(InvocationArtifact(
                 artifact_name=item.artifact_name, ref=envelope.ref, schema_id=envelope.schema_id,
@@ -231,10 +259,14 @@ class RunService(ToolEvidenceMixin):
         deadline_at = future(created_at, compiled.spec.limits.timeout_seconds)
         recovery_digest: str | None = None
         recovery_policy = self._recovery_policy(compiled)
+        if resume_from is None and draft_from is None:
+            instance_settings = parse_settings(self.scheduler_bindings.agent_settings(instance_id)["settings"])
+            for key in ("helpers", "execution_io"):
+                recovery_policy[key].update(getattr(instance_settings, key).model_dump(exclude_unset=True))
         with self._connect() as connection:
             self._attach_scheduler(connection)
             connection.execute("BEGIN IMMEDIATE")
-            frozen_inputs = self.current.freeze(connection, instance_id, raw_inputs)
+            frozen_inputs = self.current.freeze(connection, instance_id, raw_inputs, input_ports=compiled.spec.inputs)
             active_revision = active_direct_revision_ports(
                 compiled, (item.port_name for item in frozen_inputs)
             )
@@ -282,6 +314,9 @@ class RunService(ToolEvidenceMixin):
                 if draft_digest is not None and draft_digest != recovery_digest:
                     raise RunStateConflict("draft source digest changed")
             scheduler_budget = max_attempts
+            if resume_from is not None or draft_from is not None:
+                recovery_policy["helpers"] = (source.recovery_policy or {}).get("helpers", {"max_depth": 0})
+                recovery_policy["execution_io"] = (source.recovery_policy or {}).get("execution_io", ExecutionIOSettings().model_dump())
             if scheduler_budget is None and (resume_from is not None or draft_from is not None):
                 scheduler_budget = (source.recovery_policy or {}).get("scheduler_max_attempts")
             if scheduler_budget is not None:
@@ -365,7 +400,8 @@ class RunService(ToolEvidenceMixin):
                     content=self.artifacts.read(item.artifact_ref),
                 )
                 for item in frozen_inputs
-                if item.exposure != "handoff_only"
+                if item.exposure not in {"handoff_only", "file_reference"}
+                and next(port for port in compiled.spec.inputs if port.name == item.port_name).agent_visible
             )
             input_bytes = {item.name: item.content for item in materialized_inputs}
             direct_revision = active_direct_revision_ports(
@@ -545,6 +581,10 @@ class RunService(ToolEvidenceMixin):
             if row is None:
                 connection.execute("ROLLBACK")
                 raise RunStateConflict("no exact queued Run is available")
+            if self.operation_catalog.operation(operation_id).spec.independent_review_ports:
+                attached = connection.execute("SELECT 1 FROM worker_connections WHERE run_id=?", (selected_run_id,)).fetchone()
+                if attached is None:
+                    raise RunStateConflict("Independent review requires a control-verified reviewer attachment.")
             if row["state"] == "running" and not allow_running:
                 connection.execute("ROLLBACK")
                 raise RunStateConflict("no exact queued Run is available")
@@ -624,6 +664,8 @@ class RunService(ToolEvidenceMixin):
         return self.status(run_id)
 
     def submit(self, run_id: str, *, trusted_tool_records=None) -> tuple[str, tuple[dict[str, str], ...]]:
+        # Ending tool access does not assert that a native thread has stopped.
+        self.worker_connections.release_helpers(run_id)
         value = self.status(run_id)
         if value.state == "completed":
             return "completed", ()
@@ -679,6 +721,8 @@ class RunService(ToolEvidenceMixin):
             "backend_version": self.backend.backend_version,
             "max_files": limits.max_files, "max_output_bytes": limits.max_output_bytes,
             "max_attempts": limits.max_attempts,
+            "helpers": self.agent_settings.helpers.model_dump(),
+            "execution_io": self.agent_settings.execution_io.model_dump(),
             "snapshot_max_files": 132, "snapshot_max_bytes": 32 * 1024 * 1024,
         }
 
@@ -718,6 +762,14 @@ class RunService(ToolEvidenceMixin):
     def _finish_failed_workspace(self, value: RunStatus) -> RunStatus:
         if value.state != "failed":
             raise RunStateConflict("Run is not failed")
+        self.worker_connections.release_helpers(value.run_id)
+        coordinator = getattr(self, "experiment_executions", None)
+        if coordinator is not None:
+            try:
+                coordinator.cancel_owned(value)
+            except Exception:
+                self._pending_recovery(value, "external_cancellation_pending")
+                return self.status(value.run_id)
         if value.recovery_draft and value.recovery_draft.get("draft_digest"):
             # A delivered immutable subset stays frozen. Pending native writers
             # are not cleared merely because another failure request arrived.
@@ -921,6 +973,22 @@ class RunService(ToolEvidenceMixin):
             row = self._row(connection, run_id)
         return {key: row[key] for key in ("resume_from_run_id", "draft_from_run_id")}
 
+    def recovery_authorized(self, run_id: str, source_run_id: str) -> bool:
+        """Read only the sealed control recovery chain, never workspace claims."""
+        current = self.status(run_id)
+        pending, seen = [run_id], set()
+        while pending:
+            candidate = pending.pop()
+            if candidate in seen:
+                continue
+            seen.add(candidate)
+            if self.status(candidate).instance_id != current.instance_id:
+                raise RunStateConflict("recovery chain crosses instance boundary")
+            if candidate == source_run_id:
+                return True
+            pending.extend(value for value in self.recovery_links(candidate).values() if value)
+        return False
+
     def diagnostic_reference_belongs(self, run_id: str, reference: str) -> bool:
         """Associate an engineering reference with this exact durable Run event."""
         with self._connect() as connection:
@@ -954,6 +1022,14 @@ class RunService(ToolEvidenceMixin):
                 return None
             if any(ref == artifact_ref for _, ref in self.evidence_output_refs(value)):
                 return value
+            envelope = self.artifacts.catalog(artifact_ref)
+            if (value.state == "completed" and value.output_ref is not None
+                    and artifact_ref in self.artifacts.catalog(value.output_ref).parent_refs
+                    and envelope.labels.get("operation_output_port") == "recovery_manifest_output"
+                    and envelope.labels.get("operation_digest") == value.operation_digest
+                    and envelope.schema_id == "scidiscovery.tool-evidence-manifest.v1"):
+                return value
+
         return None
 
     def record_activity(self, run_id: str, activity: str, *,
@@ -1204,6 +1280,11 @@ class RunService(ToolEvidenceMixin):
     ) -> tuple[Any, ValidatedRunOutput]:
         compiled = self._compiled(value)
         assert compiled.spec.limits is not None
+        if final_submission and compiled.spec.executor.capability is not None:
+            coordinator = getattr(self, "experiment_executions", None)
+            if coordinator is None:
+                raise RunCheckerError("The experiment execution service is unavailable.")
+            coordinator.require_idle(value)
         try:
             if value.accepted_candidate_digest is None:
                 self._finalize_workspace(compiled, value.run_id, final_submission=final_submission, trusted_tool_records=trusted_tool_records)
@@ -1254,7 +1335,7 @@ class RunService(ToolEvidenceMixin):
             raise
         return sealed, validated
 
-    def _validation_inputs(
+    def _input_sources(
         self, value: RunStatus
     ) -> tuple[dict[str, bytes], dict[str, InputBindingDescriptor]]:
         contents: dict[str, bytes] = {}
@@ -1262,15 +1343,18 @@ class RunService(ToolEvidenceMixin):
         for item in value.inputs:
             try:
                 envelope = self.artifacts.catalog(item.artifact_ref)
-                content = self.artifacts.read(item.artifact_ref)
+                reference_only = item.exposure == "file_reference"
+                if reference_only:
+                    self.artifacts.verify(item.artifact_ref)
+                content = b"" if reference_only else self.artifacts.read(item.artifact_ref)
             except Exception as error:
                 raise RunCheckerError("exact Run input registration or bytes are unavailable", category="integrity_failure") from error
             if (
                 envelope.ref != item.artifact_ref
                 or envelope.media_type != item.media_type
                 or envelope.sha256 != item.artifact_ref.sha256
-                or envelope.size_bytes != len(content)
-                or hashlib.sha256(content).hexdigest() != item.artifact_ref.sha256
+                or (not reference_only and (envelope.size_bytes != len(content)
+                    or hashlib.sha256(content).hexdigest() != item.artifact_ref.sha256))
                 or item.source_name in descriptors
             ):
                 raise RunCheckerError("input registration contradicts the exact Run binding", category="integrity_failure")
@@ -1278,6 +1362,12 @@ class RunService(ToolEvidenceMixin):
             descriptors[item.source_name] = self.source_descriptor(value, item.source_name)
         acquired, acquired_descriptors = self.evidence_sources(value.run_id)
         contents.update(acquired); descriptors.update(acquired_descriptors)
+        return contents, descriptors
+
+    def _validation_inputs(
+        self, value: RunStatus
+    ) -> tuple[dict[str, bytes], dict[str, InputBindingDescriptor]]:
+        contents, descriptors = self._input_sources(value)
         if tool_evidence_ports(self._compiled(value)):
             manifest_raw = self._evidence_snapshot(value.run_id)
             contents["tool_recovery_manifest"] = manifest_raw
@@ -1307,6 +1397,7 @@ class RunService(ToolEvidenceMixin):
             return
         recovery = workspace.root / "recovery-draft"
         value = self.status(run_id)
+        contents, descriptors = self._input_sources(value)
         try:
             result = materializer(
                 WorkspaceMaterializationRequest(
@@ -1315,8 +1406,8 @@ class RunService(ToolEvidenceMixin):
                     input_paths=workspace.input_paths,
                     provisional_roots=(recovery,) if recovery.is_dir() else (),
                     edit_protocol=getattr(self.backend, "edit_protocol", "native"),
-                    binding_descriptors={alias: self.source_descriptor(value, alias)
-                        for alias in workspace.input_paths},
+                    binding_descriptors=descriptors,
+                    input_contents=contents,
                 )
             )
             if (self.backend.backend_id == "local_trusted"
@@ -1355,6 +1446,7 @@ class RunService(ToolEvidenceMixin):
             return
         workspace = self.backend.open(run_id)
         value = self.status(run_id)
+        contents, descriptors = self._input_sources(value)
         try:
             raw = finalizer(
                 WorkspaceFinalizationRequest(
@@ -1366,9 +1458,8 @@ class RunService(ToolEvidenceMixin):
                     run_id=run_id,
                     trusted_tool_records=trusted_tool_records or {},
                     output_schema_id=operation_primary_output(compiled).schema_id,
-                    binding_descriptors={alias: self.source_descriptor(value, alias)
-                        for alias in (*workspace.input_paths,
-                            *(record["alias"] for record in self.tool_evidence(run_id)))},
+                    binding_descriptors=descriptors,
+                    input_contents=contents,
                 )
             )
             writer = getattr(self.backend, "write_primary_output", None)
@@ -1396,7 +1487,10 @@ class RunService(ToolEvidenceMixin):
             compiled = self._compiled(self.status(run_id))
             if tool_evidence_ports(compiled):
                 snapshot = self.backend.seal(run_id, max_files=compiled.spec.limits.max_files, max_bytes=compiled.spec.limits.max_output_bytes, expected_digest=digest)
-                if (snapshot.root / 'tool-evidence.json').read_bytes() != self._evidence_snapshot(run_id):
+                expected = self._evidence_snapshot(run_id)
+                from .tool_evidence import scientific_evidence_projection
+                expected = scientific_evidence_projection(expected)
+                if (snapshot.root / 'tool-evidence.json').read_bytes() != expected:
                     raise RunCheckerError('tool evidence snapshot changed before acceptance', category='integrity_failure')
             accepted = row["accepted_candidate_digest"]
             if accepted is not None and str(accepted) != digest:
@@ -1889,6 +1983,7 @@ class RunService(ToolEvidenceMixin):
                 """
             )
             connection.executescript(WORKER_CONNECTION_SCHEMA)
+            connection.executescript(WORKER_PARTICIPANT_SCHEMA)
             for table, columns in {
                 "runs": {"draft_from_run_id": "TEXT", "recovery_policy_json": "BLOB",
                          **{name: value[0] for name, value in EXECUTION_SETTINGS_COLUMNS["runs"].items()}},

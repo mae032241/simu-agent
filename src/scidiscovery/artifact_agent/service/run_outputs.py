@@ -96,8 +96,11 @@ def validate_run_output(
                 declared_rule_ids,
             ),
         )
-    if tool_snapshot is not None and (sealed.root / "tool-evidence.json").read_bytes() != tool_snapshot:
-        raise RunCheckerError("tool evidence snapshot differs", category="integrity_failure")
+    if tool_snapshot is not None:
+        from .tool_evidence import scientific_evidence_projection
+        expected_snapshot = scientific_evidence_projection(tool_snapshot)
+        if (sealed.root / "tool-evidence.json").read_bytes() != expected_snapshot:
+            raise RunCheckerError("tool evidence snapshot differs", category="integrity_failure")
     descriptor = next(item for item in sealed.files if item.relative_path == "result.json")
     path = sealed.root / descriptor.relative_path
     try:
@@ -267,7 +270,6 @@ def validate_run_output(
             assumptions=handoff.assumptions,
             missing_inputs=handoff.missing_inputs,
             next_actions=handoff.next_actions,
-            next_action_kind=handoff.next_action_kind,
         ),
         media_type=port.media_types[0],
         kind=port.kind,

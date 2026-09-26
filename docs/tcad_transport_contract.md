@@ -1,6 +1,6 @@
 # TCAD 传输与开发调试合同（Run v1）
 
-更新日期：2026-09-13
+更新日期：2026-09-24
 状态：当前规范
 
 ## 1. 权限边界
@@ -20,15 +20,20 @@ Approval 和 Execution 事实只由通用控制面维护。
 
 ## 2. 外部执行 transport
 
+当前任务载荷为 `TCADJobSpec` v4，外层请求/响应仍为下述 transport v1。
+任务必须包含 `collect_generated_outputs`；不再传递未执行的 `max_processes` 提示。
+控制端与远端 runner 需配套更新，旧任务不做在线迁移。
+
 `CommandTCADExecutorAdapter` 每次调用一个管理员拥有的短命令。请求和响应均为有界规范 JSON：
 
 ```json
-{"schema_version":1,"operation":"capabilities|prepare|lookup_submission|submit|status|cancel|collect","payload":{}}
+{"schema_version":1,"operation":"capabilities|execution_policy|prepare|lookup_submission|submit|status|cancel|collect","payload":{}}
 ```
 
 transport 只能：
 
 - `capabilities`：读取管理员冻结的 solver capability；
+- `execution_policy`：读取管理员完整策略与 runner/debug 配置；
 - `prepare`：物化已审查 package 和 JobSpec；
 - `lookup_submission`：按已准备提交的稳定摘要权威查回既有外部任务；
 - `submit`：短时提交并返回外部状态；
@@ -61,8 +66,8 @@ transport 不等待 Solver、不循环轮询、不生成或修改 Deck、不批�
 reviewer、reviewed package、JobSpec 和实际 runner 必须绑定同一 capability 摘要；任何可执行文件、
 参数、环境、solver kind 或发行证据漂移均在启动前拒绝。
 
-正式执行只接受 `tcad.reviewed-deck-package.v2` 和 `execution_purpose=production`，先经过独立人工
-Effect 授权。提交成功、领域终态和结果收集是三个事实，不能压成一个 succeeded。
+正式执行只接受 `tcad.reviewed-deck-package.v2` 和 `execution_purpose=production`；独立科学审查继续必需。
+Effect 采用配置内策略授权或超额后的人工授权，submit 携带冻结 admission 并由 runner 重判当前 digest。提交成功、领域终态和结果收集是三个事实，不能压成一个 succeeded。
 
 ## 3. Local Run 开发调试
 
@@ -108,3 +113,14 @@ SciDiscovery 服务、增加 SSH key、sudo 或端口代理。
 4. 开发调试不创建 Approval、Execution、Artifact、资格或 current；
 5. 正式执行必须使用已审查 package、精确人工授权和同一 capability；
 6. 测试适配器必须标为夹具，不得冒充真实 Solver 或科学效果。
+
+### R3 资源与文件路径
+
+Job v4 必填 `max_storage_bytes`，与内存和输出限额独立。管理员示例为 2,000,000,000 字节、
+3600 秒内自主执行；数值、outside_limits、采样/终止宽限、传输分块、预览/诊断及收集预算均可配置。
+策略授权不生成 approval 或 HumanDecision；状态中直接展示授权来源。资源监控报告采样观测高水位
+与超调，不能作为硬磁盘配额证明。多 case 共用 job deadline；未知提交查询原描述符，预算不重置。
+
+科学文件使用流式上传、带明确大小上限的 `get_to`、逐文件哈希和流式 CAS 登记，不经过 JSON/base64。
+科学下载不再受预览 32MiB 门槛限制；传输配置须覆盖请求总存储额度。小 JSON/预览仍独立有界。
+本轮尚未运行测试或真实传输；旧 wire/config 不作兼容补齐，控制端、适配器、远端必须整体更新。

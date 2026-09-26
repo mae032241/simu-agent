@@ -23,7 +23,7 @@ class TCADDebugSource:
     source_name: str
     artifact_ref: ArtifactRef
     media_type: str
-    content: bytes
+    content: bytes | Path
 
 
 @dataclass(frozen=True)
@@ -91,9 +91,9 @@ class TCADDevelopmentDebugAdapter(Protocol):
 
     def cancel(self, external_run_id: str) -> str: ...
 
-    def collect(self, external_run_id: str) -> CollectedTCADDebugRun: ...
+    def collect(self, external_run_id: str, *, limits: dict[str, int]) -> CollectedTCADDebugRun: ...
 
-    def collect_with_budget(self, external_run_id: str, *, context: CollectionContext) -> CollectedTCADDebugRun: ...
+    def collect_with_budget(self, external_run_id: str, *, context: CollectionContext, limits: dict[str, int]) -> CollectedTCADDebugRun: ...
 
 
 __all__ = [

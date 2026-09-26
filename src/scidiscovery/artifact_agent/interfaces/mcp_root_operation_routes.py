@@ -8,6 +8,7 @@ from typing import Any, Protocol
 
 from ..schema.approval import ApprovalOption, CompiledApprovalIdentity, ReviewDocument
 from ..schema.artifact import ArtifactRegistration
+from ..schema.refs import ArtifactRef
 from ..schema.common import canonical_sha256
 from ..service.scheduler_bindings import SchedulerNameConflict
 from ..service.run_records import RunAttemptLimit
@@ -82,7 +83,7 @@ class RootOperationRoutes:
         items = [
             self._operation_catalog_item(item)
             for item in projection
-            if scope == "all" or item.catalog_scope == scope
+            if item.catalog_scope != "internal" and (scope == "all" or item.catalog_scope == scope)
         ]
         navigation_state = []
         if scope == "public":
@@ -106,63 +107,6 @@ class RootOperationRoutes:
     def _operation_catalog_item(self, item: Any) -> dict[str, Any]:
         value = item.model_dump(mode="json", by_alias=True)
         compiled = self._operation_catalog.operation(item.operation_id)
-        value["operation_digest"] = compiled.digest
-        if compiled.spec.executor.kind == "effect":
-            try:
-                plan = effect_operation_plan(compiled)
-            except OperationInvocationError:
-                value["runtime_binding"] = {
-                    "process": "control",
-                    "required": [],
-                    "status": "invalid_declaration",
-                }
-                return value
-            available = bool(
-                self.execution_bridge is not None
-                and self.execution_bridge.has_adapter(plan.executor)
-            )
-            value["runtime_binding"] = {
-                "process": "control",
-                "required": [plan.executor],
-                "status": "available" if available else "unavailable",
-            }
-        elif compiled.spec.executor.kind == "agent":
-            value["executor_model_usage"] = "Operation compatibility default; dispatch uses the Run execution_profile."
-            value["default_max_attempts"] = compiled.spec.limits.max_attempts
-            if self.runs is not None:
-                if not self.runs.backend.supports_operation(compiled):
-                    value["runtime_binding"] = {
-                        "process": "worker",
-                        "required": list(
-                            self.runs.backend.unsupported_requirements(compiled)
-                        ),
-                        "status": "unavailable",
-                    }
-                    return value
-                missing = operation_local_worker_missing_tools(compiled)
-                if missing:
-                    value["runtime_binding"] = {
-                        "process": "local_worker",
-                        "required": list(missing),
-                        "status": "unavailable",
-                    }
-                    return value
-            services = sorted(
-                {
-                    service
-                    for tool in operation_worker_tools(compiled)
-                    for service in tool.required_services
-                }
-            )
-            if services:
-                value["runtime_binding"] = {
-                    "process": "worker",
-                    "required": services,
-                    "status": "verified_on_worker_claim",
-                }
-            optional = sorted({service for tool in operation_worker_tools(compiled) for service in tool.optional_services})
-            if optional:
-                value["optional_runtime_services"] = optional
         return value
 
     def _scheduler_operation_available(
@@ -202,25 +146,36 @@ class RootOperationRoutes:
             ):
                 return {"reason_code": "effect_adapter_unavailable", "operation_id": operation_id,
                         "required": [plan.executor]}
-        review = compiled.spec.review
-        if (
-            compiled.spec.catalog_scope == "public"
-            and review is not None
-            and review.reviewer_operation is not None
-        ):
-            reviewer_reason = self._scheduler_operation_unavailability(
-                review.reviewer_operation, seen | {operation_id}
-            )
-            if reviewer_reason is not None:
-                return {"reason_code": "reviewer_unavailable", "operation_id": operation_id,
-                        "reviewer": reviewer_reason}
         return None
 
     def _configured_operation_call(self, values):
         self._require_scheduling_enabled()
         values = dict(values)
         profile = values.pop("execution_profile", None)
-        bound = self._prepare_operation_call(**values)
+        try:
+            bound = self._prepare_operation_call(**values)
+        except OperationInvocationError as error:
+            compiled = self._operation_catalog.operation(values["operation_id"]) if error.reason_code != "operation_unknown" else None
+            ports = {port.name: port for port in compiled.spec.inputs} if compiled else {}
+            admission = compiled.spec.input_admission if compiled else None
+            if admission is not None and error.port == admission.cohort_id:
+                # A cohort is a control grouping, never a callable input field.
+                anchor = next((ports[name] for name in admission.approval_subject_ports
+                    if name in ports), None)
+                while anchor is not None and anchor.derivation is not None:
+                    anchor = ports[anchor.derivation.anchor_port]
+                raise OperationInvocationError(error.reason_code,
+                    port=anchor.name if anchor is not None and anchor.agent_visible else None,
+                    message="The selected scientific material requires qualification. Use its declared qualification action and approval UI, then retry with the same exact material; do not add another input.") from error
+            port = ports.get(error.port)
+            if port is not None and (port.derivation is not None or not port.agent_visible):
+                self.engineering_diagnostics.capture(error, scope="instance:" + self._instance_id(),
+                    layer="input_derivation", action="invoke")
+                while port.derivation is not None:
+                    port = ports[port.derivation.anchor_port]
+                raise OperationInvocationError(error.reason_code, port=port.name if port.agent_visible else None,
+                    message="The selected subject's original materials do not satisfy this action. Restore its exact sealed materials or choose a compatible scientific subject; control diagnostics retain the detailed cause.") from error
+            raise
         if bound.compiled.spec.executor.kind != "agent":
             if profile is not None:
                 raise OperationInvocationError("execution_profile_not_applicable",
@@ -243,6 +198,7 @@ class RootOperationRoutes:
 
     def operation_preflight(self, **values: Any) -> dict[str, Any]:
         normalized = {}
+        execution_admission = {}
         def prepare() -> BoundOperationCall:
             bound, configured = self._configured_operation_call(values)
             normalized.update(configured)
@@ -256,9 +212,18 @@ class RootOperationRoutes:
                 )
             elif bound.compiled.spec.executor.kind == "approval":
                 self._prepare_approval_projection(bound)
+            elif bound.compiled.spec.executor.kind == "effect":
+                plan = self._effect_operation_plan(bound)
+                admission = self._effect_admission(bound, plan)
+                if admission is not None:
+                    execution_admission.update(outcome=admission.outcome,
+                        policy_digest=admission.policy_digest, budget=dict(admission.budget),
+                        reason=admission.reason)
             return bound
 
         result = preflight_result(prepare)
+        if result["admissible"] and execution_admission:
+            result["execution_admission"] = execution_admission
         if result["admissible"] and result["executor_kind"] == "agent":
             result["normalized_request"] = {**normalized,
                 "inputs": [{"port": item.port, "artifact_names": list(item.artifact_names)}
@@ -284,11 +249,6 @@ class RootOperationRoutes:
                     )
                 elif kind == "effect":
                     plan = self._effect_operation_plan(bound)
-                    payloads = tuple(
-                        item for item in bound.inputs if item.port_name == plan.payload_port
-                    )
-                    if len(payloads) != 1 or len(bound.inputs) != 1:
-                        raise OperationInvocationError("effect_payload_not_singular")
                     result = self._invoke_compiled_effect(
                         bound, plan, values["on_conflict"]
                     )
@@ -998,20 +958,13 @@ class RootOperationRoutes:
         payloads = tuple(
             item for item in bound.inputs if item.port_name == plan.payload_port
         )
-        if len(payloads) != 1 or len(bound.inputs) != 1:
+        if bound.compiled.spec.executor.preparation is None and (len(payloads) != 1 or len(bound.inputs) != 1):
             raise OperationInvocationError("effect_payload_not_singular")
         if self.execution_bridge is None:
             raise OperationInvocationError("effect_bridge_unavailable")
         if not self.execution_bridge.has_adapter(plan.executor):
             raise OperationInvocationError("runtime_binding_unavailable")
-        try:
-            self.execution_bridge.validate_request(
-                executor=plan.executor,
-                preparation_profile=plan.preparation_profile,
-                payload=self.artifacts.read(payloads[0].artifact.ref),
-            )
-        except Exception as error:
-            raise OperationInvocationError("effect_preparation_invalid") from error
+        self._effect_admission(bound, plan)
         return plan
 
     def _invoke_compiled_transform(
@@ -1060,7 +1013,7 @@ class RootOperationRoutes:
             for item, envelope in zip(inputs, envelopes, strict=True)
         )
         selected_payload_names = tuple(
-            item.source_name for item in inputs if item.exposure != "handoff_only"
+            item.source_name for item in inputs if item.exposure not in {"handoff_only", "file_reference"}
         )
         selected = set(selected_payload_names)
         payloads = {
@@ -1172,6 +1125,102 @@ class RootOperationRoutes:
                 )
         return {"name": target.name, "profile": profile, "outputs": registered}
 
+    def _derive_operation_inputs(self, compiled, resolved):
+        """Resolve only declared producer edges of exact selected immutable anchors."""
+        ports = {port.name: port for port in compiled.spec.inputs}
+        def bind(port):
+            if port.name in resolved or port.derivation is None:
+                return
+            rule = port.derivation
+            bind(ports[rule.anchor_port])
+            anchors = resolved.get(rule.anchor_port, ())
+            if not anchors and port.min_items == 0:
+                resolved[port.name] = ()
+                return
+            def reject(reason):
+                raise OperationInvocationError(reason, port=rule.anchor_port,
+                    message="The selected scientific subject has missing, ambiguous or inaccessible original materials. Select a subject with its sealed producer history; no newer material is substituted.")
+            if len(anchors) != 1:
+                reject("input_origin_ambiguous" if anchors else "input_origin_missing")
+            def family_for(ref):
+                name = self.bindings.find_name(instance=self._instance_id(),
+                    namespace="artifact", object_id=ref.artifact_id)
+                if name is None:
+                    reject("input_origin_unavailable")
+                self.artifacts.verify(ref)
+                return self._producer_output_family_from_envelope(name, self.artifacts.catalog(ref))
+            refs = [anchors[0].ref]
+            for edge in rule.producer_input_path:
+                following = []
+                for ref in refs:
+                    family = family_for(ref)
+                    if family is None or family.producer_instance_id != self._instance_id():
+                        reject("input_origin_unavailable")
+                    following.extend(item.ref for item in family.producer_inputs if item.port_name == edge)
+                refs = list(dict.fromkeys(following))
+                if not refs:
+                    reject("input_origin_missing")
+            if rule.select != "subject":
+                if len(refs) != 1:
+                    reject("input_origin_ambiguous")
+                family = family_for(refs[0])
+                if family is None or family.producer_instance_id != self._instance_id() or family.contract_availability != "current":
+                    reject("input_origin_unavailable")
+                refs = ([item.ref for item in family.members if item.ref != family.primary_ref]
+                        if rule.select == "siblings" else [item.ref for item in family.evidence_sources])
+                refs = list(dict.fromkeys(refs))
+            private_names = {}
+            if rule.producer_output_port is not None:
+                if len(refs) != 1:
+                    reject("input_origin_ambiguous")
+                family = family_for(refs[0])
+                if family is None or family.contract_availability != "current" or family.producer_instance_id != self._instance_id():
+                    reject("input_origin_unavailable")
+                producer = self._operation_catalog.operation(family.operation_id)
+                declared = next((item for item in producer.spec.outputs if item.name == rule.producer_output_port), None)
+                if declared is None:
+                    reject("input_origin_output_undeclared")
+                if family.producer_run_id is None:
+                    candidates = [item.ref for item in family.members if item.port_name == declared.name]
+                else:
+                    original = self.runs.status(family.producer_run_id)
+                    if original.state != "completed" or original.output_ref != family.primary_ref:
+                        reject("input_origin_unavailable")
+                    exact_evidence = {ArtifactRef.model_validate(item["artifact_ref"])
+                        for item in self.runs.tool_evidence(original.run_id)}
+                    candidates = [original.output_ref, *self.artifacts.catalog(original.output_ref).parent_refs]
+                    candidates.extend(ref for _, ref in self.runs.evidence_output_refs(original))
+                    candidates = [ref for ref in dict.fromkeys(candidates)
+                        if self.artifacts.catalog(ref).labels.get("operation_output_port") == declared.name
+                        and self.artifacts.catalog(ref).labels.get("operation_digest") == original.operation_digest
+                        and (ref == original.output_ref
+                            or self.artifacts.catalog(ref).labels.get("tool_producer_run") == original.run_id
+                            or (declared.name == "tool_evidence" and ref in exact_evidence))]
+                refs = list(dict.fromkeys(candidates))
+                # Private artifacts deliberately have no public name binding.
+                private_names = {ref: anchors[0].artifact_name for ref in refs} if not port.agent_visible else {}
+            if len(refs) < port.min_items or len(refs) > port.max_items:
+                reject("input_origin_ambiguous" if len(refs) > port.max_items else "input_origin_missing")
+            values = []
+            for ref in refs:
+                name = private_names.get(ref) or self.bindings.find_name(instance=self._instance_id(), namespace="artifact", object_id=ref.artifact_id)
+                if name is None:
+                    reject("input_origin_unavailable")
+                envelope = self.artifacts.catalog(ref)
+                self.artifacts.verify(ref)
+                family = self._producer_output_family_from_envelope(name, envelope) if ref not in private_names else family
+                signal = self.runs.signal_for_output(ref, require_current=False) if self.runs else None
+                values.append(InvocationArtifact(artifact_name=name, ref=ref, schema_id=envelope.schema_id,
+                    media_type=envelope.media_type, size_bytes=envelope.size_bytes,
+                    current=self.runs.input_is_current(instance_id=self._instance_id(), artifact_name=name, artifact_ref=ref) if self.runs else False,
+                    parent_refs=envelope.parent_refs, labels=tuple(sorted(envelope.labels.items())),
+                    historical=self._is_historical(envelope), handoff_verdict=signal.verdict if signal else None,
+                    producer_run_id=family.producer_run_id if family else None,
+                    producer_inputs=tuple((item.port_name,item.ref) for item in family.producer_inputs) if family else None))
+            resolved[port.name] = tuple(values)
+        for port in compiled.spec.inputs:
+            bind(port)
+
     def _prepare_operation_call(
         self,
         *,
@@ -1199,14 +1248,6 @@ class RootOperationRoutes:
                 raise OperationInvocationError("attempt_limit_not_applicable", message="max_attempts applies only to Agent Runs")
         if compiled.spec.catalog_scope == "internal":
             raise OperationInvocationError("operation_scope_forbidden")
-        review = compiled.spec.review
-        if (
-            compiled.spec.catalog_scope == "public"
-            and review is not None
-            and review.reviewer_operation is not None
-            and not self._scheduler_operation_available(review.reviewer_operation)
-        ):
-            raise OperationInvocationError("operation_runtime_unavailable")
         ports = tuple(item.port for item in inputs)
         if len(ports) != len(set(ports)):
             raise OperationInvocationError("input_port_duplicate")
@@ -1232,6 +1273,8 @@ class RootOperationRoutes:
             except StopIteration:
                 resolved[selection.port] = ()
                 continue
+            if port.derivation is not None or not port.agent_visible:
+                raise OperationInvocationError("input_port_unknown", message="Choose only scientific inputs shown by scid_describe for this action.")
             artifacts: list[InvocationArtifact] = []
             for artifact_name in selection.artifact_names:
                 try:
@@ -1242,6 +1285,8 @@ class RootOperationRoutes:
                     )
                     binding = self._binding("artifact", artifact_name)
                     envelope = self.artifacts.get_by_id(artifact_id)
+                    if port.exposure == "file_reference":
+                        self.artifacts.verify(envelope.ref)
                 except Exception as error:
                     raise OperationInvocationError(
                         "input_artifact_unavailable", port=selection.port
@@ -1293,6 +1338,7 @@ class RootOperationRoutes:
                     )
                 )
             resolved[selection.port] = tuple(artifacts)
+        self._derive_operation_inputs(compiled, resolved)
         for port in compiled.spec.inputs:
             if port.min_items == 0:
                 resolved.setdefault(port.name, ())
@@ -1683,15 +1729,9 @@ class RootOperationRoutes:
 
             reviewer_output = next((candidate for candidate in bound.inputs if exact_review(candidate)), None)
             if reviewer_output is None:
-                if any(exact_review(candidate, require_compatible=False) for candidate in bound.inputs):
-                    raise OperationInvocationError(
-                        "input_independent_review_incompatible", port=port_name,
-                        message="An exact completed review exists, but its Operation version or output type is no longer supported. Request a new review of this same subject.",
-                    )
-                raise OperationInvocationError(
-                    "input_independent_review_missing", port=port_name,
-                    message="No bound completed review from the declared reviewer covers this exact subject with an accepted verdict.",
-                )
+                # Ordinary downstream use does not impose a fixed review stage.
+                # Qualification projectors own their explicit major-node policy.
+                continue
             if reviewer_output.usage in {"change_request", "review_signal"}:
                 consumed_review_signals.add(reviewer_output.artifact.ref)
             elif (

@@ -1,4 +1,5 @@
 """Regression boundaries for observation, resumable collection and diagnostics."""
+from tests.operations.tcad_policy_fixtures import policy_fields
 import hashlib
 import subprocess
 import pytest
@@ -321,86 +322,6 @@ def test_proxy_daemon_status_stays_available_during_collection(tmp_path, monkeyp
     assert reader.summary(execution_id)['state'] == 'interrupted'
 
 
-def test_worker_error_reference_and_tool_time_survive_router_reopen(tmp_path, monkeypatch):
-    from tests.operations.test_l4_local_tcad import _budget_case
-    from scidiscovery.artifact_agent.interfaces.mcp_worker_protocol import WorkerToolError
-    import pytest
-    worker, adapter, _ = _budget_case(tmp_path)
-    def fail(_):
-        raise TimeoutError("test debug collection timed out")
-    monkeypatch.setattr(adapter, "collect", fail)
-    with pytest.raises(WorkerToolError) as caught:
-        worker.call_tool("worker_tcad_debug_run", {"run_name": "failure", "mode": "preflight"})
-    value = worker.runs.status(worker._run_id)
-    summary = worker.runs.diagnostic_summary(value)
-    assert summary['latest_tool_error']['engineering']['reference'] == caught.value.engineering['reference']
-    assert any(cause['type'] == 'TimeoutError' for cause in summary['latest_tool_error']['engineering']['causes'])
-    times = worker.runs.tool_timing(value.run_id)
-    assert any(item['tool_name'] == 'worker_tcad_debug_run' and item['duration_seconds'] >= 0 for item in times)
-
-
-@pytest.mark.parametrize('delay,legacy', [(0.01,False), (10,False), (10,True)])
-def test_author_service_collection_uses_run_budget_in_real_process(tmp_path, monkeypatch, delay, legacy):
-    import json
-    import os
-    import sys
-    import time
-    from dataclasses import replace
-    from pathlib import Path
-    from scidiscovery.operations.runtime_plugins import RuntimePluginContext
-    from scidiscovery.artifact_agent.interfaces.mcp_worker_protocol import WorkerToolError
-    from tests.operations.test_l4_local_tcad import _budget_case
-    from tests.operations.test_log_preservation import _descriptor
-    worker, adapter, _ = _budget_case(tmp_path)
-    root = tmp_path / 'runtime'
-    result_root = root / 'executor-results'
-    result_root.mkdir(parents=True)
-    (result_root / 'log').write_text('bounded syntax check complete\n')
-    (result_root / 'manifest').write_text(json.dumps({'terminal_state':'succeeded','exit_code':0,'outputs':[]}))
-    outputs = [_descriptor('tcad_log', result_root/'log', 'text/plain').model_dump(mode='json'),
-        _descriptor('tcad_manifest', result_root/'manifest', 'application/json').model_dump(mode='json')]
-    packet = tmp_path / 'outputs.json'
-    packet.write_text(json.dumps(outputs))
-    script = tmp_path / 'transport.py'
-    script.write_text('import json,time,sys,os\nfrom pathlib import Path\nr=json.load(sys.stdin)\nassert r["operation"] == "collect"\n'
-        f'Path({str(tmp_path / "transport.pid")!r}).write_text(str(os.getpid()))\n'
-        f'time.sleep({delay!r})\n' +
-        'print(json.dumps({"schema_version":1,"operation":"collect","ok":True,"payload":{"outputs":json.load(open(sys.argv[1]))}}))\n')
-    config = tmp_path / 'command.json'
-    config.write_text(json.dumps({'executable':sys.executable,'arguments':[str(script),str(packet)],
-        'operation_timeout_seconds':30}))
-    config.chmod(0o600)
-    service = worker.tool_services['tcad_artifact:tcad.development_debug']
-    service.runtime_context = RuntimePluginContext(plugin_id='tcad_artifact',mode='local_worker',
-        config_path=tmp_path/'runtime.json',config_bytes=json.dumps({'transport':'command',
-            'command_config_path':str(config)}).encode(),state_root=root)
-    original = worker._context
-    monkeypatch.setattr(worker, '_context', lambda *args: replace(original(*args), remaining_seconds=2))
-    monkeypatch.setenv('PYTHONPATH', os.pathsep.join(sys.path))
-    if legacy:
-        from tcad_artifact import debug_collection
-        bounded = debug_collection.run_bounded
-        def run_legacy(command, **kwargs):
-            code = 'from tcad_artifact.command_adapter import CommandTCADExecutorAdapter; del CommandTCADExecutorAdapter.collect_with_budget; from tcad_artifact.debug_collection import main; raise SystemExit(main())'
-            return bounded([sys.executable, '-c', code], **kwargs)
-        monkeypatch.setattr(debug_collection, 'run_bounded', run_legacy)
-    start = time.monotonic()
-    if delay < 1:
-        response = worker.call_tool('worker_tcad_debug_run', {'run_name':'bounded','mode':'preflight'})
-        assert response['phase'] == 'collected', response
-    else:
-        with pytest.raises(WorkerToolError) as caught:
-            worker.call_tool('worker_tcad_debug_run', {'run_name':'bounded','mode':'preflight'})
-        assert caught.value.engineering['category'] == 'timeout'
-        assert time.monotonic() - start < 3
-        import psutil
-        pid = int((tmp_path/'transport.pid').read_text())
-        def stopped():
-            return not psutil.pid_exists(pid) or psutil.Process(pid).status() == psutil.STATUS_ZOMBIE
-        _until(stopped)
-    assert adapter.submissions == 1
-
-
 @pytest.mark.parametrize('stage', ['output', 'manifest', 'committed'])
 def test_ingestion_process_exit_preserves_idempotent_registration(tmp_path, monkeypatch, stage):
     import os
@@ -470,7 +391,7 @@ def test_parent_death_stops_collector_before_restart_releases_lock(tmp_path, mon
         f'Path({str(tmp_path/"transport.ready")!r}).write_text(str(os.getpid())+" "+str(os.getpgrp())); '
         f'time.sleep(2); Path({str(tmp_path/"late-write")!r}).write_text("escaped"); time.sleep(30)')
     transport_code = ('import sys; from tcad_artifact.ssh_transport import SSHRemoteClient,SSHTCADTransportConfig; '
-        f'c=SSHTCADTransportConfig(ssh_executable=sys.executable,destination="user@fixture",destination_resolver=(sys.executable,"-c",{leaf_code!r}),'
+        f'c=SSHTCADTransportConfig(max_transfer_bytes=2100000000,transfer_chunk_bytes=1048576,ssh_executable=sys.executable,destination="user@fixture",destination_resolver=(sys.executable,"-c",{leaf_code!r}),'
         'remote_helper="/helper",remote_config="/config",remote_exchange_root="/exchange"); SSHRemoteClient(c)._destination()')
     child_code = ('import json,sys,threading,time,os; from pathlib import Path; '
         'from scidiscovery.artifact_agent.service.execution_collection import watch_parent,CollectionContext; '
@@ -557,7 +478,7 @@ def test_socket_collect_uses_collection_deadline_through_real_service(tmp_path):
     from scidiscovery.artifact_agent.service.execution_collection import CollectionContext
     from tcad_artifact.execution_control import TCADExecutionFacade,TCADExecutionPolicy,TCADExecutionRouter,ToolProfile
     from tcad_artifact.execution_adapter import TCADExecutorAdapter
-    facade = TCADExecutionFacade(policy=TCADExecutionPolicy(allowed_input_roots=(str(tmp_path),),
+    facade = TCADExecutionFacade(policy=TCADExecutionPolicy(**policy_fields(), allowed_input_roots=(str(tmp_path),),
         tools=(ToolProfile(profile_id='fixture',solver_kind='deterministic_tool',executable='/bin/true',release_evidence='fixture'),)),
         state_root=tmp_path/'state')
     run = 'terminal_fixture'

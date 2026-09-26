@@ -24,7 +24,7 @@ from scidiscovery.operations.spec import CallableComponent
 
 from .debug_adapter import TCADDevelopmentDebugBridge
 from .local_debug_service import LocalTCADDebugService
-from .project_packager import ReviewedDeckPackage, validate_reviewed_deck_eligibility
+from .project_packager import ExecutionPackage, validate_execution_package_eligibility
 
 
 _REVIEW_DETAIL_LIMIT = 64
@@ -49,6 +49,7 @@ class TCADRuntimeConfig(BaseModel):
 
     transport: Literal["socket", "command"]
     socket_path: str | None = Field(default=None, min_length=1, max_length=4096)
+    socket_timeout_seconds: float = Field(default=10.0, gt=0)
     command_config_path: str | None = Field(
         default=None, min_length=1, max_length=4096
     )
@@ -73,7 +74,7 @@ def build_runtime(context: RuntimePluginContext) -> RuntimePluginContribution:
         from .execution_adapter import TCADExecutorAdapter
 
         assert config.socket_path is not None
-        adapter = TCADExecutorAdapter(config.socket_path)
+        adapter = TCADExecutorAdapter(config.socket_path, timeout=config.socket_timeout_seconds)
     else:
         from .command_adapter import CommandTCADExecutorAdapter
 
@@ -102,25 +103,26 @@ def build_runtime(context: RuntimePluginContext) -> RuntimePluginContribution:
 def execute_effect() -> EffectExecutorPlan:
     return EffectExecutorPlan(
         executor="tcad",
-        preparation_profile="tcad.reviewed-deck-package.v2",
-        payload_port="reviewed_package",
+        preparation_profile="tcad.execution-package.v2",
+        payload_port="execution_package",
+        budget_subject_schemas=("scidiscovery.experiment-scientific-skeleton.v1",
+                                "scidiscovery.experiment-portfolio.v1"),
     )
 
 
 def execution_projector(context: ApprovalProjectorContext) -> ReviewDocument:
     if (
-        context.operation_id != "tcad.study.execute"
-        or tuple(item.port_name for item in context.subjects)
-        != ("execution_request", "reviewed_package")
+        tuple(item.port_name for item in context.subjects)
+        != ("execution_request", "execution_package")
     ):
-        raise ValueError("TCAD execution review requires request and reviewed package")
+        raise ValueError("TCAD execution review requires request and execution package")
     request = ExecutionRequest.model_validate_json(
         context.subjects[0].content, strict=True
     )
-    package = ReviewedDeckPackage.model_validate_json(
+    package = ExecutionPackage.model_validate_json(
         context.subjects[1].content, strict=True
     )
-    validate_reviewed_deck_eligibility(package)
+    validate_execution_package_eligibility(package)
     if (
         request.compiled_identity is None
         or request.compiled_identity.operation_id != context.operation_id
@@ -145,7 +147,7 @@ def execution_projector(context: ApprovalProjectorContext) -> ReviewDocument:
         )
     return ReviewDocument(
         title="TCAD 外部执行授权",
-        description="核对冻结执行合同、已审查工程、求解能力、参数绑定和副作用边界。",
+        description="核对冻结执行合同、精确工程、求解能力、参数绑定和副作用边界。",
         sections=(
             ReviewDocumentSection(
                 title="执行与副作用边界",
@@ -185,7 +187,7 @@ def execution_projector(context: ApprovalProjectorContext) -> ReviewDocument:
                     ),
                 ),
             ),
-            ReviewDocumentSection(
+            *( (ReviewDocumentSection(
                 title="独立审查结论",
                 items=(
                     _review_item("status", "审查结论", 1, "/review/verdict"),
@@ -206,7 +208,7 @@ def execution_projector(context: ApprovalProjectorContext) -> ReviewDocument:
                     _review_item("json_tree", "缺失输入", 1, "/review/missing_inputs"),
                     _review_item("json_tree", "后续动作", 1, "/review/next_actions"),
                 ),
-            ),
+            ),) if package.review is not None else () ),
             ReviewDocumentSection(
                 title="求解能力与输入",
                 description=f"共 {len(package.resolved_inputs)} 个已解析输入。",

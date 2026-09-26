@@ -14,10 +14,12 @@ from scidiscovery.artifact_agent.execution_bridge import AdapterCapability
 from scidiscovery.artifact_agent.schema.execution import LocalFileDescriptor
 
 from .execution_control import FileDescriptor, SolverCapabilitySnapshot, TCADJobSpec
+from .execution_policy import ExecutionPolicySnapshot, execution_admission, collection_context
 from .project_packager import (
     PackagerError,
-    package_reviewed_deck_json,
-    validate_reviewed_deck_json,
+    package_execution_package_json,
+    materialize_execution_inputs,
+    validate_execution_package_json,
 )
 
 
@@ -30,7 +32,7 @@ class TCADExecutorAdapter:
 
     @staticmethod
     def supports_preparation_profile(value: str) -> bool:
-        return value == "tcad.reviewed-deck-package.v2"
+        return value == "tcad.execution-package.v2"
 
     def capabilities(self) -> tuple[AdapterCapability, ...]:
         value = self._call("tcad_capabilities", {})
@@ -49,16 +51,26 @@ class TCADExecutorAdapter:
         )
         return tuple(_adapter_capability(item) for item in snapshots)
 
+    def execution_policy(self) -> ExecutionPolicySnapshot:
+        return ExecutionPolicySnapshot.model_validate_json(json.dumps(self._call("tcad_execution_policy", {})), strict=True)
+
+    def execution_admission(self, raw: bytes, *, preparation_profile: str):
+        self.validate_preparation_payload(raw, preparation_profile=preparation_profile)
+        return execution_admission(self.execution_policy(), validate_execution_package_json(raw))
+
     def validate_preparation_payload(
         self, raw: bytes, *, preparation_profile: str
     ) -> None:
-        if preparation_profile != "tcad.reviewed-deck-package.v2":
-            raise ValueError("TCAD execution requires tcad.reviewed-deck-package.v2")
+        if preparation_profile != "tcad.execution-package.v2":
+            raise ValueError("TCAD execution requires tcad.execution-package.v2")
         try:
-            reviewed = validate_reviewed_deck_json(raw)
+            reviewed = validate_execution_package_json(raw)
         except PackagerError as error:
-            raise ValueError("TCAD reviewed package is invalid") from error
+            raise ValueError("TCAD execution package is invalid") from error
         self._require_active_capability(reviewed.capability)
+
+    def prepare_with_artifacts(self, payload, *, artifacts, **options):
+        return self.prepare(payload, artifacts=artifacts, **options)
 
     def prepare(
         self,
@@ -66,19 +78,26 @@ class TCADExecutorAdapter:
         *,
         preparation_profile: str,
         exchange_directory: Path,
+        artifacts=None,
     ) -> LocalFileDescriptor:
         payload_path = Path(payload.local_path).absolute()
         if payload_path.parent != exchange_directory.absolute():
             raise ValueError("execution payload is outside its exchange directory")
-        if preparation_profile != "tcad.reviewed-deck-package.v2":
+        if preparation_profile != "tcad.execution-package.v2":
             raise ValueError(
-                "TCAD execution requires tcad.reviewed-deck-package.v2"
+                "TCAD execution requires tcad.execution-package.v2"
             )
         raw = payload_path.read_bytes()
         self.validate_preparation_payload(raw, preparation_profile=preparation_profile)
-        packaged = package_reviewed_deck_json(
+        reviewed = validate_execution_package_json(raw)
+        if reviewed.resolved_inputs and artifacts is None:
+            raise ValueError("scientific inputs require the control Artifact service")
+        inputs = (materialize_execution_inputs(reviewed, artifacts, exchange_directory,
+            self.execution_policy().runner.transfer_chunk_bytes) if artifacts is not None else {})
+        packaged = package_execution_package_json(
             raw,
             output_root=exchange_directory / "prepared",
+            input_payloads=inputs,
         )
         return LocalFileDescriptor.model_validate(
             packaged.job_spec_file.model_dump(mode="python"), strict=True
@@ -94,7 +113,7 @@ class TCADExecutorAdapter:
         raw = _read_bound_descriptor(
             job_spec_file, exchange_directory=exchange_directory
         )
-        _read_bound_descriptor(archive, exchange_directory=exchange_directory)
+        _read_bound_descriptor(archive, exchange_directory=exchange_directory, read_content=False)
         job = TCADJobSpec.model_validate_json(raw, strict=True)
         expected_archive = FileDescriptor.model_validate(
             archive.model_dump(mode="python", exclude={"schema_version"}),
@@ -119,10 +138,11 @@ class TCADExecutorAdapter:
             raise ValueError("development debug capability is not active")
         return job_spec_file
 
-    def submit(self, submission: LocalFileDescriptor) -> tuple[str, str]:
+    def submit(self, submission: LocalFileDescriptor, *, authorization=None) -> tuple[str, str]:
         value = self._call(
             "tcad_submit",
             {
+                "authorization": None if authorization is None else authorization.model_dump(mode="json"),
                 "submission": submission.model_dump(
                     mode="json", exclude={"schema_version"}
                 )
@@ -159,6 +179,7 @@ class TCADExecutorAdapter:
         return self._call("tcad_inspect_outputs", payload)
 
     def collect_with_budget(self, external_run_id: str, *, context: CollectionContext) -> tuple[LocalFileDescriptor, ...]:
+        context = collection_context(context, self.execution_policy().runner)
         context.remaining_seconds()
         value = self._call("tcad_collect", {"run_id": external_run_id, "collection": context.wire()})
         context.remaining_seconds()
@@ -224,7 +245,7 @@ class TCADExecutorAdapter:
             for item in self.capabilities()
         )
         if expected not in snapshots:
-            raise ValueError("reviewed package capability is not active on this adapter")
+            raise ValueError("execution package capability is not active on this adapter")
 
 
 def _adapter_capability(value: SolverCapabilitySnapshot) -> AdapterCapability:
@@ -254,7 +275,7 @@ def _adapter_capability(value: SolverCapabilitySnapshot) -> AdapterCapability:
 
 
 def _read_bound_descriptor(
-    descriptor: LocalFileDescriptor, *, exchange_directory: Path
+    descriptor: LocalFileDescriptor, *, exchange_directory: Path, read_content: bool = True
 ) -> bytes:
     path = Path(descriptor.local_path).expanduser().absolute()
     try:
@@ -264,6 +285,15 @@ def _read_bound_descriptor(
     metadata = path.lstat()
     if path.is_symlink() or not path.is_file():
         raise ValueError("development debug file is not regular")
+    if not read_content:
+        digest, size = hashlib.sha256(), 0
+        with path.open("rb") as source:
+            for block in iter(lambda: source.read(1024 * 1024), b""):
+                digest.update(block)
+                size += len(block)
+        if size != descriptor.size_bytes or digest.hexdigest() != descriptor.sha256:
+            raise ValueError("development archive differs from its descriptor")
+        return b""
     raw = path.read_bytes()
     if (
         metadata.st_size != descriptor.size_bytes

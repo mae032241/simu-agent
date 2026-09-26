@@ -83,6 +83,17 @@ class ArtifactService:
         cas_object = self.cas.put(content)
         # Full read after CAS publication, before any registry transaction.
         self.cas.verify(cas_object.sha256, expected_size=cas_object.size_bytes)
+        return self._register_cas_object(cas_object, registration, idempotency_key=idempotency_key)
+
+    def register_file(self, path: Path | str, registration: ArtifactRegistration, *,
+                      expected_sha256: str, expected_size: int, idempotency_key: str,
+                      chunk_bytes: int = 1024 * 1024, check_budget=None) -> ArtifactEnvelope:
+        with self._mutation_lock():
+            value = self.cas.put_file(path, expected_sha256=expected_sha256,
+                expected_size=expected_size, chunk_bytes=chunk_bytes, check_budget=check_budget)
+            return self._register_cas_object(value, registration, idempotency_key=idempotency_key)
+
+    def _register_cas_object(self, cas_object, registration, *, idempotency_key):
         request = ArtifactRegisterRequest(
             operation="artifact.register",
             payload_sha256=cas_object.sha256,

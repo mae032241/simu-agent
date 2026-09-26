@@ -171,7 +171,7 @@ def _start_file(request, restored, limit=START_LIMIT):
         "instruction_omitted": len(instruction) > 2048,
         "instruction_source": {"relative_path": "assignment.json", "pointer": "/instruction"},
         "budget": assignment.get("budget"), "output": assignment.get("output"),
-        "inputs": [], "ports": [], "plan_index": [], "excerpts": [], "omitted": 0,
+        "inputs": [], "input_purposes": [], "plan_index": [], "excerpts": [], "omitted": 0,
         "omission_source": {"relative_path": "assignment.json", "pointer": "/inputs"},
         "full_assignment": "assignment.json", "tool_contracts": {
             name: ({"relative_path": "assignment.json", "pointer": "/tool_contracts/" + name}
@@ -188,20 +188,21 @@ def _start_file(request, restored, limit=START_LIMIT):
     for item in inputs:
         descriptor = request.binding_descriptors.get(item["source_name"])
         append("inputs", {**{key: item[key] for key in
-            ("source_name", "artifact_name", "artifact_name_usage", "port", "relative_path",
+            ("source_name", "artifact_name", "artifact_name_usage", "relative_path",
              "historical", "media_type", "source_origin") if key in item},
             "schema_id": descriptor.artifact_ref.schema_id if descriptor else None,
             "size_bytes": descriptor.size_bytes if descriptor else None})
     # Purpose is a port declaration, shared by its files; do not repeat it per curve.
     seen_ports = set()
     for item in inputs:
-        if item["port"] not in seen_ports:
-            append("ports", {key: item[key] for key in ("port", "description", "usage", "exposure") if key in item})
-            seen_ports.add(item["port"])
+        descriptor = request.binding_descriptors.get(item["source_name"])
+        if descriptor is not None and descriptor.port_name not in seen_ports:
+            append("input_purposes", {"description": item.get("description", "")})
+            seen_ports.add(descriptor.port_name)
     observables = []
     for item in inputs:
         descriptor = request.binding_descriptors.get(item["source_name"])
-        if descriptor is None or item["port"] not in {
+        if descriptor is None or descriptor.port_name not in {
                 "objective", "current_progress", "experiment_plan", "prior_analysis"}:
             continue
         try:

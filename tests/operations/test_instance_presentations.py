@@ -118,15 +118,15 @@ def test_parameters_repeat_per_exact_case_and_version(installed):
     assert any(section.get("kind") == "execution_scope" for section in result["sections"])
 
 
-def test_reviewed_package_projects_parameters_without_source_code(installed):
-    artifact = view("package", "tcad.reviewed-deck-package.v2", {"project": {
+def test_execution_package_projects_parameters_without_source_code(installed):
+    artifact = view("package", "tcad.execution-package.v2", {"project": {
         "files": [{"content": "private solver source must not become presentation facts"}],
         "entrypoint": "device.cmd", "parameter_bindings": [{"name": "length", "declared_value": "1e-6", "unit": "m"}]},
         "review": {"summary": "Original review", "verdict": "pass", "execution_ready": True}})
     result = presentation.build_presentation((artifact,))
     assert result["parameters"][0]["source"]["json_pointer"] == "/project/parameter_bindings/0"
     assert "private solver source" not in str(result)
-    paths = presentation.presentation_pointers("tcad.reviewed-deck-package.v2")
+    paths = presentation.presentation_pointers("tcad.execution-package.v2")
     assert "/project/parameter_bindings" in paths and "/project/files" not in paths
 
 

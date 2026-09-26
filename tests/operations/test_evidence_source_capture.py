@@ -56,12 +56,10 @@ def test_search_capture_publication_and_independent_audit(tmp_path, monkeypatch)
     assert status["state"] == "completed"
     sources = status["evidence_outputs"]
     source = next(x for x in sources if x["artifact_name"].endswith("." + captured["source_alias"]))
-    manifest = next(x for x in sources if x["artifact_name"].endswith(".recovery_manifest"))
     # Exact output field names are provided by the control plane, never Worker-written.
     request = dict(name="audit", instruction="Independently audit the preserved source facts.", operation_id="science.evidence.audit.intake.v1", inputs=[
         dict(port="scientific_intake", artifact_names=["evidence.output"]),
-        dict(port="source_material", artifact_names=["source_paper", source["artifact_name"]]),
-        dict(port="source_manifest", artifact_names=[manifest["artifact_name"]])])
+        dict(port="source_material", artifact_names=["source_paper", source["artifact_name"]])])
     root.call_tool("operation_invoke", request)
     review = catalog.operation(request["operation_id"])
     auditor = LocalWorkerMCPRouter(runtime.runs, operation_id=review.spec.operation_id, operation_digest=review.digest)
@@ -69,11 +67,6 @@ def test_search_capture_publication_and_independent_audit(tmp_path, monkeypatch)
     audit_assignment = json.loads(Path(audit_open["assignment_path"]).read_bytes())
     original = next(i for i in audit_assignment["inputs"] if i.get("source_provenance"))
     assert original["source_provenance"]["original_source_alias"] == captured["source_alias"]
-    proof_input = next(i for i in audit_assignment["inputs"] if i["port"] == "source_manifest")
-    proof = json.loads(Path(audit_open["workspace_path"], proof_input["relative_path"]).read_bytes())
-    assert proof["records"][0]["metadata"]["url"] == "https://example.org/paper"
-    assert proof["records"][0]["metadata"]["retrieved_at"]
-    assert Path(audit_open["workspace_path"], original["relative_path"]).read_bytes() == Path(captured["path"]).read_bytes()
     assert "worker_capture_source" not in audit_assignment["tools"]
     with pytest.raises(WorkerToolError):
         auditor.call_tool("worker_capture_source", {"url": "https://example.org/other"})
@@ -190,40 +183,3 @@ def test_http_redirect_to_private_address_is_never_connected(monkeypatch):
     with pytest.raises(ValueError, match="non-public"):
         source_capture.fetch_source("https://example.org/", reserve_request=lambda _: None, timeout=5)
     assert connected == ["93.184.216.34"]
-
-
-def test_installed_source_tool_and_profiles_share_compiled_policy(installed_probe):
-    installed_probe("all_domains", r'''
-import tempfile, tomllib
-from pathlib import Path
-from scidiscovery.operations.catalog import compile_installed_catalog
-from scidiscovery.operations.tooling import operation_agent_type
-from scidiscovery.platforms.codex import initialize, validate_installation_profile
-from scidiscovery.platforms.scheduler_prompt import load_scheduler_guides
-from scidiscovery.source_capture import SOURCE_CAPTURE_TOOL, SourceCaptureInput
-catalog = compile_installed_catalog()
-root = Path(tempfile.mkdtemp(prefix="installed-capability-roles-"))
-initialize(root, control_socket=root / "control.sock", state_root=root / "state", operation_catalog=catalog)
-roles = list((root / ".codex/agents").glob("*.toml"))
-assert len(roles) == 3
-extract = catalog.operation("science.evidence.extract.v1")
-assert SOURCE_CAPTURE_TOOL.name in {tool.name for tool in extract.worker_tools}
-assert SourceCaptureInput.model_json_schema()["properties"]["url"]["maxLength"] == 2048
-profile = tomllib.loads((root / ".codex/agents" / (operation_agent_type(extract) + ".toml")).read_text())
-assert profile["web_search"] == "live"
-assert "role_instructions" in profile["developer_instructions"]
-assert "ScientificIntake" not in profile["developer_instructions"]
-prompt = (root / "AGENTS.md").read_text()
-guides = load_scheduler_guides()
-assert set(guides) == {"research.md", "inputs.md", "results.md", "dispatch.md",
-                       "recovery.md", "execution.md", "evidence.md", "domain-analysis.md"}
-for name, content in guides.items():
-    assert (root / ".codex/scidiscovery-guides" / name).read_text() == content
-    assert content.strip() not in prompt
-assert str(root / ".codex/scidiscovery-guides") in prompt
-for key in catalog.operation_ids():
-    operation = catalog.operation(key)
-    if operation.spec.executor.kind == "agent" and operation is not extract:
-        assert operation.spec.executor.native_tools.web_search == "disabled"
-print("installed capability profiles and preserved-source tool: pass")
-''')

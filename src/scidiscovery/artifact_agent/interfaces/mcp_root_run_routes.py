@@ -125,7 +125,7 @@ class RootRunRoutes:
                 continue
             if len(items) == limit:
                 return {"runs": items, "next_before": items[-1]["name"]}
-            items.append(self._run_status_value(binding.name, value)
+            items.append(self._scientific_run_view(value, self._run_status_value(binding.name, value))
                 if view == "detail" and run_is_terminal(value.state)
                 else self._compact_run_status(name=binding.name, value=value,
                     response_profile="poll", output_paths=[], index_offset=0, index_limit=16))
@@ -142,19 +142,28 @@ class RootRunRoutes:
         if self.runs is None:
             raise RuntimeError("minimal Run service is unavailable")
         value = self.runs.status(self._resolve("run", name))
+        stages = {}
+        if request["stage_offset"] is not None or request["stage_reference"] is not None:
+            from ..service.stage_deliveries import read_stage_deliveries
+            stages["sealed_stages"] = read_stage_deliveries(self.runs, value,
+                instance_id=self._instance_id(), **{key: request[key] for key in (
+                    "stage_offset", "stage_limit", "stage_reference", "stage_text_offset")})
         if response_profile != "compat" or not run_is_terminal(value.state):
-            return self._compact_run_status(
+            return {**self._compact_run_status(
                 name=name,
                 value=value,
                 response_profile=response_profile,
                 output_paths=output_paths,
                 index_offset=index_offset,
                 index_limit=index_limit,
-            )
+            ), **stages}
         result = self._run_status_value(name, value)
         if diagnostic_after is not None:
-            result["diagnostic_events"] = self.runs.diagnostic_events(
-                value, after=diagnostic_after, limit=diagnostic_limit)
+            page = self.runs.diagnostic_events(value, after=diagnostic_after, limit=diagnostic_limit)
+            result["diagnostic_events"] = {"events": [
+                {"event_id": event["event_id"], "recorded_at": event["recorded_at"],
+                 "diagnostic": self._scientific_run_diagnostic(value, event["diagnostic"])}
+                for event in page["events"]], "next_after": page["next_after"]}
         bound_inputs = {}
         instance = self._instance_id()
         aliases = {b.name: b.object_id for b in self.bindings.list(instance=instance, namespace="artifact")}
@@ -206,7 +215,7 @@ class RootRunRoutes:
         evidence = self.runs.evidence_output_refs(value)
         if evidence:
             result["evidence_outputs"] = [{"artifact_name": value.output_binding_name+"."+alias, "schema": ref.schema_id} for alias, ref in evidence]
-        return result
+        return {**self._scientific_run_view(value, result), **stages}
 
     def _compact_run_status(
         self,
@@ -267,6 +276,9 @@ class RootRunRoutes:
                 else None
             )
         elif response_profile == "decision" and value.state == "completed":
+            if not output_paths:
+                fields = compiled.spec.decision_fields if contract_status == "current" else ("summary", "limitations", "remaining_question")
+                output_paths = [field if field.startswith("/") else "/" + field.replace("~", "~0").replace("/", "~1") for field in fields]
             result["output_delivery"] = "selected"
             result["output_metadata"] = (
                 {key: output[key] for key in ("artifact_name", "kind", "schema")}
@@ -284,8 +296,67 @@ class RootRunRoutes:
                 and value.signal is not None
                 else None
             )
-        return run_profile_projection(result, response_profile=(
+        if response_profile == "decision" and isinstance(result.get("scheduler_signal"), dict):
+            signal = dict(result["scheduler_signal"])
+            omissions = {}
+            for field in ("assumptions", "missing_inputs", "next_actions"):
+                entries = signal.get(field, [])
+                shown = [entry for entry in entries[:4] if len(entry.encode("utf-8")) <= 1024]
+                signal[field] = shown
+                if len(shown) != len(entries):
+                    omissions[field] = len(entries) - len(shown)
+            result["scheduler_signal"] = signal
+            if omissions:
+                result["scheduler_signal_omissions"] = {"omitted_items": omissions,
+                    "read": {"tool": "run_status", "name": name, "view": "detail", "include_full_output": True}}
+        return run_profile_projection(self._scientific_run_view(value, result), response_profile=(
             "poll" if response_profile == "compat" else response_profile))
+
+    def _scientific_run_diagnostic(self, value, diagnostic):
+        if diagnostic is None:
+            return None
+        safe = self.runs._sanitize_diagnostic(value, diagnostic,
+            repairable=diagnostic.get("repairable_by_output") is True)
+        # Revalidate saved details against the declared contract, including old
+        # records. Engineering attachments and arbitrary messages stay private.
+        return {**{key: safe[key] for key in ("category", "code", "repairable_by_output")},
+            "details": [{key: item[key] for key in
+                ("path", "message", "phase", "affected_action", "repairable", "rule_id") if key in item}
+                for item in safe.get("details", ())]}
+
+    def _scientific_run_view(self, value, result):
+        if "reason" in result:
+            result["reason"] = None
+        if value.state == "failed":
+            failure = result.get("diagnostic_summary", {}).get("failure") or {}
+            result["reason"] = {
+                "run_timeout": "The Run exceeded its time limit. Inspect the saved diagnostics before choosing recovery.",
+                "output_rejected": "The output did not satisfy its declared contract. Correct the reported scientific fields before retrying.",
+                "integrity_failure": "The sealed materials failed integrity checks. Restore the exact originals before retrying.",
+                "admission_defect": "The selected materials did not satisfy the declared input requirements. Inspect the saved diagnostics.",
+            }.get(failure.get("category"), "The Run failed. Read the saved diagnostic page to identify a repair or choose another scientific action.")
+        allowed = {"name", "operation_id", "operation_contract_status", "state", "agent_type", "execution_profile",
+            "created_at", "started_at", "completed_at", "deadline_at", "last_activity_at", "output_artifact_name",
+            "recovery_available", "draft_from", "diagnostics_available", "reason", "diagnostic_events", "sealed_output_status", "sealed_output",
+            "scheduler_signal_status", "scheduler_signal", "scheduler_signal_omissions", "output_delivery", "output_metadata", "selected_output",
+            "output_index", "evidence_outputs", "bound_inputs", "content_unavailable", "dispatch"}
+        result = {key:item for key,item in result.items() if key in allowed}
+        try:
+            ports = self._operation_catalog.operation(value.operation_id).spec.inputs
+            visible = {port.name for port in ports if port.agent_visible and port.derivation is None}
+        except KeyError:
+            visible = set()
+        if "bound_inputs" in result:
+            result["bound_inputs"] = [item for item in result["bound_inputs"] if item["port"] in visible]
+        if value.state == "queued":
+            result["dispatch"] = {
+                "agent_type": value.agent_type,
+                "instruction": "Spawn the returned agent_type with execution_profile.profile model and reasoning_effort, without parent history. Ask it to wait for attachment; use worker_attach with this Run name and the actual platform thread ID, then ask it to open its assignment. A formal reviewer must be a different Agent from its subject author. Do not relay scientific results through chat.",
+                "attachment": {"tool": "worker_attach", "name": result.get("name")},
+                "after_completion": {"tool": "run_status", "name": result.get("name")}}
+        if isinstance(result.get("execution_profile"), dict):
+            result["execution_profile"] = {"profile":result["execution_profile"]["profile"]}
+        return result
 
     def run_record_failure(
         self,

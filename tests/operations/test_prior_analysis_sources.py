@@ -103,39 +103,6 @@ def test_wrong_pair_never_falls_back_or_matches_only_digest(defect, legacy):
     assert expected in message
 
 
-@pytest.mark.parametrize("exact_identity", [True, False])
-def test_legacy_computed_record_replays_only_the_exact_recovered_artifact(exact_identity):
-    from curve_score.analysis_tool import evaluate_analysis_request, replay_calculation
-    from scidiscovery.artifact_agent.service.tool_evidence import calculation_sources
-    from scidiscovery.operation_contract import SemanticRuleViolation
-    from tests.operations.test_result_analysis_tool import limited_report, score_inputs
-
-    original_sources, request = score_inputs()
-    raw = original_sources["curve_bundle"]
-    request["sources"][0]["input_alias"] = "old_curve"
-    record = evaluate_analysis_request(record_key="legacy_score", request=request,
-                                      sources={"old_curve":raw})
-    assert record.status == "computed" and record.attempt is None
-    previous = limited_report()
-    previous["calculation_records"] = [record.model_dump(mode="json")]
-    contents, descriptors = bindings(legacy=True, raw=raw, previous=canonical_json(previous))
-    assert descriptors["new_curve"].sha256 == descriptors["old_curve"].sha256
-    assert descriptors["new_curve"].artifact_ref != descriptors["old_curve"].artifact_ref
-    if not exact_identity:
-        contents.pop("new_curve")
-        descriptors.pop("new_curve")
-    sources = ValidationSources(contents, descriptors)
-    before = record.canonical_json()
-    if exact_identity:
-        replay_sources = calculation_sources(record, sources)
-        assert replay_sources.binding_descriptors["old_curve"].artifact_ref == descriptors["new_curve"].artifact_ref
-        replay_calculation(record, replay_sources)
-    else:
-        with pytest.raises(SemanticRuleViolation, match="not exactly bound"):
-            calculation_sources(record, sources)
-    assert record.canonical_json() == before
-    assert set(sources) == set(contents)
-    assert sources.binding_descriptors["old_curve"] == descriptors["old_curve"]
 
 
 @pytest.mark.parametrize("defect", ["explicit_empty_bindings", "incomplete_identity", "missing_alias"])

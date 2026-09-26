@@ -34,30 +34,14 @@ from .project_packager import (
 # Author-side runs are manual-backed preflight/smoke checks plus one
 # control-derived initialization probe. Full study execution belongs to the
 # reviewed, approved production bridge.
-_PREFLIGHT_WALL_SECONDS = 60
-_SMOKE_WALL_SECONDS = 180
-_INITIALIZATION_WALL_SECONDS = 120
-_MAX_MEMORY_BYTES = 2 * 1024 * 1024 * 1024
-_PREFLIGHT_OUTPUT_BYTES = 2 * 1024 * 1024
-_SMOKE_OUTPUT_BYTES = DEVELOPMENT_ARTIFACT_LIMIT_BYTES
-_MAX_OUTPUT_FILE_BYTES = 8 * 1024 * 1024
-_MAX_OUTPUT_FILES = 120
-_MAX_PROCESSES = 8
-_MAX_LOG_BYTES = 512 * 1024
-_MAX_MANIFEST_BYTES = 4 * 1024 * 1024
-_MAX_RESPONSE_LOG_CHARS = 8192
-_MAX_RAW_OUTPUT_BYTES = _SMOKE_OUTPUT_BYTES - _MAX_RESPONSE_LOG_CHARS
 _MANUAL_BACKED_RELEASE = "R-2020.09"
 
 
-def _development_limits(mode: str) -> tuple[int, int, int]:
-    if mode == "preflight":
-        return _PREFLIGHT_WALL_SECONDS, _PREFLIGHT_OUTPUT_BYTES, 4
-    if mode == "smoke":
-        return _SMOKE_WALL_SECONDS, _SMOKE_OUTPUT_BYTES, _MAX_PROCESSES
-    if mode == "initialization":
-        return _INITIALIZATION_WALL_SECONDS, _SMOKE_OUTPUT_BYTES, _MAX_PROCESSES
-    raise ValueError("development debug mode is unsupported")
+def _development_limits(mode: str, policy) -> tuple[int, int]:
+    if mode not in {"preflight", "smoke", "initialization"}:
+        raise ValueError("development debug mode is unsupported")
+    value = getattr(policy, mode)
+    return value.wall_time_seconds, value.max_output_bytes
 
 
 def _development_arguments(
@@ -124,10 +108,17 @@ class TCADDevelopmentDebugBridge:
 
     def __init__(self, adapter: ExecutionAdapter) -> None:
         self.adapter = adapter
+        self._policy = None
         self._submission_bindings: dict[
             tuple[str, str], tuple[str, str, str]
         ] = {}
         self._binding_lock = threading.Lock()
+
+    @property
+    def policy(self):
+        if self._policy is None:
+            self._policy = self.adapter.execution_policy().debug
+        return self._policy
 
     def prepare(
         self,
@@ -143,7 +134,7 @@ class TCADDevelopmentDebugBridge:
         draft = DeckProjectDraft.model_validate_json(project, strict=True)
         if output_names and mode != "initialization":
             raise ValueError("diagnostic outputs are only available in initialization mode")
-        if len(output_names) > _MAX_OUTPUT_FILES:
+        if len(output_names) > self.policy.max_output_files:
             raise ValueError("too many initialization diagnostic outputs")
         declared = {item.name: item for item in draft.expected_outputs}
         for name in output_names:
@@ -156,7 +147,7 @@ class TCADDevelopmentDebugBridge:
         if draft.solver_kind not in {"sprocess", "sdevice"}:
             raise ValueError("development debug requires a direct TCAD solver")
         release = _manual_backed_release(snapshot)
-        mode_wall, mode_output, mode_processes = _development_limits(mode)
+        mode_wall, mode_output = _development_limits(mode, self.policy)
         if output_budget_bytes is not None:
             if output_budget_bytes < 1:
                 raise ValueError("development output budget is exhausted")
@@ -234,7 +225,7 @@ class TCADDevelopmentDebugBridge:
                     target_relative_path=slot.target_relative_path,
                     artifact_ref=source.artifact_ref,
                     media_type=source.media_type,
-                    size_bytes=len(source.content),
+                    size_bytes=source.content.stat().st_size if isinstance(source.content, Path) else len(source.content),
                 )
             )
             payloads[slot.semantic_name] = source.content
@@ -268,6 +259,7 @@ class TCADDevelopmentDebugBridge:
             raise ValueError(reason) from error
         try:
             limits = ResourceLimits(
+                max_storage_bytes=min(draft.resource_limits.max_storage_bytes, self.policy.max_storage_bytes),
                 wall_time_seconds=min(
                     draft.resource_limits.wall_time_seconds, mode_wall
                 ),
@@ -275,13 +267,10 @@ class TCADDevelopmentDebugBridge:
                     draft.resource_limits.cpu_time_seconds, mode_wall
                 ),
                 max_memory_bytes=min(
-                    draft.resource_limits.max_memory_bytes, _MAX_MEMORY_BYTES
+                    draft.resource_limits.max_memory_bytes, self.policy.max_memory_bytes
                 ),
                 max_output_bytes=min(
                     draft.resource_limits.max_output_bytes, mode_output
-                ),
-                max_processes=min(
-                    draft.resource_limits.max_processes, mode_processes
                 ),
             )
             job = packaged.job_spec.model_copy(
@@ -290,7 +279,7 @@ class TCADDevelopmentDebugBridge:
                     "arguments": mode_arguments,
                     "expected_outputs": tuple(
                         item.model_copy(update={"required": True,
-                            "max_bytes": min(item.max_bytes, _MAX_OUTPUT_FILE_BYTES, limits.max_output_bytes)})
+                            "max_bytes": min(item.max_bytes, self.policy.max_output_file_bytes, limits.max_output_bytes)})
                         for item in packaged.job_spec.expected_outputs if item.name in output_names
                     ),
                     "collect_generated_outputs": mode == "initialization" and draft.collect_generated_outputs,
@@ -388,8 +377,8 @@ class TCADDevelopmentDebugBridge:
             job.solver_kind not in {"sprocess", "sdevice"}
             or (job.expected_outputs and _development_mode(job) != "initialization")
             or (job.collect_generated_outputs and _development_mode(job) != "initialization")
-            or len(job.expected_outputs) > _MAX_OUTPUT_FILES
-            or any(item.capture != "workspace_file" or item.max_bytes > min(_MAX_OUTPUT_FILE_BYTES, job.limits.max_output_bytes)
+            or len(job.expected_outputs) > self.policy.max_output_files
+            or any(item.capture != "workspace_file" or item.max_bytes > min(self.policy.max_output_file_bytes, job.limits.max_output_bytes)
                    for item in job.expected_outputs)
             or _development_mode(job)
             not in {"preflight", "smoke", "initialization"}
@@ -419,6 +408,9 @@ class TCADDevelopmentDebugBridge:
             )
         return submission
 
+    def lookup_submission(self, submission):
+        return self.adapter.lookup_submission(submission)
+
     def status(self, external_run_id: str) -> str:
         return str(self.status_details(external_run_id)["state"])
 
@@ -429,21 +421,21 @@ class TCADDevelopmentDebugBridge:
     def cancel(self, external_run_id: str) -> str:
         return self.adapter.cancel(external_run_id)
 
-    def collect(self, external_run_id: str) -> CollectedTCADDebugRun:
+    def collect(self, external_run_id: str, *, limits) -> CollectedTCADDebugRun:
         descriptors = self.adapter.collect(external_run_id)
-        return self._collected_run(descriptors)
+        return self._collected_run(descriptors, limits=limits)
 
-    def collect_with_budget(self, external_run_id: str, *, context) -> CollectedTCADDebugRun:
+    def collect_with_budget(self, external_run_id: str, *, context, limits) -> CollectedTCADDebugRun:
         context.remaining_seconds()
         method = getattr(self.adapter, "collect_with_budget", None)
         if not callable(method):
             raise RuntimeError("legacy debug collection requires its configured runtime factory")
         descriptors = method(external_run_id, context=context)
-        return self._collected_run(descriptors, context=context)
+        return self._collected_run(descriptors, context=context, limits=limits)
 
-    def _collected_run(self, descriptors, *, context=None):
+    def _collected_run(self, descriptors, *, limits, context=None):
         if context: context.remaining_seconds()
-        if len(descriptors) > _MAX_OUTPUT_FILES + 2:
+        if len(descriptors) > limits["max_output_files"] + 2:
             raise ValueError("development debug output count exceeds its bound")
         for descriptor in descriptors:
             _validate_output_name(descriptor.name)
@@ -455,9 +447,9 @@ class TCADDevelopmentDebugBridge:
             manifest_descriptor = by_name.pop("tcad_manifest")
         except KeyError as error:
             raise ValueError("development debug control outputs are incomplete") from error
-        log_raw = _read_descriptor(log_descriptor, max_bytes=_MAX_LOG_BYTES)
+        log_raw = _read_descriptor(log_descriptor, max_bytes=limits["max_log_bytes"])
         manifest_raw = _read_descriptor(
-            manifest_descriptor, max_bytes=_MAX_MANIFEST_BYTES
+            manifest_descriptor, max_bytes=limits["max_manifest_bytes"]
         )
         try:
             manifest = json.loads(manifest_raw)
@@ -471,10 +463,10 @@ class TCADDevelopmentDebugBridge:
         for name, descriptor in sorted(by_name.items()):
             if context: context.remaining_seconds()
             content = _read_descriptor(
-                descriptor, max_bytes=_MAX_OUTPUT_FILE_BYTES
+                descriptor, max_bytes=limits["max_output_file_bytes"]
             )
             total += len(content)
-            if total > _MAX_RAW_OUTPUT_BYTES:
+            if total > limits["max_output_bytes"]:
                 raise ValueError("development debug outputs exceed their total bound")
             files.append(
                 CollectedTCADDebugFile(
@@ -486,8 +478,8 @@ class TCADDevelopmentDebugBridge:
             )
         error = str(manifest.get("error", ""))[:4096]
         diagnostic_raw = ("Runner diagnostic: " + error + "\n").encode("utf-8") + log_raw if error else log_raw
-        diagnostic_log = _sanitize_log(diagnostic_raw, truncate=False)
-        log_excerpt = _sanitize_log(diagnostic_raw)
+        diagnostic_log = _sanitize_log(diagnostic_raw, max_chars=limits["max_response_log_chars"], truncate=False)
+        log_excerpt = _sanitize_log(diagnostic_raw, max_chars=limits["max_response_log_chars"])
         files.append(
             CollectedTCADDebugFile(
                 name="debug.log.txt",
@@ -514,7 +506,7 @@ class TCADDevelopmentDebugBridge:
             output_count=len(by_name),
         )
         source_diagnostic = _source_diagnostic(
-            error=_sanitize_log(error.encode("utf-8")),
+            error=_sanitize_log(error.encode("utf-8"), max_chars=limits["max_response_log_chars"]),
             log=diagnostic_log,
         )
         return CollectedTCADDebugRun(
@@ -688,10 +680,10 @@ def _source_diagnostic(*, error: str, log: str) -> TCADSourceDiagnostic | None:
     )
 
 
-def _sanitize_log(raw: bytes, *, truncate: bool = True) -> str:
+def _sanitize_log(raw: bytes, *, max_chars: int, truncate: bool = True) -> str:
     text = raw.decode("utf-8", errors="replace")
-    if truncate and len(text) > _MAX_RESPONSE_LOG_CHARS:
-        half = _MAX_RESPONSE_LOG_CHARS // 2
+    if truncate and len(text) > max_chars:
+        half = max_chars // 2
         text = (
             text[:half]
             + "\n--- bounded diagnostic omission ---\n"

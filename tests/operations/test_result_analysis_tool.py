@@ -144,57 +144,8 @@ def test_keyed_generic_scope_requires_objective_assessment_but_accepts_not_evalu
     )
 
 
-def test_generic_compiled_preflight_accepts_no_score_and_rejects_wrong_round():
-    compiled = compile_catalog((CORE_PLUGIN, GENERAL, PLUGIN)).operation('science.result.diagnose.v1')
-    assert compiled.spec.version == '4'
-    assert 'curve_contract' not in {item.name for item in compiled.spec.inputs}
-    raw_by_hash = {}
-    def artifact(name, schema, parents=(), verdict=None):
-        raw = (_FIXTURES['_plan']().canonical_json() if name == 'plan' else
-               canonical_json(dict(review_target='experiment_portfolio', verdict='pass', summary='Exact plan review.'))
-               if name == 'review' else b'{}')
-        digest = hashlib.sha256(raw).hexdigest()
-        raw_by_hash[digest] = raw
-        labels = (('operation_id', 'science.object.review.v1'), ('operation_output_port', 'scientific_review')) if name == 'review' else ()
-        return InvocationArtifact(artifact_name=name, ref=ArtifactRef(artifact_id='art_' + name, sha256=digest, kind='fixture', schema_id=schema), schema_id=schema, media_type='application/json', size_bytes=len(raw), parent_refs=parents, handoff_verdict=verdict, labels=labels)
-    plan = artifact('plan', 'scidiscovery.experiment-portfolio.v1')
-    review = artifact('review', 'scidiscovery.scientific-review.v1', (plan.ref,), 'pass')
-    result = artifact('result', 'opaque', (plan.ref,))
-    inputs = {**{item.name: () for item in compiled.spec.inputs}, 'experiment_plan': (plan,), 'experiment_review': (review,), 'experiment_results': (result,)}
-    preflight_operation(compiled, name='analysis', artifacts_by_port=inputs, instruction='Analyze available evidence.', read_artifact=lambda ref: raw_by_hash[ref.sha256])
-    from dataclasses import replace
-    invalid_inputs = [
-        ({**inputs, 'experiment_results': (replace(result, parent_refs=()),)},
-         'input_result_plan_mismatch'),
-        ({**inputs, 'experiment_review': (replace(review, parent_refs=()),)},
-         'input_review_plan_mismatch'),
-    ]
-    for key, value in (('operation_id', 'science.curve.contract.review.v1'), ('operation_output_port', 'other_review')):
-        labels = {**dict(review.labels), key: value}
-        invalid_inputs.append((
-            {**inputs, 'experiment_review': (replace(review, labels=tuple(labels.items())),)},
-            'input_review_plan_mismatch',
-        ))
-    for invalid, reason in invalid_inputs:
-        with pytest.raises(OperationInvocationError, match=reason):
-            preflight_operation(compiled, name='wrong_round', artifacts_by_port=invalid, instruction='Analyze.')
 
 
-def test_multiple_controlled_records_submit_without_recalculation(tmp_path, monkeypatch):
-    from tests.operations.test_analysis_claim_scope import generic_worker, submit
-    worker, opened = generic_worker(tmp_path)
-    request = score_inputs()[1]
-    records = [json.loads(Path(worker.call_tool('worker_curve_score', dict(record_key=f'score_{i}', request=request))["calculation_path"]).read_bytes())
-               for i in range(8)]
-    assert all(item['status'] == 'computed' for item in records)
-    def never(*args, **kwargs):
-        raise AssertionError('submission reran scoring')
-    monkeypatch.setattr('curve_score.analysis_tool.evaluate_analysis_request', never)
-    monkeypatch.setattr('curve_score.analysis_tool.replay_calculation', never)
-    report = limited_report()
-    report['source_references'] = []
-    report['calculation_records'] = records
-    assert submit(worker, opened, report)['state'] == 'completed'
 
 
 def test_no_score_real_review_worker_submit_then_next_design_reads_sealed_report(tmp_path, monkeypatch):
@@ -315,9 +266,8 @@ def test_record_status_does_not_mechanically_decide_scientific_verdict(record_ki
         request['comparison_spec']['comparisons'][0]['operators'][0]['validation_check_key'] = 'unrelated_check'
     record = evaluate_analysis_request(record_key='score', request=request, sources=sources)
     report = _FIXTURES['_passing_diagnosis']().model_dump(mode='json')
-    report['evidence'][0]['locator'] = 'calculation_records:score'
-    report['calculation_records'] = [record.model_dump(mode='json')]
-    validate_analysis_report(LayeredDiagnosisReport.model_validate_json(canonical_json(report)), _FIXTURES['_plan']())
+    report['evidence'][0]['locator'] = 'score'
+    validate_analysis_report(LayeredDiagnosisReport.model_validate_json(canonical_json(report)), _FIXTURES['_plan'](), calculations=[record])
 
 
 def test_inconclusive_observation_can_submit_without_scoring():
@@ -365,48 +315,15 @@ def test_changed_threshold_record_remains_visible_for_scientific_review(document
     request['comparison_spec']['comparisons'][0]['operators'][0]['threshold']['value'] = 100.0
     record = evaluate_analysis_request(record_key='score', request=request, sources=sources)
     report = _FIXTURES['_passing_diagnosis']().model_dump(mode='json')
-    report['evidence'][0]['locator'] = 'calculation_records:score'
-    report['calculation_records'] = [record.model_dump(mode='json')]
+    report['evidence'][0]['locator'] = 'score'
     if documented:
         report['method_changes'] = ['Exploratory relaxed threshold, not the original acceptance criterion.']
-    validate_analysis_report(LayeredDiagnosisReport.model_validate_json(canonical_json(report)), _FIXTURES['_plan']())
+    validate_analysis_report(LayeredDiagnosisReport.model_validate_json(canonical_json(report)), _FIXTURES['_plan'](), calculations=[record])
     assert record.request['comparison_spec']['comparisons'][0]['operators'][0]['threshold']['value'] == 100.0
 
 
-def test_deadline_stops_reading_more_inputs_and_error_can_be_replayed(monkeypatch, tmp_path):
-    from types import SimpleNamespace
-    import curve_score.analysis_tool as tool
-    clock = [0.0]
-    monkeypatch.setattr(tool.time, 'monotonic', lambda: clock[0])
-    sources, request = score_inputs()
-    request['sources'].append({'input_alias': 'second_bundle', 'format': 'bundle'})
-    reads = []
-    def read(name):
-        reads.append(name)
-        clock[0] = 6.0
-        return sources['curve_bundle']
-    raw = tool.score_tool(AnalysisScoreInput.model_validate_json(canonical_json(dict(record_key='timed', request=request))),
-        SimpleNamespace(remaining_seconds=10, read_evidence=read, finish_attempt=lambda **kwargs: None,
-            workspace=tmp_path, accept_evidence=lambda **kwargs: {'alias': 'tool_evidence_001'}))
-    record = CalculationRecord.model_validate_json(Path(raw["calculation_path"]).read_bytes())
-    assert record.status == 'error' and record.result is None
-    assert reads == ['curve_bundle']
-    replay_calculation(record, sources)
 
 
-def test_sealed_historical_calculation_needs_no_replay_time_budget():
-    from scidiscovery.artifact_agent.service.run_outputs import ValidationSources
-    from tests.operations.test_prior_analysis_sources import bindings
-    sources, request = score_inputs()
-    raw = sources['curve_bundle']
-    request['sources'][0]['input_alias'] = 'old_curve'
-    record = evaluate_analysis_request(record_key='score', request=request, sources={'old_curve': raw})
-    report = limited_report()
-    report['calculation_records'] = [record.model_dump(mode='json')]
-    contents, descriptors = bindings(legacy=True, raw=raw, previous=canonical_json(report))
-    contents.update(experiment_plan=_FIXTURES['_plan']().canonical_json(), experiment_results=b'failure')
-    bound = ValidationSources(contents, descriptors, validation_deadline=0.0)
-    Components.diagnosis_context.implementation(report, bound, {})
 
 
 def test_score_tool_contract_describes_comparison_and_rejects_invalid_record_key():
@@ -432,6 +349,5 @@ def test_matching_plan_check_can_still_pass_with_computed_evidence():
     sources['curve_bundle'] = canonical_json(bundle)
     record = evaluate_analysis_request(record_key='score', request=request, sources=sources)
     report = _FIXTURES['_passing_diagnosis']().model_dump(mode='json')
-    report['evidence'][0]['locator'] = 'calculation_records:score'
-    report['calculation_records'] = [record.model_dump(mode='json')]
-    validate_analysis_report(LayeredDiagnosisReport.model_validate_json(canonical_json(report)), _FIXTURES['_plan']())
+    report['evidence'][0]['locator'] = 'score'
+    validate_analysis_report(LayeredDiagnosisReport.model_validate_json(canonical_json(report)), _FIXTURES['_plan'](), calculations=[record])

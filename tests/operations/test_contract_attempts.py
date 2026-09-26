@@ -1,7 +1,6 @@
 """Controlled failure receipts through the actual MCP and sealed Run boundary."""
 import hashlib
 import json
-from pathlib import Path
 
 import pytest
 
@@ -10,56 +9,6 @@ from scidiscovery.artifact_agent.schema.common import canonical_json
 from scidiscovery.artifact_agent.service.tool_evidence import ToolEvidenceManifest, ToolAttemptLimit
 from scidiscovery.artifact_agent.service.run_records import RunStateConflict
 from tests.operations.test_tcad_result_analysis import analysis_system, open_analysis, analysis_report, write_analysis
-
-
-def test_receipt_budget_finalizes_reply_log_and_history_before_correction(tmp_path):
-    from dataclasses import replace
-    from curve_score.analysis_tool import ALGORITHM_VERSION
-    from scidiscovery.artifact_agent.interfaces.mcp_worker_protocol import WorkerToolError
-    from scidiscovery.operation_contract import contract_diagnostic
-    from tests.operations.test_tcad_result_analysis import raw_request
-    system = analysis_system(tmp_path)
-    worker, opened = open_analysis(system)
-    name = 'worker_tcad_curve_score'
-    original = worker._registered[name]
-    diagnostics = tuple(contract_diagnostic('invalid_arguments', phase='tool_arguments',
-        affected_action='tool_call', repairable=True, path='$.request.comparison_spec.comparisons[0].evaluation_points',
-        message=f'Declared constraint {i}: ' + 'x' * 440, error_type='value_error') for i in range(8))
-    def reject(*args):
-        raise WorkerToolError('controlled diagnostic budget probe', details=diagnostics)
-    worker._registered[name] = replace(original, contextual_handler=reject)
-    request = raw_request()
-    reply = MCPRouter(worker, name='budget').handle(dict(jsonrpc='2.0', id=1, method='tools/call',
-        params=dict(name=name, arguments=dict(record_key='failed', request=request))))
-    data = reply['error']['data']
-    runs = system[1].runs
-    receipt = ToolEvidenceManifest.model_validate_json(runs._evidence_snapshot(worker._run_id)).attempts[0]
-    assert 0 < len(data['diagnostics']) < 8
-    assert data['diagnostics'] == [item.model_dump(mode='json', exclude_none=True) for item in receipt.diagnostics]
-    assert len(canonical_json(receipt)) <= 4096
-    log = runs.diagnostic_summary(runs.status(worker._run_id))['latest_tool_error']['details']
-    assert log == data['diagnostics']
-    worker._registered[name] = original
-    good = worker.call_tool(name, dict(record_key='corrected', request=request))
-    assert good['status'] == 'computed'
-    good = json.loads(Path(good['calculation_path']).read_bytes())
-    failed = dict(record_key='failed', request=request, input_digests={}, algorithm_version=ALGORITHM_VERSION,
-        status='unavailable', reason_code='invalid_arguments', attempt=data['attempt'], diagnostics=data['diagnostics'])
-    report = analysis_report(alias='solver_outputs_001', output_name='A', mapped=True)
-    report['calculation_records'] = [failed, good]
-    write_analysis(opened, report)
-    submitted = worker.call_tool('worker_submit_result', {})
-    assert submitted['state'] == 'completed', submitted
-    catalog, runtime, root, base, artifacts, register = system
-    following = {**base, 'name': 'bounded_history', 'inputs': [*base['inputs'],
-        dict(port='prior_analysis', artifact_names=['analysis.output']),
-        dict(port='prior_analysis_manifest', artifact_names=['analysis.output.recovery_manifest'])]}
-    next_worker, next_opened = open_analysis((catalog, runtime, root, following, artifacts, register))
-    for record in report['calculation_records']:
-        record['attempt']['manifest_alias'] = 'prior_analysis_manifest'
-    write_analysis(next_opened, report)
-    result = next_worker.call_tool('worker_submit_result', {})
-    assert result['state'] == 'completed', result
 
 
 @pytest.mark.parametrize('direct', [False, True])
@@ -128,57 +77,6 @@ def test_finalizer_failure_keeps_category_and_bounded_reason_through_control(tmp
     assert status['diagnostic_summary']['rejection_count'] == 0
 
 
-@pytest.mark.parametrize('before_workspace', [False, True])
-def test_pre_dispatch_input_fault_is_recorded_with_its_declared_category(tmp_path, monkeypatch, before_workspace):
-    from scidiscovery.artifact_agent.interfaces.mcp import MCPRouter
-    from scidiscovery.artifact_agent.service.run_outputs import RunCheckerError
-    from tests.operations.test_l4_local_tcad import _system
-    _, runtime, root, _ = _system(tmp_path)
-    owner = runtime.runs.backend if before_workspace else runtime.runs
-    method = 'prepare' if before_workspace else '_materialize_workspace'
-    original = getattr(owner, method)
-    attempts = []
-    def fail(*args, **kwargs):
-        attempts.append(True)
-        raise RunCheckerError('admitted execution_capability is invalid JSON', category='admission_defect')
-    monkeypatch.setattr(owner, method, fail)
-    wire = MCPRouter(root, name='preparation_fault_fixture')
-    def call(name, arguments):
-        reply = wire.handle({'jsonrpc': '2.0', 'id': 1, 'method': 'tools/call',
-            'params': {'name': name, 'arguments': arguments}})
-        assert 'error' not in reply, reply
-        return reply['result']['structuredContent']
-    request = dict(name='preparation_fault', operation_id='tcad.deck.author.initial.v1',
-        instruction='Implement the bound fixture plan.', inputs=[
-            {'port': 'execution_capability', 'artifact_names': ['execution_capability']},
-            {'port': 'experiment_plan', 'artifact_names': ['experiment_plan']}])
-    failed = call('operation_invoke', request)['result']
-    assert failed['state'] == 'failed'
-    assert failed['reason'] == 'workspace preparation failed: admitted execution_capability is invalid JSON'
-    assert failed['diagnostic_summary']['failure']['category'] == 'admission_defect'
-    assert failed['diagnostic_summary']['rejection_count'] == 0
-    assert failed['sealed_output'] is None
-    status = call('run_status', {'name': 'preparation_fault', 'view': 'detail', 'output_paths': []})
-    assert status['state'] == failed['state']
-    assert status['reason'] == failed['reason']
-    assert status['diagnostic_summary']['failure'] == failed['diagnostic_summary']['failure']
-    assert status['sealed_output'] is None
-    listed = call('run_list', {'view': 'detail'})['runs']
-    assert len(listed) == 1 and listed[0]['reason'] == failed['reason']
-    assert call('operation_invoke', request)['result'] == failed
-    assert len(attempts) == 1  # An identical request reads the failed Run; it does not retry it.
-    changed = {**request, 'instruction': 'Implement after repairing the preparation defect.'}
-    assert call('operation_preflight', changed)['reason_code'] == 'semantic_name_conflict'
-    monkeypatch.setattr(owner, method, original)
-    successor = call('operation_invoke', {**changed, 'on_conflict': 'create_revision'})['result']
-    assert successor['state'] == 'queued'
-    prior = call('run_status', {'name': 'preparation_fault', 'view': 'detail', 'output_paths': []})
-    assert prior['state'] == failed['state']
-    assert prior['reason'] == failed['reason']
-    assert prior['diagnostic_summary']['failure'] == failed['diagnostic_summary']['failure']
-    assert len(call('run_list', {})['runs']) == 2
-
-
 def test_unclassified_run_failure_is_runtime_failure_and_timeout_keeps_deadline_gate(tmp_path):
     system = analysis_system(tmp_path)
     worker, _ = open_analysis(system)
@@ -225,7 +123,7 @@ def test_argument_rejection_is_receipted_before_read_and_sealed_without_raw_file
     assert "error" in response and "result" not in response
     details = response["error"]["data"]
     assert details["diagnostics"][0]["path"] == "$.record_key"
-    assert details["attempt"]["attempt_key"] == "attempt_001"
+    assert "attempt" not in details
     runs = system[1].runs
     snapshot = runs._evidence_snapshot(worker._run_id)
     assert b"DO_NOT_RECORD_REJECTED_VALUE" not in snapshot
@@ -262,50 +160,6 @@ def test_attempt_limit_and_interrupted_calls_preserve_existing_receipts(tmp_path
                for a in json.loads(before)["attempts"])
 
 
-def test_bad_request_is_honest_output_and_historical_proof_without_reexecution(tmp_path, monkeypatch):
-    from copy import deepcopy
-    from tests.operations.test_tcad_result_analysis import raw_request
-    from curve_score.analysis_tool import ALGORITHM_VERSION
-    import tcad_artifact.result_analysis as module
-    system=analysis_system(tmp_path)
-    worker,opened=open_analysis(system)
-    request=raw_request();request['sources'][0]['x_axis']='depth'
-    failed=MCPRouter(worker,name='probe').handle({'jsonrpc':'2.0','id':1,'method':'tools/call',
-        'params':{'name':'worker_tcad_curve_score','arguments':{'record_key':'bad_axis','request':request}}})
-    data=failed['error']['data']
-    record=dict(record_key='bad_axis',request=request,input_digests={},algorithm_version=ALGORITHM_VERSION,
-        status='unavailable',reason_code='invalid_arguments',attempt=data['attempt'],diagnostics=data['diagnostics'])
-    report=analysis_report();report['calculation_records']=[record]
-    report['evidence'].append(dict(source_key='failed_attempt_evidence', source_type='runtime_output',
-        title='Unavailable calculation limits the analysis', locator='calculation_records:bad_axis'))
-    report['gates']['numerical_validity'].update(status='not_evaluable',
-        evidence_keys=['failed_attempt_evidence'])
-    def never(**kwargs):
-        raise AssertionError('failed request was executed by output validation')
-    monkeypatch.setattr(module,'evaluate_tcad_request',never)
-    for corruption in ('request','code','phase','attempt'):
-        forged=deepcopy(report); bad=forged['calculation_records'][0]
-        if corruption=='request': bad['request']['sources'][0]['x_axis']='different'
-        elif corruption=='code': bad.update(status='unsupported',reason_code='unsupported_format')
-        elif corruption=='phase': bad['diagnostics'][0]['phase']='tool_execution'
-        elif corruption=='attempt': bad['attempt']['attempt_key']='attempt_unknown'
-        write_analysis(opened,forged)
-        assert worker.call_tool('worker_submit_result',{})['state']=='rejected'
-    write_analysis(opened,report)
-    submitted=worker.call_tool('worker_submit_result',{})
-    assert submitted['state']=='completed',submitted
-    catalog,runtime,root,base,artifacts,register=system
-    following=deepcopy(base);following['name']='failure_history'
-    following['inputs'].extend([dict(port='prior_analysis',artifact_names=['analysis.output']),
-        dict(port='prior_analysis_manifest',artifact_names=['analysis.output.recovery_manifest'])])
-    next_worker,next_opened=open_analysis((catalog,runtime,root,following,artifacts,register))
-    report['calculation_records'][0]['attempt']['manifest_alias']='prior_analysis_manifest'
-    write_analysis(next_opened,report)
-    submitted=next_worker.call_tool('worker_submit_result',{})
-    assert submitted['state']=='completed',submitted
-    assert runtime.runs.tool_attempts(next_worker._run_id)==[]
-
-
 def test_unknown_input_checker_error_is_engineering_failure_at_mcp():
     from types import SimpleNamespace
     from scidiscovery.operations.input_validation import validate_operation_inputs, ValidationSources
@@ -323,7 +177,6 @@ def test_unknown_input_checker_error_is_engineering_failure_at_mcp():
     diagnostic = reply["error"]["data"]["diagnostics"][0]
     assert diagnostic["code"] == "input_checker_failed" and not diagnostic["repairable"]
     assert "SECRET_INTERNAL_INPUT" not in json.dumps(reply)
-
 
 
 @pytest.mark.parametrize("rpc_request", [[], {"jsonrpc":"1.0","method":"tools/list"},

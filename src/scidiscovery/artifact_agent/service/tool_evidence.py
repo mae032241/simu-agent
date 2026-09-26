@@ -62,12 +62,22 @@ def _recovery_attempt_count(proof):
 
 
 class ToolEvidenceManifest(ToolAttemptProof):
-    records: tuple[dict[str, Any], ...] = Field(default=(), max_length=32)
+    records: tuple[dict[str, Any], ...] = Field(default=(), max_length=128)
     accesses: tuple[dict[str, Any], ...] = Field(default=(), max_length=32)
     recovery: ToolRecoveryProof | None = None
 
 
 TOOL_EVIDENCE_SCHEMA = schema_resource(ToolEvidenceManifest, "scidiscovery.tool-evidence-manifest.v1")
+
+
+def scientific_evidence_projection(raw):
+    """A readable index; the lossless provenance document stays control-owned."""
+    manifest = json.loads(raw)
+    return canonical_json({"materials": [{"reference": item["alias"],
+        "media_type": item["media_type"], "size_bytes": item["size_bytes"],
+        **{key: value for key, value in item.get("metadata", {}).items()
+           if key in {"kind", "stage", "name", "derived_from"}}}
+        for item in manifest.get("records", ())]})
 
 
 def calculation_record_content(record):
@@ -83,19 +93,21 @@ def calculation_sources(record, sources):
     from dataclasses import replace
     from ...operation_contract import SemanticRuleViolation
     from ...operations.input_validation import ValidationSources, prior_analysis_sources
-    from ..schema.layered_diagnosis import LayeredDiagnosisReport, CalculationRecord
+    from ..schema.layered_diagnosis import LayeredDiagnosisReport
+    from .calculation_proof import ControlledCalculationRecord, scientific_calculation
     if record.calculation_ref is not None:
         alias = record.calculation_ref
         if alias not in sources:
             raise SemanticRuleViolation("reference calculation alias is not an available controlled source")
-        original = CalculationRecord.model_validate_json(sources[alias])
-        if canonical_json(original.model_dump(mode="json")) != canonical_json(record.model_dump(mode="json")):
+        if canonical_json(json.loads(sources[alias])) != canonical_json(scientific_calculation(record)):
             raise SemanticRuleViolation("reference calculation differs from its exact accessed original")
         resolver = getattr(sources, "reference_calculation_sources", None)
         original_sources = resolver(alias) if resolver is not None else None
         if original_sources is None:
             raise SemanticRuleViolation("reference calculation has no authorized original manifest")
         return calculation_sources(record.model_copy(update={"calculation_ref": None}), original_sources)
+    if not isinstance(record, ControlledCalculationRecord):
+        raise SemanticRuleViolation("Numerical evidence must cite a registered calculation; inline science is not a tool receipt")
     prior = prior_analysis_sources(sources)
     current_raw = getattr(sources, "tool_snapshot", None)
     historical = False
@@ -110,12 +122,6 @@ def calculation_sources(record, sources):
             historical = True
         else:
             raise SemanticRuleViolation("calculation attempt references an unpaired proof manifest")
-    elif prior is not None:
-        previous = LayeredDiagnosisReport.model_validate_json(sources[prior["analysis_alias"]])
-        historical = any(canonical_json(calculation_record_content(r)) == canonical_json(calculation_record_content(record))
-                         for r in previous.calculation_records)
-        if historical:
-            proof_raw = sources[prior["manifest_alias"]]
     if record.attempt is None and current_raw is not None and not historical:
         raise SemanticRuleViolation("current calculation requires its controlled attempt receipt")
     view = sources
@@ -370,7 +376,8 @@ class ToolEvidenceMixin(ReferenceAccessMixin):
 
     def accept_tool_evidence(self, run_id: str, *, tool_name: str, allowed_ports: tuple[str, ...],
                              raw: bytes, media_type: str, metadata: dict, source_alias: str = 'execution_result',
-                             derived_from: tuple[str, ...] = (), external_source: bool = False) -> dict:
+                             derived_from: tuple[str, ...] = (), external_source: bool = False,
+                             trusted_parent_refs: tuple = ()) -> dict:
         value = self._require_running(run_id)
         compiled = self._compiled(value)
         ports = tool_evidence_ports(compiled)
@@ -398,15 +405,22 @@ class ToolEvidenceMixin(ReferenceAccessMixin):
             source_ref = source.artifact_ref
             derived_refs = ()
         parent_refs = [item.artifact_ref for item in value.inputs]
+        for ref in trusted_parent_refs:
+            self.artifacts.verify(ref)
+            if ref not in parent_refs:
+                parent_refs.append(ref)
         for ref in derived_refs:
             if ref not in parent_refs:
                 parent_refs.append(ref)
         port = ports['tool_evidence']
         if len(raw) > min(port.max_item_bytes, 32 * 1024 * 1024):
             raise ValueError('file_bytes')
-        if len(canonical_json(metadata)) > 8192:
+        if len(canonical_json(metadata)) > (40 * 1024 if metadata.get("kind") in {"calculation_record", "figure_file"} else 8192):
             raise ValueError('metadata_bytes')
-        key = hashlib.sha256(canonical_json({'sha256':hashlib.sha256(raw).hexdigest(), 'metadata':metadata, 'source':source_ref.model_dump(mode='json') if source_ref is not None else None})).hexdigest()
+        key_material = {'sha256':hashlib.sha256(raw).hexdigest(), 'metadata':metadata, 'source':source_ref.model_dump(mode='json') if source_ref is not None else None}
+        if trusted_parent_refs:
+            key_material['control_parents'] = [ref.model_dump(mode='json') for ref in trusted_parent_refs]
+        key = hashlib.sha256(canonical_json(key_material)).hexdigest()
         with self._connect() as connection:
             connection.execute('BEGIN IMMEDIATE')
             row = self._row(connection, run_id)
@@ -417,7 +431,7 @@ class ToolEvidenceMixin(ReferenceAccessMixin):
                 return json.loads(existing[0])
             all_records = [json.loads(r[0]) for r in connection.execute('SELECT record_json FROM run_tool_evidence WHERE run_id=?',(run_id,))]
             records = [r for r in all_records if r.get('record_type') != 'reference_access']
-            if len(records) >= min(port.max_items,32) or sum(r['size_bytes'] for r in records)+len(raw) > min(port.collection.max_total_bytes,256*1024*1024):
+            if len(records) >= min(port.max_items,128) or sum(r['size_bytes'] for r in records)+len(raw) > port.collection.max_total_bytes:
                 raise ValueError('evidence_budget')
             if metadata.get('output_name') and any(r['metadata'].get('output_name')==metadata['output_name'] for r in records):
                 raise ValueError('ambiguous_mapping')
@@ -445,6 +459,65 @@ class ToolEvidenceMixin(ReferenceAccessMixin):
             connection.execute('INSERT INTO run_tool_evidence VALUES (?,?,?,?,?)',(run_id,ordinal,key,canonical_json(record),alias))
         self._refresh_evidence_schema(run_id)
         return record
+
+    def adopt_bound_tool_evidence(self, run_id: str, *, allowed_ports: tuple[str, ...], manifest_alias: str) -> list[dict]:
+        """Reuse immutable receipts from one explicitly bound completed same-Operation family."""
+        value = self._require_running(run_id)
+        port = tool_evidence_ports(self._compiled(value)).get("tool_evidence")
+        if port is None or "tool_evidence" not in allowed_ports:
+            raise ValueError("tool evidence capability is not declared")
+        bound = next((i for i in value.inputs if i.source_name == manifest_alias), None)
+        if bound is None or bound.artifact_ref.schema_id != "scidiscovery.tool-evidence-manifest.v1":
+            raise ValueError("reuse requires an explicitly bound control manifest")
+        producer = self.completed_for_output(bound.artifact_ref)
+        if (producer is None or producer.instance_id != value.instance_id
+                or producer.operation_id != value.operation_id
+                or bound.artifact_ref not in self.artifacts.catalog(producer.output_ref).parent_refs):
+            raise ValueError("reuse manifest is not a completed same-Operation family")
+        proof = ToolEvidenceManifest.model_validate_json(self.artifacts.read(bound.artifact_ref), strict=True)
+        records = [dict(r) for r in proof.records]
+        available = {i.artifact_ref for i in value.inputs}
+        if len(records) != len({r["alias"] for r in records}):
+            raise ValueError("reuse manifest aliases are ambiguous")
+        for record in records:
+            ref = ArtifactRef.model_validate(record["artifact_ref"])
+            envelope = self.artifacts.catalog(ref)
+            raw = self.artifacts.read(ref)
+            if (ref not in available or ref.kind != port.kind or ref.schema_id != port.schema_id
+                    or record.get("source_ref") is None
+                    or ArtifactRef.model_validate(record["source_ref"]) not in available
+                    or envelope.labels.get("tool_name") != record["tool_name"]
+                    or envelope.labels.get("operation_id") != value.operation_id
+                    or record["media_type"] not in port.media_types
+                    or len(raw) != record["size_bytes"] or len(raw) > port.max_item_bytes
+                    or hashlib.sha256(raw).hexdigest() != ref.sha256):
+                raise ValueError("reuse member is missing or differs from its original receipt")
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = self._row(connection, run_id)
+            if row["state"] != "running" or row["accepted_candidate_digest"] is not None:
+                raise RunStateConflict("candidate no longer accepts preserved evidence")
+            current = [json.loads(r[0]) for r in connection.execute(
+                "SELECT record_json FROM run_tool_evidence WHERE run_id=? ORDER BY ordinal", (run_id,))]
+            existing = {r["alias"]: r for r in current}
+            bound_aliases = {i.source_name for i in value.inputs}
+            additions = []
+            for record in records:
+                if record["alias"] in bound_aliases or (record["alias"] in existing and existing[record["alias"]] != record):
+                    raise ValueError("reuse receipt alias conflicts with a current binding")
+                if record["alias"] not in existing:
+                    additions.append(record)
+            evidence = [r for r in current if r.get("record_type") != "reference_access"] + additions
+            if (len(evidence) > min(port.max_items, 128)
+                    or sum(r["size_bytes"] for r in evidence) > port.collection.max_total_bytes):
+                raise ValueError("reuse exceeds the compiled evidence collection budget")
+            for offset, record in enumerate(additions, start=1):
+                key = hashlib.sha256(canonical_json({"sha256": record["artifact_ref"]["sha256"],
+                    "metadata": record["metadata"], "source": record["source_ref"]})).hexdigest()
+                connection.execute("INSERT INTO run_tool_evidence VALUES (?,?,?,?,?)",
+                    (run_id, len(current)+offset, key, canonical_json(record), record["alias"]))
+        self._refresh_evidence_schema(run_id)
+        return records
 
     def _refresh_evidence_schema(self, run_id):
         from .run_assignment import result_schema_json
@@ -479,30 +552,27 @@ class ToolEvidenceMixin(ReferenceAccessMixin):
 
     def recovery_tool_proof(self, value):
         """Read only the original verified recovery store, never Worker copies."""
+        if not tool_evidence_ports(self._compiled(value)):
+            return None
+        return self._recovery_tool_proof_from_records(value)
+
+    def _recovery_tool_proof_from_records(self, value):
+        """Historical origins need their sealed records, not today's compiler."""
         with self._connect() as connection:
             row = self._row(connection, value.run_id)
             source_id = row['draft_from_run_id'] or row['resume_from_run_id']
-        if not source_id or not tool_evidence_ports(self._compiled(value)):
+        if not source_id:
             return None
         source = self.status(source_id)
         manifest = source.recovery_draft
         if not manifest:
             return None
         draft = self._verify_draft(source, manifest['draft_digest'])
-        layout = next((item for item in draft.files if item.relative_path == 'analysis-recovery.json'), None)
-        path = 'tool-evidence.json'
-        if layout and layout.size_bytes <= 64 * 1024:
-            if json.loads((draft.root / layout.relative_path).read_bytes()).get('format') == 'analysis-work-v1':
-                path = 'output/tool-evidence.json'
-        entry = next((item for item in draft.files if item.relative_path == path), None)
-        if entry is None:
-            return None
-        if entry.size_bytes > 1024 * 1024:
-            raise RunCheckerError('recovery tool proof exceeds limit', category='integrity_failure')
-        raw = (draft.root / entry.relative_path).read_bytes()
-        if len(raw) != entry.size_bytes or hashlib.sha256(raw).hexdigest() != entry.sha256:
-            raise RunCheckerError('recovery tool proof changed', category='integrity_failure')
-        previous = ToolEvidenceManifest.model_validate_json(raw)
+        # The draft verifies recovery authorization; its public receipt is not
+        # an identity proof. Reconstruct the exact proof from the sealed Run DB.
+        previous = ToolEvidenceManifest.model_validate_json(self._encode_evidence_snapshot(
+            source, self.tool_evidence(source.run_id), self.reference_access_records(source.run_id),
+            self._recovery_tool_proof_from_records(source), self.tool_attempts(source.run_id)))
         if previous.attempts:
             if len(previous.attempts) + _recovery_attempt_count(previous.recovery) > 64:
                 raise RunCheckerError('tool attempt proof budget exceeded')
@@ -520,6 +590,7 @@ class ToolEvidenceMixin(ReferenceAccessMixin):
             return
         workspace=self.backend.open(run_id)
         raw=self._evidence_snapshot(run_id)
+        raw = scientific_evidence_projection(raw)
         if len(raw)>1024*1024:
             raise RunCheckerError('tool evidence manifest exceeds limit')
         from .local_workspace import _validate_publication_content, WorkspaceOutputError
@@ -554,7 +625,10 @@ class ToolEvidenceMixin(ReferenceAccessMixin):
         for ref in self.artifacts.catalog(value.output_ref).parent_refs:
             if (ref.schema_id=='scidiscovery.tool-evidence-manifest.v1'
                     and self.artifacts.catalog(ref).labels.get('tool_producer_run') == value.run_id):
-                refs.append(('recovery_manifest',ref))
+                manifest_port = next((port for port in self._compiled(value).spec.outputs
+                    if port.name == "recovery_manifest_output"), None)
+                if manifest_port is not None and manifest_port.agent_visible:
+                    refs.append(('recovery_manifest',ref))
         return refs
 
     def tool_io_budget(self, run_id, *, used_bytes=0, used_seconds=0.0, reserve=False):

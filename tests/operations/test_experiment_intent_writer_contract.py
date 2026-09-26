@@ -1,4 +1,4 @@
-"""New authoring contracts exclude legacy input-only validation plans."""
+"""Authoring and materialization share the current validation-intent contract."""
 from copy import deepcopy
 import json
 
@@ -9,7 +9,6 @@ from pydantic import ValidationError
 from scidiscovery.artifact_agent.schema.common import canonical_json
 from scidiscovery.artifact_agent.schema.experiment_intent import (
     ExperimentDesignIntent,
-    HistoricalExperimentDesignIntent,
     materialize_experiment_design_intent,
 )
 from scidiscovery.operations.spec import json_projection
@@ -62,24 +61,23 @@ def test_worker_schema_shows_only_submit_ready_validation_and_repair_stays_in_ru
     assert runtime.runs.submit(run_id) == ("completed", ())
 
 
-def test_historical_input_contract_and_root_materialization_preserve_old_record(tmp_path, experiment_case):
+def test_current_input_contract_and_root_materialization_preserve_record(tmp_path, experiment_case):
     current, legacy = engineering_pair(experiment_case)
     compiled = _catalog().operation("science.experiment.materialize.v1")
     port = next(p for p in compiled.spec.inputs if p.name == "experiment_design_intent")
     resource = compiled.implementations[f"{port.schema_resource.plugin_id or compiled.plugin_id}:{port.schema_resource.component_id}"]
     validator = Draft202012Validator(json.loads(resource))
-    validator.validate(legacy)
+    assert list(validator.iter_errors(legacy))
     validator.validate(current)
-    old_model = HistoricalExperimentDesignIntent.model_validate_json(canonical_json(legacy), strict=True)
-    new_model = ExperimentDesignIntent.model_validate_json(canonical_json(current), strict=True)
-    assert materialize_experiment_design_intent(old_model, None) == materialize_experiment_design_intent(new_model, None)
+    with pytest.raises(ValidationError):
+        ExperimentDesignIntent.model_validate_json(canonical_json(legacy), strict=True)
 
     runtime, instance, root = _root(tmp_path)
-    original = canonical_json(legacy)
-    record = _register(runtime, instance, name="historical_intent", raw=original,
+    original = canonical_json(current)
+    record = _register(runtime, instance, name="current_intent", raw=original,
                        kind="experiment_design_intent", schema="scidiscovery.experiment-design-intent.v1")
-    request = {"operation_id": compiled.spec.operation_id, "name": "materialized_history",
-               "inputs": [{"port": "experiment_design_intent", "artifact_names": ["historical_intent"]}]}
+    request = {"operation_id": compiled.spec.operation_id, "name": "materialized_current",
+               "inputs": [{"port": "experiment_design_intent", "artifact_names": ["current_intent"]}]}
     assert root.call_tool("operation_preflight", request)["admissible"] is True
     result = root.call_tool("operation_invoke", request)
     assert result["executor_kind"] == "transform"
@@ -87,18 +85,18 @@ def test_historical_input_contract_and_root_materialization_preserve_old_record(
     assert runtime.artifacts.read(record.ref) == original
 
 
-@pytest.mark.parametrize("defect", ["both", "missing", "different_experiment"])
-def test_historical_reader_does_not_weaken_existing_validation(experiment_case, defect):
+@pytest.mark.parametrize("defect", ["legacy_only", "both", "missing", "different_experiment"])
+def test_current_reader_rejects_legacy_validation_plan(experiment_case, defect):
     current, legacy = engineering_pair(experiment_case)
     proposal = legacy["proposals"][0]
     if defect == "both":
         proposal["validation_intent"] = current["proposals"][0]["validation_intent"]
     elif defect == "missing":
         proposal.pop("validation_plan")
-    else:
+    elif defect == "different_experiment":
         proposal["validation_plan"]["experiment_key"] = "different_experiment"
     with pytest.raises(ValidationError):
-        HistoricalExperimentDesignIntent.model_validate_json(canonical_json(legacy), strict=True)
+        ExperimentDesignIntent.model_validate_json(canonical_json(legacy), strict=True)
 
 
 def test_scientific_skeleton_is_separate_from_concrete_plan(experiment_case):

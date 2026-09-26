@@ -1,0 +1,113 @@
+{
+  "description": "Synthetic TCAD analysis package; copied from legacy unmodified fixture, no solver execution.",
+  "project": {
+    "execution_plan": null,
+    "solver_kind": "sdevice",
+    "files": [
+      {
+        "relative_path": "main.cmd",
+        "content": "Solve {}\n"
+      }
+    ],
+    "input_slots": [],
+    "entrypoint": "main.cmd",
+    "development_initialization_entrypoint": null,
+    "arguments": [],
+    "expected_outputs": [
+      {
+        "name": "profile",
+        "relative_path": "profile.tdr",
+        "media_type": "application/octet-stream",
+        "required": true,
+        "max_bytes": 4096,
+        "capture": "workspace_file",
+        "experiment_key": null,
+        "case_key": null
+      }
+    ],
+    "collect_generated_outputs": false,
+    "resource_limits": {
+      "wall_time_seconds": 60,
+      "cpu_time_seconds": 60,
+      "max_memory_bytes": 536870912,
+      "max_output_bytes": 1048576,
+      "max_storage_bytes": 2000000000
+    },
+    "schema_version": 1,
+    "tool_profile": "review_fixture",
+    "capability_sha256": "fbe7a54693ec5c36b6d4908babaa6b5c770d65fc123334fc4392764195186e86",
+    "parameter_bindings": [],
+    "case_parameter_bindings": [],
+    "case_anchors": null,
+    "runtime_assertions": [],
+    "realization_manifest": [
+      {
+        "requirement_key": "entrypoint",
+        "category": "numerical_protocol",
+        "requirement": "Run one bounded fixture.",
+        "evidence_class": "test_fixture",
+        "evidence_source": "L4 local fixture",
+        "evidence_locator": "main.cmd",
+        "rationale": "Exercise the registered deck workspace.",
+        "implementation_status": "implemented",
+        "relative_path": "main.cmd",
+        "locator": "Solve",
+        "verification_mode": "static_review",
+        "expected_output_name": null
+      }
+    ],
+    "materialization_report": null,
+    "preflight_attestation": {
+      "schema_version": 1,
+      "profile": "tcad.project-preflight.v1",
+      "source_tree_sha256": "60d208f572fb4e121c3aba93250a1bd6017ea8999e97ac17ddadb2a43b499b0d",
+      "mode": "preflight",
+      "project_sha256": null,
+      "declarations_sha256": null,
+      "terminal_state": "succeeded",
+      "exit_code": 0,
+      "diagnostic_layer": "complete",
+      "qualified": true,
+      "summary": "Synthetic source-bound preflight."
+    },
+    "initialization_attestation": null,
+    "development_diagnostics": []
+  },
+  "capability": {
+    "capability_sha256": "fbe7a54693ec5c36b6d4908babaa6b5c770d65fc123334fc4392764195186e86",
+    "launch_name": "sdevice",
+    "private_fixed_argument_count": 0,
+    "private_fixed_arguments_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+    "private_release_evidence_bytes": 17,
+    "private_release_evidence_sha256": "08f9017849ea37e4c441a1cd09bdc12a37b66e1874017e14002f4bcc4cff39d5",
+    "profile_id": "review_fixture",
+    "public_arguments": [],
+    "public_release_label": "R-2020.09",
+    "schema_version": 2,
+    "solver_kind": "sdevice"
+  },
+  "review": {
+    "scientific_assessment": null,
+    "verdict": "pass",
+    "capability_sha256": "fbe7a54693ec5c36b6d4908babaa6b5c770d65fc123334fc4392764195186e86",
+    "summary": "Fixture review",
+    "rationale": "Check the exact declared implementation.",
+    "physical_fidelity": "pass",
+    "implementation_fidelity": "pass",
+    "syntax_fidelity": "pass",
+    "numerical_protocol_fidelity": "pass",
+    "requirement_reviews": [
+      {
+        "requirement_key": "entrypoint",
+        "status": "pass",
+        "rationale": "The entrypoint exists."
+      }
+    ],
+    "findings": [],
+    "undeclared_defaults": [],
+    "unsupported_constructs": [],
+    "missing_inputs": [],
+    "execution_ready": true,
+    "next_actions": []
+  }
+}

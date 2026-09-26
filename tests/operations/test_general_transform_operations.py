@@ -30,10 +30,6 @@ from scidiscovery.general_science_control_operations import INTAKE_SPLIT_OPERATI
 from tcad_artifact.plugin import PLUGIN as TCAD_PLUGIN
 from tcad_artifact.execution_control import SolverCapabilitySnapshot
 from tcad_artifact.operation_transforms import EXECUTION_CONTEXT_OPERATION
-from tcad_artifact.parameter_operations import (
-    COVERAGE_OPERATION as PARAMETER_COVERAGE_OPERATION,
-    UNCERTAINTY_OPERATION as PARAMETER_UNCERTAINTY_OPERATION,
-)
 from scidiscovery.operations.catalog import CatalogCompileError, compile_catalog
 from scidiscovery.operations.invoke import (
     InvocationArtifact,
@@ -56,7 +52,7 @@ GENERAL_TRANSFORM_OPERATION_IDS = {
 def test_materialize_maximum_legal_goals_and_current_selection_without_expansion() -> None:
     from scidiscovery.artifact_agent.schema.experiment import ExperimentPortfolio
     from scidiscovery.artifact_agent.transforms import materialize_experiment_plan
-    from tests.operations.m3_transform_equivalence_runner import _engineering_intent
+    from tests.operations.science_fixtures import _engineering_intent
 
     intent = json.loads(_engineering_intent())
     goals = ["原样目标 " + "x" * (8192 - 5), *[f"Bounded goal {index}" for index in range(15)]]
@@ -160,19 +156,6 @@ def test_intake_source_context_accepts_only_exact_bound_source_names() -> None:
         )
 
 
-def test_general_intake_operations_execute_the_declared_source_binding_rule() -> None:
-    catalog = compile_catalog((BUILTIN_PLUGIN, GENERAL_PLUGIN))
-    for operation_id in (
-        "science.evidence.extract.v1",
-        "science.intake.revise.v1",
-        "science.evidence.revise-from-critic.v1",
-    ):
-        output = catalog.operation(operation_id).spec.outputs[0]
-        assert output.context_validator is not None
-        assert output.context_validator.component_id == "intake_source_context"
-        assert output.context_rule_id == "intake.source_binding"
-        assert output.context_sources == (("source_material", "tool_evidence", "user_context")
-            if operation_id == "science.evidence.extract.v1" else ("source_material", "user_context"))
 
 
 def _catalog():

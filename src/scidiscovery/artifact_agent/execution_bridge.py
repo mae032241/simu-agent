@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Mapping, Protocol
 
 from .schema.approval import CompiledApprovalIdentity
-from .schema.execution import LocalFileDescriptor
+from .schema.execution import ExecutionAdmission, LocalFileDescriptor
 from .service.executions import ExecutionService, ExecutionServiceError
 
 
@@ -84,31 +84,70 @@ class ExecutionBridge:
         self,
         *,
         execution_id: str,
-        approval_id: str,
+        approval_id: str | None,
         compiled_identity: CompiledApprovalIdentity,
+        allow_policy_authorization: bool = False,
+        budget_subject_schemas: tuple[str, ...] = (),
     ) -> None:
         request = self.executions.request(execution_id)
         adapter = self._adapter(request.executor)
-        self.validate_request(
+        current = self.executions.status(execution_id)
+        if current.external_run_id is not None:
+            return
+        # Recover a possibly accepted submission before applying a changed
+        # policy. Never submit a second solver to resolve an unknown response.
+        submission = self.executions.prepared_submission(execution_id)
+        if submission is not None:
+            recovered = adapter.lookup_submission(submission)
+            if recovered is not None:
+                self._record_started(execution_id, *recovered)
+                return
+        admission = self.validate_request(
             executor=request.executor,
             preparation_profile=request.preparation_profile,
-            payload=self.executions.artifacts.read(request.payload_ref),
+            payload=self.executions.artifacts.read(request.payload_ref), allow_denial=True,
         )
-        payload = self.executions.authorize(
-            execution_id=execution_id,
-            approval_id=approval_id,
-            compiled_identity=compiled_identity,
-        )
-        submission = adapter.prepare(
-            payload,
-            preparation_profile=request.preparation_profile,
-            exchange_directory=Path(payload.local_path).parent,
-        )
+        if admission is not None:
+            owner = (self.executions.budget_owner(execution_id) or
+                self.executions.scientific_budget_owner(request.payload_ref, budget_subject_schemas))
+            admission = self.executions.budget_admission(executor=request.executor,
+                admission=admission.model_copy(update={"budget_key": owner}), execution_id=execution_id, allow_denial=True)
+        if admission is not None and admission.outcome != "policy":
+            self.executions.defer_policy(execution_id=execution_id, admission=admission)
+            if admission.outcome == "deny":
+                raise ExecutionServiceError("current execution policy denied request: " + admission.reason)
+        if admission is not None and admission.outcome == "policy":
+            if not allow_policy_authorization:
+                raise ExecutionServiceError("compiled execution contract does not permit policy authorization")
+            payload = self.executions.authorize_policy(execution_id=execution_id,
+                admission=admission, compiled_identity=compiled_identity,
+                submission_confirmed_absent=submission is not None)
+        else:
+            if approval_id is None:
+                raise ExecutionAuthorizationRequired("current policy requires human execution approval")
+            payload = self.executions.authorize(execution_id=execution_id,
+                approval_id=approval_id, compiled_identity=compiled_identity)
+            if admission is not None:
+                self.executions.reserve_human_budget(execution_id, admission)
+        if submission is None:
+            prepare = getattr(adapter, "prepare_with_artifacts", None)
+            options = {"preparation_profile": request.preparation_profile,
+                       "exchange_directory": Path(payload.local_path).parent}
+            submission = (prepare(payload, artifacts=self.executions.artifacts, **options)
+                if prepare is not None else adapter.prepare(payload, **options))
+            self.executions.record_prepared_submission(execution_id, submission,
+                policy_digest=admission.policy_digest if admission is not None else None)
         recovered = adapter.lookup_submission(submission)
         if recovered is None:
-            external_run_id, external_state = adapter.submit(submission)
+            if admission is None:
+                external_run_id, external_state = adapter.submit(submission)
+            else:
+                external_run_id, external_state = adapter.submit(submission, authorization=admission)
         else:
             external_run_id, external_state = recovered
+        self._record_started(execution_id, external_run_id, external_state)
+
+    def _record_started(self, execution_id: str, external_run_id: str, external_state: str) -> None:
         self.executions.record_submission(
             execution_id=execution_id,
             external_run_id=external_run_id,
@@ -126,7 +165,8 @@ class ExecutionBridge:
         executor: str,
         preparation_profile: str,
         payload: bytes | None = None,
-    ) -> None:
+        allow_denial: bool = False,
+    ) -> ExecutionAdmission | None:
         adapter = self._adapter(executor)
         checker = getattr(adapter, "supports_preparation_profile", None)
         if checker is not None and checker(preparation_profile) is not True:
@@ -141,8 +181,17 @@ class ExecutionBridge:
             except (TypeError, ValueError, RuntimeError) as error:
                 raise ExecutionServiceError(
                     f"execution payload is invalid for preparation profile "
-                    f"{preparation_profile}"
+                    f"{preparation_profile}: {error}"
                 ) from error
+        judge = getattr(adapter, "execution_admission", None)
+        if payload is not None and judge is not None:
+            admission = judge(payload, preparation_profile=preparation_profile)
+            if not isinstance(admission, ExecutionAdmission):
+                raise ExecutionServiceError("execution adapter returned an invalid policy judgment")
+            if admission.outcome == "deny" and not allow_denial:
+                raise ExecutionServiceError("execution policy denied request: " + admission.reason)
+            return admission
+        return None
 
     def capabilities(self, *, executor: str) -> tuple[AdapterCapability, ...]:
         adapter = self._adapter(executor)
@@ -191,6 +240,8 @@ class ExecutionBridge:
             if current.state not in {"succeeded", "failed", "cancelled", "collected"}:
                 self.executions.record_status(execution_id=execution_id,
                     external_run_id=current.external_run_id, state=external_state)
+            if external_state in {"succeeded", "failed", "cancelled"} and isinstance(details.get("consumed_budget"), dict):
+                self.executions.settle_budget(execution_id, details["consumed_budget"])
             observation["solver_state"] = external_state
             observation["status_observed_at"] = datetime.now(timezone.utc).isoformat()
             observation.pop("observation_error", None)
@@ -228,4 +279,8 @@ class ExecutionBridge:
             ) from error
 
 
-__all__ = ["AdapterCapability", "ExecutionAdapter", "ExecutionBridge"]
+class ExecutionAuthorizationRequired(ExecutionServiceError):
+    pass
+
+
+__all__ = ["AdapterCapability", "ExecutionAdapter", "ExecutionBridge", "ExecutionAuthorizationRequired"]

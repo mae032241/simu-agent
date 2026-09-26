@@ -22,6 +22,7 @@ from ...operations.invoke import (
     EffectExecutorPlan,
     OperationInvocationError,
     effect_operation_plan,
+    prepare_effect_payload,
 )
 from .mcp_root_shared import (
     RootToolError,
@@ -30,6 +31,42 @@ from .mcp_root_shared import (
 )
 
 class RootExecutionRoutes:
+    def _effect_admission(self, bound, plan):
+        prepared = (prepare_effect_payload(bound, self.artifacts.read)
+                    if bound.compiled.spec.executor.preparation is not None else None)
+        payloads = tuple(item for item in bound.inputs if item.port_name == plan.payload_port)
+        if prepared is None and (len(payloads) != 1 or len(bound.inputs) != 1):
+            raise OperationInvocationError("effect_payload_not_singular")
+        if self.execution_bridge is None:
+            raise OperationInvocationError("effect_bridge_unavailable")
+        try:
+            content = prepared.content if prepared else self.artifacts.read(payloads[0].artifact.ref)
+            admission = self.execution_bridge.validate_request(executor=plan.executor,
+                preparation_profile=plan.preparation_profile, payload=content)
+            if admission is not None:
+                refs = tuple(item.artifact.ref for item in bound.inputs)
+                owner = self.executions.scientific_budget_owner_from_refs(refs, plan.budget_subject_schemas)
+                admission = admission.model_copy(update={"budget_key": owner})
+                existing = self._optional("execution", bound.name)
+                if existing is not None:
+                    previous = self.executions.request(existing).payload_ref
+                    if prepared is not None:
+                        envelope = self.artifacts.catalog(previous)
+                        if (envelope.parent_refs != refs or self.artifacts.read(previous) != content
+                            or envelope.labels.get("operation_digest") != bound.compiled.digest):
+                            existing = None
+                    elif previous != payloads[0].artifact.ref:
+                        existing = None
+                admission = self.executions.budget_admission(executor=plan.executor,
+                    admission=admission, execution_id=existing)
+            if admission is not None and admission.outcome == "policy":
+                contract = bound.compiled.spec.review.approval if bound.compiled.spec.review else None
+                if contract is None or not contract.allow_policy_authorization:
+                    raise ValueError("compiled execution contract does not permit policy authorization")
+            return admission
+        except Exception as error:
+            raise OperationInvocationError("effect_preparation_invalid", message=str(error)) from error
+
     def execution_capabilities(self, *, operation_id: str) -> dict[str, Any]:
         executor = self._effect_executor(operation_id)
         capabilities = self._execution_capabilities(executor)
@@ -136,14 +173,40 @@ class RootExecutionRoutes:
             payloads = tuple(
                 item for item in bound.inputs if item.port_name == plan.payload_port
             )
-            if len(payloads) != 1 or len(bound.inputs) != 1:
-                raise RootToolError("compiled Effect payload is ambiguous")
-            payload_ref = payloads[0].artifact.ref
-            self.execution_bridge.validate_request(
-                executor=executor,
-                preparation_profile=preparation_profile,
-                payload=self.artifacts.read(payload_ref),
-            )
+            admission = self._effect_admission(bound, plan)
+            prepared_name = None
+            if bound.compiled.spec.executor.preparation is not None:
+                prepared = prepare_effect_payload(bound, self.artifacts.read)
+                parents = tuple(item.artifact.ref for item in bound.inputs)
+                preparation_fingerprint = canonical_sha256({
+                    "operation_digest": bound.compiled.digest, "parents": parents,
+                    "port": prepared.port_name,
+                    "sha256": hashlib.sha256(prepared.content).hexdigest()})
+                # The fingerprint makes retries and caller renames share one
+                # immutable prepared artifact. A new cohort cannot reuse it.
+                prepared_name = _derived_name("prepared", preparation_fingerprint)
+                existing_payload = self._optional("artifact", prepared_name)
+                if existing_payload is None:
+                    envelope = self.artifacts.register(prepared.content, ArtifactRegistration(
+                        kind=prepared.kind, schema_id=prepared.schema,
+                        payload_schema_version=prepared.payload_schema_version,
+                        media_type=prepared.media_type, creator=self.intake.creator,
+                        parent_refs=parents, labels={**_operation_artifact_labels(bound),
+                            "operation_output_port": prepared.port_name}),
+                        idempotency_key="effect-preparation:" + canonical_sha256({
+                            "instance": self._instance_id(), "fingerprint": preparation_fingerprint}))
+                    self._bind("artifact", prepared_name, envelope.artifact_id,
+                               request_fingerprint=preparation_fingerprint)
+                else:
+                    envelope = self.artifacts.get_by_id(existing_payload)
+                    if (envelope.parent_refs != parents or self.artifacts.read(envelope.ref) != prepared.content
+                        or envelope.labels.get("operation_digest") != bound.compiled.digest):
+                        raise RootToolError("existing prepared Effect payload differs from exact cohort")
+                payload_ref = envelope.ref
+            else:
+                if len(payloads) != 1 or len(bound.inputs) != 1:
+                    raise RootToolError("compiled Effect payload is ambiguous")
+                payload_ref = payloads[0].artifact.ref
             fingerprint = canonical_sha256(
                 {
                     "operation": bound.compiled.spec.operation_id,
@@ -179,9 +242,23 @@ class RootExecutionRoutes:
                     execution_id=execution_id,
                 )
                 self._bind_target("execution", target, execution_id, fingerprint)
-            approval = self._ensure_execution_approval(name=target.name)
+            execution_id = self._resolve("execution", target.name)
+            if admission is not None and admission.outcome == "policy":
+                contract = bound.compiled.spec.review.approval
+                if contract is None or not contract.allow_policy_authorization:
+                    raise RootToolError("compiled execution contract does not permit policy authorization")
+                if self.executions.status(execution_id).state in {"created", "authorized"}:
+                    self.executions.authorize_policy(execution_id=execution_id,
+                        admission=admission, compiled_identity=compiled_identity)
+                approval = None
+            else:
+                if admission is not None and self.executions.status(execution_id).state in {"created", "authorized"}:
+                    self.executions.defer_policy(execution_id=execution_id, admission=admission)
+                approval = self._ensure_execution_approval(name=target.name)
             status = self.execution_status(name=target.name)
-        return {**status, "approval": approval}
+        return {**status, "approval": approval,
+                **({"prepared_outputs": [{"port": plan.payload_port, "artifact_name": prepared_name}]}
+                   if prepared_name is not None else {})}
 
     def _execution_capabilities(self, executor: str) -> tuple[Any, ...]:
         if self.execution_bridge is None:
@@ -355,11 +432,10 @@ class RootExecutionRoutes:
             raise RootToolError("external operation has no compiled approval contract")
         if contract.kind != "execution_authorization":
             raise RootToolError("external operation has the wrong approval kind")
-        if len(compiled.spec.inputs) != 1 or len(compiled.spec.outputs) != 1:
-            raise RootToolError("external operation approval subjects are ambiguous")
+        plan = effect_operation_plan(compiled)
         refs_by_port = {
             compiled.spec.outputs[0].name: request_ref,
-            compiled.spec.inputs[0].name: payload_ref,
+            plan.payload_port: payload_ref,
         }
         try:
             subject_refs = tuple(refs_by_port[name] for name in contract.subject_ports)
@@ -460,6 +536,7 @@ class RootExecutionRoutes:
             "state": status.state,
             "result_artifact_name": result_artifact_name,
             "created_at": status.created_at,
+            "authorization": self.executions.authorization(binding.object_id),
             **self.executions.observation(binding.object_id),
             **({"collection": self.execution_collection.summary(binding.object_id)}
                if self.execution_collection is not None else {}),
@@ -477,6 +554,8 @@ class RootExecutionRoutes:
         from .mcp_response_views import page
         def values():
             for binding in self.bindings.list(instance=self._instance_id(), namespace="execution"):
+                if self._task_managed_execution(binding.object_id):
+                    continue
                 item = self.execution_status(name=binding.name)
                 if state is None or item["state"] == state:
                     yield item
@@ -505,17 +584,25 @@ class RootExecutionRoutes:
         if self.execution_bridge is None:
             raise RootToolError("no execution bridge is configured")
         execution_id = self._resolve("execution", name)
-        approval_id = self._resolve("approval", _derived_name(name, "approval"))
+        approval_id = self._optional("approval", _derived_name(name, "approval"))
         request_ref, _ = self.executions.approval_subject_refs(execution_id)
-        _, compiled_identity = self._current_execution_contract(
+        compiled, compiled_identity = self._current_execution_contract(
             execution_id=execution_id,
             request_ref=request_ref,
         )
-        self.execution_bridge.start(
-            execution_id=execution_id,
-            approval_id=approval_id,
-            compiled_identity=compiled_identity,
-        )
+        from ..execution_bridge import ExecutionAuthorizationRequired
+        try:
+            self.execution_bridge.start(
+                execution_id=execution_id,
+                approval_id=approval_id,
+                compiled_identity=compiled_identity,
+                allow_policy_authorization=compiled.spec.review.approval.allow_policy_authorization,
+                budget_subject_schemas=effect_operation_plan(compiled).budget_subject_schemas,
+            )
+        except ExecutionAuthorizationRequired:
+            return {**self.execution_status(name=name),
+                "approval": self._ensure_execution_approval(name=name),
+                "authorization_required": "human"}
         return self.execution_status(name=name)
 
     def execution_sync(self, *, name: str) -> dict[str, Any]:

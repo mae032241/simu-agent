@@ -2,12 +2,11 @@
 
 [简体中文](ARCHITECTURE.zh-CN.md) | English
 
-This document describes the current R5-L Run-v1 architecture after the R5-M
-simplification and R5-N scheduler-authority correction. Historical designs and
-failed reviews remain under `docs/plans/`; the active implementation authority
-is `docs/plans/R5_N_SCHEDULER_ACTION_AUTHORITY_SIMPLIFICATION.zh-CN.md`, while
-the R5-L and R5-M plans remain reviewed historical baselines.
-The current charter and 33-constraint matrix live under `docs/architecture/`.
+This document describes the current generic plugin platform and complete research
+tasks. The active implementation and acceptance plan is
+[Research Task Refactor R4](plans/RESEARCH_TASK_REFACTOR_R4.zh-CN.md).
+Historical plans and audits describe their recorded candidates; they do not override
+current contracts. Static implementation does not establish runtime acceptance.
 
 ## 1. Design rule
 
@@ -18,7 +17,7 @@ limits, workspace, tools, network, review, approval, and effect requirements.
 Narrow plugin components implement codecs, validators, guards, projectors,
 workspace hooks, worker tools, and runtime factories.
 
-Operation ABI 17 requires every Agent output to reference a structured semantic
+Operation ABI 20 requires every Agent output to reference a structured semantic
 contract. Each rule that is not expressible in JSON Schema has a stable
 `rule_id`, description, output paths, and required inputs. Compilation rejects
 unknown inputs and rules that silently make an optional port required. The
@@ -34,37 +33,33 @@ owns identity, immutable records, least-context projection, lifecycle,
 qualification, and effect gates. Deterministic code owns replayable mechanical
 work. Domain adapters own side effects only.
 
-Experiment proposals retain an ordered `objectives` list and a nonempty exact
-`current_objectives` subset. Materialization includes the original overall
-objective in each proposal and expands only the declared current cases. Existing
-rationale fields preserve the selection reasons, remaining goals, and future
-conditions. Designers and independent reviewers assess whether omitted targets
-prevent the current experiment, including targets sharing an observable. Curve
-contracts use explicit target bindings when requested; local success does not close
-uncovered overall targets. Curve scoring is an optional tool of result analysis,
-not a prerequisite for authoring or execution. Generic and TCAD result analysis
-are alternative Operations. The TCAD analysis tool parses bound raw outputs and
-scores in the same Run; unsupported scoring limits a quantitative conclusion but
-does not prevent a partial analysis. Exact plan, review, execution, file, and case
-identity checks apply even when no scoring tool is called.
+Root chooses complete evidence, hypothesis, experiment or analysis tasks according
+to the research question. These are responsibility categories, not a fixed pipeline
+or four resident Agents. `science.experiment.v1` owns design, implementation, local
+debugging, execution, collection, validity and delivery in one Run. TCAD is a domain
+capability of that task. Normal stages require no independent review or approval;
+applicable qualification and execution authorization remain explicit contracts.
 
-Observable descriptions are scientific prose, not a second identity registry.
-Design, materialization, review, and curve compilation do not require repeating
-them verbatim. An explicit comparison baseline key identifies the baseline
-without a duplicate case-role label. Compact intent can omit that key when
-exactly one declared baseline/control supplies it; ambiguity remains a located
-missing input. Unknown cases and contradictory variable values remain errors.
+A task seals scientific stage conclusions and material references as work proceeds.
+The UI reads the same stage projection, without dispatching work. A stage preview is
+not final completion: the final report identifies adopted stage versions and their
+remaining limitations. Control verifies exact scientific sources, actual collected
+execution and adopted implementation; it does not impose a fixed scientific checklist.
 
-Legacy detailed experiment-design output contracts require `validation_intent`; the obsolete
-`validation_plan` branch and its exclusive definitions are not shown to authors.
-Historical intents use a dedicated input reader at the existing materialization
-boundary, preserving the original exclusive-choice and experiment-identity checks.
-Reading compatibility neither rewrites old artifacts nor renews qualification.
-Reader and writer share the current scientific fields and constraints; the output
-Schema and submission model come from the same definition.
-The precomputed curve-diagnosis writer declares an empty calculation-record tuple;
-its Schema therefore omits unreachable calculation-record definitions. General
-analysis and historical readers retain their existing record support.
+The experiment owner may use an optional native helper for a meaningful bounded
+subproblem. It starts with fresh context and the owner's native permissions, Skill
+access and task workspace. Worker tools admit only the prepared child of that owner;
+helpers cannot select instances, dispatch Root tasks, seal owner stages, submit the
+parent result, or supply a formal independent review. The owner waits and integrates
+findings/files before releasing helper access. Default admission is one active helper
+and one layer, with a cumulative call allowance across recovery. Releasing Run tool
+access does not stop native tools or prove thread exit; native wait/stop/close and
+model usage remain platform responsibilities. The framework does not claim a hard
+aggregate memory or token cap for those native threads.
+
+Result analysis may invoke domain scoring and parsing in the same task. Calculations
+retain exact input and tool-evidence identity; unavailable scoring limits the
+quantitative conclusion rather than forcing an author/reviewer dispatch chain.
 
 ## 2. Registration, compilation, and catalog views
 
@@ -113,6 +108,16 @@ and full Artifact identities to verify provenance. Evidence collection receipts 
 scientific case-mapping claims stay distinct. New computed records require controlled
 receipts; submission does not rerun scoring.
 
+Residual diagnostics now save a controlled numerical checkpoint before rendering.
+The same Worker tool accepts `checkpoint_alias` for a plot-only retry: request,
+algorithm and complete input Artifact identities must match, and the checkpoint
+must be current or control-adopted evidence. It never reads an editable workspace
+copy as a checkpoint. Rendering failure preserves computed metrics, saved residuals
+and specific diagnostics; a computed status does not claim that plots were produced.
+Failure continuation reuses the existing receipt adoption path. Changed scientific
+inputs/methods require new computation; report corrections remain inside the current
+Run until sealing. Previously sealed reports remain immutable.
+
 `public`, `support`, `internal`, and diagnostic `all` are projections of that
 one catalog, not separate registries:
 
@@ -142,9 +147,9 @@ may reason over sealed verdicts, domain dispositions, missing inputs, and
 suggestions, but independently chooses the catalog Operation. `change_request`
 and `review_signal` prove exact review and provenance relationships; they do not
 declare a fixed stage or successor.
-Legacy `next_action_kind`, `accepts_actions`, and `recommended_task_mode` fields
-remain parseable compatibility data, but every control path ignores their
-values. They are neither a second action catalog nor an admission condition.
+The deprecated `next_action_kind`, `accepts_actions`, and `recommended_task_mode` fields
+and their forwarding paths have been removed; strict models reject these extra fields.
+Scientific suggestions use `next_actions`; the compiled catalog owns action authority.
 A TCAD implementation gap may include control-captured bounded
 source, declarations, attempt notes and diagnostic files. These remain negative
 development records, not an executable project. Review and revision both accept
@@ -168,23 +173,30 @@ ranges; captured logs travel with implementation gaps. Replies remain short and
 debug time budgets are unchanged. Launcher, transport and PDF failure diagnostics
 are retained in their existing run/result directories. This is file-based reading,
 not a new logging service or a grant to read unbound historical workspaces.
-A completed Run's default `run_status` provides a bounded summary excerpt;
-`view=detail` with omitted `output_paths` returns the complete sealed original. `output_paths=[]` returns status, exact bindings, signal and output metadata
-without reading the payload. This default `compat` profile preserves existing clients.
-An explicit request-time profile avoids assembling unrelated context: `poll` requires
-an empty values selection, `navigation` returns a bounded index without signal text,
-and `decision` returns requested exact values and the signal only after completion.
-Compact failed responses retain exact safe diagnostics and a mechanical recovery-gate
-projection; full bindings, native/tool records and recovery detail remain available
-through the compatibility detail path. Explicit payload JSON Pointers return exact values in
-`selected_output`, never a partial `sealed_output`: up to 8 paths and 32 KiB of values.
-Pointers start inside the payload: `/summary`, not `/payload/summary`. An empty
-pointer selects the whole payload; `/` selects an empty key. A `selected` value
-is exact and can be used directly, including when it is the whole payload; only
-unread information needed for a decision requires another fetch.
-Oversized subtrees have bounded direct-child navigation (32 entries, 8 KiB total);
-missing, null and omitted values remain distinct. Full reading is always available
-by omitting the parameter. Signal availability is independent of payload delivery.
+A completed Run's default `run_status` uses `response_profile="decision"` and
+returns bounded declared conclusions, limitations, remaining questions and the
+scheduler signal. Choose `output_fields` for named scientific fields or non-root
+payload JSON Pointers in `output_paths`; do not supply both. Omitted paths or `[]`
+in the decision profile select the declared decision fields. Active Runs stay short,
+except explicitly requested sealed stage previews.
+
+`poll` reads no payload (`output_paths=[]`); `navigation` uses `output_mode="index"`
+for a bounded structural index. `view="detail"` selects `compat` if no profile was
+specified, but does not implicitly return the whole payload. Full sealed output
+requires a completed Run and explicit `include_full_output=true`, `view="detail"`,
+`response_profile="compat"`, `output_mode="values"` and omitted/null `output_paths`.
+`compat` + detail + `output_paths=[]` reads record metadata without full payload;
+`diagnostic_after` selects bounded durable diagnostic pages.
+
+Selected JSON Pointer values appear in `selected_output`, never a partial
+`sealed_output`: at most 8 paths and 32 KiB. Paths start inside the payload, for
+example `/summary`, not `/payload/summary`. The empty root pointer is forbidden in
+values mode; `/` denotes an empty member key. Exact selected values need no redundant
+fetch. Oversized subtrees provide bounded direct-child navigation (32 entries,
+8 KiB); missing, null and omitted values stay distinct. Whole-output reading always
+requires the explicit full-output flag. Signal availability is separate from payload
+expansion. Compact failures retain safe diagnostics and recovery information; a
+failed Run does not become completed scientific evidence through a larger view.
 Running Runs and bulk `run_list` do not expose payloads. Review
 sources used for change accept only non-passing verdicts, never `pass`. If the
 Run's saved Operation version or digest no longer matches the compiled catalog,
@@ -225,16 +237,12 @@ currently runnable, its producer is also absent from the available public view
 and fails preflight. Root rejects internal Operations; support remains limited
 to deterministic helpers for a selected public action.
 
-Design and plan review can bind optional `current_progress`, `experiment_results`,
-and `result_analysis` originals: zero to four Artifacts per group, up to 8 MiB
-each, within the original 32 MiB input allowance plus the user-text allowance below. These are `on_demand` read-only
-`evidence_inventory` files. Only Agent inventory inputs skip producer-output
-qualification admission; instance, size, current, family, cohort, claim, revision,
-and effect gates remain in their existing paths. Wildcard schema/media pairs are
-limited to inventory with `handoff_only` or `on_demand` exposure. Reading history
-does not restore retired qualification. Deck review treats its exact project as
-`prior_signal`: incomplete implementation may receive a negative review, while
-passing review, packaging, and execution retain their implementation requirements.
+Scientific tasks bind relevant original evidence and prior results through their
+compiled scientific input ports. Inventory is read-only context; reading historical
+material does not renew its qualification. Mechanically derived ports remain hidden
+from Agent contracts, assignments and input files; control resolves their exact
+origins from the declared scientific anchors. Missing or ambiguous origins produce
+located repair diagnostics, not additional identity forms for the Agent.
 
 Root's `artifact_ingest_text(name, text, on_conflict)` registers 1–8,192 valid
 Unicode code points as exact UTF-8 bytes, including whitespace and line endings.
@@ -326,11 +334,15 @@ slice; generic core neither imports that schema nor compiles parameter
 Operations. The old role/transform entry points and direct task, transform,
 approval, and execution creation tools are no longer product authorities.
 
-For an Effect, the same `operation_invoke` creates the immutable execution
-request and its exact pending loopback review from the compiled approval
-contract. It returns the request-specific review URL but neither decides nor
-starts the side effect. Only a sealed UI decision followed by explicit
-`execution_start` and bounded `execution_sync` advances execution.
+For an Effect, `operation_invoke` creates an immutable execution request. A compiled
+contract may explicitly allow administrator policy authorization. TCAD requests
+within both configured storage and wall-time limits are authorized without a human
+approval record; other requests require the configured human decision or are denied.
+Exact request identity and any explicitly applicable review policy still apply. Explicit
+`execution_start` rechecks the current policy before submission. An unknown submission
+is looked up using its frozen descriptor before any new side effect; a renamed request
+cannot claim the same semantic project's budget again. Status and the instance UI show
+`authorization.source` (`policy`, `human`, or `none`) and the frozen policy digest/budget.
 
 `execution_sync` refreshes solver state and bounded logs, including terminal
 executions. `execution_status` reads saved observations without contacting the
@@ -535,22 +547,21 @@ direct revision Operations instead of advertising an unusable capability.
 | Fixed safe review document and UI | Review projection, never HTML or scripts |
 | Generic preflight/invoke | Transforms, runtime factory, effect adapter |
 
-The TCAD plugin registers deck author/reviewer Agents, project workspace and
-debug tools, packaging/attestation/control-equivalence Transforms, and the
-solver Effect. The curve-score plugin registers curve contracts, canonical
-curves, scoring, and diagnosis. TCAD result analysis composes its own raw-output
-parsers with the curve plugin's deterministic scoring functions without a reverse
-dependency. Final analysis validation verifies tool receipts, calculation records and
-exact source references without rerunning scoring. Raw evidence cites bound aliases;
-calculation evidence cites returned records without repeating their case mappings.
-Read-only binding descriptors distinguish same-content output files by their registered
-identity. The optional curve-figure-evidence plugin
-registers paper-figure extraction, independent review, and their tools while
-reusing the curve plugin's deterministic algorithms. Core does not recognize curve
-manifests, fixed script names, or figure collections; native and domain tools
-are projected from the compiled Operation.
-The InGaAs Fig.4 project plugin registers only its frozen project scorer. No
-plugin may duplicate control-plane identity or lifecycle state.
+The TCAD plugin supplies an `ExperimentCapability`: solver project declarations,
+implementation preparation, debugging, raw-output analysis and an internal execution
+Effect. It does not register a separate public author/revision/reviewer pipeline.
+Control creates `ExecutionPackage` (`tcad.execution-package.v2`) with exact source,
+file and capability identity; its optional review is an independent fact and grants
+no authorization by being embedded. SProcess and SDevice share the generic task.
+
+Curve-score supplies deterministic scoring/diagnosis tools for complete analysis
+tasks. Curve-figure-evidence supplies scientific figure extraction and independent
+evidence review with the required algorithms. The InGaAs Fig.4 plugin supplies its
+project scorer. Core owns lifecycle, bindings and qualification; plugins own domain
+algorithms and declared components. Component configuration identity, catalog ABI and
+digests, public/support/internal visibility and versioned schema IDs remain platform
+contracts. The current plugin dependency boundary still requires focused review;
+these declarations do not claim that every plugin already avoids core internals.
 
 Each deterministic Transform component consumes exact bytes grouped by input
 port and produces its complete output family atomically. Relations among
@@ -651,14 +662,11 @@ for scope, failure evidence and deployment limits.
 
 ## Native capability profiles and external evidence
 
-Root startup instructions come from `roles/scheduler.md`: core authority, approval,
-binding and bounded-reading rules plus a conditional reading index. Detailed guides
-in `roles/scheduler/` ship in the wheel and install under `.codex/scidiscovery-guides/`;
-the generated prompt records their absolute directory. Root reads the relevant guide
-before its action and refreshes after deployment. Guides are not additional roles,
-tools or routing authority, and are not appended to catalog/describe responses.
-They do not change Worker instructions or scientific admission. Installation preserves
-unmanaged project prose and verifies guide availability in each generated profile.
+Root startup instructions come from `roles/scheduler.md` and the managed scheduler
+section of project `AGENTS.md`. Normal operation uses the self-contained catalog and
+selected callable contract; it requires no guide files. Guides under
+`roles/scheduler/` are installed for exceptional maintenance, not as a normal reading
+gate or a second routing authority. Installation preserves unmanaged project prose.
 
 Local workspaces include the read-only `tools/read_tool_contract.py`. It reads only
 the frozen assignment's tool contracts. The reader owns a disposable scratch receipt
@@ -756,15 +764,27 @@ Invoke resolves and freezes configuration during creation. Optional preflight pr
 
 Only four additive columns are introduced: `scheduler_instances.agent_settings_json`, `agent_settings_revision`, `agent_settings_updated_at`, and `runs.execution_profile_json`. Historical NULL means unrecorded. Legacy archive bytes remain immutable. Restore projects exactly these installation ALTER definitions, using fixed NULL/0 for absent values, through preview, transactional import and interrupted completion. Unrelated schema/index/trigger or record conflicts remain rejected. Cache cleanup does not remove execution settings. No new scientific artifact, state machine, translation role or model-specific role pool is introduced.
 
-For new supported SProcess studies, `science.experiment.skeleton.v1` delivers scientific
-comparisons, criteria and frozen conditions without mandatory engineering cases. The
-author writes a concrete `ExperimentPortfolio` inside the sole project output and
-performs authorized development validation. `tcad.execution-plan.project.v1` extracts
-that same plan unchanged for downstream ports; it grants no qualification. An optional
-early skeleton review does not replace the independent comprehensive project review.
-Packaging and TCAD analysis bind the exact project, projected plan, skeleton and
-comprehensive review. Legacy detailed plans retain their separate scientific review
-witness; legacy SDevice and other plugins keep their existing contracts. Production
-approval and execution permissions are unchanged. Scientific semantic conflicts are
-resolved before repeated implementation searches; equivalent local engineering choices
-remain with the author. Fixture checks do not establish model behavior or token savings.
+New experiment tasks select scientific materials and optional scientific files.
+Control prepares the exact execution package and resolves private execution bindings;
+the owner is not required to fill capability IDs, review witnesses or routing fields.
+Optional Effect preparation remains part of the compiled ABI: transform, output schema
+and validator enter identity. Applicable policy or UI authorization, exact submission
+lookup and cumulative execution budgets govern external side effects. Changed content
+creates a new object and never silently inherits review qualification.
+
+`agent-settings.json` also configures `helpers` and `execution_io`. Global values are
+merged with explicit instance fields and frozen when a Run is created; recovery keeps
+the source snapshot. Explicit values equal to package defaults still override global
+values. These control settings are not scientific input ports or Agent forms.
+`execution_io` defaults are `max_export_bytes=2000000000`, `read_page_bytes=16384`,
+`collection_timeout_seconds=600`, `file_timeout_seconds=120` and
+`idle_timeout_seconds=30`. Capacity is bytes, time is seconds. The experiment's text
+read, streamed export and collection consume those frozen values; export/collection
+are additionally bounded by remaining Run time. They are separate from the plugin's
+configured solver storage/wall-time authorization and from RAM limits. Changing them
+neither authorizes a solver run nor expands a running task's deadline.
+
+Scientific semantic conflicts are resolved before repeated implementation searches;
+equivalent local engineering choices remain with the author. Four modules define
+complete task responsibilities, not a fixed DAG. Static implementation review does
+not establish production behavior, token savings or a deployed runtime.

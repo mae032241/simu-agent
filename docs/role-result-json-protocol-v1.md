@@ -51,7 +51,6 @@ Transform 仍可按自身编译端口生成多个 Artifact。集合输出若以�
     "assumptions": [],
     "missing_inputs": [],
     "next_actions": [],
-    "next_action_kind": null,
     "evidence_bundle_fingerprint_sha256": null
   },
   "payload": {}
@@ -62,8 +61,7 @@ Transform 仍可按自身编译端口生成多个 Artifact。集合输出若以�
 - `handoff` 只生成有界 `SchedulerSignal`，不替代详细科学内容；
 - `next_actions` 是给调度 Agent 和人阅读的非约束性建议；Worker 不输出具有控制权威的后继
   Operation 名称，调度 Agent 必须根据封存科学结果与唯一编译目录自主选择行为；
-- `next_action_kind` 是暂时保留的废弃兼容字段；可以缺失、为空或与实际选择不同，控制面和调度器
-  均不得用它匹配、准入或选择 Operation；
+- 已移除废弃的 `next_action_kind` 字段；严格合同拒绝携带此字段的旧格式；
 - 裸 payload、额外字段、非规范 JSON、未声明来源、机器路径、秘密模式、未声明二进制和超限内容
   均在 Artifact 登记前拒绝；
 - 校验失败时 Run 保持 running，Agent 可以修正同一候选；首次完整通过的候选摘要被唯一接受，后续

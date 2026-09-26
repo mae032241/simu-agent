@@ -114,6 +114,11 @@ def _source(root, name, file):
 
 
 def _within(root, relative):
+    assignment = root / 'assignment.json'
+    if relative != 'assignment.json' and assignment.is_file():
+        inputs = json.loads(assignment.read_text(encoding='utf-8')).get('inputs', [])
+        if any(item.get('exposure') == 'file_reference' and item.get('relative_path') == str(relative) for item in inputs):
+            raise ValueError('file_reference input is metadata only; a declared control tool streams its exact bytes')
     source = (root / relative).resolve()
     if not source.is_relative_to(root) or not source.is_file():
         raise ValueError('source must be a file within this workspace')

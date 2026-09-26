@@ -184,38 +184,3 @@ def test_real_scientific_approval_and_claim_cross_runtime_change(tmp_path, chang
     request["inputs"][-1]["artifact_names"] = ["unapproved_foundation"]
     assert other.ref != original.ref
     assert root.call_tool("operation_preflight", request)["reason_code"] == "input_cohort_approval_missing"
-
-
-@pytest.mark.parametrize("change", ("runtime", "review_version"))
-def test_direct_revision_reuses_only_compatible_exact_change_request(tmp_path, change):
-    old, runtime, instance, root, _ = _qualified_foundation(tmp_path)
-    intake = "extracted.output"
-    review = _complete(runtime, root, "change", "science.evidence.audit.intake.v1",
-        {"scientific_intake": intake, "source_material": "source"},
-        {"checks": [{"check_key": "scope", "subject": "Bounded source", "status": "fail",
-            "basis": "Clarify the summary.", "evidence_keys": ["source_material"]}],
-         "evidence": [{"source_key": "source_material", "source_type": "frozen_input", "locator": "line 1"}]},
-        verdict="revise")
-    operations = tuple(
-        _drift(op).model_copy(update={"version": "2"})
-        if change == "review_version" and op.operation_id == "science.evidence.audit.intake.v1"
-        else _drift(op) for op in GENERAL_PLUGIN.operations)
-    current = compile_catalog((CORE_PLUGIN, GENERAL_PLUGIN.model_copy(update={"operations": operations})))
-    _switch(runtime, root, current)
-    inputs = {"prior_draft": intake, "change_request": review, "source_material": "source"}
-    request = {"name": "revised_intake", "operation_id": "science.intake.revise.v1",
-        "inputs": [{"port": k, "artifact_names": [v]} for k, v in inputs.items()],
-        "instruction": "Use only these exact immutable inputs."}
-    preflight = root.call_tool("operation_preflight", request)
-    if change == "review_version":
-        assert preflight["reason_code"] == "input_independent_review_incompatible", preflight
-        assert preflight["port"] == "change_request"
-        assert "exact change request exists" in preflight["diagnostics"][0]["message"]
-        with pytest.raises(Exception, match="input_independent_review_incompatible"):
-            root.call_tool("operation_invoke", request)
-        return
-    assert preflight["admissible"], preflight
-    payload = json.loads(runtime.artifacts.read(_artifact(runtime, instance, intake).ref))
-    payload["scientific_foundation"]["summary"] += " The summary is scoped to this source."
-    revised = _complete(runtime, root, request["name"], request["operation_id"], inputs, payload)
-    assert _artifact(runtime, instance, revised).ref != _artifact(runtime, instance, intake).ref

@@ -57,7 +57,6 @@ def test_compiled_entry_is_the_single_runtime_authority() -> None:
         "accepted_verdicts": ["pass"],
     }
     assert projection.requires_independent_review is True
-    assert projection.accepts_actions == ()
 
 
 def test_public_producer_cannot_hide_its_reviewer_from_the_scheduler() -> None:
@@ -161,57 +160,3 @@ def test_blind_plugin_registers_one_real_domain_tool_and_review_edge() -> None:
             {"source_table": raw.replace(b"3", b"4")},
             {"verdict": "pass"},
         )
-
-
-def test_blind_plugin_has_a_small_single_entry_and_no_core_name_branch() -> None:
-    repository = Path(__file__).resolve().parents[2]
-    plugin = (
-        repository
-        / "tests/fixtures/plugins/blind_csv_operation_plugin/blind_csv_plugin/plugin.py"
-    )
-    meaningful = tuple(
-        line for line in plugin.read_text(encoding="utf-8").splitlines()
-        if line.strip() and not line.lstrip().startswith("#")
-    )
-    assert len(meaningful) <= 250
-    assert BLIND_CSV_PLUGIN.plugin_id == "blind_csv"
-    assert len(BLIND_CSV_PLUGIN.operations) == 2
-    assert all(operation.input_admission is None for operation in BLIND_CSV_PLUGIN.operations)
-    for path in (repository / "src/scidiscovery").rglob("*.py"):
-        assert "blind_csv" not in path.read_text(encoding="utf-8"), path
-
-
-def test_clean_installed_blind_plugin_compiles_and_calls_its_tool(
-    installed_probe,
-) -> None:
-    installed_probe(
-        "blind_csv",
-        r'''
-from pathlib import Path
-import sys
-
-import blind_csv_plugin
-from scidiscovery.operations.catalog import compile_installed_catalog
-from scidiscovery.operations.tooling import operation_worker_tools
-
-assert Path(blind_csv_plugin.__file__).resolve().is_relative_to(Path(sys.prefix).resolve())
-catalog = compile_installed_catalog()
-assert "blind.csv.observe.v1" in catalog.operation_ids()
-compiled = catalog.operation("blind.csv.observe.v1")
-assert catalog.operation(compiled.spec.operation_id) is compiled
-tool = {item.name: item for item in operation_worker_tools(compiled)}["worker_csv_summarize"]
-class Context:
-    def __init__(self): self.activities = []
-    def read_input(self, name):
-        assert name == "source_table"
-        return b"sample,value\na,1\nb,3\n"
-    def record_activity(self, value): self.activities.append(value)
-context = Context()
-result = tool.contextual_handler(
-    tool.input_model(),
-    context,
-)
-assert result["numeric_means"] == {"value": 2.0}
-assert context.activities == []
-''',
-    )

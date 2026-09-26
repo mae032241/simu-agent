@@ -65,6 +65,86 @@ def queued(tmp_path, backend="local"):
     return catalog, runtime, root, gateway, profile
 
 
+def test_codex_optional_source_preserves_worker_scope_and_attachment(tmp_path):
+    _, runtime, root, gateway, profile = queued(tmp_path)
+
+    def invoke(name, arguments=None, **metadata):
+        meta = {"session_id": "parent", "thread_id": "parent", **profile, **metadata}
+        return gateway.handle({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {
+            "name": "scid_call", "arguments": {"name": name, "arguments": arguments or {}},
+            "_meta": {"x-codex-turn-metadata": meta}}})
+
+    assert result(invoke("instance_current"))
+    child = {"thread_id": "child", "parent_thread_id": "parent", "subagent_kind": "thread_spawn"}
+    assert result(invoke("worker_identity", **child))["thread_id"] == "child"
+    assert "awaiting scheduler attachment" in invoke("worker_open_assignment", **child)["error"]["message"]
+    assert "error" in invoke("instance_current", **child)
+    result(invoke("worker_attach", {"name": "observation", "thread_id": "child"}))
+    assert result(invoke("worker_open_assignment", **child))["state"] == "opened"
+    # Neither omitting optional markers nor explicit privilege claims bypasses the binding.
+    assert result(invoke("worker_open_assignment", thread_id="child"))["state"] == "opened"
+    for metadata in (
+        {**child, "session_id": "other-parent"},
+        {**child, "thread_source": "user"},
+        {"thread_source": "subagent"},
+        {"parent_thread_id": "other-parent"},
+        {"subagent_kind": "thread_spawn"},
+        {"session_id": None},
+        {"thread_id": "invalid/thread"},
+    ):
+        assert "error" in invoke("instance_current", **metadata)
+    assert "error" in invoke("worker_open_assignment", **{**child, "session_id": "other-parent"})
+
+
+def test_optional_source_proxy_daemon_does_not_register_worker_as_scheduler(tmp_path):
+    from scidiscovery.interfaces.daemon import UnixSocketDaemon
+    from scidiscovery.artifact_agent.interfaces.mcp_daemon import RootBrokerRouter
+    _, runtime, root, gateway, profile = queued(tmp_path)
+    socket = tmp_path / "control.sock"
+    def serve():
+        UnixSocketDaemon(socket, RootBrokerRouter(lambda _: gateway,
+            client_bindings=runtime.scheduler_bindings,
+            instance_maintenance=runtime.instance_maintenance)).serve_forever()
+    process = multiprocessing.get_context("fork").Process(target=serve)
+    process.start()
+    def request(name, arguments=None, *, worker=False, **updates):
+        meta = {"session_id": "transport-parent",
+                "thread_id": "transport-child" if worker else "transport-parent", **profile, **updates}
+        message = {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {
+            "name": "scid_call", "arguments": {"name": name, "arguments": arguments or {}},
+            "_meta": {"x-codex-turn-metadata": meta}}}
+        reply = subprocess.run([sys.executable, "-m", "scidiscovery.artifact_agent.interfaces.mcp_proxy",
+            "--socket", str(socket)], input=json.dumps(message)+'\n', text=True, capture_output=True,
+            timeout=10, env=dict(os.environ, PYTHONPATH=os.pathsep.join(sys.path)))
+        assert reply.returncode == 0, reply.stderr
+        return json.loads(reply.stdout)
+    def clients():
+        with sqlite3.connect(runtime.scheduler_bindings.client_database_path) as db:
+            if not db.execute("SELECT 1 FROM sqlite_master WHERE name='scheduler_clients'").fetchone():
+                return 0  # The client registry is created lazily on its first Root.
+            return db.execute("SELECT COUNT(*) FROM scheduler_clients").fetchone()[0]
+    try:
+        deadline = time.monotonic()+5
+        while not socket.exists() and time.monotonic()<deadline:
+            time.sleep(.02)
+        assert socket.exists()
+        before = clients()
+        identity = result(request("worker_identity", worker=True))
+        assert identity["thread_id"] == "transport-child"
+        assert clients() == before
+        result(request("worker_attach", {"name": "observation", "thread_id": identity["thread_id"]}))
+        registered = clients()
+        assert registered == before + 1
+        assert result(request("worker_open_assignment", worker=True))["state"] == "opened"
+        assert "error" in request("instance_current", worker=True)
+        assert "error" in request("instance_current", worker=True, thread_source="user")
+        assert clients() == registered
+    finally:
+        process.terminate(); process.join(3)
+        if process.is_alive():
+            process.kill(); process.join()
+
+
 @pytest.mark.parametrize("backend", ["local", "hardened"])
 def test_gateway_scopes_actual_worker_lifecycle_and_sealed_result(tmp_path, backend):
     catalog, runtime, root, gateway, profile = queued(tmp_path, backend)
@@ -123,10 +203,10 @@ def test_gateway_scopes_actual_worker_lifecycle_and_sealed_result(tmp_path, back
     full_item = full_contract["operations"][0]
     invoke_item = invoke_contract["operations"][0]
     assert full_contract["view"] == "detail" and invoke_contract["view"] == "invoke"
-    assert invoke_item["operation_digest"] == full_item["operation_digest"] == catalog.operation(operation_id).digest
-    assert [{**invoke_item.get("defaults", {}).get("inputs", {}), **port}
-        for port in invoke_item["inputs"]] == full_item["inputs"]
-    assert invoke_item["contract_view_version"] == "invoke.compact.v1"
+    assert 'operation_digest' not in invoke_item and 'operation_digest' not in full_item
+    assert invoke_item['operation_id'] == full_item['operation_id'] == operation_id
+    assert invoke_item['inputs'] == full_item['inputs']
+    assert invoke_item["contract_view_version"] == "invoke.scientific.v2"
     assert result(rpc(gateway, "scid_describe", {"name": operation_id})) == invoke_contract
     assert invoke_item["revision_policy"]["max_revisions"] == (
         catalog.operation(operation_id).spec.review.max_revisions

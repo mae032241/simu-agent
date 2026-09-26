@@ -1,6 +1,7 @@
 """Curve-specific diagnosis Operations and components."""
 
 from __future__ import annotations
+from scidiscovery.operations.spec import InputDerivationSpec
 
 from scidiscovery.operations.input_validation import parse_bound_json, prior_analysis_sources
 
@@ -22,7 +23,7 @@ from .analysis import (
 from .curve_contract_compiler import validate_compiled_curve_contract, validate_curve_contract_inputs
 from .diagnostic_tool import DIAGNOSTIC_GUIDANCE, DIAGNOSTIC_PLOT_OUTPUT, record_metric_report
 from .analysis_files import GUIDANCE as ANALYSIS_FILES_GUIDANCE
-from scidiscovery.artifact_agent.service.analysis_artifacts import analysis_calculations, analysis_evidence_aliases, calculation_reference_aliases
+from scidiscovery.artifact_agent.service.analysis_artifacts import analysis_calculations, analysis_evidence_aliases
 from .schema import (
     CurveBundle,
     CurveComparisonSpec,
@@ -274,41 +275,17 @@ def _inventory_input(name: str, description: str, *, min_items: int = 0, max_ite
         exposure="on_demand", usage="evidence_inventory")
 
 
-def _diagnosis_identity(inputs: tuple[Any, ...], parameters: Any) -> bool:
-    del parameters
-    by_port: dict[str, list[Any]] = {}
-    for item in inputs:
-        by_port.setdefault(item.port_name, []).append(item.artifact)
-    plan, review = by_port["experiment_plan"][0], by_port["experiment_review"][0]
-    if (plan.ref not in review.parent_refs or review.handoff_verdict != "pass"
-            or dict(review.labels).get("operation_id") != "science.object.review.v1"
-            or dict(review.labels).get("operation_output_port") != "scientific_review"):
-        raise OperationInvocationError("input_review_plan_mismatch", port="experiment_review",
-            message="Bind the passing science.object.review.v1 scientific_review output whose direct parent is the exact experiment_plan.")
-    # Generic results require explicit direct plan parentage. Runtime package chains
-    # belong to the TCAD entry, whose guard checks the complete declared chain.
-    for index, item in enumerate(by_port["experiment_results"]):
-        if plan.ref not in item.parent_refs:
-            raise OperationInvocationError("input_result_plan_mismatch", port="experiment_results", field=str(index),
-                message="This result has no direct parent matching experiment_plan. Generic analysis requires direct plan parentage; TCAD runtime package chains use tcad.result.analyze.v1.")
-    return True
-
-
 def _diagnosis_inputs(sources: dict[str, bytes]) -> None:
     prior_analysis_sources(sources)
-    if "metric_report" in sources:
+    if "metric_report" in sources and "experiment_plan" in sources:
         plan = parse_bound_json(ExperimentPortfolio, sources["experiment_plan"], admission_port="experiment_plan")
         report = parse_bound_json(CurveConsistencyReport, sources["metric_report"], admission_port="metric_report")
         if report.validation_plan_sha256 not in {canonical_sha256(item) for item in plan.validation_plans}:
             raise OperationInvocationError("input_metric_plan_mismatch", port="metric_report", field="validation_plan_sha256",
                 message="The metric report must identify a validation plan in the bound experiment.")
     for port, model in (("experiment_plan", ExperimentPortfolio), ("experiment_review", ScientificReview)):
-        parsed = parse_bound_json(model, sources[port], admission_port=port)
-        if port == "experiment_review":
-            if parsed.review_target != "experiment_portfolio":
-                raise OperationInvocationError("input_review_target_mismatch", port=port, field="/review_target")
-            if parsed.verdict != "pass":
-                raise OperationInvocationError("input_review_verdict_mismatch", port=port, field="/verdict")
+        if port in sources:
+            parse_bound_json(model, sources[port], admission_port=port)
 
 
 def _diagnosis_operation(operation_id: str, purpose: str, applies_when: str, *, prompt: str) -> OperationSpec:
@@ -319,17 +296,17 @@ def _diagnosis_operation(operation_id: str, purpose: str, applies_when: str, *, 
         prompt=ComponentRef(prompt), tools=BASE_TOOLS + (ComponentRef("analysis_score_tool"), ComponentRef("analysis_diagnostic_tool"), ComponentRef("analysis_files_tool")),
         native_view_image=True,
         input_validation=InputValidationSpec(ComponentRef("diagnosis_inputs"), "science.diagnosis.history_inputs",
-            "Bind a structurally valid historical plan and its exact completed science.object.review.v1 scientific_review output, with matching plan parent and passing experiment_portfolio verdict. Results must have the exact plan parent. Historical review is evidence for analysis, not current authoring or execution authority. An optional metric report must identify a validation plan in the bound experiment."),
+            "Analyze selected immutable results. Plans and reviews are optional scientific context. When both a plan and precomputed metric report are supplied, their declared calculation identity must agree."),
         inputs=(
-            _input("experiment_plan", "Exact experiment portfolio.", "scidiscovery.experiment-portfolio.v1", max_item_bytes=2 * 1024 * 1024, usage="evidence_inventory"),
-            _review_input("experiment_review", "Exact independent passing plan review.").model_copy(update={"exposure": "on_demand", "usage": "evidence_inventory"}),
-            _inventory_input("experiment_results", "Exact results with direct plan parentage.", min_items=1),
+            _input("experiment_plan", "Exact experiment portfolio.", "scidiscovery.experiment-portfolio.v1", min_items=0, max_item_bytes=2 * 1024 * 1024, usage="evidence_inventory"),
+            _review_input("experiment_review", "Optional scientific review and its limitations.").model_copy(update={"min_items":0, "exposure": "on_demand", "usage": "evidence_inventory"}),
+            _inventory_input("experiment_results", "Exact experiment reports, observations or incomplete results.", min_items=1),
             _inventory_input("reference_material", "Optional reference bytes and explicit tables.", max_items=8),
             _inventory_input("current_progress", "Relevant prior progress and limitations."),
-            _input("prior_analysis", "Optional sealed analysis for reuse; bind its own producer manifest.",
+            _input("prior_analysis", "Optional exact prior analysis for source and calculation reuse.",
                 "scidiscovery.layered-diagnosis.v1", min_items=0, max_item_bytes=128*1024, usage="evidence_inventory"),
             _input("prior_analysis_manifest", "The prior analysis's same-producer direct manifest parent. Every reused source must also be bound in this Run.",
-                "scidiscovery.tool-evidence-manifest.v1", min_items=0, max_item_bytes=1024*1024, usage="evidence_inventory"),
+                "scidiscovery.tool-evidence-manifest.v1", min_items=0, max_item_bytes=1024*1024, usage="evidence_inventory").model_copy(update={"agent_visible":False, "derivation":InputDerivationSpec(anchor_port="prior_analysis", producer_output_port="recovery_manifest_output")}),
             _input("metric_report", "Optional precomputed metrics, limited to actual coverage.", "scidiscovery.curve-consistency-report.v1", min_items=0, max_item_bytes=2 * 1024 * 1024),
             _input("curve_bundle", "Optional canonical curves.", "scidiscovery.curve-bundle.v1", min_items=0, max_item_bytes=8 * 1024 * 1024),
         ),
@@ -342,240 +319,26 @@ def _diagnosis_operation(operation_id: str, purpose: str, applies_when: str, *, 
                 schema_resource=ComponentRef("tool_evidence_schema"), kind="tool_evidence_manifest",
                 min_items=0, max_items=1, max_item_bytes=1024*1024,
                 collection=CollectionSpec(max_total_bytes=1024*1024)), DIAGNOSTIC_PLOT_OUTPUT),
-        guards=(ComponentRef("diagnosis_identity"),), timeout=900,
+        timeout=900,
         max_input_bytes=272 * 1024 * 1024, max_output_bytes=1152 * 1024 + 64 * 1024 * 1024,
         max_files=34, consequence="scientific",
     ).model_copy(update={"version": "4"})
 
 
-def _curve_error_diagnosis_operation() -> OperationSpec:
-    return scientific_agent_operation(
-        "science.result.diagnose.curve-error.v1",
-        "Interpret one deterministic curve-error analysis package.",
-        "A deterministic curve-error analysis package localizes a failed residual metric.",
-        "Recomputing analysis, producing plots, or changing exact scientific inputs.",
-        input_validation=InputValidationSpec(ComponentRef("curve_diagnosis_inputs"), "curve.diagnosis.inputs", "At admission, the analysis package must reproduce from its exact curve inputs and bind a valid curve contract with complete-plan metric coverage. Diagnosis submission does not repeat this input validation or calculation."),
-        agent=ComponentRef("diagnosis_agent"),
-        workspace=ComponentRef("analysis_workspace"),
-        prompt=ComponentRef("curve_diagnosis_prompt"),
-        tools=BASE_TOOLS,
-        native_view_image=True,
-        inputs=(
-            _input(
-                "curve_analysis_package",
-                "Exact reproducible curve inputs and deterministic error localization.",
-                "scidiscovery.curve-diagnostic-analysis.v1",
-                max_item_bytes=12 * 1024 * 1024,
-                usage="prior_signal",
-            ),
-            _inventory_input("curve_analysis_plots", "Optional exact diagnostic images referenced by the package; inspect with view_image.", max_items=8).model_copy(update={"schema_id": "opaque", "schema_resource": ComponentRef("opaque_schema", plugin_id=_GENERAL_SCIENCE), "media_types": ("image/png",), "max_item_bytes": 1024 * 1024}),
-        ),
-        outputs=(
-            _output(
-                "layered_diagnosis",
-                "Scientific interpretation of the fixed curve-error analysis.",
-                "layered_diagnosis",
-                "scidiscovery.layered-diagnosis.v1",
-                ComponentRef("diagnosis_validator"),
-                max_item_bytes=128 * 1024,
-                context_validator=ComponentRef("curve_diagnosis_context"),
-                context_sources=("curve_analysis_package", "curve_analysis_plots"),
-            ).model_copy(update={"schema_resource": ComponentRef("curve_diagnosis_schema")}),
-        ),
-        timeout=900,
-        max_input_bytes=20 * 1024 * 1024,
-        max_output_bytes=128 * 1024,
-        max_files=1,
-        consequence="scientific",
-    ).model_copy(update={"version": "2"})
 
 
-CURVE_CONTRACT_PROMPT = """Do not author output/result.json or fill mechanical
-CurveExperimentContract fields. Read the exact objective, plan, and reference
-bundle, then call worker_curve_contract_compile once with only: the selected
-experiment key, the exact objective-target to reference-series bindings, and the
-curve-score validation-check keys scientifically belonging to each target; the
-candidate case keys that need target-fit curve comparison; and one supported
-residual metric expressing the scientific comparison intent. Select targets for
-the reviewed current experiment; sharing an observable does not require selecting
-every overall objective target. Follow the plan's current objectives and reasons
-for deferring others. If a necessary current target cannot be realized, report the
-specific gap for redesign instead of silently dropping the current commitment.
-Uncovered overall targets remain outstanding; their scientific impact belongs to
-design and independent review, not an automatic coverage gate. Do not match checks
-to targets by copying or rewriting free-text observable descriptions. The compiler copies
-axes and units, calculates support domains and point counts, creates identifiers
-and operators, binds each check owned by scidiscovery.curve-score.v1 to every
-generated comparison for the same observable,
-and writes and validates the complete v1 result. After it returns ready, call
-worker_submit_result. Do not treat convergence-only cases as target-fit candidates.
-"""
-
-CURVE_CONTRACT_REVIEW_PROMPT = """Return exactly one RoleResultEnvelope whose
-payload is the ScientificReview required by the schema identified by assignment.output.schema_path. Independently
-review the curve-domain contract against the exact generic experiment plan.
-Use review_target domain_contract. Check series identity, case binding, units,
-domains, operator semantics, exact reference-bundle support, and the exact binding
-between every operator and its supported curve check. One check may govern
-multiple comparisons for the same observable; verify the metric and threshold on
-every binding. Mechanical fields must equal the compiled result. Checks owned by
-another evaluator are outside this contract. Compare the selected objective-target
-bindings with the plan's current objectives and original research objective.
-Assess whether uncovered targets remove a necessary prerequisite, control, or
-meaningful interpretation of this experiment. Explain in the formal review why
-the current scope can proceed, needs revision, or cannot proceed; neither reject
-nor pass solely because overall coverage is incomplete. Preserve the limits of
-the resulting conclusions and the outstanding goals. Do not mutate either input or grant
-execution approval.
-"""
 
 
-def _curve_contract_operations() -> tuple[OperationSpec, ...]:
-    design = scientific_agent_operation(
-        "science.curve.contract.design.v1",
-        "Realize one generic experiment as an explicit curve-domain contract.",
-        "A reviewed generic experiment needs curve data and metric bindings.",
-        "Changing generic scientific intent or running a curve evaluator.",
-        agent=ComponentRef("curve_contract_agent"),
-        input_validation=InputValidationSpec(ComponentRef("curve_contract_inputs"),
-            "curve.contract.inputs", "The exact objective and experiment plan must share objective_key before a Run is created."),
-        workspace=ComponentRef("workspace", plugin_id=_GENERAL_SCIENCE),
-        prompt=ComponentRef("curve_contract_prompt"),
-        tools=(ComponentRef("curve_contract_compiler_tool"),),
-        inputs=(
-            _input(
-                "research_objective",
-                "Exact objective for the scientific plan.",
-                "scidiscovery.research-objective.v1",
-                max_item_bytes=512 * 1024,
-                usage="prior_signal",
-            ),
-            _input(
-                "experiment_plan",
-                "Exact generic experiment portfolio.",
-                "scidiscovery.experiment-portfolio.v1",
-                max_item_bytes=2 * 1024 * 1024,
-                usage="prior_signal",
-            ),
-            _review_input(
-                "experiment_review",
-                "Exact independent review of the generic experiment plan.",
-            ),
-            _input(
-                "reference_bundle",
-                "Exact normalized reference curves used by the contract compiler.",
-                "scidiscovery.curve-bundle.v1",
-                max_item_bytes=256 * 1024 * 1024,
-                usage="evidence_inventory",
-            ),
-        ),
-        outputs=(
-            _output(
-                "curve_contract",
-                "Curve-domain realization of one experiment.",
-                "domain_realization",
-                "scidiscovery.curve-experiment-contract.v1",
-                ComponentRef("curve_contract_validator"),
-                max_item_bytes=2 * 1024 * 1024,
-                context_validator=ComponentRef("curve_contract_context"),
-                context_sources=(
-                    "research_objective",
-                    "experiment_plan",
-                    "reference_bundle",
-                ),
-                semantic_contract=ComponentRef("curve_contract_semantic_contract"),
-            ),
-        ),
-        timeout=900,
-        max_input_bytes=261 * 1024 * 1024,
-        max_output_bytes=2 * 1024 * 1024,
-        max_files=1,
-        review=ReviewSpec(
-            reviewer_operation="science.curve.contract.review.v1",
-            reviewer_input_port="curve_contract",
-            subject_outputs=("curve_contract",),
-        ),
-    )
-    review = scientific_agent_operation(
-        "science.curve.contract.review.v1",
-        "Independently review a curve-domain contract against its generic plan.",
-        "A curve contract needs domain review before deterministic use.",
-        "Editing the contract or granting human execution approval.",
-        agent=ComponentRef("curve_contract_reviewer"),
-        input_validation=InputValidationSpec(ComponentRef("curve_contract_inputs"),
-            "curve.contract.inputs", "The exact objective and experiment plan must share objective_key before a Run is created."),
-        workspace=ComponentRef("workspace", plugin_id=_GENERAL_SCIENCE),
-        prompt=ComponentRef("curve_contract_review_prompt"),
-        tools=BASE_TOOLS,
-        inputs=(
-            _input(
-                "research_objective",
-                "Exact objective for the scientific plan.",
-                "scidiscovery.research-objective.v1",
-                max_item_bytes=512 * 1024,
-                usage="prior_signal",
-            ),
-            _input(
-                "experiment_plan",
-                "Exact generic experiment portfolio.",
-                "scidiscovery.experiment-portfolio.v1",
-                max_item_bytes=2 * 1024 * 1024,
-                usage="prior_signal",
-            ),
-            _review_input(
-                "experiment_review",
-                "Exact independent review of the generic experiment plan.",
-            ),
-            _input(
-                "curve_contract",
-                "Exact curve-domain contract under review.",
-                "scidiscovery.curve-experiment-contract.v1",
-                max_item_bytes=2 * 1024 * 1024,
-                usage="prior_signal",
-            ),
-            _input(
-                "reference_bundle",
-                "Exact normalized reference curves used by the compiler.",
-                "scidiscovery.curve-bundle.v1",
-                max_item_bytes=256 * 1024 * 1024,
-                usage="evidence_inventory",
-            ),
-        ),
-        outputs=(
-            _output(
-                "scientific_review",
-                "Independent curve-contract review.",
-                "scientific_review",
-                "scidiscovery.scientific-review.v1",
-                ComponentRef("scientific_review_validator"),
-                max_item_bytes=64 * 1024,
-                context_validator=ComponentRef("curve_contract_review_context"),
-                context_sources=(
-                    "research_objective",
-                    "experiment_plan",
-                    "curve_contract",
-                    "reference_bundle",
-                ),
-                semantic_contract=ComponentRef("curve_contract_review_contract"),
-            ),
-        ),
-        timeout=600,
-        max_input_bytes=261 * 1024 * 1024,
-        max_output_bytes=64 * 1024,
-        max_files=1,
-    )
-    return design, review
+
 
 
 AGENT_OPERATIONS = (
-    *_curve_contract_operations(),
     _diagnosis_operation(
         "science.result.diagnose.v1",
         "Analyze exact experiment results with optional deterministic calculations.",
         "Reviewed experiment results are available, including incomplete or failed results.",
         prompt="diagnosis_prompt",
     ),
-    _curve_error_diagnosis_operation(),
 )
 
 
@@ -588,14 +351,9 @@ def validate_analysis_report(diagnosis: LayeredDiagnosisReport, portfolio: Exper
     if len(plans) != 1 or diagnosis.study_kind != portfolio.study_kind:
         raise declared_violation("analysis must identify the exact study and validation plan")
     assessment = diagnosis.objective_assessment
-    if portfolio.objective_key is not None and assessment is None:
-        raise declared_violation(
-            "analysis objective assessment is required when the exact scoped plan declares objective_key",
-            path="$.objective_assessment",
-        )
     if assessment is not None and assessment.objective_key != portfolio.objective_key:
         raise declared_violation("analysis objective differs from plan", path="$.objective_assessment")
-    records = diagnosis.calculation_records if calculations is None else calculations
+    records = () if calculations is None else calculations
     comparisons = set()
     for record in records:
         if record.status == "computed":
@@ -603,10 +361,6 @@ def validate_analysis_report(diagnosis: LayeredDiagnosisReport, portfolio: Exper
             comparisons.update(item.comparison_key for item in report.comparisons)
     if metric_report is not None and metric_report.validation_plan_sha256 == canonical_sha256(plans[0]):
         comparisons.update(item.comparison_key for item in metric_report.comparisons)
-    inline_keys = {record.record_key for record in diagnosis.calculation_records}
-    for evidence in diagnosis.evidence:
-        if evidence.locator.startswith("calculation_records:") and evidence.locator.split(":", 1)[1] not in inline_keys:
-            raise declared_violation("analysis references an unknown calculation", path="$.evidence")
     if assessment is not None and not set(assessment.comparison_keys).issubset(comparisons):
         raise declared_violation("objective assessment references an unknown comparison", path="$.objective_assessment")
 
@@ -614,12 +368,13 @@ def validate_analysis_report(diagnosis: LayeredDiagnosisReport, portfolio: Exper
 def _diagnosis_context(payload: dict[str, Any], sources: dict[str, bytes], handoff: dict[str, Any]) -> None:
     del handoff
     diagnosis = LayeredDiagnosisReport.model_validate_json(canonical_json(payload), strict=True)
-    portfolio = parse_bound_json(ExperimentPortfolio, sources["experiment_plan"])
+    portfolio = parse_bound_json(ExperimentPortfolio, sources["experiment_plan"]) if "experiment_plan" in sources else None
     calculations = analysis_calculations(diagnosis, sources)
     for record in calculations:
         calculation_sources(record, sources)
     metric_report = parse_bound_json(CurveConsistencyReport, sources["metric_report"]) if "metric_report" in sources else None
-    validate_analysis_report(diagnosis, portfolio, metric_report, calculations=calculations)
+    if portfolio is not None:
+        validate_analysis_report(diagnosis, portfolio, metric_report, calculations=calculations)
     _validate_analysis_evidence(diagnosis, sources)
     _validate_diagnosis_references(diagnosis, sources)
 
@@ -630,7 +385,7 @@ def _validate_diagnosis_references(diagnosis, sources):
     validate_evidence_source_aliases(diagnosis.model_dump(mode="json"),
         set(sources) | {item.source_key for item in diagnosis.evidence}
         | {item.source_key for item in diagnosis.source_references}
-        | {item.record_key for item in diagnosis.calculation_records})
+        )
 
 
 def _validate_analysis_evidence(diagnosis, sources, *, package=None) -> None:
@@ -639,17 +394,11 @@ def _validate_analysis_evidence(diagnosis, sources, *, package=None) -> None:
         if reference.source_key in references and reference != references[reference.source_key]:
             raise declared_violation("analysis source key has conflicting source mappings", path=f"$.source_references[{index}].source_key")
         references[reference.source_key] = reference
-    records = {item.record_key for item in diagnosis.calculation_records}
     for reference in references.values():
         if reference.input_alias not in sources:
             raise declared_violation("analysis source reference is not a bound input", path="$.source_references")
-    aliases = analysis_evidence_aliases(diagnosis.evidence, diagnosis.source_references, sources,
-        calculation_reference_aliases(diagnosis.calculation_records, sources))
+    aliases = analysis_evidence_aliases(diagnosis.evidence, diagnosis.source_references, sources)
     for evidence in diagnosis.evidence:
-        if evidence.locator.startswith("calculation_records:"):
-            if package is not None or evidence.locator.split(":", 1)[1] not in records:
-                raise declared_violation("analysis references an unknown calculation", path="$.evidence")
-            continue
         alias = aliases[evidence.source_key]
         if alias not in sources:
             raise declared_violation("raw analysis evidence requires a bound input locator", path="$.evidence")
@@ -700,8 +449,6 @@ def _curve_diagnosis_context(
     diagnosis = LayeredDiagnosisReport.model_validate_json(
         canonical_json(payload), strict=True
     )
-    if diagnosis.calculation_records:
-        raise declared_violation("precomputed analysis cannot create calculation records", path="$.calculation_records")
     _validate_analysis_evidence(diagnosis, sources, package=json.loads(sources["curve_analysis_package"]))
     _validate_diagnosis_references(diagnosis, sources)
     _validate_diagnosis_against(
@@ -819,35 +566,10 @@ The optional curve-error helper is never a required next stage.
 """ + DIAGNOSTIC_GUIDANCE.format(diagnostic_tool="worker_curve_diagnose") + ANALYSIS_FILES_GUIDANCE
 
 
-class PrecomputedDiagnosisReport(LayeredDiagnosisReport):
-    """This writer consumes saved calculations and cannot author new records."""
-
-    calculation_records: tuple[()] = ()
-
-
-def _curve_diagnosis_schema() -> str:
-    schema = json.loads(schema_resource(PrecomputedDiagnosisReport, "scidiscovery.layered-diagnosis.v1"))
-    schema["$defs"]["AnalysisSourceReference"]["properties"]["input_alias"]["const"] = "curve_analysis_package"
-    return canonical_json(schema).decode("utf-8")
-
-
 class Resources:
     tool_evidence_schema = TOOL_EVIDENCE_SCHEMA
     diagnosis_schema = schema_resource(
         LayeredDiagnosisReport, "scidiscovery.layered-diagnosis.v1"
-    )
-    curve_diagnosis_schema = _curve_diagnosis_schema()
-    curve_analysis_package_schema = schema_resource(
-        CurveDiagnosticAnalysisPackage,
-        "scidiscovery.curve-diagnostic-analysis.v1",
-    )
-    diagnosis_semantic_contract = scientific_semantic_contract(
-        "curve.diagnosis",
-        "Bind analysis to the exact plan, results, evidence and optional calculations.",
-        "Report findings and limitations; verify controlled calculation receipts without rerunning scoring.",
-        context_constraint="Output identities and references must agree with the exact declared context sources that are present. A source key must resolve to one bound input or calculation record. Inline and saved representations of the same complete controlled calculation receipt share one identity. A bound input alias retains its identity even in an optional source mapping. Repeated citations and local locators are allowed; an explicit locator naming another bound input conflicts with that mapping.",
-        payload_rule_id="curve.diagnosis.report_consistency",
-        context_rule_id="curve.diagnosis.input_binding",
     )
     diagnosis_report_semantic_contract = scientific_semantic_contract(
         "curve.diagnosis",
@@ -855,337 +577,49 @@ class Resources:
         "Report findings and limitations; verify controlled calculation receipts without rerunning scoring.",
         context_constraint=(
             "Output identities and references must agree with the exact declared context sources that are present. "
-            "For generic diagnosis the scope is the exact experiment_plan; for fixed curve-error diagnosis it is "
-            "curve_analysis_package.experiment_plan. When that scope declares a non-null objective_key, "
-            "objective_assessment is required and must use the exact key. A null key does not require or authorize "
+            "When an optional objective assessment is supplied, it uses the exact selected plan objective_key. A null key does not authorize "
             "inventing an assessment identity. A source key must resolve to one bound input or calculation record. "
-            "Inline and saved representations of the same complete controlled calculation receipt share one identity. "
+            "Cite the calculation_ref returned by the tool; the service resolves the registered scientific record and private receipt. "
             "A bound input alias retains its identity even in an optional source mapping. Repeated citations and local "
             "locators are allowed; an explicit locator naming another bound input conflicts with that mapping."
         ),
         payload_rule_id="curve.diagnosis.report_consistency",
         context_rule_id="curve.diagnosis.input_binding",
     )
-    curve_contract_semantic_contract = scientific_semantic_contract(
-        "curve.contract",
-        "Realize curve data and metric bindings without changing the generic experiment.",
-        (
-            "Every bound threshold and case must match the supplied experiment "
-            "plan; checks owned by another evaluator remain unbound. Select the "
-            "current target subset from the exact objective, without requiring "
-            "all targets that share an observable."
-        ),
-        required_inputs=(
-            "research_objective",
-            "experiment_plan",
-            "reference_bundle",
-        ),
-        payload_constraint=(
-            "Mechanical series, axes, domains, counts, identifiers, operators, and "
-            "thresholds must equal the deterministic compiler output."
-        ),
-        context_constraint=(
-            "Objective, case, reference-series, metric, and threshold identities must "
-            "match the exact objective, experiment plan, and reference bundle. "
-            "Each selected target must exist in the original objective; observable "
-            "descriptions need not repeat the experiment's prose verbatim. Unselected targets "
-            "remain outstanding; scientific review assesses their impact."
-        ),
-        payload_rule_id="curve.contract.case_metric_closure",
-        context_rule_id="curve.contract.objective_binding",
-    )
-    curve_contract_review_contract = scientific_semantic_contract(
-        "curve.review",
-        "Review the complete curve contract independently without mutating it.",
-        "The verdict is scientific review, not human approval.",
-        required_inputs=(
-            "research_objective",
-            "experiment_plan",
-            "curve_contract",
-            "reference_bundle",
-        ),
-        context_constraint=(
-            "The review must bind the exact research objective, experiment plan, and "
-            "compiled curve contract and reference bundle. Assess whether any "
-            "uncovered objective target prevents the current experiment from "
-            "proceeding, and explain that judgment in the formal review."
-        ),
-        payload_rule_id="curve.review.verdict_consistency",
-        context_rule_id="curve.review.subject_binding",
-    )
-    curve_contract_prompt = OPERATION_AGENT_PREAMBLE + CURVE_CONTRACT_PROMPT
-    curve_contract_review_prompt = (
-        OPERATION_AGENT_PREAMBLE + CURVE_CONTRACT_REVIEW_PROMPT
-    )
     diagnosis_prompt = OPERATION_AGENT_PREAMBLE + DIAGNOSIS_PROMPT
-    curve_diagnosis_prompt = OPERATION_AGENT_PREAMBLE + """Read analysis-start.json first for the input index and full continuation guidance.\nRead domain-workspace.json /patch_contract for the complete draft/report instructions.\nRead any bound curve_analysis_plots with native view_image when useful; these images supplement the fixed package, never supply unbound scientific facts.\nReturn exactly one
-RoleResultEnvelope whose payload is the LayeredDiagnosisReport required by
-the schema identified by assignment.output.schema_path. Interpret the supplied immutable curve-analysis package,
-using the evidence and actual dependencies of each conclusion. The package's metric values,
-localized residuals, and plot identities are deterministic facts: do not
-recompute or alter them. Do not mutate evidence or author state transitions.
-Leave calculation_records empty, including failure records. Cite the exact
-curve_analysis_package or bound curve_analysis_plots aliases directly. Optional
-package locators use valid JSON pointers; plot locators describe positions in
-that image. Source identity needs no duplicate entry in another citation table.
-No scoring tool or external evidence is available in this Operation. Distinguish
-declared check coverage from actual passing metrics and thresholds. Missing or
-failed checks limit complete success; they do not erase independently supported facts.
-Use curve_analysis_package.experiment_plan as the exact report scope. When its
-objective_key is non-null, objective_assessment is required and must use that exact
-key; not_evaluable remains valid when this fixed package cannot assess the objective.
-When the key is null, the assessment remains optional and must not be invented.
-next_action remains optional Worker advice, not a scheduling command.
-"""
 
 
 class Components:
-    curve_diagnosis_inputs = CallableComponent("validator", _curve_diagnosis_inputs)
-    diagnosis_identity = CallableComponent("guard", _diagnosis_identity)
     diagnosis_inputs = CallableComponent("validator", _diagnosis_inputs)
     diagnosis_validator = CallableComponent(
         "validator", payload_validator(validate_layered_diagnosis)
     )
     diagnosis_context = CallableComponent("validator", _diagnosis_context)
-    curve_diagnosis_context = CallableComponent(
-        "validator", _curve_diagnosis_context
-    )
-    curve_analysis_package_validator = CallableComponent(
-        "validator",
-        lambda raw: validate_curve_analysis_package(
-            CurveDiagnosticAnalysisPackage.model_validate_json(raw, strict=True)
-        ),
-    )
     diagnosis_agent = CallableComponent("agent", _agent_marker)
-    curve_contract_agent = CallableComponent("agent", _agent_marker)
-    curve_contract_reviewer = CallableComponent("agent", _agent_marker)
-    curve_contract_inputs = CallableComponent("validator", _curve_contract_inputs)
-    curve_contract_context = CallableComponent("validator", _curve_contract_context)
-    curve_contract_review_context = CallableComponent(
-        "validator", _curve_contract_review_context
-    )
-    scientific_review_validator = CallableComponent(
-        "validator", payload_validator(validate_scientific_review)
-    )
-    curve_error_inputs = CallableComponent("validator", _curve_error_inputs)
-    curve_error_analysis = CallableComponent("transform", _curve_error_analysis)
 
 
-def _curve_error_analysis_operation() -> OperationSpec:
-    return OperationSpec(
-        operation_id="science.curve.error.analyze.v1",
-        input_validation=InputValidationSpec(ComponentRef("curve_error_inputs"), "curve.error.inputs",
-            "Validate exact plan, contract, report and curve bundle identities before computing residual diagnostics."),
-        version="1",
-        catalog_scope="support",
-        description=OperationDescription(
-            purpose="Reproduce failed residual metrics and localize their curve error.",
-            applies_when="A reviewed curve contract, complete metric report, and exact curve bundle are available.",
-            not_for="Authoring scientific diagnoses or proposing the next experiment.",
-        ),
-        executor=ExecutorRef(
-            kind="transform",
-            component=ComponentRef("curve_error_analysis"),
-        ),
-        inputs=(
-            _input(
-                "experiment_plan",
-                "Exact experiment portfolio.",
-                "scidiscovery.experiment-portfolio.v1",
-                max_item_bytes=2 * 1024 * 1024,
-                usage="prior_signal",
-            ),
-            _input(
-                "experiment_review",
-                "Exact independent plan review.",
-                "scidiscovery.scientific-review.v1",
-                max_item_bytes=64 * 1024,
-                exposure="handoff_only",
-                usage="prior_signal",
-            ),
-            _input(
-                "curve_contract",
-                "Exact reviewed curve-domain contract.",
-                "scidiscovery.curve-experiment-contract.v1",
-                max_item_bytes=2 * 1024 * 1024,
-                usage="prior_signal",
-            ),
-            _review_input(
-                "curve_contract_review",
-                "Exact independent review of the curve-domain contract.",
-            ),
-            _input(
-                "metric_report",
-                "Exact deterministic curve comparison report.",
-                "scidiscovery.curve-consistency-report.v1",
-                max_item_bytes=2 * 1024 * 1024,
-            ),
-            _input(
-                "curve_bundle",
-                "Canonical curve bundle for residual localization.",
-                "scidiscovery.curve-bundle.v1",
-                max_item_bytes=8 * 1024 * 1024,
-            ),
-        ),
-        outputs=(
-            _output(
-                "curve_analysis_package",
-                "Exact inputs and reproducible deterministic curve-error analysis.",
-                "curve_diagnostic_analysis",
-                "scidiscovery.curve-diagnostic-analysis.v1",
-                ComponentRef("curve_analysis_package_validator"),
-                max_item_bytes=12 * 1024 * 1024,
-                semantic_contract=ComponentRef("diagnosis_semantic_contract"),
-            ),
-            _output(
-                "curve_analysis_plots",
-                "Deterministic residual plots bound to the analysis package.",
-                "curve_error_plot",
-                "opaque",
-                ComponentRef("nonempty_validator"),
-                max_item_bytes=1024 * 1024,
-                media_types=("image/png",),
-                min_items=1,
-                max_items=8,
-                semantic_contract=ComponentRef("diagnosis_semantic_contract"),
-                collection=CollectionSpec(
-                    max_total_bytes=8 * 1024 * 1024,
-                ),
-            ),
-        ),
-        consequence="scientific",
-        limits=LimitsSpec(
-            timeout_seconds=120,
-            max_input_bytes=12 * 1024 * 1024,
-            max_output_bytes=20 * 1024 * 1024,
-            max_files=9,
-        ),
-    )
 
 
-TRANSFORM_OPERATIONS = (
-    _curve_error_analysis_operation(),
-)
+TRANSFORM_OPERATIONS = ()
 
 
 def component_specs() -> tuple[ComponentSpec, ...]:
     values = [
         ComponentSpec("analysis_workspace", "workspace", "curve_score.analysis_workspace:WORKSPACE", public=True,
-            resources=(ComponentRef("analysis_materializer", plugin_id="curve_score"),
-                ComponentRef("analysis_snapshotter", plugin_id="curve_score"),
-                ComponentRef("analysis_finalizer", plugin_id="curve_score"))),
+            resources=(ComponentRef("analysis_materializer"), ComponentRef("analysis_snapshotter"), ComponentRef("analysis_finalizer"))),
         ComponentSpec("analysis_finalizer", "workspace_finalizer", "scidiscovery.general_science_components:RESULT_FINALIZER"),
-        ComponentSpec("analysis_materializer", "workspace_materializer", "curve_score.analysis_workspace:MATERIALIZER", configuration_identity="analysis.user-context-origin:v1"),
+        ComponentSpec("analysis_materializer", "workspace_materializer", "curve_score.analysis_workspace:MATERIALIZER", configuration_identity="analysis.scientific-context:v2"),
         ComponentSpec("analysis_snapshotter", "workspace_snapshotter", "curve_score.analysis_workspace:SNAPSHOTTER"),
-        ComponentSpec("curve_error_inputs", "validator", "curve_score.science_operations:Components.curve_error_inputs"),
-        ComponentSpec("curve_contract_inputs", "validator", "curve_score.science_operations:Components.curve_contract_inputs"),
-        ComponentSpec("curve_diagnosis_inputs", "validator", "curve_score.science_operations:Components.curve_diagnosis_inputs"),
-        ComponentSpec("diagnosis_identity", "guard", "curve_score.science_operations:Components.diagnosis_identity", configuration_identity="historical-analysis-r2:v1"),
-        ComponentSpec("diagnosis_inputs", "validator", "curve_score.science_operations:Components.diagnosis_inputs", configuration_identity="historical-analysis-r2:v1"),
-        ComponentSpec("analysis_score_tool", "worker_tool", "curve_score.analysis_tool:CURVE_SCORE_TOOL", configuration_identity="analysis.response-summary:v1"),
-        ComponentSpec("analysis_diagnostic_tool", "worker_tool", "curve_score.diagnostic_tool:DIAGNOSTIC_TOOL", configuration_identity="analysis.response-summary:v1"),
+        ComponentSpec("diagnosis_inputs", "validator", "curve_score.science_operations:Components.diagnosis_inputs", configuration_identity="historical-analysis-r4:v1"),
+        ComponentSpec("analysis_score_tool", "worker_tool", "curve_score.analysis_tool:CURVE_SCORE_TOOL", configuration_identity="analysis.scientific-receipt:v2"),
+        ComponentSpec("analysis_diagnostic_tool", "worker_tool", "curve_score.diagnostic_tool:DIAGNOSTIC_TOOL", configuration_identity="analysis.diagnostic-checkpoint:v4"),
         ComponentSpec("analysis_files_tool", "worker_tool", "curve_score.analysis_files:TOOL", public=True),
-        ComponentSpec(
-            "diagnosis_validator",
-            "validator",
-            "curve_score.science_operations:Components.diagnosis_validator",
-            resources=(ComponentRef("diagnosis_report_semantic_contract"),),
-        ),
-        ComponentSpec(
-            "diagnosis_context",
-            "validator",
-            "curve_score.science_operations:Components.diagnosis_context",
-            configuration_identity="analysis-receipt-integrity:v1",
-            resources=(ComponentRef("diagnosis_report_semantic_contract"),),
-        ),
-        ComponentSpec(
-            "curve_diagnosis_context",
-            "validator",
-            "curve_score.science_operations:Components.curve_diagnosis_context",
-            configuration_identity="input-boundary-r4:v1",
-            resources=(ComponentRef("diagnosis_report_semantic_contract"),),
-        ),
-        ComponentSpec(
-            "curve_analysis_package_validator",
-            "validator",
-            "curve_score.science_operations:Components.curve_analysis_package_validator",
-            resources=(ComponentRef("diagnosis_semantic_contract"),),
-        ),
-        ComponentSpec(
-            "diagnosis_agent",
-            "agent",
-            "curve_score.science_operations:Components.diagnosis_agent",
-        ),
-        ComponentSpec(
-            "curve_contract_agent",
-            "agent",
-            "curve_score.science_operations:Components.curve_contract_agent",
-        ),
-        ComponentSpec(
-            "curve_contract_reviewer",
-            "agent",
-            "curve_score.science_operations:Components.curve_contract_reviewer",
-        ),
-        ComponentSpec(
-            "curve_contract_compiler_tool",
-            "worker_tool",
-            "curve_score.curve_contract_compiler:CURVE_CONTRACT_COMPILER_TOOL",
-        ),
-        ComponentSpec(
-            "curve_contract_context",
-            "validator",
-            "curve_score.science_operations:Components.curve_contract_context",
-            configuration_identity="input-boundary-r4:v1",
-            resources=(ComponentRef("curve_contract_semantic_contract"),),
-        ),
-        ComponentSpec(
-            "curve_contract_review_context",
-            "validator",
-            "curve_score.science_operations:Components.curve_contract_review_context",
-            configuration_identity="input-boundary-r4:v1",
-            resources=(ComponentRef("curve_contract_review_contract"),),
-        ),
-        ComponentSpec(
-            "scientific_review_validator",
-            "validator",
-            "curve_score.science_operations:Components.scientific_review_validator",
-            resources=(ComponentRef("curve_contract_review_contract"),),
-        ),
-        ComponentSpec(
-            "curve_error_analysis",
-            "transform",
-            "curve_score.science_operations:Components.curve_error_analysis",
-            configuration_identity="curve-error-analysis:v1",
-        ),
-        ComponentSpec(
-            "nonempty_validator",
-            "validator",
-            "curve_score.science_operations:_NONEMPTY_COMPONENT",
-            resources=(ComponentRef("diagnosis_semantic_contract"),),
-        ),
+        ComponentSpec("diagnosis_validator", "validator", "curve_score.science_operations:Components.diagnosis_validator", resources=(ComponentRef("diagnosis_report_semantic_contract"),)),
+        ComponentSpec("diagnosis_context", "validator", "curve_score.science_operations:Components.diagnosis_context", configuration_identity="analysis-private-receipt:v2", resources=(ComponentRef("diagnosis_report_semantic_contract"),)),
+        ComponentSpec("diagnosis_agent", "agent", "curve_score.science_operations:Components.diagnosis_agent"),
     ]
-    for name in (
-        "diagnosis_schema",
-        "curve_diagnosis_schema",
-        "tool_evidence_schema",
-        "curve_analysis_package_schema",
-        "diagnosis_semantic_contract",
-        "diagnosis_report_semantic_contract",
-        "diagnosis_prompt",
-        "curve_diagnosis_prompt",
-        "curve_contract_semantic_contract",
-        "curve_contract_review_contract",
-        "curve_contract_prompt",
-        "curve_contract_review_prompt",
-    ):
-        values.append(
-            ComponentSpec(
-                name,
-                "resource",
-                f"curve_score.science_operations:Resources.{name}",
-                public=name == "diagnosis_schema",
-            )
-        )
+    values.extend(ComponentSpec(name, "resource", f"curve_score.science_operations:Resources.{name}", public=name == "diagnosis_schema")
+        for name in ("diagnosis_schema", "tool_evidence_schema", "diagnosis_report_semantic_contract", "diagnosis_prompt"))
     return tuple(values)
 
 

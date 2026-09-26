@@ -45,8 +45,6 @@ from scidiscovery.operations.tooling import operation_local_worker_tool_names
 from scidiscovery.operation_contract import SemanticRuleViolation
 
 
-ANALYZE_OPERATION = "science.curve.error.analyze.v1"
-DIAGNOSE_OPERATION = "science.result.diagnose.curve-error.v1"
 
 
 def _plan() -> ExperimentPortfolio:
@@ -834,82 +832,6 @@ def test_curve_contract_compiler_respects_exclusions_without_valid_intervals() -
     ) == ((0.0, 0.4, 2), (0.6, 1.0, 2))
 
 
-@pytest.mark.parametrize("future_observable", (None, "carrier profile", "future response"))
-def test_curve_contract_worker_tool_writes_the_compiled_result(tmp_path, future_observable) -> None:
-    output = tmp_path / "output"
-    output.mkdir()
-    objective = _compiler_objective()
-    if future_observable is not None:
-        target = objective.mandatory_targets[0].model_copy(
-            update={"target_key": "future_target", "observable": future_observable}
-        )
-        objective = objective.model_copy(
-            update={"mandatory_targets": (*objective.mandatory_targets, target)}
-        )
-    raw_inputs = {
-        "research_objective": objective.canonical_json(),
-        "experiment_plan": _compiler_plan().canonical_json(),
-        "reference_bundle": _bundle().canonical_json(),
-    }
-    validated = []
-    context = OperationToolContext(
-        services={},
-        state={},
-        workspace=tmp_path,
-        output_directory=output,
-        output_collections=(),
-        remaining_seconds=60,
-        _read_input=lambda name: raw_inputs[name],
-        _input_path=lambda name: tmp_path / "inputs" / name,
-        _input_media_type=lambda name: "application/json",
-        _input_ref=lambda name: None,
-        _validate_outputs=lambda: validated.append(True),
-        _record_activity=lambda activity: None,
-        _candidate_snapshot=lambda: ("result.json",),
-    )
-    request = CurveContractCompileInput.model_validate(
-        {
-            "experiment_key": "implementation_check",
-            "target_bindings": [
-                {
-                    "target_key": "target_implementation",
-                    "reference_series_key": "reference",
-                }
-            ],
-            "candidate_case_keys": ["baseline"],
-            "comparison_metric": "residual_rms",
-        }
-    )
-    result = CURVE_CONTRACT_COMPILER_TOOL.contextual_handler(request, context)
-    envelope = parse_role_result(json.loads((output / "result.json").read_bytes()))
-    assert result["state"] == "ready"
-    assert validated == [True]
-    assert envelope.payload["experiment_key"] == "implementation_check"
-    contract = CurveExperimentContract.model_validate_json(
-        canonical_json(envelope.payload), strict=True
-    )
-    assert [item.target_key for item in contract.objective_target_bindings] == [
-        "target_implementation"
-    ]
-    Components.curve_contract_context.implementation(envelope.payload, raw_inputs, {})
-    review_inputs = {**raw_inputs, "curve_contract": contract.canonical_json()}
-    for verdict in ("pass", "revise", "blocked"):
-        Components.curve_contract_review_context.implementation(
-            {
-                "review_target": "domain_contract",
-                "verdict": verdict,
-                "summary": "Fixture verdict tests submission mechanics, not scientific judgment.",
-            },
-            review_inputs,
-            {"verdict": verdict},
-        )
-    if future_observable is not None:
-        coverage = evaluate_objective_coverage(
-            objective, _compiler_plan(), (contract,), (("reference_bundle", _bundle()),)
-        )
-        assert coverage.status == "fail"
-        missing = next(item for item in coverage.targets if item.target_key == "future_target")
-        assert "target_curve_binding_missing" in missing.reason_codes
 
 
 @pytest.mark.parametrize(
@@ -988,34 +910,6 @@ def test_curve_contract_without_eligible_checks_rejects_explicit_check_bindings(
                    for comparison in contract.comparison_spec.comparisons for operator in comparison.operators)
 
 
-def test_curve_contract_operation_keeps_v1_and_exposes_only_compiler_write_path() -> None:
-    compiled = compile_catalog((CORE_PLUGIN, GENERAL_PLUGIN, CURVE_PLUGIN)).operation(
-        "science.curve.contract.design.v1"
-    )
-    assert compiled.spec.version == "1"
-    assert (
-        compiled.spec.outputs[0].schema_id
-        == "scidiscovery.curve-experiment-contract.v1"
-    )
-    assert compile_catalog(
-        (CORE_PLUGIN, GENERAL_PLUGIN, CURVE_PLUGIN)
-    ).operation("science.curve.contract.review.v1").spec.version == "1"
-    assert {item.name for item in compiled.spec.inputs} == {
-        "research_objective",
-        "experiment_plan",
-        "experiment_review",
-        "reference_bundle",
-        "user_context",
-    }
-    assert tuple(item.component_id for item in compiled.spec.executor.tools) == (
-        "curve_contract_compiler_tool",
-        "reference_read_tool",
-    )
-    tool = compiled.implementations["curve_score:curve_contract_compiler_tool"]
-    assert tool.name == "worker_curve_contract_compile"
-    review_prompt = " ".join(Resources.curve_contract_review_prompt.split())
-    assert "one-to-one" not in review_prompt
-    assert "One check may govern multiple comparisons" in review_prompt
 
 
 def test_legacy_curve_diagnosis_accepts_exact_partial_curve_coverage() -> None:
@@ -1103,185 +997,12 @@ def _register_inputs(runtime, instance, payloads: dict[str, bytes]) -> None:
         )
 
 
-def _analysis_request() -> dict[str, object]:
-    return {
-        "name": "curve_error_analysis",
-        "operation_id": ANALYZE_OPERATION,
-        "inputs": [
-            {"port": name, "artifact_names": [name]}
-            for name in (
-                "experiment_plan",
-                "experiment_review",
-                "curve_contract",
-                "curve_contract_review",
-                "metric_report",
-                "curve_bundle",
-            )
-        ],
-    }
 
 
-def test_curve_analysis_transform_and_single_file_agent_complete_real_run(
-    tmp_path: Path, monkeypatch,
-) -> None:
-    catalog, runtime, instance, root = _root(tmp_path)
-    _register_inputs(runtime, instance, _inputs())
-    transform = catalog.operation(ANALYZE_OPERATION)
-    agent = catalog.operation(DIAGNOSE_OPERATION)
-
-    assert transform.spec.catalog_scope == "support"
-    assert transform.spec.executor.kind == "transform"
-    assert tuple(port.name for port in agent.spec.inputs) == (
-        "curve_analysis_package",
-        "curve_analysis_plots",
-        "user_context",
-    )
-    assert agent.spec.inputs[1].min_items == 0
-    assert agent.spec.executor.native_tools.view_image
-    assert tuple(port.name for port in agent.spec.outputs) == ("layered_diagnosis", "recovery_manifest_output")
-    assert LocalTrustedBackend.supports_operation(agent)
-    assert "worker_curve_analyze" not in operation_local_worker_tool_names(agent)
-
-    request = _analysis_request()
-    first = root.call_tool("operation_invoke", request)
-    assert root.call_tool("operation_invoke", request) == first
-    outputs = first["result"]["outputs"]
-    assert [item["output_label"] for item in outputs] == [
-        "primary",
-        "curve_analysis_plots_001",
-    ]
-    package_name = outputs[0]["artifact_name"]
-    package_id = runtime.scheduler_bindings.resolve(
-        instance=instance.instance_id,
-        namespace="artifact",
-        name=package_name,
-    )
-    package_envelope = runtime.artifacts.get_by_id(package_id)
-    package = CurveDiagnosticAnalysisPackage.model_validate_json(
-        runtime.artifacts.read(package_envelope.ref), strict=True
-    )
-    assert len(package.curve_analysis.analyses) == 1
-    plot_name = outputs[1]["artifact_name"]
-    plot_id = runtime.scheduler_bindings.resolve(
-        instance=instance.instance_id,
-        namespace="artifact",
-        name=plot_name,
-    )
-    assert runtime.artifacts.read(
-        runtime.artifacts.get_by_id(plot_id).ref
-    ).startswith(b"\x89PNG\r\n\x1a\n")
-
-    invoke = {
-        "name": "curve_error_diagnosis",
-        "operation_id": DIAGNOSE_OPERATION,
-        "inputs": [
-            {
-                "port": "curve_analysis_package",
-                "artifact_names": [package_name],
-            },
-            {"port": "curve_analysis_plots", "artifact_names": [plot_name]},
-        ],
-        "instruction": "Interpret the fixed deterministic curve-error analysis.",
-    }
-    assert root.call_tool("operation_preflight", invoke)["admissible"] is True
-    root.call_tool("operation_invoke", invoke)
-    worker = LocalWorkerMCPRouter(
-        runtime.runs,
-        operation_id=agent.spec.operation_id,
-        operation_digest=agent.digest,
-    )
-    opened = worker.call_tool("worker_open_assignment", {})
-    images = tuple((Path(opened["workspace_path"]) / "inputs").glob("curve_analysis_plots*.png"))
-    assert len(images) == 1
-    assert images[0].read_bytes() == runtime.artifacts.read(runtime.artifacts.get_by_id(plot_id).ref)
-    # Admission has accepted the immutable package. Reading it while submitting
-    # a diagnosis must not re-run the input calculation or contract admission.
-    def no_input_recomputation(*args, **kwargs):
-        pytest.fail("diagnosis submission recomputed or re-admitted its frozen input")
-
-    monkeypatch.setattr("curve_score.analysis.analyze_curve_error", no_input_recomputation)
-    monkeypatch.setattr("curve_score.analysis.validate_curve_experiment_contract", no_input_recomputation)
-    monkeypatch.setattr("curve_score.science_operations.validate_curve_analysis_package", no_input_recomputation)
-    Path(opened["output_directory"], "result.json").write_bytes(
-        canonical_json(
-            {
-                "schema_version": 1,
-                "handoff": {
-                    "verdict": "blocked",
-                    "summary": "The numerical prerequisite failed.",
-                },
-                "payload": _diagnosis().model_dump(mode="json"),
-            }
-        )
-    )
-    assert worker.call_tool("worker_submit_result", {})["state"] == "completed"
-    status = next(
-        item
-        for item in runtime.runs.list(instance_id=instance.instance_id)
-        if item.operation_id == DIAGNOSE_OPERATION
-    )
-    assert status.state == "completed"
-    result_id = runtime.scheduler_bindings.resolve(
-        instance=instance.instance_id,
-        namespace="artifact",
-        name=status.output_binding_name,
-    )
-    LayeredDiagnosisReport.model_validate_json(
-        runtime.artifacts.read(runtime.artifacts.get_by_id(result_id).ref), strict=True
-    )
 
 
-def test_curve_analysis_package_and_plot_bundle_fail_closed_on_tampering() -> None:
-    payloads = _inputs()
-    artifacts = Components.curve_error_analysis.implementation(
-        {name: (content,) for name, content in payloads.items()}
-    )
-    package_raw = artifacts["curve_analysis_package"][0]
-    package = json.loads(package_raw)
-    plot = artifacts["curve_analysis_plots"][0]
-
-    plot_name = package["curve_analysis"]["analyses"][0]["plot_item"]
-    validate_curve_error_plot_collection(package, {plot_name: plot})
-    with pytest.raises(ValueError, match="digest differs"):
-        validate_curve_error_plot_collection(package, {plot_name: plot + b"x"})
-    package["curve_analysis"]["curve_bundle_sha256"] = "0" * 64
-    from scidiscovery.operations.input_validation import OperationInvocationError
-    # Reproduction belongs to producer validation and input admission, rather
-    # than to every schema read of an already admitted package.
-    with pytest.raises(ValueError, match="reproduce"):
-        Components.curve_analysis_package_validator.implementation(canonical_json(package))
-    with pytest.raises(OperationInvocationError, match="input_curve_analysis_mismatch"):
-        Components.curve_diagnosis_inputs.implementation({
-            "curve_analysis_package": canonical_json(package),
-        })
 
 
-def test_keyed_curve_package_requires_objective_assessment_but_accepts_not_evaluable() -> None:
-    artifacts = Components.curve_error_analysis.implementation(
-        {name: (content,) for name, content in _inputs().items()}
-    )
-    package = json.loads(artifacts["curve_analysis_package"][0])
-    plan = _compiler_plan()
-    package["experiment_plan"] = plan.model_dump(mode="json")
-    package_raw = canonical_json(package)
-    Components.curve_diagnosis_inputs.implementation({
-        "curve_analysis_package": package_raw,
-    })
-    report = _diagnosis().model_dump(mode="json")
-    report["study_kind"] = "scientific"
-    with pytest.raises(SemanticRuleViolation, match="objective assessment is required") as caught:
-        Components.curve_diagnosis_context.implementation(
-            report, {"curve_analysis_package": package_raw}, {}
-        )
-    assert caught.value.details[0]["path"] == "$.objective_assessment"
-    report["objective_assessment"] = {
-        "objective_key": plan.objective_key,
-        "status": "not_evaluable",
-        "summary": "The immutable package does not resolve the overall objective.",
-    }
-    Components.curve_diagnosis_context.implementation(
-        report, {"curve_analysis_package": package_raw}, {}
-    )
 
 
 def test_obsolete_curve_analysis_worker_tool_is_removed() -> None:

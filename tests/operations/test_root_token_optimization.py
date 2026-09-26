@@ -183,14 +183,14 @@ def test_compact_contract_round_trip_preserves_unknown_constraints_and_optional_
         {**port, "name": "progress", "min_items": 0, "future_constraint": {"exact": True}},
         {**port, "name": "objective"}], "outputs": [], "future_admission": {"all": ["a", "b"]}}
     original = deepcopy(declaration)
-    legacy = operation_invoke_contract(declaration, revision_policy={}, representation="legacy")
+    expected = {**original, "revision_policy": {}}
     compact = operation_invoke_contract(declaration, revision_policy={})
-    assert expand_contract(compact) == legacy and declaration == original
+    assert expand_contract(compact) == expected and declaration == original
     assert compact["inputs"][1]["min_items"] == 0
-    assert len(json.dumps(compact)) < len(json.dumps(legacy))
+    assert len(json.dumps(compact)) < len(json.dumps(expected))
     changed = deepcopy(declaration)
     changed["inputs"][0]["max_item_bytes"] = 8192
-    assert expand_contract(operation_invoke_contract(changed, revision_policy={})) == operation_invoke_contract(changed, revision_policy={}, representation="legacy")
+    assert expand_contract(operation_invoke_contract(changed, revision_policy={})) == {**changed, "revision_policy": {}}
 
 
 def test_lost_receipt_recovers_original_dispatch_after_settings_change(tmp_path):
@@ -216,28 +216,35 @@ def test_compiled_catalog_contracts_expand_without_loss_or_identity_changes():
     from scidiscovery.operations.catalog import compile_catalog
     from scidiscovery.operations.spec import scheduler_operation_view
     from scidiscovery.artifact_agent.interfaces.mcp_response_views import operation_detail, operation_revision_policy
-    from tests.operations.test_l4_local_tcad import CORE_PLUGIN, SCIENCE_PLUGIN, CURVE_PLUGIN, TCAD_PLUGIN
+    from scidiscovery.builtin_plugin import CORE_PLUGIN
+    from scidiscovery.general_science_plugin import PLUGIN as SCIENCE_PLUGIN
+    from curve_score.plugin import PLUGIN as CURVE_PLUGIN
+    from tcad_artifact.plugin import PLUGIN as TCAD_PLUGIN
     from tests.operations.test_l2_run_invariants import BLIND_CSV_PLUGIN
     catalog = compile_catalog((CORE_PLUGIN, SCIENCE_PLUGIN, CURVE_PLUGIN, TCAD_PLUGIN, BLIND_CSV_PLUGIN))
     digest = catalog.digest()
-    compact_bytes = legacy_bytes = 0
+    compact_bytes = expanded_bytes = 0
     kinds = set()
     for identity in catalog.operation_ids():
         compiled = catalog.operation(identity)
         source = operation_detail(scheduler_operation_view(compiled.spec).model_dump(mode="json", by_alias=True))
         source["operation_digest"] = compiled.digest
         revision = operation_revision_policy(compiled.spec)
-        legacy = operation_invoke_contract(source, revision_policy=revision, representation="legacy")
+        execution_only = {"native_shell", "native_view_image", "network_mode",
+            "max_network_requests", "max_output_bytes", "max_files", "optional_runtime_services",
+            "executor_model_usage"}
+        expected = {key: value for key, value in source.items() if key not in execution_only}
+        expected["revision_policy"] = revision
         compact = operation_invoke_contract(source, revision_policy=revision)
-        assert expand_contract(compact) == legacy, identity
+        assert expand_contract(compact) == expected, identity
         assert compact["operation_digest"] == compiled.digest
         kinds.add(compiled.spec.executor.kind)
-        legacy_bytes += len(json.dumps(legacy, ensure_ascii=False, separators=(",", ":")).encode())
+        expanded_bytes += len(json.dumps(expected, ensure_ascii=False, separators=(",", ":")).encode())
         compact_bytes += len(json.dumps(compact, ensure_ascii=False, separators=(",", ":")).encode())
     assert {"agent", "transform", "approval", "effect"} <= kinds
     assert catalog.digest() == digest
-    assert compact_bytes < legacy_bytes
-    print(f"compiled invoke contracts: legacy={legacy_bytes} compact={compact_bytes} bytes; operations={len(catalog.operation_ids())}")
+    assert compact_bytes < expanded_bytes
+    print(f"compiled invoke contracts: expanded={expanded_bytes} compact={compact_bytes} bytes; operations={len(catalog.operation_ids())}")
 
 
 def test_summary_catalog_keeps_exact_purpose_and_rejects_stale_or_legacy_cursors():

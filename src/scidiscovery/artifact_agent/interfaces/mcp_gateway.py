@@ -6,10 +6,8 @@ This is a LocalTrusted transport boundary, not protection against a hostile OS u
 
 from __future__ import annotations
 
-import re
 import hashlib
 import threading
-from dataclasses import dataclass
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -19,8 +17,10 @@ from ...operation_contract import DiagnosticError, validation_diagnostics
 from ...operations.tooling import parse_tool_arguments
 from ..service.worker_connections import WorkerConnections, WorkerNotAttached
 from .mcp import MCPRouter, rpc_error
-from .mcp_local_worker import LocalWorkerMCPRouter, _load_operation_services
+from .mcp_local_worker import LocalWorkerMCPRouter
+from ..worker_services import load_operation_services
 from .mcp_hardened_worker import HardenedWorkerMCPRouter
+from .mcp_platform_context import PlatformContext as _Context, platform_context as _context
 
 
 GATEWAY_TOOLS = ("scid_catalog", "scid_describe", "scid_call")
@@ -48,8 +48,6 @@ class DescribeInput(_Input):
         default="invoke",
         description="Omit: Operations use invoke, interfaces use full. full adds execution diagnostics.",
     )
-    representation: Literal["compact", "legacy"] = Field(default="compact",
-        description="Invoke: compact declares shared port defaults; legacy expands them.")
 
 
 class CallInput(_Input):
@@ -75,34 +73,20 @@ _IDENTITY = {"name": "worker_identity", "description": "Read this Worker's platf
              "inputSchema": _Input.model_json_schema()}
 
 
-@dataclass(frozen=True)
-class _Context:
-    session: str
-    thread: str
-    worker: bool
-    model: str | None
-    effort: str | None
-
-
-def _context(request):
-    meta = request.get("params", {}).get("_meta", {}).get("x-codex-turn-metadata", {})
-    session, thread, source = (meta.get(key) for key in ("session_id", "thread_id", "thread_source"))
-    if (not all(isinstance(x, str) and re.fullmatch(r"[a-zA-Z0-9_-]{1,128}", x) for x in (session, thread))
-            or source not in {"user", "subagent"}
-            or (source == "user" and session != thread)
-            or (source == "subagent" and session == thread)):
-        raise DiagnosticError("trusted platform session/thread metadata is required")
-    return _Context(session, thread, source == "subagent", meta.get("model"), meta.get("reasoning_effort"))
-
-
 class UnifiedMCPRouter:
     def __init__(self, root, *, plugin_configs=None, worker_backend="local"):
         self.root = root
         self.facade = root.facade
-        self.connections = WorkerConnections(self.facade.runs)
+        self.connections = self.facade.runs.worker_connections
         self.plugin_configs = plugin_configs or {}
+        coordinator = getattr(self.facade.runs, "experiment_executions", None)
+        if coordinator is not None:
+            coordinator.services_for = lambda operation_id: load_operation_services(
+                self.facade.runs.operation_catalog, operation_id, self.plugin_configs,
+                self.facade.runs.database_path.parent.parent)
         self.worker_backend = worker_backend
         self._workers = {}
+        self._run_state = {}
         self._lock = threading.RLock()
 
     def handle(self, request):
@@ -115,7 +99,13 @@ class UnifiedMCPRouter:
             return rpc_error(request.get("id"), error)
 
     def _worker(self, context):
-        status = self.connections.resolve(platform_session=context.session, thread_id=context.thread)
+        participant = None
+        try:
+            status = self.connections.resolve(platform_session=context.session, thread_id=context.thread)
+        except WorkerNotAttached:
+            status, participant = self.connections.participant(platform_session=context.session,
+                thread_id=context.thread, parent_thread=context.parent_thread,
+                admit=context.subagent_kind in (None, "thread_spawn"))
         profile = status.execution_profile
         expected = profile["profile"] if profile is not None else None
         if expected is None or (
@@ -123,7 +113,7 @@ class UnifiedMCPRouter:
         ) != (
             canonical_model_id(expected["model"]), expected["reasoning_effort"]
         ):
-            if status.state in {"queued", "running"}:
+            if participant is None and status.state in {"queued", "running"}:
                 self.facade.runs.record_failure(
                     status.run_id,
                     reason=(
@@ -140,17 +130,26 @@ class UnifiedMCPRouter:
         with self._lock:
             worker = self._workers.get(key)
             if worker is None:
-                services = _load_operation_services(self.facade.runs.operation_catalog, status.operation_id,
+                services = load_operation_services(self.facade.runs.operation_catalog, status.operation_id,
                     self.plugin_configs, self.facade.runs.database_path.parent.parent)
+                if self.facade.runs.operation_catalog.operation(status.operation_id).spec.executor.capability is not None:
+                    from ..service.experiment_execution import bind_experiment_services
+                    bind_experiment_services(self.facade.runs,
+                        self.facade.runs.operation_catalog.operation(status.operation_id), services)
                 cls = LocalWorkerMCPRouter if self.worker_backend == "local" else HardenedWorkerMCPRouter
                 worker = cls(self.facade.runs, operation_id=status.operation_id,
-                    operation_digest=status.operation_digest, tool_services=services, run_id=status.run_id)
+                    operation_digest=status.operation_digest, tool_services=services, run_id=status.run_id,
+                    trusted_caller=(context.session, context.thread), participant=participant)
+                shared = self._run_state.setdefault(status.run_id, (threading.RLock(), {}))
+                worker._lock, worker._tool_state = shared
                 if self.worker_backend == "local":
                     worker._previous_run_id = self.connections.previous_run(
                         run_id=status.run_id, platform_session=context.session, thread_id=context.thread)
                 if self.worker_backend == "hardened":
+                    # Same Run transport lease, distinct scientific caller identity.
+                    transport_key = (context.session, participant['owner_thread'] if participant else context.thread, status.run_id)
                     worker._transport_owner = "transport_" + hashlib.sha256(
-                        "\0".join(key).encode()).hexdigest()
+                        "\0".join(transport_key).encode()).hexdigest()
                 # A reused platform thread has only one currently bound workspace.
                 for old in tuple(self._workers):
                     if old[:2] == key[:2]:
@@ -161,7 +160,8 @@ class UnifiedMCPRouter:
     def _interfaces(self, context):
         if context.worker:
             try:
-                return [_IDENTITY, *self._worker(context)[0].list_tools()]
+                worker = self._worker(context)[0]
+                return [*([] if worker.is_helper else [_IDENTITY]), *worker.list_tools()]
             except WorkerNotAttached:
                 return [_IDENTITY]
         return [*self.root.list_tools(), _ATTACH]
@@ -211,14 +211,13 @@ class UnifiedMCPRouter:
             if len(operations) != 1:
                 raise DiagnosticError("Operation contract selection did not return one exact item")
             compiled = self.facade._operation_catalog.operation(name)
-            if operations[0].get("operation_digest") != compiled.digest:
+            if "operation_digest" in operations[0] and operations[0]["operation_digest"] != compiled.digest:
                 raise DiagnosticError("Operation contract selection changed during projection")
             return {
                 **full,
                 "view": "invoke",
                 "operations": [operation_invoke_contract(
                     operations[0], revision_policy=operation_revision_policy(compiled.spec),
-                    representation=values.representation,
                 )],
             }
         raise DiagnosticError("capability is not available in this Worker assignment")
@@ -226,6 +225,13 @@ class UnifiedMCPRouter:
     def call(self, context, values):
         if context.worker:
             if values.name == "worker_identity":
+                try:
+                    _, participant = self.connections.participant(platform_session=context.session,
+                        thread_id=context.thread, parent_thread=context.parent_thread)
+                except WorkerNotAttached:
+                    participant = None
+                if participant is not None:
+                    raise DiagnosticError("Internal helpers use their scientific subtask; attachment identity is not exposed")
                 _parse(_Input, values.arguments)
                 return {"thread_id": context.thread, "model": context.model,
                         "reasoning_effort": context.effort}
@@ -239,7 +245,10 @@ class UnifiedMCPRouter:
             reply = worker.call_tool(values.name, values.arguments)
             if values.name == "worker_submit_result" and reply.get("state") == "completed":
                 with self._lock:
-                    self._workers.pop((context.session, context.thread, status.run_id), None)
+                    for key in tuple(self._workers):
+                        if key[2] == status.run_id:
+                            self._workers.pop(key)
+                    self._run_state.pop(status.run_id, None)
             return reply
         if values.name == "worker_attach":
             parsed = _parse(AttachInput, values.arguments)

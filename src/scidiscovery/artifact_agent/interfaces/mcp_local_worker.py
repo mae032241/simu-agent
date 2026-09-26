@@ -26,6 +26,7 @@ from ...operations.tooling import (
     operation_tool_contracts,
 )
 from ..operation_tool_context import OperationToolContext
+from ..worker_services import load_operation_services
 from ..runtime_plugin_bindings import (
     load_runtime_plugin_contributions,
     parse_plugin_config_assignments,
@@ -53,6 +54,8 @@ class LocalWorkerMCPRouter:
         operation_digest: str,
         tool_services: dict[str, object] | None = None,
         run_id: str | None = None,
+        trusted_caller: tuple[str, str] | None = None,
+        participant: dict | None = None,
     ) -> None:
         compiled = runs.operation_catalog.operation(operation_id)
         if compiled.digest != operation_digest or compiled.spec.executor.kind != "agent":
@@ -62,7 +65,11 @@ class LocalWorkerMCPRouter:
         self.operation_id = operation_id
         self.operation_digest = operation_digest
         self.tool_services = dict(tool_services or {})
+        self.tool_services["builtin:worker.connections"] = runs.worker_connections
+        self.participant = participant
+        self.is_helper = participant is not None
         self._bound_run_id = run_id
+        self._trusted_caller = trusted_caller
         self._previous_run_id = None
         self._tools = {tool.name: tool for tool in LIFECYCLE_WORKER_TOOLS}
         self._registered: dict[str, WorkerToolDefinition] = {}
@@ -70,6 +77,12 @@ class LocalWorkerMCPRouter:
             self._registered[tool.name] = tool
             self._tools[tool.name] = tool
         self._register_backend_tools()
+        expected = set(runs.backend.assignment_tool_names(compiled))
+        if set(self._tools) != expected:
+            raise ValueError("Worker router differs from its backend tool projection")
+        if self.is_helper:
+            self._tools = {name: tool for name, tool in self._tools.items() if not tool.owner_only}
+            self._registered = {name: tool for name, tool in self._registered.items() if name in self._tools}
         self._tool_schemas = tuple(
             freeze_json(self._tools[name].schema()) for name in sorted(self._tools)
         )
@@ -88,9 +101,38 @@ class LocalWorkerMCPRouter:
         self._active_attempt = None
         self._attempt_finished = False
         self._attempt_sources = {}
-        expected = set(runs.backend.assignment_tool_names(compiled))
-        if set(self._tools) != expected:
-            raise ValueError("Worker router differs from its backend tool projection")
+
+    def _check_participation(self):
+        if self.is_helper:
+            session, thread = self._trusted_caller
+            self.runs.worker_connections.participant(platform_session=session, thread_id=thread)
+
+    def _helper_open_reply(self, status):
+        """A separate projection; never overwrite the task owner's assignment/schema."""
+        source = json.loads(read_control_workspace_file(self._workspace.root,
+            Path("assignment.json"), max_bytes=self._workspace.assignment_path.stat().st_size))
+        task = json.loads(self.participant['request_json'])
+        instruction = (
+            "You are an internal helper for this scientific subtask. Investigate relevant task files, use appropriate "
+            "Skills and the parent's permitted native/scientific tools, and make requested local edits or already authorized checks. "
+            "Stay within the same workspace and authorization. You are not the task owner or an independent reviewer. "
+            "Owner submission and stage-sealing directions in shared materials do not apply to you. Do not submit, seal stages, "
+            "create approvals or delegate again. Return concise findings, changed file references, verification and limitations "
+            "through native completion to the responsible parent. Do not create a formal result receipt."
+        )
+        assignment = {"participation": "helper", "name": self.participant['name'], **task,
+            "role_instructions": instruction, "inputs": source.get('inputs', []),
+            "tool_contracts": {item["name"]: {key: item[key] for key in ("description", "inputSchema")} for item in self.list_tools()}}
+        relative = Path('.operation-tools/helpers') / self.participant['name'] / 'assignment.json'
+        path = write_control_workspace_file(self._workspace.root, relative,
+            json.dumps(assignment, ensure_ascii=False).encode(), mode=0o400, replace=True, create_parents=True)
+        return {"state": "opened", "participation": "helper", "name": self.participant['name'],
+            "task": task['task'], "materials": task['materials'], "role_instructions": instruction,
+            "workspace_path": str(self._workspace.root), "assignment_path": str(path),
+            "tool_contracts_path": str(path), "tool_contracts_pointer": "/tool_contracts",
+            "remaining_seconds": _remaining(status.deadline_at),
+            "native_usage": "unknown", "native_lifecycle": "platform_owned",
+            "narrative_instruction": narrative_instruction(status.execution_profile['profile'] if status.execution_profile else None)}
 
     def _register_backend_tools(self) -> None:
         """Allow a backend router to add its declared transport tools."""
@@ -99,6 +141,7 @@ class LocalWorkerMCPRouter:
         return json_projection(self._tool_schemas)
 
     def call_tool(self, name: str, arguments: dict[str, Any] | None) -> Any:
+        self._check_participation()
         self._validate_open_call(name, arguments)
         with self._maintenance_call(name):
             return self._observed_call_tool(name, arguments)
@@ -145,6 +188,7 @@ class LocalWorkerMCPRouter:
 
     def _observed_call_tool(self, name: str, arguments: dict[str, Any] | None) -> Any:
         with self._lock:
+            self._check_participation()
             started = time.monotonic()
             started_at = datetime.now(timezone.utc).isoformat()
             timing_key = uuid.uuid4().hex
@@ -182,7 +226,8 @@ class LocalWorkerMCPRouter:
                     self._opened_call_run_id = error.run_id
                     self._workspace = None
                     self._completed = False
-                    self._tool_state.clear()
+                    if not self.is_helper:
+                        self._tool_state.clear()
                 failure = self._engineering_failure(name, error)
                 engineering = failure.engineering
                 if self._active_attempt and not self._attempt_finished:
@@ -231,7 +276,8 @@ class LocalWorkerMCPRouter:
             from ..service.engineering_diagnostics import exception_facts
             error.scope_lookup_error = exception_facts(scope_error, layer="worker", action="scope")
         engineering = store.capture(error, scope=scope, layer="worker", action=name)
-        if run_id is not None and run_id == self._run_id and self._workspace is not None and engineering.get("reference"):
+        scientific = True
+        if not scientific and run_id is not None and run_id == self._run_id and self._workspace is not None and engineering.get("reference"):
             try:
                 from ..service.local_workspace import write_control_workspace_file
                 engineering["workspace_report"] = "reports/" + engineering["reference"] + ".json"
@@ -250,7 +296,20 @@ class LocalWorkerMCPRouter:
                 engineering["category"], phase="tool_execution", affected_action="tool_call",
                 message=engineering["causes"][0]["message"], error_type=type(error).__name__),))
         failure.engineering = engineering
-        if failure is not error:
+        if scientific:
+            failure.public_engineering = {"category":engineering["category"]}
+            if not failure.details:
+                failure.details = (contract_diagnostic("tool_rejected", phase="tool_execution", affected_action="tool_call",
+                    message="The experiment action could not complete with its current inputs or configured services."),)
+        if scientific and not isinstance(error, DiagnosticError):
+            failure = WorkerToolError("The experiment action could not complete. Its control diagnostic has been retained.",
+                details=(contract_diagnostic(engineering["category"], phase="tool_execution",
+                    affected_action="tool_call", message="The configured service could not complete this action.",
+                    error_type=type(error).__name__),))
+            failure.engineering = engineering
+            failure.public_engineering = {"category":engineering["category"]}
+            return failure
+        if failure is not error and not scientific:
             failure.public_engineering = {
                 key: engineering[key]
                 for key in ("category", "reference", "available_sections")
@@ -366,10 +425,17 @@ class LocalWorkerMCPRouter:
             return result
 
     def _open(self) -> dict[str, Any]:
+        if self.compiled.spec.independent_review_ports and not self.is_helper:
+            if self._trusted_caller is None or self._bound_run_id is None:
+                raise WorkerToolError("Formal independent review requires a trusted gateway caller and its exact assignment.")
+            from ..service.worker_connections import WorkerConnections
+            session, thread = self._trusted_caller
+            selected = WorkerConnections(self.runs).resolve(platform_session=session, thread_id=thread)
+            if selected.run_id != self._bound_run_id:
+                raise WorkerToolError("This reviewer caller does not own the assigned review.")
         if self._missing_services:
             raise WorkerToolError(
-                "required Operation runtime service is unavailable: "
-                + ", ".join(self._missing_services)
+                "A required experiment service is unavailable."
             )
         terminal = self._run_id is not None and self.runs.status(self._run_id).state in {"completed", "failed"}
         if self._run_id is None or terminal:
@@ -398,10 +464,13 @@ class LocalWorkerMCPRouter:
             self._opened_call_run_id = status.run_id
             self._workspace = workspace
             self._completed = False
-            self._tool_state.clear()
+            if not self.is_helper:
+                self._tool_state.clear()
         self._check_opened_instance()
         self._opened_call_run_id = self._run_id
         status = self.runs.status(self._run_id)
+        if self.is_helper:
+            return self._helper_open_reply(status)
         assignment = json.loads(read_control_workspace_file(self._workspace.root,
             Path("assignment.json"), max_bytes=self._workspace.assignment_path.stat().st_size))
         contracts = self._tool_contract_location(assignment)
@@ -471,7 +540,7 @@ class LocalWorkerMCPRouter:
         if any(not isinstance(item, dict) or item.get("source_name") not in before
                for item in old["inputs"]):
             return changes
-        semantics = ("port", "media_type", "usage", "exposure", "historical")
+        semantics = ("media_type", "usage", "exposure", "historical")
         for item, change in zip(inputs, changes):
             current = after.get(item["source_name"])
             if current is None or any(key not in item for key in semantics):
@@ -495,7 +564,7 @@ class LocalWorkerMCPRouter:
                     change["previous_source_name"] = equal[0]["source_name"]
             elif not equal:
                 change["status"] = "changed" if any(
-                    prior.get("port") == item["port"] or prior.get("source_name") == item["source_name"]
+                    before[prior["source_name"]].port_name == current.port_name or prior.get("source_name") == item["source_name"]
                     or before[prior["source_name"]].artifact_ref == current.artifact_ref
                     for prior in candidates) else "new"
         return changes
@@ -560,6 +629,8 @@ class LocalWorkerMCPRouter:
 
         def read_input(source_name: str) -> bytes:
             try:
+                if inputs[source_name].exposure == "file_reference":
+                    raise ValueError("file_reference inputs require controlled input_path streaming")
                 return self.runs.artifacts.read(inputs[source_name].artifact_ref)
             except KeyError as error:
                 raise ValueError("tool requested an undeclared Run input") from error
@@ -582,6 +653,24 @@ class LocalWorkerMCPRouter:
             path = self._workspace.root / "inputs" / workspace_input_filename(
                 source_name, item.media_type
             )
+            if item.exposure == "file_reference":
+                import hashlib
+                import os
+                import tempfile
+                if path.parent.is_symlink() or not path.parent.is_dir():
+                    raise ValueError("declared input directory is unsafe")
+                with self.runs.artifacts.open_original(item.artifact_ref) as source:
+                    with tempfile.NamedTemporaryFile(dir=path.parent, delete=False) as target:
+                        temporary = Path(target.name)
+                        try:
+                            while chunk := source.read(1024 * 1024):
+                                target.write(chunk)
+                            target.flush()
+                            os.fsync(target.fileno())
+                            os.chmod(temporary, 0o400)
+                            os.replace(temporary, path)
+                        finally:
+                            temporary.unlink(missing_ok=True)
             if not path.is_file() or path.is_symlink():
                 raise ValueError("declared Run input is unavailable")
             return path
@@ -634,8 +723,12 @@ class LocalWorkerMCPRouter:
             _source_read=self._source_read if tool.record_attempts else None,
             _finish_attempt=self._finish_attempt if tool.record_attempts else None,
             _list_evidence=lambda: self.runs.tool_evidence(self._run_id),
+            _list_attempts=lambda: self.runs.tool_attempts(self._run_id),
             _execution_scope=execution_scope if tool.evidence_ports else None,
+            _recovery_authorized=lambda source: self.runs.recovery_authorized(self._run_id, source),
+            _adopt_bound_evidence=(lambda **values: self.runs.adopt_bound_tool_evidence(self._run_id, allowed_ports=tool.evidence_ports, **values)) if tool.evidence_ports else None,
             _accept_evidence=(lambda **values: self.runs.accept_tool_evidence(self._run_id, tool_name=tool.name, allowed_ports=tool.evidence_ports, **values)) if tool.evidence_ports else None,
+            _input_names_for_port=lambda port: tuple(item.source_name for item in status.inputs if item.port_name == port),
             _read_input=read_input,
             _input_path=input_path,
             _input_media_type=lambda source_name: self.runs.source_descriptor(status, source_name).media_type,
@@ -654,6 +747,9 @@ def build_local_worker_router(
     operation_catalog: CompiledCatalog | None = None,
     tool_services: dict[str, object] | None = None,
     local_workspace_root: Path | None = None,
+    plugin_configs=None,
+    approval_secret_file: Path | None = None,
+    approval_base_url: str | None = None,
 ) -> MCPRouter:
     state = state_root.expanduser().absolute()
     catalog = operation_catalog or compile_installed_catalog()
@@ -675,38 +771,25 @@ def build_local_worker_router(
         backend=backend,
         scheduler_bindings=scheduler_bindings,
     )
+    services = dict(tool_services or {})
+    compiled = catalog.operation(operation_id)
+    if compiled.spec.executor.capability is not None:
+        from ..service.experiment_execution import open_experiment_services, bind_experiment_services
+        coordinator = open_experiment_services(runs, catalog, state_root=state,
+            plugin_configs=plugin_configs or {}, approval_secret_file=approval_secret_file,
+            approval_base_url=approval_base_url)
+        bind_experiment_services(runs, compiled, services, coordinator=coordinator)
     return MCPRouter(
         LocalWorkerMCPRouter(
             runs,
             operation_id=operation_id,
             operation_digest=operation_digest,
-            tool_services=tool_services,
+            tool_services=services,
         ),
         name="scidiscovery-local-operation",
     )
 
 
-def _load_operation_services(catalog, operation_id, assignments, state_root):
-    tools = operation_local_worker_tools(catalog.operation(operation_id))
-    required = {name.partition(':')[0] for tool in tools for name in tool.required_services}
-    optional = {name.partition(':')[0] for tool in tools for name in tool.optional_services}
-    services = {}
-    for plugin_id, path in assignments.items():
-        if plugin_id not in required | optional:
-            continue
-        try:
-            loaded = load_runtime_plugin_contributions(catalog, {plugin_id: path},
-                mode='local_worker', state_root=state_root)
-        except Exception:
-            if plugin_id not in optional or plugin_id in required:
-                raise
-            # Preserve the concrete configuration/adapter error in MCP stderr;
-            # unavailable optional tooling must not prevent opening the analysis.
-            import logging
-            logging.getLogger(__name__).exception('Optional Worker service unavailable: %s', plugin_id)
-        else:
-            services.update(loaded.tool_services)
-    return services
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -716,11 +799,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--operation-digest", required=True)
     parser.add_argument("--local-workspace-root", type=Path, required=True)
     parser.add_argument("--plugin-config", action="append", default=[])
+    parser.add_argument("--approval-secret-file", type=Path)
+    parser.add_argument("--approval-base-url")
     args = parser.parse_args(argv)
     catalog = compile_installed_catalog()
     services: dict[str, object] = {}
     if args.plugin_config:
-        services.update(_load_operation_services(catalog, args.operation_id,
+        services.update(load_operation_services(catalog, args.operation_id,
             parse_plugin_config_assignments(tuple(args.plugin_config)),
             args.state_root.expanduser().absolute()))
     router = build_local_worker_router(
@@ -730,6 +815,9 @@ def main(argv: list[str] | None = None) -> int:
         operation_catalog=catalog,
         tool_services=services,
         local_workspace_root=args.local_workspace_root,
+        plugin_configs=parse_plugin_config_assignments(tuple(args.plugin_config)),
+        approval_secret_file=args.approval_secret_file,
+        approval_base_url=args.approval_base_url,
     )
     for line in __import__("sys").stdin:
         request_id: Any = None

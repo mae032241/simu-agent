@@ -8,7 +8,7 @@ from pathlib import Path
 from ...operation_contract import declared_violation
 from ...operations.input_validation import prior_analysis_sources
 from ..schema.common import canonical_json
-from ..schema.layered_diagnosis import CalculationRecord
+from .calculation_proof import ControlledCalculationRecord as CalculationRecord, controlled_calculation, scientific_calculation
 from .local_workspace import write_control_workspace_file
 
 
@@ -16,11 +16,10 @@ def publish_analysis_file(context, raw, *, media_type, kind, sources, suffix, me
     """Register immutable bytes first; expose only a task-local preview path."""
     accepted = context.accept_evidence(raw=raw, media_type=media_type, derived_from=tuple(sources),
         metadata={**(metadata or {}), "kind": kind})
-    digest = hashlib.sha256(raw).hexdigest()
-    path = write_control_workspace_file(context.workspace,
-        Path(".operation-tools/analysis") / (digest + suffix), raw,
+    write_control_workspace_file(context.workspace,
+        Path(".operation-tools/analysis") / (accepted["alias"] + suffix), raw,
         replace=False, mode=0o400, create_parents=True)
-    return {"evidence_alias": accepted["alias"], "path": str(path), "sha256": digest}
+    return {"evidence_alias": accepted["alias"]}
 
 
 def retain_calculation(context, response, *, summary=False):
@@ -30,9 +29,10 @@ def retain_calculation(context, response, *, summary=False):
     excluded by CalculationRecord from receipt identity and historical replay.
     """
     record = CalculationRecord.model_validate_json(canonical_json(response))
-    saved = publish_analysis_file(context, canonical_json(record.model_dump(mode="json")), media_type="application/json",
-        kind="calculation_record", sources=tuple(record.input_digests) or ("experiment_plan",),
-        suffix=".json", metadata={"record_key": record.record_key})
+    saved = publish_analysis_file(context, canonical_json(scientific_calculation(record)), media_type="application/json",
+        kind="calculation_record", sources=tuple(record.input_digests) or context.input_names_for_port("experiment_results") or context.input_names_for_port("execution_result"),
+        suffix=".json", metadata={"record_key": record.record_key, "calculation_proof": record.model_dump(mode="json")})
+    response = scientific_calculation(record)
     if not summary:
         return {**response, "calculation_ref": saved["evidence_alias"]}
     result = {key: response[key] for key in
@@ -49,54 +49,9 @@ def retain_calculation(context, response, *, summary=False):
             "omitted_metrics": max(0, len(item.get("metrics", []))-4)} for item in comparisons[:4]],
         "omitted_comparisons": max(0, len(comparisons)-4),
         "interpretation_boundary": "deterministic_metrics_only_no_physical_interpretation",
+        "limitations": report.get("limitations", []),
     }
-    return {**result, "calculation_ref": saved["evidence_alias"], "calculation_path": saved["path"]}
-
-
-def calculation_reference_aliases(records, sources):
-    """Join inline/file representations of one complete controlled receipt.
-
-    Manifest scope and artifact identity distinguish identical bytes from
-    different Runs. Receipt owners still verify consumed records before sealing.
-    """
-    from .tool_evidence import ToolEvidenceManifest, _recovery_origins
-
-    if not records:
-        return {}
-    descriptors = getattr(sources, "binding_descriptors", {})
-    prior = prior_analysis_sources(sources)
-    proofs = {}
-    aliases = {}
-    for record in records:
-        if not isinstance(record, CalculationRecord) or record.attempt is None:
-            continue
-        manifest_alias = record.attempt.manifest_alias
-        if manifest_alias not in proofs:
-            raw = (getattr(sources, "tool_snapshot", None) if manifest_alias == "tool_recovery_manifest"
-                   else sources[manifest_alias] if prior and manifest_alias == prior["manifest_alias"] else None)
-            # Missing/unpaired receipts retain their original identities; the
-            # existing receipt consumer owns the resulting diagnostic.
-            proofs[manifest_alias] = ToolEvidenceManifest.model_validate_json(raw) if raw else None
-        proof = proofs[manifest_alias]
-        if proof is None:
-            continue
-        recovered_refs = {canonical_json(binding.artifact_ref) for origin in _recovery_origins(proof.recovery)
-                          for binding in origin.bindings.values()}
-        scope = (recovered_refs if record.attempt.proof_kind == "recovery" else
-                 {canonical_json(item.get("artifact_ref")) for item in proof.records} - recovered_refs)
-        # These two fields are transport projections of the selected proof.
-        # The stored tool record uses its original current-manifest spelling.
-        original = record.model_copy(update={"attempt": record.attempt.model_copy(update={
-            "manifest_alias": "tool_recovery_manifest", "proof_kind": "current"})})
-        digest = hashlib.sha256(canonical_json(original.model_dump(mode="json"))).hexdigest()
-        matches = sorted(alias for alias, descriptor in descriptors.items()
-                         if dict(descriptor.labels).get("analysis_artifact_kind") == "calculation_record"
-                         and descriptor.sha256 == digest and canonical_json(descriptor.artifact_ref) in scope)
-        identities = {canonical_json(descriptors[alias].artifact_ref) for alias in matches}
-        if len(identities) == 1:
-            aliases.update({alias: matches[0] for alias in matches})
-            aliases["calculation_records:" + record.record_key] = matches[0]
-    return aliases
+    return {**result, "calculation_ref": saved["evidence_alias"]}
 
 
 def analysis_source_claims(source_key, locator, input_alias, sources, calculation_aliases=None):
@@ -104,9 +59,7 @@ def analysis_source_claims(source_key, locator, input_alias, sources, calculatio
     claims = {source_key} if source_key in sources else set()
     if input_alias is not None:
         claims.add(input_alias)
-    if locator.startswith("calculation_records:"):
-        claims.add(locator)
-    elif locator.split(":", 1)[0] in sources:
+    if locator.split(":", 1)[0] in sources:
         claims.add(locator.split(":", 1)[0])
     aliases = calculation_aliases or {}
     return {aliases.get(claim, claim) for claim in claims}
@@ -135,11 +88,10 @@ def analysis_evidence_aliases(evidence, references, sources, calculation_aliases
 def analysis_calculations(report, sources):
     """Resolve cited tool records without changing scientific output or rerunning tools.
 
-    Old inline reports retain their exact validation path. New reports cite a
-    current registered file, or an explicitly bound file from their paired prior
-    analysis. Provenance and the existing calculation receipt are both checked.
+    Reports cite current registered scientific files or exact originals from a
+    paired prior analysis. The service verifies their private sealed receipts.
     """
-    records = list(report.calculation_records)
+    records = []
     descriptors = getattr(sources, "binding_descriptors", {})
     current_raw = getattr(sources, "tool_snapshot", None)
     current_proof = json.loads(current_raw) if current_raw else {}
@@ -164,7 +116,6 @@ def analysis_calculations(report, sources):
         descriptor = descriptors.get(alias)
         if descriptor is None or dict(descriptor.labels).get("analysis_artifact_kind") != "calculation_record":
             continue
-        record = CalculationRecord.model_validate_json(sources[alias])
         is_current = any(item["alias"] == alias and item["artifact_ref"] == descriptor.artifact_ref.model_dump(mode="json")
                          for item in current)
         proof = current_proof
@@ -174,6 +125,10 @@ def analysis_calculations(report, sources):
             # An accessed calculation keeps its producer's proof namespace. The
             # control resolver verifies that exact receipt, without binding its
             # internal sources as new Worker inputs or current products.
+            original_sources = sources.reference_calculation_sources(alias)
+            receipt = next(item for item in json.loads(original_sources.tool_snapshot)["records"]
+                if item["artifact_ref"] == descriptor.artifact_ref.model_dump(mode="json"))
+            record = controlled_calculation(sources[alias], receipt)
             records.append(record.model_copy(update={"calculation_ref": alias}))
             continue
         if not is_current:
@@ -184,9 +139,12 @@ def analysis_calculations(report, sources):
             if not any(item["artifact_ref"] == descriptor.artifact_ref.model_dump(mode="json")
                        for item in proof.get("records", ())):
                 raise declared_violation("calculation reference is not in the paired prior manifest", path="$.evidence")
-            if record.attempt is not None:
-                record = record.model_copy(update={"attempt": record.attempt.model_copy(
-                    update={"manifest_alias": prior["manifest_alias"]})})
+        receipt = next(item for item in proof.get("records", ())
+            if item["artifact_ref"] == descriptor.artifact_ref.model_dump(mode="json"))
+        record = controlled_calculation(sources[alias], receipt)
+        if not is_current and record.attempt is not None:
+            record = record.model_copy(update={"attempt": record.attempt.model_copy(
+                update={"manifest_alias": prior["manifest_alias"]})})
         recovery = proof.get("recovery") or {}
         if record.attempt is not None and any(binding["artifact_ref"] == descriptor.artifact_ref.model_dump(mode="json")
                 for binding in recovery.get("bindings", {}).values()):

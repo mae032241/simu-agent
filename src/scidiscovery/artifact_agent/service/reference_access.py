@@ -190,7 +190,7 @@ class ReferenceAccessMixin:
             raise ReferenceAccessError('reference_time_limit', 'Reference IO exceeded its reserved time; no source was committed.')
 
     def _reference_roots(self, value):
-        visible = {port.name for port in self._compiled(value).spec.inputs if port.exposure != 'handoff_only'}
+        visible = {port.name for port in self._compiled(value).spec.inputs if port.agent_visible and port.exposure not in {'handoff_only', 'file_reference'}}
         return tuple(item for item in value.inputs if item.port_name in visible)
 
     def _reference_alias(self, value, target):
@@ -207,10 +207,25 @@ class ReferenceAccessMixin:
             'policy': asdict(policy), 'root': root.model_dump(mode='json'), 'chain': chain,
             'source_ref': source.model_dump(mode='json'), 'request': request.model_dump(mode='json')})
 
+    def _reference_current_material(self, value, alias):
+        visible = {port.name for port in self._compiled(value).spec.outputs if port.agent_visible}
+        record = next((item for item in self.tool_evidence(value.run_id) if item['alias'] == alias), None)
+        if record is None:
+            return None
+        envelope = self.artifacts.catalog(_ref(record['artifact_ref']))
+        if (envelope.labels.get('operation_output_port') not in visible
+                or envelope.schema_id == 'scidiscovery.tool-evidence-manifest.v1'):
+            return None
+        return record
+
     def _reference_source(self, value, alias, policy):
         source = next((item for item in self._reference_roots(value) if item.source_name == alias), None)
         if source is not None:
             return source.artifact_ref, source.artifact_ref, []
+        material = self._reference_current_material(value, alias)
+        if material is not None:
+            ref = _ref(material['artifact_ref'])
+            return ref, ref, []
         record = next((r for r in self.reference_access_records(value.run_id) if r['alias'] == alias), None)
         if record is None or record['policy_digest'] != _digest(asdict(policy)) or record['operation_digest'] != value.operation_digest:
             raise ReferenceAccessError('reference_source_unknown', 'Source is not a frozen input or a current committed access alias.')
@@ -321,7 +336,7 @@ class ReferenceAccessMixin:
                         if rule.selected_only:
                             calculation = _pointer(document, section)
                             if calculation.get('attempt') is not None:
-                                from ..schema.layered_diagnosis import CalculationRecord
+                                from .calculation_proof import ControlledCalculationRecord as CalculationRecord, controlled_calculation
                                 origin, _ = self._reference_calculation_origin(value, manifest,
                                     CalculationRecord.model_validate_json(canonical_json(calculation)), policy, call)
                                 bindings = {name: binding.model_dump(mode='json')
@@ -339,14 +354,13 @@ class ReferenceAccessMixin:
                         alias = item.split(':', 1)[0] if rule.locator_prefix else alias_mapping.get(item, item)
                         aliases.append((locator, alias, None))
             if selected and selected.get('metadata', {}).get('kind') == 'calculation_record':
-                if document.get('attempt') is not None:
-                    from ..schema.layered_diagnosis import CalculationRecord
-                    origin, _ = _calculation_origin(manifest, CalculationRecord.model_validate_json(raw))
-                    scoped_bindings = {name: binding.model_dump(mode='json') for name, binding in origin.bindings.items()}
-                    scoped_records = []
-                digests = document.get('input_digests', {})
-                if isinstance(digests, dict):
-                    aliases.extend(('/input_digests/' + _escape(alias), alias, digest) for alias, digest in digests.items())
+                from .calculation_proof import controlled_calculation
+                calculation = controlled_calculation(raw, selected)
+                origin, _ = _calculation_origin(manifest, calculation)
+                scoped_bindings = {name: binding.model_dump(mode='json') for name, binding in origin.bindings.items()}
+                scoped_records = []
+                aliases.extend(('/sources/' + _escape(alias), alias, digest)
+                    for alias, digest in calculation.input_digests.items())
         if selected:
             aliases.extend(('/@metadata/derived_from/' + str(index), alias, None)
                            for index, alias in enumerate(selected.get('metadata', {}).get('derived_from', ())))
@@ -466,8 +480,17 @@ class ReferenceAccessMixin:
                 committed = True
                 self._reference_publish_file(run_id, response, raw)
                 return response
-            edges, sections = self._reference_edges(value, source, policy, call, request.pointer if request.action == 'list' else None,
-                request.reference if request.action == 'read' else None, root)
+            current_material = self._reference_current_material(value, request.source)
+            if current_material is not None:
+                # The current Run already owns this immutable scientific source;
+                # reading it does not create another provenance receipt or alias.
+                edges = [{'reference': 'content', 'alias': request.source,
+                    'media_type': current_material['media_type'], 'size_bytes': current_material['size_bytes'],
+                    '_edge': {'target_ref': current_material['artifact_ref']}}]
+                sections = []
+            else:
+                edges, sections = self._reference_edges(value, source, policy, call, request.pointer if request.action == 'list' else None,
+                    request.reference if request.action == 'read' else None, root)
             if request.action == 'list':
                 items = [{k: v for k, v in edge.items() if not k.startswith('_')} for edge in edges]
                 items.extend({'section': section, 'action': 'list', 'pointer': section} for section in sections)
@@ -498,7 +521,7 @@ class ReferenceAccessMixin:
             edge = selected['_edge']
             target = _ref(edge['target_ref'])
             raw = self._reference_read_bytes(value, target, policy, call, material=True)
-            alias = self._reference_alias(value, target)
+            alias = request.source if current_material is not None else self._reference_alias(value, target)
             response = {'action': 'read', 'source': alias, 'media_type': selected['media_type'],
                         'provided': {'pointer': request.pointer, 'offset': request.offset, 'characters': 0}, 'next_offset': None, 'omitted': False}
             envelope = self.artifacts.catalog(target)
@@ -537,6 +560,15 @@ class ReferenceAccessMixin:
                 workspace = self.backend.open(run_id)
                 response.update(file_path=str(workspace.root / '.reference-access' / (alias + '.bin')))
                 response['provided']['kind'] = 'file_access'
+            if current_material is not None:
+                self._reference_deadline(call)
+                with self._connect() as connection:
+                    connection.execute('BEGIN IMMEDIATE')
+                    self._reference_running(connection, run_id)
+                    self._reference_settle(connection, value, call, response, request_key=request_key)
+                committed = True
+                self._reference_publish_file(run_id, response, raw)
+                return response
             record = {'record_type': 'reference_access', 'alias': alias, 'artifact_ref': target.model_dump(mode='json'),
                 'media_type': envelope.media_type, 'size_bytes': envelope.size_bytes, 'access_run_id': run_id,
                 'producer_run_id': selected['_producer'], 'authorizing_manifest_ref': selected['_manifest_ref'],
@@ -680,7 +712,7 @@ class ReferenceAccessMixin:
     def reference_calculation_sources(self, value, alias, *, validation_deadline=None, validation_budget=None):
         """Mechanical replay context in the original namespace, never Worker inputs."""
         from ...operations.input_validation import ValidationSources
-        from ..schema.layered_diagnosis import CalculationRecord
+        from .calculation_proof import ControlledCalculationRecord as CalculationRecord, controlled_calculation
         from .run_outputs import InputBindingDescriptor, RunCheckerError
         from .tool_evidence import ToolEvidenceManifest
         records = [r for r in self.reference_access_records(value.run_id) if r['alias'] == alias]
@@ -718,7 +750,7 @@ class ReferenceAccessMixin:
                  and r.get('metadata', {}).get('kind') == 'calculation_record']
         if len(exact) != 1:
             return None
-        calculation = CalculationRecord.model_validate_json(read(target))
+        calculation = controlled_calculation(read(target), exact[0])
         if calculation.attempt is None:
             raise RunCheckerError('reference calculation has no controlled attempt', category='integrity_failure')
         origin, attempt = _calculation_origin(manifest, calculation)

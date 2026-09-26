@@ -165,11 +165,15 @@ def with_reference_access(operation: OperationSpec) -> OperationSpec:
     tools = operation.executor.tools
     if tool not in tools:
         tools = (*tools, tool)
+    helper = ComponentRef("helper_tool", "builtin")
+    if helper not in tools:
+        tools = (*tools, helper)
     outputs = operation.outputs
     added = not any(port.name == "recovery_manifest_output" for port in outputs)
     if added:
         outputs = (*outputs, OutputPortSpec(
             name="recovery_manifest_output", description="Control-owned exact tool and read-only access receipts.",
+            agent_visible=False,
             kind="tool_evidence_manifest", schema="scidiscovery.tool-evidence-manifest.v1",
             media_types=("application/json",),
             codec=ComponentRef("json_codec", "general_science"),
@@ -177,6 +181,8 @@ def with_reference_access(operation: OperationSpec) -> OperationSpec:
             min_items=0, max_items=1, max_item_bytes=1024 * 1024,
             collection=CollectionSpec(max_total_bytes=1024 * 1024),
         ))
+    outputs = tuple(port.model_copy(update={"agent_visible":False})
+        if port.name == "recovery_manifest_output" else port for port in outputs)
     return operation.model_copy(update={
         "executor": operation.executor.model_copy(update={"tools": tools}),
         "outputs": outputs,
@@ -240,7 +246,7 @@ def scientific_agent_operation(
     review: ReviewSpec | None = None,
     guards: tuple[ComponentRef, ...] = (),
     consequence: str = "scientific",
-    accepts_actions: tuple[str, ...] = (),
+    decision_fields: tuple[str, ...] = ("summary", "conclusion", "limitations", "remaining_question", "remaining_contradiction"),
 ) -> OperationSpec:
     """Build one bounded Agent declaration without registration side effects."""
 
@@ -264,12 +270,12 @@ def scientific_agent_operation(
         inputs=inputs,
         outputs=outputs,
         consequence=consequence,
+        decision_fields=decision_fields,
         input_admission=input_admission,
         input_validation=input_validation,
         complete_transform_family=complete_transform_family,
         review=review,
         guards=guards,
-        accepts_actions=accepts_actions,
         limits=LimitsSpec(
             network=network,
             timeout_seconds=timeout,

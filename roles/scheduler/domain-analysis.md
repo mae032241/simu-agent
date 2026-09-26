@@ -1,10 +1,12 @@
 <!-- SCIDISCOVERY MANAGED SCHEDULER GUIDE -->
 
-For TCAD analysis, experiment_plan/experiment_review identify the original
-execution plan and its matching review. Bind newer retrospective analysis plans
-and reviews in current_progress. Use artifact_catalog(view="producer_inputs") to
-recover exact immediate producer ports and current access names. Use its explicit
-parents_fallback for historical, cross-instance, unavailable or ambiguous producers.
+For scientific result analysis, select exact scientific materials using the current
+callable contract. The generic analysis task may invoke TCAD tools; control derives
+private execution packages and manifests from the declared scientific anchors.
+Do not ask the Agent to bind package identities or review witnesses that its contract
+hides. Inspect artifact_catalog(view="producer_inputs") only when diagnosing a
+missing origin; preserve exact access names and explicit parents_fallback for
+historical, cross-instance, unavailable or ambiguous producers.
 Read run_status(view="detail", response_profile="compat", output_paths=[]) only for a terminal binding, native or
 recovery diagnostic, and use artifact_catalog(view="parents") for the indicated
 ordered parent schema/kind fallback;
@@ -16,8 +18,13 @@ time or scientific success. No telemetry does not mean no native errors occurred
 After failure, select a bounded continuation from saved work and actual errors;
 do not repeat an unchanged full calculation that cannot fit the remaining budget.
 
-Before creating analysis that needs inspection, bind execution_outputs'
-result_artifact_name on the declared execution_result port together with the
-necessary outputs. Frozen Run inputs cannot be amended. If the result is absent,
-select a new correctly bound analysis or allow bounded analysis to state the
-missing inspection evidence; do not search for the latest execution implicitly.
+Before creating analysis, bind the exact experiment result and needed original
+scientific outputs through the selected contract. Frozen Run inputs cannot be
+amended. Missing inputs require a correctly bound new task or an explicit limited
+conclusion, never selecting the latest execution implicitly.
+
+When a curve diagnostic saved numerical tool evidence before plotting/report failure,
+reuse the exact checkpoint_alias on worker_curve_diagnose or worker_tcad_curve_diagnose.
+The tool verifies request, algorithm and input identities before reusing calculations;
+changed scientific inputs require a new calculation. Keep failed rendering diagnostic
+and limitations visible; a checkpoint is not a scientific success verdict.

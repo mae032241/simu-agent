@@ -83,11 +83,11 @@ def test_analysis_reference_does_not_require_duplicated_citation_or_locator_pref
     from types import SimpleNamespace
     from curve_score.science_operations import _validate_analysis_evidence
     reference = SimpleNamespace(source_key='local_ref', input_alias='raw')
-    report = SimpleNamespace(source_references=[reference, reference], evidence=[], calculation_records=[])
+    report = SimpleNamespace(source_references=[reference, reference], evidence=[], )
     _validate_analysis_evidence(report, {'raw': b'data'})
     report.evidence = [SimpleNamespace(source_key='local_ref', locator='/rows/2')]
     _validate_analysis_evidence(report, {'raw': b'data'})
-    direct = SimpleNamespace(source_references=[], calculation_records=[],
+    direct = SimpleNamespace(source_references=[],
         evidence=[SimpleNamespace(source_key='raw', locator='lines:2-3')])
     _validate_analysis_evidence(direct, {'raw': b'data'})
     with pytest.raises(SemanticRuleViolation):
@@ -113,16 +113,15 @@ def test_generic_analysis_source_resolution_is_independent_of_optional_citation_
     from curve_score.science_operations import _validate_analysis_evidence
     sources = {'raw': b'data', 'other': b'other'}
     report = Item(source_references=[Item(source_key='other', input_alias='raw')],
-        calculation_records=[], evidence=[])
+        evidence=[])
     for evidence in ([], [Item(source_key='other', locator='row1')]):
         report.evidence = evidence
         with pytest.raises(SemanticRuleViolation, match='conflicting source mappings') as caught:
             _validate_analysis_evidence(report, sources)
         assert caught.value.details[0]['path'] == '$.source_references[0].source_key'
     report.source_references = []
-    report.calculation_records = [Item(record_key='score')]
     report.evidence = [Item(source_key='local', locator='raw:row1'),
-        Item(source_key='local', locator='calculation_records:score')]
+        Item(source_key='local', locator='other:row1')]
     with pytest.raises(SemanticRuleViolation, match='conflicting source mappings'):
         _validate_analysis_evidence(report, sources)
     report.evidence[1].source_key = 'score_evidence'
@@ -206,22 +205,8 @@ def test_general_qualification_accepts_direct_citations_through_complete_control
 def test_precomputed_analysis_can_cite_its_bound_plot_without_package_pointer():
     from types import SimpleNamespace
     from curve_score.science_operations import _validate_analysis_evidence
-    report = SimpleNamespace(source_references=[], calculation_records=[],
+    report = SimpleNamespace(source_references=[],
         evidence=[SimpleNamespace(source_key='curve_analysis_plots_001', locator='left panel')])
     _validate_analysis_evidence(report, {'curve_analysis_package': b'{}', 'curve_analysis_plots_001': b'png'}, package={})
     with pytest.raises(SemanticRuleViolation, match='bound input'):
         _validate_analysis_evidence(report, {'curve_analysis_package': b'{}'}, package={})
-
-
-@pytest.mark.parametrize('fault', ['missing_binding', 'missing_file', 'invalid_json'])
-def test_author_frozen_input_defects_are_not_output_rejections(tmp_path, fault):
-    from types import SimpleNamespace
-    from tcad_artifact.operation_workspace import _input, _capability_snapshot
-    from scidiscovery.artifact_agent.service.run_outputs import RunCheckerError
-    with pytest.raises(RunCheckerError) as caught:
-        if fault == 'invalid_json':
-            _capability_snapshot(b'{')
-        else:
-            request = SimpleNamespace(input_paths={} if fault == 'missing_binding' else {'capability': tmp_path/'missing.json'})
-            _input(request, 'capability')
-    assert caught.value.category == ('admission_defect' if fault == 'invalid_json' else 'integrity_failure')

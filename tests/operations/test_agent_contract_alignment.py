@@ -124,6 +124,7 @@ def test_open_delivers_frozen_contracts_and_same_identity_legacy_fallback(tmp_pa
     path = Path(opened['assignment_path'])
     frozen = path.read_bytes()
     assignment = json.loads(frozen)
+    assert all("port" not in item and "artifact_ref" not in item for item in assignment["inputs"])
     if backend_kind == 'hardened':
         contracts = opened['tool_contracts']  # No native file read: necessary inline contract.
     else:
@@ -246,32 +247,6 @@ def test_root_parameters_and_catalog_inputs_share_declared_constraints():
         expected = port.model_dump(mode='json')
         assert {k: projected[k] for k in keys} == {k: expected[k] for k in keys}
     assert all(not set(keys).intersection(port) for port in view['outputs'])
-
-
-def test_analysis_producer_versions_publish_one_keyed_scope_rule_without_changing_support_transform():
-    catalog = _catalog()
-    expected = {
-        'science.result.diagnose.v1': ('4', 'curve.diagnosis.input_binding'),
-        'science.result.diagnose.curve-error.v1': ('2', 'curve.diagnosis.input_binding'),
-        'tcad.result.analyze.v1': ('2', 'tcad.result_analysis.context_binding'),
-    }
-    for operation_id, (version, rule_id) in expected.items():
-        compiled = catalog.operation(operation_id)
-        output = next(port for port in compiled.spec.outputs
-                      if port.schema_id == 'scidiscovery.layered-diagnosis.v1')
-        assert compiled.spec.version == version
-        assert output.context_rule_id == rule_id
-        assert output.schema_id == 'scidiscovery.layered-diagnosis.v1'
-        contract = operation_port_json_schema(compiled, output)
-        semantic = json.dumps(contract['x-scidiscovery-semantic-constraints'])
-        assert 'objective_key' in semantic and 'objective_assessment' in semantic
-        assert 'non-null' in semantic
-        assert all(term not in semantic for term in ('route fingerprint', 'stop pointer', 'prune enum'))
-    support = catalog.operation('science.curve.error.analyze.v1')
-    assert support.spec.version == '1'
-    assert support.digest == '0630777b4a8d874bb1b842b02834df8c6994a932498422ea2c2df5a88f6176ad'
-    assert all(port.semantic_contract.component_id == 'diagnosis_semantic_contract'
-               for port in support.spec.outputs)
 
 
 def test_declared_output_relationship_reports_the_visible_rule_and_missing_field():
@@ -1387,33 +1362,6 @@ def test_experiment_context_does_not_reclassify_invalid_inputs() -> None:
     assert not isinstance(error.value, SemanticRuleViolation)
 
 
-def test_scientific_curve_contracts_declare_the_objective_as_required() -> None:
-    catalog = _catalog()
-    for operation_id in (
-        "science.curve.contract.design.v1",
-        "science.curve.contract.review.v1",
-    ):
-        operation = catalog.operation(operation_id)
-        objective = next(
-            port for port in operation.spec.inputs if port.name == "research_objective"
-        )
-        assert objective.min_items == 1
-        contract = operation_port_json_schema(
-            operation, operation_primary_output(operation)
-        )["x-scidiscovery-validation-contract"]
-        context_checker = next(
-            item for item in contract["checkers"] if item["phase"] == "context"
-        )
-        assert context_checker["rule_id"] in {
-            "curve.contract.objective_binding",
-            "curve.review.subject_binding",
-        }
-        source_contract = {
-            item["port"]: item["required"] for item in contract["context_sources"]
-        }
-        assert source_contract["research_objective"] is True
-
-
 def test_threshold_unit_vocabulary_is_visible_in_the_json_schema() -> None:
     schema = ExperimentPortfolio.model_json_schema(mode="validation")
     unit_schema = schema["$defs"]["MetricThreshold"]["properties"]["unit"]
@@ -1595,63 +1543,6 @@ def test_evidence_source_projection_version_changes_only_applicable_digest(
         first.operation("science.experiment.design.v1").digest
         == second.operation("science.experiment.design.v1").digest
     )
-
-
-def test_real_author_gap_and_review_are_bound_back_to_design(tmp_path, monkeypatch, experiment_case):
-    from tests.operations.test_l4_local_tcad import _debug_worker, _ImmediateDebugAdapter, _write_gap
-    from tests.operations.test_general_transform_operations import _register
-    from tcad_artifact.execution_control import SolverCapability
-    from scidiscovery.artifact_agent.interfaces.mcp_local_worker import LocalWorkerMCPRouter
-
-    runtime, instance, root, _, _ = _feedback_root(tmp_path, monkeypatch, experiment_case, "science.object.review.v1")
-    catalog = runtime.runs.operation_catalog
-    capability = SolverCapability(profile_id="gap_fixture", solver_kind="sprocess",
-        executable="/opt/fake/sprocess", environment={}, release_evidence="Synthetic R-2020.09 fixture",
-        public_release_label="Sentaurus R-2020.09")
-    _register(runtime, instance, name="capability", raw=canonical_json(capability.public_snapshot().model_dump(mode="json")),
-              kind="solver_capability", schema="tcad.solver-capability.v2")
-    history, history_raw = _feedback_record(runtime, instance, "history", state="nonclaiming")
-    inputs = [{"port": "execution_capability", "artifact_names": ["capability"]},
-              {"port": "experiment_plan", "artifact_names": ["experiment_plan"]},
-              {"port": "current_progress", "artifact_names": ["research_objective", "history"]}]
-    request = {"name": "real_gap", "operation_id": "tcad.deck.author.initial.v1", "inputs": inputs,
-               "instruction": "Assess this task using the bound research context."}
-    assert root.call_tool("operation_preflight", request)["admissible"]
-    root.call_tool("operation_invoke", request)
-    worker = _debug_worker(catalog, runtime, _ImmediateDebugAdapter(), tmp_path / "unused-debug")
-    opened = worker.call_tool("worker_open_assignment", {})
-    ws = Path(opened["workspace_path"])
-    assignment = json.loads((ws / "assignment.json").read_bytes())
-    aliases = {item["source_name"] for item in assignment["inputs"]}
-    assert {"current_progress_001", "current_progress_002"} <= aliases
-    assert next((ws / "inputs").glob("current_progress_002.*")).read_bytes() == history_raw
-    _write_gap(opened)
-    assert worker.call_tool("worker_submit_result", {})["state"] == "completed"
-    gap_name = root.call_tool("run_status", {"name": "real_gap"})["output_artifact_name"]
-    review_request = {"name": "real_gap_review", "operation_id": "tcad.deck.review.v1",
-        "inputs": [{"port": "project", "artifact_names": [gap_name]}, *inputs], "instruction": "Independently assess the gap."}
-    assert root.call_tool("operation_preflight", review_request)["admissible"]
-    root.call_tool("operation_invoke", review_request)
-    compiled = catalog.operation("tcad.deck.review.v1")
-    reviewer = LocalWorkerMCPRouter(runtime.runs, operation_id=compiled.spec.operation_id, operation_digest=compiled.digest)
-    opened = reviewer.call_tool("worker_open_assignment", {})
-    template = Path(opened["workspace_path"], "deck/review-template.json").read_bytes()
-    Path(opened["output_directory"], "result.json").write_bytes(template)
-    assert reviewer.call_tool("worker_submit_result", {})["state"] == "completed"
-    review_name = root.call_tool("run_status", {"name": "real_gap_review"})["output_artifact_name"]
-    request = {"name": "design_after_gap", "operation_id": "science.experiment.design.v1",
-        "inputs": [{"port": port, "artifact_names": [port]} for port in
-                   ("scientific_foundation", "research_objective", "hypothesis_portfolio", "critic_review")]
-                   + [{"port": "current_progress", "artifact_names": [gap_name, review_name]}],
-        "instruction": "Reassess the current task from the exact negative feedback."}
-    assert root.call_tool("operation_preflight", request)["admissible"]
-    root.call_tool("operation_invoke", request)
-    compiled = catalog.operation("science.experiment.design.v1")
-    designer = LocalWorkerMCPRouter(runtime.runs, operation_id=compiled.spec.operation_id, operation_digest=compiled.digest)
-    opened = designer.call_tool("worker_open_assignment", {})
-    progress = json.loads(next(Path(opened["workspace_path"], "inputs").glob("current_progress_001.*")).read_bytes())
-    assert progress["result_kind"] == "implementation_gap"
-    assert "suggested_resolution" in progress
 
 
 def test_experiment_bad_critic_is_rejected_before_run_creation(tmp_path, experiment_case) -> None:

@@ -43,7 +43,8 @@ class SSHTCADTransportConfig(BaseModel):
     remote_exchange_root: str = Field(min_length=1, max_length=4096)
     connect_timeout_seconds: int = Field(default=5, ge=1, le=30)
     operation_timeout_seconds: int = Field(default=120, ge=1, le=600)
-    max_transfer_bytes: int = Field(default=512 * 1024 * 1024, ge=1, le=2**40)
+    max_transfer_bytes: int = Field(ge=1, le=2**40)
+    transfer_chunk_bytes: int = Field(ge=1)
 
     @field_validator(
         "ssh_executable", "remote_helper", "remote_config", "remote_exchange_root"
@@ -57,6 +58,7 @@ class SSHTCADTransportConfig(BaseModel):
 
 class RemoteClient(Protocol):
     def put(self, relative_path: str, raw: bytes) -> None: ...
+    def put_file(self, relative_path: str, descriptor: FileDescriptor) -> None: ...
     def rpc(self, request: dict[str, Any]) -> dict[str, Any]: ...
     def get(self, local_path: str) -> bytes: ...
     def get_to(self, local_path: str, destination: Path, max_bytes: int) -> None: ...
@@ -82,7 +84,8 @@ class SSHRemoteClient:
                 kwargs["timeout"] = min(kwargs.get("timeout", self.context.remaining_seconds()), self.context.remaining_seconds())
             return run_bounded(command, input=kwargs.get("input", b""), env=kwargs.get("env"),
                 timeout=kwargs["timeout"], context=self.context,
-                max_output_bytes=self.config.max_transfer_bytes + 1024 * 1024)
+                input_stream=kwargs.get("input_stream"), transfer_chunk_bytes=self.config.transfer_chunk_bytes,
+                max_output_bytes=8 * 1024 * 1024)
         except subprocess.TimeoutExpired as error:
             if self.diagnostic_root is not None:
                 preserve_log(self.diagnostic_root, "ssh-stderr", error.stderr or b"")
@@ -99,6 +102,16 @@ class SSHRemoteClient:
             },
             raw,
         )
+        if trailing:
+            raise RuntimeError("VM upload returned unexpected bytes")
+        _require_ok(response, "put")
+
+    def put_file(self, relative_path: str, descriptor: FileDescriptor) -> None:
+        if descriptor.size_bytes > self.config.max_transfer_bytes:
+            raise ValueError("upload exceeds configured transfer bound")
+        response, trailing = self._call("put", {"relative_path": relative_path,
+            "sha256": descriptor.sha256, "size_bytes": descriptor.size_bytes}, b"",
+            upload_path=Path(descriptor.local_path))
         if trailing:
             raise RuntimeError("VM upload returned unexpected bytes")
         _require_ok(response, "put")
@@ -144,6 +157,7 @@ class SSHRemoteClient:
         payload: dict[str, Any],
         body: bytes,
         *, download_to: Path | None = None, download_limit: int = 0,
+        upload_path: Path | None = None,
     ) -> tuple[dict[str, Any], bytes]:
         started = time.monotonic()
         request = _canonical(
@@ -222,9 +236,10 @@ class SSHRemoteClient:
                 raise RuntimeError("VM download returned no header")
             self.download_progress(received)
             return parsed, b""
-        completed = self._run(command, input=request, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            env=_transport_environment(self.config.ssh_executable), timeout=self.config.operation_timeout_seconds,
-            check=False)
+        from contextlib import nullcontext
+        with (upload_path.open("rb") if upload_path is not None else nullcontext(None)) as upload:
+            completed = self._run(command, input=request, input_stream=upload,
+                env=_transport_environment(self.config.ssh_executable), timeout=self.config.operation_timeout_seconds)
         if completed.stderr and self.diagnostic_root is not None:
             preserve_log(self.diagnostic_root, "ssh-stderr", completed.stderr)
         if completed.returncode != 0:
@@ -305,6 +320,8 @@ class SSHTCADTransport:
         if context and payload.get("progress_path"):
             path = Path(payload["progress_path"])
             context.report_progress = lambda value: atomic_json(path, value)
+        if operation == "execution_policy":
+            return self._rpc("tcad_execution_policy", {})
         if operation == "capabilities":
             if payload:
                 raise ValueError("capability discovery accepts no payload")
@@ -342,11 +359,11 @@ class SSHTCADTransport:
             }
         if operation == "submit":
             marker = self._read_marker(payload["submission"])
-            value = self._rpc("tcad_submit", {"submission": marker["remote_submission"]})
+            value = self._rpc("tcad_submit", {"submission": marker["remote_submission"], "authorization": payload.get("authorization")})
             return {"run_id": value["run_id"], "state": value["state"]}
         if operation == "status":
             value = self._rpc("tcad_status", {"run_id": payload["run_id"]})
-            return {key: value[key] for key in ("state", "progress") if key in value}
+            return {key: value[key] for key in ("state", "progress", "consumed_budget") if key in value}
         if operation == "cancel":
             value = self._rpc("tcad_cancel", {"run_id": payload["run_id"]})
             return {"state": value["state"]}
@@ -360,14 +377,13 @@ class SSHTCADTransport:
         job_descriptor = FileDescriptor.model_validate(payload["job_spec"], strict=True)
         archive_descriptor = FileDescriptor.model_validate(payload["archive"], strict=True)
         job_raw = _read_descriptor(job_descriptor)
-        archive_raw = _read_descriptor(archive_descriptor)
         job = TCADJobSpec.model_validate_json(job_raw, strict=True)
         if job.input_archive != archive_descriptor:
             raise ValueError("job archive binding differs from prepare archive")
         digest = hashlib.sha256(job_raw).hexdigest()
         prefix = f"transport/{digest}"
         remote_archive_path = str(self.remote_exchange_root / prefix / "project.tar")
-        self.remote.put(f"{prefix}/project.tar", archive_raw)
+        self.remote.put_file(f"{prefix}/project.tar", archive_descriptor)
         remote_archive = job.input_archive.model_copy(
             update={"local_path": remote_archive_path}
         )
@@ -474,13 +490,9 @@ class SSHTCADTransport:
                 if temporary.is_symlink():
                     raise ValueError("collection temporary file must not be a symlink")
                 try:
-                    get_to = getattr(self.remote, "get_to", None)
                     if isinstance(self.remote, SSHRemoteClient):
                         self.remote.download_progress = lambda count: progress(current_file=name, current_file_bytes=count)
-                    if callable(get_to):
-                        get_to(remote_descriptor.local_path, temporary, remote_descriptor.size_bytes)
-                    else:
-                        temporary.write_bytes(self.remote.get(remote_descriptor.local_path))
+                    self.remote.get_to(remote_descriptor.local_path, temporary, remote_descriptor.size_bytes)
                     if not matches(temporary):
                         raise RuntimeError("downloaded result differs from remote descriptor")
                     os.replace(temporary, path)

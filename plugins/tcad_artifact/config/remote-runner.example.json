@@ -1,7 +1,6 @@
 {
   "exchange_root": "/home/tcad/scidiscovery-tcad/exchange",
   "max_concurrent_runs": 1,
-  "max_transfer_bytes": 536870912,
   "result_root": "/home/tcad/scidiscovery-tcad/state/runs",
   "state_root": "/home/tcad/scidiscovery-tcad/state",
   "tools": [
@@ -35,5 +34,48 @@
       "release_evidence": "Administrator-qualified Synopsys Sentaurus R-2020.09 installation",
       "solver_kind": "sdevice"
     }
-  ]
+  ],
+  "agent_execution_policy": {
+    "enabled": true,
+    "max_storage_bytes": 2000000000,
+    "max_wall_time_seconds": 3600,
+    "outside_limits": "require_human_approval"
+  },
+  "runner": {
+    "sample_interval_seconds": 0.1,
+    "terminate_grace_seconds": 5.0,
+    "transfer_chunk_bytes": 1048576,
+    "max_transfer_bytes": 2100000000,
+    "max_preview_bytes": 33554432,
+    "max_manifest_bytes": 4194304,
+    "max_log_bytes": 524288,
+    "max_diagnostic_files": 32,
+    "collection_total_seconds": 600.0,
+    "collection_file_seconds": 120.0,
+    "collection_idle_seconds": 30.0
+  },
+  "debug": {
+    "preflight": {
+      "wall_time_seconds": 60,
+      "max_output_bytes": 2097152
+    },
+    "smoke": {
+      "wall_time_seconds": 180,
+      "max_output_bytes": 33554432
+    },
+    "initialization": {
+      "wall_time_seconds": 120,
+      "max_output_bytes": 33554432
+    },
+    "max_runs": 6,
+    "total_wall_seconds": 360,
+    "max_memory_bytes": 2147483648,
+    "max_storage_bytes": 2000000000,
+    "max_output_file_bytes": 8388608,
+    "max_output_files": 120,
+    "max_log_bytes": 524288,
+    "max_manifest_bytes": 4194304,
+    "max_response_log_chars": 8192,
+    "max_response_bytes": 32768
+  }
 }

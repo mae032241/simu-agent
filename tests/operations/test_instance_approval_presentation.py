@@ -79,7 +79,7 @@ def test_large_execution_package_keeps_original_goal_current_targets_and_exact_p
             "objectives": ["depth", "shape", "later validation"], "current_objectives": ["depth", "shape"],
             "comparison_contract": {"variables": [{"variable_key": "temperature", "scientific_path": "device.temperature",
                 "unit": "K", "expectations": [{"case_key": "control", "value": 300}]}]}}]}, (goal.ref,))
-    package = register(system, "package", "tcad.reviewed-deck-package.v2", {"project": {
+    package = register(system, "package", "tcad.execution-package.v2", {"project": {
         "entrypoint": "process.cmd", "files": [{"content": "source code " * 15000}],
         "parameter_bindings": [{"name": "temperature", "declared_value": "300", "unit": "K", "evidence_class": "assumption"}],
         "resource_limits": {"wall_time_seconds": 60}},

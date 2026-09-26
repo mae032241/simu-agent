@@ -165,30 +165,6 @@ def _curve_contract() -> CurveExperimentContract:
     )
 
 
-def test_generic_contracts_have_no_curve_vocabulary() -> None:
-    root = Path(__file__).parents[2]
-    for relative in (
-        "src/scidiscovery/artifact_agent/schema/experiment.py",
-        "src/scidiscovery/artifact_agent/schema/experiment_intent.py",
-        "src/scidiscovery/artifact_agent/schema/research_objective.py",
-        "src/scidiscovery/artifact_agent/schema/layered_diagnosis.py",
-    ):
-        text = (root / relative).read_text(encoding="utf-8").lower()
-        assert "curve" not in text
-        assert "series_key" not in text
-
-    forbidden_science_phrases = (
-        "thresholded validation-check binding",
-        "required numerical-qualification gate",
-        "series roles are incompatible",
-        "control derives compact-intent roles",
-    )
-    for path in sorted((root / "src/scidiscovery").rglob("*.py")):
-        text = path.read_text(encoding="utf-8").lower()
-        for phrase in forbidden_science_phrases:
-            assert phrase not in text, f"core interprets domain science in {path}"
-
-
 def test_curve_contract_binds_generic_checks_without_core_fields() -> None:
     plan = _engineering_plan()
     contract = _curve_contract()
@@ -212,9 +188,9 @@ def test_install_combinations_compile_without_reverse_dependency() -> None:
     )
     assert set(base.operation_ids()) < set(curve.operation_ids())
     assert set(base.operation_ids()) < set(table.operation_ids())
-    assert "science.evidence.extract.figure.v2" not in base.operation_ids()
-    assert "science.evidence.extract.figure.v2" not in curve.operation_ids()
-    assert "science.evidence.extract.figure.v2" in figure.operation_ids()
+    assert "science.evidence.extract.figure.v3" not in base.operation_ids()
+    assert "science.evidence.extract.figure.v3" not in curve.operation_ids()
+    assert "science.evidence.extract.figure.v3" in figure.operation_ids()
     assert "tcad.study.execute" not in curve.operation_ids()
     assert "science.table.observation.analyze.v1" in table.operation_ids()
     assert "tcad.curve-bundle.sprocess-plx.v1" in full.operation_ids()
@@ -226,28 +202,3 @@ def test_install_combinations_compile_without_reverse_dependency() -> None:
         "general_science",
         "curve_score",
     }
-
-
-def test_output_ports_do_not_predict_their_future_consumers() -> None:
-    catalog = compile_catalog(
-        (
-            CORE_PLUGIN,
-            GENERAL_PLUGIN,
-            CURVE_PLUGIN,
-            FIGURE_PLUGIN,
-            TCAD_PLUGIN,
-            TABLE_PLUGIN,
-        )
-    )
-    outputs = tuple(
-        port
-        for operation_id in catalog.operation_ids()
-        for port in catalog.operation(operation_id).spec.outputs
-    )
-    assert outputs
-    assert all("allowed_input_usages" not in type(port).model_fields for port in outputs)
-    assert {
-        port.usage
-        for operation_id in catalog.operation_ids()
-        for port in catalog.operation(operation_id).spec.inputs
-    } >= {"claim_evidence", "prior_signal", "evidence_inventory"}

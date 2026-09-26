@@ -27,7 +27,8 @@ _OWNED_GROUP_ENV = "_SCID_COLLECTION_PROCESS_GROUP"
 
 def run_bounded(command, *, input: bytes, timeout: float, env=None, sink=None,
                 idle_seconds=None, max_output_bytes=8 * 1024 * 1024, context=None, process_group=True,
-                timeout_kind="operation_total", pass_fds=()):
+                timeout_kind="operation_total", pass_fds=(), input_stream=None,
+                transfer_chunk_bytes=1024 * 1024):
     """Drain both pipes, bound retained bytes, and reap this call's process group."""
     # A private collector already owns the whole transfer tree. Nested command
     # transports must stay in that group so forced exit cannot orphan writers.
@@ -41,7 +42,7 @@ def run_bounded(command, *, input: bytes, timeout: float, env=None, sink=None,
     process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
         stderr=subprocess.PIPE, env=env, start_new_session=process_group, pass_fds=pass_fds)
     try:
-        # Transport requests are bounded metadata, not solver output payloads.
+        # Header bytes stay bounded; an optional scientific body is streamed.
         os.set_blocking(process.stdin.fileno(), False)
         pending = memoryview(input)
         with selectors.DefaultSelector() as selector:
@@ -63,13 +64,22 @@ def run_bounded(command, *, input: bytes, timeout: float, env=None, sink=None,
                     raise error
                 for key, _ in selector.select(min(.05, max(.001, timeout - (now - start)))):
                     if key.data == "stdin":
+                        if not pending and input_stream is not None:
+                            pending = memoryview(input_stream.read(transfer_chunk_bytes))
                         if pending:
                             try:
-                                pending = pending[os.write(key.fileobj.fileno(), pending[:65536]):]
+                                sent = os.write(key.fileobj.fileno(), pending[:65536])
+                                pending = pending[sent:]
+                                if sent:
+                                    last_progress = time.monotonic()
                             except BrokenPipeError:
                                 pending = pending[:0]
+                                input_stream = None
                         if not pending:
-                            selector.unregister(key.fileobj); key.fileobj.close()
+                            if input_stream is not None:
+                                pending = memoryview(input_stream.read(transfer_chunk_bytes))
+                            if not pending:
+                                selector.unregister(key.fileobj); key.fileobj.close()
                         continue
                     raw = os.read(key.fileobj.fileno(), 65536)
                     if not raw:
@@ -267,7 +277,8 @@ class ExecutionCollection:
                 os.close(fd)
         return result
 
-    def collect(self, execution_id, *, scope, total_seconds=COLLECTION_SECONDS):
+    def collect(self, execution_id, *, scope, total_seconds=COLLECTION_SECONDS,
+                file_timeout_seconds=FILE_SECONDS, idle_timeout_seconds=IDLE_SECONDS):
         gate = getattr(self.executions, "instance_maintenance", None)
         lease = None
         if gate is not None:
@@ -286,7 +297,8 @@ class ExecutionCollection:
                         lease.close()
                         raise
         try:
-            return self._collect_owned(execution_id, scope=scope, total_seconds=total_seconds, maintenance_lease=lease)
+            return self._collect_owned(execution_id, scope=scope, total_seconds=total_seconds, maintenance_lease=lease,
+                file_timeout_seconds=file_timeout_seconds, idle_timeout_seconds=idle_timeout_seconds)
         finally:
             # Accepted work transfers the independent lease to its supervisor;
             # the request guard may now finish without exposing a write window.
@@ -296,7 +308,8 @@ class ExecutionCollection:
                 if not transferred:
                     lease.close()
 
-    def _collect_owned(self, execution_id, *, scope, total_seconds, maintenance_lease):
+    def _collect_owned(self, execution_id, *, scope, total_seconds, maintenance_lease,
+                       file_timeout_seconds=FILE_SECONDS, idle_timeout_seconds=IDLE_SECONDS):
         with self._mutex:
             status = self.executions.status(execution_id)
             if status.state == "collected":
@@ -323,7 +336,8 @@ class ExecutionCollection:
             process = None
             try:
                 reader, writer = os.pipe()
-                context = CollectionContext.for_seconds(total_seconds)
+                context = CollectionContext.for_seconds(total_seconds, file_timeout_seconds=file_timeout_seconds,
+                    idle_timeout_seconds=idle_timeout_seconds)
                 record = {"state": "running", "started_at": _now(), "updated_at": _now(),
                     "total_seconds": total_seconds, "working_seconds": total_seconds - min(2, total_seconds * .1),
                     "file_timeout_seconds": context.file_timeout_seconds, "idle_timeout_seconds": context.idle_timeout_seconds}

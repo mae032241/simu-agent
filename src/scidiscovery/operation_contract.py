@@ -335,7 +335,10 @@ def direct_revision_ports(
         or base_cardinality not in {(0, 1), (1, 1)}
         or bases[0].exposure == "handoff_only"
         or len(primary) != 1
-        or any(port.collection is not None and port.name != "recovery_manifest_output"
+        # Catalog compilation restricts these ancillary outputs to registered
+        # controlled tools; they do not turn a complete primary revision into
+        # Worker-authored collection submission.
+        or any(port.collection is not None and port.name not in {"tool_evidence", "recovery_manifest_output"}
                for port in spec.outputs)
         or review is None
         or review.reviewer_operation is None

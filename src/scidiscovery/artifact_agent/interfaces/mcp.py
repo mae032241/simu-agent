@@ -85,7 +85,7 @@ def rpc_error(request_id: Any, error: Exception) -> dict[str, Any]:
             phase="tool_execution", affected_action="tool_call",
             message=f"{reason['type']}: {reason['message']}", error_type=reason["type"],
         ),)
-    if public_engineering is not None:
+    if public_engineering is not None and "reference" in public_engineering:
         details = tuple({**item, "message": "Tool execution failed; read the diagnostic reference for details."}
                         for item in details)
     return {

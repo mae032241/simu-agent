@@ -745,16 +745,17 @@ class SchedulerBindingService:
             self.get_binding(instance=instance_id, namespace=namespace, name=name),
         )
 
-    def list(self, *, instance: str, namespace: str) -> tuple[SchedulerBinding, ...]:
+    def list(self, *, instance: str, namespace: str, name_prefix: str | None = None) -> tuple[SchedulerBinding, ...]:
         self._validate_lookup(instance, namespace, "placeholder")
+        where = "instance = ? AND namespace = ?"
+        parameters = [instance, namespace]
+        if name_prefix is not None:
+            where += " AND name >= ? AND name < ?"
+            parameters.extend((name_prefix, name_prefix + "\U0010ffff"))
         with self._connect() as connection:
             rows = connection.execute(
-                """
-                SELECT * FROM scheduler_bindings
-                WHERE instance = ? AND namespace = ?
-                ORDER BY created_at DESC, name
-                """,
-                (instance, namespace),
+                "SELECT * FROM scheduler_bindings WHERE " + where + " ORDER BY created_at DESC, name",
+                parameters,
             ).fetchall()
         return tuple(_binding(row) for row in rows)
 

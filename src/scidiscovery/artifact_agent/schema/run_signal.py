@@ -17,8 +17,6 @@ class SchedulerSignal(SchemaModel):
     assumptions: Annotated[tuple[str, ...], Field(max_length=32)] = ()
     missing_inputs: Annotated[tuple[str, ...], Field(max_length=32)] = ()
     next_actions: Annotated[tuple[str, ...], Field(max_length=32)] = ()
-    # Deprecated compatibility metadata. It has no routing authority.
-    next_action_kind: str | None = None
 
 
 __all__ = ["SchedulerSignal"]

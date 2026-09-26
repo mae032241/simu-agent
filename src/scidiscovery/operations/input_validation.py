@@ -97,7 +97,7 @@ def read_validation_sources(
     read_artifact: Callable[[ArtifactRef], bytes] | None,
 ) -> ValidationSources:
     """Budget metadata before any read, then verify exact byte identity."""
-    if sum(item.artifact.size_bytes for item in inputs) > compiled.spec.limits.max_input_bytes:
+    if sum(item.artifact.size_bytes for item in inputs if item.exposure != "file_reference") > compiled.spec.limits.max_input_bytes:
         raise OperationInvocationError("input_total_too_large")
     if read_artifact is None:
         raise OperationInvocationError("input_content_reader_missing")
@@ -106,10 +106,10 @@ def read_validation_sources(
     for item in inputs:
         artifact = item.artifact
         try:
-            raw = read_artifact(artifact.ref)
+            raw = b"" if item.exposure == "file_reference" else read_artifact(artifact.ref)
         except Exception as error:
             raise OperationInvocationError("input_content_unavailable", port=item.port_name) from error
-        if (not isinstance(raw, bytes) or len(raw) != artifact.size_bytes
+        if item.exposure != "file_reference" and (not isinstance(raw, bytes) or len(raw) != artifact.size_bytes
                 or hashlib.sha256(raw).hexdigest() != artifact.ref.sha256):
             raise OperationInvocationError("input_content_integrity_failure", port=item.port_name)
         contents[item.source_name] = raw

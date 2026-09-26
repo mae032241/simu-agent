@@ -13,7 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, ValidationError,
 
 from scidiscovery.artifact_agent.operation_tool_context import OperationToolContext
 from scidiscovery.artifact_agent.schema.common import canonical_json, Identifier
-from scidiscovery.artifact_agent.schema.layered_diagnosis import CalculationRecord
+from scidiscovery.artifact_agent.service.calculation_proof import ControlledCalculationRecord as CalculationRecord
 from scidiscovery.operation_contract import SemanticRuleViolation, contract_diagnostic, declared_violation, validation_diagnostics
 from scidiscovery.operations.tooling import WorkerToolDefinition
 from .schema import CurveAxis, CurveBundle, CurveComparison, CurveComparisonSpec, CurveOperatorSpec, CurveSeries, evaluate_curve_consistency
@@ -325,4 +325,4 @@ def score_tool(request: AnalysisScoreInput, context: OperationToolContext) -> di
     return run_score_tool(request, context, evaluate_analysis_request)
 
 
-CURVE_SCORE_TOOL = WorkerToolDefinition(name="worker_curve_score", description="Optionally score bound bundle/explicit CSV columns. Returns compact metrics; read calculation_path for the complete record. Cite the returned calculation_ref; the complete record and receipt are saved automatically. Unsupported metrics are never substituted.", input_model=AnalysisScoreInput, capability="analysis.curve_score", contextual_handler=score_tool, record_attempts=True, evidence_ports=("tool_evidence", "recovery_manifest_output"))
+CURVE_SCORE_TOOL = WorkerToolDefinition(name="worker_curve_score", description="Optionally score bound bundle/explicit CSV columns. Returns compact metrics; read calculation_ref with the evidence reader for the scientific record. Cite the returned calculation_ref; the complete record and receipt are saved automatically. Unsupported metrics are never substituted.", input_model=AnalysisScoreInput, capability="analysis.curve_score", contextual_handler=score_tool, record_attempts=True, evidence_ports=("tool_evidence", "recovery_manifest_output"))
