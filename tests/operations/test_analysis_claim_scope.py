@@ -3,6 +3,7 @@ from copy import deepcopy
 import json
 from pathlib import Path
 
+from scidiscovery.operations.input_validation import ValidationSources
 import pytest
 
 from curve_score.schema import CurveBundle, CurveComparisonSpec, CurveConsistencyReport, evaluate_curve_consistency
@@ -86,7 +87,7 @@ def test_standalone_metric_status_does_not_override_analyst_verdict(status):
     report = curve._passing_diagnosis().model_dump(mode='json')
     report['source_references'] = [dict(source_key='metric_report', input_alias='metric_report')]
     sources = {'experiment_plan': plan.canonical_json(), 'metric_report': metric.canonical_json()}
-    Components.diagnosis_context.implementation(report, sources, {})
+    Components.diagnosis_context.implementation(report, ValidationSources(sources, {}), {})
 
 
 def test_ambiguous_check_correspondence_remains_a_scientific_review_question():
@@ -94,7 +95,7 @@ def test_ambiguous_check_correspondence_remains_a_scientific_review_question():
     report = curve._passing_diagnosis().model_dump(mode='json')
     report['source_references'] = [dict(source_key='metric_report', input_alias='metric_report')]
     Components.diagnosis_context.implementation(report,
-        {'experiment_plan': plan.canonical_json(), 'metric_report': metric.canonical_json()}, {})
+        ValidationSources({'experiment_plan': plan.canonical_json(), 'metric_report': metric.canonical_json()}, {}), {})
 
 
 @pytest.mark.parametrize('tamper', ['metric', 'threshold', 'unit', 'observed'])
@@ -114,7 +115,7 @@ def test_source_metric_method_differences_remain_visible_for_scientific_review(t
     report = curve._passing_diagnosis().model_dump(mode='json')
     report['source_references'] = [dict(source_key='metric_report', input_alias='metric_report')]
     Components.diagnosis_context.implementation(report,
-        {'experiment_plan': plan.canonical_json(), 'metric_report': altered.canonical_json()}, {})
+        ValidationSources({'experiment_plan': plan.canonical_json(), 'metric_report': altered.canonical_json()}, {}), {})
 
 
 @pytest.mark.parametrize('status', ['pass', 'unavailable'])
@@ -129,7 +130,7 @@ def test_local_objective_uses_its_cited_comparison_despite_global_inconclusive_o
         comparison_keys=['implementation_residual'], summary='This finite profile comparison passed.', evidence_keys=['metric_report'])
     raw['source_references'] = [dict(source_key='metric_report', input_alias='metric_report')]
     sources = {'experiment_plan': plan.canonical_json(), 'metric_report': metric.canonical_json()}
-    Components.diagnosis_context.implementation(raw, sources, {})
+    Components.diagnosis_context.implementation(raw, ValidationSources(sources, {}), {})
 
 
 @pytest.mark.parametrize('status', ['fail', 'unavailable'])
@@ -160,10 +161,9 @@ def generic_worker(tmp_path, *, plan=None, return_system=False):
     bundle['series'][1]['points'] = deepcopy(bundle['series'][0]['points'])
     register('generic_results', b'Execution finished with the bounded output.', 'opaque', parents=(artifacts['plan'].ref,))
     register('generic_bundle', canonical_json(bundle), 'scidiscovery.curve-bundle.v1', parents=(artifacts['plan'].ref,))
-    review = root.call_tool('run_status', {'name': 'plan_review'})['output_artifact_name']
     root.call_tool('operation_invoke', dict(name='generic_analysis', operation_id='science.result.diagnose.v1',
         instruction='Analyze only the exact bound plan, execution evidence, and optional curve calculations.', inputs=[
-        dict(port='experiment_plan', artifact_names=['plan']), dict(port='experiment_review', artifact_names=[review]),
+        dict(port='experiment_plan', artifact_names=['plan']),
         dict(port='experiment_results', artifact_names=['generic_results']), dict(port='curve_bundle', artifact_names=['generic_bundle'])]))
     compiled = catalog.operation('science.result.diagnose.v1')
     worker = LocalWorkerMCPRouter(runtime.runs, operation_id=compiled.spec.operation_id, operation_digest=compiled.digest)

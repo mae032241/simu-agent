@@ -103,7 +103,7 @@ def test_review_signal_cannot_enter_an_unrelated_operation_unconsumed() -> None:
     with pytest.raises(OperationInvocationError) as caught:
         routes._validate_producer_output_admission(
             _bound(
-                catalog.operation("science.experiment.design.v1"),
+                catalog.operation("science.experiment.v1"),
                 _input("review", "review_signal", signal),
             )
         )
@@ -165,25 +165,6 @@ def test_explore_or_internal_output_is_intrinsically_nonclaiming() -> None:
     ] == "false"
 
 
-@pytest.mark.parametrize("producer_id, port", (
-    ("tcad.deck.author.initial.v1", "project"),
-    ("tcad.deck.author.revise.v1", "project"),
-    ("tcad.deck.author.runtime-failure.v1", "project"),
-))
-def test_tcad_review_prior_signal_keeps_the_exact_producer_review_edge(producer_id, port):
-    catalog = _catalog()
-    producer = catalog.operation(producer_id)
-    reviewer = catalog.operation("tcad.deck.review.v1")
-    subject = next(item for item in reviewer.spec.inputs if item.name == "project")
-    assert subject.usage == "prior_signal"
-    assert producer.spec.review.reviewer_operation == reviewer.spec.operation_id
-    assert producer.spec.review.reviewer_input_port == subject.name
-    artifact, envelope = _produced_artifact(catalog, producer_id, port, "tcad_subject")
-    routes = _routes(catalog, {artifact.ref.artifact_id: envelope})
-    bound = _bound(reviewer, _input(subject.name, subject.usage, artifact))
-    routes._validate_producer_output_admission(bound)
-    envelope.labels["operation_digest"] = "0" * 64
-    routes._validate_producer_output_admission(bound)
 
 
 _EXISTING_INVENTORY_CONSUMERS = {
@@ -199,9 +180,9 @@ def test_agent_inventory_abi_changes_catalog_identity(monkeypatch) -> None:
     from scidiscovery.operations import catalog as catalog_module
     from scidiscovery.operations.spec import OPERATION_ABI_VERSION
 
-    assert OPERATION_ABI_VERSION == "19"
+    assert OPERATION_ABI_VERSION.isdigit()
     catalog = _catalog()
-    monkeypatch.setattr(catalog_module, "OPERATION_ABI_VERSION", "17")
+    monkeypatch.setattr(catalog_module, "OPERATION_ABI_VERSION", str(int(OPERATION_ABI_VERSION) - 1))
     prior_abi = _catalog()
     assert all(catalog.operation(operation_id).digest != prior_abi.operation(operation_id).digest
                for operation_id in catalog.operation_ids())
@@ -210,7 +191,7 @@ def test_agent_inventory_abi_changes_catalog_identity(monkeypatch) -> None:
 @pytest.mark.parametrize("operation_id", tuple(_EXISTING_INVENTORY_CONSUMERS))
 def test_existing_agent_inventory_reads_skip_stale_producer_contracts(operation_id) -> None:
     catalog = _catalog()
-    artifact, envelope = _produced_artifact(catalog, "science.experiment.revise.v1", "experiment_plan", "stale_inventory")
+    artifact, envelope = _produced_artifact(catalog, "science.experiment.v1", "experiment", "stale_inventory")
     envelope.labels["operation_digest"] = "0" * 64
     routes = _routes(catalog, {artifact.ref.artifact_id: envelope})
     routes._operation_output_contract = Mock(side_effect=AssertionError("inventory must not inspect producer qualification"))
@@ -224,11 +205,11 @@ def test_existing_agent_inventory_reads_skip_stale_producer_contracts(operation_
 @pytest.mark.parametrize("usage", ("claim_evidence", "change_request", "review_signal"))
 def test_claim_and_review_inputs_keep_incompatible_version_rejection(usage) -> None:
     catalog = _catalog()
-    artifact, envelope = _produced_artifact(catalog, "science.experiment.revise.v1", "experiment_plan", "stale_subject")
+    artifact, envelope = _produced_artifact(catalog, "science.experiment.v1", "experiment", "stale_subject")
     envelope.labels["operation_digest"] = "0" * 64
     envelope.labels["operation_version"] = "incompatible"
     routes = _routes(catalog, {artifact.ref.artifact_id: envelope})
-    compiled = catalog.operation("science.experiment.revise.v1")
+    compiled = catalog.operation("science.experiment.v1")
     with pytest.raises(OperationInvocationError) as caught:
         routes._validate_producer_output_admission(_bound(compiled, _input("prior_draft", usage, artifact)))
     assert caught.value.reason_code == "input_producer_contract_changed"
@@ -236,46 +217,19 @@ def test_claim_and_review_inputs_keep_incompatible_version_rejection(usage) -> N
 
 def test_transform_inventory_reads_history_without_qualifying_it() -> None:
     catalog = _catalog()
-    artifact, envelope = _produced_artifact(catalog, "science.experiment.revise.v1", "experiment_plan", "stale_transform_input")
+    artifact, envelope = _produced_artifact(catalog, "science.experiment.v1", "experiment", "stale_transform_input")
     envelope.labels["operation_digest"] = "0" * 64
     routes = _routes(catalog, {artifact.ref.artifact_id: envelope})
-    compiled = catalog.operation("tcad.execution-context.project.v1")
+    compiled = catalog.operation("science.intake.split.v1")
     routes._validate_producer_output_admission(_bound(compiled, _input("capability", "evidence_inventory", artifact)))
 
 
-def test_historical_prior_signal_still_requires_exact_current_review() -> None:
-    catalog = _catalog()
-    artifact, envelope = _produced_artifact(
-        catalog, "science.hypothesis.propose.v1", "hypothesis_portfolio", "historical_hypotheses"
-    )
-    envelope.labels["operation_digest"] = "0" * 64
-    routes = _routes(catalog, {artifact.ref.artifact_id: envelope})
-    designer = catalog.operation("science.experiment.design.v1")
-    bound = _bound(designer, _input("hypothesis_portfolio", "prior_signal", artifact))
-    with pytest.raises(OperationInvocationError) as caught:
-        routes._validate_producer_output_admission(bound)
-    assert caught.value.reason_code == "input_independent_review_missing"
-
-    review, review_envelope = _produced_artifact(
-        catalog, "science.hypothesis.criticize.v1", "scientific_review", "critic_review"
-    )
-    routes.artifacts = SimpleNamespace(catalog=lambda ref: {
-        artifact.ref: envelope, review.ref: review_envelope,
-    }[ref])
-    routes._is_exact_reviewer_output = Mock(return_value=False)
-    bound = _bound(designer, *bound.inputs, _input("critic_review", "prior_signal", review))
-    with pytest.raises(OperationInvocationError) as caught:
-        routes._validate_producer_output_admission(bound)
-    assert caught.value.reason_code == "input_independent_review_missing"
-    routes._is_exact_reviewer_output.return_value = True
-    routes._validate_producer_output_admission(bound)
-    assert routes._is_exact_reviewer_output.call_args.kwargs["subject_ref"] == artifact.ref
 
 
 def test_historical_prior_signal_rejects_incompatible_producer_port() -> None:
     catalog = _catalog()
     artifact, envelope = _produced_artifact(
-        catalog, "science.experiment.revise.v1", "experiment_plan", "old_schema"
+        catalog, "science.experiment.v1", "experiment", "old_schema"
     )
     envelope.labels["operation_digest"] = "0" * 64
     routes = _routes(catalog, {artifact.ref.artifact_id: envelope})
@@ -289,14 +243,14 @@ def test_historical_prior_signal_rejects_incompatible_producer_port() -> None:
 def test_historical_prior_signal_requires_complete_provenance(missing) -> None:
     catalog = _catalog()
     artifact, envelope = _produced_artifact(
-        catalog, "science.experiment.revise.v1", "experiment_plan", "missing_identity"
+        catalog, "science.experiment.v1", "experiment", "missing_identity"
     )
     del envelope.labels[missing]
     routes = _routes(catalog, {artifact.ref.artifact_id: envelope})
     with pytest.raises(OperationInvocationError) as caught:
         routes._validate_producer_output_admission(_bound(
             catalog.operation("science.object.review.v1"),
-            _input("experiment_plan", "prior_signal", artifact),
+            _input("experiment", "prior_signal", artifact),
         ))
     assert caught.value.reason_code == "input_producer_contract_unavailable"
-    assert caught.value.port == "experiment_plan"
+    assert caught.value.port == "experiment"

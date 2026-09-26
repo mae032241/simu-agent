@@ -456,9 +456,8 @@ but cannot substitute for solver products.
 Failed/cancelled execution or missing products permits invalid_study or bounded
 inconclusive findings, not fabricated success. Old aggregate 97 is not solver success:
 use explicit solver status and actual step evidence; state uncertainty when absent.
-Use execution_package.project.execution_plan for skeleton execution, or the original bound experiment_plan for the detailed-plan branch, as the exact report scope. When it declares
-a non-null objective_key, objective_assessment is required and must use that exact
-key; pass, fail, inconclusive, and not_evaluable remain scientific choices. When the
+Use execution_package.project.execution_plan for skeleton execution, or the original bound experiment_plan for the detailed-plan branch, as the exact report scope. When an optional objective_assessment is supplied, it must use the plan’s exact
+non-null objective_key; pass, fail, inconclusive, and not_evaluable remain scientific choices. When the
 key is null, the assessment remains optional and must not be invented. next_action
 remains optional Worker advice, not a scheduling command.
 
@@ -496,7 +495,7 @@ computations.
 """ + DIAGNOSTIC_GUIDANCE.format(diagnostic_tool="worker_tcad_curve_diagnose") + ANALYSIS_FILES_GUIDANCE
 SEMANTIC_CONTRACT = scientific_semantic_contract(
     "tcad.result_analysis", "Scoring is optional and occurs after execution.",
-    context_constraint="The report must identify the exact plan embedded in execution_package or the original bound detailed experiment_plan and use exact input aliases for solver claims. When that exact plan declares a non-null objective_key, objective_assessment is required and must use the exact key; a null key does not require or authorize inventing an assessment identity. A source key must resolve to one bound input or calculation record. Cite the tool-returned calculation_ref; control resolves the registered scientific record and its private receipt. A bound input alias retains its identity even in an optional source mapping. Repeated citations and local locators are allowed; an explicit locator naming another bound input conflicts with that mapping. Calculation records must match their controlled receipts or exact sealed historical records; no repeated source mapping or scoring is required at submission. Missing products and failed execution limit claims, not submission of a limited report.",
+    context_constraint="The report must identify the exact plan embedded in execution_package or the original bound detailed experiment_plan and use exact input aliases for solver claims. When an optional objective_assessment is supplied, it must use that exact plan’s non-null objective_key; a null key does not require or authorize inventing an assessment identity. A source key must resolve to one bound input or calculation record. Cite the tool-returned calculation_ref; control resolves the registered scientific record and its private receipt. A bound input alias retains its identity even in an optional source mapping. Repeated citations and local locators are allowed; an explicit locator naming another bound input conflicts with that mapping. Calculation records must match their controlled receipts or exact sealed historical records; no repeated source mapping or scoring is required at submission. Missing products and failed execution limit claims, not submission of a limited report.",
 )
 DIAGNOSIS_AGENT = Components.diagnosis_agent
 DIAGNOSIS_VALIDATOR = Components.diagnosis_validator

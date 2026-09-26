@@ -23,7 +23,7 @@ def test_collects_all_adaptive_frames_and_skips_unchanged_inputs(tmp_path):
     for index in range(79):
         (frames / f"movie_{index:04d}.tdr").write_bytes(f"frame {index}".encode())
     records = collector(str(tmp_path), [],
-                        {"max_output_bytes": 4096}, archive_entries=[original],
+                        {"max_output_bytes": 4096, "transfer_chunk_bytes": 1024}, archive_entries=[original],
                         collect_generated_outputs=True)
     assert len(records) == 79
     assert [item["relative_path"] for item in records] == [
@@ -44,14 +44,14 @@ def test_generated_capture_fails_closed_on_budget_and_symlink(tmp_path):
     frame.symlink_to(tmp_path / "other.tdr")
     (tmp_path / "other.tdr").write_bytes(b"other")
     with pytest.raises((OSError, RuntimeError, ValueError)):
-        collector(root, [], {"max_output_bytes": 4096}, collect_generated_outputs=True)
+        collector(root, [], {"max_output_bytes": 4096, "transfer_chunk_bytes": 1024}, collect_generated_outputs=True)
 
 
 def test_generated_capture_rejects_empty_set(tmp_path):
     collector = remote_runner_py36._collect_expected
     root = str(tmp_path)
     with pytest.raises(RuntimeError, match="no generated output files"):
-        collector(root, [], {"max_output_bytes": 4096}, collect_generated_outputs=True)
+        collector(root, [], {"max_output_bytes": 4096, "transfer_chunk_bytes": 1024}, collect_generated_outputs=True)
 
 
 def test_changed_staged_input_is_not_silently_excluded(tmp_path):
@@ -62,7 +62,7 @@ def test_changed_staged_input_is_not_silently_excluded(tmp_path):
                 "sha256": hashlib.sha256(b"before").hexdigest()}
     source.write_bytes(b"after")
     root = str(tmp_path)
-    records = collector(root, [], {"max_output_bytes": 4096},
+    records = collector(root, [], {"max_output_bytes": 4096, "transfer_chunk_bytes": 1024},
                         archive_entries=[original], collect_generated_outputs=True)
     assert [item["relative_path"] for item in records] == ["main.cmd"]
 
@@ -75,7 +75,7 @@ def test_generated_capture_rejects_symlinked_directory(tmp_path):
     (tmp_path / "linked").symlink_to(outside, target_is_directory=True)
     root = str(tmp_path)
     with pytest.raises(RuntimeError, match="not a real directory"):
-        collector(root, [], {"max_output_bytes": 4096}, collect_generated_outputs=True)
+        collector(root, [], {"max_output_bytes": 4096, "transfer_chunk_bytes": 1024}, collect_generated_outputs=True)
 
 
 def test_runtime_attestation_accepts_only_manifest_named_generated_files():

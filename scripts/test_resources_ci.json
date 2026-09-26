@@ -1,0 +1,5 @@
+{
+  "limits": {
+    "minimum_available_bytes": 2147483648
+  }
+}

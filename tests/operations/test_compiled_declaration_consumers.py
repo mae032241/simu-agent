@@ -69,7 +69,7 @@ def test_every_public_invoke_view_is_one_projection_of_its_compiled_contract(tmp
         policy = operation_revision_policy(compiled.spec)
         invoke = operation_invoke_contract(full, revision_policy=policy)
         assert full["version"] == compiled.spec.version
-        assert full["operation_digest"] == invoke["operation_digest"] == compiled.digest
+        assert "operation_digest" not in full and "operation_digest" not in invoke
         assert "revision_policy" not in full
         assert invoke["revision_policy"] == policy
         for field in (
@@ -173,7 +173,8 @@ def test_one_output_required_field_change_reaches_worker_schema_and_formal_submi
         payload_schema = visible["properties"]["payload"]
         assert payload_schema["required"] == schema["required"]
         assert payload_schema["properties"]["declaration_probe"] == {"type": "integer"}
-        assert assignment["operation"]["digest"] == compiled.digest
+        assert "digest" not in assignment["operation"]
+        assert runtime.runs.status(worker._run_id).operation_digest == compiled.digest
         assert payload_schema["x-scidiscovery-validation-contract"]["operation_digest"] == compiled.digest
         payload = {"summary": "A bounded architecture fixture result."}
         submitted = _submit(worker, opened, payload)

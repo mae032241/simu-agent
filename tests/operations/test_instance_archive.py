@@ -892,6 +892,7 @@ def test_foreign_key_commit_still_rolls_back_all_attached_changes(archive_system
     assert runtime.artifacts.read(subject.ref)
 
 
+@pytest.mark.process_e2e
 @pytest.mark.parametrize("action,point", [("restore", "before_restore_gate_finish"), ("archive", "database:artifacts"),
                                          ("archive", "after_recovery_retire_rename")])
 def test_hard_process_exit_preserves_resumable_gate_and_atomic_records(archive_system, action, point):

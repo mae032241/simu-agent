@@ -77,37 +77,6 @@ def test_handoff_normalizes_only_duplicate_fields_and_unknown_claims_still_fail(
     assert project_claim_decision(legacy).numerical_verdict == legacy.gates.numerical_validity.status
 
 
-def test_sealed_compact_analysis_reaches_next_design_preflight_and_original_input(tmp_path, monkeypatch):
-    from scidiscovery.artifact_agent.interfaces.mcp_local_worker import LocalWorkerMCPRouter
-    from tests.operations import test_agent_contract_alignment as alignment
-    from tests.operations import test_general_transform_operations as transforms
-    from tests.operations import test_tcad_result_analysis as tcad
-    open_runtime = tcad.open_runtime
-    monkeypatch.setattr(tcad, 'open_runtime', lambda **kwargs:
-        open_runtime(approval_receipt_secret=b'fixture-only-receipt-key-32-bytes', **kwargs))
-    system = analysis_system(tmp_path)
-    worker, opened = open_analysis(system)
-    submit_compact(worker, opened, compact_report())
-    catalog, runtime, root = system[:3]
-    completed = runtime.runs.status(worker._run_id)
-    original = runtime.artifacts.read(completed.output_ref)
-    # Reuse the existing design cohort fixture in the same instance. Its approval
-    # stub belongs to that fixture; this test checks feedback transport, not governance.
-    monkeypatch.setattr(transforms, '_root', lambda *args, **kwargs:
-        (runtime, SimpleNamespace(instance_id=completed.instance_id), root))
-    _, _, _, request, _ = alignment._feedback_root(tmp_path, monkeypatch,
-        alignment.experiment_case.__wrapped__(), 'science.experiment.design.v1', catalog=catalog)
-    request['inputs'].append(dict(port='current_progress', artifact_names=['analysis.output']))
-    checked = root.call_tool('operation_preflight', request)
-    assert checked['admissible'], checked
-    root.call_tool('operation_invoke', request)
-    operation = catalog.operation(request['operation_id'])
-    designer = LocalWorkerMCPRouter(runtime.runs, operation_id=operation.spec.operation_id, operation_digest=operation.digest)
-    opened = designer.call_tool('worker_open_assignment', {})
-    assignment = json.loads(Path(opened['assignment_path']).read_bytes())
-    item = next(item for item in assignment['inputs'] if item['port'] == 'current_progress')
-    assert (Path(opened['workspace_path'])/item['relative_path']).read_bytes() == original
-    assert json.loads(original)['limitations'] == compact_report()['limitations']
 
 
 def pointer(value, path):

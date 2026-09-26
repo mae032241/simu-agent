@@ -10,6 +10,7 @@ from curve_figure_evidence.plugin import PLUGIN as FIGURE_PLUGIN
 
 def test_figure_implementations_belong_to_the_figure_package():
     shared = {
+        "figure_intake_validator": "scidiscovery.general_science_components:Components.intake_validator",
         "nonempty_validator": "curve_score.science_operations:_NONEMPTY_COMPONENT",
         "figure_request_workspace": "scidiscovery.general_science_components:WORKSPACE",
     }

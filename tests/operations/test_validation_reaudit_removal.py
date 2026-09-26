@@ -20,7 +20,7 @@ from scidiscovery.operation_contract import SemanticRuleViolation
 from tcad_artifact.device_parameters import ScientificDecimal
 from tcad_artifact.parameter_operations import ParameterEvidencePackage
 from tcad_artifact.project_packager import validate_project_case_controls
-from tests.operations.test_agent_contract_alignment import experiment_case, _review_run
+from tests.operations.test_agent_contract_alignment import experiment_case
 from tests.operations.test_m2_parameter_package import _package
 from tests.operations.test_minimal_figure_extraction import _png, _request
 from tests.operations.test_tcad_result_analysis import (
@@ -37,25 +37,6 @@ def _plan(experiment_case):
     ).model_dump(mode='json')
 
 
-def test_review_can_submit_multiple_locators_and_repeated_references(tmp_path, experiment_case):
-    raw = canonical_json(_plan(experiment_case))
-    runtime, run_id, workspace = _review_run(tmp_path, {'experiment_plan': raw})
-    payload = {
-        'review_target': 'experiment_portfolio', 'verdict': 'revise', 'summary': 'Two exact locations.',
-        'evidence': [{'source_key': 'experiment_plan', 'source_type': 'frozen_input', 'locator': path}
-                     for path in ('experiment_plan:/proposals/0', 'experiment_plan:/validation_plans/0')],
-        'evidence_item_keys': ['item.a', 'item.a'],
-        'findings': [{'finding_key': 'scope', 'statement': 'Review the relation between these locations.',
-                      'epistemic_status': 'inference', 'evidence_keys': ['experiment_plan', 'experiment_plan']}],
-    }
-    output = workspace.output_directory / 'result.json'
-    envelope = {'schema_version': 1, 'handoff': {'verdict': 'revise', 'summary': 'Bounded review.'}, 'payload': payload}
-    payload['evidence'][0]['source_key'] = 'unbound_source'
-    output.write_bytes(canonical_json(envelope))
-    assert runtime.runs.submit(run_id)[0] == 'rejected'
-    payload['evidence'][0]['source_key'] = 'experiment_plan'
-    output.write_bytes(canonical_json(envelope))
-    assert runtime.runs.submit(run_id) == ('completed', ())
 
 
 def test_parameter_family_preserves_repeated_citations_without_overwriting_types():
@@ -73,7 +54,7 @@ def test_parameter_family_preserves_repeated_citations_without_overwriting_types
         ParameterEvidencePackage.model_validate_json(canonical_json(raw))
 
 
-def test_partial_comparison_retains_valid_refs_and_can_be_independently_reviewed(tmp_path, experiment_case):
+def test_partial_comparison_retains_valid_refs_and_exact_case_controls(tmp_path, experiment_case):
     raw = _plan(experiment_case)
     proposal = raw['proposals'][0]
     proposal['cases'].append({**deepcopy(proposal['cases'][0]), 'case_key': 'additional',
@@ -104,13 +85,6 @@ def test_partial_comparison_retains_valid_refs_and_can_be_independently_reviewed
     with pytest.raises(SemanticRuleViolation, match='additional case control differs'):
         validate_project_case_controls(project, parsed.canonical_json())
     bindings[-1].realized_value = '1'
-    runtime, run_id, workspace = _review_run(tmp_path, {'experiment_plan': parsed.canonical_json()})
-    (workspace.output_directory / 'result.json').write_bytes(canonical_json({
-        'schema_version': 1, 'handoff': {'verdict': 'revise', 'summary': 'Review local coverage.'},
-        'payload': {'review_target': 'experiment_portfolio', 'verdict': 'revise',
-                    'summary': 'The extra diagnostic is outside this comparison.'},
-    }))
-    assert runtime.runs.submit(run_id) == ('completed', ())
     for field, missing in (('comparison_case_keys', 'unknown_case'),):
         invalid = deepcopy(raw)
         invalid['proposals'][0]['comparison_contract'][field].append(missing)

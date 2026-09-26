@@ -19,7 +19,7 @@ from scidiscovery.general_science_plugin import PLUGIN as GENERAL_PLUGIN
 from scidiscovery.operations.catalog import compile_catalog
 from tests.operations.test_general_transform_operations import _intake, _register, _root
 from tests.operations.test_historical_compatibility_paths import _artifact, _complete
-from tests.operations.test_hypothesis_objective_boundary import _proposal
+from tests.operations.test_hypothesis_objective_boundary import _proposal, _foundation
 from tests.operations.test_l3_review_and_human_policy import (
     _complete_author, _complete_review, _consumer_preflight, _envelope, _system,
 )
@@ -62,12 +62,11 @@ def test_completed_review_reuse_is_separate_from_run_identity(tmp_path, change):
         runtime.runs._compiled(saved)
     assert runtime.runs.signal_for_output(original.ref, require_current=False) == saved.signal
     refused_without_review = _consumer_preflight(root, subject, None)
-    assert refused_without_review["reason_code"] == "input_independent_review_missing"
+    assert refused_without_review["admissible"]
     preflight = _consumer_preflight(root, subject, review)
     if change != "runtime":
-        assert preflight["reason_code"] == "input_independent_review_incompatible", preflight
-        assert preflight["diagnostics"][0]["path"] == "$.inputs.csv_observation"
-        assert "exact completed review exists" in preflight["diagnostics"][0]["message"]
+        # Ordinary historical context stays readable without renewing its review proof.
+        assert preflight["admissible"] if change == "review_version" else preflight["reason_code"] == "input_producer_port_incompatible"
         assert runtime.runs.signal_for_output(original.ref) is None
         return
     assert preflight["admissible"], preflight
@@ -89,7 +88,7 @@ def test_completed_review_reuse_is_separate_from_run_identity(tmp_path, change):
     assert worker.call_tool("worker_submit_result", {})["state"] == "completed"
     assert _artifact(runtime, instance, review).labels == original.labels
     revised = _complete_author(current, runtime, root, instruction="A different revision.", conflict="create_revision")
-    assert _consumer_preflight(root, revised, review)["reason_code"] == "input_independent_review_missing"
+    assert _consumer_preflight(root, revised, review)["reason_code"] == "semantic_name_conflict"
     other = runtime.scheduler_bindings.create_instance(name="other", title="Other instance", objective="Isolate exact bindings.")
     root.facade.instance = other.instance_id
     assert root.call_tool("operation_preflight", request)["reason_code"] == "input_artifact_unavailable"
@@ -102,6 +101,10 @@ def _qualified_foundation(tmp_path):
     runtime, instance, root = _root(tmp_path, catalog=catalog)
     _register(runtime, instance, name="source", raw=b"Frozen source.", kind="source", schema="opaque", media_type="text/plain")
     payload = json.loads(_intake().canonical_json().replace(b'"paper"', b'"source_material"'))
+    objective = json.loads(_foundation())["objective_contract"]
+    objective["statement"] = payload["scientific_foundation"]["objective"]
+    objective["mandatory_targets"][0]["evidence_item_keys"] = ["target"]
+    payload["scientific_foundation"]["objective_contract"] = objective
     intake = _complete(runtime, root, "extracted", "science.evidence.extract.v1", {"source_material": "source"}, payload)
     audit = _complete(runtime, root, "audit", "science.evidence.audit.intake.v1",
         {"scientific_intake": intake, "source_material": "source"},
@@ -112,11 +115,9 @@ def _qualified_foundation(tmp_path):
         {"port": "scientific_intake", "artifact_names": [intake]}, {"port": "evidence_audit", "artifact_names": [audit]}]})
     foundation = "split.scientific_foundation"
     request = {"name": "qualification", "operation_id": "science.evidence.qualify.v1", "inputs": [
-        {"port": "scientific_foundation", "artifact_names": [foundation]},
-        {"port": "extraction_primary", "artifact_names": [intake]},
-        {"port": "evidence_audit", "artifact_names": [audit]},
-        {"port": "frozen_sources", "artifact_names": ["source"]}]}
-    assert root.call_tool("operation_preflight", request)["admissible"]
+        {"port": "scientific_foundation", "artifact_names": [foundation]}]}
+    checked = root.call_tool("operation_preflight", request)
+    assert checked["admissible"], checked
     root.call_tool("operation_invoke", request)
     approval_id = runtime.scheduler_bindings.resolve(instance=instance.instance_id, namespace="approval", name="qualification")
     launch = runtime.approvals.status(approval_id)
@@ -126,9 +127,6 @@ def _qualified_foundation(tmp_path):
         csrf_token=view.csrf_token, decision_nonce=view.decision_nonce, selected_option="approve", rationale="",
         decided_by=LocalIdentityRef(identity_id="fixture_reviewer", display_name="Independent fixture reviewer"),
         ui_session_id="compatibility_test")
-    _register(runtime, instance, name="hypothesis", raw=canonical_json(_proposal(hypothesis_keys=("h1",))),
-        kind="hypothesis_portfolio", schema="scidiscovery.hypothesis-proposal.v2",
-        parents=(_artifact(runtime, instance, foundation).ref,))
     return catalog, runtime, instance, root, foundation
 
 
@@ -152,8 +150,8 @@ def test_real_scientific_approval_and_claim_cross_runtime_change(tmp_path, chang
     provider = current.operation("science.evidence.qualify.v1").approval_identity
     previous = old.operation("science.evidence.qualify.v1").approval_identity
     assert provider.operation_digest != previous.operation_digest
-    request = {"name": "new_critic", "operation_id": "science.hypothesis.criticize.v1", "inputs": [
-        {"port": "hypothesis_portfolio", "artifact_names": ["hypothesis"]},
+    request = {"name": "new_proposal", "operation_id": "science.hypothesis.propose.v1", "inputs": [
+        {"port": "problem_frame", "artifact_names": ["split"]},
         {"port": "scientific_foundation", "artifact_names": [foundation]}],
         "instruction": "Use only these exact immutable inputs."}
     preflight = root.call_tool("operation_preflight", request)
@@ -173,9 +171,8 @@ def test_real_scientific_approval_and_claim_cross_runtime_change(tmp_path, chang
     assert not runtime.approvals.are_subjects_approved_by_provider((original.ref,), kind="scientific_foundation",
         accepted_options=("approve",), accepted_providers=(identity,))
     completed = _complete(runtime, root, request["name"], request["operation_id"],
-        {"hypothesis_portfolio": "hypothesis", "scientific_foundation": foundation},
-        {"disposition": "ready_for_experiment", "reviews": [{"hypothesis_key": "h1",
-            "physical_plausibility": "pass", "falsifiability": "pass", "finite_discriminability": "pass"}]})
+        {"problem_frame": "split", "scientific_foundation": foundation},
+        _proposal(hypothesis_keys=("h1",)))
     assert completed
     assert _artifact(runtime, instance, foundation).labels == original.labels
     other = _register(runtime, instance, name="unapproved_foundation", raw=runtime.artifacts.read(original.ref),

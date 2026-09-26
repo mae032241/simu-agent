@@ -66,11 +66,12 @@ def test_real_keyed_producer_rejects_then_seals_complete_decision_contract(
     plan, worker, opened, runtime, root, name, report, evidence_key = (
         _keyed_worker(tmp_path, kind)
     )
+    report["objective_assessment"] = {"objective_key": "wrong_objective", "status": "not_evaluable", "summary": "Fixture with wrong objective binding."}
     rejected = _submit(worker, opened, report, kind)
     assert rejected["state"] == "rejected", rejected
     diagnostic = next(
         item for item in rejected["diagnostics"]
-        if "objective assessment is required" in item["message"]
+        if "objective differs from plan" in item["message"]
     )
     assert diagnostic["path"] == "$.payload.objective_assessment"
 

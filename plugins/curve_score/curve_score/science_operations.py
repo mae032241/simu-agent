@@ -550,8 +550,8 @@ No score is a normal path: report valid findings, missing conditions, current ob
 limits, remaining overall targets, and next steps, according to the evidence and the
 plan's actual dependencies. A missing comparison may leave the overall
 result inconclusive while other evidence supports finite findings or a local objective.
-Use the exact experiment_plan as the report scope. When that plan declares a non-null
-objective_key, objective_assessment is required and must use that exact key; pass,
+Use the exact experiment_plan as the report scope. When an optional
+objective_assessment is supplied, it must use that plan’s exact non-null objective_key; pass,
 fail, inconclusive, and not_evaluable remain scientific choices. When the key is null,
 the assessment remains optional and must not be invented. next_action remains optional
 Worker advice, not a scheduling command.

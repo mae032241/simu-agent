@@ -60,7 +60,7 @@ class Harness(ToolEvidenceMixin):
         return result
 
     def _compiled(self, value):
-        return SimpleNamespace(spec=SimpleNamespace(inputs=[SimpleNamespace(name=port,
+        return SimpleNamespace(spec=SimpleNamespace(outputs=(), inputs=[SimpleNamespace(name=port, agent_visible=True,
             exposure='handoff_only' if port == 'hidden' else 'full') for port in {i.port_name for i in value.inputs}]))
 
     def _reference_policy(self, value, policy=None):
@@ -167,10 +167,6 @@ def test_precise_handle_cannot_cross_roots_or_instances(harness):
     assert not harness.reference_access_records('different')
 
 
-
-
-
-
 @pytest.mark.parametrize('locator', ['/summary; /limitations', 'all rows', 'https://example.org/figure'])
 def test_in_file_locator_is_not_a_missing_source(harness, locator):
     target = harness.artifact(b'original', media='text/plain')
@@ -222,31 +218,25 @@ def test_control_manifest_fault_is_not_a_worker_output_rejection(tmp_path, monke
     original = worker.runs._evidence_snapshot
     def invalid_manifest(run_id):
         document = json.loads(original(run_id))
-        document['control_fault'] = '/tmp/control-owned-path'
+        document['records'] = 'invalid control record collection'
         return canonical_json(document)
     monkeypatch.setattr(worker.runs, '_evidence_snapshot', invalid_manifest)
     assert submit(worker, opened, analysis_report())['state'] == 'failed'
     status = system[2].call_tool('run_status', {'name': 'analysis', 'output_paths': []})
-    diagnostic = status['diagnostic_summary']
+    diagnostic = worker.runs.diagnostic_summary(worker.runs.status(worker._run_id))
     assert diagnostic['rejection_count'] == 0
     assert diagnostic['failure']['category'] == 'checker_failure'
     assert diagnostic['failure']['repairable_by_output'] is False
 
 
-def test_generic_analysis_reports_exact_result_plan_relationship(tmp_path):
+def test_generic_analysis_accepts_result_material_without_a_fixed_plan_gate(tmp_path):
     from tests.operations.test_tcad_result_analysis import analysis_system
-    from scidiscovery.artifact_agent.interfaces.mcp_root import RootToolError
-    _, _, root, request, _, _ = analysis_system(tmp_path)
-    inputs = [item for item in request['inputs'] if item['port'] in {'experiment_plan', 'experiment_review'}]
-    inputs.append({'port': 'experiment_results', 'artifact_names': ['output_A']})
+    _, _, root, _, _, _ = analysis_system(tmp_path)
     values = {'name': 'generic_relationship_probe', 'operation_id': 'science.result.diagnose.v1',
-              'instruction': 'Check the exact bound result.', 'inputs': inputs}
-    preflight = root.call_tool('operation_preflight', values)
-    assert preflight['admissible'] is False
-    assert 'input_result_plan_mismatch' in json.dumps(preflight)
-    assert 'tcad.result.analyze.v1' in json.dumps(preflight)
-    with pytest.raises(RootToolError, match='input_result_plan_mismatch'):
-        root.call_tool('operation_invoke', values)
+              'instruction': 'Diagnose the supplied observations and their limitations.',
+              'inputs': [{'port': 'experiment_results', 'artifact_names': ['output_A']}]}
+    assert root.call_tool('operation_preflight', values)['admissible']
+    assert root.call_tool('operation_invoke', values)['result']['state'] == 'queued'
 
 
 def test_encoded_response_limit_unicode_and_distinct_ranges(harness):
@@ -418,8 +408,6 @@ def test_binding_count_is_checked_before_committing_access(harness):
     assert not harness.reference_access_records('reader')
 
 
-
-
 def test_adoption_retains_committed_fact_when_worker_call_budget_is_exhausted(harness):
     harness.policy = replace(harness.policy, max_calls=2)
     _, root, handle = prepared(harness)
@@ -464,8 +452,6 @@ def test_two_roots_to_same_ref_keep_distinct_paths_and_one_alias(harness):
     assert len(records) == 2 and records[0]['root_ref'] != records[1]['root_ref']
 
 
-
-
 def test_text_original_can_be_requested_as_exact_native_file(harness):
     target, _, handle = prepared(harness, b'x,y\n1,2\n3,4\n', 'text/csv')
     response = harness.call('reader', action='read', reference=handle, delivery='file')
@@ -484,35 +470,36 @@ def test_full_file_delivery_rejects_partial_selectors(selector):
         ReferenceReadRequest(source='root', action='read', reference='handle', delivery='file', **selector)
 
 
-def test_reference_only_new_router_requires_explicit_running_or_queued_recovery(tmp_path):
+def test_reference_only_new_router_requires_explicit_running_or_queued_recovery(tmp_path, monkeypatch):
     from scidiscovery.artifact_agent.interfaces.mcp_local_worker import LocalWorkerMCPRouter, WorkerToolError
-    from tests.operations.test_tcad_result_analysis import analysis_system
+    from tests.operations.test_r4_experiment_task import _real_experiment
 
-    catalog, runtime, root, _, _, _ = analysis_system(tmp_path)
+    runtime, root, catalog, _, _ = _real_experiment(tmp_path, monkeypatch)
     operation = catalog.operation('science.object.review.v1')
     assert any(tool.reference_policy is not None for tool in operation.worker_tools)
     assert not any(tool.evidence_ports or tool.record_attempts for tool in operation.worker_tools)
     assert any(port.name == 'recovery_manifest_output' for port in operation.spec.outputs)
     request = dict(name='reference_only_review', operation_id=operation.spec.operation_id,
         instruction='Review the bounded fixture plan.',
-        inputs=[dict(port='experiment_plan', artifact_names=['plan'])])
+        inputs=[dict(port='subject', artifact_names=['observe.output'])])
     root.call_tool('operation_invoke', request)
 
     def router(**values):
         return LocalWorkerMCPRouter(runtime.runs, operation_id=operation.spec.operation_id,
             operation_digest=operation.digest, **values)
 
-    first = router()
+    from tests.operations.worker_fixtures import attached_worker
+    first = attached_worker(runtime, root, 'reference_only_review')
     opened = first.call_tool('worker_open_assignment', {})
     original_id = first._run_id
     fresh = router()
-    with pytest.raises(WorkerToolError, match='no exact queued Run is available'):
+    with pytest.raises(WorkerToolError, match='trusted gateway caller'):
         fresh.call_tool('worker_open_assignment', {})
     assert fresh._run_id is None
     assert runtime.runs.status(original_id).state == 'running'
 
     # A trusted explicit Run binding retains the existing reattachment path.
-    attached = router(run_id=original_id)
+    attached = attached_worker(runtime, root, 'reference_only_review')
     reattached = attached.call_tool('worker_open_assignment', {})
     assert attached._run_id == original_id
     assert reattached['workspace_path'] == opened['workspace_path']
@@ -529,7 +516,7 @@ def test_reference_only_new_router_requires_explicit_running_or_queued_recovery(
     # request; the review Operation's default one-attempt limit stays unchanged.
     root.call_tool('operation_invoke', {**request, 'name': 'reference_only_recovered',
         'resume_from': 'reference_only_review', 'max_attempts': 2})
-    recovered = router()
+    recovered = attached_worker(runtime, root, 'reference_only_recovered')
     assert recovered.call_tool('worker_open_assignment', {})['state'] == 'opened'
     assert recovered._run_id != original_id
     assert runtime.runs.recovery_links(recovered._run_id)['resume_from_run_id'] == original_id

@@ -47,9 +47,10 @@ def test_common_file_tools_are_registered_once_without_implicit_authority() -> N
         for item in plugin.components
     )
     catalog = compile_catalog(PLUGINS[:4])
-    author = catalog.operation("tcad.deck.author.initial.v1")
-    reviewer = catalog.operation("tcad.deck.review.v1")
-    assert "builtin:file_delete_tool" in author.permission_template.tools
+    author = catalog.operation("science.experiment.v1")
+    reviewer = catalog.operation("science.object.review.v1")
+    assert "builtin:file_delete_tool" not in author.permission_template.tools
+    assert "builtin:file_apply_patch_tool" in author.permission_template.tools
     assert "builtin:file_delete_tool" not in reviewer.permission_template.tools
 
 

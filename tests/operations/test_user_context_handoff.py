@@ -20,8 +20,8 @@ USER_TEXT = "  用户补充：请结合原任务评估这项建议。\r\n保留�
 def _context_entry(opened, *, origin):
     assignment_raw = Path(opened["assignment_path"]).read_bytes()
     assignment = json.loads(assignment_raw)
-    item, = [item for item in assignment["inputs"] if item["port"] == "user_context"]
-    expected_keys = {"source_name", "artifact_name", "artifact_name_usage", "port",
+    item, = [item for item in assignment["inputs"] if item["source_name"] == "user_context"]
+    expected_keys = {"source_name", "artifact_name", "artifact_name_usage",
         "description", "relative_path", "media_type", "reference_availability",
         "usage", "exposure", "historical"}
     if origin is not None:
@@ -37,7 +37,7 @@ def _context_entry(opened, *, origin):
     if "start_here_path" in opened:
         start_raw = Path(opened["start_here_path"]).read_bytes()
         start = json.loads(start_raw)
-        indexed, = [entry for entry in start["inputs"] if entry["port"] == "user_context"]
+        indexed, = [entry for entry in start["inputs"] if entry["source_name"] == "user_context"]
         assert indexed["relative_path"] == item["relative_path"]
         assert indexed["source_name"] == item["source_name"]
         assert indexed["artifact_name"] == item["artifact_name"]
@@ -164,11 +164,11 @@ def test_full_analysis_index_keeps_original_context_reachable(tmp_path):
     raw = (tmp_path / "analysis-start.json").read_bytes()
     start = json.loads(raw)
     assert len(raw) <= 12 * 1024 and start["omitted"] > 0
-    assert not any(item["port"] == "user_context" for item in start["inputs"])
+    assert not any(item["source_name"] == context_alias for item in start["inputs"])
     navigation = start["omission_source"]
     assert navigation == {"relative_path": start["full_assignment"], "pointer": "/inputs"}
     full = json.loads((tmp_path / navigation["relative_path"]).read_bytes())
-    entry, = [item for item in full["inputs"] if item["port"] == "user_context"]
+    entry, = [item for item in full["inputs"] if item["source_name"] == context_alias]
     assert entry["source_origin"] == "user_via_scheduler"
     assert (tmp_path / entry["relative_path"]).read_bytes() == original
     assert not start["excerpts"] and original not in raw

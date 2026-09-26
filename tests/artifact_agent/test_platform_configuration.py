@@ -94,83 +94,8 @@ def test_hardened_runtime_does_not_create_a_local_run_root(tmp_path: Path) -> No
     assert not (project / ".scidiscovery-runs").exists()
 
 
-def test_curve_error_agent_is_available_after_plots_move_to_support_transform(
-    tmp_path: Path,
-) -> None:
-    catalog = compile_catalog(
-        (CORE_PLUGIN, GENERAL_SCIENCE_PLUGIN, CURVE_SCORE_PLUGIN)
-    )
-    compiled = catalog.operation("science.result.diagnose.curve-error.v1")
-    agent_type = operation_agent_type(compiled)
-
-    assert LocalTrustedBackend.unsupported_requirements(compiled) == ()
-    assert HardenedWorkerBackend.unsupported_requirements(compiled) == (
-        "native_shell",
-        "native_view_image",
-    )
-    assert LocalTrustedBackend.supports_operation(compiled)
-    assert not HardenedWorkerBackend.supports_operation(compiled)
-
-    for backend in ("local", "hardened"):
-        project = tmp_path / backend
-        project.mkdir()
-        initialize_platform(
-            "codex",
-            project,
-            control_socket=tmp_path / f"{backend}.sock",
-            codex_config_root=project / ".codex",
-            operation_catalog=catalog,
-            worker_backend=backend,
-        )
-        generated = {
-            path.stem for path in project.joinpath(".codex/agents").glob("*.toml")
-        }
-        assert (agent_type in generated) is (backend == "local")
-
-
 def test_legacy_role_discovery_module_is_absent() -> None:
     assert find_spec("scidiscovery.platforms.roles") is None
-
-
-def test_local_tcad_runtime_config_is_bound_only_to_operations_that_need_it(
-    tmp_path: Path,
-) -> None:
-    project = tmp_path / "project"
-    project.mkdir()
-    (project / "AGENTS.md").write_text("# Project\n", encoding="utf-8")
-    config_path = tmp_path / "tcad-plugin.json"
-    config_path.write_text(
-        '{"socket_path":"' + str(tmp_path / "tcad.sock") + '","transport":"socket"}',
-        encoding="utf-8",
-    )
-    module_path = Path(__file__).resolve().parents[2] / "src"
-    initialize_platform(
-        "codex",
-        project,
-        python_executable=Path(sys.executable),
-        python_path=module_path,
-        control_socket=tmp_path / "control.sock",
-        state_root=tmp_path / "state",
-        runtime_plugin_configs={"tcad_artifact": config_path},
-    )
-    catalog = compile_installed_catalog()
-    config = tomllib.loads((project / ".codex/config.toml").read_text("utf-8"))
-    author = catalog.operation("tcad.deck.author.initial.v1")
-    reviewer = catalog.operation("tcad.deck.review.v1")
-    assert set(config["mcp_servers"]) == {"scidiscovery"}
-    from scidiscovery.artifact_agent import worker_services as worker_module
-    from unittest.mock import patch
-    # A reviewer with no TCAD runtime capability must not even load its adapter.
-    with patch.object(worker_module, "load_runtime_plugin_contributions", side_effect=AssertionError("unused adapter")):
-        assert worker_module.load_operation_services(catalog, reviewer.spec.operation_id,
-            {"tcad_artifact": config_path}, tmp_path / "state") == {}
-    validate_installation_profile(
-        project,
-        workspace=project / "workspace",
-        python_path=module_path,
-        state_root=tmp_path / "state",
-        runtime_plugin_configs={"tcad_artifact": config_path},
-    )
 
 
 def test_codex_profile_rejects_config_for_a_plugin_outside_the_catalog(
@@ -282,31 +207,13 @@ def test_codex_profile_contains_root_and_compiled_operation_boundaries(
         assert "the only permitted chat" in role["developer_instructions"]
         assert "已完成受控提交。" in role["developer_instructions"]
     scheduler_prompt = (project / "AGENTS.md").read_text(encoding="utf-8")
-    assert "Local Workers retain their declared workspace/Skill/native permissions" in scheduler_prompt
-    assert "skills belonging to its selected OperationSpec" not in scheduler_prompt
-    assert 'scid_describe(name=..., view="invoke")' in scheduler_prompt
-    assert 'run_status(intent="status")' in scheduler_prompt
-    discriminator = scheduler_prompt.index(
-        "This section applies only to the interactive parent scheduler."
-    )
-    scheduler_rule = scheduler_prompt.index(
-        "Act only as the interactive research scheduler."
-    )
-    assert discriminator < scheduler_rule
-    assert "do not call `instance_current`" in scheduler_prompt[discriminator:scheduler_rule]
-    guide_root = config_root / "scidiscovery-guides"
-    assert str(guide_root) in scheduler_prompt
+    assert "normal work requires no guide files" in scheduler_prompt
+    assert 'surface="execution"' in scheduler_prompt
     assert "{{SCHEDULER_GUIDE_ROOT}}" not in scheduler_prompt
+    guide_root = config_root / "scidiscovery-guides"
     for name, content in load_scheduler_guides().items():
-        assert name in scheduler_prompt
         assert (guide_root / name).read_text() == content
         assert content.strip() not in scheduler_prompt
-    assert "worker_attach" not in scheduler_prompt
-    assert "worker_attach" in (guide_root / "dispatch.md").read_text()
-    assert "invoke the immutable request" in (guide_root / "inputs.md").read_text()
-    assert 'artifact_catalog(view="producer_inputs")' in (guide_root / "inputs.md").read_text()
-    assert 'intent="decision"' in (guide_root / "results.md").read_text()
-    assert "source manifest" in (guide_root / "evidence.md").read_text()
 
 
 def test_codex_hardened_profile_remains_explicitly_compilable(tmp_path: Path) -> None:

@@ -29,7 +29,8 @@ TABLES = {
                   "scheduler_scientific_selections", "scheduler_sessions"),
     "runs": ("runs", "run_activity", "run_tool_evidence", "run_activity_sequence", "worker_connections", "worker_participants"),
     "approvals": ("approval_requests", "approval_decisions", "used_nonces", "decision_attempts"),
-    "executions": ("executions",),
+    "executions": ("executions", "execution_policy_authorizations", "execution_current_policy",
+                   "execution_budget_pools", "execution_budget_reservations", "execution_prepared_submissions"),
     "artifacts": ("artifact_envelopes", "artifact_links", "idempotency_records", "artifact_events"),
     "dispatch": ("active_transport",),
     "views": ("metadata", "nodes", "events", "preferences"),
@@ -40,6 +41,11 @@ CONTROL_PAYLOADS = {
     "scidiscovery.tool-evidence-manifest.v1", "tcad.execution-package.v2",
     "tcad.reviewed-deck-package.v2",  # Historical archive reachability only.
 }
+# Budget keys identify scientific subjects across instances. The active ledger
+# remains authoritative even while its execution is archived; snapshots retain
+# exact copies for inspection and conflict-checked restoration.
+RETAINED_EXECUTION_TABLES = frozenset({"execution_budget_pools", "execution_budget_reservations"})
+
 MAX_RECORD_BYTES = 16 * 1024 * 1024
 MAX_CONTROL_PAYLOAD_BYTES = 16 * 1024 * 1024
 
@@ -211,6 +217,21 @@ def execution_settings_restore_view(data):
                 [*projected["schema"]["objects"], *addition["objects"]], key=lambda item: (item["type"], item["name"]))
             projected["schema"]["tables"].update(addition["tables"])
             projected["tables"][table] = []
+    if "executions" in projected["schema"]["tables"]:
+        from .executions import EXECUTION_POLICY_SCHEMA
+        with sqlite3.connect(":memory:") as transient:
+            transient.row_factory = sqlite3.Row
+            transient.executescript(EXECUTION_POLICY_SCHEMA)
+            addition = schema(transient)
+        missing = set(addition["tables"]) - set(projected["schema"]["tables"])
+        if missing:
+            projected = deepcopy(projected)
+            projected["schema"]["objects"] = sorted(
+                [*projected["schema"]["objects"], *(item for item in addition["objects"] if item["tbl_name"] in missing)],
+                key=lambda item: (item["type"], item["name"]))
+            for table in missing:
+                projected["schema"]["tables"][table] = addition["tables"][table]
+                projected["tables"][table] = []
     return projected
 
 
@@ -397,7 +418,19 @@ class Records:
         for database, ids, column in (("approvals", approvals, "approval_id"),
                                       ("executions", executions, "execution_id"), ("dispatch", runs, "run_id")):
             for table in result.get(database, {}).get("tables", {}):
+                if table == "execution_budget_pools":
+                    # Pools have a scientific owner, not an execution primary key.
+                    # Select only pools reached by this instance's reservations.
+                    continue
                 result[database]["tables"][table] = self._materialize_ids(database, table, column, ids)
+        execution_tables = result.get("executions", {}).get("tables", {})
+        for executor, budget_key in sorted({(row["executor"], row["budget_key"])
+                for row in execution_tables.get("execution_budget_reservations", [])}):
+            pools = self._materialize("executions", "execution_budget_pools",
+                where="executor=? AND budget_key=?", parameters=(executor, budget_key))
+            if not pools:
+                raise ArchiveError("execution reservation has no budget pool")
+            execution_tables["execution_budget_pools"].extend(pools)
         for table in result.get("views", {}).get("tables", {}):
             result["views"]["tables"][table] = self._materialize("views", table,
                 where="" if table == "metadata" else "instance_id=?",
@@ -779,7 +812,8 @@ def transfer_records(paths, selected, *, direction, exclusive_ids=(), tombstone=
                     if direction == "archive":
                         if actual is None or dict(actual) != row:
                             raise ArchiveError("active record differs from frozen archive: " + table)
-                        connection.execute(f"DELETE FROM {quote(alias)}.{quote(table)} WHERE {where}", parameters)
+                        if key != "executions" or table not in RETAINED_EXECUTION_TABLES:
+                            connection.execute(f"DELETE FROM {quote(alias)}.{quote(table)} WHERE {where}", parameters)
                     elif actual is not None:
                         if dict(actual) != row:
                             raise ArchiveError("restore record identity conflict: " + table)

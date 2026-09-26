@@ -193,7 +193,8 @@ def test_install_combinations_compile_without_reverse_dependency() -> None:
     assert "science.evidence.extract.figure.v3" in figure.operation_ids()
     assert "tcad.study.execute" not in curve.operation_ids()
     assert "science.table.observation.analyze.v1" in table.operation_ids()
-    assert "tcad.curve-bundle.sprocess-plx.v1" in full.operation_ids()
+    assert "tcad.execution-context.project.v1" in full.operation_ids()
+    assert "tcad.curve-bundle.sprocess-plx.v1" not in full.operation_ids()
     assert "tcad_artifact" not in {
         item.plugin_id for item in CURVE_PLUGIN.dependencies
     }

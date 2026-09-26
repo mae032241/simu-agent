@@ -26,6 +26,5 @@ def test_all_compiled_roles_use_assignment_schema_navigation():
         assert assignment['role_instructions'] == role
         assert assignment['output']['schema_path'] == 'schema/result.schema.json'
         corrected.append(name)
-    # Design composes EXPERIMENT_PROMPT too, beyond its direct revise consumer.
-    assert 'science.experiment.design.v1' in corrected
-    assert len(corrected) == 16, "\n".join(corrected)
+    assert 'science.evidence.extract.v1' in corrected
+    assert 'science.evidence.audit.intake.v1' in corrected

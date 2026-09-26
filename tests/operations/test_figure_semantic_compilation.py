@@ -184,6 +184,8 @@ def _saved_family(tmp_path, *, unresolved=False, partial_alias_recovery=False):
         read_evidence=lambda alias: contents[ArtifactRef.model_validate(next(r for r in records if r["alias"] == alias)["artifact_ref"])],
         source_descriptor=lambda name: SimpleNamespace(port_name="paper_source"),
         finish_attempt=finish)
+    request["source"] = {key: value for key, value in request["source"].items()
+        if key not in {"source_sha256", "recovered_image_sha256", "recovery_tool", "recovery_tool_version"}}
     draft = FigureDigitizationPreviewInput.model_validate_json(canonical_json({"request": request}))
     if not unresolved:
         with pytest.raises(ValueError, match="preview"):
@@ -203,7 +205,7 @@ def _saved_family(tmp_path, *, unresolved=False, partial_alias_recovery=False):
     if partial_alias_recovery:
         assert tuple(records[:len(adopted)]) == adopted
         assert len({r["metadata"]["data_item"] for r in records}) == len(records)
-    assert result["selected_manifest_alias"] == records[-1]["alias"]
+    assert result["selected_material"] == records[-1]["alias"]
     before = len(records)
     _save(draft, context)
     assert len(records) == before
@@ -287,9 +289,10 @@ def test_wording_revision_reuses_prior_family_without_digitization(tmp_path, mon
         adopted.extend(proof.records)
         return proof.records
     context = SimpleNamespace(source_descriptor=descriptors.__getitem__, read_input=raw.__getitem__,
+        input_names_for_port=lambda port: tuple(name for name, descriptor in descriptors.items() if descriptor.port_name == port),
         input_path=lambda name: tmp_path / name, evidence=lambda: [], adopt_bound_evidence=adopt,
         finish_attempt=lambda **values: None)
-    result = tool._reuse(tool.FigureFamilyReuseInput(member_names=tuple(name for name in refs if name.startswith("prior_file_"))), context)
+    result = tool._reuse(tool.FigureFamilyReuseInput(), context)
     assert result["reused"] is True
     assert tuple(adopted) == proof.records
     assert {item["alias"] for item in result["files"]} == {record["alias"] for record in proof.records}

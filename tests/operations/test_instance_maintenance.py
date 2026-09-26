@@ -441,7 +441,7 @@ def _collection(tmp_path):
 
 def test_collection_uses_binding_owner_instead_of_diagnostic_scope(tmp_path, monkeypatch):
     collection, gate, _ = _collection(tmp_path)
-    def observed(_execution_id, *, scope, total_seconds, maintenance_lease):
+    def observed(_execution_id, *, scope, total_seconds, file_timeout_seconds, idle_timeout_seconds, maintenance_lease):
         assert len(maintenance_lease.descriptors) == 2
         return {"scope": scope, "accepted": False}
     monkeypatch.setattr(collection, "_collect_owned", observed)
@@ -458,7 +458,7 @@ def test_unowned_legacy_collection_keeps_transferable_global_guard_without_inven
     collection.executions.scheduler_bindings.find_owner = lambda **_: None
     collection.executions.scheduler_bindings.require_active_instance = lambda **_: pytest.fail("unowned execution acquired an invented owner")
     freeze(gate)
-    def observed(_execution_id, *, scope, total_seconds, maintenance_lease):
+    def observed(_execution_id, *, scope, total_seconds, file_timeout_seconds, idle_timeout_seconds, maintenance_lease):
         assert scope == "fixture" and len(maintenance_lease.descriptors) == 1
         with pytest.raises(InstanceMaintenanceBusy):
             with gate.exclusive("two"):

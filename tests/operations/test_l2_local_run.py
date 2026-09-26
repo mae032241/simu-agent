@@ -120,6 +120,19 @@ def test_missing_optional_context_is_a_checker_fault_not_worker_rejection(
         )
 
 
+def test_schema_projection_program_error_remains_checker_failure(monkeypatch):
+    from scidiscovery.artifact_agent.service import run_outputs
+    compiled = compile_catalog((ARCHITECTURE_TEST_PLUGIN,)).operation("builtin.test.agent")
+    port = compiled.spec.outputs[0]
+    defect = ValueError("schema projector implementation defect")
+    def broken(*args, **kwargs):
+        raise defect
+    monkeypatch.setattr(run_outputs, "operation_port_json_schema", broken)
+    with pytest.raises(RunCheckerError, match="compiled output schema projection failed") as failure:
+        run_outputs._validate_payload_schema({}, compiled, port, frozenset(), input_source_ports={})
+    assert failure.value.__cause__ is defect
+
+
 def test_worker_visible_json_schema_precedes_a_deliberately_weak_validator(
     tmp_path: Path,
 ) -> None:
@@ -330,7 +343,7 @@ def test_local_run_uses_native_files_one_domain_tool_and_one_terminal_authority(
                 "operations"
             ]
         }
-        assert "blind.csv.observe.v1" not in unavailable_ids
+        assert "blind.csv.observe.v1" in unavailable_ids
         assert "blind.csv.review.v1" not in unavailable_ids
         unavailable = root.call_tool(
             "operation_preflight",
@@ -340,11 +353,10 @@ def test_local_run_uses_native_files_one_domain_tool_and_one_terminal_authority(
                 "inputs": [
                     {"port": "source_table", "artifact_names": ["source_csv"]}
                 ],
-                "instruction": "The unavailable review edge must close this action.",
+                "instruction": "An optional reviewer does not block the author.",
             },
         )
-        assert unavailable["admissible"] is False
-        assert unavailable["reason_code"] == "operation_runtime_unavailable"
+        assert unavailable["admissible"] is True
     finally:
         runtime.runs.backend = backend
 
@@ -356,6 +368,7 @@ def test_local_run_uses_native_files_one_domain_tool_and_one_terminal_authority(
         if item["operation_id"] == "blind.csv.observe.v1"
     )
     assert observe_view["review_edge"] == {
+        "policy": "optional",
         "reviewer_operation": "blind.csv.review.v1",
         "reviewer_input_port": "csv_observation",
         "subject_outputs": ["csv_observation"],
@@ -374,11 +387,8 @@ def test_local_run_uses_native_files_one_domain_tool_and_one_terminal_authority(
     assert not hasattr(runtime, "tasks") and not hasattr(runtime, "tokens")
 
     compiled = catalog.operation("blind.csv.observe.v1")
-    worker = LocalWorkerMCPRouter(
-        runtime.runs,
-        operation_id=compiled.spec.operation_id,
-        operation_digest=compiled.digest,
-    )
+    from tests.operations.worker_fixtures import attached_worker
+    worker = attached_worker(runtime, root, "observe")
     tools = {item["name"] for item in worker.list_tools()}
     assert tools == {
         "worker_open_assignment",
@@ -386,6 +396,7 @@ def test_local_run_uses_native_files_one_domain_tool_and_one_terminal_authority(
         "worker_submit_result",
         "worker_csv_summarize",
         "worker_reference_read",
+        "worker_helper",
     }
     opened = worker.call_tool("worker_open_assignment", {})
     workspace = Path(opened["workspace_path"])
@@ -453,7 +464,7 @@ def test_local_run_uses_native_files_one_domain_tool_and_one_terminal_authority(
     running = root.call_tool("run_status", {'name': "observe", "intent": 'full'})
     assert running["state"] == "running"
     assert running["sealed_output_status"] == "unavailable"
-    assert running["sealed_output"] is None
+    assert "sealed_output" not in running
     running_summary = root.call_tool(
         "run_list", {"state": "running", "limit": 10}
     )["runs"][0]
@@ -493,11 +504,8 @@ def test_local_run_uses_native_files_one_domain_tool_and_one_terminal_authority(
     )
     assert review_created["result"]["state"] == "queued"
     review_compiled = catalog.operation("blind.csv.review.v1")
-    reviewer = LocalWorkerMCPRouter(
-        runtime.runs,
-        operation_id=review_compiled.spec.operation_id,
-        operation_digest=review_compiled.digest,
-    )
+    from tests.operations.worker_fixtures import attached_worker
+    reviewer = attached_worker(runtime, root, "review")
     assert "worker_csv_summarize" not in {item["name"] for item in reviewer.list_tools()}
     review_open = reviewer.call_tool("worker_open_assignment", {})
     review_output = Path(review_open["output_directory"]) / "result.json"
@@ -559,6 +567,9 @@ def test_local_run_uses_native_files_one_domain_tool_and_one_terminal_authority(
     assert retired_compatible["sealed_output"]["payload"] == observation.model_dump(mode="json")
     assert retired_compatible["scheduler_signal"] is not None
     retired_inventory = root.call_tool("scientific_inventory", {})
+    author_id = runtime.scheduler_bindings.resolve(instance=instance.instance_id, namespace="run", name="observe")
+    assert all(ref.schema_id != "scidiscovery.tool-evidence-manifest.v1"
+        for _, ref in runtime.runs.evidence_output_refs(runtime.runs.status(author_id)))
     retired_observation = next(
         item
         for item in retired_inventory["objects"]
@@ -580,11 +591,7 @@ def test_local_run_uses_native_files_one_domain_tool_and_one_terminal_authority(
     }
     assert root.call_tool("operation_preflight", request)["admissible"] is True
     assert root.call_tool("operation_invoke", request)["result"]["state"] == "queued"
-    historical_reviewer = LocalWorkerMCPRouter(
-        runtime.runs,
-        operation_id=review_compiled.spec.operation_id,
-        operation_digest=review_compiled.digest,
-    )
+    historical_reviewer = attached_worker(runtime, root, "review_historical")
     historical_open = historical_reviewer.call_tool("worker_open_assignment", {})
     Path(historical_open["output_directory"], "result.json").write_bytes(
         _envelope(review.model_dump(mode="json"))

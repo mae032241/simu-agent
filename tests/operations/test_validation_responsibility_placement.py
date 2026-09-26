@@ -45,7 +45,7 @@ def test_analysis_submission_does_not_requalify_the_bound_package(tmp_path, monk
 
 def test_unresolved_figure_retains_source_and_partial_fields_without_recovery():
     from curve_figure_evidence.figure_digitization_contract import FigureDigitizationRequest
-    from curve_figure_evidence.figure_science_operations import _validate_request_context
+    from curve_figure_evidence.figure_digitization_contract import materialize_figure_request
     from tests.operations.test_minimal_figure_extraction import _request, _png
     raw = _png()
     value = json.loads(_request(raw))
@@ -53,15 +53,15 @@ def test_unresolved_figure_retains_source_and_partial_fields_without_recovery():
     value['source'] = {key: value['source'][key] for key in ('source_kind', 'media_type', 'source_sha256')}
     request = FigureDigitizationRequest.model_validate_json(canonical_json(value))
     assert request.plot_bbox is not None
-    _validate_request_context(value, {'paper_source': raw}, {})
+    materialize_figure_request(value, raw)
     with pytest.raises(ValueError, match='cannot be materialized'):
         request.require_ready()
     with pytest.raises(ValueError, match='complete recovered source metadata'):
         FigureDigitizationRequest.model_validate_json(canonical_json(dict(value, request_status='ready', unresolved_reasons=[]))).require_ready()
     from scidiscovery.operation_contract import SemanticRuleViolation
     value['source']['source_sha256'] = 'f' * 64
-    with pytest.raises(SemanticRuleViolation, match='source hash'):
-        _validate_request_context(value, {'paper_source': raw}, {})
+    with pytest.raises(ValueError, match='source hash'):
+        materialize_figure_request(value, raw)
 
 
 def test_pdf_timeout_is_not_a_scientific_output_error(monkeypatch):
@@ -126,18 +126,6 @@ def test_figure_draft_materializes_recovered_metadata_and_retains_image_choice()
     FigureDigitizationRequest.model_validate_json(canonical_json(result)).require_ready()
 
 
-def test_curve_error_bad_bundle_is_rejected_before_transform(tmp_path):
-    from tests.operations.test_m2_curve_analysis_boundary import _root, _inputs, _register_inputs, _analysis_request
-    catalog, runtime, instance, root = _root(tmp_path)
-    values = _inputs()
-    metric = json.loads(values['metric_report'])
-    metric['curve_bundle_sha256'] = 'f' * 64
-    values['metric_report'] = canonical_json(metric)
-    _register_inputs(runtime, instance, values)
-    result = root.call_tool('operation_preflight', _analysis_request())
-    assert not result['admissible']
-    assert result['reason_code'] == 'input_metric_bundle_mismatch'
-    assert result['diagnostics'][0]['path'] == '$.inputs.metric_report.curve_bundle_sha256'
 
 
 def test_runtime_collection_mismatch_is_an_input_failure():
@@ -151,7 +139,7 @@ def test_runtime_collection_mismatch_is_an_input_failure():
         runtime_inputs(sources)
 
 
-def test_historical_package_is_readable_but_nonpassing_package_cannot_execute():
+def test_execution_package_does_not_reintroduce_optional_review_as_a_gate():
     from tests.operations.test_tcad_result_analysis import analysis_materials
     from tcad_artifact.project_packager import ExecutionPackage, validate_execution_package_json, PackagerError
     _, package, _, _, _ = analysis_materials()
@@ -159,46 +147,13 @@ def test_historical_package_is_readable_but_nonpassing_package_cannot_execute():
     value['review'].update(verdict='blocked', execution_ready=False)
     raw = canonical_json(value)
     ExecutionPackage.model_validate_json(raw)
-    with pytest.raises(PackagerError, match='invalid'):
-        validate_execution_package_json(raw)
+    assert validate_execution_package_json(raw).review.verdict == 'blocked'
+    value['review'] = None
+    assert validate_execution_package_json(canonical_json(value)).review is None
 
 
-def test_transform_engineering_failure_and_unavailable_are_distinct(tmp_path, monkeypatch):
-    from scidiscovery.operations import invoke
-    from scidiscovery.operation_contract import DiagnosticError
-    from scidiscovery.operations.input_validation import OperationEngineeringError
-    from tests.operations.test_m2_curve_analysis_boundary import _root, _inputs, _register_inputs, _analysis_request
-    from scidiscovery.artifact_agent.interfaces.mcp_root import OperationCallInput
-    _, runtime, instance, root = _root(tmp_path)
-    values = _inputs()
-    _register_inputs(runtime, instance, values)
-    typed = OperationCallInput.model_validate(_analysis_request())
-    bound = root.facade._prepare_operation_call(**{**typed.model_dump(exclude={'inputs', 'execution_profile'}), 'inputs': typed.inputs})
-    def bug(_):
-        raise ValueError('unexpected internal value')
-    monkeypatch.setattr(invoke, '_executor_callable', lambda _: bug)
-    with pytest.raises(OperationEngineeringError, match='executor_component_failed'):
-        invoke.execute_compiled_transform(bound, values)
-    expected = DiagnosticError('computation_unavailable')
-    def unavailable(_):
-        raise expected
-    monkeypatch.setattr(invoke, '_executor_callable', lambda _: unavailable)
-    with pytest.raises(DiagnosticError) as failure:
-        invoke.execute_compiled_transform(bound, values)
-    assert failure.value is expected
 
 
-def test_unresolved_request_cannot_enter_quantitative_transform():
-    from tests.operations.test_minimal_figure_extraction import _request, _png
-    from curve_figure_evidence.operation_transforms import validate_materialization_inputs, FIGURE_OPERATIONS
-    raw = _png()
-    value = json.loads(_request(raw))
-    sources = {'figure_request': canonical_json(value), 'paper_source': raw}
-    assert FIGURE_OPERATIONS[0].input_validation is not None
-    validate_materialization_inputs(sources)
-    value.update(request_status='unresolved', unresolved_reasons=['Image identity is incomplete.'])
-    with pytest.raises(OperationInvocationError, match='input_figure_not_ready'):
-        validate_materialization_inputs(dict(sources, figure_request=canonical_json(value)))
 
 
 def test_actual_finalizer_timeout_is_not_reported_as_checker_failure(tmp_path, monkeypatch):

@@ -47,9 +47,9 @@ def test_scheduler_prompt_has_no_retired_generic_creation_path() -> None:
         "ready_capabilities",
     ):
         assert retired not in prompt
-    assert "scientific_inventory" in prompt
-    assert "operation_catalog" in prompt
-    assert "operation_preflight" in prompt
+    assert "run_list" in prompt
+    assert "scid_catalog" in prompt
+    assert "Preflight is optional" in prompt
     assert "science.evidence.extract.figure.v1" not in prompt
     assert "tcad.parameter.evidence.extract.v1" not in prompt
     assert "device_parameter_evidence_auditor" not in prompt
@@ -62,10 +62,10 @@ def test_scheduler_prompt_is_domain_neutral_and_catalog_driven() -> None:
     )
 
     assert operation_id.search(prompt) is None
-    assert "operation_catalog" in prompt
-    assert "operation_preflight" in prompt
+    assert "scid_catalog" in prompt
+    assert "Preflight is optional" in prompt
     assert "operation_invoke" in prompt
-    assert "scientific_inventory" in prompt
+    assert "run_list" in prompt
     for domain_token in (
         "TCAD",
         "InGaAs",
@@ -76,41 +76,13 @@ def test_scheduler_prompt_is_domain_neutral_and_catalog_driven() -> None:
         assert domain_token.casefold() not in prompt.casefold()
 
 
-def test_device_parameter_audit_is_owned_only_by_the_compiled_tcad_plugin() -> None:
+def test_complete_parameter_evidence_task_is_owned_by_tcad_plugin() -> None:
     catalog = compile_installed_catalog()
     extraction = catalog.operation("tcad.parameter.evidence.extract.v1")
-    expansion = catalog.operation("tcad.parameter.evidence.expand.v1")
-    audit = catalog.operation("tcad.parameter.evidence.audit.v1")
-
-    assert extraction.plugin_id == expansion.plugin_id == audit.plugin_id == "tcad_artifact"
-    assert extraction.spec.executor.kind == audit.spec.executor.kind == "agent"
-    assert expansion.spec.executor.kind == "transform"
-    assert tuple(port.name for port in extraction.spec.outputs if port.collection is None) == (
-        "parameter_evidence_package",
-    )
-    assert tuple(port.name for port in expansion.spec.outputs) == (
-        "scientific_intake",
-        "parameter_requirements",
-        "device_parameters",
-        "source_catalog",
-    )
+    assert extraction.plugin_id == "tcad_artifact"
+    assert extraction.spec.executor.kind == "agent"
+    assert tuple(port.name for port in extraction.spec.outputs if port.kind == "parameter_evidence_package") == ("parameter_evidence_package",)
     assert extraction.spec.review is None
-    assert expansion.spec.review is not None
-    assert expansion.spec.review.reviewer_operation == audit.spec.operation_id
-    assert expansion.spec.review.reviewer_input_port == "scientific_intake"
-    assert expansion.spec.review.subject_outputs == ("scientific_intake",)
-    assert tuple(port.name for port in audit.spec.inputs) == (
-        "parameter_evidence_package",
-        "scientific_intake",
-        "required_parameter_checklist",
-        "parameter_requirements",
-        "device_parameters",
-        "source_catalog",
-        "parameter_coverage",
-        "source_material",
-        "user_context",
-    )
-    assert audit.spec.review is None
-    assert "device_parameter_evidence_auditor" not in {
-        item.operation_id for item in catalog.scheduler_projection()
-    }
+    assert {"tcad.parameter.evidence.expand.v1", "tcad.parameter.evidence.audit.v1"}.isdisjoint(catalog.operation_ids())
+    assert tuple(port.name for port in extraction.spec.inputs) == (
+        "required_parameter_checklist", "source_material", "previous_evidence", "user_context")

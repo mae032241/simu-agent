@@ -11,7 +11,8 @@ from scidiscovery.artifact_agent.service.input_reader import page
 
 @pytest.mark.parametrize('state,timed_out', [('running',False), ('failed',False), ('cancelled',False), ('failed',True)])
 def test_author_reads_saved_diagnostic_detail(tmp_path, state, timed_out):
-    context = SimpleNamespace(workspace=tmp_path, state={}, remaining_seconds=60)
+    from tests.operations.tcad_policy_fixtures import policy_fields
+    context = SimpleNamespace(workspace=tmp_path, state={"debug_policy": policy_fields()["debug"]}, remaining_seconds=60)
     (tmp_path/'deck/reports').mkdir(parents=True)
     log = tmp_path/'deck/reports/solver.log';log.write_text('specific solver diagnostic\n')
     original = dict(run_name='probe', mode='initialization', state=state,
@@ -28,5 +29,4 @@ def test_author_reads_saved_diagnostic_detail(tmp_path, state, timed_out):
     assert (tmp_path/short['log_relative_path']).read_text() == log.read_text()
     prompt = role_prompt('author')
     assert 'open details_path' in prompt and '/progress/log_tails' in prompt
-    assert 'complete filename actually written' in prompt
-    assert 'do not infer the final\npath from the text of a `struct` argument' in prompt
+    assert 'Locate keys/sections before reading' in prompt

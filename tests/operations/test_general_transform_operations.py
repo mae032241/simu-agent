@@ -44,7 +44,6 @@ EXPERIMENT_MATERIALIZE_OPERATION = "science.experiment.materialize.v1"
 OBJECTIVE_PROJECT_OPERATION = "science.objective.project.v1"
 GENERAL_TRANSFORM_OPERATION_IDS = {
     INTAKE_SPLIT_OPERATION,
-    EXPERIMENT_MATERIALIZE_OPERATION,
     OBJECTIVE_PROJECT_OPERATION,
 }
 
@@ -154,8 +153,6 @@ def test_intake_source_context_accepts_only_exact_bound_source_names() -> None:
             {"source_material": b"bounded source"},
             {},
         )
-
-
 
 
 def _catalog():
@@ -279,66 +276,6 @@ def _solver_capability_snapshot() -> SolverCapabilitySnapshot:
     )
 
 
-def test_tcad_execution_context_projection_is_narrow_and_declared_for_design() -> None:
-    catalog = _catalog()
-    operation = catalog.operation(EXECUTION_CONTEXT_OPERATION)
-    assert operation.spec.catalog_scope == "support"
-    assert operation.spec.executor.kind == "transform"
-    assert tuple(port.name for port in operation.spec.inputs) == ("capability",)
-    assert tuple(port.name for port in operation.spec.outputs) == (
-        "execution_context",
-    )
-    assert operation.spec.outputs[0].schema_id == "scidiscovery.execution-context.v1"
-
-    snapshot = _solver_capability_snapshot()
-    payload = snapshot.model_dump(mode="json")
-    raw = json.dumps(payload, indent=2).encode("utf-8")
-    capability = _invocation_artifact("capability", "tcad.solver-capability.v2")
-    bound = preflight_operation(
-        operation,
-        name="execution_context",
-        artifacts_by_port={"capability": (capability,)},
-        instruction=None,
-    )
-    output = execute_compiled_transform(bound, {"capability": raw})[0]
-    context = ExecutionContext.model_validate_json(output.content, strict=True)
-    assert context == ExecutionContext(
-        domain="tcad",
-        implementation_backend="sprocess",
-        implementation_kind="sprocess",
-        release_label="R-2020.09",
-        public_arguments=("-i",),
-        capability_statements=None,
-        limitations=None,
-    )
-    assert "private_" not in output.content.decode("utf-8")
-    reordered = json.dumps(
-        dict(reversed(tuple(payload.items()))), separators=(",", ":")
-    ).encode("utf-8")
-    assert execute_compiled_transform(bound, {"capability": reordered})[0].content == (
-        output.content
-    )
-
-    projected = InvocationArtifact(
-        artifact_name="execution_context",
-        ref=ArtifactRef(
-            artifact_id="art_execution_context",
-            sha256="d" * 64,
-            kind="execution_context",
-            schema_id="scidiscovery.execution-context.v1",
-        ),
-        schema_id="scidiscovery.execution-context.v1",
-        media_type="application/json",
-        size_bytes=len(output.content),
-        parent_refs=(capability.ref,),
-    )
-    design = catalog.operation("science.experiment.design.v1")
-    context_port = next(port for port in design.spec.inputs if port.name == "execution_context")
-    assert context_port.schema_id == projected.schema_id
-    assert context_port.min_items == 0 and context_port.max_items == 1
-    assert projected.parent_refs == (capability.ref,)
-
-
 def test_tcad_execution_context_projection_rejects_non_snapshot_content() -> None:
     operation = _catalog().operation(EXECUTION_CONTEXT_OPERATION)
     capability = _invocation_artifact("capability", "tcad.solver-capability.v2")
@@ -440,7 +377,6 @@ def test_root_projects_execution_context_idempotently_with_exact_parent(tmp_path
     assert runtime.artifacts.read(reordered_envelope.ref) == runtime.artifacts.read(
         envelope.ref
     )
-
 
 
 @pytest.mark.parametrize("raw, reason", (
@@ -648,164 +584,6 @@ def test_parameter_uncertainty_projection_blocks_unbounded_and_preserves_bounded
     assert bounded.items[0].candidate_values == ("1e+0", "2e+0")
 
 
-def test_optional_experiment_inputs_fail_closed_as_two_explicit_shapes() -> None:
-    operation = _catalog().operation(EXPERIMENT_MATERIALIZE_OPERATION)
-    assert operation.spec.input_admission is not None
-    assert operation.spec.input_admission.member_ports == (
-        "scientific_foundation",
-        "research_objective",
-        "hypothesis_portfolio",
-        "critic_review",
-    )
-    intent = _invocation_artifact(
-        "intent", "scidiscovery.experiment-design-intent.v1"
-    )
-    engineering = {
-        "experiment_design_intent": (intent,),
-        "scientific_foundation": (),
-        "research_objective": (),
-        "hypothesis_portfolio": (),
-        "critic_review": (),
-    }
-    assert preflight_operation(
-        operation,
-        name="engineering",
-        artifacts_by_port=engineering,
-        instruction=None,
-    ).compiled is operation
-    objective = _invocation_artifact(
-        "objective", "scidiscovery.research-objective.v1"
-    )
-    with pytest.raises(OperationInvocationError) as partial:
-        preflight_operation(
-            operation,
-            name="partial_science",
-            artifacts_by_port={**engineering, "research_objective": (objective,)},
-            instruction=None,
-        )
-    assert partial.value.reason_code == "input_cohort_incomplete"
-    assert partial.value.port == "scientific_foundation"
-
-    portfolio = _invocation_artifact(
-        "portfolio", "scidiscovery.hypothesis-proposal.v2"
-    )
-    foundation = _invocation_artifact(
-        "foundation", "scidiscovery.scientific-foundation.v1"
-    )
-    objective = _invocation_artifact(
-        "cohort_objective",
-        "scidiscovery.research-objective.v1",
-        parent_refs=(foundation.ref,),
-    )
-    portfolio = _invocation_artifact(
-        "cohort_portfolio",
-        "scidiscovery.hypothesis-proposal.v2",
-        parent_refs=(foundation.ref,),
-    )
-    critic = _invocation_artifact(
-        "critic",
-        "scidiscovery.critic-review.v2",
-        parent_refs=(portfolio.ref, foundation.ref),
-    )
-    reviewed_intent = _invocation_artifact(
-        "reviewed_intent",
-        "scidiscovery.experiment-design-intent.v1",
-        parent_refs=(foundation.ref, objective.ref, portfolio.ref, critic.ref),
-    )
-    scientific = {
-        "experiment_design_intent": (reviewed_intent,),
-        "scientific_foundation": (foundation,),
-        "research_objective": (objective,),
-        "hypothesis_portfolio": (portfolio,),
-        "critic_review": (critic,),
-    }
-    assert preflight_operation(
-        operation,
-        name="reviewed_science",
-        artifacts_by_port=scientific,
-        instruction=None,
-    ).compiled is operation
-
-    unrelated_critic = _invocation_artifact(
-        "unrelated_critic", "scidiscovery.critic-review.v2"
-    )
-    with pytest.raises(OperationInvocationError, match="guard_rejected"):
-        preflight_operation(
-            operation,
-            name="unreviewed_science",
-            artifacts_by_port={**scientific, "critic_review": (unrelated_critic,)},
-            instruction=None,
-        )
-
-
-def test_experiment_design_rejects_mixed_foundation_cohorts() -> None:
-    operation = _catalog().operation("science.experiment.design.v1")
-    old_foundation = _invocation_artifact(
-        "old_foundation", "scidiscovery.scientific-foundation.v1"
-    )
-    current_foundation = _invocation_artifact(
-        "current_foundation", "scidiscovery.scientific-foundation.v1"
-    )
-    objective = _invocation_artifact(
-        "current_objective",
-        "scidiscovery.research-objective.v1",
-        parent_refs=(current_foundation.ref,),
-    )
-    portfolio = _invocation_artifact(
-        "old_portfolio",
-        "scidiscovery.hypothesis-proposal.v2",
-        parent_refs=(old_foundation.ref,),
-    )
-    critic = _invocation_artifact(
-        "mixed_critic",
-        "scidiscovery.critic-review.v2",
-        parent_refs=(portfolio.ref, current_foundation.ref),
-    )
-    bindings = {
-        "scientific_foundation": (current_foundation,),
-        "research_objective": (objective,),
-        "hypothesis_portfolio": (portfolio,),
-        "critic_review": (critic,),
-        "execution_context": (),
-        "current_progress": (),
-        "experiment_results": (),
-        "result_analysis": (),
-        "user_context": (),
-    }
-    with pytest.raises(OperationInvocationError, match="guard_rejected"):
-        preflight_operation(
-            operation,
-            name="mixed_foundation_design",
-            artifacts_by_port=bindings,
-            instruction="Design one bounded discriminating experiment.",
-        )
-
-    exact_portfolio = _invocation_artifact(
-        "current_portfolio",
-        "scidiscovery.hypothesis-proposal.v2",
-        parent_refs=(current_foundation.ref,),
-    )
-    exact_critic = _invocation_artifact(
-        "current_critic",
-        "scidiscovery.critic-review.v2",
-        parent_refs=(exact_portfolio.ref, current_foundation.ref),
-    )
-    # These are metadata-only fixtures. An exact cohort passes the lineage guard
-    # and reaches content admission; it cannot authorize work without a reader.
-    # The complete positive path is exercised by the real design Run tests.
-    with pytest.raises(OperationInvocationError, match="input_content_reader_missing"):
-        preflight_operation(
-            operation,
-            name="exact_foundation_design",
-            artifacts_by_port={
-                **bindings,
-                "hypothesis_portfolio": (exact_portfolio,),
-                "critic_review": (exact_critic,),
-            },
-            instruction="Design one bounded discriminating experiment.",
-        )
-
-
 def test_wildcard_schema_is_limited_to_read_only_evidence_ports() -> None:
     catalog = _catalog()
     wildcard_ports = tuple(
@@ -869,7 +647,7 @@ def test_catalog_transform_split_is_idempotent_and_preserves_provisional_state(
         assert envelope.parent_refs == (intake.ref, audit.ref)
         assert envelope.labels["operation_id"] == INTAKE_SPLIT_OPERATION
         assert envelope.labels["scientific_claim_admissible"] == "false"
-    with pytest.raises(RootToolError, match="unknown root tool"):
+    with pytest.raises(RootToolError, match="interface is not available on research surface"):
         root.call_tool(
             "artifact_transform",
             {

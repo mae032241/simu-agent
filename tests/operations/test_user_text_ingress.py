@@ -85,7 +85,7 @@ def test_text_schema_and_generated_scheduler_tools_share_root_declaration(ingres
     assert schema["additionalProperties"] is False
     assert schema["properties"]["on_conflict"]["default"] == "reject"
 
-    declared_names = tuple(tool.name for tool in ROOT_TOOLS)
+    declared_names = tuple(tool.name for tool in ROOT_TOOLS if tool.surface == "research")
     assert tuple(tool["name"] for tool in tools) == declared_names
     assert SCHEDULER_TOOLS == GATEWAY_TOOLS
     gateway = UnifiedMCPRouter(root)
@@ -132,7 +132,7 @@ def test_original_unicode_and_whitespace_are_frozen_without_project_files_or_run
         assert envelope.creator.actor_type == "service"
         assert envelope.parent_refs == ()
         metadata = root.call_tool("artifact_catalog", {"name": name, "view": "detail"})
-        assert metadata["labels"] == {"source_origin": "user_via_scheduler"}
+        assert "labels" not in metadata  # Exact metadata remains control-owned.
     assert _envelope(runtime, instance_id, "original_4").size_bytes == 32768
     assert tuple(sorted(runtime.project_root.rglob("*"))) == before_files
     assert runtime.runs.list(instance_id=instance_id) == ()

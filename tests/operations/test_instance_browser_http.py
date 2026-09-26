@@ -111,7 +111,9 @@ def test_discovery_does_not_register_client_and_pause_blocks_only_new_work(tmp_p
             broker.handle({'jsonrpc':'2.0','id':1,'method':method,SCHEDULER_PROXY_FIELD:key})
         assert runtime.scheduler_bindings.clients()==[]
         broker.handle({'jsonrpc':'2.0','id':2,'method':'tools/call',
-            'params':{'name':'instance_current','arguments':{}},SCHEDULER_PROXY_FIELD:key})
+            'params':{'name':'instance_current','arguments':{}, '_meta': {'x-codex-turn-metadata': {
+                'session_id': 'fixture-parent', 'thread_id': 'fixture-parent', 'thread_source': 'user',
+                'model': 'gpt-5.6-sol', 'reasoning_effort': 'medium'}}},SCHEDULER_PROXY_FIELD:key})
         assert any(x['session_key']==key for x in runtime.scheduler_bindings.clients())
         root=transport.router
         assert root.call_tool('instance_current',{})['state']=='unbound'
@@ -121,11 +123,11 @@ def test_discovery_does_not_register_client_and_pause_blocks_only_new_work(tmp_p
         assert root.call_tool('instance_current',{})['state']=='paused'
         assert root.call_tool('run_list',{})['runs']==[]
         for action,args in (
-            ('operation_preflight',{'name':'paused.preflight','operation_id':'science.experiment.design.v1','inputs':[]}),
-            ('operation_invoke',{'name':'paused.invoke','operation_id':'science.experiment.design.v1','inputs':[]}),
+            ('operation_preflight',{'name':'paused.preflight','operation_id':'science.experiment.v1','inputs':[]}),
+            ('operation_invoke',{'name':'paused.invoke','operation_id':'science.experiment.v1','inputs':[]}),
             ('execution_start',{'name':'paused.execution'})):
             with pytest.raises(RootToolError,match='paused by the workbench'):
-                root.call_tool(action,args)
+                root.call_tool(action,args, surface="execution" if action == "execution_start" else "research")
         assert runtime.runs.active_ids(instance_id=instance.instance_id,limit=10)==()
         runtime.scheduler_bindings.set_client_enabled(session_key=key,enabled=True,expected=False)
         assert root.call_tool('instance_current',{})['name']==instance.name

@@ -135,11 +135,8 @@ def _complete_author(catalog, runtime, root, *, instruction: str, conflict: str)
     )
     name = created["result"]["name"]
     compiled = catalog.operation("blind.csv.observe.v1")
-    worker = LocalWorkerMCPRouter(
-        runtime.runs,
-        operation_id=compiled.spec.operation_id,
-        operation_digest=compiled.digest,
-    )
+    from tests.operations.worker_fixtures import attached_worker
+    worker = attached_worker(runtime, root, name)
     opened = worker.call_tool("worker_open_assignment", {})
     observation = CsvObservation(
         schema_probe=CSV_SCHEMA_PROBE,
@@ -168,11 +165,8 @@ def _complete_review(catalog, runtime, root, *, name: str, subject_name: str):
         },
     )
     compiled = catalog.operation("blind.csv.review.v1")
-    worker = LocalWorkerMCPRouter(
-        runtime.runs,
-        operation_id=compiled.spec.operation_id,
-        operation_digest=compiled.digest,
-    )
+    from tests.operations.worker_fixtures import attached_worker
+    worker = attached_worker(runtime, root, name)
     opened = worker.call_tool("worker_open_assignment", {})
     subject_ref = runtime.artifacts.get_by_id(
         runtime.scheduler_bindings.resolve(
@@ -213,7 +207,7 @@ def _consumer_preflight(root, observation: str, review: str | None):
     )
 
 
-def test_review_gate_requires_a_passing_review_of_the_exact_revision(
+def test_ordinary_downstream_use_does_not_require_a_fixed_review_stage(
     tmp_path: Path,
 ) -> None:
     catalog, runtime, _, root = _system(tmp_path)
@@ -232,8 +226,7 @@ def test_review_gate_requires_a_passing_review_of_the_exact_revision(
         conflict="reject",
     )
     missing = _consumer_preflight(root, first, None)
-    assert missing["admissible"] is False
-    assert missing["reason_code"] == "input_independent_review_missing"
+    assert missing["admissible"] is True
 
     first_review = _complete_review(
         catalog, runtime, root, name="first_review", subject_name=first
@@ -249,8 +242,7 @@ def test_review_gate_requires_a_passing_review_of_the_exact_revision(
     )
     assert revised != first
     stale = _consumer_preflight(root, revised, first_review)
-    assert stale["admissible"] is False
-    assert stale["reason_code"] == "input_independent_review_missing"
+    assert stale["admissible"] is True  # Context is not a qualification grant.
 
     revised_review = _complete_review(
         catalog, runtime, root, name="revised_review", subject_name=revised

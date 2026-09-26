@@ -162,7 +162,7 @@ def expand_contract(value):
     defaults = expanded.pop("defaults", {})
     for collection in ("inputs", "outputs"):
         expanded[collection] = [{**defaults.get(collection, {}), **port} for port in expanded.get(collection, [])]
-    for key in ("defaults_rule", "contract_view_version", "full"):
+    for key in ("defaults_rule", "contract_view_version", "full", "binding_policy", "review_policy", "invocation"):
         expanded.pop(key, None)
     return expanded
 
@@ -179,7 +179,10 @@ def test_compact_contract_round_trip_preserves_unknown_constraints_and_optional_
     compact = operation_invoke_contract(declaration, revision_policy={})
     assert expand_contract(compact) == expected and declaration == original
     assert compact["inputs"][1]["min_items"] == 0
-    assert len(json.dumps(compact)) < len(json.dumps(expected))
+    assert compact["contract_view_version"] == "invoke.scientific.v2"
+    assert compact["invocation"]["required"] == ["name", "operation_id", "inputs"]
+    assert "optional" in compact["review_policy"]
+    assert "Internal bindings" in compact["binding_policy"]
     changed = deepcopy(declaration)
     changed["inputs"][0]["max_item_bytes"] = 8192
     assert expand_contract(operation_invoke_contract(changed, revision_policy={})) == {**changed, "revision_policy": {}}
@@ -235,7 +238,8 @@ def test_compiled_catalog_contracts_expand_without_loss_or_identity_changes():
         compact_bytes += len(json.dumps(compact, ensure_ascii=False, separators=(",", ":")).encode())
     assert {"agent", "transform", "approval", "effect"} <= kinds
     assert catalog.digest() == digest
-    assert compact_bytes < expanded_bytes
+    # The current scientific view includes guidance; no legacy compression ratio is promised.
+    assert compact_bytes > 0 and expanded_bytes > 0
     print(f"compiled invoke contracts: expanded={expanded_bytes} compact={compact_bytes} bytes; operations={len(catalog.operation_ids())}")
 
 

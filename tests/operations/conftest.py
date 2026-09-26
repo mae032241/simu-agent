@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import csv
 import io
+import itertools
 import shutil
 import subprocess
 import sys
@@ -11,7 +12,7 @@ import venv
 from dataclasses import dataclass
 from importlib.metadata import distribution
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Iterator
 
 import pytest
 
@@ -41,8 +42,7 @@ def _copy_runtime_distribution(name: str, destination: Path) -> None:
         shutil.copy2(source, target)
 
 
-def _supply_runtime_dependencies(environment_root: Path) -> None:
-    site_packages = environment_root / "lib" / f"python{sys.version_info.major}.{sys.version_info.minor}" / "site-packages"
+def _supply_runtime_dependencies(site_packages: Path) -> None:
     for package_name in (
         "annotated-types", "Pillow", "attrs", "jsonschema",
         "jsonschema-specifications", "pydantic", "pydantic_core",
@@ -54,14 +54,48 @@ def _supply_runtime_dependencies(environment_root: Path) -> None:
         _copy_runtime_distribution("tomli", site_packages)
 
 
+_LOG_SEQUENCE = itertools.count(1)
+
+
+def _run_logged(command, *, cwd: Path, timeout: int, env=None, read_stdout=False) -> str:
+    """Fixture logs stay on disk and under the outer runner's sampled log budget."""
+    log_root = Path(os.environ["SCID_TEST_LOG_DIR"])
+    log_root.mkdir(parents=True, exist_ok=True)
+    stem = str(next(_LOG_SEQUENCE))
+    stdout_path, stderr_path = (log_root / f"{stem}.{channel}.log" for channel in ("stdout", "stderr"))
+    with stdout_path.open("wb") as stdout, stderr_path.open("wb") as stderr:
+        result = subprocess.run(command, cwd=cwd, env=env, stdout=stdout, stderr=stderr,
+                                timeout=timeout, check=False)
+    limit = int(os.environ["SCID_TEST_LOG_BYTES"])
+    assert stdout_path.stat().st_size + stderr_path.stat().st_size <= limit, f"fixture log budget exceeded: {log_root}"
+    def tail(path):
+        with path.open("rb") as stream:
+            stream.seek(max(0, path.stat().st_size - 4096))
+            return stream.read(4096).decode("utf-8", errors="replace")
+    assert result.returncode == 0, (f"installed command failed ({result.returncode}); logs: {log_root}\n"
+                                    f"stdout tail: {tail(stdout_path)}\nstderr tail: {tail(stderr_path)}")
+    return stdout_path.read_text() if read_stdout else ""
+
+
+def _link_runtime_file(source, target):
+    # The immutable per-session dependency cache is not the user's installation.
+    try:
+        os.link(source, target)
+    except OSError:
+        shutil.copy2(source, target)
+    return target
+
+
 @pytest.fixture(scope="session")
 def installed_environments(
     tmp_path_factory: pytest.TempPathFactory,
-) -> dict[str, InstalledEnvironment]:
-    """Build wheels once; install only the source-independent runtimes used."""
+) -> Iterator[dict[str, InstalledEnvironment]]:
+    """Build wheels once; retain one isolated runtime, with shared dependency files."""
 
     repository = Path(__file__).resolve().parents[2]
-    root = tmp_path_factory.mktemp("r0-installed")
+    root = tmp_path_factory.mktemp("installed")
+    dependency_cache = root / "runtime-dependencies"
+    _supply_runtime_dependencies(dependency_cache)
     wheelhouse = root / "wheelhouse"
     wheelhouse.mkdir()
     fixture_plugins = repository / "tests/fixtures/plugins"
@@ -104,10 +138,10 @@ def installed_environments(
                     shutil.copytree(source / relative, stage / relative, ignore=ignored)
             else:
                 shutil.copytree(source, stage, ignore=ignored)
-            subprocess.run([
-                sys.executable, "-m", "pip", "wheel", "--no-deps",
+            _run_logged([
+                sys.executable, "-m", "pip", "wheel", "--no-deps", "--no-index", "--no-cache-dir",
                 "--no-build-isolation", "--wheel-dir", str(wheelhouse), str(stage),
-            ], cwd=root, check=True, capture_output=True, text=True, timeout=180)
+            ], cwd=root, timeout=180)
             built[name] = next(path for path in wheelhouse.glob("*.whl") if path.name.startswith(prefix))
         return built[name]
 
@@ -116,37 +150,31 @@ def installed_environments(
             raise KeyError(name)
         selected = tuple(wheel(package) for package in selections[name])
         environment_root = root / name
-        venv.EnvBuilder(with_pip=True, system_site_packages=False).create(environment_root)
-        _supply_runtime_dependencies(environment_root)
+        venv.EnvBuilder(with_pip=False, symlinks=True, system_site_packages=False).create(environment_root)
+        site_packages = environment_root / "lib" / f"python{sys.version_info.major}.{sys.version_info.minor}" / "site-packages"
+        shutil.copytree(dependency_cache, site_packages, dirs_exist_ok=True, copy_function=_link_runtime_file)
         python = environment_root / "bin/python"
         if name == "tcad_resolved":
             selected = (wheel("core"),)
-        subprocess.run(
+        _run_logged(
             [
-                str(python),
-                "-m",
-                "pip",
-                "install",
+                sys.executable, "-m", "pip", "--python", str(python),
+                "install", "--no-cache-dir", "--no-compile",
                 "--no-index",
                 "--no-deps",
                 *map(str, selected),
             ],
             cwd=root,
-            check=True,
-            capture_output=True,
-            text=True,
             timeout=180,
         )
         if name == "tcad_resolved":
-            subprocess.run(
+            _run_logged(
                 [
-                    str(python), "-m", "pip", "install", "--no-index",
+                    sys.executable, "-m", "pip", "--python", str(python),
+                    "install", "--no-index", "--no-cache-dir", "--no-compile",
                     "--find-links", str(wheelhouse), str(wheel("tcad")),
                 ],
                 cwd=root,
-                check=True,
-                capture_output=True,
-                text=True,
                 timeout=180,
             )
         workdir = root / f"{name}-workdir"
@@ -155,11 +183,18 @@ def installed_environments(
 
     class LazyEnvironments(dict[str, InstalledEnvironment]):
         def __missing__(self, name: str) -> InstalledEnvironment:
+            for previous in self.values():
+                shutil.rmtree(previous.python.parent.parent)
+                shutil.rmtree(previous.workdir)
+            self.clear()
             environment = create_environment(name)
             self[name] = environment
             return environment
 
-    return LazyEnvironments()
+    try:
+        yield LazyEnvironments()
+    finally:
+        shutil.rmtree(root)
 
 
 @pytest.fixture
@@ -183,20 +218,9 @@ assert 'include-system-site-packages = false' in (_R0Path(_r0_sys.prefix) / 'pyv
 import PIL as _r0_pil
 assert _R0Path(_r0_pil.__file__).resolve().is_relative_to(_R0Path(_r0_sys.prefix).resolve())
 """
-        completed = subprocess.run(
+        return _run_logged(
             [str(environment.python), "-c", textwrap.dedent(prefix + source)],
-            cwd=environment.workdir,
-            env=clean_environment,
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=120,
+            cwd=environment.workdir, env=clean_environment, timeout=120, read_stdout=True,
         )
-        assert completed.returncode == 0, (
-            f"installed probe failed ({environment_name})\n"
-            f"stdout:\n{completed.stdout}\n"
-            f"stderr:\n{completed.stderr}"
-        )
-        return completed.stdout
 
     return run

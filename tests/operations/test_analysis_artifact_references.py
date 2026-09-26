@@ -65,17 +65,13 @@ else: plot()
     catalog, runtime, facade, request, artifacts, register = system
     manifest = facade.call_tool('artifact_catalog', {
         'name': 'analysis.output.recovery_manifest', 'view': 'parents', 'parent_limit': 16})
-    projection = manifest['manifest_projection']
-    assert projection['status'] == 'complete' and projection['binding_count'] >= 3
-    assert projection['record_count'] == projection['page_record_count'] == 3
-    assert projection['invalid_record_count'] == projection['unmapped_record_count'] == 0
-    script_parent = next(parent for parent in manifest['parents']
-        if any(record['alias'] == published['script']['evidence_alias']
-               for record in parent.get('manifest_records', ())))
-    record = script_parent['manifest_records'][0]
-    assert script_parent['artifact_name'] == 'analysis.output.' + published['script']['evidence_alias']
+    assert 'manifest_projection' not in manifest
+    records = runtime.runs.tool_evidence(worker._run_id)
+    assert len(records) == 3
+    record = next(item for item in records if item['alias'] == published['script']['evidence_alias'])
     assert record['tool_name'] == 'worker_analysis_publish_files'
     assert record['metadata']['method'] == 'Tiny fixture unit; optional plot unavailable.'
+    assert any(parent['artifact_name'] == 'analysis.output.' + record['alias'] for parent in manifest['parents'])
     assert 'artifact_ref' not in json.dumps(manifest)
     request = deepcopy(request); request['name'] = 'plot_continuation'
     reference = next(i for i in request['inputs'] if i['port'] == 'reference_material')
@@ -180,9 +176,11 @@ Path("weighted.json").write_text(json.dumps({"weighted_mean": sum(w*p["y"] for w
     report = cite(limited_report(), result["calculation_ref"])
     report = cite(report, published["files"][1]["evidence_alias"], "weighted_native_result")
     assert submit(worker, opened, report)["state"] == "completed"
-    for file in [published["script"], *published["files"]]:
+    for file, original_path in zip([published["script"], *published["files"]],
+                                   ("analysis.py", "selected.csv", "weighted.json"), strict=True):
         stored = worker.runs.read_tool_evidence(worker.runs.status(worker._run_id), file["evidence_alias"])
-        assert stored == Path(file["path"]).read_bytes()
+        assert "path" not in file
+        assert stored == (scratch / original_path).read_bytes()
 
 
 @pytest.mark.parametrize("bad", ["outside", "symlink", "source"])

@@ -35,21 +35,14 @@ def test_producer_inputs_projects_frozen_ports_with_paging_and_instance_name_bou
 
     projection = root.call_tool("artifact_catalog", {
         "name": "observation.output", "view": "producer_inputs"})
-    assert projection["producer"] == {
-        "kind": "run", "operation_id": before_run.operation_id,
-        "operation_version": before_run.operation_version,
-        "operation_digest": before_run.operation_digest,
-        "availability": "current", "unavailable_reason": None}
-    assert projection["producer_input_count"] == 1 and projection["next_offset"] is None
-    assert projection["producer_inputs"] == [{
-        "port_name": "source_table", "item_index": 1,
-        "artifact_ref": source.ref.model_dump(mode="json"),
-        "artifact_name": "source_csv", "source_name": "source_table",
-        "current_access_name": "source_csv", "kind": source.ref.kind,
-        "schema": source.ref.schema_id}]
+    assert projection["availability"] == "current"
+    assert projection["material_count"] == 1 and projection["next_offset"] is None
+    assert projection["materials"] == [{"artifact_name": "source_csv", "source_name": "source_table",
+        "kind": source.ref.kind, "schema": source.ref.schema_id}]
+    assert not {"producer", "artifact_ref", "operation_digest"}.intersection(projection)
     assert root.call_tool("artifact_catalog", {"name": "observation.output",
-        "view": "producer_inputs", "parent_offset": 1})["producer_inputs"] == []
-    with pytest.raises(RootToolError, match="producer_input_count"):
+        "view": "producer_inputs", "parent_offset": 1})["materials"] == []
+    with pytest.raises(RootToolError, match="offset exceeds"):
         root.call_tool("artifact_catalog", {"name": "observation.output",
             "view": "producer_inputs", "parent_offset": 2})
     assert runtime.runs.status(run_id) == before_run
@@ -61,8 +54,7 @@ def test_producer_inputs_projects_frozen_ports_with_paging_and_instance_name_bou
         None if values["object_id"] == source.artifact_id else original_find(**values))
     unbound = root.call_tool("artifact_catalog", {
         "name": "observation.output", "view": "producer_inputs"})
-    assert unbound["producer_inputs"][0]["artifact_name"] == "source_csv"
-    assert unbound["producer_inputs"][0]["current_access_name"] is None
+    assert unbound["materials"][0]["artifact_name"] is None
     monkeypatch.setattr(runtime.scheduler_bindings, "find_name", original_find)
 
     output_id = runtime.scheduler_bindings.resolve(
@@ -78,23 +70,20 @@ def test_producer_inputs_projects_frozen_ports_with_paging_and_instance_name_bou
     root.facade.instance = other.instance_id
     cross = root.call_tool("artifact_catalog", {
         "name": "local_alias", "view": "producer_inputs"})
-    assert cross["producer"]["availability"] == "cross_instance"
-    assert cross["producer"]["unavailable_reason"] == "cross_instance"
-    assert cross["producer_inputs"][0]["artifact_name"] is None
-    assert cross["producer_inputs"][0]["source_name"] is None
-    assert cross["producer_inputs"][0]["current_access_name"] == "local_source"
+    assert cross["availability"] == "current"
+    assert cross["materials"][0]["artifact_name"] == "local_source"
+    assert cross["materials"][0]["source_name"] == "source_table"
+    assert "source_csv" not in str(cross)
 
 
 def test_producer_inputs_imported_artifact_is_explicitly_unavailable(tmp_path):
     _, _, _, source, root = _system(tmp_path)
     projection = root.call_tool("artifact_catalog", {
         "name": "source_csv", "view": "producer_inputs"})
-    assert projection["subject"]["artifact_ref"] == source.ref.model_dump(mode="json")
-    assert projection["producer"]["availability"] == "unavailable"
-    assert projection["producer"]["unavailable_reason"] == "producer_unavailable"
-    assert projection["producer_inputs"] == []
-    assert projection["parents_fallback"] == {
-        "tool": "artifact_catalog", "name": "source_csv", "view": "parents"}
+    assert projection["subject"]["name"] == "source_csv"
+    assert projection["availability"] == "unavailable"
+    assert projection["materials"] == []
+    assert "artifact_ref" not in str(projection)
 
 
 def test_root_projects_exact_bindings_and_ordered_parent_metadata_without_payload_reads(tmp_path, monkeypatch):
@@ -107,7 +96,7 @@ def test_root_projects_exact_bindings_and_ordered_parent_metadata_without_payloa
     register('many_parents', b'{}', 'opaque', parents=(artifacts['plan'].ref, second.ref))
     monkeypatch.setattr(runtime.artifacts, 'read', lambda *a: pytest.fail('metadata query read scientific payload'))
     parents = root.call_tool('artifact_catalog', {'name': 'many_parents', 'view': 'detail'})
-    assert [p['artifact_name'] for p in parents['parents']] == parents['parent_artifact_names']
+    assert [p['artifact_name'] for p in parents['parents']] == ['plan', 'another_plan']
     assert [p['schema'] for p in parents['parents']] == [artifacts['plan'].schema_id] * 2
     first = root.call_tool('artifact_catalog', {'name': 'many_parents', 'view': 'parents', 'parent_limit': 1})
     second_page = root.call_tool('artifact_catalog', {'name': 'many_parents', 'view': 'parents',
@@ -115,25 +104,22 @@ def test_root_projects_exact_bindings_and_ordered_parent_metadata_without_payloa
     assert first['parents'] + second_page['parents'] == parents['parents']
     assert first['parent_count'] == 2 and second_page['next_offset'] is None
     assert 'parent_artifact_names' not in first
-    with pytest.raises(RootToolError, match='parent_offset'):
+    with pytest.raises(RootToolError, match='offset exceeds'):
         root.call_tool('artifact_catalog', {'name': 'many_parents', 'view': 'parents', 'parent_offset': 3})
     before = runtime.runs.status(worker._run_id)
     status = root.call_tool('run_status', {'name': 'analysis', "intent": 'navigation'})
-    expected = {}
-    for item in before.inputs:
-        expected.setdefault(item.port_name, []).append(item.artifact_name)
-    assert status['bound_inputs'] == [dict(port=p, artifact_names=n) for p, n in expected.items()]
+    assert 'bound_inputs' not in status  # Running tasks expose no navigation bindings.
     assert runtime.runs.status(worker._run_id) == before
     assert all('bound_inputs' not in item for item in root.call_tool('run_list', {})['runs'])
     original_find = runtime.scheduler_bindings.find_name
     monkeypatch.setattr(runtime.scheduler_bindings, 'find_name', lambda **kw:
         None if kw['object_id'] == second.artifact_id else original_find(**kw))
     missing = root.call_tool('artifact_catalog', {'name': 'many_parents', 'view': 'detail'})['parents'][1]
-    assert missing == dict(artifact_name=None, schema=None, kind=None, producer=None)
+    assert missing == dict(artifact_name=None, schema=artifacts['plan'].schema_id, kind=second.kind)
     original_list = runtime.scheduler_bindings.list
     monkeypatch.setattr(runtime.scheduler_bindings, 'list', lambda **kw:
         tuple(b for b in original_list(**kw) if b.name != before.inputs[0].artifact_name))
-    assert root.call_tool('run_status', {'name': 'analysis', "intent": 'navigation'})['bound_inputs'][0]['artifact_names'] == [None]
+    assert 'bound_inputs' not in root.call_tool('run_status', {'name': 'analysis', 'intent': 'navigation'})
 
 
 def _failed_source(catalog, runtime, root):
@@ -154,14 +140,18 @@ def test_root_draft_source_handoff_is_not_scientific_output(tmp_path):
     catalog, runtime, _, _, root = _system(tmp_path)
     status = _failed_source(catalog, runtime, root)
     assert "sealed_output" not in status
-    assert status["recovery"]["delivery_preserved"]
-    assert status["recovery"]["draft_available"]
+    assert "recovery" not in status
+    source_id = runtime.scheduler_bindings.resolve(instance=root.facade.instance, namespace="run", name="draft_source")
+    recovery = runtime.runs.recovery_status(runtime.runs.status(source_id))
+    assert recovery["delivery_preserved"] and recovery["draft_available"]
     assert "PRIVATE_UNACCEPTED_DRAFT" not in json.dumps(status)
     assert "PRIVATE_UNACCEPTED_DRAFT" not in json.dumps(root.call_tool("run_list", {}))
     request = _request("draft_successor", draft_from="draft_source")
     assert root.call_tool("operation_preflight", request)["admissible"]
     result = root.call_tool("operation_invoke", request)["result"]
-    assert result["draft_from"] == "draft_source"
+    assert "draft_from" not in result
+    successor = runtime.runs.status(runtime.scheduler_bindings.resolve(instance=root.facade.instance, namespace="run", name="draft_successor"))
+    assert successor.draft_from_run_id == source_id
     assert "sealed_output" not in result
     opened = _worker(catalog, runtime).call_tool("worker_open_assignment", {})
     assignment = json.loads(Path(opened["assignment_path"]).read_text())
@@ -260,7 +250,7 @@ def test_scheduler_attempt_budget_extends_frozen_chain_and_replays_idempotently(
     detail = rejection["diagnostics"][0]
     assert detail["path"] == "$.max_attempts"
     assert "2 Runs used, limit 2" in detail["message"]
-    assert root.call_tool("run_status", {"name": "second"})["recovery"]["attempt_budget"] == dict(used=2, limit=2)
+    assert runtime.runs.recovery_status(runtime.runs.status(runtime.scheduler_bindings.resolve(instance=instance.instance_id, namespace="run", name="second")))["attempt_budget"] == dict(used=2, limit=2)
     request["max_attempts"] = 4
     third = fail_next(request)
     assert third.recovery_policy["scheduler_max_attempts"] == 4
@@ -268,7 +258,7 @@ def test_scheduler_attempt_budget_extends_frozen_chain_and_replays_idempotently(
     fourth = fail_next(fourth_request)
     assert fourth.recovery_policy["max_attempts"] == 4
     assert runtime.runs.status(source_id) == original  # No old policy, request or draft mutation.
-    assert root.call_tool("run_status", {"name": "fourth"})["recovery"]["attempt_budget"] == dict(used=4, limit=4)
+    assert runtime.runs.recovery_status(fourth)["attempt_budget"] == dict(used=4, limit=4)
     assert root.call_tool("operation_preflight", _request("fifth", **{route: "fourth"}))["reason_code"] == "recovery_attempt_limit_reached"
     before = root.call_tool("run_list", {})
     assert root.call_tool("operation_preflight", fourth_request)["admissible"]
@@ -314,7 +304,8 @@ def test_attempt_budget_mcp_contract_and_non_agent_applicability(tmp_path):
         assert contract['properties']['max_attempts']['anyOf'][0] == dict(type='integer',minimum=1)
         assert 'max_attempts' not in contract.get('required', [])
     items = root.call_tool('operation_catalog', {'scope':'all', 'operation_id':'blind.csv.observe.v1', 'view':'detail'})['operations']
-    assert next(i for i in items if i['operation_id'] == 'blind.csv.observe.v1')['default_max_attempts'] == 2
+    assert 'default_max_attempts' not in next(i for i in items if i['operation_id'] == 'blind.csv.observe.v1')
+    assert catalog.operation('blind.csv.observe.v1').spec.limits.max_attempts == 2
     operation = next(catalog.operation(key) for key in catalog.operation_ids()
         if catalog.operation(key).spec.executor.kind != 'agent')
     request = _request('non_agent', operation_id=operation.spec.operation_id, max_attempts=3)

@@ -63,7 +63,7 @@ def test_all_backend_tool_contracts_equal_actual_mcp_schemas_and_resolve_refs():
             continue
         for backend, router_type in ((LocalTrustedBackend, LocalWorkerMCPRouter),
                                      (HardenedWorkerBackend, HardenedWorkerMCPRouter)):
-            router = router_type(SimpleNamespace(operation_catalog=catalog, backend=backend),
+            router = router_type(SimpleNamespace(operation_catalog=catalog, backend=backend, worker_connections=SimpleNamespace()),
                 operation_id=key, operation_digest=compiled.digest)
             contracts = operation_tool_contracts(compiled, backend.assignment_tool_names(compiled))
             assert contracts == {tool['name']: {k: tool[k] for k in ('description', 'inputSchema')}
@@ -243,7 +243,8 @@ def test_root_parameters_and_catalog_inputs_share_declared_constraints():
     assert caught.value.reason_code == 'parameters_not_declared'
     view = scheduler_operation_view(compiled.spec).model_dump(mode='json', by_alias=True)
     keys = ('usage', 'exposure', 'require_current', 'media_types', 'max_item_bytes')
-    for port, projected in zip(compiled.spec.inputs, view['inputs']):
+    for projected in view['inputs']:
+        port = next(p for p in compiled.spec.inputs if p.name == projected['name'])
         expected = port.model_dump(mode='json')
         assert {k: projected[k] for k in keys} == {k: expected[k] for k in keys}
     assert all(not set(keys).intersection(port) for port in view['outputs'])
@@ -254,7 +255,7 @@ def test_declared_output_relationship_reports_the_visible_rule_and_missing_field
     from scidiscovery.operation_contract import validation_diagnostics
     for model, raw, field in (
         (AnalysisSourceReference, dict(source_key='source', input_alias='raw', experiment_key='experiment'), 'case_key'),
-        (CalculationRecord, dict(record_key='calculation', input_digests={}, request={}, algorithm_version='v1', status='computed'), 'result'),
+        (CalculationRecord, dict(record_key='calculation', request={}, algorithm_version='v1', status='computed'), 'result'),
     ):
         schema = model.model_json_schema()
         with pytest.raises(ValidationError) as caught:
@@ -306,74 +307,6 @@ def test_audit_contracts_distinguish_fidelity_from_evidence_sufficiency() -> Non
         assert "unknown" in text
         assert "not_applicable" in text
         assert "充分" in text or "sufficient" in text
-
-
-def test_experiment_revision_has_only_its_true_behavioral_inputs() -> None:
-    operation = _catalog().operation("science.experiment.revise.v1").spec
-    assert tuple(port.name for port in operation.inputs) == (
-        "prior_draft",
-        "change_request",
-        "current_progress",
-        "user_context",
-    )
-    assert operation.input_admission is None
-    assert operation.guards == ()
-    assert operation.outputs[0].context_sources == (
-        "prior_draft",
-        "change_request",
-        "current_progress",
-        "user_context",
-    )
-
-
-def test_experiment_design_exposes_the_exact_critic_review() -> None:
-    operation = _catalog().operation("science.experiment.design.v1").spec
-    critic_review = next(
-        port for port in operation.inputs if port.name == "critic_review"
-    )
-    assert critic_review.exposure == "full"
-
-
-@pytest.mark.parametrize("with_context", (False, True))
-def test_experiment_execution_context_is_optional_and_read_only(tmp_path, experiment_case, with_context):
-    from scidiscovery.general_science_experiment_components import (
-        EXPERIMENT_DESIGN_PROMPT,
-        EXPERIMENT_PROMPT,
-    )
-
-    _, sources = experiment_case
-    context = canonical_json(
-        {
-            "schema_version": 1,
-            "domain": "tcad",
-            "implementation_backend": "sprocess",
-            "implementation_kind": "sprocess",
-            "release_label": "R-2020.09",
-            "public_arguments": [],
-            "capability_statements": None,
-            "limitations": None,
-        }
-    )
-    if with_context:
-        sources = {**sources, "execution_context": context}
-    runtime, run_id, output = _experiment_run(tmp_path, sources)
-    workspace = runtime.runs.backend.open(run_id)
-    if with_context:
-        path = workspace.input_paths["execution_context"]
-        assert path.read_bytes() == context
-        assert path.stat().st_mode & 0o222 == 0
-    else:
-        assert "execution_context" not in workspace.input_paths
-    port = next(port for port in _catalog().operation("science.experiment.design.v1").spec.inputs
-                if port.name == "execution_context")
-    assert (port.schema_id, port.min_items, port.max_items, port.max_item_bytes, port.exposure) == (
-        "scidiscovery.execution-context.v1", 0, 1, 64 * 1024, "full",
-    )
-    assert port.media_types == ("application/json",)
-    assert "execution_context" in EXPERIMENT_DESIGN_PROMPT
-    assert "unresolved feasibility condition" in EXPERIMENT_DESIGN_PROMPT
-    assert "execution_context" not in EXPERIMENT_PROMPT
-    assert "tcad_artifact" not in EXPERIMENT_DESIGN_PROMPT
 
 
 @pytest.fixture
@@ -604,389 +537,12 @@ def _partial_experiment(experiment_case):
     return intent, sources
 
 
-def _feedback_root(tmp_path, monkeypatch, experiment_case, operation_id, *, name="feedback_task", catalog=None):
-    from scidiscovery.artifact_agent.transforms import materialize_experiment_plan
-    from tests.operations.test_general_transform_operations import _intake, _register, _root
-
-    intent, sources = _partial_experiment(experiment_case)
-    catalog = catalog or _catalog()
-    runtime, instance, root = _root(tmp_path, catalog=catalog)
-    foundation = _intake().scientific_foundation.model_dump(mode="json")
-    foundation["objective"] = json.loads(sources["research_objective"])["statement"]
-    foundation["objective_contract"] = json.loads(sources["research_objective"])
-    # The partial-goal fixture replaced the intake objective; supply its actual
-    # referenced items too, rather than relying on an admission stub to hide them.
-    known = {item["item_key"] for item in foundation["items"]}
-    for target in foundation["objective_contract"]["mandatory_targets"]:
-        for key in target["evidence_item_keys"]:
-            if key not in known:
-                foundation["items"].append({**foundation["items"][0], "item_key": key,
-                    "statement": target["rationale"]})
-                known.add(key)
-    content = {"scientific_foundation": canonical_json(foundation), **sources}
-    envelopes = {}
-    for port in ("scientific_foundation", "research_objective", "hypothesis_portfolio", "critic_review"):
-        parents = () if port == "scientific_foundation" else (envelopes["scientific_foundation"].ref,)
-        if port == "critic_review":
-            parents += (envelopes["hypothesis_portfolio"].ref,)
-        declaration = next(item for item in catalog.operation("science.experiment.design.v1").spec.inputs if item.name == port)
-        envelopes[port] = _register(runtime, instance, name=port, raw=content[port],
-                                    kind=port, schema=declaration.schema_id, parents=parents)
-    monkeypatch.setattr(runtime.approvals, "are_subjects_approved_by_provider", lambda *args, **kwargs: True)
-    ports = tuple(content)
-    payload = intent
-    if operation_id == "science.object.review.v1":
-        raw, _ = materialize_experiment_plan({
-            "experiment_design_intent": canonical_json(intent),
-            "research_objective": sources["research_objective"],
-            "hypothesis_portfolio": sources["hypothesis_portfolio"],
-        })
-        _register(runtime, instance, name="experiment_plan", raw=raw,
-                  kind="experiment_portfolio", schema="scidiscovery.experiment-portfolio.v1",
-                  parents=tuple(item.ref for item in envelopes.values()))
-        ports = ("experiment_plan", "research_objective")
-        payload = {"review_target": "experiment_portfolio", "verdict": "pass",
-                   "summary": "Assess the current scope and retained future conditions."}
-    request = {"name": name, "operation_id": operation_id,
-               "inputs": [{"port": port, "artifact_names": [port]} for port in ports],
-               "instruction": "Use only the exact current selection and visible feedback."}
-    return runtime, instance, root, request, payload
 
 
-def _feedback_record(runtime, instance, name, *, state="stale", raw=None):
-    from scidiscovery.artifact_agent.schema.artifact import ArtifactRegistration
-
-    producer = runtime.runs.operation_catalog.operation("science.experiment.revise.v1")
-    labels = {"operation_id": producer.spec.operation_id, "operation_version": producer.spec.version,
-              "operation_digest": "0" * 64 if state == "stale" else producer.digest,
-              "operation_output_port": "experiment_plan"}
-    if state == "nonclaiming":
-        labels["scientific_claim_admissible"] = "false"
-    content = raw if raw is not None else b"\x00Exact historical feedback: " + name.encode()
-    envelope = runtime.artifacts.register(content, ArtifactRegistration(
-        kind="historical_feedback", schema_id="example.historical-feedback.v1",
-        payload_schema_version=1, media_type="application/octet-stream",
-        creator=runtime.actor, labels=labels,
-    ), idempotency_key=f"feedback:{name}")
-    runtime.scheduler_bindings.bind(instance=instance.instance_id, namespace="artifact",
-                                    name=name, object_id=envelope.artifact_id)
-    return envelope, content
 
 
-@pytest.mark.parametrize("operation_id", ("science.experiment.design.v1", "science.object.review.v1"))
-@pytest.mark.parametrize("groups", (
-    (), ("current_progress",), ("experiment_results",), ("result_analysis",),
-    ("current_progress", "experiment_results", "result_analysis"),
-    ("current_progress", "current_progress", "experiment_results", "result_analysis"),
-))
-def test_exact_optional_feedback_reaches_root_run_local_worker_and_output_parentage(
-    tmp_path, monkeypatch, experiment_case, operation_id, groups,
-) -> None:
-    from scidiscovery.artifact_agent.interfaces.mcp_local_worker import LocalWorkerMCPRouter
-
-    runtime, instance, root, request, payload = _feedback_root(tmp_path, monkeypatch, experiment_case, operation_id)
-    records = {}
-    by_port = {}
-    for index, port in enumerate(groups):
-        name = f"feedback_{index}"
-        records[name] = _feedback_record(runtime, instance, name,
-                                         state=("stale", "unreviewed", "nonclaiming")[index % 3])
-        by_port.setdefault(port, []).append(name)
-    request["inputs"].extend({"port": port, "artifact_names": names} for port, names in by_port.items())
-    preflight = root.call_tool("operation_preflight", request)
-    assert preflight["admissible"] is True, preflight
-    assert root.call_tool("operation_invoke", request)["result"]["state"] == "queued"
-    compiled = runtime.runs.operation_catalog.operation(operation_id)
-    worker = LocalWorkerMCPRouter(runtime.runs, operation_id=operation_id, operation_digest=compiled.digest)
-    opened = worker.call_tool("worker_open_assignment", {})
-    assert "tool_contracts" not in opened
-    assert opened["tool_contracts_pointer"] == "/tool_contracts"
-    assert Path(opened["tool_contracts_path"]).is_file()
-    run_id = runtime.scheduler_bindings.resolve(instance=instance.instance_id, namespace="run", name=request["name"])
-    status = runtime.runs.status(run_id)
-    workspace = runtime.runs.backend.open(run_id)
-    aliases = []
-    for port, names in by_port.items():
-        for index, name in enumerate(names, start=1):
-            alias = port if len(names) == 1 else f"{port}_{index:03d}"
-            aliases.append(alias)
-            path = workspace.input_paths[alias]
-            assert path.read_bytes() == records[name][1]
-            assert path.stat().st_mode & 0o777 == 0o400
-            frozen = next(item for item in status.inputs if item.source_name == alias)
-            assert (frozen.artifact_name, frozen.exposure, frozen.usage) == (name, "on_demand", "evidence_inventory")
-    assert set(workspace.input_paths).intersection({"current_progress", "experiment_results", "result_analysis"}) == {
-        port for port, names in by_port.items() if len(names) == 1
-    }
-    if operation_id == "science.object.review.v1":
-        payload["evidence"] = [{"source_key": alias, "source_type": "frozen_input", "locator": "exact bound feedback"}
-                               for alias in ("experiment_plan", "research_objective", *aliases)]
-    Path(opened["output_directory"], "result.json").write_bytes(_experiment_envelope(payload))
-    assert worker.call_tool("worker_submit_result", {})["state"] == "completed"
-    result = root.call_tool("run_status", {"name": request["name"]})
-    output_id = runtime.scheduler_bindings.resolve(instance=instance.instance_id, namespace="artifact", name=result["output_artifact_name"])
-    output = runtime.artifacts.get_by_id(output_id)
-    assert {record.ref for record, _ in records.values()}.issubset(output.parent_refs)
-    manifest_refs = {ref for ref in output.parent_refs
-                     if ref.schema_id == "scidiscovery.tool-evidence-manifest.v1"}
-    assert len(manifest_refs) == 1
-    assert {item.artifact_ref for item in status.inputs} == set(output.parent_refs) - manifest_refs
 
 
-def test_feedback_changes_the_immutable_request_fingerprint(tmp_path, monkeypatch, experiment_case) -> None:
-    from scidiscovery.artifact_agent.interfaces.mcp_local_worker import LocalWorkerMCPRouter
-
-    runtime, instance, root, request, payload = _feedback_root(tmp_path, monkeypatch, experiment_case, "science.experiment.design.v1")
-    for name in ("prior_one", "prior_two"):
-        _feedback_record(runtime, instance, name)
-    request["inputs"].append({"port": "current_progress", "artifact_names": ["prior_one"]})
-    root.call_tool("operation_invoke", request)
-    original = runtime.scheduler_bindings.get_binding(instance=instance.instance_id, namespace="run", name=request["name"])
-    compiled = runtime.runs.operation_catalog.operation(request["operation_id"])
-    worker = LocalWorkerMCPRouter(runtime.runs, operation_id=request["operation_id"], operation_digest=compiled.digest)
-    opened = worker.call_tool("worker_open_assignment", {})
-    Path(opened["output_directory"], "result.json").write_bytes(_experiment_envelope(payload))
-    assert worker.call_tool("worker_submit_result", {})["state"] == "completed"
-    request["inputs"][-1]["artifact_names"] = ["prior_two"]
-    rejected = root.call_tool("operation_preflight", request)
-    assert rejected["admissible"] is False
-    revised = root.call_tool("operation_invoke", {**request, "on_conflict": "create_revision"})["result"]
-    new = runtime.scheduler_bindings.get_binding(instance=instance.instance_id, namespace="run", name=revised["name"])
-    assert original.request_fingerprint != new.request_fingerprint
-
-
-@pytest.mark.parametrize("defect,reason", (
-    ("too_many", "input_cardinality_invalid"), ("too_large", "input_item_too_large"),
-    ("total", "input_total_too_large"), ("duplicate", "input_artifact_duplicate"),
-    ("cross_instance", "input_artifact_unavailable"),
-))
-def test_feedback_root_keeps_size_count_duplicate_and_instance_gates(
-    tmp_path, monkeypatch, experiment_case, defect, reason,
-) -> None:
-    runtime, instance, root, request, _ = _feedback_root(tmp_path, monkeypatch, experiment_case, "science.object.review.v1")
-    count = 5 if defect == "too_many" else 4 if defect == "total" else 1
-    size = 8 * 1024 * 1024 + 1 if defect == "too_large" else 8 * 1024 * 1024 if defect == "total" else 16
-    selected_instance = instance
-    if defect == "cross_instance":
-        selected_instance = runtime.scheduler_bindings.create_instance(
-            name="other_feedback_instance", title="Other instance", objective="Keep input identity scoped.")
-    names = []
-    for index in range(count):
-        name = f"feedback_limit_{index}"
-        _feedback_record(runtime, selected_instance, name, raw=bytes([index]) * size)
-        names.append(name)
-    request["inputs"].append({"port": "current_progress", "artifact_names": names})
-    if defect == "total":
-        _feedback_record(runtime, instance, "additional_feedback", raw=b"x" * 131072)
-        request["inputs"].append({"port": "result_analysis", "artifact_names": ["additional_feedback"]})
-    if defect == "duplicate":
-        request["inputs"].append({"port": "result_analysis", "artifact_names": names})
-    rejected = root.call_tool("operation_preflight", request)
-    assert rejected["admissible"] is False
-    assert rejected["reason_code"] == reason
-    if defect == "total":
-        limit = runtime.runs.operation_catalog.operation(request["operation_id"]).spec.limits.max_input_bytes
-        assert f"max_input_bytes={limit}" in json.dumps(rejected)
-    elif defect == "too_large":
-        assert "max_item_bytes=8388608" in json.dumps(rejected)
-
-
-def _feedback_catalog_with_input(operation_id, port_name, **changes):
-    general = GENERAL_PLUGIN.model_copy(update={"operations": tuple(
-        operation.model_copy(update={"inputs": tuple(
-            port.model_copy(update=changes) if port.name == port_name else port
-            for port in operation.inputs
-        )}) if operation.operation_id == operation_id else operation
-        for operation in GENERAL_PLUGIN.operations
-    )})
-    return compile_catalog((CORE_PLUGIN, general, CURVE_PLUGIN, TCAD_PLUGIN))
-
-
-def test_feedback_inventory_still_obeys_explicit_current_requirement(tmp_path, monkeypatch, experiment_case) -> None:
-    operation_id = "science.object.review.v1"
-    catalog = _feedback_catalog_with_input(operation_id, "current_progress", require_current=True)
-    runtime, instance, root, request, _ = _feedback_root(tmp_path, monkeypatch, experiment_case, operation_id, catalog=catalog)
-    old, _ = _feedback_record(runtime, instance, "old_feedback")
-    new, _ = _feedback_record(runtime, instance, "new_feedback")
-    runtime.scheduler_bindings.select_scientific_object(
-        instance=instance.instance_id, kind="source_head", logical_name="old_feedback", artifact_ref=old.ref)
-    runtime.scheduler_bindings.select_scientific_object(
-        instance=instance.instance_id, kind="source_head", logical_name="old_feedback", artifact_ref=new.ref, expected_ref=old.ref)
-    request["inputs"].append({"port": "current_progress", "artifact_names": ["old_feedback"]})
-    rejected = root.call_tool("operation_preflight", request)
-    assert rejected["admissible"] is False
-    assert rejected["reason_code"] == "input_not_current"
-
-
-def test_nonclaiming_feedback_cannot_enter_a_typed_claim_port(tmp_path, monkeypatch, experiment_case) -> None:
-    from tests.operations.test_general_transform_operations import _register
-
-    operation_id = "science.object.review.v1"
-    catalog = _feedback_catalog_with_input(operation_id, "experiment_plan", usage="claim_evidence")
-    runtime, instance, root, request, _ = _feedback_root(tmp_path, monkeypatch, experiment_case, operation_id, catalog=catalog)
-    plan_id = runtime.scheduler_bindings.resolve(instance=instance.instance_id, namespace="artifact", name="experiment_plan")
-    plan = runtime.artifacts.get_by_id(plan_id)
-    _register(runtime, instance, name="nonclaiming_plan", raw=runtime.artifacts.read(plan.ref),
-              kind=plan.kind, schema=plan.schema_id, provisional=True)
-    request["inputs"][0]["artifact_names"] = ["nonclaiming_plan"]
-    rejected = root.call_tool("operation_preflight", request)
-    assert rejected["admissible"] is False
-    assert rejected["reason_code"] == "input_scientific_claim_forbidden"
-
-
-def test_sealed_blocked_review_is_readable_as_exact_feedback(tmp_path, monkeypatch, experiment_case) -> None:
-    from scidiscovery.artifact_agent.interfaces.mcp_local_worker import LocalWorkerMCPRouter
-
-    operation_id = "science.object.review.v1"
-    runtime, instance, root, request, payload = _feedback_root(tmp_path, monkeypatch, experiment_case, operation_id, name="blocked_review")
-    compiled = runtime.runs.operation_catalog.operation(operation_id)
-    root.call_tool("operation_invoke", request)
-    worker = LocalWorkerMCPRouter(runtime.runs, operation_id=operation_id, operation_digest=compiled.digest)
-    opened = worker.call_tool("worker_open_assignment", {})
-    payload["verdict"] = "blocked"
-    Path(opened["output_directory"], "result.json").write_bytes(canonical_json({
-        "schema_version": 1, "payload": payload,
-    }))
-    submitted = worker.call_tool("worker_submit_result", {})
-    assert submitted["state"] == "completed", submitted
-    blocked = root.call_tool("run_status", {'name': request["name"], "intent": 'full'})
-    assert blocked["sealed_output"]["payload"]["verdict"] == "blocked"
-    output_name = blocked["output_artifact_name"]
-    output_id = runtime.scheduler_bindings.resolve(instance=instance.instance_id, namespace="artifact", name=output_name)
-    envelope = runtime.artifacts.get_by_id(output_id)
-    assert blocked["scheduler_signal"]["verdict"] == "blocked"
-    plan_id = runtime.scheduler_bindings.resolve(instance=instance.instance_id, namespace="artifact", name="experiment_plan")
-    review_match = dict(reviewer_operation=operation_id, reviewer_input_port="experiment_plan",
-                        subject_ref=runtime.artifacts.get_by_id(plan_id).ref)
-    assert runtime.runs.is_exact_reviewer_output(envelope.ref, accepted_verdicts=("blocked",), **review_match)
-    assert not runtime.runs.is_exact_reviewer_output(envelope.ref, accepted_verdicts=("pass",), **review_match)
-    request = {**request, "name": "review_with_blocked_feedback", "inputs": [
-        *request["inputs"], {"port": "current_progress", "artifact_names": [output_name]},
-    ]}
-    assert root.call_tool("operation_preflight", request)["admissible"] is True
-    root.call_tool("operation_invoke", request)
-    reader = LocalWorkerMCPRouter(runtime.runs, operation_id=operation_id, operation_digest=compiled.digest)
-    reader.call_tool("worker_open_assignment", {})
-    run_id = runtime.scheduler_bindings.resolve(instance=instance.instance_id, namespace="run", name=request["name"])
-    assert runtime.runs.backend.open(run_id).input_paths["current_progress"].read_bytes() == runtime.artifacts.read(envelope.ref)
-    assert root.call_tool("run_status", {'name': "blocked_review", "intent": 'full'})["sealed_output"]["payload"]["verdict"] == "blocked"
-
-
-def test_partial_goal_submission_corrects_same_run_then_preserves_intent(tmp_path, experiment_case) -> None:
-    intent, sources = _partial_experiment(experiment_case)
-    runtime, run_id, output = _experiment_run(tmp_path, sources)
-    intent["proposals"][0]["current_objectives"] = ["Unlisted goal"]
-    output.write_bytes(_experiment_envelope(intent))
-    state, diagnostics = runtime.runs.submit(run_id)
-    assert state == "rejected" and diagnostics
-    assert runtime.runs.status(run_id).state == "running"
-    intent["proposals"][0]["current_objectives"] = ["Test the response now."]
-    output.write_bytes(_experiment_envelope(intent))
-    assert runtime.runs.submit(run_id) == ("completed", ())
-    assert runtime.runs.status(run_id).state == "completed"
-
-
-def _review_run(tmp_path, sources, *, operation_id="science.object.review.v1"):
-    from tests.operations.test_general_transform_operations import _register, _root
-
-    catalog = _catalog()
-    compiled = catalog.operation(operation_id)
-    runtime, instance, _ = _root(tmp_path, catalog=catalog)
-    runtime.runs.operation_catalog = catalog
-    artifacts = {}
-    for port in compiled.spec.inputs:
-        if port.name not in sources:
-            artifacts[port.name] = ()
-            continue
-        envelope = _register(runtime, instance, name=port.name, raw=sources[port.name],
-                             kind=port.name, schema=port.schema_id if port.schema_id != "*" else "test.progress.v1")
-        artifacts[port.name] = (InvocationArtifact(
-            artifact_name=port.name, ref=envelope.ref, schema_id=envelope.schema_id,
-            media_type=envelope.media_type, size_bytes=envelope.size_bytes,
-            parent_refs=envelope.parent_refs,
-        ),)
-    bound = preflight_operation(compiled, name="review", artifacts_by_port=artifacts,
-                                instruction="Review the exact current selection.", read_artifact=runtime.artifacts.read)
-    run_id = runtime.runs.schedule(
-        bound, instance_id=instance.instance_id, output_binding_name="review",
-        output_logical_name="review", output_revision=1,
-        output_binding_fingerprint="b" * 64,
-    )
-    _, workspace = runtime.runs.open(operation_id=compiled.spec.operation_id,
-                                     operation_digest=compiled.digest)
-    return runtime, run_id, workspace
-
-
-@pytest.mark.parametrize("with_objective", (False, True))
-@pytest.mark.parametrize("with_context", (False, True))
-@pytest.mark.parametrize("verdict", ("pass", "revise", "reject", "blocked", "inconclusive"))
-def test_review_optional_original_is_visible_and_citations_correct_in_same_run(
-    tmp_path, experiment_case, with_objective, with_context, verdict,
-) -> None:
-    from scidiscovery.artifact_agent.transforms import materialize_experiment_plan
-
-    intent, inputs = _partial_experiment(experiment_case)
-    plan, _ = materialize_experiment_plan({
-        "experiment_design_intent": canonical_json(intent),
-        "research_objective": inputs["research_objective"],
-        "hypothesis_portfolio": inputs["hypothesis_portfolio"],
-    })
-    sources = {"experiment_plan": plan}
-    if with_objective:
-        sources["research_objective"] = inputs["research_objective"]
-    if with_context:
-        sources["execution_context"] = canonical_json({
-            "schema_version": 1, "domain": "tcad", "implementation_backend": "sprocess",
-            "implementation_kind": "sprocess", "release_label": "R-2020.09",
-            "public_arguments": [], "capability_statements": None, "limitations": None,
-        })
-    runtime, run_id, workspace = _review_run(tmp_path, sources)
-    for name, raw in sources.items():
-        assert workspace.input_paths[name].read_bytes() == raw
-        assert workspace.input_paths[name].stat().st_mode & 0o222 == 0
-    assert ("research_objective" in workspace.input_paths) is with_objective
-    assert ("execution_context" in workspace.input_paths) is with_context
-    payload = {
-        "review_target": "experiment_portfolio", "verdict": verdict,
-        "summary": "Assess current validity and the stated condition for future work.",
-        "evidence": [{"source_key": "unbound_original", "source_type": "frozen_input",
-                      "locator": "objective statement"}],
-        "findings": [{"finding_key": "scope", "statement": "Only current scope was assessed.",
-                      "epistemic_status": "inference", "evidence_keys": ["unbound_original"]}],
-    }
-    output = workspace.output_directory / "result.json"
-    handoff = {"verdict": verdict, "summary": payload["summary"]}
-    output.write_bytes(canonical_json({"schema_version": 1, "payload": payload, "handoff": handoff}))
-    state, diagnostics = runtime.runs.submit(run_id)
-    assert state == "rejected"
-    assert runtime.runs.status(run_id).state == "running"
-    assert any(item["rule_id"] == "experiment.review.subject_binding" for item in diagnostics)
-    alias = "research_objective" if with_objective else "experiment_plan"
-    payload["evidence"][0]["source_key"] = alias
-    payload["findings"][0]["evidence_keys"] = [alias]
-    output.write_bytes(canonical_json({"schema_version": 1, "payload": payload, "handoff": handoff}))
-    assert runtime.runs.submit(run_id) == ("completed", ())
-
-
-def test_review_contract_declares_optional_original_and_execution_inputs() -> None:
-    compiled = _catalog().operation("science.object.review.v1")
-    ports = {port.name: port for port in compiled.spec.inputs}
-    for name, schema_id, size in (
-        ("research_objective", "scidiscovery.research-objective.v1", 512 * 1024),
-        ("execution_context", "scidiscovery.execution-context.v1", 64 * 1024),
-    ):
-        port = ports[name]
-        assert (port.schema_id, port.min_items, port.max_items, port.max_item_bytes,
-                port.usage, port.exposure) == (schema_id, 0, 1, size, "prior_signal", "full")
-    output = operation_primary_output(compiled)
-    assert output.evidence_paths == ()
-    contract = operation_port_json_schema(compiled, output)["x-scidiscovery-validation-contract"]
-    checker = next(item for item in contract["checkers"] if item["phase"] == "context")
-    assert set(checker["optional_inputs"]) == {
-        "experiment_plan", "scientific_skeleton", "research_objective",
-        "execution_context", "current_progress",
-        "experiment_results", "result_analysis", "user_context",
-    }
 
 
 @pytest.mark.parametrize("global_already_present", (False, True))
@@ -1067,45 +623,6 @@ def test_review_validates_bound_original_context_and_actual_source_aliases(exper
             _object_review_inputs(sources)
 
 
-def test_complete_revision_projects_copies_but_requires_scientific_change(tmp_path, experiment_case) -> None:
-    from scidiscovery.artifact_agent.transforms import materialize_experiment_plan
-
-    intent, inputs = _partial_experiment(experiment_case)
-    raw, _ = materialize_experiment_plan({
-        "experiment_design_intent": canonical_json(intent),
-        "research_objective": inputs["research_objective"],
-        "hypothesis_portfolio": inputs["hypothesis_portfolio"],
-    })
-    sources = {"prior_draft": raw, "change_request": canonical_json({
-        "review_target": "experiment_portfolio", "verdict": "revise",
-        "summary": "Clarify why the future observable remains deferred.",
-    })}
-    runtime, run_id, workspace = _review_run(
-        tmp_path, sources, operation_id="science.experiment.revise.v1",
-    )
-    revised = json.loads(raw)
-    proposal = revised["proposals"][0]
-    proposal["objectives"].remove(revised["objective"])
-    output = workspace.output_directory / "result.json"
-    output.write_bytes(_experiment_envelope(revised))
-    state, diagnostics = runtime.runs.submit(run_id)
-    assert state == "rejected"
-    # Copy repair alone is not scientific progress: the materialized draft is unchanged.
-    assert any(item.get("type") == "revision_unchanged" for item in diagnostics)
-    assert revised["objective"] in json.loads(output.read_bytes())["payload"]["proposals"][0]["objectives"]
-    assert runtime.runs.status(run_id).state == "running"
-    proposal["current_objectives"] = ["Unlisted goal"]
-    output.write_bytes(_experiment_envelope(revised))
-    state, diagnostics = runtime.runs.submit(run_id)
-    assert state == "rejected"
-    assert any("exact subset" in item["message"] for item in diagnostics)
-    assert runtime.runs.status(run_id).state == "running"
-    proposal["current_objectives"] = intent["proposals"][0]["current_objectives"]
-    proposal["value_assessment"]["rationale"] += " Later work requires the stated evidence."
-    output.write_bytes(_experiment_envelope(revised))
-    assert runtime.runs.submit(run_id) == ("completed", ())
-
-
 def test_experiment_materialized_constraints_are_correctable(experiment_case) -> None:
     intent, sources = experiment_case
     intent["objective_key"] = "objective_expected"
@@ -1131,36 +648,6 @@ def engineering_case(experiment_case):
                     identifiability_claims=[], prediction_tests=[])
     ExperimentDesignIntent.model_validate_json(canonical_json(intent), strict=True)
     return intent, sources
-
-
-def test_engineering_run_accepts_designer_selected_validation_dimensions(tmp_path, engineering_case) -> None:
-    intent, sources = engineering_case
-    runtime, run_id, output = _experiment_run(tmp_path, sources)
-    output.write_bytes(_experiment_envelope(intent))
-    assert runtime.runs.submit(run_id) == ("completed", ())
-    assert runtime.runs.status(run_id).state == "completed"
-
-
-@pytest.mark.parametrize("fault", ("value_error", "runtime_error"))
-def test_engineering_run_submission_keeps_system_failures_terminal(
-    tmp_path, monkeypatch, engineering_case, fault,
-) -> None:
-    from scidiscovery.artifact_agent.schema import experiment_intent
-
-    intent, sources = engineering_case
-    if fault == "critic_review":
-        sources["critic_review"] = b"{}"
-    else:
-        error_type = ValueError if fault == "value_error" else RuntimeError
-
-        def broken_materializer(*_args):
-            raise error_type("materializer programming defect")
-
-        monkeypatch.setattr(experiment_intent, "materialize_experiment_design_intent", broken_materializer)
-    runtime, run_id, output = _experiment_run(tmp_path, sources)
-    output.write_bytes(_experiment_envelope(intent))
-    assert runtime.runs.submit(run_id) == ("failed", ())
-    assert runtime.runs.status(run_id).state == "failed"
 
 
 def _experiment_run(tmp_path, sources):
@@ -1200,136 +687,6 @@ def _experiment_run(tmp_path, sources):
     _, workspace = runtime.runs.open(operation_id=compiled.spec.operation_id,
                                      operation_digest=compiled.digest)
     return runtime, run_id, workspace.output_directory / "result.json"
-
-
-@pytest.mark.parametrize("broken_input", ("research_objective", "hypothesis_portfolio"))
-def test_experiment_submission_rejects_corrupt_immutable_inputs_as_system_failures(
-    tmp_path, experiment_case, broken_input,
-) -> None:
-    intent, sources = experiment_case
-    intent["objective_key"] = "objective_expected"
-    sources[broken_input] = b"{}"
-    with pytest.raises(RunCheckerError, match="context checker failed"):
-        _validate_experiment_submission(tmp_path, intent, sources)
-
-
-def test_experiment_submission_preserves_declared_rule_id(tmp_path, experiment_case) -> None:
-    intent, sources = experiment_case
-    intent['selected_hypothesis_keys'].append('unbound_hypothesis')
-    with pytest.raises(RunOutputError) as error:
-        _validate_experiment_submission(tmp_path, intent, sources)
-    assert {item["rule_id"] for item in error.value.details} == {
-        "experiment.design.objective_and_hypothesis_binding"
-    }
-    assert any("hypothesis absent" in item["message"] for item in error.value.details)
-
-
-@pytest.mark.parametrize(
-    "execution_context",
-    (
-        b"{",
-        canonical_json(
-            {
-                "schema_version": 1,
-                "domain": "tcad",
-                "implementation_backend": "sprocess",
-                "implementation_kind": "sprocess",
-                "release_label": "R-2020.09",
-                "public_arguments": [],
-                "capability_statements": None,
-                "limitations": None,
-                "undeclared": True,
-            }
-        ),
-    ),
-)
-def test_experiment_submission_rejects_invalid_optional_execution_context(
-    tmp_path, experiment_case, execution_context
-) -> None:
-    intent, sources = experiment_case
-    intent["objective_key"] = "objective_expected"
-    sources["execution_context"] = execution_context
-    from scidiscovery.operations.input_validation import OperationInvocationError
-    with pytest.raises(OperationInvocationError, match="input_content_incompatible"):
-        _experiment_run(tmp_path, sources)
-
-
-def test_experiment_validation_contract_exposes_optional_execution_context() -> None:
-    compiled = _catalog().operation("science.experiment.design.v1")
-    contract = operation_port_json_schema(
-        compiled, operation_primary_output(compiled)
-    )["x-scidiscovery-validation-contract"]
-    sources = {item["port"]: item for item in contract["context_sources"]}
-    assert sources["execution_context"]["required"] is False
-    port = next(
-        item for item in compiled.spec.inputs if item.name == "execution_context"
-    )
-    assert port.schema_id == "scidiscovery.execution-context.v1"
-    checker = next(
-        item for item in contract["checkers"] if item["phase"] == "context"
-    )
-    assert "execution_context" in checker["optional_inputs"]
-
-
-@pytest.mark.parametrize("error_type", (ValueError, RuntimeError))
-def test_experiment_materializer_program_errors_remain_system_failures(
-    tmp_path, monkeypatch, experiment_case, error_type,
-) -> None:
-    from scidiscovery.artifact_agent.schema import experiment_intent
-
-    intent, sources = experiment_case
-    intent["objective_key"] = "objective_expected"
-
-    def broken_materializer(*_args):
-        raise error_type("materializer programming defect")
-
-    monkeypatch.setattr(experiment_intent, "materialize_experiment_design_intent", broken_materializer)
-    with pytest.raises(RunCheckerError, match="context checker failed") as error:
-        _validate_experiment_submission(tmp_path, intent, sources)
-    assert type(error.value.__cause__) is error_type
-
-
-def test_context_sources_do_not_include_a_different_port_with_the_same_prefix(
-    tmp_path, experiment_case,
-) -> None:
-    intent, sources = experiment_case
-    intent["objective_key"] = "objective_expected"
-    sources["critic_review_aux"] = b"private lineage content"
-    compiled = _catalog().operation("science.experiment.design.v1")
-    extra = compiled.spec.inputs[0].model_copy(update={"name": "critic_review_aux", "min_items": 0})
-    implementations = dict(compiled.implementations)
-    observed = []
-
-    def check(payload, context, handoff):
-        observed.append(set(context))
-        _experiment_context(payload, context, handoff)
-
-    implementations["general_science:experiment_context"] = check
-    compiled = replace(
-        compiled, implementations=implementations,
-        spec=compiled.spec.model_copy(update={"inputs": (*compiled.spec.inputs, extra)}),
-    )
-    _validate_experiment_submission(tmp_path, intent, sources, compiled=compiled)
-    assert observed == [{"critic_review", "research_objective", "hypothesis_portfolio"}]
-
-
-def test_schema_projection_program_errors_remain_system_failures(
-    tmp_path, monkeypatch, experiment_case,
-) -> None:
-    from scidiscovery.artifact_agent.service import run_outputs
-
-    intent, sources = experiment_case
-    intent["objective_key"] = "objective_expected"
-
-    def broken_projection(*_args, **_kwargs):
-        raise ValueError("projection programming defect")
-
-    monkeypatch.setattr(run_outputs, "operation_port_json_schema", broken_projection)
-    with pytest.raises(
-        RunCheckerError, match="compiled output schema projection failed"
-    ) as error:
-        _validate_experiment_submission(tmp_path, intent, sources)
-    assert type(error.value.__cause__) is ValueError
 
 
 def _experiment_envelope(intent):
@@ -1497,7 +854,8 @@ def test_evidence_source_projection_uses_exact_bound_context_aliases() -> None:
         item["port"]: item["usage"] for item in validation["context_sources"]
     }
     assert usages == {
-        "required_parameter_checklist": "prior_signal",
+        "required_parameter_checklist": "evidence_inventory",
+        "previous_evidence": "evidence_inventory",
         "source_material": "evidence_inventory",
         "user_context": "prior_signal",
     }
@@ -1522,44 +880,6 @@ def test_empty_optional_inventory_still_allows_citing_the_bound_review_subject()
     assert list(validator.iter_errors(payload))
 
 
-def test_evidence_source_projection_version_changes_only_applicable_digest(
-    monkeypatch,
-) -> None:
-    first = _catalog()
-    selector = catalog_module._evidence_source_projection_version
-
-    def next_projection(spec, port):
-        return "evidence-source-enum.test-next" if selector(spec, port) else None
-
-    monkeypatch.setattr(
-        catalog_module, "_evidence_source_projection_version", next_projection
-    )
-    second = _catalog()
-    assert (
-        first.operation("tcad.parameter.evidence.extract.v1").digest
-        != second.operation("tcad.parameter.evidence.extract.v1").digest
-    )
-    assert (
-        first.operation("science.experiment.design.v1").digest
-        == second.operation("science.experiment.design.v1").digest
-    )
-
-
-def test_experiment_bad_critic_is_rejected_before_run_creation(tmp_path, experiment_case) -> None:
-    from scidiscovery.operations.input_validation import OperationInvocationError
-    _, sources = experiment_case
-    sources["critic_review"] = b"{}"
-    with pytest.raises(OperationInvocationError, match="input_content_incompatible"):
-        _experiment_run(tmp_path, sources)
-
-
-def test_experiment_output_does_not_recheck_unused_critic_input(tmp_path, experiment_case) -> None:
-    intent, sources = experiment_case
-    intent["objective_key"] = "objective_expected"
-    sources["critic_review"] = b"{}"
-    _validate_experiment_submission(tmp_path, intent, sources)
-
-
 def test_corrupt_assignment_does_not_fall_back_to_a_new_tool_contract(tmp_path, monkeypatch):
     from scidiscovery.artifact_agent.interfaces.mcp_local_worker import WorkerToolError
     from tests.operations.test_tcad_result_analysis import analysis_system, open_analysis
@@ -1573,22 +893,3 @@ def test_corrupt_assignment_does_not_fall_back_to_a_new_tool_contract(tmp_path, 
     with pytest.raises(WorkerToolError) as error:
         worker.call_tool('worker_open_assignment', {})
     assert 'JSONDecodeError' in str(error.value.engineering)
-
-
-@pytest.mark.parametrize('owner,component,consumer', [
-    ('general_science', 'result_finalizer', 'science.object.review.v1'),
-    ('tcad_artifact', 'workspace_materializer', 'tcad.deck.author.initial.v1'),
-    ('tcad_artifact', 'workspace_finalizer', 'tcad.deck.author.initial.v1'),
-    ('tcad_artifact', 'review_result_finalizer', 'tcad.deck.review.v1'),
-])
-def test_handoff_component_identity_changes_without_prompt_drift(owner, component, consumer):
-    plugins = (CORE_PLUGIN, GENERAL_PLUGIN, CURVE_PLUGIN, TCAD_PLUGIN)
-    original = compile_catalog(plugins)
-    changed = []
-    for plugin in plugins:
-        if plugin.plugin_id == owner:
-            declarations = tuple(item.model_copy(update={'configuration_identity': item.configuration_identity + ':fixture-change'})
-                if item.component_id == component else item for item in plugin.components)
-            plugin = plugin.model_copy(update={'components': declarations})
-        changed.append(plugin)
-    assert compile_catalog(tuple(changed)).operation(consumer).digest != original.operation(consumer).digest

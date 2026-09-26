@@ -261,11 +261,14 @@ def _worker(catalog, runtime, operation_id: str):
         if runtime.hardened_backend is not None
         else LocalWorkerMCPRouter
     )
-    return router(
-        runtime.runs,
-        operation_id=operation_id,
-        operation_digest=compiled.digest,
-    )
+    from scidiscovery.artifact_agent.service.worker_connections import WorkerConnections
+    instance = runtime.scheduler_bindings.select_instance(name="incremental_revision")
+    value, = [item for item in runtime.runs.list(instance_id=instance.instance_id)
+              if item.operation_id == operation_id and item.state in {"queued", "running"}]
+    caller = ("revision-session", "worker-" + value.run_id)
+    WorkerConnections(runtime.runs).attach(run_id=value.run_id, platform_session=caller[0], thread_id=caller[1])
+    return router(runtime.runs, operation_id=operation_id, operation_digest=compiled.digest,
+                  run_id=value.run_id, trusted_caller=caller)
 
 
 def _system(tmp_path: Path, *, worker_backend: str = "local"):

@@ -10,39 +10,10 @@ from scidiscovery.artifact_agent.schema.scientific_foundation import ScientificF
 from scidiscovery.artifact_agent.service.run_outputs import _validation_details
 from scidiscovery.operation_contract import SemanticRuleViolation, validate_evidence_source_aliases, validation_diagnostics
 from tests.operations.test_agent_contract_alignment import (
-    experiment_case, _partial_experiment, _review_run,
+    experiment_case, _partial_experiment,
 )
 
 
-def test_review_binds_direct_progress_reference_and_repairs_unknown_source_in_same_run(tmp_path, experiment_case):
-    from scidiscovery.artifact_agent.transforms import materialize_experiment_plan
-    intent, inputs = _partial_experiment(experiment_case)
-    plan, _ = materialize_experiment_plan({
-        'experiment_design_intent': canonical_json(intent),
-        'research_objective': inputs['research_objective'],
-        'hypothesis_portfolio': inputs['hypothesis_portfolio'],
-    })
-    runtime, run_id, workspace = _review_run(tmp_path, {
-        'experiment_plan': plan, 'current_progress': canonical_json({'completed_units': 60}),
-    })
-    payload = {'review_target': 'experiment_portfolio', 'verdict': 'revise',
-        'summary': 'Use the bound progress to assess the next experiment.',
-        'findings': [{'finding_key': 'progress', 'statement': 'The previous work is available.',
-            'epistemic_status': 'runtime_observation', 'evidence_keys': ['unknown_progress']}]}
-    path = workspace.output_directory / 'result.json'
-    def write():
-        path.write_bytes(canonical_json({'schema_version': 1, 'payload': payload,
-            'handoff': {'verdict': 'revise', 'summary': 'Review completed.'}}))
-    write()
-    state, details = runtime.runs.submit(run_id)
-    assert state == 'rejected'
-    assert details[0]['path'] == '$.payload.findings[0].evidence_keys[0]'
-    assert 'bound to this task' in details[0]['message']
-    assert runtime.runs.status(run_id).state == 'running'
-    payload['findings'][0]['evidence_keys'] = ['current_progress', 'current_progress']
-    write()
-    assert runtime.runs.submit(run_id) == ('completed', ())
-    assert runtime.runs.status(run_id).state == 'completed'
 
 
 @pytest.mark.parametrize(('model', 'payload'), [

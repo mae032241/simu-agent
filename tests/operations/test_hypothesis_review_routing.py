@@ -236,26 +236,5 @@ def test_critic_routes_current_uncertainty_to_experiment_design() -> None:
     )
 
 
-
-
-def test_experiment_review_reports_a_verdict_without_selecting_an_operation() -> None:
-    from tests.operations.test_m2_curve_analysis_boundary import _plan
-
-    payload = {
-        "review_target": "experiment_portfolio",
-        "verdict": "revise",
-        "summary": "One bounded correction is required.",
-    }
-    _object_review_context(payload, {"experiment_plan": canonical_json(_plan())}, {"verdict": "revise"})
-    catalog = _catalog()
-    assert next(
-        item
-        for item in catalog.operation("science.experiment.design.v1").spec.inputs
-        if item.name == "critic_review"
-    ).usage == "prior_signal"
-
-
-
-
 # The real Root preflight/invoke source-continuity path is covered in
 # test_user_context_contract, with completed producers and an actual fixture approval.

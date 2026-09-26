@@ -16,7 +16,7 @@ from scidiscovery.artifact_agent.schema.research_objective import ResearchObject
 from scidiscovery.artifact_agent.service.run_outputs import RunOutputError
 from scidiscovery.operation_contract import contract_diagnostic
 from tests.operations.test_agent_contract_alignment import (
-    experiment_case, _experiment_run, _experiment_envelope, _review_run,
+    experiment_case, _experiment_run, _experiment_envelope,
 )
 from tests.operations.test_tcad_result_analysis import (
     analysis_system, open_analysis, analysis_report, write_analysis,
@@ -28,78 +28,6 @@ def wire(router, name, arguments):
         "jsonrpc": "2.0", "id": 1, "method": "tools/call",
         "params": {"name": name, "arguments": arguments},
     })
-
-
-@pytest.mark.parametrize("derive_baseline", [False, True])
-def test_prose_and_baseline_labels_survive_submit_materialize_and_review(tmp_path, experiment_case, derive_baseline):
-    intent, sources = deepcopy(experiment_case)
-    intent["objective_key"] = "objective_expected"
-    proposal = intent["proposals"][0]
-    proposal["identifiability_claims"] = [{
-        "hypothesis_key": "hypothesis_a", "observable": "Combined depth and normalized shape response",
-        "distinguishing_outcome": "The response distinguishes the stated alternatives.",
-        "decision_rule": "Review the supplied response.", "ambiguity_conditions": ["Finite support."],
-        "smallest_resolving_control": "The existing bounded comparison.",
-    }]
-    if derive_baseline:
-        proposal.pop("baseline_case_key")
-    else:
-        proposal["cases"][0]["scientific_role"] = "perturbation"
-    (tmp_path / "design").mkdir()
-    (tmp_path / "review").mkdir()
-    runtime, run_id, output = _experiment_run(tmp_path / "design", sources)
-    output.write_bytes(_experiment_envelope(intent))
-    assert runtime.runs.submit(run_id) == ("completed", ())
-    sealed = runtime.artifacts.read(runtime.runs.status(run_id).output_ref)
-    plan = materialize_experiment_design_intent(
-        ExperimentDesignIntent.model_validate_json(sealed),
-        ResearchObjectiveContract.model_validate_json(sources["research_objective"]),
-    )
-    assert plan.proposals[0].comparison_contract.baseline_case_key == "baseline"
-    assert len(plan.proposals[0].comparison_contract.variables) == 1
-    raw = plan.model_dump(mode="json")
-    raw["proposals"][0]["comparison_contract"]["required_observables"] = ["A different description of the same observation"]
-    parsed = ExperimentPortfolio.model_validate_json(canonical_json(raw))
-    revised = deepcopy(raw)
-    revised["priority_rationale"] += " Preserve the comparison during this revision."
-    (tmp_path / "revision").mkdir()
-    runtime, revision_id, workspace = _review_run(tmp_path / "revision", {
-        "prior_draft": parsed.canonical_json(),
-        "change_request": canonical_json({"review_target": "experiment_portfolio", "verdict": "revise",
-                                          "summary": "Clarify the next bounded comparison."}),
-    }, operation_id="science.experiment.revise.v1")
-    (workspace.output_directory / "result.json").write_bytes(_experiment_envelope(revised))
-    assert runtime.runs.submit(revision_id) == ("completed", ())
-    runtime, review_id, workspace = _review_run(tmp_path / "review", {"experiment_plan": parsed.canonical_json()})
-    (workspace.output_directory / "result.json").write_bytes(canonical_json({
-        "schema_version": 1, "handoff": {"verdict": "revise", "summary": "Independent coverage review."},
-        "payload": {"review_target": "experiment_portfolio", "verdict": "revise",
-                    "summary": "Scientific coverage remains a reviewer judgment."},
-    }))
-    assert runtime.runs.submit(review_id) == ("completed", ())
-    raw["proposals"][0]["comparison_contract"]["baseline_case_key"] = "unknown_case"
-    for variable in raw["proposals"][0]["comparison_contract"]["variables"]:
-        for expectation in variable["expectations"]:
-            if expectation["case_key"] == "baseline":
-                expectation["case_key"] = "unknown_case"
-    with pytest.raises(ValidationError, match="undeclared experiment case"):
-        ExperimentPortfolio.model_validate_json(canonical_json(raw))
-
-
-def test_real_variable_conflict_is_precise_and_correctable_without_cascade(tmp_path, experiment_case):
-    intent, sources = deepcopy(experiment_case)
-    intent["objective_key"] = "objective_expected"
-    intent["proposals"][0]["variables"][0]["comparison_role"] = "frozen"
-    runtime, run_id, output = _experiment_run(tmp_path, sources)
-    output.write_bytes(_experiment_envelope(intent))
-    state, details = runtime.runs.submit(run_id)
-    assert state == "rejected"
-    assert len(details) == 1, details
-    assert details[0]["path"] == "$.payload.proposals[0].variables[0].comparison_role"
-    assert details[0]["rule_id"] == "experiment.design.intent_closure"
-    intent["proposals"][0]["variables"][0]["comparison_role"] = "intended_change"
-    output.write_bytes(_experiment_envelope(intent))
-    assert runtime.runs.submit(run_id) == ("completed", ())
 
 
 def test_missing_ambiguous_baseline_and_true_empty_cases_remain_rejected(experiment_case):
@@ -115,39 +43,6 @@ def test_missing_ambiguous_baseline_and_true_empty_cases_remain_rejected(experim
         ExperimentDesignIntent.model_validate_json(canonical_json(intent))
 
 
-def test_derived_plan_failure_keeps_payload_owner(tmp_path, experiment_case):
-    intent, sources = deepcopy(experiment_case)
-    intent["objective_key"] = "objective_expected"
-    intent["proposals"][0]["identifiability_claims"] = [{
-        "hypothesis_key": "unknown_hypothesis", "observable": "response",
-        "distinguishing_outcome": "response", "decision_rule": "response",
-        "ambiguity_conditions": ["bounded"], "smallest_resolving_control": "control",
-    }]
-    runtime, run_id, output = _experiment_run(tmp_path, sources)
-    output.write_bytes(_experiment_envelope(intent))
-    state, details = runtime.runs.submit(run_id)
-    assert state == "rejected"
-    assert details[0]["phase"] == "output_payload"
-    assert details[0]["rule_id"] == "experiment.design.intent_closure"
-    assert "hypothesis" in details[0]["message"]
-
-
-def test_materialized_variable_keeps_editable_intent_location(tmp_path, experiment_case):
-    intent, sources = deepcopy(experiment_case)
-    intent["objective_key"] = "objective_expected"
-    variable = intent["proposals"][0]["variables"][0]
-    variable["baseline_value"], variable["case_overrides"][0]["value"] = False, 0
-    runtime, run_id, output = _experiment_run(tmp_path, sources)
-    output.write_bytes(_experiment_envelope(intent))
-    state, details = runtime.runs.submit(run_id)
-    assert state == "rejected"
-    assert details[0]["path"] == "$.payload.proposals[0].variables[0].comparison_role"
-    assert details[0]["phase"] == "output_payload"
-    variable["baseline_value"], variable["case_overrides"][0]["value"] = 0, 1
-    output.write_bytes(_experiment_envelope(intent))
-    assert runtime.runs.submit(run_id) == ("completed", ())
-
-
 def test_expired_and_terminal_calls_keep_diagnostics_without_changing_state(tmp_path):
     system = analysis_system(tmp_path)
     worker, opened = open_analysis(system)
@@ -159,19 +54,21 @@ def test_expired_and_terminal_calls_keep_diagnostics_without_changing_state(tmp_
     reply = wire(worker, "worker_submit_result", {})
     assert "error" in reply
     status = root.call_tool("run_status", {'name': "analysis", 'diagnostic_after': 0, "intent": 'status'})
-    assert status["state"] == "running" and status["candidate_accepted"] is False
-    error = status["diagnostic_summary"]["latest_tool_error"]
+    assert status["state"] == "running" and "candidate_accepted" not in status
+    assert runs.status(worker._run_id).accepted_candidate_digest is None
+    error = runs.diagnostic_summary(runs.status(worker._run_id))["latest_tool_error"]
     assert "deadline expired" in json.dumps(error)
     reference = error["engineering"]["reference"]
     assert "error" not in wire(root, "diagnostic_read", {"reference": reference})
     assert runs.status(worker._run_id).last_activity_at == before.last_activity_at
-    assert len(status["diagnostic_events"]["events"]) == 1
+    assert status["diagnostics_unavailable"] == "run_not_terminal"
+    assert len(runs.diagnostic_events(before, after=0, limit=20)["events"]) == 1
     failed = runs.record_failure(worker._run_id, reason="scheduler records timeout", timed_out=True,
         expected_state="running", expected_last_activity_at=before.last_activity_at)
     assert "error" in wire(worker, "worker_heartbeat", {})
     after = runs.status(worker._run_id)
     assert after.state == failed.state == "failed" and after.reason == failed.reason
-    assert len(root.call_tool("run_status", {"name": "analysis", "diagnostic_after": 0})["diagnostic_events"]["events"]) == 3
+    assert len(root.call_tool("run_status", {"name": "analysis", "intent": "status", "diagnostic_after": 0})["diagnostic_events"]["events"]) == 3
 
 
 def test_rejection_finishing_after_deadline_is_still_saved(tmp_path, monkeypatch):
@@ -246,12 +143,12 @@ def test_failed_reuse_open_belongs_to_selected_run(tmp_path, monkeypatch, failur
     assert "error" in reply and selected not in json.dumps(reply)
     assert worker._run_id == selected and worker._workspace is None
     assert runs.status(prior).state == "completed" and runs.tool_timing(prior) == before
-    status = root.call_tool("run_status", {"name": "next", "diagnostic_after": 0})
-    assert status["state"] == "failed" and reason in json.dumps(status["diagnostic_summary"])
+    status = root.call_tool("run_status", {"name": "next", "intent": "status", "diagnostic_after": 0})
+    assert status["state"] == "failed" and reason in json.dumps(runs.diagnostic_summary(runs.status(selected)))
     timing = runs.tool_timing(selected)
     assert len(timing) == 1 and timing[0]["tool_name"] == "worker_open_assignment"
     assert timing[0]["started_at"] and timing[0]["completed_at"]
-    assert status["diagnostic_events"]["events"][-1]["activity"] == "tool_failed"
+    assert status["diagnostic_events"]["events"][-1]["diagnostic"] is not None
 
 
 def test_mcp_pages_all_saved_errors_and_runs_with_instance_isolation(tmp_path):
@@ -269,35 +166,37 @@ def test_mcp_pages_all_saved_errors_and_runs_with_instance_isolation(tmp_path):
         connection.execute("INSERT INTO run_activity(run_id,activity,recorded_at,diagnostic_json) VALUES (?,?,?,NULL)",
             (worker._run_id, "output_rejected", "2026-01-01T00:00:00Z"))
     assert "diagnostic_events" not in root.call_tool("run_status", {"name": "analysis"})
+    current = runs.status(worker._run_id)
+    runs.record_failure(worker._run_id, reason="Stop before paginating diagnostics.",
+        expected_state='running', expected_last_activity_at=current.last_activity_at)
     cursor, events = 0, []
     while cursor is not None:
-        reply = wire(root, "run_status", {"name": "analysis", "diagnostic_after": cursor, "diagnostic_limit": 3})
+        reply = wire(root, "run_status", {"name": "analysis", "intent": "status", "diagnostic_after": cursor, "diagnostic_limit": 3})
         assert "error" not in reply
         page = reply["result"]["structuredContent"]["diagnostic_events"]
         events.extend(page["events"])
         cursor = page["next_after"]
-    assert len(events) == 12 and len({e["event_id"] for e in events}) == 12
-    assert events[-1]["diagnostic"] is None
-    assert all(e["recorded_at"] and e["activity"] == "output_rejected" for e in events)
-    write_analysis(opened, analysis_report())
-    assert worker.call_tool("worker_submit_result", {})["state"] == "completed"
+    assert len(events) == 13 and len({e["event_id"] for e in events}) == 13
+    assert events[-2]["diagnostic"] is None
+    assert all(e["recorded_at"] and "activity" not in e for e in events)
     root.call_tool("operation_invoke", {**request, "name": "second"})
-    first = root.call_tool("run_list", {"limit": 2})
     opened = worker.call_tool("worker_open_assignment", {})
     write_analysis(opened, analysis_report())
     assert worker.call_tool("worker_submit_result", {})["state"] == "completed"
     root.call_tool("operation_invoke", {**request, "name": "newest"})
+    first = root.call_tool("run_list", {"limit": 2})
+    assert first["next_before"] is not None
     second = root.call_tool("run_list", {"limit": 2, "before": first["next_before"]})
     assert not {r["name"] for r in first["runs"]} & {r["name"] for r in second["runs"]}
-    assert "plan_review" in {r["name"] for r in second["runs"]}
+    assert "analysis" in {r["name"] for r in second["runs"]}
     foreign = system[1].scheduler_bindings.create_instance(name="foreign", title="Foreign", objective="Isolation")
     facade = RootToolFacade(system[1].artifacts, system[1].intake, runs=runs, approvals=system[1].approvals,
         executions=system[1].executions, bindings=system[1].scheduler_bindings,
         instance=foreign.instance_id, operation_catalog=system[0])
     foreign_root = RootMCPRouter(facade)
-    assert "error" in wire(foreign_root, "run_status", {"name": "analysis", "diagnostic_after": 0})
+    assert "error" in wire(foreign_root, "run_status", {"name": "analysis", "intent": "status", "diagnostic_after": 0})
     assert "error" in wire(foreign_root, "run_list", {"before": "analysis"})
-    assert root.call_tool("run_list", {"state": "failed"})["runs"] == []
+    assert {r["name"] for r in root.call_tool("run_list", {"state": "failed"})["runs"]} == {"analysis"}
 
 
 def test_publication_source_failure_names_exact_argument_and_is_recoverable(tmp_path):

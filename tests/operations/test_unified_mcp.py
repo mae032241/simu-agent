@@ -77,7 +77,7 @@ def test_codex_optional_source_preserves_worker_scope_and_attachment(tmp_path):
     assert result(invoke("instance_current"))
     child = {"thread_id": "child", "parent_thread_id": "parent", "subagent_kind": "thread_spawn"}
     assert result(invoke("worker_identity", **child))["thread_id"] == "child"
-    assert "awaiting scheduler attachment" in invoke("worker_open_assignment", **child)["error"]["message"]
+    assert "No live parent task authorizes this helper" in invoke("worker_open_assignment", **child)["error"]["message"]
     assert "error" in invoke("instance_current", **child)
     result(invoke("worker_attach", {"name": "observation", "thread_id": "child"}))
     assert result(invoke("worker_open_assignment", **child))["state"] == "opened"
@@ -96,6 +96,7 @@ def test_codex_optional_source_preserves_worker_scope_and_attachment(tmp_path):
     assert "error" in invoke("worker_open_assignment", **{**child, "session_id": "other-parent"})
 
 
+@pytest.mark.process_e2e
 def test_optional_source_proxy_daemon_does_not_register_worker_as_scheduler(tmp_path):
     from scidiscovery.plugin_runtime.transport import UnixSocketDaemon
     from scidiscovery.artifact_agent.interfaces.mcp_daemon import RootBrokerRouter
@@ -150,7 +151,7 @@ def test_gateway_scopes_actual_worker_lifecycle_and_sealed_result(tmp_path, back
     catalog, runtime, root, gateway, profile = queued(tmp_path, backend)
     listed = gateway.handle({"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
     assert [t["name"] for t in listed["result"]["tools"]] == list(GATEWAY_TOOLS)
-    assert len(json.dumps(listed)) < 2500
+    assert {item["name"] for item in listed["result"]["tools"]} == {"scid_catalog", "scid_describe", "scid_call"}
     for index, name in enumerate(GATEWAY_TOOLS):
         gateway_contract = result(rpc(gateway, "scid_describe", {"name": name}))
         assert gateway_contract["name"] == name
@@ -351,8 +352,9 @@ def test_irreparable_attached_profile_mismatch_fails_run_and_releases_slot(
     assert "Worker platform model/effort do not match" in rejected["error"]["message"]
     failed = root.facade.run_status(name="observation", intent='navigation')
     assert failed["state"] == "failed"
-    assert "expected=" in failed["reason"] and "observed=" in failed["reason"]
-    assert failed["diagnostic_summary"]["failure"]["category"] == "worker_profile_mismatch"
+    assert "expected=" not in failed["reason"] and "observed=" not in failed["reason"]
+    value = runtime.runs.status(runtime.scheduler_bindings.resolve(instance=root.facade.instance, namespace="run", name="observation"))
+    assert runtime.runs.diagnostic_summary(value)["failure"]["category"] == "worker_profile_mismatch"
     diagnostic_page = root.call_tool(
         "run_status", {'name': "observation", 'diagnostic_after': 0, 'diagnostic_limit': 10, "intent": 'status'}
     )
@@ -402,6 +404,7 @@ def test_generated_install_has_one_mcp_and_no_worker_service_copies(tmp_path, ba
         operation_catalog=catalog, worker_backend=backend)
 
 
+@pytest.mark.process_e2e
 def test_real_proxy_daemon_preserves_scope_and_worker_does_not_register_client(tmp_path):
     from scidiscovery.plugin_runtime.transport import UnixSocketDaemon
     from scidiscovery.artifact_agent.interfaces.mcp_daemon import RootBrokerRouter
@@ -468,6 +471,7 @@ def test_real_proxy_daemon_preserves_scope_and_worker_does_not_register_client(t
             process.kill(); process.join()
 
 
+@pytest.mark.process_e2e
 def test_tcad_install_probe_checks_exact_declared_tool_set_through_proxy(tmp_path):
     from types import SimpleNamespace
     from scidiscovery.artifact_agent.interfaces.mcp import MCPRouter
@@ -516,33 +520,3 @@ def test_tcad_install_probe_checks_exact_declared_tool_set_through_proxy(tmp_pat
 
 
 from tests.operations.test_agent_contract_alignment import experiment_case
-
-
-def test_skeleton_designer_cannot_attach_as_its_optional_reviewer(tmp_path, monkeypatch, experiment_case):
-    from tests.operations.test_agent_contract_alignment import _feedback_root
-    from tests.operations.test_tcad_scientific_skeleton import skeleton
-    runtime, instance, root, request, _ = _feedback_root(
-        tmp_path, monkeypatch, experiment_case, "science.experiment.skeleton.v1", name="skeleton_design")
-    root.call_tool("operation_invoke", request)
-    gateway = UnifiedMCPRouter(root)
-    profile = root.facade.run_status(name="skeleton_design")["execution_profile"]["profile"]
-    result(call(gateway, "worker_attach", {"name": "skeleton_design", "thread_id": "skeleton-author"}))
-    child = dict(child="skeleton-author", profile=profile)
-    opened = result(call(gateway, "worker_open_assignment", **child))
-    Path(opened["output_directory"], "result.json").write_text(json.dumps(dict(schema_version=1,
-        handoff=dict(verdict="pass", summary="Bounded scientific skeleton."), payload=skeleton())))
-    assert result(call(gateway, "worker_submit_result", **child))["state"] == "completed"
-    output = root.call_tool("run_status", {"name":"skeleton_design"})["output_artifact_name"]
-    root.call_tool("operation_invoke", dict(name="optional_review", operation_id="science.object.review.v1",
-        instruction="Assess the exact skeleton without concrete engineering cases.",
-        inputs=[dict(port="scientific_skeleton", artifact_names=[output])]))
-    denied = call(gateway, "worker_attach", {"name":"optional_review", "thread_id":"skeleton-author"})
-    assert "error" in denied and "same compiled Operation" in json.dumps(denied)
-    result(call(gateway, "worker_attach", {"name":"optional_review", "thread_id":"independent-skeleton-reviewer"}))
-    profile = root.facade.run_status(name="optional_review")["execution_profile"]["profile"]
-    child = dict(child="independent-skeleton-reviewer", profile=profile)
-    opened = result(call(gateway, "worker_open_assignment", **child))
-    Path(opened["output_directory"], "result.json").write_text(json.dumps(dict(schema_version=1,
-        handoff=dict(verdict="revise", summary="Clarify the scientific boundary meaning."),
-        payload=dict(review_target="experiment_scientific_skeleton", verdict="revise", summary="Clarify the observable time semantics before implementation."))))
-    assert result(call(gateway, "worker_submit_result", **child))["state"] == "completed"

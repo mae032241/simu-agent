@@ -28,7 +28,11 @@ def test_terminal_sync_never_calls_collect(tmp_path):
 def test_completed_download_is_reused(tmp_path, monkeypatch):
     raw = b"solver data\n"
     calls = []
-    remote = SimpleNamespace(get=lambda path: calls.append(path) or raw)
+    def get_to(path, destination, max_bytes):
+        calls.append(path)
+        assert len(raw) <= max_bytes
+        destination.write_bytes(raw)
+    remote = SimpleNamespace(get_to=get_to)
     transport = SSHTCADTransport(remote, local_result_root=tmp_path)
     monkeypatch.setattr(transport, "_rpc", lambda *args: {"outputs": [{
         "name": "profile", "local_path": "/remote/profile.dat", "media_type": "text/plain",
@@ -98,6 +102,7 @@ def _until(predicate, *, seconds=5):
     raise AssertionError("bounded process condition was not observed")
 
 
+@pytest.mark.process_e2e
 def test_collection_process_reaps_legacy_hang_and_releases_slot(tmp_path, monkeypatch):
     import os
     import sys
@@ -126,6 +131,7 @@ def test_collection_process_reaps_legacy_hang_and_releases_slot(tmp_path, monkey
         _until(lambda: coordinator._active is None)
 
 
+@pytest.mark.process_e2e
 def test_collection_supervisor_start_failure_reaps_child_before_unlock(tmp_path, monkeypatch):
     import os
     import sys
@@ -157,6 +163,7 @@ def test_collection_supervisor_start_failure_reaps_child_before_unlock(tmp_path,
     assert (tmp_path / "exchange/second/collection/process.stderr.log").is_file()
 
 
+@pytest.mark.process_e2e
 def test_completed_manifest_checkpoint_registers_in_real_child(tmp_path, monkeypatch):
     import os
     import sys
@@ -200,6 +207,7 @@ def test_completed_manifest_checkpoint_registers_in_real_child(tmp_path, monkeyp
         coordinator.close()
 
 
+@pytest.mark.process_e2e
 def test_transport_differentiates_no_progress_and_total_deadline():
     import sys
     import pytest
@@ -235,12 +243,13 @@ def test_partial_manifest_resumes_43_files_without_cross_execution_cache(tmp_pat
     outputs = [{"name": f"profile_{i}", "local_path": f"/remote/p{i}", "media_type": "text/plain",
         "size_bytes": 4, "sha256": hashlib.sha256(b"data").hexdigest()} for i in range(43)]
     calls = []
-    def get(path):
+    def get_to(path, destination, max_bytes):
+        assert max_bytes == 4
         calls.append(path)
         if len(calls) == 18:
             raise TimeoutError("transfer stopped at file 18")
-        return b"data"
-    transport = SSHTCADTransport(SimpleNamespace(get=get), local_result_root=tmp_path)
+        destination.write_bytes(b"data")
+    transport = SSHTCADTransport(SimpleNamespace(get_to=get_to), local_result_root=tmp_path)
     monkeypatch.setattr(transport, "_rpc", lambda *args: {"outputs": outputs})
     run = "run_" + "a" * 32
     with pytest.raises(TimeoutError):
@@ -256,6 +265,7 @@ def test_partial_manifest_resumes_43_files_without_cross_execution_cache(tmp_pat
     assert len(calls) == 88
 
 
+@pytest.mark.process_e2e
 def test_proxy_daemon_status_stays_available_during_collection(tmp_path, monkeypatch):
     import json
     import multiprocessing
@@ -264,7 +274,7 @@ def test_proxy_daemon_status_stays_available_during_collection(tmp_path, monkeyp
     import sys
     import time
     from scidiscovery.plugin_runtime.transport import UnixSocketDaemon
-    from scidiscovery.artifact_agent.interfaces.mcp import MCPRouter
+    from scidiscovery.artifact_agent.interfaces.mcp_gateway import UnifiedMCPRouter
     from scidiscovery.artifact_agent.interfaces.mcp_daemon import RootBrokerRouter
     from scidiscovery.artifact_agent.service.execution_collection import ExecutionCollection
     from tests.operations.test_r4_execution_approval_identity import _setup, _create_effect, _decide_execution_approval
@@ -285,12 +295,16 @@ def test_proxy_daemon_status_stays_available_during_collection(tmp_path, monkeyp
             collector.close()
             os._exit(0)
         signal.signal(signal.SIGTERM, stop)
-        UnixSocketDaemon(socket, RootBrokerRouter(lambda _: MCPRouter(root, name="fixture"))).serve_forever()
+        UnixSocketDaemon(socket, RootBrokerRouter(lambda _: UnifiedMCPRouter(root))).serve_forever()
     monkeypatch.setenv("PYTHONPATH", os.pathsep.join(sys.path))
     process = multiprocessing.get_context("fork").Process(target=serve)
     process.start()
     def call(name, arguments):
-        request = {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": name, "arguments": arguments}}
+        request = {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {
+            "name": "scid_call", "arguments": {"name": name, "arguments": arguments,
+                "surface": "execution" if name.startswith("execution_") else "research"},
+            "_meta": {"x-codex-turn-metadata": {"session_id": "collection-parent",
+                "thread_id": "collection-parent", "thread_source": "user"}}}}
         reply = subprocess.run([sys.executable, "-m", "scidiscovery.artifact_agent.interfaces.mcp_proxy",
             "--socket", str(socket), "--timeout", "1"], input=json.dumps(request).encode()+b"\n",
             capture_output=True, timeout=3)
@@ -322,6 +336,7 @@ def test_proxy_daemon_status_stays_available_during_collection(tmp_path, monkeyp
     assert reader.summary(execution_id)['state'] == 'interrupted'
 
 
+@pytest.mark.process_e2e
 @pytest.mark.parametrize('stage', ['output', 'manifest', 'committed'])
 def test_ingestion_process_exit_preserves_idempotent_registration(tmp_path, monkeypatch, stage):
     import os
@@ -351,6 +366,12 @@ def test_ingestion_process_exit_preserves_idempotent_registration(tmp_path, monk
         ' if (stage=="output" and registration.kind=="execution_output") or (stage=="manifest" and registration.kind=="execution_result"): os._exit(71)\n'
         ' return result\n'
         'ArtifactService.register=register\n'
+        'original_file=ArtifactService.register_file\n'
+        'def register_file(self, path, registration, **kwargs):\n'
+        ' result=original_file(self,path,registration,**kwargs)\n'
+        ' if stage=="output" and registration.kind=="execution_output": os._exit(71)\n'
+        ' return result\n'
+        'ArtifactService.register_file=register_file\n'
         'ingest=ExecutionService.ingest_result\n'
         'def finish(self, **kwargs):\n'
         ' result=ingest(self,**kwargs)\n'
@@ -380,6 +401,7 @@ def test_ingestion_process_exit_preserves_idempotent_registration(tmp_path, monk
         collector.close()
 
 
+@pytest.mark.process_e2e
 @pytest.mark.parametrize('native_ssh', [False, True])
 def test_parent_death_stops_collector_before_restart_releases_lock(tmp_path, monkeypatch, native_ssh):
     import os
@@ -468,6 +490,7 @@ def test_nested_transport_cause_survives_multiple_wrappers():
     assert any(item.get('timeout_kind') == 'transfer_no_progress' for item in facts['causes'])
 
 
+@pytest.mark.process_e2e
 def test_socket_collect_uses_collection_deadline_through_real_service(tmp_path):
     import json
     import multiprocessing
@@ -514,6 +537,7 @@ def test_socket_collect_uses_collection_deadline_through_real_service(tmp_path):
             raise AssertionError('TCAD service fixture did not stop')
 
 
+@pytest.mark.process_e2e
 def test_collection_guard_keeps_locks_when_stop_observation_fails(tmp_path, monkeypatch):
     import os
     import sys
@@ -567,6 +591,7 @@ def test_collection_guard_keeps_locks_when_stop_observation_fails(tmp_path, monk
         restarted.close()
 
 
+@pytest.mark.process_e2e
 def test_collection_timeout_reason_survives_delayed_parent_watcher(tmp_path, monkeypatch):
     import os
     import sys

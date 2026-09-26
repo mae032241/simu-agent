@@ -203,8 +203,9 @@ from importlib.metadata import distribution
 from scidiscovery.operations.catalog import compile_installed_catalog
 assert distribution("scidiscovery-curve-score").version
 catalog = compile_installed_catalog()
-assert catalog.operation("tcad.study.execute")
-assert catalog.operation("scidiscovery.curve-score.v1")
+assert catalog.operation("science.experiment.v1")
+assert catalog.operation("tcad.experiment.execute.internal")
+assert catalog.operation("science.result.diagnose.v1").plugin_id == "curve_score"
 ''')
 
 

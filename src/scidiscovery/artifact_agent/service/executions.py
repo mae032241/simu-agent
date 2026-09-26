@@ -38,6 +38,32 @@ from .approvals import ApprovalService
 from .artifacts import ArtifactService
 
 
+# Shared with identity-preserving archive schema projection.
+EXECUTION_POLICY_SCHEMA = """
+                CREATE TABLE IF NOT EXISTS execution_policy_authorizations (
+                    execution_id TEXT NOT NULL, digest TEXT NOT NULL,
+                    record_json BLOB NOT NULL, created_at TEXT NOT NULL,
+                    PRIMARY KEY (execution_id, digest)
+                );
+                CREATE TABLE IF NOT EXISTS execution_current_policy (
+                    execution_id TEXT PRIMARY KEY, digest TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS execution_budget_pools (
+                    executor TEXT NOT NULL, budget_key TEXT NOT NULL,
+                    allowance_json BLOB NOT NULL,
+                    PRIMARY KEY (executor, budget_key)
+                );
+                CREATE TABLE IF NOT EXISTS execution_budget_reservations (
+                    execution_id TEXT PRIMARY KEY, executor TEXT NOT NULL,
+                    budget_key TEXT NOT NULL, reserved_json BLOB NOT NULL,
+                    consumed_json BLOB
+                );
+                CREATE TABLE IF NOT EXISTS execution_prepared_submissions (
+                    execution_id TEXT PRIMARY KEY, descriptor_json BLOB NOT NULL
+                );
+"""
+
+
 class ExecutionServiceError(RuntimeError):
     pass
 
@@ -932,29 +958,9 @@ class ExecutionService:
                     result_ref_json BLOB,
                     created_at TEXT NOT NULL
                 );
-                CREATE TABLE IF NOT EXISTS execution_policy_authorizations (
-                    execution_id TEXT NOT NULL, digest TEXT NOT NULL,
-                    record_json BLOB NOT NULL, created_at TEXT NOT NULL,
-                    PRIMARY KEY (execution_id, digest)
-                );
-                CREATE TABLE IF NOT EXISTS execution_current_policy (
-                    execution_id TEXT PRIMARY KEY, digest TEXT NOT NULL
-                );
-                CREATE TABLE IF NOT EXISTS execution_budget_pools (
-                    executor TEXT NOT NULL, budget_key TEXT NOT NULL,
-                    allowance_json BLOB NOT NULL,
-                    PRIMARY KEY (executor, budget_key)
-                );
-                CREATE TABLE IF NOT EXISTS execution_budget_reservations (
-                    execution_id TEXT PRIMARY KEY, executor TEXT NOT NULL,
-                    budget_key TEXT NOT NULL, reserved_json BLOB NOT NULL,
-                    consumed_json BLOB
-                );
-                CREATE TABLE IF NOT EXISTS execution_prepared_submissions (
-                    execution_id TEXT PRIMARY KEY, descriptor_json BLOB NOT NULL
-                );
                 """
             )
+            connection.executescript(EXECUTION_POLICY_SCHEMA)
 
     def _connect(self) -> sqlite3.Connection:
         import time

@@ -241,8 +241,7 @@ def test_validation_sources_owns_its_descriptor_mapping(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize('wrong,port,relation', [
-    ('review', 'experiment_review', 'science.object.review.v1'),
-    ('package', 'experiment_plan', 'execution_package'),
+    ('package', 'runtime_manifest', 'execution_package'),
     ('manifest', 'runtime_manifest', 'execution_package'),
     ('diagnostics', 'diagnostics', 'execution_id'),
 ])
@@ -287,8 +286,10 @@ def test_analysis_assignment_projects_compiled_port_descriptions_and_deadline(tm
     assignment = json.loads(Path(opened['assignment_path']).read_text())
     ports = {p.name: p.description for p in system[0].operation('tcad.result.analyze.v1').spec.inputs}
     assert assignment['budget']['deadline_at'] == system[1].runs.status(worker._run_id).deadline_at
+    assert assignment['inputs']
     for item in assignment['inputs']:
-        assert item['description'] == ports[item['port']]
+        assert 'port' not in item  # Mechanical bindings stay inside control.
+        assert item['description'] in ports.values()
 
 
 def test_unexpected_guard_exception_remains_engineering_failure(tmp_path):

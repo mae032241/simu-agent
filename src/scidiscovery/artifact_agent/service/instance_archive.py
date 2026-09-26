@@ -21,7 +21,7 @@ from .instance_archive_files import (Files, check_path, cleanup, copy_verified, 
     finish_permissions, fsync_directory, hash_file, recovery_trees, retained_recovery_digests, restore_recovery_trees, roots, safe_id, verify_tree, verify_tree_inventory)
 from .instance_archive_records import (ArchiveError, Records, ReadTicket, build_database, canonical, decode,
     digest, encode, quote, readonly, row_where, transfer_records, attached, schema,
-    execution_settings_restore_view, execution_settings_tombstone)
+    execution_settings_restore_view, execution_settings_tombstone, RETAINED_EXECUTION_TABLES)
 from .instance_maintenance import InstanceMaintenance, InstanceMaintenanceBusy, backend_writer_guards
 
 
@@ -558,6 +558,8 @@ class InstanceArchive:
             with readonly(snapshot["database_paths"][database]) as connection:
                 for table, rows in data["tables"].items():
                     if table in {"scheduler_instances", "scheduler_sessions", "run_activity_sequence"} or (database == "views" and table == "metadata"):
+                        continue
+                    if database == "executions" and table in RETAINED_EXECUTION_TABLES:
                         continue
                     for row in rows:
                         if database == "artifacts" and row["source_artifact_id" if table == "artifact_links" else "artifact_id"] not in exclusive:

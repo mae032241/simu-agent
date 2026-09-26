@@ -177,3 +177,7 @@ def test_control_ingests_and_reads_file_reference_without_whole_file_read(tmp_pa
         for chunk in iter(lambda: stream.read(1024), b""):
             observed.update(chunk)
     assert artifact.size_bytes == 2097152 and observed.hexdigest() == digest.hexdigest()
+
+
+# These tests exercise real supervised child lifecycle and restart behavior.
+pytestmark = pytest.mark.process_e2e

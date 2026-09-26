@@ -142,7 +142,7 @@ def test_recovery_with_changed_inputs_keeps_draft_and_only_adopts_applicable_rec
     coverage = opened['recovery_evidence']
     assert coverage['preserved_count'] == len(receipts)
     assert coverage['adopted_count'] == (len(receipts) if keep_original else 0)
-    assert facade.call_tool('run_status', {'name':'changed_inputs'})['recovery']['tool_evidence'] == coverage
+    assert runtime.runs.recovery_status(runtime.runs.status(worker._run_id))['tool_evidence'] == coverage
     new = Path(opened['workspace_path'])
     assert (new/'scratch/numbers.json').read_text() == (root/'scratch/numbers.json').read_text()
     (new/'scratch/analysis.py').write_text('# edited safely\n')
@@ -180,10 +180,13 @@ def test_out_of_scope_receipt_corruption_still_fails_open_with_record_index(tmp_
     monkeypatch.setattr(runtime.runs, 'tool_evidence', corrupted)
     request = deepcopy(system[3]); request.update(name='bad_receipt', draft_from='analysis')
     request['inputs'] = [i for i in request['inputs'] if i['port'] != 'reference_material']
-    with pytest.raises(Exception, match='preserved tool evidence integrity failure'):
+    with pytest.raises(Exception, match='control diagnostic'):
         open_analysis((*system[:3], request, *system[4:]))
     status = system[2].call_tool('run_status', {'name':'bad_receipt'})
-    assert status['state'] == 'failed' and 'records[0] receipt differs from its origin' in status['reason']
+    assert status['state'] == 'failed'
+    failed_id = runtime.scheduler_bindings.resolve(instance=system[2].facade.instance, namespace='run', name='bad_receipt')
+    assert 'records[0] receipt differs from its origin' in runtime.runs.status(failed_id).reason
+    assert 'records[0]' not in status['reason']
 
 
 @pytest.mark.parametrize('field, value, expected', [

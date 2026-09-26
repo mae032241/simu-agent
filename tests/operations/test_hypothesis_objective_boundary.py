@@ -106,44 +106,10 @@ def test_hypothesis_must_reference_the_exact_global_objective() -> None:
         )
 
 
-def test_revision_cannot_move_a_portfolio_between_global_objectives() -> None:
-    prior = canonical_json(_proposal("prior_objective"))
-    with pytest.raises(ValueError, match="revision cannot change"):
-        _hypothesis_objective_context(
-            _proposal(),
-            {
-                "scientific_foundation": _foundation(),
-                "prior_draft": prior,
-            },
-            {},
-        )
 
 
-def test_revision_cannot_add_remove_or_rename_hypotheses() -> None:
-    prior = canonical_json(_proposal(hypothesis_keys=("mechanism_a",)))
-    with pytest.raises(ValueError, match="cannot add, remove, or rename"):
-        _hypothesis_objective_context(
-            _proposal(hypothesis_keys=("mechanism_a_renamed",)),
-            {
-                "scientific_foundation": _foundation(),
-                "prior_draft": prior,
-            },
-            {},
-        )
 
 
-def test_revision_may_reorder_the_same_stable_hypothesis_keys() -> None:
-    prior = canonical_json(
-        _proposal(hypothesis_keys=("mechanism_a", "mechanism_b"))
-    )
-    _hypothesis_objective_context(
-        _proposal(hypothesis_keys=("mechanism_b", "mechanism_a")),
-        {
-            "scientific_foundation": _foundation(),
-            "prior_draft": prior,
-        },
-        {},
-    )
 
 
 def test_missing_foundation_objective_is_an_input_admission_error() -> None:
@@ -155,3 +121,9 @@ def test_missing_foundation_objective_is_an_input_admission_error() -> None:
     foundation["objective_contract"] = None
     with pytest.raises(OperationInvocationError, match="input_objective_missing"):
         _hypothesis_inputs({"scientific_foundation": canonical_json(foundation)})
+
+
+def test_hypothesis_can_reconsider_keys_within_bound_objective():
+    _hypothesis_objective_context(_proposal(hypothesis_keys=("new_mechanism",)),
+        {"scientific_foundation": _foundation(),
+         "previous_hypotheses": canonical_json(_proposal(hypothesis_keys=("old_mechanism",)))}, {})

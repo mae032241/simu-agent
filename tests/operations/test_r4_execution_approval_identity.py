@@ -252,7 +252,7 @@ def test_effect_invoke_creates_one_exact_approval_and_replays_it(
         name="automatic_approval.approval",
     ) == approval_id
     with pytest.raises(
-        RootToolError, match="unknown root tool: execution_approval_request_create"
+        RootToolError, match="interface is not available on execution surface: execution_approval_request_create"
     ):
         root.call_tool(
             "execution_approval_request_create", {"name": "automatic_approval"}

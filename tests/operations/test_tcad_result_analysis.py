@@ -124,8 +124,6 @@ def write_analysis(opened,report):
         schema_version=1,handoff=dict(verdict='blocked',summary='Bounded analysis; further work remains.'),payload=report)))
 
 
-
-
 @pytest.mark.parametrize('state',['failed','cancelled'])
 def test_failed_execution_zero_outputs_no_score_can_seal(tmp_path,state):
     system = analysis_system(tmp_path,state=state,bind_names=())
@@ -139,28 +137,17 @@ def test_failed_execution_zero_outputs_no_score_can_seal(tmp_path,state):
     assert result['state']=='completed',result
 
 
-def test_keyed_tcad_scope_rejects_missing_assessment_then_accepts_not_evaluable(tmp_path):
+@pytest.mark.parametrize('assessment', [None, 'not_evaluable'])
+def test_failed_tcad_analysis_can_state_its_limits_without_forced_objective_form(tmp_path, assessment):
     plan = _CURVE['_compiler_plan']()
-    system = analysis_system(tmp_path, state='failed', bind_names=(), plan=plan)
-    worker, opened = open_analysis(system)
+    worker, opened = open_analysis(analysis_system(tmp_path, state='failed', bind_names=(), plan=plan))
     report = analysis_report()
     report['study_kind'] = 'scientific'
-    write_analysis(opened, report)
-    rejected = worker.call_tool('worker_submit_result', {})
-    assert rejected['state'] == 'rejected', rejected
-    diagnostic = next(item for item in rejected['diagnostics']
-                      if 'objective assessment is required' in item['message'])
-    assert diagnostic['path'] == '$.payload.objective_assessment'
-    assert diagnostic['rule_id'] == 'tcad.result_analysis.context_binding'
-    report['objective_assessment'] = {
-        'objective_key': plan.objective_key,
-        'status': 'not_evaluable',
-        'summary': 'The failed execution produced no solver output for the planned objective.',
-    }
+    if assessment:
+        report['objective_assessment'] = {'objective_key': plan.objective_key, 'status': assessment,
+            'summary': 'The failed execution produced no solver output for the planned objective.'}
     write_analysis(opened, report)
     assert worker.call_tool('worker_submit_result', {})['state'] == 'completed'
-
-
 
 
 @pytest.mark.parametrize('explicit_reference', [False, True])
@@ -216,8 +203,6 @@ def test_source_conflict_does_not_leave_a_control_mapping_to_repair(tmp_path, so
     assert sealed['source_references'][0]['output_name'] == 'A'
 
 
-
-
 def test_optional_citation_cannot_change_an_exact_bound_alias(tmp_path):
     worker, opened = open_analysis(analysis_system(tmp_path))
     report = json.loads(json.dumps(analysis_report(alias='solver_outputs_001')).replace('raw_evidence', 'solver_outputs_002'))
@@ -241,8 +226,7 @@ def test_legacy_unmapped_output_can_seal_limited_analysis(tmp_path):
     assert result['state']=='completed',result
 
 
-
-@pytest.mark.parametrize('wrong',['review','manifest','output'])
+@pytest.mark.parametrize('wrong',['manifest','output'])
 def test_no_score_preflight_rejects_other_round(tmp_path,wrong):
     catalog,runtime,root,request,artifacts,register=analysis_system(tmp_path)
     request=deepcopy(request)
@@ -285,18 +269,12 @@ def test_unscored_manifest_bytes_and_registered_media_are_checked(tmp_path,wrong
         root.call_tool('operation_invoke',request)
 
 
-
-
-
-
 def test_optional_output_case_keys_are_paired():
     output=dict(name='A',relative_path='A.plx',media_type='application/x-synopsys-plx',max_bytes=4096)
     ProjectExpectedOutput(**output)
     with pytest.raises(ValueError,match='declared together'):
         ProjectExpectedOutput(**output,case_key='baseline')
     ProjectExpectedOutput(**output,experiment_key='implementation_check',case_key='baseline')
-
-
 
 
 @pytest.mark.parametrize('source_index', [0, 1])
@@ -312,7 +290,8 @@ def test_tcad_unknown_weighting_mapping_is_a_request_error(source_index):
 
 
 @pytest.mark.parametrize('raw', [b'"carrier"\n' + b'0 1\n' * 66000,
-    b'"carrier"\n0 1\x0b0 1', b'"carrier"\n0 1\xe2\x80\xa80 1'])
+    b'"carrier"\n0 1\x0b0 1', b'"carrier"\n0 1\xe2\x80\xa80 1'],
+    ids=['row-limit', 'vertical-tab', 'unicode-line-separator'])
 def test_raw_admission_bounds_rows_before_parser_allocation(raw, monkeypatch):
     import tcad_artifact.result_analysis as analysis
     def forbidden(*args, **kwargs):

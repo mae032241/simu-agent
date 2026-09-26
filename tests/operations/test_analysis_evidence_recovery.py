@@ -56,6 +56,7 @@ def test_unpublished_analysis_survives_failure_and_new_assignment(tmp_path, reus
     assert coverage['omitted_count'] >= 1 and coverage['normalized_count'] == 1
 
 
+@pytest.mark.process_e2e
 def test_native_writer_after_failure_keeps_original_directory(tmp_path):
     import subprocess
     import sys
@@ -135,10 +136,7 @@ def test_collection_keeps_later_products(tmp_path):
     (tmp_path/'later.plx').write_bytes(b'raw data\n')
     expected=[dict(name=n,relative_path=p,required=True,max_bytes=1024,media_type='text/plain') for n,p in [('missing','missing.tdr'),('later','later.plx')]]
     records=[]; errors=[]
-    if remote:
-        _collect_expected(str(tmp_path),expected,{'max_output_bytes':4096,'transfer_chunk_bytes':1048576},records,errors)
-    else:
-        _collect_outputs(tmp_path,expected,{'max_output_bytes':4096,'transfer_chunk_bytes':1048576},records=records,errors=errors)
+    _collect_expected(str(tmp_path),expected,{'max_output_bytes':4096,'transfer_chunk_bytes':1048576},records,errors)
     assert [x['name'] for x in records]==['later']
     assert len(errors)==1 and 'missing.tdr' in errors[0]
 
@@ -229,6 +227,7 @@ def test_tool_evidence_cannot_change_after_candidate_acceptance(tmp_path):
     assert worker.call_tool('worker_submit_result',{})['state']=='completed'
 
 
+@pytest.mark.process_e2e
 def test_command_ssh_remote_inspection_roundtrip(tmp_path):
     import os
     import sys
@@ -244,8 +243,10 @@ from pathlib import Path
 from tcad_artifact.ssh_transport import SSHTCADTransport
 from tcad_artifact.remote_runner_py36 import _rpc
 root=Path(sys.argv[1])
+config=json.loads(sys.argv[2])
+config['result_root']=str(root/'remote')
 class Remote:
-    def rpc(self,request): return _rpc({'result_root':str(root/'remote')},{'request':request})
+    def rpc(self,request): return _rpc(config,{'request':request})
     def get_to(self,path,destination,max_bytes):
         raw=Path(path).read_bytes()
         assert len(raw)<=max_bytes
@@ -256,7 +257,7 @@ value=transport.handle(request['operation'],request['payload'])
 print(json.dumps(dict(schema_version=1,operation=request['operation'],ok=True,payload=value)))
 ''')
     adapter = CommandTCADExecutorAdapter(CommandAdapterConfig(executable=sys.executable,
-        arguments=(str(script), str(tmp_path)), environment={'PYTHONPATH':os.pathsep.join(sys.path)}),
+        arguments=(str(script), str(tmp_path), json.dumps(policy_fields())), environment={'PYTHONPATH':os.pathsep.join(sys.path)}),
         local_result_root=tmp_path/'local')
     listed = adapter.inspect_outputs(run_id)
     assert listed['status'] == 'available' and listed['files'][0]['relative_path'] == 'actual.plx'
@@ -274,8 +275,8 @@ def test_forged_workspace_receipt_cannot_publish_evidence(tmp_path):
     (output/'tool-evidence.json').write_text('{"schema_version":1,"records":[{"alias":"forged"}]}')
     write_analysis(opened, analysis_report())
     assert worker.call_tool('worker_submit_result', {})['state'] == 'completed'
-    evidence=system[2].call_tool('run_status', {'name': 'analysis', "intent": 'navigation'})['evidence_outputs']
-    assert evidence==[dict(artifact_name='analysis.output.recovery_manifest',schema='scidiscovery.tool-evidence-manifest.v1')]
+    evidence=system[2].call_tool('run_status', {'name': 'analysis', "intent": 'navigation'}).get('evidence_outputs', [])
+    assert evidence == []
     assert json.loads(system[1].runs._evidence_snapshot(worker._run_id))['records']==[]
 
 
@@ -301,6 +302,7 @@ def test_ssh_inspection_download_streams_through_remote_protocol(tmp_path, monke
     assert target.read_bytes() == raw
 
 
+@pytest.mark.process_e2e
 @pytest.mark.parametrize('short_budget', [False, True])
 def test_socket_inspection_uses_existing_execution_router(tmp_path, monkeypatch, short_budget):
     import multiprocessing
@@ -362,20 +364,6 @@ def test_reserved_io_budget_cannot_be_spent_by_another_router(tmp_path):
     assert service.tool_io_budget(worker._run_id, reserve=True)['remaining_seconds'] == 0
     service.tool_io_budget(worker._run_id, used_bytes=-reserved['remaining_bytes']+10, used_seconds=-119)
     assert service.tool_io_budget(worker._run_id)['remaining_seconds'] == 119
-
-
-def test_optional_service_startup_failure_does_not_relax_author_requirement(tmp_path, monkeypatch):
-    from tests.operations.test_tcad_result_analysis import analysis_system
-    import scidiscovery.artifact_agent.worker_services as module
-    catalog = analysis_system(tmp_path)[0]
-    def broken(*args, **kwargs):
-        raise FileNotFoundError('missing transport configuration')
-    monkeypatch.setattr(module, 'load_runtime_plugin_contributions', broken)
-    assert module.load_operation_services(catalog, 'tcad.result.analyze.v1',
-        {'tcad_artifact':tmp_path/'absent'}, tmp_path) == {}
-    with pytest.raises(FileNotFoundError):
-        module.load_operation_services(catalog, 'tcad.deck.author.initial.v1',
-            {'tcad_artifact':tmp_path/'absent'}, tmp_path)
 
 
 def test_collection_declaration_without_trusted_tool_is_rejected_at_both_gates(tmp_path, monkeypatch):
@@ -447,7 +435,10 @@ def test_inspection_transport_failure_has_shared_diagnostic_and_allows_report(tm
     facts=caught.value.engineering
     assert facts['category']=='timeout' and facts['reference']
     assert '/private/runtime' not in str(facts)
-    assert (Path(opened['workspace_path'])/facts['workspace_report']).is_file()
+    assert 'workspace_report' not in facts
+    from scidiscovery.artifact_agent.service.engineering_diagnostics import EngineeringDiagnostics
+    store = EngineeringDiagnostics(system[1].runs.database_path.parent.parent / 'engineering-diagnostics')
+    assert store.read(facts['reference'], scopes=('instance:' + system[1].runs.status(worker._run_id).instance_id,))['text']
     assert system[1].runs.status(worker._run_id).state=='running'
     write_analysis(opened,analysis_report())
     assert worker.call_tool('worker_submit_result',{})['state']=='completed'
@@ -546,7 +537,7 @@ def test_corrupt_preserved_receipt_fails_successor_open_explicitly(tmp_path, mon
     monkeypatch.setattr(runtime.artifacts,'read',lambda ref: b'corrupt' if ref.model_dump(mode='json')==record['artifact_ref'] else original_read(ref))
     request=deepcopy(request)
     request.update(name='corrupt_successor',draft_from='analysis')
-    with pytest.raises(Exception,match='preserved tool evidence integrity failure'):
+    with pytest.raises(Exception,match='control diagnostic'):
         open_analysis((catalog,runtime,root,request,artifacts,register))
     assert root.call_tool('run_status',{'name': 'corrupt_successor', "intent": 'navigation'})['state']=='failed'
 

@@ -344,7 +344,7 @@ def test_public_reviewer_and_effect_unavailability_reuse_catalog_gate(monkeypatc
         lambda compiled: SimpleNamespace(executor="solver_adapter"))
     specs = {
         "proposal": SimpleNamespace(catalog_scope="public", executor=SimpleNamespace(kind="agent"),
-            review=SimpleNamespace(reviewer_operation="reviewer")),
+            review=SimpleNamespace(reviewer_operation="reviewer", policy="optional")),
         "reviewer": SimpleNamespace(catalog_scope="support", executor=SimpleNamespace(kind="agent"),
             review=None),
         "execution": SimpleNamespace(catalog_scope="public", executor=SimpleNamespace(kind="effect"),
@@ -361,16 +361,14 @@ def test_public_reviewer_and_effect_unavailability_reuse_catalog_gate(monkeypatc
         supports_operation=lambda item: item is not compiled["reviewer"],
         unsupported_requirements=lambda item: ("native_shell",)))
     route.execution_bridge = None
-    assert route.operation_catalog(scope="public")["operations"] == []
+    assert route.operation_catalog(scope="public")["operations"] == [{"operation_id": "proposal"}]
     result = route.operation_catalog(scope="public", navigation=True)
     reasons = {entry["operation_id"]: entry["unavailable_reason"]
         for entry in result["navigation_state"]}
-    assert reasons["proposal"] == {"reason_code": "reviewer_unavailable",
-        "operation_id": "proposal", "reviewer": {"reason_code": "backend_requirements_unavailable",
-            "operation_id": "reviewer", "required": ["native_shell"]}}
+    assert reasons["proposal"] is None  # Optional review does not block author availability.
     assert reasons["execution"] == {"reason_code": "effect_adapter_unavailable",
         "operation_id": "execution", "required": ["solver_adapter"]}
-    assert all(not entry["available"] for entry in result["navigation_state"])
+    assert next(entry for entry in result["navigation_state"] if entry["operation_id"] == "proposal")["available"]
 
 
 def test_catalog_preserves_unknown_fields_and_removes_repeated_port_lists():
@@ -447,7 +445,7 @@ def test_transport_has_same_compact_result_in_both_representations_and_typed_err
     assert json.loads(reply["content"][0]["text"]) == reply["structuredContent"] == {"state": "active", "name": "instance"}
     error = transport.handle({"jsonrpc": "2.0", "id": 2, "method": "tools/call",
         "params": {"name": "run_status", "arguments": {"name": "run", "view": "bogus"}}})["error"]
-    assert error["data"]["diagnostics"][0]["path"] == "$.view"
+    assert error["data"]["diagnostics"][0]["path"] == "$[key]"
 
 
 def test_lifecycle_paging_does_not_consume_unreturned_events(tmp_path):

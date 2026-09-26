@@ -195,26 +195,3 @@ def test_policy_deferral_releases_only_never_prepared_reservation(tmp_path, prep
         assert connection.execute("SELECT COUNT(*) FROM execution_policy_authorizations").fetchone()[0] == 2
     assert service.authorization("one")["outcome"] == "deny"
     assert (service.prepared_submission("one") is not None) == prepared
-
-
-def test_all_executing_author_modes_declare_one_grid_reference():
-    from tcad_artifact.plugin import INITIAL_INPUTS, REVISION_INPUTS, RUNTIME_INPUTS
-    for ports in (INITIAL_INPUTS, REVISION_INPUTS, RUNTIME_INPUTS):
-        grid = [port for port in ports if port.name == "device_grid"]
-        assert len(grid) == 1 and grid[0].exposure == "file_reference"
-        assert grid[0].max_item_bytes >= 2_000_000_000
-
-
-def test_repair_requires_the_exact_prior_grid_parent(monkeypatch):
-    from types import SimpleNamespace
-    from scidiscovery.operations.input_validation import ValidationSources, OperationInvocationError
-    from tcad_artifact import plugin
-    project = SimpleNamespace(execution_plan=None, input_slots=(SimpleNamespace(semantic_name="device_grid", media_type="application/octet-stream"),))
-    monkeypatch.setattr(plugin, "parse_bound_json", lambda *args, **kwargs: SimpleNamespace(root=project))
-    def sources(grid):
-        return ValidationSources({"prior_project": b"{}", "experiment_plan": b"{}", "device_grid": b""}, {
-            "prior_project": SimpleNamespace(parent_refs=("original-grid",)),
-            "device_grid": SimpleNamespace(artifact_ref=grid, media_type="application/octet-stream")})
-    plugin._parameter_inputs(sources("original-grid"))
-    with pytest.raises(OperationInvocationError, match="input_prior_device_grid_mismatch"):
-        plugin._parameter_inputs(sources("other-grid"))

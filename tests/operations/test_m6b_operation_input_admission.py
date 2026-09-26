@@ -41,21 +41,13 @@ def _full_catalog():
 
 def test_admission_is_one_operation_fact_not_repeated_on_ports() -> None:
     catalog = _full_catalog()
-    operation = catalog.operation("tcad.deck.author.initial.v1")
+    operation = catalog.operation("science.hypothesis.propose.v1")
     admission = operation.spec.input_admission
 
     assert admission is not None
-    assert admission.member_ports == (
-        "scientific_foundation",
-        "parameter_requirements",
-        "device_parameters",
-        "source_catalog",
-        "parameter_coverage",
-        "parameter_audit",
-        "parameter_uncertainty",
-    )
-    assert admission.approval_subject_ports == admission.member_ports[:-1]
-    assert len(operation.approval_providers) == 2
+    assert admission.member_ports == ("scientific_foundation",)
+    assert admission.approval_subject_ports == admission.member_ports
+    assert len(operation.approval_providers) == 1
     assert all(
         "cohort_id" not in type(port).model_fields
         and "approval_kind" not in type(port).model_fields
@@ -67,7 +59,7 @@ def test_admission_is_one_operation_fact_not_repeated_on_ports() -> None:
         for item in catalog.scheduler_projection()
         if item.operation_id == operation.spec.operation_id
     )
-    assert view.input_admission == admission
+    assert "input_admission" not in type(view).model_fields
     assert all("cohort_id" not in type(port).model_fields for port in view.inputs)
 
 
@@ -205,7 +197,7 @@ def _bound(operation, present_ports: tuple[str, ...]):
 
 
 def test_root_consumes_compiled_member_and_subject_sets_without_reaggregation() -> None:
-    operation = _full_catalog().operation("tcad.deck.author.initial.v1")
+    operation = _full_catalog().operation("science.hypothesis.propose.v1")
     admission = operation.spec.input_admission
     assert admission is not None
     approvals = Mock()
@@ -223,11 +215,11 @@ def test_root_consumes_compiled_member_and_subject_sets_without_reaggregation() 
     )
     assert call.kwargs["kind"] == admission.approval_kind
     assert call.kwargs["accepted_options"] == admission.accepted_options
-    assert len(call.kwargs["accepted_providers"]) == 2
+    assert len(call.kwargs["accepted_providers"]) == 1
 
 
 def test_root_preserves_fail_closed_approval_behavior_after_structural_binding() -> None:
-    operation = _full_catalog().operation("tcad.deck.author.initial.v1")
+    operation = _full_catalog().operation("science.hypothesis.propose.v1")
     admission = operation.spec.input_admission
     assert admission is not None
     routes = object.__new__(RootOperationRoutes)

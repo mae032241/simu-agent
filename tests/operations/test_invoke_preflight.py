@@ -201,7 +201,7 @@ def test_declared_input_checker_gets_exact_bounded_sources_before_run_creation(m
     projection = scheduler_operation_view(spec).input_validation
     assert projection == operation_input_validation_contract(compiled)
     assert operation_port_json_schema(compiled, spec.outputs[0])["x-scidiscovery-input-validation-contract"] == projection
-    assert scheduler_operation_view(spec).input_admission == spec.input_admission
+    assert "input_admission" not in scheduler_operation_view(spec).model_dump()
     with pytest.raises(OperationInvocationError, match="input_content_integrity_failure"):
         preflight_operation(compiled, name="corrupt", artifacts_by_port={"agent_input": (artifact,)}, instruction="Review.", read_artifact=lambda ref: b"[]")
     assert len(calls) == 1

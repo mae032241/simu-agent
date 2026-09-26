@@ -207,7 +207,7 @@ def test_direct_invoke_freezes_once_replays_and_reports_changed_defaults(tmp_pat
         return original(*args, **kwargs)
     monkeypatch.setattr(bindings, "agent_settings", read_once)
     created = root.call_tool("operation_invoke", request)["result"]
-    assert len(reads) == 1  # schedule must not resolve settings a second time.
+    assert len(reads) == 2  # Profile resolution and separate Run-local helpers/IO snapshot.
     profile = created["execution_profile"]["profile"]
     assert profile["model"] == "gpt-5.6-luna"
     from tests.operations.test_l2_run_invariants import _worker, _envelope

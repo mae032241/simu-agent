@@ -5,7 +5,6 @@ import os
 import shutil
 import subprocess
 import sys
-import zipfile
 from pathlib import Path
 
 import pytest
@@ -30,42 +29,21 @@ def test_role_prompts_use_only_packaged_role_resources():
         assert "frozen Sentaurus" not in prompt
 
 
-def test_sdist_wheel_compiles_without_repository_or_host_skill(tmp_path):
-    package = tmp_path / "source/tcad_artifact"
-    shutil.copytree(REPOSITORY / "plugins/tcad_artifact", package,
-                    ignore=shutil.ignore_patterns("build", "*.egg-info", "__pycache__"))
-    dist = tmp_path / "dist"
-    dist.mkdir()
-    subprocess.run([sys.executable, "-c",
-                    "import setuptools.build_meta, sys; setuptools.build_meta.build_sdist(sys.argv[1])",
-                    str(dist)], cwd=package, check=True, capture_output=True, timeout=60)
-    archive = next(dist.glob("*.tar.gz"))
-    subprocess.run([sys.executable, "-m", "pip", "wheel", "--no-deps", "--no-build-isolation",
-                    "--wheel-dir", str(tmp_path / "wheels"), str(archive)],
-                   cwd=tmp_path, check=True, capture_output=True, timeout=60)
-    installed = tmp_path / "installed"
-    with zipfile.ZipFile(next((tmp_path / "wheels").glob("*.whl"))) as wheel:
-        assert not any("sentaurus_knowledge" in name or "SKILL.md" in name for name in wheel.namelist())
-        wheel.extractall(installed)
-    subprocess.run([sys.executable, "-c", """
-import sys
+def test_installed_tcad_resources_and_experiment_capability(installed_probe):
+    """Prove packaged resources without rebuilding a second wheel cohort."""
+    installed_probe("all_domains", r'''
 from pathlib import Path
-from scidiscovery.builtin_plugin import CORE_PLUGIN
-from scidiscovery.general_science_plugin import PLUGIN as SCIENCE_PLUGIN
-from scidiscovery.operations.catalog import compile_catalog
-from curve_score.plugin import PLUGIN as CURVE_PLUGIN
-Path.home = lambda: (_ for _ in ()).throw(AssertionError('host skill lookup'))
+from scidiscovery.operations.catalog import compile_installed_catalog
 from tcad_artifact import plugin, role_pack
-assert Path(plugin.__file__).resolve().is_relative_to(Path(sys.argv[1]))
-catalog = compile_catalog((CORE_PLUGIN, SCIENCE_PLUGIN, CURVE_PLUGIN, plugin.PLUGIN))
-for operation in ('tcad.deck.author.initial.v1', 'tcad.deck.author.revise.v1', 'tcad.deck.review.v1'):
-    assert catalog.operation(operation).digest
-assert plugin.AUTHOR_PROMPT == role_pack.role_prompt('author')
-assert plugin.REVIEWER_PROMPT == role_pack.role_prompt('reviewer')
-""", str(installed)], cwd=tmp_path, check=True, capture_output=True, timeout=60,
-                   env={**os.environ, "PYTHONPATH": os.pathsep.join(map(str, (
-                       installed, REPOSITORY / "src", REPOSITORY / "plugins/curve_score"))),
-                        "PYTHONDONTWRITEBYTECODE": "1"})
+import sys
+assert Path(plugin.__file__).resolve().is_relative_to(Path(sys.prefix).resolve())
+Path.home = lambda: (_ for _ in ()).throw(AssertionError("host skill lookup"))
+catalog = compile_installed_catalog()
+assert catalog.operation("science.experiment.v1").digest
+for role in ("author", "reviewer"):
+    assert role_pack.role_prompt(role)
+assert not (Path(plugin.__file__).parent / "SKILL.md").exists()
+''')
 
 
 @pytest.mark.skipif(shutil.which("pdftotext") is None, reason="pdftotext is required")

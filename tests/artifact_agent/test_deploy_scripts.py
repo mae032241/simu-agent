@@ -218,7 +218,7 @@ def test_figure_dependency_failure_precedes_install_transaction(tmp_path: Path, 
     else:
         from PIL import Image  # Only the operator environment supplies Pillow.
         assert Image
-        venv.EnvBuilder(with_pip=False).create(tmp_path / "service-python")
+        venv.EnvBuilder(with_pip=False, symlinks=True).create(tmp_path / "service-python")
         environment["SCID_PYTHON"] = str(tmp_path / "service-python/bin/python")
         expected = "No module named 'PIL'"
     completed = subprocess.run([
@@ -322,6 +322,9 @@ def test_tcad_runtime_configuration_is_owned_and_executed_by_plugin(
     project_root = Path(__file__).resolve().parents[2]
     helper = project_root / "plugins/tcad_artifact/deploy/configure_runtime.py"
     policy = tmp_path / "tcad-policy.json"
+    supplied_policy = json.loads((project_root / "plugins/tcad_artifact/config/execution-policy.example.json").read_text())
+    supplied_policy["allowed_input_roots"] = [str(tmp_path / "state/execution-exchange")]
+    policy.write_text(json.dumps(supplied_policy))
     plugin_config = tmp_path / "tcad-plugin.json"
     state_root = tmp_path / "state"
     socket = tmp_path / "tcad.sock"
@@ -368,24 +371,36 @@ def test_tcad_runtime_configuration_is_owned_and_executed_by_plugin(
     }
 
 
-def test_complete_tcad_skill_install_integrity_removal_and_rollback(tmp_path: Path) -> None:
+def test_skill_install_integrity_removal_and_rollback(tmp_path: Path) -> None:
     import grp
     import pwd
 
     project_root = Path(__file__).resolve().parents[2]
+    # Copy real installer entry points, but exercise directory transactions with
+    # tiny synthetic resources. The release smoke pins the real manual bytes.
+    fixture_root = tmp_path / "source"
+    (fixture_root / "deploy").mkdir(parents=True)
+    for script in ("install.sh", "install_transaction.py"):
+        shutil.copy2(project_root / "deploy" / script, fixture_root / "deploy" / script)
+    source = fixture_root / "skills/sentaurus-tcad-code"
+    for relative in ("SKILL.md", "scripts/manual_extract.py",
+                     "references/manuals/catalog.json", "references/manuals/topics.json",
+                     "references/manuals/R-2020.09/sprocess_ug.pdf"):
+        target = source / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes((relative + "\n").encode())
     skill_root = tmp_path / "skills"
     skill = skill_root / "sentaurus-tcad-code"
     name = "codex-skill-sentaurus-tcad-code"
     result = subprocess.run(
         ["bash", "-c", 'source "$1"; install_platform_skill "$2" codex "$3" sentaurus-tcad-code',
-         "bash", str(project_root / "deploy/install.sh"), str(tmp_path / "backup"), str(skill_root)],
+         "bash", str(fixture_root / "deploy/install.sh"), str(tmp_path / "backup"), str(skill_root)],
         cwd=project_root, capture_output=True, text=True, timeout=30,
         env={**os.environ, "SCID_PYTHON": sys.executable,
              "SCID_SERVICE_USER": pwd.getpwuid(os.getuid()).pw_name,
              "SCID_SERVICE_GROUP": grp.getgrgid(os.getgid()).gr_name},
     )
     assert result.returncode == 0, result.stderr
-    source = project_root / "skills/sentaurus-tcad-code"
     assert _directory_digest(skill) == _directory_digest(source)
     _verify_managed_directory(skill, name=name)
     for relative in ("references/manuals/R-2020.09/sprocess_ug.pdf",
@@ -409,8 +424,6 @@ def test_complete_tcad_skill_install_integrity_removal_and_rollback(tmp_path: Pa
     rollback_transaction(transaction)
     _verify_managed_directory(skill, name=name)
     assert _directory_digest(skill) == _directory_digest(source)
-
-
 
 
 def test_install_transaction_sqlite_snapshot_restore_remains_compatible(
@@ -458,8 +471,6 @@ def test_install_transaction_sqlite_snapshot_restore_remains_compatible(
     for database in (existing, missing):
         assert not Path(str(database) + "-wal").exists()
         assert not Path(str(database) + "-shm").exists()
-
-
 
 
 def test_core_install_retires_and_rollback_restores_tcad_surfaces(
@@ -840,6 +851,8 @@ print("fake SSH code-only extraction: pass")
     transport.write_text(
         json.dumps(
             {
+                "max_transfer_bytes": 1024 * 1024,
+                "transfer_chunk_bytes": 65536,
                 "ssh_executable": str(fake_ssh),
                 "identity_file": None,
                 "destination": "tcad@192.0.2.10",
@@ -852,7 +865,6 @@ print("fake SSH code-only extraction: pass")
                 "remote_exchange_root": str(remote_root / "exchange"),
                 "connect_timeout_seconds": 5,
                 "operation_timeout_seconds": 30,
-                "max_transfer_bytes": 1024 * 1024,
             }
         ),
         encoding="utf-8",
@@ -897,6 +909,8 @@ def test_ssh_runner_code_upgrade_rejects_mismatched_remote_binding(
     transport.write_text(
         json.dumps(
             {
+                "max_transfer_bytes": 1024 * 1024,
+                "transfer_chunk_bytes": 65536,
                 "ssh_executable": str(fake_ssh),
                 "destination": "tcad@192.0.2.10",
                 "remote_helper": "/home/tcad/scidiscovery-tcad/bin/scidiscovery-tcad-ssh-runner",
@@ -982,6 +996,8 @@ raise SystemExit(completed.returncode)
     transport.write_text(
         json.dumps(
             {
+                "max_transfer_bytes": 1024 * 1024,
+                "transfer_chunk_bytes": 65536,
                 "ssh_executable": str(fake_ssh),
                 "destination": "tcad@192.0.2.10",
                 "destination_resolver": [str(resolver)],
@@ -1058,7 +1074,7 @@ for line in sys.stdin:
     arguments = request["params"]["arguments"]
     if name == "scid_catalog":
         catalog_seen = True
-        value = {"operations": [{"operation_id": "science.fixture.v1"}]}
+        value = {"operations": [{"operation_id": "science.fixture.v1", "purpose": "fixture"}], "complete": True, "next_before": None}
     elif arguments["name"] == "scid_describe":
         value = {"inputSchema": {"properties": {"view": {"enum": ["full", "invoke"]}, "surface":{"default":"research"}}}}
     elif arguments["name"] == "run_status":
@@ -1075,7 +1091,7 @@ for line in sys.stdin:
         continue
     else:
         value = {"view": "invoke", "operations": [{
-            "operation_id": arguments["name"], "operation_digest": "a" * 64,
+            "operation_id": arguments["name"], "contract_view_version": "invoke.scientific.v2",
             "inputs": [], "revision_policy": {"max_revisions": 0},
         }]}
     print(json.dumps({"jsonrpc": "2.0", "id": request["id"],
@@ -1738,6 +1754,7 @@ def test_deployment_sources_are_machine_neutral() -> None:
     )
 
 
+@pytest.mark.installed
 def test_git_release_builder_emits_clean_manifested_source(tmp_path: Path) -> None:
     project_root = Path(__file__).resolve().parents[2]
     output = tmp_path / "scidiscovery-agent"
@@ -1773,25 +1790,12 @@ def test_git_release_builder_emits_clean_manifested_source(tmp_path: Path) -> No
     ).exists()
     assert not (output / "src/scidiscovery/platforms/codex_worker.py").exists()
     assert not (output / "experiments/worker_process_v2").exists()
-    current_decisions = {
-        "OPERATION_SPEC_MINIMAL_REFACTOR_PLAN.zh-CN.md",
-        "R5_H_MINIMAL_CLOSURE_IMPLEMENTATION.zh-CN.md",
-        "R5_S_PRODUCTION_CODE_SIMPLIFICATION_PLAN.zh-CN.md",
-        "R5_E5_4_GENERIC_AUTOMATIC_FIGURE_EXTRACTION_AND_CASE_PLUGIN_REMOVAL_PLAN.zh-CN.md",
-    }
-    assert {
-        path.name for path in (output / "docs/plans").glob("*.md")
-    } == current_decisions
-    assert {
-        path.name for path in (output / "docs/plans/reviews").glob("*.md")
-    } == {
-        "R5_S1_PRODUCTION_BOUNDARY_INDEPENDENT_REVIEW.zh-CN.md",
-        "R5_E5_4_GENERIC_AUTOMATIC_FIGURE_EXTRACTION_AND_CASE_PLUGIN_REMOVAL_PLAN_GPT6_REVIEW.zh-CN.md",
-        "R5_E5_4_P0_G0_GPT6_REVIEW.zh-CN.md",
-        "R5_E5_4_P1_G1_GPT6_REVIEW.zh-CN.md",
-        "R5_E5_4_P2_G2_GPT6_REVIEW.zh-CN.md",
-        "R5_E5_4_P3_G3_GPT6_REVIEW.zh-CN.md",
-    }
+    # The release manifest is the explicit publication policy; archived research
+    # documents outside it must not leak into the generated repository.
+    import runpy
+    release = runpy.run_path(str(project_root / "scripts/build_git_release.py"))
+    assert {path.relative_to(output).as_posix()
+            for path in (output / "docs").rglob("*") if path.is_file()} == set(release["DOCUMENTS"])
     assert (
         output
         / "docs/architecture/SCIENTIFIC_AGENT_DESIGN_CHARTER.zh-CN.md"

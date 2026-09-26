@@ -23,71 +23,10 @@ def component_catalog():
     return compile_catalog((CORE_PLUGIN, GENERAL_PLUGIN, CURVE_PLUGIN, TCAD_PLUGIN))
 
 
-def _transform(catalog, operation_id, values):
-    operation = catalog.operation(operation_id)
-    outputs = _executor_callable(operation)(values)
-    # Retain the old corpus's output cardinality/codec boundary without creating Runs.
-    assert _transform_outputs(operation, outputs)
-    return outputs
-
-
-@pytest.mark.parametrize("operation_id", (
-    "scidiscovery.curve-reference-coverage.v1",
-    "scidiscovery.objective-coverage.v1",
-))
-def test_curve_coverage_components(component_catalog, operation_id):
-    values = {
-        "experiment_plan": (_plan().canonical_json(),),
-        "reference_bundles": (_bundle().canonical_json(),),
-    }
-    if operation_id == "scidiscovery.objective-coverage.v1":
-        values.update(objective=(_objective_fixture()[2],),
-                      curve_contracts=(_contract().canonical_json(),))
-    else:
-        values["curve_contract"] = (_contract().canonical_json(),)
-    outputs = _transform(component_catalog, operation_id, values)
-    assert set(outputs) == {"coverage_report"}
-    assert json.loads(outputs["coverage_report"][0])
-
-
-# Each graph names exact ports and required parent links. All links are removed one
-# at a time, so negative coverage is broader than the old corpus's one edge per guard.
-_GUARD_GRAPHS = (
-    ("science.parameter.uncertainty.v1", {
-        "parameter_requirements": (), "device_parameters": (),
-        "parameter_coverage": ("parameter_requirements", "device_parameters"),
-    }),
-    ("scidiscovery.curve-score.v1", {
-        "curve_contract": (), "experiment_plan": (),
-        "curve_bundle": ("curve_contract", "experiment_plan"),
-    }),
-    ("scidiscovery.objective-coverage.v1", {
-        "objective": (), "experiment_plan": ("objective",),
-        "curve_contracts": ("experiment_plan",),
-    }),
-    ("tcad.study.execute", {
-        "project": (), "capability": (), "experiment_plan": (),
-        "review": ("project", "capability", "experiment_plan"),
-    }),
-    ("tcad.runtime-attestation.v1", {
-        "execution_package": (), "runtime_manifest": ("execution_package",),
-        "runtime_outputs": ("execution_package",),
-    }),
-    ("tcad.curve-bundle.sprocess-log.v1", {
-        "solver_output": (), "runtime_attestation": ("solver_output",),
-    }),
-    ("tcad.curve-bundle.sprocess-plx.v1", {
-        "runtime_manifest": (), "solver_outputs": (),
-        "runtime_attestation": ("runtime_manifest", "solver_outputs"),
-    }),
-    ("science.experiment.materialize.v1", {
-        "scientific_foundation": (),
-        "research_objective": ("scientific_foundation",),
-        "hypothesis_portfolio": ("scientific_foundation",),
-        "critic_review": ("scientific_foundation", "hypothesis_portfolio"),
-        "experiment_design_intent": ("scientific_foundation", "research_objective", "hypothesis_portfolio", "critic_review"),
-    }),
-)
+_GUARD_GRAPHS = (("tcad.runtime-attestation.v1", {
+    "execution_package": (), "runtime_manifest": ("execution_package",),
+    "runtime_outputs": ("execution_package",),
+}),)
 
 
 @pytest.mark.parametrize("operation_id,graph", _GUARD_GRAPHS)

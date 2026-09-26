@@ -9,6 +9,7 @@ from scidiscovery.artifact_agent.interfaces.mcp_local_worker import LocalWorkerM
 from scidiscovery.operations.tooling import operation_agent_type, operation_role_instructions
 from tests.operations.test_l2_run_invariants import _system, _audit_envelope
 from tests.operations.test_general_transform_operations import _intake
+from tests.operations.worker_fixtures import attached_worker
 
 
 def open_extraction(tmp_path):
@@ -22,7 +23,7 @@ def open_extraction(tmp_path):
         inputs=[dict(port="source_material", artifact_names=["source_paper"])])
     root.call_tool("operation_invoke", request)
     op = catalog.operation(request["operation_id"])
-    worker = LocalWorkerMCPRouter(runtime.runs, operation_id=op.spec.operation_id, operation_digest=op.digest)
+    worker = attached_worker(runtime, root, "evidence")
     opened = worker.call_tool("worker_open_assignment", {})
     return catalog, runtime, root, worker, opened, request
 
@@ -62,7 +63,7 @@ def test_search_capture_publication_and_independent_audit(tmp_path, monkeypatch)
         dict(port="source_material", artifact_names=["source_paper", source["artifact_name"]])])
     root.call_tool("operation_invoke", request)
     review = catalog.operation(request["operation_id"])
-    auditor = LocalWorkerMCPRouter(runtime.runs, operation_id=review.spec.operation_id, operation_digest=review.digest)
+    auditor = attached_worker(runtime, root, "audit")
     audit_open = auditor.call_tool("worker_open_assignment", {})
     audit_assignment = json.loads(Path(audit_open["assignment_path"]).read_bytes())
     original = next(i for i in audit_assignment["inputs"] if i.get("source_provenance"))
@@ -84,7 +85,8 @@ def test_failed_fetch_has_diagnostic_and_no_false_evidence(tmp_path, monkeypatch
     assert runtime.runs.tool_evidence(worker._run_id) == []
     attempts = runtime.runs.tool_attempts(worker._run_id)
     assert attempts[-1]["state"] == "rejected"
-    assert "deadline" in json.dumps(attempts[-1])
+    assert attempts[-1]["diagnostics"][0]["code"] == "timeout"
+    assert "deadline" not in json.dumps(attempts[-1])
 
 
 def test_fetched_evidence_survives_bounded_recovery(tmp_path, monkeypatch):
@@ -141,12 +143,12 @@ def test_request_budget_survives_worker_reconnection(tmp_path, monkeypatch):
         raise TimeoutError("fixture remote timeout")
     monkeypatch.setattr(source_capture, "fetch_source", fail)
     for _ in range(24):
-        with pytest.raises(WorkerToolError, match="timeout"):
+        with pytest.raises(WorkerToolError, match="control diagnostic"):
             worker.call_tool("worker_capture_source", {"url": "https://example.org/paper"})
     op = catalog.operation("science.evidence.extract.v1")
     reopened = LocalWorkerMCPRouter(runtime.runs, operation_id=op.spec.operation_id, operation_digest=op.digest)
     reopened.call_tool("worker_open_assignment", {})
-    with pytest.raises(WorkerToolError, match="request budget exhausted"):
+    with pytest.raises(WorkerToolError, match="control diagnostic"):
         reopened.call_tool("worker_capture_source", {"url": "https://example.org/paper"})
     assert runtime.runs.tool_evidence(reopened._run_id) == []
 

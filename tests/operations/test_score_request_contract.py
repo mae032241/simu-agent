@@ -172,7 +172,7 @@ def test_generic_tool_uses_defaults_without_rewriting_the_raw_receipt(explicit_d
     assert parsed.request.comparison_spec.comparisons[0].evaluation_points == 257
     record = evaluate_analysis_request(record_key='score', request=original, sources=sources)
     assert record.status == 'computed'
-    assert record.request == original
+    assert record.model_dump(mode="json")["request"] == original
     replay_calculation(record, sources)
 
 
@@ -243,6 +243,9 @@ def test_unknown_parser_failure_remains_a_framework_error(tmp_path, monkeypatch)
     diagnostic = response['error']['data']['diagnostics'][0]
     assert diagnostic['code'] == 'runtime_failure' and diagnostic['phase'] == 'tool_execution'
     assert 'DO_NOT_ECHO_PARSER_INTERNALS' not in json.dumps(response)
-    reference = response['error']['data']['engineering']['reference']
-    assert 'DO_NOT_ECHO_PARSER_INTERNALS' in system[2].call_tool(
-        'diagnostic_read', {'reference': reference})['text']
+    assert 'reference' not in response['error']['data']['engineering']
+    diagnostic = system[1].runs.diagnostic_summary(system[1].runs.status(worker._run_id))['latest_tool_error']
+    from scidiscovery.artifact_agent.service.engineering_diagnostics import EngineeringDiagnostics
+    store = EngineeringDiagnostics(system[1].runs.database_path.parent.parent / 'engineering-diagnostics')
+    assert 'DO_NOT_ECHO_PARSER_INTERNALS' in store.read(diagnostic['engineering']['reference'],
+        scopes=('instance:' + system[1].runs.status(worker._run_id).instance_id,))['text']

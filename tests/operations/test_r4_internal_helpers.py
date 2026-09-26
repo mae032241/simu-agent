@@ -110,8 +110,8 @@ def test_active_helper_and_owner_admission_are_mutually_exclusive(tmp_path, monk
     connections = runtime.runs.worker_connections
     instance_id = runtime.runs.status(run_id).instance_id
     def queued(name):
-        gateway.root.call_tool('operation_invoke', dict(name=name, operation_id='science.result.diagnose.v1',
-            instruction='Assess observations.', inputs=[dict(port='experiment_results', artifact_names=['observe.output'])]))
+        gateway.root.call_tool('operation_invoke', dict(name=name, operation_id='science.object.review.v1',
+            instruction='Assess observations.', inputs=[dict(port='subject', artifact_names=['observe.output'])]))
         return runtime.scheduler_bindings.resolve(instance=instance_id, namespace='run', name=name)
     assert _result(call('worker_identity'))['thread_id'] == 'owner'
     target = queued('second-owner')
@@ -129,7 +129,9 @@ def test_active_helper_and_owner_admission_are_mutually_exclusive(tmp_path, monk
         historical = db.execute("SELECT thread_id,released_at FROM worker_participants WHERE run_id=?", (run_id,)).fetchone()
     assert historical['thread_id'] == 'helper' and historical['released_at'] is not None
     _result(call('worker_helper', {'name':'next', 'task':'Inspect more data.'}))
-    other = queued('attached-first')
+    gateway.root.call_tool('operation_invoke', dict(name='attached-first', operation_id='science.experiment.v1',
+        instruction='Complete another experiment.', inputs=[dict(port='research_objective', artifact_names=['objective'])]))
+    other = runtime.scheduler_bindings.resolve(instance=instance_id, namespace='run', name='attached-first')
     connections.attach(run_id=other, platform_session='session', thread_id='attached-first')
     assert _result(call('worker_identity', thread='attached-first'))['thread_id'] == 'attached-first'
     with pytest.raises(RunStateConflict, match='owns an active Run'):

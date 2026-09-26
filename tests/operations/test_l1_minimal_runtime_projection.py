@@ -51,12 +51,13 @@ def test_compiled_entry_is_the_single_runtime_authority() -> None:
     )
     assert projection.review_edge is not None
     assert projection.review_edge.model_dump(mode="json") == {
+        "policy": "optional",
         "reviewer_operation": "blind.csv.review.v1",
         "reviewer_input_port": "csv_observation",
         "subject_outputs": ["csv_observation"],
         "accepted_verdicts": ["pass"],
     }
-    assert projection.requires_independent_review is True
+    assert projection.requires_independent_review is False
 
 
 def test_public_producer_cannot_hide_its_reviewer_from_the_scheduler() -> None:
@@ -118,6 +119,8 @@ def test_blind_plugin_registers_one_real_domain_tool_and_review_edge() -> None:
         "worker_file_write_chunk",
         "worker_file_write_commit",
         "worker_csv_summarize",
+        "worker_reference_read",
+        "worker_helper",
     }
 
     raw = b"sample,value\na,1\nb,3\n"

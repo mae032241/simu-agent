@@ -12,7 +12,7 @@ from PIL import Image
 from pydantic import ValidationError
 
 from curve_figure_evidence.figure_digitization import build_digitized_figure_bundle
-from curve_figure_evidence.figure_digitization_contract import FigureDigitizationRequest
+from curve_figure_evidence.figure_digitization_contract import FigureDigitizationRequest, ScientificFigureRequest
 from curve_figure_evidence.figure_source import inspect_figure_source_bytes
 from curve_figure_evidence.figure_worker_tool import (
     FIGURE_DIGITIZATION_PREVIEW_TOOL,
@@ -265,7 +265,7 @@ def test_preview_and_formal_materialization_use_identical_outputs(tmp_path: Path
     assert handler is not None
     preview = handler(
         FigureDigitizationPreviewInput(
-            request=FigureDigitizationRequest.model_validate_json(request, strict=True)
+            request=ScientificFigureRequest.model_validate_json(canonical_json({**json.loads(request), "source": {key: value for key, value in json.loads(request)["source"].items() if key in {"source_kind", "media_type", "width", "height"}}}), strict=True)
         ),
         context,
     )
@@ -286,7 +286,13 @@ def test_preview_and_formal_materialization_use_identical_outputs(tmp_path: Path
     assert preview["source_status"] == full_report["source_status"]
     assert preview["integrity_status"] == full_report["integrity_status"]
     assert all(full_report["metrics"][key] == value for key, value in preview["metrics"].items())
-    assert json.loads(Path(preview["details_path"]).read_bytes())["validation_report"] == json.loads(formal["validation_report"][0])
+    public_report = json.loads(Path(preview["details_path"]).read_bytes())["validation_report"]
+    expected = json.loads(formal["validation_report"][0])
+    for key in ("manifest_sha256", "bundle_fingerprint_sha256"):
+        expected.pop(key, None)
+    for series in expected.get("series", ()):
+        series.pop("csv_sha256", None)
+    assert public_report == expected
     assert all(Path(item["local_path"]).stat().st_mode & 0o222 == 0 for item in preview["images"])
     assert context.activities == ["deterministic_analysis_completed"]
 

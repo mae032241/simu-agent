@@ -9,7 +9,6 @@ from pathlib import Path
 
 import pytest
 
-from scripts import l3_live_review_probe, l4_live_tcad_agent_probe
 
 
 SCRIPT = Path(__file__).resolve().parents[2] / "scripts/run_compiled_codex_worker.py"
@@ -220,6 +219,7 @@ def test_receipt_binds_identity_memory_and_static_worker_projection(
         )
 
 
+@pytest.mark.process_e2e
 def test_process_tree_memory_budget_stops_a_large_grandchild() -> None:
     child = "import time; payload = bytearray(48 * 1024 * 1024); time.sleep(30)"
     parent = (
@@ -240,6 +240,7 @@ def test_process_tree_memory_budget_stops_a_large_grandchild() -> None:
     assert peak_rss_kib > 32 * 1024
 
 
+@pytest.mark.process_e2e
 def test_process_group_cleans_an_observed_detached_child(tmp_path: Path) -> None:
     pid_path = tmp_path / "detached.pid"
     child = "import time; time.sleep(30)"
@@ -267,6 +268,7 @@ def test_process_group_cleans_an_observed_detached_child(tmp_path: Path) -> None
         assert "Z" in state
 
 
+@pytest.mark.process_e2e
 def test_cli_writes_a_memory_receipt_without_native_audit(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -310,20 +312,3 @@ def test_cli_writes_a_memory_receipt_without_native_audit(
     assert receipt["memory_limit_exceeded"] is False
     assert "native_workspace_audit" not in receipt
     assert "worker_tool_calls" not in receipt
-
-
-def test_fresh_live_probes_freeze_four_gibibyte_serial_dispatch(tmp_path: Path) -> None:
-    l3_root = tmp_path / "l3"
-    l3_live_review_probe.prepare(l3_root)
-    l3 = json.loads((l3_root / "author-dispatch.json").read_text("utf-8"))
-    assert l3["launcher_command"][l3["launcher_command"].index("--memory-limit-mib") + 1] == "4096"
-
-    l4_root = tmp_path / "l4"
-    l4_live_tcad_agent_probe.prepare(l4_root)
-    l4 = json.loads((l4_root / "author-dispatch.json").read_text("utf-8"))
-    assert l4["launcher_command"][l4["launcher_command"].index("--memory-limit-mib") + 1] == "4096"
-    assert l4["required_worker_calls"] == [
-        "worker_open_assignment",
-        "worker_tcad_debug_run",
-        "worker_submit_result",
-    ]

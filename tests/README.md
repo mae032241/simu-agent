@@ -1,22 +1,61 @@
-# 测试范围与静态清理
+# 测试分层与运行
 
-默认配置只排除 `stress`，安装测试仍会构建 wheel、创建隔离环境、启动子进程。不能将整套测试视为低资源检查。2026-09-24 本轮只做文本、AST 和消费者检查，**没有执行测试、收集测试、安装、构建或动态导入**。
+测试按需要证明的边界划分。默认 `pytest` 仅选择源码层，`-m` 不会越过层选择；安装、进程、大文件和在线平台必须显式选层。资源敏感环境应始终使用下面的串行入口。
 
-## 分层口径
+| 层 | 选择参数 | 覆盖范围 |
+| --- | --- | --- |
+| 源码 | `--lane source` | 业务规则、合同、资格、审批、恢复、非法输入；允许小型本地命令，例如 `bash -n`。 |
+| 安装 | `--lane installed` | wheel 资源、依赖解析、真实 entry point、解释器隔离、一个代表性安装后完成链；不重跑源码业务矩阵。 |
+| 进程 | `--lane process` | 真实 daemon、Unix socket、跨进程重启和子进程生命周期。 |
+| 大输入 | `--lane stress` | 大文件、资源边界；按具体节点单独运行。 |
+| 在线平台 | `--lane live` | 需要真实平台或外部服务；选层不提供凭据或授权。 |
 
-- 源码测试覆盖业务规则、身份、资格、审批、恢复及拒绝非法输入。
-- 安装测试覆盖打包资源、插件发现、解释器隔离、依赖解析、真实 MCP 入口、代表性 Worker 完成与审批 UI。不同 Operation 的相同业务矩阵不再在 venv 重跑。
-- 安装 fixture 按请求构建并缓存所需 wheel；core 暂存范围来自 `pyproject.toml` 的 package/readme/data 声明，不再先复制发布树和手册。发布组装仍由 `test_deploy_scripts.py` 的真实 release-builder 用例覆盖。
+## 串行资源入口
 
-| 删除或收敛的家族 | 剩余覆盖 |
-| --- | --- |
-| 安装环境中的 retry/budget、recovery、hypothesis feedback、原始 TCAD 分析函数副本 | `test_l4_local_tcad.py`、`test_analysis_evidence_recovery.py`、`test_hypothesis_feedback_flow.py`、`test_tcad_result_analysis.py` 保留原有行为与负例。 |
-| 安装中的 schema/角色/alias/上下文/skeleton/结果注册/claim admission/生成输出业务矩阵 | 对应源码 `test_agent_contract_alignment.py`、`test_role_schema_navigation.py`、`test_evidence_source_capture.py`、`test_general_transform_operations.py`、`test_tcad_scientific_skeleton.py`、`test_tcad_development_delivery.py`、`test_reviewed_claim_admission.py`、`test_tcad_generated_capture.py`；整个安装 catalog 仍与源码 digest/agent_type 精确比对。 |
-| 各插件安装组合的固定完整清单、重复 fake Context 业务、reader 全量字段/补丁矩阵 | 源码 catalog 编译/负例、`test_h2b_domain_boundaries.py`、`test_l1_minimal_runtime_projection.py`、`test_tool_contract_reader.py`、`test_output_schema_reader.py`；安装保留 core/curve 隔离、figure 图片依赖、blind Worker 完成、runtime factory、坏资源及两种独立 reader 脚本 smoke。 |
-| M3 历史动态 19 transform 汇总 runner、固定数量、每项重复 Root/replay/revision/approval | 源码 general transform、M2 parameter/curve、L4 package 业务回归；`test_transform_components.py` 承接原先唯一的 6 种 coverage/realization/curve 组件与 8 类 compiled guard，并逐条断父链验证拒绝。共享科学夹具迁到 `science_fixtures.py`，专用输入在 `transform_fixtures.py`。 |
-| 多份 synthetic analysis/UI runtime 与每种 verdict 的完整 TCAD Run | `test_analysis_decision_contract.py` 的实际完成链路同时验证 UI 原文和读取无副作用；`test_analysis_handoff_report.py` 用共享 finalizer 参数例覆盖四类 verdict，并保留一个真实 TCAD 链路。 |
-| 固定源码类/函数形状、目录行数、已删除文件名称、固定文档清单、固定旧版本/digest | 删除 architecture matrix、adapter-removal、baseline role、general-plugin-split 等历史结构验收；保留 catalog 编译不变性/非法声明、插件加载、领域组合和实际部署事务。具有独立业务/权限含义的断言保留。 |
-| 旧版本 wheel 反复构建与 return 后不可达代码 | dist-info 四组轻量夹具直接检查真实 installer 依赖守卫；独立 TCAD 依赖解析、资源完整性及 source-release 检查保留。 |
-| 产品已删除的旧格式与路由字段 | 删除 Task/envelope UI 两文件、Historical experiment 正例、无 anchors 的打包兼容正例、旧序列化字节保留断言和路由字段夹具；保留当前格式、旧格式拒绝、anchors/proof 拒绝与 compact 无损展开。历史 producer 可读性不等于重新获得资格的负例保留。 |
+从仓库根目录运行；输出目录必须不存在。日志和结果建议放在 `/tmp`：
 
-另外移除 221 个未跟踪缓存/build 文件（8,906,244 字节）。仍有消费者的历史证据夹具与发布范围说明未按名称删除。静态检查不能证明运行通过，也不代表已部署或真实求解器闭环完成。
+```bash
+python scripts/run_tests.py --lane source --per-file --output /tmp/scid-source
+python scripts/run_tests.py --lane source --output /tmp/scid-source-focused tests/operations/test_r3_catalog_authority.py
+python scripts/run_tests.py --lane installed --output /tmp/scid-installed
+python scripts/run_tests.py --lane process --per-file --output /tmp/scid-process
+python scripts/run_tests.py --lane installed --collect-only --output /tmp/scid-installed-collect
+```
+
+`--per-file` 逐文件启动新的 pytest 进程，避免全套运行长期保留模块和 catalog；失败或资源止损立即停止，不自动加额或重试。其他层文件全部被排除时允许 pytest 返回 5，但不会将收集错误视为通过。安装层不接受此选项，以保持一次 session 内的 wheel 复用。精确 `文件::测试名` 也可作为目标。
+
+资源设置来自 [scripts/test_resources.json](../scripts/test_resources.json)，可用 `--config PATH` 提供完整配置或显式覆盖部分 `limits`：
+
+- 每进程地址空间硬上限 2,000,000,000 B；整棵进程树 RSS 采样止损 1,500,000,000 B。
+- 系统可用内存至少 8 GiB、下降不超过 2 GB；Dirty 不超过 128 MiB。
+- 每批 300 秒；数值库线程固定为 1；输出日志预算 8 MiB。
+- 同一用户的所有此类测试共享 `/tmp/scid-tests-UID.lock`，拒绝并行；pytest 也拒绝 xdist 多 worker。
+- 主日志流式写入并严格截到上限；安装子命令日志落盘，由监督器采样总量止损，可能有一个采样周期的超量，不会全量读入内存。
+- 正常退出、超时、信号和监督异常均清理子进程组及已观测的后代。每批临时环境、pip 暂存目录随后删除，保留日志及 `result.json`。
+
+这不是 cgroup 聚合硬隔离：`RLIMIT_AS` 是每进程上限，RSS/系统内存/脏页都是采样保护；瞬间分配和在两次采样间脱离父进程组的未知后代仍有限制。不要据此承诺绝不 OOM。当前 Linux 环境未发现可用的 `memory.max` 控制文件。
+
+CI 使用单独的 [test_resources_ci.json](../scripts/test_resources_ci.json)，只将可用内存门槛显式设为 2 GiB，适配内存小于 8 GiB 的托管 runner；其他上限不变。源码、安装、进程层在每个 job 内顺序执行。不同 Python 版本的 CI job 属于独立主机。
+
+## 标记与安装 fixture
+
+使用 `installed_probe` / `installed_environments` 的测试通过 fixture 依赖闭包自动归入安装层。其他自行构建或安装的测试使用 `@pytest.mark.installed`；真实生命周期使用 `@pytest.mark.process_e2e`；大输入和在线平台分别使用 `stress`、`live_platform`。复合测试选最高成本层：live → stress → installed → process → source。新测试应将收集阶段保持为声明，不在模块顶层启动进程或构建。
+
+`pytest --test-lane installed --collect-only` 可仅收集；真正运行重型层必须经过资源入口。不要将无界 subprocess、网络或安装伪装成普通源码测试。
+
+当前安装证据证明从暂存源码直接构建并安装 wheel。发布入口
+`scripts/build_git_release.py` 生成 Git 源码目录及规范化源码 tar.gz，
+`deploy/install.sh` 从源码目录安装；该 tar.gz 不是 Python sdist。
+当前发布文档没有声明 Python sdist 为交付入口，测试也不覆盖
+`sdist → 解包 → wheel → 安装`。不能用现有 wheel 或 Git 源码发布结果声称
+这条路径已经通过；若将来支持 sdist 交付，需要单独补充受限验证。
+
+安装 fixture 按需构建并缓存 wheel：
+
+- 从已声明的源码/资源根暂存，排除 build、dist、egg-info 和字节码。
+- 解释器使用链接，环境不 bootstrap pip；宿主 pip（22.3+，支持 `--python`）向隔离环境离线安装。
+- 运行依赖先按已安装 distribution 的 RECORD 复制到 session 缓存，各环境使用 hardlink；不能 hardlink 时复制。不会向宿主安装目录写入。
+- 环境保持 `system_site_packages=False`，既验证核心包路径也验证 Pillow 路径确实属于隔离环境。
+- 同时只保留一个安装环境。测试按环境连续组织，避免来回切换重装；多个不同环境的业务矩阵应回到源码层。
+
+历史 R3 精确节点脚本和配置已经被此入口替代。旧计划中的命令是当时的验收记录，不是当前可执行测试清单。运行验证结果由每次 `result.json` 和日志证明，本文不宣称全套已通过。

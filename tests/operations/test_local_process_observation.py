@@ -188,3 +188,7 @@ def test_inherit_policy_keeps_native_raw_default(tmp_path):
     result = subprocess.run([sys.executable, 'tools/local_process_observation.py', '--timeout', '5', '--command',
                              sys.executable, '-c', 'print("x"*150000)'], cwd=root, capture_output=True, timeout=8)
     assert result.returncode == 0 and len(result.stdout) == 150001
+
+
+# These tests exercise real supervised child lifecycle and restart behavior.
+pytestmark = pytest.mark.process_e2e

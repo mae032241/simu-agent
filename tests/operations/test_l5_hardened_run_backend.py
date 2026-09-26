@@ -216,7 +216,8 @@ def test_hardened_transport_completes_the_same_run_without_task_science(
     _write_result(worker)
     assert worker.call_tool("worker_submit_result", {})["state"] == "completed"
     status = root.call_tool("run_status", {'name': "observation", "intent": 'full'})
-    assert status["backend"] == "hardened_worker"
+    assert "backend" not in status
+    assert runtime.runs.status(worker._run_id).backend_id == "hardened_worker"
     assert status["state"] == "completed"
     with pytest.raises(ValueError, match="namespace is invalid"):
         runtime.scheduler_bindings.list(
@@ -302,14 +303,14 @@ def test_hardened_transport_rejects_concurrent_owner_and_recovers_after_lease(
         )
     restarted = _worker(catalog, runtime)
     assert restarted.call_tool("worker_open_assignment", {})["state"] == "opened"
-    with pytest.raises(Exception, match="ownership is stale"):
+    with pytest.raises(Exception, match="control diagnostic"):
         first.call_tool("worker_csv_summarize", {})
-    with pytest.raises(Exception, match="ownership is stale"):
+    with pytest.raises(Exception, match="control diagnostic"):
         first.call_tool(
             "worker_file_write_begin",
             {"relative_path": "output/result.json", "operation": "create"},
         )
-    with pytest.raises(Exception, match="ownership is stale"):
+    with pytest.raises(Exception, match="control diagnostic"):
         first.call_tool("worker_submit_result", {})
     _write_result(restarted)
     assert restarted.call_tool("worker_submit_result", {})["state"] == "completed"
@@ -447,6 +448,7 @@ def test_hardened_server_write_rejects_parent_symlink_escape(tmp_path: Path) -> 
     assert runtime.runs.status(worker._run_id).state == "running"
 
 
+@pytest.mark.process_e2e
 def test_hardened_stdio_process_recovers_the_exact_running_run(
     tmp_path: Path,
 ) -> None:

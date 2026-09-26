@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 
 from .instance_archive_files import hash_file
-from .instance_archive_records import ArchiveError, readonly
+from .instance_archive_records import ArchiveError, TABLES, readonly
 
 
 def _database_service(service, path):
@@ -16,6 +16,20 @@ def _database_service(service, path):
     clone.database_path = path
     clone._connect = lambda **kwargs: readonly(path)
     return clone
+
+
+def _historical_policy_record(connection, execution_id):
+    """Archive-only lookup: pre-policy schemas record no policy authorization.
+
+    A partial modern schema is not historical absence. Let the normal query
+    report missing tables/columns or corruption instead of inventing a result.
+    """
+    from .executions import ExecutionService
+    tables = {row[0] for row in connection.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'")}
+    if not tables.intersection(TABLES["executions"][1:]):
+        return None
+    return ExecutionService._current_policy_record(connection, execution_id)
 
 
 class _ReadOnly:
@@ -71,6 +85,7 @@ def archived_model(runtime, package, manifest):
         approvals.artifacts = artifacts
     executions = _database_service(runtime.executions, package / "records" / "executions.sqlite3")
     if executions is not None:
+        executions._current_policy_record = _historical_policy_record
         executions.artifacts = artifacts
         executions.approvals = approvals
         executions.exchange_root = package / "executions" / "exchange"

@@ -53,6 +53,7 @@ def eventually(predicate):
     assert predicate()
 
 
+@pytest.mark.process_e2e
 @pytest.mark.parametrize('ending', ['eof', 'terminate', 'kill', 'two_clients'])
 def test_real_proxy_idle_presence_disconnect_and_restart(tmp_path, ending):
     socket = tmp_path / 'control.sock'
@@ -84,7 +85,13 @@ UnixSocketDaemon(Path(sys.argv[1]), RootBrokerRouter(lambda _: Router(),
             '--socket', str(socket)]
         proxy = subprocess.Popen(command, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         def rpc(method, client=proxy):
-            client.stdin.write((json.dumps({'jsonrpc':'2.0','id':1,'method':method})+'\n').encode())
+            request = {'jsonrpc': '2.0', 'id': 1, 'method': method}
+            if method == 'tools/call':
+                identity = f'fixture-{client.pid}'
+                request['params'] = {'name': 'scid_call', 'arguments': {'name': 'instance_current'},
+                    '_meta': {'x-codex-turn-metadata': {'session_id': identity,
+                        'thread_id': identity, 'thread_source': 'user'}}}
+            client.stdin.write((json.dumps(request)+'\n').encode())
             client.stdin.flush()
             assert select.select([client.stdout], [], [], 5)[0]
             assert 'result' in json.loads(client.stdout.readline())

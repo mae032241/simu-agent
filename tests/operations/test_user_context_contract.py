@@ -38,10 +38,6 @@ def test_user_context_is_declared_only_on_public_agents():
             assert ("user_context" in output.context_sources) == (output.context_validator is not None)
 
 
-
-
-
-
 def test_background_reference_is_not_a_formal_parameter_source(tmp_path):
     from pathlib import Path
     from scidiscovery.artifact_agent.interfaces.mcp_local_worker import LocalWorkerMCPRouter
@@ -128,7 +124,7 @@ def test_added_text_uses_draft_recovery_and_cannot_change_strict_resume(tmp_path
     assignment = json.loads(Path(new_opened["assignment_path"]).read_bytes())
     original = Path(new_opened["workspace_path"], assignment["recovery_draft"]["relative_path"], "scratch", "saved.json")
     assert original.read_bytes() == scratch.read_bytes()
-    item, = [item for item in assignment["inputs"] if item["port"] == "user_context"]
+    item, = [item for item in assignment["inputs"] if item["source_name"].startswith("user_context")]
     assert Path(new_opened["workspace_path"], item["relative_path"]).read_text().startswith("Continue from")
     write_analysis(new_opened, analysis_report())
     assert worker.call_tool("worker_submit_result", {})["state"] == "completed"

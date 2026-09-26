@@ -423,11 +423,13 @@ def test_candidate_binding_crash_windows_and_response_replay(
     )
     with pytest.raises(WorkerToolError) as error:
         worker.call_tool("worker_submit_result", {})
-    assert error.value.details[0]["message"] == "after seal"
-    diagnostic = root.call_tool("run_status", {"name": "candidate"})["diagnostic_summary"]["latest_tool_error"]
-    assert diagnostic["details"][0]["message"] == "after seal"
-    assert "after seal" in root.call_tool("diagnostic_read", {
-        "reference": diagnostic["engineering"]["reference"], "section": "traceback"})["text"]
+    assert "after seal" not in str(error.value.details)
+    current = runtime.runs.status(worker._run_id)
+    diagnostic = runtime.runs.diagnostic_summary(current)["latest_tool_error"]
+    assert diagnostic["engineering"]["reference"]
+    from scidiscovery.artifact_agent.service.engineering_diagnostics import EngineeringDiagnostics
+    store = EngineeringDiagnostics(runtime.runs.database_path.parent.parent / "engineering-diagnostics")
+    assert "after seal" in store.read(diagnostic["engineering"]["reference"], scopes=("instance:" + current.instance_id,))["text"]
     status = runtime.runs.status(runtime.scheduler_bindings.resolve(
         instance=runtime.scheduler_bindings.list_instances()[0].instance_id,
         namespace="run",
@@ -460,8 +462,9 @@ def test_candidate_binding_crash_windows_and_response_replay(
     )
     with pytest.raises(WorkerToolError) as error:
         second_worker.call_tool("worker_submit_result", {})
-    assert error.value.details[0]["message"] == "after artifact"
-    assert root.call_tool("run_status", {"name": "artifact_window"})["diagnostic_summary"]["latest_tool_error"]["details"][0]["message"] == "after artifact"
+    assert "after artifact" not in str(error.value.details)
+    diagnostic = runtime.runs.diagnostic_summary(runtime.runs.status(second_worker._run_id))["latest_tool_error"]
+    assert "after artifact" in store.read(diagnostic["engineering"]["reference"], scopes=("instance:" + current.instance_id,))["text"]
     before = len(runtime.artifacts.list_artifacts(kind="observation", limit=100))
     monkeypatch.setattr(runtime.runs, "_complete", original_complete)
     assert second_worker.call_tool("worker_submit_result", {})["state"] == "completed"
@@ -793,8 +796,8 @@ def test_source_projection_generation_handles_old_run_without_reusing_it(
     assert old_compiled.spec.version == new_compiled.spec.version
     assert old_compiled.digest != new_compiled.digest
     assert (
-        old_catalog.operation("science.experiment.design.v1").digest
-        == new_catalog.operation("science.experiment.design.v1").digest
+        old_catalog.operation("science.experiment.v1").digest
+        == new_catalog.operation("science.experiment.v1").digest
     )
 
     runtime, instance, old_root = _audit_runtime(tmp_path, old_catalog)
@@ -884,7 +887,8 @@ def test_source_projection_generation_handles_old_run_without_reusing_it(
         failed = new_root.call_tool("run_record_failure", failure_request)
         assert failed["state"] == "failed"
         assert failed["recovery_available"] is False
-        assert failed["recovery"]["recovery_pending"] is True
+        assert "recovery" not in failed
+        assert restarted.runs.recovery_status(restarted.runs.status(run_id))["recovery_pending"] is True
         # An unavailable contract cannot authorize deleting even a queued workspace.
         retained = restarted.runs.backend.open(run_id)
         if old_state != "queued":
@@ -1037,6 +1041,7 @@ def test_control_startup_reconciles_only_expired_active_runs(
         assert runtime.runs.reconcile_expired_active() == 0
 
 
+@pytest.mark.process_e2e
 def test_real_control_daemon_reconciles_expired_run_before_proxy_serves(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1242,6 +1247,7 @@ def test_untrusted_input_content_cannot_expand_compiled_run_authority(
     assert set(config["mcp_servers"]) == {"scidiscovery"}
 
 
+@pytest.mark.process_e2e
 def test_real_stdio_worker_process_opens_calls_registered_tool_and_submits(
     tmp_path: Path,
 ) -> None:
@@ -1305,6 +1311,7 @@ def test_real_stdio_worker_process_opens_calls_registered_tool_and_submits(
     assert runtime.artifacts.get_by_id(output_id).parent_refs
 
 
+@pytest.mark.process_e2e
 def test_real_process_failure_isolation_windows_replay_after_restart(
     tmp_path: Path,
 ) -> None:
@@ -1353,11 +1360,21 @@ def test_real_process_failure_isolation_windows_replay_after_restart(
         with pytest.raises(WorkerToolError) as error:
             worker.call_tool("worker_heartbeat", {})
         assert error.value.details[0]["type"] == "RunStateConflict"
-        assert "failed" in error.value.details[0]["message"]
-        after_late_call = root.call_tool("run_status", {"name": name, "diagnostic_after": 0})
+        safe_message = "The configured service could not complete this action."
+        assert error.value.details[0]["message"] == safe_message
+        after_late_call = root.call_tool("run_status", {"name": name, "intent": "status", "diagnostic_after": 0})
         assert after_late_call["state"] == "failed"
-        assert "failed" in after_late_call["diagnostic_summary"]["latest_tool_error"]["details"][0]["message"]
-        assert after_late_call["diagnostic_events"]["events"][-1]["activity"] == "tool_failed"
+        event = after_late_call["diagnostic_events"]["events"][-1]
+        assert event["diagnostic"]["details"][0]["message"] == "Value violates the declared type, bounds, or field relationship."
+        assert "engineering" not in event["diagnostic"]
+        current = runtime.runs.status(run_id)
+        internal = runtime.runs.diagnostic_events(current)["events"][-1]
+        assert internal["activity"] == "tool_failed"
+        diagnostic = runtime.runs.diagnostic_summary(current)["latest_tool_error"]
+        from scidiscovery.artifact_agent.service.engineering_diagnostics import EngineeringDiagnostics
+        store = EngineeringDiagnostics(runtime.state_root / "engineering-diagnostics")
+        saved = store.read(diagnostic["engineering"]["reference"], scopes=("instance:" + current.instance_id,))
+        assert "RunStateConflict" in saved["text"] and "failed" in saved["text"]
         first_manifest = runtime.runs.status(run_id).recovery_draft
         root.call_tool(
             "run_record_failure",

@@ -73,9 +73,12 @@ def test_finalizer_failure_keeps_category_and_bounded_reason_through_control(tmp
         assert caught.value.category == category
     status = system[2].call_tool('run_status', {'name': 'analysis'})
     assert status['state'] == 'failed'
-    assert status['reason'] == 'Run validation framework failure: ' + reason[:512]
-    assert status['diagnostic_summary']['failure']['category'] == category
-    assert status['diagnostic_summary']['rejection_count'] == 0
+    assert reason[:64] not in status['reason']
+    control = runs.status(worker._run_id)
+    assert control.reason == 'Run validation framework failure: ' + reason[:512]
+    diagnostic = runs.diagnostic_summary(control)
+    assert diagnostic['failure']['category'] == category
+    assert diagnostic['rejection_count'] == 0
 
 
 def test_unclassified_run_failure_is_runtime_failure_and_timeout_keeps_deadline_gate(tmp_path):
@@ -124,7 +127,7 @@ def test_argument_rejection_is_receipted_before_read_and_sealed_without_raw_file
     assert "error" in response and "result" not in response
     details = response["error"]["data"]
     assert details["diagnostics"][0]["path"] == "$.record_key"
-    assert "attempt" not in details
+    assert details["attempt"] == {"manifest_alias": "tool_recovery_manifest", "attempt_key": "attempt_001"}
     runs = system[1].runs
     snapshot = runs._evidence_snapshot(worker._run_id)
     assert b"DO_NOT_RECORD_REJECTED_VALUE" not in snapshot
@@ -140,7 +143,9 @@ def test_argument_rejection_is_receipted_before_read_and_sealed_without_raw_file
     assert submitted["state"] == "completed", submitted
     # Completion publishes the same manifest, even with no collected raw files.
     status = system[2].call_tool("run_status", {'name': "analysis", "intent": 'navigation'})
-    assert len(status["evidence_outputs"]) == 1
+    assert status.get("evidence_outputs", []) == []
+    assert any(ref.schema_id == "scidiscovery.tool-evidence-manifest.v1"
+               for ref in runs.artifacts.catalog(runs.status(worker._run_id).output_ref).parent_refs)
     assert json.loads(runs._evidence_snapshot(worker._run_id)) == json.loads(snapshot)
     with pytest.raises(RunStateConflict):
         runs.begin_tool_attempt(worker._run_id, worker._registered["worker_tcad_curve_score"], {})

@@ -28,9 +28,8 @@ Cite key evidence; use optional limitations for restrictions and actual anomalie
 Write remaining_contradiction and next_action only when needed. Gates and separate
 hypothesis assessments are optional, not a required six-layer form. For a new
 diagnosis, use its exact scoped plan (the bound experiment_plan, or the plan inside
-the fixed curve-analysis package): when objective_key is non-null, include
-objective_assessment with that exact key; when it is null, the assessment is optional
-and no key may be invented. not_evaluable is valid when the evidence or task scope
+the fixed curve-analysis package): objective_assessment is optional; if supplied,
+it must use that plan’s exact non-null objective_key. No key may be invented. not_evaluable is valid when the evidence or task scope
 cannot assess the objective. next_action is non-authoritative Worker advice.
 Keep claim_allowed explicit; no omitted gate implies success. Detailed numbers,
 scripts and plots belong in controlled evidence files. For a LayeredDiagnosisReport

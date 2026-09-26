@@ -13,7 +13,7 @@ from ..schema.artifact import ArtifactRegistration
 from ..schema.common import canonical_json
 from ..schema.refs import ArtifactRef
 from .run_outputs import InputBindingDescriptor, RunCheckerError
-from .run_records import RunError, RunStateConflict
+from .run_records import RunError, RunStateConflict, RunContractUnavailable
 from .reference_access import ReferenceAccessMixin
 
 
@@ -583,7 +583,13 @@ class ToolEvidenceMixin(ReferenceAccessMixin):
         for ref in self.artifacts.catalog(value.output_ref).parent_refs:
             if (ref.schema_id=='scidiscovery.tool-evidence-manifest.v1'
                     and self.artifacts.catalog(ref).labels.get('tool_producer_run') == value.run_id):
-                manifest_port = next((port for port in self._compiled(value).spec.outputs
+                try:
+                    compiled = self._compiled(value)
+                except RunContractUnavailable:
+                    # Historical science remains readable; a missing current
+                    # visibility contract cannot expose private control receipts.
+                    continue
+                manifest_port = next((port for port in compiled.spec.outputs
                     if port.name == "recovery_manifest_output"), None)
                 if manifest_port is not None and manifest_port.agent_visible:
                     refs.append(('recovery_manifest',ref))
