@@ -8,7 +8,6 @@ from typing import Any, Protocol
 
 from ..schema.approval import ApprovalOption, CompiledApprovalIdentity, ReviewDocument
 from ..schema.artifact import ArtifactRegistration
-from ..schema.refs import ArtifactRef
 from ..schema.common import canonical_sha256
 from ..service.scheduler_bindings import SchedulerNameConflict
 from ..service.run_records import RunAttemptLimit
@@ -21,9 +20,6 @@ from ...operations.invoke import (
     InvocationArtifact,
     OperationInvocationError,
     OperationEngineeringError,
-    ProducerEvidenceSource,
-    ProducerFamilyMember,
-    ProducerInputProjection,
     ProducerOutputFamily,
     active_direct_revision_ports,
     direct_revision_ports,
@@ -333,6 +329,7 @@ class RootOperationRoutes:
     ) -> tuple[str | None, str | None, str | None, str, _CreationTarget]:
         if self.runs is None:
             raise OperationInvocationError("runtime_backend_unavailable")
+        self.runs.validate_input_bindings(bound, instance_id=self._instance_id())
         resume_run_id = (
             None if resume_from is None else self._resolve("run", resume_from)
         )
@@ -581,371 +578,22 @@ class RootOperationRoutes:
             by_members[member_key] = family
         return tuple(by_members.values())
 
-    def _producer_output_family_from_envelope(
-        self,
-        artifact_name: str,
-        envelope: Any,
-    ) -> ProducerOutputFamily | None:
-        run_family = self._run_output_family(envelope)
-        if run_family is not None:
-            return run_family
-        return self._transform_output_family(artifact_name, envelope)
+    def _input_origins(self):
+        from ..service.operation_origins import OperationOrigins
+        return OperationOrigins(artifacts=self.artifacts, bindings=self.bindings,
+            runs=self.runs, catalog=self._operation_catalog, instance_id=self._instance_id())
 
-    def _run_output_family(self, envelope: Any) -> ProducerOutputFamily | None:
-        if self.runs is None:
-            return None
-        status = self.runs.completed_for_output(envelope.ref)
-        if status is None or status.output_ref is None:
-            return None
-        is_primary_output = status.output_ref == envelope.ref
-        if not is_primary_output and not any(
-            ref == envelope.ref for _, ref in self.runs.evidence_output_refs(status)
-        ):
-            return None
-        if any(envelope.labels.get(key) != expected for key, expected in (
-            ("operation_id", status.operation_id),
-            ("operation_version", status.operation_version),
-            ("operation_digest", status.operation_digest),
-        )):
-            raise OperationInvocationError("producer_family_inconsistent")
-        port_name = envelope.labels.get("operation_output_port")
-        counts: dict[str, int] = {}
-        producer_inputs = []
-        for item in status.inputs:
-            counts[item.port_name] = counts.get(item.port_name, 0) + 1
-            producer_inputs.append(
-                ProducerInputProjection(
-                    port_name=item.port_name,
-                    item_index=counts[item.port_name],
-                    ref=item.artifact_ref,
-                    artifact_name=item.artifact_name,
-                    source_name=item.source_name,
-                )
-            )
-        sources = tuple(
-            ProducerEvidenceSource(
-                source_kind="run_input",
-                source_name=value.source_name,
-                ref=value.artifact_ref,
-            )
-            for value in status.inputs
-            if value.usage
-            in {"claim_evidence", "evidence_inventory", "cached_excerpt"}
-        )
-        family_identity = canonical_sha256(
-            {
-                "producer": "run",
-                "operation": status.operation_id,
-                "operation_version": status.operation_version,
-                "operation_digest": status.operation_digest,
-                "run_id": status.run_id,
-                "primary_ref": status.output_ref,
-            }
-        )
-        try:
-            producer = self._operation_catalog.operation(status.operation_id)
-        except KeyError:
-            producer = None
-        if (
-            producer is None
-            or producer.spec.version != status.operation_version
-            or producer.digest != status.operation_digest
-        ):
-            return ProducerOutputFamily(
-                primary_ref=status.output_ref,
-                operation_id=status.operation_id,
-                operation_version=status.operation_version,
-                operation_digest=status.operation_digest,
-                producer_kind="run",
-                producer_instance_id=status.instance_id,
-                producer_run_id=status.run_id,
-                contract_availability="historical",
-                unavailable_reason="producer_contract_unavailable",
-                members=(
-                    ProducerFamilyMember(port_name=port_name, item_name=None, ref=envelope.ref),
-                ) if isinstance(port_name, str) else (),
-                evidence_sources=sources,
-                producer_inputs=tuple(producer_inputs),
-                family_identity=family_identity,
-            )
-        if producer.spec.executor.kind != "agent":
-            return None
-        selected_port = next(
-            (
-                port
-                for port in producer.spec.outputs
-                if port.name == port_name
-                and ((port.collection is None) == is_primary_output)
-            ),
-            None,
-        )
-        if selected_port is None or not self._artifact_matches_output_port(
-            envelope, selected_port
-        ):
-            return None
-        return ProducerOutputFamily(
-            primary_ref=status.output_ref,
-            operation_id=producer.spec.operation_id,
-            operation_version=status.operation_version,
-            operation_digest=status.operation_digest,
-            producer_kind="run",
-            producer_instance_id=status.instance_id,
-            producer_run_id=status.run_id,
-            contract_availability="current",
-            unavailable_reason=None,
-            members=(
-                ProducerFamilyMember(
-                    port_name=selected_port.name,
-                    item_name=None,
-                    ref=envelope.ref,
-                ),
-            ),
-            evidence_sources=sources,
-            producer_inputs=tuple(producer_inputs),
-            reviewer_operation=(
-                producer.spec.review.reviewer_operation
-                if producer.spec.review is not None
-                else None
-            ),
-            review_subject_outputs=(
-                producer.spec.review.subject_outputs
-                if producer.spec.review is not None
-                else ()
-            ),
-            family_identity=family_identity,
-        )
+    def _producer_output_family_from_envelope(self, artifact_name, envelope):
+        return self._input_origins()._producer_output_family_from_envelope(artifact_name, envelope)
 
-    def _transform_output_family(
-        self,
-        artifact_name: str,
-        envelope: Any,
-    ) -> ProducerOutputFamily | None:
-        labels = envelope.labels
-        operation_id = labels.get("operation_id")
-        operation_version = labels.get("operation_version")
-        operation_digest = labels.get("operation_digest")
-        invocation_fingerprint = labels.get("operation_invocation_fingerprint")
-        if (
-            not isinstance(operation_id, str)
-            or not isinstance(operation_version, str)
-            or not isinstance(operation_digest, str)
-            or not isinstance(invocation_fingerprint, str)
-            or labels.get("transform_profile") != operation_id
-        ):
-            return None
-        family_identity = canonical_sha256(
-            {
-                "producer": "transform",
-                "operation": operation_id,
-                "operation_version": operation_version,
-                "operation_digest": operation_digest,
-                "invocation_fingerprint": invocation_fingerprint,
-                "ordered_parents": envelope.parent_refs,
-            }
-        )
+    def _run_output_family(self, envelope):
+        return self._input_origins()._run_output_family(envelope)
 
-        instance_bindings = self.bindings.list(
-            instance=self._instance_id(), namespace="artifact"
-        )
-        subject_bindings = tuple(
-            binding
-            for binding in instance_bindings
-            if binding.object_id == envelope.artifact_id
-        )
-        if not any(
-            binding.name == artifact_name
-            and binding.request_fingerprint == invocation_fingerprint
-            for binding in subject_bindings
-        ):
-            return None
-        siblings: dict[str, Any] = {}
-        for binding in instance_bindings:
-            if binding.request_fingerprint != invocation_fingerprint:
-                continue
-            candidate = self.artifacts.get_by_id(binding.object_id)
-            candidate_labels = candidate.labels
-            if candidate.parent_refs != envelope.parent_refs or any(
-                candidate_labels.get(key) != expected
-                for key, expected in (
-                    ("operation_id", operation_id),
-                    ("operation_version", operation_version),
-                    ("operation_digest", operation_digest),
-                    ("transform_profile", operation_id),
-                    ("operation_invocation_fingerprint", invocation_fingerprint),
-                )
-            ):
-                raise OperationInvocationError("producer_family_inconsistent")
-            output_label = candidate_labels.get("output_label")
-            if not isinstance(output_label, str):
-                raise OperationInvocationError("producer_family_inconsistent")
-            existing = siblings.get(output_label)
-            if existing is not None and existing.ref != candidate.ref:
-                raise OperationInvocationError("producer_family_inconsistent")
-            siblings[output_label] = candidate
-        if "primary" not in siblings or envelope.ref not in {
-            value.ref for value in siblings.values()
-        }:
-            return None
+    def _transform_output_family(self, artifact_name, envelope):
+        return self._input_origins()._transform_output_family(artifact_name, envelope)
 
-        def unavailable(reason: str) -> ProducerOutputFamily:
-            return ProducerOutputFamily(
-                primary_ref=siblings["primary"].ref,
-                operation_id=operation_id,
-                operation_version=operation_version,
-                operation_digest=operation_digest,
-                producer_kind="transform",
-                producer_instance_id=self._instance_id(),
-                producer_run_id=None,
-                contract_availability="historical",
-                unavailable_reason=reason,
-                members=(),
-                evidence_sources=(),
-                producer_inputs=(),
-                family_identity=family_identity,
-            )
-        try:
-            compiled = self._operation_catalog.operation(operation_id)
-        except KeyError:
-            return unavailable("producer_contract_unavailable")
-        if (
-            compiled.spec.version != operation_version
-            or compiled.digest != operation_digest
-            or compiled.spec.executor.kind != "transform"
-        ):
-            return unavailable("producer_contract_unavailable")
-        input_groups = self._transform_input_groups(compiled, envelope.parent_refs)
-        if input_groups is None:
-            return unavailable("producer_input_mapping_ambiguous")
-        ordered_members = self._validated_transform_members(compiled, siblings)
-        if ordered_members is None:
-            return None
-        return ProducerOutputFamily(
-            primary_ref=siblings["primary"].ref,
-            operation_id=operation_id,
-            operation_version=operation_version,
-            operation_digest=operation_digest,
-            producer_kind="transform",
-            producer_instance_id=self._instance_id(),
-            producer_run_id=None,
-            contract_availability="current",
-            unavailable_reason=None,
-            members=ordered_members,
-            evidence_sources=(),
-            producer_inputs=tuple(
-                ProducerInputProjection(
-                    port_name=port.name,
-                    item_index=index,
-                    ref=item.ref,
-                )
-                for port in compiled.spec.inputs
-                for index, item in enumerate(input_groups[port.name], start=1)
-            ),
-            reviewer_operation=(
-                compiled.spec.review.reviewer_operation
-                if compiled.spec.review is not None
-                else None
-            ),
-            review_subject_outputs=(
-                compiled.spec.review.subject_outputs
-                if compiled.spec.review is not None
-                else ()
-            ),
-            family_identity=family_identity,
-        )
-
-    def _transform_input_groups(
-        self, compiled: Any, parent_refs: tuple[Any, ...]
-    ) -> dict[str, tuple[Any, ...]] | None:
-        if len(parent_refs) != len(set(parent_refs)):
-            return None
-        envelopes = tuple(self.artifacts.verify(ref) for ref in parent_refs)
-        ports = compiled.spec.inputs
-        solutions: list[dict[str, tuple[Any, ...]]] = []
-
-        def visit(port_index: int, offset: int, values: dict[str, tuple[Any, ...]]) -> None:
-            if len(solutions) > 1:
-                return
-            if port_index == len(ports):
-                if offset == len(envelopes):
-                    solutions.append(dict(values))
-                return
-            port = ports[port_index]
-            remaining_min = sum(item.min_items for item in ports[port_index + 1 :])
-            remaining_max = sum(item.max_items for item in ports[port_index + 1 :])
-            lower = max(port.min_items, len(envelopes) - offset - remaining_max)
-            upper = min(port.max_items, len(envelopes) - offset - remaining_min)
-            for count in range(lower, upper + 1):
-                selected = envelopes[offset : offset + count]
-                if not all(self._artifact_matches_input_port(item, port) for item in selected):
-                    continue
-                values[port.name] = selected
-                visit(port_index + 1, offset + count, values)
-            values.pop(port.name, None)
-
-        visit(0, 0, {})
-        return solutions[0] if len(solutions) == 1 else None
-
-    def _validated_transform_members(
-        self, compiled: Any, siblings: dict[str, Any]
-    ) -> tuple[ProducerFamilyMember, ...] | None:
-        by_port: dict[str, list[Any]] = {}
-        valid_ports = {port.name for port in compiled.spec.outputs}
-        for candidate in siblings.values():
-            port_name = candidate.labels.get("operation_output_port")
-            if port_name not in valid_ports:
-                return None
-            by_port.setdefault(port_name, []).append(candidate)
-        expected_labels: list[tuple[str, str, int]] = []
-        output_count = 0
-        for port in compiled.spec.outputs:
-            values = by_port.get(port.name, [])
-            if not port.min_items <= len(values) <= port.max_items:
-                return None
-            if not all(self._artifact_matches_output_port(item, port) for item in values):
-                return None
-            for index in range(1, len(values) + 1):
-                label = (
-                    "primary"
-                    if output_count == 0
-                    else port.name
-                    if port.collection is None and len(values) == 1
-                    else f"{port.name}_{index:03d}"
-                )
-                expected_labels.append((label, port.name, index))
-                output_count += 1
-        if {label for label, _, _ in expected_labels} != set(siblings):
-            return None
-        if any(
-            siblings[label].labels.get("operation_output_port") != port_name
-            for label, port_name, _ in expected_labels
-        ):
-            return None
-        return tuple(
-            ProducerFamilyMember(
-                port_name=port_name,
-                item_name=(None if label == "primary" else label),
-                ref=siblings[label].ref,
-            )
-            for label, port_name, _ in expected_labels
-        )
-
-    @staticmethod
-    def _artifact_matches_input_port(envelope: Any, port: Any) -> bool:
-        return bool(
-            (port.schema_id == "*" or envelope.schema_id == port.schema_id)
-            and (port.media_types == ("*/*",) or envelope.media_type in port.media_types)
-            and envelope.size_bytes <= port.max_item_bytes
-        )
-
-    @staticmethod
-    def _artifact_matches_output_port(envelope: Any, port: Any) -> bool:
-        return bool(
-            envelope.kind == port.kind
-            and envelope.schema_id == port.schema_id
-            and envelope.payload_schema_version == port.payload_schema_version
-            and envelope.media_type in port.media_types
-            and envelope.size_bytes <= port.max_item_bytes
-        )
+    def _transform_input_groups(self, compiled, parent_refs):
+        return self._input_origins()._transform_input_groups(compiled, parent_refs)
 
     def _effect_operation_plan(
         self, bound: BoundOperationCall
@@ -976,11 +624,8 @@ class RootOperationRoutes:
         profile = bound.compiled.spec.operation_id
         inputs = bound.inputs
         source_names = tuple(item.source_name for item in inputs)
-        artifact_names = tuple(item.artifact_name for item in inputs)
         if len(source_names) != len(set(source_names)):
             raise RootToolError("transform source names must be unique")
-        if len(artifact_names) != len(set(artifact_names)):
-            raise RootToolError("transform artifacts must be unique")
         allowed_nonqualifying = frozenset(
             item.source_name
             for item in inputs
@@ -988,17 +633,7 @@ class RootOperationRoutes:
             or item.usage != "claim_evidence"
         )
 
-        envelopes = tuple(
-            self.artifacts.get_by_id(
-                self._resolve_input_artifact(
-                    item.artifact_name,
-                    allow_nonqualifying=(
-                        item.source_name in allowed_nonqualifying
-                    ),
-                )
-            )
-            for item in inputs
-        )
+        envelopes = tuple(self.artifacts.verify(item.artifact.ref) for item in inputs)
         derived_from_nonqualifying = any(
             item.source_name in allowed_nonqualifying
             and (
@@ -1049,40 +684,70 @@ class RootOperationRoutes:
         parent_refs = tuple(envelope.ref for envelope in envelopes)
         with self._create_lock:
             target = self._creation_target("artifact", name, fingerprint, on_conflict)
-            registered = []
+            planned = []
             for output in outputs:
                 output_name = (
                     target.name
                     if output.label == "primary"
                     else _derived_name(target.name, output.label)
                 )
+                registration = ArtifactRegistration(
+                    kind=output.kind,
+                    schema_id=output.schema,
+                    payload_schema_version=output.payload_schema_version,
+                    media_type=output.media_type,
+                    creator=self.intake.creator,
+                    parent_refs=parent_refs,
+                    labels={
+                        "transform_profile": profile,
+                        "output_label": output.label,
+                        "operation_invocation_fingerprint": fingerprint,
+                        "operation_invocation_name": target.name,
+                        "operation_invocation_instance": self._instance_id(),
+                        **(
+                            {"operation_output_port": output.port_name}
+                            if output.port_name is not None else {}
+                        ),
+                        **_operation_artifact_labels(bound),
+                        **(
+                            {"scientific_claim_admissible": "false"}
+                            if derived_from_nonqualifying
+                            else {}
+                        ),
+                    },
+                )
                 existing_id = self._optional("artifact", output_name)
-                if existing_id is None:
+                envelope = None
+                if existing_id is not None:
+                    binding = self._binding("artifact", output_name)
+                    envelope = self.artifacts.get_by_id(existing_id)
+                    # Equal payload bytes do not establish producer identity.
+                    # Old outputs lack invocation labels but retain exact names,
+                    # fingerprints, parents and all other producer metadata.
+                    expected_labels = dict(registration.labels)
+                    for key in ("operation_invocation_name", "operation_invocation_instance"):
+                        if key not in envelope.labels:
+                            expected_labels.pop(key)
+                    if (
+                        binding.request_fingerprint != fingerprint
+                        or envelope.parent_refs != parent_refs
+                        or any(getattr(envelope, key) != getattr(registration, key) for key in (
+                            "kind", "schema_id", "payload_schema_version", "media_type", "content_encoding"))
+                        or any(envelope.labels.get(key) != value for key, value in expected_labels.items())
+                        or envelope.labels.get("scientific_claim_admissible") != registration.labels.get("scientific_claim_admissible")
+                        or self.artifacts.read(envelope.ref) != output.content
+                    ):
+                        raise SchedulerNameConflict(
+                            f"transform output name belongs to different immutable content: {output_name}"
+                        )
+                planned.append((output, output_name, registration, envelope))
+            # Check the entire namespace before creating any family member.
+            registered = []
+            for output, output_name, registration, envelope in planned:
+                if envelope is None:
                     envelope = self.artifacts.register(
                         output.content,
-                        ArtifactRegistration(
-                            kind=output.kind,
-                            schema_id=output.schema,
-                            payload_schema_version=output.payload_schema_version,
-                            media_type=output.media_type,
-                            creator=self.intake.creator,
-                            parent_refs=parent_refs,
-                            labels={
-                                "transform_profile": profile,
-                                "output_label": output.label,
-                                "operation_invocation_fingerprint": fingerprint,
-                                **(
-                                    {"operation_output_port": output.port_name}
-                                    if output.port_name is not None else {}
-                                ),
-                                **_operation_artifact_labels(bound),
-                                **(
-                                    {"scientific_claim_admissible": "false"}
-                                    if derived_from_nonqualifying
-                                    else {}
-                                ),
-                            },
-                        ),
+                        registration,
                         idempotency_key=(
                             "artifact-transform:"
                             + canonical_sha256(
@@ -1107,11 +772,6 @@ class RootOperationRoutes:
                             request_fingerprint=fingerprint,
                         )
                 else:
-                    envelope = self.artifacts.get_by_id(existing_id)
-                    if self.artifacts.read(envelope.ref) != output.content:
-                        raise RootToolError(
-                            "existing transform output differs from deterministic result"
-                        )
                     binding = self._binding("artifact", output_name)
                 registered.append(
                     {
@@ -1126,100 +786,7 @@ class RootOperationRoutes:
         return {"name": target.name, "profile": profile, "outputs": registered}
 
     def _derive_operation_inputs(self, compiled, resolved):
-        """Resolve only declared producer edges of exact selected immutable anchors."""
-        ports = {port.name: port for port in compiled.spec.inputs}
-        def bind(port):
-            if port.name in resolved or port.derivation is None:
-                return
-            rule = port.derivation
-            bind(ports[rule.anchor_port])
-            anchors = resolved.get(rule.anchor_port, ())
-            if not anchors and port.min_items == 0:
-                resolved[port.name] = ()
-                return
-            def reject(reason):
-                raise OperationInvocationError(reason, port=rule.anchor_port,
-                    message="The selected scientific subject has missing, ambiguous or inaccessible original materials. Select a subject with its sealed producer history; no newer material is substituted.")
-            if len(anchors) != 1:
-                reject("input_origin_ambiguous" if anchors else "input_origin_missing")
-            def family_for(ref):
-                name = self.bindings.find_name(instance=self._instance_id(),
-                    namespace="artifact", object_id=ref.artifact_id)
-                if name is None:
-                    reject("input_origin_unavailable")
-                self.artifacts.verify(ref)
-                return self._producer_output_family_from_envelope(name, self.artifacts.catalog(ref))
-            refs = [anchors[0].ref]
-            for edge in rule.producer_input_path:
-                following = []
-                for ref in refs:
-                    family = family_for(ref)
-                    if family is None or family.producer_instance_id != self._instance_id():
-                        reject("input_origin_unavailable")
-                    following.extend(item.ref for item in family.producer_inputs if item.port_name == edge)
-                refs = list(dict.fromkeys(following))
-                if not refs:
-                    reject("input_origin_missing")
-            if rule.select != "subject":
-                if len(refs) != 1:
-                    reject("input_origin_ambiguous")
-                family = family_for(refs[0])
-                if family is None or family.producer_instance_id != self._instance_id() or family.contract_availability != "current":
-                    reject("input_origin_unavailable")
-                refs = ([item.ref for item in family.members if item.ref != family.primary_ref]
-                        if rule.select == "siblings" else [item.ref for item in family.evidence_sources])
-                refs = list(dict.fromkeys(refs))
-            private_names = {}
-            if rule.producer_output_port is not None:
-                if len(refs) != 1:
-                    reject("input_origin_ambiguous")
-                family = family_for(refs[0])
-                if family is None or family.contract_availability != "current" or family.producer_instance_id != self._instance_id():
-                    reject("input_origin_unavailable")
-                producer = self._operation_catalog.operation(family.operation_id)
-                declared = next((item for item in producer.spec.outputs if item.name == rule.producer_output_port), None)
-                if declared is None:
-                    reject("input_origin_output_undeclared")
-                if family.producer_run_id is None:
-                    candidates = [item.ref for item in family.members if item.port_name == declared.name]
-                else:
-                    original = self.runs.status(family.producer_run_id)
-                    if original.state != "completed" or original.output_ref != family.primary_ref:
-                        reject("input_origin_unavailable")
-                    exact_evidence = {ArtifactRef.model_validate(item["artifact_ref"])
-                        for item in self.runs.tool_evidence(original.run_id)}
-                    candidates = [original.output_ref, *self.artifacts.catalog(original.output_ref).parent_refs]
-                    candidates.extend(ref for _, ref in self.runs.evidence_output_refs(original))
-                    candidates = [ref for ref in dict.fromkeys(candidates)
-                        if self.artifacts.catalog(ref).labels.get("operation_output_port") == declared.name
-                        and self.artifacts.catalog(ref).labels.get("operation_digest") == original.operation_digest
-                        and (ref == original.output_ref
-                            or self.artifacts.catalog(ref).labels.get("tool_producer_run") == original.run_id
-                            or (declared.name == "tool_evidence" and ref in exact_evidence))]
-                refs = list(dict.fromkeys(candidates))
-                # Private artifacts deliberately have no public name binding.
-                private_names = {ref: anchors[0].artifact_name for ref in refs} if not port.agent_visible else {}
-            if len(refs) < port.min_items or len(refs) > port.max_items:
-                reject("input_origin_ambiguous" if len(refs) > port.max_items else "input_origin_missing")
-            values = []
-            for ref in refs:
-                name = private_names.get(ref) or self.bindings.find_name(instance=self._instance_id(), namespace="artifact", object_id=ref.artifact_id)
-                if name is None:
-                    reject("input_origin_unavailable")
-                envelope = self.artifacts.catalog(ref)
-                self.artifacts.verify(ref)
-                family = self._producer_output_family_from_envelope(name, envelope) if ref not in private_names else family
-                signal = self.runs.signal_for_output(ref, require_current=False) if self.runs else None
-                values.append(InvocationArtifact(artifact_name=name, ref=ref, schema_id=envelope.schema_id,
-                    media_type=envelope.media_type, size_bytes=envelope.size_bytes,
-                    current=self.runs.input_is_current(instance_id=self._instance_id(), artifact_name=name, artifact_ref=ref) if self.runs else False,
-                    parent_refs=envelope.parent_refs, labels=tuple(sorted(envelope.labels.items())),
-                    historical=self._is_historical(envelope), handoff_verdict=signal.verdict if signal else None,
-                    producer_run_id=family.producer_run_id if family else None,
-                    producer_inputs=tuple((item.port_name,item.ref) for item in family.producer_inputs) if family else None))
-            resolved[port.name] = tuple(values)
-        for port in compiled.spec.inputs:
-            bind(port)
+        return self._input_origins()._derive_operation_inputs(compiled, resolved)
 
     def _prepare_operation_call(
         self,
@@ -1815,18 +1382,8 @@ class RootOperationRoutes:
             )
         return tuple(item.artifact.ref for item in change_requests)
 
-    def _is_historical(self, envelope: Any) -> bool:
-        operation_id = envelope.labels.get("operation_id")
-        if operation_id is None:
-            return False
-        try:
-            producer = self._operation_catalog.operation(operation_id)
-        except KeyError:
-            return True
-        return (
-            envelope.labels.get("operation_version") != producer.spec.version
-            or envelope.labels.get("operation_digest") != producer.digest
-        )
+    def _is_historical(self, envelope):
+        return self._input_origins()._is_historical(envelope)
 
     def _operation_output_contract(
         self, artifact: InvocationArtifact, *, allow_historical: bool = False

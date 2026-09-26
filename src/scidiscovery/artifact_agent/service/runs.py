@@ -57,6 +57,7 @@ from .run_outputs import (
     validate_run_output,
 )
 from .run_records import (
+    RUN_READ_COLUMNS,
     RunCompletionReceipt,
     RunContractUnavailable,
     RunError,
@@ -174,6 +175,38 @@ class RunService(ToolEvidenceMixin):
                 "sources": {key: "legacy_recovery_default" if source else resolved["sources"][key]
                             for key in ExecutionProfile.model_fields}, "default_max_attempts": budget}
 
+    @staticmethod
+    def _input_bindings(bound):
+        compiled = bound.compiled
+        return tuple(
+            RunInputBinding(
+                port_name=item.port_name,
+                source_name=item.source_name,
+                artifact_name=item.artifact_name,
+                artifact_ref=item.artifact.ref,
+                media_type=item.artifact.media_type,
+                exposure=item.exposure,
+                usage=item.usage,
+                require_current=next(
+                    port.require_current
+                    for port in compiled.spec.inputs
+                    if port.name == item.port_name
+                ),
+            )
+            for item in bound.inputs
+        )
+
+    def input_origins(self, instance_id):
+        from .operation_origins import OperationOrigins
+        return OperationOrigins(artifacts=self.artifacts, bindings=self.scheduler_bindings,
+            runs=self, catalog=self.operation_catalog, instance_id=instance_id)
+
+    def validate_input_bindings(self, bound, *, instance_id):
+        with self._connect() as connection:
+            self._attach_scheduler(connection)
+            return self.current.freeze(connection, instance_id, self._input_bindings(bound),
+                compiled=bound.compiled, origins=self.input_origins(instance_id))
+
     def schedule(
         self,
         bound: BoundOperationCall,
@@ -226,7 +259,7 @@ class RunService(ToolEvidenceMixin):
         bound = preflight_operation(compiled, name=bound.name,
             artifacts_by_port={name: tuple(items) for name, items in by_port.items()},
             instruction=bound.instruction, read_artifact=self.artifacts.read,
-            source_name_overrides={(item.port_name, item.artifact_name): item.source_name
+            source_name_overrides={(item.port_name, item.artifact.ref): item.source_name
                                    for item in bound.inputs})
         if execution_profile is None:
             settings = self.execution_settings(compiled, instance_id=instance_id,
@@ -235,23 +268,7 @@ class RunService(ToolEvidenceMixin):
             if max_attempts is None:
                 max_attempts = settings["default_max_attempts"]
         bound = replace(bound, execution_profile=execution_profile)
-        raw_inputs = tuple(
-            RunInputBinding(
-                port_name=item.port_name,
-                source_name=item.source_name,
-                artifact_name=item.artifact_name,
-                artifact_ref=item.artifact.ref,
-                media_type=item.artifact.media_type,
-                exposure=item.exposure,
-                usage=item.usage,
-                require_current=next(
-                    port.require_current
-                    for port in compiled.spec.inputs
-                    if port.name == item.port_name
-                ),
-            )
-            for item in bound.inputs
-        )
+        raw_inputs = self._input_bindings(bound)
         for item in raw_inputs:
             self.artifacts.verify(item.artifact_ref)
         run_id = f"run_{uuid.uuid4().hex}"
@@ -266,7 +283,8 @@ class RunService(ToolEvidenceMixin):
         with self._connect() as connection:
             self._attach_scheduler(connection)
             connection.execute("BEGIN IMMEDIATE")
-            frozen_inputs = self.current.freeze(connection, instance_id, raw_inputs, input_ports=compiled.spec.inputs)
+            frozen_inputs = self.current.freeze(connection, instance_id, raw_inputs,
+                compiled=compiled, origins=self.input_origins(instance_id))
             active_revision = active_direct_revision_ports(
                 compiled, (item.port_name for item in frozen_inputs)
             )
@@ -357,9 +375,9 @@ class RunService(ToolEvidenceMixin):
                         output_binding_name, output_logical_name,
                         output_revision, output_binding_fingerprint,
                         request_digest, resume_from_run_id, draft_from_run_id, recovery_policy_json,
-                        state, created_at, deadline_at, execution_profile_json
+                        state, created_at, deadline_at, execution_profile_json, decision_fields_json
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                              ?, ?, 'queued', ?, ?, ?)
+                              ?, ?, 'queued', ?, ?, ?, ?)
                     """,
                     (
                         run_id,
@@ -384,6 +402,7 @@ class RunService(ToolEvidenceMixin):
                         created_at,
                         deadline_at,
                         json.dumps(execution_profile),
+                        canonical_json(compiled.spec.decision_fields),
                     ),
                 )
             except sqlite3.IntegrityError as error:
@@ -1988,7 +2007,8 @@ class RunService(ToolEvidenceMixin):
             connection.executescript(WORKER_PARTICIPANT_SCHEMA)
             for table, columns in {
                 "runs": {"draft_from_run_id": "TEXT", "recovery_policy_json": "BLOB",
-                         **{name: value[0] for name, value in EXECUTION_SETTINGS_COLUMNS["runs"].items()}},
+                         **{name: value[0] for name, value in EXECUTION_SETTINGS_COLUMNS["runs"].items()},
+                         **{name: value[0] for name, value in RUN_READ_COLUMNS.items()}},
                 "run_activity": {"diagnostic_json": "BLOB"},
             }.items():
                 existing = {row[1] for row in connection.execute(f"PRAGMA table_info({table})")}

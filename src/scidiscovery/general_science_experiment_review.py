@@ -38,6 +38,7 @@ COMPONENTS = (
 OPERATION = scientific_agent_operation("science.object.review.v1",
     "Independently assess one exact scientific object when review is useful.",
     "A sealed scientific subject has a bounded review question.", "Authoring, execution authorization, or adding undeclared formatting gates.",
+    decision_fields=("verdict", "summary", "limitations", "findings"),
     agent=ComponentRef("critic_agent"), workspace=ComponentRef("experiment_task_workspace"),
     prompt=ComponentRef("experiment_review_prompt"), tools=BASE_TOOLS,
     inputs=(_input("subject", "Exact sealed scientific object to assess.", "*",

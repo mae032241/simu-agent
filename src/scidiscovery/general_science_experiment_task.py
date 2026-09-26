@@ -151,6 +151,7 @@ OPERATION = scientific_agent_operation(
     "science.experiment.v1", "Complete a bounded experiment from scientific design through execution and validity judgment.",
     "A research question and exact supporting scientific materials are available.",
     "Unbounded research or claims without retained observations.",
+    decision_fields=("outcome", "summary", "remaining_question", "limitations"),
     agent=_REF("experiment_task_agent"), prompt=_REF("experiment_task_prompt"),
     workspace=_REF("experiment_task_workspace"),
     tools=BASE_TOOLS + (_REF("experiment_stage_tool"), _REF("experiment_execute_tool")),

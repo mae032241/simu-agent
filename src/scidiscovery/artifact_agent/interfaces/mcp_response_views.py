@@ -43,6 +43,8 @@ def run_intent_projection(value, *, intent):
                 "output_delivery",
                 "output_metadata",
                 "selected_output",
+                "default_output_unavailable",
+                "output_index",
                 "scheduler_signal",
                 "scheduler_signal_status",
                 "scheduler_signal_omissions",

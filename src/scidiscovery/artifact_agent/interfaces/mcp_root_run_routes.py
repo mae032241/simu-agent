@@ -238,9 +238,18 @@ class RootRunRoutes:
             )
         elif intent == "decision" and value.state == "completed":
             if not output_paths:
-                fields = compiled.spec.decision_fields if contract_status == "current" else ("summary", "limitations", "remaining_question")
-                output_paths = [field if field.startswith("/") else "/" + field.replace("~", "~0").replace("/", "~1") for field in fields]
-            result["output_delivery"] = "selected"
+                # The frozen read projection remains useful after its authoring contract
+                # retires; it never establishes current scientific qualification.
+                fields = value.decision_fields
+                if fields is None and contract_status == "current":
+                    fields = compiled.spec.decision_fields
+                if fields is None:
+                    result["default_output_unavailable"] = "decision_fields_not_recorded"
+                    result["output_index"] = (_output_index(output, "", index_offset, index_limit)
+                        if output is not None else None)
+                else:
+                    output_paths = [field if field.startswith("/") else "/" + field.replace("~", "~0").replace("/", "~1") for field in fields]
+            result["output_delivery"] = "index" if "default_output_unavailable" in result else "selected"
             result["output_metadata"] = (
                 {key: output[key] for key in ("artifact_name", "kind", "schema")}
                 if output is not None
@@ -248,7 +257,7 @@ class RootRunRoutes:
             )
             result["selected_output"] = (
                 _output_selection(output, output_paths or [])
-                if output is not None
+                if output is not None and output_paths
                 else None
             )
             result["scheduler_signal"] = (
@@ -299,7 +308,7 @@ class RootRunRoutes:
             "created_at", "started_at", "completed_at", "deadline_at", "last_activity_at", "output_artifact_name",
             "recovery_available", "draft_from", "diagnostics_available", "reason", "diagnostic_events", "sealed_output_status", "sealed_output",
             "scheduler_signal_status", "scheduler_signal", "scheduler_signal_omissions", "output_delivery", "output_metadata", "selected_output",
-            "output_index", "evidence_outputs", "bound_inputs", "content_unavailable", "dispatch"}
+            "output_index", "default_output_unavailable", "evidence_outputs", "bound_inputs", "content_unavailable", "dispatch"}
         result = {key:item for key,item in result.items() if key in allowed}
         try:
             ports = self._operation_catalog.operation(value.operation_id).spec.inputs

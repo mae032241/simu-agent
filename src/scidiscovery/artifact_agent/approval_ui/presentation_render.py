@@ -410,7 +410,7 @@ def render_presentation(presentation: dict | None, *, evidence_href: EvidenceHre
 
     # Reserve the first HTML budget for this node, before parameters or history.
     badges, brief, originals, seen = [], [], [], set()
-    status_labels = {"审查结论", "分析结论", "实现审查结论", "正式处置", "selected_option"}
+    status_labels = {"实验结果", "参数覆盖", "审查结论", "分析结论", "实现审查结论", "正式处置", "selected_option"}
     prose_labels = {"正式摘要", "正式结论", "正式说明", "目标原文", "总体目标", "工程目标"}
     count_labels = {"缺失输入", "实现缺口", "审查意见", "限制", "未解决问题"}
     for section in primary:
@@ -424,7 +424,7 @@ def render_presentation(presentation: dict | None, *, evidence_href: EvidenceHre
             seen.add(identity)
             label, value = item.get("label", "原记录"), item["value"]
             if label in status_labels and isinstance(value, (str, bool)):
-                tone = "good" if value in ("pass", "passed", "approve", "authorize_execution") else "attention"
+                tone = "good" if value in ("pass", "passed", "completed", "approve", "authorize_execution") else "attention"
                 badges.append("<div class='conclusion-value tone-" + tone + "'><span>" + _text(label if label != "selected_option" else "原审批决定")
                     + "</span><strong>" + _text(human_value(value), 100) + "</strong>" + render_source(source, evidence_href) + "</div>")
             elif label in prose_labels and isinstance(value, str):

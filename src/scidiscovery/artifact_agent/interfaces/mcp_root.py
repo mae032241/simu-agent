@@ -180,7 +180,7 @@ class ArtifactCatalogInput(NamedReadInput):
 
 class RunStatusInput(NamedInput, StageReadQuery):
     intent: Literal["decision", "status", "navigation", "full"] = Field(default="decision",
-        description="decision reads bounded sealed conclusions and scheduler signal after completion; status reads lifecycle and optional saved diagnostics; navigation lists exact fields and scientific input names; full explicitly reads the complete sealed scientific output. Active or failed Runs never expose draft science.")
+        description="decision reads bounded sealed conclusions and scheduler signal after completion, using frozen decision fields for historical Runs; older records without those fields return an explicit unavailable default and bounded field index. status reads lifecycle and optional saved diagnostics; navigation lists exact fields and scientific input names; full explicitly reads the complete sealed scientific output. Active or failed Runs never expose draft science.")
     output_fields: list[str] | None = Field(default=None, max_length=8,
         description="decision only: named top-level fields; omit for declared decision fields. Mutually exclusive with output_paths.")
     output_paths: list[Annotated[str, Field(pattern=r"^(?:/(?:[^~]|~[01])*)?$")]] | None = Field(

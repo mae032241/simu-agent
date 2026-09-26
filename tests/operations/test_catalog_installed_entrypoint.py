@@ -61,8 +61,14 @@ import curve_score
 from scidiscovery.artifact_agent.schema.refs import ArtifactRef
 from scidiscovery.operations.catalog import compile_installed_catalog
 from scidiscovery.operations.tooling import operation_worker_tools
+from scidiscovery.artifact_agent.service import operation_origins
 
 assert Path(curve_score.__file__).resolve().is_relative_to(Path(sys.prefix).resolve())
+assert Path(operation_origins.__file__).resolve().is_relative_to(Path(sys.prefix).resolve())
+catalog = compile_installed_catalog()
+for operation_id in ("science.evidence.audit.v1", "science.evidence.audit.intake.v1",
+                     "science.figure.evidence.audit.v2"):
+    assert catalog.operation(operation_id).spec.decision_fields == ("checks",)
 image = Image.new("RGB", (12, 12), "white")
 ImageDraw.Draw(image).line([(1, 9), (9, 1)], fill="#ff0000", width=1)
 stream = io.BytesIO()

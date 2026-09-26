@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from ...agent_execution_settings import EXECUTION_SETTINGS_COLUMNS
+from .run_records import RUN_READ_COLUMNS
 from .worker_connections import WORKER_CONNECTION_SCHEMA, WORKER_PARTICIPANT_SCHEMA
 
 import base64
@@ -176,13 +177,14 @@ def schema(connection, alias="main"):
 
 
 def execution_settings_restore_view(data):
-    """Project additive settings and Worker bindings; never rewrite archive bytes.
+    """Project additive settings, read metadata and Worker bindings; never rewrite archive bytes.
 
     SQLite itself applies the same ALTER statements used by installation, preserving
     original table SQL, constraints and every unrelated index/trigger definition.
     """
     result = None
-    for table, definitions in EXECUTION_SETTINGS_COLUMNS.items():
+    columns = {**EXECUTION_SETTINGS_COLUMNS, "runs": {**EXECUTION_SETTINGS_COLUMNS["runs"], **RUN_READ_COLUMNS}}
+    for table, definitions in columns.items():
         info = data["schema"]["tables"].get(table)
         if info is None:
             continue

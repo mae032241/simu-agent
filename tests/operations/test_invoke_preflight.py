@@ -244,11 +244,11 @@ def test_service_alias_overrides_are_frozen_before_input_checker() -> None:
     }))
     artifact = _artifact(ref=_artifact().ref.model_copy(update={"sha256": sha256(b"{}").hexdigest()}))
     kwargs = dict(name="aliases", artifacts_by_port={"agent_input": (artifact,)}, instruction="Review.", read_artifact=lambda ref: b"{}")
-    bound = preflight_operation(compiled, **kwargs, source_name_overrides={("agent_input", artifact.artifact_name): "legacy_source"})
+    bound = preflight_operation(compiled, **kwargs, source_name_overrides={("agent_input", artifact.ref): "legacy_source"})
     assert bound.inputs[0].source_name == "legacy_source"
     assert observed == [("legacy_source",)]
     with pytest.raises(OperationInvocationError, match="input_source_alias_invalid"):
-        preflight_operation(compiled, **kwargs, source_name_overrides={("agent_input", artifact.artifact_name): "../escape"})
+        preflight_operation(compiled, **kwargs, source_name_overrides={("agent_input", artifact.ref): "../escape"})
     with pytest.raises(OperationInvocationError, match="input_source_alias_unknown"):
         preflight_operation(compiled, **kwargs, source_name_overrides={("agent_input", "foreign_artifact"): "source"})
     assert observed == [("legacy_source",)]
@@ -264,4 +264,4 @@ def test_service_alias_overrides_reject_duplicate_final_sources() -> None:
     with pytest.raises(OperationInvocationError, match="input_source_alias_duplicate"):
         preflight_operation(compiled, name="duplicates", instruction="Review.",
                             artifacts_by_port={"agent_input": (first,), "other_input": (second,)},
-                            source_name_overrides={("agent_input", first.artifact_name): "same", ("other_input", second.artifact_name): "same"})
+                            source_name_overrides={("agent_input", first.ref): "same", ("other_input", second.ref): "same"})

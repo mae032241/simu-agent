@@ -351,6 +351,7 @@ OPERATIONS = (
                 usage="evidence_inventory",
             ),
         ),
+        decision_fields=("checks",),
         outputs=(_audit_output("scientific_foundation", "source_material"),),
         timeout=600,
         max_input_bytes=225 * 1024 * 1024,
@@ -396,6 +397,7 @@ OPERATIONS = (
             ),
 
         ),
+        decision_fields=("checks",),
         outputs=(_audit_output("scientific_intake", "source_material"),),
         timeout=600,
         max_input_bytes=225 * 1024 * 1024,

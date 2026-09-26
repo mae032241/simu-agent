@@ -8,6 +8,7 @@ from scidiscovery.plugin_runtime.presentation import (
 )
 
 
+EVIDENCE_PACKAGE = "scidiscovery.parameter-evidence-package.v1"
 PARAMETERS = "scidiscovery.device-parameter-set.v1"
 REQUIREMENTS = "scidiscovery.device-parameter-requirements.v1"
 CATALOG = "scidiscovery.evidence-source-catalog.v1"
@@ -23,12 +24,17 @@ _PROJECT_FIELDS = (("solver_kind", "求解器"), ("tool_profile", "工具配置"
     ("runtime_assertions", "运行时核验"))
 
 
-def _claim_rows(result, artifact, payload, cohort):
-    complete = dependency_complete(artifact, cohort)
-    cohort = dependency_cohort(artifact, cohort)
-    catalogs = [a for a in cohort if a.get("schema_id") == CATALOG and isinstance(a.get("payload"), Mapping)]
-    requirements = [a for a in cohort if a.get("schema_id") == REQUIREMENTS and isinstance(a.get("payload"), Mapping)
-                    and a["payload"].get("requirement_set_key") == payload.get("requirement_set_key")]
+def _claim_rows(result, artifact, payload, cohort, *, local_sources=None):
+    if local_sources is None:
+        complete = dependency_complete(artifact, cohort)
+        cohort = dependency_cohort(artifact, cohort)
+        catalogs = [a for a in cohort if a.get("schema_id") == CATALOG and isinstance(a.get("payload"), Mapping)]
+        requirements = [a for a in cohort if a.get("schema_id") == REQUIREMENTS and isinstance(a.get("payload"), Mapping)
+                        and a["payload"].get("requirement_set_key") == payload.get("requirement_set_key")]
+    else:
+        # These three objects belong to one exact package, not inferred siblings.
+        catalogs, requirements = local_sources
+        complete = not artifact.get("gaps")
     for i, claim in enumerate(items(payload.get("claims"))):
         if len(result["parameters"]) >= 128:
             add_gap(result, "parameter_rows_limited", artifact)
@@ -134,6 +140,23 @@ def _project_rows(result, artifact, project, base="", cohort=()):
                     ("epistemic_status", "evidence_class"), ("rationale", "rationale")) if field in binding}))
 
 
+def _evidence_package(result, artifact, payload):
+    foundation = payload.get("scientific_intake", {}).get("scientific_foundation", {})
+    add_fields(result, artifact, "参数科学依据", (("summary", "正式摘要"),
+        ("missing_inputs", "缺失输入"), ("open_questions", "未解决问题")),
+        payload=foundation, path="/scientific_intake/scientific_foundation")
+    add_fields(result, artifact, "参数覆盖", (("status", "参数覆盖"),
+        ("confirmed_count", "已确认参数"), ("review_count", "待审查参数"), ("blocking_count", "阻塞参数")),
+        payload=payload.get("coverage"), path="/coverage")
+    def nested(field):
+        return {**artifact, "payload": payload[field], "source": source(artifact, pointer(field))}
+    if all(isinstance(payload.get(field), Mapping) for field in
+           ("device_parameters", "source_catalog", "parameter_requirements")):
+        parameters = nested("device_parameters")
+        _claim_rows(result, parameters, parameters["payload"], (), local_sources=(
+            (nested("source_catalog"),), (nested("parameter_requirements"),)))
+
+
 def build_presentation(artifacts, *, parameter_target=None, parameter_after=0, parameter_limit=8):
     result = empty()
     if parameter_target is not None:
@@ -144,7 +167,9 @@ def build_presentation(artifacts, *, parameter_target=None, parameter_after=0, p
         payload, schema = artifact.get("payload"), artifact.get("schema_id")
         if not isinstance(payload, Mapping):
             continue
-        if schema == PARAMETERS:
+        if schema == EVIDENCE_PACKAGE:
+            _evidence_package(result, artifact, payload)
+        elif schema == PARAMETERS:
             add_fields(result, artifact, "器件参数依据", (("title", "参数集"), ("objective", "目标")))
             _claim_rows(result, artifact, payload, artifacts)
         elif schema == REQUIREMENTS:
@@ -169,6 +194,13 @@ def build_presentation(artifacts, *, parameter_target=None, parameter_after=0, p
 
 
 DISPLAY_POINTERS = {
+    EVIDENCE_PACKAGE: (
+        "/scientific_intake/scientific_foundation/summary",
+        "/scientific_intake/scientific_foundation/missing_inputs",
+        "/scientific_intake/scientific_foundation/open_questions",
+        "/coverage/status", "/coverage/confirmed_count", "/coverage/review_count", "/coverage/blocking_count",
+        "/device_parameters/parameter_set_key", "/device_parameters/requirement_set_key",
+        "/parameter_requirements/parameters", "/source_catalog/sources", "/device_parameters/claims"),
     PARAMETERS: ("/parameter_set_key", "/requirement_set_key", "/title", "/objective", "/claims"),
     REQUIREMENTS: ("/requirement_set_key", "/title", "/objective", "/parameters"),
     CATALOG: ("/catalog_key", "/sources"),
@@ -180,6 +212,6 @@ DISPLAY_POINTERS = {
 DISPLAY_POINTERS[PACKAGE] = tuple("/project" + p for p in DISPLAY_POINTERS[PROJECT]) + tuple("/review" + p for p in DISPLAY_POINTERS[REVIEW]) + ("/resolved_inputs",)
 build_presentation.display_pointers = DISPLAY_POINTERS
 
-build_presentation.parameter_schemas = (PARAMETERS, PROJECT, PACKAGE)
+build_presentation.parameter_schemas = (PARAMETERS, PROJECT, PACKAGE, EVIDENCE_PACKAGE)
 
 build_presentation.parameter_dependencies = (CATALOG, REQUIREMENTS, PARAMETERS)

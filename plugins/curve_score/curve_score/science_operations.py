@@ -292,6 +292,7 @@ def _diagnosis_operation(operation_id: str, purpose: str, applies_when: str, *, 
     return scientific_agent_operation(
         operation_id, purpose, applies_when,
         "Changing evidence, inventing unsupported metrics, or executing experiments.",
+        decision_fields=("overall_verdict", "claim_allowed", "summary", "next_action", "remaining_contradiction", "limitations"),
         agent=ComponentRef("diagnosis_agent"), workspace=ComponentRef("analysis_workspace"),
         prompt=ComponentRef(prompt), tools=BASE_TOOLS + (ComponentRef("analysis_score_tool"), ComponentRef("analysis_diagnostic_tool"), ComponentRef("analysis_files_tool")),
         native_view_image=True,

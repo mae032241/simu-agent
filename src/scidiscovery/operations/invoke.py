@@ -140,7 +140,7 @@ def preflight_operation(
     instruction: str | None,
     parameters: Mapping[str, Any] | None = None,
     read_artifact: Callable[[ArtifactRef], bytes] | None = None,
-    source_name_overrides: Mapping[tuple[str, str], str] | None = None,
+    source_name_overrides: Mapping[tuple[str, ArtifactRef], str] | None = None,
 ) -> BoundOperationCall:
     spec = compiled.spec
     expected = {port.name: port for port in spec.inputs}
@@ -177,7 +177,7 @@ def preflight_operation(
     elif instruction is not None:
         raise OperationInvocationError("instruction_forbidden")
     aliases = dict(source_name_overrides or {})
-    bound_keys = {(port, item.artifact_name) for port, items in artifacts_by_port.items() for item in items}
+    bound_keys = {(port, item.ref) for port, items in artifacts_by_port.items() for item in items}
     if set(aliases) - bound_keys:
         raise OperationInvocationError("input_source_alias_unknown")
     seen_sources: set[str] = set()
@@ -198,7 +198,7 @@ def preflight_operation(
                 if len(artifacts) == 1
                 else f"{port.name}_{index:03d}"
             )
-            source_name = aliases.get((port.name, artifact.artifact_name), source_name)
+            source_name = aliases.get((port.name, artifact.ref), source_name)
             if not isinstance(source_name, str) or _RUNTIME_BINDING.fullmatch(source_name) is None:
                 raise OperationInvocationError("input_source_alias_invalid", port=port.name)
             if source_name in seen_sources:

@@ -570,6 +570,7 @@ OPERATIONS = (scientific_agent_operation(
     "tcad.result.analyze.v1", "Analyze one exact TCAD execution with optional raw-output scoring.",
     "An exact plan, execution package and terminal execution manifest exist, including failed runs.",
     "Solver execution, mandatory pre-experiment curve contracts, or changing raw evidence.",
+    decision_fields=("overall_verdict", "claim_allowed", "summary", "next_action", "remaining_contradiction", "limitations"),
     agent=_ref("result_analysis_agent"), workspace=_ref("tcad_analysis_workspace"),
     prompt=_ref("result_analysis_prompt"), tools=(*BASE_TOOLS, _ref("result_analysis_score_tool"), _ref("result_analysis_diagnostic_tool"), _ref("analysis_files_tool", "curve_score"), _ref("analysis_inspect_tool"), _ref("analysis_accept_tool")),
     native_view_image=True,

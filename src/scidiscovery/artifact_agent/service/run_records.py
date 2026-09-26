@@ -15,6 +15,10 @@ from ..schema.refs import ArtifactRef
 from ..schema.run_signal import SchedulerSignal
 
 
+# Additive read metadata only; NULL preserves records created before this field.
+RUN_READ_COLUMNS = {"decision_fields_json": ("BLOB", None)}
+
+
 class RunError(RuntimeError):
     pass
 
@@ -109,6 +113,7 @@ class RunStatus:
     draft_from_run_id: str | None = None
     recovery_policy: dict[str, Any] | None = None
     execution_profile: dict[str, Any] | None = None
+    decision_fields: tuple[str, ...] | None = None
 
 
 def status_from_row(row: sqlite3.Row) -> RunStatus:
@@ -160,6 +165,8 @@ def status_from_row(row: sqlite3.Row) -> RunStatus:
         ),
         execution_profile=(None if "execution_profile_json" not in row.keys() or row["execution_profile_json"] is None
                            else _json_object(row["execution_profile_json"], "stored execution profile")),
+        decision_fields=(None if "decision_fields_json" not in row.keys() or row["decision_fields_json"] is None
+                         else tuple(json.loads(row["decision_fields_json"]))),
         request_digest=str(row["request_digest"]),
         draft_from_run_id=row["draft_from_run_id"],
         recovery_policy=(None if row["recovery_policy_json"] is None else

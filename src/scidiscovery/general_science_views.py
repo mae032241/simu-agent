@@ -9,6 +9,8 @@ from .artifact_agent.approval_ui.presentation import (
 
 
 _ROOTS = {
+    "scidiscovery.experiment-report.v1": ("实验报告", (("outcome", "实验结果"), ("summary", "正式摘要"), ("limitations", "限制"), ("remaining_question", "未解决问题"), ("adopted_stages", "采用的封存阶段"))),
+    "scidiscovery.experiment-review.v1": ("独立科学审查", (("verdict", "审查结论"), ("summary", "正式摘要"), ("findings", "审查意见"), ("limitations", "限制"))),
     "scidiscovery.experiment-scientific-skeleton.v1": ("科学骨架", (("current_objectives", "本轮目标"), ("competing_explanations_and_controls", "竞争解释与对照"), ("discrimination_criteria_and_basis", "判别标准及依据"), ("immutable_conditions", "不可改科学条件"), ("stop_conditions", "停止条件"), ("feasibility_limitations", "可行性限制"))),
     "scidiscovery.research-objective.v1": ("总体研究目标", (("statement", "目标原文"), ("intent", "目标类型"), ("mandatory_targets", "必需目标"), ("closure_requirements", "完成条件"))),
     "scidiscovery.experiment-design-intent.v1": ("实验设计", (("engineering_objective", "工程目标"), ("priority_rationale", "设计理由"))),
@@ -241,7 +243,7 @@ def build_presentation(artifacts, *, parameter_target=None, parameter_after=0, p
             for field, title in (("problem_frame", "研究问题"), ("scientific_foundation", "科学依据")):
                 nested = payload.get(field)
                 if isinstance(nested, Mapping):
-                    add_fields(result, artifact, title, (("objective", "目标"), ("summary", "正式摘要"), ("current_contradiction", "当前矛盾"), ("missing_inputs", "缺失输入")), payload=nested, path=pointer(field))
+                    add_fields(result, artifact, title, (("objective", "目标"), ("summary", "正式摘要"), ("current_contradiction", "当前矛盾"), ("missing_inputs", "缺失输入"), ("open_questions", "未解决问题")), payload=nested, path=pointer(field))
                     if field == "scientific_foundation":
                         _foundation(result, artifact, nested, pointer(field))
         elif schema in _ROOTS:
@@ -267,7 +269,7 @@ DISPLAY_POINTERS["scidiscovery.layered-diagnosis.v1"] += ("/evidence",)
 DISPLAY_POINTERS["scidiscovery.scientific-intake.v1"] = (
     "/problem_frame/objective", "/problem_frame/current_contradiction", "/scientific_foundation/objective",
     "/scientific_foundation/summary", "/scientific_foundation/items", "/scientific_foundation/evidence",
-    "/scientific_foundation/missing_inputs")
+    "/scientific_foundation/missing_inputs", "/scientific_foundation/open_questions")
 DISPLAY_POINTERS[_TOOL_MANIFEST] = ("/records", "/bindings")
 build_presentation.display_pointers = DISPLAY_POINTERS
 

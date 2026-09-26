@@ -192,6 +192,7 @@ OPERATIONS = (
         "A completed provisional author supplies Intake, exact provenance and all saved family files.",
         "Redigitizing, revising or qualifying evidence.",
         agent=_general("auditor_agent"), workspace=_general("workspace"), prompt=ComponentRef("figure_audit_prompt"),
+        decision_fields=("checks",),
         tools=BASE_TOOLS+(PDF_TOOL,), inputs=AUDIT_INPUTS, outputs=(AUDIT_OUTPUT,), timeout=600,
         max_input_bytes=355*1024*1024, max_output_bytes=32*1024, max_files=1, native_view_image=True,
         input_validation=FAMILY_VALIDATION, guards=(ComponentRef("figure_audit_parentage"),)),
