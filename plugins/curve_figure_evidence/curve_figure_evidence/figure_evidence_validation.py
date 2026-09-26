@@ -13,6 +13,8 @@ from typing import Any
 
 from PIL import Image
 
+from scidiscovery.artifact_agent.schema.common import canonical_json
+
 
 VALIDATOR_VERSION = "6"
 REPORT_SCHEMA_VERSION = "scidiscovery.figure-evidence-validation-report.v1"
@@ -45,16 +47,6 @@ EXTENDED_CURVE_COLUMNS = (
 
 class FigureEvidenceBundleError(ValueError):
     """Raised when evidence bytes do not satisfy their mechanical contract."""
-
-
-def canonical_json(value: Any) -> bytes:
-    return json.dumps(
-        value,
-        sort_keys=True,
-        separators=(",", ":"),
-        ensure_ascii=False,
-        allow_nan=False,
-    ).encode("utf-8")
 
 
 def build_figure_evidence_validation_report(

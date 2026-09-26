@@ -415,7 +415,7 @@ class LocalWorkerMCPRouter:
                     details = error.details
                 else:
                     diagnostic = self.runs.record_error_observation(self._run_id, "output_rejected",
-                        diagnostic=self.runs._rejection_diagnostic(self.runs.status(self._run_id), error))
+                        diagnostic=self.runs.rejection_diagnostic(self.runs.status(self._run_id), error))
                     details = diagnostic.get("details", ())
                 return {"state": "rejected", "diagnostics": list(details)}
             except DiagnosticError:
@@ -599,7 +599,7 @@ class LocalWorkerMCPRouter:
     def _assignment_tool_contracts(self) -> dict[str, Any]:
         # Old assignments may lack additive metadata; never replace their files
         # or use a newer contract to reopen an old Run.
-        compiled = self.runs._compiled(self.runs.status(self._run_id))
+        compiled = self.runs.compiled_operation(self.runs.status(self._run_id))
         assignment = json.loads(self._workspace.assignment_path.read_bytes())
         if "tool_contracts" in assignment:
             return assignment["tool_contracts"]

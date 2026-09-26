@@ -127,8 +127,10 @@ python3 -m pip install -e '.[test]'
 python3 -m pip install -e plugins/tcad_artifact
 python3 -m pip install -e plugins/curve_score
 python3 -m pip install -e plugins/curve_figure_evidence  # 可选自动图提取；离线依赖见安装教程
-pytest -q
+python scripts/run_tests.py --lane source --per-file --output /tmp/scid-source
 ```
+
+安装层、进程层和资源限额见[测试运行说明](tests/README.md)。
 
 发布前必须运行 hermetic 测试。真实平台和真实 Solver 测试依赖外部配置，不能由
 单元测试通过来替代。

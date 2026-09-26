@@ -149,6 +149,94 @@ def test_installer_previews_core_only_and_explicit_tcad_paths(tmp_path: Path) ->
     assert "Selected plugins: tcad_artifact,curve_score,curve_figure_evidence" in all_domains
 
 
+@pytest.mark.parametrize("phase", ["preview", "configure_platform"])
+@pytest.mark.parametrize("directory", ["plain", "O'Brien space"])
+@pytest.mark.parametrize("nested", [False, True])
+def test_installer_passes_platform_paths_as_data(tmp_path: Path, phase: str, directory: str, nested: bool) -> None:
+    """Run the actual shell functions with a harmless initializer and no install effects."""
+    project_root = Path(__file__).resolve().parents[2]
+    root = tmp_path / directory
+    source = root / "source"
+    (source / "deploy").mkdir(parents=True)
+    script = source / "deploy/install.sh"
+    shutil.copyfile(project_root / "deploy/install.sh", script)
+    package = source / "src/scidiscovery"
+    (package / "operations").mkdir(parents=True)
+    (package / "__init__.py").touch()
+    (package / "operations/__init__.py").touch()
+    (package / "platforms.py").write_text(
+        "import json, os\n"
+        "def initialize_platform(platform, root, **kwargs):\n"
+        "    kwargs.pop('operation_catalog', None)\n"
+        "    with open(os.environ['SCID_TEST_CALLS'], 'a') as stream:\n"
+        "        stream.write(json.dumps(dict(platform=platform, root=root, **kwargs), default=str) + '\\n')\n",
+        encoding="utf-8",
+    )
+    (package / "operations/catalog.py").write_text(
+        "class Catalog:\n"
+        "    def runtime_plugin_ids(self): return ('tcad_artifact',)\n"
+        "def compile_installed_catalog(): return Catalog()\n",
+        encoding="utf-8",
+    )
+    site = root / "install/site"
+    shutil.copytree(source / "src", site)
+    workspace = (source if nested else root) / "workspace"
+    workspace.mkdir()
+    launch = root / "launch"
+    launch.mkdir()
+    python = root / "python"
+    python.symlink_to(sys.executable)
+    calls_path = root / "calls.jsonl"
+    completed = subprocess.run(
+        ["bash", "-c", '''
+source "$1"
+render_units() { touch "$1/fake.service"; }
+systemd-analyze() { :; }
+install() { :; }
+chown() { :; }
+backup_legacy_user_entrypoints() { :; }
+install_platform_skills() { :; }
+prepare_managed_platform_paths() { :; }
+runuser() { shift 3; "$@"; }
+TCAD_ENABLED=1
+"$2"
+''', "bash", str(script), phase],
+        env={
+            **os.environ,
+            "SCID_WORKSPACE": str(workspace),
+            "SCID_CODEX_LAUNCH_ROOT": str(launch),
+            "SCID_PYTHON": str(python),
+            "SCID_INSTALL_ROOT": str(root / "install"),
+            "SCID_CONFIG_ROOT": str(root / "config"),
+            "SCID_STATE_ROOT": str(root / "state"),
+            "SCID_BACKUP_ROOT": str(root / "backups"),
+            "SCID_WORKER_BACKEND": "hardened",
+            "SCID_TEST_CALLS": str(calls_path),
+            "TMPDIR": str(root),
+        },
+        capture_output=True, text=True, timeout=10, check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+    calls = [json.loads(line) for line in calls_path.read_text("utf-8").splitlines()]
+    assert [call["root"] for call in calls] == [str(path) for path in (
+        [source, launch] if nested else [source, workspace, launch]
+    )]
+    for call in calls:
+        assert call["platform"] == "codex"
+        assert call["python_executable"] == str(python)
+        assert call["state_root"] == str(root / "state")
+        assert call["local_workspace_root"] == str(workspace / ".scidiscovery-runs")
+        assert call["control_socket"] == "/run/scidiscovery/control.sock"
+        assert call["worker_backend"] == "hardened"
+        assert call["runtime_plugin_configs"] == {"tcad_artifact": str(root / "config/tcad-plugin.json")}
+        if phase == "configure_platform":
+            assert call["python_path"] == str(site)
+            assert call["codex_config_root"] == str(Path(call["root"]) / ".codex")
+        else:
+            assert call["dry_run"] is True
+            assert Path(call["codex_config_root"]).is_relative_to(root)
+
+
 def _figure_supply(root: Path) -> dict[str, str]:
     """Expose the real pdfimages binary through the simulated service PATH."""
     binary = root / "figure-bin"
@@ -1861,6 +1949,78 @@ def test_git_release_builder_emits_clean_manifested_source(tmp_path: Path) -> No
         if path.is_file() and path != manifest
     }
     assert output.with_suffix(".tar.gz").is_file()
+    assert not (output / "docs/plans").exists()
+    # Independent consumer requirements: do not derive these from the builder's
+    # own allowlists, which previously made missing CI/test inputs invisible.
+    required = (
+        "docs/PLUGIN_RUNTIME_API.md", "tests/conftest.py", "tests/operations/conftest.py",
+        "tests/fixtures/plugins/blind_csv_operation_plugin/blind_csv_plugin/plugin.py",
+        "tests/fixtures/plugins/architecture_operation_plugin/pyproject.toml",
+        "tests/fixtures/plugins/table_observation_plugin/pyproject.toml",
+        "scripts/run_tests.py", "scripts/test_resources.json", "scripts/test_resources_ci.json",
+        "scripts/compiled_worker_process_guard.py", "scripts/run_compiled_codex_worker.py",
+        "scripts/l4_live_tcad_revision_probe.py", "scripts/l4_live_tcad_agent_probe.py",
+        "scripts/l4_tcad_transport_fixture.py",
+    )
+    assert all((output / relative).is_file() for relative in required)
+    expected_tests = {p.relative_to(project_root / "tests") for p in
+                      (project_root / "tests").rglob("*") if p.is_file()
+                      and not any(part in release["IGNORED_NAMES"] or
+                                  part.endswith(release["IGNORED_SUFFIXES"])
+                                  for part in p.relative_to(project_root / "tests").parts)}
+    assert {p.relative_to(output / "tests") for p in (output / "tests").rglob("*")
+            if p.is_file()} == expected_tests
+    for relative in ("docs/ARCHITECTURE.md", "docs/ARCHITECTURE.zh-CN.md",
+                     "docs/PLUGIN_RUNTIME_API.md", "docs/RELEASE.md", "docs/RELEASE.zh-CN.md"):
+        document = output / relative
+        text = document.read_text()
+        for link in re.findall(r"\]\(([^)]+)\)", text):
+            if "://" in link:
+                continue
+            target, _, anchor = link.partition("#")
+            linked = document.parent / target if target else document
+            assert linked.is_file(), (relative, link)
+            if anchor:
+                assert f'id="{anchor}"' in linked.read_text(), (relative, link)
+        assert "plans/RESEARCH_TASK_REFACTOR_R4" not in text
+    for relative in release["DOCUMENT_PROJECTIONS"]:
+        assert entries[relative] == hashlib.sha256((output / relative).read_bytes()).hexdigest()
+
+    receipt_root = Path(os.environ["SCID_TEST_LOG_DIR"])
+    receipt_root.mkdir(parents=True, exist_ok=True)
+    (receipt_root / "release-manifest.log").write_text(manifest.read_text())
+
+    # The outer resource runner already holds the serial lock and supervises
+    # this entire descendant tree. Forward that lock, never nest another runner.
+    lock_fd = int(os.environ["SCID_TEST_LOCK_FD"])
+    def check_release(lane, *targets, collect=False):
+        command = [sys.executable, "-B", "-m", "pytest", "-q", "--tb=short",
+                   "-o", "addopts=", "-p", "no:cacheprovider", "--test-lane", lane]
+        if collect:
+            command.append("--collect-only")
+        command.extend(targets or ("tests",))
+        log_root = Path(os.environ["SCID_TEST_LOG_DIR"])
+        log_root.mkdir(parents=True, exist_ok=True)
+        label = f"release-{lane}-{'collection' if collect else 'checks'}"
+        command.extend(["--basetemp", str(Path(os.environ["TMPDIR"]) / label)])
+        log_path = log_root / f"{label}.log"
+        # Stream under the outer runner's sampled fixture-log budget.
+        with log_path.open("wb") as log:
+            checked = subprocess.run(command, cwd=output, env=dict(os.environ),
+                                     pass_fds=(lock_fd,), stdout=log, stderr=subprocess.STDOUT,
+                                     timeout=120, check=False)
+        with log_path.open("rb") as log:
+            log.seek(max(0, log_path.stat().st_size - 4096))
+            diagnostic = log.read(4096).decode("utf-8", errors="replace")
+        assert checked.returncode == 0, diagnostic
+    for lane in ("source", "installed", "process"):
+        check_release(lane, collect=True)
+    check_release("source", "tests/operations/test_l4_live_tcad_revision_evidence.py",
+                  "tests/operations/test_plugin_canonical_identity.py")
+    check_release("installed",
+        "tests/operations/test_catalog_installed_entrypoint.py::test_clean_installed_core_compiles_only_the_single_plugin_group",
+        "tests/operations/test_catalog_installed_entrypoint.py::test_installed_figure_tool_executes_packaged_image_dependencies",
+        "tests/operations/test_catalog_installed_entrypoint.py::test_installed_tcad_resolves_its_declared_curve_dependency")
 
 
 @pytest.mark.parametrize('status,exit_code,accepted', [('200', 0, True), ('503', 0, False), ('000', 28, False)])
@@ -1884,3 +2044,31 @@ probe_approval_ui
         assert 'timed out' in result.stderr and 'Address already in use' in result.stderr
     elif not accepted:
         assert 'HTTP 503' in result.stderr
+
+
+def test_release_document_projection_preserves_sources_and_is_idempotent(tmp_path):
+    import runpy
+    release = runpy.run_path(str(Path(__file__).resolve().parents[2] / "scripts/build_git_release.py"))
+    for relative, replacements in release["DOCUMENT_PROJECTIONS"].items():
+        path = tmp_path / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("\n".join(original for original, _ in replacements))
+    release["_project_documents"](tmp_path)
+    expected = {p: (tmp_path / p).read_bytes() for p in release["DOCUMENT_PROJECTIONS"]}
+    release["_project_documents"](tmp_path)
+    assert expected == {p: (tmp_path / p).read_bytes() for p in expected}
+    (tmp_path / "docs/ARCHITECTURE.md").write_text("unrecognized current reference")
+    with pytest.raises(ValueError, match="projection drift"):
+        release["_project_documents"](tmp_path)
+
+
+@pytest.mark.parametrize("content", ["/home/" + "private-person/state",
+                                       "192." + "168.1.1", "BEGIN " + "PRIVATE KEY"])
+def test_release_scan_still_rejects_sensitive_test_fixtures(tmp_path, content):
+    import runpy
+    release = runpy.run_path(str(Path(__file__).resolve().parents[2] / "scripts/build_git_release.py"))
+    path = tmp_path / "tests/fixtures/injected.txt"
+    path.parent.mkdir(parents=True)
+    path.write_text(content)
+    with pytest.raises(RuntimeError, match="release scan failed"):
+        release["_scan_release"](tmp_path)

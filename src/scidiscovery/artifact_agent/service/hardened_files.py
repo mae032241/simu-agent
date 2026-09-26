@@ -29,6 +29,10 @@ _UNIFIED_HUNK = re.compile(
 )
 
 
+class JsonPatchError(WorkspaceError):
+    """The caller can revise a rejected JSON patch without changing Run state."""
+
+
 @dataclass(slots=True)
 class _Upload:
     path: Path
@@ -109,7 +113,7 @@ class HardenedFileEditor:
         raw = read_control_workspace_file(self.workspace.root, path, max_bytes=limit)
         digest = hashlib.sha256(raw).hexdigest()
         if expected_digest is not None and digest != expected_digest:
-            raise WorkspaceError("JSON patch digest does not match")
+            raise JsonPatchError("JSON patch digest does not match")
         try:
             value = json.loads(raw)
             result = _apply_json_patch(
@@ -123,9 +127,9 @@ class HardenedFileEditor:
                 sort_keys=True,
             ).encode("utf-8") + b"\n"
         except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as error:
-            raise WorkspaceError("JSON patch is invalid") from error
+            raise JsonPatchError("JSON patch is invalid") from error
         if len(content) > limit:
-            raise WorkspaceError("patched JSON exceeds the file limit")
+            raise JsonPatchError("patched JSON exceeds the file limit")
         write_control_workspace_file(
             self.workspace.root, path, content, replace=True, mode=0o600
         )
@@ -235,7 +239,7 @@ def _apply_json_patch(value: Any, operations: tuple[dict[str, Any], ...]) -> Any
             else:
                 parent[leaf] = operation["value"]
         elif isinstance(parent, list):
-            index = len(parent) if op == "add" and leaf == "-" else int(leaf)
+            index = _array_index(parent, leaf, allow_end=op == "add")
             if op == "add":
                 parent.insert(index, operation["value"])
             elif op == "replace":
@@ -312,7 +316,7 @@ def _apply_text_patch(original: str, patch: str, relative_path: str) -> str:
 
 
 def _pointer_tokens(path: str) -> tuple[str, ...]:
-    if not path.startswith("/") or path == "/":
+    if not path.startswith("/"):
         raise ValueError("JSON patch path must be non-root")
     values = []
     for raw in path[1:].split("/"):
@@ -325,10 +329,23 @@ def _pointer_tokens(path: str) -> tuple[str, ...]:
 
 def _pointer_get(parent: Any, token: str) -> Any:
     if isinstance(parent, dict):
+        if token not in parent:
+            raise ValueError("JSON patch path does not exist")
         return parent[token]
     if isinstance(parent, list):
-        return parent[int(token)]
+        return parent[_array_index(parent, token)]
     raise ValueError("JSON patch parent is scalar")
 
 
-__all__ = ["HardenedFileEditor"]
+def _array_index(parent: list[Any], token: str, *, allow_end: bool = False) -> int:
+    if allow_end and token == "-":
+        return len(parent)
+    if re.fullmatch(r"0|[1-9][0-9]*", token) is None:
+        raise ValueError("JSON patch array index is invalid")
+    index = int(token)
+    if index > len(parent) or (index == len(parent) and not allow_end):
+        raise ValueError("JSON patch path does not exist")
+    return index
+
+
+__all__ = ["HardenedFileEditor", "JsonPatchError"]

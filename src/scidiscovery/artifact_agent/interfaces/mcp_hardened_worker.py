@@ -25,7 +25,7 @@ from ..runtime_plugin_bindings import (
 )
 from ..schema.refs import ActorRef
 from ..service.artifacts import ArtifactService
-from ..service.hardened_files import HardenedFileEditor
+from ..service.hardened_files import HardenedFileEditor, JsonPatchError
 from ..service.hardened_workspace import HardenedWorkerBackend
 from ..service.runs import RunService, RunStateConflict
 from ..service.scheduler_bindings import SchedulerBindingService
@@ -159,6 +159,15 @@ class HardenedWorkerMCPRouter(LocalWorkerMCPRouter):
                     )
                 else:
                     raise WorkerToolError("unknown server-side file operation")
+            except JsonPatchError as error:
+                raise WorkerToolError("server-side workspace edit failed", details=(
+                    contract_diagnostic(
+                        "json_patch_invalid", phase="tool_arguments", affected_action="tool_call",
+                        repairable=True,
+                        message="Check the JSON pointer, operation, current file digest and file size, then retry.",
+                        error_type="value_error",
+                    ),
+                )) from error
             except Exception as error:
                 if isinstance(error, DiagnosticError):
                     raise

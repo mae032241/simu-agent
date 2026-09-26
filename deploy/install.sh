@@ -426,44 +426,49 @@ preview() {
         cd "$SOURCE_ROOT"
         SCID_INSTALL_CODEX_LAUNCH_ROOT="$CODEX_LAUNCH_ROOT" \
         SCID_INSTALL_CODEX_LAUNCH_DISTINCT="$launch_is_distinct" \
-        PYTHONPATH="$pythonpath" "$PYTHON" - <<PY
+        PYTHONPATH="$pythonpath" "$PYTHON" - \
+            "$CONFIG_ROOT" "$TCAD_ENABLED" "$PYTHON" "$CONTROL_SOCKET" \
+            "$SCID_STATE" "$LOCAL_WORKSPACE_ROOT" "$WORKER_BACKEND" \
+            "$SOURCE_ROOT" "$stage" "$WORKSPACE" <<'PY'
 import os
+import sys
 from pathlib import Path
 from scidiscovery.platforms import initialize_platform
 from scidiscovery.operations.catalog import compile_installed_catalog
 
+config_root, tcad_enabled, python, control_socket, state_root, local_workspace_root, worker_backend, source_root, stage, workspace = sys.argv[1:]
 catalog = compile_installed_catalog()
 runtime_plugin_configs = (
-    {'tcad_artifact': Path('${CONFIG_ROOT}/tcad-plugin.json')}
-    if int('${TCAD_ENABLED}') and 'tcad_artifact' in catalog.runtime_plugin_ids()
+    {'tcad_artifact': Path(config_root) / 'tcad-plugin.json'}
+    if int(tcad_enabled) and 'tcad_artifact' in catalog.runtime_plugin_ids()
     else {}
 )
 
 common = {
-    'python_executable': Path('$PYTHON'),
-    'control_socket': Path('$CONTROL_SOCKET'),
-    'state_root': Path('$SCID_STATE'),
-    'local_workspace_root': Path('$LOCAL_WORKSPACE_ROOT'),
-    'worker_backend': '$WORKER_BACKEND',
+    'python_executable': Path(python),
+    'control_socket': Path(control_socket),
+    'state_root': Path(state_root),
+    'local_workspace_root': Path(local_workspace_root),
+    'worker_backend': worker_backend,
     'dry_run': True,
     'operation_catalog': catalog,
     'runtime_plugin_configs': runtime_plugin_configs,
 }
 initialize_platform(
-    'codex', Path('$SOURCE_ROOT'),
-    codex_config_root=Path('$stage/codex'), **common,
+    'codex', Path(source_root),
+    codex_config_root=Path(stage) / 'codex', **common,
 )
 try:
-    Path('$WORKSPACE').resolve().relative_to(Path('$SOURCE_ROOT').resolve())
+    Path(workspace).resolve().relative_to(Path(source_root).resolve())
 except ValueError:
     initialize_platform(
-        'codex', Path('$WORKSPACE'),
-        codex_config_root=Path('$stage/external-workspace-codex'), **common,
+        'codex', Path(workspace),
+        codex_config_root=Path(stage) / 'external-workspace-codex', **common,
     )
 if int(os.environ['SCID_INSTALL_CODEX_LAUNCH_DISTINCT']):
     initialize_platform(
         'codex', Path(os.environ['SCID_INSTALL_CODEX_LAUNCH_ROOT']),
-        codex_config_root=Path('$stage/launch-root-codex'), **common,
+        codex_config_root=Path(stage) / 'launch-root-codex', **common,
     )
 print('deployment preview: pass')
 PY
@@ -877,14 +882,19 @@ configure_platform() {
     runuser -u "$SERVICE_USER" -- env PYTHONNOUSERSITE=1 PYTHONPATH="$SITE_ROOT" \
         SCID_INSTALL_CODEX_LAUNCH_ROOT="$CODEX_LAUNCH_ROOT" \
         SCID_INSTALL_CODEX_LAUNCH_DISTINCT="$launch_is_distinct" \
-        "$PYTHON" - <<PY
+        "$PYTHON" - \
+        "$SOURCE_ROOT" "$WORKSPACE" "$workspace_is_nested" "$PYTHON" \
+        "$SITE_ROOT" "$CONTROL_SOCKET" "$SCID_STATE" "$LOCAL_WORKSPACE_ROOT" \
+        "$WORKER_BACKEND" "$CONFIG_ROOT" "$TCAD_ENABLED" <<'PY'
 import os
+import sys
 from pathlib import Path
 from scidiscovery.platforms import initialize_platform
 
-source_root = Path('$SOURCE_ROOT')
-workspace = Path('$WORKSPACE')
-workspace_is_nested = bool($workspace_is_nested)
+source, work, nested, python, site_root, control_socket, state_root, local_workspace_root, worker_backend, config_root, tcad_enabled = sys.argv[1:]
+source_root = Path(source)
+workspace = Path(work)
+workspace_is_nested = bool(int(nested))
 prompt = workspace / 'AGENTS.md'
 if prompt.exists():
     text = prompt.read_text(encoding='utf-8')
@@ -907,15 +917,15 @@ if prompt.exists():
         text = before.rstrip() + '\n' + after.lstrip()
     prompt.write_text(text, encoding='utf-8')
 common = {
-    'python_executable': Path('$PYTHON'),
-    'python_path': Path('$SITE_ROOT'),
-    'control_socket': Path('$CONTROL_SOCKET'),
-    'state_root': Path('$SCID_STATE'),
-    'local_workspace_root': Path('$LOCAL_WORKSPACE_ROOT'),
-    'worker_backend': '$WORKER_BACKEND',
+    'python_executable': Path(python),
+    'python_path': Path(site_root),
+    'control_socket': Path(control_socket),
+    'state_root': Path(state_root),
+    'local_workspace_root': Path(local_workspace_root),
+    'worker_backend': worker_backend,
     'runtime_plugin_configs': (
-        {'tcad_artifact': Path('${CONFIG_ROOT}/tcad-plugin.json')}
-        if int('${TCAD_ENABLED}') else {}
+        {'tcad_artifact': Path(config_root) / 'tcad-plugin.json'}
+        if int(tcad_enabled) else {}
     ),
 }
 initialize_platform(

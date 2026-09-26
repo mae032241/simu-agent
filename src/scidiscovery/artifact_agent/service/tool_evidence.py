@@ -241,7 +241,7 @@ class ToolEvidenceMixin(ReferenceAccessMixin):
         value = self._require_running(run_id)
         # Finalize once against the actual receipt budget, before any consumer
         # publishes details. Keep the safe in-process diagnostics for the reply.
-        normalized = self._sanitize_diagnostic(value, {"category": "tool_failed",
+        normalized = self.sanitize_diagnostic(value, {"category": "tool_failed",
             "tool_name": attempt["tool_name"], "details": diagnostics}, repairable=False)
         details = tuple(normalized.get("details", ()))[:8]
         record = ToolAttempt.model_validate_json(canonical_json({**attempt,

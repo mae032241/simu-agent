@@ -31,7 +31,7 @@ class ReadFixture(RootRunRoutes):
         self.bindings = SimpleNamespace(list=lambda **kwargs: (
             [SimpleNamespace(name="run", object_id="private-id")] if kwargs["namespace"] == "run" else []))
         self.artifacts = SimpleNamespace(read=Mock(return_value=json.dumps(PAYLOAD).encode()))
-        self.runs = SimpleNamespace(worker_connections=SimpleNamespace(), diagnostic_summary=lambda value: {"failure":{"category":"output_rejected"}}, _sanitize_diagnostic=lambda value, diagnostic, **kwargs: diagnostic, status=Mock(return_value=self.value), recovery_available=Mock(return_value=False),
+        self.runs = SimpleNamespace(worker_connections=SimpleNamespace(), diagnostic_summary=lambda value: {"failure":{"category":"output_rejected"}}, sanitize_diagnostic=lambda value, diagnostic, **kwargs: diagnostic, status=Mock(return_value=self.value), recovery_available=Mock(return_value=False),
             diagnostic_events=Mock(return_value={"events": [{"event_id": 1, "recorded_at": "saved", "diagnostic": {"category":"output_rejected", "code":"fixture", "repairable_by_output":True, "details":[{"path":"$.summary", "message":"exact saved error"}]}}], "next_after": None}),
             evidence_output_refs=Mock(return_value=[]))
         self._operation_catalog = SimpleNamespace(operation=lambda _: SimpleNamespace(

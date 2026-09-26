@@ -56,6 +56,12 @@ Capability discovery 只产生 `tcad.solver-capability.v2`。私有固定参数�
 调试模式时限、次数、累计预留和诊断额度同样读取配置，提交前持久保存绑定不可变科学主题的
 reservation，失败与未知提交也不退款。
 
+领域执行策略还限制可用 executable、host、输入、环境和 runner 资源。核心控制层持有精确授权绑定、
+预算与生命周期；TCAD adapter 在副作用边界执行领域限制。socket、command 传输和 stdio 安装探针
+均保留这些不同职责。默认本地 daemon 与核心控制服务使用同一 service UID，通常也与本地 Worker
+相同；它提供进程与故障边界，不能对同 UID 隔离凭据。有访问权的原生 shell 可接触 socket、控制
+状态和审批密钥；仍适用可信本机假设与未关闭的 `SEC-002` 限制，见[安全说明](../../SECURITY.md)。
+
 总存储计入逻辑输入、中间文件、输出、日志；输入删除仍计费，stdout 保留镜像在终态观测中保守计费，所有 solver 文件均计入。
 本地与远端采样目录总量，超限终止进程组，manifest 记录**观测高水位**、采样周期与超调，
 不声称瞬时峰值或文件系统硬配额。科学输入物化、归档、SSH 传输及最终 CAS 登记均采用文件流；

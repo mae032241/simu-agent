@@ -1153,7 +1153,7 @@ def test_tool_projection_identity_independent_path_and_publication_gate(
         rejected
     )  # The finalizer reports the bad primary file before the seal step.
     output.unlink()
-    output.write_bytes(_envelope("Leaked host path: /home/example/private/state.db"))
+    output.write_bytes(_envelope("Leaked host path: /home/user/private/state.db"))
     rejected = worker.call_tool("worker_submit_result", {})
     assert rejected["state"] == "rejected" and "host-specific" in json.dumps(rejected)
     output.write_bytes(_envelope("password=abcdefghijklmnop"))

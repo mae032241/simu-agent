@@ -389,7 +389,9 @@ Operation 或 Schema 分支。Agent 主输出的 context validator 则获得其 
 - Run v1 只接受一个 Agent 主结果；声明 collection 输出的 Agent Operation 统一显示为当前后端
   unavailable，preflight 失败关闭；Transform 多输出不受此限制；
 - Hardened v1 的历史实现只支持纯 MCP Operation；当前阶段不扩展、不补齐，也不以其通过作为完成
-  条件；
+  条件。默认 12 个科学 Operation 需要原生能力，在该后端不可用；已支持的纯 MCP fixture 仍保留。
+  transport 租约默认 30 秒，仅 `worker_heartbeat` 续租，长时间工作或调用间隔可能使所有权过期。
+  每 Run 锁保护正在执行的调用，SQLite 写事务在工具执行前已结束；这些机制不续租，也不建立 OS 隔离；
 - 审批 UI 已增加结构化参数、证据与原件入口；真实 Fig4 部署后的阅读验收仍需单列，不以合成页面代替；
 - 当前测试证明工程边界和 TCAD 最小纵向路径，不证明论文图数字化精度、Solver 科学正确性、三领域
   通用性或相对单 Agent 的统计优势。
@@ -404,9 +406,16 @@ R5-L 不增加科学图、插件生命周期系统、第二注册表、第二 cu
 会话 current 或会话绑定候选；系统不为其增加在线迁移或兼容入口。
 生成的平台配置含机器绝对路径，每台设备必须重新生成。
 
-Worker prompt、任务目录和 JSON 校验提供上下文软隔离，不是完整系统沙箱。当前强制边界是精确输入
-绑定、输出封存与校验、Artifact 登记、独立审查、人工审批和外部执行授权；不是对每次任务内文件
-读取建立控制面记录。外部执行策略仍限制 executable、arguments、环境、资源和输入目录。科学接受
+`LocalTrustedBackend` 假设本机 Agent 协作可信、宿主用户可信。Root/Worker 路由使用客户端自报的平台
+元数据，能访问 socket 的原生 shell 可以伪造 Root 元数据。默认安装器让 control、UI 和本地 TCAD
+服务使用同一 service UID，通常就是安装用户 UID；同 UID 且有文件系统访问权的 Worker 还可读写
+控制数据库、CAS 和审批回执密钥。独立 daemon 进程、同 UID peer credentials 或同 UID 可读的 `0600`
+令牌都不能隔离角色。`SEC-002` 保持未关闭；强隔离需要可信启动器绑定身份，并用 OS/沙箱边界阻断
+Worker 对控制 socket、状态和密钥的访问。原生沙箱可缩小访问范围，但框架没有保证该隔离边界。
+
+Worker prompt、任务目录和 JSON 校验提供上下文软隔离。正常接口强制精确输入绑定、输出封存与校验、
+Artifact 登记、独立审查、人工审批和外部执行授权；这些 gate 不能遏制恶意同 UID shell。
+外部执行策略仍限制 executable、arguments、环境、资源和输入目录。科学接受
 仍依赖来源、独立审查、确定性报告和结果诊断。
 
 TCAD 分析可选择检查所绑定终态执行的原文件并接收明确的输出映射。注册工具将原始字节及持久回执保存在本 Run 的 Artifact 集合中，冻结输入不变。报告和精确证据快照一起完成；Root 仅在 completed 后公开附属语义名称。后轮显式绑定恢复清单及原始文件，可重放原计算别名。检查服务缺失或旧 runner 不支持时仍可交付有限分析。求解器退出结果和收集错误分别保留；恢复不重写原执行，也不授予科学成功。

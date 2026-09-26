@@ -688,7 +688,7 @@ class RunService(ToolEvidenceMixin):
             return "failed", ()
         except (RunOutputError, WorkspaceError) as error:
             diagnostic = self.record_error_observation(run_id, "output_rejected",
-                                 diagnostic=self._rejection_diagnostic(value, error))
+                                 diagnostic=self.rejection_diagnostic(value, error))
             return "rejected", tuple(diagnostic.get("details", ()))
         self._accept_candidate(run_id, sealed.digest)
         output = self._register_candidate(value, validated, sealed.digest)
@@ -707,7 +707,7 @@ class RunService(ToolEvidenceMixin):
             raise
         except (RunOutputError, WorkspaceError) as error:
             diagnostic = self.record_error_observation(run_id, "output_rejected",
-                diagnostic=self._rejection_diagnostic(value, error))
+                diagnostic=self.rejection_diagnostic(value, error))
             raise RunOutputError("candidate requires correction", details=tuple(diagnostic.get("details", ())),
                                  recorded=True) from error
         return validated
@@ -1037,7 +1037,7 @@ class RunService(ToolEvidenceMixin):
         if not activity or len(activity) > 128:
             raise ValueError("Run activity is invalid")
         value = self._require_running(run_id)
-        normalized = None if diagnostic is None else self._sanitize_diagnostic(
+        normalized = None if diagnostic is None else self.sanitize_diagnostic(
             value, diagnostic, repairable=activity == "output_rejected")
         now = timestamp()
         with self._connect() as connection:
@@ -1098,7 +1098,7 @@ class RunService(ToolEvidenceMixin):
     def record_error_observation(self, run_id: str, activity: str, *, diagnostic: dict[str, Any]) -> dict[str, Any]:
         """Retain failures without reopening or heartbeating an expired Run."""
         value = self.status(run_id)
-        normalized = self._sanitize_diagnostic(value, diagnostic, repairable=activity == "output_rejected")
+        normalized = self.sanitize_diagnostic(value, diagnostic, repairable=activity == "output_rejected")
         self.record_tool_observation(run_id, activity, normalized)
         return normalized
 
@@ -1122,12 +1122,14 @@ class RunService(ToolEvidenceMixin):
                         (datetime.fromisoformat(record['completed_at'].replace('Z', '+00:00')) - datetime.fromisoformat(record['started_at'].replace('Z', '+00:00'))).total_seconds()))
         return list(calls.values())[-16:]
 
-    def _rejection_diagnostic(self, value: RunStatus, error: Exception) -> dict[str, Any]:
+    def rejection_diagnostic(self, value: RunStatus, error: Exception) -> dict[str, Any]:
+        """Build output rejection facts for the controlled diagnostic path."""
         return {"category": "output_rejected", "details":getattr(error, "details", ()) or
                 ({"path":"$", "type":"value_error"},)}
 
-    def _sanitize_diagnostic(self, value: RunStatus, diagnostic: dict[str, Any],
-                             *, repairable: bool) -> dict[str, Any]:
+    def sanitize_diagnostic(self, value: RunStatus, diagnostic: dict[str, Any],
+                            *, repairable: bool) -> dict[str, Any]:
+        """Project diagnostic facts through this Run's frozen public contract."""
         result = self._safe_diagnostic(diagnostic.get("category"), repairable=repairable)
         try:
             compiled = self._compiled(value)

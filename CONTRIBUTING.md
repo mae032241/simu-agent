@@ -5,7 +5,9 @@
    payloads.
 3. Add deterministic code for mechanical transformations; use Agents only for
    scientific judgment or simulator authoring/review.
-4. Add focused tests for every behavior change, then run `pytest -q`.
+4. Add focused tests for behavior changes. Run them through
+   `python scripts/run_tests.py --lane source --output /tmp/scid-focused tests/path.py`;
+   choose installed/process checks as described in [tests/README.md](tests/README.md).
 5. Keep tracked examples free of credentials, licenses, live hosts, and
    machine-specific absolute paths.
 6. Update both English and Chinese README or installation documents when their

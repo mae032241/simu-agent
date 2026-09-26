@@ -20,6 +20,7 @@ from scidiscovery.artifact_agent.interfaces.mcp_hardened_worker import (
     HardenedWorkerMCPRouter,
 )
 from scidiscovery.artifact_agent.interfaces.mcp_root import RootMCPRouter, RootToolFacade
+from scidiscovery.artifact_agent.interfaces.mcp_worker_protocol import WorkerToolError
 from scidiscovery.artifact_agent.runtime import open_runtime
 from scidiscovery.artifact_agent.schema.artifact import ArtifactRegistration
 from scidiscovery.artifact_agent.schema.common import canonical_json
@@ -44,6 +45,7 @@ def _system(
     tmp_path: Path,
     *,
     with_text_patch: bool = False,
+    with_json_patch: bool = False,
     blind_plugin=BLIND_CSV_PLUGIN,
     worker_backend="hardened",
 ):
@@ -62,13 +64,21 @@ def _system(
                         operation.executor.model_copy(update={"native_tools": native})})
                 operations.append(operation)
             blind_plugin = blind_plugin.model_copy(update={"operations": tuple(operations)})
-    if with_text_patch:
+    if with_text_patch or with_json_patch:
         author = blind_plugin.operations[0]
+        patch_tools = tuple(
+            ComponentRef(name, plugin_id="builtin")
+            for name, enabled in (
+                ("file_apply_patch_tool", with_text_patch),
+                ("file_json_patch_tool", with_json_patch),
+            )
+            if enabled
+        )
         executor = author.executor.model_copy(
             update={
                 "tools": (
                     *author.executor.tools,
-                    ComponentRef("file_apply_patch_tool", plugin_id="builtin"),
+                    *patch_tools,
                 )
             }
         )
@@ -425,6 +435,86 @@ def test_hardened_exact_text_patch_is_real_for_a_shell_free_operation(
                 ),
             },
         )
+
+
+@pytest.mark.parametrize("op", ["add", "replace", "remove", "test"])
+def test_hardened_json_patch_rejects_invalid_paths_atomically(tmp_path: Path, op: str) -> None:
+    catalog, runtime, _, root = _system(tmp_path, with_json_patch=True)
+    _invoke(root)
+    worker = _worker(catalog, runtime)
+    opened = worker.call_tool("worker_open_assignment", {})
+    original = b'{"items":[{"value":1},{"value":2}],"empty":[],"marker":0}\n'
+    worker.call_tool("worker_file_write_begin", {"relative_path": "output/result.json"})
+    worker.call_tool("worker_file_write_chunk", {"content": original.decode()})
+    worker.call_tool("worker_file_write_commit", {})
+    target = Path(opened["workspace_path"], "output/result.json")
+    invalid_indices = ["-1", "+1", "01", "1.0", " 1", "١", "100"]
+    paths = [f"/items/{index}" for index in invalid_indices]
+    paths += [f"/items/{index}/value" for index in [*invalid_indices, "2", "-"]]
+    paths += ["/missing/value", "/marker/value", "/items/~2"]
+    if op != "add":
+        paths += ["/items/2", "/items/-", "/empty/0", "/missing"]
+    else:
+        paths += ["/empty/1"]
+    for path in paths:
+        operation = {"op": op, "path": path}
+        if op != "remove":
+            operation["value"] = {"value": 2} if path.count("/") == 2 else 2
+        with pytest.raises(WorkerToolError, match="server-side workspace edit failed") as rejected:
+            worker.call_tool("worker_file_json_patch", {
+                "relative_path": "output/result.json",
+                "expected_digest": hashlib.sha256(original).hexdigest(),
+                "operations": [
+                    {"op": "replace", "path": "/marker", "value": 1},
+                    operation,
+                ],
+            })
+        assert str(rejected.value.__cause__) == "JSON patch is invalid"
+        assert rejected.value.details[0]["repairable"] is True
+        assert target.read_bytes() == original, path
+        assert runtime.runs.status(worker._run_id).state == "running"
+    repaired = worker.call_tool("worker_file_json_patch", {
+        "relative_path": "output/result.json",
+        "expected_digest": hashlib.sha256(original).hexdigest(),
+        "operations": [{"op": "replace", "path": "/items/1/value", "value": 3}],
+    })
+    assert repaired["state"] == "patched"
+    assert json.loads(target.read_bytes())["items"][1]["value"] == 3
+
+
+def test_hardened_json_patch_accepts_array_bounds_and_object_pointer_keys(tmp_path: Path) -> None:
+    catalog, runtime, _, root = _system(tmp_path, with_json_patch=True)
+    _invoke(root)
+    worker = _worker(catalog, runtime)
+    opened = worker.call_tool("worker_open_assignment", {})
+    original = '{"items":[],"01":1,"-1":2,"+1":3,"":4,"a/b":{"~":5},"-":6}\n'
+    worker.call_tool("worker_file_write_begin", {"relative_path": "output/result.json"})
+    worker.call_tool("worker_file_write_chunk", {"content": original})
+    worker.call_tool("worker_file_write_commit", {})
+    patched = worker.call_tool("worker_file_json_patch", {
+        "relative_path": "output/result.json",
+        "operations": [
+            {"op": "test", "path": "/01", "value": 1},
+            {"op": "test", "path": "/-1", "value": 2},
+            {"op": "test", "path": "/+1", "value": 3},
+            {"op": "test", "path": "/", "value": 4},
+            {"op": "test", "path": "/a~1b/~0", "value": 5},
+            {"op": "test", "path": "/-", "value": 6},
+            {"op": "add", "path": "/items/0", "value": 10},
+            {"op": "add", "path": "/items/1", "value": 20},
+            {"op": "add", "path": "/items/-", "value": 30},
+            {"op": "add", "path": "/items/1", "value": 15},
+            {"op": "replace", "path": "/items/0", "value": 11},
+            {"op": "test", "path": "/items/3", "value": 30},
+            {"op": "remove", "path": "/items/3"},
+            {"op": "replace", "path": "/", "value": 40},
+            {"op": "add", "path": "/new", "value": None},
+        ],
+    })
+    assert patched["state"] == "patched"
+    assert json.loads(Path(opened["workspace_path"], "output/result.json").read_bytes()) == {
+        "items": [11, 15, 20], "01": 1, "-1": 2, "+1": 3, "": 40, "a/b": {"~": 5}, "-": 6, "new": None,
+    }
 
 
 def test_hardened_server_write_rejects_parent_symlink_escape(tmp_path: Path) -> None:

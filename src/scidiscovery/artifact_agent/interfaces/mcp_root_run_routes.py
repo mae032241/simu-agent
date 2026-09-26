@@ -275,7 +275,7 @@ class RootRunRoutes:
     def _scientific_run_diagnostic(self, value, diagnostic):
         if diagnostic is None:
             return None
-        safe = self.runs._sanitize_diagnostic(value, diagnostic,
+        safe = self.runs.sanitize_diagnostic(value, diagnostic,
             repairable=diagnostic.get("repairable_by_output") is True)
         # Revalidate saved details against the declared contract, including old
         # records. Engineering attachments and arbitrary messages stay private.

@@ -595,7 +595,12 @@ with a reason in the diagnostic `all` view.
   multi-output remains supported.
 - The historical Hardened-v1 implementation supports MCP-only Operations. The
   current milestone neither extends nor completes it and does not require it to
-  pass.
+  pass. The 12 default scientific Operations require native capabilities and are
+  unavailable on this backend; supported MCP-only fixtures remain useful. Its
+  transport lease defaults to 30 seconds and renews only on `worker_heartbeat`:
+  long work or gaps between calls can expire ownership. Per-Run locks fence
+  in-flight calls, and the SQLite writer transaction ends before the tool runs;
+  these mechanisms do not renew the lease or establish OS isolation.
 - The approval UI now provides structured parameters, evidence and original-file
   links. Post-deployment Fig4 reading still requires separate acceptance; synthetic
   page checks do not substitute for it.
@@ -620,11 +625,21 @@ ResearchInstances and cannot enter instance listings, session current, or
 session-binding candidates. No online migration or compatibility entry is
 added for them.
 
+`LocalTrustedBackend` assumes cooperative local Agents and a trusted host user.
+The Root/Worker route consumes client-supplied platform metadata; a native shell
+with socket access can forge Root metadata. The default installer runs control,
+UI and local TCAD services under the same service UID, normally the installing
+user's UID. A Worker with that UID and filesystem access can read or modify
+control databases, CAS and the approval receipt secret. Separate daemon processes,
+same-UID peer credentials and same-UID-readable `0600` tokens do not isolate roles.
+`SEC-002` remains open. Strong isolation needs a trusted launcher identity binding
+and an OS/sandbox boundary denying Workers access to control sockets, state and
+secrets; native sandbox restrictions alone are not a framework guarantee.
+
 Worker prompts, task directories, and JSON validation provide context-level
-soft isolation, not a complete system sandbox. Enforced boundaries are exact
-input binding, output sealing and validation, Artifact registration,
-independent review, human approval, and effect authorization—not a control-plane
-record for every task-local read. Effect policy still limits executable,
+soft isolation. Normal interfaces enforce exact input binding, output sealing and
+validation, Artifact registration, independent review, human approval and effect
+authorization. Those gates do not contain a hostile same-UID shell. Effect policy limits executable,
 arguments, environment, resources, and inputs. Scientific acceptance still
 depends on provenance, independent review, deterministic reports, and result
 diagnosis.

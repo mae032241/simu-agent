@@ -93,6 +93,17 @@ a fresh allowance. Debug modes, attempts, total reservations and diagnostic boun
 also come from config; reservations are saved before submission against the immutable
 scientific subject, including failed/unknown submissions.
 
+The domain execution policy also constrains allowed executables, hosts, inputs,
+environment and runner limits. Core control owns exact authorization bindings,
+budgets and lifecycle; the TCAD adapter owns enforcement at the side-effect
+boundary. Socket and command transports, including the stdio installation probe,
+retain these distinct responsibilities. The default local daemon runs under the
+same service UID as core control and usually the local Worker: it separates
+processes and faults, but provides no credential isolation from that UID. A native
+shell with access can reach sockets and control state or read the approval secret;
+the trusted-local assumption and open `SEC-002` limitation apply (see
+[Security](../../SECURITY.md)).
+
 Storage counts logical inputs, intermediates, outputs and logs. Inputs remain charged
 even if deleted. Every solver file is counted; retained stdout mirrors are conservatively included in the terminal observation. Local and remote runners
 sample directory sizes and terminate the process group on excess. The manifest reports

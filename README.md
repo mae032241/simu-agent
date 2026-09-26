@@ -138,8 +138,10 @@ python3 -m pip install -e '.[test]'
 python3 -m pip install -e plugins/tcad_artifact
 python3 -m pip install -e plugins/curve_score
 python3 -m pip install -e plugins/curve_figure_evidence  # optional automatic figures; see INSTALL for offline dependencies
-pytest -q
+python scripts/run_tests.py --lane source --per-file --output /tmp/scid-source
 ```
+
+See [test lanes and resource limits](tests/README.md) for installed and process checks.
 
 Run the hermetic suite before publishing. Live platform and real solver tests
 require explicit external configuration and are not implied by unit-test

@@ -59,7 +59,7 @@ def test_completed_review_reuse_is_separate_from_run_identity(tmp_path, change):
     _switch(runtime, root, current)
     assert current.operation(saved.operation_id).digest != saved.operation_digest
     with pytest.raises(RunContractUnavailable):
-        runtime.runs._compiled(saved)
+        runtime.runs.compiled_operation(saved)
     assert runtime.runs.signal_for_output(original.ref, require_current=False) == saved.signal
     refused_without_review = _consumer_preflight(root, subject, None)
     assert refused_without_review["admissible"]
