@@ -176,8 +176,8 @@ class FigureDigitizationRequest(_DigitizationModel):
                 "ready figure request requires plot_bbox, axis_calibration, and series"
             )
         # Unresolved requests may retain known geometry without inventing image bounds.
-        width = self.source.width if self.source.width is not None else math.inf
-        height = self.source.height if self.source.height is not None else math.inf
+        width = getattr(self.source, "width", None) or math.inf
+        height = getattr(self.source, "height", None) or math.inf
         if self.plot_bbox is not None and not _valid_box(
             self.plot_bbox, width=width, height=height
         ):
@@ -266,6 +266,18 @@ def materialize_figure_request(value: dict, source_content: bytes) -> dict:
     if source.get("source_sha256", actual_hash) != actual_hash:
         raise ValueError("figure source hash differs from the typed request")
     source["source_sha256"] = actual_hash
+    # The preserved original bytes own file type; page/image selection stays scientific.
+    if source_content.startswith(b"%PDF-"):
+        media_type, source_kind = "application/pdf", "pdf_embedded_image"
+    else:
+        import io
+        from PIL import Image
+        with Image.open(io.BytesIO(source_content)) as image:
+            media_type = Image.MIME[image.format]
+        source_kind = "raster_image"
+    if source.get("media_type", media_type) != media_type or source.get("source_kind", source_kind) != source_kind:
+        raise ValueError("figure source type differs from the preserved original")
+    source.update(media_type=media_type, source_kind=source_kind)
     value["source"] = source
     if value.get("request_status", "ready") == "unresolved":
         return value
@@ -338,14 +350,18 @@ __all__ = [
 
 
 class ScientificFigureSource(_DigitizationModel):
-    source_kind: Literal["pdf_embedded_image", "raster_image"]
-    media_type: Literal["application/pdf", "image/png", "image/jpeg", "image/webp"]
     page: Annotated[int, Field(ge=1, le=100_000)] | None = None
     document_image_index: Annotated[int, Field(ge=0, le=1_000_000)] | None = None
-    width: Annotated[int, Field(ge=1)] | None = None
-    height: Annotated[int, Field(ge=1)] | None = None
 
 
 class ScientificFigureRequest(FigureDigitizationRequest):
     """Scientific choices only; materialization restores source identity internally."""
     source: ScientificFigureSource
+    schema_version: Literal["scidiscovery.curve-figure-digitization-request.v2"] = "scidiscovery.curve-figure-digitization-request.v2"
+
+    @classmethod
+    def __get_pydantic_json_schema__(cls, core_schema, handler):
+        schema = super().__get_pydantic_json_schema__(core_schema, handler)
+        schema['properties'].pop('schema_version', None)
+        schema['required'] = [field for field in schema.get('required', ()) if field != 'schema_version']
+        return schema

@@ -330,11 +330,7 @@ repeated implementation searches. Deliver the assigned scientific skeleton only.
     )
     scientific_review_schema = json.dumps({
         **json.loads(schema_resource(ScientificReview, "scidiscovery.scientific-review.v1")),
-        "description": "Formal ScientificReview payload of the sealed envelope. In the draft envelope, "
-            "/handoff or its /summary and /verdict may be omitted: the workspace finalizer derives "
-            "handoff verdict from payload.verdict (reject maps to blocked) and a short reference "
-            "to payload.summary. Existing explicit summary/notes are preserved. This is a draft "
-            "omission, not a relaxation of the sealed RoleResultEnvelope Schema.",
+        "description": "Author the scientific summary, verdict and next_actions here once; control projects the sealed handoff.",
     }, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
     materialization_report_schema = schema_resource(
         ExperimentPlanMaterializationReport,

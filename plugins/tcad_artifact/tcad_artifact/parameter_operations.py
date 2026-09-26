@@ -43,23 +43,29 @@ class ParameterEvidencePackage(SchemaModel):
             raise ValueError("parameter coverage differs from the declared values and sources")
         return self
 
+def _materialize_parameter_draft(payload):
+    from scidiscovery.plugin_runtime.results import materialize_intake
+    if isinstance(payload.get("scientific_intake"), dict):
+        materialize_intake(payload["scientific_intake"])
+    catalog = payload.get("source_catalog")
+    if isinstance(catalog, dict) and isinstance(catalog.get("sources"), list):
+        for source in catalog["sources"]:
+            if isinstance(source, dict) and isinstance(source.get("doi"), str):
+                source["work_key"] = "doi:" + source["doi"].lower().removeprefix("https://doi.org/")
+    payload.pop("coverage", None)
+
+
 def _finalize_parameter_result(request):
     from scidiscovery.plugin_runtime.results import (
-        finalize_result, materialize_general_result, materialize_intake,
+        finalize_result, materialize_general_result, validate_finalizer_payload,
     )
     def project(value):
         materialize_general_result(value, request.output_schema_id)
         if request.output_schema_id != "scidiscovery.parameter-evidence-package.v1":
             return
         payload = value["payload"]
-        if isinstance(payload.get("scientific_intake"), dict):
-            materialize_intake(payload["scientific_intake"])
-        catalog = payload.get("source_catalog")
-        if isinstance(catalog, dict) and isinstance(catalog.get("sources"), list):
-            for source in catalog["sources"]:
-                if isinstance(source, dict) and isinstance(source.get("doi"), str):
-                    source["work_key"] = "doi:" + source["doi"].lower().removeprefix("https://doi.org/")
-        package = ParameterEvidencePackage.model_validate_json(canonical_json(payload))
+        _materialize_parameter_draft(payload)
+        package = validate_finalizer_payload(ParameterEvidencePackage, payload)
         payload["coverage"] = evaluate_device_parameter_coverage(package.parameter_requirements,
             package.device_parameters, package.source_catalog).model_dump(mode="json")
     return finalize_result(request, project)
@@ -146,19 +152,27 @@ def check_parameters(request, context):
     if path.is_absolute() or not path.parts or path.parts[0] not in {"scratch", "output"}:
         raise ValueError("parameter package must be a task-local scratch/ or output/ draft")
     document = json.loads(read_control_workspace_file(context.workspace, path, max_bytes=7*1024*1024))
-    package = ParameterEvidencePackage.model_validate_json(canonical_json(document.get("payload", document)))
+    payload = document.get("payload", document)
+    _materialize_parameter_draft(payload)
+    package = ParameterEvidencePackage.model_validate_json(canonical_json(payload))
     coverage = evaluate_device_parameter_coverage(package.parameter_requirements, package.device_parameters, package.source_catalog)
     uncertainty = project_parameter_uncertainty(package.parameter_requirements, package.device_parameters, coverage)
     return {"coverage": coverage.model_dump(mode="json"), "uncertainty": uncertainty.model_dump(mode="json"),
         "interpretation": "Deterministic parameter checks; no qualification or scientific approval."}
 
-PARAMETER_RESULT_FINALIZER = CallableComponent("workspace_finalizer", _finalize_parameter_result)
+from scidiscovery.operations.workspace import WorkspaceFinalizer
+from scidiscovery.plugin_runtime.results import result_draft_schema, RESULT_PROJECTION_VERSION
+PARAMETER_RESULT_FINALIZER = CallableComponent("workspace_finalizer", WorkspaceFinalizer(
+    _finalize_parameter_result, result_draft_schema, RESULT_PROJECTION_VERSION))
 PARAMETER_PACKAGE_SCHEMA = _schema(ParameterEvidencePackage, "scidiscovery.parameter-evidence-package.v1")
 PACKAGE_VALIDATOR = CallableComponent("validator", _strict(ParameterEvidencePackage))
 EXTRACT_CONTEXT_VALIDATOR = CallableComponent("validator", validate_extract_context)
 EXTRACT_AGENT = CallableComponent("agent", lambda: None)
 EXTRACT_PROMPT = OPERATION_AGENT_PREAMBLE + (Path(__file__).with_name("roles") / "parameter_evidence_extractor.md").read_text()
+from scidiscovery.general_science_resources import INTAKE_RULES
+
 PARAMETER_SEMANTIC_CONTRACT = semantic_contract(
+    *(SemanticRuleSpec(f"parameter.intake_{index}", rule) for index, rule in enumerate(INTAKE_RULES)),
     SemanticRuleSpec("parameter.reference_and_unit_closure", "Preserve consistent objectives, parameter keys, units, conditions and exact scientific source references. Missing coverage is a scientific limitation, not a task-completion gate."),
     SemanticRuleSpec("parameter.source_binding", "Parameter observations cite the exact supplied sources. Preserve any supplied scientific checklist."))
 PARAMETER_CHECK_TOOL = WorkerToolDefinition(name="worker_parameter_check", input_model=ParameterCheckInput,

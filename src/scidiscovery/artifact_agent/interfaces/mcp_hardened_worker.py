@@ -211,7 +211,10 @@ class HardenedWorkerMCPRouter(LocalWorkerMCPRouter):
         status = self.runs.status(self._run_id)
         if self.is_helper:
             reply = self._helper_open_reply(status)
-            reply["tool_contracts"] = {item["name"]: {key: item[key] for key in ("description", "inputSchema")} for item in self.list_tools()}
+            # This backend cannot read native files: inline the small subtask,
+            # while selected tool contracts remain available through describe.
+            reply.update(json.loads(Path(reply["assignment_path"]).read_bytes()))
+            reply["instruction"] = "Follow the inline subtask; use scid_describe for needed complete tool contracts."
             reply["write_protocol"] = "server_file_tools"
             return reply
         return {

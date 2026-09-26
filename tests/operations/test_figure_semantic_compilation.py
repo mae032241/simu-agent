@@ -72,7 +72,6 @@ def _source_and_request() -> tuple[bytes, dict[str, object]]:
 def test_public_schema_contains_only_agent_owned_description() -> None:
     schema = json.loads(FIGURE_REQUEST_SCHEMA)
     assert set(schema["properties"]) == {
-        "schema_version",
         "request_status",
         "unresolved_reasons",
         "figure_key",
@@ -185,7 +184,7 @@ def _saved_family(tmp_path, *, unresolved=False, partial_alias_recovery=False):
         source_descriptor=lambda name: SimpleNamespace(port_name="paper_source"),
         finish_attempt=finish)
     request["source"] = {key: value for key, value in request["source"].items()
-        if key not in {"source_sha256", "recovered_image_sha256", "recovery_tool", "recovery_tool_version"}}
+        if key in {"page", "document_image_index"}}
     draft = FigureDigitizationPreviewInput.model_validate_json(canonical_json({"request": request}))
     if not unresolved:
         with pytest.raises(ValueError, match="preview"):

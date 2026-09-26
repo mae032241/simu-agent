@@ -7,7 +7,7 @@ from typing import Annotated, Literal
 from pydantic import Field, model_validator
 
 from .common import Identifier, SchemaModel, canonical_json
-from .scientific_foundation import ScientificFoundation
+from .scientific_foundation import ScientificFoundation, _raise_issues
 from .scientific_output import EvidenceCitation, ScientificFinding
 
 
@@ -59,12 +59,14 @@ class ProblemFrame(SchemaModel):
     def _frame_is_closed(self) -> ProblemFrame:
         foundation_keys = tuple(self.foundation_item_keys)
         observable_keys = tuple(item.observable_key for item in self.observables)
+        issues = []
         if len(observable_keys) != len(set(observable_keys)):
-            raise ValueError("observable_key values must be unique")
+            issues.append((("observables",), "observable_key values must be unique"))
         known = set(foundation_keys)
-        for observable in self.observables:
+        for index, observable in enumerate(self.observables):
             if not set(observable.foundation_item_keys).issubset(known):
-                raise ValueError("observable references an undeclared foundation item")
+                issues.append((("observables", index, "foundation_item_keys"), "observable references an undeclared foundation item"))
+        _raise_issues(self, issues)
         return self
 
 
@@ -133,11 +135,13 @@ class ScientificIntake(SchemaModel):
 
     @model_validator(mode="after")
     def _frame_uses_the_supplied_foundation(self) -> ScientificIntake:
-        validate_problem_frame_against_foundation(
-            self.problem_frame, self.scientific_foundation
-        )
+        issues = []
+        known = {item.item_key for item in self.scientific_foundation.items}
+        if not set(self.problem_frame.foundation_item_keys).issubset(known):
+            issues.append((("problem_frame", "foundation_item_keys"), "problem frame references an unknown foundation item"))
         if self.problem_frame.objective != self.scientific_foundation.objective:
-            raise ValueError("problem frame and scientific foundation objectives differ")
+            issues.append((("problem_frame", "objective"), "problem frame and scientific foundation objectives differ"))
+        _raise_issues(self, issues)
         return self
 
 

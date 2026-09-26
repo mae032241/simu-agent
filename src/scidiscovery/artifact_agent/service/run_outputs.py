@@ -314,7 +314,7 @@ def _validate_payload_schema(
         return
     details = []
     names = schema_field_names(schema)
-    for error in errors[:32]:
+    for error in errors[:15]:
         parts = list(error.absolute_path)
         message = "Value does not satisfy the declared JSON Schema constraint."
         if error.validator == "required" and isinstance(error.instance, dict):
@@ -334,6 +334,9 @@ def _validate_payload_schema(
             "path": diagnostic_path(parts, names, root="$.payload"),
             "message": message[:512], "type": f"json_schema.{error.validator}",
         }))
+    from ...operation_contract import bounded_diagnostics
+    details = bounded_diagnostics(details, total=len(errors), phase="output_payload", action="submit",
+        deferred="Cross-field and source-reference checks were not evaluated.")
     raise RunOutputError(
         "operation payload does not satisfy its JSON Schema",
         details=_with_rule(tuple(details), "runtime.schema", declared_rule_ids),

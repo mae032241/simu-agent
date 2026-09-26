@@ -26,17 +26,16 @@ READ_VIEW_LIMIT = 32 * 1024
 REPORT_GUIDANCE = """Concentrate the scientific conclusion in payload.summary and overall_verdict.
 Cite key evidence; use optional limitations for restrictions and actual anomalies.
 Write remaining_contradiction and next_action only when needed. Gates and separate
-hypothesis assessments are optional, not a required six-layer form. For a new
-diagnosis, use its exact scoped plan (the bound experiment_plan, or the plan inside
+hypothesis assessments are optional, not a required six-layer form. When a plan is supplied, use its exact scoped plan (the bound experiment_plan, or the plan inside
 the fixed curve-analysis package): objective_assessment is optional; if supplied,
 it must use that plan’s exact non-null objective_key. No key may be invented. not_evaluable is valid when the evidence or task scope
 cannot assess the objective. next_action is non-authoritative Worker advice.
 Keep claim_allowed explicit; no omitted gate implies success. Detailed numbers,
 scripts and plots belong in controlled evidence files. For a LayeredDiagnosisReport
-draft, handoff may be omitted: the finalizer generates its verdict and a short
-reference to payload.summary. Do not repeat the conclusion or next action there.
-The sealed envelope schema includes these generated fields; domain-workspace.json
-patch_contract identifies them. Other handoff explanations remain optional.
+draft, write the summary and verdict once in the payload. The finalizer projects
+these into the sealed handoff. Other handoff explanations remain optional.
+When no experiment plan is supplied, omit plan and experiment identifiers; do not
+invent placeholders. A supplied plan retains its exact scientific selections.
 """
 GUIDANCE = """If the workspace provides analysis-start.json, read it first. It contains
 bounded verbatim excerpts and exact source pointers, not a new scientific authority.
@@ -253,9 +252,6 @@ def materialize(request, *, start_limit=START_LIMIT):
                 "budget": "Timeout is clipped to the Run deadline minus the selected submission reserve. Reserve is adjustable; timing is not required to submit."}},
         read_paths=(START, "scratch", "recovery-draft", "tools"),
         patch_contract={"target": "output/result.json", "schema": "scidiscovery.layered-diagnosis.v1",
-            "generated_fields": {"/handoff/verdict": "/payload/overall_verdict",
-                "/handoff/summary": "short reference to /payload/summary"},
-            "draft_may_omit": ["/handoff"],
             "instruction": REPORT_GUIDANCE},
     )
 

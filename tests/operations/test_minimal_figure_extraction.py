@@ -265,7 +265,7 @@ def test_preview_and_formal_materialization_use_identical_outputs(tmp_path: Path
     assert handler is not None
     preview = handler(
         FigureDigitizationPreviewInput(
-            request=ScientificFigureRequest.model_validate_json(canonical_json({**json.loads(request), "source": {key: value for key, value in json.loads(request)["source"].items() if key in {"source_kind", "media_type", "width", "height"}}}), strict=True)
+            request=ScientificFigureRequest.model_validate_json(canonical_json({**json.loads(request), "source": {key: value for key, value in json.loads(request)["source"].items() if key in {"page", "document_image_index"}}}), strict=True)
         ),
         context,
     )

@@ -374,8 +374,10 @@ class Components:
     foundation_validator = CallableComponent("validator", _strict_validator(ScientificFoundation))
 
 
-from .plugin_runtime.results import finalize_general_result
-RESULT_FINALIZER = CallableComponent("workspace_finalizer", finalize_general_result)
+from .plugin_runtime.results import finalize_general_result, result_draft_schema, RESULT_PROJECTION_VERSION
+from .operations.workspace import WorkspaceFinalizer
+RESULT_FINALIZER = CallableComponent("workspace_finalizer", WorkspaceFinalizer(
+    finalize_general_result, result_draft_schema, RESULT_PROJECTION_VERSION))
 WORKSPACE = WorkspaceContract()
 
 

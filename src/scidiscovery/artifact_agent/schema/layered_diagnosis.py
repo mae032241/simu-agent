@@ -152,8 +152,8 @@ class AnalysisSourceReference(SchemaModel):
 
 class LayeredDiagnosisReport(SchemaModel):
     study_kind: Literal["scientific", "engineering"] = "scientific"
-    experiment_key: Identifier
-    plan_key: Identifier
+    experiment_key: Identifier | None = Field(default=None, description="Select the experiment from the bound plan when a plan is supplied. Omit when there is no plan; never invent a placeholder.")
+    plan_key: Identifier | None = Field(default=None, description="Select the validation plan when a plan is supplied. Omit when there is no plan; never invent a placeholder.")
     summary: Annotated[str, Field(min_length=1, max_length=8192)]
     evidence: Annotated[tuple[ValidationEvidence, ...], Field(max_length=256)] = ()
     source_references: Annotated[tuple[AnalysisSourceReference, ...], Field(max_length=64)] = ()

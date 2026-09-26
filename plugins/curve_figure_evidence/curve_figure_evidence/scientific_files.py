@@ -22,7 +22,7 @@ def project_figure_file(name, raw):
         public = {"materials": [{"name": item["data_item"], "media_type": item["media_type"]} for item in value["members"]]}
         return canonical_json(public), {"selection": value}
     if name == "figure_request/request.json":
-        remove(("source",), SOURCE_CONTROL)
+        remove(("source",), (*SOURCE_CONTROL, "source_kind", "media_type", "width", "height"))
     elif name == "figure_manifest/evidence.json":
         remove(("source",), ("image_sha256", "pdf_sha256", "pdf_object"))
         remove(("provenance",), ("spec_sha256",))

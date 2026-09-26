@@ -118,18 +118,23 @@ class LocalWorkerMCPRouter:
             "Stay within the same workspace and authorization. You are not the task owner or an independent reviewer. "
             "Owner submission and stage-sealing directions in shared materials do not apply to you. Do not submit, seal stages, "
             "create approvals or delegate again. Return concise findings, changed file references, verification and limitations "
-            "through native completion to the responsible parent. Do not create a formal result receipt."
+            "through native completion to the responsible parent. Do not create a formal result receipt. "
+            "Read the selected material navigation below; unresolved material names remain gaps. "
+            "Use scid_describe for a selected tool's complete contract and retain it while unchanged and in context. "
+            "Do not read the parent result schema or owner instructions unless the subtask specifically needs them."
         )
         assignment = {"participation": "helper", "name": self.participant['name'], **task,
-            "role_instructions": instruction, "inputs": source.get('inputs', []),
-            "tool_contracts": {item["name"]: {key: item[key] for key in ("description", "inputSchema")} for item in self.list_tools()}}
+            "role_instructions": instruction,
+            "inputs": [item for item in source.get('inputs', [])
+                       if item.get('source_name') in task['materials']
+                       or item.get('relative_path') in task['materials']],
+            "tools": [item["name"] for item in self.list_tools()]}
         relative = Path('.operation-tools/helpers') / self.participant['name'] / 'assignment.json'
         path = write_control_workspace_file(self._workspace.root, relative,
             json.dumps(assignment, ensure_ascii=False).encode(), mode=0o400, replace=True, create_parents=True)
         return {"state": "opened", "participation": "helper", "name": self.participant['name'],
-            "task": task['task'], "materials": task['materials'], "role_instructions": instruction,
             "workspace_path": str(self._workspace.root), "assignment_path": str(path),
-            "tool_contracts_path": str(path), "tool_contracts_pointer": "/tool_contracts",
+            "instruction": "Read this task-specific assignment; select complete tool contracts with scid_describe as needed.",
             "remaining_seconds": _remaining(status.deadline_at),
             "native_usage": "unknown", "native_lifecycle": "platform_owned",
             "narrative_instruction": narrative_instruction(status.execution_profile['profile'] if status.execution_profile else None)}
@@ -186,6 +191,10 @@ class LocalWorkerMCPRouter:
             except SchedulerInstanceClosed as error:
                 raise InstanceMaintenanceUnavailable("assignment instance is closed") from error
 
+    def _activity_participant(self) -> dict[str, str]:
+        return ({"role": "helper", "name": self.participant["name"]}
+                if self.is_helper else {"role": "owner"})
+
     def _observed_call_tool(self, name: str, arguments: dict[str, Any] | None) -> Any:
         with self._lock:
             self._check_participation()
@@ -196,19 +205,22 @@ class LocalWorkerMCPRouter:
             timing_error = None
             opening = name == "worker_open_assignment"
             timing_run_id = None if opening else self._run_id
+            result = None
             self._active_attempt = None
             self._attempt_sources = {}
             self._attempt_finished = False
             try:
                 tool = self._registered.get(name)
                 if tool is not None and tool.record_attempts and self._run_id is not None:
-                    self._active_attempt = self.runs.begin_tool_attempt(self._run_id, tool, arguments)
+                    self._active_attempt = self.runs.begin_tool_attempt(self._run_id, tool, arguments,
+                        participant=self._activity_participant())
                 else:
                     timing_enabled = name in self._tools
                     if timing_enabled and timing_run_id:
                         try:
                             self.runs.record_tool_observation(timing_run_id, "tool_call_started",
-                                {"call_key": timing_key, "tool_name": name, "started_at": started_at})
+                                {"call_key": timing_key, "tool_name": name, "started_at": started_at,
+                                 "participant": self._activity_participant()})
                         except Exception as observation_error:
                             timing_error = observation_error
                 result = self._call_tool(name, arguments)
@@ -250,11 +262,17 @@ class LocalWorkerMCPRouter:
                     try:
                         if opening:
                             self.runs.record_tool_observation(timing_run_id, "tool_call_started",
-                                {"call_key": timing_key, "tool_name": name, "started_at": started_at})
+                                {"call_key": timing_key, "tool_name": name, "started_at": started_at,
+                                 "participant": self._activity_participant()})
                         self.runs.record_tool_observation(timing_run_id, "tool_call_completed",
                             {"call_key": timing_key, "tool_name": name, "started_at": started_at,
                              "completed_at": datetime.now(timezone.utc).isoformat(),
-                             "duration_seconds": round(time.monotonic() - started, 6)})
+                             "duration_seconds": round(time.monotonic() - started, 6),
+                             "participant": self._activity_participant(),
+                             **({"helper_access": {key: result[key] for key in
+                                 ("name", "access", "native_thread_state") if key in result}}
+                                if name == "worker_helper" and isinstance(result, dict)
+                                and "name" in result and "access" in result else {})})
                     except Exception as observation_error:
                         timing_error = observation_error
                 if timing_error is not None:

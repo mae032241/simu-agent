@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+from scidiscovery.general_science_resources import INTAKE_RULES
 from scidiscovery.artifact_agent.schema.common import canonical_json
 from scidiscovery.artifact_agent.schema.cognitive import EvidenceAudit
 from scidiscovery.operation_declaration import (OPERATION_AGENT_PREAMBLE, schema_resource,
@@ -41,9 +42,8 @@ the program normalizes them. They do not describe the extracted curve's range.
 Omit color tolerances, pixel ranges, eligibility ranges, declared gaps,
 shared_support, tracking thresholds, point counts, coverage and result statistics.
 
-The program fills recovered image hashes, dimensions, recovery versions and PDF object
-metadata from the bound source. Choose page and document_image_index for a PDF;
-these mechanical metadata fields may be omitted from the draft.
+Choose page and document_image_index for a PDF. For a raster, source is an empty
+object. File identity and image properties come from the preserved original.
 
 Before saving a ready request, call worker_curve_figure_preview with the complete
 draft. View both returned images: the source-pixel overlay and the plot redrawn only
@@ -55,7 +55,7 @@ CSV and shared-pixel markings; never hand-write them.
 
 If the page, image, calibration or series identity cannot be established visibly,
 save request_status unresolved with bounded unresolved_reasons. Preserve the
-original source identity and any known partial fields; omit unknown recovery metadata. Do not grant qualification or approval.
+original source identity and any known partial fields; leave unknown image selections absent. Do not grant qualification or approval.
 After saving, inspect the returned local files and compose the ScientificIntake in
 this same task. Use the returned exact tool evidence aliases in evidence keys.
 Preserve unresolved identity, occlusion, gap and quantitative limits. Distinguish
@@ -66,7 +66,7 @@ worker_curve_figure_reuse with the bound source name; its original materials are
 aliases without redigitization. Preserve unchallenged content and submit a complete
 new Intake; any formal audit applies to this new Intake. Never inherit the prior verdict.
 If that review requires new extraction, explicitly preview and save a new family
-instead of calling reuse. Do not mix a reused family with a new selection. The workspace finalizer copies the objective from the foundation.
+instead of calling reuse. Do not mix a reused family with a new selection. Write the objective and summary once in scientific_foundation. The problem-frame question, contradiction and scope retain their distinct scientific meanings. In handoff, author the scientific verdict and any next actions.
 """
 
 
@@ -93,14 +93,14 @@ not apply. A faithful statement of limited evidence can pass this audit without
 granting quantitative qualification.
 Explicitly declared zero-table or zero-image families can be faithfully audited;
 absence of an attachment declared by the manifest is a different integrity defect.
-The workspace finalizer derives only handoff.verdict. Author the handoff summary
+The workspace finalizer derives the verdict from the evidence checks. Author the handoff summary
 and needed next actions; do not omit the entire handoff.
 """
 
 
 FIGURE_REQUEST_SCHEMA = schema_resource(ScientificFigureRequest, "scidiscovery.curve-figure-digitization-request.v2")
 FIGURE_SEMANTIC_CONTRACT = scientific_semantic_contract(
-    "curve.figure", "One author delivers source-bound Intake and an explicitly selected immutable figure family.",
+    "curve.figure", *INTAKE_RULES, "One author delivers source-bound Intake and an explicitly selected immutable figure family.",
     "Selected request, algorithm identity, file hashes and original source must match controlled tool evidence.",
     "Only independent audit can review the author; a revision never inherits a verdict.",
     payload_rule_id="intake.internal_closure", context_rule_id="curve.figure.evidence_binding")

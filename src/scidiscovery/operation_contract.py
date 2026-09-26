@@ -107,6 +107,23 @@ def diagnostic_path(parts: Iterable[Any], names: Iterable[str], *, root: str = "
     return path
 
 
+def bounded_diagnostics(items: Iterable[dict[str, Any]], *, phase: str, action: str,
+                        total: int | None = None, deferred: str | None = None) -> tuple[dict[str, Any], ...]:
+    """Reserve a summary inside the public 16-detail budget; never miscount a prefix."""
+    details = tuple(items)
+    count = len(details) if total is None else total
+    if count <= 16 and deferred is None:
+        return details
+    shown = min(15, len(details))
+    summary = f"Reported {shown} of {count} diagnosed defects; omitted {count - shown}."
+    if deferred:
+        summary += " " + deferred
+    return (*details[:shown], contract_diagnostic(
+        "invalid_arguments" if phase == "tool_arguments" else "output_invalid",
+        phase=phase, affected_action=action, repairable=True, message=summary,
+        error_type="dependent_checks_deferred" if deferred else "diagnostics_omitted"))
+
+
 def validation_diagnostics(error: ValidationError, *, schema: Any,
                            phase: str = "tool_arguments", action: str = "tool_call") -> tuple[dict[str, Any], ...]:
     messages = {
@@ -123,7 +140,7 @@ def validation_diagnostics(error: ValidationError, *, schema: Any,
     names = schema_field_names(schema)
     result = []
     errors = error.errors(include_input=True, include_context=True, include_url=False)
-    for item in errors[:32]:
+    for item in errors:
         kind = item["type"]
         # Invalid children can make Pydantic's validated array look empty even
         # when the supplied array meets min_length. Report the child failures.
@@ -180,7 +197,9 @@ def validation_diagnostics(error: ValidationError, *, schema: Any,
             "invalid_arguments" if phase == "tool_arguments" else "output_invalid",
             phase=phase, affected_action=action, repairable=True,
             path=diagnostic_path(item["loc"], names), error_type=kind, message=message))
-    return tuple(result)
+    return bounded_diagnostics(result, phase=phase, action=action,
+        deferred=("Dependent checks requiring invalid nested values were not evaluated."
+                  if phase == "output_payload" else None))
 
 
 
@@ -190,7 +209,7 @@ def sanitize_diagnostic_details(items: Iterable[Any], *, schema: Any,
     names = schema_field_names(schema) | {"payload", "handoff", "schema_version"}
     allowed_rules = set(rules)
     result = []
-    for item in tuple(items)[:16]:
+    for item in items:
         if not isinstance(item, Mapping): continue
         rule = item.get("rule_id")
         if rule is not None and rule not in allowed_rules: continue
@@ -219,7 +238,7 @@ def sanitize_diagnostic_details(items: Iterable[Any], *, schema: Any,
             path=path, repairable=(item.get("repairable", resolved_phase in {"input_admission","tool_arguments","output_payload","output_context"}) if isinstance(item, DeclaredDiagnostic) else
                                   resolved_phase in {"input_admission","tool_arguments","output_payload","output_context"}),
             message=message[:512], rule_id=rule, error_type=error_type))
-    return tuple(result)
+    return bounded_diagnostics(result, phase=phase, action=action)
 
 
 def semantic_contract(*rules: SemanticRuleSpec) -> str:

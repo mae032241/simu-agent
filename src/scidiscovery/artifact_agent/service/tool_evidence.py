@@ -216,7 +216,7 @@ class ToolEvidenceMixin(ReferenceAccessMixin):
                 raise ValueError("source retrieval request budget exhausted")
             self._append_activity(connection, run_id, "source_network_request", timestamp(), None)
 
-    def begin_tool_attempt(self, run_id, tool, arguments):
+    def begin_tool_attempt(self, run_id, tool, arguments, *, participant=None):
         from .run_records import timestamp
         value = self._require_running(run_id)
         request = arguments.get("request", arguments) if isinstance(arguments, dict) else arguments
@@ -231,7 +231,8 @@ class ToolEvidenceMixin(ReferenceAccessMixin):
             if count + _recovery_attempt_count(recovery) >= 64:
                 raise ToolAttemptLimit()
             record = ToolAttempt(attempt_key=f"attempt_{count+1:03d}", tool_name=tool.name,
-                operation_digest=value.operation_digest, request_digest=digest, state="started")
+                operation_digest=value.operation_digest, request_digest=digest, state="started",
+                participant=participant or {"role": "owner"})
             self._append_activity(connection, run_id, "tool_attempt_started", timestamp(), canonical_json(record))
         return record.model_dump(mode="json")
 

@@ -261,7 +261,10 @@ def finalize(request):
 
 
 MATERIALIZER = CallableComponent("workspace_materializer", materialize)
-FINALIZER = CallableComponent("workspace_finalizer", finalize)
+from scidiscovery.operations.workspace import WorkspaceFinalizer
+from scidiscovery.plugin_runtime.results import result_draft_schema, RESULT_PROJECTION_VERSION
+FINALIZER = CallableComponent("workspace_finalizer", WorkspaceFinalizer(
+    finalize, result_draft_schema, RESULT_PROJECTION_VERSION))
 
 WORKSPACE = analysis_workspace.WORKSPACE
 SNAPSHOTTER = analysis_workspace.SNAPSHOTTER

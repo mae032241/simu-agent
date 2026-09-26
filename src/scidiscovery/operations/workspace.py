@@ -120,7 +120,24 @@ WorkspaceMaterializer = Callable[
     [WorkspaceMaterializationRequest], WorkspaceMaterializationResult
 ]
 WorkspaceFilePolicy = Callable[[WorkspaceFileRequest], WorkspaceFileRule | None]
-WorkspaceFinalizer = Callable[[WorkspaceFinalizationRequest], bytes]
+@dataclass(frozen=True, slots=True)
+class WorkspaceFinalizer:
+    """One hook owns both its draft contract and deterministic completion.
+
+    Plain callable finalizers remain valid and keep the complete output schema.
+    Projection versions identify behavior in the compiled operation digest.
+    """
+    implementation: Callable[[WorkspaceFinalizationRequest], bytes]
+    draft_schema: Callable[[dict, str, Mapping[str, str] | None], dict]
+    projection_version: str
+
+    def __post_init__(self) -> None:
+        if not callable(self.implementation) or not callable(self.draft_schema) or not self.projection_version:
+            raise ValueError("finalizer projection requires both implementations and a version")
+
+    def __call__(self, request: WorkspaceFinalizationRequest) -> bytes:
+        return self.implementation(request)
+
 WorkspaceSnapshotter = Callable[[Path], tuple[WorkspaceSnapshotFile, ...]]
 
 
@@ -148,6 +165,7 @@ __all__ = [
     "WorkspaceFileRequest",
     "WorkspaceFileRule",
     "WorkspaceFinalizationRequest",
+    "WorkspaceFinalizer",
     "WorkspaceMaterializationRequest",
     "WorkspaceMaterializationResult",
     "WorkspaceProtocolError",

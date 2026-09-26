@@ -6,6 +6,7 @@ import json
 
 from .artifact_agent.schema.cognitive import CriticReview, EvidenceAudit, HypothesisProposal
 from .artifact_agent.schema.research_cycle import ProblemFrame, ScientificFoundation, ScientificIntake
+from .artifact_agent.schema.scientific_foundation import FOUNDATION_RULES
 from .operation_declaration import (
     OPERATION_AGENT_PREAMBLE,
     schema_resource,
@@ -14,9 +15,10 @@ from .operation_declaration import (
 
 EVIDENCE_PROMPT = """Return exactly one RoleResultEnvelope whose payload is the
 ScientificIntake required by the schema identified by assignment.output.schema_path. Build a bounded ProblemFrame
-and ScientificFoundation for only the assigned question. Workspace finalizers copy
-objective text from objective_contract.statement, or the foundation objective
-when absent; the draft may omit problem_frame.objective. Every problem-frame
+and ScientificFoundation for only the assigned question. Write the objective and
+summary once in scientific_foundation. Control copies that objective into the
+problem frame and optional objective contract. Handoff retains your scientific
+verdict and next actions. Every problem-frame
 foundation reference must close over an item in that foundation.
 
 Use the exact assignment source_name in every factual item's evidence_keys;
@@ -55,7 +57,7 @@ Prior review or qualification is not inherited.
 IDEATOR_PROMPT = """Return exactly one RoleResultEnvelope whose payload is the
 HypothesisProposal required by the schema identified by assignment.output.schema_path. Propose a small ordered
 portfolio of distinct, testable mechanisms for the supplied contradiction.
-Copy the immutable global objective key into research_objective_key. Write only
+Control binds the immutable global objective. Write only
 the bounded goal of this hypothesis stage in stage_objective; never copy,
 paraphrase, or replace the global research objective as if it were role-owned.
 Hypotheses own competing explanations and the research route; do not freeze every numerical initialization or discretization choice for later authors.
@@ -111,7 +113,7 @@ missing execution route as physical refutation or assign its invention to an aut
 Challenge mechanisms; do not design the
 measurement algorithm, repeat source intake, grant qualification, select a
 candidate, or demand that uncertainty be hidden by further prose.
-The workspace finalizer derives only handoff.verdict. Author the handoff summary
+The workspace finalizer derives the verdict from the formal review. Author the handoff summary
 and needed next actions; do not omit the entire handoff.
 """
 
@@ -133,30 +135,29 @@ an unsupported affirmative claim. Use unknown only when required material is
 missing, unreadable, or cannot be compared. Use not_applicable only when the
 declared check does not apply. A faithful statement that evidence is limited can
 pass this audit without becoming qualified or scientifically sufficient.
-The workspace finalizer derives only handoff.verdict. Author the handoff summary
+The workspace finalizer derives the verdict from the formal review. Author the handoff summary
 and needed next actions; do not omit the entire handoff.
 """
+
+
+INTAKE_RULES = (*FOUNDATION_RULES,
+    "Problem-frame foundation_item_keys and each observable's foundation_item_keys close over the exact foundation items; observable_key values are unique.",
+    "The problem-frame objective is projected from the foundation objective.",
+    "References and tags may repeat; one source may have multiple citation locators. Sources resolve to bound inputs without a duplicated source ledger.",
+    "The payload may frame the bounded question but must not generalize beyond supplied evidence.")
 
 
 class Resources:
     opaque_schema = '{"$id":"opaque","type":["object","array","string","number","boolean","null"]}'
     intake_semantic_contract = scientific_semantic_contract(
         "intake",
-        "Every factual foundation item must cite an exact supplied source key.",
-        "Problem-frame references must close over the exact foundation item keys in this payload.",
-        "A parameter item requires both a value and a unit; use dimensionless when applicable.",
-        "A unit cannot exist without a value, and numeric uncertainty requires a unit.",
-        "Paper facts, user definitions, and runtime observations require evidence keys; inference, assumption, and speculation require a rationale.",
-        "Item, conflict, and condition identities must be unambiguous. Item references close locally; source references resolve to bound inputs without a duplicated source ledger. References and tags may repeat; one source may have multiple citation locators.",
-        "Conflict resolution fields must match unresolved, resolved, or accepted-assumption status.",
-        "A supplied objective contract must exactly match the foundation objective and reference only declared items.",
-        "The payload may frame the bounded question but must not generalize beyond supplied evidence.",
+        *INTAKE_RULES,
         payload_rule_id="intake.internal_closure",
         context_rule_id="intake.source_binding",
     )
     hypothesis_semantic_contract = scientific_semantic_contract(
         "hypothesis",
-        "research_objective_key references the immutable global objective; stage_objective is the role-authored bounded goal for this hypothesis action.",
+        "stage_objective is the role-authored bounded goal for this hypothesis action; the immutable global objective remains bound by control.",
         "A hypothesis Worker may not replace or paraphrase the global research objective.",
         "Hypothesis, parameter, prediction, and falsifier identities must be unambiguous. Competitor references close locally. Evidence references resolve to bound inputs or the exact foundation provenance without a copied source ledger; repeated references and multiple locators for one source are permitted.",
         "A bounded hypothesis revision preserves the complete hypothesis key set; adding, removing, or renaming a hypothesis requires a new proposal action.",

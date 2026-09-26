@@ -7,7 +7,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from .artifact_agent.schema.common import canonical_json
-from .plugin_runtime.results import materialize_summary_handoff
+from .plugin_runtime.results import materialize_summary_handoff, finalize_result, validate_finalizer_payload
 from .general_science_agent_operations import BASE_TOOLS, _input
 from .operation_declaration import schema_resource, scientific_agent_operation, semantic_contract
 from .operations.spec import (CallableComponent, CollectionSpec, ComponentRef,
@@ -81,19 +81,18 @@ def validate_completion(payload, sources, handoff):
 
 
 def finalize(request):
-    value = json.loads((request.workspace / "output/result.json").read_bytes())
-    if request.output_schema_id == "scidiscovery.experiment-review.v1":
-        from .general_science_experiment_review import ExperimentReview
-        review = ExperimentReview.model_validate_json(canonical_json(value["payload"]), strict=True)
-        materialize_summary_handoff(value, review.verdict)
-        return canonical_json(value)
-    report = ExperimentReport.model_validate_json(canonical_json(value["payload"]), strict=True)
-    evidence = request.binding_descriptors
-    if any(alias not in evidence for alias in report.adopted_stages):
-        raise WorkspaceProtocolError("Adopted stages must name sealed material available in this task.")
-    materialize_summary_handoff(value, {"completed": "pass", "inconclusive": "inconclusive",
-        "blocked": "blocked"}[report.outcome])
-    return canonical_json(value)
+    def project(value):
+        if request.output_schema_id == "scidiscovery.experiment-review.v1":
+            from .general_science_experiment_review import ExperimentReview
+            review = validate_finalizer_payload(ExperimentReview, value["payload"])
+            materialize_summary_handoff(value, review.verdict)
+            return
+        report = validate_finalizer_payload(ExperimentReport, value["payload"])
+        if any(alias not in request.binding_descriptors for alias in report.adopted_stages):
+            raise WorkspaceProtocolError("Adopted stages must name sealed material available in this task.")
+        materialize_summary_handoff(value, {"completed": "pass", "inconclusive": "inconclusive",
+            "blocked": "blocked"}[report.outcome])
+    return finalize_result(request, project)
 
 
 PROMPT = """Own this complete experiment: design, implement, debug when useful,
@@ -120,7 +119,10 @@ WORKSPACE = WorkspaceContract()
 AGENT = CallableComponent("agent", lambda: None)
 VALIDATOR = CallableComponent("validator", validate_report)
 COMPLETION_VALIDATOR = CallableComponent("validator", validate_completion)
-FINALIZER = CallableComponent("workspace_finalizer", finalize)
+from .operations.workspace import WorkspaceFinalizer
+from .plugin_runtime.results import result_draft_schema, RESULT_PROJECTION_VERSION
+FINALIZER = CallableComponent("workspace_finalizer", WorkspaceFinalizer(
+    finalize, result_draft_schema, RESULT_PROJECTION_VERSION))
 STAGE_TOOL = WorkerToolDefinition(name="worker_experiment_stage",
     description="Seal a stage conclusion and its exact scientific materials in this experiment. Continue working after sealing.",
     input_model=StageSubmission, capability="experiment.stage", contextual_handler=submit_stage, owner_only=True,

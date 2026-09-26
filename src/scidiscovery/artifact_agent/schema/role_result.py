@@ -6,7 +6,7 @@ from typing import Annotated, Any, Generic, Literal, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from .common import Sha256, canonical_json
+from .common import canonical_json
 
 
 class FormModel(BaseModel):
@@ -20,11 +20,10 @@ class FormModel(BaseModel):
 
 class RoleHandoff(FormModel):
     verdict: Literal["pass", "revise", "blocked", "inconclusive"]
-    summary: Annotated[str, Field(min_length=1, max_length=2048)]
-    assumptions: Annotated[tuple[str, ...], Field(max_length=16)] = ()
-    missing_inputs: Annotated[tuple[str, ...], Field(max_length=16)] = ()
-    next_actions: Annotated[tuple[str, ...], Field(max_length=8)] = ()
-    evidence_bundle_fingerprint_sha256: Sha256 | None = None
+    summary: Annotated[str, Field(min_length=1, max_length=8192)]
+    assumptions: Annotated[tuple[str, ...], Field(max_length=128)] = ()
+    missing_inputs: Annotated[tuple[str, ...], Field(max_length=128)] = ()
+    next_actions: Annotated[tuple[str, ...], Field(max_length=32)] = ()
 
 
 PayloadT = TypeVar("PayloadT")

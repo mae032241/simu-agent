@@ -29,7 +29,7 @@ page view needed for the cited locator. The view is not a second scientific
 source: cite the exact task-local PDF input key and retain page locators.
 Finalize the complete single package. Ordinary completion does not require independent review or qualification.
 
-The finalizer derives work_key from a supplied DOI; this mirror may be omitted.
-Without a DOI, provide the scientific work identity. The formal objective contract
-statement supplies duplicate Intake objective text; without a contract, the
-foundation objective is authoritative. Do not change these authorities to repair copies.
+For a source with a DOI, provide the DOI. For a source without a DOI, provide
+work_key as the scientific identity of one underlying publication, grouping
+mirrors and pages from the same work. Author the objective and summary once in
+the scientific foundation; control projects their duplicate transport fields.

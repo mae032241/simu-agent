@@ -205,6 +205,10 @@ def result_schema_json(
         compiled, port, input_source_ports=input_source_ports
     )
     envelope["$id"] = f"{port.schema_id}.run-envelope"
+    from ...operations.workspace import WorkspaceFinalizer, operation_workspace_hooks
+    finalizer = operation_workspace_hooks(compiled).get("workspace_finalizer")
+    if isinstance(finalizer, WorkspaceFinalizer):
+        envelope = finalizer.draft_schema(envelope, port.schema_id, input_source_ports)
     return canonical_json(envelope)
 
 

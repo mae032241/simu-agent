@@ -25,7 +25,8 @@ def compact_report(alias='runtime_manifest', verdict='inconclusive'):
 
 def submit_compact(worker, opened, payload):
     domain = json.loads(Path(opened['domain_workspace_path']).read_bytes())
-    assert domain['patch_contract']['draft_may_omit'] == ['/handoff']
+    assert domain['patch_contract']['schema'] == 'scidiscovery.layered-diagnosis.v1'
+    assert 'generated_fields' not in domain['patch_contract']
     Path(opened['output_directory'], 'result.json').write_bytes(canonical_json(
         dict(schema_version=1, payload=payload)))
     result = mcp_call(worker, 'worker_submit_result', {})['result']['structuredContent']
@@ -65,10 +66,12 @@ def test_handoff_normalizes_only_duplicate_fields_and_unknown_claims_still_fail(
     assert value['handoff']['verdict'] == 'blocked'
     assert value['handoff']['missing_inputs'] == ['Separate input note']
     assert value['handoff']['assumptions'] == ['Conditional premise']
-    assert value['handoff']['next_actions'] == ['Historical extra']
+    assert value['handoff']['next_actions'] == []
     invalid = dict(payload={'summary': 'Missing scientific verdict'})
-    materialize_general_result(invalid, 'scidiscovery.layered-diagnosis.v1')
-    assert 'handoff' not in invalid
+    from scidiscovery.operations.workspace import WorkspaceProtocolError
+    with pytest.raises(WorkspaceProtocolError) as error:
+        materialize_general_result(invalid, 'scidiscovery.layered-diagnosis.v1')
+    assert error.value.details[0]['path'] == '$.payload.overall_verdict'
 
 
 
@@ -161,7 +164,7 @@ def test_formal_summary_projection_leaves_other_role_contracts_unchanged():
     ]:
         value = dict(payload=payload)
         materialize_general_result(value, schema)
-        assert 'handoff' not in value
+        assert value['handoff'] == {'verdict': 'pass'}  # Summary remains the reviewer-authored conclusion.
     malformed = dict(payload=dict(summary=None, verdict='pass'), handoff=dict(summary=None))
     from scidiscovery.operations.workspace import WorkspaceProtocolError
     with pytest.raises(WorkspaceProtocolError) as error:

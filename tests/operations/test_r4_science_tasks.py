@@ -176,10 +176,9 @@ def test_parameter_and_figure_tasks_keep_science_tools_and_exact_origins(tmp_pat
     assert not {'figure_family','figure_provenance'} & {port.name for port in visible.inputs}
     worker = LocalWorkerMCPRouter(runtime.runs,operation_id=compiled.spec.operation_id,operation_digest=compiled.digest)
     opened = worker.call_tool('worker_open_assignment', {})
-    from curve_figure_evidence.scientific_files import SOURCE_CONTROL
     request = json.loads(_request(_png()))
-    for key in SOURCE_CONTROL:
-        request['source'].pop(key, None)
+    # A raster needs no source selection fields; metadata comes from its sealed bytes.
+    request['source'] = {}
     preview = worker.call_tool('worker_curve_figure_preview',dict(name='paper_source',request=request))
     assert 'sha256' not in json.dumps(preview)
     reply = worker.call_tool('worker_curve_figure_save',dict(name='paper_source',request=request))

@@ -5,6 +5,7 @@ plugins consume the bounded records projection through plugin_runtime.evidence.
 """
 from typing import Any, Literal
 from pydantic import Field
+from typing_extensions import TypedDict
 from .common import SchemaModel, ContractDiagnostic, Sha256, Identifier
 from .refs import ArtifactRef
 
@@ -14,11 +15,22 @@ class ToolSourceBinding(SchemaModel):
     port_name: Identifier
 
 
+class OwnerToolParticipant(TypedDict):
+    role: Literal["owner"]
+
+
+class HelperToolParticipant(TypedDict):
+    role: Literal["helper"]
+    name: Identifier
+
+
 class ToolAttempt(SchemaModel):
     attempt_key: Identifier
     tool_name: Identifier
     operation_digest: Sha256
     request_digest: Sha256
+    # Absent on historical receipts means unknown; never infer their participant.
+    participant: OwnerToolParticipant | HelperToolParticipant | None = None
     state: Literal["started", "completed", "rejected", "interrupted"]
     result_status: Identifier | None = None
     reason_code: Identifier | None = None

@@ -158,6 +158,10 @@ def _resource_digest(spec: ComponentSpec, implementation: Any, plugin_id: str) -
             })
         if spec.kind in {"workspace", "experiment_capability"}:
             return canonical_digest(implementation)
+        if spec.kind == "workspace_finalizer":
+            from .workspace import WorkspaceFinalizer
+            if isinstance(implementation, WorkspaceFinalizer):
+                return canonical_digest({"draft_projection": implementation.projection_version})
         if spec.kind == "resource":
             content = implementation if isinstance(implementation, bytes) else implementation.encode("utf-8")
             return sha256(content).hexdigest()
