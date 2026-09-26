@@ -256,12 +256,12 @@ def _collect_effect(
     start_before_decision_blocked: bool,
     resumed_same_pending_approval: bool,
 ) -> dict[str, object]:
-    started = router.call_tool("execution_start", {"name": EXECUTION_NAME})
-    synced = router.call_tool("execution_sync", {"name": EXECUTION_NAME})
-    router.call_tool("execution_collect", {"name": EXECUTION_NAME})
+    started = router.call_tool("execution_start", {"name": EXECUTION_NAME}, surface="execution")
+    synced = router.call_tool("execution_sync", {"name": EXECUTION_NAME}, surface="execution")
+    router.call_tool("execution_collect", {"name": EXECUTION_NAME}, surface="execution")
     deadline = time.monotonic() + 605
     while True:
-        status = router.call_tool("execution_status", {"name": EXECUTION_NAME})
+        status = router.call_tool("execution_status", {"name": EXECUTION_NAME}, surface="execution")
         if status["state"] == "collected":
             break
         if status.get("collection", {}).get("state") not in {"running", "stopping", "stop_pending"} or time.monotonic() >= deadline:
@@ -269,7 +269,7 @@ def _collect_effect(
         time.sleep(.1)
     outputs = router.call_tool(
         "execution_outputs", {"name": EXECUTION_NAME}
-    ).get("outputs")
+    , surface="execution").get("outputs")
     if not isinstance(outputs, list):
         raise RuntimeError("Effect outputs are missing")
     outputs_match, verified_outputs = _outputs_match(
@@ -401,7 +401,7 @@ def run(root: Path, *, timeout_seconds: int, ui_port: int) -> dict[str, object]:
     )
     request = _request()
     try:
-        if router.call_tool("execution_list", {"limit": 100})["executions"]:
+        if router.call_tool("execution_list", {"limit": 100}, surface="execution")["executions"]:
             raise RuntimeError("fresh Effect root already contains an execution")
         if router.call_tool(
             "approval_list", {"status": None, "limit": 100}
@@ -420,7 +420,7 @@ def run(root: Path, *, timeout_seconds: int, ui_port: int) -> dict[str, object]:
         review_url = approval.get("review_url")
         if not isinstance(review_url, str) or not review_url.startswith(base_url):
             raise RuntimeError("Effect invoke returned no exact loopback review URL")
-        executions = router.call_tool("execution_list", {"limit": 100})["executions"]
+        executions = router.call_tool("execution_list", {"limit": 100}, surface="execution")["executions"]
         approvals = router.call_tool(
             "approval_list", {"status": None, "limit": 100}
         )["approvals"]
@@ -444,7 +444,7 @@ def run(root: Path, *, timeout_seconds: int, ui_port: int) -> dict[str, object]:
 
         start_before_decision_blocked = False
         try:
-            router.call_tool("execution_start", {"name": EXECUTION_NAME})
+            router.call_tool("execution_start", {"name": EXECUTION_NAME}, surface="execution")
         except ExecutionApprovalError:
             start_before_decision_blocked = True
         if not start_before_decision_blocked:
@@ -553,7 +553,7 @@ def resume(root: Path, *, timeout_seconds: int, ui_port: int) -> dict[str, objec
         preflight = router.call_tool("operation_preflight", _request())
         if preflight.get("admissible") is not True:
             raise RuntimeError(f"resumed Effect preflight rejected: {preflight}")
-        executions = router.call_tool("execution_list", {"limit": 100})["executions"]
+        executions = router.call_tool("execution_list", {"limit": 100}, surface="execution")["executions"]
         approvals = router.call_tool(
             "approval_list", {"status": None, "limit": 100}
         )["approvals"]
@@ -587,7 +587,7 @@ def resume(root: Path, *, timeout_seconds: int, ui_port: int) -> dict[str, objec
 
         start_before_decision_blocked = False
         try:
-            router.call_tool("execution_start", {"name": EXECUTION_NAME})
+            router.call_tool("execution_start", {"name": EXECUTION_NAME}, surface="execution")
         except ExecutionApprovalError:
             start_before_decision_blocked = True
         if not start_before_decision_blocked:

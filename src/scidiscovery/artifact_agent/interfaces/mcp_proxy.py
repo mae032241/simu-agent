@@ -17,7 +17,7 @@ from .mcp_platform_context import platform_context
 from ..service.engineering_diagnostics import exception_facts
 
 
-MAX_RESPONSE_BYTES = 16 * 1024 * 1024
+from ...plugin_runtime.transport import MAX_RESPONSE_BYTES, forward_request
 SCHEDULER_PROXY_FIELD = "_scidiscovery_scheduler_proxy"
 CLIENT_HEARTBEAT = "scidiscovery/client-heartbeat"
 CLIENT_DISCONNECT = "scidiscovery/client-disconnect"
@@ -45,7 +45,6 @@ def _heartbeat(socket_path, proxy_id, stopped):
                 print(json.dumps(exception_facts(error, layer="root_proxy", action="client_heartbeat"),
                                  ensure_ascii=False), file=sys.stderr, flush=True)
             failed = True
-
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -98,46 +97,6 @@ def main(argv: list[str] | None = None) -> int:
                                  ensure_ascii=False), file=sys.stderr, flush=True)
         signal.signal(signal.SIGTERM, previous_term)
     return 0
-
-
-def forward_request(socket_path: Path, raw: bytes, *, timeout: float) -> dict | None:
-    request = json.loads(raw)
-    notification = request.get("method") == "notifications/initialized"
-    started = time.monotonic()
-    deadline = started + timeout
-    response_raw = bytearray()
-    try:
-        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
-            def remaining():
-                value = deadline - time.monotonic()
-                if value <= 0:
-                    raise TimeoutError("proxy response deadline exhausted")
-                client.settimeout(value)
-            remaining()
-            client.connect(str(socket_path.expanduser().absolute()))
-            remaining()
-            client.sendall(raw.rstrip(b"\r\n") + b"\n")
-            if notification:
-                return None
-            while len(response_raw) <= MAX_RESPONSE_BYTES:
-                remaining()
-                chunk = client.recv(min(65536, MAX_RESPONSE_BYTES + 1 - len(response_raw)))
-                if not chunk:
-                    break
-                response_raw.extend(chunk)
-                if b"\n" in chunk:
-                    break
-    except TimeoutError as error:
-        error.timeout = timeout
-        error.timeout_kind = "proxy_response"
-        error.elapsed_seconds = time.monotonic() - started
-        raise
-    if not response_raw or len(response_raw) > MAX_RESPONSE_BYTES:
-        raise RuntimeError("control service returned no bounded response")
-    response = json.loads(response_raw)
-    if not isinstance(response, dict):
-        raise RuntimeError("control service response is not an object")
-    return response
 
 
 def bind_scheduler_proxy(raw: bytes, proxy_id: str) -> bytes:

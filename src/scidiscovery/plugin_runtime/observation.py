@@ -22,6 +22,8 @@ import sys
 import time
 import uuid
 
+__all__ = ["RECORD_DIR", "normalize_log", "materialize_launcher"]
+
 RECORD_DIR = Path("scratch/.analysis-process")
 LOG_LIMIT = 128 * 1024
 MEMORY_LIMIT = 512 * 1024 * 1024
@@ -129,8 +131,8 @@ def read_summary(workspace):
 
 
 def materialize_launcher(workspace, *, analysis_policy=False):
-    """Control-only preparation; the copied launcher remains stdlib-only."""
-    from .local_workspace import write_control_workspace_file
+    """Install within the supplied task root; the copied launcher is stdlib-only."""
+    from .workspace import write_control_workspace_file
     root = Path(workspace)
     (root / "scratch").mkdir(exist_ok=True, mode=0o700)
     tool = Path("tools/local_process_observation.py")

@@ -14,11 +14,11 @@ from pathlib import Path
 from scidiscovery.artifact_agent.operation_tool_context import OperationToolContext
 from scidiscovery.artifact_agent.schema.common import canonical_json, canonical_sha256
 from scidiscovery.artifact_agent.schema.role_result import parse_role_result
-from scidiscovery.artifact_agent.service.local_workspace import (
+from scidiscovery.plugin_runtime.workspace import (
     WorkspaceError,
     write_control_workspace_file,
 )
-from scidiscovery.artifact_agent.service.run_outputs import (
+from scidiscovery.plugin_runtime.diagnostics import (
     RunCheckerError,
     RunOutputError,
 )
@@ -120,7 +120,7 @@ class LocalTCADDebugService:
         root = self.exchange_root / "budgets"
         root.mkdir(exist_ok=True, mode=0o700)
         path = root / (key + ".json")
-        from scidiscovery.artifact_agent.service.engineering_diagnostics import atomic_json
+        from scidiscovery.plugin_runtime.workspace import atomic_json
         with (root / (key + ".lock")).open("a+") as lock:
             fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
             if path.exists():
@@ -134,7 +134,7 @@ class LocalTCADDebugService:
     def experiment_activity(self, run_ids, inputs, *, cancel=False, name=None):
         """Observe/cancel persisted jobs without resetting the original allowance."""
         from scidiscovery.artifact_agent.schema.execution import LocalFileDescriptor
-        from scidiscovery.artifact_agent.service.engineering_diagnostics import atomic_json
+        from scidiscovery.plugin_runtime.workspace import atomic_json
         subject = next((item.artifact_ref for item in inputs if item.port_name == "research_objective"), None)
         if subject is None:
             return False
@@ -173,7 +173,7 @@ class LocalTCADDebugService:
 
     @staticmethod
     def _save_budget(context):
-        from scidiscovery.artifact_agent.service.engineering_diagnostics import atomic_json
+        from scidiscovery.plugin_runtime.workspace import atomic_json
         atomic_json(Path(context.state["budget_ledger_path"]), {key: context.state[key] for key in
             ("debug_policy", "reserved_wall_seconds", "runs", "reservations") if key in context.state})
 
@@ -227,7 +227,7 @@ class LocalTCADDebugService:
                 response["progress"] = details["progress"]
             return response
         try:
-            from scidiscovery.artifact_agent.service.execution_collection import CollectionContext
+            from scidiscovery.plugin_runtime.collection import CollectionContext
             remaining = context.remaining_seconds - (time.monotonic() - call_started)
             budget = CollectionContext.for_seconds(remaining)
             budget.remaining_seconds()

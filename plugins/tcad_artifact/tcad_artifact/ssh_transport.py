@@ -22,8 +22,9 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from scidiscovery.artifact_agent.schema.execution import LocalFileDescriptor
 
 from .transport_logs import preserve_log
-from scidiscovery.artifact_agent.service.execution_collection import CollectionContext, run_bounded
-from scidiscovery.artifact_agent.service.engineering_diagnostics import atomic_json, exception_facts
+from scidiscovery.plugin_runtime.collection import CollectionContext, run_bounded
+from scidiscovery.plugin_runtime.workspace import atomic_json
+from scidiscovery.plugin_runtime.diagnostics import exception_facts
 
 from .execution_control import FileDescriptor, SolverCapabilitySnapshot, TCADJobSpec
 

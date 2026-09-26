@@ -173,25 +173,29 @@ ranges; captured logs travel with implementation gaps. Replies remain short and
 debug time budgets are unchanged. Launcher, transport and PDF failure diagnostics
 are retained in their existing run/result directories. This is file-based reading,
 not a new logging service or a grant to read unbound historical workspaces.
-A completed Run's default `run_status` uses `response_profile="decision"` and
-returns bounded declared conclusions, limitations, remaining questions and the
-scheduler signal. Choose `output_fields` for named scientific fields or non-root
-payload JSON Pointers in `output_paths`; do not supply both. Omitted paths or `[]`
-in the decision profile select the declared decision fields. Active Runs stay short,
-except explicitly requested sealed stage previews.
+`run_status` has one `intent`: `decision` (default), `status`, `navigation`, or
+`full`. Decision returns bounded declared conclusions, limitations, remaining
+questions and scheduler signal after completion. Choose top-level `output_fields`
+or exact non-root `output_paths`, never both; omission or `[]` selects declared
+fields. Status reads no scientific payload; `diagnostic_after=0` explicitly starts
+safe terminal diagnostics. Navigation lists bounded exact output paths and the
+frozen visible scientific input names. Full explicitly returns complete sealed
+science only after completion, with no output selection or private control records.
+Active Runs stay short; explicitly requested sealed stage previews retain their
+own pagination and never establish final completion.
 
-`poll` reads no payload (`output_paths=[]`); `navigation` uses `output_mode="index"`
-for a bounded structural index. `view="detail"` selects `compat` if no profile was
-specified, but does not implicitly return the whole payload. Full sealed output
-requires a completed Run and explicit `include_full_output=true`, `view="detail"`,
-`response_profile="compat"`, `output_mode="values"` and omitted/null `output_paths`.
-`compat` + detail + `output_paths=[]` reads record metadata without full payload;
-`diagnostic_after` selects bounded durable diagnostic pages.
+Root interface declarations also own their surface: ordinary `research` omits the
+10 standalone execution interfaces. Select `surface="execution"` consistently in
+`scid_catalog(kind="interfaces")`, `scid_describe`, and `scid_call` for independent
+Effect execution or historical recovery. This is one declaration projection, not
+another Operation registry or authorization. Task-managed execution stays with
+`worker_experiment_execute`; internal Operations remain inaccessible. UI reads
+ExecutionService and collection state directly and retains the same authorization.
 
 Selected JSON Pointer values appear in `selected_output`, never a partial
 `sealed_output`: at most 8 paths and 32 KiB. Paths start inside the payload, for
 example `/summary`, not `/payload/summary`. The empty root pointer is forbidden in
-values mode; `/` denotes an empty member key. Exact selected values need no redundant
+decision intent; `/` denotes an empty member key. Exact selected values need no redundant
 fetch. Oversized subtrees provide bounded direct-child navigation (32 entries,
 8 KiB); missing, null and omitted values stay distinct. Whole-output reading always
 requires the explicit full-output flag. Signal availability is separate from payload
@@ -371,7 +375,7 @@ Each MCP call's start and finish belong to the same Run, including when an idle
 Worker opens its next assignment. An open failure after selection belongs to
 that selected Run, preserves its cause,
 and cannot return the previous Run's completion as the new call's outcome.
-`run_status` retains a compact default summary; `diagnostic_after=0` requests
+`run_status(intent="status", diagnostic_after=0)` requests
 the first saved error page, with `next_after` as the
 continuation cursor and `diagnostic_limit` bounded to 100. `run_list` returns
 `next_before` for its optional semantic-name `before` cursor. Both queries stay
@@ -432,7 +436,7 @@ to the absolute Run deadline minus an adjustable submission reserve. Root reads
 only bounded timing/status metadata. Unobserved execution remains unknown and
 does not block submission. Analysts save complete numerical units atomically and
 retry plotting from saved data; optional rendering failure cannot erase numbers.
-`run_status.bound_inputs` and ordered `artifact_catalog.parents` project exact
+`run_status(intent="navigation").bound_inputs` and ordered `artifact_catalog.parents` project exact
 bindings without selecting replacements. TCAD plan/review ports retain original
 execution identity; newer analysis plans and reviews use `current_progress`.
 
@@ -560,7 +564,9 @@ evidence review with the required algorithms. The InGaAs Fig.4 plugin supplies i
 project scorer. Core owns lifecycle, bindings and qualification; plugins own domain
 algorithms and declared components. Component configuration identity, catalog ABI and
 digests, public/support/internal visibility and versioned schema IDs remain platform
-contracts. The current plugin dependency boundary still requires focused review;
+contracts. The public runtime boundary is documented in [Plugin runtime API](PLUGIN_RUNTIME_API.md).
+Figure consumes its records/presentation API and shared deterministic declarations.
+The remaining plugin dependency boundary still requires focused review;
 these declarations do not claim that every plugin already avoids core internals.
 
 Each deterministic Transform component consumes exact bytes grouped by input
@@ -713,9 +719,8 @@ Old workspaces receive a targeted direct-reading hint without rewriting frozen h
 This helper neither limits arbitrary native shell output nor adds submission gates.
 Analysis launchers default to a short observation with retained log paths; explicit
 `--display raw` preserves stdout data consumers, and native inherit policy keeps
-its raw default. Capture remains bounded separately from display. Recovery status
-summarizes coverage and omission counts; `run_status(view="detail", output_paths=[])`
-retains the original omission list.
+its raw default. Capture remains bounded separately from display. The control UI retains recovery coverage and exact omission records. Root status
+exposes recovery availability and explicitly requested safe diagnostics.
 
 Codex platform roles group identical declared `NativeToolPolicy` values (shell,
 image viewing, web search). Scientific Operations retain their identities and

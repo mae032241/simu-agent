@@ -17,7 +17,7 @@ from scidiscovery.artifact_agent.execution_bridge import AdapterCapability
 from scidiscovery.artifact_agent.schema.execution import LocalFileDescriptor
 
 from .transport_logs import preserve_log
-from scidiscovery.artifact_agent.service.execution_collection import CollectionContext, QUERY_SECONDS, run_bounded
+from scidiscovery.plugin_runtime.collection import CollectionContext, QUERY_SECONDS, run_bounded
 
 from .execution_control import FileDescriptor, SolverCapabilitySnapshot, TCADJobSpec
 from .execution_policy import ExecutionPolicySnapshot, execution_admission, collection_context

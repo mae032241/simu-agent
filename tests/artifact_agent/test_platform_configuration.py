@@ -285,7 +285,7 @@ def test_codex_profile_contains_root_and_compiled_operation_boundaries(
     assert "Local Workers retain their declared workspace/Skill/native permissions" in scheduler_prompt
     assert "skills belonging to its selected OperationSpec" not in scheduler_prompt
     assert 'scid_describe(name=..., view="invoke")' in scheduler_prompt
-    assert 'run_status(response_profile="poll", output_paths=[])' in scheduler_prompt
+    assert 'run_status(intent="status")' in scheduler_prompt
     discriminator = scheduler_prompt.index(
         "This section applies only to the interactive parent scheduler."
     )
@@ -305,7 +305,7 @@ def test_codex_profile_contains_root_and_compiled_operation_boundaries(
     assert "worker_attach" in (guide_root / "dispatch.md").read_text()
     assert "invoke the immutable request" in (guide_root / "inputs.md").read_text()
     assert 'artifact_catalog(view="producer_inputs")' in (guide_root / "inputs.md").read_text()
-    assert 'response_profile="decision"' in (guide_root / "results.md").read_text()
+    assert 'intent="decision"' in (guide_root / "results.md").read_text()
     assert "source manifest" in (guide_root / "evidence.md").read_text()
 
 

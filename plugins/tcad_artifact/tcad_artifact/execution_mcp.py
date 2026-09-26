@@ -24,8 +24,8 @@ def main(argv: list[str] | None = None) -> int:
             request_id = request.get("id")
             response = _forward(args.socket, line, timeout=args.timeout)
         except Exception as error:
-            from scidiscovery.artifact_agent.interfaces.mcp import rpc_error
-            from scidiscovery.artifact_agent.service.engineering_diagnostics import exception_facts
+            from scidiscovery.plugin_runtime.transport import rpc_error
+            from scidiscovery.plugin_runtime.diagnostics import exception_facts
             error.engineering = exception_facts(error, layer="tcad_proxy", action="forward")
             error.engineering["response_timeout_seconds"] = args.timeout
             print(json.dumps(error.engineering), file=sys.stderr, flush=True)
@@ -36,7 +36,7 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _forward(socket_path: Path, raw: bytes, *, timeout: float) -> dict | None:
-    from scidiscovery.artifact_agent.interfaces.mcp_proxy import forward_request
+    from scidiscovery.plugin_runtime.transport import forward_request
     return forward_request(socket_path, raw, timeout=timeout)
 
 

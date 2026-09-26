@@ -8,7 +8,7 @@ from typing import Any
 
 from ..schema.approval import parse_json_pointer
 from ..schema.common import canonical_json
-from .mcp_response_views import run_is_terminal, run_profile_projection
+from .mcp_response_views import run_is_terminal, run_intent_projection
 from .mcp_root_shared import RootToolError
 
 
@@ -128,106 +128,60 @@ class RootRunRoutes:
             items.append(self._scientific_run_view(value, self._run_status_value(binding.name, value))
                 if view == "detail" and run_is_terminal(value.state)
                 else self._compact_run_status(name=binding.name, value=value,
-                    response_profile="poll", output_paths=[], index_offset=0, index_limit=16))
+                    intent="status", output_paths=[], index_offset=0, index_limit=16))
         return {"runs": items, "next_before": None}
 
     def run_status(self, *, name: str, **arguments) -> dict[str, Any]:
         from .mcp_root import parse_run_status_arguments
         request = parse_run_status_arguments({"name": name, **arguments})
-        response_profile = request["response_profile"]
-        diagnostic_after, diagnostic_limit = request["diagnostic_after"], request["diagnostic_limit"]
-        output_paths, output_mode = request["output_paths"], request["output_mode"]
-        index_offset, index_limit = request["index_offset"], request["index_limit"]
-        include_full_output = request["include_full_output"]
         if self.runs is None:
             raise RuntimeError("minimal Run service is unavailable")
         value = self.runs.status(self._resolve("run", name))
-        stages = {}
+        result = self._compact_run_status(name=name, value=value, **{
+            key: request[key] for key in ("intent", "output_paths", "index_offset", "index_limit")})
+        if request["intent"] == "status" and request["diagnostic_after"] is not None:
+            if run_is_terminal(value.state):
+                page = self.runs.diagnostic_events(value, after=request["diagnostic_after"],
+                    limit=request["diagnostic_limit"])
+                result["diagnostic_events"] = {"events": [
+                    {"event_id": event["event_id"], "recorded_at": event["recorded_at"],
+                     "diagnostic": self._scientific_run_diagnostic(value, event["diagnostic"])}
+                    for event in page["events"]], "next_after": page["next_after"]}
+            else:
+                result["diagnostics_unavailable"] = "run_not_terminal"
+        if request["intent"] == "navigation" and run_is_terminal(value.state):
+            aliases = {b.name: b.object_id for b in self.bindings.list(
+                instance=self._instance_id(), namespace="artifact")}
+            inputs = {}
+            for item in value.inputs:
+                alias = item.artifact_name if aliases.get(item.artifact_name) == item.artifact_ref.artifact_id else None
+                inputs.setdefault(item.port_name, []).append(alias)
+            # Preserve exact frozen aliases and order; hidden/derived ports stay private.
+            result["bound_inputs"] = self._scientific_run_view(value, {"bound_inputs": [
+                {"port": port, "artifact_names": names} for port, names in inputs.items()]})["bound_inputs"]
+            if value.state == "completed":
+                evidence = self.runs.evidence_output_refs(value)
+                if evidence:
+                    result["evidence_outputs"] = [{"artifact_name": value.output_binding_name + "." + alias,
+                        "schema": ref.schema_id} for alias, ref in evidence]
         if request["stage_offset"] is not None or request["stage_reference"] is not None:
             from ..service.stage_deliveries import read_stage_deliveries
-            stages["sealed_stages"] = read_stage_deliveries(self.runs, value,
+            result["sealed_stages"] = read_stage_deliveries(self.runs, value,
                 instance_id=self._instance_id(), **{key: request[key] for key in (
                     "stage_offset", "stage_limit", "stage_reference", "stage_text_offset")})
-        if response_profile != "compat" or not run_is_terminal(value.state):
-            return {**self._compact_run_status(
-                name=name,
-                value=value,
-                response_profile=response_profile,
-                output_paths=output_paths,
-                index_offset=index_offset,
-                index_limit=index_limit,
-            ), **stages}
-        result = self._run_status_value(name, value)
-        if diagnostic_after is not None:
-            page = self.runs.diagnostic_events(value, after=diagnostic_after, limit=diagnostic_limit)
-            result["diagnostic_events"] = {"events": [
-                {"event_id": event["event_id"], "recorded_at": event["recorded_at"],
-                 "diagnostic": self._scientific_run_diagnostic(value, event["diagnostic"])}
-                for event in page["events"]], "next_after": page["next_after"]}
-        bound_inputs = {}
-        instance = self._instance_id()
-        aliases = {b.name: b.object_id for b in self.bindings.list(instance=instance, namespace="artifact")}
-        for item in value.inputs:
-            # Preserve the frozen request's alias and order. Missing aliases are
-            # explicit; another record of the same schema is never substituted.
-            name = item.artifact_name if aliases.get(item.artifact_name) == item.artifact_ref.artifact_id else None
-            bound_inputs.setdefault(item.port_name, []).append(name)
-        result["bound_inputs"] = [{"port": port, "artifact_names": names} for port, names in bound_inputs.items()]
-        if value.backend_id == "local_trusted":
-            from ..service.local_process_observation import read_summary
-            from ..service.local_workspace import WorkspaceError
-            try:
-                result["native_execution"] = read_summary(self.runs.backend.open(value.run_id).root)
-            except (WorkspaceError, OSError) as error:
-                result["native_execution"] = {"coverage": "unobserved", "scientific_evidence": False,
-                    "reason": "workspace_unavailable", "error_type": type(error).__name__}
-            native = result["native_execution"]
-            result["diagnostic_summary"]["native_coverage"] = native["coverage"]
-            result["diagnostic_summary"]["latest_native_error"] = next(
-                iter(reversed(native.get("recent_errors", []))), None)
-        output_status, output = self._sealed_output(value, include_payload=(
-            include_full_output or output_mode == "index" or bool(output_paths)))
-        result["sealed_output_status"] = output_status
-        result["sealed_output"] = output if include_full_output else None
-        if output_mode == "index":
-            result["output_delivery"] = "index"
-            result["output_index"] = (
-                _output_index(output, (output_paths or [""])[0], index_offset, index_limit)
-                if output is not None else None)
-        else:
-            result["output_delivery"] = "full" if include_full_output else ("selected" if output_paths else "omitted")
-            result["output_metadata"] = (
-                {key: output[key] for key in ("artifact_name", "kind", "schema")}
-                if output is not None else None
-            )
-            result["selected_output"] = (
-                _output_selection(output, output_paths) if output_paths and output is not None else None
-            )
-        result["scheduler_signal_status"] = (
-            "available" if output is not None and value.signal is not None else "unavailable"
-        )
-        result["scheduler_signal"] = (
-            value.signal.model_dump(mode="json")
-            if (include_full_output or bool(output_paths)) and output_mode == "values"
-            and output_status in {"available", "historical"} and value.signal is not None
-            else None
-        )
-        evidence = self.runs.evidence_output_refs(value)
-        if evidence:
-            result["evidence_outputs"] = [{"artifact_name": value.output_binding_name+"."+alias, "schema": ref.schema_id} for alias, ref in evidence]
-        return {**self._scientific_run_view(value, result), **stages}
+        return result
 
     def _compact_run_status(
         self,
         *,
         name: str,
         value: Any,
-        response_profile: str,
+        intent: str,
         output_paths: list[str] | None,
         index_offset: int,
         index_limit: int,
     ) -> dict[str, Any]:
-        include_payload = response_profile in {"navigation", "decision"}
+        include_payload = intent in {"navigation", "decision", "full"}
         output_status, output = self._sealed_output(value, include_payload=include_payload)
         try:
             compiled = self._operation_catalog.operation(value.operation_id)
@@ -261,9 +215,16 @@ class RootRunRoutes:
                 else "unavailable"
             ),
         }
-        if response_profile != "poll" and value.state != "completed":
+        if value.state == "failed":
+            result["diagnostic_summary"] = self.runs.diagnostic_summary(value)
+        if intent != "status" and value.state != "completed":
             result["content_unavailable"] = "run_not_completed"
-        if response_profile == "navigation" and value.state == "completed":
+        if intent == "full" and value.state == "completed":
+            result["output_delivery"] = "full"
+            result["sealed_output"] = output
+            result["scheduler_signal"] = (value.signal.model_dump(mode="json")
+                if output_status in {"available", "historical"} and value.signal is not None else None)
+        elif intent == "navigation" and value.state == "completed":
             result["output_delivery"] = "index"
             result["output_index"] = (
                 _output_index(
@@ -275,7 +236,7 @@ class RootRunRoutes:
                 if output is not None
                 else None
             )
-        elif response_profile == "decision" and value.state == "completed":
+        elif intent == "decision" and value.state == "completed":
             if not output_paths:
                 fields = compiled.spec.decision_fields if contract_status == "current" else ("summary", "limitations", "remaining_question")
                 output_paths = [field if field.startswith("/") else "/" + field.replace("~", "~0").replace("/", "~1") for field in fields]
@@ -296,7 +257,7 @@ class RootRunRoutes:
                 and value.signal is not None
                 else None
             )
-        if response_profile == "decision" and isinstance(result.get("scheduler_signal"), dict):
+        if intent == "decision" and isinstance(result.get("scheduler_signal"), dict):
             signal = dict(result["scheduler_signal"])
             omissions = {}
             for field in ("assumptions", "missing_inputs", "next_actions"):
@@ -308,9 +269,8 @@ class RootRunRoutes:
             result["scheduler_signal"] = signal
             if omissions:
                 result["scheduler_signal_omissions"] = {"omitted_items": omissions,
-                    "read": {"tool": "run_status", "name": name, "view": "detail", "include_full_output": True}}
-        return run_profile_projection(self._scientific_run_view(value, result), response_profile=(
-            "poll" if response_profile == "compat" else response_profile))
+                    "read": {"tool": "run_status", "name": name, "intent": "full"}}
+        return run_intent_projection(self._scientific_run_view(value, result), intent=intent)
 
     def _scientific_run_diagnostic(self, value, diagnostic):
         if diagnostic is None:

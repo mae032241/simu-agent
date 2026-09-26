@@ -8,7 +8,7 @@ import threading
 from dataclasses import dataclass
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, ValidationInfo
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from ...operation_contract import validation_diagnostics, contract_diagnostic
 from ...operations.tooling import parse_tool_arguments
@@ -178,43 +178,23 @@ class ArtifactCatalogInput(NamedReadInput):
     parent_limit: int = Field(default=16, ge=1, le=32)
 
 
-class RunStatusInput(NamedReadInput, StageReadQuery):
-    response_profile: Literal["compat", "poll", "navigation", "decision"] = Field(
-        default="decision",
-        description=(
-            "Omitted request gives bounded completed conclusions, limitations and remaining questions; active Runs stay short. Explicit poll reads no scientific payload. Explicit detail defaults to compat; "
-            "active Runs stay short unless sealed stages are explicitly requested. poll requires summary + values + output_paths=[]; navigation requires summary "
-            "+ index with zero or one path; decision requires summary + values; omitted paths use the declared decision fields. "
-            "Read durable diagnostics with compat + detail + output_paths=[] + diagnostic_after."
-        ),
-    )
-    include_full_output: Annotated[bool, Field(strict=True)] = Field(default=False,
-        description="Explicit true is the only whole sealed-output escape hatch: completed Run, detail + compat + values, omitted/null paths. Never grants access to active drafts or failed science.")
-    output_mode: Literal["values", "index"] = Field(default="values",
-        description='Use decision + values for known non-root paths; navigation + index discovers unknown paths without values. Omit output_paths for the root index.')
+class RunStatusInput(NamedInput, StageReadQuery):
+    intent: Literal["decision", "status", "navigation", "full"] = Field(default="decision",
+        description="decision reads bounded sealed conclusions and scheduler signal after completion; status reads lifecycle and optional saved diagnostics; navigation lists exact fields and scientific input names; full explicitly reads the complete sealed scientific output. Active or failed Runs never expose draft science.")
+    output_fields: list[str] | None = Field(default=None, max_length=8,
+        description="decision only: named top-level fields; omit for declared decision fields. Mutually exclusive with output_paths.")
     output_paths: list[Annotated[str, Field(pattern=r"^(?:/(?:[^~]|~[01])*)?$")]] | None = Field(
         default=None, max_length=8,
-        description='JSON Pointers relative to sealed payload, e.g. /summary. Omit/null or [] uses declared decision fields for decision; compat reads no values without explicit paths. Non-root paths require explicit decision or compat; up to 8 paths, 32 KiB values total. Empty root pointer is forbidden in values mode; use include_full_output=true. "/" selects an empty key. selected values are exact. Oversized values are omitted; object/array children support navigation, oversized scalars require the explicit full-output escape hatch. Detail reveals scientific input names and bounded safe diagnostics; private control bindings and engineering records remain internal.',
-    )
-    output_fields: list[str] | None = Field(default=None, max_length=8, description="Select named top-level scientific fields; omit for declared decision fields. No JSON Pointer is needed.")
-    index_offset: int = Field(default=0, ge=0,
-        description="Index mode only: continue at output_index.next_offset for the same immutable object and path.")
-    index_limit: int = Field(default=16, ge=1, le=32,
-        description="Index mode only: maximum direct children; the complete output_index is limited to 8 KiB UTF-8 JSON.")
-
-    @field_validator("output_paths")
-    @classmethod
-    def index_has_one_path(cls, value, info: ValidationInfo):
-        if info.data.get("output_mode") == "index" and value is not None and len(value) != 1:
-            raise ValueError("index mode requires exactly one output path or null for the root")
-        return value
+        description="decision: exact non-root JSON Pointers, up to 32 KiB selected values; oversized values carry explicit omissions. navigation: one pointer, omitted for root. Use full for complete output, including oversized scalars. '/' selects an empty key.")
+    index_offset: int = Field(default=0, ge=0, description="navigation: continue at output_index.next_offset.")
+    index_limit: int = Field(default=16, ge=1, le=32, description="navigation: direct children, bounded to 8 KiB including metadata.")
     diagnostic_after: int | None = Field(default=None, ge=0,
-        description="For terminal compat + detail, set to 0 for the first bounded page of safe saved errors, then use diagnostic_events.next_after. Declared field paths and repair guidance are preserved; private engineering records are excluded. Omit for the compact status.")
+        description="status: for a terminal Run, 0 starts a bounded page of saved safe diagnostics; continue at diagnostic_events.next_after. Private engineering records are excluded.")
     diagnostic_limit: int = Field(default=20, ge=1, le=100)
 
 
 def parse_run_status_arguments(arguments):
-    """One omission-aware validation boundary for router and direct facade."""
+    """One intent contract shared by direct facade and MCP callers."""
     try:
         parsed = parse_tool_arguments(RunStatusInput, arguments)
     except ValidationError as error:
@@ -222,17 +202,22 @@ def parse_run_status_arguments(arguments):
             details=validation_diagnostics(error, schema=RunStatusInput.model_json_schema())) from error
     values = parsed.model_dump()
     fields = values.pop("output_fields")
+    paths, intent = values["output_paths"], values["intent"]
     if fields is not None:
-        if values["output_paths"] is not None:
-            raise RootToolError("Choose output_fields or output_paths, not both.")
-        values["output_paths"] = ["/" + field.replace("~", "~0").replace("/", "~1") for field in fields]
-    if "response_profile" not in parsed.model_fields_set and values["view"] == "detail":
-        values["response_profile"] = "compat"
-    if values["response_profile"] == "poll" and values["output_paths"] is None:
-        values["output_paths"] = []
-    from .mcp_response_views import validate_run_status_profile
-    validate_run_status_profile(**{key: values[key] for key in (
-        "response_profile", "view", "output_mode", "output_paths", "include_full_output")})
+        if intent != "decision" or paths is not None:
+            raise RootToolError("output_fields requires decision intent and omitted output_paths")
+        paths = ["/" + field.replace("~", "~0").replace("/", "~1") for field in fields]
+        values["output_paths"] = paths
+    if intent in {"status", "full"} and paths is not None:
+        raise RootToolError(f"{intent} intent does not accept output selection")
+    if intent == "navigation" and paths is not None and len(paths) != 1:
+        raise RootToolError("navigation accepts one output path; omit it for root")
+    if intent == "decision" and paths and "" in paths:
+        raise RootToolError("root output pointer requires full intent")
+    if intent != "navigation" and parsed.model_fields_set & {"index_offset", "index_limit"}:
+        raise RootToolError("index pagination requires navigation intent")
+    if intent != "status" and parsed.model_fields_set & {"diagnostic_after", "diagnostic_limit"}:
+        raise RootToolError("saved diagnostics require status intent")
     return values
 
 
@@ -278,6 +263,7 @@ class RootTool:
     name: str
     description: str
     input_model: type[RootToolInput]
+    surface: Literal["research", "execution"] = "research"
 
     def schema(self) -> dict[str, Any]:
         return {
@@ -303,20 +289,20 @@ ROOT_TOOLS = (
     RootTool("operation_preflight", "Optional check without creating. Invoke independently checks admission; this does not reserve resources or authorize execution.", OperationCallInput),
     RootTool("operation_invoke", "Validate and create one Agent, Transform, Effect or Approval from the compiled catalog; no prior preflight required. Success preserves dispatch configuration, exact outputs or approval URLs by executor kind; use the returned detail entry for Run context.", OperationCallInput),
     RootTool("run_list", "List minimal Runs in this research instance.", RunListInput),
-    RootTool("run_status", "Default is short state. Explicit decision/navigation read completed sealed fields; terminal detail reads diagnostics. Only include_full_output=true opts into whole output. Explicit stage_offset=0 reads sealed experiment deliveries even while running; stage_reference reads one material by its returned name. Stages never establish final completion or qualification.", RunStatusInput),
+    RootTool("run_status", "Read a Run with one intent: decision (default), status, navigation or full. Explicit stage_offset=0 lists sealed stages even while running; stage_reference reads an exact material. Stages never establish final completion or qualification.", RunStatusInput),
     RootTool("run_record_failure", "Record failure of one running minimal Run.", RunFailureInput),
     RootTool("approval_list", "List named reviews in this scheduler instance.", ApprovalListInput),
     RootTool("approval_status", "Read one named human-review state.", NamedReadInput),
-    RootTool("execution_capabilities", "List sanitized execution capabilities for one compiled Effect operation.", ExecutionCapabilitiesInput),
-    RootTool("execution_capability_bind", "Freeze one capability selected through a compiled Effect under a semantic artifact name.", ExecutionCapabilityBindInput),
-    RootTool("execution_abandon", "Abandon one named unsubmitted execution.", NamedInput),
-    RootTool("execution_cancel", "Request cancellation of one named submitted execution.", NamedInput),
-    RootTool("execution_list", "List named executions in this scheduler instance.", ExecutionListInput),
-    RootTool("execution_status", "Read one named execution state. Summary gives a bounded deduplicated log index and exact error fields; view=detail reads the complete existing response.", NamedReadInput),
-    RootTool("execution_outputs", "Bind and list logical outputs and the exact result_artifact_name from this execution; null means not yet bindable. Bind that result before creating analysis; every page preserves the same identity.", NamedPageInput),
-    RootTool("execution_start", "Submit one named execution after its exact local review authorizes it.", NamedInput),
-    RootTool("execution_sync", "Refresh bounded solver status and logs; never collect artifacts.", NamedReadInput),
-    RootTool("execution_collect", "Start or resume terminal artifact collection; returns immediately. Other active collection returns busy without queuing.", ExecutionCollectInput),
+    RootTool("execution_capabilities", "List sanitized execution capabilities for one compiled Effect operation.", ExecutionCapabilitiesInput, surface="execution"),
+    RootTool("execution_capability_bind", "Freeze one capability selected through a compiled Effect under a semantic artifact name.", ExecutionCapabilityBindInput, surface="execution"),
+    RootTool("execution_abandon", "Abandon one named unsubmitted execution.", NamedInput, surface="execution"),
+    RootTool("execution_cancel", "Request cancellation of one named submitted execution.", NamedInput, surface="execution"),
+    RootTool("execution_list", "List named executions in this scheduler instance.", ExecutionListInput, surface="execution"),
+    RootTool("execution_status", "Read one named execution state. Summary gives a bounded deduplicated log index and exact error fields; view=detail reads the complete existing response.", NamedReadInput, surface="execution"),
+    RootTool("execution_outputs", "Bind and list logical outputs and the exact result_artifact_name from this execution; null means not yet bindable. Bind that result before creating analysis; every page preserves the same identity.", NamedPageInput, surface="execution"),
+    RootTool("execution_start", "Submit one named execution after its exact local review authorizes it.", NamedInput, surface="execution"),
+    RootTool("execution_sync", "Refresh bounded solver status and logs; never collect artifacts.", NamedReadInput, surface="execution"),
+    RootTool("execution_collect", "Start or resume terminal artifact collection; returns immediately. Other active collection returns busy without queuing.", ExecutionCollectInput, surface="execution"),
 )
 
 
@@ -558,10 +544,14 @@ class RootMCPRouter:
         self._tools = {tool.name: tool for tool in tools}
         self._tool_schemas = tuple(freeze_json(tool.schema()) for tool in tools)
 
-    def list_tools(self) -> list[dict[str, Any]]:
-        return json_projection(self._tool_schemas)
+    def list_tools(self, *, surface: str = "research") -> list[dict[str, Any]]:
+        return [json_projection(schema) for tool, schema in zip(self._ordered_tools, self._tool_schemas)
+                if tool.surface == surface]
 
-    def call_tool(self, name: str, arguments: dict[str, Any] | None) -> Any:
+    def call_tool(self, name: str, arguments: dict[str, Any] | None, *, surface: str = "research") -> Any:
+        tool = self._tools.get(name)
+        if tool is None or tool.surface != surface:
+            raise RootToolError(f"interface is not available on {surface} surface: {name}")
         gate = getattr(self.facade.runs, "instance_maintenance", None)
         if gate is None:
             return self._call_tool(name, arguments)
@@ -611,11 +601,11 @@ class RootMCPRouter:
         values = {field: getattr(parsed, field) for field in type(parsed).model_fields}
         try:
             if name == "run_status":
-                values = parse_run_status_arguments(arguments)
+                return self.facade.run_status(**parsed.model_dump(exclude_unset=True))
             # Presentation options are never part of an immutable operation request.
             query = dict(values)
             query.pop("view", None)
-            if name in {"artifact_catalog", "run_status", "run_list"}:
+            if name in {"artifact_catalog", "run_list"}:
                 query["view"] = values["view"]
             if name in {"operation_catalog", "scientific_inventory", "scientific_current", "instance_list", "execution_outputs", "execution_capabilities"}:
                 query.pop("limit", None)

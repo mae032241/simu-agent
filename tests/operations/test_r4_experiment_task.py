@@ -256,7 +256,7 @@ def _real_experiment(tmp_path, monkeypatch, solver="sprocess", before_submit=Non
     formal = next(item.object_id for item in runtime.scheduler_bindings.list(instance=instance.instance_id, namespace="execution")
         if runtime.executions.status(item.object_id).state == "collected")
     assert runtime.executions.budget_owner(formal) == runtime.executions.scientific_budget_owner(private_package, ("scidiscovery.research-objective.v1",))
-    detail = root.call_tool("run_status", {"name":"observe", "view":"detail", "response_profile":"compat", "include_full_output":True})
+    detail = root.call_tool("run_status", {'name': "observe", "intent": 'full'})
     assert "artifact_ref" not in json.dumps(detail) and "operation_digest" not in json.dumps(detail)
     schema = (workspace / "schema/result.schema.json").read_text()
     assert "recovery_manifest_output" not in schema and "tool_recovery_manifest" not in schema
@@ -291,13 +291,13 @@ def test_reviewer_and_scientific_surfaces_use_declared_contract(tmp_path, monkey
     assert "recovery" not in next(item for item in listing["runs"] if item["name"] == "observe")
     executions = runtime.scheduler_bindings.list(instance=instance.instance_id, namespace="execution")
     assert executions
-    assert root.call_tool("execution_list", {"limit":10})["executions"] == []
+    assert root.call_tool("execution_list", {"limit":10}, surface="execution")["executions"] == []
     events = root.call_tool("lifecycle_events", {})["events"]
     assert not any(item["object_type"] == "execution" for item in events)
     from scidiscovery.artifact_agent.interfaces.mcp_root_shared import RootToolError
     for execution in executions:
         with pytest.raises(RootToolError, match="managed within its scientific task"):
-            root.call_tool("execution_status", {"name":execution.name})
+            root.call_tool("execution_status", {"name":execution.name}, surface="execution")
         assert execution.name not in json.dumps(events)
     created = root.call_tool("operation_invoke", {"name":"review", "operation_id":"science.object.review.v1",
         "inputs":[{"port":"subject", "artifact_names":["observe.output"]}], "instruction":"Review the observation."})
@@ -436,3 +436,52 @@ def test_execution_package_sealing_preserves_declared_payload_version(monkeypatc
         service.seal_implementation(context, payload=b'{}', scientific_material=b'{}', sources=())
     assert [record.payload_schema_version for record in registrations] == [1, 2, 3]
     assert all(record.schema_id == 'plugin.package' for record in registrations)
+
+
+def test_experiment_tool_binding_scopes_each_run_without_exposing_control_services(tmp_path):
+    from dataclasses import dataclass
+    from types import SimpleNamespace
+    import pytest
+    from scidiscovery.artifact_agent.service.experiment_execution import (
+        bind_experiment_services, scope_experiment_services)
+    calls = []
+    @dataclass
+    class Context:
+        run_id: str
+        workspace: object
+        output_directory: object
+        def require_service(self, name):
+            assert name == 'domain.debug'
+            return domain
+    domain = SimpleNamespace(exchange_root=tmp_path / 'private',
+        experiment_activity=lambda lineage, inputs, **kw: calls.append((lineage, inputs, kw)) or True)
+    runs = SimpleNamespace(running_task=lambda run_id: SimpleNamespace(
+        run_id=run_id, operation_id='experiment', inputs=('frozen-subject',)))
+    coordinator = SimpleNamespace(runs=runs, worker_services={},
+        capabilities=lambda context: ('solver-document',),
+        implementation=lambda context, alias: 'exact-package-ref',
+        executions=SimpleNamespace(artifacts=SimpleNamespace(read=lambda ref: b'exact-package')),
+        task_origin=lambda run: 'original-task',
+        task_lineage=lambda run: (run, SimpleNamespace(run_id='original-task')))
+    compiled = SimpleNamespace(spec=SimpleNamespace(operation_id='experiment',
+        executor=SimpleNamespace(capability='domain')),
+        worker_tools=(SimpleNamespace(required_services=('domain:experiment.execution',), optional_services=()),))
+    shared = bind_experiment_services(runs, compiled, {}, coordinator=coordinator)
+    first = scope_experiment_services(shared, run_id='run-a')['domain:experiment.execution']
+    second = scope_experiment_services(shared, run_id='run-b')['domain:experiment.execution']
+    assert first is not second and first is not coordinator
+    assert not any(hasattr(first, name) for name in ('runs', 'executions', 'bridge', 'collection', 'task_lineage'))
+    a = Context('run-a', tmp_path / 'agent-a', tmp_path / 'agent-a/output')
+    b = Context('run-b', tmp_path / 'agent-b', tmp_path / 'agent-b/output')
+    assert first.capabilities(a) == second.capabilities(b) == ('solver-document',)
+    with pytest.raises(ValueError, match='another Run'):
+        first.capabilities(b)
+    with pytest.raises(ValueError, match='rebound'):
+        scope_experiment_services({'experiment.execution': first}, run_id='run-b')
+    sealed = first.read_implementation(a, 'implementation')
+    assert sealed.artifact_ref == 'exact-package-ref' and sealed.content == b'exact-package'
+    scoped = first.diagnostic_context(a, service_name='domain.debug')
+    assert scoped.workspace == domain.exchange_root / 'experiment-workspaces/original-task'
+    assert a.workspace == tmp_path / 'agent-a'
+    assert first.cancel_diagnostics(a, service_name='domain.debug', name='smoke')
+    assert calls == [({'run-a', 'original-task'}, ('frozen-subject',), {'cancel': True, 'name': 'smoke'})]

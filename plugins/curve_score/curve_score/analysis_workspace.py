@@ -5,12 +5,12 @@ import json
 import os
 from pathlib import Path
 
-from scidiscovery.artifact_agent.service.local_workspace import (
-    WorkspaceError, _media_type, _validate_publication_content,
+from scidiscovery.plugin_runtime.workspace import (
+    WorkspaceError, media_type_for_path, validate_publication_content,
     read_control_workspace_file,
     write_control_workspace_file,
 )
-from scidiscovery.artifact_agent.service import local_process_observation
+from scidiscovery.plugin_runtime import observation
 from scidiscovery.operations.spec import CallableComponent, WorkspaceContract
 from scidiscovery.operations.workspace import WorkspaceMaterializationResult, WorkspaceSnapshotFile
 
@@ -87,7 +87,7 @@ def _restore_scratch(request):
             path = Path(item.relative_path)
             if not item.relative_path.startswith("scratch/"):
                 continue
-            if path.is_relative_to(local_process_observation.RECORD_DIR):
+            if path.is_relative_to(observation.RECORD_DIR):
                 continue  # Never make an old latest.json the new Run's observation.
             try:
                 write_control_workspace_file(request.workspace, path, item.content,
@@ -107,8 +107,8 @@ def _restore_scratch(request):
     return {"scientific_evidence": False, "restored": restored, "copy_omissions": omitted,
         "coverage": coverage, "restored_count": len(restored), "copy_omitted_count": len(omitted),
         "coverage_path": "recovery-draft/" + MANIFEST if coverage is not None else None,
-        "historical_runtime_path": "recovery-draft/" + str(local_process_observation.RECORD_DIR)
-            if request.provisional_roots and (request.provisional_roots[-1] / local_process_observation.RECORD_DIR).is_dir() else None}
+        "historical_runtime_path": "recovery-draft/" + str(observation.RECORD_DIR)
+            if request.provisional_roots and (request.provisional_roots[-1] / observation.RECORD_DIR).is_dir() else None}
 
 
 def _excerpts(value, schema):
@@ -238,7 +238,7 @@ def materialize(request, *, start_limit=START_LIMIT):
     available = False
     if request.edit_protocol == "native":
         try:
-            local_process_observation.materialize_launcher(request.workspace, analysis_policy=True)
+            observation.materialize_launcher(request.workspace, analysis_policy=True)
             available = True
         except (OSError, WorkspaceError):
             pass  # Optional telemetry must not prevent the actual analysis task.
@@ -273,7 +273,7 @@ def snapshot(root):
             # Names, too, can carry secrets; never echo rejected content.
             safe = relative[:240]
             try:
-                _validate_publication_content("name.txt", safe.encode(), "text/plain")
+                validate_publication_content("name.txt", safe.encode(), "text/plain")
             except WorkspaceError:
                 safe = "[redacted-name]"
             omitted.append({"relative_path": safe, "reason": reason})
@@ -312,11 +312,11 @@ def snapshot(root):
                         omit(relative, "changed_during_copy"); continue
                     normalized = path.suffix.lower() == ".log"
                     if normalized and not raw.startswith(b"[normalized log copy; original retained]"):
-                        raw = local_process_observation.normalize_log(raw, root)
-                    media = _media_type(relative)
+                        raw = observation.normalize_log(raw, root)
+                    media = media_type_for_path(relative)
                     if media == "application/octet-stream":
                         media = "text/plain"
-                    _validate_publication_content(relative, raw, media)
+                    validate_publication_content(relative, raw, media)
                     if total + len(raw) > MAX_BYTES - 64 * 1024:
                         omit(relative, "byte_limit"); continue
                 except (WorkspaceError, OSError, ValueError):

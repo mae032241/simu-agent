@@ -1,18 +1,17 @@
 """Private calculation receipts. Never a scientific schema or workspace artifact."""
 from __future__ import annotations
 
-from typing import Annotated, Literal
+from typing import Literal
 from pydantic import Field
 from ..schema.common import SchemaModel, Identifier, ContractDiagnostic, canonical_json
-from ..schema.layered_diagnosis import CalculationRecord
+from ...plugin_runtime.calculations import CalculationResult
 
 class CalculationAttemptReference(SchemaModel):
     manifest_alias: Identifier
     attempt_key: Identifier
     proof_kind: Literal["current", "recovery"] = "current"
 
-class ControlledCalculationRecord(CalculationRecord):
-    input_digests: Annotated[dict[str, str], Field(max_length=40)]
+class ControlledCalculationRecord(CalculationResult):
     attempt: CalculationAttemptReference | None = None
     diagnostics: tuple[ContractDiagnostic, ...] = Field(default=(), max_length=8)
 

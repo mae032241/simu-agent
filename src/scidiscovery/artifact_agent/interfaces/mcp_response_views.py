@@ -9,62 +9,12 @@ import json
 from .mcp_root_shared import RootToolError
 
 
-RUN_RESPONSE_PROFILES = ("compat", "poll", "navigation", "decision")
-
-
-def validate_run_status_profile(*, response_profile, view, output_mode, output_paths,
-                                include_full_output=False):
-    """Keep the model-visible profile matrix and both runtime checks identical."""
-    if include_full_output and not (
-        view == "detail" and response_profile == "compat" and output_mode == "values"
-        and output_paths is None
-    ):
-        raise RootToolError('include_full_output=true requires view="detail", '
-            'response_profile="compat", output_mode="values" and omitted/null output_paths')
-    if output_mode == "values" and output_paths and "" in output_paths:
-        raise RootToolError('root output pointer requires include_full_output=true with '
-            'view="detail", response_profile="compat" and omitted/null output_paths')
-    if response_profile == "compat":
-        return
-    if view != "summary":
-        raise RootToolError(
-            f'run_status response_profile="{response_profile}" requires view="summary"; '
-            'use response_profile="compat", view="detail" for the full record'
-        )
-    if response_profile == "poll" and not (
-        output_mode == "values" and output_paths == []
-    ):
-        raise RootToolError(
-            'run_status response_profile="poll" requires output_mode="values" and output_paths=[]; '
-            'use explicit response_profile="decision" for selected non-root values'
-        )
-    if response_profile == "navigation" and not (
-        output_mode == "index"
-        and (output_paths is None or len(output_paths) == 1)
-    ):
-        raise RootToolError(
-            'run_status response_profile="navigation" requires output_mode="index" '
-            'and zero or one output path'
-        )
-    if response_profile == "decision" and not (
-        output_mode == "values" and (output_paths is None or isinstance(output_paths, list))
-    ):
-        raise RootToolError(
-            'run_status response_profile="decision" requires output_mode="values" '
-            'and optional named output_fields or output_paths'
-        )
-
-
-def run_profile_projection(value, *, response_profile, diagnostics_requested=False):
+def run_intent_projection(value, *, intent):
     """Pure compact projection; the route avoids assembling excluded details."""
-    if response_profile == "compat":
-        return value
     result = pick(
         value,
         "name",
         "operation_id",
-        "operation_version",
-        "operation_digest",
         "operation_contract_status",
         "state",
         "agent_type",
@@ -82,9 +32,11 @@ def run_profile_projection(value, *, response_profile, diagnostics_requested=Fal
     )
     if isinstance(result.get("execution_profile"), dict):
         result["execution_profile"] = pick(result["execution_profile"], "profile")
-    if response_profile == "navigation" and value.get("state") == "completed":
+    if intent == "full" and value.get("state") == "completed":
+        result.update(pick(value, "output_delivery", "sealed_output", "scheduler_signal", "scheduler_signal_status"))
+    elif intent == "navigation" and value.get("state") == "completed":
         result.update(pick(value, "output_delivery", "output_index", "output_metadata"))
-    elif response_profile == "decision" and value.get("state") == "completed":
+    elif intent == "decision" and value.get("state") == "completed":
         result.update(
             pick(
                 value,
@@ -386,86 +338,14 @@ def execution_summary(value):
             "completed_bytes", "total_bytes", "completed_files", "total_files",
             "total_seconds", "recovery_pending", "reason", "error", "diagnostic_ref", "diagnostics",
             "record_error", "progress_error", "stop_record_error", "observation_error", "stop_observation_error", "stop_reason")
-    result["detail"] = {"tool": "execution_status", "name": value.get("name"), "view": "detail"}
+    result["detail"] = {"tool": "scid_call", "arguments": {"name": "execution_status",
+        "surface": "execution", "arguments": {"name": value.get("name"), "view": "detail"}}}
     return result
-
-
-def run_summary(value):
-    result = pick(value, "name", "state", "operation_id", "agent_type", "execution_profile",
-        "output_artifact_name", "reason", "deadline_at", "last_activity_at", "completed_at", "draft_from",
-        "recovery", "recovery_available", "sealed_output_status", "output_metadata",
-        "output_delivery", "selected_output", "output_index", "scheduler_signal_status", "scheduler_signal",
-        "diagnostic_events")
-    recovery = result.get("recovery")
-    if isinstance(recovery, dict) and isinstance(recovery.get("coverage"), dict):
-        coverage = recovery["coverage"]
-        compact = pick(coverage, "format", "scope", "status", "saved_count", "saved_bytes",
-            "saved_by_scope", "omitted_count", "normalized_count", "writers_stopped",
-            "original_retained", "complete")
-        omitted = coverage.get("omitted")
-        if isinstance(omitted, list):
-            compact["omitted_listed_count"] = len(omitted)
-            # Only known mechanical categories, never arbitrary path-like diagnostic text.
-            reasons = {item.get("reason") for item in omitted if isinstance(item, dict)
-                and isinstance(item.get("reason"), str)}
-            known = {"symlink", "bytecode_cache", "scan_limit", "unsupported_type", "file_limit",
-                "changed_during_copy", "byte_limit", "unsafe_unreadable_or_oversized"}
-            compact["omission_reasons"] = sorted(reasons & known)
-            if reasons - known:
-                compact["omission_reasons"].append("other")
-        result["recovery"] = {**recovery, "coverage": compact}
-    if "evidence_outputs" in value:
-        result["evidence_output_count"] = len(value["evidence_outputs"])
-    diagnostic = value.get("diagnostic_summary") or {}
-    result["diagnostic_summary"] = pick(diagnostic, "failure", "latest_rejection",
-        "latest_tool_error", "latest_native_error", "native_coverage", "rejection_count")
-    native = value.get("native_execution")
-    if native is not None:
-        result["native_execution"] = pick(native, "coverage", "state", "reason", "elapsed_seconds",
-            "exit_code", "timed_out", "error_type", "error_count", "observation_status")
-    result["detail"] = {"tool": "run_status", "name": value.get("name"), "view": "detail", "output_paths": []}
-    return result
-
-
-def _summary_excerpt(result):
-    selection = result.get("selected_output")
-    if selection is None:
-        return
-    for item in selection.get("items", []):
-        if item.get("pointer") == "/summary" and isinstance(item.get("value"), str):
-            text = item["value"]
-            if len(text) > 512:
-                item.update(value=text[:512], status="excerpt", omitted_characters=len(text)-512)
 
 
 def root_response(name, value, arguments):
     """Never replace a scientific object, precise request, or error with a verdict."""
     detail = arguments.get("view") == "detail"
-    if name == "run_status":
-        response_profile = arguments.get("response_profile", "decision")
-        validate_run_status_profile(
-            response_profile=response_profile,
-            view=arguments.get("view", "summary"),
-            output_mode=arguments.get("output_mode", "values"),
-            output_paths=arguments.get("output_paths"),
-            include_full_output=arguments.get("include_full_output", False),
-        )
-        if not run_is_terminal(value.get("state")):
-            return run_profile_projection(value, response_profile="poll")
-        if response_profile != "compat":
-            return run_profile_projection(
-                value,
-                response_profile=response_profile,
-                diagnostics_requested=arguments.get("diagnostic_after") is not None,
-            )
-        if detail:
-            return value
-        result = run_summary(value)
-        if "sealed_stages" in value:
-            result["sealed_stages"] = value["sealed_stages"]
-        if arguments.get("output_paths") is None:
-            _summary_excerpt(result)
-        return result
     if name in {"execution_status", "execution_sync", "execution_start", "execution_cancel", "execution_abandon"}:
         return value if detail else execution_summary(value)
     if name == "operation_invoke":
@@ -478,11 +358,11 @@ def root_response(name, value, arguments):
                 "operation_version", "operation_digest",
                 "deadline_at", "output_artifact_name", "draft_from", "recovery", "normalized_request",
                 "diagnostics", "missing_inputs", "review_url", "approval_name", "dispatch")
-            result["detail"] = {"tool": "run_status", "name": result.get("name"), "view": "detail", "output_paths": []}
+            result["detail"] = {"tool": "run_status", "name": result.get("name"), "intent": "navigation"}
         # Transform/effect/approval returns already expose output identities and exact review URLs.
         return {**value, "result": result}
     if name == "run_record_failure":
-        return run_summary(value)
+        return run_intent_projection(value, intent="status")
     if name == "operation_catalog":
         if arguments["view"] in _NAV_BUDGET:
             return operation_navigation(value, arguments)
@@ -530,7 +410,7 @@ def root_response(name, value, arguments):
         field = {"run_list": "runs", "execution_list": "executions", "approval_list": "approvals"}[name]
         if name == "run_list":
             return {**value, field: [item if detail and run_is_terminal(item.get("state"))
-                else run_profile_projection(item, response_profile="poll") for item in value[field]]}
+                else run_intent_projection(item, intent="status") for item in value[field]]}
         if not detail:
             value = {**value, field: [pick(item, "name", "state", "status", "operation_id",
                         "output_artifact_name", "selected_option") for item in value[field]]}
@@ -559,18 +439,17 @@ def root_response(name, value, arguments):
         if not detail:
             items = [pick(item, "profile", "solver_kind", "launch_name", "public_release_label") for item in items]
         return {**value, "capabilities": items, "next_before": cursor,
-                "detail": {"tool": name, "operation_id": arguments["operation_id"], "view": "detail"}}
+                "detail": {"tool": "scid_call", "arguments": {"name": name, "surface": "execution",
+                    "arguments": {"operation_id": arguments["operation_id"], "view": "detail"}}}}
     return value
 
 
 __all__ = [
-    "RUN_RESPONSE_PROFILES",
     "operation_detail",
     "operation_invoke_contract",
     "operation_revision_policy",
     "page",
     "pick",
     "root_response",
-    "run_profile_projection",
-    "validate_run_status_profile",
+    "run_intent_projection",
 ]

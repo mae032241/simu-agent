@@ -6,7 +6,8 @@ import pytest
 
 from scidiscovery.artifact_agent.interfaces.mcp import MCPRouter
 from scidiscovery.artifact_agent.schema.common import canonical_json
-from scidiscovery.artifact_agent.service.tool_evidence import ToolEvidenceManifest, ToolAttemptLimit
+from scidiscovery.artifact_agent.schema.tool_evidence import ToolEvidenceManifest
+from scidiscovery.artifact_agent.service.tool_evidence import ToolAttemptLimit
 from scidiscovery.artifact_agent.service.run_records import RunStateConflict
 from tests.operations.test_tcad_result_analysis import analysis_system, open_analysis, analysis_report, write_analysis
 
@@ -138,7 +139,7 @@ def test_argument_rejection_is_receipted_before_read_and_sealed_without_raw_file
     submitted = worker.call_tool("worker_submit_result", {})
     assert submitted["state"] == "completed", submitted
     # Completion publishes the same manifest, even with no collected raw files.
-    status = system[2].call_tool("run_status", {"name":"analysis", "view":"detail", "output_paths": []})
+    status = system[2].call_tool("run_status", {'name': "analysis", "intent": 'navigation'})
     assert len(status["evidence_outputs"]) == 1
     assert json.loads(runs._evidence_snapshot(worker._run_id)) == json.loads(snapshot)
     with pytest.raises(RunStateConflict):

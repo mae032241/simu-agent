@@ -44,7 +44,7 @@ class ParameterEvidencePackage(SchemaModel):
         return self
 
 def _finalize_parameter_result(request):
-    from scidiscovery.artifact_agent.service.result_materialization import (
+    from scidiscovery.plugin_runtime.results import (
         finalize_result, materialize_general_result, materialize_intake,
     )
     def project(value):
@@ -141,7 +141,7 @@ class ParameterCheckInput(BaseModel):
     package_path: str = Field(description="Workspace-relative JSON package or result-envelope draft below scratch/ or output/.")
 
 def check_parameters(request, context):
-    from scidiscovery.artifact_agent.service.local_workspace import read_control_workspace_file
+    from scidiscovery.plugin_runtime.workspace import read_control_workspace_file
     path = Path(request.package_path)
     if path.is_absolute() or not path.parts or path.parts[0] not in {"scratch", "output"}:
         raise ValueError("parameter package must be a task-local scratch/ or output/ draft")

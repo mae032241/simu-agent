@@ -186,10 +186,9 @@ def _save(request: BaseModel, context: OperationToolContext) -> dict[str, object
         # Reopening a Run may change its workspace/alias spelling. Preserve the
         # original immutable family instead of regenerating or re-registering it.
         from scidiscovery.artifact_agent.schema.refs import ArtifactRef
-        from scidiscovery.artifact_agent.service.tool_evidence import ToolEvidenceManifest
         from .figure_family import selected_family_files
         contents = {ArtifactRef.model_validate(r["artifact_ref"]): context.read_evidence(r["alias"]) for r in existing}
-        files = selected_family_files(ToolEvidenceManifest(records=tuple(existing)), contents, context.input_ref(request.name))
+        files = selected_family_files(tuple(existing), contents, context.input_ref(request.name))
         directory = context.workspace / ".operation-tools" / "figure-saved" / request_digest
         directory.mkdir(parents=True, exist_ok=True, mode=0o700)
         if directory.resolve() != context.workspace.resolve() / ".operation-tools" / "figure-saved" / request_digest:
@@ -280,7 +279,7 @@ class FigureFamilyReuseInput(BaseModel):
 def _reuse(request: BaseModel, context: OperationToolContext) -> dict[str, object]:
     """Select the bound prior family unchanged, for a fresh complete Intake revision."""
     from scidiscovery.operations.input_validation import ValidationSources
-    from scidiscovery.artifact_agent.service.tool_evidence import ToolEvidenceManifest
+    from scidiscovery.plugin_runtime.evidence import read_evidence_records
     from .figure_family import _bound_family, SELECTION_ITEM, REQUEST_ITEM
     if not isinstance(request, FigureFamilyReuseInput):
         raise ValueError("figure reuse request has the wrong type")
@@ -296,8 +295,8 @@ def _reuse(request: BaseModel, context: OperationToolContext) -> dict[str, objec
         raise ValueError("reuse requires declared prior source, provenance and family inputs")
     sources = ValidationSources({name: context.read_input(name) for name in names}, descriptors)
     files = _bound_family(sources)
-    proof = ToolEvidenceManifest.model_validate_json(sources[provenance_name], strict=True)
-    prior = {record["alias"]: record for record in proof.records}
+    proof = read_evidence_records(sources[provenance_name])
+    prior = {record["alias"]: record for record in proof}
     if any(record != prior.get(record["alias"]) for record in context.evidence()):
         raise ValueError("another selected or partial family already exists; cannot mix reuse with new extraction")
     records = context.adopt_bound_evidence(provenance_name)

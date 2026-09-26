@@ -44,7 +44,7 @@ def test_generic_analysis_finalizes_compact_draft_through_mcp(tmp_path):
     ('pass', 'pass'), ('fail', 'blocked'), ('inconclusive', 'inconclusive'), ('invalid_study', 'blocked'),
 ])
 def test_analysis_verdict_projection_preserves_the_formal_report(verdict, expected):
-    from scidiscovery.artifact_agent.service.result_materialization import materialize_analysis_handoff
+    from scidiscovery.plugin_runtime.results import materialize_analysis_handoff
     payload = compact_report(verdict=verdict)
     value = dict(payload=deepcopy(payload))
     materialize_analysis_handoff(value)
@@ -57,7 +57,7 @@ def test_analysis_verdict_projection_preserves_the_formal_report(verdict, expect
 
 
 def test_handoff_normalizes_only_duplicate_fields_and_unknown_claims_still_fail():
-    from scidiscovery.artifact_agent.service.result_materialization import materialize_general_result
+    from scidiscovery.plugin_runtime.results import materialize_general_result
     value = dict(payload=compact_report(verdict='fail'), handoff=dict(verdict='pass', summary='Old copy',
         missing_inputs=['Separate input note'], assumptions=['Conditional premise'], next_actions=['Historical extra']))
     original_payload = deepcopy(value['payload'])
@@ -191,7 +191,7 @@ def test_bounded_views_preserve_originals_matrix_values_and_full_rule_pointers(t
 
 
 def test_formal_summary_projection_leaves_other_role_contracts_unchanged():
-    from scidiscovery.artifact_agent.service.result_materialization import materialize_general_result
+    from scidiscovery.plugin_runtime.results import materialize_general_result
     for schema, payload in [
         ('scidiscovery.critic-review.v2', dict(disposition='ready_for_experiment')),
         ('scidiscovery.evidence-audit.v1', dict(checks=[dict(status='pass')])),

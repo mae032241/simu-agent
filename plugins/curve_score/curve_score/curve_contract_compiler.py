@@ -15,7 +15,7 @@ from scidiscovery.artifact_agent.schema.research_objective import (
     ResearchObjectiveContract,
 )
 from scidiscovery.artifact_agent.schema.role_result import RoleHandoff, RoleResultEnvelope
-from scidiscovery.artifact_agent.service.local_workspace import (
+from scidiscovery.plugin_runtime.workspace import (
     write_control_workspace_file,
 )
 from scidiscovery.operation_contract import SemanticRuleViolation

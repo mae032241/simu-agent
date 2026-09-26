@@ -287,7 +287,70 @@ class ExperimentExecution:
         return launch.url(self.approval_base_url)
 
 
-def bind_experiment_services(runs, compiled, services, *, coordinator=None):
+class _TaskExperimentTools:
+    """Control adapter bound by the tool host; a template never mutates its scope."""
+    __slots__ = ("__coordinator", "__operation_id", "__run_id")
+
+    def __init__(self, coordinator, *, operation_id, run_id=None):
+        self.__coordinator = coordinator
+        self.__operation_id = operation_id
+        self.__run_id = run_id
+
+    def _for_run(self, run_id):
+        if self.__run_id is not None and self.__run_id != run_id:
+            raise ValueError("Experiment capability cannot be rebound to another Run.")
+        return self if self.__run_id is not None else _TaskExperimentTools(
+            self.__coordinator, operation_id=self.__operation_id, run_id=run_id)
+
+    def __scope(self, context):
+        run = self.__coordinator.runs.running_task(context.run_id)
+        if run.operation_id != self.__operation_id:
+            raise ValueError("Experiment capability belongs to another operation.")
+        if run.run_id != self.__run_id:
+            raise ValueError("Experiment capability belongs to another Run.")
+        return run
+
+    def capabilities(self, context):
+        self.__scope(context)
+        return self.__coordinator.capabilities(context)
+
+    def seal_implementation(self, context, *, payload, scientific_material, sources, private_outputs=()):
+        self.__scope(context)
+        return self.__coordinator.seal_implementation(context, payload=payload,
+            scientific_material=scientific_material, sources=sources, private_outputs=private_outputs)
+
+    def read_implementation(self, context, alias):
+        from ...plugin_runtime.experiment import SealedImplementation
+        self.__scope(context)
+        ref = self.__coordinator.implementation(context, alias)
+        return SealedImplementation(ref, self.__coordinator.executions.artifacts.read(ref))
+
+    def diagnostic_context(self, context, *, service_name):
+        from dataclasses import replace
+        run = self.__scope(context)
+        service = context.require_service(service_name)
+        private = service.exchange_root / "experiment-workspaces" / self.__coordinator.task_origin(run)
+        private.mkdir(parents=True, exist_ok=True, mode=0o700)
+        return replace(context, workspace=private, output_directory=private / "output")
+
+    def cancel_diagnostics(self, context, *, service_name, name):
+        run = self.__scope(context)
+        service = context.require_service(service_name)
+        lineage = {item.run_id for item in self.__coordinator.task_lineage(run)}
+        return bool(service.experiment_activity(lineage, run.inputs, cancel=True, name=name))
+
+    def command(self, context, request):
+        self.__scope(context)
+        return self.__coordinator.command(context, request)
+
+
+def scope_experiment_services(services, *, run_id):
+    """Scope only the compiled tool's selected services, without mutating cached bindings."""
+    return {key: value._for_run(run_id) if isinstance(value, _TaskExperimentTools) else value
+            for key, value in services.items()}
+
+
+def bind_experiment_services(runs, compiled, services, *, coordinator=None, run_id=None):
     """Shared tool-service binding for unified and standalone Worker hosts."""
     if compiled.spec.executor.capability is None:
         return services
@@ -295,10 +358,11 @@ def bind_experiment_services(runs, compiled, services, *, coordinator=None):
     if coordinator is None:
         raise ValueError("The experiment execution service is not configured.")
     coordinator.worker_services.update(services)
+    capability = _TaskExperimentTools(coordinator, operation_id=compiled.spec.operation_id, run_id=run_id)
     for tool in compiled.worker_tools:
         for key in (*tool.required_services, *tool.optional_services):
             if key.partition(":")[2] == "experiment.execution":
-                services[key] = coordinator
+                services[key] = capability
     return services
 
 

@@ -158,7 +158,7 @@ def test_expired_and_terminal_calls_keep_diagnostics_without_changing_state(tmp_
     before = runs.status(worker._run_id)
     reply = wire(worker, "worker_submit_result", {})
     assert "error" in reply
-    status = root.call_tool("run_status", {"name": "analysis", "view": "detail", "output_paths": [], "diagnostic_after": 0})
+    status = root.call_tool("run_status", {'name': "analysis", 'diagnostic_after': 0, "intent": 'status'})
     assert status["state"] == "running" and status["candidate_accepted"] is False
     error = status["diagnostic_summary"]["latest_tool_error"]
     assert "deadline expired" in json.dumps(error)

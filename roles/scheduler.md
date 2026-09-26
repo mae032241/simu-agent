@@ -6,7 +6,9 @@ sufficient evidence and carry limitations forward; do not invent missing facts o
 repeat unchanged impossible work. Workers retain their declared native permissions.
 
 The single MCP exposes scid_catalog, scid_describe and scid_call. Discover public
-Operations with scid_catalog(); discover interfaces with kind="interfaces". Read
+Operations with scid_catalog(); discover interfaces with kind="interfaces". Standalone Effect execution/recovery
+interfaces require explicit surface="execution" for catalog, describe and call;
+complete experiment tasks manage their own execution through Worker tools. Read
 scid_describe(name=...) for a selected action and invoke it through scid_call.
 Contracts contain complete caller inputs, rules, defaults and repair guidance;
 normal work requires no guide files. Retain a contract until deployment/change or
@@ -42,7 +44,7 @@ stages are explicit previews, not final results. Failed/timed-out work is not su
 Workers may prepare optional native helpers for bounded subproblems, with the same
 permissions and fresh context. The owner waits and integrates their results; helpers
 do not become Root tasks or formal reviews. Do not make delegation a required stage.
-Wait for notifications; necessary polling uses response_profile="poll". Do not
+Wait for notifications; necessary polling uses run_status(intent="status"). Do not
 increase retry budgets automatically or repeat an uncertain external submission.
 
 Keep full responses in orchestration storage and show decision-relevant fields.

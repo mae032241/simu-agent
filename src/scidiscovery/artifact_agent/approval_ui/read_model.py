@@ -742,7 +742,7 @@ class InstanceReadModel:
             return {"state": "unknown", "gaps": [gap("collection_observation_unavailable", error_type=type(error).__name__)]}
 
     def _run_detail(self, result, value):
-        from ..service.local_process_observation import read_summary
+        from ...plugin_runtime.observation import read_summary
         try:
             result["native_execution"] = read_summary(self.runs.backend.open(value.run_id).root)
         except Exception as error:

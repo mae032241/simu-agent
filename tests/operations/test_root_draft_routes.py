@@ -118,7 +118,7 @@ def test_root_projects_exact_bindings_and_ordered_parent_metadata_without_payloa
     with pytest.raises(RootToolError, match='parent_offset'):
         root.call_tool('artifact_catalog', {'name': 'many_parents', 'view': 'parents', 'parent_offset': 3})
     before = runtime.runs.status(worker._run_id)
-    status = root.call_tool('run_status', {'name': 'analysis', 'view': 'detail', 'output_paths': []})
+    status = root.call_tool('run_status', {'name': 'analysis', "intent": 'navigation'})
     expected = {}
     for item in before.inputs:
         expected.setdefault(item.port_name, []).append(item.artifact_name)
@@ -133,7 +133,7 @@ def test_root_projects_exact_bindings_and_ordered_parent_metadata_without_payloa
     original_list = runtime.scheduler_bindings.list
     monkeypatch.setattr(runtime.scheduler_bindings, 'list', lambda **kw:
         tuple(b for b in original_list(**kw) if b.name != before.inputs[0].artifact_name))
-    assert root.call_tool('run_status', {'name': 'analysis', 'view': 'detail', 'output_paths': []})['bound_inputs'][0]['artifact_names'] == [None]
+    assert root.call_tool('run_status', {'name': 'analysis', "intent": 'navigation'})['bound_inputs'][0]['artifact_names'] == [None]
 
 
 def _failed_source(catalog, runtime, root):

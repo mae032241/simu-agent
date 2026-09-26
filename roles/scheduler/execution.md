@@ -1,11 +1,14 @@
 <!-- SCIDISCOVERY MANAGED SCHEDULER GUIDE -->
 
-External execution requires exact control authorization. For TCAD, invoke the
-complete `tcad.study.execute` task with its exact project, independent review,
-capability and scientific subject. Control prepares and seals the reviewed package
-and returns its semantic name in `prepared_outputs`; do not schedule packaging or
-project an embedded execution plan. Scientific file slots use `file_reference`;
-never move large input files through JSON or model context.
+Complete experiment tasks own design, implementation, authorized execution and
+collection through worker_experiment_execute. Root binds scientific materials and
+reads sealed task results; it does not drive task-managed execution objects.
+
+For a standalone compiled Effect or historical execution recovery, explicitly select
+surface="execution" in scid_catalog(kind="interfaces"), scid_describe and scid_call.
+The same declarations govern discovery and calls. This selection grants no additional
+permission: internal Operations and task-managed execution remain unavailable.
+Scientific file slots use file_reference, never large JSON bodies.
 
 Within both configured inclusive storage and wall-time limits, invoke reports policy
 authorization with no human approval request. Otherwise follow the configured human

@@ -21,23 +21,7 @@ from ..schema.common import canonical_json
 from ..schema.role_result import RoleResultEnvelope, parse_role_result
 from ..schema.run_signal import SchedulerSignal
 from .local_workspace import SealedWorkspace, WorkspaceError
-
-
-class RunOutputError(RuntimeError):
-    def __init__(
-        self, message: str, *, details: tuple[dict[str, str], ...] = (), recorded: bool = False,
-    ) -> None:
-        super().__init__(message)
-        self.details = details
-        self.recorded = recorded
-
-
-class RunCheckerError(RuntimeError):
-    """Control integrity or checker failure, never a request to rewrite output."""
-
-    def __init__(self, message: str, *, category: str = "checker_failure") -> None:
-        super().__init__(message)
-        self.category = category if category in {"checker_failure", "integrity_failure", "admission_defect", "tool_timeout"} else "checker_failure"
+from ...plugin_runtime.diagnostics import RunOutputError, RunCheckerError
 
 
 from ...operations.input_validation import InputBindingDescriptor, ValidationSources, BoundSourceError

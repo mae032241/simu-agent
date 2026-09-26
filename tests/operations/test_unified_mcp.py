@@ -97,7 +97,7 @@ def test_codex_optional_source_preserves_worker_scope_and_attachment(tmp_path):
 
 
 def test_optional_source_proxy_daemon_does_not_register_worker_as_scheduler(tmp_path):
-    from scidiscovery.interfaces.daemon import UnixSocketDaemon
+    from scidiscovery.plugin_runtime.transport import UnixSocketDaemon
     from scidiscovery.artifact_agent.interfaces.mcp_daemon import RootBrokerRouter
     _, runtime, root, gateway, profile = queued(tmp_path)
     socket = tmp_path / "control.sock"
@@ -302,8 +302,6 @@ def test_gateway_scopes_actual_worker_lifecycle_and_sealed_result(tmp_path, back
         assert all(item['status'] == 'unknown' for item in unavailable['reading_guidance']['inputs'])
 
 
-
-
 def test_pre_gateway_archive_restores_without_fabricated_bindings(archive_system):
     runtime, archives, instance_id, _ = archive_system
     with runtime.runs._connect() as connection:
@@ -351,12 +349,12 @@ def test_irreparable_attached_profile_mismatch_fails_run_and_releases_slot(
         profile={**profile, **profile_override},
     )
     assert "Worker platform model/effort do not match" in rejected["error"]["message"]
-    failed = root.facade.run_status(name="observation", view="detail")
+    failed = root.facade.run_status(name="observation", intent='navigation')
     assert failed["state"] == "failed"
     assert "expected=" in failed["reason"] and "observed=" in failed["reason"]
     assert failed["diagnostic_summary"]["failure"]["category"] == "worker_profile_mismatch"
     diagnostic_page = root.call_tool(
-        "run_status", {"name": "observation", "view": "detail", "diagnostic_after": 0, "diagnostic_limit": 10}
+        "run_status", {'name': "observation", 'diagnostic_after': 0, 'diagnostic_limit': 10, "intent": 'status'}
     )
     assert diagnostic_page["diagnostic_events"]["events"][-1]["diagnostic"]["code"] == "worker_profile_mismatch"
     with runtime.runs._connect() as connection:
@@ -405,7 +403,7 @@ def test_generated_install_has_one_mcp_and_no_worker_service_copies(tmp_path, ba
 
 
 def test_real_proxy_daemon_preserves_scope_and_worker_does_not_register_client(tmp_path):
-    from scidiscovery.interfaces.daemon import UnixSocketDaemon
+    from scidiscovery.plugin_runtime.transport import UnixSocketDaemon
     from scidiscovery.artifact_agent.interfaces.mcp_daemon import RootBrokerRouter
     _, runtime, root, gateway, profile = queued(tmp_path)
     socket = tmp_path / "control.sock"
@@ -473,7 +471,7 @@ def test_real_proxy_daemon_preserves_scope_and_worker_does_not_register_client(t
 def test_tcad_install_probe_checks_exact_declared_tool_set_through_proxy(tmp_path):
     from types import SimpleNamespace
     from scidiscovery.artifact_agent.interfaces.mcp import MCPRouter
-    from scidiscovery.interfaces.daemon import UnixSocketDaemon
+    from scidiscovery.plugin_runtime.transport import UnixSocketDaemon
     from tcad_artifact.execution_control import TCADExecutionRouter
 
     project = Path(__file__).resolve().parents[2]

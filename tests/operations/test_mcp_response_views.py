@@ -11,7 +11,7 @@ from scidiscovery.artifact_agent.interfaces.mcp_root_operation_routes import Roo
 from scidiscovery.artifact_agent.interfaces.mcp_response_views import (
     operation_invoke_contract,
     page,
-    run_profile_projection,
+    run_intent_projection,
 )
 
 
@@ -29,48 +29,32 @@ def test_execution_poll_is_short_but_exact_logs_and_failure_remain_readable():
         "collection": {"state": "failed", "error": {"code": "collection_timeout", "diagnostic_ref": "diag_saved"}}}
     root = router(execution_status=lambda **args: deepcopy(full), execution_sync=lambda **args: deepcopy(full))
     for name in ("execution_status", "execution_sync"):
-        short = root.call_tool(name, {"name": "execution"})
+        short = root.call_tool(name, {"name": "execution"}, surface="execution")
         assert "log_tails" not in short["progress"]
         assert short["collection"]["error"] == full["collection"]["error"]
         assert short["progress"]["exit_code"] == 1
         assert len(json.dumps(short)) < .4*len(json.dumps(full))
-        assert root.call_tool(name, {"name": "execution", "view": "detail"}) == full
+        assert root.call_tool(name, {"name": "execution", "view": "detail"}, surface="execution") == full
 
 
-def test_run_default_never_requests_full_output_and_keeps_explicit_pointer_semantics():
-    def status(**args):
-        return {"name": args["name"], "state": "completed", "bound_inputs": [{"port": "input", "artifact_names": [None]}],
-            "scheduler_signal": {"verdict": "blocked"},
-            "selected_output": {"items": [{"pointer": "/summary", "status": "selected", "value": "结论"*1000}]},
-            "received": args}
-    call = Mock(side_effect=status)
+def test_run_router_preserves_omission_and_named_selection():
+    call = Mock(return_value={"name":"run", "state":"completed"})
     root = router(run_status=call)
-    short = root.call_tool("run_status", {"name": "run"})
-    assert call.call_args.kwargs["output_paths"] == []
-    assert "bound_inputs" not in short and "sealed_output" not in short
-    assert "selected_output" not in short and "scheduler_signal" not in short
-    root.call_tool("run_status", {"name": "run", "output_paths": []})
-    assert call.call_args.kwargs["output_paths"] == []
-    detail = root.call_tool("run_status", {"name": "run", "view": "detail", "output_paths": []})
-    assert detail["bound_inputs"][0]["artifact_names"] == [None]
-    assert call.call_args.kwargs["view"] == "detail"
-    selected = root.call_tool("run_status", {"name": "run", "response_profile": "decision", "output_paths": ["/summary"]})
-    assert selected["selected_output"]["items"][0]["status"] == "selected"
+    root.call_tool("run_status", {"name":"run"})
+    assert call.call_args.kwargs == {"name":"run"}
+    root.call_tool("run_status", {"name":"run", "intent":"decision", "output_fields":["summary"]})
+    assert call.call_args.kwargs == {"name":"run", "intent":"decision", "output_fields":["summary"]}
 
 
-@pytest.mark.parametrize(
-    ("arguments", "message"),
-    [
-        ({"response_profile": "poll", "output_paths": ["/summary"]}, 'response_profile="poll"'),
-        ({"response_profile": "navigation", "output_mode": "values"}, 'response_profile="navigation"'),
-        ({"response_profile": "decision", "output_paths": []}, 'response_profile="decision"'),
-        ({"response_profile": "poll", "output_paths": [], "view": "detail"}, 'requires view="summary"'),
-    ],
-)
-def test_run_response_profile_matrix_rejects_exact_invalid_combinations(arguments, message):
-    root = router(run_status=Mock(return_value={"name": "run", "state": "queued"}))
-    with pytest.raises(RootToolError, match=message):
-        root.call_tool("run_status", {"name": "run", **arguments})
+@pytest.mark.parametrize("arguments", [
+    {"response_profile":"poll"}, {"view":"detail"}, {"output_mode":"index"},
+    {"include_full_output":True},
+])
+def test_retired_status_parameters_are_rejected(arguments):
+    root = router(run_status=Mock())
+    with pytest.raises(RootToolError):
+        root.call_tool("run_status", {"name":"run", **arguments})
+    root.facade.run_status.assert_not_called()
 
 
 def test_run_compact_profile_golden_fields_keep_diagnostics_and_hide_payloads():
@@ -94,10 +78,10 @@ def test_run_compact_profile_golden_fields_keep_diagnostics_and_hide_payloads():
             "next_after": 9},
         "selected_output": {"items": [{"value": "unsealed"}]},
     }
-    without_events = run_profile_projection(full, response_profile="poll")
-    with_events = run_profile_projection(full, response_profile="poll", diagnostics_requested=True)
+    without_events = run_intent_projection(full, intent="status")
+    with_events = run_intent_projection(full, intent="status")
     assert "compact_recovery_status" not in without_events
-    assert "diagnostic_summary" not in without_events and "reason" not in without_events
+    assert "diagnostic_summary" not in without_events
     assert "diagnostic_events" not in without_events
     assert "diagnostic_events" not in with_events
     for hidden in ("scheduler_signal", "bound_inputs", "native_execution", "tool_timing", "recovery", "selected_output"):
@@ -110,7 +94,7 @@ def test_run_decision_does_not_expose_unsealed_science(state):
     value = {"name": "run", "state": state, "sealed_output_status": "unavailable",
         "scheduler_signal_status": "unavailable", "selected_output": {"items": [{"value": "draft"}]},
         "scheduler_signal": {"verdict": "accept"}, "diagnostic_summary": {}}
-    result = run_profile_projection(value, response_profile="decision")
+    result = run_intent_projection(value, intent="decision")
     assert "selected_output" not in result and "scheduler_signal" not in result
 
 
@@ -123,8 +107,8 @@ def test_run_completed_navigation_and_decision_preserve_exact_mechanical_and_sci
     value = {"name": "run", "state": "completed", "sealed_output_status": "available",
         "scheduler_signal_status": "available", "selected_output": selected, "output_index": index,
         "output_delivery": "selected", "scheduler_signal": signal}
-    decision = run_profile_projection(value, response_profile="decision")
-    navigation = run_profile_projection({**value, "output_delivery": "index"}, response_profile="navigation")
+    decision = run_intent_projection(value, intent="decision")
+    navigation = run_intent_projection({**value, "output_delivery": "index"}, intent="navigation")
     assert decision["selected_output"] == selected and decision["scheduler_signal"] == signal
     assert navigation["output_index"] == index and "scheduler_signal" not in navigation
 
@@ -487,12 +471,12 @@ def test_observation_and_collection_failures_are_not_hidden_by_summary(tmp_path,
     runtime, _, effect, _, root, _ = _setup(tmp_path)
     _create_effect(root, name='broken_observation')
     _decide_execution_approval(runtime, root, name='broken_observation')
-    root.call_tool('execution_start', {'name':'broken_observation'})
+    root.call_tool('execution_start', {'name':'broken_observation'}, surface="execution")
     def broken(*a, **k):
         raise TimeoutError('fixture status read timed out')
     monkeypatch.setattr(effect, 'status_details', broken, raising=False)
-    short = root.call_tool('execution_sync', {'name':'broken_observation'})
-    full = root.call_tool('execution_status', {'name':'broken_observation', 'view':'detail'})
+    short = root.call_tool('execution_sync', {'name':'broken_observation'}, surface="execution")
+    full = root.call_tool('execution_status', {'name':'broken_observation', 'view':'detail'}, surface="execution")
     assert short['observation_error'] == full['observation_error']
     assert 'timed out' in json.dumps(short['observation_error'])
     from scidiscovery.artifact_agent.interfaces.mcp_response_views import execution_summary
@@ -510,26 +494,20 @@ def test_approval_url_and_capability_details_survive_compact_views():
     short = root.call_tool('approval_status', {'name':'decision'})
     assert short['review_url'] == full['review_url'] and short['omitted_characters'] > 0
     assert root.call_tool('approval_status', {'name':'decision','view':'detail'}) == full
-    assert 'public_arguments' not in root.call_tool('execution_capabilities', {'operation_id':'effect'})['capabilities'][0]
-    assert root.call_tool('execution_capabilities', {'operation_id':'effect', 'view':'detail'})['capabilities'][0]['public_arguments'] == ['--exact']
+    assert 'public_arguments' not in root.call_tool('execution_capabilities', {'operation_id':'effect'}, surface="execution")['capabilities'][0]
+    navigation = root.call_tool('execution_capabilities', {'operation_id': 'effect'}, surface='execution')['detail']
+    assert navigation['tool'] == 'scid_call'
+    request = navigation['arguments']
+    assert request == {'name': 'execution_capabilities', 'surface': 'execution',
+        'arguments': {'operation_id': 'effect', 'view': 'detail'}}
+    assert root.call_tool(request['name'], request['arguments'], surface=request['surface'])['capabilities'][0]['public_arguments'] == ['--exact']
 
 
-@pytest.mark.parametrize('coverage', [None, {'status':'unavailable'}, {},
-    {'complete': False, 'saved_count':3, 'omitted_count':100, 'omitted':[
-        {'relative_path':'长路径'*75+str(i), 'reason':'byte_limit'} for i in range(64)]},
-    {'omitted':[{'relative_path':'x','reason':'unknown future reason'}]}])
-def test_recovery_short_view_retains_detail_without_mutating_history(coverage):
-    recovery={'resume_available':True, 'delivery_preserved':True}
-    if coverage is not None:
-        recovery['coverage']=coverage
-    full={'name':'r', 'state':'failed', 'recovery': recovery}
-    before=deepcopy(full)
-    root=router(run_status=lambda **kwargs: deepcopy(full))
-    short=root.call_tool('run_status',{'name':'r','output_paths':[]})
-    detail=root.call_tool('run_status',{'name':'r','view':'detail','output_paths':[]})
-    assert detail == before and full == before
-    assert 'recovery' not in short
-    assert len(json.dumps(short)) < 1800
+def test_status_projection_keeps_private_recovery_records_internal():
+    original = {"name":"r", "state":"failed", "recovery":{"coverage":{"omitted":["private"]}}}
+    before = deepcopy(original)
+    result = run_intent_projection(original, intent="status")
+    assert "recovery" not in result and original == before
 
 
 def test_log_summary_deduplicates_sources_and_keeps_distinct_error_navigation():
@@ -538,12 +516,17 @@ def test_log_summary_deduplicates_sources_and_keeps_distinct_error_navigation():
         {'source':'solver_log','tail':'common setup\nunique error A'},
         {'source':'stderr','tail':'unique error B'}]}}
     root=router(execution_status=lambda **kw:deepcopy(full))
-    result=root.call_tool('execution_status',{'name':'execution'})
+    result=root.call_tool('execution_status',{'name':'execution'}, surface="execution")
     index=result['progress']['log_index']
     assert len(index)==2 and index[0]['sources']==['stdout','solver_log']
     assert index[0]['pointers']==['/progress/log_tails/0','/progress/log_tails/1']
     assert 'unique error B' in index[1]['excerpt']
-    assert root.call_tool('execution_status',{'name':'execution','view':'detail'})==full
+    navigation = result['detail']
+    assert navigation == {'tool': 'scid_call', 'arguments': {'name': 'execution_status',
+        'surface': 'execution', 'arguments': {'name': 'execution', 'view': 'detail'}}}
+    request = navigation['arguments']
+    assert root.call_tool(request['name'], request['arguments'], surface=request['surface']) == full
+    assert 'surface' not in request['arguments']
 
 
 @pytest.mark.parametrize('kind', ['agent','transform','effect','approval'])
@@ -568,8 +551,8 @@ def test_invoke_preserves_executor_dispatch_facts_and_exact_errors(kind):
 def test_execution_outputs_preserve_exact_result_identity_across_pages():
     root=router(execution_outputs=lambda **kw:{'execution_name':'e','result_artifact_name':'e.result',
         'outputs':[{'output_label':str(i),'artifact_name':f'e.output.{i}'} for i in range(3)]})
-    first=root.call_tool('execution_outputs',{'name':'e','limit':1})
-    second=root.call_tool('execution_outputs',{'name':'e','limit':1,'before':first['next_before']})
+    first=root.call_tool('execution_outputs',{'name':'e','limit':1}, surface="execution")
+    second=root.call_tool('execution_outputs',{'name':'e','limit':1,'before':first['next_before']}, surface="execution")
     assert first['result_artifact_name']==second['result_artifact_name']=='e.result'
     absent=router(execution_outputs=lambda **kw:{'execution_name':'e','result_artifact_name':None,'outputs':[]})
-    assert absent.call_tool('execution_outputs',{'name':'e'})['result_artifact_name'] is None
+    assert absent.call_tool('execution_outputs',{'name':'e'}, surface="execution")['result_artifact_name'] is None

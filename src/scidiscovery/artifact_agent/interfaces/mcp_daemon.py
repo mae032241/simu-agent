@@ -14,7 +14,7 @@ from contextlib import nullcontext
 from pathlib import Path
 from typing import Any, Callable
 
-from scidiscovery.interfaces.daemon import UnixSocketDaemon
+from scidiscovery.plugin_runtime.transport import UnixSocketDaemon
 from ...operation_contract import DiagnosticError
 
 from .mcp import build_root_router, rpc_error

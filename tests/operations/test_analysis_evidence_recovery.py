@@ -31,7 +31,7 @@ def test_unpublished_analysis_survives_failure_and_new_assignment(tmp_path, reus
     value = runtime.runs.status(worker._run_id)
     runtime.runs.record_failure(value.run_id, reason='fixture interrupted',
         expected_state=value.state, expected_last_activity_at=value.last_activity_at)
-    recovery = root.call_tool('run_status', {"view": "detail", 'name': 'analysis'})['recovery']
+    recovery = runtime.runs.recovery_status(runtime.runs.status(worker._run_id))
     assert recovery['draft_available'] and recovery['recovery_pending']
     assert (scratch / 'analysis.py').read_bytes() == script
     request = deepcopy(system[3]); request.update(name='continued_work', draft_from='analysis')
@@ -111,7 +111,7 @@ def test_recovery_filters_bad_files_individually_and_rejects_changed_copy(tmp_pa
     retained.write_text('changed')
     request = deepcopy(system[3]); request.update(name='tampered_resume', draft_from='analysis')
     assert not system[2].call_tool('operation_preflight', request)['admissible']
-    damaged = system[2].call_tool('run_status', {'name':'analysis', 'view':'detail', 'response_profile':'compat', 'output_paths':[]})
+    damaged = {"recovery": runtime.runs.recovery_status(runtime.runs.status(worker._run_id))}
     assert damaged['recovery']['delivery_preserved'] is False
     assert damaged['recovery'].get('coverage', {}).get('complete') is not True
     assert (scratch / 'complete.csv').read_text() == 'x,y\n0,3\n'
@@ -274,7 +274,7 @@ def test_forged_workspace_receipt_cannot_publish_evidence(tmp_path):
     (output/'tool-evidence.json').write_text('{"schema_version":1,"records":[{"alias":"forged"}]}')
     write_analysis(opened, analysis_report())
     assert worker.call_tool('worker_submit_result', {})['state'] == 'completed'
-    evidence=system[2].call_tool('run_status', {"view": "detail", 'name':'analysis'})['evidence_outputs']
+    evidence=system[2].call_tool('run_status', {'name': 'analysis', "intent": 'navigation'})['evidence_outputs']
     assert evidence==[dict(artifact_name='analysis.output.recovery_manifest',schema='scidiscovery.tool-evidence-manifest.v1')]
     assert json.loads(system[1].runs._evidence_snapshot(worker._run_id))['records']==[]
 
@@ -305,7 +305,7 @@ def test_ssh_inspection_download_streams_through_remote_protocol(tmp_path, monke
 def test_socket_inspection_uses_existing_execution_router(tmp_path, monkeypatch, short_budget):
     import multiprocessing
     import time
-    from scidiscovery.interfaces.daemon import UnixSocketDaemon
+    from scidiscovery.plugin_runtime.transport import UnixSocketDaemon
     from tcad_artifact.execution_control import TCADExecutionFacade,TCADExecutionPolicy,TCADExecutionRouter,ToolProfile
     from tcad_artifact.execution_adapter import TCADExecutorAdapter
     facade = TCADExecutionFacade(policy=TCADExecutionPolicy(**policy_fields(), allowed_input_roots=(str(tmp_path),),
@@ -407,7 +407,7 @@ def test_corrupt_retained_evidence_is_engineering_failure(tmp_path, monkeypatch)
     write_analysis(opened, analysis_report(alias=inspected['evidence_alias']))
     monkeypatch.setattr(system[1].artifacts, 'read', read)
     assert worker.call_tool('worker_submit_result', {})['state'] == 'failed'
-    assert system[2].call_tool('run_status', {"view": "detail", 'name':'analysis'})['recovery']['delivery_preserved']
+    assert system[1].runs.recovery_status(system[1].runs.status(worker._run_id))['delivery_preserved']
 
 
 def test_old_runner_tool_error_allows_limited_report(tmp_path):
@@ -540,7 +540,7 @@ def test_corrupt_preserved_receipt_fails_successor_open_explicitly(tmp_path, mon
     catalog,runtime,root,request,artifacts,register=system
     record=runtime.runs.tool_evidence(worker._run_id)[0]
     write_analysis(opened,analysis_report())
-    status=root.call_tool('run_status',{"view": "detail", 'name':'analysis'})
+    status=root.call_tool('run_status',{'name': 'analysis', "intent": 'navigation'})
     root.call_tool('run_record_failure',dict(name='analysis',reason='fixture interruption',expected_state='running',expected_last_activity_at=status['last_activity_at']))
     original_read=runtime.artifacts.read
     monkeypatch.setattr(runtime.artifacts,'read',lambda ref: b'corrupt' if ref.model_dump(mode='json')==record['artifact_ref'] else original_read(ref))
@@ -548,7 +548,7 @@ def test_corrupt_preserved_receipt_fails_successor_open_explicitly(tmp_path, mon
     request.update(name='corrupt_successor',draft_from='analysis')
     with pytest.raises(Exception,match='preserved tool evidence integrity failure'):
         open_analysis((catalog,runtime,root,request,artifacts,register))
-    assert root.call_tool('run_status',{"view": "detail", 'name':'corrupt_successor'})['state']=='failed'
+    assert root.call_tool('run_status',{'name': 'corrupt_successor', "intent": 'navigation'})['state']=='failed'
 
 
 def test_missing_execution_binding_reports_exact_repair_without_discovery():

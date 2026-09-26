@@ -1,7 +1,7 @@
 """Display saved figure families without re-running scientific qualification."""
 from collections.abc import Mapping
 
-from scidiscovery.artifact_agent.approval_ui.presentation import (
+from scidiscovery.plugin_runtime.presentation import (
     add_fields, add_gap, empty, items, pointer, source,
 )
 

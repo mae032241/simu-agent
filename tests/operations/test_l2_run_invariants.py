@@ -890,7 +890,7 @@ def test_source_projection_generation_handles_old_run_without_reusing_it(
         if old_state != "queued":
             assert (retained.output_directory / "result.json").read_bytes() == _audit_envelope()
     elif old_state == "failed":
-        retired = new_root.call_tool("run_status", {"name": name, "view": "detail"})
+        retired = new_root.call_tool("run_status", {'name': name, "intent": 'navigation'})
         assert retired["recovery_available"] is False
         before_runs = new_root.call_tool("run_list", {})
         rejected = new_root.call_tool(
@@ -913,7 +913,7 @@ def test_source_projection_generation_handles_old_run_without_reusing_it(
         assert rejected["reason_code"] == "recovery_source_unavailable"
         assert new_root.call_tool("run_list", {}) == before_runs
     else:
-        retired = new_root.call_tool("run_status", {"name": name, "view": "detail"})
+        retired = new_root.call_tool("run_status", {'name': name, "intent": 'full'})
         assert retired["sealed_output_status"] == "historical"
         assert retired["sealed_output"] is not None
         assert retired["scheduler_signal"] is not None
@@ -1213,7 +1213,7 @@ def test_untrusted_input_content_cannot_expand_compiled_run_authority(
     )
     assert "worker_tcad_debug_run" not in assignment["tools"]
     assert root.call_tool("approval_list", {}) == {"approvals": [], "next_before": None}
-    assert root.call_tool("execution_list", {"state": None, "limit": 50}) == {
+    assert root.call_tool("execution_list", {"state": None, "limit": 50}, surface="execution") == {
         "executions": [], "next_before": None
     }
 

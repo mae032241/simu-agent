@@ -17,17 +17,8 @@ from .schema import (
 from .objective import (
     ObjectiveCoverageReport,
 )
-from scidiscovery.operations.spec import (
-    CallableComponent,
-    ComponentRef,
-    ComponentSpec,
-    ExecutorRef,
-    InputPortSpec,
-    LimitsSpec,
-    OperationDescription,
-    OperationSpec,
-    OutputPortSpec,
-)
+from scidiscovery.operations.spec import CallableComponent, ComponentSpec
+from scidiscovery.operations.transforms import object_schema, single_input, group_inputs
 from scidiscovery.operation_contract import SemanticRuleViolation
 from .transform_adapter import (
     CURVE_SCORE_OPERATION,
@@ -45,14 +36,6 @@ def _schema(model: type[BaseModel], schema_id: str) -> str:
     value = model.model_json_schema(mode="validation")
     value["$id"] = schema_id
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
-
-
-def _object_schema(schema_id: str) -> str:
-    return json.dumps(
-        {"$id": schema_id, "type": "object"},
-        separators=(",", ":"),
-        sort_keys=True,
-    )
 
 
 def _model_validator(model: type[BaseModel]) -> Callable[[bytes], None]:
@@ -76,13 +59,6 @@ def _png(raw: bytes) -> None:
         raise ValueError("curve comparison plot is not a PNG")
 
 
-def _one(values: Mapping[str, tuple[bytes, ...]], name: str) -> bytes:
-    items = values.get(name, ())
-    if len(items) != 1:
-        raise ValueError(f"curve operation input {name} must contain one item")
-    return items[0]
-
-
 def _reference_inputs(raw_items: tuple[bytes, ...]) -> dict[str, bytes]:
     ordered = sorted((hashlib.sha256(raw).hexdigest(), raw) for raw in raw_items)
     digests = tuple(item[0] for item in ordered)
@@ -100,9 +76,9 @@ def score_curve_bundle(
     values: Mapping[str, tuple[bytes, ...]],
 ) -> dict[str, tuple[bytes, ...]]:
     inputs = {
-        "curve_bundle": _one(values, "curve_bundle"),
-        "experiment_plan": _one(values, "experiment_plan"),
-        "curve_contract": _one(values, "curve_contract"),
+        "curve_bundle": single_input(values, "curve_bundle"),
+        "experiment_plan": single_input(values, "experiment_plan"),
+        "curve_contract": single_input(values, "curve_contract"),
         **_reference_inputs(values.get("reference_bundles", ())),
     }
     return score_curve_bundle_outputs(inputs)
@@ -112,8 +88,8 @@ def reference_coverage(
     values: Mapping[str, tuple[bytes, ...]],
 ) -> dict[str, tuple[bytes, ...]]:
     inputs = {
-        "experiment_plan": _one(values, "experiment_plan"),
-        "curve_contract": _one(values, "curve_contract"),
+        "experiment_plan": single_input(values, "experiment_plan"),
+        "curve_contract": single_input(values, "curve_contract"),
         **_reference_inputs(values.get("reference_bundles", ())),
     }
     return curve_reference_coverage_outputs(inputs)
@@ -123,8 +99,8 @@ def objective_coverage(
     values: Mapping[str, tuple[bytes, ...]],
 ) -> dict[str, tuple[bytes, ...]]:
     inputs = {
-        "objective": _one(values, "objective"),
-        "experiment_plan": _one(values, "experiment_plan"),
+        "objective": single_input(values, "objective"),
+        "experiment_plan": single_input(values, "experiment_plan"),
         **_reference_inputs(values.get("reference_bundles", ())),
     }
     for index, raw in enumerate(values.get("curve_contracts", ()), start=1):
@@ -132,16 +108,9 @@ def objective_coverage(
     return objective_coverage_outputs(inputs)
 
 
-def _group(inputs: tuple[Any, ...]) -> dict[str, list[Any]]:
-    grouped: dict[str, list[Any]] = {}
-    for item in inputs:
-        grouped.setdefault(item.port_name, []).append(item)
-    return grouped
-
-
 def score_parentage(inputs: tuple[Any, ...], parameters: Mapping[str, Any]) -> bool:
     del parameters
-    grouped = _group(inputs)
+    grouped = group_inputs(inputs)
     bundle = grouped["curve_bundle"][0]
     return all(
         grouped[name][0].artifact.ref in bundle.artifact.parent_refs
@@ -151,7 +120,7 @@ def score_parentage(inputs: tuple[Any, ...], parameters: Mapping[str, Any]) -> b
 
 def objective_parentage(inputs: tuple[Any, ...], parameters: Mapping[str, Any]) -> bool:
     del parameters
-    grouped = _group(inputs)
+    grouped = group_inputs(inputs)
     plan = grouped["experiment_plan"][0]
     return bool(
         grouped["objective"][0].artifact.ref in plan.artifact.parent_refs
@@ -197,7 +166,7 @@ REFERENCE_COVERAGE_SCHEMA = _schema(
 OBJECTIVE_COVERAGE_SCHEMA = _schema(
     ObjectiveCoverageReport, "scidiscovery.objective-coverage.v1"
 )
-SCORE_AUDIT_SCHEMA = _object_schema("scidiscovery.curve-score-audit.v1")
+SCORE_AUDIT_SCHEMA = object_schema("scidiscovery.curve-score-audit.v1")
 PLOT_SCHEMA = json.dumps(
     {
         "$id": "scidiscovery.curve-comparison-plot.v1",
@@ -207,117 +176,6 @@ PLOT_SCHEMA = json.dumps(
     separators=(",", ":"),
     sort_keys=True,
 )
-
-
-def _ref(name: str, *, plugin_id: str | None = None) -> ComponentRef:
-    return ComponentRef(name, plugin_id=plugin_id)
-
-
-def _input(
-    name: str,
-    schema: str,
-    resource: str | ComponentRef,
-    *,
-    min_items: int = 1,
-    max_items: int = 1,
-    max_bytes: int = 32 * 1024 * 1024,
-    usage: str = "claim_evidence",
-    media_types: tuple[str, ...] = ("application/json",),
-) -> InputPortSpec:
-    return InputPortSpec(
-        name=name,
-        description=f"Exact immutable curve operation input: {name}.",
-        schema=schema,
-        media_types=media_types,
-        codec=_ref(
-            "json_codec" if media_types == ("application/json",) else "opaque_codec",
-            plugin_id="general_science",
-        ),
-        schema_resource=resource if isinstance(resource, ComponentRef) else _ref(resource),
-        min_items=min_items,
-        max_items=max_items,
-        max_item_bytes=max_bytes,
-        usage=usage,
-        exposure="full",
-    )
-
-
-def _review_input(
-    name: str, *, min_items: int = 1, max_items: int = 1
-) -> InputPortSpec:
-    return _input(
-        name,
-        "scidiscovery.scientific-review.v1",
-        _ref("scientific_review_schema", plugin_id="general_science"),
-        min_items=min_items,
-        max_items=max_items,
-        max_bytes=64 * 1024,
-        usage="prior_signal",
-    )
-
-
-def _output(
-    name: str,
-    kind: str,
-    schema: str,
-    resource: str | ComponentRef,
-    validator: str | ComponentRef,
-    *,
-    min_items: int = 1,
-    max_items: int = 1,
-    max_bytes: int = 32 * 1024 * 1024,
-    media_type: str = "application/json",
-) -> OutputPortSpec:
-    return OutputPortSpec(
-        name=name,
-        description=f"Deterministic curve operation output: {name}.",
-        schema=schema,
-        media_types=(media_type,),
-        codec=_ref(
-            "json_codec" if media_type == "application/json" else "opaque_codec",
-            plugin_id="general_science",
-        ),
-        schema_resource=resource if isinstance(resource, ComponentRef) else _ref(resource),
-        min_items=min_items,
-        max_items=max_items,
-        max_item_bytes=max_bytes,
-        kind=kind,
-        validator=validator if isinstance(validator, ComponentRef) else _ref(validator),
-    )
-
-
-def _operation(
-    operation_id: str,
-    component: str,
-    purpose: str,
-    inputs: tuple[InputPortSpec, ...],
-    outputs: tuple[OutputPortSpec, ...],
-    *,
-    guards: tuple[str, ...] = (),
-    max_input_bytes: int = 1024 * 1024 * 1024,
-    max_output_bytes: int = 512 * 1024 * 1024,
-) -> OperationSpec:
-    return OperationSpec(
-        operation_id=operation_id,
-        version="1",
-        catalog_scope="support",
-        description=OperationDescription(
-            purpose=purpose,
-            applies_when="The exact declared immutable curve inputs are available.",
-            not_for="Selecting scientific targets, interpreting mechanisms, or executing a solver.",
-        ),
-        executor=ExecutorRef(kind="transform", component=_ref(component)),
-        inputs=inputs,
-        outputs=outputs,
-        consequence="scientific",
-        guards=tuple(_ref(name) for name in guards),
-        limits=LimitsSpec(
-            timeout_seconds=300,
-            max_input_bytes=max_input_bytes,
-            max_output_bytes=max_output_bytes,
-            max_files=sum(item.max_items for item in outputs),
-        ),
-    )
 
 
 # Algorithms above remain available to complete analysis tools. These are the

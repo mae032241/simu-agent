@@ -86,7 +86,7 @@ def _collect_execution(system, directory, *, name, state="succeeded", output_nam
         outputs=tuple(LocalFileDescriptor.model_validate(item) for item in collected["outputs"]))
     runtime.scheduler_bindings.bind(instance=root.facade._instance_id(), namespace="execution",
         name=name, object_id=execution_id)
-    published = root.call_tool("execution_outputs", {"name": name})
+    published = root.call_tool("execution_outputs", {"name": name}, surface="execution")
     return {item["output_label"]: item["artifact_name"] for item in published["outputs"]}
 
 
@@ -113,7 +113,7 @@ def test_collected_log_and_missing_products_allow_limited_analysis(tmp_path, sta
     write_analysis(opened, analysis_report(alias="diagnostics"))
     submitted = worker.call_tool("worker_submit_result", {})
     assert submitted["state"] == "completed", submitted
-    sealed = system[2].call_tool("run_status", {"name": "analysis", "view": "detail"})["sealed_output"]
+    sealed = system[2].call_tool("run_status", {'name': "analysis", "intent": 'full'})["sealed_output"]
     assert sealed["payload"]["source_references"][0]["input_alias"] == "diagnostics"
 
 
@@ -232,7 +232,7 @@ def test_historical_review_reaches_new_analysis_without_current_authority(tmp_pa
     write_analysis(opened, report)
     submitted = worker.call_tool("worker_submit_result", {})
     assert submitted["state"] == "completed", submitted
-    assert root.call_tool("run_status", {"name": "analysis", "view": "detail"})["sealed_output"]["payload"]["claim_allowed"] is False
+    assert root.call_tool("run_status", {'name': "analysis", "intent": 'full'})["sealed_output"]["payload"]["claim_allowed"] is False
     # Analysis completion does not renew the old review's authoring authority.
     import json
     package = json.loads(runtime.artifacts.read(artifacts["package"].ref))

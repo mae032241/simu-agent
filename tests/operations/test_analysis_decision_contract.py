@@ -106,11 +106,7 @@ def test_real_keyed_producer_rejects_then_seals_complete_decision_contract(
             tuple(item.artifact_id for item in runtime.artifacts.list_artifacts(limit=100)),
         )
     before = control_state()
-    decision = root.call_tool("run_status", {
-        "name": name,
-        "response_profile": "decision",
-        "output_paths": DECISION_PATHS,
-    })
+    decision = root.call_tool("run_status", {'name': name, 'output_paths': DECISION_PATHS, "intent": 'decision'})
     assert control_state() == before
     assert decision["state"] == "completed"
     assert decision["scheduler_signal_status"] == "available"

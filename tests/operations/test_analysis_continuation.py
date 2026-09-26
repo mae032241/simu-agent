@@ -31,7 +31,7 @@ def test_legacy_draft_without_coverage_or_runtime_files_does_not_advertise_them(
 
 
 def test_compact_open_and_editable_nested_recovery_with_fresh_runtime(tmp_path):
-    from scidiscovery.artifact_agent.service import local_process_observation as observation
+    from scidiscovery.plugin_runtime import observation
     from tests.operations.test_analysis_evidence_recovery import recovery_system
     system, worker, opened, _ = recovery_system(tmp_path)
     root = Path(opened['workspace_path'])
@@ -106,10 +106,11 @@ def test_native_read_error_survives_success_and_is_visible_in_completed_root_sta
     report = analysis_report(alias='solver_outputs_001', output_name='A', mapped=True)
     write_analysis(opened, report)
     assert worker.call_tool('worker_submit_result', {})['state'] == 'completed'
-    status = system[2].call_tool('run_status', {'name':'analysis', 'view':'detail'})
-    native, diagnostic = status['native_execution'], status['diagnostic_summary']
+    from scidiscovery.plugin_runtime.observation import read_summary
+    native = read_summary(root)
+    diagnostic = system[1].runs.diagnostic_summary(system[1].runs.status(worker._run_id))
     assert native['exit_code'] == 0 and native['attempt_count'] == 2 and native['error_count'] == 1
-    error = diagnostic['latest_native_error']
+    error = native['recent_errors'][-1]
     assert error['exit_code'] == 1 and error['error_type'] == 'FileNotFoundError'
     assert 'missing-recovery.json' in (root / error['stderr_log']).read_text()
     assert diagnostic['rejection_count'] == 0 and diagnostic['failure'] is None

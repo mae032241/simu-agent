@@ -8,9 +8,9 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 from scidiscovery.artifact_agent.schema.common import canonical_json
 from scidiscovery.artifact_agent.schema.refs import ArtifactRef
-from scidiscovery.artifact_agent.service.tool_evidence import ToolEvidenceManifest
-from scidiscovery.general_science_components import _intake_source_context
-from scidiscovery.operation_contract import SemanticRuleViolation
+from scidiscovery.plugin_runtime.evidence import read_evidence_records
+from scidiscovery.artifact_agent.schema.research_cycle import validate_scientific_intake
+from scidiscovery.operation_contract import SemanticRuleViolation, validate_evidence_source_aliases
 from scidiscovery.operations.input_validation import OperationInvocationError
 from scidiscovery.operations.spec import CallableComponent
 from .figure_digitization_contract import FigureDigitizationRequest
@@ -42,9 +42,8 @@ class SelectedFigureFamily(BaseModel):
     members: tuple[FigureFamilyMember, ...] = Field(min_length=1, max_length=38)
 
 
-def selected_family_files(proof, records_by_ref, source_ref):
+def selected_family_files(records, records_by_ref, source_ref):
     """Read exact controlled bytes, never select the last attempt or rerun extraction."""
-    records = proof.records
     selected = [r for r in records if r.get("metadata", {}).get("data_item") == SELECTION_ITEM]
     if len(selected) != 1:
         raise ValueError("exactly one explicitly saved figure family is required")
@@ -109,7 +108,7 @@ def _bound_family(sources):
             raise ValueError(f"figure family requires one {port}")
         return names[0]
     source = descriptors[one("paper_source")].artifact_ref
-    proof = ToolEvidenceManifest.model_validate_json(sources[one("figure_provenance")], strict=True)
+    proof = read_evidence_records(sources[one("figure_provenance")])
     files = {d.artifact_ref: sources[name] for name, d in descriptors.items() if d.port_name == "figure_family"}
     if len(files) != sum(d.port_name == "figure_family" for d in descriptors.values()):
         raise ValueError("duplicate figure member binding")
@@ -124,11 +123,12 @@ def validate_family_inputs(sources):
 
 
 def validate_intake_context(payload, sources, handoff):
-    _intake_source_context(payload, sources, handoff)
+    validate_scientific_intake(payload)
+    validate_evidence_source_aliases(payload, sources)
     try:
         if sources.tool_snapshot is None:
             raise ValueError("figure Intake requires controlled tool evidence")
-        proof = ToolEvidenceManifest.model_validate_json(sources.tool_snapshot, strict=True)
+        proof = read_evidence_records(sources.tool_snapshot)
         descriptors = sources.binding_descriptors
         source = next(d.artifact_ref for d in descriptors.values() if d.port_name == "paper_source")
         files = {d.artifact_ref: sources[name] for name, d in descriptors.items() if d.port_name == "tool_evidence"}

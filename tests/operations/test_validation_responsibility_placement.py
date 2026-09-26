@@ -84,7 +84,7 @@ def _final_request(tmp_path, schema_id, payload, *, inputs=None, handoff=None):
 
 def test_plan_draft_materializes_count_and_goal_without_changing_scientific_choices(tmp_path):
     from tests.operations.test_m2_curve_analysis_boundary import _compiler_plan
-    from scidiscovery.artifact_agent.service.result_materialization import finalize_general_result
+    from scidiscovery.plugin_runtime.results import finalize_general_result
     from scidiscovery.artifact_agent.schema.experiment import ExperimentPortfolio
     plan = _compiler_plan().model_dump(mode='json')
     expected = json.loads(canonical_json(plan))

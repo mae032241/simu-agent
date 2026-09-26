@@ -13,7 +13,7 @@ from scidiscovery.artifact_agent.interfaces.mcp import MCPRouter
 from scidiscovery.artifact_agent.operation_tool_context import OperationToolContext
 from scidiscovery.artifact_agent.schema.common import canonical_json
 from scidiscovery.artifact_agent.schema.layered_diagnosis import CalculationRecord
-from scidiscovery.artifact_agent.service.tool_evidence import ToolEvidenceManifest
+from scidiscovery.artifact_agent.schema.tool_evidence import ToolEvidenceManifest
 from tcad_artifact.result_analysis import TCADScoreInput, evaluate_tcad_request
 from tests.operations.test_result_analysis_tool import score_inputs
 from tests.operations.test_tcad_result_analysis import (
@@ -104,9 +104,12 @@ def test_supported_log_and_linear_metrics_have_independent_known_values(tmp_path
         operators=[dict(operator_key=space, kind='residual_max_abs', value_space=space)
                    for space in ('linear', 'log10')])]
     parsed = AnalysisScoreInput.model_validate_json(canonical_json(dict(record_key='known', request=request)))
-    record = score_tool(parsed, SimpleNamespace(remaining_seconds=30,
+    context = SimpleNamespace(remaining_seconds=30,
         read_evidence=sources.__getitem__, finish_attempt=lambda **kwargs: None,
-        workspace=tmp_path, accept_evidence=lambda **kwargs: {'alias': 'tool_evidence_001'}))
+        workspace=tmp_path, accept_evidence=lambda **kwargs: {'alias': 'tool_evidence_001'})
+    from scidiscovery.artifact_agent.operation_tool_context import OperationToolContext
+    context.complete_calculation = lambda record, **kwargs: OperationToolContext.complete_calculation(context, record, **kwargs)
+    record = score_tool(parsed, context)
     assert record['status'] == 'computed', record
     metrics = record['summary']['comparisons'][0]['metrics']
     assert {item['operator_key']: item['value'] for item in metrics} == {'linear': 900.0, 'log10': 1.0}

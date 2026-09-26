@@ -11,9 +11,8 @@ from pydantic import Field
 
 from scidiscovery.artifact_agent.operation_tool_context import OperationToolContext
 from scidiscovery.artifact_agent.schema.common import canonical_json
-from scidiscovery.artifact_agent.service.calculation_proof import ControlledCalculationRecord as CalculationRecord
-from scidiscovery.artifact_agent.service.analysis_artifacts import publish_analysis_file, retain_calculation
-from scidiscovery.artifact_agent.service.local_workspace import WorkspaceError, write_control_workspace_file
+from scidiscovery.plugin_runtime.calculations import CalculationResult as CalculationRecord
+from scidiscovery.plugin_runtime.workspace import WorkspaceError, write_control_workspace_file
 from scidiscovery.operation_contract import contract_diagnostic
 from scidiscovery.operations.spec import CollectionSpec, ComponentRef, OutputPortSpec
 from scidiscovery.operations.tooling import WorkerToolDefinition
@@ -131,23 +130,15 @@ def _scientific_numerics(value):
 
 
 def _restore_checkpoint(alias, request, context, input_digests):
-    record = next((item for item in context.evidence() if item["alias"] == alias), None)
-    if (record is None or record.get("metadata", {}).get("kind") != "calculation_checkpoint"
-            or record.get("metadata", {}).get("algorithm_version") != ALGORITHM_VERSION
-            or record.get("tool_name") not in {"worker_curve_diagnose", "worker_tcad_curve_diagnose"}):
-        raise ValueError("diagnostic_checkpoint_not_controlled")
-    raw = context.read_evidence(alias)
-    if len(raw) > MAX_DETAILS_BYTES or hashlib.sha256(raw).hexdigest() != record["artifact_ref"]["sha256"]:
-        raise ValueError("diagnostic_checkpoint_identity_mismatch")
+    raw, numerical_identity = context.read_calculation_checkpoint(alias,
+        algorithm_version=ALGORITHM_VERSION,
+        tool_names=("worker_curve_diagnose", "worker_tcad_curve_diagnose"),
+        sources=tuple(input_digests), max_bytes=MAX_DETAILS_BYTES)
     saved = json.loads(raw)
-    proof = record.get("metadata", {}).get("checkpoint_proof", {})
-    refs = {name: context.source_descriptor(name).artifact_ref.model_dump(mode="json")
-            for name in input_digests}
     if (saved["algorithm_version"] != ALGORITHM_VERSION
-            or canonical_json(saved["request"]) != canonical_json(request.request.raw_request)
-            or proof.get("input_digests") != input_digests or proof.get("input_refs") != refs):
+            or canonical_json(saved["request"]) != canonical_json(request.request.raw_request)):
         raise ValueError("diagnostic_checkpoint_scope_mismatch")
-    for path, value in proof.get("numerical_identity", ()):
+    for path, value in numerical_identity:
         target = saved
         for part in path[:-1]:
             target = target[part]
@@ -200,11 +191,9 @@ def run_diagnostic_tool(
                 raw = canonical_json(scientific)
                 if len(raw) > MAX_DETAILS_BYTES:
                     raise ScoreLimitError("diagnostic_checkpoint_byte_limit")
-                checkpoint = publish_analysis_file(context, raw, media_type="application/json",
-                    kind="calculation_checkpoint", sources=tuple(sources), suffix=".json",
-                    metadata={"record_key": request.record_key, "algorithm_version": ALGORITHM_VERSION,
-                        "checkpoint_proof": {"numerical_identity": numerical_identity, "input_digests": base["input_digests"],
-                            "input_refs": {name: context.source_descriptor(name).artifact_ref.model_dump(mode="json") for name in sources}}})
+                checkpoint = context.publish_calculation_checkpoint(raw,
+                    algorithm_version=ALGORITHM_VERSION, record_key=request.record_key,
+                    sources=tuple(sources), numerical_identity=numerical_identity)
             else:
                 record = score.model_copy(update={"algorithm_version": ALGORITHM_VERSION})
     except (TimeoutError, ScoreLimitError, UnsupportedSourceError, ValueError, OSError, WorkspaceError) as error:
@@ -231,7 +220,7 @@ def run_diagnostic_tool(
                 raw_details = canonical_json(_scientific_numerics({"metric_report": metric_result, "localization": localization})[0])
                 if len(raw_details) > MAX_DETAILS_BYTES:
                     raise ScoreLimitError("diagnostic_details_byte_limit")
-                details = publish_analysis_file(context, raw_details, media_type="application/json",
+                details = context.publish_analysis_file(raw_details, media_type="application/json",
                     kind="calculation_details", sources=(*tuple(sources), checkpoint["evidence_alias"]), suffix=".json",
                     metadata={"record_key": request.record_key, "algorithm_version": ALGORITHM_VERSION})
                 for name, raw in plots:
@@ -248,17 +237,11 @@ def run_diagnostic_tool(
             "images": [{k: v for k, v in image.items() if k != "path"} for image in images],
             "limitations": (["Numerical results are retained; the requested figure is unavailable. Retry with the checkpoint or report the missing figure."] if diagnostics else []),
         })
-    response = record.model_dump(mode="json", exclude={"attempt", "diagnostics"})
     if record.status != "computed" and not diagnostics:
         diagnostics = (contract_diagnostic(record.reason_code or record.status,
             phase="tool_execution", affected_action="tool_call",
             message="The diagnostic is unavailable; retain the reason and submit any supported finite analysis."),)
-    finished = context.finish_attempt(result_status=record.status, reason_code=record.reason_code,
-        response=response, diagnostics=diagnostics)
-    if finished is not None:
-        attempt, attempt_diagnostics = finished
-        response.update(attempt=attempt, diagnostics=list(attempt_diagnostics))
-    return {"record": retain_calculation(context, response, summary=True), "images": images,
+    return {"record": context.complete_calculation(record, diagnostics=diagnostics, summary=True), "images": images,
             "details": details, "checkpoint": checkpoint}
 
 

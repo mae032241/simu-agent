@@ -57,8 +57,8 @@ def test_root_default_decision_and_exact_origin_binding(tmp_path, monkeypatch):
     selected = {item['pointer']:item for item in response['selected_output']['items']}
     assert selected['/summary']['value'] == 'Observed fixture.'
     assert selected['/limitations']['status'] == 'missing'  # No invented limitations.
-    assert root.call_tool('run_status', {'name':'observe', 'response_profile':'poll'})['state'] == 'completed'
-    assert 'selected_output' not in root.call_tool('run_status', {'name':'observe', 'response_profile':'poll'})
+    assert root.call_tool('run_status', {'name': 'observe', "intent": 'status'})['state'] == 'completed'
+    assert 'selected_output' not in root.call_tool('run_status', {'name': 'observe', "intent": 'status'})
     requested = root.call_tool('run_status', {'name':'observe', 'output_fields':['outcome']})
     assert requested['selected_output']['items'][0]['value'] == 'completed'
     operations = []
@@ -262,8 +262,7 @@ def test_failed_run_safe_reason_and_diagnostic_pagination(tmp_path, monkeypatch)
     runtime.runs.record_failure(run_id, reason=secret, category='output_rejected',
         expected_state=value.state, expected_last_activity_at=value.last_activity_at,
         engineering={'reference':secret})
-    request = {'name':'bad_output', 'view':'detail', 'response_profile':'compat',
-        'output_paths':[], 'diagnostic_after':0, 'diagnostic_limit':1}
+    request = {'name':'bad_output', 'intent':'status', 'diagnostic_after':0, 'diagnostic_limit':1}
     first = root.call_tool('run_status', request)
     assert 'declared contract' in first['reason']
     events = first['diagnostic_events']
@@ -279,3 +278,60 @@ def test_failed_run_safe_reason_and_diagnostic_pagination(tmp_path, monkeypatch)
     assert secret not in public and run_id not in public and 'engineering' not in public
     # The maintenance truth is retained, not erased to make the public check pass.
     assert secret in json.dumps(runtime.runs.diagnostic_events(runtime.runs.status(run_id)))
+
+
+def test_execution_surface_has_one_declaration_projection_and_no_default_call_bypass():
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+    import pytest
+    from scidiscovery.artifact_agent.interfaces.mcp_root import RootMCPRouter, RootToolError, ROOT_TOOLS
+    from scidiscovery.artifact_agent.interfaces.mcp_gateway import UnifiedMCPRouter
+    from tests.operations.test_unified_mcp import rpc, result
+    handler = Mock(return_value={"name":"standalone", "state":"collected"})
+    facade = SimpleNamespace(runs=SimpleNamespace(worker_connections=SimpleNamespace()),
+        execution_status=handler, session_key=None, _instance_id=lambda:"fixture",
+        engineering_diagnostics=SimpleNamespace(capture=Mock()),
+        operation_catalog=lambda **_: {"scope":"all", "operations":[]})
+    root = RootMCPRouter(facade)
+    for surface in ("research", "execution"):
+        assert {t["name"] for t in root.list_tools(surface=surface)} == {
+            t.name for t in ROOT_TOOLS if t.surface == surface}
+    assert "execution_status" not in {t["name"] for t in root.list_tools()}
+    with pytest.raises(RootToolError):
+        root.call_tool("execution_status", {"name":"standalone"})
+    handler.assert_not_called()
+    gateway = UnifiedMCPRouter(root)
+    catalog = result(rpc(gateway, "scid_catalog", {"kind":"interfaces", "surface":"execution"}))
+    assert {t["name"] for t in catalog["entries"]} == {t.name for t in ROOT_TOOLS if t.surface == "execution"}
+    described = result(rpc(gateway, "scid_describe", {"name":"execution_status", "surface":"execution"}))
+    assert described["name"] == "execution_status"
+    assert "error" in rpc(gateway, "scid_describe", {"name":"execution_status"})
+    assert "error" in rpc(gateway, "scid_call", {"name":"execution_status", "arguments":{"name":"standalone"}})
+    response = result(rpc(gateway, "scid_call", {"name":"execution_status", "surface":"execution", "arguments":{"name":"standalone"}}))
+    assert response["state"] == "collected"
+    for method, args in (("scid_catalog", {"kind":"interfaces"}),
+                         ("scid_describe", {"name":"execution_status"}),
+                         ("scid_call", {"name":"execution_status", "arguments":{"name":"standalone"}})):
+        reply = rpc(gateway, method, {**args, "surface":"execution"}, child="helper")
+        assert "execution surface is available only to Root" in reply["error"]["message"]
+    assert handler.call_count == 1
+
+
+def test_execution_capability_cannot_select_internal_compiled_effect():
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+    import pytest
+    from scidiscovery.artifact_agent.interfaces.mcp_root_execution_routes import RootExecutionRoutes
+    from scidiscovery.artifact_agent.interfaces.mcp_root_operation_routes import RootOperationRoutes
+    from scidiscovery.artifact_agent.interfaces.mcp_root_shared import RootToolError
+
+    class Fixture(RootExecutionRoutes, RootOperationRoutes):
+        pass
+
+    facade = Fixture()
+    facade._operation_catalog = SimpleNamespace(operation=lambda _: SimpleNamespace(
+        spec=SimpleNamespace(catalog_scope="internal")))
+    facade.execution_bridge = SimpleNamespace(capabilities=Mock())
+    with pytest.raises(RootToolError, match="not available to Root"):
+        facade.execution_capabilities(operation_id="internal.effect.v1")
+    facade.execution_bridge.capabilities.assert_not_called()

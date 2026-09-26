@@ -631,11 +631,13 @@ assert not {
 catalog = compile_installed_catalog()
 assert len(catalog.operation_ids()) == len(set(catalog.operation_ids()))
 assert DescribeInput.model_json_schema()['properties']['view']['enum'] == ['full', 'invoke']
-assert RunStatusInput.model_json_schema()['properties']['response_profile']['enum'] == [
-    'compat', 'poll', 'navigation', 'decision'
+assert RunStatusInput.model_json_schema()['properties']['intent']['enum'] == [
+    'decision', 'status', 'navigation', 'full'
 ]
-assert RunStatusInput.model_json_schema()['properties']['response_profile']['default'] == 'decision'
-assert RunStatusInput.model_json_schema()['properties']['include_full_output']['default'] is False
+assert RunStatusInput.model_json_schema()['properties']['intent']['default'] == 'decision'
+assert 'view' not in RunStatusInput.model_json_schema()['properties']
+assert DescribeInput.model_json_schema()['properties']['surface']['default'] == 'research'
+assert all(item.surface == 'execution' for item in ROOT_TOOLS if item.name.startswith('execution_'))
 assert 'producer_inputs' in ArtifactCatalogInput.model_json_schema()['properties']['view']['enum']
 print('installed package probe: pass')
 PY
@@ -1069,11 +1071,12 @@ try:
     describe = call("describe_gateway", "scid_describe", {"name": "scid_describe"})
     assert describe["inputSchema"]["properties"]["view"]["enum"] == ["full", "invoke"]
     run_status = call("describe_run_status", "scid_describe", {"name": "run_status"})
-    assert run_status["inputSchema"]["properties"]["response_profile"]["enum"] == [
-        "compat", "poll", "navigation", "decision"
+    assert run_status["inputSchema"]["properties"]["intent"]["enum"] == [
+        "decision", "status", "navigation", "full"
     ]
-    assert run_status["inputSchema"]["properties"]["response_profile"]["default"] == "decision"
-    assert run_status["inputSchema"]["properties"]["include_full_output"]["default"] is False
+    assert run_status["inputSchema"]["properties"]["intent"]["default"] == "decision"
+    assert "view" not in run_status["inputSchema"]["properties"]
+    assert describe["inputSchema"]["properties"]["surface"]["default"] == "research"
     artifact_catalog = call("describe_artifact_catalog", "scid_describe", {"name": "artifact_catalog"})
     assert "producer_inputs" in artifact_catalog["inputSchema"]["properties"]["view"]["enum"]
     catalog = call("catalog_public", "scid_catalog", {})

@@ -73,12 +73,12 @@ def test_combined_status_and_values_waits_for_sealing(tmp_path):
     catalog, runtime, _, _, root = _system(tmp_path)
     _invoke(root, 'observation')
     gateway = UnifiedMCPRouter(root, worker_backend='local')
-    request = {'name': 'observation', 'response_profile': 'decision', 'output_paths': ['/limitations']}
+    request = {'name': 'observation', 'intent': 'decision', 'output_paths': ['/limitations']}
     queued = result(call(gateway, 'run_status', request))
     assert queued['state'] == 'queued' and not queued.get('selected_output') and not queued.get('scheduler_signal')
-    assert queued['operation_version'] and queued['operation_digest']
+    assert "operation_version" not in queued and "operation_digest" not in queued
     poll = result(call(gateway, 'run_status', {
-        'name': 'observation', 'response_profile': 'poll', 'output_paths': []}))
+        'name': 'observation', 'intent': 'status'}))
     assert poll['state'] == 'queued' and 'bound_inputs' not in poll and 'scheduler_signal' not in poll
     worker = _worker(catalog, runtime)
     opened = worker.call_tool('worker_open_assignment', {})
@@ -91,11 +91,11 @@ def test_combined_status_and_values_waits_for_sealing(tmp_path):
     assert completed['state'] == 'completed' and completed['scheduler_signal']
     assert completed['selected_output']['items'][0]['value'] == ['Two rows do not establish causality.']
     navigation = result(call(gateway, 'run_status', {
-        'name': 'observation', 'response_profile': 'navigation', 'output_mode': 'index'}))
+        'name': 'observation', 'intent': 'navigation'}))
     assert navigation['output_index']['pointer'] == '' and 'scheduler_signal' not in navigation
-    poll = result(call(gateway, 'run_status', {'name': 'observation', 'output_paths': []}))
+    poll = result(call(gateway, 'run_status', {'name': 'observation', 'intent': 'status'}))
     assert 'scheduler_signal' not in poll
-    assert poll['operation_version'] and poll['operation_digest']
+    assert 'operation_version' not in poll and 'operation_digest' not in poll
 
 
 def test_gateway_index_does_not_read_summary_or_leak_full_output(tmp_path):
@@ -109,22 +109,17 @@ def test_gateway_index_does_not_read_summary_or_leak_full_output(tmp_path):
     Path(opened["output_directory"], "result.json").write_bytes(_envelope())
     assert worker.call_tool("worker_submit_result", {})["state"] == "completed"
     gateway = UnifiedMCPRouter(root, worker_backend="local")
-    for view in ("summary", "detail"):
-        page = result(call(gateway, "run_status", {"name": "observation", "view": view,
-            "response_profile": "compat", "output_mode": "index"}))
-        assert not page.get("sealed_output") and not page.get("selected_output")
-        assert page["output_index"]["pointer"] == ""
-        assert "/limitations" in [i["pointer"] for i in page["output_index"]["children"]]
-    exact = result(call(gateway, "run_status", {"name": "observation", "response_profile": "decision", "output_paths": ["/limitations"]}))
+    page = result(call(gateway, "run_status", {"name":"observation", "intent":"navigation"}))
+    assert not page.get("sealed_output") and not page.get("selected_output")
+    assert page["output_index"]["pointer"] == ""
+    assert "/limitations" in [i["pointer"] for i in page["output_index"]["children"]]
+    exact = result(call(gateway, "run_status", {"name":"observation", "output_paths":["/limitations"]}))
     assert exact["selected_output"]["items"][0]["value"] == ["Two rows do not establish causality."]
     for paths in ([], ["/limitations", "/structure"]):
-        error = call(gateway, "run_status", {"name": "observation", "output_mode": "index", "output_paths": paths})
-        assert error["error"]["data"]["diagnostics"][0]["path"] == "$.output_paths"
-    full = result(call(gateway, "run_status", {"name": "observation", "view": "detail", "include_full_output": True}))
+        error = call(gateway, "run_status", {"name":"observation", "intent":"navigation", "output_paths":paths})
+        assert "navigation accepts one output path" in error["error"]["message"]
+    full = result(call(gateway, "run_status", {"name":"observation", "intent":"full"}))
     assert full["sealed_output"]["payload"]["limitations"] == ["Two rows do not establish causality."]
-    compact_detail = call(gateway, "run_status", {"name": "observation", "response_profile": "poll",
-        "view": "detail", "output_paths": []})
-    assert 'requires view="summary"' in compact_detail["error"]["message"]
 
 
 def test_parent_gateway_paging_keeps_limit_and_no_payload_read(tmp_path, monkeypatch):

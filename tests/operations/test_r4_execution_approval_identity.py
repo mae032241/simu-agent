@@ -256,7 +256,7 @@ def test_effect_invoke_creates_one_exact_approval_and_replays_it(
     ):
         root.call_tool(
             "execution_approval_request_create", {"name": "automatic_approval"}
-        )
+        , surface="execution")
     assert adapter.submit_count == 0
 
 
@@ -281,16 +281,16 @@ def test_unknown_submission_is_recovered_by_lookup_without_resubmit(
         )
 
     with pytest.raises(RuntimeError):
-        root.call_tool("execution_start", {"name": "unknown_submission"})
+        root.call_tool("execution_start", {"name": "unknown_submission"}, surface="execution")
     assert adapter.submit_count == 1
     assert root.call_tool(
         "execution_status", {"name": "unknown_submission"}
-    )["state"] == "authorized"
+    , surface="execution")["state"] == "authorized"
 
     restarted, restarted_root = _reopen(tmp_path, instance, adapter, catalog)
     recovered = restarted_root.call_tool(
         "execution_start", {"name": "unknown_submission"}
-    )
+    , surface="execution")
     assert recovered["state"] == "submitted"
     assert adapter.submit_count == 1
     execution_id = restarted.scheduler_bindings.resolve(
@@ -313,16 +313,16 @@ def test_unavailable_submission_lookup_fails_before_external_submit(
     adapter.fail_lookup = True
 
     with pytest.raises(RuntimeError, match="authority is unavailable"):
-        root.call_tool("execution_start", {"name": "lookup_unavailable"})
+        root.call_tool("execution_start", {"name": "lookup_unavailable"}, surface="execution")
     assert adapter.submit_count == 0
     assert root.call_tool(
         "execution_status", {"name": "lookup_unavailable"}
-    )["state"] == "authorized"
+    , surface="execution")["state"] == "authorized"
 
     adapter.fail_lookup = False
     assert root.call_tool(
         "execution_start", {"name": "lookup_unavailable"}
-    )["state"] == "submitted"
+    , surface="execution")["state"] == "submitted"
     assert adapter.submit_count == 1
 
 
@@ -563,7 +563,7 @@ def test_execution_status_and_list_do_not_publish_collected_result(
     runtime, instance, adapter, facade, root, _ = _setup(tmp_path)
     _create_effect(root, name="pure_execution_query")
     _decide_execution_approval(runtime, root, name="pure_execution_query")
-    started = root.call_tool("execution_start", {"name": "pure_execution_query"})
+    started = root.call_tool("execution_start", {"name": "pure_execution_query"}, surface="execution")
     assert started["state"] == "submitted"
     execution_id = runtime.scheduler_bindings.resolve(
         instance=instance.instance_id,
@@ -587,8 +587,8 @@ def test_execution_status_and_list_do_not_publish_collected_result(
             instance=instance.instance_id, namespace="artifact"
         )
     )
-    status = root.call_tool("execution_status", {"name": "pure_execution_query"})
-    listed = root.call_tool("execution_list", {"state": "collected", "limit": 10})
+    status = root.call_tool("execution_status", {"name": "pure_execution_query"}, surface="execution")
+    listed = root.call_tool("execution_list", {"state": "collected", "limit": 10}, surface="execution")
     after = tuple(
         runtime.scheduler_bindings.list(
             instance=instance.instance_id, namespace="artifact"
@@ -604,7 +604,7 @@ def test_execution_status_and_list_do_not_publish_collected_result(
 
     assert root.call_tool(
         "execution_outputs", {"name": "pure_execution_query"}
-    )["outputs"] == []
+    , surface="execution")["outputs"] == []
     assert runtime.scheduler_bindings.resolve(
         instance=instance.instance_id,
         namespace="artifact",
@@ -662,7 +662,7 @@ def test_effect_revision_gets_a_new_undecided_exact_approval(
     )
     assert revised_approval != first_approval
     with pytest.raises(ExecutionApprovalError, match="not decided"):
-        root.call_tool("execution_start", {"name": "revision_execution.rev2"})
+        root.call_tool("execution_start", {"name": "revision_execution.rev2"}, surface="execution")
     assert adapter.submit_count == 0
 
 
@@ -675,11 +675,11 @@ def test_contract_drift_blocks_previously_decided_execution_start(
     _switch_catalog(runtime, facade, _drifted_catalog())
 
     with pytest.raises(RootToolError, match="operation contract changed"):
-        root.call_tool("execution_start", {"name": "drift_after_decision"})
+        root.call_tool("execution_start", {"name": "drift_after_decision"}, surface="execution")
     assert adapter.submit_count == 0
     assert root.call_tool(
         "execution_status", {"name": "drift_after_decision"}
-    )["state"] == "created"
+    , surface="execution")["state"] == "created"
 
 
 def test_plugin_removal_blocks_previously_decided_execution_start(
@@ -691,11 +691,11 @@ def test_plugin_removal_blocks_previously_decided_execution_start(
     _switch_catalog(runtime, facade, compile_catalog(()))
 
     with pytest.raises(RootToolError, match="operation is not installed"):
-        root.call_tool("execution_start", {"name": "removed_after_decision"})
+        root.call_tool("execution_start", {"name": "removed_after_decision"}, surface="execution")
     assert adapter.submit_count == 0
     assert root.call_tool(
         "execution_status", {"name": "removed_after_decision"}
-    )["state"] == "created"
+    , surface="execution")["state"] == "created"
 
 
 def test_wrong_approval_request_identity_cannot_authorize_execution(
@@ -790,11 +790,11 @@ def test_wrong_approval_request_identity_cannot_authorize_execution(
         ExecutionApprovalError,
         match="execution approval compiled identity is missing or changed",
     ):
-        root.call_tool("execution_start", {"name": "wrong_approval_identity"})
+        root.call_tool("execution_start", {"name": "wrong_approval_identity"}, surface="execution")
     assert adapter.submit_count == 0
     assert root.call_tool(
         "execution_status", {"name": "wrong_approval_identity"}
-    )["state"] == "created"
+    , surface="execution")["state"] == "created"
 
 
 def test_decided_legacy_execution_request_remains_non_authorizable(
@@ -874,8 +874,8 @@ def test_decided_legacy_execution_request_remains_non_authorizable(
     )
 
     with pytest.raises(RootToolError, match="no compiled approval identity"):
-        root.call_tool("execution_start", {"name": "legacy_decided"})
+        root.call_tool("execution_start", {"name": "legacy_decided"}, surface="execution")
     assert adapter.submit_count == 0
     assert root.call_tool(
         "execution_status", {"name": "legacy_decided"}
-    )["state"] == "created"
+    , surface="execution")["state"] == "created"

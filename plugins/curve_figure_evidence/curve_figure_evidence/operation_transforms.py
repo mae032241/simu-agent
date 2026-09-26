@@ -6,15 +6,15 @@ import hashlib
 from typing import Any, Mapping
 
 from scidiscovery.artifact_agent.schema.common import canonical_json
-from scidiscovery.operations.spec import CallableComponent, ComponentSpec
-from curve_score.operation_transforms import (
-    _group, _object_schema, _one, _operation, _output, _ref,
+from scidiscovery.operations.spec import CallableComponent, ComponentRef, ComponentSpec
+from scidiscovery.operations.transforms import (
+    group_inputs, object_schema, single_input, transform_operation, transform_output,
 )
 from .figure_evidence import FigureEvidenceManifest, FigureEvidenceValidationReport
 from .figure_science_operations import (AUDIT_INPUTS, BUNDLE_OPERATION, FAMILY_VALIDATION, _input as science_input)
 from .figure_family import figure_audit_parentage, selected_family_files
 from scidiscovery.artifact_agent.schema.refs import ArtifactRef
-from scidiscovery.artifact_agent.service.tool_evidence import ToolEvidenceManifest
+from scidiscovery.plugin_runtime.evidence import read_evidence_records
 from .figure_evidence_normalizer import (
     FIGURE_EVIDENCE_BUNDLE_PROFILE_V2, normalize_figure_evidence,
 )
@@ -58,8 +58,8 @@ def bundle_figure_evidence_outputs(
 def bundle_figure_evidence(
     values: Mapping[str, tuple[bytes, ...]],
 ) -> dict[str, tuple[bytes, ...]]:
-    manifest_raw = _one(values, "figure_manifest")
-    report_raw = _one(values, "validation_report")
+    manifest_raw = single_input(values, "figure_manifest")
+    report_raw = single_input(values, "validation_report")
     manifest = FigureEvidenceManifest.model_validate_json(manifest_raw, strict=True)
     report = FigureEvidenceValidationReport.model_validate_json(report_raw, strict=True)
     by_identity = {(item.panel_key, item.series_key): item for item in report.series}
@@ -87,7 +87,7 @@ def bundle_figure_evidence(
 def figure_parentage(inputs: tuple[Any, ...], parameters: Mapping[str, Any]) -> bool:
     if not figure_audit_parentage(inputs, parameters):
         return False
-    grouped = _group(inputs)
+    grouped = group_inputs(inputs)
     if len(grouped.get("evidence_audit", ())) != 1:
         return False
     audit = grouped["evidence_audit"][0].artifact
@@ -99,12 +99,12 @@ def figure_parentage(inputs: tuple[Any, ...], parameters: Mapping[str, Any]) -> 
 
 
 def bundle_selected_figure(values):
-    proof = ToolEvidenceManifest.model_validate_json(_one(values, "figure_provenance"), strict=True)
+    proof = read_evidence_records(single_input(values, "figure_provenance"))
     # Admission has already checked exact Artifact identities. Transform inputs carry bytes.
     by_digest = {hashlib.sha256(raw).hexdigest(): raw for raw in values["figure_family"]}
     files_by_ref = {ArtifactRef.model_validate(record["artifact_ref"]): by_digest[record["artifact_ref"]["sha256"]]
-        for record in proof.records}
-    source_refs = {ArtifactRef.model_validate(record["source_ref"]) for record in proof.records}
+        for record in proof}
+    source_refs = {ArtifactRef.model_validate(record["source_ref"]) for record in proof}
     if len(source_refs) != 1:
         raise ValueError("figure family source is ambiguous")
     files = selected_family_files(proof, files_by_ref, source_refs.pop())
@@ -118,22 +118,24 @@ def bundle_selected_figure(values):
 
 BUNDLE_SELECTED_FIGURE = CallableComponent("transform", bundle_selected_figure)
 FIGURE_PARENTAGE = CallableComponent("guard", figure_parentage)
-FIGURE_AUDIT_SCHEMA = _object_schema("scidiscovery.figure-evidence-curve-normalization-audit.v1")
+FIGURE_AUDIT_SCHEMA = object_schema("scidiscovery.figure-evidence-curve-normalization-audit.v1")
 FIGURE_COMPONENT_SPECS = (
     ComponentSpec("bundle_selected_figure", "transform", "curve_figure_evidence.operation_transforms:BUNDLE_SELECTED_FIGURE"),
     ComponentSpec("figure_parentage", "guard", "curve_figure_evidence.operation_transforms:FIGURE_PARENTAGE"),
     ComponentSpec("figure_audit_schema", "resource", "curve_figure_evidence.operation_transforms:FIGURE_AUDIT_SCHEMA"),
 )
 FIGURE_OPERATIONS = (
-    _operation(BUNDLE_OPERATION, "bundle_selected_figure",
+    transform_operation(BUNDLE_OPERATION, ComponentRef("bundle_selected_figure"),
         "Normalize the complete selected and independently audited figure family into a quantitative evidence library.",
         (*AUDIT_INPUTS, science_input("evidence_audit", "Exact passing independent audit of the selected Intake and family.",
             "scidiscovery.evidence-audit.v1", resource="evidence_audit_schema", usage="prior_signal", max_item_bytes=32*1024)),
         (
-            _output("curve_bundle", "curve_bundle", "scidiscovery.curve-bundle.v1", _ref("curve_bundle_schema", plugin_id="curve_score"),
-                _ref("curve_bundle_validator", plugin_id="curve_score"), max_bytes=256*1024*1024),
-            _output("normalization_audit", "figure_evidence_curve_normalization_audit", "scidiscovery.figure-evidence-curve-normalization-audit.v1",
-                "figure_audit_schema", _ref("audit_validator", plugin_id="curve_score"), max_bytes=16*1024*1024),
-        ), guards=("figure_parentage",), max_input_bytes=355*1024*1024,
+            transform_output("curve_bundle", "curve_bundle", "scidiscovery.curve-bundle.v1", ComponentRef("curve_bundle_schema", plugin_id="curve_score"),
+                ComponentRef("curve_bundle_validator", plugin_id="curve_score"), codec=ComponentRef("json_codec", plugin_id="general_science"), max_bytes=256*1024*1024),
+            transform_output("normalization_audit", "figure_evidence_curve_normalization_audit", "scidiscovery.figure-evidence-curve-normalization-audit.v1",
+                ComponentRef("figure_audit_schema"), ComponentRef("audit_validator", plugin_id="curve_score"), codec=ComponentRef("json_codec", plugin_id="general_science"), max_bytes=16*1024*1024),
+        ), guards=(ComponentRef("figure_parentage"),), max_input_bytes=355*1024*1024,
+        applies_when="The exact selected figure family and its independent audit are available.",
+        not_for="Selecting scientific targets, interpreting mechanisms, or executing a solver.",
     ).model_copy(update={"input_validation": FAMILY_VALIDATION}),
 )

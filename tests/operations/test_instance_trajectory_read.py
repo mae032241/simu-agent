@@ -13,7 +13,7 @@ from scidiscovery.artifact_agent.schema.artifact import ArtifactRegistration
 from scidiscovery.artifact_agent.schema.common import canonical_json
 from scidiscovery.artifact_agent.schema.refs import ArtifactRef
 from scidiscovery.artifact_agent.service.engineering_diagnostics import EngineeringDiagnostics
-from scidiscovery.artifact_agent.service.local_process_observation import RECORD_DIR
+from scidiscovery.plugin_runtime.observation import RECORD_DIR
 from scidiscovery.artifact_agent.service.runs import RunService
 from scidiscovery.general_science_views import build_presentation as general_presentation
 from tests.operations.test_instance_read_model import system, bind, approval

@@ -269,6 +269,9 @@ class RootExecutionRoutes:
             raise RootToolError("execution capability discovery failed") from error
 
     def _effect_executor(self, operation_id: str) -> str:
+        unavailable = self._scheduler_operation_unavailability(operation_id)
+        if unavailable is not None:
+            raise RootToolError("execution capability operation is not available to Root", details=[unavailable])
         try:
             compiled = self._operation_catalog.operation(operation_id)
             return effect_operation_plan(compiled).executor
@@ -365,6 +368,9 @@ class RootExecutionRoutes:
             raise RootToolError(
                 "execution request operation is not installed"
             ) from error
+        unavailable = self._scheduler_operation_unavailability(identity.operation_id)
+        if unavailable is not None:
+            raise RootToolError("execution request operation is not available to Root", details=[unavailable])
         current = compiled.approval_identity
         if compiled.spec.executor.kind != "effect" or current is None:
             raise RootToolError(

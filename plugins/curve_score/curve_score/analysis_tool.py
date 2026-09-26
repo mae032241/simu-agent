@@ -13,7 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, ValidationError,
 
 from scidiscovery.artifact_agent.operation_tool_context import OperationToolContext
 from scidiscovery.artifact_agent.schema.common import canonical_json, Identifier
-from scidiscovery.artifact_agent.service.calculation_proof import ControlledCalculationRecord as CalculationRecord
+from scidiscovery.plugin_runtime.calculations import CalculationResult as CalculationRecord
 from scidiscovery.operation_contract import SemanticRuleViolation, contract_diagnostic, declared_violation, validation_diagnostics
 from scidiscovery.operations.tooling import WorkerToolDefinition
 from .schema import CurveAxis, CurveBundle, CurveComparison, CurveComparisonSpec, CurveOperatorSpec, CurveSeries, evaluate_curve_consistency
@@ -307,18 +307,11 @@ def run_score_tool(request: AnalysisScoreInput, context: OperationToolContext,
         result = CalculationRecord(record_key=request.record_key, request=raw_request,
             input_digests={}, algorithm_version=ALGORITHM_VERSION, status="error",
             reason_code="calculation_time_budget")
-    response = result.model_dump(mode="json", exclude={"attempt", "diagnostics"})
     diagnostics = () if result.status == "computed" else (contract_diagnostic(
         result.reason_code or result.status, phase="tool_execution", affected_action="tool_call",
         message="The tool returned no numeric result; retain its specific reason and limitations.",
     ),)
-    finished = context.finish_attempt(result_status=result.status, reason_code=result.reason_code,
-                                      response=response, diagnostics=diagnostics)
-    if finished is not None:
-        attempt, diagnostics = finished
-        response.update(attempt=attempt, diagnostics=list(diagnostics))
-    from scidiscovery.artifact_agent.service.analysis_artifacts import retain_calculation
-    return retain_calculation(context, response, summary=True)
+    return context.complete_calculation(result, diagnostics=diagnostics, summary=True)
 
 
 def score_tool(request: AnalysisScoreInput, context: OperationToolContext) -> dict[str, Any]:

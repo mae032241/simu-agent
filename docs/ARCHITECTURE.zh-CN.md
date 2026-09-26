@@ -103,20 +103,22 @@ Worker 不输出具有控制权威的后继 Operation 名称。调度 Agent 可�
 证明精确独立审查和来源关系，不预先指定下一阶段或后继操作。
 旧 `next_action_kind`、`accepts_actions` 与 `recommended_task_mode` 字段及其透传代码已移除；
 严格模型不再接受这些额外字段。科学建议通过 `next_actions` 表达，行动仍由唯一编译目录授权。
-完成 Run 的 `run_status` 默认使用 `response_profile="decision"`，返回声明的有界结论、限制、
-剩余问题和 scheduler signal。使用 `output_fields` 选择具名科学字段，或在 `output_paths` 中
-选择非根 payload JSON Pointer，两者不同时填写。decision 中缺省路径或 `[]` 都读取声明的
-决策字段。活动 Run 保持短状态，除非显式请求已封存阶段预览。
+`run_status` 只使用一个 `intent`：decision（默认）、status、navigation、full。
+decision 在 completed 后返回声明的有界结论、局限、剩余问题及 scheduler signal；
+`output_fields` 选择顶层字段，`output_paths` 选择精确非根路径，二者互斥，缺省或 `[]`
+使用声明的决策字段。status 不读科学正文，`diagnostic_after=0` 显式分页读取终态安全诊断。
+navigation 返回有界字段导航及冻结的可见科学输入名。full 显式读取 completed 的完整封存
+科学输出，不接受字段选择，也不返回控制私有记录。活动 Run 保持短状态，显式阶段预览
+保留独立分页，不代表整个任务完成。
 
-`poll` 不读正文（`output_paths=[]`）；`navigation` 使用 `output_mode="index"` 返回有界结构
-索引。显式 `view="detail"` 且未选 profile 时使用 compat，但不会自动返回完整正文。完整封存
-输出只适用于 completed Run，必须显式 `include_full_output=true`、`view="detail"`、
-`response_profile="compat"`、`output_mode="values"`，并省略或设 null 的 `output_paths`。
-compat + detail + `output_paths=[]` 读取记录元数据，不展开完整正文；`diagnostic_after` 选择
-持久化诊断的有界页。
+Root 接口在同一声明上选择 surface：默认 research 不暴露十个独立 execution 接口；
+独立 Effect 或历史执行恢复须在 `scid_catalog(kind="interfaces")`、`scid_describe`、
+`scid_call` 一致显式选择 `surface="execution"`。这只是声明投影，不是第二 Operation
+注册表或授权通道。完整实验由 `worker_experiment_execute` 管理，Root 仍不能直接操作
+任务内 execution 或内部 Operation。UI 直接读取执行/收集服务，授权策略保持原样。
 
 JSON Pointer 原值放在 `selected_output`，不将部分内容放入 `sealed_output`；最多 8 个指针、
-累计 32 KiB。路径从 payload 内部起算，例如 `/summary`，不是 `/payload/summary`。values 模式
+累计 32 KiB。路径从 payload 内部起算，例如 `/summary`，不是 `/payload/summary`。decision 意图
 禁止空字符串根指针；`/` 代表空成员键。已选准确值无需重复读取；超预算子树提供有界一层导航
 （32 项、8 KiB），missing、null 与 omitted 分开。完整输出始终需要显式 full-output 标志；
 signal 可用性与正文展开分开。失败短响应保留安全诊断与恢复信息，扩大视图不把失败任务变成
@@ -254,7 +256,7 @@ Local 分析工作区在失败时保存 `output/` 与 `scratch/` 的有界、带
 分析工作区从已安装核心包物化可选的标准库启动脚本，由 Worker 本地调用，不增加服务器执行工具。
 它限制日志和数值子进程资源，每次按绝对 Run 截止减去可调整提交余量截定请求超时。Root 只读取
 有界的计时与状态元数据；未观测执行仍为未知，不阻断提交。分析者逐个原子保存完整数值工作单元，
-绘图从已保存数据局部重试，可选渲染失败不抹去数值结果。`run_status.bound_inputs` 和有序
+绘图从已保存数据局部重试，可选渲染失败不抹去数值结果。`run_status(intent="navigation").bound_inputs` 和有序
 `artifact_catalog.parents` 只投影精确绑定，不选择替代对象；TCAD 计划/审查端口保持原执行身份，
 新分析方案与审查通过 `current_progress` 绑定。
 
@@ -328,7 +330,7 @@ Worker 在自身工作区保留可读报告。既有 Run 活动记录还提供 M
 错误观测在截止时间后或 Run 终态仍追加到既有活动记录，不续预算、不重开 Run、不接收成果。
 同次 MCP 调用的开始与结束归属同一 Run，包括空闲 Worker 打开下一份 assignment 的情况。
 选定任务后打开失败，失败归属该 Run 并保留原原因，不能把前一个 Run 的完成当作此次打开结果。
-`run_status` 默认仍返回精简摘要；`diagnostic_after=0` 读取已保存错误的第一页，以 `next_after`
+`run_status(intent="status", diagnostic_after=0)` 读取已保存错误的第一页，以 `next_after`
 续读，`diagnostic_limit` 最大100。`run_list` 返回 `next_before`，供可选的语义名 `before`
 游标续读。两种查询均限当前实例；旧事件缺失详情时明确保留缺失，分页不能补造从未记录的信息。
 
@@ -367,7 +369,8 @@ TCAD 插件通过 `ExperimentCapability` 提供求解器项目声明、实现准
 curve-score 向完整分析任务提供确定性评分/诊断工具；curve-figure-evidence 提供图证据提取、
 独立证据审查及所需算法；InGaAs Fig.4 插件提供项目评分器。核心拥有生命周期、绑定和资格，插件
 拥有领域算法与声明组件。组件配置身份、catalog ABI 与摘要、public/support/internal 可见性和
-带版本的 Schema ID 均保留为平台合同。当前真实插件的依赖边界仍需专门审查，不能因此宣称所有
+带版本的 Schema ID 均保留为平台合同。公共运行时边界见 [Plugin runtime API](PLUGIN_RUNTIME_API.md)；figure 已使用证据记录/展示 API
+和共有确定性声明。其余真实插件的依赖边界仍需专门审查，不能因此宣称所有
 插件已经不依赖核心内部实现。
 
 确定性 Transform 组件从按端口分组的精确输入字节一次性产生全部输出；涉及多个输出之间关系的
@@ -462,8 +465,7 @@ Local 工作区还安装 `tools/read_input.py`，按原文或 JSON Pointer 精�
 缓存不跨 Run、不成为科研状态，只检测本次选择首次读取后的内容变化，不核验封存原件哈希；
 控制层继续负责输入绑定与工作区初始化。旧工作区收到定向原文读取指引，不热换冻结 helper。
 该工具不限制任意原生 shell 输出、不新增提交门禁。analysis launcher 默认返回短观测与日志路径，stdout 数据消费者显式用
-`--display raw`，原生 inherit 策略保持 raw 默认。采集上限与展示预算分离。恢复状态只显示
-覆盖与遗漏数量，原遗漏清单由 `run_status(view="detail", output_paths=[])` 读取。
+`--display raw`，原生 inherit 策略保持 raw 默认。采集上限与展示预算分离。控制 UI 保留恢复覆盖与准确遗漏清单；Root status 只提供恢复可用性和显式请求的安全诊断。
 
 Codex 平台角色按 `NativeToolPolicy` 声明的 shell、识图和网页搜索权限组合共享。
 科学 Operation 保留各自身份和合同。角色文件仅提供生命周期引导；每轮 assignment

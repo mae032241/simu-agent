@@ -9,7 +9,7 @@ import time
 
 import pytest
 
-from scidiscovery.artifact_agent.service import local_process_observation as observation
+from scidiscovery.plugin_runtime import observation
 
 
 def workspace(tmp_path, code, *, remaining=10):

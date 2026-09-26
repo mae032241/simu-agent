@@ -4,8 +4,8 @@ from __future__ import annotations
 import json
 from typing import Callable
 
-from ...operations.workspace import WorkspaceFinalizationRequest, WorkspaceProtocolError
-from ..schema.common import canonical_json
+from ..operations.workspace import WorkspaceFinalizationRequest, WorkspaceProtocolError
+from ..artifact_agent.schema.common import canonical_json
 
 
 def finalize_result(request: WorkspaceFinalizationRequest, project: Callable[[dict], None]) -> bytes:

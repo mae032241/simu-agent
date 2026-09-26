@@ -287,8 +287,6 @@ class TCADExecutionPolicy(StrictModel):
             runner=self.runner, debug=self.debug)
 
 
-
-
 class ExecutionToolError(RuntimeError):
     pass
 
@@ -728,7 +726,7 @@ class TCADExecutionFacade:
 
     def tcad_inspect_outputs(self, *, run_id: str, relative_path: str | None = None, max_bytes: int = 32*1024*1024, deadline_monotonic=None) -> dict[str, Any]:
         from .remote_runner_py36 import _inspect_directory
-        from scidiscovery.artifact_agent.service.execution_collection import CollectionContext
+        from scidiscovery.plugin_runtime.collection import CollectionContext
         context = CollectionContext(deadline_monotonic, deadline_monotonic) if deadline_monotonic is not None else None
         if context: context.remaining_seconds()
         self.tcad_status(run_id=run_id)
@@ -738,7 +736,7 @@ class TCADExecutionFacade:
         return result
 
     def tcad_collect(self, *, run_id: str, collection=None) -> dict[str, Any]:
-        from scidiscovery.artifact_agent.service.execution_collection import CollectionContext
+        from scidiscovery.plugin_runtime.collection import CollectionContext
         if isinstance(collection, CollectionBudgetInput):
             collection = collection.model_dump()
         context = CollectionContext(**collection) if collection is not None else None

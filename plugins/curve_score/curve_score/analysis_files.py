@@ -4,8 +4,7 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from scidiscovery.artifact_agent.service.analysis_artifacts import publish_analysis_file
-from scidiscovery.artifact_agent.service.local_workspace import WorkspaceError, read_control_workspace_file
+from scidiscovery.plugin_runtime.workspace import WorkspaceError, read_control_workspace_file
 from scidiscovery.operation_contract import DiagnosticError, contract_diagnostic
 from scidiscovery.operations.tooling import WorkerToolDefinition
 
@@ -54,13 +53,13 @@ def publish_files(request, context):
             if item.media_type != "image/png":
                 raw.decode("utf-8")
             files.append((item, raw))
-        saved_script = publish_analysis_file(context, script, media_type="text/plain",
+        saved_script = context.publish_analysis_file(script, media_type="text/plain",
             kind="analysis_script", sources=sources, suffix=".py" if request.script_path.endswith(".py") else ".txt",
             metadata={"method": request.method, "execution_proof": "agent_reported", "file_name": Path(request.script_path).name})
         outputs = []
         for item, raw in files:
             suffix = {"text/csv": ".csv", "application/json": ".json", "text/plain": ".txt", "image/png": ".png"}[item.media_type]
-            saved = publish_analysis_file(context, raw, media_type=item.media_type,
+            saved = context.publish_analysis_file(raw, media_type=item.media_type,
                 kind="analysis_derived", sources=(*sources, saved_script["evidence_alias"]), suffix=suffix,
                 metadata={"script_alias": saved_script["evidence_alias"], "method": request.method,
                           "execution_proof": "agent_reported", "file_name": Path(item.path).name})

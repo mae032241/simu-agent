@@ -24,14 +24,15 @@ from curve_score.diagnostic_tool import (
 )
 from curve_score.science_operations import BASE_TOOLS, Components, validate_analysis_report
 from curve_score.analysis_files import GUIDANCE as ANALYSIS_FILES_GUIDANCE
-from scidiscovery.artifact_agent.service.analysis_artifacts import analysis_calculations, analysis_evidence_aliases
+from scidiscovery.plugin_runtime.calculations import analysis_evidence_aliases
+from scidiscovery.plugin_runtime.evidence import read_evidence_records
 from scidiscovery.artifact_agent.operation_tool_context import OperationToolContext
 from scidiscovery.artifact_agent.schema.common import Identifier, canonical_json
 from scidiscovery.artifact_agent.schema.experiment import ExperimentPortfolio
 from scidiscovery.artifact_agent.schema.research_cycle import ScientificReview
 from scidiscovery.artifact_agent.schema.layered_diagnosis import CaseMappingBasis, LayeredDiagnosisReport
-from scidiscovery.artifact_agent.service.calculation_proof import ControlledCalculationRecord as CalculationRecord
-from scidiscovery.artifact_agent.service.run_outputs import RunCheckerError
+from scidiscovery.plugin_runtime.calculations import CalculationResult as CalculationRecord
+from scidiscovery.plugin_runtime.diagnostics import RunCheckerError
 from scidiscovery.operation_contract import SemanticRuleViolation, declared_violation, validation_diagnostics
 from scidiscovery.operations.input_validation import OperationInvocationError
 from scidiscovery.operation_declaration import (
@@ -309,10 +310,7 @@ def _recovery_records(sources):
     records = []
     for alias in ('prior_analysis_manifest', 'tool_recovery_manifest'):
         if alias in sources:
-            value = json.loads(sources[alias])
-            if value.get('schema_version') != 1 or not isinstance(value.get('records'), list) or len(value['records']) > 32:
-                raise ValueError('recovery manifest shape')
-            records.extend(value['records'])
+            records.extend(read_evidence_records(sources[alias]))
     return records
 
 
@@ -441,10 +439,7 @@ def analysis_context(payload: dict[str, Any], sources: Mapping[str, bytes], hand
     from scidiscovery.operation_contract import validate_evidence_source_aliases
     validate_evidence_source_aliases(payload,
         set(sources) | set(references) | {item.source_key for item in report.evidence})
-    calculations = analysis_calculations(report, sources)
-    for record in calculations:
-        from scidiscovery.artifact_agent.service.tool_evidence import calculation_sources
-        calculation_sources(record, sources)
+    calculations = sources.verified_calculations(report)
     validate_analysis_report(report, plan, calculations=calculations)
 
 
@@ -543,7 +538,7 @@ INPUTS = (
     _input("execution_result", "scidiscovery.execution-result", _ref("analysis_execution_schema"), optional=True, max_bytes=2*1024*1024).model_copy(update={"usage":"evidence_inventory"}),
 
     _input("prior_analysis", "scidiscovery.layered-diagnosis.v1", _ref("diagnosis_schema", "curve_score"), optional=True, max_bytes=128*1024).model_copy(update={"usage":"evidence_inventory", "description":"Optional exact prior analysis for original calculation reuse."}),
-    _input("prior_analysis_manifest", "scidiscovery.tool-evidence-manifest.v1", _ref("analysis_recovery_schema"), optional=True, max_bytes=1024*1024).model_copy(update={"agent_visible":False,"derivation":InputDerivationSpec(anchor_port="prior_analysis", producer_output_port="recovery_manifest_output")}),
+    _input("prior_analysis_manifest", "scidiscovery.tool-evidence-manifest.v1", _ref("tool_evidence_schema", "general_science"), optional=True, max_bytes=1024*1024).model_copy(update={"agent_visible":False,"derivation":InputDerivationSpec(anchor_port="prior_analysis", producer_output_port="recovery_manifest_output")}),
     _input("experiment_plan", "scidiscovery.experiment-portfolio.v1", _ref("experiment_portfolio_schema", "general_science"), optional=True, max_bytes=2*1024*1024).model_copy(update={"usage": "evidence_inventory", "description": "Detailed-plan branch only: exact original plan parent of execution_package. Skeleton branch reads execution_package.project.execution_plan directly; omit this port. New analysis plans belong in current_progress."}),
     _input("execution_package", "tcad.execution-package.v2", _ref("execution_package_schema"), max_bytes=64*1024*1024),
     _input("runtime_manifest", "opaque", _ref("opaque_schema", "general_science"), max_bytes=4*1024*1024),
@@ -555,7 +550,6 @@ INPUTS = (
 )
 COMPONENT_SPECS = (
     ComponentSpec("analysis_execution_schema", "resource", "tcad_artifact.output_recovery:EXECUTION_SCHEMA"),
-    ComponentSpec("analysis_recovery_schema", "resource", "tcad_artifact.output_recovery:RECOVERY_SCHEMA"),
     ComponentSpec("analysis_inspect_tool", "worker_tool", "tcad_artifact.output_recovery:INSPECT_TOOL", configuration_identity="tcad.analysis.inspect.v2:retained-list-summary"),
     ComponentSpec("analysis_accept_tool", "worker_tool", "tcad_artifact.output_recovery:ACCEPT_TOOL", configuration_identity="tcad.analysis.accept.v1"),
     ComponentSpec("tcad_analysis_workspace", "workspace", "tcad_artifact.analysis_bindings:WORKSPACE",
@@ -568,10 +562,10 @@ COMPONENT_SPECS = (
     ComponentSpec("result_analysis_prompt", "resource", "tcad_artifact.result_analysis:PROMPT"),
     ComponentSpec("result_analysis_semantic", "resource", "tcad_artifact.result_analysis:SEMANTIC_CONTRACT"),
     ComponentSpec("result_analysis_parentage", "guard", "tcad_artifact.result_analysis:GUARD", configuration_identity="tcad.analysis.exact-parentage.v4"),
-    ComponentSpec("result_analysis_input", "validator", "tcad_artifact.result_analysis:INPUT_VALIDATOR", configuration_identity="tcad.analysis.input-binding.v3"),
-    ComponentSpec("result_analysis_context", "validator", "tcad_artifact.result_analysis:CONTEXT", resources=(_ref("result_analysis_semantic"),), configuration_identity="tcad.analysis.receipt-integrity.v1"),
-    ComponentSpec("result_analysis_score_tool", "worker_tool", "tcad_artifact.result_analysis:TOOL", configuration_identity="analysis.response-summary:v1"),
-    ComponentSpec("result_analysis_diagnostic_tool", "worker_tool", "tcad_artifact.result_analysis:DIAGNOSTIC_TOOL", configuration_identity="analysis.diagnostic-checkpoint:v3"),
+    ComponentSpec("result_analysis_input", "validator", "tcad_artifact.result_analysis:INPUT_VALIDATOR", configuration_identity="tcad.analysis.input-binding.v4"),
+    ComponentSpec("result_analysis_context", "validator", "tcad_artifact.result_analysis:CONTEXT", resources=(_ref("result_analysis_semantic"),), configuration_identity="tcad.analysis.receipt-integrity.v2"),
+    ComponentSpec("result_analysis_score_tool", "worker_tool", "tcad_artifact.result_analysis:TOOL", configuration_identity="analysis.response-summary:v2"),
+    ComponentSpec("result_analysis_diagnostic_tool", "worker_tool", "tcad_artifact.result_analysis:DIAGNOSTIC_TOOL", configuration_identity="analysis.diagnostic-checkpoint:v4"),
 )
 OPERATIONS = (scientific_agent_operation(
     "tcad.result.analyze.v1", "Analyze one exact TCAD execution with optional raw-output scoring.",
@@ -594,6 +588,6 @@ OPERATIONS = (scientific_agent_operation(
         validator_rule_id="tcad.result_analysis.payload_consistency",
         context_rule_id="tcad.result_analysis.context_binding",
     ), OutputPortSpec(name='tool_evidence', description='Tool-retained original runtime files, calculation records and declared analysis derivatives.', schema='opaque', media_types=('*/*',), codec=_ref('opaque_codec','general_science'), schema_resource=_ref('opaque_schema','general_science'), kind='tool_evidence', min_items=0, max_items=32, max_item_bytes=32*1024*1024, collection=CollectionSpec(max_total_bytes=256*1024*1024)),
-    OutputPortSpec(name='recovery_manifest_output', description='Service-generated immutable evidence receipts and source mappings.', schema='scidiscovery.tool-evidence-manifest.v1',media_types=('application/json',),codec=_ref('json_codec','general_science'),schema_resource=_ref('analysis_recovery_schema'),kind='tool_evidence_manifest',min_items=0,max_items=1,max_item_bytes=1024*1024,collection=CollectionSpec(max_total_bytes=1024*1024))), guards=(_ref("result_analysis_parentage"),), timeout=900, max_attempts=2,
+    OutputPortSpec(name='recovery_manifest_output', description='Service-generated immutable evidence receipts and source mappings.', schema='scidiscovery.tool-evidence-manifest.v1',media_types=('application/json',),codec=_ref('json_codec','general_science'),schema_resource=_ref('tool_evidence_schema', 'general_science'),kind='tool_evidence_manifest',min_items=0,max_items=1,max_item_bytes=1024*1024,collection=CollectionSpec(max_total_bytes=1024*1024))), guards=(_ref("result_analysis_parentage"),), timeout=900, max_attempts=2,
     max_input_bytes=512*1024*1024, max_output_bytes=257*1024*1024+128*1024, max_files=34,
 ).model_copy(update={"version": "2"}),)

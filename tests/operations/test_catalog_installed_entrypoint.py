@@ -358,9 +358,9 @@ worker.call_tool(
 worker.call_tool("worker_file_write_chunk", {"content": result})
 worker.call_tool("worker_file_write_commit", {})
 assert worker.call_tool("worker_submit_result", {})["state"] == "completed"
-status = root_router.call_tool("run_status", {"name": "observation", "view": "detail"})
+status = root_router.call_tool("run_status", {"name": "observation", "intent": "full"})
 assert status["state"] == "completed"
-assert status["backend"] == "hardened_worker"
+assert "backend" not in status  # Control-only identity is not a scientific field.
 assert status["output_artifact_name"] == "observation.output"
 ''',
     )

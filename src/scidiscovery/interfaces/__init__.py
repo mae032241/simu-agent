@@ -1,5 +1,5 @@
 """Generic transport helpers."""
 
-from .daemon import UnixSocketDaemon
+from ..plugin_runtime.transport import UnixSocketDaemon
 
 __all__ = ["UnixSocketDaemon"]

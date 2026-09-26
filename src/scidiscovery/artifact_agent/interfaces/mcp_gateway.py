@@ -31,6 +31,8 @@ class _Input(BaseModel):
 
 
 class CatalogInput(_Input):
+    surface: Literal["research", "execution"] = Field(default="research",
+        description="Root interfaces: research is normal scheduling; execution explicitly selects standalone Effect diagnostics/recovery. It never grants task-managed or internal access. Workers use research.")
     kind: Literal["operations", "interfaces"] = "operations"
     view: Literal["summary", "index", "facets", "matches"] = Field(default="summary",
         description="Root: summary = IDs + exact purposes; index/facets/matches = structural navigation.")
@@ -43,6 +45,8 @@ class CatalogInput(_Input):
 
 
 class DescribeInput(_Input):
+    surface: Literal["research", "execution"] = Field(default="research",
+        description="Root interfaces: research is normal scheduling; execution explicitly selects standalone Effect diagnostics/recovery. It never grants task-managed or internal access. Workers use research.")
     name: str = Field(min_length=1, max_length=256)
     view: Literal["full", "invoke"] = Field(
         default="invoke",
@@ -51,6 +55,8 @@ class DescribeInput(_Input):
 
 
 class CallInput(_Input):
+    surface: Literal["research", "execution"] = Field(default="research",
+        description="Root interfaces: research is normal scheduling; execution explicitly selects standalone Effect diagnostics/recovery. It never grants task-managed or internal access. Workers use research.")
     name: str = Field(min_length=1, max_length=256)
     arguments: dict[str, Any] = Field(default_factory=dict,
         description="Match the exact scid_describe contract.")
@@ -135,7 +141,7 @@ class UnifiedMCPRouter:
                 if self.facade.runs.operation_catalog.operation(status.operation_id).spec.executor.capability is not None:
                     from ..service.experiment_execution import bind_experiment_services
                     bind_experiment_services(self.facade.runs,
-                        self.facade.runs.operation_catalog.operation(status.operation_id), services)
+                        self.facade.runs.operation_catalog.operation(status.operation_id), services, run_id=status.run_id)
                 cls = LocalWorkerMCPRouter if self.worker_backend == "local" else HardenedWorkerMCPRouter
                 worker = cls(self.facade.runs, operation_id=status.operation_id,
                     operation_digest=status.operation_digest, tool_services=services, run_id=status.run_id,
@@ -157,23 +163,27 @@ class UnifiedMCPRouter:
                 self._workers[key] = worker
         return worker, status
 
-    def _interfaces(self, context):
+    def _interfaces(self, context, surface="research"):
         if context.worker:
+            if surface != "research":
+                raise DiagnosticError("execution surface is available only to Root")
             try:
                 worker = self._worker(context)[0]
                 return [*([] if worker.is_helper else [_IDENTITY]), *worker.list_tools()]
             except WorkerNotAttached:
                 return [_IDENTITY]
-        return [*self.root.list_tools(), _ATTACH]
+        return [*self.root.list_tools(surface=surface), *([_ATTACH] if surface == "research" else [])]
 
     def catalog(self, context, values):
+        if values.surface != "research" and values.kind != "interfaces":
+            raise DiagnosticError("execution surface requires kind=interfaces")
         if not context.worker and values.kind == "operations":
             return self.root.call_tool("operation_catalog", {
                 "limit": values.limit, "before": values.before, "view": values.view,
                 "dimension": values.dimension, "where": values.where})
         if values.view != "summary" or values.dimension is not None or values.where is not None:
             raise DiagnosticError("navigation views are available only for Root operations; Worker and interface catalogs are unchanged")
-        entries = sorted(self._interfaces(context), key=lambda item: item["name"])
+        entries = sorted(self._interfaces(context, values.surface), key=lambda item: item["name"])
         if values.before is not None:
             entries = [x for x in entries if x["name"] > values.before]
         selected = entries[:values.limit]
@@ -190,16 +200,18 @@ class UnifiedMCPRouter:
             entry_name, description, model = declaration
             return {"name": entry_name, "description": description,
                     "inputSchema": model.model_json_schema()}
+        if context.worker and values.surface != "research":
+            raise DiagnosticError("execution surface is available only to Root")
         if context.worker and name == "worker_identity":
             if interface_view != "full":
                 raise DiagnosticError('scid_describe view="invoke" is supported only for Operations')
             return _IDENTITY
-        for tool in self._interfaces(context):
+        for tool in self._interfaces(context, values.surface):
             if tool["name"] == name:
                 if interface_view != "full":
                     raise DiagnosticError('scid_describe view="invoke" is supported only for Operations')
                 return tool
-        if not context.worker:
+        if not context.worker and values.surface == "research":
             full = self.root.call_tool(
                 "operation_catalog",
                 {"operation_id": name, "view": "detail", "scope": "all"},
@@ -223,6 +235,8 @@ class UnifiedMCPRouter:
         raise DiagnosticError("capability is not available in this Worker assignment")
 
     def call(self, context, values):
+        if context.worker and values.surface != "research":
+            raise DiagnosticError("execution surface is available only to Root")
         if context.worker:
             if values.name == "worker_identity":
                 try:
@@ -250,7 +264,7 @@ class UnifiedMCPRouter:
                             self._workers.pop(key)
                     self._run_state.pop(status.run_id, None)
             return reply
-        if values.name == "worker_attach":
+        if values.name == "worker_attach" and values.surface == "research":
             parsed = _parse(AttachInput, values.arguments)
             if parsed.thread_id == context.thread:
                 raise DiagnosticError("Root cannot attach itself as a Worker")
@@ -265,7 +279,7 @@ class UnifiedMCPRouter:
                     self.connections.attach(run_id=run_id, platform_session=context.session, thread_id=parsed.thread_id)
             return {"state": "attached", "name": parsed.name}
         # Existing Root handlers remain the sole authority for bindings, approvals and Run lifecycle.
-        return self.root.call_tool(values.name, values.arguments)
+        return self.root.call_tool(values.name, values.arguments, surface=values.surface)
 
 
 def _parse(model, arguments):

@@ -77,7 +77,7 @@ def test_new_and_reused_local_workers_open_new_context_assignment(tmp_path, reus
     old_assignment = Path(opened["assignment_path"]).read_bytes()
     write_analysis(opened, analysis_report())
     assert worker.call_tool("worker_submit_result", {})["state"] == "completed"
-    old_status = root.call_tool("run_status", {"name": "analysis", "view": "detail"})
+    old_status = root.call_tool("run_status", {'name': "analysis", "intent": 'full'})
 
     registered = root.call_tool("artifact_ingest_text", dict(name="supplement", text=USER_TEXT))
     following = deepcopy(request)
@@ -101,7 +101,7 @@ def test_new_and_reused_local_workers_open_new_context_assignment(tmp_path, reus
     assert runtime.artifacts.read(legacy.ref) == legacy_text
     write_analysis(new_opened, analysis_report())
     assert worker.call_tool("worker_submit_result", {})["state"] == "completed"
-    assert root.call_tool("run_status", {"name": "analysis", "view": "detail"})["sealed_output"] == old_status["sealed_output"]
+    assert root.call_tool("run_status", {'name': "analysis", "intent": 'full'})["sealed_output"] == old_status["sealed_output"]
 
 
 def test_hardened_assignment_preserves_user_context_original(tmp_path):

@@ -67,7 +67,7 @@ def _matches(value, path, locator=''):
 
 def _calculation_origin(manifest, calculation):
     """Choose one exact attempt namespace, including a sealed recovery origin."""
-    from .tool_evidence import ToolEvidenceManifest
+    from ..schema.tool_evidence import ToolEvidenceManifest
     proof = ToolEvidenceManifest.model_validate_json(canonical_json(manifest)) if isinstance(manifest, dict) else manifest
     origins = [proof]
     if proof.recovery is not None:
@@ -714,7 +714,7 @@ class ReferenceAccessMixin:
         from ...operations.input_validation import ValidationSources
         from .calculation_proof import ControlledCalculationRecord as CalculationRecord, controlled_calculation
         from .run_outputs import InputBindingDescriptor, RunCheckerError
-        from .tool_evidence import ToolEvidenceManifest
+        from ..schema.tool_evidence import ToolEvidenceManifest
         records = [r for r in self.reference_access_records(value.run_id) if r['alias'] == alias]
         if not records:
             return None

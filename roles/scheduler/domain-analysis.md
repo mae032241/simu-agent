@@ -7,14 +7,11 @@ Do not ask the Agent to bind package identities or review witnesses that its con
 hides. Inspect artifact_catalog(view="producer_inputs") only when diagnosing a
 missing origin; preserve exact access names and explicit parents_fallback for
 historical, cross-instance, unavailable or ambiguous producers.
-Read run_status(view="detail", response_profile="compat", output_paths=[]) only for a terminal binding, native or
-recovery diagnostic, and use artifact_catalog(view="parents") for the indicated
-ordered parent schema/kind fallback;
-null aliases are missing inputs, never permission to choose a newer record.
-Inspect both recovery.draft_available and recovery.recovery_pending: an immutable
-subset may be delivered while the old directory still requires preservation.
-native_execution reports only observed local computation, not Agent reasoning
-time or scientific success. No telemetry does not mean no native errors occurred.
+Read run_status(intent="navigation") for exact terminal scientific input names and
+artifact_catalog(view="parents") for ordered parent schema/kind fallback; null
+aliases never permit selecting newer records. Saved failure diagnostics use
+run_status(intent="status", diagnostic_after=0). Private recovery coverage and
+native execution records remain in the control UI; they are not scientific results.
 After failure, select a bounded continuation from saved work and actual errors;
 do not repeat an unchanged full calculation that cannot fit the remaining budget.
 

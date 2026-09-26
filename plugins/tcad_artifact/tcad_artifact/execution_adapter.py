@@ -7,7 +7,7 @@ import json
 import time
 import uuid
 from pathlib import Path
-from scidiscovery.artifact_agent.service.execution_collection import CollectionContext, QUERY_SECONDS
+from scidiscovery.plugin_runtime.collection import CollectionContext, QUERY_SECONDS
 from typing import Any
 
 from scidiscovery.artifact_agent.execution_bridge import AdapterCapability
@@ -214,7 +214,7 @@ class TCADExecutorAdapter:
             separators=(",", ":"),
             sort_keys=True,
         ).encode("utf-8")
-        from scidiscovery.artifact_agent.interfaces.mcp_proxy import forward_request
+        from scidiscovery.plugin_runtime.transport import forward_request
         try:
             response = forward_request(self.socket_path, request, timeout=remaining())
         except TimeoutError as error:

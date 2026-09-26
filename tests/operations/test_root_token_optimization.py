@@ -31,11 +31,11 @@ class ReadFixture(RootRunRoutes):
         self.bindings = SimpleNamespace(list=lambda **kwargs: (
             [SimpleNamespace(name="run", object_id="private-id")] if kwargs["namespace"] == "run" else []))
         self.artifacts = SimpleNamespace(read=Mock(return_value=json.dumps(PAYLOAD).encode()))
-        self.runs = SimpleNamespace(status=Mock(return_value=self.value), recovery_available=Mock(return_value=False),
-            diagnostic_events=Mock(return_value={"events": [{"diagnostic": {"message": "exact saved error"}}], "next_after": None}),
+        self.runs = SimpleNamespace(worker_connections=SimpleNamespace(), diagnostic_summary=lambda value: {"failure":{"category":"output_rejected"}}, _sanitize_diagnostic=lambda value, diagnostic, **kwargs: diagnostic, status=Mock(return_value=self.value), recovery_available=Mock(return_value=False),
+            diagnostic_events=Mock(return_value={"events": [{"event_id": 1, "recorded_at": "saved", "diagnostic": {"category":"output_rejected", "code":"fixture", "repairable_by_output":True, "details":[{"path":"$.summary", "message":"exact saved error"}]}}], "next_after": None}),
             evidence_output_refs=Mock(return_value=[]))
         self._operation_catalog = SimpleNamespace(operation=lambda _: SimpleNamespace(
-            spec=SimpleNamespace(version="1"), digest="a" * 64))
+            spec=SimpleNamespace(version="1", inputs=(), decision_fields=("summary", "limitations")), digest="a" * 64))
         self.engineering_diagnostics = SimpleNamespace(capture=Mock())
         self.detail_reads = Mock()
 
@@ -48,19 +48,19 @@ class ReadFixture(RootRunRoutes):
     def _run_status_value(self, name, value):
         self.detail_reads()
         return {"name": name, "state": value.state, "reason": value.reason,
-            "diagnostic_summary": {"failure": "exact saved error"},
+            "diagnostic_summary": {"failure": {"category":"runtime_failure"}},
             "recovery": {"coverage": "long"}, "tool_timing": ["long"]}
 
 
 @pytest.mark.parametrize("state", ["queued", "running", "completed", "failed", "timed_out", "cancelled", "future_active"])
-def test_default_is_short_for_every_state_without_diagnostic_or_payload_assembly(state):
+def test_explicit_status_is_short_for_every_state_without_diagnostic_or_payload_assembly(state):
     facade = ReadFixture(state)
-    direct = facade.run_status(name="run")
-    routed = RootMCPRouter(facade).call_tool("run_status", {"name": "run"})
+    direct = facade.run_status(name="run", intent="status")
+    routed = RootMCPRouter(facade).call_tool("run_status", {"name": "run", "intent":"status"})
     assert direct == routed
     assert direct["execution_profile"] == {"profile": PROFILE["profile"]}
     assert direct["agent_type"] == "frozen-worker" and direct["deadline_at"] == "frozen-deadline"
-    assert not {"reason", "diagnostic_summary", "recovery", "tool_timing", "scheduler_signal", "sealed_output"} & direct.keys()
+    assert not {"diagnostic_summary", "recovery", "tool_timing", "scheduler_signal", "sealed_output"} & direct.keys()
     assert len(json.dumps(direct, ensure_ascii=False).encode()) <= 1024
     facade.detail_reads.assert_not_called()
     facade.artifacts.read.assert_not_called()
@@ -69,10 +69,8 @@ def test_default_is_short_for_every_state_without_diagnostic_or_payload_assembly
 
 @pytest.mark.parametrize("state", ["queued", "running", "future_active"])
 @pytest.mark.parametrize("arguments", [
-    {"view": "detail", "diagnostic_after": 0},
-    {"view": "detail", "response_profile": "compat", "include_full_output": True},
-    {"response_profile": "decision", "output_paths": ["/summary"]},
-    {"response_profile": "navigation", "output_mode": "index"},
+    {"intent": "status", "diagnostic_after": 0}, {"intent": "full"},
+    {"intent": "decision", "output_paths": ["/summary"]}, {"intent": "navigation"},
 ])
 def test_active_status_and_list_gate_before_content_assembly(state, arguments):
     facade = ReadFixture(state)
@@ -87,38 +85,32 @@ def test_active_status_and_list_gate_before_content_assembly(state, arguments):
     facade.runs.diagnostic_events.assert_not_called()
 
 
-@pytest.mark.parametrize("paths", [None, []])
-@pytest.mark.parametrize("enabled", [None, False, True])
-def test_full_output_positive_opt_in_only(paths, enabled):
+@pytest.mark.parametrize("intent", ["decision", "status", "navigation", "full"])
+def test_full_output_positive_opt_in_only(intent):
     facade = ReadFixture("completed")
-    request = {"view": "detail", "response_profile": "compat", "output_paths": paths}
-    if enabled is not None:
-        request["include_full_output"] = enabled
+    request = {"intent": intent}
     gateway = UnifiedMCPRouter(RootMCPRouter(facade), worker_backend="local")
-    if enabled and paths == []:
-        with pytest.raises(RootToolError, match="include_full_output"):
-            facade.run_status(name="run", **request)
-        assert "include_full_output" in call(gateway, "run_status", {"name": "run", **request})["error"]["message"]
-        facade.runs.status.assert_not_called()
+    direct = facade.run_status(name="run", **request)
+    assert direct == result(call(gateway, "run_status", {"name": "run", **request}))
+    if intent == "full":
+        assert direct["sealed_output"] == {"artifact_name":"run.output", "kind":"science", "schema":"report.v1", "payload":PAYLOAD}
     else:
-        direct = facade.run_status(name="run", **request)
-        assert direct == result(call(gateway, "run_status", {"name": "run", **request}))
-        assert direct["sealed_output"] == ({"artifact_name": "run.output", "kind": "science", "schema": "report.v1", "payload": PAYLOAD} if enabled else None)
-        if not enabled:
-            facade.artifacts.read.assert_not_called()
+        assert "sealed_output" not in direct
+    if intent == "status":
+        facade.artifacts.read.assert_not_called()
 
 
 @pytest.mark.parametrize("arguments", [
-    {"include_full_output": 1}, {"include_full_output": "true"},
-    {"include_full_output": True},
-    {"include_full_output": True, "view": "detail", "output_mode": "index"},
-    {"include_full_output": True, "response_profile": "decision", "output_paths": ["/summary"]},
-    {"include_full_output": True, "view": "detail", "output_paths": ["/summary"]},
-    {"response_profile": "decision", "output_paths": [""]},
-    {"response_profile": "decision", "output_paths": ["/summary", ""]},
-    {"response_profile": "compat", "output_paths": ["/summary", ""]},
-    {"response_profile": "poll", "output_paths": ["/summary"]},
-    {"output_paths": ["/summary"]},
+    {"include_full_output": True}, {"response_profile": "compat"}, {"view": "detail"},
+    {"output_mode": "index"}, {"intent": "invalid"},
+    {"intent": "full", "output_paths": []},
+    {"intent": "full", "output_fields": ["summary"]},
+    {"intent": "decision", "output_paths": [""]},
+    {"intent": "status", "output_paths": ["/summary"]},
+    {"intent": "navigation", "output_paths": []},
+    {"output_fields": ["summary"], "output_paths": ["/summary"]},
+    {"intent": "decision", "index_offset": 1},
+    {"intent": "full", "diagnostic_after": 0},
 ])
 def test_invalid_requests_reject_before_state_read_at_both_entries(arguments):
     facade = ReadFixture("completed")
@@ -137,17 +129,17 @@ def test_invalid_requests_reject_before_state_read_at_both_entries(arguments):
 def test_large_scalar_historical_output_and_failed_diagnostics_remain_readable():
     facade = ReadFixture("completed")
     facade._operation_catalog.operation = Mock(side_effect=KeyError("retired"))
-    selection = facade.run_status(name="run", response_profile="decision", output_paths=["/large"])
+    selection = facade.run_status(name="run", output_paths=["/large"], intent='decision')
     assert selection["selected_output"]["items"][0]["status"] == "omitted"
-    index = facade.run_status(name="run", response_profile="navigation", output_mode="index", output_paths=["/large"])
+    index = facade.run_status(name="run", output_paths=["/large"], intent='navigation')
     assert index["output_index"]["next_offset"] is None and not index["output_index"]["children"]
-    full = facade.run_status(name="run", view="detail", include_full_output=True)
+    full = facade.run_status(name="run", intent='full')
     assert full["sealed_output_status"] == "historical" and full["sealed_output"]["payload"] == PAYLOAD
     facade.value.state = "failed"
     facade.artifacts.read.reset_mock()
-    failed = facade.run_status(name="run", view="detail", include_full_output=True, diagnostic_after=0)
-    assert failed["sealed_output"] is None and failed["reason"] == facade.value.reason
-    assert failed["diagnostic_events"]["events"][0]["diagnostic"]["message"] == "exact saved error"
+    failed = facade.run_status(name="run", diagnostic_after=0, intent="status")
+    assert "sealed_output" not in failed and "UNSEALED_SCIENCE" not in failed["reason"]
+    assert failed["diagnostic_events"]["events"][0]["diagnostic"]["details"][0]["message"] == "exact saved error"
     facade.artifacts.read.assert_not_called()
 
 
@@ -161,8 +153,8 @@ def test_mixed_list_gates_each_item_and_retains_terminal_details():
     gateway = UnifiedMCPRouter(RootMCPRouter(facade), worker_backend="local")
     for listing in (facade.run_list(state=None, limit=20, view="detail"), result(call(gateway, "run_list", {"view": "detail"}))):
         assert "reason" not in listing["runs"][0]
-        assert listing["runs"][1]["reason"] == failed.reason
-        assert listing["runs"][1]["diagnostic_summary"] == {"failure": "exact saved error"}
+        assert "UNSEALED_SCIENCE" not in listing["runs"][1]["reason"]
+        assert "diagnostic_summary" not in listing["runs"][1]
 
 
 def expand_contract(value):
@@ -199,10 +191,10 @@ def test_lost_receipt_recovers_original_dispatch_after_settings_change(tmp_path)
     _, runtime, _, _, root = _system(tmp_path)
     created = _invoke(root, "observation")["result"]
     repeated = _invoke(root, "observation")["result"]
-    frozen = ("agent_type", "execution_profile", "deadline_at", "operation_id", "operation_version", "operation_digest")
+    frozen = ("agent_type", "execution_profile", "deadline_at", "operation_id")
     assert all(repeated[key] == created[key] for key in frozen)
     runtime.runs.agent_settings = parse_settings({"defaults": {"model": "different-model", "reasoning_effort": "low"}})
-    recovered = root.facade.run_status(name="observation", view="detail")
+    recovered = root.facade.run_status(name="observation", intent='navigation')
     assert all(recovered[key] == created[key] for key in frozen)
     assert recovered["execution_profile"]["profile"]["model"] != "different-model"
     gateway = UnifiedMCPRouter(root, worker_backend="local")

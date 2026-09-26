@@ -113,9 +113,8 @@ def test_running_and_final_deliveries_share_readonly_scientific_projection(tmp_p
     assert '未被最终报告采用' in html and '最终采用' in html
     with monkeypatch.context() as patch:
         patch.setattr(runtime.artifacts, 'read', lambda *args: pytest.fail('Default status read a payload'))
-        assert 'sealed_stages' not in root.call_tool('run_status', {'name': 'observe', 'response_profile': 'poll'})
-    assert root.call_tool('run_status', {'name': 'observe', 'view': 'detail',
-        'stage_offset': 0})['sealed_stages'] == final
+        assert 'sealed_stages' not in root.call_tool('run_status', {'name': 'observe', "intent": 'status'})
+    assert root.call_tool('run_status', {'name': 'observe', 'stage_offset': 0, "intent": 'navigation'})['sealed_stages'] == final
 
 
 def test_large_material_pagination_and_instance_boundaries(tmp_path, monkeypatch):

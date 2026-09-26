@@ -699,12 +699,13 @@ class LocalWorkerMCPRouter:
             return ExecutionService.resolve_result_scope(artifacts=self.runs.artifacts,
                 database_path=self.runs.database_path.parent/'executions.sqlite3', result_ref=item.artifact_ref)
 
+        from ..service.experiment_execution import scope_experiment_services
         return OperationToolContext(
-            services={
+            services=scope_experiment_services({
                 key.partition(":")[2]: self.tool_services[key]
                 for key in (*tool.required_services, *tool.optional_services)
                 if key in self.tool_services
-            },
+            }, run_id=self._run_id),
             state=self._tool_state.setdefault(name, {}),
             run_id=self._run_id,
             operation_id=self.compiled.spec.operation_id,

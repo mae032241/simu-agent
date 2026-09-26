@@ -10,7 +10,6 @@ import re
 from typing import Any
 
 from scidiscovery.artifact_agent.schema.common import canonical_json, canonical_sha256
-from scidiscovery.artifact_agent.service.tool_evidence import TOOL_EVIDENCE_SCHEMA, calculation_sources
 from .analysis import (
     CurveDiagnosticAnalysisPackage,
     analyze_curve_error,
@@ -23,7 +22,7 @@ from .analysis import (
 from .curve_contract_compiler import validate_compiled_curve_contract, validate_curve_contract_inputs
 from .diagnostic_tool import DIAGNOSTIC_GUIDANCE, DIAGNOSTIC_PLOT_OUTPUT, record_metric_report
 from .analysis_files import GUIDANCE as ANALYSIS_FILES_GUIDANCE
-from scidiscovery.artifact_agent.service.analysis_artifacts import analysis_calculations, analysis_evidence_aliases
+from scidiscovery.plugin_runtime.calculations import analysis_evidence_aliases
 from .schema import (
     CurveBundle,
     CurveComparisonSpec,
@@ -74,6 +73,7 @@ from scidiscovery.operations.spec import (
 _GENERAL_SCIENCE = "general_science"
 _GENERAL_RESOURCES = {
     "opaque_schema",
+    "tool_evidence_schema",
     "experiment_portfolio_schema",
     "hypothesis_schema",
     "scientific_review_schema",
@@ -316,7 +316,7 @@ def _diagnosis_operation(operation_id: str, purpose: str, applies_when: str, *, 
             OutputPortSpec(name="recovery_manifest_output", description="Runtime-owned source and attempt receipts.",
                 schema="scidiscovery.tool-evidence-manifest.v1", media_types=("application/json",),
                 codec=ComponentRef("json_codec", plugin_id=_GENERAL_SCIENCE),
-                schema_resource=ComponentRef("tool_evidence_schema"), kind="tool_evidence_manifest",
+                schema_resource=ComponentRef("tool_evidence_schema", plugin_id=_GENERAL_SCIENCE), kind="tool_evidence_manifest",
                 min_items=0, max_items=1, max_item_bytes=1024*1024,
                 collection=CollectionSpec(max_total_bytes=1024*1024)), DIAGNOSTIC_PLOT_OUTPUT),
         timeout=900,
@@ -369,9 +369,7 @@ def _diagnosis_context(payload: dict[str, Any], sources: dict[str, bytes], hando
     del handoff
     diagnosis = LayeredDiagnosisReport.model_validate_json(canonical_json(payload), strict=True)
     portfolio = parse_bound_json(ExperimentPortfolio, sources["experiment_plan"]) if "experiment_plan" in sources else None
-    calculations = analysis_calculations(diagnosis, sources)
-    for record in calculations:
-        calculation_sources(record, sources)
+    calculations = sources.verified_calculations(diagnosis)
     metric_report = parse_bound_json(CurveConsistencyReport, sources["metric_report"]) if "metric_report" in sources else None
     if portfolio is not None:
         validate_analysis_report(diagnosis, portfolio, metric_report, calculations=calculations)
@@ -567,7 +565,6 @@ The optional curve-error helper is never a required next stage.
 
 
 class Resources:
-    tool_evidence_schema = TOOL_EVIDENCE_SCHEMA
     diagnosis_schema = schema_resource(
         LayeredDiagnosisReport, "scidiscovery.layered-diagnosis.v1"
     )
@@ -611,15 +608,15 @@ def component_specs() -> tuple[ComponentSpec, ...]:
         ComponentSpec("analysis_materializer", "workspace_materializer", "curve_score.analysis_workspace:MATERIALIZER", configuration_identity="analysis.scientific-context:v2"),
         ComponentSpec("analysis_snapshotter", "workspace_snapshotter", "curve_score.analysis_workspace:SNAPSHOTTER"),
         ComponentSpec("diagnosis_inputs", "validator", "curve_score.science_operations:Components.diagnosis_inputs", configuration_identity="historical-analysis-r4:v1"),
-        ComponentSpec("analysis_score_tool", "worker_tool", "curve_score.analysis_tool:CURVE_SCORE_TOOL", configuration_identity="analysis.scientific-receipt:v2"),
-        ComponentSpec("analysis_diagnostic_tool", "worker_tool", "curve_score.diagnostic_tool:DIAGNOSTIC_TOOL", configuration_identity="analysis.diagnostic-checkpoint:v4"),
+        ComponentSpec("analysis_score_tool", "worker_tool", "curve_score.analysis_tool:CURVE_SCORE_TOOL", configuration_identity="analysis.scientific-receipt:v3"),
+        ComponentSpec("analysis_diagnostic_tool", "worker_tool", "curve_score.diagnostic_tool:DIAGNOSTIC_TOOL", configuration_identity="analysis.diagnostic-checkpoint:v5"),
         ComponentSpec("analysis_files_tool", "worker_tool", "curve_score.analysis_files:TOOL", public=True),
         ComponentSpec("diagnosis_validator", "validator", "curve_score.science_operations:Components.diagnosis_validator", resources=(ComponentRef("diagnosis_report_semantic_contract"),)),
-        ComponentSpec("diagnosis_context", "validator", "curve_score.science_operations:Components.diagnosis_context", configuration_identity="analysis-private-receipt:v2", resources=(ComponentRef("diagnosis_report_semantic_contract"),)),
+        ComponentSpec("diagnosis_context", "validator", "curve_score.science_operations:Components.diagnosis_context", configuration_identity="analysis-private-receipt:v3", resources=(ComponentRef("diagnosis_report_semantic_contract"),)),
         ComponentSpec("diagnosis_agent", "agent", "curve_score.science_operations:Components.diagnosis_agent"),
     ]
     values.extend(ComponentSpec(name, "resource", f"curve_score.science_operations:Resources.{name}", public=name == "diagnosis_schema")
-        for name in ("diagnosis_schema", "tool_evidence_schema", "diagnosis_report_semantic_contract", "diagnosis_prompt"))
+        for name in ("diagnosis_schema", "diagnosis_report_semantic_contract", "diagnosis_prompt"))
     return tuple(values)
 
 

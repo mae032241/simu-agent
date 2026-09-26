@@ -8,7 +8,7 @@ from typing import Protocol
 
 from scidiscovery.artifact_agent.schema.execution import LocalFileDescriptor
 from scidiscovery.artifact_agent.schema.refs import ArtifactRef
-from scidiscovery.artifact_agent.service.execution_collection import CollectionContext
+from scidiscovery.plugin_runtime.collection import CollectionContext
 
 
 DEVELOPMENT_ARTIFACT_LIMIT_BYTES = 64 * 1024 * 1024

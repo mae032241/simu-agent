@@ -849,7 +849,7 @@ def test_sealed_blocked_review_is_readable_as_exact_feedback(tmp_path, monkeypat
     }))
     submitted = worker.call_tool("worker_submit_result", {})
     assert submitted["state"] == "completed", submitted
-    blocked = root.call_tool("run_status", {"name": request["name"], "view": "detail"})
+    blocked = root.call_tool("run_status", {'name': request["name"], "intent": 'full'})
     assert blocked["sealed_output"]["payload"]["verdict"] == "blocked"
     output_name = blocked["output_artifact_name"]
     output_id = runtime.scheduler_bindings.resolve(instance=instance.instance_id, namespace="artifact", name=output_name)
@@ -869,7 +869,7 @@ def test_sealed_blocked_review_is_readable_as_exact_feedback(tmp_path, monkeypat
     reader.call_tool("worker_open_assignment", {})
     run_id = runtime.scheduler_bindings.resolve(instance=instance.instance_id, namespace="run", name=request["name"])
     assert runtime.runs.backend.open(run_id).input_paths["current_progress"].read_bytes() == runtime.artifacts.read(envelope.ref)
-    assert root.call_tool("run_status", {"name": "blocked_review", "view": "detail"})["sealed_output"]["payload"]["verdict"] == "blocked"
+    assert root.call_tool("run_status", {'name': "blocked_review", "intent": 'full'})["sealed_output"]["payload"]["verdict"] == "blocked"
 
 
 def test_partial_goal_submission_corrects_same_run_then_preserves_intent(tmp_path, experiment_case) -> None:

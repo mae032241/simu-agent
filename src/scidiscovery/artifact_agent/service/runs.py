@@ -809,7 +809,7 @@ class RunService(ToolEvidenceMixin):
             retain_original = (self.backend.backend_id == "local_trusted"
                 and (value.recovery_policy or {}).get("retain_original_on_failure") is True)
             if retain_original and workspace:
-                from .local_process_observation import request_stop
+                from ...plugin_runtime.observation import request_stop
                 request_stop(workspace.root)
             if coverage is None and value.accepted_candidate_digest is None and value.recovery_candidate_digest is None:
                 self._prepare_evidence_snapshot(value.run_id)
@@ -1378,7 +1378,7 @@ class RunService(ToolEvidenceMixin):
         self, compiled: Any, run_id: str, workspace: OpenWorkspace
     ) -> None:
         if self.backend.backend_id == "local_trusted":
-            from .local_process_observation import materialize_launcher
+            from ...plugin_runtime.observation import materialize_launcher
             try:
                 materialize_launcher(workspace.root)
             except (OSError, WorkspaceError, ValueError) as error:

@@ -62,7 +62,7 @@ def test_real_proxy_idle_presence_disconnect_and_restart(tmp_path, ending):
     daemon_code = '''
 import sys
 from pathlib import Path
-from scidiscovery.interfaces.daemon import UnixSocketDaemon
+from scidiscovery.plugin_runtime.transport import UnixSocketDaemon
 from scidiscovery.artifact_agent.interfaces.mcp_daemon import RootBrokerRouter
 from scidiscovery.artifact_agent.service.scheduler_bindings import SchedulerBindingService
 class Router:

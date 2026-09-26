@@ -68,6 +68,11 @@ class ValidationSources(dict[str, bytes]):
         self.__tool_snapshot = tool_snapshot
         self.__reference_calculation_resolver = reference_calculation_resolver
 
+    def verified_calculations(self, report):
+        """Read-only calculation view; core retains receipt and origin verification."""
+        from ..artifact_agent.service.analysis_artifacts import verified_calculations
+        return verified_calculations(report, self)
+
     def reference_calculation_sources(self, alias):
         return self.__reference_calculation_resolver(alias) if self.__reference_calculation_resolver else None
 
@@ -177,7 +182,7 @@ def prior_analysis_sources(sources: Mapping[str, bytes]) -> Mapping[str, Any] | 
         raise OperationInvocationError("prior_manifest_pair_mismatch", port=proof.port_name,
             message=("Bind the direct recovery manifest produced with the prior analysis primary; "
                      "mismatched facts: " + ", ".join(pair_failures) + "."))
-    from ..artifact_agent.service.tool_evidence import ToolEvidenceManifest
+    from ..artifact_agent.schema.tool_evidence import ToolEvidenceManifest
     try:
         manifest = ToolEvidenceManifest.model_validate_json(sources[proof.source_name])
     except (ValueError, KeyError) as error:
@@ -208,7 +213,8 @@ def prior_analysis_sources(sources: Mapping[str, bytes]) -> Mapping[str, Any] | 
         if matches:
             mapped[old] = matches[0]
     return MappingProxyType({"analysis_alias":prior.source_name,
-        "manifest_alias":proof.source_name, "source_bindings":MappingProxyType(mapped)})
+        "manifest_alias":proof.source_name, "source_bindings":MappingProxyType(mapped),
+        "source_ports":MappingProxyType({old: binding.port_name for old, binding in manifest.bindings.items()})})
 
 
 def parse_bound_json(

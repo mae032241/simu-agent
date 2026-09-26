@@ -215,7 +215,7 @@ def test_hardened_transport_completes_the_same_run_without_task_science(
     }.issubset(assignment_tools)
     _write_result(worker)
     assert worker.call_tool("worker_submit_result", {})["state"] == "completed"
-    status = root.call_tool("run_status", {"name": "observation", "view": "detail", "output_paths": []})
+    status = root.call_tool("run_status", {'name': "observation", "intent": 'full'})
     assert status["backend"] == "hardened_worker"
     assert status["state"] == "completed"
     with pytest.raises(ValueError, match="namespace is invalid"):

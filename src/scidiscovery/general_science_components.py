@@ -374,7 +374,7 @@ class Components:
     foundation_validator = CallableComponent("validator", _strict_validator(ScientificFoundation))
 
 
-from .artifact_agent.service.result_materialization import finalize_general_result
+from .plugin_runtime.results import finalize_general_result
 RESULT_FINALIZER = CallableComponent("workspace_finalizer", finalize_general_result)
 WORKSPACE = WorkspaceContract()
 

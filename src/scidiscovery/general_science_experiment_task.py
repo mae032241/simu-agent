@@ -7,7 +7,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from .artifact_agent.schema.common import canonical_json
-from .artifact_agent.service.result_materialization import materialize_summary_handoff
+from .plugin_runtime.results import materialize_summary_handoff
 from .general_science_agent_operations import BASE_TOOLS, _input
 from .operation_declaration import schema_resource, scientific_agent_operation, semantic_contract
 from .operations.spec import (CallableComponent, CollectionSpec, ComponentRef,

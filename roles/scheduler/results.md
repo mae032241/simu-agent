@@ -7,20 +7,18 @@ and based on new events; do not reread results just to report waiting. Request s
 and needed fields in one run_status call; check that response's state before using
 its scientific content. Unfinished Runs expose no sealed results. Do not precede a
 result read with an empty-path status check. Use
-`run_status(response_profile="poll", output_paths=[])` only for necessary polling
-or status checks. Omitted arguments also give short status for every state. It keeps
-mechanical state and the frozen Agent dispatch profile, never diagnostic prose or signal text.
-For saved failure diagnostics use view="detail", response_profile="compat", output_paths=[],
-diagnostic_after=0, then diagnostic_events.next_after. This reads only persisted,
-accessible diagnostics: saved reason may already be capped at 4096 characters and
-each event projects at most 16 details; paging events does not recover unsaved tails.
+`run_status(intent="status")` only for necessary polling or status checks. Omitted
+intent returns bounded declared decision fields after completion. Active Runs stay
+short. For saved terminal diagnostics use intent="status", diagnostic_after=0,
+then diagnostic_events.next_after. This reads only persisted safe diagnostics;
+event paging does not recover unsaved tails or expose private engineering records.
 For every MCP reply, handle the transport `isError` result before parsing its JSON payload;
 preserve the returned code, path and message instead of turning it into a parse failure.
-Fetch exact terminal bindings with view="detail" when constructing or recovering a task
-requires them, or to resolve a specific provenance question. Expand timing, native records and logs for an actual
-diagnostic question, not routine polling. Active Run status and list detail stay short;
-recover the original agent_type, execution_profile.profile and deadline_at by Run name,
-never by consulting changed model defaults. Completed defaults contain no scientific values.
+Use intent="navigation" for exact terminal scientific input names and output
+structure. Private recovery/native records remain in the control UI; use a returned
+scoped diagnostic reference for an actual engineering question. Active Run status
+stays short; recover the frozen agent_type, execution_profile.profile and deadline_at
+by Run name, never by consulting changed model defaults.
 When the response reports completed, read the formal conclusion, limitations, remaining contradiction
 and next-action rationale together with scheduler_signal. Choose the read once:
 use known paths directly; index only an unknown structure; read the whole payload
@@ -29,7 +27,7 @@ For a LayeredDiagnosisReport, these existing paths give the scheduling context
 in one values call (replace the Run name):
 
 ```json
-{"name":"analysis","response_profile":"decision","output_paths":["/summary","/overall_verdict","/claim_allowed","/limitations","/remaining_contradiction","/next_action","/objective_assessment","/hypothesis_assessments"]}
+{"name":"analysis","intent":"decision","output_paths":["/summary","/overall_verdict","/claim_allowed","/limitations","/remaining_contradiction","/next_action","/objective_assessment","/hypothesis_assessments"]}
 ```
 
 This is a reading example, not a required output shape for every Operation.
@@ -42,16 +40,15 @@ do not request entire proposal, variable or validation arrays merely to pass the
 to another role. Bind the sealed original for that role's own reading. Selected values appear in
 selected_output with original pointers; they are not a complete sealed_output.
 Pointers start inside the payload: /summary, not /payload/summary. Only when needed
-paths are unknown, use response_profile="navigation" with output_mode="index" for
+paths are unknown, use intent="navigation" for
 the root field directory. Navigation returns no signal text.
 Follow output_index.next_offset with index_offset on the same path; nested objects
 can be indexed by their exact pointer. The directory has no field values. Read
-needed originals with explicit response_profile="decision" and selected output_paths.
-For most/all fields, use view="detail", response_profile="compat", include_full_output=true
-with output_paths omitted/null. Only this positive opt-in returns whole sealed output;
-detail alone never does. Values-mode paths containing the empty root pointer are rejected.
-Full output cannot be combined with a paths array, decision, or index/navigation.
-Use terminal detail for exact bindings/timing. A selected scalar larger than 32 KiB
+needed originals with explicit intent="decision" and selected output_paths.
+For most/all fields, use intent="full" with output selection omitted. Only this
+explicit intent returns complete sealed science after completion; it does not return
+private control records. Empty root pointers are rejected for decision reads.
+A selected scalar larger than 32 KiB
 has no child continuation; the explicit full-output escape hatch retains it within
 the existing transport limit. Never describe its empty index as a complete value read.
 Retain values already read; never refetch their constituent fields or expand the
@@ -77,7 +74,7 @@ the user's unwillingness to invest into physical evidence. An inconclusive verdi
 or invalid execution may remain recorded while the scheduler legitimately stops;
 numerical repair is selected only when it can affect the decision and is authorized.
 
-For a known report Schema, use response_profile="decision" to request the decision's
+For a known report Schema, use intent="decision" to request the decision's
 exact conclusion, limitations, remaining contradiction and scheduler_signal together
 with completed state. For an unknown Schema, read one bounded navigation index first
 and then make one decision read for exact paths;

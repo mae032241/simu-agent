@@ -1060,10 +1060,10 @@ for line in sys.stdin:
         catalog_seen = True
         value = {"operations": [{"operation_id": "science.fixture.v1"}]}
     elif arguments["name"] == "scid_describe":
-        value = {"inputSchema": {"properties": {"view": {"enum": ["full", "invoke"]}}}}
+        value = {"inputSchema": {"properties": {"view": {"enum": ["full", "invoke"]}, "surface":{"default":"research"}}}}
     elif arguments["name"] == "run_status":
-        value = {"inputSchema": {"properties": {"response_profile": {
-            "enum": ["compat", "poll", "navigation", "decision"]
+        value = {"inputSchema": {"properties": {"intent": {
+            "enum": ["decision", "status", "navigation", "full"], "default":"decision"
         }}}}
     elif arguments["name"] == "artifact_catalog":
         value = {"inputSchema": {"properties": {"view": {

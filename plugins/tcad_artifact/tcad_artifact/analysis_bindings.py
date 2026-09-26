@@ -7,11 +7,11 @@ import json
 from pathlib import Path
 
 from curve_score import analysis_workspace
-from scidiscovery.artifact_agent.service.analysis_artifacts import analysis_source_claims
-from scidiscovery.artifact_agent.service.local_workspace import (
+from scidiscovery.plugin_runtime.calculations import analysis_source_claims
+from scidiscovery.plugin_runtime.workspace import (
     read_control_workspace_file, write_control_workspace_file,
 )
-from scidiscovery.artifact_agent.service.result_materialization import finalize_result, materialize_analysis_handoff
+from scidiscovery.plugin_runtime.results import finalize_result, materialize_analysis_handoff
 from scidiscovery.operations.input_validation import ValidationSources, prior_analysis_sources
 from scidiscovery.operations.spec import CallableComponent
 
@@ -47,9 +47,8 @@ def source_bindings(sources):
     if prior is None:
         return view
     mapped = prior["source_bindings"]
-    manifest = json.loads(sources[prior["manifest_alias"]])
     for port in (("execution_package",) if package["project"].get("execution_plan") is not None else ("experiment_plan", "execution_package")):
-        old = [alias for alias, binding in manifest.get("bindings", {}).items() if binding.get("port_name") == port]
+        old = [alias for alias, source_port in prior["source_ports"].items() if source_port == port]
         if len(old) != 1 or mapped.get(old[0]) != by_port[port]:
             view["unavailable"].append({"reason": "prior_execution_cohort_not_bound"})
             return view

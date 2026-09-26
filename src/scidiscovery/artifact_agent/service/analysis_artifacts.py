@@ -6,10 +6,11 @@ import json
 from pathlib import Path
 
 from ...operation_contract import declared_violation
+from ...plugin_runtime.calculations import CalculationResult, analysis_source_claims, analysis_evidence_aliases
 from ...operations.input_validation import prior_analysis_sources
 from ..schema.common import canonical_json
 from .calculation_proof import ControlledCalculationRecord as CalculationRecord, controlled_calculation, scientific_calculation
-from .local_workspace import write_control_workspace_file
+from ...plugin_runtime.workspace import write_control_workspace_file
 
 
 def publish_analysis_file(context, raw, *, media_type, kind, sources, suffix, metadata=None):
@@ -52,37 +53,6 @@ def retain_calculation(context, response, *, summary=False):
         "limitations": report.get("limitations", []),
     }
     return {**result, "calculation_ref": saved["evidence_alias"]}
-
-
-def analysis_source_claims(source_key, locator, input_alias, sources, calculation_aliases=None):
-    """Use the same source identities for validation and mechanical completion."""
-    claims = {source_key} if source_key in sources else set()
-    if input_alias is not None:
-        claims.add(input_alias)
-    if locator.split(":", 1)[0] in sources:
-        claims.add(locator.split(":", 1)[0])
-    aliases = calculation_aliases or {}
-    return {aliases.get(claim, claim) for claim in claims}
-
-
-def analysis_evidence_aliases(evidence, references, sources, calculation_aliases=None):
-    """Resolve optional citations without letting a generated mapping hide a conflict."""
-    resolved = {}
-    for index, reference in enumerate(references):
-        claims = analysis_source_claims(reference.source_key, "", reference.input_alias, sources, calculation_aliases)
-        claims.update(resolved.get(reference.source_key, ()))
-        if len(claims) != 1:
-            raise declared_violation("analysis source key has conflicting source mappings",
-                path=f"$.source_references[{index}].source_key")
-        resolved[reference.source_key] = claims
-    for index, item in enumerate(evidence):
-        claims = analysis_source_claims(item.source_key, item.locator, None, sources, calculation_aliases)
-        claims.update(resolved.get(item.source_key, ()))
-        if len(claims) > 1:
-            raise declared_violation("analysis source key has conflicting source mappings",
-                path=f"$.evidence[{index}].source_key")
-        resolved[item.source_key] = claims
-    return {key: next(iter(claims)) if claims else key for key, claims in resolved.items()}
 
 
 def analysis_calculations(report, sources):
@@ -153,3 +123,65 @@ def analysis_calculations(report, sources):
         # record names need not form another namespace across calls or Runs.
         records.append(record)
     return tuple(records)
+
+
+def complete_calculation(context, result, *, diagnostics=(), summary=False):
+    """Own attempt finalization and private receipt construction, never the plugin."""
+    # Revalidate the public shape so a caller cannot inject an attempt/receipt.
+    public = CalculationResult.model_validate_json(canonical_json(result))
+    response = public.model_dump(mode="json", exclude={"diagnostics"})
+    diagnostics = diagnostics or tuple(item.model_dump(mode="json") for item in public.diagnostics)
+    finished = context.finish_attempt(result_status=public.status, reason_code=public.reason_code,
+        response=response, diagnostics=diagnostics)
+    if finished is not None:
+        attempt, controlled_diagnostics = finished
+        response.update(attempt=attempt, diagnostics=list(controlled_diagnostics))
+    return retain_calculation(context, response, summary=summary)
+
+
+def verified_calculations(report, sources):
+    """Verify private receipts before exposing domain result values."""
+    from .tool_evidence import calculation_sources
+    result = []
+    for record in analysis_calculations(report, sources):
+        calculation_sources(record, sources)
+        public = CalculationResult.model_validate_json(canonical_json(
+            record.model_dump(mode="json", exclude={"attempt", "diagnostics"})))
+        result.append(public.model_copy(update={"calculation_ref": record.calculation_ref}))
+    return tuple(result)
+
+
+def _checkpoint_sources(context, sources):
+    refs = {name: context.source_descriptor(name).artifact_ref.model_dump(mode="json")
+            for name in sources}
+    return refs, {name: ref["sha256"] for name, ref in refs.items()}
+
+
+def publish_calculation_checkpoint(context, raw, *, algorithm_version, record_key,
+                                   sources, numerical_identity):
+    """Derive immutable source identity; plugins supply only numerical values."""
+    refs, digests = _checkpoint_sources(context, sources)
+    return publish_analysis_file(context, raw, media_type="application/json",
+        kind="calculation_checkpoint", sources=sources, suffix=".json",
+        metadata={"record_key": record_key, "algorithm_version": algorithm_version,
+            "checkpoint_proof": {"numerical_identity": numerical_identity,
+                "input_digests": digests, "input_refs": refs}})
+
+
+def read_calculation_checkpoint(context, alias, *, algorithm_version, tool_names,
+                                sources, max_bytes):
+    """Verify exact registered source identities before exposing checkpoint values."""
+    receipts = context._list_evidence() if context._list_evidence else ()
+    record = next((item for item in receipts if item["alias"] == alias), None)
+    if (record is None or record.get("metadata", {}).get("kind") != "calculation_checkpoint"
+            or record.get("metadata", {}).get("algorithm_version") != algorithm_version
+            or record.get("tool_name") not in tool_names):
+        raise ValueError("diagnostic_checkpoint_not_controlled")
+    raw = context.read_evidence(alias)
+    if len(raw) > max_bytes or hashlib.sha256(raw).hexdigest() != record["artifact_ref"]["sha256"]:
+        raise ValueError("diagnostic_checkpoint_identity_mismatch")
+    refs, digests = _checkpoint_sources(context, sources)
+    proof = record.get("metadata", {}).get("checkpoint_proof", {})
+    if proof.get("input_digests") != digests or proof.get("input_refs") != refs:
+        raise ValueError("diagnostic_checkpoint_scope_mismatch")
+    return raw, proof.get("numerical_identity", [])

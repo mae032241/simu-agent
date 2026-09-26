@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 from scidiscovery.artifact_agent.execution_bridge import ExecutionBridge
 from scidiscovery.artifact_agent.interfaces.mcp import rpc_error
-from scidiscovery.artifact_agent.service.local_process_observation import read_summary
+from scidiscovery.plugin_runtime.observation import read_summary
 from tcad_artifact.ssh_transport import SSHTCADTransport
 
 
@@ -167,7 +167,7 @@ def test_completed_manifest_checkpoint_registers_in_real_child(tmp_path, monkeyp
     runtime, _, adapter, _, root, _ = _setup(tmp_path)
     _create_effect(root, name="collected")
     _decide_execution_approval(runtime, root, name="collected")
-    root.call_tool("execution_start", {"name": "collected"})
+    root.call_tool("execution_start", {"name": "collected"}, surface="execution")
     execution_id = root.facade._resolve("execution", "collected")
     current = runtime.executions.status(execution_id)
     runtime.executions.record_status(execution_id=execution_id, external_run_id=current.external_run_id, state="succeeded")
@@ -182,19 +182,19 @@ def test_completed_manifest_checkpoint_registers_in_real_child(tmp_path, monkeyp
         "collected_at": "2026-09-13T00:00:00Z"})
     monkeypatch.setenv("PYTHONPATH", os.pathsep.join(sys.path))
     try:
-        reply = root.call_tool("execution_collect", {"name": "collected", "total_seconds": 10})
+        reply = root.call_tool("execution_collect", {"name": "collected", "total_seconds": 10}, surface="execution")
         assert reply["collection"]["accepted"]
         _until(lambda: coordinator._active is None)
         assert coordinator.summary(execution_id)["state"] == "completed", coordinator.summary(execution_id)
-        status = root.call_tool("execution_status", {"name": "collected"})
+        status = root.call_tool("execution_status", {"name": "collected"}, surface="execution")
         assert status["state"] == "collected"
         assert status["result_artifact_name"] is None  # status remains a pure read
-        outputs = root.call_tool("execution_outputs", {"name": "collected"})
+        outputs = root.call_tool("execution_outputs", {"name": "collected"}, surface="execution")
         assert outputs["outputs"][0]["output_label"] == "profile"
-        assert outputs["result_artifact_name"] == root.call_tool("execution_status", {"name": "collected"})["result_artifact_name"]
-        assert root.call_tool("execution_outputs", {"name":"collected", "limit":1})["result_artifact_name"] == outputs["result_artifact_name"]
-        assert root.call_tool("execution_status", {"name": "collected"})["result_artifact_name"]
-        assert root.call_tool("execution_collect", {"name": "collected"})["collection"]["state"] == "completed"
+        assert outputs["result_artifact_name"] == root.call_tool("execution_status", {"name": "collected"}, surface="execution")["result_artifact_name"]
+        assert root.call_tool("execution_outputs", {"name":"collected", "limit":1}, surface="execution")["result_artifact_name"] == outputs["result_artifact_name"]
+        assert root.call_tool("execution_status", {"name": "collected"}, surface="execution")["result_artifact_name"]
+        assert root.call_tool("execution_collect", {"name": "collected"}, surface="execution")["collection"]["state"] == "completed"
         assert adapter.submit_count == 1
     finally:
         coordinator.close()
@@ -214,7 +214,7 @@ def test_transport_differentiates_no_progress_and_total_deadline():
 def test_common_launcher_preserves_environment_and_full_stdout(tmp_path, monkeypatch):
     import os
     import sys
-    from scidiscovery.artifact_agent.service.local_process_observation import materialize_launcher
+    from scidiscovery.plugin_runtime.observation import materialize_launcher
     materialize_launcher(tmp_path)
     import json
     from datetime import datetime, timedelta, timezone
@@ -263,7 +263,7 @@ def test_proxy_daemon_status_stays_available_during_collection(tmp_path, monkeyp
     import signal
     import sys
     import time
-    from scidiscovery.interfaces.daemon import UnixSocketDaemon
+    from scidiscovery.plugin_runtime.transport import UnixSocketDaemon
     from scidiscovery.artifact_agent.interfaces.mcp import MCPRouter
     from scidiscovery.artifact_agent.interfaces.mcp_daemon import RootBrokerRouter
     from scidiscovery.artifact_agent.service.execution_collection import ExecutionCollection
@@ -271,7 +271,7 @@ def test_proxy_daemon_status_stays_available_during_collection(tmp_path, monkeyp
     runtime, _, adapter, _, root, _ = _setup(tmp_path)
     _create_effect(root, name="slow")
     _decide_execution_approval(runtime, root, name="slow")
-    root.call_tool("execution_start", {"name": "slow"})
+    root.call_tool("execution_start", {"name": "slow"}, surface="execution")
     execution_id = root.facade._resolve("execution", "slow")
     current = runtime.executions.status(execution_id)
     runtime.executions.record_status(execution_id=execution_id, external_run_id=current.external_run_id, state="succeeded")
@@ -333,7 +333,7 @@ def test_ingestion_process_exit_preserves_idempotent_registration(tmp_path, monk
     runtime, _, adapter, _, root, _ = _setup(tmp_path)
     _create_effect(root, name='interrupted')
     _decide_execution_approval(runtime, root, name='interrupted')
-    root.call_tool('execution_start', {'name':'interrupted'})
+    root.call_tool('execution_start', {'name':'interrupted'}, surface="execution")
     execution_id = root.facade._resolve('execution','interrupted')
     value = runtime.executions.status(execution_id)
     runtime.executions.record_status(execution_id=execution_id,external_run_id=value.external_run_id,state='succeeded')
@@ -473,7 +473,7 @@ def test_socket_collect_uses_collection_deadline_through_real_service(tmp_path):
     import multiprocessing
     import sqlite3
     import time
-    from scidiscovery.interfaces.daemon import UnixSocketDaemon
+    from scidiscovery.plugin_runtime.transport import UnixSocketDaemon
     from scidiscovery.artifact_agent.interfaces.mcp import MCPRouter
     from scidiscovery.artifact_agent.service.execution_collection import CollectionContext
     from tcad_artifact.execution_control import TCADExecutionFacade,TCADExecutionPolicy,TCADExecutionRouter,ToolProfile

@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import json
-from dataclasses import replace
 from pathlib import Path
 from typing import Literal
 
@@ -11,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from scidiscovery.artifact_agent.schema.common import canonical_json
 from scidiscovery.artifact_agent.schema.experiment import ExperimentPortfolio
 from scidiscovery.operations.experiment import ExperimentCapability
+from scidiscovery.plugin_runtime.experiment import ExperimentTools
 from scidiscovery.operations.spec import ComponentRef, ComponentSpec
 from scidiscovery.operations.tooling import WorkerToolDefinition
 from scidiscovery.operation_contract import DiagnosticError, validation_diagnostics
@@ -50,7 +50,7 @@ def prepare(request, context):
     except ValidationError as error:
         raise DiagnosticError("The scientific implementation needs correction.",
             details=validation_diagnostics(error, schema=Implementation.model_json_schema())) from error
-    service = context.require_service("experiment.execution")
+    service: ExperimentTools = context.require_service("experiment.execution")
     candidates = []
     for item in service.capabilities(context):
         capability = SolverCapabilitySnapshot.model_validate_json(item.content, strict=True)
@@ -93,17 +93,17 @@ class DebugInput(BaseModel):
 
 def debug(request, context):
     from .debug_contract import TCADDebugSource
-    from scidiscovery.artifact_agent.service.local_workspace import write_control_workspace_file
-    execution = context.require_service("experiment.execution")
+    from scidiscovery.plugin_runtime.workspace import write_control_workspace_file
+    execution: ExperimentTools = context.require_service("experiment.execution")
     service = context.require_service("tcad.development_debug")
     if request.action == "cancel":
-        run = execution.runs.status(context.run_id)
-        active = service.experiment_activity({item.run_id for item in execution.task_lineage(run)}, run.inputs, cancel=True, name=request.name)
+        active = execution.cancel_diagnostics(context, service_name="tcad.development_debug", name=request.name)
         return {"name":request.name, "state":"cancelling" if active else "inactive"}
     if request.implementation is None:
         raise ValueError("Choose a sealed implementation for this diagnostic.")
-    package_ref = execution.implementation(context, request.implementation)
-    package = ExecutionPackage.model_validate_json(execution.executions.artifacts.read(package_ref), strict=True)
+    sealed = execution.read_implementation(context, request.implementation)
+    package_ref = sealed.artifact_ref
+    package = ExecutionPackage.model_validate_json(sealed.content, strict=True)
     scientific = json.loads(context.read_evidence(request.implementation))
     aliases = scientific["scientific_files"]
     context.state.update(experiment_project=canonical_json(package.project.model_dump(mode="json")),
@@ -115,9 +115,8 @@ def debug(request, context):
             for slot in package.project.input_slots))
     # Old diagnostic receipts contain executor identities and policy details.
     # Keep that lossless workspace with the service, outside the Agent workspace.
-    private = service.exchange_root / "experiment-workspaces" / execution.task_origin(execution.runs.status(context.run_id))
-    private.mkdir(parents=True, exist_ok=True, mode=0o700)
-    scoped = replace(context, workspace=private, output_directory=private / "output")
+    scoped = execution.diagnostic_context(context, service_name="tcad.development_debug")
+    private = scoped.workspace
     response = service.run(scoped, run_name=request.name, mode=request.mode, output_names=request.output_names)
     result = {key: response[key] for key in ("state", "mode", "summary", "exit_code", "missing_outputs") if key in response}
     log = private / "deck/reports" / ("log-" + request.name + ".txt")

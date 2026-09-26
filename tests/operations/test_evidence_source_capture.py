@@ -52,7 +52,7 @@ def test_search_capture_publication_and_independent_audit(tmp_path, monkeypatch)
     Path(opened["output_directory"], "result.json").write_text(json.dumps({"schema_version": 1,
         "handoff": {"verdict": "pass", "summary": "Bounded source fixture."}, "payload": payload}))
     assert worker.call_tool("worker_submit_result", {})["state"] == "completed"
-    status = root.call_tool("run_status", {"name": "evidence", "view": "detail"})
+    status = root.call_tool("run_status", {'name': "evidence", "intent": 'navigation'})
     assert status["state"] == "completed"
     sources = status["evidence_outputs"]
     source = next(x for x in sources if x["artifact_name"].endswith("." + captured["source_alias"]))

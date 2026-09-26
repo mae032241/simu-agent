@@ -11,8 +11,8 @@ import subprocess
 import sys
 import threading
 
-from scidiscovery.artifact_agent.service.execution_collection import CollectionContext, run_bounded, watch_parent
-from scidiscovery.artifact_agent.service.engineering_diagnostics import exception_facts
+from scidiscovery.plugin_runtime.collection import CollectionContext, run_bounded, watch_parent
+from scidiscovery.plugin_runtime.diagnostics import exception_facts
 from scidiscovery.operations.runtime_plugins import RuntimePluginContext
 from .debug_contract import (
     DEVELOPMENT_ARTIFACT_LIMIT_BYTES,

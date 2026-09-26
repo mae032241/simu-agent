@@ -42,17 +42,17 @@ def test_local_adapter_and_root_sync_expose_optional_progress_without_changing_s
     runtime, _, effect, _, root, _ = _setup(tmp_path)
     _create_effect(root, name="progress")
     _decide_execution_approval(runtime, root, name="progress")
-    root.call_tool("execution_start", {"name": "progress"})
+    root.call_tool("execution_start", {"name": "progress"}, surface="execution")
     monkeypatch.setattr(effect, "status_details", lambda _: adapter.status_details(run_id), raising=False)
-    observed = root.call_tool("execution_sync", {"name": "progress"})
+    observed = root.call_tool("execution_sync", {"name": "progress"}, surface="execution")
     assert observed["state"] == "running" and observed["progress"]["elapsed_seconds"] == 12
     # A pure status read must not silently poll the server.
     monkeypatch.setattr(effect, "status_details", lambda _: pytest.fail("status polled the server"))
-    assert root.call_tool("execution_status", {"name": "progress"})["progress"] == observed["progress"]
+    assert root.call_tool("execution_status", {"name": "progress"}, surface="execution")["progress"] == observed["progress"]
     # Existing adapters without the optional extension still synchronize.
     monkeypatch.delattr(effect, "status_details")
     monkeypatch.setattr(effect, "status", lambda _: "running", raising=False)
-    assert root.call_tool("execution_sync", {"name": "progress"})["progress"] == observed["progress"]
+    assert root.call_tool("execution_sync", {"name": "progress"}, surface="execution")["progress"] == observed["progress"]
 
 
 def test_progress_is_bounded_nonblocking_and_unavailable_time_is_not_invented(tmp_path, monkeypatch):

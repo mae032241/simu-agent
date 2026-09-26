@@ -70,6 +70,25 @@ class OperationToolContext:
             raise ValueError("tool has no source descriptor projection")
         return self._source_descriptor(name)
 
+    def complete_calculation(self, record, *, diagnostics=(), summary=False) -> dict:
+        from .service.analysis_artifacts import complete_calculation
+        return complete_calculation(self, record, diagnostics=diagnostics, summary=summary)
+
+    def publish_analysis_file(self, raw, *, media_type, kind, sources, suffix, metadata=None) -> dict:
+        from .service.analysis_artifacts import publish_analysis_file
+        return publish_analysis_file(self, raw, media_type=media_type, kind=kind,
+            sources=sources, suffix=suffix, metadata=metadata)
+
+    def publish_calculation_checkpoint(self, raw, *, algorithm_version, record_key, sources, numerical_identity):
+        from .service.analysis_artifacts import publish_calculation_checkpoint
+        return publish_calculation_checkpoint(self, raw, algorithm_version=algorithm_version,
+            record_key=record_key, sources=sources, numerical_identity=numerical_identity)
+
+    def read_calculation_checkpoint(self, alias, *, algorithm_version, tool_names, sources, max_bytes):
+        from .service.analysis_artifacts import read_calculation_checkpoint
+        return read_calculation_checkpoint(self, alias, algorithm_version=algorithm_version,
+            tool_names=tool_names, sources=sources, max_bytes=max_bytes)
+
     def finish_attempt(self, **values) -> tuple[dict, tuple[dict, ...]] | None:
         return self._finish_attempt(**values) if self._finish_attempt else None
 
@@ -83,7 +102,8 @@ class OperationToolContext:
         return self._list_attempts() if self._list_attempts else []
 
     def evidence(self) -> list[dict]:
-        return self._list_evidence() if self._list_evidence else []
+        from ..plugin_runtime.evidence import _record_view
+        return [_record_view(record) for record in self._list_evidence()] if self._list_evidence else []
 
     def read_evidence(self, name: str) -> bytes:
         raw = self._read_evidence(name) if self._read_evidence else self.read_input(name)

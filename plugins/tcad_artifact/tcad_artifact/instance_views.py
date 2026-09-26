@@ -2,7 +2,7 @@
 
 from collections.abc import Mapping
 
-from scidiscovery.artifact_agent.approval_ui.presentation import (
+from scidiscovery.plugin_runtime.presentation import (
     MISSING, NO_SOURCE, NO_UNCERTAINTY, add_fields, add_gap, citation,
     empty, items, parameter, pointer, source, dependency_cohort, dependency_complete, ParameterPageRows,
 )

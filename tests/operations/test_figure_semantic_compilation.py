@@ -147,7 +147,7 @@ def _saved_family(tmp_path, *, unresolved=False, partial_alias_recovery=False):
     """Use real domain tools/algorithm with a bounded in-memory control receipt store."""
     from types import SimpleNamespace
     from scidiscovery.artifact_agent.schema.refs import ArtifactRef
-    from scidiscovery.artifact_agent.service.tool_evidence import ToolEvidenceManifest
+    from scidiscovery.artifact_agent.schema.tool_evidence import ToolEvidenceManifest
     from curve_figure_evidence.figure_worker_tool import FigureDigitizationPreviewInput, _preview, _save
     source, request = _source_and_request()
     if unresolved:
@@ -214,7 +214,7 @@ def test_author_saves_complete_selected_family_and_bundle_consumes_it(tmp_path):
     from curve_figure_evidence.figure_family import selected_family_files
     from curve_figure_evidence.operation_transforms import bundle_selected_figure
     proof, contents, source = _saved_family(tmp_path)
-    files = selected_family_files(proof, contents, source)
+    files = selected_family_files(proof.records, contents, source)
     assert "figure_request/request.json" in files
     assert len([name for name in files if name.startswith("audit_overlays/")]) == 2
     result = bundle_selected_figure({"figure_provenance": (canonical_json(proof),), "figure_family": tuple(contents.values())})
@@ -240,14 +240,14 @@ def test_selected_family_rejects_identity_and_completeness_defects(tmp_path, def
     else:
         proof = proof.model_copy(update={"records": ({**proof.records[0], "tool_name": "other_tool"}, *proof.records[1:])})
     with pytest.raises(ValueError):
-        selected_family_files(proof, contents, source)
+        selected_family_files(proof.records, contents, source)
 
 
 def test_unresolved_selection_retains_limits_without_quantitative_bundle(tmp_path):
     from curve_figure_evidence.figure_family import selected_family_files
     from curve_figure_evidence.operation_transforms import bundle_selected_figure
     proof, contents, source = _saved_family(tmp_path, unresolved=True)
-    assert set(selected_family_files(proof, contents, source)) == {"figure_request/request.json"}
+    assert set(selected_family_files(proof.records, contents, source)) == {"figure_request/request.json"}
     with pytest.raises(ValueError, match="quantitative"):
         bundle_selected_figure({"figure_provenance": (canonical_json(proof),), "figure_family": tuple(contents.values())})
 
@@ -255,7 +255,7 @@ def test_unresolved_selection_retains_limits_without_quantitative_bundle(tmp_pat
 def test_partial_save_recovery_reuses_exact_members_despite_source_alias_change(tmp_path):
     from curve_figure_evidence.figure_family import selected_family_files
     proof, contents, source = _saved_family(tmp_path, partial_alias_recovery=True)
-    assert selected_family_files(proof, contents, source)
+    assert selected_family_files(proof.records, contents, source)
     assert proof.records[0]["metadata"]["derived_from"] == ("paper_source",)
     assert proof.records[-1]["metadata"]["derived_from"] == ("renamed_original",)
 
