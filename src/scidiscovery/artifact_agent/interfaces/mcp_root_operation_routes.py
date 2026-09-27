@@ -999,7 +999,19 @@ class RootOperationRoutes:
         self._validate_complete_transform_family(bound)
         self._validate_revision_policy(bound)
         self._validate_compiled_input_admission(bound)
+        from ..service.scientific_usage import scientific_use_restricted, ScientificProvenanceError
+        from ...operations.tooling import reference_policy
         for item in bound.inputs:
+            if bound.compiled.spec.consequence != "explore" and item.usage == "claim_evidence" and self.runs is not None:
+                try:
+                    inherited = scientific_use_restricted(self.runs, (item.artifact.ref,), ignore_labels=(item.artifact.ref,),
+                        policy=reference_policy(bound.compiled))
+                except ScientificProvenanceError as error:
+                    raise OperationInvocationError("input_scientific_provenance_unavailable", port=item.port_name,
+                        message=str(error)) from error
+                if inherited:
+                    raise OperationInvocationError("input_scientific_claim_forbidden", port=item.port_name,
+                        message="The exact cited source retains a scientific-use restriction.")
             if (
                 bound.compiled.spec.consequence != "explore"
                 and item.usage == "claim_evidence"

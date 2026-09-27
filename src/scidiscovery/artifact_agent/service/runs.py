@@ -1550,6 +1550,10 @@ class RunService(ToolEvidenceMixin):
         candidate_digest: str,
     ) -> ArtifactRef:
         compiled = self._compiled(value)
+        from .scientific_usage import output_sources, scientific_use_restricted
+        from ...operations.tooling import reference_policy
+        restricted = scientific_use_restricted(self, output_sources(
+            self, value, compiled, validated.output_port, validated.content), policy=reference_policy(compiled))
         manifest = self._evidence_manifest(value)
         extra_parents = (manifest,) if manifest is not None else ()
         return self.artifacts.register(
@@ -1570,7 +1574,8 @@ class RunService(ToolEvidenceMixin):
                     **(
                         {"scientific_claim_admissible": "false"}
                         if (
-                            compiled.spec.consequence == "explore"
+                            restricted
+                            or compiled.spec.consequence == "explore"
                             or compiled.spec.catalog_scope == "internal"
                         )
                         else {}

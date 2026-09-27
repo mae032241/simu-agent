@@ -34,13 +34,15 @@ def _source(workspace, name):
 
 def publish_attachments(runs, run_id, request, *, workspace):
     run = runs._require_running(run_id)
-    from ...operations.tooling import tool_evidence_ports
+    from ...operations.tooling import reference_policy, tool_evidence_ports
     port = tool_evidence_ports(runs._compiled(run)).get('attachments')
     if port is None:
         raise ValueError('This task has no attachment publication capability')
     settings = AttachmentSettings.model_validate((run.recovery_policy or {}).get('attachments', {}))
     aliases = tuple(dict.fromkeys(request.source_aliases))
     sources = tuple(runs.source_descriptor(run, alias).artifact_ref for alias in aliases)
+    from .scientific_usage import scientific_use_restricted
+    restricted = scientific_use_restricted(runs, sources, policy=reference_policy(runs._compiled(run)))
     parents = tuple(dict.fromkeys((*[item.artifact_ref for item in run.inputs], *sources)))
     if len({item.path for item in request.files}) != len(request.files):
         raise ValueError('Duplicate attachment paths in one request')
@@ -113,7 +115,8 @@ def publish_attachments(runs, run_id, request, *, workspace):
                         schema_id=port.schema_id, payload_schema_version=1, media_type=media, creator=runs.service_actor,
                         parent_refs=parents, labels={'operation_id':run.operation_id, 'operation_version':run.operation_version,
                             'operation_digest':run.operation_digest, 'operation_output_port':'attachments',
-                            'tool_name':'worker_publish_files', 'tool_producer_run':run_id, 'source_origin':'agent_authored'},
+                            'tool_name':'worker_publish_files', 'tool_producer_run':run_id, 'source_origin':'agent_authored',
+                            **({'scientific_claim_admissible': 'false'} if restricted else {})},
                         confidentiality='run_private'), expected_sha256=digest, expected_size=size,
                         idempotency_key=f'run:{run_id}:attachment:{key}', chunk_bytes=settings.chunk_bytes,
                         check_budget=check_budget)

@@ -8,7 +8,7 @@ from ..schema.tool_evidence import (ToolSourceBinding, ToolAttempt, ToolAttemptP
     ToolRecoveryOrigin, ToolRecoveryProof, ToolEvidenceManifest)
 from ...operation_declaration import schema_resource
 from ...operation_contract import DiagnosticError, contract_diagnostic
-from ...operations.tooling import tool_evidence_ports
+from ...operations.tooling import reference_policy, tool_evidence_ports
 from ..schema.artifact import ArtifactRegistration
 from ..schema.common import canonical_json
 from ..schema.refs import ArtifactRef
@@ -396,6 +396,9 @@ class ToolEvidenceMixin(ReferenceAccessMixin):
         for ref in derived_refs:
             if ref not in parent_refs:
                 parent_refs.append(ref)
+        from .scientific_usage import scientific_use_restricted
+        restricted = scientific_use_restricted(self, (*derived_refs, *((source_ref,) if source_ref else ()), *trusted_parent_refs),
+            policy=reference_policy(compiled))
         port = ports['tool_evidence']
         if len(raw) > min(port.max_item_bytes, 32 * 1024 * 1024):
             raise ValueError('file_bytes')
@@ -433,6 +436,7 @@ class ToolEvidenceMixin(ReferenceAccessMixin):
                 parent_refs=tuple(parent_refs),
                 labels={'operation_id':value.operation_id,'operation_digest':value.operation_digest,'operation_version':value.operation_version,
                         'operation_output_port':'tool_evidence','tool_name':tool_name,'tool_producer_run':run_id,
+                        **({'scientific_claim_admissible': 'false'} if restricted else {}),
                         **({'source_origin':'public_web', 'original_source_alias':alias} if external_source else {}),
                         **({'analysis_artifact_kind':metadata['kind']} if metadata.get('kind') in
                            {'calculation_record', 'calculation_details', 'analysis_script', 'analysis_derived'} else {}),
