@@ -290,7 +290,7 @@ class RunService(ToolEvidenceMixin):
             recovery_policy["input_materials"] = material_policy.model_dump()
         if resume_from is None and draft_from is None:
             instance_settings = parse_settings(self.scheduler_bindings.agent_settings(instance_id)["settings"])
-            for key in ("helpers", "execution_io"):
+            for key in ("helpers", "execution_io", "attachments"):
                 recovery_policy[key].update(getattr(instance_settings, key).model_dump(exclude_unset=True))
         with self._connect() as connection:
             self._attach_scheduler(connection)
@@ -347,6 +347,7 @@ class RunService(ToolEvidenceMixin):
             if resume_from is not None or draft_from is not None:
                 recovery_policy["helpers"] = (source.recovery_policy or {}).get("helpers", {"max_depth": 0})
                 recovery_policy["execution_io"] = (source.recovery_policy or {}).get("execution_io", ExecutionIOSettings().model_dump())
+                recovery_policy["attachments"] = (source.recovery_policy or {}).get("attachments", recovery_policy["attachments"])
             if scheduler_budget is None and (resume_from is not None or draft_from is not None):
                 scheduler_budget = (source.recovery_policy or {}).get("scheduler_max_attempts")
             if scheduler_budget is not None:
@@ -465,6 +466,7 @@ class RunService(ToolEvidenceMixin):
                     revision_workspace_mode=revision_workspace_mode,
                     prior_source_bindings=dict(self.prior_source_bindings(self.status(run_id))),
                     deadline_at=deadline_at,
+                    attachment_settings=recovery_policy.get("attachments"),
                 ),
                 result_schema=result_schema_json(
                     compiled,
@@ -755,6 +757,7 @@ class RunService(ToolEvidenceMixin):
             "helpers": self.agent_settings.helpers.model_dump(),
             "execution_io": self.agent_settings.execution_io.model_dump(),
             "input_materials": self.agent_settings.input_materials.model_dump(),
+            "attachments": self.agent_settings.attachments.model_dump(),
             "snapshot_max_files": 132, "snapshot_max_bytes": 32 * 1024 * 1024,
         }
 

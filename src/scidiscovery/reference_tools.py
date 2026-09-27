@@ -77,7 +77,7 @@ def reference_tool():
     from .operations.tooling import WorkerToolDefinition
     return WorkerToolDefinition(
         name='worker_reference_read',
-        description='List direct citations or read one exact cited original on demand; no recursive material bundle. Select one calculation before requesting its inputs.',
+        description='List direct citations and published attachments of one exact bound report, or read a selected original. Use delivery=file for large originals (streamed under frozen input_materials budgets); fragment reads have bounded memory. Select one calculation before requesting its inputs.',
         input_model=ReferenceReadRequest, capability='reference.read',
         contextual_handler=reference_handler, reference_policy=ReferencePolicy(),
     )

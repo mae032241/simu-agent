@@ -215,8 +215,11 @@ PLUGIN = PluginDefinition(
 _hardened_native = REVIEWER.executor.native_tools.model_copy(update={"shell": "none"})
 HARDENED_PLUGIN = PLUGIN.model_copy(update={"operations": (
     AUTHOR,
-    REVIEWER.model_copy(update={"executor":
-        REVIEWER.executor.model_copy(update={"native_tools": _hardened_native})}),
+    REVIEWER.model_copy(update={
+        "outputs": tuple(p for p in REVIEWER.outputs if p.name != "attachments"),
+        "executor": REVIEWER.executor.model_copy(update={"native_tools": _hardened_native,
+            "tools": tuple(t for t in REVIEWER.executor.tools
+                if t.component_id not in {"publish_files_tool", "materialize_input_tool"})})}),
 )})
 
 # The stdio transport regression imports this fixture in a fresh interpreter.

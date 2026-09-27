@@ -47,6 +47,13 @@ class OperationToolContext:
     def input_names_for_port(self, port: str) -> tuple[str, ...]:
         return self._input_names_for_port(port) if self._input_names_for_port else ()
 
+    _publish_files: Callable[..., dict] | None = None
+
+    def publish_files(self, request):
+        if self._publish_files is None:
+            raise ValueError("tool has no scientific attachment capability")
+        return self._publish_files(request)
+
     _read_reference: Callable[..., dict] | None = None
 
     def read_reference(self, request):

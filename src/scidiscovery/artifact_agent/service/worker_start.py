@@ -24,6 +24,12 @@ def startup_document(assignment: dict, domain: dict | None = None) -> dict:
             'including any required handoff. Combine needed fields in one call. The reader supplements retained definitions; '
             'refresh after schema changes or context loss. Read field meanings, shared rules and reference definitions before writing.',
     }
+    if 'worker_publish_files' in assignment.get('tools', ()):
+        result['output']['attachments'] = (
+            'Keep CSV/JSON/images/scripts and other deliverables below scratch/. Publish them with worker_publish_files '
+            'using paths, scientific purpose and exact source aliases; control assigns types, hashes and bindings. '
+            'Write only the form to output/result.json; do not put attachments in output/ or embed files in narrative fields. '
+            'Publication retains bytes and provenance, not scientific validation. Returned references are reusable evidence.')
     result['reading'] = {
         'inputs': 'Use source_name with python tools/read_input.py SOURCE. --directory lists JSON keys; '
             '--pointer /FIELD selects a known field (repeat for multiple fields). Omit --pointer to read the root; / is an empty-key member. '

@@ -594,7 +594,7 @@ def test_wildcard_schema_is_limited_to_read_only_evidence_ports() -> None:
     )
     assert wildcard_ports
     assert all(
-        port.exposure in {"handoff_only", "on_demand"}
+        port.exposure in {"handoff_only", "on_demand", "material", "file_reference"}
         and port.usage == "evidence_inventory"
         for port in wildcard_ports
     )

@@ -1,4 +1,6 @@
 """Exact references, recovery scopes and atomic access receipts on real SQLite."""
+from contextlib import contextmanager
+import io
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 import hashlib
@@ -26,7 +28,7 @@ class Harness(ToolEvidenceMixin):
         self.envelopes = {}
         self.producers = {}
         self.inputs = {}
-        self.artifacts = SimpleNamespace(read=self.read, catalog=lambda ref: self.envelopes[ref])
+        self.artifacts = SimpleNamespace(read=self.read, catalog=lambda ref: self.envelopes[ref], open_original=self.open_original)
         self.backend = SimpleNamespace(capabilities=('native_workspace',), open=lambda run_id: SimpleNamespace(root=root / run_id / 'workspace', input_paths={item.source_name: root/run_id/'workspace'/'inputs'/item.source_name for item in self.inputs.get(run_id, ())}))
         with self._connect() as db:
             db.executescript('''
@@ -52,7 +54,7 @@ class Harness(ToolEvidenceMixin):
         with self._connect() as db:
             row = dict(self._row(db, run_id))
         return SimpleNamespace(**row, operation_digest='a' * 64, inputs=self.inputs[run_id],
-                               output_ref=self.producers.get(run_id))
+                               output_ref=self.producers.get(run_id), recovery_policy={})
 
     def _require_running(self, run_id):
         result = self.status(run_id)
@@ -81,6 +83,10 @@ class Harness(ToolEvidenceMixin):
     def completed_for_output(self, ref):
         producer = self.producers.get(ref)
         return self.status(producer) if producer else None
+
+    @contextmanager
+    def open_original(self, ref):
+        yield io.BytesIO(self.contents[ref])
 
     def read(self, ref):
         return self.contents[ref]
@@ -328,7 +334,7 @@ def test_independent_scopes_charge_same_ref_independently(harness):
 def test_binary_committed_response_survives_publish_interruption(harness, monkeypatch):
     target, _, handle = prepared(harness, b'\x00\xffbinary', 'application/octet-stream')
     publish = harness._reference_publish_file
-    monkeypatch.setattr(harness, '_reference_publish_file', lambda *args: (_ for _ in ()).throw(OSError('fixture interruption')))
+    monkeypatch.setattr(harness, '_reference_publish_file', lambda *args, **kwargs: (_ for _ in ()).throw(OSError('fixture interruption')))
     failed = harness.call('reader', action='read', reference=handle)
     assert failed['state'] == 'rejected'
     records = harness.reference_access_records('reader')
@@ -351,17 +357,19 @@ def test_binary_unavailable_backend_does_not_create_source(harness):
 
 def test_binary_cancellation_never_exposes_staged_file(harness):
     target, _, handle = prepared(harness, b'\x00\xffbinary', 'application/octet-stream')
-    original = harness.artifacts.read
+    original = harness.artifacts.open_original
+    @contextmanager
     def read(ref):
-        raw = original(ref)
-        if ref == target:
-            with harness._connect() as db:
-                db.execute("UPDATE runs SET state='cancelled' WHERE run_id='reader'")
-        return raw
-    harness.artifacts.read = read
+        with original(ref) as stream:
+            if ref == target:
+                with harness._connect() as db:
+                    db.execute("UPDATE runs SET state='cancelled' WHERE run_id='reader'")
+            yield stream
+    harness.artifacts.open_original = read
     assert harness.call('reader', action='read', reference=handle)['state'] == 'rejected'
-    assert not (harness.root / 'reader/workspace/.reference-access').exists()
-    assert harness.reference_access_records('reader') == []
+    assert not list((harness.root / 'reader/workspace/.reference-access').glob('*'))
+    # Exact authorization survives, but the interrupted file is never exposed.
+    assert len(harness.reference_access_records('reader')) == 1
 
 
 def test_material_limit_and_same_bytes_different_refs_are_not_deduplicated(harness):
@@ -470,14 +478,14 @@ def test_full_file_delivery_rejects_partial_selectors(selector):
         ReferenceReadRequest(source='root', action='read', reference='handle', delivery='file', **selector)
 
 
-def test_reference_only_new_router_requires_explicit_running_or_queued_recovery(tmp_path, monkeypatch):
+def test_review_new_router_requires_explicit_running_or_queued_recovery(tmp_path, monkeypatch):
     from scidiscovery.artifact_agent.interfaces.mcp_local_worker import LocalWorkerMCPRouter, WorkerToolError
     from tests.operations.test_r4_experiment_task import _real_experiment
 
     runtime, root, catalog, _, _ = _real_experiment(tmp_path, monkeypatch)
     operation = catalog.operation('science.object.review.v1')
     assert any(tool.reference_policy is not None for tool in operation.worker_tools)
-    assert not any(tool.evidence_ports or tool.record_attempts for tool in operation.worker_tools)
+    assert any(tool.name == "worker_publish_files" for tool in operation.worker_tools)
     assert any(port.name == 'recovery_manifest_output' for port in operation.spec.outputs)
     request = dict(name='reference_only_review', operation_id=operation.spec.operation_id,
         instruction='Review the bounded fixture plan.',

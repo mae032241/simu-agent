@@ -18,6 +18,7 @@ from blind_csv_plugin.plugin import (
     JSON_CODEC,
     OBSERVATION,
     PLUGIN,
+    HARDENED_PLUGIN,
     REVIEWER,
     TABLE,
     WORKSPACE,
@@ -189,22 +190,7 @@ DUAL_AUTHOR = scientific_agent_operation(
 
 
 def _catalog(*, hardened: bool = False, reviewer=REVIEWER, revision=REVISION):
-    operations = PLUGIN.operations if hardened else (DUAL_AUTHOR, reviewer)
-    if hardened:
-        operations = tuple(
-            operation.model_copy(
-                update={
-                    "executor": operation.executor.model_copy(
-                        update={
-                            "native_tools": operation.executor.native_tools.model_copy(
-                                update={"shell": "none"}
-                            )
-                        }
-                    )
-                }
-            )
-            for operation in operations
-        )
+    operations = HARDENED_PLUGIN.operations if hardened else (DUAL_AUTHOR, reviewer)
     plugin = PLUGIN.model_copy(
         update={
             "components": (

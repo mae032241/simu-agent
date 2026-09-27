@@ -534,7 +534,7 @@ def _validate_operation_contracts(plugin_map: dict[str, PluginDefinition], compo
             if executor.kind == "agent":
                 if not executor.workspace or not executor.prompt: _fail("agent_authority_incomplete", plugin.plugin_id, op_id)
                 tool_ports = declared_tool_output_names(tuple(components[_qualified(plugin.plugin_id, ref)].implementation for ref in executor.tools))
-                if tool_ports and (tool_ports not in ({'recovery_manifest_output'}, {'tool_evidence', 'recovery_manifest_output'})
+                if tool_ports and ((not tool_ports <= {'recovery_manifest_output', 'tool_evidence', 'attachments'} or 'recovery_manifest_output' not in tool_ports)
                         or tool_ports != {port.name for port in operation.outputs if port.collection is not None}):
                     _fail("agent_tool_evidence_contract_invalid", plugin.plugin_id, op_id)
                 agent_outputs = tuple(port for port in operation.outputs if not (port.collection is not None and port.name in tool_ports))

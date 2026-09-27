@@ -295,3 +295,15 @@ def test_wording_revision_reuses_prior_family_without_digitization(tmp_path, mon
     assert result["reused"] is True
     assert tuple(adopted) == proof.records
     assert {item["alias"] for item in result["files"]} == {record["alias"] for record in proof.records}
+
+
+def test_common_attachments_do_not_pollute_selected_figure_transform(tmp_path):
+    from curve_figure_evidence.operation_transforms import bundle_selected_figure
+    proof, contents, source = _saved_family(tmp_path)
+    attachment = {**proof.records[0], 'alias':'attachment_001',
+        'tool_name':'worker_publish_files', 'output_port':'attachments',
+        'metadata':{'kind':'scientific_attachment', 'file_name':'notes.csv', 'purpose':'Analysis table'}}
+    mixed = proof.model_copy(update={'records':(*proof.records, attachment)})
+    result=bundle_selected_figure({'figure_provenance':(canonical_json(mixed),),
+                                  'figure_family':tuple(contents.values())})
+    assert result['curve_bundle']

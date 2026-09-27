@@ -34,7 +34,7 @@ def scientific_evidence_projection(raw):
     return canonical_json({"materials": [{"reference": item["alias"],
         "media_type": item["media_type"], "size_bytes": item["size_bytes"],
         **{key: value for key, value in item.get("metadata", {}).items()
-           if key in {"kind", "stage", "name", "derived_from"}}}
+           if key in {"kind", "stage", "name", "derived_from", "file_name", "purpose"}}}
         for item in manifest.get("records", ())]})
 
 
@@ -176,6 +176,10 @@ class ToolAttemptLimit(DiagnosticError):
 
 
 class ToolEvidenceMixin(ReferenceAccessMixin):
+    def publish_attachments(self, run_id, request, *, workspace):
+        from .attachments import publish_attachments
+        return publish_attachments(self, run_id, request, workspace=workspace)
+
     def source_descriptor(self, value, alias):
         source = next((item for item in value.inputs if item.source_name == alias), None)
         if source is not None:
@@ -190,7 +194,7 @@ class ToolEvidenceMixin(ReferenceAccessMixin):
         if record is None: raise ValueError("unknown controlled source alias")
         ref = ArtifactRef.model_validate(record["artifact_ref"])
         envelope = self.artifacts.catalog(ref)
-        return InputBindingDescriptor(source_name=alias, port_name=("reference_access" if record.get("record_type") == "reference_access" else "tool_evidence"), artifact_ref=ref,
+        return InputBindingDescriptor(source_name=alias, port_name=("reference_access" if record.get("record_type") == "reference_access" else record.get("output_port", "tool_evidence")), artifact_ref=ref,
             media_type=record["media_type"], size_bytes=record["size_bytes"], sha256=ref.sha256,
             output_name=record.get("metadata", {}).get("output_name", envelope.labels.get("logical_name")), parent_refs=envelope.parent_refs,
             labels=tuple(envelope.labels.items()), producer_run_id=record.get("producer_run_id"))
@@ -308,13 +312,19 @@ class ToolEvidenceMixin(ReferenceAccessMixin):
             if only_alias is not None and record['alias'] != only_alias:
                 continue
             ref = ArtifactRef.model_validate(record['artifact_ref'])
+            if only_alias is not None and self.artifacts.catalog(ref).size_bytes > 32 * 1024 * 1024:
+                raise ValueError('Large evidence requires streamed input_path or worker_reference_read delivery=file')
             try:
-                raw = self.artifacts.read(ref)
+                reference_only = only_alias is None and (record.get('output_port') == 'attachments'
+                    or (record.get('record_type') == 'reference_access' and record.get('provided', {}).get('kind') == 'file_access'))
+                if reference_only:
+                    self.artifacts.verify(ref)
+                raw = b'' if reference_only else self.artifacts.read(ref)
                 envelope = self.artifacts.catalog(ref)
             except Exception as error:
                 raise RunCheckerError('tool evidence is unavailable', category='integrity_failure') from error
             alias = record['alias']
-            if hashlib.sha256(raw).hexdigest() != ref.sha256:
+            if not reference_only and hashlib.sha256(raw).hexdigest() != ref.sha256:
                 raise RunCheckerError('tool evidence changed', category='integrity_failure')
             contents[alias] = raw
             descriptors[alias] = self.source_descriptor(self.status(run_id), alias)
@@ -389,8 +399,8 @@ class ToolEvidenceMixin(ReferenceAccessMixin):
             if existing:
                 return json.loads(existing[0])
             all_records = [json.loads(r[0]) for r in connection.execute('SELECT record_json FROM run_tool_evidence WHERE run_id=?',(run_id,))]
-            records = [r for r in all_records if r.get('record_type') != 'reference_access']
-            if len(records) >= min(port.max_items,128) or sum(r['size_bytes'] for r in records)+len(raw) > port.collection.max_total_bytes:
+            records = [r for r in all_records if r.get('record_type') != 'reference_access' and r.get('output_port', 'tool_evidence') == 'tool_evidence']
+            if len([r for r in all_records if r.get('record_type') != 'reference_access']) >= 128 or len(records) >= port.max_items or sum(r['size_bytes'] for r in records)+len(raw) > port.collection.max_total_bytes:
                 raise ValueError('evidence_budget')
             if metadata.get('output_name') and any(r['metadata'].get('output_name')==metadata['output_name'] for r in records):
                 raise ValueError('ambiguous_mapping')
@@ -434,7 +444,7 @@ class ToolEvidenceMixin(ReferenceAccessMixin):
                 or bound.artifact_ref not in self.artifacts.catalog(producer.output_ref).parent_refs):
             raise ValueError("reuse manifest is not a completed same-Operation family")
         proof = ToolEvidenceManifest.model_validate_json(self.artifacts.read(bound.artifact_ref), strict=True)
-        records = [dict(r) for r in proof.records]
+        records = [dict(r) for r in proof.records if r.get("output_port", "tool_evidence") == "tool_evidence"]
         available = {i.artifact_ref for i in value.inputs}
         if len(records) != len({r["alias"] for r in records}):
             raise ValueError("reuse manifest aliases are ambiguous")
@@ -491,7 +501,7 @@ class ToolEvidenceMixin(ReferenceAccessMixin):
     @staticmethod
     def _encode_evidence_snapshot(value, records, accesses, recovery, attempts):
         bindings = {item.source_name:{"schema_version":1,"artifact_ref":item.artifact_ref.model_dump(mode="json"), "port_name":item.port_name} for item in value.inputs}
-        bindings.update({r['alias']:{"schema_version":1,"artifact_ref":r['artifact_ref'], "port_name":"tool_evidence"} for r in records})
+        bindings.update({r['alias']:{"schema_version":1,"artifact_ref":r['artifact_ref'], "port_name":r.get("output_port", "tool_evidence")} for r in records})
         for record in accesses:
             bindings.setdefault(record['alias'], {'schema_version':1,'artifact_ref':record['artifact_ref'], 'port_name':'reference_access'})
         if len(bindings) > 128:
@@ -659,19 +669,27 @@ class ToolEvidenceMixin(ReferenceAccessMixin):
         current=next((i.artifact_ref for i in value.inputs if i.port_name=='execution_result'),None)
         if source.instance_id!=value.instance_id:
             raise RunCheckerError('preserved tool evidence belongs to another execution',category='integrity_failure')
-        port = tool_evidence_ports(self._compiled(value)).get('tool_evidence')
-        if port is None or len(previous) > port.max_items or sum(r['size_bytes'] for r in previous) > port.collection.max_total_bytes:
-            raise RunCheckerError('preserved evidence exceeds this operation capability',category='integrity_failure')
+        ports = tool_evidence_ports(self._compiled(value))
+        from ...agent_execution_settings import AttachmentSettings
+        attachment_limits = AttachmentSettings.model_validate((value.recovery_policy or {}).get('attachments', {}))
+        for port_name in {r.get('output_port', 'tool_evidence') for r in previous}:
+            port = ports.get(port_name)
+            subset = [r for r in previous if r.get('output_port', 'tool_evidence') == port_name]
+            max_items = attachment_limits.max_files if port_name == 'attachments' else (port.max_items if port else 0)
+            max_total = attachment_limits.max_total_bytes if port_name == 'attachments' else (port.collection.max_total_bytes if port else 0)
+            if port is None or len(subset) > max_items or sum(r['size_bytes'] for r in subset) > max_total:
+                raise RunCheckerError('preserved evidence exceeds this operation capability',category='integrity_failure')
         available_refs = {item.artifact_ref for item in value.inputs}
         available_refs.update(ArtifactRef.model_validate(r["artifact_ref"]) for r in self.reference_access_records(run_id))
         for index, record in enumerate(previous):
+            port_name = record.get('output_port', 'tool_evidence')
+            port = ports[port_name]
             ref=ArtifactRef.model_validate(record['artifact_ref'])
             try:
-                raw=self.artifacts.read(ref)
-                envelope=self.artifacts.catalog(ref)
+                envelope=self.artifacts.verify(ref)
             except Exception as error:
                 raise RunCheckerError('preserved evidence bytes unavailable', category='integrity_failure') from error
-            if hashlib.sha256(raw).hexdigest()!=ref.sha256:
+            if envelope.size_bytes != record['size_bytes']:
                 raise RunCheckerError('preserved evidence bytes changed',category='integrity_failure')
             try:
                 # Receipt aliases belong to the collecting producer, even after
@@ -694,7 +712,8 @@ class ToolEvidenceMixin(ReferenceAccessMixin):
                 origin_matches = origin_matches and origin.instance_id == value.instance_id
             except (KeyError, ValueError, RunError) as error:
                 raise RunCheckerError(f'preserved evidence records[{index}] origin is unavailable',category='integrity_failure') from error
-            if len(raw) > port.max_item_bytes or not origin_matches:
+            limit = attachment_limits.max_item_bytes if port_name == 'attachments' else port.max_item_bytes
+            if envelope.size_bytes > limit or not origin_matches:
                 raise RunCheckerError(f'preserved evidence records[{index}] receipt differs from its origin',category='integrity_failure')
             if not applicable:
                 # A valid old receipt can be outside the new input scope. Keep
@@ -702,7 +721,7 @@ class ToolEvidenceMixin(ReferenceAccessMixin):
                 continue
             if record['alias'] in {item.source_name for item in value.inputs}:
                 raise RunCheckerError('preserved evidence alias conflicts with current input',category='integrity_failure')
-            key = hashlib.sha256(canonical_json({'sha256':ref.sha256,
+            key = record.get('publication_key') or hashlib.sha256(canonical_json({'sha256':ref.sha256,
                 'metadata':record['metadata'], 'source':record['source_ref']})).hexdigest()
             # Adopt the exact receipt and CAS reference. Re-registering these bytes
             # would falsely make the new Run their original collecting producer.
@@ -726,7 +745,7 @@ class ToolEvidenceMixin(ReferenceAccessMixin):
         """Expected source wiring comes from bindings/receipts, never descriptors."""
         ports={item.source_name:item.port_name for item in value.inputs}
         records=self.tool_evidence(value.run_id)
-        ports.update({r['alias']:'tool_evidence' for r in records})
+        ports.update({r['alias']:r.get('output_port', 'tool_evidence') for r in records})
         for record in self.reference_access_records(value.run_id):
             ports.setdefault(record['alias'], 'reference_access')
         if tool_evidence_ports(self._compiled(value)):

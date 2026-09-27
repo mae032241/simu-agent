@@ -59,22 +59,6 @@ def execute(request, context):
     return context.require_service("experiment.execution").command(context, request)
 
 
-class InputFileRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid", strict=True)
-    source_name: str = Field(min_length=1, max_length=128,
-        description="Exact input source_name from the assignment.")
-
-
-def materialize_input(request, context):
-    try:
-        context.input_ref(request.source_name)  # Reject paths and undeclared sources.
-    except ValueError as error:
-        raise DiagnosticError("Unknown input source_name; choose an exact source_name from the assignment.") from error
-    path = context.input_path(request.source_name)
-    return {"source_name": request.source_name, "relative_path": str(path.relative_to(context.workspace)),
-            "size_bytes": path.stat().st_size, "state": "available",
-            "reading": "Use native file tools for PDFs, images or large tables; read bounded sections. This call returns no file contents."}
-
 
 def validate_report(raw):
     ExperimentReport.model_validate_json(raw, strict=True)
@@ -149,9 +133,7 @@ EXECUTE_TOOL = WorkerToolDefinition(name="worker_experiment_execute",
     description="Request, advance, collect or cancel this experiment's formal execution; status and capabilities are read-only. Read text or export exact collected scientific files into scratch for local analysis. Uses configured authorization and the original scientific budget.",
     input_model=ExecuteExperiment, capability="experiment.execute", contextual_handler=execute,
     optional_services=("experiment.execution",), evidence_ports=("tool_evidence", "recovery_manifest_output"))
-INPUT_TOOL = WorkerToolDefinition(name="worker_materialize_input",
-    description="Stream one exact bound input into the workspace for native reading or analysis; returns its path, never its contents.",
-    input_model=InputFileRequest, capability="material.input", contextual_handler=materialize_input)
+
 
 _REF = ComponentRef
 COMPONENTS = (
@@ -169,7 +151,6 @@ COMPONENTS = (
         resources=(_REF("experiment_task_finalizer"),)),
     ComponentSpec("experiment_stage_tool", "worker_tool", __name__ + ":STAGE_TOOL"),
     ComponentSpec("experiment_execute_tool", "worker_tool", __name__ + ":EXECUTE_TOOL"),
-    ComponentSpec("experiment_input_tool", "worker_tool", __name__ + ":INPUT_TOOL"),
 )
 OPERATION = scientific_agent_operation(
     "science.experiment.v1", "Complete a bounded experiment from scientific design through execution and validity judgment.",
@@ -178,7 +159,7 @@ OPERATION = scientific_agent_operation(
     decision_fields=("outcome", "summary", "remaining_question", "limitations"),
     agent=_REF("experiment_task_agent"), prompt=_REF("experiment_task_prompt"),
     workspace=_REF("experiment_task_workspace"),
-    tools=BASE_TOOLS + (_REF("experiment_stage_tool"), _REF("experiment_execute_tool"), _REF("experiment_input_tool")),
+    tools=BASE_TOOLS + (_REF("experiment_stage_tool"), _REF("experiment_execute_tool")),
     inputs=(
         _input("research_objective", "Exact scientific objective and constraints.", "scidiscovery.research-objective.v1"),
         _input("scientific_materials", "Exact hypothesis, evidence, parameters or feedback needed for this experiment.", "*",

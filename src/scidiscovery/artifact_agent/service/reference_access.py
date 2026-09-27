@@ -11,6 +11,7 @@ import uuid
 from ..schema.common import canonical_json
 from ..schema.refs import ArtifactRef
 from .run_records import RunStateConflict, timestamp
+from ...plugin_runtime.workspace import WorkspaceError
 
 
 class ReferenceAccessError(ValueError):
@@ -158,10 +159,16 @@ class ReferenceAccessMixin:
             self._reference_event(connection, value.run_id, 'reference_read_reserved', reservation)
             return reservation
 
-    def _reference_read_bytes(self, value, ref, policy, call, *, material=False):
+    def _reference_reserve_bytes(self, value, ref, policy, call, *, material=False, file_delivery=False):
         self._reference_deadline(call)
         envelope = self.artifacts.catalog(ref)
-        if envelope.size_bytes > policy.max_file_bytes:
+        file_limit, unique_limit, io_limit = policy.max_file_bytes, policy.max_unique_bytes, policy.max_io_bytes
+        if file_delivery:
+            from ...agent_execution_settings import MaterialInputSettings
+            settings = MaterialInputSettings.model_validate((value.recovery_policy or {}).get('input_materials', {}))
+            file_limit, unique_limit = settings.max_item_bytes, settings.max_total_bytes
+            io_limit = settings.max_total_bytes + policy.max_io_bytes
+        if envelope.size_bytes > file_limit:
             raise ReferenceAccessError('reference_file_limit', 'Original exceeds the declared single-file byte limit.')
         with self._connect() as connection:
             connection.execute('BEGIN IMMEDIATE')
@@ -169,15 +176,19 @@ class ReferenceAccessMixin:
             usage = self._reference_usage(connection, call['budget_scope'])
             key = _digest(ref.model_dump(mode='json'))
             if material and key not in usage['materials']:
-                if sum(usage['materials'].values()) + envelope.size_bytes > policy.max_unique_bytes:
+                if sum(usage['materials'].values()) + envelope.size_bytes > unique_limit:
                     raise ReferenceAccessError('reference_material_limit', 'Unique original-material budget exhausted.')
                 self._reference_event(connection, value.run_id, 'reference_material_reserved', {
                     'budget_scope': call['budget_scope'], 'reservation_id': call['reservation_id'],
                     'ref_key': key, 'bytes': envelope.size_bytes})
-            if usage['io_bytes'] + envelope.size_bytes > policy.max_io_bytes:
+            if usage['io_bytes'] + envelope.size_bytes > io_limit:
                 raise ReferenceAccessError('reference_io_limit', 'Cumulative original IO budget exhausted.')
             self._reference_event(connection, value.run_id, 'reference_io_reserved', {
                 'budget_scope': call['budget_scope'], 'reservation_id': call['reservation_id'], 'bytes': envelope.size_bytes})
+        return envelope
+
+    def _reference_read_bytes(self, value, ref, policy, call, *, material=False):
+        envelope = self._reference_reserve_bytes(value, ref, policy, call, material=material)
         raw = self.artifacts.read(ref)
         self._reference_deadline(call)
         if len(raw) != envelope.size_bytes or hashlib.sha256(raw).hexdigest() != ref.sha256:
@@ -297,7 +308,6 @@ class ReferenceAccessMixin:
 
     def _reference_edges(self, value, source_ref, policy, call, pointer=None, reference=None, root_ref=None):
         producer, manifest, selected, manifest_ref = self._reference_pair(value, source_ref, policy, call, root_ref)
-        raw = self._reference_read_bytes(value, source_ref, policy, call)
         rules = [rule for rule in policy.rules if rule.schema_id == source_ref.schema_id]
         aliases = []
         sections = []
@@ -306,7 +316,12 @@ class ReferenceAccessMixin:
         scoped_bindings = manifest.get('bindings', {})
         scoped_records = manifest.get('records', [])
         known_aliases = set(scoped_bindings) | {r['alias'] for r in scoped_records}
+        if selected is None:
+            aliases.extend(('/@attachments/' + _escape(r['alias']), r['alias'], None)
+                           for r in scoped_records if r.get('output_port') == 'attachments'
+                           and (not pointer or ('/@attachments/' + _escape(r['alias'])).startswith(pointer)))
         if rules or (selected and selected.get('metadata', {}).get('kind') == 'calculation_record'):
+            raw = self._reference_read_bytes(value, source_ref, policy, call)
             try:
                 document = json.loads(raw)
             except (ValueError, UnicodeError) as error:
@@ -415,8 +430,10 @@ class ReferenceAccessMixin:
                 original_run, _, original_record, original_manifest = self._reference_pair(value, target, policy, call)
                 if original_record is not None:
                     original_proof = (original_run.run_id, original_manifest.model_dump(mode='json'))
+            attachment = next((r for r in records if r.get('alias') == alias and r.get('output_port') == 'attachments'), None)
             edges.append({'reference': handle, 'locator': locator, 'alias': alias,
                           'media_type': target_envelope.media_type, 'size_bytes': target_envelope.size_bytes,
+                          **({k: attachment['metadata'][k] for k in ('file_name', 'purpose') if k in attachment.get('metadata', {})} if attachment else {}),
                           '_edge': edge, '_producer': target_producer.run_id if target_producer else None,
                           '_manifest_ref': manifest_ref.model_dump(mode='json'), '_manifest_run': producer.run_id,
                           '_proof_run': original_proof[0] if original_proof else None,
@@ -438,12 +455,33 @@ class ReferenceAccessMixin:
             response['file_path'] = str(self.backend.open(run_id).root / '.reference-access' / (response['source'] + '.bin'))
         return response
 
-    def _reference_publish_file(self, run_id, response, raw):
+    def _reference_publish_file(self, run_id, response, raw, *, target=None, call=None):
         if 'file_path' not in response:
             return
         # The exact CAS object and response are committed first. A crash before
         # materialization is recovered by replay; no uncommitted file is exposed.
-        from .local_workspace import write_control_workspace_file
+        from ...plugin_runtime.workspace import write_control_workspace_file, write_control_workspace_stream
+        if target is not None:
+            from ...agent_execution_settings import MaterialInputSettings
+            value = self.status(run_id)
+            settings = MaterialInputSettings.model_validate((value.recovery_policy or {}).get('input_materials', {}))
+            def chunks():
+                digest, size = hashlib.sha256(), 0
+                with self.artifacts.open_original(target) as source:
+                    while chunk := source.read(settings.transfer_chunk_bytes):
+                        self._reference_deadline(call)
+                        size += len(chunk)
+                        if size > settings.max_item_bytes:
+                            raise ReferenceAccessError('reference_file_limit', 'Original exceeded material file budget.')
+                        digest.update(chunk)
+                        yield chunk
+                with self._connect() as connection:
+                    self._reference_running(connection, run_id)
+                if size != self.artifacts.catalog(target).size_bytes or digest.hexdigest() != target.sha256:
+                    raise ReferenceAccessError('reference_integrity_failure', 'Original differs from its frozen reference.')
+            write_control_workspace_stream(self.backend.open(run_id).root,
+                Path('.reference-access') / (response['source'] + '.bin'), chunks())
+            return
         write_control_workspace_file(self.backend.open(run_id).root,
             Path('.reference-access') / (response['source'] + '.bin'),
             raw, replace=True, mode=0o400, create_parents=True)
@@ -472,13 +510,13 @@ class ReferenceAccessMixin:
                 response = self._reference_delivery_response(run_id, original_record['response'])
                 raw = b''
                 if 'file_path' in response:
-                    raw = self._reference_read_bytes(value, _ref(original_record['artifact_ref']), policy, call, material=True)
+                    self._reference_reserve_bytes(value, _ref(original_record['artifact_ref']), policy, call, material=True, file_delivery=True)
                 with self._connect() as connection:
                     connection.execute('BEGIN IMMEDIATE')
                     self._reference_running(connection, run_id)
                     self._reference_settle(connection, value, call, response, request_key=request_key)
                 committed = True
-                self._reference_publish_file(run_id, response, raw)
+                self._reference_publish_file(run_id, response, raw, target=_ref(original_record['artifact_ref']) if 'file_path' in response else None, call=call)
                 return response
             current_material = self._reference_current_material(value, request.source)
             if current_material is not None:
@@ -520,7 +558,12 @@ class ReferenceAccessMixin:
             selected = matches[0]
             edge = selected['_edge']
             target = _ref(edge['target_ref'])
-            raw = self._reference_read_bytes(value, target, policy, call, material=True)
+            file_delivery = request.delivery == 'file' or not (selected['media_type'].startswith('text/') or 'json' in selected['media_type'])
+            raw = b''
+            if file_delivery:
+                self._reference_reserve_bytes(value, target, policy, call, material=True, file_delivery=True)
+            else:
+                raw = self._reference_read_bytes(value, target, policy, call, material=True)
             alias = request.source if current_material is not None else self._reference_alias(value, target)
             response = {'action': 'read', 'source': alias, 'media_type': selected['media_type'],
                         'provided': {'pointer': request.pointer, 'offset': request.offset, 'characters': 0}, 'next_offset': None, 'omitted': False}
@@ -567,7 +610,7 @@ class ReferenceAccessMixin:
                     self._reference_running(connection, run_id)
                     self._reference_settle(connection, value, call, response, request_key=request_key)
                 committed = True
-                self._reference_publish_file(run_id, response, raw)
+                self._reference_publish_file(run_id, response, raw, target=target if file_delivery else None, call=call)
                 return response
             record = {'record_type': 'reference_access', 'alias': alias, 'artifact_ref': target.model_dump(mode='json'),
                 'media_type': envelope.media_type, 'size_bytes': envelope.size_bytes, 'access_run_id': run_id,
@@ -608,10 +651,10 @@ class ReferenceAccessMixin:
                     connection.execute('INSERT INTO run_tool_evidence VALUES (?,?,?,?,?)', (run_id, ordinal, request_key, canonical_json(record), alias))
                 self._reference_settle(connection, value, call, response, request_key=request_key)
             committed = True
-            self._reference_publish_file(run_id, response, raw)
+            self._reference_publish_file(run_id, response, raw, target=target if file_delivery else None, call=call)
             self._refresh_evidence_schema(run_id)
             return response
-        except (ReferenceAccessError, RunStateConflict, ValueError, KeyError, OSError) as error:
+        except (ReferenceAccessError, RunStateConflict, ValueError, KeyError, OSError, WorkspaceError) as error:
             response = {'state': 'rejected', 'code': getattr(error, 'code', 'reference_run_closed' if isinstance(error, RunStateConflict) else 'reference_unavailable'), 'message': str(error)}
             if source_authorized and response['code'] in {'reference_producer_missing', 'reference_manifest_unpaired'}:
                 workspace = self.backend.open(run_id)

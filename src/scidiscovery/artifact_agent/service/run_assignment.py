@@ -29,6 +29,7 @@ def assignment_json(
     revision_workspace_mode: str | None = None,
     prior_source_bindings: dict[str, str] | None = None,
     deadline_at: str | None = None,
+    attachment_settings: dict | None = None,
 ) -> bytes:
     revision = _revision_assignment(
         bound, inputs, workspace_mode=revision_workspace_mode
@@ -58,7 +59,7 @@ def assignment_json(
             "role_instructions": operation_role_instructions(bound.compiled),
             "narrative_instruction": narrative_instruction(
                 bound.execution_profile["profile"] if bound.execution_profile else None),
-            "budget": {"deadline_at": deadline_at, "source": "control"} if deadline_at else None,
+            "budget": {"deadline_at": deadline_at, "source": "control", "attachments": attachment_settings} if deadline_at else None,
             "inputs": [
                 {
                     "source_name": item.source_name,
@@ -102,7 +103,7 @@ def assignment_json(
             },
             "revision": revision,
             "prior_source_bindings": prior_source_bindings or {},
-            **({"reference_access": "Text inputs are readable at their relative_path; file_reference inputs expose metadata only and are streamed by declared control tools; reference availability is unknown until checked, not absent. Use worker_reference_read to list one selected bound report’s direct citations and read selected originals. Select a calculation before its inputs. Do not expand all history; unresolved references remain explicit gaps."}
+            **({"reference_access": "Text inputs are readable at their relative_path; file_reference inputs expose metadata only; use worker_materialize_input for their streamed native files; reference availability is unknown until checked, not absent. Use worker_reference_read to list one selected bound report’s direct citations and published attachments; read selected originals (delivery=file streams large files). Select a calculation before its inputs. Do not expand all history; unresolved references remain explicit gaps."}
                if "worker_reference_read" in tool_names else {}),
             "tools": list(tool_names),
             "tool_contracts": operation_tool_contracts(bound.compiled, tool_names),

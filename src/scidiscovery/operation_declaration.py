@@ -123,7 +123,7 @@ def scientific_semantic_contract(
 
 
 def with_reference_access(operation: OperationSpec) -> OperationSpec:
-    """Declare the common read-only capability, never an executor or input port."""
+    """Declare scoped research tools and their control-owned output receipts."""
     if operation.executor.kind != "agent":
         return operation
     from .operations.spec import CollectionSpec
@@ -135,6 +135,21 @@ def with_reference_access(operation: OperationSpec) -> OperationSpec:
     if helper not in tools:
         tools = (*tools, helper)
     outputs = operation.outputs
+    if operation.executor.native_tools.shell != "none":
+        publisher = ComponentRef("publish_files_tool", "builtin")
+        if publisher not in tools:
+            tools = (*tools, publisher)
+        materializer = ComponentRef("materialize_input_tool", "builtin")
+        if materializer not in tools:
+            tools = (*tools, materializer)
+        if not any(port.name == "attachments" for port in outputs):
+            outputs = (*outputs, OutputPortSpec(name="attachments",
+                description="Control-registered scientific files; budgets come from frozen attachments settings.",
+                kind="scientific_attachment", schema="opaque", media_types=("*/*",),
+                codec=ComponentRef("opaque_codec", "general_science"),
+                schema_resource=ComponentRef("opaque_schema", "general_science"),
+                min_items=0, max_items=128, max_item_bytes=2**63-1,
+                collection=CollectionSpec(max_total_bytes=2**63-1), agent_visible=False))
     added = not any(port.name == "recovery_manifest_output" for port in outputs)
     if added:
         outputs = (*outputs, OutputPortSpec(

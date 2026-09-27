@@ -42,6 +42,10 @@ class SelectedFigureFamily(BaseModel):
     members: tuple[FigureFamilyMember, ...] = Field(min_length=1, max_length=38)
 
 
+def figure_records(raw):
+    return tuple(r for r in read_evidence_records(raw) if r.get("tool_name") == SAVE_TOOL)
+
+
 def selected_family_files(records, records_by_ref, source_ref):
     """Read exact controlled bytes, never select the last attempt or rerun extraction."""
     selected = [r for r in records if r.get("metadata", {}).get("data_item") == SELECTION_ITEM]
@@ -108,7 +112,7 @@ def _bound_family(sources):
             raise ValueError(f"figure family requires one {port}")
         return names[0]
     source = descriptors[one("paper_source")].artifact_ref
-    proof = read_evidence_records(sources[one("figure_provenance")])
+    proof = figure_records(sources[one("figure_provenance")])
     files = {d.artifact_ref: sources[name] for name, d in descriptors.items() if d.port_name == "figure_family"}
     if len(files) != sum(d.port_name == "figure_family" for d in descriptors.values()):
         raise ValueError("duplicate figure member binding")
@@ -128,7 +132,7 @@ def validate_intake_context(payload, sources, handoff):
     try:
         if sources.tool_snapshot is None:
             raise ValueError("figure Intake requires controlled tool evidence")
-        proof = read_evidence_records(sources.tool_snapshot)
+        proof = figure_records(sources.tool_snapshot)
         descriptors = sources.binding_descriptors
         source = next(d.artifact_ref for d in descriptors.values() if d.port_name == "paper_source")
         files = {d.artifact_ref: sources[name] for name, d in descriptors.items() if d.port_name == "tool_evidence"}

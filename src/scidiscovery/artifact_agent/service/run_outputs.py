@@ -73,9 +73,9 @@ def validate_run_output(
     expected_paths = {"result.json"} | ({"tool-evidence.json"} if tool_snapshot is not None else set())
     if paths != expected_paths:
         raise RunOutputError(
-            "this minimal Run accepts exactly output/result.json",
+            "Keep output/result.json and runtime receipts only. Move derived files to scratch/ and publish them with worker_publish_files when available; do not embed files in narrative fields.",
             details=_with_rule(
-                ({"path": "$.files", "message": "unexpected output file set", "type": "value_error"},),
+                ({"path": "$.files", "message": "unexpected output file set: " + ", ".join(sorted(paths - expected_paths))[:512], "type": "value_error"},),
                 "runtime.files",
                 declared_rule_ids,
             ),

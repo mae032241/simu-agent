@@ -9,7 +9,7 @@ import uuid
 from pathlib import Path
 
 __all__ = ["WorkspaceError", "WorkspaceOutputError", "read_control_workspace_file",
-    "write_control_workspace_file", "remove_control_workspace_file", "move_control_workspace_file",
+    "write_control_workspace_file", "write_control_workspace_stream", "remove_control_workspace_file", "move_control_workspace_file",
     "validate_publication_content", "media_type_for_path"]
 
 _MACHINE_PATH = re.compile(
@@ -36,10 +36,20 @@ def write_control_workspace_file(
     mode: int,
     create_parents: bool = False,
 ) -> Path:
-    """Write through non-symlink directory handles below one workspace root."""
-
+    """Write bytes through non-symlink directory handles below one workspace root."""
     if type(content) is not bytes:
         raise TypeError("workspace content must be bytes")
+    return _write_control_file(workspace, relative_path, (content,), content=content,
+        replace=replace, mode=mode, create_parents=create_parents)
+
+
+def write_control_workspace_stream(workspace: Path, relative_path: Path, chunks, *, mode: int = 0o400) -> Path:
+    """Atomically replace a file from bounded chunks; never follow workspace symlinks."""
+    return _write_control_file(workspace, relative_path, chunks, content=None,
+        replace=True, mode=mode, create_parents=True)
+
+
+def _write_control_file(workspace, relative_path, chunks, *, content, replace, mode, create_parents):
     if (
         relative_path.is_absolute()
         or not relative_path.parts
@@ -85,7 +95,8 @@ def write_control_workspace_file(
         output = os.open(temporary, flags, mode, dir_fd=parent)
         try:
             with os.fdopen(output, "wb", closefd=False) as stream:
-                stream.write(content)
+                for chunk in chunks:
+                    stream.write(chunk)
                 stream.flush()
                 os.fsync(stream.fileno())
             os.fchmod(output, mode)

@@ -506,7 +506,7 @@ class OperationOrigins:
                         and self.artifacts.catalog(ref).labels.get("operation_digest") == original.operation_digest
                         and (ref == original.output_ref
                             or self.artifacts.catalog(ref).labels.get("tool_producer_run") == original.run_id
-                            or (declared.name == "tool_evidence" and ref in exact_evidence))]
+                            or (declared.name in {"tool_evidence", "attachments"} and ref in exact_evidence))]
                 refs = list(dict.fromkeys(candidates))
                 # Private artifacts deliberately have no public name binding.
                 private_names = {ref: anchors[0].artifact_name for ref in refs} if not port.agent_visible else {}

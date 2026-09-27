@@ -205,3 +205,17 @@ def test_number_rich_preview_keeps_existing_byte_bound() -> None:
     assert len(page.encode("utf-8")) <= 8192
     assert "rounded-number" in page
     assert "预览" in page
+
+
+def test_figures_beyond_inline_preview_keep_exact_open_links():
+    data = _presentation()
+    data['figures'] = [{'artifact_id': f'image-{i}', 'label': f'Case {i}',
+        'source': {'artifact_id': 'manifest', 'json_pointer': f'/records/{i}'}} for i in range(12)]
+    page = render_presentation(data, evidence_href=_evidence, image_href=_image)
+    assert page.count('<img ') == 8
+    assert page.count('下载原图') == 12
+    assert "<span class='panel-count'>12</span>" in page
+    for i in range(12):
+        assert _image(f'image-{i}').replace('&', '&amp;') in page
+        assert f'Case {i}' in page
+    assert '其余图件可逐项打开原图' in page

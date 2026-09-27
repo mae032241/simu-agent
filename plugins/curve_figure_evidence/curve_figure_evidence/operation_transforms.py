@@ -14,7 +14,7 @@ from .figure_evidence import FigureEvidenceManifest, FigureEvidenceValidationRep
 from .figure_science_operations import (AUDIT_INPUTS, BUNDLE_OPERATION, FAMILY_VALIDATION, _input as science_input)
 from .figure_family import figure_audit_parentage, selected_family_files
 from scidiscovery.artifact_agent.schema.refs import ArtifactRef
-from scidiscovery.plugin_runtime.evidence import read_evidence_records
+from .figure_family import figure_records
 from .figure_evidence_normalizer import (
     FIGURE_EVIDENCE_BUNDLE_PROFILE_V2, normalize_figure_evidence,
 )
@@ -99,7 +99,7 @@ def figure_parentage(inputs: tuple[Any, ...], parameters: Mapping[str, Any]) -> 
 
 
 def bundle_selected_figure(values):
-    proof = read_evidence_records(single_input(values, "figure_provenance"))
+    proof = figure_records(single_input(values, "figure_provenance"))
     # Admission has already checked exact Artifact identities. Transform inputs carry bytes.
     by_digest = {hashlib.sha256(raw).hexdigest(): raw for raw in values["figure_family"]}
     files_by_ref = {ArtifactRef.model_validate(record["artifact_ref"]): by_digest[record["artifact_ref"]["sha256"]]

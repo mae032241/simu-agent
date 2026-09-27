@@ -69,6 +69,12 @@ catalog = compile_installed_catalog()
 for operation_id in ("science.evidence.audit.v1", "science.evidence.audit.intake.v1",
                      "science.figure.evidence.audit.v2"):
     assert catalog.operation(operation_id).spec.decision_fields == ("checks",)
+for identity in catalog.operation_ids():
+    operation = catalog.operation(identity)
+    if operation.spec.executor.kind == "agent" and operation.spec.executor.native_tools.shell != "none":
+        tools = {tool.name: tool for tool in operation_worker_tools(operation)}
+        assert "worker_publish_files" in tools and "worker_materialize_input" in tools
+        assert set(tools["worker_publish_files"].input_model.model_json_schema()["properties"]) == {"files", "source_aliases"}
 image = Image.new("RGB", (12, 12), "white")
 ImageDraw.Draw(image).line([(1, 9), (9, 1)], fill="#ff0000", width=1)
 stream = io.BytesIO()

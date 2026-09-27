@@ -67,6 +67,14 @@ class MaterialInputSettings(SettingsValue):
     transfer_chunk_bytes: int = Field(default=1048576, ge=1, le=8388608)
 
 
+class AttachmentSettings(SettingsValue):
+    """Streamed scientific deliverables, independent of prompt and solver budgets."""
+    max_item_bytes: int = Field(default=2_000_000_000, ge=1)
+    max_total_bytes: int = Field(default=2_000_000_000, ge=1)
+    max_files: int = Field(default=64, ge=1, le=128)
+    chunk_bytes: int = Field(default=1048576, ge=4096, le=8388608)
+
+
 class AgentSettings(SettingsValue):
     schema_version: Literal[1] = 1
     defaults: DefaultSettings = Field(default_factory=DefaultSettings)
@@ -74,6 +82,7 @@ class AgentSettings(SettingsValue):
     helpers: HelperSettings = Field(default_factory=HelperSettings)
     execution_io: ExecutionIOSettings = Field(default_factory=ExecutionIOSettings)
     input_materials: MaterialInputSettings = Field(default_factory=MaterialInputSettings)
+    attachments: AttachmentSettings = Field(default_factory=AttachmentSettings)
 
     def sparse(self) -> dict:
         return self.model_dump(exclude_none=True, exclude_unset=True)

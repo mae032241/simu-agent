@@ -346,7 +346,7 @@ def declared_tool_output_names(tools):
 def tool_evidence_ports(compiled):
     ports = {p.name: p for p in compiled.spec.outputs if p.collection is not None}
     enabled = declared_tool_output_names(operation_worker_tools(compiled))
-    return ports if enabled and enabled == set(ports) and enabled <= {"tool_evidence", "recovery_manifest_output"} else {}
+    return ports if enabled and enabled == set(ports) and enabled <= {"tool_evidence", "recovery_manifest_output", "attachments"} else {}
 
 
 def reference_policy(compiled):
@@ -359,4 +359,4 @@ def reference_policy(compiled):
 
 def reference_source_ports(compiled):
     """One authority for schema projection and context-checker source access."""
-    return frozenset({'reference_access'}) if reference_policy(compiled) is not None else frozenset()
+    return (frozenset({'reference_access'}) if reference_policy(compiled) is not None else frozenset()) | (frozenset({'attachments'}) if 'attachments' in tool_evidence_ports(compiled) else frozenset())

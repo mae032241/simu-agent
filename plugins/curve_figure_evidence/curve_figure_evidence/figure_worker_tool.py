@@ -279,7 +279,7 @@ class FigureFamilyReuseInput(BaseModel):
 def _reuse(request: BaseModel, context: OperationToolContext) -> dict[str, object]:
     """Select the bound prior family unchanged, for a fresh complete Intake revision."""
     from scidiscovery.operations.input_validation import ValidationSources
-    from scidiscovery.plugin_runtime.evidence import read_evidence_records
+    from .figure_family import figure_records
     from .figure_family import _bound_family, SELECTION_ITEM, REQUEST_ITEM
     if not isinstance(request, FigureFamilyReuseInput):
         raise ValueError("figure reuse request has the wrong type")
@@ -295,7 +295,7 @@ def _reuse(request: BaseModel, context: OperationToolContext) -> dict[str, objec
         raise ValueError("reuse requires declared prior source, provenance and family inputs")
     sources = ValidationSources({name: context.read_input(name) for name in names}, descriptors)
     files = _bound_family(sources)
-    proof = read_evidence_records(sources[provenance_name])
+    proof = figure_records(sources[provenance_name])
     prior = {record["alias"]: record for record in proof}
     if any(record != prior.get(record["alias"]) for record in context.evidence()):
         raise ValueError("another selected or partial family already exists; cannot mix reuse with new extraction")

@@ -477,20 +477,31 @@ def render_presentation(presentation: dict | None, *, evidence_href: EvidenceHre
         table += "<ul class='parameter-pages'>" + "".join(links) + "</ul>"
         append(fold_panel("关键参数与条件", table, class_name="parameters-panel"))
     if figures:
+        from .evidence import query_url
         cards = []
-        for index, figure in enumerate(figures[:8]):
+        for index, figure in enumerate(figures[:32]):
             try:
                 href = safe_local_href(image_href(figure.get("artifact_id")))
             except Exception:
                 href = None
+            try:
+                original = safe_local_href(query_url(evidence_href(figure.get("artifact_id"), ""), format="download"))
+            except Exception:
+                original = None
+            download = (f" <a href='{html.escape(original, quote=True)}'>下载原图</a>" if original else "")
             label = _text(figure.get("label", "已登记图件"), 160)
             picture = (f"<a href='{html.escape(href, quote=True)}' target='_blank' rel='noopener'><img src='{html.escape(href, quote=True)}'"
                 f" alt='{label}' loading='lazy' decoding='async' referrerpolicy='no-referrer'></a>" if href else "<p>安全预览未提供</p>")
+            if index >= 8 and href:
+                picture = (f"<a href='{html.escape(href, quote=True)}' target='_blank' "
+                    "rel='noopener'>打开原图</a>")
             cards.append("<figure class='figure-card'><div class='figure-number'>图件 " + str(index+1) + "</div>" + picture
-                + "<figcaption>" + label + render_source(figure.get("source"), evidence_href) + "</figcaption></figure>")
+                + "<figcaption>" + label + download + render_source(figure.get("source"), evidence_href) + "</figcaption></figure>")
         figure_body = "<div class='figure-grid'>" + "".join(cards) + "</div>"
+        if len(figures) > 8:
+            figure_body = "<p>内嵌预览前 8 张；其余图件可逐项打开原图。</p>" + figure_body
         append(fold_panel("图件与结果对照", figure_body,
-                          count=min(len(figures), 8), class_name="figures-panel"))
+                          count=min(len(figures), 32), class_name="figures-panel"))
 
     curve_sections = [section for section in sections if section.get("kind") == "curve_evidence"]
     if curve_sections:
@@ -509,6 +520,21 @@ def render_presentation(presentation: dict | None, *, evidence_href: EvidenceHre
         append(fold_panel("论文曲线提取 · 坐标、身份与 CSV", "".join(rows), class_name="curve-evidence-panel"))
         primary = [section for section in primary if section.get("kind") != "curve_evidence"]
         background = [section for section in background if section.get("kind") != "curve_evidence"]
+
+    attachment_sections = [section for section in sections if section.get("kind") == "attachments"]
+    if attachment_sections:
+        from .evidence import query_url
+        rows = []
+        for section in attachment_sections:
+            for item in section.get("items", []):
+                ref = item["source"]
+                href = safe_local_href(query_url(evidence_href(ref["artifact_id"], ""), format="download"))
+                if href:
+                    rows.append("<li><a href='" + html.escape(href, quote=True) + "'>" + _text(item["label"])
+                        + "</a> · " + _text(item["value"], 1024) + "</li>")
+        append(fold_panel("封存科学附件（不代表已审查）", "<ul>" + "".join(rows) + "</ul>", count=len(rows)))
+        primary = [section for section in primary if section.get("kind") != "attachments"]
+        background = [section for section in background if section.get("kind") != "attachments"]
 
     def report_group(title, group):
         rendered, total = [], 0

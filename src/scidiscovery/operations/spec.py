@@ -8,7 +8,7 @@ from typing import Any, Literal, Mapping
 from types import MappingProxyType
 from pydantic import BaseModel, ConfigDict, Field
 PLUGIN_PROTOCOL_VERSION = "1"
-OPERATION_ABI_VERSION = "22"
+OPERATION_ABI_VERSION = "23"
 _ID = re.compile(r"^[a-z][a-z0-9_.-]{0,127}$")
 _JSON_POINTER = re.compile(r"^/(?:[^~/]|~[01])*(?:/(?:[^~/]|~[01])*)*$")
 _DOMAIN = re.compile(r"^(?:\*\.)?[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
@@ -393,16 +393,19 @@ class OperationSpec(FrozenSpec):
     def bounds_issue(self) -> str | None:
         if self.limits is None:
             return "limits_invalid"
+        # Core attachments stream directly to CAS under frozen runtime settings;
+        # they never consume the candidate workspace's in-memory/file allowance.
         output_bytes = sum(
             p.collection.max_total_bytes if p.collection else p.max_items * p.max_item_bytes
             for p in self.outputs
+            if not (self.executor.kind == "agent" and p.name == "attachments")
         )
         if any(
             p.collection and p.collection.max_total_bytes <= 0 for p in self.outputs
         ):
             return "input_or_collection_limit_invalid"
         if (output_bytes > self.limits.max_output_bytes
-                or sum(p.max_items for p in self.outputs) > self.limits.max_files):
+                or sum(p.max_items for p in self.outputs if not (self.executor.kind == "agent" and p.name == "attachments")) > self.limits.max_files):
             return "output_limits_inconsistent"
         return None
 class PluginDependency(FrozenSpec):

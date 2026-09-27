@@ -523,7 +523,7 @@ def test_collection_97_preserves_solver_facts_without_deciding_local_findings(tm
     assert actual.terminal_state == terminal and actual.solver_exit_code == solver_code
 
 
-def test_corrupt_preserved_receipt_fails_successor_open_explicitly(tmp_path, monkeypatch):
+def test_corrupt_preserved_receipt_fails_successor_open_explicitly(tmp_path):
     from copy import deepcopy
     from tests.operations.test_tcad_result_analysis import analysis_report,write_analysis,open_analysis
     system,worker,opened,_=recovery_system(tmp_path)
@@ -533,8 +533,9 @@ def test_corrupt_preserved_receipt_fails_successor_open_explicitly(tmp_path, mon
     write_analysis(opened,analysis_report())
     status=root.call_tool('run_status',{'name': 'analysis', "intent": 'navigation'})
     root.call_tool('run_record_failure',dict(name='analysis',reason='fixture interruption',expected_state='running',expected_last_activity_at=status['last_activity_at']))
-    original_read=runtime.artifacts.read
-    monkeypatch.setattr(runtime.artifacts,'read',lambda ref: b'corrupt' if ref.model_dump(mode='json')==record['artifact_ref'] else original_read(ref))
+    stored=runtime.artifacts.cas.path_for(record['artifact_ref']['sha256'])
+    stored.chmod(0o600)
+    stored.write_bytes(b'corrupt')
     request=deepcopy(request)
     request.update(name='corrupt_successor',draft_from='analysis')
     with pytest.raises(Exception,match='control diagnostic'):

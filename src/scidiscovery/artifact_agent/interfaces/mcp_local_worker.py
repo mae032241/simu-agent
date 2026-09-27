@@ -472,7 +472,7 @@ class LocalWorkerMCPRouter:
                     self._opened_call_run_id = self._run_id
                     return {"state": self.runs.status(self._run_id).state}
                 # Read-only provenance output does not grant implicit reattachment.
-                resumable_tools = any(tool.evidence_ports or tool.record_attempts
+                resumable_tools = any("tool_evidence" in tool.evidence_ports or tool.record_attempts
                                       for tool in self.compiled.worker_tools)
                 if not resumable_tools or str(error) != "no exact queued Run is available":
                     raise WorkerToolError(str(error)) from error
@@ -653,35 +653,28 @@ class LocalWorkerMCPRouter:
 
         def input_path(source_name: str) -> Path:
             if source_name not in {item.source_name for item in status.inputs}:
-                from ..service.local_workspace import write_control_workspace_file
-                raw = self.runs.read_tool_evidence(status, source_name)
+                from ...plugin_runtime.workspace import write_control_workspace_stream
+                from ...agent_execution_settings import MaterialInputSettings
                 descriptor = self.runs.source_descriptor(status, source_name)
+                policy = MaterialInputSettings.model_validate((status.recovery_policy or {}).get("input_materials", {}))
+                if self.runs.artifacts.catalog(descriptor.artifact_ref).size_bytes > policy.max_item_bytes:
+                    raise ValueError("Source exceeds the configured material file budget")
                 relative = Path(".operation-tools/sources") / workspace_input_filename(source_name, descriptor.media_type)
-                write_control_workspace_file(self._workspace.root, relative, raw, mode=0o400, replace=True, create_parents=True)
+                with self.runs.artifacts.open_original(descriptor.artifact_ref) as source:
+                    write_control_workspace_stream(self._workspace.root, relative,
+                        iter(lambda: source.read(policy.transfer_chunk_bytes), b""))
                 return self._workspace.root / relative
             item = input_binding(source_name)
             path = self._workspace.root / "inputs" / workspace_input_filename(
                 source_name, item.media_type
             )
             if item.exposure == "file_reference":
-                import os
-                import tempfile
+                from ...plugin_runtime.workspace import write_control_workspace_stream
                 from ...agent_execution_settings import MaterialInputSettings
                 policy = MaterialInputSettings.model_validate((status.recovery_policy or {}).get("input_materials", {}))
-                if path.parent.is_symlink() or not path.parent.is_dir():
-                    raise ValueError("declared input directory is unsafe")
                 with self.runs.artifacts.open_original(item.artifact_ref) as source:
-                    with tempfile.NamedTemporaryFile(dir=path.parent, delete=False) as target:
-                        temporary = Path(target.name)
-                        try:
-                            while chunk := source.read(policy.transfer_chunk_bytes):
-                                target.write(chunk)
-                            target.flush()
-                            os.fsync(target.fileno())
-                            os.chmod(temporary, 0o400)
-                            os.replace(temporary, path)
-                        finally:
-                            temporary.unlink(missing_ok=True)
+                    write_control_workspace_stream(self._workspace.root, path.relative_to(self._workspace.root),
+                        iter(lambda: source.read(policy.transfer_chunk_bytes), b""))
             if not path.is_file() or path.is_symlink():
                 raise ValueError("declared Run input is unavailable")
             return path
@@ -740,6 +733,8 @@ class LocalWorkerMCPRouter:
             _recovery_authorized=lambda source: self.runs.recovery_authorized(self._run_id, source),
             _adopt_bound_evidence=(lambda **values: self.runs.adopt_bound_tool_evidence(self._run_id, allowed_ports=tool.evidence_ports, **values)) if tool.evidence_ports else None,
             _accept_evidence=(lambda **values: self.runs.accept_tool_evidence(self._run_id, tool_name=tool.name, allowed_ports=tool.evidence_ports, **values)) if tool.evidence_ports else None,
+            _publish_files=(lambda request: self.runs.publish_attachments(self._run_id, request,
+                workspace=self._workspace.root)) if 'attachments' in tool.evidence_ports else None,
             _input_names_for_port=lambda port: tuple(item.source_name for item in status.inputs if item.port_name == port),
             _read_input=read_input,
             _input_path=input_path,

@@ -95,7 +95,7 @@ def _validate_output(result, cohort):
     result = plain(result)
     allowed = {artifact["artifact_id"] for artifact in cohort}
     for section in result["sections"]:
-        if set(section) - {"title", "items", "kind"} or not {"title", "items"}.issubset(section) or section.get("kind") not in {None, "execution_scope", "curve_evidence"}:
+        if set(section) - {"title", "items", "kind"} or not {"title", "items"}.issubset(section) or section.get("kind") not in {None, "execution_scope", "curve_evidence", "attachments"}:
             raise ValueError("invalid provider section")
         for item in section["items"]:
             if set(item) != {"label", "value", "source"} or not _valid_source(item["source"], cohort):
@@ -132,6 +132,7 @@ def _validate_output(result, cohort):
 def presentation_pointers(schema_id):
     """Static display selections; these never grant access to another artifact."""
     control = {
+        "scidiscovery.tool-evidence-manifest.v1": ("/records", "/bindings"),
         "scidiscovery.approval-request": ("/kind", "/question", "/options", "/subject_refs", "/expires_at"),
         "scidiscovery.human-decision": ("/selected_option", "/rationale", "/decided_at"),
     }
@@ -176,6 +177,8 @@ def build_presentation(artifacts, *, focus_artifact_ids=None, task_artifact_ids=
                   for artifact in cohort]
         add_gap(result, "presentation_cohort_incomplete")
     cohort = tuple(cohort)
+    from .attachment_presentation import append_attachments
+    append_attachments(result, cohort)
     try:
         providers = _provider_entries(entry_points)
     except Exception as error:

@@ -10,7 +10,7 @@ visibility and versioned schema IDs remain necessary platform contracts.
 Support is attached to the values and callbacks below, at their existing import
 paths. It does not cover every symbol in their containing packages. Source type
 annotations and compiled schemas are authoritative; this reference does not define
-parallel types. Current plugin protocol is `1`, Operation ABI is `22`, and component
+parallel types. Current plugin protocol is `1`, Operation ABI is `23`, and component
 protocol versions are declared independently. Changing an implementation or resource
 still changes compiled identity.
 
@@ -20,11 +20,27 @@ to stored sizes, delivers small text on demand, and freezes larger or binary inp
 as `file_reference`. A file reference may declare concrete MIME/schema constraints
 or the same paired wildcard inventory; it is not restricted to octet-stream.
 Its bytes are absent from in-memory validation mappings. Tools use
-`OperationToolContext.input_path(source_name)` for bounded streaming. The complete
-experiment exposes `worker_materialize_input` so Workers can request a native-readable
+`OperationToolContext.input_path(source_name)` for bounded streaming. Scientific Agent tasks with native shell access expose `worker_materialize_input` so Workers can request a native-readable
 path without handling private identities. Material limits are shown in Root's
 contract and frozen in the Run; they do not authorize solver execution or qualify
 scientific claims. Other input ports retain their declared semantic/content limits.
+
+Scientific Agent tasks with native shell access declared through `with_reference_access` also expose
+`worker_publish_files(files=[{path, purpose}], source_aliases=[...])`. Files live
+under `scratch/`; `output/` remains the primary `result.json` plus control receipts.
+Control snapshots and streams files, infers MIME types, assigns references, and seals
+an independent `attachments` collection. No hashes, ports or manifest rows are
+Agent-authored. Publication does not imply execution, qualification or review.
+Domain tool evidence (for example, calibrated figure families) remains separate.
+
+`AgentSettings.attachments` configures `max_item_bytes`, `max_total_bytes`, `max_files`
+and `chunk_bytes` (defaults: 2,000,000,000 bytes per file and total, 64 files, 1 MiB
+chunks). Settings are frozen per Run, inherited on recovery and shown in startup
+budgets. Identical publication retries reuse receipts. Downstream Workers can list
+attachments through `worker_reference_read` on the exact bound main output, then
+read selected fragments or request streamed file delivery under `input_materials`.
+The UI renders verified attachments as downloads, with PNG/JPEG previews. Reference
+file delivery and finalization do not bulk-load attachment bytes.
 
 | Owner | Supported extension contract |
 | --- | --- |
@@ -46,7 +62,7 @@ setting its underscore-prefixed callback fields:
 | Task-local work | `workspace`, `output_directory`, `output_collections`, `remaining_seconds`, mutable task `state`; `validate_outputs()`, `record_activity(activity)`, `candidate_snapshot()` |
 | Declared inputs | `input_names_for_port(port)`, `read_input(name)`, `input_path(name)`, `input_media_type(name)`, `input_ref(name)`, `source_descriptor(name)`, read-only `prior_source_bindings` |
 | Declared services and access | `require_service(name)` over the supplied read-only `services`; `read_reference(request)`, `reserve_network_request(url)`. Missing permissions reject access; importing the context grants none. |
-| Evidence collection | `io_budget(**values)`, `evidence()`, `read_evidence(name)`, `accept_evidence(**values)`, `adopt_bound_evidence(manifest_alias)`. Budget/registration arguments follow the declared tool's collection contract; adoption verifies the exact bound family. |
+| Evidence collection | `io_budget(**values)`, `evidence()`, `read_evidence(name)`, `accept_evidence(**values)`, `adopt_bound_evidence(manifest_alias)`, `publish_files(request)`. Budget/registration arguments follow the declared tool's collection contract; adoption verifies the exact bound family. |
 | Scientific calculation | `complete_calculation(record, *, diagnostics=(), summary=False)`, `publish_analysis_file(raw, *, media_type, kind, sources, suffix, metadata=None)`, `publish_calculation_checkpoint(raw, *, algorithm_version, record_key, sources, numerical_identity)`, `read_calculation_checkpoint(alias, *, algorithm_version, tool_names, sources, max_bytes)` |
 
 `run_id`, `operation_id`, `tool_attempts`, `finish_attempt`, `execution_scope` and
