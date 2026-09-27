@@ -197,7 +197,8 @@ class TCADExecutorAdapter:
 
     def _call(self, tool: str, arguments: dict[str, Any]) -> dict[str, Any]:
         deadline = (arguments.get("collection") or {}).get("deadline_monotonic",
-            arguments.get("deadline_monotonic", time.monotonic() + (min(QUERY_SECONDS, self.timeout) if tool == "tcad_status" else self.timeout)))
+            arguments.get("deadline_monotonic", time.monotonic() + (min(QUERY_SECONDS, self.timeout)
+                if tool in {"tcad_status", "tcad_capabilities", "tcad_execution_policy"} else self.timeout)))
         def remaining():
             seconds = deadline - time.monotonic()
             if seconds <= 0:

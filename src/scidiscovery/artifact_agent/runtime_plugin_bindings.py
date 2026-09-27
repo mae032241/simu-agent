@@ -273,13 +273,20 @@ def read_runtime_summary(
         value = json.loads(path.read_bytes())
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
         raise ValueError(f"{expected_mode} runtime summary is invalid JSON") from error
-    if not isinstance(value, dict) or set(value) != {
+    if not isinstance(value, dict) or set(value) - {"io_budget_defaults"} != {
         "schema_version",
         "mode",
         "catalog_digest",
         "plugins",
     }:
         raise ValueError(f"{expected_mode} runtime summary shape is invalid")
+    if "io_budget_defaults" in value:
+        budgets = value["io_budget_defaults"]
+        if not isinstance(budgets, dict) or any(
+            type(budgets.get(key)) not in (int, float) or not 0 < budgets[key] < float("inf")
+            for key in ("query_seconds", "collection_seconds", "file_seconds", "idle_seconds")
+        ):
+            raise ValueError(f"{expected_mode} runtime IO budgets are invalid")
     if (
         value["schema_version"] != 1
         or value["mode"] != expected_mode

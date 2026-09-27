@@ -50,6 +50,7 @@ def test_invalid_explicit_chunk_is_rejected(tmp_path, value):
 
 
 @pytest.mark.parametrize("problem", ["invalid", "missing", "writable", "symlink"])
+@pytest.mark.process_e2e
 def test_command_failure_preserves_safe_repair_across_process_boundary(tmp_path, problem):
     path = transport_config(tmp_path, transfer_chunk_bytes=0 if problem == "invalid" else 65536)
     if problem == "missing":
@@ -112,6 +113,7 @@ def test_bundled_command_requires_unambiguous_absolute_config(arguments):
             executable="/usr/local/bin/scidiscovery-tcad-transport", arguments=arguments))
 
 
+@pytest.mark.process_e2e
 def test_preparation_bridge_preserves_configuration_failure(tmp_path):
     from types import SimpleNamespace
     from scidiscovery.artifact_agent.execution_bridge import ExecutionBridge
@@ -125,6 +127,7 @@ def test_preparation_bridge_preserves_configuration_failure(tmp_path):
     assert caught.value.details[0]["code"] == "tcad_transport_configuration_invalid"
 
 
+@pytest.mark.process_e2e
 def test_worker_retains_configuration_repair_without_private_values(tmp_path):
     from tcad_artifact.output_recovery import OutputInspectionService
     from tests.operations.test_analysis_evidence_recovery import recovery_system

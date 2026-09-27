@@ -316,6 +316,7 @@ def forward_request(socket_path: Path, raw: bytes, *, timeout: float) -> dict | 
     started = time.monotonic()
     deadline = started + timeout
     response_raw = bytearray()
+    sending = False
     try:
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
             def remaining():
@@ -326,6 +327,7 @@ def forward_request(socket_path: Path, raw: bytes, *, timeout: float) -> dict | 
             remaining()
             client.connect(str(socket_path.expanduser().absolute()))
             remaining()
+            sending = True
             client.sendall(raw.rstrip(b"\r\n") + b"\n")
             if notification:
                 return None
@@ -337,10 +339,13 @@ def forward_request(socket_path: Path, raw: bytes, *, timeout: float) -> dict | 
                 response_raw.extend(chunk)
                 if b"\n" in chunk:
                     break
-    except TimeoutError as error:
-        error.timeout = timeout
-        error.timeout_kind = "proxy_response"
-        error.elapsed_seconds = time.monotonic() - started
+    except OSError as error:
+        if not sending:
+            error.failure_stage = "connection"
+        if isinstance(error, TimeoutError):
+            error.timeout = timeout
+            error.timeout_kind = "proxy_response"
+            error.elapsed_seconds = time.monotonic() - started
         raise
     if not response_raw or len(response_raw) > MAX_RESPONSE_BYTES:
         raise RuntimeError("control service returned no bounded response")

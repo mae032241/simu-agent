@@ -63,6 +63,7 @@ class ExecutionBridge:
     ) -> None:
         self.executions = executions
         self.adapters = dict(adapters)
+        self._health_observations = {}
         missing_lookup = next(
             (
                 name
@@ -79,6 +80,34 @@ class ExecutionBridge:
 
     def has_adapter(self, executor: str) -> bool:
         return executor in self.adapters
+
+    def health(self, *, executor: str, minimum_interval_seconds: float = 5) -> dict:
+        """Read declared capabilities once per interval; never advance execution.
+
+        Each adapter owns its configured query timeout/total query budget. This
+        on-demand probe starts no polling loop and proves only capability access.
+        """
+        import math
+        import time
+        from ..plugin_runtime.diagnostics import exception_facts, recovery_facts
+        if (type(minimum_interval_seconds) not in (int, float)
+                or not math.isfinite(minimum_interval_seconds) or minimum_interval_seconds < 0):
+            raise ValueError("health probe interval must be finite and nonnegative")
+        now = time.monotonic()
+        cached = self._health_observations.get(executor)
+        if cached is not None and now - cached[0] < minimum_interval_seconds:
+            return {**cached[1], "cached": True}
+        result = {"scope": "declared_capability_access", "execution_verified": False}
+        if not self.has_adapter(executor):
+            result.update(state="unavailable", recovery=recovery_facts("configuration"))
+        else:
+            try:
+                result.update(state="available", capability_count=len(self.capabilities(executor=executor)))
+            except Exception as error:
+                result.update(state="unavailable", diagnostic=exception_facts(
+                    error, layer="runtime_health", action="capabilities"))
+        self._health_observations[executor] = (time.monotonic(), result)
+        return {**result, "cached": False}
 
     def start(
         self,
@@ -98,10 +127,14 @@ class ExecutionBridge:
         # policy. Never submit a second solver to resolve an unknown response.
         submission = self.executions.prepared_submission(execution_id)
         if submission is not None:
-            recovered = adapter.lookup_submission(submission)
-            if recovered is not None:
-                self._record_started(execution_id, *recovered)
-                return
+            try:
+                recovered = adapter.lookup_submission(submission)
+                if recovered is not None:
+                    self._record_started(execution_id, *recovered)
+                    return
+            except Exception as error:
+                error.failure_stage = "submission_unknown"
+                raise
         admission = self.validate_request(
             executor=request.executor,
             preparation_profile=request.preparation_profile,
@@ -115,7 +148,9 @@ class ExecutionBridge:
         if admission is not None and admission.outcome != "policy":
             self.executions.defer_policy(execution_id=execution_id, admission=admission)
             if admission.outcome == "deny":
-                raise ExecutionServiceError("current execution policy denied request: " + admission.reason)
+                error = ExecutionServiceError("current execution policy denied request: " + admission.reason)
+                error.failure_stage = "pre_execution_rejected"
+                raise error
         if admission is not None and admission.outcome == "policy":
             if not allow_policy_authorization:
                 raise ExecutionServiceError("compiled execution contract does not permit policy authorization")
@@ -137,15 +172,20 @@ class ExecutionBridge:
                 if prepare is not None else adapter.prepare(payload, **options))
             self.executions.record_prepared_submission(execution_id, submission,
                 policy_digest=admission.policy_digest if admission is not None else None)
-        recovered = adapter.lookup_submission(submission)
-        if recovered is None:
-            if admission is None:
-                external_run_id, external_state = adapter.submit(submission)
+        try:
+            recovered = adapter.lookup_submission(submission)
+            if recovered is None:
+                if admission is None:
+                    external_run_id, external_state = adapter.submit(submission)
+                else:
+                    external_run_id, external_state = adapter.submit(submission, authorization=admission)
             else:
-                external_run_id, external_state = adapter.submit(submission, authorization=admission)
-        else:
-            external_run_id, external_state = recovered
-        self._record_started(execution_id, external_run_id, external_state)
+                external_run_id, external_state = recovered
+            self._record_started(execution_id, external_run_id, external_state)
+        except Exception as error:
+            # Includes a lost local receipt after the adapter accepted the job.
+            error.failure_stage = "submission_unknown"
+            raise
 
     def _record_started(self, execution_id: str, external_run_id: str, external_state: str) -> None:
         self.executions.record_submission(

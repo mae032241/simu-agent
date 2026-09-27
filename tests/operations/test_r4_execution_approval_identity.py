@@ -280,8 +280,12 @@ def test_unknown_submission_is_recovered_by_lookup_without_resubmit(
             ),
         )
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError) as captured:
         root.call_tool("execution_start", {"name": "unknown_submission"}, surface="execution")
+    from scidiscovery.plugin_runtime.diagnostics import exception_facts
+    recovery = exception_facts(captured.value, layer="execution", action="start")["recovery"]
+    assert recovery["stage"] == "submission_unknown" and recovery["retryable"] is False
+    assert "execution_start" in recovery["recovery_condition"]
     assert adapter.submit_count == 1
     assert root.call_tool(
         "execution_status", {"name": "unknown_submission"}

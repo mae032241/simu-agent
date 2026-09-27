@@ -163,8 +163,8 @@ def test_gateway_scopes_actual_worker_lifecycle_and_sealed_result(tmp_path, back
             assert "omit for P1 structural dimensions/counts" in fields["dimension"]["description"]
             assert "consequence, executor_kind, input_schema" in fields["where"]["description"]
             assert "AND keys, OR values" in fields["where"]["description"]
-        rejected = rpc(gateway, "scid_describe", {"name": name, "view": "invoke"})
-        assert 'view="invoke" is supported only for Operations' in rejected["error"]["message"]
+        for view in ("invoke", "full"):
+            assert result(rpc(gateway, "scid_describe", {"name": name, "view": view})) == gateway_contract
     assert "inputSchema" not in json.dumps(result(rpc(gateway, "scid_catalog")))
     summary = result(rpc(gateway, "scid_catalog"))
     index = result(rpc(gateway, "scid_catalog", {"view": "index"}))
@@ -215,13 +215,16 @@ def test_gateway_scopes_actual_worker_lifecycle_and_sealed_result(tmp_path, back
     )
     assert "revision_policy" not in full_item
     assert "native_shell" in full_item and "native_shell" not in invoke_item
-    unsupported = rpc(gateway, "scid_describe", {"name": "operation_invoke", "view": "invoke"})
-    assert 'view="invoke" is supported only for Operations' in unsupported["error"]["message"]
+    for view in ("invoke", "full"):
+        assert result(rpc(gateway, "scid_describe", {"name": "operation_invoke", "view": view})) == result(
+            rpc(gateway, "scid_describe", {"name": "operation_invoke"}))
     child = {"child": "child-1", "profile": profile}
     assert [x['name'] for x in result(rpc(gateway, "scid_catalog", **child))['entries']] == ['worker_identity']
     assert "navigation views are available only for Root" in rpc(
         gateway, "scid_catalog", {"view": "index"}, **child)["error"]["message"]
-    result(rpc(gateway, "scid_describe", {"name": "worker_identity"}, **child))
+    for view in ("invoke", "full"):
+        assert result(rpc(gateway, "scid_describe", {"name": "worker_identity", "view": view}, **child)) == result(
+            rpc(gateway, "scid_describe", {"name": "worker_identity"}, **child))
     identity = result(call(gateway, "worker_identity", **child))
     assert identity == {"thread_id": "child-1", "model": profile['model'],
                         "reasoning_effort": profile['reasoning_effort']}
@@ -232,6 +235,9 @@ def test_gateway_scopes_actual_worker_lifecycle_and_sealed_result(tmp_path, back
     result(call(gateway, "worker_attach", {"name": "observation", "thread_id": identity['thread_id']}))
     names = {x["name"] for x in result(rpc(gateway, "scid_catalog", **child))["entries"]}
     assert "worker_csv_summarize" in names and "operation_invoke" not in names
+    for view in ("invoke", "full"):
+        assert result(rpc(gateway, "scid_describe", {"name": "worker_csv_summarize", "view": view}, **child)) == result(
+            rpc(gateway, "scid_describe", {"name": "worker_csv_summarize"}, **child))
     assert "navigation views are available only for Root" in rpc(
         gateway, "scid_catalog", {"view": "matches", "where": {"consequence": "scientific"}},
         **child)["error"]["message"]

@@ -4,7 +4,22 @@ import re
 import subprocess
 from pydantic import ValidationError
 
-__all__ = ["redact", "exception_facts", "RunOutputError", "RunCheckerError"]
+__all__ = ["redact", "exception_facts", "recovery_facts", "RunOutputError", "RunCheckerError"]
+
+# Stages are set at the local boundary that knows whether an action was sent.
+# Exception type or a remote error message alone cannot establish that fact.
+_RECOVERY = {
+    "configuration": (False, "administrator", "Repair service configuration before retrying the same action."),
+    "connection": (True, "operator", "No request was sent; restore connectivity before retrying within the existing budget."),
+    "pre_execution_rejected": (False, "caller", "Resolve the declared rejection before retrying the same action."),
+    "submission_unknown": (False, "operator", "Read status and recover the exact prepared submission through execution_start; do not rename or resubmit."),
+}
+
+
+def recovery_facts(stage: str) -> dict:
+    retryable, owner, condition = _RECOVERY[stage]
+    return {"stage": stage, "retryable": retryable, "responsibility": owner,
+            "recovery_condition": condition}
 
 def redact(value: str) -> str:
     from .workspace import _SECRET
@@ -54,7 +69,11 @@ def exception_facts(error: Exception, *, layer: str, action: str) -> dict:
                 item["timeout_kind"] = redact(str(cause["timeout_kind"]))[:80]
             if item not in chain:
                 chain.append(item)
+    stage = getattr(error, "failure_stage", None)
+    if stage not in _RECOVERY:
+        stage = None
     return {"layer": layer, "action": action,
+            **({"recovery": recovery_facts(stage)} if stage else {}),
             **({"origin_layer": redact(str(upstreams[-1].get("origin_layer", upstreams[-1].get("layer", "unknown"))))[:80]} if upstreams else {}),
             "causes": chain[:12],
             "category": "timeout" if any("timeout" in x or x["type"] == "TimeoutError" for x in chain) else "runtime_failure"}

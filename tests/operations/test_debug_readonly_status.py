@@ -101,3 +101,5 @@ def test_runner_upgrade_diagnostic_survives_command_boundary(tmp_path, monkeypat
         adapter.execution_policy()
     assert caught.value.details[0]["code"] == "tcad_runner_upgrade_required"
     assert "did not submit a job" in str(caught.value) and "/private" not in str(caught.value)
+    from scidiscovery.plugin_runtime.diagnostics import exception_facts
+    assert exception_facts(caught.value, layer="transport", action="policy")["recovery"]["stage"] == "configuration"

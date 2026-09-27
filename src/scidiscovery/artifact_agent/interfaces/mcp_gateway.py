@@ -50,7 +50,7 @@ class DescribeInput(_Input):
     name: str = Field(min_length=1, max_length=256)
     view: Literal["full", "invoke"] = Field(
         default="invoke",
-        description="Omit: Operations use invoke, interfaces use full. full adds execution diagnostics.",
+        description="Operations: invoke is the default; full adds execution diagnostics. Interfaces always return their complete input contract for either view.",
     )
 
 
@@ -192,24 +192,17 @@ class UnifiedMCPRouter:
 
     def describe(self, context, values):
         name = values.name
-        interface_view = values.view if "view" in values.model_fields_set else "full"
         declaration = next((item for item in _DECLARATIONS if item[0] == name), None)
         if declaration is not None:
-            if interface_view != "full":
-                raise DiagnosticError('scid_describe view="invoke" is supported only for Operations')
             entry_name, description, model = declaration
             return {"name": entry_name, "description": description,
                     "inputSchema": model.model_json_schema()}
         if context.worker and values.surface != "research":
             raise DiagnosticError("execution surface is available only to Root")
         if context.worker and name == "worker_identity":
-            if interface_view != "full":
-                raise DiagnosticError('scid_describe view="invoke" is supported only for Operations')
             return _IDENTITY
         for tool in self._interfaces(context, values.surface):
             if tool["name"] == name:
-                if interface_view != "full":
-                    raise DiagnosticError('scid_describe view="invoke" is supported only for Operations')
                 return tool
         if not context.worker and values.surface == "research":
             full = self.root.call_tool(

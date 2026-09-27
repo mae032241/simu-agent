@@ -379,6 +379,26 @@ analysis retains its existing execution policy, other roles inherit their prior
 environment and limits. Missing or damaged observation is reported explicitly
 and never adds a scientific submission requirement.
 
+Known failure boundaries add safe recovery facts: configuration repair belongs to
+the administrator; a failed connection is retryable only when no bytes were sent;
+policy rejection requires repair; an uncertain submission requires lookup of the
+exact prepared identity through `execution_start`. None starts an automatic retry.
+`ExecutionBridge.health` reuses declared capability reads, caches observations for
+a configurable minimum interval (default 5 seconds), and never submits, collects,
+cancels or recovers jobs. TCAD capability/policy queries share the configured total
+query timeout. An available probe proves capability access, not solver success.
+
+`platforms.codex_usage.observe_usage` reduces Codex `thread/tokenUsage/updated`
+cumulative snapshots for the host's existing observation storage. The host owns
+exact thread/turn bindings and Root/Worker/helper attribution; missing bindings
+remain unattributed. Repeated counters contribute zero; counter regression retains
+the high water and marks a gap. A resumed thread requires an initial baseline.
+`usage_summary` reads one latest record per thread, includes failed-thread usage,
+and preserves gaps. Cached input is part of input, and response bytes/time are
+separate optional observations. Individual model-request usage remains unavailable.
+This interface creates no database or host loop; automatic collection by a live
+host and its persistence remain integration/acceptance work, not an Agent form.
+
 Error observations append to existing Run activity even after the deadline or
 terminal state; they do not renew a budget, reopen a Run, or accept a result.
 Each MCP call's start and finish belong to the same Run, including when an idle

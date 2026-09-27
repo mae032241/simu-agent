@@ -303,7 +303,7 @@ class CommandTCADExecutorAdapter:
         return outputs
 
     def _call(self, operation: str, payload: dict[str, Any], *, context=None) -> dict[str, Any]:
-        if operation == "status":
+        if operation in {"status", "capabilities", "execution_policy"}:
             payload = {**payload, "deadline_monotonic": time.monotonic() + self.config.query_timeout_seconds}
         deadline = payload.get("deadline_monotonic")
         timeout = context.remaining_seconds() if context is not None else max(.001, deadline - time.monotonic()) if deadline is not None else self.config.operation_timeout_seconds
@@ -370,6 +370,7 @@ class CommandTCADExecutorAdapter:
                 error = DiagnosticError(message, details=(contract_diagnostic(
                     code, phase="tool_execution",
                     affected_action="tool_call", message=message, repairable=False),))
+                error.failure_stage = "configuration"
             else:
                 error = RuntimeError(str(response.get("error", "TCAD transport rejected operation")))
             if isinstance(response.get("engineering"), dict):
