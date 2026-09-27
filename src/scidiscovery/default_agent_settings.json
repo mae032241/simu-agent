@@ -5,5 +5,12 @@
     "model": "gpt-6-sol",
     "reasoning_effort": "medium"
   },
-  "operations": {}
+  "operations": {},
+  "input_materials": {
+    "max_item_bytes": 2000000000,
+    "max_total_bytes": 2000000000,
+    "inline_max_bytes": 1048576,
+    "inline_total_bytes": 8388608,
+    "transfer_chunk_bytes": 1048576
+  }
 }

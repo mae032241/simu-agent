@@ -8,7 +8,7 @@ from typing import Any, Literal, Mapping
 from types import MappingProxyType
 from pydantic import BaseModel, ConfigDict, Field
 PLUGIN_PROTOCOL_VERSION = "1"
-OPERATION_ABI_VERSION = "21"
+OPERATION_ABI_VERSION = "22"
 _ID = re.compile(r"^[a-z][a-z0-9_.-]{0,127}$")
 _JSON_POINTER = re.compile(r"^/(?:[^~/]|~[01])*(?:/(?:[^~/]|~[01])*)*$")
 _DOMAIN = re.compile(r"^(?:\*\.)?[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
@@ -119,8 +119,10 @@ class InputPortSpec(PortSpec):
     # Top-level JSON fields that must be present and non-null before invocation.
     required_non_null_fields: tuple[str, ...] = ()
     def issue(self) -> str | None:
-        if self.exposure == "file_reference" and (self.required_non_null_fields or self.media_types != ("application/octet-stream",)):
+        if self.exposure in {"material", "file_reference"} and self.required_non_null_fields:
             return "file_reference_contract_invalid"
+        if self.exposure == "material" and (self.schema_id != "*" or self.usage != "evidence_inventory"):
+            return "input_wildcard_invalid"
         if self.required_non_null_fields and (
             self.media_types != ("application/json",)
             or len(self.required_non_null_fields) != len(set(self.required_non_null_fields))
@@ -131,12 +133,12 @@ class InputPortSpec(PortSpec):
         if wildcard and not (
             self.schema_id == "*"
             and self.media_types == ("*/*",)
-            and self.exposure in {"handoff_only", "on_demand"}
+            and self.exposure in {"handoff_only", "on_demand", "material", "file_reference"}
             and self.usage == "evidence_inventory"
         ):
             return "input_wildcard_invalid"
         issue = super().issue() or (None if self.exposure in {
-            "full", "on_demand", "handoff_only", "file_reference"
+            "full", "on_demand", "handoff_only", "file_reference", "material"
         } else "input_exposure_invalid")
         if issue is not None:
             return issue

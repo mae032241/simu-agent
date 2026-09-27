@@ -10,9 +10,21 @@ visibility and versioned schema IDs remain necessary platform contracts.
 Support is attached to the values and callbacks below, at their existing import
 paths. It does not cover every symbol in their containing packages. Source type
 annotations and compiled schemas are authoritative; this reference does not define
-parallel types. Current plugin protocol is `1`, Operation ABI is `21`, and component
+parallel types. Current plugin protocol is `1`, Operation ABI is `22`, and component
 protocol versions are declared independently. Changing an implementation or resource
 still changes compiled identity.
+
+`InputPortSpec.exposure="material"` declares a paired wildcard evidence inventory
+(`schema="*"`, `media_types=("*/*",)`). Control applies `AgentSettings.input_materials`
+to stored sizes, delivers small text on demand, and freezes larger or binary inputs
+as `file_reference`. A file reference may declare concrete MIME/schema constraints
+or the same paired wildcard inventory; it is not restricted to octet-stream.
+Its bytes are absent from in-memory validation mappings. Tools use
+`OperationToolContext.input_path(source_name)` for bounded streaming. The complete
+experiment exposes `worker_materialize_input` so Workers can request a native-readable
+path without handling private identities. Material limits are shown in Root's
+contract and frozen in the Run; they do not authorize solver execution or qualify
+scientific claims. Other input ports retain their declared semantic/content limits.
 
 | Owner | Supported extension contract |
 | --- | --- |

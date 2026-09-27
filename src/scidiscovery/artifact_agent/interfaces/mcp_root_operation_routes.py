@@ -103,6 +103,20 @@ class RootOperationRoutes:
     def _operation_catalog_item(self, item: Any) -> dict[str, Any]:
         value = item.model_dump(mode="json", by_alias=True)
         compiled = self._operation_catalog.operation(item.operation_id)
+        if self.runs is not None and any(p.exposure in {"material", "file_reference"} for p in compiled.spec.inputs):
+            from ...operations.invoke import material_input_limit
+            instance_id = (self.bindings.session_instance(session_key=self.session_key)
+                           if self.session_key is not None else self.instance)
+            policy = self.runs.material_input_settings(instance_id)
+            value["input_materials"] = {
+                **policy.model_dump(), "configuration": "agent-settings.json:input_materials",
+                "delivery": "Control selects small text delivery or exact streamed file references. "
+                "File size is not context size; Workers materialize selected files on demand.",
+            }
+            for port in value["inputs"]:
+                if port["exposure"] in {"material", "file_reference"}:
+                    declared = next(p for p in compiled.spec.inputs if p.name == port["name"])
+                    port["max_item_bytes"] = material_input_limit(declared, policy)
         return value
 
     def _scheduler_operation_available(
@@ -916,6 +930,8 @@ class RootOperationRoutes:
             instruction=instruction,
             parameters=parameters,
             read_artifact=self.artifacts.read,
+            material_settings=(self.runs.material_input_settings(self._instance_id())
+                if self.runs is not None and any(p.exposure in {"material", "file_reference"} for p in compiled.spec.inputs) else None),
         )
         if (
             self.runs is not None

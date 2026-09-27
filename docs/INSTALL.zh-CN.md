@@ -434,3 +434,32 @@ sudo deploy/cleanup_legacy_services.sh clean
 实例管理列表提供独立的“Agent 设置”和“资料整理与归档”入口。点击“Agent 设置”可取得编辑权限并覆盖语言、模型、推理强度和恢复链总 Run 数，也可按已安装 Operation ID 覆盖后三项。留空继承，清除全部覆盖恢复公共默认。只读访问不能保存；归档实例只读；保存仅影响新预检，不启动 Agent、仿真或审批，也不改变会话绑定。历史英文报告不翻译，历史 Run 未记录的配置不回填。
 
 首次升级本功能需要正常安装、重新生成角色并重新加载 Codex，移除旧角色文件固定的模型；之后实例修改配置无需新 role 或重启。Worker 按每个 Run 的冻结配置工作，调度方须将预检返回的 `normalized_request` 原样用于 invoke，并使用返回的 `execution_profile.profile.model` / `reasoning_effort` 分发。旧独立 CLI 启动脚本支持 `--model` 与 `--reasoning-effort`，新动态角色要求这两项来自已排队 Run。配置是请求事实，不冒充实际模型遥测。VM runner 不变，本次无需同步 VM。回滚应使用安装事务中匹配的代码、角色、数据库和配置备份。
+
+## 实验材料与读取预算
+
+完整实验的 `scientific_materials` 支持原始 PDF、图片、CSV、JSON、归档和网格文件；
+`scientific_files` 也接受这些类型，显式采用按需文件交付。它们共用材料存储预算，
+不再把 1 MB 当作论文或文件的准入上限。小文本可以直接读取，较大或二进制材料
+只保留精确引用，通过 `worker_materialize_input(source_name=...)` 分块取到工作区。
+实验 Worker 允许原生图像查看；启动材料不会携带原始文件内容或要求填写哈希等机械字段。
+
+在 `${SCID_CONFIG_ROOT}/agent-settings.json` 中配置以下顶层字段（单位为字节）：
+
+```json
+{
+  "input_materials": {
+    "max_item_bytes": 2000000000,
+    "max_total_bytes": 2000000000,
+    "inline_max_bytes": 1048576,
+    "inline_total_bytes": 8388608,
+    "transfer_chunk_bytes": 1048576
+  }
+}
+```
+
+将该字段合并进现有配置，保留模型等其他设置；不要整文件覆盖。前两项限制绑定文件的
+单项与合计大小，中间两项限制自动内存交付，最后一项控制流式复制块大小。
+实例设置中已有的同名覆盖会继承并覆盖公共值；当前表单不提供这些字段的编辑控件。
+`scid_describe` 返回实际生效的预算，新 Run 冻结预算和交付方式。超限诊断指出具体材料；
+不得通过丢弃必要原始证据规避失败。该预算不替代 TCAD 执行授权与运行资源策略。
+升级需要重新生成角色并重载 Codex；不要在旧合同任务运行期间切换服务版本。

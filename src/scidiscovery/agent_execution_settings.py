@@ -58,12 +58,22 @@ class ExecutionIOSettings(SettingsValue):
     idle_timeout_seconds: int = Field(default=30, ge=1)
 
 
+class MaterialInputSettings(SettingsValue):
+    """Stored material budgets are separate from in-memory delivery thresholds."""
+    max_item_bytes: int = Field(default=2_000_000_000, ge=1)
+    max_total_bytes: int = Field(default=2_000_000_000, ge=1)
+    inline_max_bytes: int = Field(default=1048576, ge=1)
+    inline_total_bytes: int = Field(default=8388608, ge=1)
+    transfer_chunk_bytes: int = Field(default=1048576, ge=1, le=8388608)
+
+
 class AgentSettings(SettingsValue):
     schema_version: Literal[1] = 1
     defaults: DefaultSettings = Field(default_factory=DefaultSettings)
     operations: dict[str, OperationSettings] = Field(default_factory=dict)
     helpers: HelperSettings = Field(default_factory=HelperSettings)
     execution_io: ExecutionIOSettings = Field(default_factory=ExecutionIOSettings)
+    input_materials: MaterialInputSettings = Field(default_factory=MaterialInputSettings)
 
     def sparse(self) -> dict:
         return self.model_dump(exclude_none=True, exclude_unset=True)

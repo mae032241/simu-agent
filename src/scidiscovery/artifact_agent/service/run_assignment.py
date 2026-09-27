@@ -74,7 +74,8 @@ def assignment_json(
                     "media_type": item.media_type,
                     "size_bytes": next(value.artifact.size_bytes for value in bound.inputs if value.source_name == item.source_name),
                     "schema_id": item.artifact_ref.schema_id,
-                    **({"materialization": "controlled_tool_stream_only", "artifact_ref": item.artifact_ref.model_dump(mode="json")}
+                    **({"materialization": "controlled_tool_stream_only",
+                        **({"materialize_tool": "worker_materialize_input"} if "worker_materialize_input" in tool_names else {})}
                        if item.exposure == "file_reference" else {}),
                     **({"reference_availability": "unknown"} if "worker_reference_read" in tool_names else {}),
                     "usage": item.usage,

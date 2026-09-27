@@ -492,3 +492,36 @@ The current M7 configuration matches the previous generated default, so reinstal
 Instance management exposes sparse overrides for narrative language, model, effort and recovery-chain total Run count. The latter three also support installed Operation IDs. Blank fields inherit; resetting removes instance overrides only. Read-only and archived instances cannot save. Saving affects future preflights only: it does not dispatch, execute, approve or rebind a session. Historical reports are not translated and missing historical Run profiles are not backfilled.
 
 The initial upgrade requires installation, role regeneration and reloading Codex to remove fixed role models. Later instance edits need neither new roles nor a restart. Reuse preflight's `normalized_request` for invoke and dispatch its frozen `execution_profile.profile.model` and `reasoning_effort`. The standalone CLI launcher accepts `--model` and `--reasoning-effort`; dynamic roles require both from the queued Run. Requested configuration is not actual model telemetry. VM runner is unchanged and needs no synchronization. Roll back with matching code, roles, database and configuration transaction backups.
+
+## Experiment material and reading budgets
+
+Complete experiments accept exact PDFs, images, CSV, JSON, archives and grids via
+`scientific_materials`; `scientific_files` supports the same types with explicit lazy
+file delivery. Both share the stored-material budget. Small text remains directly
+readable; large or binary files retain exact references until the Worker requests
+`worker_materialize_input(source_name=...)`. Native image viewing is enabled for
+experiment Workers. Startup does not embed file contents or ask for control hashes.
+
+Merge this top-level field into `${SCID_CONFIG_ROOT}/agent-settings.json`, retaining
+other settings (all sizes are bytes):
+
+```json
+{
+  "input_materials": {
+    "max_item_bytes": 2000000000,
+    "max_total_bytes": 2000000000,
+    "inline_max_bytes": 1048576,
+    "inline_total_bytes": 8388608,
+    "transfer_chunk_bytes": 1048576
+  }
+}
+```
+
+The first two limits bound stored individual/aggregate material sizes, the next two
+bound automatic in-memory delivery, and the last bounds streaming copy chunks.
+Existing instance overrides inherit global values; the settings form currently has
+no editing controls for these fields. `scid_describe` reports effective budgets and
+new Runs freeze budgets and delivery modes. Admission errors identify the material;
+do not drop necessary evidence to bypass a rejection. These budgets do not replace
+TCAD execution authorization or solver resource policy. Regenerate roles and reload
+Codex on upgrade; finish tasks bound to old contracts before switching services.

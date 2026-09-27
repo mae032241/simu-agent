@@ -31,7 +31,7 @@ def _expect(code: str, *plugins: PluginDefinition) -> CatalogCompileError:
     return caught.value
 
 
-@pytest.mark.parametrize("exposure", ("handoff_only", "on_demand", "full"))
+@pytest.mark.parametrize("exposure", ("handoff_only", "on_demand", "full", "material", "file_reference"))
 @pytest.mark.parametrize("usage", ("evidence_inventory", "prior_signal", "claim_evidence"))
 @pytest.mark.parametrize("wildcard", ("paired", "schema_only", "media_only"))
 def test_wildcard_inputs_require_paired_read_only_inventory(exposure, usage, wildcard) -> None:

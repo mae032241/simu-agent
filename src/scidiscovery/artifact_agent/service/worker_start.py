@@ -36,6 +36,12 @@ def startup_document(assignment: dict, domain: dict | None = None) -> dict:
     }
     if domain:
         result['workspace'] = {key: domain[key] for key in ('manifest', 'paths', 'read_paths', 'patch_contract') if key in domain}
+    if 'worker_materialize_input' in assignment.get('tools', ()):
+        result['reading']['files'] = (
+            'Inputs marked controlled_tool_stream_only are bound files, not missing evidence. '
+            'Call worker_materialize_input with their source_name to obtain a local path. '
+            'Read PDF/image/table/archive files with the appropriate native tool or a streaming script; '
+            'do not print whole large files. The input JSON reader handles the small text inputs.')
     return result
 
 

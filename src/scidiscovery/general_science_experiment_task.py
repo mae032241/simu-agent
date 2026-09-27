@@ -13,8 +13,9 @@ from .operation_declaration import schema_resource, scientific_agent_operation, 
 from .operations.spec import (CallableComponent, CollectionSpec, ComponentRef,
     ComponentSpec, InputPortSpec, OutputPortSpec, SemanticRuleSpec, WorkspaceContract)
 from .operations.tooling import WorkerToolDefinition
+from .agent_execution_settings import MaterialInputSettings
 from .operations.workspace import WorkspaceProtocolError
-from .operation_contract import SemanticRuleViolation
+from .operation_contract import SemanticRuleViolation, DiagnosticError
 
 
 class ExperimentReport(BaseModel):
@@ -56,6 +57,23 @@ class ExecuteExperiment(BaseModel):
 
 def execute(request, context):
     return context.require_service("experiment.execution").command(context, request)
+
+
+class InputFileRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    source_name: str = Field(min_length=1, max_length=128,
+        description="Exact input source_name from the assignment.")
+
+
+def materialize_input(request, context):
+    try:
+        context.input_ref(request.source_name)  # Reject paths and undeclared sources.
+    except ValueError as error:
+        raise DiagnosticError("Unknown input source_name; choose an exact source_name from the assignment.") from error
+    path = context.input_path(request.source_name)
+    return {"source_name": request.source_name, "relative_path": str(path.relative_to(context.workspace)),
+            "size_bytes": path.stat().st_size, "state": "available",
+            "reading": "Use native file tools for PDFs, images or large tables; read bounded sections. This call returns no file contents."}
 
 
 def validate_report(raw):
@@ -131,6 +149,9 @@ EXECUTE_TOOL = WorkerToolDefinition(name="worker_experiment_execute",
     description="Request, advance, collect or cancel this experiment's formal execution; status and capabilities are read-only. Read text or export exact collected scientific files into scratch for local analysis. Uses configured authorization and the original scientific budget.",
     input_model=ExecuteExperiment, capability="experiment.execute", contextual_handler=execute,
     optional_services=("experiment.execution",), evidence_ports=("tool_evidence", "recovery_manifest_output"))
+INPUT_TOOL = WorkerToolDefinition(name="worker_materialize_input",
+    description="Stream one exact bound input into the workspace for native reading or analysis; returns its path, never its contents.",
+    input_model=InputFileRequest, capability="material.input", contextual_handler=materialize_input)
 
 _REF = ComponentRef
 COMPONENTS = (
@@ -148,6 +169,7 @@ COMPONENTS = (
         resources=(_REF("experiment_task_finalizer"),)),
     ComponentSpec("experiment_stage_tool", "worker_tool", __name__ + ":STAGE_TOOL"),
     ComponentSpec("experiment_execute_tool", "worker_tool", __name__ + ":EXECUTE_TOOL"),
+    ComponentSpec("experiment_input_tool", "worker_tool", __name__ + ":INPUT_TOOL"),
 )
 OPERATION = scientific_agent_operation(
     "science.experiment.v1", "Complete a bounded experiment from scientific design through execution and validity judgment.",
@@ -156,18 +178,20 @@ OPERATION = scientific_agent_operation(
     decision_fields=("outcome", "summary", "remaining_question", "limitations"),
     agent=_REF("experiment_task_agent"), prompt=_REF("experiment_task_prompt"),
     workspace=_REF("experiment_task_workspace"),
-    tools=BASE_TOOLS + (_REF("experiment_stage_tool"), _REF("experiment_execute_tool")),
+    tools=BASE_TOOLS + (_REF("experiment_stage_tool"), _REF("experiment_execute_tool"), _REF("experiment_input_tool")),
     inputs=(
         _input("research_objective", "Exact scientific objective and constraints.", "scidiscovery.research-objective.v1"),
         _input("scientific_materials", "Exact hypothesis, evidence, parameters or feedback needed for this experiment.", "*",
-            media_types=("*/*",), min_items=0, max_items=16, exposure="on_demand", usage="evidence_inventory"),
+            media_types=("*/*",), min_items=0, max_items=16, exposure="material", usage="evidence_inventory",
+            max_item_bytes=MaterialInputSettings().max_item_bytes),
         InputPortSpec(name="prior_experiment", description="Optional exact previous experiment whose feedback this task addresses.",
             schema="scidiscovery.experiment-report.v1", media_types=("application/json",), codec=_REF("json_codec"),
             schema_resource=_REF("experiment_task_schema"), min_items=0, exposure="on_demand", usage="prior_signal"),
-        InputPortSpec(name="scientific_files", description="Exact scientific binary materials, including simulation grids.",
-            schema="opaque", media_types=("application/octet-stream",), codec=_REF("opaque_codec"),
-            schema_resource=_REF("opaque_schema"), min_items=0, max_items=16, max_item_bytes=2_000_000_000,
-            exposure="file_reference", usage="claim_evidence"),
+        InputPortSpec(name="scientific_files", description="Optional exact files of any registered type (PDF, image, table, archive or simulation grid); streamed on request. These may also be supplied as scientific_materials.",
+            schema="*", media_types=("*/*",), codec=_REF("opaque_codec"),
+            schema_resource=_REF("wildcard_schema"), min_items=0, max_items=16,
+            max_item_bytes=MaterialInputSettings().max_item_bytes,
+            exposure="file_reference", usage="evidence_inventory"),
     ),
     outputs=(
         OutputPortSpec(name="experiment", description="Complete experiment conclusion and adopted sealed stages.",
@@ -187,7 +211,7 @@ OPERATION = scientific_agent_operation(
             agent_visible=False,
             max_item_bytes=1024*1024, collection=CollectionSpec(1024*1024)),
     ), timeout=7200, max_input_bytes=32_100_000_000, max_output_bytes=130*1024*1024,
-    max_files=66, max_attempts=2,
+    max_files=66, max_attempts=2, native_view_image=True,
 )
 OPERATION = OPERATION.model_copy(update={"executor": OPERATION.executor.model_copy(update={
     "capability": _REF("experiment_task_protocol")})})

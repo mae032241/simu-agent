@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from ..operation_contract import DiagnosticError
+from ..agent_execution_settings import MaterialInputSettings
 import json
 import re
 from collections.abc import Callable
@@ -141,8 +142,10 @@ def preflight_operation(
     parameters: Mapping[str, Any] | None = None,
     read_artifact: Callable[[ArtifactRef], bytes] | None = None,
     source_name_overrides: Mapping[tuple[str, ArtifactRef], str] | None = None,
+    material_settings: MaterialInputSettings | None = None,
 ) -> BoundOperationCall:
     spec = compiled.spec
+    material_settings = material_settings or MaterialInputSettings()
     expected = {port.name: port for port in spec.inputs}
     if set(artifacts_by_port) != set(expected):
         missing = next(iter(sorted(set(expected) - set(artifacts_by_port))), None)
@@ -184,12 +187,27 @@ def preflight_operation(
     bound: list[BoundInput] = []
     seen_refs: set[ArtifactRef] = set()
     total_bytes = 0
+    material_bytes = 0
     for port in spec.inputs:
         artifacts = artifacts_by_port[port.name]
-        _validate_port_binding(port, artifacts)
-        if port.exposure != "file_reference":
-            total_bytes += sum(item.size_bytes for item in artifacts)
+        controlled_material = port.exposure in {"material", "file_reference"}
+        _validate_port_binding(port, artifacts, max_item_bytes=material_input_limit(port, material_settings))
         for index, artifact in enumerate(artifacts, start=1):
+            exposure = port.exposure
+            if controlled_material:
+                material_bytes += artifact.size_bytes
+                if material_bytes > material_settings.max_total_bytes:
+                    raise OperationInvocationError("input_total_too_large", port=port.name,
+                        message=f"Material {artifact.artifact_name!r} brings stored materials to {material_bytes} bytes; "
+                        f"input_materials.max_total_bytes={material_settings.max_total_bytes}. Select fewer materials "
+                        "or change the administrator material budget; do not discard necessary evidence silently.")
+            if exposure == "material":
+                textual = artifact.media_type.startswith("text/") or artifact.media_type == "application/json"
+                exposure = ("on_demand" if textual and artifact.size_bytes <= material_settings.inline_max_bytes
+                            and total_bytes + artifact.size_bytes <= min(spec.limits.max_input_bytes,
+                                material_settings.inline_total_bytes) else "file_reference")
+            if exposure != "file_reference":
+                total_bytes += artifact.size_bytes
             if artifact.ref in seen_refs:
                 raise OperationInvocationError("input_artifact_duplicate", port=port.name)
             seen_refs.add(artifact.ref)
@@ -210,7 +228,7 @@ def preflight_operation(
                     source_name=source_name,
                     artifact_name=artifact.artifact_name,
                     artifact=artifact,
-                    exposure=port.exposure,
+                    exposure=exposure,
                     usage=port.usage,
                 )
             )
@@ -421,8 +439,16 @@ def execute_compiled_transform(
     if not isinstance(value, Mapping):
         raise ValueError("transform component must return an output mapping")
     return _transform_outputs(bound.compiled, value)
+def material_input_limit(port: InputPortSpec, settings: MaterialInputSettings) -> int:
+    if port.exposure not in {"material", "file_reference"}:
+        return port.max_item_bytes
+    if port.schema_id == "*":
+        return settings.max_item_bytes
+    return min(port.max_item_bytes, settings.max_item_bytes)
+
+
 def _validate_port_binding(
-    port: InputPortSpec, artifacts: tuple[InvocationArtifact, ...]
+    port: InputPortSpec, artifacts: tuple[InvocationArtifact, ...], *, max_item_bytes: int
 ) -> None:
     if not port.min_items <= len(artifacts) <= port.max_items:
         raise OperationInvocationError("input_cardinality_invalid", port=port.name,
@@ -430,12 +456,14 @@ def _validate_port_binding(
     wildcard = port.schema_id == "*" and port.media_types == ("*/*",)
     for artifact in artifacts:
         if not wildcard and artifact.schema_id != port.schema_id:
-            raise OperationInvocationError("input_schema_mismatch", port=port.name)
+            raise OperationInvocationError("input_schema_mismatch", port=port.name,
+                message=f"Material {artifact.artifact_name!r} has schema {artifact.schema_id!r}; expected {port.schema_id!r}.")
         if not wildcard and artifact.media_type not in port.media_types:
-            raise OperationInvocationError("input_media_type_mismatch", port=port.name)
-        if artifact.size_bytes > port.max_item_bytes:
+            raise OperationInvocationError("input_media_type_mismatch", port=port.name,
+                message=f"Material {artifact.artifact_name!r} has media type {artifact.media_type!r}; expected {port.media_types!r}.")
+        if artifact.size_bytes > max_item_bytes:
             raise OperationInvocationError("input_item_too_large", port=port.name,
-                message=f"Input size {artifact.size_bytes} bytes exceeds max_item_bytes={port.max_item_bytes}.")
+                message=f"Material {artifact.artifact_name!r}: input size {artifact.size_bytes} bytes exceeds max_item_bytes={max_item_bytes}.")
         if port.require_current and not artifact.current:
             raise OperationInvocationError("input_not_current", port=port.name)
 def _run_guards(

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from ...agent_execution_settings import (EXECUTION_SETTINGS_COLUMNS, AgentSettings, ExecutionIOSettings, ExecutionProfile,
+from ...agent_execution_settings import (EXECUTION_SETTINGS_COLUMNS, AgentSettings, ExecutionIOSettings, ExecutionProfile, MaterialInputSettings,
                                           parse_settings, resolve_settings)
 
 import hashlib
@@ -126,6 +126,13 @@ class RunService(ToolEvidenceMixin):
         from .worker_connections import WorkerConnections
         self.worker_connections = WorkerConnections(self)
         self.experiment_executions = None
+
+    def material_input_settings(self, instance_id=None):
+        values = self.agent_settings.input_materials.model_dump()
+        if instance_id is not None:
+            instance = parse_settings(self.scheduler_bindings.agent_settings(instance_id)["settings"])
+            values.update(instance.input_materials.model_dump(exclude_unset=True))
+        return MaterialInputSettings.model_validate(values)
 
     def task_lineage(self, run_id):
         """Current Run through its immutable recovery ancestors, newest first."""
@@ -256,9 +263,12 @@ class RunService(ToolEvidenceMixin):
                     if self.signal_for_output(envelope.ref, require_current=False) else None),
                 historical=item.artifact.historical,
             ))
+        material_policy = (self.material_input_settings(instance_id)
+            if any(p.exposure in {"material", "file_reference"} for p in compiled.spec.inputs) else None)
         bound = preflight_operation(compiled, name=bound.name,
             artifacts_by_port={name: tuple(items) for name, items in by_port.items()},
             instruction=bound.instruction, read_artifact=self.artifacts.read,
+            material_settings=material_policy,
             source_name_overrides={(item.port_name, item.artifact.ref): item.source_name
                                    for item in bound.inputs})
         if execution_profile is None:
@@ -276,6 +286,8 @@ class RunService(ToolEvidenceMixin):
         deadline_at = future(created_at, compiled.spec.limits.timeout_seconds)
         recovery_digest: str | None = None
         recovery_policy = self._recovery_policy(compiled)
+        if material_policy is not None:
+            recovery_policy["input_materials"] = material_policy.model_dump()
         if resume_from is None and draft_from is None:
             instance_settings = parse_settings(self.scheduler_bindings.agent_settings(instance_id)["settings"])
             for key in ("helpers", "execution_io"):
@@ -742,6 +754,7 @@ class RunService(ToolEvidenceMixin):
             "max_attempts": limits.max_attempts,
             "helpers": self.agent_settings.helpers.model_dump(),
             "execution_io": self.agent_settings.execution_io.model_dump(),
+            "input_materials": self.agent_settings.input_materials.model_dump(),
             "snapshot_max_files": 132, "snapshot_max_bytes": 32 * 1024 * 1024,
         }
 

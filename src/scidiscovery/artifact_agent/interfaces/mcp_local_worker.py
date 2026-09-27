@@ -664,16 +664,17 @@ class LocalWorkerMCPRouter:
                 source_name, item.media_type
             )
             if item.exposure == "file_reference":
-                import hashlib
                 import os
                 import tempfile
+                from ...agent_execution_settings import MaterialInputSettings
+                policy = MaterialInputSettings.model_validate((status.recovery_policy or {}).get("input_materials", {}))
                 if path.parent.is_symlink() or not path.parent.is_dir():
                     raise ValueError("declared input directory is unsafe")
                 with self.runs.artifacts.open_original(item.artifact_ref) as source:
                     with tempfile.NamedTemporaryFile(dir=path.parent, delete=False) as target:
                         temporary = Path(target.name)
                         try:
-                            while chunk := source.read(1024 * 1024):
+                            while chunk := source.read(policy.transfer_chunk_bytes):
                                 target.write(chunk)
                             target.flush()
                             os.fsync(target.fileno())
