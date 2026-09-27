@@ -29,6 +29,7 @@ class ReferencePolicy:
         ReferenceRule('scidiscovery.layered-diagnosis.v1', '/objective_assessment/evidence_keys/*'),
         ReferenceRule('scidiscovery.layered-diagnosis.v1', '/hypothesis_assessments/*/evidence_keys/*'),
         ReferenceRule('scidiscovery.experiment-scientific-skeleton.v1', '', producer_input_alias='research_objective'),
+        ReferenceRule('scidiscovery.experiment-report.v1', '/adopted_stages/*'),
     )
     max_file_bytes: int = 32 * 1024 * 1024
     max_unique_bytes: int = 256 * 1024 * 1024

@@ -652,6 +652,7 @@ class RootOperationRoutes:
             item.source_name in allowed_nonqualifying
             and (
                 envelope.labels.get("scientific_claim_admissible") == "false"
+                or self._scientific_source_restriction(item, bound.compiled)
                 or (
                     (signal := self.runs.signal_for_output(envelope.ref, require_current=False)
                      if self.runs is not None else None)
@@ -994,22 +995,26 @@ class RootOperationRoutes:
             pending.extend(self.artifacts.catalog(current).parent_refs)
         return False
 
+    def _scientific_source_restriction(self, item, compiled, *, inherited_only=False):
+        from ..service.scientific_usage import scientific_use_restricted, ScientificProvenanceError
+        from ...operations.tooling import reference_policy
+        if self.runs is None:
+            return False
+        try:
+            return scientific_use_restricted(self.runs, (item.artifact.ref,),
+                ignore_labels=(item.artifact.ref,) if inherited_only else (), policy=reference_policy(compiled))
+        except ScientificProvenanceError as error:
+            raise OperationInvocationError("input_scientific_provenance_unavailable", port=item.port_name,
+                message=str(error)) from error
+
     def _validate_operation_input_admission(self, bound: BoundOperationCall) -> None:
         reviewed = self._validate_producer_output_admission(bound)
         self._validate_complete_transform_family(bound)
         self._validate_revision_policy(bound)
         self._validate_compiled_input_admission(bound)
-        from ..service.scientific_usage import scientific_use_restricted, ScientificProvenanceError
-        from ...operations.tooling import reference_policy
         for item in bound.inputs:
-            if bound.compiled.spec.consequence != "explore" and item.usage == "claim_evidence" and self.runs is not None:
-                try:
-                    inherited = scientific_use_restricted(self.runs, (item.artifact.ref,), ignore_labels=(item.artifact.ref,),
-                        policy=reference_policy(bound.compiled))
-                except ScientificProvenanceError as error:
-                    raise OperationInvocationError("input_scientific_provenance_unavailable", port=item.port_name,
-                        message=str(error)) from error
-                if inherited:
+            if bound.compiled.spec.consequence != "explore" and item.usage == "claim_evidence":
+                if self._scientific_source_restriction(item, bound.compiled, inherited_only=True):
                     raise OperationInvocationError("input_scientific_claim_forbidden", port=item.port_name,
                         message="The exact cited source retains a scientific-use restriction.")
             if (

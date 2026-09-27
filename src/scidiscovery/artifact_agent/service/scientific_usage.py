@@ -2,10 +2,12 @@
 import json
 
 from ...operations.tooling import reference_policy
+from ...operations.invoke import OperationInvocationError
 from ...reference_tools import ReferencePolicy
 from ..schema.refs import ArtifactRef
 from .reference_access import _matches, _pointer
-from .run_records import RunError
+from .run_records import RunContractUnavailable, RunError
+from .scheduler_bindings import SchedulerBindingError
 
 
 class ScientificProvenanceError(ValueError):
@@ -68,18 +70,27 @@ def scientific_use_restricted(runs, references, *, ignore_labels=(), policy=None
     stay with admission's exact-review policy; this checks source restrictions.
     """
     limits = policy or ReferencePolicy()
-    pending, seen = list(references), set()
+    pending, seen = [(ref, False) for ref in references], set()
     remaining_bytes = limits.max_unique_bytes
     while pending:
-        ref = pending.pop()
-        if ref in seen:
+        ref, uncertain = pending.pop()
+        visit = (ref, uncertain)
+        if visit in seen:
             continue
-        seen.add(ref)
+        seen.add(visit)
         if len(seen) > limits.max_calls:
             raise ScientificProvenanceError('Scientific provenance exceeds its object bound.')
         envelope = runs.artifacts.catalog(ref)
         if ref not in ignore_labels and envelope.labels.get('scientific_claim_admissible') == 'false':
+            if uncertain:
+                raise ScientificProvenanceError('Historical ancestors include restricted material, but exact scientific citations are unavailable.')
             return True
+        if uncertain:
+            # Missing old citation contracts cannot identify adopted sources.
+            # Only absence of restrictions across every immutable ancestor is
+            # sufficient here; a restricted ancestor means unknown, not a claim.
+            pending.extend((parent, True) for parent in envelope.parent_refs)
+            continue
         producer_id = envelope.labels.get('tool_producer_run')
         if producer_id:
             try:
@@ -97,19 +108,39 @@ def scientific_use_restricted(runs, references, *, ignore_labels=(), policy=None
                     sources = tuple(runs.source_descriptor(producer, alias).artifact_ref for alias in aliases)
                     if any(source not in envelope.parent_refs for source in sources):
                         raise ScientificProvenanceError('Scientific receipt source is not an exact parent.')
-                    pending.extend(sources)
+                    pending.extend((source, False) for source in sources)
                 except ValueError as error:
                     raise ScientificProvenanceError('Scientific receipt source is unavailable.') from error
             elif record.get('source_ref') is not None:
-                pending.append(ArtifactRef.model_validate(record['source_ref']))
+                pending.append((ArtifactRef.model_validate(record['source_ref']), False))
             continue
         producer = runs.completed_for_output(ref)
         if producer is None or producer.output_ref != ref:
+            if envelope.labels.get('transform_profile') is None:
+                continue
+            try:
+                owner = runs.scheduler_bindings.find_owner(namespace='artifact', object_id=ref.artifact_id)
+                if owner is None:
+                    raise ScientificProvenanceError('Exact Transform creation binding is unavailable.')
+                instance, binding = owner
+                family = runs.input_origins(instance.instance_id)._transform_output_family(
+                    binding.name, envelope, verify_inputs=False)
+            except (SchedulerBindingError, OperationInvocationError) as error:
+                raise ScientificProvenanceError('Exact Transform source family is unavailable.') from error
+            if family is None or family.producer_kind != 'transform':
+                raise ScientificProvenanceError('Exact Transform source family is unavailable or ambiguous.')
+            if family.contract_availability != 'current':
+                pending.extend((parent, True) for parent in envelope.parent_refs)
+                continue
+            # These are the declared inputs of this exact invocation, not every
+            # arbitrary ancestor or an object found by schema/navigation name.
+            pending.extend((item.ref, False) for item in family.producer_inputs)
             continue
         try:
             compiled = runs._compiled(producer)
-        except RunError as error:
-            raise ScientificProvenanceError('Exact scientific output contract is unavailable.') from error
+        except RunContractUnavailable:
+            pending.extend((parent, True) for parent in envelope.parent_refs)
+            continue
         port_name = envelope.labels.get('operation_output_port')
         port = next((port for port in compiled.spec.outputs if port.name == port_name), None)
         policy = reference_policy(compiled)
@@ -120,5 +151,5 @@ def scientific_use_restricted(runs, references, *, ignore_labels=(), policy=None
         remaining_bytes -= envelope.size_bytes
         if remaining_bytes < 0 or envelope.size_bytes > limits.max_file_bytes:
             raise ScientificProvenanceError('Scientific provenance exceeds its byte bound.')
-        pending.extend(output_sources(runs, producer, compiled, port_name, runs.artifacts.read(ref)))
+        pending.extend((source, False) for source in output_sources(runs, producer, compiled, port_name, runs.artifacts.read(ref)))
     return False

@@ -184,6 +184,8 @@ class OperationOrigins:
         self,
         artifact_name: str,
         envelope: Any,
+        *,
+        verify_inputs: bool = True,
     ) -> ProducerOutputFamily | None:
         labels = envelope.labels
         operation_id = labels.get("operation_id")
@@ -302,7 +304,7 @@ class OperationOrigins:
             or compiled.spec.executor.kind != "transform"
         ):
             return unavailable("producer_contract_unavailable")
-        input_groups = self._transform_input_groups(compiled, envelope.parent_refs)
+        input_groups = self._transform_input_groups(compiled, envelope.parent_refs, verify_inputs=verify_inputs)
         if input_groups is None:
             return unavailable("producer_input_mapping_ambiguous")
         ordered_members = self._validated_transform_members(compiled, siblings)
@@ -343,11 +345,14 @@ class OperationOrigins:
         )
 
     def _transform_input_groups(
-        self, compiled: Any, parent_refs: tuple[Any, ...]
+        self, compiled: Any, parent_refs: tuple[Any, ...], *, verify_inputs: bool = True
     ) -> dict[str, tuple[Any, ...]] | None:
         if len(parent_refs) != len(set(parent_refs)):
             return None
-        envelopes = tuple(self.artifacts.verify(ref) for ref in parent_refs)
+        # Provenance-only restriction checks need immutable port metadata, not
+        # another content hash pass over potentially large original materials.
+        read = self.artifacts.verify if verify_inputs else self.artifacts.catalog
+        envelopes = tuple(read(ref) for ref in parent_refs)
         ports = compiled.spec.inputs
         solutions: list[dict[str, tuple[Any, ...]]] = []
 
