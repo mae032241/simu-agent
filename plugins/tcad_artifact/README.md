@@ -2,6 +2,13 @@
 
 [简体中文](README.zh-CN.md) | English
 
+The bundled SSH command transport is validated locally during installation, including
+its referenced configuration, without contacting the remote solver. The optional
+`transfer_chunk_bytes` setting defaults to 1 MiB and can be overridden; transfer
+quotas and execution authorization remain explicit. Invalid transport configuration
+produces `tcad_transport_configuration_invalid`: an administrator must repair it
+before retrying the same scientific action. Private diagnostics stay in control storage.
+
 `tcad_control` is the execution adapter for prepared TCAD jobs. It exposes
 capability and administrator-policy discovery, authoritative submission lookup, submit,
 status, cancel, inspection, and collection. Submission is idempotent for an exact frozen

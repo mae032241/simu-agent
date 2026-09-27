@@ -176,8 +176,12 @@ class ExecutionBridge:
             )
         payload_checker = getattr(adapter, "validate_preparation_payload", None)
         if payload is not None and payload_checker is not None:
+            from ..operation_contract import DiagnosticError
             try:
                 payload_checker(payload, preparation_profile=preparation_profile)
+            except DiagnosticError:
+                # A service configuration failure is not a scientific payload defect.
+                raise
             except (TypeError, ValueError, RuntimeError) as error:
                 raise ExecutionServiceError(
                     f"execution payload is invalid for preparation profile "

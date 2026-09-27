@@ -45,7 +45,8 @@ class SSHTCADTransportConfig(BaseModel):
     connect_timeout_seconds: int = Field(default=5, ge=1, le=30)
     operation_timeout_seconds: int = Field(default=120, ge=1, le=600)
     max_transfer_bytes: int = Field(ge=1, le=2**40)
-    transfer_chunk_bytes: int = Field(ge=1)
+    # Buffer tuning is optional; execution authority and transfer quota remain explicit.
+    transfer_chunk_bytes: int = Field(default=1024 * 1024, ge=1)
 
     @field_validator(
         "ssh_executable", "remote_helper", "remote_config", "remote_exchange_root"
@@ -629,13 +630,20 @@ def _transport_environment(executable: str) -> dict[str, str]:
     return environment
 
 
-def _read_config(path: Path) -> SSHTCADTransportConfig:
-    metadata = os.lstat(path)
-    if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
-        raise ValueError("SSH transport configuration must be a regular file")
-    if stat.S_IMODE(metadata.st_mode) & 0o022:
-        raise ValueError("SSH transport configuration must not be group/world writable")
-    return SSHTCADTransportConfig.model_validate_json(path.read_bytes(), strict=True)
+class SSHTransportConfigurationError(ValueError):
+    """Local configuration failure, before any remote operation is attempted."""
+
+
+def read_transport_config(path: Path) -> SSHTCADTransportConfig:
+    try:
+        metadata = os.lstat(path)
+        if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
+            raise ValueError("SSH transport configuration must be a regular file")
+        if stat.S_IMODE(metadata.st_mode) & 0o022:
+            raise ValueError("SSH transport configuration must not be group/world writable")
+        return SSHTCADTransportConfig.model_validate_json(path.read_bytes(), strict=True)
+    except (OSError, ValueError) as error:
+        raise SSHTransportConfigurationError("TCAD SSH transport configuration is invalid") from error
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -651,7 +659,7 @@ def main(argv: list[str] | None = None) -> int:
         if request.get("schema_version") != 1 or not isinstance(request.get("payload"), dict):
             raise ValueError("transport request envelope is invalid")
         operation = str(request.get("operation"))
-        config = _read_config(args.config)
+        config = read_transport_config(args.config)
         transport = SSHTCADTransport(
             SSHRemoteClient(config, diagnostic_root=Path(os.environ.get(
                 "SCIDISCOVERY_TCAD_RESULT_ROOT", "/var/lib/scidiscovery/transport-results"
@@ -672,6 +680,8 @@ def main(argv: list[str] | None = None) -> int:
             "engineering": exception_facts(error, layer="ssh_transport", action=operation),
             "payload": {},
         }
+        if isinstance(error, SSHTransportConfigurationError):
+            response["error_code"] = "tcad_transport_configuration_invalid"
     sys.stdout.buffer.write(_canonical(response))
     return 0
 
@@ -685,5 +695,6 @@ __all__ = [
     "SSHRemoteClient",
     "SSHTCADTransport",
     "SSHTCADTransportConfig",
+    "read_transport_config",
     "main",
 ]

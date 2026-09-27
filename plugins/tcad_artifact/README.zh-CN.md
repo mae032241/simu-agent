@@ -2,6 +2,11 @@
 
 简体中文 | [English](README.md)
 
+安装时会在本地校验内置 SSH command transport 及其引用的配置，不连接远端求解器。
+`transfer_chunk_bytes` 可省略，默认 1 MiB，也可显式配置；传输额度和执行授权仍须明确提供。
+配置非法时返回 `tcad_transport_configuration_invalid`，要求管理员修复后再重试同一科学动作，
+私有诊断保留在控制层存储中。
+
 `tcad_control` 是已准备 TCAD 作业的执行适配器，只提供 capability discovery、
 policy discovery、submission lookup、submit、status、cancel、inspection、collect 操作。lookup 按冻结提交摘要权威查回，
 submit 对同一描述符幂等；查询不可用时不得盲目重提。它只管理运行目录和后台进程状态；Artifact、Run、审批、执行

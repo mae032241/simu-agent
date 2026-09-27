@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Sequence
 
 from tcad_artifact.execution_control import TCADExecutionPolicy
-from tcad_artifact.command_adapter import CommandAdapterConfig
+from tcad_artifact.command_adapter import CommandAdapterConfig, validate_command_configuration
 
 
 def _replace(path: Path, content: bytes) -> None:
@@ -30,7 +30,8 @@ def configure(
     # External executors supply their own policy through the adapter. A leftover
     # local-daemon policy is neither their configuration nor their authority.
     if command_config is not None:
-        CommandAdapterConfig.model_validate_json(command_config.read_bytes(), strict=True)
+        adapter = CommandAdapterConfig.model_validate_json(command_config.read_bytes(), strict=True)
+        validate_command_configuration(adapter)
     else:
         # Never invent execution authority for a local daemon.
         if not policy.is_file():

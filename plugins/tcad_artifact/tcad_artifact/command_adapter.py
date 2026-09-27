@@ -18,6 +18,7 @@ from scidiscovery.artifact_agent.schema.execution import LocalFileDescriptor
 
 from .transport_logs import preserve_log
 from scidiscovery.plugin_runtime.collection import CollectionContext, QUERY_SECONDS, run_bounded
+from scidiscovery.operation_contract import DiagnosticError, contract_diagnostic
 
 from .execution_control import FileDescriptor, SolverCapabilitySnapshot, TCADJobSpec
 from .execution_policy import ExecutionPolicySnapshot, execution_admission, collection_context
@@ -44,6 +45,25 @@ class CommandAdapterConfig(BaseModel):
         if not Path(value).is_absolute():
             raise ValueError("transport executable must be absolute")
         return value
+
+
+def validate_command_configuration(config: CommandAdapterConfig) -> None:
+    """Check our bundled transport locally; arbitrary external executors own their config."""
+    arguments = config.arguments
+    if arguments[:2] == ("-m", "tcad_artifact.ssh_transport"):
+        arguments = arguments[2:]
+    elif Path(config.executable).name != "scidiscovery-tcad-transport":
+        return
+    if len(arguments) == 2 and arguments[0] == "--config":
+        path = arguments[1]
+    elif len(arguments) == 1 and arguments[0].startswith("--config="):
+        path = arguments[0].split("=", 1)[1]
+    else:
+        raise ValueError("bundled TCAD transport requires one --config argument")
+    if not path or not Path(path).is_absolute():
+        raise ValueError("bundled TCAD transport configuration path must be absolute")
+    from .ssh_transport import read_transport_config
+    read_transport_config(Path(path))
 
 
 class CommandTCADExecutorAdapter:
@@ -324,7 +344,17 @@ class CommandTCADExecutorAdapter:
         if response.get("operation") != operation:
             raise RuntimeError("TCAD transport response operation differs")
         if response.get("ok") is not True or not isinstance(response.get("payload"), dict):
-            error = RuntimeError(str(response.get("error", "TCAD transport rejected operation")))
+            if response.get("error_code") == "tcad_transport_configuration_invalid":
+                # Reconstruct a declared safe diagnostic; never trust wire messages,
+                # configuration values, paths or arbitrary wire diagnostic fields.
+                message = ("TCAD execution is blocked by invalid local transport configuration before remote contact. "
+                    "Ask the administrator to repair the service configuration, then retry the same action. "
+                    "Do not change scientific inputs or repeat this request before repair.")
+                error = DiagnosticError(message, details=(contract_diagnostic(
+                    "tcad_transport_configuration_invalid", phase="tool_execution",
+                    affected_action="tool_call", message=message, repairable=False),))
+            else:
+                error = RuntimeError(str(response.get("error", "TCAD transport rejected operation")))
             if isinstance(response.get("engineering"), dict):
                 error.engineering = response["engineering"]
             raise error
@@ -411,4 +441,4 @@ def _adapter_capability(value: SolverCapabilitySnapshot) -> AdapterCapability:
     )
 
 
-__all__ = ["CommandAdapterConfig", "CommandTCADExecutorAdapter"]
+__all__ = ["CommandAdapterConfig", "CommandTCADExecutorAdapter", "validate_command_configuration"]
