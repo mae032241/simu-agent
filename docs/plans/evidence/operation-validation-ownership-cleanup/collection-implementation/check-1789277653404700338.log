@@ -1,0 +1,27 @@
+....F                                                                    [100%]
+=================================== FAILURES ===================================
+__________ test_common_launcher_preserves_environment_and_full_stdout __________
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-286/test_common_launcher_preserves0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7fea937f2fc0>
+
+    def test_common_launcher_preserves_environment_and_full_stdout(tmp_path, monkeypatch):
+        import os
+        import sys
+        from scidiscovery.artifact_agent.service.local_process_observation import materialize_launcher
+        materialize_launcher(tmp_path)
+        monkeypatch.setenv("OMP_NUM_THREADS", "3")
+        result = subprocess.run([sys.executable, str(tmp_path / "tools/local_process_observation.py"),
+            "--timeout", "4", "--submission-reserve", "0", "--command", sys.executable, "-c",
+            "import os; print(os.environ['OMP_NUM_THREADS']); print('x'*140000)"], capture_output=True, timeout=6)
+>       assert result.returncode == 0, result.stderr
+E       AssertionError: b'Traceback (most recent call last):
+E           File "/tmp/pytest-of-da/pytest-286/test_common_launcher_preserves0/tools/local...o such file or directory: \'/tmp/pytest-of-da/pytest-286/test_common_launcher_preserves0/scratch/.analysis-process\'
+E         '
+E       assert 1 == 0
+E        +  where 1 = CompletedProcess(args=['/home/da/miniconda3/bin/python', '/tmp/pytest-of-da/pytest-286/test_common_launcher_preserves0... such file or directory: \'/tmp/pytest-of-da/pytest-286/test_common_launcher_preserves0/scratch/.analysis-process\'\n').returncode
+
+tests/operations/test_execution_collection.py:186: AssertionError
+=========================== short test summary info ============================
+FAILED tests/operations/test_execution_collection.py::test_common_launcher_preserves_environment_and_full_stdout
+1 failed, 4 passed, 5 deselected in 2.85s

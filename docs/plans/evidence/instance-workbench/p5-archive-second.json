@@ -1,0 +1,19 @@
+{
+  "command": [
+    "python",
+    "-m",
+    "pytest",
+    "-q",
+    "tests/operations/test_instance_archive.py",
+    "tests/operations/test_instance_management_http.py",
+    "tests/operations/test_instance_archive_install.py",
+    "tests/operations/test_instance_management_render.py",
+    "tests/artifact_agent/test_deploy_scripts.py::test_rendered_units_share_only_the_local_run_workspace",
+    "tests/artifact_agent/test_deploy_scripts.py::test_primary_installer_has_valid_shell_syntax"
+  ],
+  "exit_code": 1,
+  "stop_reason": null,
+  "duration_seconds": 14.92,
+  "peak_tree_rss_mib": 124.79,
+  "budget_mib": 512
+}

@@ -1,0 +1,30 @@
+{
+  "command": [
+    "python",
+    "-m",
+    "pytest",
+    "-q",
+    "tests/operations/test_analysis_continuation.py::test_compact_open_and_editable_nested_recovery_with_fresh_runtime",
+    "tests/operations/test_analysis_continuation.py::test_recovery_with_changed_inputs_keeps_draft_and_only_adopts_applicable_receipts",
+    "tests/operations/test_tcad_gap_continuation.py::test_completed_local_router_claims_new_run_with_fresh_tool_state",
+    "tests/operations/test_run_status_output_selection.py",
+    "tests/operations/test_user_text_ingress.py",
+    "tests/operations/test_user_context_contract.py",
+    "tests/operations/test_user_context_handoff.py"
+  ],
+  "exit_code": 0,
+  "stop_reason": null,
+  "duration_seconds": 20.318,
+  "peak_tree_rss_mib": 132.95,
+  "budget_mib": 512,
+  "peak_processes": [
+    {
+      "name": "python",
+      "rss_mib": 119.96
+    },
+    {
+      "name": "python",
+      "rss_mib": 13.0
+    }
+  ]
+}

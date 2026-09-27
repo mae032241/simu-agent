@@ -1,0 +1,161 @@
+.F..                                                                     [100%]
+=================================== FAILURES ===================================
+_____________ test_status_is_pure_and_failure_recovery_is_explicit _____________
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-330/test_status_is_pure_and_failur0')
+
+    def test_status_is_pure_and_failure_recovery_is_explicit(tmp_path: Path) -> None:
+        catalog, runtime, instance, _, root = _system(tmp_path)
+        _invoke(root, "recoverable")
+        worker = _worker(catalog, runtime)
+        opened = worker.call_tool("worker_open_assignment", {})
+        old_workspace = Path(opened["workspace_path"])
+        Path(opened["output_directory"], "result.json").write_bytes(_envelope())
+        run_id = runtime.scheduler_bindings.resolve(
+            instance=instance.instance_id, namespace="run", name="recoverable"
+        )
+        database = runtime.runs.database_path
+        before = hashlib.sha256(database.read_bytes()).hexdigest()
+        root.call_tool("run_status", {"name": "recoverable"})
+        root.call_tool("run_list", {})
+        assert hashlib.sha256(database.read_bytes()).hexdigest() == before
+    
+        status = root.call_tool("run_status", {"name": "recoverable"})
+        failed = root.call_tool(
+            "run_record_failure",
+            {
+                "name": "recoverable",
+                "reason": "spawned Agent exited before submitting",
+                "expected_state": "running",
+                "expected_last_activity_at": status["last_activity_at"],
+            },
+        )
+        assert failed["state"] == "failed" and failed["recovery_available"]
+        assert not old_workspace.exists()
+        assert root.call_tool(
+            "run_record_failure",
+            {
+                "name": "recoverable",
+                "reason": "spawned Agent exited before submitting",
+                "expected_state": "running",
+                "expected_last_activity_at": status["last_activity_at"],
+            },
+        )["state"] == "failed"
+    
+        other = runtime.artifacts.register(
+            b"sample,value\na,9\n",
+            ArtifactRegistration(
+                kind="blind_csv_input",
+                schema_id="blind.opaque.v1",
+                payload_schema_version=1,
+                media_type="text/csv",
+                creator=runtime.actor,
+            ),
+            idempotency_key="l2:invariant:other-recovery-source",
+        )
+        runtime.scheduler_bindings.bind(
+            instance=instance.instance_id,
+            namespace="artifact",
+            name="other_source_csv",
+            object_id=other.artifact_id,
+        )
+        before_rejected_preflight = root.call_tool("run_list", {})
+        rejected = root.call_tool(
+            "operation_preflight",
+            {
+                "name": "wrong_recovery_input",
+                "operation_id": "blind.csv.observe.v1",
+                "inputs": [
+                    {
+                        "port": "source_table",
+                        "artifact_names": ["other_source_csv"],
+                    }
+                ],
+                "instruction": "Make one bounded observation.",
+                "resume_from": "recoverable",
+            },
+        )
+        assert {key: rejected[key] for key in ("admissible", "reason_code", "port", "executor_kind")} == {
+            "admissible": False,
+            "reason_code": "recovery_source_unavailable",
+            "port": None,
+            "executor_kind": None,
+        }
+        assert rejected["diagnostics"][0]["code"] == "recovery_source_unavailable"
+        assert rejected["diagnostics"][0]["phase"] == "input_admission"
+        assert rejected["diagnostics"][0]["path"] == "$.inputs"
+        assert root.call_tool("run_list", {}) == before_rejected_preflight
+        with pytest.raises(Exception, match="unknown run name"):
+            runtime.scheduler_bindings.resolve(
+                instance=instance.instance_id,
+                namespace="run",
+                name="wrong_recovery_input",
+            )
+    
+        resumed = _invoke(root, "resumed", resume_from="recoverable")
+        assert resumed["result"]["state"] == "queued"
+        resumed_worker = _worker(catalog, runtime)
+        resumed_open = resumed_worker.call_tool("worker_open_assignment", {})
+        assignment = json.loads(Path(resumed_open["assignment_path"]).read_text("utf-8"))
+        assert assignment["recovery_draft"]["scientific_evidence"] is False
+        assert Path(resumed_open["workspace_path"], "recovery-draft/result.json").is_file()
+        assert catalog.operation("blind.csv.observe.v1").spec.limits.max_attempts == 2
+    
+        Path(resumed_open["output_directory"], "result.json").write_bytes(
+            _envelope("The recovery attempt also left a bounded draft.")
+        )
+        resumed_status = root.call_tool("run_status", {"name": "resumed"})
+        root.call_tool(
+            "run_record_failure",
+            {
+                "name": "resumed",
+                "reason": "second attempt failed before submitting",
+                "expected_state": "running",
+                "expected_last_activity_at": resumed_status["last_activity_at"],
+            },
+        )
+    
+        restarted = open_runtime(
+            project_root=tmp_path / "project",
+            state_root=tmp_path / "state",
+            worker_backend="local",
+        )
+        assert restarted.runs is not None
+        restarted.runs.operation_catalog = catalog
+        restarted_root = RootMCPRouter(
+            RootToolFacade(
+                restarted.artifacts,
+                restarted.intake,
+                runs=restarted.runs,
+                approvals=restarted.approvals,
+                executions=restarted.executions,
+                bindings=restarted.scheduler_bindings,
+                instance=instance.instance_id,
+                operation_catalog=catalog,
+            )
+        )
+        before_limit = restarted_root.call_tool("run_list", {})
+        for source_name in ("recoverable", "resumed"):
+            limited = restarted_root.call_tool(
+                "operation_preflight",
+                {
+                    "name": f"third_from_{source_name}",
+                    "operation_id": "blind.csv.observe.v1",
+                    "inputs": [
+                        {"port": "source_table", "artifact_names": ["source_csv"]}
+                    ],
+                    "instruction": "Make one bounded observation.",
+                    "resume_from": source_name,
+                },
+            )
+            assert limited["admissible"] is False
+>           assert limited["reason_code"] == "recovery_source_unavailable"
+E           AssertionError: assert 'recovery_att...limit_reached' == 'recovery_source_unavailable'
+E             
+E             - recovery_source_unavailable
+E             + recovery_attempt_limit_reached
+
+tests/operations/test_l2_run_invariants.py:617: AssertionError
+=========================== short test summary info ============================
+FAILED tests/operations/test_l2_run_invariants.py::test_status_is_pure_and_failure_recovery_is_explicit
+1 failed, 3 passed in 3.50s

@@ -1,0 +1,21 @@
+{
+  "command": [
+    "python",
+    "-m",
+    "pytest",
+    "-q",
+    "tests/operations/test_agent_contract_alignment.py::test_experiment_submission_rejects_invalid_optional_execution_context",
+    "tests/operations/test_agent_contract_alignment.py::test_experiment_bad_critic_is_rejected_before_run_creation",
+    "tests/operations/test_catalog_negative_cases.py",
+    "tests/operations/test_contract_attempts.py",
+    "tests/operations/test_analysis_claim_scope.py",
+    "tests/operations/test_result_analysis_tool.py",
+    "tests/operations/test_m2_curve_analysis_boundary.py"
+  ],
+  "exit_code": 0,
+  "seconds": 33.495,
+  "peak_tree_rss_bytes": 146296832,
+  "budget_bytes": 536870912,
+  "early_stop_bytes": 469762048,
+  "memory_terminated": false
+}

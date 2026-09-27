@@ -1,0 +1,11 @@
+{
+  "plan_sha256": "7b4f194326912bc3c697cbfec5d8dc9f3d8cba461ee0bcd82217962ab6d543c0",
+  "reviewed_production_manifest_sha256": "8926a4d33bd5799c149f67208a0b23fa5ebd2718a50134f744a13792243b5ea9",
+  "final_core_tests": 40,
+  "installed_wheel_stdio": "passed",
+  "max_memory_bytes": 418791424,
+  "memory_limit_bytes": 536870912,
+  "production_deployed": false,
+  "real_scientific_agent_continuation": "pending_install_restart",
+  "remaining_baseline_failures": 13
+}

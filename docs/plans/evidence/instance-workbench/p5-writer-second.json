@@ -1,0 +1,19 @@
+{
+  "command": [
+    "python",
+    "-m",
+    "pytest",
+    "-q",
+    "tests/operations/test_instance_maintenance.py",
+    "tests/operations/test_execution_collection.py",
+    "tests/operations/test_l2_run_invariants.py",
+    "tests/operations/test_m6a_direct_instance_management.py",
+    "-k",
+    "not test_recursive_current_uses_producer_receipts_and_commit_rechecks_head"
+  ],
+  "exit_code": 0,
+  "stop_reason": null,
+  "duration_seconds": 79.973,
+  "peak_tree_rss_mib": 332.59,
+  "budget_mib": 512
+}

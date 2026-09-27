@@ -28,6 +28,17 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -e '.[test]'
           python -m pip install -e plugins/tcad_artifact
-          python -m pip install -e plugins/ingaas_fig4
-      - name: Test
-        run: pytest -q
+          python -m pip install -e plugins/curve_score
+          python -m pip install -e plugins/curve_figure_evidence
+      - name: Source tests
+        run: python scripts/run_tests.py --config scripts/test_resources_ci.json --lane source --per-file --output /tmp/scid-source-ci
+      - name: Installed boundary tests
+        run: python scripts/run_tests.py --config scripts/test_resources_ci.json --lane installed --output /tmp/scid-installed-ci
+      - name: Process lifecycle tests
+        run: python scripts/run_tests.py --config scripts/test_resources_ci.json --lane process --per-file --output /tmp/scid-process-ci
+      - name: Upload test logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tests-${{ matrix.python-version }}
+          path: /tmp/scid-*-ci

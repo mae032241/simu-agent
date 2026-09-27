@@ -1,0 +1,22 @@
+{
+  "command": [
+    "env",
+    "PYTHONPATH=/tmp/scid-execution-settings-p0/site",
+    "python",
+    "docs/plans/evidence/agent-execution-settings/p0_fixture.py",
+    "fail",
+    "dispatch_a2",
+    "P0 fixture omitted inherited Worker server; no controlled submission occurred"
+  ],
+  "exit_code": 0,
+  "stop_reason": null,
+  "duration_seconds": 1.654,
+  "peak_tree_rss_mib": 89.49,
+  "budget_mib": 512,
+  "peak_processes": [
+    {
+      "name": "python",
+      "rss_mib": 89.49
+    }
+  ]
+}

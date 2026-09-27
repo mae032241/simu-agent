@@ -1,0 +1,555 @@
+"""Bounded production evidence recovery paths; no solver is launched."""
+from tests.operations.tcad_policy_fixtures import policy_fields
+import hashlib
+import json
+from pathlib import Path
+import pytest
+
+
+@pytest.mark.parametrize('reuse_route', [False, True])
+def test_unpublished_analysis_survives_failure_and_new_assignment(tmp_path, reuse_route):
+    from copy import deepcopy
+    import subprocess
+    import sys
+    from scidiscovery.artifact_agent.interfaces.mcp_local_worker import LocalWorkerMCPRouter
+    system, worker, opened, _ = recovery_system(tmp_path)
+    workspace = Path(opened['workspace_path'])
+    from scidiscovery.artifact_agent.service.input_reader import read, CACHE_DIRECTORY
+    read(workspace, 'assignment.json', file=True, pointers=['/role_instructions'])
+    scratch = workspace / 'scratch'
+    scratch.mkdir(exist_ok=True)
+    script = b'from pathlib import Path\nPath("numbers.json").write_text("{\\"value\\": 3}")\nraise ModuleNotFoundError("No module named fixture_plotter")\n'
+    (scratch / 'analysis.py').write_bytes(script)
+    completed = subprocess.run([sys.executable, 'analysis.py'], cwd=scratch,
+        capture_output=True, timeout=5)
+    assert completed.returncode == 1
+    (scratch / 'error.log').write_bytes(completed.stderr)  # Real absolute traceback.
+    (scratch / '__pycache__').mkdir()
+    (scratch / '__pycache__/fixture.pyc').write_bytes(b'\x00cache')
+    numbers = (scratch / 'numbers.json').read_bytes()
+    runtime, root = system[1:3]
+    value = runtime.runs.status(worker._run_id)
+    runtime.runs.record_failure(value.run_id, reason='fixture interrupted',
+        expected_state=value.state, expected_last_activity_at=value.last_activity_at)
+    recovery = runtime.runs.recovery_status(runtime.runs.status(worker._run_id))
+    assert recovery['draft_available'] and recovery['recovery_pending']
+    assert (scratch / 'analysis.py').read_bytes() == script
+    request = deepcopy(system[3]); request.update(name='continued_work', draft_from='analysis')
+    root.call_tool('operation_invoke', request)
+    op = system[0].operation('tcad.result.analyze.v1')
+    following = worker if reuse_route else LocalWorkerMCPRouter(runtime.runs,
+        operation_id=op.spec.operation_id, operation_digest=op.digest)
+    next_opened = following.call_tool('worker_open_assignment', {})
+    assignment = json.loads(Path(next_opened['assignment_path']).read_text())
+    assert 'role_instructions_sha256' not in opened and 'role_instructions_sha256' not in next_opened
+    assert assignment['role_instructions'] == json.loads(Path(opened['assignment_path']).read_text())['role_instructions']
+    assert next_opened['assignment_path'] != opened['assignment_path']
+    draft = Path(next_opened['workspace_path']) / assignment['recovery_draft']['relative_path']
+    assert (draft / 'scratch/analysis.py').read_bytes() == script
+    assert (draft / 'scratch/numbers.json').read_bytes() == numbers
+    log = (draft / 'scratch/error.log').read_text()
+    assert 'ModuleNotFoundError' in log and str(workspace) not in log
+    assert not list(draft.rglob('*.pyc'))
+    assert not (Path(next_opened['workspace_path']) / CACHE_DIRECTORY).exists()
+    assert not list(draft.rglob(CACHE_DIRECTORY))
+    coverage = json.loads((draft / 'analysis-recovery.json').read_text())
+    assert coverage['omitted_count'] >= 1 and coverage['normalized_count'] == 1
+
+
+@pytest.mark.process_e2e
+def test_native_writer_after_failure_keeps_original_directory(tmp_path):
+    import subprocess
+    import sys
+    system, worker, opened, _ = recovery_system(tmp_path)
+    workspace = Path(opened['workspace_path'])
+    scratch = workspace / 'scratch'; scratch.mkdir(exist_ok=True)
+    (scratch / 'first.json').write_text('{"complete":true}')
+    # The outer command returns while a real child still holds this cwd.
+    child = subprocess.Popen([sys.executable, '-c',
+        'import sys; from pathlib import Path; sys.stdin.read(1); Path("later.json").write_text("{}");'],
+        cwd=scratch, stdin=subprocess.PIPE)
+    try:
+        value = system[1].runs.status(worker._run_id)
+        failed = system[1].runs.record_failure(value.run_id, reason='fixture outer command stopped',
+            expected_state=value.state, expected_last_activity_at=value.last_activity_at)
+        # Release the write only after the failure snapshot has finished.
+        child.communicate(b'x', timeout=5)
+        assert child.returncode == 0
+        assert (scratch / 'later.json').read_text() == '{}'
+        digest = failed.recovery_draft['draft_digest']
+        again = system[1].runs.record_failure(value.run_id, reason='explicit retry',
+            expected_state='failed', expected_last_activity_at=None)
+        assert again.recovery_draft['draft_digest'] == digest
+        assert system[1].runs.recovery_status(again)['recovery_pending']
+    finally:
+        if child.poll() is None:
+            child.kill(); child.wait()
+
+
+def test_recovery_filters_bad_files_individually_and_rejects_changed_copy(tmp_path):
+    from copy import deepcopy
+    system, worker, opened, _ = recovery_system(tmp_path)
+    scratch = Path(opened['workspace_path']) / 'scratch'
+    (scratch / 'complete.csv').write_text('x,y\n0,3\n')
+    (scratch / 'bad.py').write_text('secret = "' + 'example' * 8 + '"')
+    (scratch / 'bad.txt').write_bytes(b'\xff')
+    (scratch / 'external.csv').symlink_to(tmp_path / 'outside')
+    with (scratch / 'large.json').open('wb') as stream:
+        stream.truncate(33 * 1024 * 1024)  # Sparse: limit must be checked before reading.
+    runtime = system[1]
+    # Native write permission never turns the workspace projection into policy.
+    projection = scratch.parent / 'domain-workspace.json'
+    projection.chmod(0o600); projection.write_text('{}')
+    value = runtime.runs.status(worker._run_id)
+    failed = runtime.runs.record_failure(value.run_id, reason='fixture',
+        expected_state=value.state, expected_last_activity_at=value.last_activity_at)
+    draft = runtime.runs._verify_draft(failed, failed.recovery_draft['draft_digest'])
+    assert (draft.root / 'scratch/complete.csv').read_text() == 'x,y\n0,3\n'
+    coverage = json.loads((draft.root / 'analysis-recovery.json').read_text())
+    assert coverage['omitted_count'] >= 4
+    assert (scratch / 'large.json').stat().st_size == 33 * 1024 * 1024
+    retained = draft.root / 'scratch/complete.csv'; retained.chmod(0o600)
+    retained.write_text('changed')
+    request = deepcopy(system[3]); request.update(name='tampered_resume', draft_from='analysis')
+    assert not system[2].call_tool('operation_preflight', request)['admissible']
+    damaged = {"recovery": runtime.runs.recovery_status(runtime.runs.status(worker._run_id))}
+    assert damaged['recovery']['delivery_preserved'] is False
+    assert damaged['recovery'].get('coverage', {}).get('complete') is not True
+    assert (scratch / 'complete.csv').read_text() == 'x,y\n0,3\n'
+
+
+def test_local_copy_and_explicit_cleanup_are_separate(tmp_path):
+    from scidiscovery.artifact_agent.service.local_workspace import LocalTrustedBackend
+    backend = LocalTrustedBackend(tmp_path)
+    opened = backend.prepare(run_id='run_fixture', inputs=(), assignment=b'{}', result_schema=b'{}')
+    (opened.output_directory / 'result.json').write_text('{}')
+    sealed = backend.seal('run_fixture', max_files=1, max_bytes=4096)
+    draft = backend.discard('run_fixture', preserve_digest=sealed.digest,
+        max_files=1, max_bytes=4096, retain_original=True)
+    assert opened.root.exists() and (draft.root / 'result.json').read_bytes() == b'{}'
+    # This fixture owns the only writer and has stopped it; all work is saved.
+    backend.discard('run_fixture', preserve_digest=sealed.digest, max_files=1, max_bytes=4096)
+    assert not opened.root.exists() and (draft.root / 'result.json').read_bytes() == b'{}'
+
+def test_collection_keeps_later_products(tmp_path):
+    from tcad_artifact.remote_runner_py36 import _collect_expected
+    (tmp_path/'later.plx').write_bytes(b'raw data\n')
+    expected=[dict(name=n,relative_path=p,required=True,max_bytes=1024,media_type='text/plain') for n,p in [('missing','missing.tdr'),('later','later.plx')]]
+    records=[]; errors=[]
+    _collect_expected(str(tmp_path),expected,{'max_output_bytes':4096,'transfer_chunk_bytes':1048576},records,errors)
+    assert [x['name'] for x in records]==['later']
+    assert len(errors)==1 and 'missing.tdr' in errors[0]
+
+
+def recovery_system(tmp_path):
+    from tests.operations.test_collector_analysis_handoff import _analysis_system,_collect_execution,_bind_collected
+    from scidiscovery.artifact_agent.interfaces.mcp_local_worker import LocalWorkerMCPRouter
+    from tcad_artifact.output_recovery import OutputInspectionService
+    from tcad_artifact.remote_runner_py36 import _inspect_directory
+    system=_analysis_system(tmp_path)
+    outputs=_collect_execution(system,tmp_path/'collector',name='collected',output_names=())
+    _bind_collected(system,outputs)
+    catalog,runtime,root,request,artifacts,_=system
+    result=root.facade._publish_execution_result(name='collected')
+    request['inputs'].append(dict(port='execution_result',artifact_names=[result]))
+    directory=tmp_path/'collector/runs/terminal_collected'
+    raw=runtime.artifacts.read(artifacts['output_A'].ref)
+    (directory/'work/A_actual.plx').write_bytes(raw)
+    class Adapter:
+        def inspect_outputs(self, external_run_id, relative_path, max_bytes=32*1024*1024, *, deadline_monotonic=None):
+            assert external_run_id=='terminal_collected'
+            return _inspect_directory(str(directory),relative_path,max_bytes)
+    root.call_tool('operation_invoke',request)
+    op=catalog.operation('tcad.result.analyze.v1')
+    worker=LocalWorkerMCPRouter(runtime.runs,operation_id=op.spec.operation_id,operation_digest=op.digest,
+        tool_services={'tcad_artifact:tcad.output_inspection':OutputInspectionService(Adapter())})
+    opened=worker.call_tool('worker_open_assignment',{})
+    return system,worker,opened,directory
+
+
+@pytest.mark.parametrize('failure',['changed','symlink','budget','missing'])
+def test_inspection_failures_remain_bounded(tmp_path,failure):
+    system,worker,opened,directory=recovery_system(tmp_path)
+    if failure=='missing':
+        reply=worker.call_tool('worker_tcad_inspect_outputs',{'relative_path':'absent.plx'})
+        assert reply['status']=='not_found'
+    elif failure=='symlink':
+        (directory/'work/foreign.plx').symlink_to(tmp_path/'outside')
+        reply=worker.call_tool('worker_tcad_inspect_outputs',{'relative_path':'foreign.plx'})
+        assert reply['status']=='unavailable'
+    elif failure=='budget':
+        system[1].runs.tool_io_budget(worker._run_id,used_bytes=256*1024*1024)
+        reply=worker.call_tool('worker_tcad_inspect_outputs',{'relative_path':'A_actual.plx'})
+        assert reply['status']=='limit_exceeded'
+    else:
+        reply=worker.call_tool('worker_tcad_inspect_outputs',{'relative_path':'A_actual.plx'})
+        (directory/'work/A_actual.plx').write_bytes(b'changed')
+        reply=worker.call_tool('worker_tcad_accept_output',dict(evidence_alias=reply['evidence_alias'],output_name='A',rationale='fixture mapping',evidence_aliases=['runtime_manifest']))
+        assert reply['status']=='changed_since_inspection'
+    from tests.operations.test_tcad_result_analysis import analysis_report,write_analysis
+    write_analysis(opened,analysis_report())
+    assert worker.call_tool('worker_submit_result',{})['state']=='completed'
+
+
+def test_offline_tools_do_not_prevent_open_or_limited_submit(tmp_path):
+    from tests.operations.test_tcad_result_analysis import analysis_system,open_analysis,analysis_report,write_analysis
+    worker,opened=open_analysis(analysis_system(tmp_path))
+    assert worker.call_tool('worker_tcad_inspect_outputs',{})['status']=='unavailable'
+    write_analysis(opened,analysis_report())
+    assert worker.call_tool('worker_submit_result',{})['state']=='completed'
+
+
+def test_reopen_keeps_receipts_and_duplicate_accept_is_idempotent(tmp_path):
+    from scidiscovery.artifact_agent.interfaces.mcp_local_worker import LocalWorkerMCPRouter
+    system,worker,opened,_=recovery_system(tmp_path)
+    inspected=worker.call_tool('worker_tcad_inspect_outputs',{'relative_path':'A_actual.plx'})
+    args=dict(evidence_alias=inspected['evidence_alias'],output_name='A',rationale='Exact mapping',evidence_aliases=[inspected['evidence_alias']])
+    accepted=worker.call_tool('worker_tcad_accept_output',args)
+    op=system[0].operation('tcad.result.analyze.v1')
+    restarted=LocalWorkerMCPRouter(system[1].runs,operation_id=op.spec.operation_id,operation_digest=op.digest,tool_services=worker.tool_services)
+    restarted.call_tool('worker_open_assignment',{})
+    assert restarted.call_tool('worker_tcad_accept_output',args)['evidence_alias']==accepted['evidence_alias']
+    assert len(system[1].runs.tool_evidence(restarted._run_id))==2
+
+
+def test_tool_evidence_cannot_change_after_candidate_acceptance(tmp_path):
+    from tests.operations.test_tcad_result_analysis import analysis_report,write_analysis
+    from scidiscovery.artifact_agent.service.run_records import RunStateConflict
+    system,worker,opened,_=recovery_system(tmp_path)
+    reply=worker.call_tool('worker_tcad_inspect_outputs',{'relative_path':'A_actual.plx'})
+    runs=system[1].runs
+    write_analysis(opened,analysis_report())
+    value=runs.status(worker._run_id)
+    sealed,validated=runs._validated_candidate(value)
+    runs._accept_candidate(value.run_id,sealed.digest)
+    with pytest.raises(RunStateConflict):
+        runs.accept_tool_evidence(value.run_id,tool_name='worker_tcad_inspect_outputs',allowed_ports=('tool_evidence',),raw=b'late',media_type='text/plain',metadata={'relative_path':'late'})
+    assert worker.call_tool('worker_submit_result',{})['state']=='completed'
+
+
+@pytest.mark.process_e2e
+def test_command_ssh_remote_inspection_roundtrip(tmp_path):
+    import os
+    import sys
+    from tcad_artifact.command_adapter import CommandAdapterConfig, CommandTCADExecutorAdapter
+    run_id = 'run_' + 'a'*32
+    directory = tmp_path / 'remote' / run_id
+    (directory / 'work').mkdir(parents=True)
+    (directory / 'done').touch()
+    (directory / 'work/actual.plx').write_bytes(b'original bytes')
+    script = tmp_path / 'transport.py'
+    script.write_text('''import json,sys
+from pathlib import Path
+from tcad_artifact.ssh_transport import SSHTCADTransport
+from tcad_artifact.remote_runner_py36 import _rpc
+root=Path(sys.argv[1])
+config=json.loads(sys.argv[2])
+config['result_root']=str(root/'remote')
+class Remote:
+    def rpc(self,request): return _rpc(config,{'request':request})
+    def get_to(self,path,destination,max_bytes):
+        raw=Path(path).read_bytes()
+        assert len(raw)<=max_bytes
+        destination.write_bytes(raw)
+transport=SSHTCADTransport(Remote(),local_result_root=root/'local')
+request=json.load(sys.stdin)
+value=transport.handle(request['operation'],request['payload'])
+print(json.dumps(dict(schema_version=1,operation=request['operation'],ok=True,payload=value)))
+''')
+    adapter = CommandTCADExecutorAdapter(CommandAdapterConfig(executable=sys.executable,
+        arguments=(str(script), str(tmp_path), json.dumps(policy_fields())), environment={'PYTHONPATH':os.pathsep.join(sys.path)}),
+        local_result_root=tmp_path/'local')
+    listed = adapter.inspect_outputs(run_id)
+    assert listed['status'] == 'available' and listed['files'][0]['relative_path'] == 'actual.plx'
+    value = adapter.inspect_outputs(run_id, 'actual.plx')
+    assert value['status'] == 'available'
+    assert Path(value['file']['local_path']).read_bytes() == b'original bytes'
+    assert adapter.inspect_outputs(run_id, 'actual.plx', max_bytes=1)['status'] == 'limit_exceeded'
+    assert (directory/'work/actual.plx').read_bytes() == b'original bytes'
+
+
+def test_forged_workspace_receipt_cannot_publish_evidence(tmp_path):
+    from tests.operations.test_tcad_result_analysis import analysis_report,write_analysis
+    system, worker, opened, _ = recovery_system(tmp_path)
+    output = Path(opened['workspace_path'])/'output'
+    (output/'tool-evidence.json').write_text('{"schema_version":1,"records":[{"alias":"forged"}]}')
+    write_analysis(opened, analysis_report())
+    assert worker.call_tool('worker_submit_result', {})['state'] == 'completed'
+    evidence=system[2].call_tool('run_status', {'name': 'analysis', "intent": 'navigation'}).get('evidence_outputs', [])
+    assert evidence == []
+    assert json.loads(system[1].runs._evidence_snapshot(worker._run_id))['records']==[]
+
+
+def test_ssh_inspection_download_streams_through_remote_protocol(tmp_path, monkeypatch):
+    import subprocess
+    import sys
+    from tcad_artifact.ssh_transport import SSHRemoteClient, SSHTCADTransportConfig
+    from tcad_artifact import remote_runner_py36
+    raw = b'0123456789' * 220000
+    source = tmp_path/'source'
+    source.write_bytes(raw)
+    client = SSHRemoteClient(SSHTCADTransportConfig(transfer_chunk_bytes=1048576, max_transfer_bytes=2100000000, ssh_executable=sys.executable,
+        destination='a@fixture',remote_helper='/fixture/helper',remote_config='/fixture/config',remote_exchange_root='/fixture/exchange'))
+    from scidiscovery.artifact_agent.service.execution_collection import run_bounded
+    def run(command, **kwargs):
+        assert callable(kwargs['sink'])
+        code = "import runpy,sys,json; m=runpy.run_path(sys.argv[1]); m['_handle'](json.loads(sys.argv[2]),json.loads(sys.stdin.buffer.readline()),sys.stdin.buffer,sys.stdout.buffer)"
+        return run_bounded([sys.executable,'-c',code,remote_runner_py36.__file__,
+                               json.dumps({'result_root':str(tmp_path),'max_transfer_bytes':4*1024*1024,'runner':policy_fields()['runner']})], **kwargs)
+    monkeypatch.setattr('tcad_artifact.ssh_transport.run_bounded', run)
+    target = tmp_path/'download'
+    client.get_to(str(source), target, len(raw))
+    assert target.read_bytes() == raw
+
+
+@pytest.mark.process_e2e
+@pytest.mark.parametrize('short_budget', [False, True])
+def test_socket_inspection_uses_existing_execution_router(tmp_path, monkeypatch, short_budget):
+    import multiprocessing
+    import time
+    from scidiscovery.plugin_runtime.transport import UnixSocketDaemon
+    from tcad_artifact.execution_control import TCADExecutionFacade,TCADExecutionPolicy,TCADExecutionRouter,ToolProfile
+    from tcad_artifact.execution_adapter import TCADExecutorAdapter
+    facade = TCADExecutionFacade(policy=TCADExecutionPolicy(**policy_fields(), allowed_input_roots=(str(tmp_path),),
+        tools=(ToolProfile(profile_id='fixture',solver_kind='deterministic_tool',executable='/bin/true',release_evidence='fixture'),)), state_root=tmp_path/'state')
+    directory = facade.runs_root/'terminal_fixture'
+    (directory/'work').mkdir(parents=True)
+    (directory/'work/actual').write_bytes(b'x'*(3*1024*1024) if short_budget else b'raw')
+    (directory/'done').touch()
+    (directory/'output_manifest.json').write_text(json.dumps({'terminal_state':'succeeded','exit_code':0}))
+    import sqlite3
+    with sqlite3.connect(facade.database_path) as connection:
+        connection.execute('INSERT INTO submissions VALUES (?,?,?,?)', ('a'*64,'terminal_fixture','2026-09-09T00:00:00Z','terminal'))
+    socket = tmp_path/'control.sock'
+    from scidiscovery.artifact_agent.interfaces.mcp import MCPRouter
+    if short_budget:
+        from types import SimpleNamespace
+        from tcad_artifact import remote_runner_py36 as remote
+        original_hash=hashlib.sha256
+        class SlowHash:
+            def __init__(self): self.inner=original_hash()
+            def update(self, raw):
+                with (directory/'hash-steps').open('a') as stream: stream.write('step\n')
+                time.sleep(.15)
+                self.inner.update(raw)
+            def hexdigest(self): return self.inner.hexdigest()
+        monkeypatch.setattr(remote,'hashlib',SimpleNamespace(sha256=SlowHash))
+    process = multiprocessing.get_context('fork').Process(target=UnixSocketDaemon(socket,MCPRouter(TCADExecutionRouter(facade),name='tcad-control')).serve_forever)
+    process.start()
+    try:
+        deadline=time.monotonic()+5
+        while not socket.exists() and time.monotonic()<deadline:
+            time.sleep(.02)
+        adapter=TCADExecutorAdapter(socket)
+        if short_budget:
+            with pytest.raises(TimeoutError):
+                adapter.inspect_outputs('terminal_fixture','actual',deadline_monotonic=time.monotonic()+.08)
+            time.sleep(.2)
+            assert (directory/'hash-steps').read_text()=='step\n'
+            assert adapter.status('terminal_fixture')=='succeeded'
+        else:
+            result=adapter.inspect_outputs('terminal_fixture','actual')
+            assert result['status']=='available' and result['file']['size_bytes']==3
+    finally:
+        process.terminate()
+        process.join(5)
+        assert not process.is_alive()
+
+
+def test_reserved_io_budget_cannot_be_spent_by_another_router(tmp_path):
+    system, worker, _, _ = recovery_system(tmp_path)
+    service = system[1].runs
+    reserved = service.tool_io_budget(worker._run_id, reserve=True)
+    assert reserved['remaining_seconds'] == 120
+    assert service.tool_io_budget(worker._run_id, reserve=True)['remaining_seconds'] == 0
+    service.tool_io_budget(worker._run_id, used_bytes=-reserved['remaining_bytes']+10, used_seconds=-119)
+    assert service.tool_io_budget(worker._run_id)['remaining_seconds'] == 119
+
+
+def test_collection_declaration_without_trusted_tool_is_rejected_at_both_gates(tmp_path, monkeypatch):
+    from dataclasses import replace
+    from types import SimpleNamespace
+    from tests.operations.test_tcad_result_analysis import analysis_system
+    from scidiscovery.artifact_agent.service.local_workspace import LocalTrustedBackend
+    from scidiscovery.artifact_agent.service.runs import RunError
+    catalog, runtime, *_ = analysis_system(tmp_path)
+    operation = catalog.operation('tcad.result.analyze.v1')
+    executor = operation.spec.executor.model_copy(update={'tools':()})
+    undeclared = replace(operation,worker_tools=(),spec=operation.spec.model_copy(update={'executor':executor}))
+    assert LocalTrustedBackend.unsupported_requirements(undeclared) == ('agent_collection_outputs',)
+    monkeypatch.setattr(runtime.runs.backend, 'supports_operation', lambda _: True)
+    with pytest.raises(RunError, match='output collections'):
+        runtime.runs.schedule(SimpleNamespace(compiled=undeclared, execution_profile=None), instance_id='unused',
+            output_binding_name='unused',output_logical_name='unused',output_revision=1,
+            output_binding_fingerprint='unused')
+
+
+def test_corrupt_retained_evidence_is_engineering_failure(tmp_path, monkeypatch):
+    from tests.operations.test_tcad_result_analysis import analysis_report,write_analysis
+    system, worker, opened, _ = recovery_system(tmp_path)
+    inspected = worker.call_tool('worker_tcad_inspect_outputs', {'relative_path':'A_actual.plx'})
+    record = system[1].runs.tool_evidence(worker._run_id)[0]
+    original_read = system[1].artifacts.read
+    def read(ref):
+        return b'corrupted' if ref.model_dump(mode='json') == record['artifact_ref'] else original_read(ref)
+    write_analysis(opened, analysis_report(alias=inspected['evidence_alias']))
+    monkeypatch.setattr(system[1].artifacts, 'read', read)
+    assert worker.call_tool('worker_submit_result', {})['state'] == 'failed'
+    assert system[1].runs.recovery_status(system[1].runs.status(worker._run_id))['delivery_preserved']
+
+
+def test_old_runner_tool_error_allows_limited_report(tmp_path):
+    from tcad_artifact.output_recovery import OutputInspectionService
+    from tests.operations.test_tcad_result_analysis import analysis_report,write_analysis
+    system, worker, opened, _ = recovery_system(tmp_path)
+    class OldAdapter:
+        def inspect_outputs(self, *args, **kwargs):
+            raise RuntimeError('unknown runner tool')
+    worker.tool_services['tcad_artifact:tcad.output_inspection'] = OutputInspectionService(OldAdapter())
+    assert worker.call_tool('worker_tcad_inspect_outputs', {})['status'] == 'unsupported'
+    write_analysis(opened, analysis_report())
+    assert worker.call_tool('worker_submit_result', {})['state'] == 'completed'
+
+
+@pytest.mark.parametrize('action', ['inspect', 'accept'])
+def test_inspection_transport_failure_has_shared_diagnostic_and_allows_report(tmp_path, action):
+    from tcad_artifact.output_recovery import OutputInspectionService
+    from scidiscovery.artifact_agent.interfaces.mcp_worker_protocol import WorkerToolError
+    from tests.operations.test_tcad_result_analysis import analysis_report,write_analysis
+    system,worker,opened,_=recovery_system(tmp_path)
+    arguments = {}
+    tool = 'worker_tcad_inspect_outputs'
+    if action == 'accept':
+        candidate=worker.call_tool(tool,{'relative_path':'A_actual.plx'})
+        tool='worker_tcad_accept_output'
+        arguments=dict(evidence_alias=candidate['evidence_alias'],output_name='A',rationale='fixture mapping',evidence_aliases=['runtime_manifest'])
+    class BrokenAdapter:
+        def inspect_outputs(self,*args,**kwargs):
+            try:
+                raise TimeoutError('inspection IO budget exhausted')
+            except TimeoutError as cause:
+                raise RuntimeError('transport failed; stderr log: /private/runtime/stderr') from cause
+    worker.tool_services['tcad_artifact:tcad.output_inspection']=OutputInspectionService(BrokenAdapter())
+    with pytest.raises(WorkerToolError) as caught:
+        worker.call_tool(tool,arguments)
+    facts=caught.value.engineering
+    assert facts['category']=='timeout' and facts['reference']
+    assert '/private/runtime' not in str(facts)
+    assert 'workspace_report' not in facts
+    from scidiscovery.artifact_agent.service.engineering_diagnostics import EngineeringDiagnostics
+    store = EngineeringDiagnostics(system[1].runs.database_path.parent.parent / 'engineering-diagnostics')
+    assert store.read(facts['reference'], scopes=('instance:' + system[1].runs.status(worker._run_id).instance_id,))['text']
+    assert system[1].runs.status(worker._run_id).state=='running'
+    write_analysis(opened,analysis_report())
+    assert worker.call_tool('worker_submit_result',{})['state']=='completed'
+
+
+def test_local_evidence_hash_consumes_same_inspection_budget(tmp_path, monkeypatch):
+    import time
+    from dataclasses import replace
+    from types import SimpleNamespace
+    from tcad_artifact import output_recovery
+    from scidiscovery.artifact_agent.interfaces.mcp_worker_protocol import WorkerToolError
+    system,worker,_,_=recovery_system(tmp_path)
+    original_context=worker._context
+    monkeypatch.setattr(worker,'_context',lambda *args:replace(original_context(*args),remaining_seconds=1.1))
+    original_hash=hashlib.sha256
+    class SlowHash:
+        def __init__(self):self.inner=original_hash()
+        def update(self,raw):time.sleep(1.2);self.inner.update(raw)
+        def hexdigest(self):return self.inner.hexdigest()
+    monkeypatch.setattr(output_recovery,'hashlib',SimpleNamespace(sha256=SlowHash))
+    with pytest.raises(WorkerToolError) as caught:
+        worker.call_tool('worker_tcad_inspect_outputs',{'relative_path':'A_actual.plx'})
+    assert any(cause.get('timeout_kind')=='inspection_io' for cause in caught.value.engineering['causes'])
+    assert system[1].runs.tool_io_budget(worker._run_id)['remaining_seconds']<119
+    assert system[1].runs.status(worker._run_id).state=='running'
+
+
+@pytest.mark.parametrize('action',['inspect','accept'])
+def test_inspection_preparation_cannot_restart_run_deadline(tmp_path,monkeypatch,action):
+    import time
+    from dataclasses import replace
+    from tcad_artifact.output_recovery import OutputInspectionService
+    _,worker,_,_=recovery_system(tmp_path)
+    tool='worker_tcad_inspect_outputs'; arguments={}
+    if action=='accept':
+        candidate=worker.call_tool(tool,{'relative_path':'A_actual.plx'})
+        tool='worker_tcad_accept_output'
+        arguments=dict(evidence_alias=candidate['evidence_alias'],output_name='A',rationale='fixture mapping',evidence_aliases=['runtime_manifest'])
+    observed={}; original_context=worker._context
+    def context(*args):
+        current=original_context(*args)
+        observed['run_deadline']=time.monotonic()+3
+        def read(name):
+            if name=='execution_package': time.sleep(.2)
+            return current._read_input(name)
+        return replace(current,remaining_seconds=3,_read_input=read)
+    class Adapter:
+        def inspect_outputs(self,*args,**kwargs):
+            observed['adapter_deadline']=kwargs['deadline_monotonic']
+            return {'status':'not_found','reason':'fixture'}
+    monkeypatch.setattr(worker,'_context',context)
+    worker.tool_services['tcad_artifact:tcad.output_inspection']=OutputInspectionService(Adapter())
+    assert worker.call_tool(tool,arguments)['status']=='not_found'
+    assert observed['adapter_deadline']<=observed['run_deadline']+.05
+
+
+@pytest.mark.parametrize('solver_code,terminal', [(None,'failed'),(0,'failed'),(1,'failed'),(0,'cancelled')])
+def test_collection_97_preserves_solver_facts_without_deciding_local_findings(tmp_path, solver_code, terminal):
+    from scidiscovery.artifact_agent.schema.common import canonical_json
+    from tcad_artifact.project_packager import TCADRuntimeManifest
+    from tests.operations.test_tcad_result_analysis import analysis_system,analysis_report,open_analysis,write_analysis
+    system=analysis_system(tmp_path)
+    catalog,runtime,root,request,artifacts,register=system
+    manifest=json.loads(runtime.artifacts.read(artifacts['manifest'].ref))
+    manifest.update(exit_code=97,terminal_state=terminal,error='fixture collection failure')
+    if solver_code is not None:
+        manifest['solver_exit_code']=solver_code
+    raw=canonical_json(manifest)
+    assert TCADRuntimeManifest.model_validate_json(raw).solver_exit_code==solver_code
+    registered = register('collection_manifest',raw,'opaque',parents=artifacts['manifest'].parent_refs)
+    next(i for i in request['inputs'] if i['port']=='runtime_manifest')['artifact_names']=['collection_manifest']
+    worker,opened=open_analysis(system)
+    report=analysis_report(alias='solver_outputs_001',output_name='A',mapped=True)
+    report['gates']['numerical_validity']['status']='pass'
+    report['gates']['numerical_validity']['summary']='Fixture local numerical condition is supported by the raw product; no overall success claimed.'
+    report['gates']['control_equivalence']=dict(status='fail',summary='Control mismatch remains.',evidence_keys=['raw_evidence'])
+    write_analysis(opened,report)
+    result=worker.call_tool('worker_submit_result',{})
+    assert result['state']=='completed',result
+    # A local scientific assessment never rewrites the actual execution record.
+    actual = TCADRuntimeManifest.model_validate_json(runtime.artifacts.read(registered.ref))
+    assert actual.terminal_state == terminal and actual.solver_exit_code == solver_code
+
+
+def test_corrupt_preserved_receipt_fails_successor_open_explicitly(tmp_path):
+    from copy import deepcopy
+    from tests.operations.test_tcad_result_analysis import analysis_report,write_analysis,open_analysis
+    system,worker,opened,_=recovery_system(tmp_path)
+    worker.call_tool('worker_tcad_inspect_outputs',{'relative_path':'A_actual.plx'})
+    catalog,runtime,root,request,artifacts,register=system
+    record=runtime.runs.tool_evidence(worker._run_id)[0]
+    write_analysis(opened,analysis_report())
+    status=root.call_tool('run_status',{'name': 'analysis', "intent": 'navigation'})
+    root.call_tool('run_record_failure',dict(name='analysis',reason='fixture interruption',expected_state='running',expected_last_activity_at=status['last_activity_at']))
+    stored=runtime.artifacts.cas.path_for(record['artifact_ref']['sha256'])
+    stored.chmod(0o600)
+    stored.write_bytes(b'corrupt')
+    request=deepcopy(request)
+    request.update(name='corrupt_successor',draft_from='analysis')
+    with pytest.raises(Exception,match='control diagnostic'):
+        open_analysis((catalog,runtime,root,request,artifacts,register))
+    assert root.call_tool('run_status',{'name': 'corrupt_successor', "intent": 'navigation'})['state']=='failed'
+
+
+def test_missing_execution_binding_reports_exact_repair_without_discovery():
+    from types import SimpleNamespace
+    from tcad_artifact.output_recovery import _inspect
+    def missing(name):
+        raise ValueError('tool requested an undeclared Run input')
+    context=SimpleNamespace(input_ref=missing)
+    result=_inspect(context,'execution_result',None,run_deadline=1)
+    assert result['reason']=='execution_result_not_bound'
+    assert result['message']=='tool requested an undeclared Run input'
+    assert 'result_artifact_name' in result['repair'] and 'Frozen inputs' in result['repair']

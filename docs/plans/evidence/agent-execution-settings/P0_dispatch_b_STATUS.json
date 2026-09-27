@@ -1,0 +1,91 @@
+{
+  "name": "dispatch_b",
+  "logical_name": "dispatch_b",
+  "revision": 1,
+  "operation_id": "blind.csv.observe.v1",
+  "agent_type": "op_blind_csv_observe_v1_56b24007eb0b",
+  "backend": "local_trusted",
+  "state": "completed",
+  "output_artifact_name": "dispatch_b.output",
+  "reason": null,
+  "created_at": "2026-09-15T09:12:56.757615Z",
+  "started_at": "2026-09-15T09:13:35.378779Z",
+  "deadline_at": "2026-09-15T09:17:56.757615Z",
+  "completed_at": "2026-09-15T09:14:18.962907Z",
+  "last_activity_at": "2026-09-15T09:14:18.962907Z",
+  "candidate_accepted": true,
+  "head_advance": "not_requested",
+  "recovery_available": false,
+  "recovery": {
+    "delivery_preserved": false,
+    "resume_available": false,
+    "draft_available": false,
+    "recovery_pending": false,
+    "attempt_budget": {
+      "used": 1,
+      "limit": 2
+    }
+  },
+  "diagnostic_summary": {
+    "latest_tool_error": null,
+    "recent_errors": [],
+    "rejection_count": 0,
+    "latest_rejection": null,
+    "failure": null,
+    "native_coverage": "unobserved",
+    "latest_native_error": null
+  },
+  "tool_timing": [
+    {
+      "tool_name": "worker_open_assignment",
+      "started_at": "2026-09-15T09:13:35.378175+00:00",
+      "completed_at": "2026-09-15T09:13:35.388075+00:00",
+      "duration_seconds": 0.009914
+    },
+    {
+      "tool_name": "worker_csv_summarize",
+      "started_at": "2026-09-15T09:13:51.185020+00:00",
+      "completed_at": "2026-09-15T09:13:51.194015+00:00",
+      "duration_seconds": 0.00901
+    },
+    {
+      "tool_name": "worker_submit_result",
+      "started_at": "2026-09-15T09:14:18.850984+00:00",
+      "completed_at": "2026-09-15T09:14:18.973434+00:00",
+      "duration_seconds": 0.122466
+    }
+  ],
+  "draft_from": null,
+  "bound_inputs": [
+    {
+      "port": "source_table",
+      "artifact_names": [
+        "source"
+      ]
+    }
+  ],
+  "native_execution": {
+    "coverage": "unobserved",
+    "scientific_evidence": false,
+    "reason": "no_records"
+  },
+  "sealed_output_status": "available",
+  "sealed_output": null,
+  "output_delivery": "omitted",
+  "output_metadata": {
+    "artifact_name": "dispatch_b.output",
+    "kind": "observation",
+    "schema": "blind.csv-observation.v1"
+  },
+  "selected_output": null,
+  "scheduler_signal_status": "available",
+  "scheduler_signal": {
+    "schema_version": 1,
+    "verdict": "pass",
+    "summary": "Completed the bounded observation of the exact declared CSV: two rows, columns sample and value, with mean value 2.0.",
+    "assumptions": [],
+    "missing_inputs": [],
+    "next_actions": [],
+    "next_action_kind": null
+  }
+}

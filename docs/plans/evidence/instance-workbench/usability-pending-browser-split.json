@@ -1,0 +1,28 @@
+{
+  "command": [
+    "env",
+    "PLAYWRIGHT_BROWSERS_PATH=/tmp/scid-workbench-browsers",
+    "NODE_OPTIONS=--max-old-space-size=64",
+    "python",
+    "docs/plans/evidence/instance-workbench/usability_pending_browser.py"
+  ],
+  "exit_code": 0,
+  "stop_reason": null,
+  "duration_seconds": 2.652,
+  "peak_tree_rss_mib": 455.33,
+  "budget_mib": 512,
+  "peak_processes": [
+    {
+      "name": "chrome-headless-shell",
+      "rss_mib": 246.97
+    },
+    {
+      "name": "MainThread",
+      "rss_mib": 128.3
+    },
+    {
+      "name": "python",
+      "rss_mib": 80.05
+    }
+  ]
+}

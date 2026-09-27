@@ -1,0 +1,14 @@
+[
+  {
+    "operation": "tcad.result.analyze.v1",
+    "prompt_utf8_bytes": 18377
+  },
+  {
+    "operation": "science.result.diagnose.v1",
+    "prompt_utf8_bytes": 14929
+  },
+  {
+    "operation": "science.result.diagnose.curve-error.v1",
+    "prompt_utf8_bytes": 9271
+  }
+]

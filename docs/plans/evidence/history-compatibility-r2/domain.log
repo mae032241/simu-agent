@@ -1,0 +1,359 @@
+..F....................................                                  [100%]
+=================================== FAILURES ===================================
+____ test_current_science_reaches_author_while_historical_contracts_retire _____
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-30/test_current_science_reaches_a0')
+
+    def test_current_science_reaches_author_while_historical_contracts_retire(
+        tmp_path,
+    ) -> None:
+        historical = _historical_operation_digests(tmp_path)
+        repaired = _catalog()
+        # The goal contract and Operation ABI intentionally retire old qualification.
+        # Derive old identities from untouched archived source, not replacement hashes.
+        assert all(
+            digest != repaired.operation(operation_id).digest
+            for operation_id, digest in historical.items()
+        )
+    
+        project = tmp_path / "project"
+        project.mkdir()
+        runtime = open_runtime(
+            project_root=project,
+            state_root=tmp_path / "state",
+            worker_backend="local",
+            local_workspace_root=project / ".scidiscovery-runs",
+            approval_receipt_secret=os.urandom(32),
+        )
+        runtime.runs.operation_catalog = repaired
+        instance = runtime.scheduler_bindings.create_instance(
+            name="historical_contract_boundary",
+            title="Historical contract boundary",
+            objective="Accept current science and reject retired producer contracts.",
+        )
+        root = RootMCPRouter(
+            RootToolFacade(
+                runtime.artifacts,
+                runtime.intake,
+                runs=runtime.runs,
+                approvals=runtime.approvals,
+                executions=runtime.executions,
+                bindings=runtime.scheduler_bindings,
+                instance=instance.instance_id,
+                operation_catalog=repaired,
+            )
+        )
+    
+        plan = _compiler_plan()
+        objective = _compiler_objective()
+        bundle = _bundle()
+        contract = compile_curve_contract(
+            CurveContractCompileInput.model_validate(
+                {
+                    "experiment_key": "implementation_check",
+                    "target_bindings": [
+                        {
+                            "target_key": "target_implementation",
+                            "reference_series_key": "reference",
+                            "validation_check_keys": ["profile_rms"],
+                        }
+                    ],
+                    "candidate_case_keys": ["baseline"],
+                    "comparison_metric": "residual_rms",
+                }
+            ),
+            objective=objective,
+            portfolio=plan,
+            reference_bundle=bundle,
+        )
+        plan_producer = repaired.operation("science.experiment.revise.v1")
+        curve_producer = repaired.operation("science.curve.contract.design.v1")
+        retired_plan = _register_bound(
+            runtime,
+            instance,
+            name="retired_plan",
+            content=plan.canonical_json(),
+            kind=plan_producer.spec.outputs[0].kind,
+            schema_id=plan_producer.spec.outputs[0].schema_id,
+            labels={
+                "operation_id": plan_producer.spec.operation_id,
+                "operation_version": plan_producer.spec.version,
+                "operation_digest": historical["science.experiment.revise.v1"],
+                "operation_output_port": plan_producer.spec.outputs[0].name,
+            },
+        )
+        # A separate current fixture must obtain its own independent review.
+        # The retired fixture and its producer labels remain unchanged.
+        plan_artifact = _register_bound(
+            runtime,
+            instance,
+            name="current_plan",
+            content=plan.canonical_json(),
+            kind=plan_producer.spec.outputs[0].kind,
+            schema_id=plan_producer.spec.outputs[0].schema_id,
+            labels={
+                "operation_id": plan_producer.spec.operation_id,
+                "operation_version": plan_producer.spec.version,
+                "operation_digest": plan_producer.digest,
+                "operation_output_port": plan_producer.spec.outputs[0].name,
+            },
+        )
+        retired_review_request = {
+            "name": "review_retired_plan", "operation_id": "science.object.review.v1",
+            "inputs": [{"port": "experiment_plan", "artifact_names": ["retired_plan"]}],
+            "instruction": "Review only the exact immutable subject.",
+        }
+        before_retired_review = root.call_tool("run_list", {})["runs"]
+        accepted = root.call_tool("operation_preflight", retired_review_request)
+        assert accepted["admissible"] is True
+        assert root.call_tool("run_list", {})["runs"] == before_retired_review
+    
+        _register_bound(
+            runtime,
+            instance,
+            name="research_objective",
+            content=objective.canonical_json(),
+            kind="research_objective",
+            schema_id="scidiscovery.research-objective.v1",
+        )
+        _register_bound(
+            runtime,
+            instance,
+            name="reference_bundle",
+            content=bundle.canonical_json(),
+            kind="curve_bundle",
+            schema_id="scidiscovery.curve-bundle.v1",
+        )
+        curve_artifact = _register_bound(
+            runtime,
+            instance,
+            name="current_curve_contract",
+            content=contract.canonical_json(),
+            kind=curve_producer.spec.outputs[0].kind,
+            schema_id=curve_producer.spec.outputs[0].schema_id,
+            labels={
+                "operation_id": curve_producer.spec.operation_id,
+                "operation_version": curve_producer.spec.version,
+                "operation_digest": curve_producer.digest,
+                "operation_output_port": curve_producer.spec.outputs[0].name,
+            },
+        )
+        snapshot = SolverCapabilitySnapshot(
+            profile_id="compatibility_sprocess",
+            solver_kind="sprocess",
+            launch_name="sprocess",
+            public_arguments=("-i",),
+            public_release_label="R-2020.09",
+            private_fixed_argument_count=0,
+            private_fixed_arguments_sha256="a" * 64,
+            private_release_evidence_bytes=1,
+            private_release_evidence_sha256="b" * 64,
+            capability_sha256="c" * 64,
+        )
+        _register_bound(
+            runtime,
+            instance,
+            name="execution_capability",
+            content=json.dumps(
+                snapshot.model_dump(mode="json"),
+                ensure_ascii=True,
+                allow_nan=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            ).encode("utf-8"),
+            kind="solver_capability",
+            schema_id="tcad.solver-capability.v2",
+        )
+    
+        experiment_review = _complete_scientific_review(
+            runtime,
+            root,
+            repaired,
+            name="current_plan_review",
+            operation_id="science.object.review.v1",
+            inputs=(("experiment_plan", "current_plan"),),
+            review_target="experiment_portfolio",
+        )
+        curve_review = _complete_scientific_review(
+            runtime,
+            root,
+            repaired,
+            name="current_curve_contract_review",
+            operation_id="science.curve.contract.review.v1",
+            inputs=(
+                ("research_objective", "research_objective"),
+                ("experiment_plan", "current_plan"),
+                ("experiment_review", experiment_review),
+                ("curve_contract", "current_curve_contract"),
+                ("reference_bundle", "reference_bundle"),
+            ),
+            review_target="domain_contract",
+        )
+        author_inputs = [
+            {"port": "execution_capability", "artifact_names": ["execution_capability"]},
+            {"port": "experiment_plan", "artifact_names": ["current_plan"]},
+            {"port": "experiment_review", "artifact_names": [experiment_review]},
+            {"port": "curve_contract", "artifact_names": ["current_curve_contract"]},
+            {"port": "curve_contract_review", "artifact_names": [curve_review]},
+        ]
+        before = root.call_tool("run_list", {})["runs"]
+        accepted = root.call_tool(
+            "operation_preflight",
+            {
+                "name": "current_author_accepts_current_science",
+                "operation_id": "tcad.deck.author.initial.v1",
+                "inputs": author_inputs,
+                "instruction": "Author only the exact bounded project.",
+            },
+        )
+        assert accepted["admissible"] is True, accepted
+        retired_author_inputs = [
+            {**item, "artifact_names": ["retired_plan"]}
+            if item["port"] == "experiment_plan" else item
+            for item in author_inputs
+        ]
+        rejected = root.call_tool("operation_preflight", {
+            "name": "current_author_rejects_retired_plan",
+            "operation_id": "tcad.deck.author.initial.v1",
+            "inputs": retired_author_inputs,
+            "instruction": "Author only the exact bounded project.",
+        })
+        assert rejected["admissible"] is False
+        assert rejected["reason_code"] == "input_producer_contract_changed"
+        assert runtime.artifacts.read(retired_plan.ref) == plan.canonical_json()
+        assert runtime.artifacts.catalog(retired_plan.ref).labels["operation_digest"] == historical[
+            "science.experiment.revise.v1"
+        ]
+        assert root.call_tool("run_list", {})["runs"] == before
+        admission = repaired.operation("tcad.deck.author.initial.v1").spec.input_admission
+        assert admission is not None
+        assert not {item["port"] for item in author_inputs} & set(admission.member_ports)
+    
+        author = repaired.operation("tcad.deck.author.initial.v1")
+        old_project = _register_bound(
+            runtime,
+            instance,
+            name="pre_p2_project",
+            content=b"{}",
+            kind=author.spec.outputs[0].kind,
+            schema_id=author.spec.outputs[0].schema_id,
+            parents=(plan_artifact.ref, curve_artifact.ref),
+            labels={
+                "operation_id": author.spec.operation_id,
+                "operation_version": author.spec.version,
+                "operation_digest": historical["tcad.deck.author.initial.v1"],
+                "operation_output_port": author.spec.outputs[0].name,
+            },
+        )
+        old_review_operation = repaired.operation("tcad.deck.review.v1")
+        review_subject = _register_bound(
+            runtime,
+            instance,
+            name="review_contract_subject",
+            content=b"{}",
+            kind=author.spec.outputs[0].kind,
+            schema_id=author.spec.outputs[0].schema_id,
+        )
+        _register_bound(
+            runtime,
+            instance,
+            name="current_review_fixture",
+            content=b"{}",
+            kind=old_review_operation.spec.outputs[0].kind,
+            schema_id=old_review_operation.spec.outputs[0].schema_id,
+            parents=(review_subject.ref,),
+            labels={
+                "operation_id": old_review_operation.spec.operation_id,
+                "operation_version": old_review_operation.spec.version,
+                "operation_digest": old_review_operation.digest,
+                "operation_output_port": old_review_operation.spec.outputs[0].name,
+            },
+        )
+        _register_bound(
+            runtime,
+            instance,
+            name="pre_p2_review",
+            content=b"{}",
+            kind=old_review_operation.spec.outputs[0].kind,
+            schema_id=old_review_operation.spec.outputs[0].schema_id,
+            parents=(review_subject.ref,),
+            labels={
+                "operation_id": old_review_operation.spec.operation_id,
+                "operation_version": old_review_operation.spec.version,
+                "operation_digest": historical["tcad.deck.review.v1"],
+                "operation_output_port": old_review_operation.spec.outputs[0].name,
+            },
+        )
+        rejected_review = root.call_tool(
+            "operation_preflight",
+            {
+                "name": "review_pre_p2_project",
+                "operation_id": "tcad.deck.review.v1",
+                "inputs": [
+                    {"port": "project", "artifact_names": ["pre_p2_project"]},
+                    *author_inputs,
+                ],
+                "instruction": "Review only the exact bounded project.",
+            },
+        )
+        assert rejected_review["admissible"] is False
+        assert rejected_review["reason_code"] == "input_content_incompatible"
+        assert rejected_review["port"] == "project"
+        accepted_review_contract = root.call_tool(
+            "operation_preflight",
+            {
+                "name": "validate_current_review_contract",
+                "operation_id": "tcad.deck-review-validate.v1",
+                "inputs": [
+                    {"port": "project", "artifact_names": ["review_contract_subject"]},
+                    {"port": "review", "artifact_names": ["current_review_fixture"]},
+                ],
+            },
+        )
+        assert accepted_review_contract["admissible"] is True, accepted_review_contract
+        rejected_review_contract = root.call_tool(
+            "operation_preflight",
+            {
+                "name": "validate_pre_p2_review_contract",
+                "operation_id": "tcad.deck-review-validate.v1",
+                "inputs": [
+                    {"port": "project", "artifact_names": ["review_contract_subject"]},
+                    {"port": "review", "artifact_names": ["pre_p2_review"]},
+                ],
+            },
+        )
+        assert rejected_review_contract["admissible"] is False
+>       assert rejected_review_contract["reason_code"] == "input_producer_contract_changed"
+E       AssertionError: assert 'input_content_incompatible' == 'input_produc...tract_changed'
+E         
+E         - input_producer_contract_changed
+E         + input_content_incompatible
+
+tests/operations/test_skill_policy_producer_compatibility.py:743: AssertionError
+=========================== short test summary info ============================
+FAILED tests/operations/test_skill_policy_producer_compatibility.py::test_current_science_reaches_author_while_historical_contracts_retire
+1 failed, 38 passed, 1 deselected in 11.80s
+Command exited with non-zero status 1
+	Command being timed: "python -m pytest -q tests/operations/test_l4_local_tcad.py::test_tcad_device_grid_is_one_declared_optional_port_and_debug_fails_closed tests/operations/test_skill_policy_producer_compatibility.py::test_current_science_reaches_author_while_historical_contracts_retire tests/operations/test_tcad_result_analysis.py -k not eight_near_sampling_limit tests/operations/test_m6b_operation_input_admission.py"
+	User time (seconds): 7.89
+	System time (seconds): 0.56
+	Percent of CPU this job got: 69%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:12.25
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 135196
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 130
+	Minor (reclaiming a frame) page faults: 59328
+	Voluntary context switches: 9389
+	Involuntary context switches: 157
+	Swaps: 0
+	File system inputs: 33712
+	File system outputs: 164656
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 1

@@ -7,6 +7,7 @@ import errno
 import os
 import stat
 import tempfile
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -116,6 +117,41 @@ class ContentAddressedStore:
         assert content is not None
         return content
 
+    def put_file(self, path: Path | str, *, expected_sha256: str, expected_size: int,
+                 chunk_bytes: int = 1024 * 1024, check_budget=None) -> CASObject:
+        """Publish one exact scientific file without retaining its bytes in RAM."""
+        if chunk_bytes < 1 or expected_size < 0:
+            raise ValueError("invalid streaming CAS bounds")
+        destination = self.path_for(expected_sha256)
+        self._ensure_directory_durable(destination.parent)
+        source_fd = self._open_no_follow(Path(path), directory=False)
+        descriptor, temporary_name = tempfile.mkstemp(prefix=".ingest.", dir=destination.parent)
+        temporary = Path(temporary_name)
+        try:
+            with os.fdopen(source_fd, "rb") as source, os.fdopen(descriptor, "wb") as target:
+                os.fchmod(target.fileno(), self.file_mode)
+                digest, size = hashlib.sha256(), 0
+                while True:
+                    if check_budget is not None:
+                        check_budget()
+                    block = source.read(chunk_bytes)
+                    if not block:
+                        break
+                    size += len(block)
+                    if size > expected_size:
+                        raise CASIntegrityError("streamed source exceeds its descriptor")
+                    digest.update(block)
+                    target.write(block)
+                if size != expected_size or digest.hexdigest() != expected_sha256:
+                    raise CASIntegrityError("streamed source differs from its descriptor")
+                target.flush()
+                os.fsync(target.fileno())
+            self._publish(temporary, destination)
+            self._fsync_directory(destination.parent)
+            return self.verify(expected_sha256, expected_size=expected_size)
+        finally:
+            temporary.unlink(missing_ok=True)
+
     def verify(self, digest: str, *, expected_size: int | None = None) -> CASObject:
         path = self.path_for(digest)
         try:
@@ -133,6 +169,23 @@ class ContentAddressedStore:
                 f"expected {expected_size}, observed {observed_size}"
             )
         return CASObject(digest, observed_size, path)
+
+    @contextmanager
+    def open_verified(self, digest: str, *, expected_size: int | None = None):
+        """Stream an exact original using the same verified, no-follow descriptor."""
+        try:
+            descriptor = self._open_no_follow(self.path_for(digest), directory=False)
+        except FileNotFoundError as error:
+            raise CASObjectMissingError(f"CAS object is missing: {digest}") from error
+        with os.fdopen(descriptor, "rb") as source:
+            observed, size = hashlib.sha256(), 0
+            while block := source.read(1024 * 1024):
+                observed.update(block)
+                size += len(block)
+            if observed.hexdigest() != digest or (expected_size is not None and size != expected_size):
+                raise CASIntegrityError("CAS original failed hash or size verification")
+            source.seek(0)
+            yield source
 
     def path_for(self, digest: str) -> Path:
         _validate_digest(digest)
@@ -181,6 +234,17 @@ class ContentAddressedStore:
             ):
                 invalid.append(candidate)
         return tuple(invalid)
+
+    def discard(self, digest: str) -> bool:
+        """Unlink one exact verified CAS object during serialized maintenance."""
+
+        try:
+            value = self.verify(digest)
+        except CASObjectMissingError:
+            return False
+        value.path.unlink()
+        self._fsync_directory(value.path.parent)
+        return True
 
     @staticmethod
     def _write_temporary(descriptor: int, content: bytes) -> None:

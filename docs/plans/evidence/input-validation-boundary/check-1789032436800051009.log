@@ -1,0 +1,13 @@
+..............F
+=================================== FAILURES ===================================
+_ test_no_score_real_review_worker_submit_then_next_design_reads_sealed_report _
+tests/operations/test_result_analysis_tool.py:194: in test_no_score_real_review_worker_submit_then_next_design_reads_sealed_report
+    worker, opened = invoke_worker('next_design', 'science.experiment.design.v1', {'scientific_foundation': 'foundation', 'research_objective': 'objective', 'hypothesis_portfolio': 'hypotheses', 'critic_review': 'critic', 'result_analysis': analysis.output_binding_name})
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/operations/test_result_analysis_tool.py:163: in invoke_worker
+    assert root.call_tool('operation_preflight', request)['admissible'] is True
+E   assert False is True
+=========================== short test summary info ============================
+FAILED tests/operations/test_result_analysis_tool.py::test_no_score_real_review_worker_submit_then_next_design_reads_sealed_report
+!!!!!!!!!!!!!!!!!!!!!!!!!! stopping after 1 failures !!!!!!!!!!!!!!!!!!!!!!!!!!!
+1 failed, 14 passed in 1.49s

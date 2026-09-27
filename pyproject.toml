@@ -4,40 +4,55 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "scidiscovery"
-version = "0.1.0"
+version = "0.1.1"
 description = "Portable, evidence-bound scientific discovery orchestration"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-  "PyYAML>=6,<7",
+  "cryptography>=42,<47",
+  "Pillow>=10,<13",
+  "jsonschema>=4,<5",
   "pydantic>=2,<3",
   "tomli>=2; python_version < '3.11'",
 ]
 
 [project.optional-dependencies]
 test = [
+  "PyYAML>=6,<7",
   "pytest>=8,<10",
 ]
 
 [project.scripts]
 scid = "scidiscovery.artifact_agent.interfaces.cli:main"
 
+[project.entry-points."scidiscovery.plugins"]
+builtin = "scidiscovery.builtin_plugin:CORE_PLUGIN"
+general_science = "scidiscovery.general_science_plugin:PLUGIN"
+
+[project.entry-points."scidiscovery.instance_views"]
+general_science = "scidiscovery.general_science_views:build_presentation"
+
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.setuptools.package-data]
+"scidiscovery" = ["default_agent_settings.json"]
 "scidiscovery.artifact_agent.storage" = ["migrations/*.sql"]
 "scidiscovery.artifact_agent.approval_ui" = ["static/*.css", "static/*.js"]
 
 [tool.setuptools.data-files]
-"share/scidiscovery/roles" = ["roles/*.md"]
+"share/scidiscovery/roles" = ["roles/scheduler.md"]
+"share/scidiscovery/roles/scheduler" = ["roles/scheduler/*.md"]
 "share/scidiscovery/deploy/systemd" = ["deploy/systemd/*.in"]
 
 [tool.pytest.ini_options]
-pythonpath = ["src", ".", "plugins/tcad_artifact", "plugins/ingaas_fig4"]
+addopts = "--strict-markers"
+pythonpath = ["src", ".", "plugins/tcad_artifact", "plugins/curve_score", "plugins/curve_figure_evidence", "tests/fixtures/plugins/architecture_operation_plugin", "tests/fixtures/plugins/table_observation_plugin", "tests/fixtures/plugins/blind_csv_operation_plugin"]
 testpaths = ["tests"]
 norecursedirs = ["portable_delivery"]
 markers = [
+  "installed: isolated wheel installation and installed entry points",
+  "stress: large-input and resource-bound checks; run with --test-lane=stress",
   "process_e2e: launches real daemon and stdio proxy processes across Unix sockets",
-  "live_platform: requires a running Codex/Claude platform and is not part of hermetic pytest",
+  "live_platform: requires a running Codex platform and is not part of hermetic pytest",
 ]

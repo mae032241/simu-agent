@@ -1,0 +1,41 @@
+WARNING: The directory '/home/da/.cache/pip' or its parent directory is not owned or is not writable by the current user. The cache has been disabled. Check the permissions and owner of that directory. If executing pip with sudo, you should use sudo's -H flag.
+Looking in indexes: https://mirrors.aliyun.com/pypi/simple/
+Processing /home/da/project/ai4s/tcad/git_release/scidiscovery-agent/123/scidiscovery-e5.2
+  Preparing metadata (pyproject.toml): started
+  Preparing metadata (pyproject.toml): finished with status 'done'
+Processing ./plugins/tcad_artifact
+  Preparing metadata (pyproject.toml): started
+  Preparing metadata (pyproject.toml): finished with status 'done'
+Building wheels for collected packages: scidiscovery, tcad-artifact
+  Building wheel for scidiscovery (pyproject.toml): started
+  Building wheel for scidiscovery (pyproject.toml): finished with status 'done'
+  Created wheel for scidiscovery: filename=scidiscovery-0.1.0-py3-none-any.whl size=285297 sha256=c3f4cafa98d3e82cb6f075ff1b2fd06c6fcbe050c1afb56d1b9ccb218843ee88
+  Stored in directory: /tmp/pip-ephem-wheel-cache-15sm3gb0/wheels/7b/04/b5/f4ee68449c0cac3cd9c0d25bb3effbfc58794fa0911e959b95
+  Building wheel for tcad-artifact (pyproject.toml): started
+  Building wheel for tcad-artifact (pyproject.toml): finished with status 'done'
+  Created wheel for tcad-artifact: filename=tcad_artifact-0.1.0-py3-none-any.whl size=153593 sha256=313abd89ec3e24bcb21b27df65e34d4759e3e3bbe7c00b9bea3588b2b6e9720e
+  Stored in directory: /tmp/pip-ephem-wheel-cache-15sm3gb0/wheels/15/b5/95/f5ee59d124bad5f87c1f2409783b13247261698bb428d02887
+Successfully built scidiscovery tcad-artifact
+	Command being timed: "timeout 120 /home/da/miniconda3/bin/python -m pip wheel --no-deps --no-build-isolation --wheel-dir /tmp/scid-consistency-wheels . ./plugins/tcad_artifact"
+	User time (seconds): 0.99
+	System time (seconds): 0.26
+	Percent of CPU this job got: 77%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:01.61
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 49200
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 497
+	Minor (reclaiming a frame) page faults: 41090
+	Voluntary context switches: 1860
+	Involuntary context switches: 29
+	Swaps: 0
+	File system inputs: 127016
+	File system outputs: 10392
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0

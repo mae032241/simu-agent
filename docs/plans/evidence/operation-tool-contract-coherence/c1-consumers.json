@@ -1,0 +1,18 @@
+{
+  "command": [
+    "python",
+    "-m",
+    "pytest",
+    "-q",
+    "tests/operations/test_catalog_compile.py::test_compiled_contracts_have_no_self_digest_and_run_projections_are_isolated",
+    "tests/operations/test_l5_hardened_run_backend.py::test_one_tool_model_change_reaches_schema_call_and_identity",
+    "tests/operations/test_l2_local_run.py",
+    "tests/operations/test_agent_contract_alignment.py"
+  ],
+  "exit_code": 1,
+  "seconds": 31.876,
+  "peak_tree_rss_bytes": 150708224,
+  "budget_bytes": 536870912,
+  "early_stop_bytes": 469762048,
+  "memory_terminated": false
+}

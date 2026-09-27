@@ -1,0 +1,45 @@
+........................................................................ [ 55%]
+............F............................................                [100%]
+=================================== FAILURES ===================================
+_ test_review_validates_bound_original_context_and_actual_source_aliases[unbound_citation] _
+
+experiment_case = ({'study_kind': 'scientific', 'objective_key': 'objective_expected', 'selected_hypothesis_keys': ['hypothesis_a'], 'pr...research_objective_key":"objective_expected","schema_version":2,"stage_objective":"Separate one bounded mechanism."}'})
+mismatch = 'unbound_citation'
+
+    @pytest.mark.parametrize("mismatch", ("objective_key", "statement", "execution_context", "unbound_citation"))
+    def test_review_validates_bound_original_context_and_actual_source_aliases(experiment_case, mismatch) -> None:
+        from scidiscovery.artifact_agent.transforms import materialize_experiment_plan
+        from scidiscovery.general_science_experiment_components import _object_review_context, _object_review_inputs
+        from scidiscovery.operations.input_validation import OperationInvocationError
+    
+        intent, inputs = _partial_experiment(experiment_case)
+        plan, _ = materialize_experiment_plan({
+            "experiment_design_intent": canonical_json(intent),
+            "research_objective": inputs["research_objective"],
+            "hypothesis_portfolio": inputs["hypothesis_portfolio"],
+        })
+        sources = {"experiment_plan": plan, "research_objective": inputs["research_objective"]}
+        payload = {"review_target": "experiment_portfolio", "verdict": "revise",
+                   "summary": "Assess the exact original contract."}
+        if mismatch in {"objective_key", "statement"}:
+            objective = json.loads(sources["research_objective"])
+            objective[mismatch] = "different_objective"
+            sources["research_objective"] = canonical_json(objective)
+            error, message = OperationInvocationError, "input_plan_objective_mismatch"
+        elif mismatch == "execution_context":
+            sources["execution_context"] = b"{}"
+            error, message = OperationInvocationError, "input_content_incompatible: execution_context"
+        else:
+            payload["evidence"] = [{"source_key": "experiment_plan_aux", "source_type": "frozen_input",
+                                    "locator": "absent input"}]
+            error, message = SemanticRuleViolation, "actual visible input alias"
+>       with pytest.raises(error, match=message):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AssertionError: Regex pattern did not match.
+E         Expected regex: 'actual visible input alias'
+E         Actual message: 'Evidence citation must name a source bound to this task.'
+
+tests/operations/test_agent_contract_alignment.py:1017: AssertionError
+=========================== short test summary info ============================
+FAILED tests/operations/test_agent_contract_alignment.py::test_review_validates_bound_original_context_and_actual_source_aliases[unbound_citation]
+1 failed, 128 passed in 36.44s

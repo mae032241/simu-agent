@@ -1,0 +1,19 @@
+..F..                                                                    [100%]
+=================================== FAILURES ===================================
+_______ test_catalog_stage_refactor_matches_current_core_digest_summary ________
+
+    def test_catalog_stage_refactor_matches_current_core_digest_summary() -> None:
+        compiled = catalog_module.compile_catalog((CORE_PLUGIN, SCIENCE_PLUGIN))
+        assert len(compiled.operation_ids()) == 15
+>       assert _digest_map(compiled) == (
+            "052bda8151ea633a62c02ac9c4ee87f6c0fece9383bdb8ffb3a1d0fb9054251e"
+        )
+E       AssertionError: assert 'eca9324b46e5...db9bcf1acd1be' == '052bda8151ea...1d0fb9054251e'
+E         
+E         - 052bda8151ea633a62c02ac9c4ee87f6c0fece9383bdb8ffb3a1d0fb9054251e
+E         + eca9324b46e59f93a5d592f712fb021089674f6b133a3cf1d62db9bcf1acd1be
+
+tests/operations/test_r5_catalog_stages.py:148: AssertionError
+=========================== short test summary info ============================
+FAILED tests/operations/test_r5_catalog_stages.py::test_catalog_stage_refactor_matches_current_core_digest_summary
+1 failed, 4 passed in 3.06s

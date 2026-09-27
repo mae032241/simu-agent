@@ -1,0 +1,796 @@
+diff --git a/docs/plans/README.md b/docs/plans/README.md
+index 5215704..7dd510d 100644
+--- a/docs/plans/README.md
++++ b/docs/plans/README.md
+@@ -5,6 +5,8 @@
+ 
+ ## 当前执行链
+ 
++- [实验反馈与 MCP 信息分级修订计划 R1](HYPOTHESIS_EXPERIMENT_FEEDBACK_PLAN.zh-CN.md)：2026-09-16，**[R1 独立复审 PASS（计划级）](reviews/HYPOTHESIS_EXPERIMENT_FEEDBACK_PLAN_R1_REVIEW.zh-CN.md)，未实施**。工作包 A 接通封存反馈→新假设→批评/必要纠错→设计；工作包 B 包含[全 MCP 默认摘要与按需展开](MCP_RESPONSE_INFORMATION_LEVELS_PLAN.zh-CN.md)，二者及组合路径均通过计划复审。原计划保持送审字节，当前状态以本索引及审查报告为准。保留控制和科学职责边界，不新增角色、状态机或强制表格；[R0 审查](reviews/HYPOTHESIS_EXPERIMENT_FEEDBACK_PLAN_R0_REVIEW.zh-CN.md)与原文快照保留。本轮授权止于计划与审查；实现和安装验收尚未开始。
++
+ - [实例 Agent 执行配置计划 R1](INSTANCE_AGENT_EXECUTION_SETTINGS_PLAN.zh-CN.md)：2026-09-15，**[R1 独立复审 PASS](reviews/INSTANCE_AGENT_EXECUTION_SETTINGS_PLAN_R1_REVIEW.zh-CN.md)，P0 独立 CLI 实测 PASS，P1–P6 实现与隔离验收完成，[R2 独立实现复审 PASS](reviews/INSTANCE_AGENT_EXECUTION_SETTINGS_IMPLEMENTATION_R2_REVIEW.zh-CN.md)，待生产安装验证**；[P0 诊断](evidence/agent-execution-settings/P0_STATUS.zh-CN.md)保留原启动失败及独立 CODEX_HOME/TMPDIR 解决记录；模型覆盖实测仍是先行条件，四列受限归档兼容的计划缺口已闭合；[R0 审查报告](reviews/INSTANCE_AGENT_EXECUTION_SETTINGS_PLAN_R0_REVIEW.zh-CN.md)及原计划字节快照保留。先验证同一受控角色按 spawn 参数选择模型/推理强度，再接公共默认、实例页面覆盖与 Run 快照；语言动态作用于新报告，尝试次数复用现有调度机制，不因设置变化新增 role。覆盖预检请求一致性、旧 Run、草稿、归档与安装保留；不含历史翻译、资源调度或真实仿真。 后续按用户反馈完成[设置/归档入口拆分](evidence/settings-navigation/README.zh-CN.md)，独立入口及[实际部署页面验收通过](evidence/settings-live-acceptance/ACCEPTANCE.zh-CN.md)。
+ 
+ - [科研内容展示最小修复计划 R1](INSTANCE_RESEARCH_CONTENT_DISPLAY_REPAIR_PLAN.zh-CN.md)：2026-09-15，承接现场发现的 CSV 曲线未展示、实验变量来源误报及英文正文阅读困难。**P1/P2 源码、隔离验证及独立审查 PASS，安装后真实页面验收完成；P3 暂缓**；沿用原科学合同，本轮仅修展示和只读关联、固定中文标签。翻译服务及阅读缓存不在本轮实施范围。[本轮实施与验证](evidence/content-display/IMPLEMENTATION.zh-CN.md)记录 53 项最终定向回归、50 项合同保持及真实材料隔离回放。原安装、导航和只读浏览验收保留；[内容缺口审计](evidence/home-navigation/CONTENT_DISPLAY_FINDINGS.zh-CN.md)解释其不覆盖的事项。
+diff --git a/docs/plans/evidence/workbench-session/browser_probe.py b/docs/plans/evidence/workbench-session/browser_probe.py
+index 745365e..cabc995 100644
+--- a/docs/plans/evidence/workbench-session/browser_probe.py
++++ b/docs/plans/evidence/workbench-session/browser_probe.py
+@@ -31,7 +31,7 @@ with tempfile.TemporaryDirectory(prefix='scid-workbench-client-') as temporary:
+             errors = []
+             page.on('pageerror', lambda error: errors.append(str(error)))
+             page.goto(ui.base_url)
+-            page.locator('a[href="#session-setup"]').click()
++            page.locator('a[href="#create-instance"]').click()
+             expect(page.locator('form[action="/instances/create-unbound"]')).to_be_visible()
+             page.locator('input[name="name"]').fill('browser.standalone')
+             page.locator('input[name="title"]').fill('浏览器独立创建')
+@@ -52,6 +52,8 @@ with tempfile.TemporaryDirectory(prefix='scid-workbench-client-') as temporary:
+             page.goto(ui.base_url + '/sessions')
+             client = page.locator('article').filter(has_text='bbbbbbbb')
+             client.get_by_role('link', name='处理绑定申请').click()
++            assert '/sessions/' + b in page.url
++            expect(page.locator('form[action="/instances/select"]')).to_be_visible()
+             page.locator('select[name="name"]').select_option(second.name)
+             page.get_by_role('button', name='绑定到当前会话', exact=True).click()
+             page.wait_for_load_state('networkidle')
+@@ -61,6 +63,22 @@ with tempfile.TemporaryDirectory(prefix='scid-workbench-client-') as temporary:
+             page.locator('article').filter(has_text='aaaaaaaa').get_by_role('button', name='暂停后续调度').click()
+             page.wait_for_load_state('networkidle')
+             assert not runtime.scheduler_bindings.client_enabled(session_key=a)
++            page.goto(ui.base_url)
++            expect(page.locator('form[action="/instances/select"]')).to_have_count(0)
++            expect(page.locator('form[action="/instances/create"]')).to_have_count(0)
++            expect(page.locator('form[action="/instances/create-unbound"]')).to_have_count(1)
++            # Offline clients leave the directory; their instances stay accessible.
++            runtime.scheduler_bindings.disconnect_client(session_key=b)
++            page.goto(ui.base_url + '/sessions')
++            expect(page.locator('article').filter(has_text='bbbbbbbb')).to_have_count(0)
++            expect(page.locator('article').filter(has_text='aaaaaaaa')).to_be_visible()
++            assert runtime.scheduler_bindings.session_instance(session_key=b) == second.instance_id
++            page.get_by_role('button', name='清理离线会话', exact=True).click()
++            page.wait_for_load_state('networkidle')
++            expect(page.get_by_role('status')).to_have_text('已清理 1 个离线会话。')
++            assert runtime.scheduler_bindings.session_instance(session_key=b) is None
++            assert runtime.scheduler_bindings.get_instance(instance_id=second.instance_id).name == second.name
++            expect(page.locator('article').filter(has_text='aaaaaaaa')).to_be_visible()
+             # A fresh browser recovers access directly without any client link.
+             page.context.clear_cookies()
+             page.goto(ui.base_url + f'/instance/{first.instance_id}/settings')
+@@ -71,7 +89,7 @@ with tempfile.TemporaryDirectory(prefix='scid-workbench-client-') as temporary:
+             assert runtime.runs.active_ids(instance_id=first.instance_id, limit=10) == ()
+             browser.close()
+             print(json.dumps({'browser': 'pass', 'unbound_creation': True, 'settings_without_conversation': True,
+-                'client_request_binding': True, 'pause': True, 'expired_browser_reentry': True,
++                'client_request_binding': True, 'pause': True, 'offline_hidden_instance_retained': True, 'session_subpage': True, 'offline_cleanup': True, 'expired_browser_reentry': True,
+                 'javascript_errors': errors, 'scientific_runs_started': 0}))
+     finally:
+         fixture.close()
+diff --git a/src/scidiscovery/artifact_agent/approval_ui/app.py b/src/scidiscovery/artifact_agent/approval_ui/app.py
+index 08dacb8..a07cf8a 100644
+--- a/src/scidiscovery/artifact_agent/approval_ui/app.py
++++ b/src/scidiscovery/artifact_agent/approval_ui/app.py
+@@ -42,7 +42,7 @@ from ..storage import CASIntegrityError
+ from .render import ReviewContext, render_review
+ from .access import BrowserAccessDenied, BrowserAccessService, access_cookie, management_cookie, management_token
+ from .navigation import navigation
+-from .home_render import session_controls, instance_directory, confirm_binding, access_page, client_directory
++from .home_render import session_controls, instance_directory, confirm_binding, access_page, client_directory, create_form, page as management_page
+ 
+ if TYPE_CHECKING:
+     from .read_model import InstanceReadModel
+@@ -217,9 +217,12 @@ class ApprovalUI:
+         token = _one(query, "token")
+         try:
+             if parsed.path in {"/", "/instances", "/instances/manage"}:
+-                return self._handle_home(handler, query, directory=parsed.path == "/instances/manage")
++                return self._handle_home(handler, query, directory=parsed.path == "/instances/manage",
++                    session_key="" if parsed.path == "/instances" and "capability" in query else None)
+             if parsed.path == "/sessions":
+                 return self._handle_clients(handler, query)
++            if len(parts) == 2 and parts[0] == "sessions":
++                return self._handle_home(handler, query, session_key=parts[1])
+             if len(parts) == 3 and parts[0] == "instance" and parts[2] == "settings":
+                 return self._handle_agent_settings_get(handler, parts[1], query)
+             if len(parts) == 3 and parts[0] == "instance" and parts[2] == "manage":
+@@ -384,7 +387,7 @@ class ApprovalUI:
+             self._stream_slots.release()
+             handler.close_connection = True
+ 
+-    def _handle_home(self, handler, query, *, directory=False):
++    def _handle_home(self, handler, query, *, directory=False, session_key=None):
+         token = _one(query, "capability")
+         capability = None
+         if "capability" in query:
+@@ -396,7 +399,10 @@ class ApprovalUI:
+                     capability = self._instance_capability(token)
+                 except InstanceManagementCapabilityError:
+                     token = None
+-        instances = self.bindings.list_instances() if self.bindings else ()
++        if session_key is not None:
++            if capability is None or (session_key and capability.session_key != session_key):
++                return self._error(handler, HTTPStatus.FORBIDDEN, "请从科研会话列表重新进入对应会话。")
++        instances = self.bindings.list_instances() if self.bindings and (directory or session_key is not None) else ()
+         offset = int(_one(query, "offset") or "0")
+         if offset < 0:
+             raise ValueError("invalid instance page")
+@@ -406,14 +412,18 @@ class ApprovalUI:
+             body = instance_directory(rows, token=token, csrf=self.session_id, offset=offset, total=len(instances),
+                 workbench_available=self.read_model is not None, maintenance_available=self.management is not None,
+                 local_access=self.browser_access is not None)
+-        else:
++        elif session_key is not None:
+             current = None
+             if capability and self.bindings:
+                 current_id = self.bindings.session_instance(session_key=capability.session_key)
+                 current = self.bindings.get_instance(instance_id=current_id) if current_id else None
+             controls = session_controls(rows, token=token, csrf=self.session_id, current=current,
+-                expires_at=capability.expires_at if capability else None, workbench_available=self.read_model is not None,
+-                local_access=self.browser_access is not None)
++                expires_at=capability.expires_at, workbench_available=self.read_model is not None)
++            body = management_page("科研会话 · " + capability.session_key[-8:],
++                "<p><a href='/sessions'>返回会话列表</a></p>" + controls)
++        else:
++            controls = ("<section id='create-instance'>" + create_form(csrf=self.session_id) + "</section>"
++                if self.browser_access is not None else "")
+             body = _render_dashboard(self.service.list_requests(status="pending", limit=100,
+                 excluded_kinds=_RETIRED_INSTANCE_APPROVAL_KINDS), context_for=self._review_context,
+                 csrf_token=self.session_id, home_controls=controls)
+@@ -430,9 +440,11 @@ class ApprovalUI:
+         if offset < 0:
+             raise ValueError("invalid client page")
+         rows = self.bindings.clients(offset=offset)
+-        links = {row["session_key"]: "/instances?" + urlencode({"capability":
++        links = {row["session_key"]: "/sessions/" + row["session_key"] + "?" + urlencode({"capability":
+             issue_instance_management_capability(session_key=row["session_key"], secret=self.instance_management_secret)}) for row in rows}
+-        return self._respond(handler, HTTPStatus.OK, client_directory(rows, csrf=self.session_id, links=links, offset=offset),
++        cleared = _one(query, "cleared")
++        cleared = max(0, int(cleared)) if cleared is not None else None
++        return self._respond(handler, HTTPStatus.OK, client_directory(rows, csrf=self.session_id, links=links, offset=offset, cleared=cleared),
+                              "text/html; charset=utf-8")
+ 
+     def _home_rows(self, handler, instances, capability, *, read_status):
+@@ -780,6 +792,7 @@ class ApprovalUI:
+             "create",
+             "create-unbound",
+             "client-state",
++            "clients-clear",
+             "select",
+             "access",
+         }:
+@@ -891,6 +904,10 @@ class ApprovalUI:
+                 raise ValueError("local instance management is unavailable")
+             maintenance_access = False
+             with self._shared_maintenance():
++                if action == "clients-clear":
++                    cleared = self.bindings.clear_offline_clients(can_clear_instance=self._cache_writable)
++                    return self._respond(handler, HTTPStatus.SEE_OTHER, b"", "text/plain; charset=utf-8",
++                                         extra_headers={"Location": "/sessions?" + urlencode({"cleared": cleared})})
+                 if action == "client-state":
+                     key = _required(form, "session_key")
+                     enabled, expected = _required(form, "enabled"), _required(form, "expected_enabled")
+@@ -1386,7 +1403,7 @@ def _render_dashboard(
+         "<div class='home-entry-grid'><a class='home-entry' href='/instances/manage'><strong>实例管理</strong>"
+         "<span>查看实例当前状态、研究轨迹和阶段成果</span></a>"
+         "<a class='home-entry' href='/sessions'><strong>科研会话</strong><span>处理客户端绑定申请，暂停或恢复后续调度</span></a>"
+-        "<a class='home-entry' href='#session-setup'><strong>创建与绑定</strong><span>选择当前科研会话，或接续已有研究</span></a>"
++        "<a class='home-entry' href='#create-instance'><strong>创建实例</strong><span>建立新的研究实例</span></a>"
+         "<a class='home-entry' href='#pending-approvals'><strong>待审批事项</strong><span>审阅原请求并记录决定</span></a></div>"
+         + home_controls + "<details class='research-panel' id='pending-approvals'><summary>待审批事项 · " + str(len(rows))
+         + "</summary><div class='research-panel-body'>" + content + "</div></details></main></body></html>"
+diff --git a/src/scidiscovery/artifact_agent/approval_ui/home_render.py b/src/scidiscovery/artifact_agent/approval_ui/home_render.py
+index 76450c6..b0e9bac 100644
+--- a/src/scidiscovery/artifact_agent/approval_ui/home_render.py
++++ b/src/scidiscovery/artifact_agent/approval_ui/home_render.py
+@@ -12,14 +12,14 @@ def page(title, content):
+         + navigation() + "<main class='home-page'><h1>" + escape(title) + "</h1>" + content + "</main></body></html>").encode()
+ 
+ 
+-def client_directory(rows, *, csrf, links, offset=0):
++def client_directory(rows, *, csrf, links, offset=0, cleared=None):
+     cards = []
+     for row in rows:
+         key = row["session_key"]
+         state = "已暂停" if not row["enabled"] else "已绑定 · 允许调度" if row["instance_id"] else "申请绑定"
+         label = "暂停后续调度" if row["enabled"] else "恢复调度"
+         cards.append("<article class='instance-directory-card'><h2>科研会话 · " + escape(key[-8:]) + "</h2>"
+-            "<p>" + state + "</p><p>关联实例：" + escape(row["title"] or "尚未绑定") + "</p>"
++            "<p>在线 · " + state + "</p><p>关联实例：" + escape(row["title"] or "尚未绑定") + "</p>"
+             "<p>登记时间：" + escape(row["requested_at"]) + "</p>"
+             "<a href='" + escape(links[key], quote=True) + "'>" + ("选择此会话并管理绑定" if row["instance_id"] else "处理绑定申请") + "</a>"
+             "<form method='post' action='/instances/client-state'>" + hidden("csrf", csrf) + hidden("session_key", key)
+@@ -27,10 +27,13 @@ def client_directory(rows, *, csrf, links, offset=0):
+             + "<button type='submit'>" + label + "</button></form></article>")
+     paging = (f"<a href='/sessions?offset={max(0,offset-30)}'>上一页</a>" if offset else "")
+     if len(rows)==30: paging += f"<a href='/sessions?offset={offset+30}'>下一页</a>"
+-    return page("科研会话管理", "<p>客户端连接后自动登记绑定申请，由工作台选择实例并确认。"
+-        "允许调度不代表 Agent 正在计算或仍然在线。</p>"
++    return page("科研会话管理", "<p>仅显示正在连接的科研客户端；首次调用科研工具后登记，由工作台选择实例并确认。"
++        "客户端每 20 秒自动发送心跳，正常断开即退出列表；异常中断最多 90 秒后退出。在线不代表正在计算。<a href='/sessions'>刷新列表</a></p>"
+         "<p>暂停保留绑定和记录，阻止后续科研操作，不会强杀已有任务。归档还需等待已有任务和文件收集结束。</p>"
+-        + "<div class='instance-directory'>" + ("".join(cards) or "<p>暂无客户端申请，请从科研客户端连接本服务。</p>")
++        + ("<p role='status'>已清理 " + str(cleared) + " 个离线会话。</p>" if cleared is not None else "")
++        + "<form method='post' action='/instances/clients-clear'>" + hidden("csrf", csrf)
++        + "<button type='submit'>清理离线会话</button><p class='source-note'>删除离线会话记录并解除其临时绑定；实例、科研成果和后台任务保留。正在归档或恢复的关联记录暂不清理。</p></form>"
++        + "<div class='instance-directory'>" + ("".join(cards) or "<p>暂无在线科研会话。实例资料仍可从首页的实例管理查看。</p>")
+         + "</div>" + paging)
+ 
+ 
+@@ -61,14 +64,10 @@ def create_form(*, csrf, token=None):
+         "<button type='submit'>" + label + "</button></form></div></details>")
+ 
+ 
+-def session_controls(rows, *, token, csrf, current=None, expires_at=None, workbench_available=True, local_access=False):
+-    current_title = escape(current.title) if current else "尚未绑定实例" if token else "尚未选择科研会话"
+-    body = ("<section class='home-session' id='session-setup'><h2>当前选中的科研会话</h2><p class='session-title'>"
++def session_controls(rows, *, token, csrf, current=None, expires_at=None, workbench_available=True):
++    current_title = escape(current.title) if current else "尚未绑定实例"
++    body = ("<section class='home-session' id='session-binding'><h2>实例绑定</h2><p class='session-title'>"
+             + current_title + "</p><p>打开实例查看资料不会改变会话绑定。</p>")
+-    if not token:
+-        return body + ("<p class='source-note'>尚未选择科研对话，不影响实例浏览、设置和资料管理。"
+-            "需要绑定或切换时，请先选择要控制的客户端。</p><p><a href='/sessions'>选择科研会话或处理绑定申请</a></p>"
+-            + (create_form(csrf=csrf) if local_access else "") + "</section>")
+     common = hidden("capability", token) + hidden("csrf", csrf)
+     if current and workbench_available:
+         body += ("<form method='post' action='/instances/access'>" + common + hidden("instance_id", current.instance_id)
+@@ -83,10 +82,10 @@ def session_controls(rows, *, token, csrf, current=None, expires_at=None, workbe
+             continue
+         options += ("<option value='" + escape(instance.name, quote=True) + "'>" + escape(instance.title)
+             + " · " + escape(row["binding_label"]) + "</option>")
+-    body += ("<div class='home-setup-grid'><section><h3>绑定或接续实例</h3><form class='instance-command' method='post' action='/instances/select'>"
++    body += ("<section><h3>绑定或接续实例</h3><form class='instance-command' method='post' action='/instances/select'>"
+         + common + "<label>目标实例<select name='name' required>" + options + "</select></label>"
+         "<button type='submit'>绑定到当前会话</button></form><p class='source-note'>切换或接管已有绑定前，会展示影响并要求确认。</p></section>"
+-        + create_form(csrf=csrf, token=token) + "</div></section>")
++        + "<p><a href='/#create-instance'>需要新实例？前往首页创建</a></p></section>")
+     return body
+ 
+ 
+@@ -127,7 +126,7 @@ def instance_directory(rows, *, token, csrf, offset=0, total=0, workbench_availa
+     if offset + len(rows) < total:
+         paging += f"<a href='/instances/manage?offset={offset+len(rows)}'>下一页</a>"
+     return page("实例管理", "<p>查看每个实例的当前状态、研究轨迹和阶段成果。浏览不会改变科研会话绑定。</p>"
+-        "<p class='source-note'>绑定记录不代表 Agent 在线；创建、绑定或接续请返回首页。</p>"
++        "<p class='source-note'>创建实例请返回首页；绑定或接续请进入具体科研会话。</p>"
+         + "<div class='instance-directory'>" + ("".join(cards) or "<p>暂无实例，请在首页创建。</p>")
+         + "</div><nav class='directory-pagination'>" + paging + "</nav>")
+ 
+@@ -141,4 +140,4 @@ def confirm_binding(*, action, values, token, csrf, snapshot, current_title, tar
+         + "</strong></p><p>接续到：<strong>" + escape(target_title) + "</strong></p><p>" + ownership
+         + "</p><p>原实例的记录会保留。转移绑定不会停止、重启或重新计算已有任务，也不代表新的执行授权。</p>"
+         "<p>已记录的任务情况：" + escape(activity) + "</p><form method='post' action='/instances/" + escape(action, quote=True) + "'>"
+-        + fields + "<button type='submit'>确认接续到当前会话</button> <a href='/'>取消并返回首页</a></form></section>")
++        + fields + "<button type='submit'>确认接续到当前会话</button> <a href='/sessions'>取消并返回会话列表</a></form></section>")
+diff --git a/src/scidiscovery/artifact_agent/approval_ui/static/home.js b/src/scidiscovery/artifact_agent/approval_ui/static/home.js
+index b82d559..780defa 100644
+--- a/src/scidiscovery/artifact_agent/approval_ui/static/home.js
++++ b/src/scidiscovery/artifact_agent/approval_ui/static/home.js
+@@ -3,7 +3,7 @@
+ // Home cards reveal their destination; they never submit a management action.
+ function revealHomeSection() {
+   const id = window.location.hash.slice(1);
+-  if (id !== "session-setup" && id !== "pending-approvals") return;
++  if (id !== "create-instance" && id !== "pending-approvals") return;
+   const section = document.getElementById(id);
+   if (!section) return;
+   if (section instanceof HTMLDetailsElement) section.open = true;
+diff --git a/src/scidiscovery/artifact_agent/interfaces/mcp.py b/src/scidiscovery/artifact_agent/interfaces/mcp.py
+index 342b2f9..c92d07e 100644
+--- a/src/scidiscovery/artifact_agent/interfaces/mcp.py
++++ b/src/scidiscovery/artifact_agent/interfaces/mcp.py
+@@ -137,8 +137,6 @@ def build_root_router(
+         local_workspace_root=local_workspace_root,
+         agent_settings=agent_settings,
+     )
+-    if scheduler_session_key is not None:
+-        runtime.scheduler_bindings.register_client(session_key=scheduler_session_key)
+     facade = RootToolFacade(
+         runtime.artifacts,
+         runtime.intake,
+diff --git a/src/scidiscovery/artifact_agent/interfaces/mcp_daemon.py b/src/scidiscovery/artifact_agent/interfaces/mcp_daemon.py
+index 817f6cf..88163bd 100644
+--- a/src/scidiscovery/artifact_agent/interfaces/mcp_daemon.py
++++ b/src/scidiscovery/artifact_agent/interfaces/mcp_daemon.py
+@@ -17,7 +17,8 @@ from typing import Any, Callable
+ from scidiscovery.interfaces.daemon import UnixSocketDaemon
+ 
+ from .mcp import build_root_router
+-from .mcp_proxy import SCHEDULER_PROXY_FIELD
++from .mcp_proxy import SCHEDULER_PROXY_FIELD, CLIENT_HEARTBEAT, CLIENT_DISCONNECT
++from ..service.scheduler_bindings import SchedulerBindingService
+ from ..service import StateMaintenanceLock
+ from ..service.instance_maintenance import InstanceMaintenance
+ from ..service.execution_collection import ExecutionCollection, open_collection_executions
+@@ -43,10 +44,12 @@ class RootBrokerRouter:
+         maintenance: StateMaintenanceLock | None = None,
+         instance_maintenance: InstanceMaintenance | None = None,
+         max_cached_routers: int = 128,
++        client_bindings: SchedulerBindingService | None = None,
+     ) -> None:
+         if type(max_cached_routers) is not int or max_cached_routers < 1:
+             raise ValueError("max_cached_routers must be positive")
+         self.builder = builder
++        self.client_bindings = client_bindings
+         self.maintenance = maintenance
+         self.instance_maintenance = instance_maintenance
+         self.max_cached_routers = max_cached_routers
+@@ -84,6 +87,22 @@ class RootBrokerRouter:
+                 else self.maintenance.shared()
+             )
+         with context:
++            method = clean.get("method")
++            if method in (CLIENT_HEARTBEAT, CLIENT_DISCONNECT):
++                if self.client_bindings is not None:
++                    if method == CLIENT_HEARTBEAT:
++                        self.client_bindings.client_heartbeat(session_key=proxy_id)
++                    else:
++                        self.client_bindings.disconnect_client(session_key=proxy_id)
++                if method == CLIENT_DISCONNECT:
++                    with self._lock:
++                        self._routers.pop(proxy_id, None)
++                return {"jsonrpc": "2.0", "id": request_id, "result": {}}
++            if method == "tools/call" and self.client_bindings is not None:
++                # instance_close owns an exclusive gate internally; protect this
++                # short lease write separately to avoid nesting shared -> exclusive.
++                with self.instance_maintenance.global_guard() if exclusive and self.instance_maintenance else nullcontext():
++                    self.client_bindings.register_client(session_key=proxy_id)
+             return self._router(proxy_id).handle(clean)
+ 
+     def _router(self, proxy_id: str) -> Any:
+@@ -140,6 +159,7 @@ def main(argv: list[str] | None = None) -> int:
+     )
+     instance_maintenance = InstanceMaintenance(state_root, maintenance=maintenance)
+     with maintenance.shared():
++        client_bindings = SchedulerBindingService(state_root / "database" / "scheduler-bindings.sqlite3")
+         collection = ExecutionCollection(open_collection_executions(state_root),
+             plugin_configs={key: str(value) for key, value in plugin_configs.items()})
+     router = RootBrokerRouter(
+@@ -159,6 +179,7 @@ def main(argv: list[str] | None = None) -> int:
+         ),
+         maintenance=maintenance,
+         instance_maintenance=instance_maintenance,
++        client_bindings=client_bindings,
+     )
+     def stop(*_):
+         collection.close()
+diff --git a/src/scidiscovery/artifact_agent/interfaces/mcp_proxy.py b/src/scidiscovery/artifact_agent/interfaces/mcp_proxy.py
+index 07c2bee..7063cea 100644
+--- a/src/scidiscovery/artifact_agent/interfaces/mcp_proxy.py
++++ b/src/scidiscovery/artifact_agent/interfaces/mcp_proxy.py
+@@ -6,6 +6,8 @@ import argparse
+ import json
+ import socket
+ import sys
++import signal
++import threading
+ import time
+ import uuid
+ from pathlib import Path
+@@ -16,6 +18,33 @@ from ..service.engineering_diagnostics import exception_facts
+ 
+ MAX_RESPONSE_BYTES = 16 * 1024 * 1024
+ SCHEDULER_PROXY_FIELD = "_scidiscovery_scheduler_proxy"
++CLIENT_HEARTBEAT = "scidiscovery/client-heartbeat"
++CLIENT_DISCONNECT = "scidiscovery/client-disconnect"
++HEARTBEAT_INTERVAL_SECONDS = 20
++LIFECYCLE_TIMEOUT_SECONDS = 3
++
++
++def _client_event(socket_path, proxy_id, method):
++    response = forward_request(socket_path, json.dumps({
++        "jsonrpc": "2.0", "id": "client-lifecycle", "method": method,
++        SCHEDULER_PROXY_FIELD: proxy_id,
++    }).encode(), timeout=LIFECYCLE_TIMEOUT_SECONDS)
++    if response and "error" in response:
++        raise RuntimeError(response["error"].get("message", "client lifecycle rejected"))
++
++
++def _heartbeat(socket_path, proxy_id, stopped):
++    failed = False
++    while not stopped.wait(HEARTBEAT_INTERVAL_SECONDS):
++        try:
++            _client_event(socket_path, proxy_id, CLIENT_HEARTBEAT)
++            failed = False
++        except Exception as error:
++            if not failed:
++                print(json.dumps(exception_facts(error, layer="root_proxy", action="client_heartbeat"),
++                                 ensure_ascii=False), file=sys.stderr, flush=True)
++            failed = True
++
+ 
+ 
+ def main(argv: list[str] | None = None) -> int:
+@@ -26,26 +55,45 @@ def main(argv: list[str] | None = None) -> int:
+     if args.timeout <= 0:
+         raise ValueError("proxy timeout must be positive")
+     proxy_id = f"sch_{uuid.uuid4().hex}"
+-    for line in sys.stdin.buffer:
+-        request_id = None
+-        try:
+-            request = parse_rpc_line(line)
+-            request_id = request.get("id")
+-            response = forward_request(
+-                args.socket,
+-                bind_scheduler_proxy(line, proxy_id),
+-                timeout=args.timeout,
+-            )
+-        except Exception as error:
+-            error.engineering = exception_facts(error, layer="root_proxy", action="forward_request")
+-            error.engineering["response_timeout_seconds"] = args.timeout
+-            print(json.dumps(error.engineering, ensure_ascii=False), file=sys.stderr, flush=True)
+-            response = rpc_error(request_id, error)
+-        if response is not None:
+-            print(
+-                json.dumps(response, separators=(",", ":"), sort_keys=True),
+-                flush=True,
+-            )
++    stopped = threading.Event()
++    heartbeat = None
++    def terminate(*_):
++        raise SystemExit(0)
++    previous_term = signal.signal(signal.SIGTERM, terminate)
++    try:
++        for line in sys.stdin.buffer:
++            request_id = None
++            try:
++                request = parse_rpc_line(line)
++                request_id = request.get("id")
++                if request.get("method") == "tools/call" and heartbeat is None:
++                    heartbeat = threading.Thread(target=_heartbeat, args=(args.socket, proxy_id, stopped), daemon=True)
++                    heartbeat.start()
++                response = forward_request(
++                    args.socket,
++                    bind_scheduler_proxy(line, proxy_id),
++                    timeout=args.timeout,
++                )
++            except Exception as error:
++                error.engineering = exception_facts(error, layer="root_proxy", action="forward_request")
++                error.engineering["response_timeout_seconds"] = args.timeout
++                print(json.dumps(error.engineering, ensure_ascii=False), file=sys.stderr, flush=True)
++                response = rpc_error(request_id, error)
++            if response is not None:
++                print(
++                    json.dumps(response, separators=(",", ":"), sort_keys=True),
++                    flush=True,
++                )
++    finally:
++        stopped.set()
++        if heartbeat is not None:
++            heartbeat.join(timeout=LIFECYCLE_TIMEOUT_SECONDS + 1)
++            try:
++                _client_event(args.socket, proxy_id, CLIENT_DISCONNECT)
++            except Exception as error:
++                print(json.dumps(exception_facts(error, layer="root_proxy", action="client_disconnect"),
++                                 ensure_ascii=False), file=sys.stderr, flush=True)
++        signal.signal(signal.SIGTERM, previous_term)
+     return 0
+ 
+ 
+@@ -95,6 +143,8 @@ def bind_scheduler_proxy(raw: bytes, proxy_id: str) -> bytes:
+     request = json.loads(raw)
+     if not isinstance(request, dict):
+         raise ValueError("request must be a JSON object")
++    if request.get("method") in (CLIENT_HEARTBEAT, CLIENT_DISCONNECT):
++        raise ValueError("client lifecycle is transport-managed")
+     if SCHEDULER_PROXY_FIELD in request:
+         raise ValueError("scheduler proxy binding is transport-managed")
+     request[SCHEDULER_PROXY_FIELD] = proxy_id
+diff --git a/src/scidiscovery/artifact_agent/interfaces/mcp_root_instance_routes.py b/src/scidiscovery/artifact_agent/interfaces/mcp_root_instance_routes.py
+index 1d408d6..89cab89 100644
+--- a/src/scidiscovery/artifact_agent/interfaces/mcp_root_instance_routes.py
++++ b/src/scidiscovery/artifact_agent/interfaces/mcp_root_instance_routes.py
+@@ -78,7 +78,7 @@ class RootInstanceRoutes:
+         )
+         return (
+             self.approval_base_url.rstrip("/")
+-            + "/instances?"
++            + "/sessions/" + self.session_key + "?"
+             + urlencode({"capability": capability})
+         )
+ 
+diff --git a/src/scidiscovery/artifact_agent/service/scheduler_bindings.py b/src/scidiscovery/artifact_agent/service/scheduler_bindings.py
+index 265a43a..bfd2405 100644
+--- a/src/scidiscovery/artifact_agent/service/scheduler_bindings.py
++++ b/src/scidiscovery/artifact_agent/service/scheduler_bindings.py
+@@ -6,6 +6,7 @@ import re
+ import hashlib
+ import json
+ import sqlite3
++import time
+ import uuid
+ from dataclasses import dataclass
+ from contextlib import contextmanager
+@@ -20,6 +21,7 @@ _NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,255}$")
+ _FINGERPRINT = re.compile(r"^[0-9a-f]{64}$")
+ _NAMESPACES = {"artifact", "run", "approval", "execution"}
+ _EXPECTED_REF_UNSET = object()
++CLIENT_LEASE_SECONDS = 90
+ 
+ 
+ class SchedulerBindingError(RuntimeError):
+@@ -174,11 +176,25 @@ class SchedulerBindingService:
+             return self._session_snapshot(connection, session_key, instance_id)
+ 
+     def register_client(self, *, session_key: str) -> None:
+-        """An MCP client requests connection; reconnect never undoes a UI pause."""
++        """Actual Root use activates a client without undoing a workbench pause."""
+         self._validate_session_key(session_key)
+-        with self._client_connect(create=True) as connection:
+-            connection.execute("INSERT OR IGNORE INTO scheduler_clients VALUES (?, 1, ?)",
+-                               (session_key, _timestamp()))
++        with self._client_connect() as connection:
++            connection.execute(
++                "INSERT INTO scheduler_clients (session_key, enabled, requested_at, last_seen, disconnected) "
++                "VALUES (?, 1, ?, ?, 0) ON CONFLICT(session_key) DO UPDATE SET "
++                "last_seen=excluded.last_seen, disconnected=0", (session_key, _timestamp(), time.time()))
++
++    def client_heartbeat(self, *, session_key: str) -> None:
++        # A heartbeat alone never creates a research client or revives a closed transport.
++        if self.client_database_path.exists():
++            with self._client_connect() as connection:
++                connection.execute("UPDATE scheduler_clients SET last_seen=? WHERE session_key=? AND disconnected=0",
++                                   (time.time(), session_key))
++
++    def disconnect_client(self, *, session_key: str) -> None:
++        if self.client_database_path.exists():
++            with self._client_connect() as connection:
++                connection.execute("UPDATE scheduler_clients SET disconnected=1 WHERE session_key=?", (session_key,))
+ 
+     def client_enabled(self, *, session_key: str) -> bool:
+         if not self.client_database_path.exists():
+@@ -195,7 +211,9 @@ class SchedulerBindingService:
+                 "SELECT c.session_key, c.enabled, c.requested_at, s.instance_id, i.title "
+                 "FROM scheduler_clients c LEFT JOIN bindings.scheduler_sessions s USING(session_key) "
+                 "LEFT JOIN bindings.scheduler_instances i ON i.instance_id=s.instance_id "
+-                "ORDER BY c.requested_at DESC, c.session_key LIMIT ? OFFSET ?", (limit, offset)).fetchall()]
++                "WHERE c.disconnected=0 AND c.last_seen>=? "
++                "ORDER BY c.requested_at DESC, c.session_key LIMIT ? OFFSET ?",
++                (time.time()-CLIENT_LEASE_SECONDS, limit, offset)).fetchall()]
+ 
+     def set_client_enabled(self, *, session_key: str, enabled: bool, expected: bool) -> None:
+         if not self.client_database_path.exists():
+@@ -206,24 +224,57 @@ class SchedulerBindingService:
+             if cursor.rowcount != 1:
+                 raise SchedulerInstanceConflict("会话状态已变化，请刷新后重试。")
+ 
++    def clear_offline_clients(self, *, can_clear_instance=None) -> int:
++        """Remove transient clients and their bindings, never instance records.
++
++        Lock both attached databases before selecting candidates: a concurrent
++        heartbeat, registration or binding must not race the cleanup selection.
++        """
++        if not self.client_database_path.exists():
++            return 0
++        with self._client_connect(bindings=True) as connection:
++            # Finish any sidecar migration before locking both attached databases.
++            connection.commit()
++            connection.execute("BEGIN IMMEDIATE")
++            rows = connection.execute(
++                "SELECT c.session_key, s.instance_id FROM scheduler_clients c "
++                "LEFT JOIN bindings.scheduler_sessions s USING(session_key) "
++                "WHERE c.disconnected=1 OR c.last_seen IS NULL OR c.last_seen<?",
++                (time.time()-CLIENT_LEASE_SECONDS,)).fetchall()
++            keys = [key for key, instance_id in rows
++                    if instance_id is None or can_clear_instance is None or can_clear_instance(instance_id)]
++            connection.executemany("DELETE FROM bindings.scheduler_sessions WHERE session_key=?", ((key,) for key in keys))
++            connection.executemany("DELETE FROM scheduler_clients WHERE session_key=?", ((key,) for key in keys))
++            return len(keys)
++
+     def active_clients(self, *, instance_id: str) -> tuple[str, ...]:
+         if not self.client_database_path.exists():
+             return ()
+         with self._client_connect(bindings=True) as connection:
+             return tuple(row[0] for row in connection.execute(
+                 "SELECT c.session_key FROM scheduler_clients c JOIN bindings.scheduler_sessions s USING(session_key) "
+-                "WHERE s.instance_id=? AND c.enabled=1", (instance_id,)).fetchall())
++                "WHERE s.instance_id=? AND c.enabled=1 AND c.disconnected=0 AND c.last_seen>=?",
++                (instance_id, time.time()-CLIENT_LEASE_SECONDS)).fetchall())
+ 
+     @contextmanager
+-    def _client_connect(self, *, create=False, bindings=False):
++    def _client_connect(self, *, bindings=False):
+         # Transport requests belong to the server, not to an instance's archive.
+         connection = sqlite3.connect(self.client_database_path, timeout=30)
+         connection.row_factory = sqlite3.Row
+         try:
+             with connection:
+-                if create:
++                columns = {row[1] for row in connection.execute("PRAGMA table_info(scheduler_clients)")}
++                if "disconnected" not in columns:
++                    # Serialize additive migration across UI and control processes. Old rows
++                    # have unknown liveness, not a fabricated fresh lease.
++                    connection.execute("BEGIN IMMEDIATE")
+                     connection.execute("CREATE TABLE IF NOT EXISTS scheduler_clients ("
+                         "session_key TEXT PRIMARY KEY, enabled INTEGER NOT NULL CHECK(enabled IN (0,1)), requested_at TEXT NOT NULL)")
++                    columns = {row[1] for row in connection.execute("PRAGMA table_info(scheduler_clients)")}
++                    if "last_seen" not in columns:
++                        connection.execute("ALTER TABLE scheduler_clients ADD COLUMN last_seen REAL")
++                    if "disconnected" not in columns:
++                        connection.execute("ALTER TABLE scheduler_clients ADD COLUMN disconnected INTEGER NOT NULL DEFAULT 0")
+                 if bindings:
+                     connection.execute("ATTACH DATABASE ? AS bindings", (str(self.database_path),))
+                 yield connection
+diff --git a/tests/operations/test_home_navigation.py b/tests/operations/test_home_navigation.py
+index 1976323..240702b 100644
+--- a/tests/operations/test_home_navigation.py
++++ b/tests/operations/test_home_navigation.py
+@@ -44,7 +44,7 @@ def home(system):
+ 
+ def enter(ui,base,session=A):
+     token=issue_instance_management_capability(session_key=session,secret=SECRET)
+-    status,headers,page=request(base,'GET','/instances?'+urlencode({'capability':token}))
++    status,headers,page=request(base,'GET','/sessions/'+session+'?'+urlencode({'capability':token}))
+     assert status==200
+     return token,headers['Set-Cookie'].split(';',1)[0],page
+ 
+@@ -56,10 +56,12 @@ def test_home_cookie_and_independent_directory_do_not_bind(home):
+     run(s,'working',state='running')
+     before=s.bindings.session_binding_snapshot(session_key=A,instance_id=s.b)
+     token,cookie,page=enter(ui,base)
+-    assert "href='/instances/manage'" in page and '科研工作台' in page
++    assert '科研会话 · aaaaaaaa' in page and "action='/instances/select'" in page
++    assert "action='/instances/create'" not in page
+     assert '进入当前实例工作台' in page
+     status,_,page=request(base,'GET','/',cookie=cookie)
+-    assert status==200 and "action='/instances/create'" in page
++    assert status==200 and "action='/instances/create-unbound'" in page
++    assert "action='/instances/select'" not in page and "action='/instances/create'" not in page
+     status,_,page=request(base,'GET','/instances/manage',cookie=cookie)
+     assert status==200 and '当前会话已绑定' in page and '已被其他会话绑定' in page
+     assert '已记录的排队 / 运行任务：1' in page and '最近任务：运行中' in page
+@@ -135,7 +137,7 @@ def test_expired_or_forged_home_context_cannot_create_or_extend_access(home):
+     expired=issue_instance_management_capability(session_key=A,secret=SECRET,now=datetime.now(timezone.utc)-timedelta(hours=2))
+     status,headers,page=request(base,'GET','/',cookie='scid_management='+expired)
+     assert status==200 and "action='/instances/create'" not in page
+-    assert '尚未选择科研会话' in page and '尚未绑定实例' not in page
++    assert '创建实例' in page and '实例绑定' not in page
+     assert 'Set-Cookie' not in headers
+     for token in (expired,'forged'):
+         status,_,page=request(base,'GET','/instances?'+urlencode({'capability':token}),accept='text/html')
+@@ -175,7 +177,7 @@ def test_local_workbench_without_conversation_preserves_science_and_bindings(hom
+     decision=approval(s,'local_decision',(source.ref,))
+     before=s.bindings.session_binding_snapshot(session_key=A,instance_id=s.b)
+     status,headers,page=request(base,'GET','/')
+-    assert status==200 and '尚未选择科研会话' in page
++    assert status==200 and '创建实例' in page
+     assert "action='/instances/create-unbound'" in page
+     assert "action='/instances/select'" not in page
+     assert 'Set-Cookie' not in headers  # Reading a page is not a grant.
+@@ -244,3 +246,45 @@ def test_workbench_manages_registered_clients_without_a_conversation_cookie(home
+     assert request(base,'POST','/instances/client-state',form={**form,'enabled':'1','expected_enabled':'0'})[0]==303
+     assert s.bindings.client_enabled(session_key=A)
+     assert s.bindings.session_instance(session_key=B) is None
++
++
++def test_scoped_session_page_rejects_other_session_and_supports_legacy_entry(home):
++    s,ui,base=home
++    token,cookie,page=enter(ui,base,A)
++    assert "action='/instances/select'" in page
++    assert request(base,'GET','/sessions/'+B+'?'+urlencode({'capability':token}))[0]==403
++    assert request(base,'GET','/sessions/'+B,cookie=cookie)[0]==403
++    status,_,legacy=request(base,'GET','/instances?'+urlencode({'capability':token}))
++    assert status==200 and '科研会话 · aaaaaaaa' in legacy
++    assert '创建与绑定' not in legacy
++
++
++def test_clear_offline_clients_removes_only_transient_rows_and_bindings(home):
++    import sqlite3
++    s,ui,base=home
++    s.bindings.bind_session(session_key=A,instance_id=s.a)
++    s.bindings.bind_session(session_key=B,instance_id=s.b)
++    s.bindings.register_client(session_key=A)
++    s.bindings.register_client(session_key=B)
++    task=run(s,'survives_cleanup',state='running')
++    source=artifact(s,'survives_cleanup',instance=s.a)
++    pending=approval(s,'survives_cleanup',(source.ref,))
++    s.bindings.disconnect_client(session_key=A)
++    writable = ui._cache_writable
++    ui._cache_writable = lambda instance_id: False
++    assert request(base,'POST','/instances/clients-clear',form={'csrf':ui.session_id})[0]==303
++    assert s.bindings.session_instance(session_key=A)==s.a
++    ui._cache_writable = writable
++    status,_,_=request(base,'POST','/instances/clients-clear',form={'csrf':'bad'})
++    assert status==403 and s.bindings.session_instance(session_key=A)==s.a
++    status,headers,_=request(base,'POST','/instances/clients-clear',form={'csrf':ui.session_id})
++    assert status==303 and headers['Location']=='/sessions?cleared=1'
++    assert '已清理 1 个离线会话' in request(base,'GET',headers['Location'])[2]
++    with sqlite3.connect(s.bindings.client_database_path) as db:
++        assert [row[0] for row in db.execute('SELECT session_key FROM scheduler_clients')]==[B]
++    assert s.bindings.session_instance(session_key=A) is None
++    assert s.bindings.session_instance(session_key=B)==s.b
++    assert len(s.bindings.list_instances())==2
++    assert task.state=='running' and s.approvals.status(pending.approval_id).status=='pending'
++    s.bindings.client_heartbeat(session_key=A)
++    assert [row['session_key'] for row in s.bindings.clients()]==[B]
+diff --git a/tests/operations/test_instance_archive.py b/tests/operations/test_instance_archive.py
+index a7cdaa9..cc1e207 100644
+--- a/tests/operations/test_instance_archive.py
++++ b/tests/operations/test_instance_archive.py
+@@ -60,7 +60,26 @@ def test_registered_client_must_be_paused_at_preview_and_archive_commit(archive_
+     save_archive(service,first)
+ 
+ 
+-def test_pausing_client_does_not_allow_archiving_queued_or_running_work(tmp_path):
++def test_reconnected_client_blocks_archive_commit_but_disconnect_keeps_history(archive_system):
++    from scidiscovery.artifact_agent.service.instance_maintenance import InstanceMaintenanceBusy
++    runtime, service, first, _ = archive_system
++    bindings = runtime.scheduler_bindings
++    key = "sch_" + "a" * 32
++    bindings.register_client(session_key=key)
++    with sqlite3.connect(bindings.client_database_path) as db:
++        db.execute("UPDATE scheduler_clients SET last_seen=0")
++    ready = service.preview(first)
++    assert ready["ready"], ready
++    bindings.client_heartbeat(session_key=key)
++    with pytest.raises(InstanceMaintenanceBusy):
++        service.archive(first, ready["fingerprint"])
++    bindings.disconnect_client(session_key=key)
++    assert bindings.session_instance(session_key=key) == first
++    save_archive(service, first)
++
++
++@pytest.mark.parametrize("presence", ["paused", "disconnected", "expired", "cleared"])
++def test_pausing_client_does_not_allow_archiving_queued_or_running_work(tmp_path, presence):
+     from tests.operations.test_instance_archive_continuation import _hardened_system
+     from tests.operations.test_l5_hardened_run_backend import _invoke, _worker
+     catalog,runtime,instance,root=_hardened_system(tmp_path)
+@@ -68,7 +87,15 @@ def test_pausing_client_does_not_allow_archiving_queued_or_running_work(tmp_path
+     runtime.scheduler_bindings.register_client(session_key=key)
+     runtime.scheduler_bindings.bind_session(session_key=key,instance_id=instance.instance_id)
+     _invoke(root,'still_active')
+-    runtime.scheduler_bindings.set_client_enabled(session_key=key,enabled=False,expected=True)
++    if presence == 'paused':
++        runtime.scheduler_bindings.set_client_enabled(session_key=key,enabled=False,expected=True)
++    elif presence == 'disconnected':
++        runtime.scheduler_bindings.disconnect_client(session_key=key)
++    else:
++        with sqlite3.connect(runtime.scheduler_bindings.client_database_path) as db:
++            db.execute('UPDATE scheduler_clients SET last_seen=0')
++    if presence == 'cleared':
++        assert runtime.scheduler_bindings.clear_offline_clients() == 1
+     service=InstanceArchive(runtime)
+     for expected in ('queued','running'):
+         view=service.preview(instance.instance_id)
+diff --git a/tests/operations/test_instance_browser_http.py b/tests/operations/test_instance_browser_http.py
+index 22608bc..1265ad9 100644
+--- a/tests/operations/test_instance_browser_http.py
++++ b/tests/operations/test_instance_browser_http.py
+@@ -88,7 +88,7 @@ def test_instance_browser_grants_read_without_rebinding_or_cross_instance_access
+         ui.stop()
+ 
+ 
+-def test_client_registers_at_transport_start_and_pause_blocks_only_new_work(tmp_path):
++def test_discovery_does_not_register_client_and_pause_blocks_only_new_work(tmp_path):
+     from scidiscovery.artifact_agent.interfaces.mcp import build_root_router
+     from scidiscovery.artifact_agent.interfaces.mcp_root import RootToolError
+     runtime,state,secret,ui,base=_setup(tmp_path)
+@@ -98,6 +98,14 @@ def test_client_registers_at_transport_start_and_pause_blocks_only_new_work(tmp_
+     try:
+         transport=build_root_router(project_root=tmp_path/'project',state_root=state,
+             approval_secret_file=secret_file,approval_base_url=base,scheduler_session_key=key,worker_backend='hardened')
++        from scidiscovery.artifact_agent.interfaces.mcp_daemon import RootBrokerRouter
++        from scidiscovery.artifact_agent.interfaces.mcp_proxy import SCHEDULER_PROXY_FIELD
++        broker=RootBrokerRouter(lambda _: transport, client_bindings=runtime.scheduler_bindings)
++        for method in ('initialize', 'tools/list'):
++            broker.handle({'jsonrpc':'2.0','id':1,'method':method,SCHEDULER_PROXY_FIELD:key})
++        assert runtime.scheduler_bindings.clients()==[]
++        broker.handle({'jsonrpc':'2.0','id':2,'method':'tools/call',
++            'params':{'name':'instance_current','arguments':{}},SCHEDULER_PROXY_FIELD:key})
+         assert any(x['session_key']==key for x in runtime.scheduler_bindings.clients())
+         root=transport.router
+         assert root.call_tool('instance_current',{})['state']=='unbound'
+diff --git a/tests/operations/test_m6a_direct_instance_management.py b/tests/operations/test_m6a_direct_instance_management.py
+index fe37351..13cd681 100644
+--- a/tests/operations/test_m6a_direct_instance_management.py
++++ b/tests/operations/test_m6a_direct_instance_management.py
+@@ -138,7 +138,9 @@ def test_instance_current_is_pure_and_ui_directly_creates_and_binds(
+     before_artifacts = _row_count(artifact_db, "artifact_envelopes")
+     try:
+         capability, csrf, page = _management_page(root, base)
+-        assert "创建实例".encode("utf-8") in page
++        assert "实例绑定".encode("utf-8") in page
++        assert b"action='/instances/create'" not in page
++        assert "/sessions/" in root.call_tool("instance_current", {})["management_url"]
+         assert scheduler_db.read_bytes() == before_scheduler
+ 
+         status, headers, _ = _request(

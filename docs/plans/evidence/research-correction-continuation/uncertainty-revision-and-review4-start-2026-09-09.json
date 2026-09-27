@@ -1,0 +1,982 @@
+{
+  "recorded_date": "2026-09-09",
+  "revision": {
+    "agent_type": "op_science_experiment_revise_v1_d533e82f29eb",
+    "backend": "local_trusted",
+    "candidate_accepted": true,
+    "completed_at": "2026-09-09T04:13:59.448279Z",
+    "created_at": "2026-09-09T04:05:53.649048Z",
+    "deadline_at": "2026-09-09T04:20:53.649048Z",
+    "head_advance": "not_requested",
+    "last_activity_at": "2026-09-09T04:13:59.448279Z",
+    "logical_name": "fig4_continuation_experiment_plan_revision_2",
+    "name": "fig4_continuation_experiment_plan_revision_2",
+    "operation_id": "science.experiment.revise.v1",
+    "output_artifact_name": "fig4_continuation_experiment_plan_revision_2.output",
+    "reason": null,
+    "recovery_available": false,
+    "revision": 1,
+    "scheduler_signal": {
+      "assumptions": [
+        "The bound review's aggregate affected-row counts are authoritative; no unprovided row-by-row ledger is claimed as checked in this revision.",
+        "A deterministic sensitivity envelope expresses rule-defined perturbation sensitivity and has no probability or coverage interpretation."
+      ],
+      "missing_inputs": [
+        "The exact row-by-row identities and adjacency ledgers for the revised finite-uncertainty masks are not present in the bound review; the pre-implementation audit must derive and verify them from the exact supplied tables."
+      ],
+      "next_action_kind": "independent_experiment_review",
+      "next_actions": [
+        "Independently compare the revised mask predicates, aggregate counts, excluded-row sensitivity rule, deterministic envelopes, and gates against the exact reference tables.",
+        "If that review passes, obtain fresh exact-source domain review and initialization for the unchanged eight-case SProcess realization."
+      ],
+      "schema_version": 1,
+      "summary": "Revised the same eight-case portfolio only at the two blocking uncertainty rules. Decision-bearing M0-M2 now require y_value>y_uncertainty, with frozen aggregate counts from the bound review; excluded original-mask rows enter central-value-only sensitivity checks that can force inconclusive but cannot support or reject. The unsupported quadrature/1.96 construction is replaced by an explicitly nonprobabilistic additive deterministic sensitivity envelope used directly at the existing 0.50, 0.25, and 10% gates. Exact revised row identities and adjacency ledgers remain a bounded pre-implementation audit item because they were not supplied in the review.",
+      "verdict": "pass"
+    },
+    "sealed_output": {
+      "artifact_name": "fig4_continuation_experiment_plan_revision_2.output",
+      "kind": "experiment_portfolio",
+      "payload": {
+        "objective": "Use the supplied paper evidence to support later selection of falsifiable hypotheses and design of a minimal TCAD control experiment, while this Intake is limited to evidence extraction and does not select a hypothesis.",
+        "objective_key": "objective.fig4_mechanism_discrimination",
+        "priority_order": [
+          "experiment.fig4.supported_row_boundary_counterfactual"
+        ],
+        "priority_rationale": "The objective selection and order are unchanged: this single proposal remains first because it repairs the reviewed decision-bearing uncertainty rules before spending solver work, then reuses the same finite 2 x 2 material-by-boundary factorial for both selected hypotheses. The finite-uncertainty decision masks contain 359 InAlAs and 702 InGaAs rows in M0, 383 and 753 in M1, and 439 and 757 in M2 according to the bound review's aggregate counts; exact row identities and adjacency ledgers must still be reproduced from the supplied tables before implementation. The original broader masks remain central-value-only sensitivity checks. Continuous-response and two-regime comparisons remain later work because the present evidence has not yet shown that the constant-boundary base family is adequate or that the low-concentration contrast is stable to support masks.",
+        "proposals": [
+          {
+            "cases": [
+              {
+                "case_key": "case.fig4.al_own_anchor_primary",
+                "purpose": "Primary In0.83Al0.17As constant-D case at Cs=6.85 x 10^19 cm^-3.",
+                "schema_version": 1,
+                "scientific_role": "baseline",
+                "settings": [
+                  {
+                    "name": "variable.fig4.material",
+                    "schema_version": 1,
+                    "unit": "category",
+                    "value": "In0.83Al0.17As"
+                  },
+                  {
+                    "name": "variable.fig4.surface_concentration",
+                    "schema_version": 1,
+                    "unit": "cm^-3",
+                    "value": 68500000000000000000
+                  },
+                  {
+                    "name": "variable.fig4.numerical_level",
+                    "schema_version": 1,
+                    "unit": "category",
+                    "value": "primary_registered_resolution"
+                  }
+                ]
+              },
+              {
+                "case_key": "case.fig4.al_high_anchor_primary",
+                "purpose": "In0.83Al0.17As boundary intervention changing only Cs to 8.35 x 10^19 cm^-3.",
+                "schema_version": 1,
+                "scientific_role": "perturbation",
+                "settings": [
+                  {
+                    "name": "variable.fig4.material",
+                    "schema_version": 1,
+                    "unit": "category",
+                    "value": "In0.83Al0.17As"
+                  },
+                  {
+                    "name": "variable.fig4.surface_concentration",
+                    "schema_version": 1,
+                    "unit": "cm^-3",
+                    "value": 83500000000000000000
+                  },
+                  {
+                    "name": "variable.fig4.numerical_level",
+                    "schema_version": 1,
+                    "unit": "category",
+                    "value": "primary_registered_resolution"
+                  }
+                ]
+              },
+              {
+                "case_key": "case.fig4.ga_own_anchor_primary",
+                "purpose": "Primary In0.83Ga0.17As constant-D case at Cs=8.35 x 10^19 cm^-3.",
+                "schema_version": 1,
+                "scientific_role": "control",
+                "settings": [
+                  {
+                    "name": "variable.fig4.material",
+                    "schema_version": 1,
+                    "unit": "category",
+                    "value": "In0.83Ga0.17As"
+                  },
+                  {
+                    "name": "variable.fig4.surface_concentration",
+                    "schema_version": 1,
+                    "unit": "cm^-3",
+                    "value": 83500000000000000000
+                  },
+                  {
+                    "name": "variable.fig4.numerical_level",
+                    "schema_version": 1,
+                    "unit": "category",
+                    "value": "primary_registered_resolution"
+                  }
+                ]
+              },
+              {
+                "case_key": "case.fig4.ga_low_anchor_primary",
+                "purpose": "In0.83Ga0.17As boundary intervention changing only Cs to 6.85 x 10^19 cm^-3.",
+                "schema_version": 1,
+                "scientific_role": "perturbation",
+                "settings": [
+                  {
+                    "name": "variable.fig4.material",
+                    "schema_version": 1,
+                    "unit": "category",
+                    "value": "In0.83Ga0.17As"
+                  },
+                  {
+                    "name": "variable.fig4.surface_concentration",
+                    "schema_version": 1,
+                    "unit": "cm^-3",
+                    "value": 68500000000000000000
+                  },
+                  {
+                    "name": "variable.fig4.numerical_level",
+                    "schema_version": 1,
+                    "unit": "category",
+                    "value": "primary_registered_resolution"
+                  }
+                ]
+              },
+              {
+                "case_key": "case.fig4.al_own_anchor_tight",
+                "purpose": "Paired rerun of the Al own-anchor case with maximum spatial and time steps halved and L increased by 50%.",
+                "schema_version": 1,
+                "scientific_role": "convergence",
+                "settings": [
+                  {
+                    "name": "variable.fig4.material",
+                    "schema_version": 1,
+                    "unit": "category",
+                    "value": "In0.83Al0.17As"
+                  },
+                  {
+                    "name": "variable.fig4.surface_concentration",
+                    "schema_version": 1,
+                    "unit": "cm^-3",
+                    "value": 68500000000000000000
+                  },
+                  {
+                    "name": "variable.fig4.numerical_level",
+                    "schema_version": 1,
+                    "unit": "category",
+                    "value": "half_steps_plus_1.5x_domain"
+                  }
+                ]
+              },
+              {
+                "case_key": "case.fig4.al_high_anchor_tight",
+                "purpose": "Paired rerun of the Al high-anchor case with maximum spatial and time steps halved and L increased by 50%.",
+                "schema_version": 1,
+                "scientific_role": "convergence",
+                "settings": [
+                  {
+                    "name": "variable.fig4.material",
+                    "schema_version": 1,
+                    "unit": "category",
+                    "value": "In0.83Al0.17As"
+                  },
+                  {
+                    "name": "variable.fig4.surface_concentration",
+                    "schema_version": 1,
+                    "unit": "cm^-3",
+                    "value": 83500000000000000000
+                  },
+                  {
+                    "name": "variable.fig4.numerical_level",
+                    "schema_version": 1,
+                    "unit": "category",
+                    "value": "half_steps_plus_1.5x_domain"
+                  }
+                ]
+              },
+              {
+                "case_key": "case.fig4.ga_own_anchor_tight",
+                "purpose": "Paired rerun of the Ga own-anchor case with maximum spatial and time steps halved and L increased by 50%.",
+                "schema_version": 1,
+                "scientific_role": "convergence",
+                "settings": [
+                  {
+                    "name": "variable.fig4.material",
+                    "schema_version": 1,
+                    "unit": "category",
+                    "value": "In0.83Ga0.17As"
+                  },
+                  {
+                    "name": "variable.fig4.surface_concentration",
+                    "schema_version": 1,
+                    "unit": "cm^-3",
+                    "value": 83500000000000000000
+                  },
+                  {
+                    "name": "variable.fig4.numerical_level",
+                    "schema_version": 1,
+                    "unit": "category",
+                    "value": "half_steps_plus_1.5x_domain"
+                  }
+                ]
+              },
+              {
+                "case_key": "case.fig4.ga_low_anchor_tight",
+                "purpose": "Paired rerun of the Ga low-anchor case with maximum spatial and time steps halved and L increased by 50%.",
+                "schema_version": 1,
+                "scientific_role": "convergence",
+                "settings": [
+                  {
+                    "name": "variable.fig4.material",
+                    "schema_version": 1,
+                    "unit": "category",
+                    "value": "In0.83Ga0.17As"
+                  },
+                  {
+                    "name": "variable.fig4.surface_concentration",
+                    "schema_version": 1,
+                    "unit": "cm^-3",
+                    "value": 68500000000000000000
+                  },
+                  {
+                    "name": "variable.fig4.numerical_level",
+                    "schema_version": 1,
+                    "unit": "category",
+                    "value": "half_steps_plus_1.5x_domain"
+                  }
+                ]
+              }
+            ],
+            "changed_factors": [
+              {
+                "factor_type": "physical",
+                "name": "variable.fig4.material",
+                "rationale": "The full two-material comparison is required; material-specific D remains paired and limits causal interpretation to the declared phenomenological family.",
+                "schema_version": 1,
+                "unit": "category",
+                "values": [
+                  "In0.83Al0.17As",
+                  "In0.83Ga0.17As"
+                ]
+              },
+              {
+                "factor_type": "physical",
+                "name": "variable.fig4.surface_concentration",
+                "rationale": "The two exact Table I anchors form the smallest finite boundary intervention and introduce no fitted source history.",
+                "schema_version": 1,
+                "unit": "cm^-3",
+                "values": [
+                  68500000000000000000,
+                  83500000000000000000
+                ]
+              },
+              {
+                "factor_type": "numerical",
+                "name": "variable.fig4.numerical_level",
+                "rationale": "The domain implementation may choose exact primary mesh and time-step values; the scientific convergence intervention and acceptance threshold are fixed here.",
+                "schema_version": 1,
+                "unit": "category",
+                "values": [
+                  "primary_registered_resolution",
+                  "half_steps_plus_1.5x_domain"
+                ]
+              }
+            ],
+            "comparison_contract": {
+              "baseline_case_key": "case.fig4.al_own_anchor_primary",
+              "comparison_case_keys": [
+                "case.fig4.al_high_anchor_primary",
+                "case.fig4.ga_own_anchor_primary",
+                "case.fig4.ga_low_anchor_primary",
+                "case.fig4.al_own_anchor_tight",
+                "case.fig4.al_high_anchor_tight",
+                "case.fig4.ga_own_anchor_tight",
+                "case.fig4.ga_low_anchor_tight"
+              ],
+              "identifiability_claims": [
+                {
+                  "ambiguity_conditions": [
+                    "Either own-anchor WRMSE exceeds 0.15 decade.",
+                    "The deterministic sensitivity envelope for G_0 does not separate the 0.25 or 0.50 gate.",
+                    "Any required M0 field, row mapping, group, simulation value, or paired numerical value is unavailable.",
+                    "The category changes under tightened numerics or an evidence mask."
+                  ],
+                  "competing_hypothesis_key": "hypothesis.tail_support_artifact",
+                  "decision_rule": "Use the 0.50 support and 0.25 rejection gates only when the finite-uncertainty M0 ledger is verified, all four primary/tight pairs pass convergence, both own-anchor models pass 0.15-decade adequacy, and the deterministic sensitivity envelope is finite. Support requires envelope_lower(G_0)>=0.50; rejection requires envelope_upper(G_0)<=0.25; otherwise conclude inconclusive. Any category change in the broader central-value-only excluded-row sensitivity also forces inconclusive.",
+                  "distinguishing_outcome": "A deterministic envelope wholly at or above G_0=0.50 after adequacy and convergence gates supports a dominant role for the two constant boundary anchors within this model; strong mask or excluded-row sensitivity identifies evidence support as decision-limiting.",
+                  "hypothesis_key": "hypothesis.surface_boundary_control",
+                  "observable": "WRMSE_m,a,k, J_own,k, J_low,k, J_high,k, G_k, per-group and numerical absolute bounds, and untruncated deterministic sensitivity envelopes for M0-M2, plus central-value-only S0-S2 category checks.",
+                  "schema_version": 1,
+                  "smallest_resolving_control": "For numerical ambiguity, rerun the exact failed pair at a reviewed tighter level without changing physics; for evidence ambiguity, obtain qualified author raw SIMS rows with detection status and uncertainty."
+                },
+                {
+                  "ambiguity_conditions": [
+                    "A required T is zero or unavailable, so its relative change is undefined.",
+                    "Any exact field or category needed by a mask is absent.",
+                    "Changes fall between 10% and 50%.",
+                    "A deterministic sensitivity envelope crosses a decision gate or an excluded-row central-value sensitivity changes category."
+                  ],
+                  "competing_hypothesis_key": "hypothesis.surface_boundary_control",
+                  "decision_rule": "For each material and k in M1,M2, compute the deterministic envelope of r_m,k=abs(T_m,k-T_m,0)/T_m,0. Support requires envelope_lower(r_m,k)>=0.50 for at least one comparison or a boundary-category change that persists over its full envelope. Reject only if every envelope_upper(r_m,k)<=0.10, every required envelope is finite, and the boundary category is invariant across M0-M2 and all excluded-row central-value sensitivities; otherwise conclude inconclusive.",
+                  "distinguishing_outcome": "An envelope wholly at or above 50% for either resolved support-length change, or a robust boundary-category change, makes evidence support decision-limiting; envelopes wholly at or below 10% with invariant categories reject the bounded artifact concern.",
+                  "hypothesis_key": "hypothesis.tail_support_artifact",
+                  "observable": "Resolved low-concentration support lengths T_Al,k and T_Ga,k, finite-mask and excluded-row adjacency ledgers, deterministic sensitivity envelopes, and relative changes from M0.",
+                  "schema_version": 1,
+                  "smallest_resolving_control": "Obtain author raw SIMS rows for the same samples with reconciled detection-limit status, independent uncertainties, and unambiguous series identity."
+                }
+              ],
+              "required_observables": [
+                "For all eight executions: case key, material, D, Cs, temperature, time, L, primary or tightened numerical controls, termination state, and raw one-dimensional C(x,480 s).",
+                "For every finite-mask row: exact source fields, dependence_group, M0-M2 membership, weight, predicted log concentration, residual, asymmetric y perturbations, clipped x endpoints, and paired numerical difference; for every excluded original-mask row, exact source fields and S0-S2 central-value sensitivity membership; no inserted rows.",
+                "WRMSE_m,a,k, J_own,k, J_low,k, J_high,k, G_k, per-group and numerical absolute bounds, and untruncated deterministic sensitivity envelopes for M0-M2, plus central-value-only S0-S2 category checks.",
+                "Resolved low-concentration support lengths T_Al,k and T_Ga,k, finite-mask and excluded-row adjacency ledgers, deterministic sensitivity envelopes, and relative changes from M0.",
+                "A pre-execution availability report reproducing headers, categorical domains, total rows, direct-above-limit rows, mask counts, shared-group ownership, and the two documented threshold-crossing gaps."
+              ],
+              "schema_version": 1,
+              "variables": [
+                {
+                  "comparison_role": "intended_change",
+                  "equivalence_rule": "exact",
+                  "expectations": [
+                    {
+                      "case_key": "case.fig4.al_own_anchor_primary",
+                      "schema_version": 1,
+                      "value": "In0.83Al0.17As"
+                    },
+                    {
+                      "case_key": "case.fig4.al_high_anchor_primary",
+                      "schema_version": 1,
+                      "value": "In0.83Al0.17As"
+                    },
+                    {
+                      "case_key": "case.fig4.ga_own_anchor_primary",
+                      "schema_version": 1,
+                      "value": "In0.83Ga0.17As"
+                    },
+                    {
+                      "case_key": "case.fig4.ga_low_anchor_primary",
+                      "schema_version": 1,
+                      "value": "In0.83Ga0.17As"
+                    },
+                    {
+                      "case_key": "case.fig4.al_own_anchor_tight",
+                      "schema_version": 1,
+                      "value": "In0.83Al0.17As"
+                    },
+                    {
+                      "case_key": "case.fig4.al_high_anchor_tight",
+                      "schema_version": 1,
+                      "value": "In0.83Al0.17As"
+                    },
+                    {
+                      "case_key": "case.fig4.ga_own_anchor_tight",
+                      "schema_version": 1,
+                      "value": "In0.83Ga0.17As"
+                    },
+                    {
+                      "case_key": "case.fig4.ga_low_anchor_tight",
+                      "schema_version": 1,
+                      "value": "In0.83Ga0.17As"
+                    }
+                  ],
+                  "factor_type": "physical",
+                  "rationale": "The full two-material comparison is required; material-specific D remains paired and limits causal interpretation to the declared phenomenological family.",
+                  "schema_version": 1,
+                  "scientific_path": "model.material_identity",
+                  "tolerance": null,
+                  "unit": "category",
+                  "variable_key": "variable.fig4.material"
+                },
+                {
+                  "comparison_role": "intended_change",
+                  "equivalence_rule": "exact",
+                  "expectations": [
+                    {
+                      "case_key": "case.fig4.al_own_anchor_primary",
+                      "schema_version": 1,
+                      "value": 68500000000000000000
+                    },
+                    {
+                      "case_key": "case.fig4.al_high_anchor_primary",
+                      "schema_version": 1,
+                      "value": 83500000000000000000
+                    },
+                    {
+                      "case_key": "case.fig4.ga_own_anchor_primary",
+                      "schema_version": 1,
+                      "value": 83500000000000000000
+                    },
+                    {
+                      "case_key": "case.fig4.ga_low_anchor_primary",
+                      "schema_version": 1,
+                      "value": 68500000000000000000
+                    },
+                    {
+                      "case_key": "case.fig4.al_own_anchor_tight",
+                      "schema_version": 1,
+                      "value": 68500000000000000000
+                    },
+                    {
+                      "case_key": "case.fig4.al_high_anchor_tight",
+                      "schema_version": 1,
+                      "value": 83500000000000000000
+                    },
+                    {
+                      "case_key": "case.fig4.ga_own_anchor_tight",
+                      "schema_version": 1,
+                      "value": 83500000000000000000
+                    },
+                    {
+                      "case_key": "case.fig4.ga_low_anchor_tight",
+                      "schema_version": 1,
+                      "value": 68500000000000000000
+                    }
+                  ],
+                  "factor_type": "physical",
+                  "rationale": "The two exact Table I anchors form the smallest finite boundary intervention and introduce no fitted source history.",
+                  "schema_version": 1,
+                  "scientific_path": "boundary.x0.constant_concentration",
+                  "tolerance": null,
+                  "unit": "cm^-3",
+                  "variable_key": "variable.fig4.surface_concentration"
+                },
+                {
+                  "comparison_role": "permitted_difference",
+                  "equivalence_rule": "exact",
+                  "expectations": [
+                    {
+                      "case_key": "case.fig4.al_own_anchor_primary",
+                      "schema_version": 1,
+                      "value": 1.59e-12
+                    },
+                    {
+                      "case_key": "case.fig4.al_high_anchor_primary",
+                      "schema_version": 1,
+                      "value": 1.59e-12
+                    },
+                    {
+                      "case_key": "case.fig4.ga_own_anchor_primary",
+                      "schema_version": 1,
+                      "value": 1.05e-12
+                    },
+                    {
+                      "case_key": "case.fig4.ga_low_anchor_primary",
+                      "schema_version": 1,
+                      "value": 1.05e-12
+                    },
+                    {
+                      "case_key": "case.fig4.al_own_anchor_tight",
+                      "schema_version": 1,
+                      "value": 1.59e-12
+                    },
+                    {
+                      "case_key": "case.fig4.al_high_anchor_tight",
+                      "schema_version": 1,
+                      "value": 1.59e-12
+                    },
+                    {
+                      "case_key": "case.fig4.ga_own_anchor_tight",
+                      "schema_version": 1,
+                      "value": 1.05e-12
+                    },
+                    {
+                      "case_key": "case.fig4.ga_low_anchor_tight",
+                      "schema_version": 1,
+                      "value": 1.05e-12
+                    }
+                  ],
+                  "factor_type": "physical",
+                  "rationale": "These are fixed paper-reported material anchors and are not calibrated or interpreted as a complete physical parameter family.",
+                  "schema_version": 1,
+                  "scientific_path": "model.constant_diffusion_coefficient",
+                  "tolerance": null,
+                  "unit": "cm^2/s",
+                  "variable_key": "variable.fig4.diffusion_coefficient"
+                },
+                {
+                  "comparison_role": "frozen",
+                  "equivalence_rule": "exact",
+                  "expectations": [
+                    {
+                      "case_key": "case.fig4.al_own_anchor_primary",
+                      "schema_version": 1,
+                      "value": 480
+                    },
+                    {
+                      "case_key": "case.fig4.al_high_anchor_primary",
+                      "schema_version": 1,
+                      "value": 480
+                    },
+                    {
+                      "case_key": "case.fig4.ga_own_anchor_primary",
+                      "schema_version": 1,
+                      "value": 480
+                    },
+                    {
+                      "case_key": "case.fig4.ga_low_anchor_primary",
+                      "schema_version": 1,
+                      "value": 480
+                    },
+                    {
+                      "case_key": "case.fig4.al_own_anchor_tight",
+                      "schema_version": 1,
+                      "value": 480
+                    },
+                    {
+                      "case_key": "case.fig4.al_high_anchor_tight",
+                      "schema_version": 1,
+                      "value": 480
+                    },
+                    {
+                      "case_key": "case.fig4.ga_own_anchor_tight",
+                      "schema_version": 1,
+                      "value": 480
+                    },
+                    {
+                      "case_key": "case.fig4.ga_low_anchor_tight",
+                      "schema_version": 1,
+                      "value": 480
+                    }
+                  ],
+                  "factor_type": "physical",
+                  "rationale": "All supplied profile evidence is restricted to 480 degrees C.",
+                  "schema_version": 1,
+                  "scientific_path": "thermal.temperature",
+                  "tolerance": null,
+                  "unit": "°C",
+                  "variable_key": "variable.fig4.temperature"
+                },
+                {
+                  "comparison_role": "frozen",
+                  "equivalence_rule": "exact",
+                  "expectations": [
+                    {
+                      "case_key": "case.fig4.al_own_anchor_primary",
+                      "schema_version": 1,
+                      "value": 480
+                    },
+                    {
+                      "case_key": "case.fig4.al_high_anchor_primary",
+                      "schema_version": 1,
+                      "value": 480
+                    },
+                    {
+                      "case_key": "case.fig4.ga_own_anchor_primary",
+                      "schema_version": 1,
+                      "value": 480
+                    },
+                    {
+                      "case_key": "case.fig4.ga_low_anchor_primary",
+                      "schema_version": 1,
+                      "value": 480
+                    },
+                    {
+                      "case_key": "case.fig4.al_own_anchor_tight",
+                      "schema_version": 1,
+                      "value": 480
+                    },
+                    {
+                      "case_key": "case.fig4.al_high_anchor_tight",
+                      "schema_version": 1,
+                      "value": 480
+                    },
+                    {
+                      "case_key": "case.fig4.ga_own_anchor_tight",
+                      "schema_version": 1,
+                      "value": 480
+                    },
+                    {
+                      "case_key": "case.fig4.ga_low_anchor_tight",
+                      "schema_version": 1,
+                      "value": 480
+                    }
+                  ],
+                  "factor_type": "physical",
+                  "rationale": "All supplied profile evidence is restricted to the 8 minute treatment.",
+                  "schema_version": 1,
+                  "scientific_path": "thermal.duration",
+                  "tolerance": null,
+                  "unit": "s",
+                  "variable_key": "variable.fig4.duration"
+                },
+                {
+                  "comparison_role": "intended_change",
+                  "equivalence_rule": "reviewed",
+                  "expectations": [
+                    {
+                      "case_key": "case.fig4.al_own_anchor_primary",
+                      "schema_version": 1,
+                      "value": "primary_registered_resolution"
+                    },
+                    {
+                      "case_key": "case.fig4.al_high_anchor_primary",
+                      "schema_version": 1,
+                      "value": "primary_registered_resolution"
+                    },
+                    {
+                      "case_key": "case.fig4.ga_own_anchor_primary",
+                      "schema_version": 1,
+                      "value": "primary_registered_resolution"
+                    },
+                    {
+                      "case_key": "case.fig4.ga_low_anchor_primary",
+                      "schema_version": 1,
+                      "value": "primary_registered_resolution"
+                    },
+                    {
+                      "case_key": "case.fig4.al_own_anchor_tight",
+                      "schema_version": 1,
+                      "value": "half_steps_plus_1.5x_domain"
+                    },
+                    {
+                      "case_key": "case.fig4.al_high_anchor_tight",
+                      "schema_version": 1,
+                      "value": "half_steps_plus_1.5x_domain"
+                    },
+                    {
+                      "case_key": "case.fig4.ga_own_anchor_tight",
+                      "schema_version": 1,
+                      "value": "half_steps_plus_1.5x_domain"
+                    },
+                    {
+                      "case_key": "case.fig4.ga_low_anchor_tight",
+                      "schema_version": 1,
+                      "value": "half_steps_plus_1.5x_domain"
+                    }
+                  ],
+                  "factor_type": "numerical",
+                  "rationale": "The domain implementation may choose exact primary mesh and time-step values; the scientific convergence intervention and acceptance threshold are fixed here.",
+                  "schema_version": 1,
+                  "scientific_path": "numerics.mesh_time_domain_level",
+                  "tolerance": null,
+                  "unit": "category",
+                  "variable_key": "variable.fig4.numerical_level"
+                }
+              ]
+            },
+            "current_objectives": [
+              "Determine whether the two paper-reported material-specific constant surface anchors reduce joint supported-row log-profile error by at least 50% relative to the better common-anchor control while the material-specific constant-D anchor, thermal history, equation, initial condition, and reduction are frozen.",
+              "Determine whether the resolved low-concentration support length and the boundary decision change materially when shared-occlusion rows and rows at or below 3 x 10^15 cm^-3 are admitted by exact preregistered masks."
+            ],
+            "experiment_key": "experiment.fig4.supported_row_boundary_counterfactual",
+            "frozen_invariants": [
+              "Use only the two supplied legend-bound CSV series. Preserve panel_key, series_key, point_index, x_value, y_value, x_uncertainty, y_uncertainty, observed, quantitative_measurement_claim_eligible, below_sims_detection_limit, support_kind, pixel coordinates, coordinate_ownership, shared_group, and support_source_series exactly; never fill a missing point index or treat a shared-occlusion row as independent.",
+              "The pre-execution audit must reproduce the exact headers and categorical values. The supplied tables contain 501 In0.83Al0.17As rows and 765 In0.83Ga0.17As rows; support_kind is direct_pixel or shared_occlusion; all observed and eligibility values are 1; all supplied below_sims_detection_limit flags are 0 despite 104 and 10 respective central y_value values at or below 3 x 10^15 cm^-3.",
+              "Freeze three decision-bearing masks from actual fields and require y_value>y_uncertainty so the declared two-sided log perturbation is finite. M0 selects observed=1, quantitative_measurement_claim_eligible=1, support_kind=direct_pixel, y_value>3 x 10^15 cm^-3, and y_value>y_uncertainty, yielding exactly 359 InAlAs and 702 InGaAs rows. M1 uses the same predicates except support_kind may be direct_pixel or shared_occlusion, yielding exactly 383 and 753 rows. M2 selects observed eligible rows of either support_kind with y_value>y_uncertainty, yielding exactly 439 and 757 rows; it is sensitivity evidence only because numeric central values conflict with the all-zero limit flags. These aggregate counts are supplied by the bound review; the exact row identities and adjacency ledgers are a required pre-implementation reproduction, not claimed as already verified.",
+              "Also freeze central-value-only sensitivity masks S0-S2 using the prior M0-M2 predicates without y_value>y_uncertainty: S0 contains 373 InAlAs and 702 InGaAs rows, S1 contains 397 and 755, and S2 contains 501 and 765. Thus S0 adds 14 affected InAlAs rows; S1 adds those 14 plus 2 affected InGaAs shared rows; S2 adds 62 affected InAlAs and 8 affected InGaAs rows relative to the corresponding finite masks. Compute central WRMSE, G, T, and category on S0-S2 without uncertainty envelopes. These checks may force an otherwise supported or rejected disposition to inconclusive if the category changes, but cannot create support or rejection. Reproduce exact excluded-row identities and adjacency effects from the supplied tables before implementation; do not infer them from aggregate counts.",
+              "For M0 and S0 every selected row has unit weight. For M1, M2, S1, and S2 define dependence_group as nonblank shared_group; otherwise use the exact tuple panel_key, pixel_x_raw, pixel_y_raw. Give every row in group g weight 1/n_g across both series so a shared source pixel contributes total weight one. No missing or blank provenance field may be guessed.",
+              "Temperature is exactly 480 degrees C and elapsed time is exactly 480 s. For material m solve partial C_m/partial t = D_m partial squared C_m/partial x squared on 0<x<L with C_m(x,0)=0, C_m(0,t)=Cs, and C_m(L,t)=0. Use D_Al=1.59 x 10^-12 cm^2/s and D_Ga=1.05 x 10^-12 cm^2/s only as paper-reported anchors.",
+              "Set L=x_max+6 sqrt(D_max t), with x_max the deepest existing target x_value, D_max=1.59 x 10^-12 cm^2/s, and t=480 s. The only physical intervention is Cs at 6.85 x 10^19 or 8.35 x 10^19 cm^-3. Do not fit D or Cs, add a source history, add a transport channel, or identify a defect species.",
+              "Sample predicted C only at each existing x_value. For a decision-mask row i, y_i=log10(y_value_i/(cm^-3)); define the two exact log perturbations d_y,i^- = y_i-log10((y_value_i-y_uncertainty_i)/(cm^-3)) and d_y,i^+ = log10((y_value_i+y_uncertainty_i)/(cm^-3))-y_i. The finite-mask predicate guarantees both are finite. Use x_i^- = max(0,x_value_i-x_uncertainty_i) and x_i^+ = min(L,x_value_i+x_uncertainty_i). Preserve the asymmetric y perturbations and exact clipped x endpoints in the deterministic envelope; do not collapse them into a standard uncertainty or assign a distribution. Record the absolute primary-versus-tightened log-prediction difference u_num,i at the same x_value. Rows with y_value<=y_uncertainty enter only S0-S2 central-value sensitivity and have no claimed uncertainty interval.",
+              "For material m, boundary anchor a, and mask k compute WRMSE_m,a,k=sqrt(sum(w_i*(log10(Cpred_m,a(x_i))-y_i)^2)/sum(w_i)) using only finite positive predictions and selected rows. Define J_own,k=sqrt((WRMSE_Al,low,k squared+WRMSE_Ga,high,k squared)/2), J_low,k from both low-anchor cells, J_high,k from both high-anchor cells, and G_k=1-J_own,k/min(J_low,k,J_high,k). G is unavailable if any component is unavailable or the common-anchor denominator is nonpositive.",
+              "Define resolved low-concentration support length T_m,k without a threshold crossing: sort selected rows by point_index and sum x_value_i-x_value_previous only when the indices differ by exactly one and both central concentrations are below 5.4 x 10^16 cm^-3; for M0 and M1 both must also exceed 3 x 10^15 cm^-3, while M2 has no lower concentration cutoff. Never add length across a missing index. Report T separately by material and mask.",
+              "Construct a deterministic sensitivity envelope with no probability or coverage interpretation. For each reported scalar Q (each WRMSE, J, G, T, and relative T change), compute nominal Q0 on a frozen finite mask. For each dependence_group g in turn, coherently recompute Q at the four joint corners formed by every row in g taking its lower or upper y perturbation and its clipped lower or upper x endpoint, while all other groups remain nominal; define b_g(Q) as the largest absolute corner departure from Q0. Preserve a shared group jointly across materials. Define b_num(Q) as the largest absolute departure obtained by coherently replacing all predictions contributing to Q with their paired tightened predictions. Set B_Q=sum_g b_g(Q)+b_num(Q) and report E_Q=[Q0-B_Q,Q0+B_Q] without truncation. This additive one-group-at-a-time envelope is a preregistered deterministic sensitivity bound, not a confidence interval; it neither assumes independence nor multiplies by 1.96. If any required corner, bound, denominator, or endpoint is unavailable or nonfinite, E_Q is unavailable and the associated disposition is inconclusive.",
+              "The supplied rows at the 5.4 x 10^16 cm^-3 crossing remain structurally discontinuous between point_index 447 and 466 for InAlAs and 363 and 382 for InGaAs. No current quantity depends on interpolating those crossings. The old F, E, qualified-dose, Delta, and R definitions are explicitly deferred and are not execution prerequisites.",
+              "No disposition from this study establishes kick-out, VCD, a continuous microscopic response, or any other defect mechanism. Claims are restricted to adequacy and relative performance of the frozen constant-D, constant-boundary family and to robustness of the pixel-derived low-concentration support."
+            ],
+            "hypothesis_keys": [
+              "hypothesis.surface_boundary_control",
+              "hypothesis.tail_support_artifact"
+            ],
+            "objectives": [
+              "Use the supplied paper evidence to support later selection of falsifiable hypotheses and design of a minimal TCAD control experiment, while this Intake is limited to evidence extraction and does not select a hypothesis.",
+              "Determine whether the two paper-reported material-specific constant surface anchors reduce joint supported-row log-profile error by at least 50% relative to the better common-anchor control while the material-specific constant-D anchor, thermal history, equation, initial condition, and reduction are frozen.",
+              "Determine whether the resolved low-concentration support length and the boundary decision change materially when shared-occlusion rows and rows at or below 3 x 10^15 cm^-3 are admitted by exact preregistered masks.",
+              "If constant-boundary control is rejected or remains ambiguous, the base family is adequate, and the direct-pixel above-limit low-concentration contrast is stable, later compare the reviewed continuous material response with the reviewed two-regime kick-out/VCD phenomenology using a separately reviewed finite model family."
+            ],
+            "prediction_tests": [
+              {
+                "expected_result": "Support the bounded surface-boundary hypothesis only if envelope_lower(G_0)>=0.50, both own-anchor WRMSE values are <=0.15 decade, tightened numerics preserve the category, and S0-S2 central-value sensitivities do not change it.",
+                "falsifying_result": "Reject the bounded hypothesis only if envelope_upper(G_0)<=0.25 after the same gates pass and S0-S2 do not change category. If the deterministic envelope does not separate 0.25 or 0.50, an excluded-row sensitivity changes category, or either own-anchor WRMSE exceeds 0.15 decade, report inconclusive; inadequacy is not rejection evidence.",
+                "hypothesis_key": "hypothesis.surface_boundary_control",
+                "observable": "M0 joint log-profile gain G_0 for the material-specific own-anchor pair relative to the better common-anchor control, after numerical and own-anchor adequacy gates.",
+                "prediction_key": "prediction.boundary.supported_row_gain",
+                "schema_version": 1
+              },
+              {
+                "expected_result": "Support the evidence-artifact concern if at least one finite-mask relative-T envelope has lower bound >=50% or a boundary-category change under M1 or M2 persists over the full deterministic envelopes.",
+                "falsifying_result": "Reject this bounded concern only if every required relative-T envelope has upper bound <=10%, all required T and G envelopes are finite, and the boundary category is unchanged across finite masks, tightened numerics, and S0-S2 central-value sensitivities; intermediate, missing, or excluded-row-sensitive outcomes are inconclusive.",
+                "hypothesis_key": "hypothesis.tail_support_artifact",
+                "observable": "Relative changes in each material's resolved low-concentration support length and any change in the surface-boundary category from M0 to M1 and M2.",
+                "prediction_key": "prediction.artifact.resolved_length_sensitivity",
+                "schema_version": 1
+              }
+            ],
+            "required_observables": [
+              "For all eight executions: case key, material, D, Cs, temperature, time, L, primary or tightened numerical controls, termination state, and raw one-dimensional C(x,480 s).",
+              "For every finite-mask row: exact source fields, dependence_group, M0-M2 membership, weight, predicted log concentration, residual, asymmetric y perturbations, clipped x endpoints, and paired numerical difference; for every excluded original-mask row, exact source fields and S0-S2 central-value sensitivity membership; no inserted rows.",
+              "WRMSE_m,a,k, J_own,k, J_low,k, J_high,k, G_k, per-group and numerical absolute bounds, and untruncated deterministic sensitivity envelopes for M0-M2, plus central-value-only S0-S2 category checks.",
+              "Resolved low-concentration support lengths T_Al,k and T_Ga,k, finite-mask and excluded-row adjacency ledgers, deterministic sensitivity envelopes, and relative changes from M0.",
+              "A pre-execution availability report reproducing headers, categorical domains, total rows, direct-above-limit rows, mask counts, shared-group ownership, and the two documented threshold-crossing gaps."
+            ],
+            "resource_estimate": {
+              "case_count": 8,
+              "relative_cost": "low",
+              "runtime_basis": "Exactly four one-dimensional primary cells and four paired tightened reruns; all three masks and all statistics reuse these outputs. SProcess R-2020.09 is declared, and the release-matched Skill documents a custom conservative state, explicit fixed boundary equations, diffusion steps, independent cases, and raw PLX/TDR output. The execution context itself provides no capability statements or limitations, so feasibility remains conditional on fresh exact-source domain review and initialization. The prior differently keyed initialized project is context only and supplies no qualification for this intent.",
+              "schema_version": 1
+            },
+            "schema_version": 1,
+            "stop_conditions": [
+              "Stop before implementation unless the exact reference audit reproduces the M0 counts 359 InAlAs and 702 InGaAs, M1 counts 383 and 753, M2 counts 439 and 757, S0 counts 373 and 702, S1 counts 397 and 755, S2 counts 501 and 765, the corresponding 14/0, 14/2, and 62/8 excluded-row counts, every exact row identity, dependence group, and finite-mask/excluded-row adjacency ledger. Report any mismatch as a bounded input failure; never guess a row mapping.",
+              "Stop before execution if independent review cannot confirm the frozen custom-state PDE, boundary conditions, independent case reset, units, and raw output in the declared SProcess R-2020.09 backend, or if fresh initialization for this experiment fails.",
+              "Stop as numerically inconclusive if any execution fails, any M0 sampled prediction is nonpositive or nonfinite, the maximum paired change exceeds 0.05 decade, or a scientific category changes under tightened numerics.",
+              "If either own-anchor M0 WRMSE exceeds 0.15 decade, report the constant-D base family inadequate and surface-boundary control inconclusive; do not reject the hypothesis from model inadequacy.",
+              "Support bounded surface-boundary control only when envelope_lower(G_0)>=0.50; reject only when envelope_upper(G_0)<=0.25; require all prerequisite gates and invariant categories under tightened numerics and S0-S2, and otherwise report inconclusive.",
+              "Support the bounded tail-support artifact concern only when a required relative-T envelope has lower bound >=50% or a boundary-category change persists over the full deterministic envelopes; reject only when every required relative-T envelope has upper bound <=10% and categories are invariant under M0-M2, tightened numerics, and S0-S2; otherwise report inconclusive.",
+              "Do not bridge any missing point index, count shared pixels independently, use the all-zero below-limit flags to override central y_value, or treat M2 as qualified primary evidence.",
+              "Do not add free parameters, optimize anchors, add a diffusion channel, infer a time-dependent surface source, or proceed to the deferred continuous/two-regime comparison within this experiment.",
+              "Stop after one bounded supported, rejected, or inconclusive disposition for each selected hypothesis and one explicit assessment of remaining overall-objective coverage; do not select a microscopic mechanism."
+            ],
+            "value_assessment": {
+              "added_free_parameters": 0,
+              "cost": "low",
+              "discrimination_power": "medium",
+              "evidence_support": "medium",
+              "information_gain": "medium",
+              "rationale": "The current-objective selection is unchanged because this round still covers both original mandatory observables: finite M0 whole-profile errors use the two material-resolved profiles, while T and its finite-mask plus excluded-row sensitivity quantify the observed low-concentration front/tail contrast only over contiguous existing rows. This revision removes the two reviewed blockers by requiring y_value>y_uncertainty in decision masks and replacing unsupported probabilistic intervals with additive deterministic sensitivity envelopes. The bound review supplies aggregate revised counts but not exact revised row identities or adjacency ledgers, so the formal pre-implementation audit must reproduce those items and execution cannot claim they were already checked. The unavailable threshold-crossing F, tail extent from F, qualified dose, Delta, and R remain deferred because both crossings lie across missing point indices. Microscopic continuous-versus-two-regime discrimination also remains deferred until the constant-boundary family is rejected or ambiguous, passes adequacy, and the direct-pixel above-limit low-concentration contrast is stable. These omissions do not invalidate the current supported-row loss or no-gap mask-sensitivity calculations, but they restrict claims to the frozen constant-D boundary counterfactual and pixel-derived evidence robustness. The design remains minimal: four physical cells and four paired convergence controls, three finite masks plus deterministic postprocessing of their broader central-value counterparts, no fitted parameter, no stochastic model, and no extra solve. Information gain remains medium because model inadequacy, unavailable ledgers, wide envelopes, or excluded-row sensitivity can still force inconclusive. Later microscopic work requires a separately reviewed finite model family; stronger empirical claims require qualified raw SIMS data.",
+              "schema_version": 1
+            }
+          }
+        ],
+        "schema_version": 1,
+        "selected_hypothesis_keys": [
+          "hypothesis.surface_boundary_control",
+          "hypothesis.tail_support_artifact"
+        ],
+        "study_kind": "scientific",
+        "validation_plans": [
+          {
+            "claim_gate": "all_required_checks_pass",
+            "experiment_key": "experiment.fig4.supported_row_boundary_counterfactual",
+            "experimental": {
+              "applicability": "required",
+              "checks": [
+                {
+                  "acceptance_condition": "Every declared header, category, M0-M2 and S0-S2 count, 14/0, 14/2, and 62/8 excluded-row count, exact row identity, dependence-group assignment, finite-uncertainty predicate, and adjacency ledger is reproducible exactly.",
+                  "basis": "The bound review established the aggregate affected-row counts but did not supply the exact revised row ledgers; decision-bearing rows must have finite two-sided log perturbations and no missing index may be bridged.",
+                  "check_key": "check.fig4.reference_availability",
+                  "evaluation_mode": "deterministic_threshold",
+                  "evaluator_metric": "assertion_pass_fraction",
+                  "evaluator_profile": "profile.fig4.reference_mask_audit",
+                  "failure_action": "Stop before implementation and report the mismatched field or assertion without guessing a translation.",
+                  "metric": "Fraction of exact required schema, mask-count, excluded-row, row-identity, group, and adjacency assertions satisfied.",
+                  "observable": "CSV headers, categories, M0-M2 and S0-S2 ledgers, group construction, finite y_value>y_uncertainty assertions, and gaps before solver work.",
+                  "schema_version": 1,
+                  "threshold": {
+                    "operator": "equal",
+                    "schema_version": 1,
+                    "unit": "dimensionless",
+                    "upper_value": null,
+                    "value": 1
+                  }
+                },
+                {
+                  "acceptance_condition": "Both own-anchor WRMSE values are <=0.15 decade.",
+                  "basis": "A boundary gain from an inadequate frozen model family is not identifiable evidence for or against boundary control.",
+                  "check_key": "check.fig4.own_anchor_adequacy",
+                  "evaluation_mode": "deterministic_threshold",
+                  "evaluator_metric": "max_own_anchor_wrmse",
+                  "evaluator_profile": "profile.fig4.supported_row_counterfactual",
+                  "failure_action": "Classify the base model as inadequate and the boundary hypothesis as inconclusive; do not call inadequacy a rejection.",
+                  "metric": "Maximum of the two own-anchor WRMSE values.",
+                  "observable": "M0 own-anchor WRMSE for both materials after convergence passes.",
+                  "schema_version": 1,
+                  "threshold": {
+                    "operator": "le",
+                    "schema_version": 1,
+                    "unit": "decade",
+                    "upper_value": null,
+                    "value": 0.15
+                  }
+                },
+                {
+                  "acceptance_condition": "Every required scalar has a finite nominal value, all declared group corners and the coherent tightened-prediction variant are evaluated exactly once, B_Q equals the arithmetic sum of recorded absolute bounds, and no confidence level, probability distribution, covariance, independence assumption, quadrature, or 1.96 multiplier is used.",
+                  "basis": "The supplied pixel-derived uncertainties have no stochastic semantics; the revised decision rule is an explicitly deterministic additive sensitivity envelope.",
+                  "check_key": "check.fig4.deterministic_envelope",
+                  "evaluation_mode": "deterministic_threshold",
+                  "evaluator_metric": "envelope_assertion_pass_fraction",
+                  "evaluator_profile": "profile.fig4.supported_row_counterfactual",
+                  "failure_action": "Stop as evidence-uncertainty inconclusive and report the missing or inconsistent scalar, group corner, numerical variant, or arithmetic assertion.",
+                  "metric": "Fraction of deterministic-envelope construction and semantics assertions satisfied for all required WRMSE, J, G, T, and relative-T scalars.",
+                  "observable": "Nominal metrics, every per-group corner value and b_g, b_num, summed B_Q, untruncated E_Q endpoints, and absence of probabilistic interval labels.",
+                  "schema_version": 1,
+                  "threshold": {
+                    "operator": "equal",
+                    "schema_version": 1,
+                    "unit": "dimensionless",
+                    "upper_value": null,
+                    "value": 1
+                  }
+                }
+              ],
+              "rationale": "Validation is against supplied pixel-digitized observations within exact finite masks and broader central-value sensitivity masks. Uncertainty is evaluated only by the registered deterministic envelope; no new wet experiment or probability coverage is claimed.",
+              "schema_version": 1
+            },
+            "numerical": {
+              "applicability": "required",
+              "checks": [
+                {
+                  "acceptance_condition": "Maximum difference is <=0.05 decade and adequacy and hypothesis categories are unchanged.",
+                  "basis": "This is one third of the retained 0.15-decade whole-profile adequacy scale.",
+                  "check_key": "check.fig4.paired_convergence",
+                  "evaluation_mode": "deterministic_threshold",
+                  "evaluator_metric": "max_paired_log_difference",
+                  "evaluator_profile": "profile.fig4.supported_row_counterfactual",
+                  "failure_action": "Stop as numerically inconclusive without relaxing thresholds or adding physics.",
+                  "metric": "Maximum absolute paired log-concentration difference across all four cells and all M0 rows.",
+                  "observable": "Primary and tightened log10 concentration at every M0 row for each physical cell.",
+                  "schema_version": 1,
+                  "threshold": {
+                    "operator": "le",
+                    "schema_version": 1,
+                    "unit": "decade",
+                    "upper_value": null,
+                    "value": 0.05
+                  }
+                },
+                {
+                  "acceptance_condition": "All eight cases and all required sampled values are complete.",
+                  "basis": "The paired factorial and deterministic envelope calculation require complete cells.",
+                  "check_key": "check.fig4.complete_outputs",
+                  "evaluation_mode": "deterministic_threshold",
+                  "evaluator_metric": "complete_case_row_fraction",
+                  "evaluator_profile": "profile.fig4.supported_row_counterfactual",
+                  "failure_action": "Stop without imputing a case or row.",
+                  "metric": "Fraction of declared cases with successful termination and finite positive predictions at all required rows.",
+                  "observable": "Eight-case ledger and raw profiles sampled at every M0 x_value.",
+                  "schema_version": 1,
+                  "threshold": {
+                    "operator": "equal",
+                    "schema_version": 1,
+                    "unit": "dimensionless",
+                    "upper_value": null,
+                    "value": 1
+                  }
+                }
+              ],
+              "rationale": "Numerical differences must be smaller than the scientific adequacy scale and must not decide a category.",
+              "schema_version": 1
+            },
+            "physical": {
+              "applicability": "required",
+              "checks": [
+                {
+                  "acceptance_condition": "Independent domain review passes and fresh initialization succeeds for this exact experiment realization.",
+                  "basis": "Only backend, implementation kind, and release are declared by execution_context.",
+                  "check_key": "physical/review/1",
+                  "evaluation_mode": "reviewed_qualitative",
+                  "evaluator_metric": null,
+                  "evaluator_profile": null,
+                  "failure_action": "Revise or block realization before execution; do not inherit the differently keyed project result.",
+                  "metric": "Fidelity to the frozen PDE and eight-case contract in Sentaurus R-2020.09.",
+                  "observable": "Effective SProcess source, independent case construction, fixed boundaries, custom state, units, and raw-output declarations.",
+                  "schema_version": 1,
+                  "threshold": null
+                }
+              ],
+              "rationale": "The bound context lacks capability statements, so exact domain realization remains a reviewed feasibility condition.",
+              "schema_version": 1
+            },
+            "plan_key": "experiment.fig4.supported_row_boundary_counterfactual/validation",
+            "schema_version": 1
+          }
+        ]
+      },
+      "schema": "scidiscovery.experiment-portfolio.v1"
+    },
+    "sealed_output_status": "available",
+    "started_at": "2026-09-09T04:06:14.143940Z",
+    "state": "completed"
+  },
+  "review_request": {
+    "name": "fig4_continuation_experiment_review_4",
+    "operation_id": "science.object.review.v1",
+    "inputs": [
+      {
+        "port": "experiment_plan",
+        "artifact_names": [
+          "fig4_continuation_experiment_plan_revision_2.output"
+        ]
+      },
+      {
+        "port": "research_objective",
+        "artifact_names": [
+          "fig4_continuation_objective_2"
+        ]
+      },
+      {
+        "port": "execution_context",
+        "artifact_names": [
+          "fig4_continuation_execution_context_1"
+        ]
+      },
+      {
+        "port": "current_progress",
+        "artifact_names": [
+          "fig4_continuation_experiment_plan_2",
+          "fig4_continuation_experiment_review_3.output",
+          "fig4_e55_research_objective_1",
+          "fig4_r4_tcad_author_1.output"
+        ]
+      },
+      {
+        "port": "experiment_results",
+        "artifact_names": [
+          "fig4_continuation_figure_materialized_1.curve_tables_001",
+          "fig4_continuation_figure_materialized_1.curve_tables_002"
+        ]
+      },
+      {
+        "port": "result_analysis",
+        "artifact_names": [
+          "fig4_continuation_intake_objective_revision_audit_1.output",
+          "fig4_continuation_figure_materialized_1.validation_report"
+        ]
+      }
+    ],
+    "instruction": "独立审查完整修订计划，实际用绑定逐行参考表核对有限不确定度掩码、数量、邻接规则及敏感性定义，判断两项已指出的实质阻断是否消除。这些表是论文数字化观测，不是新仿真结果。核查确定性敏感性计算及结论范围是否相符、判定规则是否唯一且可执行；区分实质缺陷与首版非阻断细节，优先最小必要修正，不要求额外覆盖后续目标或新增统计系统。核对原目标和后续条件保留，不继承旧初始化资格。仅提交正式独立审查，不修改计划。"
+  },
+  "review_invocation": {
+    "content": [
+      {
+        "type": "text",
+        "text": "{\"executor_kind\":\"agent\",\"operation_id\":\"science.object.review.v1\",\"result\":{\"agent_type\":\"op_science_object_review_v1_e079a8680e7c\",\"backend\":\"local_trusted\",\"candidate_accepted\":false,\"completed_at\":null,\"created_at\":\"2026-09-09T04:14:29.381096Z\",\"deadline_at\":\"2026-09-09T04:24:29.381096Z\",\"head_advance\":null,\"last_activity_at\":null,\"logical_name\":\"fig4_continuation_experiment_review_4\",\"name\":\"fig4_continuation_experiment_review_4\",\"operation_id\":\"science.object.review.v1\",\"output_artifact_name\":null,\"reason\":null,\"recovery_available\":false,\"revision\":1,\"scheduler_signal\":null,\"sealed_output\":null,\"sealed_output_status\":\"unavailable\",\"started_at\":null,\"state\":\"queued\"}}"
+      }
+    ],
+    "structuredContent": {
+      "executor_kind": "agent",
+      "operation_id": "science.object.review.v1",
+      "result": {
+        "agent_type": "op_science_object_review_v1_e079a8680e7c",
+        "backend": "local_trusted",
+        "candidate_accepted": false,
+        "completed_at": null,
+        "created_at": "2026-09-09T04:14:29.381096Z",
+        "deadline_at": "2026-09-09T04:24:29.381096Z",
+        "head_advance": null,
+        "last_activity_at": null,
+        "logical_name": "fig4_continuation_experiment_review_4",
+        "name": "fig4_continuation_experiment_review_4",
+        "operation_id": "science.object.review.v1",
+        "output_artifact_name": null,
+        "reason": null,
+        "recovery_available": false,
+        "revision": 1,
+        "scheduler_signal": null,
+        "sealed_output": null,
+        "sealed_output_status": "unavailable",
+        "started_at": null,
+        "state": "queued"
+      }
+    },
+    "isError": false
+  }
+}

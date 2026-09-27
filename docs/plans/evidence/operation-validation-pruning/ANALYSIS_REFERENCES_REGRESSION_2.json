@@ -1,0 +1,24 @@
+{
+  "command": [
+    "python",
+    "-m",
+    "pytest",
+    "-q",
+    "-x",
+    "tests/operations/test_analysis_artifact_references.py",
+    "tests/operations/test_analysis_diagnostic_tool.py",
+    "tests/operations/test_result_analysis_tool.py",
+    "tests/operations/test_tcad_result_analysis.py",
+    "tests/operations/test_analysis_evidence_recovery.py",
+    "tests/operations/test_analysis_claim_scope.py",
+    "tests/operations/test_prior_analysis_sources.py",
+    "tests/operations/test_analysis_input_descriptors.py",
+    "tests/operations/test_contract_attempts.py"
+  ],
+  "exit_code": 0,
+  "seconds": 108.0,
+  "peak_tree_rss_bytes": 276496384,
+  "budget_bytes": 536870912,
+  "early_stop_bytes": 469762048,
+  "memory_terminated": false
+}

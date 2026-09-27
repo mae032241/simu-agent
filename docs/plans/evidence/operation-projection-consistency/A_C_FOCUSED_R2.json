@@ -1,0 +1,16 @@
+{
+  "command": [
+    "python",
+    "-m",
+    "pytest",
+    "-q",
+    "tests/operations/test_score_request_contract.py",
+    "tests/operations/test_contract_attempts.py"
+  ],
+  "exit_code": 1,
+  "seconds": 12.016,
+  "peak_tree_rss_bytes": 146055168,
+  "budget_bytes": 536870912,
+  "early_stop_bytes": 469762048,
+  "memory_terminated": false
+}

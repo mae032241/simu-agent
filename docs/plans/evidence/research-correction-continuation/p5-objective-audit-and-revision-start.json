@@ -1,0 +1,390 @@
+{
+  "recorded_at": "2026-09-08 13:55:12 UTC",
+  "scope": "P5 bounded Intake contract correction via the existing exact figure audit/revision edge; no source code or curve-family mutation.",
+  "audit_completed": {
+    "agent_type": "op_science_figure_evidence_audit_v1_f8abce8f8476",
+    "backend": "local_trusted",
+    "candidate_accepted": true,
+    "completed_at": "2026-09-08T13:54:13.394926Z",
+    "created_at": "2026-09-08T13:46:14.714264Z",
+    "deadline_at": "2026-09-08T13:56:14.714264Z",
+    "head_advance": "not_requested",
+    "last_activity_at": "2026-09-08T13:54:13.394926Z",
+    "logical_name": "fig4_continuation_intake_objective_audit_1",
+    "name": "fig4_continuation_intake_objective_audit_1",
+    "operation_id": "science.figure.evidence.audit.v1",
+    "output_artifact_name": "fig4_continuation_intake_objective_audit_1.output",
+    "reason": null,
+    "recovery_available": false,
+    "revision": 1,
+    "scheduler_signal": {
+      "assumptions": [],
+      "missing_inputs": [
+        "The reviewed ScientificIntake lacks the formal scientific_foundation.objective_contract structure required for continuation; the existing objective strings are not a structural substitute."
+      ],
+      "next_action_kind": null,
+      "next_actions": [
+        "Revise only the ScientificIntake contract layer by adding scientific_foundation.objective_contract while preserving the already stated overall objective, source bounds, stop conditions, observables, and unresolved evidence gaps.",
+        "Re-run actual-target projection after that bounded Intake revision; do not select a target, add a scientific objective, alter curve evidence, or introduce new TCAD parameters during the revision."
+      ],
+      "schema_version": 1,
+      "summary": "The reviewed ScientificIntake is faithful to the supplied Fig. 4 evidence family: identities, axes, paper conditions, digitized table statistics, per-series gaps, shared support, and the unresolved SIMS detection-limit mismatch are all preserved without claiming raw SIMS data or qualification. Continuation is nevertheless blocked because scientific_foundation.objective_contract is absent. The existing objective prose preserves the research intent but cannot satisfy the formal contract consumed by actual-target projection and the later hypothesis stage.",
+      "verdict": "blocked"
+    },
+    "sealed_output": {
+      "artifact_name": "fig4_continuation_intake_objective_audit_1.output",
+      "kind": "evidence_audit",
+      "payload": {
+        "checks": [
+          {
+            "basis": "The paper title, journal, year, and DOI in the Intake match the supplied PDF. The PDF, recovered panel, both overlays, both CSVs, and manifest hashes match the manifest and validation report; the manifest binds Fig. 4 to PDF page 6 and object 241 0.",
+            "check_key": "source.object_identity",
+            "evidence_keys": [
+              "paper_source",
+              "figure_request",
+              "figure_manifest",
+              "validation_report",
+              "source_panels",
+              "audit_overlays_001",
+              "audit_overlays_002",
+              "curve_tables_001",
+              "curve_tables_002"
+            ],
+            "status": "pass",
+            "subject": "The Intake binds the correct paper and exact Fig. 4 evidence family."
+          },
+          {
+            "basis": "The request, manifest, and visible panel agree on a linear depth axis from 0.0 to 0.8 micrometers and a log10 Zn concentration axis from 10^15 to 10^20 cm^-3. The Intake preserves those bounds and units without extending them.",
+            "check_key": "figure.axis_calibration",
+            "evidence_keys": [
+              "figure_request",
+              "figure_manifest",
+              "source_panels"
+            ],
+            "status": "pass",
+            "subject": "The Intake states the panel axes and scales correctly."
+          },
+          {
+            "basis": "The source legend visibly binds the solid black trace to In0.83Al0.17As, and the request and manifest record the same label, color, style, and matched legend binding. The Intake does not confuse it with a blue fitted curve.",
+            "check_key": "series.inalas.identity",
+            "evidence_keys": [
+              "figure_request",
+              "figure_manifest",
+              "source_panels",
+              "audit_overlays_001"
+            ],
+            "status": "pass",
+            "subject": "In0.83Al0.17As series identity and role are bound faithfully."
+          },
+          {
+            "basis": "The source legend visibly binds the solid red trace to In0.83Ga0.17As, and the request and manifest record the same label, color, style, and matched legend binding. The Intake keeps the measured trace distinct from the blue erfc fit.",
+            "check_key": "series.ingaas.identity",
+            "evidence_keys": [
+              "figure_request",
+              "figure_manifest",
+              "source_panels",
+              "audit_overlays_001"
+            ],
+            "status": "pass",
+            "subject": "In0.83Ga0.17As series identity and role are bound faithfully."
+          },
+          {
+            "basis": "Full-table inspection confirms 501 observed and eligible rows, x 0.00990099-0.79009901 micrometers, y 1.7012542798525858e15-3.218787511821249e19 cm^-3, 477 direct rows and 24 shared rows. The maximum missing run is 235 source columns between point indices 12 and 248; the Intake explicitly denies continuous direct support across it.",
+            "check_key": "series.inalas.table_status",
+            "evidence_keys": [
+              "curve_tables_001",
+              "validation_report",
+              "audit_overlays_001",
+              "audit_overlays_002"
+            ],
+            "status": "pass",
+            "subject": "The Intake accurately reports the complete In0.83Al0.17As table and its limitations."
+          },
+          {
+            "basis": "Full-table inspection confirms 765 observed and eligible rows, x 0.00990099-0.79009901 micrometers, y 1.7012542798525858e15-5.549927761300058e19 cm^-3, 702 direct rows and 63 shared rows. The largest missing run is 18 source columns, matching the reported maximum gap.",
+            "check_key": "series.ingaas.table_status",
+            "evidence_keys": [
+              "curve_tables_002",
+              "validation_report",
+              "audit_overlays_001",
+              "audit_overlays_002"
+            ],
+            "status": "pass",
+            "subject": "The Intake accurately reports the complete In0.83Ga0.17As table and its limitations."
+          },
+          {
+            "basis": "The identity overlay and numeric redraw show the discontinuities recorded by point_index and pixel_x_raw. The Intake carries the 235-pixel In0.83Al0.17As gap as unresolved and imposes a stop condition against interpolation; it also preserves the smaller In0.83Ga0.17As gaps rather than describing either table as continuous raw data.",
+            "check_key": "visible_support.gaps_and_occlusion",
+            "evidence_keys": [
+              "figure_request",
+              "figure_manifest",
+              "audit_overlays_001",
+              "audit_overlays_002",
+              "curve_tables_001",
+              "curve_tables_002"
+            ],
+            "status": "pass",
+            "subject": "The Intake preserves visible support gaps and does not interpolate across them."
+          },
+          {
+            "basis": "The manifest declares shared-support groups for both series, the tables retain support_kind, coordinate_ownership, shared_group, and support_source_series, and the report counts 87 shared-occlusion rows. The Intake expressly requires downstream use to retain shared ownership.",
+            "check_key": "visible_support.shared_ownership",
+            "evidence_keys": [
+              "figure_manifest",
+              "validation_report",
+              "audit_overlays_001",
+              "audit_overlays_002",
+              "curve_tables_001",
+              "curve_tables_002"
+            ],
+            "status": "pass",
+            "subject": "The Intake preserves shared-support provenance and avoids treating it as independent direct support."
+          },
+          {
+            "basis": "The paper and source panel place the approximate SIMS limit at 3e15 cm^-3. Full-table comparison finds 104 In0.83Al0.17As rows and 10 In0.83Ga0.17As rows numerically below it, while every below_sims_detection_limit field is zero and the report records zero below-limit rows. The Intake states this exact conflict and stops secure quantitative use pending resolution.",
+            "check_key": "measurement.sims_detection_limit",
+            "evidence_keys": [
+              "paper_source",
+              "source_panels",
+              "curve_tables_001",
+              "curve_tables_002",
+              "validation_report"
+            ],
+            "status": "pass",
+            "subject": "The Intake faithfully exposes the unresolved detection-limit eligibility conflict."
+          },
+          {
+            "basis": "The Intake repeatedly labels the numeric profiles as digitized pixel evidence, distinguishes overlays from raw measurement, lists author raw SIMS data as missing, and excludes any claim that the tables are author-supplied raw data.",
+            "check_key": "claims.digitized_not_raw",
+            "evidence_keys": [
+              "paper_source",
+              "figure_request",
+              "figure_manifest",
+              "curve_tables_001",
+              "curve_tables_002"
+            ],
+            "status": "pass",
+            "subject": "The Intake does not overstate pixel-digitized observations as author-supplied raw SIMS data."
+          },
+          {
+            "basis": "The source panel shows blue D proportional to C and erfc fits, but the typed request, manifest, and validation report contain only the two measured black and red series. The Intake explicitly says the fitted curves were not requested or supplied as curve tables.",
+            "check_key": "claims.fitted_curves_excluded",
+            "evidence_keys": [
+              "source_panels",
+              "figure_request",
+              "figure_manifest",
+              "validation_report"
+            ],
+            "status": "pass",
+            "subject": "The Intake correctly excludes the visible fitted curves from the digitized family."
+          },
+          {
+            "basis": "The PDF supports single-layer diffusion at 480 degrees C for 8 min, the high-concentration D proportional to C interpretation, the low-concentration VCD/erfc interpretation for In0.83Ga0.17As, ni=5.4e16 cm^-3, and the listed Table I coefficients and surface concentrations. The Intake attributes these to the authors and does not present them as proof or a complete TCAD parameter set.",
+            "check_key": "paper.conditions_interpretation_parameters",
+            "evidence_keys": [
+              "paper_source"
+            ],
+            "status": "pass",
+            "subject": "Paper conditions, author interpretation, and Table I values are transcribed within their stated scope."
+          },
+          {
+            "basis": "The Intake restricts this family to the supplied 480 degrees C, 8 min condition and explicitly excludes 800 degrees C and 900 degrees C curves or parameters; none appears in the request, manifest, panel, overlays, or tables.",
+            "check_key": "scope.unsupported_temperatures",
+            "evidence_keys": [
+              "paper_source",
+              "figure_request",
+              "figure_manifest",
+              "source_panels",
+              "curve_tables_001",
+              "curve_tables_002"
+            ],
+            "status": "pass",
+            "subject": "The Intake avoids unsupported 800 degrees C and 900 degrees C evidence or parameters."
+          },
+          {
+            "basis": "Both objective strings state that the supplied evidence is for later falsifiable-hypothesis selection and a minimal TCAD comparison, while this Intake remains evidence extraction and does not select a hypothesis. The observables, stop conditions, missing inputs, and claim boundary keep the paper-only scope and unresolved limitations explicit.",
+            "check_key": "continuation.objective_text",
+            "evidence_keys": [
+              "paper_source",
+              "figure_request",
+              "figure_manifest",
+              "validation_report"
+            ],
+            "status": "pass",
+            "subject": "The Intake's objective prose preserves the bounded research purpose without selecting the current target."
+          },
+          {
+            "basis": "Direct inspection of the reviewed object finds objective prose in problem_frame.objective and scientific_foundation.objective but no scientific_foundation.objective_contract field. Because prose does not satisfy the typed continuation contract, actual-target projection remains structurally blocked. The minimum revision is confined to adding that contract from the already stated overall objective and bounds, without changing evidence, selecting this round's target, adding scientific goals, or supplying new experimental parameters.",
+            "check_key": "continuation.objective_contract",
+            "evidence_keys": [
+              "paper_source",
+              "figure_request",
+              "figure_manifest",
+              "validation_report"
+            ],
+            "status": "fail",
+            "subject": "The ScientificIntake must carry a formal objective_contract consumable by actual-target projection and the later hypothesis stage."
+          },
+          {
+            "basis": "The Intake lists the absent boundary history, vacancy and complex-defect populations, reaction constants, and complete material parameters, and its stop conditions prohibit TCAD parameterization when those inputs are absent. The paper's interpretation and Table I fits are kept distinct from a complete TCAD model.",
+            "check_key": "scope.tcad_missing_inputs",
+            "evidence_keys": [
+              "paper_source",
+              "figure_request",
+              "figure_manifest"
+            ],
+            "status": "pass",
+            "subject": "The Intake faithfully preserves missing TCAD inputs and does not claim model readiness."
+          }
+        ],
+        "evidence": [
+          {
+            "locator": "Supplied PDF, pages 1-7; bibliographic header, Fig. 4 discussion, Fig. 4 caption, and Table I.",
+            "source_key": "paper_source",
+            "source_type": "frozen_input"
+          },
+          {
+            "locator": "Typed Fig. 4 request for panel main, including source binding, calibrated axes, requested solid black and red series, legend boxes, exclusions, and seeds.",
+            "source_key": "figure_request",
+            "source_type": "frozen_input"
+          },
+          {
+            "locator": "Qualified Fig. 4 manifest for paper_source PDF object 241 0 on PDF page 6, with one panel, two matched series, shared-support declarations, and artifact hashes.",
+            "source_key": "figure_manifest",
+            "source_type": "frozen_input"
+          },
+          {
+            "locator": "Deterministic validation report with integrity_status valid, source_status qualified, bundle fingerprint 8702fefaceacecad92c32296f775ba8892cb75a826693a92b9cf6184e093a496, and per-series row metrics.",
+            "source_key": "validation_report",
+            "source_type": "runtime_output"
+          },
+          {
+            "locator": "Recovered 1000 by 815 pixel Fig. 4 source panel showing the axes, two measured profiles, fitted curves, legend, SEM annotations, and SIMS Detection Limit.",
+            "source_key": "source_panels",
+            "source_type": "frozen_input"
+          },
+          {
+            "locator": "Identity and fidelity overlay for both legend-bound series, including visible tracked, shared, and missing support indications.",
+            "source_key": "audit_overlays_001",
+            "source_type": "runtime_output"
+          },
+          {
+            "locator": "Numeric redraw of every supplied CSV row with discontinuities retained.",
+            "source_key": "audit_overlays_002",
+            "source_type": "runtime_output"
+          },
+          {
+            "locator": "Complete In0.83Al0.17As CSV, 501 rows, point indices 10-798, with observed, eligibility, detection-limit, and support-ownership fields.",
+            "source_key": "curve_tables_001",
+            "source_type": "runtime_output"
+          },
+          {
+            "locator": "Complete In0.83Ga0.17As CSV, 765 rows, point indices 10-798, with observed, eligibility, detection-limit, and support-ownership fields.",
+            "source_key": "curve_tables_002",
+            "source_type": "runtime_output"
+          }
+        ],
+        "schema_version": 1
+      },
+      "schema": "scidiscovery.evidence-audit.v1"
+    },
+    "sealed_output_status": "available",
+    "started_at": "2026-09-08T13:46:44.185154Z",
+    "state": "completed"
+  },
+  "revision_request": {
+    "name": "fig4_continuation_intake_objective_revision_1",
+    "operation_id": "science.evidence.extract.figure.v2",
+    "inputs": [
+      {
+        "port": "paper_source",
+        "artifact_names": [
+          "ingaas_inalas_fig4_source_paper"
+        ]
+      },
+      {
+        "port": "figure_request",
+        "artifact_names": [
+          "fig4_continuation_figure_request_1.output"
+        ]
+      },
+      {
+        "port": "figure_manifest",
+        "artifact_names": [
+          "fig4_continuation_figure_materialized_1"
+        ]
+      },
+      {
+        "port": "validation_report",
+        "artifact_names": [
+          "fig4_continuation_figure_materialized_1.validation_report"
+        ]
+      },
+      {
+        "port": "source_panels",
+        "artifact_names": [
+          "fig4_continuation_figure_materialized_1.source_panels"
+        ]
+      },
+      {
+        "port": "audit_overlays",
+        "artifact_names": [
+          "fig4_continuation_figure_materialized_1.audit_overlays_001",
+          "fig4_continuation_figure_materialized_1.audit_overlays_002"
+        ]
+      },
+      {
+        "port": "curve_tables",
+        "artifact_names": [
+          "fig4_continuation_figure_materialized_1.curve_tables_001",
+          "fig4_continuation_figure_materialized_1.curve_tables_002"
+        ]
+      },
+      {
+        "port": "prior_draft",
+        "artifact_names": [
+          "fig4_continuation_intake_2.output"
+        ]
+      },
+      {
+        "port": "change_request",
+        "artifact_names": [
+          "fig4_continuation_intake_objective_audit_1.output"
+        ]
+      }
+    ],
+    "instruction": "按精确绑定的非通过审查完成一次最小范围的 ScientificIntake 修订。优先读取 prior_draft 与 change_request，补齐审查指出的科学基础正式目标合同，使后续既有目标投影和假设阶段能够消费原已陈述的总体研究目的。不得改变证据事实、图证数据、已有未决问题、缺失条件和停止条件；不要选择本轮实验子目标、不要新增科学目标或补造实验参数。仍须提交完整 ScientificIntake，已有独立审查不由本次修订继承。在预算内先形成完整候选、按可确定诊断修正并完成受控提交；只作完成这次确切修改所需的原件核对。"
+  },
+  "revision_preflight": {
+    "admissible": true,
+    "executor_kind": "agent",
+    "port": null,
+    "reason_code": null
+  },
+  "revision_invocation": {
+    "executor_kind": "agent",
+    "operation_id": "science.evidence.extract.figure.v2",
+    "result": {
+      "agent_type": "op_science_evidence_extract_figure_v2_bc4404c0d76c",
+      "backend": "local_trusted",
+      "candidate_accepted": false,
+      "completed_at": null,
+      "created_at": "2026-09-08T13:54:47.532146Z",
+      "deadline_at": "2026-09-08T14:04:47.532146Z",
+      "head_advance": null,
+      "last_activity_at": null,
+      "logical_name": "fig4_continuation_intake_objective_revision_1",
+      "name": "fig4_continuation_intake_objective_revision_1",
+      "operation_id": "science.evidence.extract.figure.v2",
+      "output_artifact_name": null,
+      "reason": null,
+      "recovery_available": false,
+      "revision": 1,
+      "scheduler_signal": null,
+      "sealed_output": null,
+      "sealed_output_status": "unavailable",
+      "started_at": null,
+      "state": "queued"
+    }
+  }
+}

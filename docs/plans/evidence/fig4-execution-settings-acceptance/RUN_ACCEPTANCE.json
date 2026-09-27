@@ -1,0 +1,213 @@
+{
+  "scope": "Engineering acceptance only; scientific authority remains the sealed instance records.",
+  "instance": "M7-test0",
+  "runs": [
+    {
+      "name": "fig4_user_context_author_settings_acceptance_1",
+      "operation_id": "tcad.deck.author.initial.v1",
+      "state": "completed",
+      "created_at": "2026-09-15T11:02:56.658991Z",
+      "completed_at": "2026-09-15T11:07:28.819880Z",
+      "duration_seconds": 272.161,
+      "execution_profile": {
+        "profile": {
+          "model": "gpt-5.6-sol",
+          "narrative_language": "zh-CN",
+          "reasoning_effort": "medium"
+        },
+        "sources": {
+          "model": "request_snapshot",
+          "narrative_language": "request_snapshot",
+          "reasoning_effort": "request_snapshot"
+        }
+      },
+      "output_artifact_name": "fig4_user_context_author_settings_acceptance_1.output",
+      "signal_verdict": "pass",
+      "diagnostic_summary": {
+        "failure": null,
+        "latest_native_error": null,
+        "latest_rejection": null,
+        "latest_tool_error": null,
+        "native_coverage": "unobserved",
+        "recent_errors": [
+          {
+            "category": "output_rejected",
+            "code": "output_rejected",
+            "details": [
+              {
+                "affected_action": "submit",
+                "code": "output_invalid",
+                "message": "Supported values: 'pass', 'revise', 'blocked' or 'inconclusive'",
+                "path": "$.deck[key]",
+                "phase": "output_payload",
+                "repairable": true,
+                "schema_version": 1,
+                "type": "literal_error"
+              }
+            ],
+            "repairable_by_output": true
+          }
+        ],
+        "rejection_count": 2
+      },
+      "tool_timing": [
+        {
+          "completed_at": "2026-09-15T11:03:18.566328+00:00",
+          "duration_seconds": 0.01014,
+          "started_at": "2026-09-15T11:03:18.556203+00:00",
+          "tool_name": "worker_open_assignment"
+        },
+        {
+          "completed_at": "2026-09-15T11:05:39.300070+00:00",
+          "duration_seconds": 0.055826,
+          "started_at": "2026-09-15T11:05:39.244290+00:00",
+          "tool_name": "worker_tcad_debug_run"
+        },
+        {
+          "completed_at": "2026-09-15T11:06:04.965103+00:00",
+          "duration_seconds": 8.387715,
+          "started_at": "2026-09-15T11:05:56.577405+00:00",
+          "tool_name": "worker_tcad_debug_run"
+        },
+        {
+          "completed_at": "2026-09-15T11:06:12.152515+00:00",
+          "duration_seconds": 3.822706,
+          "started_at": "2026-09-15T11:06:08.329822+00:00",
+          "tool_name": "worker_tcad_debug_run"
+        },
+        {
+          "completed_at": "2026-09-15T11:06:30.905914+00:00",
+          "duration_seconds": 7.8538,
+          "started_at": "2026-09-15T11:06:23.052127+00:00",
+          "tool_name": "worker_tcad_debug_run"
+        },
+        {
+          "completed_at": "2026-09-15T11:06:35.461875+00:00",
+          "duration_seconds": 1.033747,
+          "started_at": "2026-09-15T11:06:34.428144+00:00",
+          "tool_name": "worker_tcad_debug_run"
+        },
+        {
+          "completed_at": "2026-09-15T11:06:40.641734+00:00",
+          "duration_seconds": 1.144532,
+          "started_at": "2026-09-15T11:06:39.497218+00:00",
+          "tool_name": "worker_tcad_debug_run"
+        },
+        {
+          "completed_at": "2026-09-15T11:06:46.042337+00:00",
+          "duration_seconds": 1.107693,
+          "started_at": "2026-09-15T11:06:44.934693+00:00",
+          "tool_name": "worker_tcad_debug_run"
+        },
+        {
+          "completed_at": "2026-09-15T11:06:53.544196+00:00",
+          "duration_seconds": 4.016282,
+          "started_at": "2026-09-15T11:06:49.527928+00:00",
+          "tool_name": "worker_tcad_debug_run"
+        },
+        {
+          "completed_at": "2026-09-15T11:07:28.830258+00:00",
+          "duration_seconds": 0.130512,
+          "started_at": "2026-09-15T11:07:28.699756+00:00",
+          "tool_name": "worker_submit_result"
+        }
+      ]
+    },
+    {
+      "name": "fig4_user_context_implementation_review_settings_1",
+      "operation_id": "tcad.deck.review.v1",
+      "state": "completed",
+      "created_at": "2026-09-15T11:08:35.122802Z",
+      "completed_at": "2026-09-15T11:12:01.803283Z",
+      "duration_seconds": 206.681,
+      "execution_profile": {
+        "profile": {
+          "model": "gpt-5.6-sol",
+          "narrative_language": "zh-CN",
+          "reasoning_effort": "medium"
+        },
+        "sources": {
+          "model": "request_snapshot",
+          "narrative_language": "request_snapshot",
+          "reasoning_effort": "request_snapshot"
+        }
+      },
+      "output_artifact_name": "fig4_user_context_implementation_review_settings_1.output",
+      "signal_verdict": "revise",
+      "diagnostic_summary": {
+        "failure": null,
+        "latest_native_error": null,
+        "latest_rejection": null,
+        "latest_tool_error": null,
+        "native_coverage": "unobserved",
+        "recent_errors": [],
+        "rejection_count": 0
+      },
+      "tool_timing": [
+        {
+          "completed_at": "2026-09-15T11:08:55.362307+00:00",
+          "duration_seconds": 0.010213,
+          "started_at": "2026-09-15T11:08:55.352107+00:00",
+          "tool_name": "worker_open_assignment"
+        },
+        {
+          "completed_at": "2026-09-15T11:12:01.816665+00:00",
+          "duration_seconds": 0.197683,
+          "started_at": "2026-09-15T11:12:01.619375+00:00",
+          "tool_name": "worker_submit_result"
+        }
+      ]
+    },
+    {
+      "name": "fig4_dimensionless_gate_author_revision_1",
+      "operation_id": "tcad.deck.author.revise.v1",
+      "state": "completed",
+      "created_at": "2026-09-15T11:15:47.867614Z",
+      "completed_at": "2026-09-15T11:17:32.651215Z",
+      "duration_seconds": 104.784,
+      "execution_profile": {
+        "profile": {
+          "model": "gpt-5.6-sol",
+          "narrative_language": "zh-CN",
+          "reasoning_effort": "medium"
+        },
+        "sources": {
+          "model": "request_snapshot",
+          "narrative_language": "request_snapshot",
+          "reasoning_effort": "request_snapshot"
+        }
+      },
+      "output_artifact_name": "fig4_dimensionless_gate_author_revision_1.output",
+      "signal_verdict": "blocked",
+      "diagnostic_summary": {
+        "failure": null,
+        "latest_native_error": null,
+        "latest_rejection": null,
+        "latest_tool_error": null,
+        "native_coverage": "unobserved",
+        "recent_errors": [],
+        "rejection_count": 0
+      },
+      "tool_timing": [
+        {
+          "completed_at": "2026-09-15T11:16:09.406508+00:00",
+          "duration_seconds": 0.009507,
+          "started_at": "2026-09-15T11:16:09.397018+00:00",
+          "tool_name": "worker_open_assignment"
+        },
+        {
+          "completed_at": "2026-09-15T11:17:32.665012+00:00",
+          "duration_seconds": 0.23958,
+          "started_at": "2026-09-15T11:17:32.425465+00:00",
+          "tool_name": "worker_submit_result"
+        }
+      ]
+    }
+  ],
+  "observations": [
+    "The author and independent reviewer both received the configured profile; separate platform metadata files record observed model and effort.",
+    "The initial author's debug call produced two rejection events, one detailed $.deck[key] enum violation and one empty diagnostic; this is not evidence of two independent failed attempts.",
+    "A sealed implementation_gap was accepted as a completed author-revision Run without placeholder code or retry.",
+    "The bounded implementation gap has been explicitly bound into a new experiment-design Run; no runtime or framework changes were made."
+  ]
+}

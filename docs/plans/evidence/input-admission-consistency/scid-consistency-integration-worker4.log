@@ -1,0 +1,206 @@
+.FF                                                                      [100%]
+=================================== FAILURES ===================================
+_ test_materialized_sprocess_author_review_package_preserves_case_anchors[reviewed-producer-plan] _
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-19/test_materialized_sprocess_aut1')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7feb71316cf0>
+produced = True
+
+    @pytest.mark.parametrize("produced", (False, True), ids=("imported-plan", "reviewed-producer-plan"))
+    def test_materialized_sprocess_author_review_package_preserves_case_anchors(tmp_path, monkeypatch, produced):
+        catalog, runtime, root, capability = _system(
+            tmp_path, solver_kind="sprocess", science_plugin=_plan_producer_plugin() if produced else SCIENCE_PLUGIN,
+        )
+        _, sources, _ = _review_context_fixture("case")
+        artifact = runtime.artifacts.register(sources["experiment_plan"], ArtifactRegistration(
+            kind="experiment_portfolio", schema_id="scidiscovery.experiment-portfolio.v1",
+            payload_schema_version=1, media_type="application/json", creator=runtime.actor,
+        ), idempotency_key="p1:comparison-plan")
+        plan_name = "comparison_plan"
+        runtime.scheduler_bindings.bind(
+            instance=runtime.scheduler_bindings.list_instances()[0].instance_id,
+            namespace="artifact", name=plan_name, object_id=artifact.artifact_id,
+        )
+        experiment_review_name = None
+        if produced:
+            plan_name = _complete_plan_fixture(
+                catalog, runtime, root, "produced_plan", "science.fixture.plan.v1",
+                json.loads(sources["experiment_plan"]),
+            )
+            experiment_review_name = _complete_plan_fixture(
+                catalog, runtime, root, "plan_review", "science.object.review.v1",
+                {"review_target": "experiment_portfolio", "verdict": "pass", "summary": "Plan is consistent."},
+                [{"port": "experiment_plan", "artifact_names": [plan_name]}],
+            )
+        plan_proofs = ([{"port": "experiment_review", "artifact_names": [experiment_review_name]}]
+                       if experiment_review_name is not None else [])
+        _invoke(root, "process", "tcad.deck.author.initial.v1", [
+            {"port": "execution_capability", "artifact_names": ["execution_capability"]},
+            {"port": "experiment_plan", "artifact_names": [plan_name]},
+            *plan_proofs,
+        ])
+        worker = _debug_worker(catalog, runtime, _ImmediateDebugAdapter(), tmp_path / "debug")
+        opened = worker.call_tool("worker_open_assignment", {})
+        _write_sprocess_workspace(opened)
+        workspace = Path(str(opened["workspace_path"]))
+        (workspace / "deck/files/main.cmd").write_text("set bias_smoke 0.0\nset bias_comparison 1.0\n")
+        path = workspace / "deck/declarations.json"
+        declarations = json.loads(path.read_bytes())
+        declarations["case_anchors"] = [
+            {"experiment_key": "entrypoint_smoke", "case_key": key,
+             "relative_path": "main.cmd", "locator": f"set bias_{key} {value}"}
+            for key, value in (("smoke", "0.0"), ("comparison", "1.0"))
+        ]
+        path.write_bytes(canonical_json(declarations))
+        for mode in ("preflight", "initialization"):
+            assert worker.call_tool("worker_tcad_debug_run", {"run_name": mode, "mode": mode})["state"] == "succeeded"
+        assert worker.call_tool("worker_submit_result", {})["state"] == "completed"
+        project_name = root.call_tool("run_status", {"name": "process"})["output_artifact_name"]
+        _invoke(root, "process_review", "tcad.deck.review.v1", [
+            {"port": "project", "artifact_names": [project_name]},
+            {"port": "execution_capability", "artifact_names": ["execution_capability"]},
+            {"port": "experiment_plan", "artifact_names": [plan_name]},
+            *plan_proofs,
+        ])
+        compiled = catalog.operation("tcad.deck.review.v1")
+        reviewer = LocalWorkerMCPRouter(runtime.runs, operation_id=compiled.spec.operation_id,
+                                        operation_digest=compiled.digest)
+        review_open = reviewer.call_tool("worker_open_assignment", {})
+        review = DeckReviewReport(
+            verdict="pass", capability_sha256=capability.canonical_sha256(),
+            summary="The materialized fixture is ready.", rationale="Its bounded requirements are realized.",
+            physical_fidelity="pass", implementation_fidelity="pass", syntax_fidelity="pass",
+            numerical_protocol_fidelity="pass", execution_ready=True,
+        )
+        Path(str(review_open["output_directory"]), "result.json").write_bytes(canonical_json({
+            "schema_version": 1, "handoff": {"verdict": "pass", "summary": "Ready for packaging."},
+            "payload": review.model_dump(mode="json"),
+        }))
+        assert reviewer.call_tool("worker_submit_result", {})["state"] == "completed"
+        review_name = root.call_tool("run_status", {"name": "process_review"})["output_artifact_name"]
+        package_request = {
+            "name": "process_package", "operation_id": "tcad.reviewed-deck-package.v2",
+            "inputs": [
+                {"port": "project", "artifact_names": [project_name]},
+                {"port": "review", "artifact_names": [review_name]},
+                {"port": "capability", "artifact_names": ["execution_capability"]},
+                {"port": "experiment_plan", "artifact_names": [plan_name]},
+            ],
+        }
+        if produced:
+            from scidiscovery.artifact_agent.interfaces.mcp_root_shared import RootToolError
+            from tcad_artifact import operation_transforms
+    
+>           other_plan = _complete_plan_fixture(
+                catalog, runtime, root, "other_plan", "science.fixture.plan.v1",
+                {**json.loads(sources["experiment_plan"]), "objective": "A different bounded plan."},
+            )
+
+tests/operations/test_l4_local_tcad.py:1975: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+catalog = <scidiscovery.operations.catalog.CompiledCatalog object at 0x7feb72f57740>
+runtime = ArtifactAgentRuntime(project_root=PosixPath('/tmp/pytest-of-da/pytest-19/test_materialized_sprocess_aut1/project'), st...bject at 0x7feb714762d0>, operation_catalog=<scidiscovery.operations.catalog.CompiledCatalog object at 0x7feb711a7c80>)
+root = <scidiscovery.artifact_agent.interfaces.mcp_root.RootMCPRouter object at 0x7feb71194ce0>
+name = 'other_plan', operation_id = 'science.fixture.plan.v1'
+payload = {'objective': 'A different bounded plan.', 'objective_key': 'fixture_objective', 'priority_order': ['entrypoint_smoke'], 'priority_rationale': 'Only one implementation check is required.', ...}
+inputs = (), verdict = 'pass'
+
+    def _complete_plan_fixture(catalog, runtime, root, name, operation_id, payload, inputs=(), verdict="pass"):
+        _invoke(root, name, operation_id, list(inputs))
+        compiled = catalog.operation(operation_id)
+        worker = LocalWorkerMCPRouter(runtime.runs, operation_id=operation_id,
+                                     operation_digest=compiled.digest)
+        opened = worker.call_tool("worker_open_assignment", {})
+        Path(str(opened["output_directory"]), "result.json").write_bytes(canonical_json({
+            "schema_version": 1, "handoff": {"verdict": verdict, "summary": "Bounded admission fixture."},
+            "payload": payload,
+        }))
+        submitted = worker.call_tool("worker_submit_result", {})
+>       assert submitted["state"] == "completed", submitted
+E       AssertionError: {'state': 'rejected', 'diagnostics': [{'path': '$.payload', 'message': "1 validation error for ExperimentPortfolio
+E           ...ation visit https://errors.pydantic.dev/2.11/v/value_error", 'type': 'value_error', 'rule_id': 'fixture.plan.schema'}]}
+E       assert 'rejected' == 'completed'
+E         
+E         - completed
+E         + rejected
+
+tests/operations/test_l4_local_tcad.py:1884: AssertionError
+_____ test_shared_review_requires_every_exact_subject_across_producer_runs _____
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-19/test_shared_review_requires_ev0')
+
+    def test_shared_review_requires_every_exact_subject_across_producer_runs(tmp_path):
+        plugin = _plan_producer_plugin()
+        producer = next(op for op in plugin.operations if op.operation_id == "science.fixture.plan.v1")
+        reviewer = next(op for op in plugin.operations if op.operation_id == "science.object.review.v1")
+        plan_port = reviewer.inputs[0].model_copy(update={"max_items": 2})
+        # This fixture isolates control-plane identity, without a single-plan domain checker.
+        review_output = reviewer.outputs[0].model_copy(update={
+            "context_validator": None, "context_rule_id": None, "context_sources": (),
+        })
+        reviewer = reviewer.model_copy(update={
+            "operation_id": "science.fixture.collection-review.v1",
+            "inputs": (plan_port, *reviewer.inputs[1:]), "outputs": (review_output,),
+        })
+        producer = producer.model_copy(update={
+            "review": producer.review.model_copy(update={"reviewer_operation": reviewer.operation_id}),
+        })
+        from scidiscovery.operations.spec import InputPortSpec
+    
+        review_port = InputPortSpec(
+            name="reviews", description="Exact independent witnesses for the bound plans.",
+            schema_id=review_output.schema_id, media_types=review_output.media_types,
+            codec=review_output.codec, schema_resource=review_output.schema_resource,
+            min_items=0, max_items=2, usage="prior_signal",
+        )
+        consumer = reviewer.model_copy(update={
+            "operation_id": "science.fixture.collection-consume.v1",
+            "inputs": (*reviewer.inputs, review_port),
+        })
+        plugin = plugin.model_copy(update={"operations": (
+            *(op for op in plugin.operations if op.operation_id != producer.operation_id),
+            producer, reviewer, consumer,
+        )})
+        catalog, runtime, root, _ = _system(tmp_path, science_plugin=plugin)
+        _, sources, _ = _review_context_fixture("case")
+        plans = [
+>           _complete_plan_fixture(catalog, runtime, root, f"plan_{index}", producer.operation_id,
+                                   {**json.loads(sources["experiment_plan"]), "objective": f"Plan {index}."})
+            for index in range(3)
+        ]
+
+tests/operations/test_review_admission_integration.py:49: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+catalog = <scidiscovery.operations.catalog.CompiledCatalog object at 0x7feb72bb9c00>
+runtime = ArtifactAgentRuntime(project_root=PosixPath('/tmp/pytest-of-da/pytest-19/test_shared_review_requires_ev0/project'), st...bject at 0x7feb7150d670>, operation_catalog=<scidiscovery.operations.catalog.CompiledCatalog object at 0x7feb72e3f300>)
+root = <scidiscovery.artifact_agent.interfaces.mcp_root.RootMCPRouter object at 0x7feb711bf7a0>
+name = 'plan_0', operation_id = 'science.fixture.plan.v1'
+payload = {'objective': 'Plan 0.', 'objective_key': 'fixture_objective', 'priority_order': ['entrypoint_smoke'], 'priority_rationale': 'Only one implementation check is required.', ...}
+inputs = (), verdict = 'pass'
+
+    def _complete_plan_fixture(catalog, runtime, root, name, operation_id, payload, inputs=(), verdict="pass"):
+        _invoke(root, name, operation_id, list(inputs))
+        compiled = catalog.operation(operation_id)
+        worker = LocalWorkerMCPRouter(runtime.runs, operation_id=operation_id,
+                                     operation_digest=compiled.digest)
+        opened = worker.call_tool("worker_open_assignment", {})
+        Path(str(opened["output_directory"]), "result.json").write_bytes(canonical_json({
+            "schema_version": 1, "handoff": {"verdict": verdict, "summary": "Bounded admission fixture."},
+            "payload": payload,
+        }))
+        submitted = worker.call_tool("worker_submit_result", {})
+>       assert submitted["state"] == "completed", submitted
+E       AssertionError: {'state': 'rejected', 'diagnostics': [{'path': '$.payload', 'message': "1 validation error for ExperimentPortfolio
+E           ...ation visit https://errors.pydantic.dev/2.11/v/value_error", 'type': 'value_error', 'rule_id': 'fixture.plan.schema'}]}
+E       assert 'rejected' == 'completed'
+E         
+E         - completed
+E         + rejected
+
+tests/operations/test_l4_local_tcad.py:1884: AssertionError
+=========================== short test summary info ============================
+FAILED tests/operations/test_l4_local_tcad.py::test_materialized_sprocess_author_review_package_preserves_case_anchors[reviewed-producer-plan]
+FAILED tests/operations/test_review_admission_integration.py::test_shared_review_requires_every_exact_subject_across_producer_runs
+2 failed, 1 passed in 2.29s

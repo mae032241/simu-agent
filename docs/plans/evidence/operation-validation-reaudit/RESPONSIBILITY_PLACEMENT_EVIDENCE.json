@@ -1,0 +1,895 @@
+{
+  "date": "2026-09-12",
+  "scope": "Current post-removal working tree; engineering audit only; no deployed-runtime claim",
+  "source_mutations": false,
+  "production_instance_access": false,
+  "counts": {
+    "operations": 50,
+    "agent": 25,
+    "transform": 21,
+    "approval": 3,
+    "effect": 1,
+    "declared_agent_input_validators": 14,
+    "declared_transform_input_validators": 0
+  },
+  "count_interpretation": "Absence of a declared input validator is not itself a defect; guards and port rules still apply. Specific failures require leaf and consumer evidence.",
+  "findings": {
+    "R01": {
+      "title": "Input-only objective/plan identity checked at output submission",
+      "evidence": "temporary Root/Worker Run reproduction",
+      "operations": [
+        "science.curve.contract.design.v1"
+      ]
+    },
+    "R02": {
+      "title": "Reading a bound TCAD package repeats execution qualification",
+      "evidence": "actual submission call trace; positive submission completed",
+      "operations": [
+        "tcad.result.analyze.v1"
+      ]
+    },
+    "R03": {
+      "title": "Unresolved figure report requires recovered-image execution metadata",
+      "evidence": "model probe plus request context consumer",
+      "operations": [
+        "science.figure.request.prepare.v1"
+      ]
+    },
+    "R04": {
+      "title": "Agent retypes mechanically derived fields",
+      "evidence": "current schema and generator/caller tracing",
+      "operations": [
+        "science.evidence.extract.v1",
+        "science.evidence.extract.figure.v2",
+        "science.evidence.revise-from-critic.v1",
+        "science.intake.revise.v1",
+        "science.experiment.revise.v1",
+        "science.evidence.audit.v1",
+        "science.evidence.audit.intake.v1",
+        "science.figure.evidence.audit.v1",
+        "science.hypothesis.criticize.v1",
+        "science.object.review.v1",
+        "science.curve.contract.review.v1",
+        "science.figure.request.prepare.v1",
+        "tcad.parameter.evidence.extract.v1",
+        "tcad.parameter.evidence.audit.v1",
+        "tcad.deck.author.initial.v1",
+        "tcad.deck.author.revise.v1",
+        "tcad.deck.author.runtime-failure.v1",
+        "tcad.deck.review.v1"
+      ]
+    },
+    "R05": {
+      "title": "Transform input mismatch is delayed and classified as an engineering failure",
+      "evidence": "Root preflight/invoke probe for curve-error transform; additional source tracing",
+      "operations": [
+        "science.curve.error.analyze.v1",
+        "tcad.runtime-attestation.v1"
+      ]
+    },
+    "R06": {
+      "title": "Approval eligibility checking and document projection share exception handling",
+      "evidence": "current source trace; prior recorded parameter approval test failures, not a new live approval",
+      "operations": [
+        "science.evidence.qualify.v1",
+        "science.parameters.qualify.pass.v1",
+        "science.parameters.qualify.exception.v1"
+      ]
+    },
+    "A01": {
+      "title": "PDF recovery environment failure can be classified as repairable scientific output",
+      "evidence": "source exception chain only; not a new live failure",
+      "operations": [
+        "science.figure.request.prepare.v1"
+      ]
+    },
+    "A02": {
+      "title": "Figure role prompt still forbids partial unresolved fields",
+      "evidence": "current prompt/model comparison; prior implementation omission",
+      "operations": [
+        "science.figure.request.prepare.v1"
+      ]
+    }
+  },
+  "probes": [
+    {
+      "probe": "curve_contract_cross_input_identity",
+      "preflight_admissible": true,
+      "submission_state": "rejected",
+      "diagnostics": [
+        {
+          "schema_version": 1,
+          "code": "output_invalid",
+          "phase": "output_context",
+          "path": "$.payload",
+          "message": "Value violates the declared type, bounds, or field relationship.",
+          "repairable": true,
+          "affected_action": "submit",
+          "rule_id": "curve.contract.objective_binding",
+          "type": "value_error"
+        }
+      ],
+      "direct_reason": "curve contract objective differs from the experiment plan"
+    },
+    {
+      "probe": "tcad_analysis_submit_rechecks_project_qualification",
+      "state": "completed",
+      "qualification_check_calls": 1,
+      "stacks": [
+        [
+          "_review_qualifies_project",
+          "model_validate_json",
+          "parse_bound_json",
+          "_identity_context",
+          "analysis_context",
+          "validate_run_output",
+          "_validated_candidate"
+        ]
+      ]
+    },
+    {
+      "probe": "unresolved_figure_requires_recovered_image_metadata",
+      "accepted": false,
+      "errors": [
+        {
+          "loc": [
+            "source",
+            "raster_image",
+            "recovered_image_sha256"
+          ],
+          "type": "missing"
+        },
+        {
+          "loc": [
+            "source",
+            "raster_image",
+            "width"
+          ],
+          "type": "missing"
+        },
+        {
+          "loc": [
+            "source",
+            "raster_image",
+            "height"
+          ],
+          "type": "missing"
+        },
+        {
+          "loc": [
+            "source",
+            "raster_image",
+            "recovery_tool_version"
+          ],
+          "type": "missing"
+        }
+      ]
+    },
+    {
+      "operation": "science.curve.error.analyze.v1",
+      "probe": "transform_accepts_mismatched_input_then_calls_it_engineering_failure",
+      "preflight_admissible": true,
+      "exception_type": "RootToolError",
+      "reason": "deterministic transform failed",
+      "cause": "executor_component_failed",
+      "exception_chain": [
+        {
+          "type": "RootToolError",
+          "message": "deterministic transform failed"
+        },
+        {
+          "type": "OperationEngineeringError",
+          "message": "executor_component_failed"
+        },
+        {
+          "type": "ValueError",
+          "message": "curve bundle digest does not match metric report"
+        }
+      ],
+      "resources": {
+        "elapsed_seconds": 0.704,
+        "peak_rss_kib": 105544,
+        "address_space_limit_mib": 512,
+        "cpu_limit_seconds": 30
+      }
+    }
+  ],
+  "resource_limits": {
+    "elapsed_seconds": 1.477,
+    "peak_rss_kib": 121044,
+    "address_space_limit_mib": 512,
+    "cpu_limit_seconds": 45,
+    "threads": 1
+  },
+  "source_snapshot": [
+    {
+      "path": "plugins/curve_figure_evidence/curve_figure_evidence/figure_digitization_contract.py",
+      "sha256": "8263a4fe8c101ddd016b07fa1ab8265be159737d4b35ce2f97b5eb310c238b4b"
+    },
+    {
+      "path": "plugins/curve_figure_evidence/curve_figure_evidence/figure_science_operations.py",
+      "sha256": "debc1fe5591004b3c967460aceaec3e0093d8c4872cc92ba29f9b0210a7dd9c0"
+    },
+    {
+      "path": "plugins/curve_figure_evidence/curve_figure_evidence/figure_source.py",
+      "sha256": "855b5822e0462cb157817e146162b554cfb97493b96982d5fa42c57cfe73bb23"
+    },
+    {
+      "path": "plugins/curve_figure_evidence/curve_figure_evidence/figure_worker_tool.py",
+      "sha256": "3df95c4cbb7fa8a420134e13a77116d2ae2564cc62b846642176c87ef5b3a836"
+    },
+    {
+      "path": "plugins/curve_figure_evidence/curve_figure_evidence/operation_transforms.py",
+      "sha256": "92ba770788cbb30f039ca7cd9b954e5fb20fb7b43b9962b40cdd16c133bbde49"
+    },
+    {
+      "path": "plugins/curve_score/curve_score/analysis.py",
+      "sha256": "5ee436fd998bc90f6ad61729370e4bfc890202529ea546472e096f0cce5ae39a"
+    },
+    {
+      "path": "plugins/curve_score/curve_score/curve_contract_compiler.py",
+      "sha256": "cbb7cd939b17746980df9c221c6978bb4265d4f08ca56893a8b37c2b9d2fdaf8"
+    },
+    {
+      "path": "plugins/curve_score/curve_score/operation_transforms.py",
+      "sha256": "7d4b5726a9be8d36a260a344daa7f28837c2898e82b389729faafde1ec37f60a"
+    },
+    {
+      "path": "plugins/curve_score/curve_score/science_operations.py",
+      "sha256": "df2153d30371ddd229d2dea0de37943c849d8c0f850acd0c4f25a6d28211946b"
+    },
+    {
+      "path": "plugins/tcad_artifact/tcad_artifact/curve_operations.py",
+      "sha256": "3aac8d29776aea869897c2f8f50b06416be4fbb16462733d6ad5edffd0f39d98"
+    },
+    {
+      "path": "plugins/tcad_artifact/tcad_artifact/device_parameters.py",
+      "sha256": "18648674fb251e6914e8f3ef48762795688ca306ca7871e2d1e295e79c620ec7"
+    },
+    {
+      "path": "plugins/tcad_artifact/tcad_artifact/operation_transforms.py",
+      "sha256": "0c50c74bf0b39dfc5c3ffb57a78e31cb896d509e8cc297706e96a2da1c4dd735"
+    },
+    {
+      "path": "plugins/tcad_artifact/tcad_artifact/parameter_operations.py",
+      "sha256": "5ca6807f8c3500a56a7161f1af225b278808fc060167909c17a1dc46373756d0"
+    },
+    {
+      "path": "plugins/tcad_artifact/tcad_artifact/plugin.py",
+      "sha256": "4c9da0ebdcee20df8f7da2ea3e7aa163714eb14852cdf6ff0c8db611c6dc201a"
+    },
+    {
+      "path": "plugins/tcad_artifact/tcad_artifact/project_packager.py",
+      "sha256": "f8d0a3b1e9e87e1dc122dd62ada23f34e0c9e7c72ff480848db2b7e7ff5bc534"
+    },
+    {
+      "path": "plugins/tcad_artifact/tcad_artifact/result_analysis.py",
+      "sha256": "a88f5ad610f95c959d3db2faf31e126ea2ab9b336b7c91cfdfb7ef23ce7eade9"
+    },
+    {
+      "path": "plugins/tcad_artifact/tcad_artifact/runtime_plugin.py",
+      "sha256": "9890a822c5e6d17d5b465c52f66aaf2d615afdd90161b083a8168d8f381cf5c7"
+    },
+    {
+      "path": "src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py",
+      "sha256": "8058957908259e95322164e7cbc477931a6b5dedd42af50cf56aa7c92e6938b0"
+    },
+    {
+      "path": "src/scidiscovery/artifact_agent/schema/cognitive.py",
+      "sha256": "5807eb23c746dd7714caba68e68628f074b2436490cef8ee883c22e69d00c179"
+    },
+    {
+      "path": "src/scidiscovery/artifact_agent/schema/experiment.py",
+      "sha256": "3b0b707b3e6e4fa6de9a57484ba6cd1c2f7e0cfc68d22f7f5463c6ab39a7d437"
+    },
+    {
+      "path": "src/scidiscovery/artifact_agent/schema/experiment_intent.py",
+      "sha256": "5a5f1fc4274a22bb0d0bd4c00d938682ab10ac7e00d1707ea1d90886ef605b0d"
+    },
+    {
+      "path": "src/scidiscovery/artifact_agent/schema/research_cycle.py",
+      "sha256": "ab1f9554d47450be8b1eaa71da7a4fb1c202f7db48864001c080680b2326ea84"
+    },
+    {
+      "path": "src/scidiscovery/artifact_agent/schema/scientific_foundation.py",
+      "sha256": "2d315048409c9909328f43a95d8b539601bfe8e393a5b7584d53994d9d50665e"
+    },
+    {
+      "path": "src/scidiscovery/artifact_agent/service/run_outputs.py",
+      "sha256": "8e9846a03ecdb101d75e257db67ef9b6078d4341eb1a61d8b0a124b5325401b6"
+    },
+    {
+      "path": "src/scidiscovery/general_science_components.py",
+      "sha256": "bdb5a4650bbb0bfa4494c57b172ecff185cd5228df26cbef42232ec0617175a7"
+    },
+    {
+      "path": "src/scidiscovery/general_science_experiment_components.py",
+      "sha256": "0e60acb2b53ee8c38b58c2c0c28d4a60fff34e50a48f7b5044a323516214c9a3"
+    },
+    {
+      "path": "src/scidiscovery/operation_declaration.py",
+      "sha256": "db656e07f3e68f0c9f12e45380ecf7727c72fc054bf156c1da1bb70ebab51476"
+    },
+    {
+      "path": "src/scidiscovery/operations/input_validation.py",
+      "sha256": "c3b1d7aeac77f0a52af6f6b04714d1468e19c5c724dd9ff66153c060394fff7d"
+    },
+    {
+      "path": "src/scidiscovery/operations/invoke.py",
+      "sha256": "ddc7a15ee092fade527fe3ad1dcbed159921a8c4b5937fea298348cc4b91364a"
+    },
+    {
+      "path": "src/scidiscovery/operations/review_admission.py",
+      "sha256": "d5034f0c61a629e3ecc99501c81774d2f5e5d339b308fc6f0f93dfd2b24a7dbd"
+    }
+  ],
+  "operations": [
+    {
+      "operation": "scidiscovery.curve-bundle.figure-evidence.v2",
+      "executor": "transform",
+      "input_validation": null,
+      "digest": "1efec158d1536fd3732318aad57b7c79d1732d9069e5ad93cb48a440d0bb25ee",
+      "findings": [],
+      "scope_note": "Catalog, declared validation boundaries and applicable shared consumers inspected; not exhaustive branch execution."
+    },
+    {
+      "operation": "scidiscovery.curve-reference-coverage.v1",
+      "executor": "transform",
+      "input_validation": null,
+      "digest": "369fb4ea85fb703c6d0bba365473391cbac60f070f0917df8cc82b7ea8cb2656",
+      "findings": [],
+      "scope_note": "Catalog, declared validation boundaries and applicable shared consumers inspected; not exhaustive branch execution."
+    },
+    {
+      "operation": "scidiscovery.curve-score.v1",
+      "executor": "transform",
+      "input_validation": null,
+      "digest": "b2c5c50812478f1458e6f964a38d68e5c32a4b2630889467a53fe389cb61822b",
+      "findings": [],
+      "scope_note": "Catalog, declared validation boundaries and applicable shared consumers inspected; not exhaustive branch execution."
+    },
+    {
+      "operation": "scidiscovery.objective-coverage.v1",
+      "executor": "transform",
+      "input_validation": null,
+      "digest": "e7712d1827fb8768e792096c44b8663e5c20233116722524987b6af16e2ed4cc",
+      "findings": [],
+      "scope_note": "Catalog, declared validation boundaries and applicable shared consumers inspected; not exhaustive branch execution."
+    },
+    {
+      "operation": "science.curve.contract.design.v1",
+      "executor": "agent",
+      "input_validation": null,
+      "digest": "4c77641d6a7301d20c36b32b4da61508ca063d526ade21a6aa7fd354bd9f95ff",
+      "findings": [
+        "R01"
+      ],
+      "scope_note": "Catalog, declared validation boundaries and applicable shared consumers inspected; not exhaustive branch execution."
+    },
+    {
+      "operation": "science.curve.contract.review.v1",
+      "executor": "agent",
+      "input_validation": null,
+      "digest": "b04b40cc92f209fffb8f9a831e8481b36ea5b2ad9df170319209e5659afcaac2",
+      "findings": [
+        "R04"
+      ],
+      "scope_note": "Catalog, declared validation boundaries and applicable shared consumers inspected; not exhaustive branch execution."
+    },
+    {
+      "operation": "science.curve.error.analyze.v1",
+      "executor": "transform",
+      "input_validation": null,
+      "digest": "3b638ac4d08b47a4f95a9fcc0599b27b4e0d0f04f77a256857758dd986dd12f9",
+      "findings": [
+        "R05"
+      ],
+      "scope_note": "Catalog, declared validation boundaries and applicable shared consumers inspected; not exhaustive branch execution."
+    },
+    {
+      "operation": "science.evidence.audit.intake.v1",
+      "executor": "agent",
+      "input_validation": null,
+      "digest": "5d4b0b89b19ba8de895d46c98770e88f38cab33a95fc5238dcc71559afbe9664",
+      "findings": [
+        "R04"
+      ],
+      "scope_note": "Catalog, declared validation boundaries and applicable shared consumers inspected; not exhaustive branch execution."
+    },
+    {
+      "operation": "science.evidence.audit.v1",
+      "executor": "agent",
+      "input_validation": null,
+      "digest": "d4f3b61cfb911bfd1672fae3e23938bf8e5b2730160259e623932499ef4ed1c0",
+      "findings": [
+        "R04"
+      ],
+      "scope_note": "Catalog, declared validation boundaries and applicable shared consumers inspected; not exhaustive branch execution."
+    },
+    {
+      "operation": "science.evidence.extract.figure.v2",
+      "executor": "agent",
+      "input_validation": null,
+      "digest": "8f556ecc5938a7871048b955763916a7ba38b27d3c1c393bf78d3c3aeb3cd8af",
+      "findings": [
+        "R04"
+      ],
+      "scope_note": "Catalog, declared validation boundaries and applicable shared consumers inspected; not exhaustive branch execution."
+    },
+    {
+      "operation": "science.evidence.extract.v1",
+      "executor": "agent",
+      "input_validation": null,
+      "digest": "94d94b9cb7fe03563e60e654ffe9b60126ec0e4dd7541daa46c02962a072fe55",
+      "findings": [
+        "R04"
+      ],
+      "scope_note": "Catalog, declared validation boundaries and applicable shared consumers inspected; not exhaustive branch execution."
+    },
+    {
+      "operation": "science.evidence.qualify.v1",
+      "executor": "approval",
+      "input_validation": null,
+      "digest": "2c78e818df061bae280c9374f1f3bc86e50027acf5ed2e9789d9122bcfb54f0c",
+      "findings": [
+        "R06"
+      ],
+      "scope_note": "Catalog, declared validation boundaries and applicable shared consumers inspected; not exhaustive branch execution."
+    },
+    {
+      "operation": "science.evidence.revise-from-critic.v1",
+      "executor": "agent",
+      "input_validation": null,
+      "digest": "f8a0d307563bad32c0b242b2c75c150ce6278022a092caae97c9b753fee967f0",
+      "findings": [
+        "R04"
+      ],
+      "scope_note": "Catalog, declared validation boundaries and applicable shared consumers inspected; not exhaustive branch execution."
+    },
+    {
+      "operation": "science.experiment.design.v1",
+      "executor": "agent",
+      "input_validation": {
+        "validator": {
+          "component_id": "experiment_inputs",
+          "plugin_id": null
+        },
+        "rule_id": "science.experiment.design.v1.inputs",
+        "description": "The hypothesis portfolio must match the exact research objective; critic disposition must support design; optional execution context must be structurally valid."
+      },
+      "digest": "a441b398e2a94725a8bd702c7d3465c16382a392a1f1982f516a2dbe95144fae",
+      "findings": [],
+      "scope_note": "Catalog, declared validation boundaries and applicable shared consumers inspected; not exhaustive branch execution."
+    },
+    {
+      "operation": "science.experiment.materialize.v1",
+      "executor": "transform",
+      "input_validation": null,
+      "digest": "83ff9f7e804164b42e65dc49ab114a0055e6e73e5cad31caee0ea2c57639021c",
+      "findings": [],
+      "scope_note": "Catalog, declared validation boundaries and applicable shared consumers inspected; not exhaustive branch execution."
+    },
+    {
+      "operation": "science.experiment.revise.v1",
+      "executor": "agent",
+      "input_validation": {
+        "validator": {
+          "component_id": "experiment_revision_inputs",
+          "plugin_id": null
+        },
+        "rule_id": "science.experiment.revise.v1.inputs",
+        "description": "The change request must review the experiment portfolio."
+      },
+      "digest": "05b43c320e54f1a8056b98a30c9ea5383aa9767191bc27f98aee548b0ef35161",
+      "findings": [
+        "R04"
+      ],
+      "scope_note": "Catalog, declared validation boundaries and applicable shared consumers inspected; not exhaustive branch execution."
+    },
+    {
+      "operation": "science.figure.evidence.audit.v1",
+      "executor": "agent",
+      "input_validation": null,
+      "digest": "afc8a48b7631270b6ae2bf8de0c2ed35543cf329fd0c6036453ec0b9743aaf0c",
+      "findings": [
+        "R04"
+      ],
+      "scope_note": "Catalog, declared validation boundaries and applicable shared consumers inspected; not exhaustive branch execution."
+    },
+    {
+      "operation": "science.figure.evidence.materialize.v1",
+      "executor": "transform",
+      "input_validation": null,
+      "digest": "ff3e820657b222167d1b4c22cd2255c387ff5d42cacde1982fe0cc9bda950332",
+      "findings": [],
+      "scope_note": "Catalog, declared validation boundaries and applicable shared consumers inspected; not exhaustive branch execution."
+    },
+    {
+      "operation": "science.figure.request.prepare.v1",
+      "executor": "agent",
+      "input_validation": null,
+      "digest": "a99134fa32ab314a2fcc0e5538cc76a6ee492b7490e764aca649ad58cf31ce6e",
+      "findings": [
+        "R03",
+        "R04",
+        "A01",
+        "A02"
+      ],
+      "scope_note": "Catalog, declared validation boundaries and applicable shared consumers inspected; not exhaustive branch execution."
+    },
+    {
+      "operation": "science.hypothesis.criticize.v1",
+      "executor": "agent",
+      "input_validation": {
+        "validator": {
+          "component_id": "critic_inputs",
+          "plugin_id": null
+        },
+        "rule_id": "science.hypothesis.criticize.v1.inputs",
+        "description": "The exact hypothesis portfolio must contain hypotheses."
+      },
+      "digest": "3a3a030ab6b5b2f2c71b758d8864237f9cf277ce339d8154631e3388ba9bd141",
+      "findings": [
+        "R04"
+      ],
+      "scope_note": "Catalog, declared validation boundaries and applicable shared consumers inspected; not exhaustive branch execution."
+    },
+    {
+      "operation": "science.hypothesis.propose.v1",
+      "executor": "agent",
+      "input_validation": {
+        "validator": {
+          "component_id": "hypothesis_inputs",
+          "plugin_id": null
+        },
+        "rule_id": "science.hypothesis.propose.v1.inputs",
+        "description": "The scientific foundation must contain its explicit original objective."
+      },
+      "digest": "98706e1b6ec44d9bdb3fe7a291ec68065c5c2b7be17ef2e0c48e02cfab51de96",
+      "findings": [],
+      "scope_note": "Catalog, declared validation boundaries and applicable shared consumers inspected; not exhaustive branch execution."
+    },
+    {
+      "operation": "science.hypothesis.revise.v1",
+      "executor": "agent",
+      "input_validation": {
+        "validator": {
+          "component_id": "hypothesis_inputs",
+          "plugin_id": null
+        },
+        "rule_id": "science.hypothesis.revise.v1.inputs",
+        "description": "The scientific foundation must contain its explicit original objective."
+      },
+      "digest": "990d4e71bb50569a8728d5a5336344a2430b46b31deafc555e06cc034e9850dc",
+      "findings": [],
+      "scope_note": "Catalog, declared validation boundaries and applicable shared consumers inspected; not exhaustive branch execution."
+    },
+    {
+      "operation": "science.intake.revise.v1",
+      "executor": "agent",
+      "input_validation": null,
+      "digest": "76f3b237a1c19a3bb87f4220a8def29008c48cb6356c61e24243e3518b4bf89b",
+      "findings": [
+        "R04"
+      ],
+      "scope_note": "Catalog, declared validation boundaries and applicable shared consumers inspected; not exhaustive branch execution."
+    },
+    {
+      "operation": "science.intake.split.v1",
+      "executor": "transform",
+      "input_validation": null,
+      "digest": "8314ef8d3226b7abffeb1cf526b028d7e679ccf034038c83bd31405e5352754f",
+      "findings": [],
+      "scope_note": "Catalog, declared validation boundaries and applicable shared consumers inspected; not exhaustive branch execution."
+    },
+    {
+      "operation": "science.object.review.v1",
+      "executor": "agent",
+      "input_validation": {
+        "validator": {
+          "component_id": "object_review_inputs",
+          "plugin_id": null
+        },
+        "rule_id": "science.object.review.v1.inputs",
+        "description": "The bound plan and optional original research objective must have matching identity and statement."
+      },
+      "digest": "390ca1811e612f394ce54eed05ccb834bd9fc8b87a542c02d943f985b9792aa3",
+      "findings": [
+        "R04"
+      ],
+      "scope_note": "Catalog, declared validation boundaries and applicable shared consumers inspected; not exhaustive branch execution."
+    },
+    {
+      "operation": "science.objective.project.v1",
+      "executor": "transform",
+      "input_validation": null,
+      "digest": "7c2d2a9e0fd7c4ae6cbe38719851971ff1e6f909acf41fec4355053c17f087b4",
+      "findings": [],
+      "scope_note": "Catalog, declared validation boundaries and applicable shared consumers inspected; not exhaustive branch execution."
+    },
+    {
+      "operation": "science.parameter.coverage.v1",
+      "executor": "transform",
+      "input_validation": null,
+      "digest": "b49acfeb60e8e0b0c3b0766503531953c65e0a92e28892c17bec5c7dc69e5335",
+      "findings": [],
+      "scope_note": "Catalog, declared validation boundaries and applicable shared consumers inspected; not exhaustive branch execution."
+    },
+    {
+      "operation": "science.parameter.uncertainty.v1",
+      "executor": "transform",
+      "input_validation": null,
+      "digest": "feeaf7c74a6328ed19768c419783946b3d3de6345efcc199def86693b305c408",
+      "findings": [],
+      "scope_note": "Catalog, declared validation boundaries and applicable shared consumers inspected; not exhaustive branch execution."
+    },
+    {
+      "operation": "science.parameters.qualify.exception.v1",
+      "executor": "approval",
+      "input_validation": null,
+      "digest": "fa321d2b6b1ff4c9411750d1253ab6ee72d9412b5a3d96da8279ca190c57ad31",
+      "findings": [
+        "R06"
+      ],
+      "scope_note": "Catalog, declared validation boundaries and applicable shared consumers inspected; not exhaustive branch execution."
+    },
+    {
+      "operation": "science.parameters.qualify.pass.v1",
+      "executor": "approval",
+      "input_validation": null,
+      "digest": "d8e6993e3758b126f6e324b2f43f9bba62d159f90bb8cdf1f3d9dff38e47910f",
+      "findings": [
+        "R06"
+      ],
+      "scope_note": "Catalog, declared validation boundaries and applicable shared consumers inspected; not exhaustive branch execution."
+    },
+    {
+      "operation": "science.result.diagnose.curve-error.v1",
+      "executor": "agent",
+      "input_validation": {
+        "validator": {
+          "component_id": "curve_diagnosis_inputs",
+          "plugin_id": null
+        },
+        "rule_id": "curve.diagnosis.inputs",
+        "description": "At admission, the analysis package must reproduce from its exact curve inputs and bind a valid curve contract with complete-plan metric coverage. Diagnosis submission does not repeat this input validation or calculation."
+      },
+      "digest": "0852c1f6a9587f996498e6b032693f5c868126e718c080c1fd5ef50093ba2724",
+      "findings": [],
+      "scope_note": "Catalog, declared validation boundaries and applicable shared consumers inspected; not exhaustive branch execution."
+    },
+    {
+      "operation": "science.result.diagnose.v1",
+      "executor": "agent",
+      "input_validation": {
+        "validator": {
+          "component_id": "diagnosis_inputs",
+          "plugin_id": null
+        },
+        "rule_id": "science.diagnosis.history_inputs",
+        "description": "Bind a structurally valid historical plan and its exact completed science.object.review.v1 scientific_review output, with matching plan parent and passing experiment_portfolio verdict. Results must have the exact plan parent. Historical review is evidence for analysis, not current authoring or execution authority."
+      },
+      "digest": "08ccdc52f6141bceffb3fc8e9733db184b32dfd9ff2b3238400b6c78bc9eac6e",
+      "findings": [],
+      "scope_note": "Catalog, declared validation boundaries and applicable shared consumers inspected; not exhaustive branch execution."
+    },
+    {
+      "operation": "tcad.control-equivalence.v1",
+      "executor": "transform",
+      "input_validation": null,
+      "digest": "1847fb685214ab020dea40cc16a2aec4d640ede39877e18451dcd8ccae7e713d",
+      "findings": [],
+      "scope_note": "Catalog, declared validation boundaries and applicable shared consumers inspected; not exhaustive branch execution."
+    },
+    {
+      "operation": "tcad.curve-bundle.sprocess-log.v1",
+      "executor": "transform",
+      "input_validation": null,
+      "digest": "41c95f656fc98113e5c2c269659308ae57138b755b0a1679f07377e02ff0bc43",
+      "findings": [],
+      "scope_note": "Catalog, declared validation boundaries and applicable shared consumers inspected; not exhaustive branch execution."
+    },
+    {
+      "operation": "tcad.curve-bundle.sprocess-plx.v1",
+      "executor": "transform",
+      "input_validation": null,
+      "digest": "a823604ea451c8314eb25e133986b8d9705544aada909fa56261db36715d74ab",
+      "findings": [],
+      "scope_note": "Catalog, declared validation boundaries and applicable shared consumers inspected; not exhaustive branch execution."
+    },
+    {
+      "operation": "tcad.deck-project-compare.v1",
+      "executor": "transform",
+      "input_validation": null,
+      "digest": "b5256e35ad47419ac79b1f9b55c8d296b57f27f280fae942d8a2f482b6f89c33",
+      "findings": [],
+      "scope_note": "Catalog, declared validation boundaries and applicable shared consumers inspected; not exhaustive branch execution."
+    },
+    {
+      "operation": "tcad.deck-review-validate.v1",
+      "executor": "transform",
+      "input_validation": null,
+      "digest": "9e837d81190fbd4d9dec519070800d5eb304d3c5406de76f69c2527bb126020a",
+      "findings": [],
+      "scope_note": "Catalog, declared validation boundaries and applicable shared consumers inspected; not exhaustive branch execution."
+    },
+    {
+      "operation": "tcad.deck.author.initial.v1",
+      "executor": "agent",
+      "input_validation": {
+        "validator": {
+          "component_id": "parameter_inputs",
+          "plugin_id": null
+        },
+        "rule_id": "tcad.author.parameter_inputs",
+        "description": "Bound parameter set and coverage must be paired and identify the same set; scientific deficiencies remain reviewable."
+      },
+      "digest": "901c2a8715583a71d08b570fbe1daafbda86a3bda634c2ffdd7dbab32c2ac24b",
+      "findings": [
+        "R04"
+      ],
+      "scope_note": "Catalog, declared validation boundaries and applicable shared consumers inspected; not exhaustive branch execution."
+    },
+    {
+      "operation": "tcad.deck.author.revise.v1",
+      "executor": "agent",
+      "input_validation": {
+        "validator": {
+          "component_id": "parameter_inputs",
+          "plugin_id": null
+        },
+        "rule_id": "tcad.author.parameter_inputs",
+        "description": "Bound parameter set and coverage must be paired and identify the same set; scientific deficiencies remain reviewable."
+      },
+      "digest": "42f0288997806f8d7ebca762f3bcb1dc95b41a4b69a163e8717fd9fdbb115a39",
+      "findings": [
+        "R04"
+      ],
+      "scope_note": "Catalog, declared validation boundaries and applicable shared consumers inspected; not exhaustive branch execution."
+    },
+    {
+      "operation": "tcad.deck.author.runtime-failure.v1",
+      "executor": "agent",
+      "input_validation": {
+        "validator": {
+          "component_id": "runtime_author_inputs",
+          "plugin_id": null
+        },
+        "rule_id": "tcad.author.runtime_failure.inputs",
+        "description": "The bound runtime attestation must report failure."
+      },
+      "digest": "3c9d912317d416040a5f11814bd778d7b1d2f5e18663fc272cc412aa3abcbd92",
+      "findings": [
+        "R04"
+      ],
+      "scope_note": "Catalog, declared validation boundaries and applicable shared consumers inspected; not exhaustive branch execution."
+    },
+    {
+      "operation": "tcad.deck.review.v1",
+      "executor": "agent",
+      "input_validation": {
+        "validator": {
+          "component_id": "parameter_inputs",
+          "plugin_id": null
+        },
+        "rule_id": "tcad.review.parameter_inputs",
+        "description": "Bound parameter set and coverage must be paired and identify the same set; failed coverage remains independently reviewable."
+      },
+      "digest": "0ce095a21839cc0b6059d119705fe13527b6437e067e5c49aeb4cf909fe68a65",
+      "findings": [
+        "R04"
+      ],
+      "scope_note": "Catalog, declared validation boundaries and applicable shared consumers inspected; not exhaustive branch execution."
+    },
+    {
+      "operation": "tcad.execution-context.project.v1",
+      "executor": "transform",
+      "input_validation": null,
+      "digest": "67431321235770012bc7efd79ad7cb360ed6be8191ccfd9d40b1b39adc0682bb",
+      "findings": [],
+      "scope_note": "Catalog, declared validation boundaries and applicable shared consumers inspected; not exhaustive branch execution."
+    },
+    {
+      "operation": "tcad.parameter.evidence.audit.v1",
+      "executor": "agent",
+      "input_validation": {
+        "validator": {
+          "component_id": "parameter_audit_inputs",
+          "plugin_id": null
+        },
+        "rule_id": "tcad.parameter.audit.inputs",
+        "description": "The exact parameter package must equal every bound expanded family member."
+      },
+      "digest": "64e7646e9597114f00d80757cb4304d62b032b01149b7717a1a782b63461f2ec",
+      "findings": [
+        "R04"
+      ],
+      "scope_note": "Catalog, declared validation boundaries and applicable shared consumers inspected; not exhaustive branch execution."
+    },
+    {
+      "operation": "tcad.parameter.evidence.expand.v1",
+      "executor": "transform",
+      "input_validation": null,
+      "digest": "d1e880dedfd1e503c479036fb13e3f7cb915d7596f1babaac6d62ddfe29d527e",
+      "findings": [],
+      "scope_note": "Catalog, declared validation boundaries and applicable shared consumers inspected; not exhaustive branch execution."
+    },
+    {
+      "operation": "tcad.parameter.evidence.extract.v1",
+      "executor": "agent",
+      "input_validation": null,
+      "digest": "ab5f0fd93c887ec2ed5e5730e88a8ba44a6d793f61d580396524990a5b01ad72",
+      "findings": [
+        "R04"
+      ],
+      "scope_note": "Catalog, declared validation boundaries and applicable shared consumers inspected; not exhaustive branch execution."
+    },
+    {
+      "operation": "tcad.realization-snapshot-materialize.v1",
+      "executor": "transform",
+      "input_validation": null,
+      "digest": "1d41f5d90e3e16670e15914cf07789faf9c364427830e5c7beb98b94b962e46f",
+      "findings": [],
+      "scope_note": "Catalog, declared validation boundaries and applicable shared consumers inspected; not exhaustive branch execution."
+    },
+    {
+      "operation": "tcad.result.analyze.v1",
+      "executor": "agent",
+      "input_validation": {
+        "validator": {
+          "component_id": "result_analysis_input",
+          "plugin_id": null
+        },
+        "rule_id": "tcad.result_analysis.input_binding",
+        "description": "Before creating a Run, bind a structurally valid historical plan and its exact completed science.object.review.v1 scientific_review output, with matching plan parent and passing experiment_portfolio verdict; history grants no current authoring or execution authority. Original solver outputs must match manifest names/media/bytes and declared project paths/cases. Recovered solver outputs instead require the explicitly bound sealed recovery_manifest and execution_result, with exact receipt membership, original execution/project, declared output/case, actual path and byte identity. Same-Run registered tool evidence is admitted by the tool, not by submission. Bind the additional controlled tcad_log to diagnostics, not solver_outputs; diagnostics must share the exact execution lineage. Missing execution products permit limited analysis."
+      },
+      "digest": "2a88189d98c97dc4fb37879cea9cfe486e4865ca000b50f86ad224e6914b26ed",
+      "findings": [
+        "R02"
+      ],
+      "scope_note": "Catalog, declared validation boundaries and applicable shared consumers inspected; not exhaustive branch execution."
+    },
+    {
+      "operation": "tcad.reviewed-deck-package.v2",
+      "executor": "transform",
+      "input_validation": null,
+      "digest": "b7860038bf54b413f843211f4a379f00761a95909d706d95866b59f55b6f8110",
+      "findings": [],
+      "scope_note": "Catalog, declared validation boundaries and applicable shared consumers inspected; not exhaustive branch execution."
+    },
+    {
+      "operation": "tcad.runtime-attestation.v1",
+      "executor": "transform",
+      "input_validation": null,
+      "digest": "2f1be8423029547bb4d452d232d9c90d559d69df2e1dad53120c0b069e0bb569",
+      "findings": [
+        "R05"
+      ],
+      "scope_note": "Catalog, declared validation boundaries and applicable shared consumers inspected; not exhaustive branch execution."
+    },
+    {
+      "operation": "tcad.study.execute",
+      "executor": "effect",
+      "input_validation": null,
+      "digest": "f30025ab24f6dc7459187e4b73c0c467ad1bc6d1acddd4194b9d2d208afcf186",
+      "findings": [],
+      "scope_note": "Catalog, declared validation boundaries and applicable shared consumers inspected; not exhaustive branch execution."
+    }
+  ],
+  "reproduction_scripts": [
+    {
+      "name": "scid_responsibility_probe.py",
+      "sha256": "6163b60de5ca71f8fbae9527c8c3c20ee1f047a54a90a61f6e198a98946212ac",
+      "source": "import os, resource, sys, json, tempfile, inspect, collections, hashlib, time\nfrom pathlib import Path\nos.environ.update(OPENBLAS_NUM_THREADS='1', OMP_NUM_THREADS='1', MKL_NUM_THREADS='1', PYTHONDONTWRITEBYTECODE='1')\nresource.setrlimit(resource.RLIMIT_AS, (512 * 1024**2, 512 * 1024**2))\nresource.setrlimit(resource.RLIMIT_CPU, (45, 45))\nroot = Path.cwd()\nsys.path[:0] = [str(root / p) for p in ('src', '.', 'plugins/tcad_artifact', 'plugins/curve_score', 'plugins/curve_figure_evidence')]\nfrom scidiscovery.operations.catalog import compile_catalog\nfrom scidiscovery.builtin_plugin import CORE_PLUGIN\nfrom scidiscovery.general_science_plugin import PLUGIN as GENERAL\nfrom curve_score.plugin import PLUGIN as CURVE\nfrom tcad_artifact.plugin import PLUGIN as TCAD\nfrom curve_figure_evidence.plugin import PLUGIN as FIGURE\nfrom scidiscovery.artifact_agent.schema.common import canonical_json\nfrom scidiscovery.artifact_agent.schema.artifact import ArtifactRegistration\nfrom scidiscovery.artifact_agent.interfaces.mcp_local_worker import LocalWorkerMCPRouter\nfrom tests.operations.test_m2_curve_analysis_boundary import _root, _compiler_plan, _compiler_objective, _bundle\nfrom curve_score.curve_contract_compiler import CurveContractCompileInput, compile_curve_contract\nfrom tests.operations.test_tcad_result_analysis import analysis_system, open_analysis, analysis_report, write_analysis\nfrom tests.operations.test_minimal_figure_extraction import _request, _png\nfrom curve_figure_evidence.figure_digitization_contract import FigureDigitizationRequest\nfrom pydantic import ValidationError\n\nstarted=time.monotonic()\ncatalog=compile_catalog((CORE_PLUGIN, GENERAL, CURVE, TCAD, FIGURE))\nrows=[]\nfor name in catalog.operation_ids():\n    op=catalog.operation(name)\n    rows.append({'operation':name,'executor':op.spec.executor.kind,'input_validation':op.spec.input_validation.model_dump(mode='json') if op.spec.input_validation else None,\n                 'guards':[g.model_dump(mode='json') for g in op.spec.guards],\n                 'context_validators':[{'output':p.name,'validator':p.context_validator.model_dump(mode='json'),'sources':list(p.context_sources)} for p in op.spec.outputs if p.context_validator],\n                 'digest':op.digest})\nout={'catalog':rows, 'probes':[]}\nwith tempfile.TemporaryDirectory(prefix='scid-responsibility-') as tmp:\n    temp=Path(tmp)\n    temp.joinpath('curve').mkdir()\n    cat,runtime,instance,router=_root(temp/'curve')\n    def register(name, value, schema):\n        obj=runtime.artifacts.register(canonical_json(value), ArtifactRegistration(kind='fixture',schema_id=schema,payload_schema_version=1,media_type='application/json',creator=runtime.actor),idempotency_key=name)\n        runtime.scheduler_bindings.bind(instance=instance.instance_id,namespace='artifact',name=name,object_id=obj.artifact_id)\n    plan=_compiler_plan(); objective=_compiler_objective(); bundle=_bundle()\n    register('plan',plan.model_dump(mode='json'),'scidiscovery.experiment-portfolio.v1')\n    register('objective',objective.model_dump(mode='json'),'scidiscovery.research-objective.v1')\n    wrong=objective.model_dump(mode='json'); wrong['objective_key']='different_objective'\n    register('wrong_objective',wrong,'scidiscovery.research-objective.v1')\n    register('reference',bundle.model_dump(mode='json'),'scidiscovery.curve-bundle.v1')\n    router.call_tool('operation_invoke',dict(name='plan_review',operation_id='science.object.review.v1',inputs=[dict(port='experiment_plan',artifact_names=['plan'])],instruction='Review the synthetic plan.'))\n    compiled=cat.operation('science.object.review.v1')\n    reviewer=LocalWorkerMCPRouter(runtime.runs,operation_id=compiled.spec.operation_id,operation_digest=compiled.digest)\n    opened=reviewer.call_tool('worker_open_assignment',{})\n    Path(opened['output_directory'],'result.json').write_bytes(canonical_json({'schema_version':1,'handoff':{'verdict':'pass','summary':'Synthetic fixture.'},'payload':{'review_target':'experiment_portfolio','verdict':'pass','summary':'Synthetic fixture.'}}))\n    assert reviewer.call_tool('worker_submit_result',{})['state']=='completed'\n    review_name=router.call_tool('run_status',{'name':'plan_review'})['output_artifact_name']\n    request=dict(name='contract_bad_input',operation_id='science.curve.contract.design.v1',instruction='Exercise the exact synthetic bindings.',inputs=[dict(port='research_objective',artifact_names=['wrong_objective']),dict(port='experiment_plan',artifact_names=['plan']),dict(port='experiment_review',artifact_names=[review_name]),dict(port='reference_bundle',artifact_names=['reference'])])\n    admission=router.call_tool('operation_preflight',request)\n    result={'probe':'curve_contract_cross_input_identity','preflight_admissible':admission['admissible']}\n    if admission['admissible']:\n        router.call_tool('operation_invoke',request)\n        compiled=cat.operation(request['operation_id'])\n        worker=LocalWorkerMCPRouter(runtime.runs,operation_id=compiled.spec.operation_id,operation_digest=compiled.digest)\n        opened=worker.call_tool('worker_open_assignment',{})\n        contract=compile_curve_contract(CurveContractCompileInput.model_validate({'experiment_key':'implementation_check','target_bindings':[{'target_key':'target_implementation','reference_series_key':'reference'}],'candidate_case_keys':['baseline'],'comparison_metric':'residual_rms'}),objective=objective,portfolio=plan,reference_bundle=bundle)\n        Path(opened['output_directory'],'result.json').write_bytes(canonical_json({'schema_version':1,'handoff':{'verdict':'pass','summary':'Synthetic compiler output.'},'payload':contract.model_dump(mode='json')}))\n        submitted=worker.call_tool('worker_submit_result',{})\n        result.update(submission_state=submitted['state'],diagnostics=submitted.get('diagnostics'))\n        from curve_score.science_operations import _curve_contract_context\n        try:_curve_contract_context(contract.model_dump(mode='json'),{'experiment_plan':plan.canonical_json(),'research_objective':canonical_json(wrong),'reference_bundle':bundle.canonical_json()}, {})\n        except Exception as error:result['direct_reason']=str(error)\n    out['probes'].append(result)\n\n    temp.joinpath('tcad').mkdir()\n    system=analysis_system(temp/'tcad'); worker,opened=open_analysis(system)\n    import tcad_artifact.project_packager as packager\n    original=packager.validate_deck_review_against_project\n    calls=[]\n    def track(*args,**kwargs):\n        calls.append([frame.function for frame in inspect.stack()[1:8]])\n        return original(*args,**kwargs)\n    packager.validate_deck_review_against_project=track\n    try:\n        write_analysis(opened,analysis_report())\n        submitted=worker.call_tool('worker_submit_result',{})\n    finally:packager.validate_deck_review_against_project=original\n    out['probes'].append({'probe':'tcad_analysis_submit_rechecks_project_qualification','state':submitted['state'],'qualification_check_calls':len(calls),'stacks':calls})\n\n    request=json.loads(_request(_png()))\n    request.update(request_status='unresolved',unresolved_reasons=['Image identity has not been recovered.'])\n    for key in ('plot_bbox','axis_calibration','series'):request.pop(key,None)\n    for key in ('recovered_image_sha256','width','height','recovery_tool_version'):request['source'].pop(key,None)\n    try:FigureDigitizationRequest.model_validate_json(canonical_json(request)); errors=[]\n    except ValidationError as error:errors=[{'loc':list(e['loc']),'type':e['type']} for e in error.errors()]\n    out['probes'].append({'probe':'unresolved_figure_requires_recovered_image_metadata','accepted':not errors,'errors':errors})\n\nout['resources']={'elapsed_seconds':round(time.monotonic()-started,3),'peak_rss_kib':resource.getrusage(resource.RUSAGE_SELF).ru_maxrss,'address_space_limit_mib':512,'cpu_limit_seconds':45,'threads':1}\nPath('/tmp/scid-responsibility-probes.json').write_text(json.dumps(out,ensure_ascii=False,indent=2)+'\\n')\nprint(json.dumps({'operation_count':len(rows),'executor_counts':dict(collections.Counter(r['executor'] for r in rows)),'probes':out['probes'],'resources':out['resources']},ensure_ascii=False,indent=2))\n",
+      "command": "/home/da/miniconda3/bin/python /tmp/scid_responsibility_probe.py",
+      "working_directory": "/home/da/project/ai4s/tcad/git_release/scidiscovery-agent/123/scidiscovery-e5.2"
+    },
+    {
+      "name": "scid_transform_boundary_probe.py",
+      "sha256": "a0b9600d77ccfd0a02f5f66b739665300d268c072344d7dee3169d9f266043c6",
+      "source": "import os,resource,sys,json,tempfile,time\nfrom pathlib import Path\nos.environ.update(OPENBLAS_NUM_THREADS='1',OMP_NUM_THREADS='1',MKL_NUM_THREADS='1',PYTHONDONTWRITEBYTECODE='1')\nresource.setrlimit(resource.RLIMIT_AS,(512*1024**2,512*1024**2))\nresource.setrlimit(resource.RLIMIT_CPU,(30,30))\nroot=Path.cwd()\nsys.path[:0]=[str(root/p) for p in ('src','.','plugins/curve_score','plugins/tcad_artifact','plugins/curve_figure_evidence')]\nfrom tests.operations.test_m2_curve_analysis_boundary import _root,_inputs,_register_inputs,_analysis_request\nfrom scidiscovery.artifact_agent.schema.common import canonical_json\nstarted=time.monotonic()\nwith tempfile.TemporaryDirectory(prefix='scid-transform-boundary-') as tmp:\n    catalog,runtime,instance,router=_root(Path(tmp))\n    values=_inputs(); report=json.loads(values['metric_report'])\n    report['curve_bundle_sha256']='f'*64\n    values['metric_report']=canonical_json(report)\n    _register_inputs(runtime,instance,values)\n    request=_analysis_request()\n    admission=router.call_tool('operation_preflight',request)\n    out={'operation':request['operation_id'],'probe':'transform_accepts_mismatched_input_then_calls_it_engineering_failure','preflight_admissible':admission['admissible']}\n    if admission['admissible']:\n        try:out['invoke_result']=router.call_tool('operation_invoke',request)\n        except Exception as error:\n            out['exception_type']=type(error).__name__\n            out['reason']=str(error)\n            out['cause']=str(error.__cause__)\n            out['exception_chain']=[]\n            while error is not None:\n                out['exception_chain'].append({'type':type(error).__name__,'message':str(error)})\n                error=error.__cause__\n    out['resources']={'elapsed_seconds':round(time.monotonic()-started,3),'peak_rss_kib':resource.getrusage(resource.RUSAGE_SELF).ru_maxrss,'address_space_limit_mib':512,'cpu_limit_seconds':30}\n    Path('/tmp/scid-transform-boundary-probe.json').write_text(json.dumps(out,ensure_ascii=False,indent=2)+'\\n')\n    print(json.dumps(out,ensure_ascii=False,indent=2))\n",
+      "command": "/home/da/miniconda3/bin/python /tmp/scid_transform_boundary_probe.py",
+      "working_directory": "/home/da/project/ai4s/tcad/git_release/scidiscovery-agent/123/scidiscovery-e5.2"
+    }
+  ]
+}

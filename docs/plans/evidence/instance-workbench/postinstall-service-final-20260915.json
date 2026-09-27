@@ -1,0 +1,17 @@
+{
+  "command": [
+    "python",
+    "/tmp/scid_workbench_postinstall_20260915.py"
+  ],
+  "exit_code": 0,
+  "stop_reason": null,
+  "duration_seconds": 0.206,
+  "peak_tree_rss_mib": 26.16,
+  "budget_mib": 512,
+  "peak_processes": [
+    {
+      "name": "python",
+      "rss_mib": 26.16
+    }
+  ]
+}

@@ -1,0 +1,1 @@
+{"mount_sandbox": true, "workspace_and_source_readonly": true, "write_roots": ["state", "local_workspaces", "archive/instances"], "round_trips": 2, "actual_systemd_unit": false, "scientific_execution_started": false}

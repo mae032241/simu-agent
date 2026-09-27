@@ -1,0 +1,16 @@
+{
+  "command": [
+    "python",
+    "-m",
+    "pytest",
+    "-q",
+    "--tb=short",
+    "tests/operations/test_contract_attempts.py::test_unretainable_receipt_is_explicit_unknown_without_false_terminal_proof"
+  ],
+  "exit_code": 0,
+  "seconds": 1.991,
+  "peak_tree_rss_bytes": 127062016,
+  "budget_bytes": 536870912,
+  "early_stop_bytes": 469762048,
+  "memory_terminated": false
+}

@@ -1,0 +1,20 @@
+{
+  "command": [
+    "python",
+    "-m",
+    "pytest",
+    "-q",
+    "tests/operations/test_validation_responsibility_pruning.py",
+    "tests/operations/test_agent_contract_alignment.py",
+    "tests/operations/test_hypothesis_review_routing.py",
+    "tests/operations/test_tcad_gap_continuation.py",
+    "tests/operations/test_tcad_knowledge_closure.py",
+    "tests/operations/test_score_request_contract.py"
+  ],
+  "exit_code": 1,
+  "seconds": 50.263,
+  "peak_tree_rss_bytes": 244547584,
+  "budget_bytes": 536870912,
+  "early_stop_bytes": 469762048,
+  "memory_terminated": false
+}

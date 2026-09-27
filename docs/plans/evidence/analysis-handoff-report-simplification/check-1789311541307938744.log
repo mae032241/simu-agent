@@ -1,0 +1,214 @@
+FFFF...FF                                                                [100%]
+=================================== FAILURES ===================================
+_____ test_tcad_compact_report_seals_and_preserves_scientific_claim[pass] ______
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-337/test_tcad_compact_report_seals0')
+verdict = 'pass'
+
+    @pytest.mark.parametrize('verdict', ['pass', 'fail', 'inconclusive', 'invalid_study'])
+    def test_tcad_compact_report_seals_and_preserves_scientific_claim(tmp_path, verdict):
+        system = analysis_system(tmp_path, state='failed' if verdict == 'invalid_study' else 'succeeded',
+            bind_names=() if verdict == 'invalid_study' else ('A', 'B'))
+        worker, opened = open_analysis(system)
+        payload = compact_report(verdict=verdict)
+        submit_compact(worker, opened, payload)
+        status = system[2].call_tool('run_status', {'name': 'analysis'})
+        envelope = status['sealed_output']
+        report = LayeredDiagnosisReport.model_validate_json(canonical_json(envelope['payload']))
+        assert report.summary == payload['summary'] and report.gates is None
+        assert report.remaining_contradiction is report.next_action is None
+        decision = project_claim_decision(report)
+        assert decision.numerical_verdict == 'not_evaluable'
+        assert decision.overall_verdict == verdict and decision.claim_allowed == payload['claim_allowed']
+>       assert envelope['handoff']['verdict'] == {'fail': 'blocked', 'invalid_study': 'blocked'}.get(verdict, verdict)
+               ^^^^^^^^^^^^^^^^^^^
+E       KeyError: 'handoff'
+
+tests/operations/test_analysis_handoff_report.py:52: KeyError
+_____ test_tcad_compact_report_seals_and_preserves_scientific_claim[fail] ______
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-337/test_tcad_compact_report_seals1')
+verdict = 'fail'
+
+    @pytest.mark.parametrize('verdict', ['pass', 'fail', 'inconclusive', 'invalid_study'])
+    def test_tcad_compact_report_seals_and_preserves_scientific_claim(tmp_path, verdict):
+        system = analysis_system(tmp_path, state='failed' if verdict == 'invalid_study' else 'succeeded',
+            bind_names=() if verdict == 'invalid_study' else ('A', 'B'))
+        worker, opened = open_analysis(system)
+        payload = compact_report(verdict=verdict)
+        submit_compact(worker, opened, payload)
+        status = system[2].call_tool('run_status', {'name': 'analysis'})
+        envelope = status['sealed_output']
+        report = LayeredDiagnosisReport.model_validate_json(canonical_json(envelope['payload']))
+        assert report.summary == payload['summary'] and report.gates is None
+        assert report.remaining_contradiction is report.next_action is None
+        decision = project_claim_decision(report)
+        assert decision.numerical_verdict == 'not_evaluable'
+        assert decision.overall_verdict == verdict and decision.claim_allowed == payload['claim_allowed']
+>       assert envelope['handoff']['verdict'] == {'fail': 'blocked', 'invalid_study': 'blocked'}.get(verdict, verdict)
+               ^^^^^^^^^^^^^^^^^^^
+E       KeyError: 'handoff'
+
+tests/operations/test_analysis_handoff_report.py:52: KeyError
+_ test_tcad_compact_report_seals_and_preserves_scientific_claim[inconclusive] __
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-337/test_tcad_compact_report_seals2')
+verdict = 'inconclusive'
+
+    @pytest.mark.parametrize('verdict', ['pass', 'fail', 'inconclusive', 'invalid_study'])
+    def test_tcad_compact_report_seals_and_preserves_scientific_claim(tmp_path, verdict):
+        system = analysis_system(tmp_path, state='failed' if verdict == 'invalid_study' else 'succeeded',
+            bind_names=() if verdict == 'invalid_study' else ('A', 'B'))
+        worker, opened = open_analysis(system)
+        payload = compact_report(verdict=verdict)
+        submit_compact(worker, opened, payload)
+        status = system[2].call_tool('run_status', {'name': 'analysis'})
+        envelope = status['sealed_output']
+        report = LayeredDiagnosisReport.model_validate_json(canonical_json(envelope['payload']))
+        assert report.summary == payload['summary'] and report.gates is None
+        assert report.remaining_contradiction is report.next_action is None
+        decision = project_claim_decision(report)
+        assert decision.numerical_verdict == 'not_evaluable'
+        assert decision.overall_verdict == verdict and decision.claim_allowed == payload['claim_allowed']
+>       assert envelope['handoff']['verdict'] == {'fail': 'blocked', 'invalid_study': 'blocked'}.get(verdict, verdict)
+               ^^^^^^^^^^^^^^^^^^^
+E       KeyError: 'handoff'
+
+tests/operations/test_analysis_handoff_report.py:52: KeyError
+_ test_tcad_compact_report_seals_and_preserves_scientific_claim[invalid_study] _
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-337/test_tcad_compact_report_seals3')
+verdict = 'invalid_study'
+
+    @pytest.mark.parametrize('verdict', ['pass', 'fail', 'inconclusive', 'invalid_study'])
+    def test_tcad_compact_report_seals_and_preserves_scientific_claim(tmp_path, verdict):
+        system = analysis_system(tmp_path, state='failed' if verdict == 'invalid_study' else 'succeeded',
+            bind_names=() if verdict == 'invalid_study' else ('A', 'B'))
+        worker, opened = open_analysis(system)
+        payload = compact_report(verdict=verdict)
+        submit_compact(worker, opened, payload)
+        status = system[2].call_tool('run_status', {'name': 'analysis'})
+        envelope = status['sealed_output']
+        report = LayeredDiagnosisReport.model_validate_json(canonical_json(envelope['payload']))
+        assert report.summary == payload['summary'] and report.gates is None
+        assert report.remaining_contradiction is report.next_action is None
+        decision = project_claim_decision(report)
+        assert decision.numerical_verdict == 'not_evaluable'
+        assert decision.overall_verdict == verdict and decision.claim_allowed == payload['claim_allowed']
+>       assert envelope['handoff']['verdict'] == {'fail': 'blocked', 'invalid_study': 'blocked'}.get(verdict, verdict)
+               ^^^^^^^^^^^^^^^^^^^
+E       KeyError: 'handoff'
+
+tests/operations/test_analysis_handoff_report.py:52: KeyError
+_ test_bounded_views_preserve_originals_matrix_values_and_full_rule_pointers[False] _
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-337/test_bounded_views_preserve_or0')
+oversized = False
+
+    @pytest.mark.parametrize('oversized', [False, True])
+    def test_bounded_views_preserve_originals_matrix_values_and_full_rule_pointers(tmp_path, oversized):
+        from tcad_artifact.analysis_bindings import materialize, source_bindings, workspace_sources
+>       request, contents = view_fixture(tmp_path, oversized=oversized)
+                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/operations/test_analysis_handoff_report.py:147: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-337/test_bounded_views_preserve_or0')
+oversized = False
+
+    def view_fixture(tmp_path, *, oversized=False):
+        from scidiscovery.operations.workspace import WorkspaceMaterializationRequest
+        plan, package, *_ = analysis_materials()
+        plan, package = plan.model_dump(mode='json'), package.model_dump(mode='json')
+        proposal = plan['proposals'][0]
+        proposal['cases'] = [dict(case_key=f'case_{n}', scientific_role='baseline' if n == 0 else 'perturbation',
+            purpose='Fixture case', settings=[]) for n in range(12)]
+        observable = '完整公式和阈值' * 160
+        proposal['required_observables'] = [observable]
+        proposal['comparison_contract'] = dict(baseline_case_key='case_0',
+            comparison_case_keys=[f'case_{n}' for n in range(1, 12)], required_observables=[observable],
+            variables=[dict(variable_key=f'variable_{n}', scientific_path='Fixture parameter',
+                factor_type='physical', comparison_role='intended_change', unit='um', equivalence_rule='exact',
+                rationale='Read the complete original', expectations=[dict(case_key=f'case_{c}',
+                    value=('长值' * 20000 if oversized and n == 0 else c + n / 10)) for c in reversed(range(12))])
+                for n in range(13)])
+        package['project']['case_parameter_bindings'] = [{'control_only_marker': n} for n in range(156)]
+        contents = {'experiment_plan': plan, 'reviewed_package': package, 'current_progress': {'unknown_future_field': 'Kept'}}
+        schemas = {'experiment_plan': 'scidiscovery.experiment-portfolio.v1', 'reviewed_package': 'tcad.reviewed-deck-package.v2',
+            'current_progress': 'future.schema'}
+        inputs, paths, descriptors = [], {}, {}
+        (tmp_path/'inputs').mkdir()
+        for alias, value in contents.items():
+            relative = f'inputs/{alias}.json'; path = tmp_path/relative
+            path.write_bytes(canonical_json(value)); paths[alias] = path
+            descriptors[alias] = SimpleNamespace(port_name=alias, size_bytes=path.stat().st_size,
+                artifact_ref=SimpleNamespace(schema_id=schemas[alias]), output_name=None)
+            inputs.append(dict(source_name=alias, port=alias, relative_path=relative, description='Fixture input',
+                exposure='full', usage='evidence_inventory', media_type='application/json'))
+        (tmp_path/'assignment.json').write_text(json.dumps(dict(inputs=inputs, tools=[])))
+>       request = WorkspaceMaterializationRequest(operation_id='fixture', workspace=tmp_path, input_paths=paths,
+            binding_descriptors=descriptors, edit_protocol='native')
+E       TypeError: WorkspaceMaterializationRequest.__init__() missing 1 required positional argument: 'provisional_roots'
+
+tests/operations/test_analysis_handoff_report.py:139: TypeError
+_ test_bounded_views_preserve_originals_matrix_values_and_full_rule_pointers[True] _
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-337/test_bounded_views_preserve_or1')
+oversized = True
+
+    @pytest.mark.parametrize('oversized', [False, True])
+    def test_bounded_views_preserve_originals_matrix_values_and_full_rule_pointers(tmp_path, oversized):
+        from tcad_artifact.analysis_bindings import materialize, source_bindings, workspace_sources
+>       request, contents = view_fixture(tmp_path, oversized=oversized)
+                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/operations/test_analysis_handoff_report.py:147: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-337/test_bounded_views_preserve_or1')
+oversized = True
+
+    def view_fixture(tmp_path, *, oversized=False):
+        from scidiscovery.operations.workspace import WorkspaceMaterializationRequest
+        plan, package, *_ = analysis_materials()
+        plan, package = plan.model_dump(mode='json'), package.model_dump(mode='json')
+        proposal = plan['proposals'][0]
+        proposal['cases'] = [dict(case_key=f'case_{n}', scientific_role='baseline' if n == 0 else 'perturbation',
+            purpose='Fixture case', settings=[]) for n in range(12)]
+        observable = '完整公式和阈值' * 160
+        proposal['required_observables'] = [observable]
+        proposal['comparison_contract'] = dict(baseline_case_key='case_0',
+            comparison_case_keys=[f'case_{n}' for n in range(1, 12)], required_observables=[observable],
+            variables=[dict(variable_key=f'variable_{n}', scientific_path='Fixture parameter',
+                factor_type='physical', comparison_role='intended_change', unit='um', equivalence_rule='exact',
+                rationale='Read the complete original', expectations=[dict(case_key=f'case_{c}',
+                    value=('长值' * 20000 if oversized and n == 0 else c + n / 10)) for c in reversed(range(12))])
+                for n in range(13)])
+        package['project']['case_parameter_bindings'] = [{'control_only_marker': n} for n in range(156)]
+        contents = {'experiment_plan': plan, 'reviewed_package': package, 'current_progress': {'unknown_future_field': 'Kept'}}
+        schemas = {'experiment_plan': 'scidiscovery.experiment-portfolio.v1', 'reviewed_package': 'tcad.reviewed-deck-package.v2',
+            'current_progress': 'future.schema'}
+        inputs, paths, descriptors = [], {}, {}
+        (tmp_path/'inputs').mkdir()
+        for alias, value in contents.items():
+            relative = f'inputs/{alias}.json'; path = tmp_path/relative
+            path.write_bytes(canonical_json(value)); paths[alias] = path
+            descriptors[alias] = SimpleNamespace(port_name=alias, size_bytes=path.stat().st_size,
+                artifact_ref=SimpleNamespace(schema_id=schemas[alias]), output_name=None)
+            inputs.append(dict(source_name=alias, port=alias, relative_path=relative, description='Fixture input',
+                exposure='full', usage='evidence_inventory', media_type='application/json'))
+        (tmp_path/'assignment.json').write_text(json.dumps(dict(inputs=inputs, tools=[])))
+>       request = WorkspaceMaterializationRequest(operation_id='fixture', workspace=tmp_path, input_paths=paths,
+            binding_descriptors=descriptors, edit_protocol='native')
+E       TypeError: WorkspaceMaterializationRequest.__init__() missing 1 required positional argument: 'provisional_roots'
+
+tests/operations/test_analysis_handoff_report.py:139: TypeError
+=========================== short test summary info ============================
+FAILED tests/operations/test_analysis_handoff_report.py::test_tcad_compact_report_seals_and_preserves_scientific_claim[pass]
+FAILED tests/operations/test_analysis_handoff_report.py::test_tcad_compact_report_seals_and_preserves_scientific_claim[fail]
+FAILED tests/operations/test_analysis_handoff_report.py::test_tcad_compact_report_seals_and_preserves_scientific_claim[inconclusive]
+FAILED tests/operations/test_analysis_handoff_report.py::test_tcad_compact_report_seals_and_preserves_scientific_claim[invalid_study]
+FAILED tests/operations/test_analysis_handoff_report.py::test_bounded_views_preserve_originals_matrix_values_and_full_rule_pointers[False]
+FAILED tests/operations/test_analysis_handoff_report.py::test_bounded_views_preserve_originals_matrix_values_and_full_rule_pointers[True]
+6 failed, 3 passed in 7.32s

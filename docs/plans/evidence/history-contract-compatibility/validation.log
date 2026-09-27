@@ -1,0 +1,25 @@
+.........................................                                [100%]
+41 passed in 6.42s
+	Command being timed: "python -m pytest -q tests/operations/test_l2_local_run.py tests/operations/test_m6c_producer_topology_removal.py tests/operations/test_l2_run_invariants.py::test_source_projection_generation_handles_old_run_without_reusing_it tests/operations/test_skill_policy_producer_compatibility.py::test_root_review_preflight_accepts_historical_producer_after_prompt_change tests/operations/test_skill_policy_producer_compatibility.py::test_current_science_reaches_author_while_historical_contracts_retire tests/operations/test_l3_review_and_human_policy.py::test_review_gate_requires_a_passing_review_of_the_exact_revision"
+	User time (seconds): 5.41
+	System time (seconds): 0.40
+	Percent of CPU this job got: 85%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:06.83
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 134868
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 0
+	Minor (reclaiming a frame) page faults: 54854
+	Voluntary context switches: 2980
+	Involuntary context switches: 70
+	Swaps: 0
+	File system inputs: 272
+	File system outputs: 88904
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0

@@ -1,0 +1,16 @@
+{
+  "command": [
+    "python",
+    "-m",
+    "pytest",
+    "-q",
+    "tests/operations/test_catalog_compile.py",
+    "tests/operations/test_catalog_negative_cases.py"
+  ],
+  "exit_code": 0,
+  "seconds": 1.428,
+  "peak_tree_rss_bytes": 105832448,
+  "budget_bytes": 536870912,
+  "early_stop_bytes": 469762048,
+  "memory_terminated": false
+}

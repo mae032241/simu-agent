@@ -1,0 +1,33 @@
+{
+  "command": [
+    "env",
+    "SCID_SETTINGS_PROBE_ROOT=/tmp/scid-execution-settings-candidate",
+    "python",
+    "docs/plans/evidence/agent-execution-settings/p0_dispatch.py",
+    "gpt-5.6-luna",
+    "low"
+  ],
+  "exit_code": 0,
+  "stop_reason": null,
+  "duration_seconds": 96.177,
+  "peak_tree_rss_mib": 374.71,
+  "budget_mib": 512,
+  "peak_processes": [
+    {
+      "name": "codex",
+      "rss_mib": 176.27
+    },
+    {
+      "name": "python",
+      "rss_mib": 88.8
+    },
+    {
+      "name": "python",
+      "rss_mib": 84.5
+    },
+    {
+      "name": "codex-code-mode-host",
+      "rss_mib": 25.14
+    }
+  ]
+}

@@ -17,6 +17,7 @@ from pathlib import Path
 
 ROOT_FILES = (
     ".gitattributes",
+    "BASELINE_8765.zh-CN.md",
     "CHANGELOG.md",
     ".gitignore",
     "CONTRIBUTING.md",
@@ -32,7 +33,8 @@ SOURCE_TREES = (
     ".github",
     "deploy",
     "plugins/tcad_artifact",
-    "plugins/ingaas_fig4",
+    "plugins/curve_score",
+    "plugins/curve_figure_evidence",
     "roles",
     "skills/sentaurus-tcad-code",
     "src/scidiscovery",
@@ -42,6 +44,12 @@ SOURCE_TREES = (
 DOCUMENTS = (
     "docs/ARCHITECTURE.md",
     "docs/ARCHITECTURE.zh-CN.md",
+    "docs/PLUGIN_RUNTIME_API.md",
+    "docs/TCAD_AGENT_AUDIT.zh-CN.md",
+    "docs/TCAD_AGENT_REAUDIT.zh-CN.md",
+    "docs/TCAD_QUALIFICATION_STATUS.md",
+    "docs/TCAD_QUALIFICATION_STATUS.zh-CN.md",
+    "docs/SCIENTIFIC_PAPER_EVIDENCE_QUALIFICATION.zh-CN.md",
     "docs/INSTALL.md",
     "docs/INSTALL.zh-CN.md",
     "docs/RELEASE.md",
@@ -49,9 +57,64 @@ DOCUMENTS = (
     "docs/role-result-json-protocol-v1.md",
     "docs/scientific_discovery_layer.md",
     "docs/tcad_transport_contract.md",
+    "docs/architecture/SCIENTIFIC_AGENT_DESIGN_CHARTER.zh-CN.md",
+    "docs/architecture/SCIENTIFIC_AGENT_CONSTRAINTS.yaml",
 )
 
-TOOLS = ("scripts/build_git_release.py",)
+TOOLS = (
+    "scripts/build_git_release.py",
+    "scripts/run_tests.py",
+    "scripts/test_resources.json",
+    "scripts/test_resources_ci.json",
+    "scripts/compiled_worker_process_guard.py",
+    "scripts/run_compiled_codex_worker.py",
+    "scripts/l4_live_tcad_revision_probe.py",
+    "scripts/l4_live_tcad_agent_probe.py",
+    "scripts/l4_tcad_transport_fixture.py",
+    "scripts/evaluate_tcad_skill_ab.py",
+    "scripts/evaluate_tcad_skill_ab_holdout.py",
+)
+
+
+# The research archive is not a public source dependency. Only generated copies
+# receive these explicit editorial projections; the source history stays intact.
+DOCUMENT_PROJECTIONS = {
+    "docs/ARCHITECTURE.md": (
+        ("The active implementation and acceptance plan is\n"
+         "[Research Task Refactor R4](plans/RESEARCH_TASK_REFACTOR_R4.zh-CN.md).",
+         "See the [public implementation and validation status](RELEASE.md#current-status)."),
+        ("See the\n[implementation record](plans/evidence/instance-workbench/IMPLEMENTATION.zh-CN.md)\n"
+         "for scope, failure evidence and deployment limits.",
+         "See [release scope and omitted historical records](RELEASE.md#publication-scope)."),
+    ),
+    "docs/ARCHITECTURE.zh-CN.md": (
+        ("实施与验收进度以\n[R4 主计划](plans/RESEARCH_TASK_REFACTOR_R4.zh-CN.md) 为准。",
+         "公开实现与验证状态见[发布说明](RELEASE.zh-CN.md#current-status)。"),
+        ("范围、故障证据和部署边界见[实施记录](plans/evidence/instance-workbench/IMPLEMENTATION.zh-CN.md)。",
+         "历史记录的排除范围见[发布说明](RELEASE.zh-CN.md#publication-scope)。"),
+    ),
+    "docs/PLUGIN_RUNTIME_API.md": (
+        ("recorded in the\n[R4 plan](plans/RESEARCH_TASK_REFACTOR_R4.zh-CN.md).",
+         "summarized in the\n[public validation status](RELEASE.md#current-status)."),
+        ("its exact results are recorded in the\nsame plan.",
+         "exact per-change receipts remain in the private R4 research archive,\n"
+         "outside this source release."),
+    ),
+}
+
+
+def _project_documents(root: Path) -> None:
+    for relative, replacements in DOCUMENT_PROJECTIONS.items():
+        path = root / relative
+        text = path.read_text(encoding="utf-8")
+        for original, public in replacements:
+            # A generated release can itself be used as the next release source.
+            if original in text:
+                text = text.replace(original, public)
+            elif public not in text:
+                raise ValueError(f"release document projection drift: {relative}")
+        path.write_text(text, encoding="utf-8")
+
 
 IGNORED_NAMES = {
     ".git",
@@ -90,6 +153,26 @@ FORBIDDEN_PATTERNS = (
         "machine-specific user home path",
     ),
 )
+
+# These release-matched manuals are the only binary source references shipped
+# with a release. Pinning both size and digest prevents a modified catalog from
+# turning the source-release scanner into a generic binary-file bypass.
+BUNDLED_BINARY_REFERENCES = {
+    Path("skills/sentaurus-tcad-code/references/manuals/R-2020.09/sprocess_ug.pdf"): (
+        10_670_223,
+        "bcaf5cfe87bd276a2068fa6681a0b62b2526512b65a710a660d892c45ceaf5d9",
+    ),
+    Path("skills/sentaurus-tcad-code/references/manuals/R-2020.09/sdevice_ug.pdf"): (
+        9_523_113,
+        "dae2c94b29c92705d3b8d6124c2f0ab595541ed48e4b220a425f72fac42794ce",
+    ),
+    Path(
+        "skills/sentaurus-tcad-code/references/manuals/R-2020.09/sentaurus_relnote.pdf"
+    ): (
+        37_980,
+        "0e6679154406b2d12356be28ab901a3786f48ca9b91b14f6769ada508bdbfbf9",
+    ),
+}
 
 
 def _parse_args() -> argparse.Namespace:
@@ -140,6 +223,16 @@ def _scan_release(root: Path) -> None:
     failures: list[str] = []
     for path in _iter_files(root):
         relative = path.relative_to(root)
+        allowed_binary = BUNDLED_BINARY_REFERENCES.get(relative)
+        if allowed_binary is not None:
+            expected_size, expected_sha256 = allowed_binary
+            raw = path.read_bytes()
+            if (
+                len(raw) != expected_size
+                or hashlib.sha256(raw).hexdigest() != expected_sha256
+            ):
+                failures.append(f"bundled binary reference differs: {relative}")
+            continue
         if path.stat().st_size > 10 * 1024 * 1024:
             failures.append(f"oversized source file: {relative}")
             continue
@@ -167,6 +260,10 @@ def _normalize_modes(root: Path) -> None:
             continue
         executable = path.suffix == ".sh" or path.name in {
             "build_git_release.py",
+            "evaluate_tcad_skill_ab.py",
+            "evaluate_tcad_skill_ab_holdout.py",
+            "manual_extract.py",
+            "manual_search.py",
             "validate_deck_project.py",
         }
         path.chmod(0o755 if executable else 0o644)
@@ -251,6 +348,7 @@ def main() -> int:
     for relative in TOOLS:
         _copy_path(source / relative, output / relative)
 
+    _project_documents(output)
     _normalize_text(output)
     _normalize_modes(output)
     _scan_release(output)

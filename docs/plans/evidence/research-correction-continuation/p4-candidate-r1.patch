@@ -1,0 +1,2715 @@
+--- baseline/docs/ARCHITECTURE.md
++++ candidate/docs/ARCHITECTURE.md
+@@ -18,7 +18,7 @@
+ Narrow plugin components implement codecs, validators, guards, projectors,
+ workspace hooks, worker tools, and runtime factories.
+ 
+-Operation ABI 15 requires every Agent output to reference a structured semantic
++Operation ABI 17 requires every Agent output to reference a structured semantic
+ contract. Each rule that is not expressible in JSON Schema has a stable
+ `rule_id`, description, output paths, and required inputs. Compilation rejects
+ unknown inputs and rules that silently make an optional port required. The
+@@ -33,6 +33,15 @@
+ owns identity, immutable records, least-context projection, lifecycle,
+ qualification, and effect gates. Deterministic code owns replayable mechanical
+ work. Domain adapters own side effects only.
++
++Experiment proposals retain an ordered `objectives` list and a nonempty exact
++`current_objectives` subset. Materialization includes the original overall
++objective in each proposal and expands only the declared current cases. Existing
++rationale fields preserve the selection reasons, remaining goals, and future
++conditions. Designers and independent reviewers assess whether omitted targets
++prevent the current experiment, including targets sharing an observable. Curve
++contracts use explicit target bindings; local success does not close uncovered
++overall targets.
+ 
+ ## 2. Registration, compilation, and catalog views
+ 
+@@ -97,6 +106,26 @@
+ and fails preflight. Root rejects internal Operations; support remains limited
+ to deterministic helpers for a selected public action.
+ 
++Design and plan review can bind optional `current_progress`, `experiment_results`,
++and `result_analysis` originals: zero to four Artifacts per group, up to 8 MiB
++each, within a 32 MiB total input budget. These are `on_demand` read-only
++`evidence_inventory` files. Only Agent inventory inputs skip producer-output
++qualification admission; instance, size, current, family, cohort, claim, revision,
++and effect gates remain in their existing paths. Wildcard schema/media pairs are
++limited to inventory with `handoff_only` or `on_demand` exposure. Reading history
++does not restore retired qualification. Deck review treats its exact project as
++`prior_signal`: incomplete implementation may receive a negative review, while
++passing review, packaging, and execution retain their implementation requirements.
++
++`artifact_catalog(name=...)` returns ordered `parent_artifact_names` for the exact
++Artifact: `[]` without parents and `null` for a parent without a current-instance
++binding. Names resolve the stored parent identity, never the latest revision;
++aliases use the existing first-created/name order. More than 4096 direct parents
++causes an explicit error. The query neither writes state nor recursively searches
++history. A new scheduler follows plan revisions to the materialized plan's typed
++parents to recover its original objective, then explicitly binds relevant context
++to the next Worker. This continuation path adds no progress object or stage machine.
++
+ Behavior is created through `operation_invoke`. The TCAD plugin
+ registers the device-parameter schemas, extraction/audit Agents, deterministic
+ coverage/uncertainty transforms, and qualification approvals as one vertical
+--- baseline/docs/ARCHITECTURE.zh-CN.md
++++ candidate/docs/ARCHITECTURE.zh-CN.md
+@@ -17,7 +17,7 @@
+ 独立审查、人工审批与副作用要求；具体 codec、validator、guard、projector、workspace hook、
+ Worker tool 和 runtime factory 由插件内的窄组件实现。
+ 
+-当前 Operation ABI 15 要求 Agent 输出引用结构化语义合同。每条不能由 JSON Schema 表达的规则
++当前 Operation ABI 17 要求 Agent 输出引用结构化语义合同。每条不能由 JSON Schema 表达的规则
+ 具有稳定 `rule_id`、说明、输出路径和所需输入；编译器拒绝未知输入以及把可选端口暗中声明为必需
+ 输入的规则。每个 Python 内容或上下文校验器必须绑定其中一个已声明 `rule_id`，否则目录编译失败。
+ 编译器把这份合同和从端口、校验器绑定及修订形状机械派生的校验合同嵌入同一份
+@@ -26,6 +26,11 @@
+ 
+ 科学判断属于调度 Agent 和专业 Worker；控制面只拥有身份、不可变记录、最小上下文投影、生命周期、
+ 资格与副作用门禁；确定性代码只做可重放的机械变换；领域 adapter 只做外部副作用。
++
++每份实验保留有序 `objectives` 及其非空精确子集 `current_objectives`。物化时将原始总体目标放入
++每份实验，只展开已经声明的本轮 case；选择理由、后续目标和条件保留在既有 rationale 字段。
++未覆盖目标是否妨碍本轮实验，包括同一 observable 下的多个目标，由设计者和独立审查者判断。
++曲线合同使用显式 target bindings，局部成功不代表未覆盖的总体目标已经闭合。
+ 
+ ## 2. 注册、编译与三种视图
+ 
+@@ -73,6 +78,20 @@
+ 引用 public reviewer；reviewer 当前不可用时，生产者同步从公开可用集合移除并在 preflight 失败。
+ Root 调用入口拒绝 internal Operation；support 只保留给已选择 public 行为所需的确定性辅助变换。
+ 
++设计和计划审查可选绑定 `current_progress`、`experiment_results`、`result_analysis` 三组原件，
++每组零到四项、每项至多 8 MiB、全部输入合计至多 32 MiB。它们是 `on_demand` 只读
++`evidence_inventory` 文件。仅 Agent 的 inventory 输入跳过 producer-output 资格检查；实例、
++大小、current、完整 family、cohort、claim、revision 和 effect 门禁仍走原路径。Schema/media
++通配对仅允许用于 `handoff_only` 或 `on_demand` inventory。读取历史不恢复退休资格。
++Deck review 将精确 project 作为 `prior_signal`，实现不完整时可以封存负面审查；通过审查、
++包装和执行仍须满足原实现要求。
++
++`artifact_catalog(name=...)` 返回精确对象的有序 `parent_artifact_names`：无父件为 `[]`，
++当前实例没有名称映射的父件为 `null`。名称对应已保存的父件身份，不回退到最新修订；别名沿用
++既有首次创建时间和名称排序。直接父件超过 4096 项时明确报错，查询不写状态、不递归搜索历史。
++新调度者沿修订计划追溯到物化计划，从其强类型直接父件恢复原始目标，再将相关上下文显式绑定给
++下一 Worker；此路径不增加进度对象或阶段状态机。
++
+ 行为都通过 `operation_invoke` 创建。设备参数 Schema、提取/审查 Agent、覆盖与不确定性
+ 变换以及资格审批均由 TCAD 插件一次注册；通用核心不再导入该 Schema 或编译参数 Operation。
+ 旧角色/变换入口以及直接创建任务、变换、审批和执行的工具不再是产品权威。
+--- baseline/plugins/curve_score/curve_score/curve_contract_compiler.py
++++ candidate/plugins/curve_score/curve_score/curve_contract_compiler.py
+@@ -112,15 +112,24 @@
+             "curve contract must select one exact experiment and validation plan"
+         )
+     proposal, validation_plan = proposals[0], plans[0]
+-    expected_targets = tuple(
++    bindings = {item.target_key: item for item in request.target_bindings}
++    if not set(bindings).issubset(
++        item.target_key for item in objective.mandatory_targets
++    ):
++        raise SemanticRuleViolation(
++            "curve target_bindings names an unknown objective target_key"
++        )
++    selected_targets = tuple(
+         item
+         for item in objective.mandatory_targets
+-        if item.observable in set(proposal.required_observables)
+-    )
+-    bindings = {item.target_key: item for item in request.target_bindings}
+-    if set(bindings) != {item.target_key for item in expected_targets}:
+-        raise SemanticRuleViolation(
+-            "curve target bindings must cover the exact planned objective targets"
++        if item.target_key in bindings
++    )
++    if any(
++        item.observable not in proposal.required_observables
++        for item in selected_targets
++    ):
++        raise SemanticRuleViolation(
++            "curve target_bindings observable is absent from the selected experiment"
+         )
+     references = {item.series_key: item for item in reference_bundle.series}
+     if not set(item.reference_series_key for item in request.target_bindings).issubset(
+@@ -146,7 +155,7 @@
+     target_contracts: list[CurveObjectiveTargetBinding] = []
+     dispositions: list[CurveReferenceDisposition] = []
+ 
+-    for target in expected_targets:
++    for target in selected_targets:
+         target_binding = bindings[target.target_key]
+         reference = references[target_binding.reference_series_key]
+         domains = _reference_domains(reference)
+--- baseline/plugins/curve_score/curve_score/science_operations.py
++++ candidate/plugins/curve_score/curve_score/science_operations.py
+@@ -387,7 +387,13 @@
+ experiment key, the exact objective-target to reference-series bindings, and the
+ curve-score validation-check keys scientifically belonging to each target; the
+ candidate case keys that need target-fit curve comparison; and one supported
+-residual metric expressing the scientific comparison intent. Do not match checks
++residual metric expressing the scientific comparison intent. Select targets for
++the reviewed current experiment; sharing an observable does not require selecting
++every overall objective target. Follow the plan's current objectives and reasons
++for deferring others. If a necessary current target cannot be realized, report the
++specific gap for redesign instead of silently dropping the current commitment.
++Uncovered overall targets remain outstanding; their scientific impact belongs to
++design and independent review, not an automatic coverage gate. Do not match checks
+ to targets by copying or rewriting free-text observable descriptions. The compiler copies
+ axes and units, calculates support domains and point counts, creates identifiers
+ and operators, binds each check owned by scidiscovery.curve-score.v1 to every
+@@ -404,7 +410,13 @@
+ between every operator and its supported curve check. One check may govern
+ multiple comparisons for the same observable; verify the metric and threshold on
+ every binding. Mechanical fields must equal the compiled result. Checks owned by
+-another evaluator are outside this contract. Do not mutate either input or grant
++another evaluator are outside this contract. Compare the selected objective-target
++bindings with the plan's current objectives and original research objective.
++Assess whether uncovered targets remove a necessary prerequisite, control, or
++meaningful interpretation of this experiment. Explain in the formal review why
++the current scope can proceed, needs revision, or cannot proceed; neither reject
++nor pass solely because overall coverage is incomplete. Preserve the limits of
++the resulting conclusions and the outstanding goals. Do not mutate either input or grant
+ execution approval.
+ """
+ 
+@@ -753,7 +765,9 @@
+         "Realize curve data and metric bindings without changing the generic experiment.",
+         (
+             "Every bound threshold and case must match the supplied experiment "
+-            "plan; checks owned by another evaluator remain unbound."
++            "plan; checks owned by another evaluator remain unbound. Select the "
++            "current target subset from the exact objective, without requiring "
++            "all targets that share an observable."
+         ),
+         required_inputs=(
+             "research_objective",
+@@ -766,7 +780,10 @@
+         ),
+         context_constraint=(
+             "Objective, case, reference-series, metric, and threshold identities must "
+-            "match the exact objective, experiment plan, and reference bundle."
++            "match the exact objective, experiment plan, and reference bundle. "
++            "Each selected target must exist in the original objective and its "
++            "observable must belong to the selected experiment. Unselected targets "
++            "remain outstanding; scientific review assesses their impact."
+         ),
+         payload_rule_id="curve.contract.case_metric_closure",
+         context_rule_id="curve.contract.objective_binding",
+@@ -783,7 +800,9 @@
+         ),
+         context_constraint=(
+             "The review must bind the exact research objective, experiment plan, and "
+-            "compiled curve contract and reference bundle."
++            "compiled curve contract and reference bundle. Assess whether any "
++            "uncovered objective target prevents the current experiment from "
++            "proceeding, and explain that judgment in the formal review."
+         ),
+         payload_rule_id="curve.review.verdict_consistency",
+         context_rule_id="curve.review.subject_binding",
+--- baseline/plugins/tcad_artifact/tcad_artifact/plugin.py
++++ candidate/plugins/tcad_artifact/tcad_artifact/plugin.py
+@@ -108,8 +108,8 @@
+ def _review_context(
+     payload: dict[str, object], sources: dict[str, bytes], handoff: dict[str, object]
+ ) -> None:
+-    _validate_parameter_uncertainty(sources)
+     validate_deck_review_task_output(payload, sources, handoff)
++    _validate_parameter_uncertainty(sources, require_ready=payload["verdict"] == "pass")
+ 
+ 
+ def _author_agent() -> None:
+@@ -126,14 +126,17 @@
+     mode: str = Field(pattern=r"^(preflight|smoke|initialization)$")
+ 
+ 
+-def _validate_parameter_uncertainty(sources: dict[str, bytes]) -> None:
++def _validate_parameter_uncertainty(
++    sources: dict[str, bytes], *, require_ready: bool = True
++) -> None:
+     raw = sources.get("parameter_uncertainty")
+     if raw is None:
+         return
+     projection = ParameterUncertaintyProjection.model_validate_json(raw, strict=True)
+-    if projection.status != "ready":
++    if require_ready and projection.status != "ready":
+         raise SemanticRuleViolation(
+-            "blocking-unbounded parameters cannot enter TCAD authoring"
++            "parameter_uncertainty.status must be ready for TCAD authoring or a "
++            "passing review; observed blocking-unbounded parameters"
+         )
+ 
+ 
+@@ -218,7 +221,13 @@
+         rule_id="tcad.deck.input_binding",
+         description=(
+             "Every contextual claim must remain consistent with the explicitly "
+-            "bound inputs."
++            "bound inputs. Every deck review verdict requires parseable exact "
++            "project, plan and parameter inputs, matching approved parameter "
++            "context, and consistent report subject and handoff. Case realization, "
++            "approved parameter values and units, and parameter uncertainty "
++            "readiness are required for author outputs and passing reviews. "
++            "A revise or blocked review may report implementation gaps with "
++            "execution_ready=false without editing its inputs."
+         ),
+     ),
+     SemanticRuleSpec(
+@@ -454,7 +463,7 @@
+     *INITIAL_INPUTS,
+ )
+ REVIEW_INPUTS = (
+-    _input("project", "tcad.deck-project.v1", "project_schema"),
++    _input("project", "tcad.deck-project.v1", "project_schema", usage="prior_signal"),
+     *INITIAL_INPUTS,
+ )
+ 
+@@ -563,7 +572,7 @@
+             catalog_scope="public",
+             description=OperationDescription(
+                 purpose="Independently review an exact TCAD project for physical and code fidelity.",
+-                applies_when="A complete author project, plan, and capability are available.",
++                applies_when="A structurally readable exact author project, plan, and capability are available, including a blocked project or implementation gaps.",
+                 not_for="Editing the project or running a solver.",
+             ),
+             executor=ExecutorRef(
+--- baseline/plugins/tcad_artifact/tcad_artifact/project_packager.py
++++ candidate/plugins/tcad_artifact/tcad_artifact/project_packager.py
+@@ -1230,11 +1230,16 @@
+     project = DeckProjectDraft.model_validate_json(
+         inputs[project_names[0]], strict=True
+     )
++    report = DeckReviewReport.model_validate_json(_canonical(value), strict=True)
+     experiment_plan = inputs.get("experiment_plan")
+     if experiment_plan is not None:
+-        validate_project_case_controls(project, experiment_plan)
+-    _validate_approved_parameter_bindings(project, inputs)
+-    report = DeckReviewReport.model_validate_json(_canonical(value), strict=True)
++        if report.verdict == "pass":
++            validate_project_case_controls(project, experiment_plan)
++        else:
++            ExperimentPortfolio.model_validate_json(experiment_plan, strict=True)
++    _validate_approved_parameter_bindings(
++        project, inputs, require_implementation=report.verdict == "pass"
++    )
+     if handoff.get("verdict") != report.verdict:
+         raise SemanticRuleViolation("deck review handoff verdict differs from its report")
+     validate_deck_review_against_project(project, report)
+@@ -1249,7 +1254,10 @@
+ def _validate_approved_parameter_bindings(
+     project: DeckProjectDraft,
+     inputs: Mapping[str, bytes],
++    *,
++    require_implementation: bool = True,
+ ) -> None:
++    """Keep approved context exact; require value/unit realization when consuming it."""
+     parameter_raw = inputs.get("device_parameters")
+     coverage_raw = inputs.get("parameter_coverage")
+     if parameter_raw is None and coverage_raw is None:
+@@ -1288,9 +1296,14 @@
+             )
+         if coverage_item.status in {"missing", "conflict", "not_comparable"}:
+             raise SemanticRuleViolation(f"approved parameter is not usable by the deck: {key}")
+-        if binding.declared_value != claim.selected_value or binding.unit != claim.unit:
++        if require_implementation and (
++            binding.declared_value != claim.selected_value or binding.unit != claim.unit
++        ):
+             raise SemanticRuleViolation(
+-                f"deck binding differs from the exact approved parameter value: {key}"
++                "project.parameter_bindings "
++                f"{binding.name!r} differs from the exact approved parameter value: {key}; "
++                f"expected={claim.selected_value} {claim.unit}, "
++                f"observed={binding.declared_value} {binding.unit}"
+             )
+ 
+ 
+--- baseline/plugins/tcad_artifact/tcad_artifact/roles/tcad_deck_reviewer.md
++++ candidate/plugins/tcad_artifact/tcad_artifact/roles/tcad_deck_reviewer.md
+@@ -76,6 +76,14 @@
+ control-materialized project. Use `pass` only when no explicit blocking/major
+ code or fidelity defect remains and execution readiness is supported. A pass
+ means ready for controlled execution, never that the hypothesis is true.
++An exact, structurally readable project may have a blocked author handoff,
++missing case implementations, incorrect parameter values or units, or an
++uncertainty projection that is not ready. Report those gaps with `revise` or
++`blocked` and `execution_ready=false`; do not modify frozen inputs to make a
++negative report submit. Every verdict still requires the exact parseable
++parameter set and coverage context, resolvable approved parameter keys, exact
++realization requirement coverage, capability binding, and matching report and
++handoff verdicts. A negative report grants no packaging or execution readiness.
+ 
+ Use the assignment's exact mode and inputs. For an initial review, read the
+ complete project and experiment plan. For a revision review, read the complete
+--- baseline/plugins/tcad_artifact/tcad_artifact/transform_adapter.py
++++ candidate/plugins/tcad_artifact/tcad_artifact/transform_adapter.py
+@@ -191,6 +191,15 @@
+             experiment_plan=inputs["experiment_plan"],
+             execution_capability=inputs["capability"],
+             preflight_attestation=preflight,
++        )
++        rebuilt_value = rematerialized.model_dump(mode="json")
++        rebuilt_value["initialization_attestation"] = (
++            project.initialization_attestation.model_dump(mode="json")
++            if project.initialization_attestation is not None
++            else None
++        )
++        rematerialized = DeckProjectDraft.model_validate_json(
++            canonical_json(rebuilt_value), strict=True
+         )
+         if rematerialized != project and not _process_log_capture_migration(
+             project, rematerialized
+--- baseline/roles/scheduler.md
++++ candidate/roles/scheduler.md
+@@ -29,6 +29,35 @@
+ or side-effect gates. A successful preflight authorizes only
+ `operation_invoke` with the same immutable request. Dependencies describe data
+ readiness and never impose a fixed stage sequence.
++
++For experiment design, bind the exact overall objective and the relevant sealed
++progress, results, and analysis when the selected Operation declares those
++optional ports. Workers choose the current objective subset and retain still
++relevant later objectives and their conditions in the formal plan. Incomplete
++overall target coverage, including targets sharing one observable, does not by
++itself decide whether an experiment can proceed. Read the designer's and exact
++independent reviewer's reasons about the missing targets and current feasibility;
++do not choose scientific targets or synthesize missing parameters yourself.
++If the task requires unavailable prior results, use the catalog to choose a
++bounded redesign or evidence action. A code defect in an otherwise viable task
++may instead warrant the declared author revision. Bind only the exact review
++type required by that revision; a domain review is not interchangeable with a
++generic experiment review. Changed plans require new matching domain contracts
++and reviews before implementation or execution. Local success never establishes
++completion of still-uncovered overall research goals.
++
++To resume from an exact plan name, query `artifact_catalog` and its ordered
++`parent_artifact_names`, then query each relevant parent's schema. A materialized
++plan's direct typed parents identify its original objective and design intent;
++a revised plan leads through its unique prior plan parent to that materialized
++plan. Recover the objective there, rather than choosing same-schema feedback
++from the intent or matching objective text to a newer record. Inspect the
++intent's parents for relevant prior progress, results, and analysis, then bind
++the exact recovered originals explicitly to the next design and review. A null
++name for a required parent is a bounded missing input, not permission to guess
++a replacement or read storage directly. Historical payloads may be read through
++declared inventory inputs; this does not renew their qualification. Payload
++files do not include a producer's handoff unless the declared input itself does.
+ 
+ Scientific verdicts, structured dispositions, missing inputs, and suggestions
+ are sealed Worker results, not commands that select the next Operation. Read
+--- baseline/src/scidiscovery/artifact_agent/interfaces/mcp_root_instance_routes.py
++++ candidate/src/scidiscovery/artifact_agent/interfaces/mcp_root_instance_routes.py
+@@ -246,6 +246,17 @@
+     def artifact_catalog(self, *, name: str) -> dict[str, Any]:
+         binding = self._binding("artifact", name)
+         envelope = self.artifacts.get_by_id(binding.object_id)
++        if len(envelope.parent_refs) > 4096:
++            raise RootToolError("artifact_catalog direct parent limit exceeded (4096)")
++        instance_id = self._instance_id()
++        parent_artifact_names = [
++            self.bindings.find_name(
++                instance=instance_id,
++                namespace="artifact",
++                object_id=parent.artifact_id,
++            )
++            for parent in envelope.parent_refs
++        ]
+         labels = {
+             key: value
+             for key, value in envelope.labels.items()
+@@ -260,6 +271,7 @@
+             "size_bytes": envelope.size_bytes,
+             "created_at": envelope.created_at,
+             "labels": labels,
++            "parent_artifact_names": parent_artifact_names,
+         }
+ 
+ 
+--- baseline/src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py
++++ candidate/src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py
+@@ -1324,6 +1324,11 @@
+         )
+         consumed_review_signals: set[Any] = set()
+         for item in bound.inputs:
++            if (
++                bound.compiled.spec.executor.kind == "agent"
++                and item.usage == "evidence_inventory"
++            ):
++                continue
+             artifact = item.artifact
+             port_name = item.port_name
+             contract = self._operation_output_contract(artifact)
+--- baseline/src/scidiscovery/artifact_agent/schema/experiment.py
++++ candidate/src/scidiscovery/artifact_agent/schema/experiment.py
+@@ -205,7 +205,14 @@
+ 
+ class ExperimentProposal(SchemaModel):
+     experiment_key: Identifier
+-    objective: Annotated[str, Field(min_length=1, max_length=8192)]
++    objectives: Annotated[
++        tuple[Annotated[str, Field(min_length=1, max_length=8192)], ...],
++        Field(min_length=1, max_length=17),
++    ]
++    current_objectives: Annotated[
++        tuple[Annotated[str, Field(min_length=1, max_length=8192)], ...],
++        Field(min_length=1, max_length=16),
++    ]
+     hypothesis_keys: Annotated[tuple[Identifier, ...], Field(max_length=12)] = ()
+     changed_factors: Annotated[
+         tuple[ExperimentFactor, ...], Field(max_length=64)
+@@ -226,6 +233,8 @@
+     @model_validator(mode="after")
+     def _proposal_is_bounded(self) -> ExperimentProposal:
+         for values, label in (
++            (self.objectives, "objectives"),
++            (self.current_objectives, "current_objectives"),
+             (self.hypothesis_keys, "hypothesis_keys"),
+             (
+                 tuple(item.name for item in self.changed_factors),
+@@ -236,6 +245,8 @@
+         ):
+             if len(values) != len(set(values)):
+                 raise ValueError(f"{label} must be unique")
++        if not set(self.current_objectives).issubset(self.objectives):
++            raise ValueError("current_objectives must be an exact subset of objectives")
+         if not any(item.scientific_role in {"baseline", "control"} for item in self.cases):
+             raise ValueError("experiment requires at least one baseline or control case")
+         factor_by_name = {item.name: item for item in self.changed_factors}
+@@ -437,6 +448,8 @@
+             raise ValueError("priority_order must contain every experiment exactly once")
+         selected = set(self.selected_hypothesis_keys)
+         for proposal in self.proposals:
++            if self.objective not in proposal.objectives:
++                raise ValueError("every proposal must contain the exact portfolio objective")
+             if not set(proposal.hypothesis_keys).issubset(selected):
+                 raise ValueError("proposal references an unselected hypothesis")
+         if {item.experiment_key for item in self.validation_plans} != set(proposal_keys):
+@@ -547,21 +560,6 @@
+         raise SemanticRuleViolation(
+             "experiment portfolio objective statement differs from research objective"
+         )
+-    declared_observables = {
+-        observable
+-        for proposal in portfolio.proposals
+-        for observable in proposal.required_observables
+-    }
+-    missing_targets = tuple(
+-        target.target_key
+-        for target in objective.mandatory_targets
+-        if target.observable not in declared_observables
+-    )
+-    if missing_targets:
+-        raise SemanticRuleViolation(
+-            "experiment portfolio omits mandatory objective targets: "
+-            + ", ".join(missing_targets)
+-        )
+ 
+ 
+ __all__ = [
+--- baseline/src/scidiscovery/artifact_agent/schema/experiment_intent.py
++++ candidate/src/scidiscovery/artifact_agent/schema/experiment_intent.py
+@@ -137,6 +137,14 @@
+     """Scientific choices for one experiment without domain execution payloads."""
+ 
+     experiment_key: Identifier
++    objectives: Annotated[
++        tuple[Annotated[str, Field(min_length=1, max_length=8192)], ...],
++        Field(min_length=1, max_length=16),
++    ]
++    current_objectives: Annotated[
++        tuple[Annotated[str, Field(min_length=1, max_length=8192)], ...],
++        Field(min_length=1, max_length=16),
++    ]
+     hypothesis_keys: Annotated[tuple[Identifier, ...], Field(max_length=12)] = ()
+     frozen_invariants: Annotated[tuple[str, ...], Field(min_length=1, max_length=128)]
+     cases: Annotated[tuple[IntentCase, ...], Field(min_length=1, max_length=10000)]
+@@ -164,6 +172,8 @@
+         case_keys = tuple(item.case_key for item in self.cases)
+         variable_keys = tuple(item.variable_key for item in self.variables)
+         for values, label in (
++            (self.objectives, "objectives"),
++            (self.current_objectives, "current_objectives"),
+             (self.hypothesis_keys, "hypothesis_keys"),
+             (case_keys, "case_key values"),
+             (variable_keys, "comparison variable keys"),
+@@ -171,6 +181,8 @@
+         ):
+             if len(values) != len(set(values)):
+                 raise ValueError(f"{label} must be unique")
++        if not set(self.current_objectives).issubset(self.objectives):
++            raise ValueError("current_objectives must be an exact subset of objectives")
+         if (self.validation_plan is None) == (self.validation_intent is None):
+             raise ValueError(
+                 "intent requires exactly one complete validation_plan or compact validation_intent"
+@@ -405,7 +417,10 @@
+         proposals.append(
+             ExperimentProposal(
+                 experiment_key=proposal_intent.experiment_key,
+-                objective=objective_statement,
++                objectives=tuple(
++                    dict.fromkeys((objective_statement, *proposal_intent.objectives))
++                ),
++                current_objectives=proposal_intent.current_objectives,
+                 hypothesis_keys=proposal_intent.hypothesis_keys,
+                 changed_factors=changed_factors,
+                 frozen_invariants=proposal_intent.frozen_invariants,
+--- baseline/src/scidiscovery/general_science_experiment_components.py
++++ candidate/src/scidiscovery/general_science_experiment_components.py
+@@ -59,6 +59,21 @@
+ of the exact prior ExperimentPortfolio. Edit only fields required by the bounded
+ review, complete its new handoff, and submit the entire revised object, not a
+ patch. Preserve supported fields; never inherit a verdict or invent candidates.
++For each proposal preserve the complete objectives and select a nonempty exact
++current_objectives subset. A complete ExperimentPortfolio must include its exact
++overall objective in every proposal's objectives. Expand only this round's
++current objectives into cases, variables, observables, resources, and validation;
++do not put placeholders for future work into execution fields. In
++value_assessment.rationale explain coverage, deferred objectives, minimality,
++and the conditions for later work; use priority_rationale to explain this round's
++selection order. Explain any changed objective selection in a complete revision.
++Independently judge whether uncovered original targets undermine the current
++experiment's validity, identifiability, or allowed claims. Deferral alone is not
++a mechanical blocker: state the scientific consequence and remaining conditions.
++When progress, results, or analysis are supplied, use their exact visible content
++to justify the selection and distinguish numerical failure from missing evidence.
++These feedback inputs are optional; if absent, limit the corresponding claims
++and never imply that prior results have been checked.
+ """
+ 
+ EXPERIMENT_DESIGN_PROMPT = EXPERIMENT_PROMPT + """When execution_context is
+@@ -79,6 +94,18 @@
+ complete supplied experiment plan without mutating it. The verdict is a
+ scientific assessment, not human approval or qualification. Report the
+ smallest bounded correction for each material defect.
++Compare the complete objectives, current_objectives, cases, validation, resource
++judgment, value_assessment.rationale, and priority_rationale. When an original
++research_objective is supplied, independently assess its mandatory_targets and
++closure_requirements against the current selection and deferred work; do not
++infer the original contract from the plan's own description. Judge whether
++uncovered targets affect this experiment's validity, identifiability, or allowed
++claims, and state the conditions for later work. Partial coverage alone does not
++force a negative verdict. When execution_context or feedback is supplied, assess
++feasibility and the stated selection using those exact inputs. These inputs are
++optional: if absent, limit the affected conclusions and do not claim independent
++verification. Cite only actual visible input aliases in evidence.source_key,
++including experiment_plan; never cite an unbound original or feedback item.
+ """
+ 
+ 
+@@ -172,12 +199,34 @@
+ ) -> None:
+     if "experiment_plan" not in sources:
+         raise SemanticRuleViolation("review target is absent")
++    plan = ExperimentPortfolio.model_validate_json(
++        sources["experiment_plan"], strict=True
++    )
++    raw_objective = sources.get("research_objective")
++    if raw_objective is not None:
++        objective = ResearchObjectiveContract.model_validate_json(
++            raw_objective, strict=True
++        )
++        if (
++            plan.objective_key != objective.objective_key
++            or plan.objective != objective.statement
++        ):
++            raise SemanticRuleViolation(
++                "review research objective key or statement differs from the bound plan"
++            )
++    execution_context = sources.get("execution_context")
++    if execution_context is not None:
++        ExecutionContext.model_validate_json(execution_context, strict=True)
+     review = ScientificReview.model_validate_json(canonical_json(payload), strict=True)
+     if review.review_target != "experiment_portfolio":
+         raise SemanticRuleViolation("scientific review target differs from the bound object")
+     expected_verdict = "blocked" if review.verdict == "reject" else review.verdict
+     if handoff.get("verdict") != expected_verdict:
+         raise SemanticRuleViolation("review handoff verdict differs from payload verdict")
++    if any(item.source_key not in sources for item in review.evidence):
++        raise SemanticRuleViolation(
++            "review evidence source_key must name an actual visible input alias"
++        )
+ 
+ 
+ def _one(values: Mapping[str, tuple[bytes, ...]], name: str) -> bytes:
+@@ -246,12 +295,20 @@
+         payload_constraint=(
+             "Selected hypotheses, controls, interventions, observables, predictions, "
+             "falsifiers, metrics, uncertainty, resources, and stop conditions must "
+-            "form one internally closed design intent."
++            "form one internally closed design intent. Each proposal declares unique "
++            "nonempty objectives and a nonempty exact current_objectives subset; "
++            "only this round's goals expand into executable cases and validation. "
++            "value_assessment.rationale explains coverage, deferral, minimality and "
++            "later conditions; priority_rationale explains the current ordering."
+         ),
+         context_constraint=(
+             "The objective key and selected hypothesis keys must match the exact "
+             "objective, portfolio, and critic review inputs. When an optional "
+-            "execution context is bound, it must match its declared strict schema."
++            "execution context is bound, it must match its declared strict schema. "
++            "The Agent judges the effect of uncovered original targets on current "
++            "validity, identifiability and claims; full target coverage is not a "
++            "per-round mechanical requirement. Optional feedback supports only "
++            "conclusions justified by its actual supplied content."
+         ),
+         payload_rule_id="experiment.design.intent_closure",
+         context_rule_id="experiment.design.objective_and_hypothesis_binding",
+@@ -264,11 +321,19 @@
+         payload_constraint=(
+             "Study kind, objective and hypothesis keys, proposal keys, case settings, "
+             "changed factors, intended comparison variables, validation plans, "
+-            "threshold units, and priority order must remain mutually consistent."
++            "threshold units, and priority order must remain mutually consistent. "
++            "Every proposal's unique objectives include the exact overall objective "
++            "and its unique nonempty current_objectives are an exact subset. "
++            "Explain selection changes, coverage, deferral, minimality and later "
++            "conditions in value_assessment.rationale and priority_rationale; expand "
++            "only current goals into cases and validation."
+         ),
+         context_constraint=(
+             "The complete replacement must preserve the prior experiment identity "
+-            "and answer the exact review whose target is experiment_portfolio."
++            "and answer the exact review whose target is experiment_portfolio. "
++            "The Agent judges how uncovered targets affect the current experiment; "
++            "objective selection is not permanently frozen and missing optional "
++            "feedback limits conclusions rather than preventing submission."
+         ),
+         payload_rule_id="experiment.revision.case_and_validation_closure",
+         context_rule_id="experiment.revision.review_target",
+@@ -283,7 +348,15 @@
+             "internally consistent scientific review."
+         ),
+         context_constraint=(
+-            "The review must assess the exact supplied experiment without mutating it."
++            "The review must assess the exact supplied experiment without mutating it. "
++            "If research_objective is supplied, its key and statement must match "
++            "the plan. If execution_context is supplied, parse its strict schema. "
++            "Every evidence.source_key must name an actual visible input alias, "
++            "including actual collection aliases. Independently assess original "
++            "mandatory targets and closure, current selection, deferral, feasibility "
++            "and supplied feedback; judge how uncovered targets affect current "
++            "validity, identifiability and claims. Optional absent inputs limit "
++            "conclusions without imposing a hidden submission requirement."
+         ),
+         payload_rule_id="experiment.review.verdict_consistency",
+         context_rule_id="experiment.review.subject_binding",
+--- baseline/src/scidiscovery/general_science_experiment_operations.py
++++ candidate/src/scidiscovery/general_science_experiment_operations.py
+@@ -29,6 +29,26 @@
+     approval_kind="scientific_foundation",
+     accepted_options=("approve",),
+     accepted_provider_operations=_EVIDENCE_APPROVAL_PROVIDER,
++)
++
++
++_FEEDBACK_INPUTS = tuple(
++    _agent_input(
++        name,
++        description,
++        "*",
++        media_types=("*/*",),
++        min_items=0,
++        max_items=4,
++        max_item_bytes=8 * 1024 * 1024,
++        exposure="on_demand",
++        usage="evidence_inventory",
++    )
++    for name, description in (
++        ("current_progress", "Optional exact prior plans, reviews, and bounded progress records."),
++        ("experiment_results", "Optional exact experiment outputs, failures, and deterministic metrics."),
++        ("result_analysis", "Optional exact analyses supporting the current objective selection."),
++    )
+ )
+ 
+ 
+@@ -77,6 +97,7 @@
+                 max_item_bytes=64 * 1024,
+                 usage="prior_signal",
+             ),
++            *_FEEDBACK_INPUTS,
+         ),
+         outputs=(
+             _agent_output(
+@@ -92,11 +113,14 @@
+                     "hypothesis_portfolio",
+                     "critic_review",
+                     "execution_context",
++                    "current_progress",
++                    "experiment_results",
++                    "result_analysis",
+                 ),
+             ),
+         ),
+         timeout=900,
+-        max_input_bytes=2 * 1024 * 1024,
++        max_input_bytes=32 * 1024 * 1024,
+         max_output_bytes=64 * 1024,
+         max_files=1,
+         input_admission=_FOUNDATION_ADMISSION,
+@@ -121,6 +145,23 @@
+                 max_item_bytes=2 * 1024 * 1024,
+                 usage="prior_signal",
+             ),
++            _agent_input(
++                "research_objective",
++                "Optional exact original research objective for independent coverage review.",
++                "scidiscovery.research-objective.v1",
++                min_items=0,
++                max_item_bytes=512 * 1024,
++                usage="prior_signal",
++            ),
++            _agent_input(
++                "execution_context",
++                "Optional immutable execution capabilities and implementation limits.",
++                "scidiscovery.execution-context.v1",
++                min_items=0,
++                max_item_bytes=64 * 1024,
++                usage="prior_signal",
++            ),
++            *_FEEDBACK_INPUTS,
+         ),
+         outputs=(
+             _agent_output(
+@@ -131,11 +172,15 @@
+                 "review_validator",
+                 max_item_bytes=64 * 1024,
+                 context_validator="object_review_context",
+-                context_sources=("experiment_plan",),
++                context_sources=(
++                    "experiment_plan", "research_objective", "execution_context",
++                    "current_progress", "experiment_results", "result_analysis",
++                ),
++                evidence_paths=(),
+             ),
+         ),
+         timeout=600,
+-        max_input_bytes=2 * 1024 * 1024,
++        max_input_bytes=32 * 1024 * 1024,
+         max_output_bytes=64 * 1024,
+         max_files=1,
+     ),
+--- baseline/src/scidiscovery/operations/spec.py
++++ candidate/src/scidiscovery/operations/spec.py
+@@ -7,7 +7,7 @@
+ from typing import Any, Literal, Mapping
+ from pydantic import BaseModel, ConfigDict, Field
+ PLUGIN_PROTOCOL_VERSION = "1"
+-OPERATION_ABI_VERSION = "16"
++OPERATION_ABI_VERSION = "17"
+ _ID = re.compile(r"^[a-z][a-z0-9_.-]{0,127}$")
+ _JSON_POINTER = re.compile(r"^/(?:[^~/]|~[01])*(?:/(?:[^~/]|~[01])*)*$")
+ _DOMAIN = re.compile(r"^(?:\*\.)?[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
+@@ -115,7 +115,7 @@
+         if wildcard and not (
+             self.schema_id == "*"
+             and self.media_types == ("*/*",)
+-            and self.exposure == "handoff_only"
++            and self.exposure in {"handoff_only", "on_demand"}
+             and self.usage == "evidence_inventory"
+         ):
+             return "input_wildcard_invalid"
+--- baseline/tests/operations/m3_transform_equivalence_runner.py
++++ candidate/tests/operations/m3_transform_equivalence_runner.py
+@@ -126,6 +126,8 @@
+                 "proposals": [
+                     {
+                         "experiment_key": "engineering_smoke",
++                        "objectives": ["Verify one bounded analysis."],
++                        "current_objectives": ["Verify one bounded analysis."],
+                         "frozen_invariants": ["same fixture"],
+                         "cases": [
+                             {
+@@ -729,6 +731,11 @@
+             "analysis_curve_contract_review",
+         ),
+         Scenario(
++            "tcad.execution-context.project.v1",
++            (Datum("capability", "execution_context_capability", tcad["capability"]),),
++            "execution_context_capability",
++        ),
++        Scenario(
+             "tcad.deck-project-compare.v1",
+             (
+                 Datum("base_project", "base_project", tcad["project"]),
+--- baseline/tests/operations/test_agent_contract_alignment.py
++++ candidate/tests/operations/test_agent_contract_alignment.py
+@@ -1,9 +1,12 @@
+ from __future__ import annotations
+ 
+ import hashlib
++import json
+ from dataclasses import replace
++from pathlib import Path
+ 
+ import pytest
++from pydantic import ValidationError
+ 
+ from curve_score.plugin import PLUGIN as CURVE_PLUGIN
+ from scidiscovery.artifact_agent.schema.common import canonical_json
+@@ -208,6 +211,8 @@
+         "proposals": [
+             {
+                 "experiment_key": "experiment_a",
++                "objectives": ["Distinguish one bounded mechanism."],
++                "current_objectives": ["Distinguish one bounded mechanism."],
+                 "hypothesis_keys": ["hypothesis_a"],
+                 "frozen_invariants": ["Use the same bounded system."],
+                 "cases": [
+@@ -295,6 +300,548 @@
+         _experiment_context(intent, sources, {})
+ 
+ 
++@pytest.mark.parametrize("model_kind,limit", (("intent", 16), ("proposal", 17)))
++@pytest.mark.parametrize("field", ("objectives", "current_objectives"))
++@pytest.mark.parametrize("defect", ("missing", "empty", "blank", "long", "duplicate", "too_many"))
++def test_experiment_goal_lists_enforce_exact_bounds(
++    experiment_case, model_kind, limit, field, defect,
++) -> None:
++    from scidiscovery.artifact_agent.schema.experiment import ExperimentProposal
++    from scidiscovery.artifact_agent.schema.experiment_intent import (
++        ExperimentProposalIntent, materialize_experiment_design_intent,
++    )
++    from scidiscovery.artifact_agent.schema.research_objective import ResearchObjectiveContract
++
++    intent, sources = experiment_case
++    intent["objective_key"] = "objective_expected"
++    if model_kind == "intent":
++        model, proposal = ExperimentProposalIntent, intent["proposals"][0]
++    else:
++        plan = materialize_experiment_design_intent(
++            ExperimentDesignIntent.model_validate_json(canonical_json(intent), strict=True),
++            ResearchObjectiveContract.model_validate_json(sources["research_objective"], strict=True),
++        )
++        model, proposal = ExperimentProposal, plan.proposals[0].model_dump(mode="json")
++    if defect == "missing":
++        proposal.pop(field)
++    else:
++        proposal[field] = {
++            "empty": [], "blank": [""], "long": ["x" * 8193],
++            "duplicate": ["goal", "goal"],
++            "too_many": [f"goal {index}" for index in range((limit if field == "objectives" else 16) + 1)],
++        }[defect]
++    with pytest.raises(ValidationError):
++        model.model_validate_json(canonical_json(proposal), strict=True)
++
++
++def test_experiment_goal_subset_is_verbatim_and_python_uses_tuples(experiment_case) -> None:
++    from scidiscovery.artifact_agent.schema.experiment_intent import ExperimentProposalIntent
++
++    intent, _ = experiment_case
++    proposal = intent["proposals"][0]
++    proposal.update(objectives=["  Exact goal\n"], current_objectives=["Exact goal"])
++    with pytest.raises(ValidationError, match="exact subset"):
++        ExperimentProposalIntent.model_validate_json(canonical_json(proposal), strict=True)
++    proposal["current_objectives"] = list(proposal["objectives"])
++    value = ExperimentProposalIntent.model_validate_json(canonical_json(proposal), strict=True)
++    assert value.objectives == value.current_objectives == ("  Exact goal\n",)
++    with pytest.raises(ValidationError, match="tuple"):
++        ExperimentProposalIntent.model_validate(proposal, strict=True)
++
++
++def _partial_experiment(experiment_case):
++    intent, sources = experiment_case
++    intent["objective_key"] = "objective_expected"
++    objective = json.loads(sources["research_objective"])
++    objective["mandatory_targets"] = [
++        {"target_key": key, "observable": observable,
++         "support_requirement": "complete_observation", "evidence_item_keys": [key],
++         "rationale": "The original objective retains this obligation."}
++        for key, observable in (("current_response", "response"), ("future_response", "future observable"))
++    ]
++    objective["closure_requirements"].append({
++        "requirement_key": "all_targets", "requirement_type": "target_coverage",
++        "description": "Overall closure still requires both targets.",
++        "target_keys": ["current_response", "future_response"],
++    })
++    sources["research_objective"] = canonical_json(objective)
++    proposal = intent["proposals"][0]
++    proposal.update(objectives=["Test the response now.", "Test the future observable after evidence is available."],
++                    current_objectives=["Test the response now."])
++    proposal["value_assessment"]["rationale"] = (
++        "The response comparison is sufficient for this bounded inference. "
++        "Defer the future observable until its evidence is available; overall closure remains open."
++    )
++    return intent, sources
++
++
++def _feedback_root(tmp_path, monkeypatch, experiment_case, operation_id, *, name="feedback_task", catalog=None):
++    from scidiscovery.artifact_agent.transforms import materialize_experiment_plan
++    from tests.operations.test_general_transform_operations import _intake, _register, _root
++
++    intent, sources = _partial_experiment(experiment_case)
++    catalog = catalog or _catalog()
++    runtime, instance, root = _root(tmp_path, catalog=catalog)
++    foundation = _intake().scientific_foundation.model_dump(mode="json")
++    foundation["objective"] = json.loads(sources["research_objective"])["statement"]
++    foundation["objective_contract"] = json.loads(sources["research_objective"])
++    content = {"scientific_foundation": canonical_json(foundation), **sources}
++    envelopes = {}
++    for port in ("scientific_foundation", "research_objective", "hypothesis_portfolio", "critic_review"):
++        parents = () if port == "scientific_foundation" else (envelopes["scientific_foundation"].ref,)
++        if port == "critic_review":
++            parents += (envelopes["hypothesis_portfolio"].ref,)
++        declaration = next(item for item in catalog.operation("science.experiment.design.v1").spec.inputs if item.name == port)
++        envelopes[port] = _register(runtime, instance, name=port, raw=content[port],
++                                    kind=port, schema=declaration.schema_id, parents=parents)
++    monkeypatch.setattr(runtime.approvals, "are_subjects_approved_by_provider", lambda *args, **kwargs: True)
++    ports = tuple(content)
++    payload = intent
++    if operation_id == "science.object.review.v1":
++        raw, _ = materialize_experiment_plan({
++            "experiment_design_intent": canonical_json(intent),
++            "research_objective": sources["research_objective"],
++            "hypothesis_portfolio": sources["hypothesis_portfolio"],
++        })
++        _register(runtime, instance, name="experiment_plan", raw=raw,
++                  kind="experiment_portfolio", schema="scidiscovery.experiment-portfolio.v1",
++                  parents=tuple(item.ref for item in envelopes.values()))
++        ports = ("experiment_plan", "research_objective")
++        payload = {"review_target": "experiment_portfolio", "verdict": "pass",
++                   "summary": "Assess the current scope and retained future conditions."}
++    request = {"name": name, "operation_id": operation_id,
++               "inputs": [{"port": port, "artifact_names": [port]} for port in ports],
++               "instruction": "Use only the exact current selection and visible feedback."}
++    return runtime, instance, root, request, payload
++
++
++def _feedback_record(runtime, instance, name, *, state="stale", raw=None):
++    from scidiscovery.artifact_agent.schema.artifact import ArtifactRegistration
++
++    producer = runtime.runs.operation_catalog.operation("science.experiment.revise.v1")
++    labels = {"operation_id": producer.spec.operation_id, "operation_version": producer.spec.version,
++              "operation_digest": "0" * 64 if state == "stale" else producer.digest,
++              "operation_output_port": "experiment_plan"}
++    if state == "nonclaiming":
++        labels["scientific_claim_admissible"] = "false"
++    content = raw if raw is not None else b"\x00Exact historical feedback: " + name.encode()
++    envelope = runtime.artifacts.register(content, ArtifactRegistration(
++        kind="historical_feedback", schema_id="example.historical-feedback.v1",
++        payload_schema_version=1, media_type="application/octet-stream",
++        creator=runtime.actor, labels=labels,
++    ), idempotency_key=f"feedback:{name}")
++    runtime.scheduler_bindings.bind(instance=instance.instance_id, namespace="artifact",
++                                    name=name, object_id=envelope.artifact_id)
++    return envelope, content
++
++
++@pytest.mark.parametrize("operation_id", ("science.experiment.design.v1", "science.object.review.v1"))
++@pytest.mark.parametrize("groups", (
++    (), ("current_progress",), ("experiment_results",), ("result_analysis",),
++    ("current_progress", "experiment_results", "result_analysis"),
++    ("current_progress", "current_progress", "experiment_results", "result_analysis"),
++))
++def test_exact_optional_feedback_reaches_root_run_local_worker_and_output_parentage(
++    tmp_path, monkeypatch, experiment_case, operation_id, groups,
++) -> None:
++    from scidiscovery.artifact_agent.interfaces.mcp_local_worker import LocalWorkerMCPRouter
++
++    runtime, instance, root, request, payload = _feedback_root(tmp_path, monkeypatch, experiment_case, operation_id)
++    records = {}
++    by_port = {}
++    for index, port in enumerate(groups):
++        name = f"feedback_{index}"
++        records[name] = _feedback_record(runtime, instance, name,
++                                         state=("stale", "unreviewed", "nonclaiming")[index % 3])
++        by_port.setdefault(port, []).append(name)
++    request["inputs"].extend({"port": port, "artifact_names": names} for port, names in by_port.items())
++    preflight = root.call_tool("operation_preflight", request)
++    assert preflight["admissible"] is True, preflight
++    assert root.call_tool("operation_invoke", request)["result"]["state"] == "queued"
++    compiled = runtime.runs.operation_catalog.operation(operation_id)
++    worker = LocalWorkerMCPRouter(runtime.runs, operation_id=operation_id, operation_digest=compiled.digest)
++    opened = worker.call_tool("worker_open_assignment", {})
++    run_id = runtime.scheduler_bindings.resolve(instance=instance.instance_id, namespace="run", name=request["name"])
++    status = runtime.runs.status(run_id)
++    workspace = runtime.runs.backend.open(run_id)
++    aliases = []
++    for port, names in by_port.items():
++        for index, name in enumerate(names, start=1):
++            alias = port if len(names) == 1 else f"{port}_{index:03d}"
++            aliases.append(alias)
++            path = workspace.input_paths[alias]
++            assert path.read_bytes() == records[name][1]
++            assert path.stat().st_mode & 0o777 == 0o400
++            frozen = next(item for item in status.inputs if item.source_name == alias)
++            assert (frozen.artifact_name, frozen.exposure, frozen.usage) == (name, "on_demand", "evidence_inventory")
++    assert set(workspace.input_paths).intersection({"current_progress", "experiment_results", "result_analysis"}) == {
++        port for port, names in by_port.items() if len(names) == 1
++    }
++    if operation_id == "science.object.review.v1":
++        payload["evidence"] = [{"source_key": alias, "source_type": "frozen_input", "locator": "exact bound feedback"}
++                               for alias in ("experiment_plan", "research_objective", *aliases)]
++    Path(opened["output_directory"], "result.json").write_bytes(_experiment_envelope(payload))
++    assert worker.call_tool("worker_submit_result", {})["state"] == "completed"
++    result = root.call_tool("run_status", {"name": request["name"]})
++    output_id = runtime.scheduler_bindings.resolve(instance=instance.instance_id, namespace="artifact", name=result["output_artifact_name"])
++    output = runtime.artifacts.get_by_id(output_id)
++    assert {record.ref for record, _ in records.values()}.issubset(output.parent_refs)
++    assert {item.artifact_ref for item in status.inputs} == set(output.parent_refs)
++
++
++def test_feedback_changes_the_immutable_request_fingerprint(tmp_path, monkeypatch, experiment_case) -> None:
++    from scidiscovery.artifact_agent.interfaces.mcp_local_worker import LocalWorkerMCPRouter
++
++    runtime, instance, root, request, payload = _feedback_root(tmp_path, monkeypatch, experiment_case, "science.experiment.design.v1")
++    for name in ("prior_one", "prior_two"):
++        _feedback_record(runtime, instance, name)
++    request["inputs"].append({"port": "current_progress", "artifact_names": ["prior_one"]})
++    root.call_tool("operation_invoke", request)
++    original = runtime.scheduler_bindings.get_binding(instance=instance.instance_id, namespace="run", name=request["name"])
++    compiled = runtime.runs.operation_catalog.operation(request["operation_id"])
++    worker = LocalWorkerMCPRouter(runtime.runs, operation_id=request["operation_id"], operation_digest=compiled.digest)
++    opened = worker.call_tool("worker_open_assignment", {})
++    Path(opened["output_directory"], "result.json").write_bytes(_experiment_envelope(payload))
++    assert worker.call_tool("worker_submit_result", {})["state"] == "completed"
++    request["inputs"][-1]["artifact_names"] = ["prior_two"]
++    rejected = root.call_tool("operation_preflight", request)
++    assert rejected["admissible"] is False
++    revised = root.call_tool("operation_invoke", {**request, "on_conflict": "create_revision"})["result"]
++    new = runtime.scheduler_bindings.get_binding(instance=instance.instance_id, namespace="run", name=revised["name"])
++    assert original.request_fingerprint != new.request_fingerprint
++
++
++@pytest.mark.parametrize("defect,reason", (
++    ("too_many", "input_cardinality_invalid"), ("too_large", "input_item_too_large"),
++    ("total", "input_total_too_large"), ("duplicate", "input_artifact_duplicate"),
++    ("cross_instance", "input_artifact_unavailable"),
++))
++def test_feedback_root_keeps_size_count_duplicate_and_instance_gates(
++    tmp_path, monkeypatch, experiment_case, defect, reason,
++) -> None:
++    runtime, instance, root, request, _ = _feedback_root(tmp_path, monkeypatch, experiment_case, "science.object.review.v1")
++    count = 5 if defect == "too_many" else 4 if defect == "total" else 1
++    size = 8 * 1024 * 1024 + 1 if defect == "too_large" else 8 * 1024 * 1024 if defect == "total" else 16
++    selected_instance = instance
++    if defect == "cross_instance":
++        selected_instance = runtime.scheduler_bindings.create_instance(
++            name="other_feedback_instance", title="Other instance", objective="Keep input identity scoped.")
++    names = []
++    for index in range(count):
++        name = f"feedback_limit_{index}"
++        _feedback_record(runtime, selected_instance, name, raw=bytes([index]) * size)
++        names.append(name)
++    request["inputs"].append({"port": "current_progress", "artifact_names": names})
++    if defect == "duplicate":
++        request["inputs"].append({"port": "result_analysis", "artifact_names": names})
++    rejected = root.call_tool("operation_preflight", request)
++    assert rejected["admissible"] is False
++    assert rejected["reason_code"] == reason
++
++
++def _feedback_catalog_with_input(operation_id, port_name, **changes):
++    general = GENERAL_PLUGIN.model_copy(update={"operations": tuple(
++        operation.model_copy(update={"inputs": tuple(
++            port.model_copy(update=changes) if port.name == port_name else port
++            for port in operation.inputs
++        )}) if operation.operation_id == operation_id else operation
++        for operation in GENERAL_PLUGIN.operations
++    )})
++    return compile_catalog((CORE_PLUGIN, general, CURVE_PLUGIN, TCAD_PLUGIN))
++
++
++def test_feedback_inventory_still_obeys_explicit_current_requirement(tmp_path, monkeypatch, experiment_case) -> None:
++    operation_id = "science.object.review.v1"
++    catalog = _feedback_catalog_with_input(operation_id, "current_progress", require_current=True)
++    runtime, instance, root, request, _ = _feedback_root(tmp_path, monkeypatch, experiment_case, operation_id, catalog=catalog)
++    old, _ = _feedback_record(runtime, instance, "old_feedback")
++    new, _ = _feedback_record(runtime, instance, "new_feedback")
++    runtime.scheduler_bindings.select_scientific_object(
++        instance=instance.instance_id, kind="source_head", logical_name="old_feedback", artifact_ref=old.ref)
++    runtime.scheduler_bindings.select_scientific_object(
++        instance=instance.instance_id, kind="source_head", logical_name="old_feedback", artifact_ref=new.ref, expected_ref=old.ref)
++    request["inputs"].append({"port": "current_progress", "artifact_names": ["old_feedback"]})
++    rejected = root.call_tool("operation_preflight", request)
++    assert rejected["admissible"] is False
++    assert rejected["reason_code"] == "input_not_current"
++
++
++def test_nonclaiming_feedback_cannot_enter_a_typed_claim_port(tmp_path, monkeypatch, experiment_case) -> None:
++    from tests.operations.test_general_transform_operations import _register
++
++    operation_id = "science.object.review.v1"
++    catalog = _feedback_catalog_with_input(operation_id, "experiment_plan", usage="claim_evidence")
++    runtime, instance, root, request, _ = _feedback_root(tmp_path, monkeypatch, experiment_case, operation_id, catalog=catalog)
++    plan_id = runtime.scheduler_bindings.resolve(instance=instance.instance_id, namespace="artifact", name="experiment_plan")
++    plan = runtime.artifacts.get_by_id(plan_id)
++    _register(runtime, instance, name="nonclaiming_plan", raw=runtime.artifacts.read(plan.ref),
++              kind=plan.kind, schema=plan.schema_id, provisional=True)
++    request["inputs"][0]["artifact_names"] = ["nonclaiming_plan"]
++    rejected = root.call_tool("operation_preflight", request)
++    assert rejected["admissible"] is False
++    assert rejected["reason_code"] == "input_scientific_claim_forbidden"
++
++
++def test_sealed_blocked_review_is_readable_as_exact_feedback(tmp_path, monkeypatch, experiment_case) -> None:
++    from scidiscovery.artifact_agent.interfaces.mcp_local_worker import LocalWorkerMCPRouter
++
++    operation_id = "science.object.review.v1"
++    runtime, instance, root, request, payload = _feedback_root(tmp_path, monkeypatch, experiment_case, operation_id, name="blocked_review")
++    compiled = runtime.runs.operation_catalog.operation(operation_id)
++    root.call_tool("operation_invoke", request)
++    worker = LocalWorkerMCPRouter(runtime.runs, operation_id=operation_id, operation_digest=compiled.digest)
++    opened = worker.call_tool("worker_open_assignment", {})
++    payload["verdict"] = "blocked"
++    Path(opened["output_directory"], "result.json").write_bytes(canonical_json({
++        "schema_version": 1, "payload": payload,
++        "handoff": {"verdict": "blocked", "summary": "The bounded review records an unresolved dependency."},
++    }))
++    assert worker.call_tool("worker_submit_result", {})["state"] == "completed"
++    blocked = root.call_tool("run_status", {"name": request["name"]})
++    assert blocked["sealed_output"]["payload"]["verdict"] == "blocked"
++    output_name = blocked["output_artifact_name"]
++    output_id = runtime.scheduler_bindings.resolve(instance=instance.instance_id, namespace="artifact", name=output_name)
++    envelope = runtime.artifacts.get_by_id(output_id)
++    request = {**request, "name": "review_with_blocked_feedback", "inputs": [
++        *request["inputs"], {"port": "current_progress", "artifact_names": [output_name]},
++    ]}
++    assert root.call_tool("operation_preflight", request)["admissible"] is True
++    root.call_tool("operation_invoke", request)
++    reader = LocalWorkerMCPRouter(runtime.runs, operation_id=operation_id, operation_digest=compiled.digest)
++    reader.call_tool("worker_open_assignment", {})
++    run_id = runtime.scheduler_bindings.resolve(instance=instance.instance_id, namespace="run", name=request["name"])
++    assert runtime.runs.backend.open(run_id).input_paths["current_progress"].read_bytes() == runtime.artifacts.read(envelope.ref)
++    assert root.call_tool("run_status", {"name": "blocked_review"})["sealed_output"]["payload"]["verdict"] == "blocked"
++
++
++def test_partial_goal_submission_corrects_same_run_then_preserves_intent(tmp_path, experiment_case) -> None:
++    intent, sources = _partial_experiment(experiment_case)
++    runtime, run_id, output = _experiment_run(tmp_path, sources)
++    intent["proposals"][0]["current_objectives"] = ["Unlisted goal"]
++    output.write_bytes(_experiment_envelope(intent))
++    state, diagnostics = runtime.runs.submit(run_id)
++    assert state == "rejected" and diagnostics
++    assert runtime.runs.status(run_id).state == "running"
++    intent["proposals"][0]["current_objectives"] = ["Test the response now."]
++    output.write_bytes(_experiment_envelope(intent))
++    assert runtime.runs.submit(run_id) == ("completed", ())
++    assert runtime.runs.status(run_id).state == "completed"
++
++
++def _review_run(tmp_path, sources, *, operation_id="science.object.review.v1"):
++    from tests.operations.test_general_transform_operations import _register, _root
++
++    catalog = _catalog()
++    compiled = catalog.operation(operation_id)
++    runtime, instance, _ = _root(tmp_path, catalog=catalog)
++    runtime.runs.operation_catalog = catalog
++    artifacts = {}
++    for port in compiled.spec.inputs:
++        if port.name not in sources:
++            artifacts[port.name] = ()
++            continue
++        envelope = _register(runtime, instance, name=port.name, raw=sources[port.name],
++                             kind=port.name, schema=port.schema_id)
++        artifacts[port.name] = (InvocationArtifact(
++            artifact_name=port.name, ref=envelope.ref, schema_id=envelope.schema_id,
++            media_type=envelope.media_type, size_bytes=envelope.size_bytes,
++            parent_refs=envelope.parent_refs,
++        ),)
++    bound = preflight_operation(compiled, name="review", artifacts_by_port=artifacts,
++                                instruction="Review the exact current selection.")
++    run_id = runtime.runs.schedule(
++        bound, instance_id=instance.instance_id, output_binding_name="review",
++        output_logical_name="review", output_revision=1,
++        output_binding_fingerprint="b" * 64,
++    )
++    _, workspace = runtime.runs.open(operation_id=compiled.spec.operation_id,
++                                     operation_digest=compiled.digest)
++    return runtime, run_id, workspace
++
++
++@pytest.mark.parametrize("with_objective", (False, True))
++@pytest.mark.parametrize("with_context", (False, True))
++@pytest.mark.parametrize("verdict", ("pass", "revise", "blocked"))
++def test_review_optional_original_is_visible_and_citations_correct_in_same_run(
++    tmp_path, experiment_case, with_objective, with_context, verdict,
++) -> None:
++    from scidiscovery.artifact_agent.transforms import materialize_experiment_plan
++
++    intent, inputs = _partial_experiment(experiment_case)
++    plan, _ = materialize_experiment_plan({
++        "experiment_design_intent": canonical_json(intent),
++        "research_objective": inputs["research_objective"],
++        "hypothesis_portfolio": inputs["hypothesis_portfolio"],
++    })
++    sources = {"experiment_plan": plan}
++    if with_objective:
++        sources["research_objective"] = inputs["research_objective"]
++    if with_context:
++        sources["execution_context"] = canonical_json({
++            "schema_version": 1, "domain": "tcad", "implementation_backend": "sprocess",
++            "implementation_kind": "sprocess", "release_label": "R-2020.09",
++            "public_arguments": [], "capability_statements": None, "limitations": None,
++        })
++    runtime, run_id, workspace = _review_run(tmp_path, sources)
++    for name, raw in sources.items():
++        assert workspace.input_paths[name].read_bytes() == raw
++        assert workspace.input_paths[name].stat().st_mode & 0o222 == 0
++    assert ("research_objective" in workspace.input_paths) is with_objective
++    assert ("execution_context" in workspace.input_paths) is with_context
++    payload = {
++        "review_target": "experiment_portfolio", "verdict": verdict,
++        "summary": "Assess current validity and the stated condition for future work.",
++        "evidence": [{"source_key": "unbound_original", "source_type": "frozen_input",
++                      "locator": "objective statement"}],
++        "findings": [{"finding_key": "scope", "statement": "Only current scope was assessed.",
++                      "epistemic_status": "inference", "evidence_keys": ["unbound_original"]}],
++    }
++    output = workspace.output_directory / "result.json"
++    handoff = {"verdict": verdict, "summary": payload["summary"]}
++    output.write_bytes(canonical_json({"schema_version": 1, "payload": payload, "handoff": handoff}))
++    state, diagnostics = runtime.runs.submit(run_id)
++    assert state == "rejected"
++    assert runtime.runs.status(run_id).state == "running"
++    assert any(item["rule_id"] == "experiment.review.subject_binding" for item in diagnostics)
++    alias = "research_objective" if with_objective else "experiment_plan"
++    payload["evidence"][0]["source_key"] = alias
++    payload["findings"][0]["evidence_keys"] = [alias]
++    output.write_bytes(canonical_json({"schema_version": 1, "payload": payload, "handoff": handoff}))
++    assert runtime.runs.submit(run_id) == ("completed", ())
++
++
++def test_review_contract_declares_optional_original_and_execution_inputs() -> None:
++    compiled = _catalog().operation("science.object.review.v1")
++    ports = {port.name: port for port in compiled.spec.inputs}
++    for name, schema_id, size in (
++        ("research_objective", "scidiscovery.research-objective.v1", 512 * 1024),
++        ("execution_context", "scidiscovery.execution-context.v1", 64 * 1024),
++    ):
++        port = ports[name]
++        assert (port.schema_id, port.min_items, port.max_items, port.max_item_bytes,
++                port.usage, port.exposure) == (schema_id, 0, 1, size, "prior_signal", "full")
++    output = operation_primary_output(compiled)
++    assert output.evidence_paths == ()
++    contract = operation_port_json_schema(compiled, output)["x-scidiscovery-validation-contract"]
++    checker = next(item for item in contract["checkers"] if item["phase"] == "context")
++    assert set(checker["optional_inputs"]) == {
++        "research_objective", "execution_context", "current_progress",
++        "experiment_results", "result_analysis",
++    }
++
++
++@pytest.mark.parametrize("global_already_present", (False, True))
++def test_materialization_and_revision_preserve_goal_text_and_rationales(
++    experiment_case, global_already_present,
++) -> None:
++    from scidiscovery.artifact_agent.transforms import materialize_experiment_plan
++    from scidiscovery.general_science_experiment_components import _experiment_revision_context
++
++    intent, inputs = _partial_experiment(experiment_case)
++    global_objective = json.loads(inputs["research_objective"])["statement"]
++    proposal = intent["proposals"][0]
++    local_goals = ["  Current response\n", "Future response; requires additional evidence."]
++    proposal["objectives"] = [local_goals[0], global_objective, local_goals[1]] if global_already_present else local_goals
++    proposal["current_objectives"] = [local_goals[0]]
++    proposal["value_assessment"]["rationale"] += "\n  Keep exact scientific wording."
++    intent["priority_rationale"] = "  First resolve the response.\nThen reassess the evidence condition."
++    args = {"experiment_design_intent": canonical_json(intent),
++            "research_objective": inputs["research_objective"],
++            "hypothesis_portfolio": inputs["hypothesis_portfolio"]}
++    raw, report = materialize_experiment_plan(args)
++    assert materialize_experiment_plan(args) == (raw, report)
++    plan = ExperimentPortfolio.model_validate_json(raw, strict=True)
++    assert plan.proposals[0].objectives == (global_objective, *local_goals)
++    assert plan.proposals[0].current_objectives == (local_goals[0],)
++    assert plan.proposals[0].value_assessment.rationale == proposal["value_assessment"]["rationale"]
++    assert plan.priority_rationale == intent["priority_rationale"]
++    assert len(plan.proposals[0].cases) == 2
++    assert plan.proposals[0].required_observables == ("response",)
++    assert ExperimentPortfolio.model_validate_json(plan.canonical_json(), strict=True) == plan
++    revised = plan.model_dump(mode="json")
++    revised["proposals"][0]["objectives"].append("Reassess a bounded follow-up after review.")
++    sources = {"prior_draft": raw, "change_request": canonical_json({
++        "review_target": "experiment_portfolio", "verdict": "revise",
++        "summary": "Retain the condition for one later follow-up.",
++    })}
++    _experiment_revision_context(revised, sources, {})
++    assert revised["proposals"][0]["value_assessment"]["rationale"] == proposal["value_assessment"]["rationale"]
++    assert revised["priority_rationale"] == intent["priority_rationale"]
++    revised["proposals"][0]["objectives"].remove(global_objective)
++    with pytest.raises(ValidationError, match="exact portfolio objective"):
++        ExperimentPortfolio.model_validate_json(canonical_json(revised), strict=True)
++    with pytest.raises(ValidationError, match="exact portfolio objective"):
++        _experiment_revision_context(revised, sources, {})
++
++
++@pytest.mark.parametrize("mismatch", ("objective_key", "statement", "execution_context", "unbound_citation"))
++def test_review_validates_bound_original_context_and_actual_source_aliases(experiment_case, mismatch) -> None:
++    from scidiscovery.artifact_agent.transforms import materialize_experiment_plan
++    from scidiscovery.general_science_experiment_components import _object_review_context
++
++    intent, inputs = _partial_experiment(experiment_case)
++    plan, _ = materialize_experiment_plan({
++        "experiment_design_intent": canonical_json(intent),
++        "research_objective": inputs["research_objective"],
++        "hypothesis_portfolio": inputs["hypothesis_portfolio"],
++    })
++    sources = {"experiment_plan": plan, "research_objective": inputs["research_objective"]}
++    payload = {"review_target": "experiment_portfolio", "verdict": "revise",
++               "summary": "Assess the exact original contract."}
++    if mismatch in {"objective_key", "statement"}:
++        objective = json.loads(sources["research_objective"])
++        objective[mismatch] = "different_objective"
++        sources["research_objective"] = canonical_json(objective)
++        error, message = SemanticRuleViolation, "key or statement differs"
++    elif mismatch == "execution_context":
++        sources["execution_context"] = b"{}"
++        error, message = ValidationError, "ExecutionContext"
++    else:
++        payload["evidence"] = [{"source_key": "experiment_plan_aux", "source_type": "frozen_input",
++                                "locator": "absent input"}]
++        error, message = SemanticRuleViolation, "actual visible input alias"
++    with pytest.raises(error, match=message):
++        _object_review_context(payload, sources, {"verdict": "revise"})
++
++
++def test_complete_revision_corrects_missing_global_and_subset_in_same_run(tmp_path, experiment_case) -> None:
++    from scidiscovery.artifact_agent.transforms import materialize_experiment_plan
++
++    intent, inputs = _partial_experiment(experiment_case)
++    raw, _ = materialize_experiment_plan({
++        "experiment_design_intent": canonical_json(intent),
++        "research_objective": inputs["research_objective"],
++        "hypothesis_portfolio": inputs["hypothesis_portfolio"],
++    })
++    sources = {"prior_draft": raw, "change_request": canonical_json({
++        "review_target": "experiment_portfolio", "verdict": "revise",
++        "summary": "Clarify why the future observable remains deferred.",
++    })}
++    runtime, run_id, workspace = _review_run(
++        tmp_path, sources, operation_id="science.experiment.revise.v1",
++    )
++    revised = json.loads(raw)
++    proposal = revised["proposals"][0]
++    proposal["objectives"].remove(revised["objective"])
++    output = workspace.output_directory / "result.json"
++    output.write_bytes(_experiment_envelope(revised))
++    state, diagnostics = runtime.runs.submit(run_id)
++    assert state == "rejected"
++    assert any("exact portfolio objective" in item["message"] for item in diagnostics)
++    assert runtime.runs.status(run_id).state == "running"
++    proposal["objectives"].insert(0, revised["objective"])
++    proposal["current_objectives"] = ["Unlisted goal"]
++    output.write_bytes(_experiment_envelope(revised))
++    state, diagnostics = runtime.runs.submit(run_id)
++    assert state == "rejected"
++    assert any("exact subset" in item["message"] for item in diagnostics)
++    assert runtime.runs.status(run_id).state == "running"
++    proposal["current_objectives"] = intent["proposals"][0]["current_objectives"]
++    proposal["value_assessment"]["rationale"] += " Later work requires the stated evidence."
++    output.write_bytes(_experiment_envelope(revised))
++    assert runtime.runs.submit(run_id) == ("completed", ())
++
++
+ def test_experiment_materialized_constraints_are_correctable(experiment_case) -> None:
+     intent, sources = experiment_case
+     intent["objective_key"] = "objective_expected"
+@@ -313,7 +860,9 @@
+                   engineering_objective="Check one bounded numerical case.",
+                   selected_hypothesis_keys=[])
+     proposal = intent["proposals"][0]
+-    proposal.update(hypothesis_keys=[], cases=proposal["cases"][:1],
++    proposal.update(objectives=[intent["engineering_objective"]],
++                    current_objectives=[intent["engineering_objective"]],
++                    hypothesis_keys=[], cases=proposal["cases"][:1],
+                     baseline_case_key=None, variables=[],
+                     identifiability_claims=[], prediction_tests=[])
+     ExperimentDesignIntent.model_validate_json(canonical_json(intent), strict=True)
+--- baseline/tests/operations/test_catalog_installed_entrypoint.py
++++ candidate/tests/operations/test_catalog_installed_entrypoint.py
+@@ -299,6 +299,8 @@
+     "selected_hypothesis_keys": [],
+     "proposals": [{
+         "experiment_key": "installed_case",
++        "objectives": ["Check one bounded numerical case."],
++        "current_objectives": ["Check one bounded numerical case."],
+         "hypothesis_keys": [],
+         "frozen_invariants": ["Use the exact installed-package inputs."],
+         "cases": [{
+--- baseline/tests/operations/test_catalog_negative_cases.py
++++ candidate/tests/operations/test_catalog_negative_cases.py
+@@ -29,6 +29,21 @@
+         compile_catalog(plugins)
+     assert caught.value.reason_code == code
+     return caught.value
++
++
++@pytest.mark.parametrize("exposure", ("handoff_only", "on_demand", "full"))
++@pytest.mark.parametrize("usage", ("evidence_inventory", "prior_signal", "claim_evidence"))
++@pytest.mark.parametrize("wildcard", ("paired", "schema_only", "media_only"))
++def test_wildcard_inputs_require_paired_read_only_inventory(exposure, usage, wildcard) -> None:
++    port = replace(
++        PLUGIN.operations[0].inputs[0],
++        schema_id="*" if wildcard != "media_only" else "example.input.v1",
++        media_types=("*/*",) if wildcard != "schema_only" else ("application/json",),
++        exposure=exposure,
++        usage=usage,
++    )
++    allowed = wildcard == "paired" and usage == "evidence_inventory" and exposure != "full"
++    assert port.issue() == (None if allowed else "input_wildcard_invalid")
+ 
+ 
+ @pytest.mark.parametrize(
+--- baseline/tests/operations/test_general_transform_operations.py
++++ candidate/tests/operations/test_general_transform_operations.py
+@@ -50,6 +50,27 @@
+     EXPERIMENT_MATERIALIZE_OPERATION,
+     OBJECTIVE_PROJECT_OPERATION,
+ }
++
++
++def test_materialize_maximum_legal_goals_and_current_selection_without_expansion() -> None:
++    from scidiscovery.artifact_agent.schema.experiment import ExperimentPortfolio
++    from scidiscovery.artifact_agent.transforms import materialize_experiment_plan
++    from tests.operations.m3_transform_equivalence_runner import _engineering_intent
++
++    intent = json.loads(_engineering_intent())
++    goals = ["原样目标 " + "x" * (8192 - 5), *[f"Bounded goal {index}" for index in range(15)]]
++    assert len(goals[0]) == 8192
++    proposal = intent["proposals"][0]
++    proposal.update(objectives=goals, current_objectives=goals)
++    raw, _ = materialize_experiment_plan({"experiment_design_intent": canonical_json(intent)})
++    plan = ExperimentPortfolio.model_validate_json(raw, strict=True)
++    assert plan.proposals[0].objectives == (intent["engineering_objective"], *goals)
++    assert plan.proposals[0].current_objectives == tuple(goals)
++    assert len(plan.proposals[0].objectives) == 17
++    assert len(plan.proposals[0].cases) == 1
++    assert plan.proposals[0].resource_estimate.case_count == 1
++    assert plan.proposals[0].value_assessment.rationale == proposal["value_assessment"]["rationale"]
++    assert plan.priority_rationale == intent["priority_rationale"]
+ 
+ 
+ def _intake() -> ScientificIntake:
+@@ -353,6 +374,9 @@
+             "hypothesis_portfolio": (portfolio,),
+             "critic_review": (critic,),
+             "execution_context": (projected,),
++            "current_progress": (),
++            "experiment_results": (),
++            "result_analysis": (),
+         },
+         instruction="Design one bounded experiment.",
+     )
+@@ -873,6 +897,9 @@
+         "hypothesis_portfolio": (portfolio,),
+         "critic_review": (critic,),
+         "execution_context": (),
++        "current_progress": (),
++        "experiment_results": (),
++        "result_analysis": (),
+     }
+     with pytest.raises(OperationInvocationError, match="guard_rejected"):
+         preflight_operation(
+@@ -905,7 +932,7 @@
+     assert accepted.compiled is operation
+ 
+ 
+-def test_wildcard_schema_is_limited_to_lineage_only_evidence_ports() -> None:
++def test_wildcard_schema_is_limited_to_read_only_evidence_ports() -> None:
+     catalog = _catalog()
+     wildcard_ports = tuple(
+         port
+@@ -915,7 +942,8 @@
+     )
+     assert wildcard_ports
+     assert all(
+-        port.exposure == "handoff_only" and port.usage == "evidence_inventory"
++        port.exposure in {"handoff_only", "on_demand"}
++        and port.usage == "evidence_inventory"
+         for port in wildcard_ports
+     )
+ 
+--- baseline/tests/operations/test_h2b_domain_boundaries.py
++++ candidate/tests/operations/test_h2b_domain_boundaries.py
+@@ -31,7 +31,8 @@
+             "proposals": [
+                 {
+                     "experiment_key": "implementation_check",
+-                    "objective": "Check one bounded implementation curve.",
++                    "objectives": ["Check one bounded implementation curve."],
++                    "current_objectives": ["Check one bounded implementation curve."],
+                     "frozen_invariants": ["same implementation"],
+                     "cases": [
+                         {
+--- baseline/tests/operations/test_l4_local_tcad.py
++++ candidate/tests/operations/test_l4_local_tcad.py
+@@ -6,6 +6,7 @@
+ from pathlib import Path
+ 
+ import pytest
++from pydantic import ValidationError
+ 
+ from curve_score.plugin import PLUGIN as CURVE_PLUGIN
+ from scidiscovery.artifact_agent.interfaces.mcp_local_worker import LocalWorkerMCPRouter
+@@ -14,7 +15,14 @@
+ from scidiscovery.artifact_agent.schema.artifact import ArtifactRegistration
+ from scidiscovery.artifact_agent.schema.common import canonical_json
+ from scidiscovery.artifact_agent.schema.experiment import (
++    CaseExpectation,
++    ComparisonContract,
++    ComparisonVariable,
++    IdentifiabilityClaim,
+     ExperimentCase,
++    ExperimentFactor,
++    FactorSetting,
++    PredictionTest,
+     ExperimentPortfolio,
+     ExperimentProposal,
+     ExperimentValueAssessment,
+@@ -26,6 +34,7 @@
+ from scidiscovery.builtin_plugin import CORE_PLUGIN
+ from scidiscovery.general_science_plugin import PLUGIN as SCIENCE_PLUGIN
+ from scidiscovery.operations.catalog import compile_catalog
++from scidiscovery.operation_contract import SemanticRuleViolation
+ from tcad_artifact.debug_contract import (
+     CollectedTCADDebugFile,
+     CollectedTCADDebugRun,
+@@ -38,12 +47,16 @@
+ )
+ from tcad_artifact.execution_control import SolverCapability
+ from tcad_artifact.local_debug_service import LocalTCADDebugService
+-from tcad_artifact.plugin import AUTHOR_PROMPT, PLUGIN as TCAD_PLUGIN
++from tcad_artifact.plugin import (
++    AUTHOR_PROMPT, PLUGIN as TCAD_PLUGIN, _author_context, _review_context,
++)
+ from tcad_artifact.project_packager import (
+     DeckFile,
+     DeckProjectDraft,
+     DeckRequirementReview,
+     DeckReviewReport,
++    ParameterBinding,
++    ProjectPreflightAttestation,
+     ProjectExpectedOutput,
+     ProjectInputSlot,
+     ProjectResourceLimits,
+@@ -130,7 +143,11 @@
+ def _portfolio() -> ExperimentPortfolio:
+     proposal = ExperimentProposal(
+         experiment_key="entrypoint_smoke",
+-        objective="Verify one bounded direct solver entrypoint.",
++        objectives=(
++            "Verify one direct solver entrypoint.",
++            "Verify one bounded direct solver entrypoint.",
++        ),
++        current_objectives=("Verify one bounded direct solver entrypoint.",),
+         frozen_invariants=("No scientific claim is made.",),
+         cases=(
+             ExperimentCase(
+@@ -214,7 +231,15 @@
+     _experiment_revision_context(revised.model_dump(mode="json"), sources, {})
+ 
+     replacement = revised.model_copy(
+-        update={"objective": "Replace the experiment with another objective."}
++        update={
++            "objective": "Replace the experiment with another objective.",
++            "proposals": (revised.proposals[0].model_copy(update={
++                "objectives": (
++                    "Replace the experiment with another objective.",
++                    *revised.proposals[0].objectives,
++                ),
++            }),),
++        }
+     )
+     with pytest.raises(SemanticRuleViolation, match="experiment identity"):
+         _experiment_revision_context(
+@@ -1034,8 +1059,9 @@
+     assert later.source_relative_path is None and later.reported_line is None
+ 
+ 
++@pytest.mark.parametrize("verdict", ("pass", "revise", "blocked"))
+ def test_local_tcad_author_debug_and_independent_review_share_one_operation_path(
+-    tmp_path: Path,
++    tmp_path: Path, verdict: str,
+ ) -> None:
+     catalog, runtime, root, capability = _system(tmp_path)
+     _invoke(
+@@ -1062,6 +1088,12 @@
+     )
+     opened = worker.call_tool("worker_open_assignment", {})
+     _write_author_workspace(opened, _project(capability))
++    if verdict != "pass":
++        handoff_path = Path(str(opened["workspace_path"]), "deck/handoff.json")
++        handoff_path.write_bytes(canonical_json({
++            "verdict": "blocked", "summary": "The exact grid input remains missing.",
++            "missing_inputs": ["The direct SDevice entrypoint has no device grid."],
++        }))
+     debug = worker.call_tool(
+         "worker_tcad_debug_run", {"run_name": "preflight", "mode": "preflight"}
+     )
+@@ -1078,16 +1110,18 @@
+     author_status = root.call_tool("run_status", {"name": "deck"})
+     project_name = author_status["output_artifact_name"]
+ 
+-    _invoke(
+-        root,
+-        "deck_review",
+-        "tcad.deck.review.v1",
+-        [
++    review_request = {
++        "name": "deck_review", "operation_id": "tcad.deck.review.v1",
++        "inputs": [
+             {"port": "project", "artifact_names": [project_name]},
+             {"port": "execution_capability", "artifact_names": ["execution_capability"]},
+             {"port": "experiment_plan", "artifact_names": ["experiment_plan"]},
+         ],
+-    )
++        "instruction": "Review the exact bounded project including its implementation gaps.",
++    }
++    preflight = root.call_tool("operation_preflight", review_request)
++    assert preflight["admissible"] is True, preflight
++    root.call_tool("operation_invoke", review_request)
+     review_compiled = catalog.operation("tcad.deck.review.v1")
+     reviewer = LocalWorkerMCPRouter(
+         runtime.runs,
+@@ -1123,13 +1157,18 @@
+         ),
+         execution_ready=True,
+     )
++    if verdict != "pass":
++        review = review.model_copy(update={
++            "verdict": verdict, "execution_ready": False, "implementation_fidelity": "fail",
++            "missing_inputs": ("The direct SDevice entrypoint has no device grid.",),
++        })
+     Path(str(review_open["output_directory"]), "result.json").write_bytes(
+         canonical_json(
+             {
+                 "schema_version": 1,
+                 "handoff": {
+-                    "verdict": "pass",
+-                    "summary": "The exact TCAD project passed independent review.",
++                    "verdict": verdict,
++                    "summary": "The exact TCAD project received independent review.",
+                 },
+                 "payload": review.model_dump(mode="json"),
+             }
+@@ -1138,6 +1177,31 @@
+     assert reviewer.call_tool("worker_submit_result", {})["state"] == "completed"
+     review_status = root.call_tool("run_status", {"name": "deck_review"})
+     assert review_status["state"] == "completed"
++    assert review_status["sealed_output"]["payload"]["verdict"] == verdict
++    assert review_status["sealed_output"]["payload"]["execution_ready"] is (verdict == "pass")
++    if verdict != "pass":
++        package_request = {
++            "name": "blocked_package", "operation_id": "tcad.reviewed-deck-package.v2",
++            "inputs": [
++                {"port": "project", "artifact_names": [project_name]},
++                {"port": "review", "artifact_names": [review_status["output_artifact_name"]]},
++                {"port": "capability", "artifact_names": ["execution_capability"]},
++                {"port": "experiment_plan", "artifact_names": ["experiment_plan"]},
++            ],
++        }
++        denied = root.call_tool("operation_preflight", package_request)
++        assert denied["admissible"] is False
++        assert denied["reason_code"] == "input_independent_review_missing"
++        with pytest.raises(Exception, match="input_independent_review_missing"):
++            root.call_tool("operation_invoke", package_request)
++        # An effect still requires the declared reviewed-package schema.
++        denied = root.call_tool("operation_preflight", {
++            "name": "blocked_execution", "operation_id": "tcad.study.execute",
++            "inputs": [{"port": "reviewed_package", "artifact_names": [project_name]}],
++        })
++        assert denied["admissible"] is False
++        assert denied["reason_code"] == "input_schema_mismatch"
++        assert root.call_tool("run_status", {"name": "deck"})["scheduler_signal"]["verdict"] == "blocked"
+     assert not hasattr(runtime, "tasks") and not hasattr(runtime, "tokens")
+ 
+ 
+@@ -1510,3 +1574,360 @@
+     assert root.call_tool("run_status", {"name": "output_symlink_deck"})[
+         "state"
+     ] == "running"
++
++
++def _review_context_fixture(defect):
++    capability = SolverCapability(
++        profile_id="review_fixture", solver_kind="sdevice", executable="/opt/fake/sdevice",
++        environment={}, release_evidence="Synthetic fixture", public_release_label="R-2020.09",
++    )
++    project = _project(capability)
++    plan = _portfolio()
++    sources = {}
++    if defect == "case":
++        proposal = plan.proposals[0]
++        contract = ComparisonContract(
++            baseline_case_key="smoke", comparison_case_keys=("comparison",),
++            variables=(ComparisonVariable(
++                variable_key="bias", scientific_path="device.bias", factor_type="physical",
++                comparison_role="intended_change", unit="V", equivalence_rule="exact",
++                expectations=(CaseExpectation(case_key="smoke", value=0.0),
++                              CaseExpectation(case_key="comparison", value=1.0)),
++                rationale="Compare two declared biases.",
++            ),),
++            required_observables=proposal.required_observables,
++            identifiability_claims=(IdentifiabilityClaim(
++                hypothesis_key="fixture", observable="terminal state",
++                distinguishing_outcome="Both cases complete.", decision_rule="Review both cases.",
++                ambiguity_conditions=("A missing case cannot support the comparison.",),
++                smallest_resolving_control="Implement the missing case.",
++            ),),
++        )
++        proposal = proposal.model_copy(update={
++            "cases": tuple(ExperimentCase(
++                case_key=key, scientific_role=role, purpose="Compare bias.",
++                settings=(FactorSetting(name="bias", value=value, unit="V"),),
++            ) for key, role, value in (("smoke", "baseline", 0.0), ("comparison", "perturbation", 1.0))),
++            "comparison_contract": contract, "hypothesis_keys": ("fixture",),
++            "changed_factors": (ExperimentFactor(
++                name="bias", factor_type="physical", values=(0.0, 1.0), unit="V", rationale="Compare bias.",
++            ),),
++            "prediction_tests": (PredictionTest(
++                hypothesis_key="fixture", prediction_key="completion", observable="terminal state",
++                expected_result="Both cases complete.", falsifying_result="One case fails.",
++            ),),
++            "resource_estimate": proposal.resource_estimate.model_copy(update={"case_count": 2}),
++        })
++        plan = plan.model_copy(update={
++            "proposals": (proposal,), "study_kind": "scientific", "objective_key": "fixture_objective",
++            "selected_hypothesis_keys": ("fixture",),
++        })
++    elif defect in {"value", "unit", "uncertainty", "none"}:
++        project = project.model_copy(update={"parameter_bindings": (ParameterBinding(
++            name="bias", approved_parameter_key="bias", declared_value="2.0e+0" if defect == "value" else "1.0e+0",
++            unit="mV" if defect == "unit" else "V", relative_path="main.cmd", locator="Solve",
++            requirement_keys=("entrypoint",),
++        ),)})
++        sources["device_parameters"] = canonical_json({
++            "parameter_set_key": "parameters", "requirement_set_key": "requirements",
++            "title": "Fixture parameters", "objective": "Bound one bias.",
++            "claims": [{"parameter_key": "bias", "selected_value": "1.0e+0", "unit": "V",
++                        "epistemic_status": "user_defined", "selection_rationale": "Fixture input."}],
++        })
++        sources["parameter_coverage"] = canonical_json({
++            "requirement_set_key": "requirements", "parameter_set_key": "parameters",
++            "source_catalog_key": "sources", "status": "pass", "confirmed_count": 1,
++            "review_count": 0, "blocking_count": 0,
++            "items": [{"parameter_key": "bias", "status": "confirmed", "selected_value": "1.0e+0",
++                       "canonical_unit": "V", "independent_source_count": 1, "summary": "Fixture coverage."}],
++        })
++        if defect == "uncertainty":
++            sources["parameter_uncertainty"] = canonical_json({
++                "requirement_set_key": "requirements", "parameter_set_key": "parameters",
++                "status": "blocking_unbounded", "items": [{
++                    "parameter_key": "bias", "classification": "blocking_unbounded",
++                    "canonical_unit": "V", "rationale": "Missing finite bounds.",
++                }],
++            })
++    digest = hashlib.sha256()
++    for item in sorted(project.files, key=lambda item: item.relative_path):
++        digest.update(item.relative_path.encode() + b"\0" + item.content.encode() + b"\0")
++    project = project.model_copy(update={"preflight_attestation": ProjectPreflightAttestation(
++        source_tree_sha256=digest.hexdigest(), terminal_state="succeeded", exit_code=0,
++        diagnostic_layer="complete", qualified=True, summary="Synthetic source-bound preflight.",
++    )})
++    sources.update({
++        "project": canonical_json(project.model_dump(mode="json")),
++        "experiment_plan": canonical_json(plan.model_dump(mode="json")),
++        "execution_capability": canonical_json(capability.public_snapshot().model_dump(mode="json")),
++    })
++    report = DeckReviewReport(
++        verdict="pass", capability_sha256=project.capability_sha256,
++        summary="Fixture review", rationale="Check the exact declared implementation.",
++        physical_fidelity="pass", implementation_fidelity="pass", syntax_fidelity="pass",
++        numerical_protocol_fidelity="pass", execution_ready=True,
++        requirement_reviews=(DeckRequirementReview(
++            requirement_key="entrypoint", status="pass", rationale="The entrypoint exists.",
++        ),),
++    ).model_dump(mode="json")
++    return project, sources, report
++
++
++@pytest.mark.parametrize("defect", ("case", "value", "unit", "uncertainty"))
++@pytest.mark.parametrize("verdict", ("revise", "blocked"))
++def test_negative_deck_review_can_report_implementation_defects(defect, verdict):
++    project, sources, report = _review_context_fixture(defect)
++    report.update(verdict=verdict, execution_ready=False, implementation_fidelity="fail",
++                  missing_inputs=[f"Resolve the {defect} implementation gap."])
++    _review_context(report, sources, {"verdict": verdict})
++    # The same exact project remains inadmissible as an author result, even blocked.
++    with pytest.raises(SemanticRuleViolation):
++        _author_context(project.model_dump(mode="json"), sources, {"verdict": "blocked"})
++
++
++@pytest.mark.parametrize("defect, diagnostic", (
++    ("case", "case_parameter_bindings"), ("value", "approved parameter value"),
++    ("unit", "approved parameter value"), ("uncertainty", "blocking-unbounded"),
++))
++def test_deck_review_cannot_pass_the_same_implementation_defects(defect, diagnostic):
++    _, sources, report = _review_context_fixture(defect)
++    with pytest.raises(SemanticRuleViolation, match=diagnostic):
++        _review_context(report, sources, {"verdict": "pass"})
++
++
++@pytest.mark.parametrize("verdict", ("pass", "revise", "blocked"))
++@pytest.mark.parametrize("mismatch", (
++    "project_parse", "plan_parse", "parameters_parse", "coverage_parse", "uncertainty_parse",
++    "coverage_identity", "missing_coverage", "approved_key", "handoff", "subject", "capability",
++))
++def test_deck_review_keeps_exact_input_and_report_validation(verdict, mismatch):
++    project, sources, report = _review_context_fixture("none")
++    report.update(verdict=verdict, execution_ready=verdict == "pass")
++    handoff = {"verdict": verdict}
++    if mismatch.endswith("_parse"):
++        port = {"parameters": "device_parameters", "plan": "experiment_plan"}.get(
++            mismatch[:-6], mismatch[:-6])
++        if port == "coverage":
++            port = "parameter_coverage"
++        if port == "uncertainty":
++            port = "parameter_uncertainty"
++        sources[port] = b"{}"
++    elif mismatch == "coverage_identity":
++        coverage = json.loads(sources["parameter_coverage"])
++        coverage["parameter_set_key"] = "another_set"
++        sources["parameter_coverage"] = canonical_json(coverage)
++    elif mismatch == "missing_coverage":
++        sources.pop("parameter_coverage")
++    elif mismatch == "approved_key":
++        value = project.model_dump(mode="json")
++        value["parameter_bindings"][0]["approved_parameter_key"] = "unknown"
++        sources["project"] = canonical_json(value)
++    elif mismatch == "handoff":
++        handoff["verdict"] = "blocked" if verdict != "blocked" else "revise"
++    elif mismatch == "subject":
++        report["requirement_reviews"][0]["requirement_key"] = "another_subject"
++    elif mismatch == "capability":
++        report["capability_sha256"] = "f" * 64
++    with pytest.raises((SemanticRuleViolation, ValidationError)):
++        _review_context(report, sources, handoff)
++
++
++def test_local_review_rejects_false_pass_then_seals_missing_case_report(tmp_path):
++    catalog, runtime, root, capability = _system(tmp_path)
++    project, sources, report = _review_context_fixture("case")
++    project = project.model_copy(update={
++        "tool_profile": capability.profile_id, "capability_sha256": capability.canonical_sha256(),
++    })
++    report["capability_sha256"] = capability.canonical_sha256()
++    sources["project"] = canonical_json(project.model_dump(mode="json"))
++    instance = runtime.scheduler_bindings.list_instances()[0].instance_id
++    for name, schema, kind, raw in (
++        ("case_project", "tcad.deck-project.v1", "tcad_project", sources["project"]),
++        ("case_plan", "scidiscovery.experiment-portfolio.v1", "experiment_portfolio", sources["experiment_plan"]),
++    ):
++        artifact = runtime.artifacts.register(raw, ArtifactRegistration(
++            kind=kind, schema_id=schema, payload_schema_version=1,
++            media_type="application/json", creator=runtime.actor,
++        ), idempotency_key=f"p1:{name}")
++        runtime.scheduler_bindings.bind(
++            instance=instance, namespace="artifact", name=name, object_id=artifact.artifact_id,
++        )
++    request = {
++        "name": "case_review", "operation_id": "tcad.deck.review.v1",
++        "inputs": [
++            {"port": "project", "artifact_names": ["case_project"]},
++            {"port": "experiment_plan", "artifact_names": ["case_plan"]},
++            {"port": "execution_capability", "artifact_names": ["execution_capability"]},
++        ], "instruction": "Review the fixture's missing declared case implementation.",
++    }
++    assert root.call_tool("operation_preflight", request)["admissible"] is True
++    root.call_tool("operation_invoke", request)
++    compiled = catalog.operation("tcad.deck.review.v1")
++    worker = LocalWorkerMCPRouter(runtime.runs, operation_id=compiled.spec.operation_id,
++                                  operation_digest=compiled.digest)
++    opened = worker.call_tool("worker_open_assignment", {})
++    workspace = Path(str(opened["workspace_path"]))
++    project_path = workspace / "deck/project.json"
++    frozen_project = project_path.read_bytes()
++    assert project_path.stat().st_mode & 0o222 == 0
++    output = Path(str(opened["output_directory"]), "result.json")
++    output.write_bytes(canonical_json({
++        "schema_version": 1, "handoff": {"verdict": "pass", "summary": "Fixture false pass."},
++        "payload": report,
++    }))
++    rejected = worker.call_tool("worker_submit_result", {})
++    assert rejected["state"] == "rejected"
++    assert "case_parameter_bindings" in str(rejected["diagnostics"])
++    assert root.call_tool("run_status", {"name": "case_review"})["state"] == "running"
++    report.update(verdict="blocked", execution_ready=False, implementation_fidelity="fail",
++                  missing_inputs=["Both declared case bias bindings are absent."])
++    for change, diagnostic in (("readiness", "execution_ready"), ("handoff", "handoff verdict"),
++                               ("subject", "realization manifest")):
++        candidate = json.loads(canonical_json(report))
++        verdict = "blocked"
++        if change == "readiness":
++            candidate["execution_ready"] = True
++        elif change == "handoff":
++            verdict = "revise"
++        else:
++            candidate["requirement_reviews"][0]["requirement_key"] = "wrong_subject"
++        output.write_bytes(canonical_json({
++            "schema_version": 1, "handoff": {"verdict": verdict, "summary": "Fixture mismatch."},
++            "payload": candidate,
++        }))
++        rejected = worker.call_tool("worker_submit_result", {})
++        assert rejected["state"] == "rejected"
++        assert diagnostic in str(rejected["diagnostics"])
++    output.write_bytes(canonical_json({
++        "schema_version": 1, "handoff": {"verdict": "blocked", "summary": "Missing case controls."},
++        "payload": report,
++    }))
++    assert worker.call_tool("worker_submit_result", {})["state"] == "completed"
++    status = root.call_tool("run_status", {"name": "case_review"})
++    assert status["state"] == "completed"
++    assert status["sealed_output"]["payload"]["missing_inputs"] == report["missing_inputs"]
++    assert status["sealed_output"]["payload"]["execution_ready"] is False
++    assert project_path.read_bytes() == frozen_project
++
++
++def test_materialized_sprocess_author_review_package_preserves_case_anchors(tmp_path, monkeypatch):
++    catalog, runtime, root, capability = _system(tmp_path, solver_kind="sprocess")
++    _, sources, _ = _review_context_fixture("case")
++    artifact = runtime.artifacts.register(sources["experiment_plan"], ArtifactRegistration(
++        kind="experiment_portfolio", schema_id="scidiscovery.experiment-portfolio.v1",
++        payload_schema_version=1, media_type="application/json", creator=runtime.actor,
++    ), idempotency_key="p1:comparison-plan")
++    plan_name = "comparison_plan"
++    runtime.scheduler_bindings.bind(
++        instance=runtime.scheduler_bindings.list_instances()[0].instance_id,
++        namespace="artifact", name=plan_name, object_id=artifact.artifact_id,
++    )
++    _invoke(root, "process", "tcad.deck.author.initial.v1", [
++        {"port": "execution_capability", "artifact_names": ["execution_capability"]},
++        {"port": "experiment_plan", "artifact_names": [plan_name]},
++    ])
++    worker = _debug_worker(catalog, runtime, _ImmediateDebugAdapter(), tmp_path / "debug")
++    opened = worker.call_tool("worker_open_assignment", {})
++    _write_sprocess_workspace(opened)
++    workspace = Path(str(opened["workspace_path"]))
++    (workspace / "deck/files/main.cmd").write_text("set bias_smoke 0.0\nset bias_comparison 1.0\n")
++    path = workspace / "deck/declarations.json"
++    declarations = json.loads(path.read_bytes())
++    declarations["case_anchors"] = [
++        {"experiment_key": "entrypoint_smoke", "case_key": key,
++         "relative_path": "main.cmd", "locator": f"set bias_{key} {value}"}
++        for key, value in (("smoke", "0.0"), ("comparison", "1.0"))
++    ]
++    path.write_bytes(canonical_json(declarations))
++    for mode in ("preflight", "initialization"):
++        assert worker.call_tool("worker_tcad_debug_run", {"run_name": mode, "mode": mode})["state"] == "succeeded"
++    assert worker.call_tool("worker_submit_result", {})["state"] == "completed"
++    project_name = root.call_tool("run_status", {"name": "process"})["output_artifact_name"]
++    _invoke(root, "process_review", "tcad.deck.review.v1", [
++        {"port": "project", "artifact_names": [project_name]},
++        {"port": "execution_capability", "artifact_names": ["execution_capability"]},
++        {"port": "experiment_plan", "artifact_names": [plan_name]},
++    ])
++    compiled = catalog.operation("tcad.deck.review.v1")
++    reviewer = LocalWorkerMCPRouter(runtime.runs, operation_id=compiled.spec.operation_id,
++                                    operation_digest=compiled.digest)
++    review_open = reviewer.call_tool("worker_open_assignment", {})
++    review = DeckReviewReport(
++        verdict="pass", capability_sha256=capability.canonical_sha256(),
++        summary="The materialized fixture is ready.", rationale="Its bounded requirements are realized.",
++        physical_fidelity="pass", implementation_fidelity="pass", syntax_fidelity="pass",
++        numerical_protocol_fidelity="pass", execution_ready=True,
++    )
++    Path(str(review_open["output_directory"]), "result.json").write_bytes(canonical_json({
++        "schema_version": 1, "handoff": {"verdict": "pass", "summary": "Ready for packaging."},
++        "payload": review.model_dump(mode="json"),
++    }))
++    assert reviewer.call_tool("worker_submit_result", {})["state"] == "completed"
++    review_name = root.call_tool("run_status", {"name": "process_review"})["output_artifact_name"]
++    package_request = {
++        "name": "process_package", "operation_id": "tcad.reviewed-deck-package.v2",
++        "inputs": [
++            {"port": "project", "artifact_names": [project_name]},
++            {"port": "review", "artifact_names": [review_name]},
++            {"port": "capability", "artifact_names": ["execution_capability"]},
++            {"port": "experiment_plan", "artifact_names": [plan_name]},
++        ],
++    }
++    assert root.call_tool("operation_preflight", package_request)["admissible"] is True
++    packaged = root.call_tool("operation_invoke", package_request)
++    assert packaged["executor_kind"] == "transform"
++    assert len(packaged["result"]["outputs"]) == 1
++    package_name = packaged["result"]["outputs"][0]["artifact_name"]
++    package_id = runtime.scheduler_bindings.resolve(
++        instance=runtime.scheduler_bindings.list_instances()[0].instance_id,
++        namespace="artifact", name=package_name,
++    )
++    envelope = runtime.artifacts.get_by_id(package_id)
++    package = json.loads(runtime.artifacts.read(envelope.ref))
++    author_project = root.call_tool("run_status", {"name": "process"})["sealed_output"]["payload"]
++    assert len(author_project["case_parameter_bindings"]) == 2
++    assert author_project["initialization_attestation"]["qualified"] is True
++    assert canonical_json(package["project"]["initialization_attestation"]) == canonical_json(
++        author_project["initialization_attestation"]
++    )
++    assert package["review"] == review.model_dump(mode="json")
++
++    from tcad_artifact import transform_adapter
++
++    exact_inputs = {
++        "project": canonical_json(author_project),
++        "review": canonical_json(review.model_dump(mode="json")),
++        "capability": canonical_json(capability.public_snapshot().model_dump(mode="json")),
++        "experiment_plan": sources["experiment_plan"],
++    }
++    for field, diagnostic in (("source_tree_sha256", "source digest differs"),
++                               ("project_sha256", "project digest differs")):
++        changed = json.loads(exact_inputs["project"])
++        changed["initialization_attestation"][field] = "f" * 64
++        with pytest.raises(ValidationError, match=diagnostic):
++            transform_adapter.package_reviewed_project({
++                **exact_inputs, "project": canonical_json(changed),
++            })
++
++    materialize = transform_adapter.materialize_deck_project
++    for field, diagnostic in (("arguments", "project digest differs"),
++                               ("materialization_report", "differs from deterministic rematerialization")):
++        def changed_rebuild(**kwargs):
++            rebuilt = materialize(**kwargs)
++            if field == "arguments":
++                return rebuilt.model_copy(update={"arguments": ("changed",)})
++            return rebuilt.model_copy(update={"materialization_report":
++                rebuilt.materialization_report.model_copy(update={"generated_case_bindings": 3})})
++
++        with monkeypatch.context() as patch:
++            patch.setattr(transform_adapter, "materialize_deck_project", changed_rebuild)
++            with pytest.raises(ValueError, match=diagnostic):
++                transform_adapter.package_reviewed_project(exact_inputs)
++
++    # A historical absent proof stays absent; packaging does not synthesize one.
++    absent = json.loads(exact_inputs["project"])
++    absent["initialization_attestation"] = None
++    result = transform_adapter.package_reviewed_project({
++        **exact_inputs, "project": canonical_json(absent),
++    })
++    assert json.loads(result["reviewed_package"][0])["project"]["initialization_attestation"] is None
+--- baseline/tests/operations/test_m2_curve_analysis_boundary.py
++++ candidate/tests/operations/test_m2_curve_analysis_boundary.py
+@@ -17,6 +17,7 @@
+     validate_compiled_curve_contract,
+ )
+ from curve_score.plugin import PLUGIN as CURVE_PLUGIN
++from curve_score.objective import evaluate_objective_coverage
+ from curve_score.schema import (
+     CurveBundle,
+     CurveExperimentContract,
+@@ -57,7 +58,8 @@
+                 "proposals": [
+                     {
+                         "experiment_key": "implementation_check",
+-                        "objective": "Check one bounded implementation curve.",
++                        "objectives": ["Check one bounded implementation curve."],
++                        "current_objectives": ["Check one bounded implementation curve."],
+                         "frozen_invariants": ["same implementation"],
+                         "cases": [
+                             {
+@@ -831,11 +833,20 @@
+     ) == ((0.0, 0.4, 2), (0.6, 1.0, 2))
+ 
+ 
+-def test_curve_contract_worker_tool_writes_the_compiled_result(tmp_path) -> None:
++@pytest.mark.parametrize("future_observable", (None, "carrier profile", "future response"))
++def test_curve_contract_worker_tool_writes_the_compiled_result(tmp_path, future_observable) -> None:
+     output = tmp_path / "output"
+     output.mkdir()
++    objective = _compiler_objective()
++    if future_observable is not None:
++        target = objective.mandatory_targets[0].model_copy(
++            update={"target_key": "future_target", "observable": future_observable}
++        )
++        objective = objective.model_copy(
++            update={"mandatory_targets": (*objective.mandatory_targets, target)}
++        )
+     raw_inputs = {
+-        "research_objective": _compiler_objective().canonical_json(),
++        "research_objective": objective.canonical_json(),
+         "experiment_plan": _compiler_plan().canonical_json(),
+         "reference_bundle": _bundle().canonical_json(),
+     }
+@@ -873,6 +884,87 @@
+     assert result["state"] == "ready"
+     assert validated == [True]
+     assert envelope.payload["experiment_key"] == "implementation_check"
++    contract = CurveExperimentContract.model_validate_json(
++        canonical_json(envelope.payload), strict=True
++    )
++    assert [item.target_key for item in contract.objective_target_bindings] == [
++        "target_implementation"
++    ]
++    Components.curve_contract_context.implementation(envelope.payload, raw_inputs, {})
++    review_inputs = {**raw_inputs, "curve_contract": contract.canonical_json()}
++    for verdict in ("pass", "revise", "blocked"):
++        Components.curve_contract_review_context.implementation(
++            {
++                "review_target": "domain_contract",
++                "verdict": verdict,
++                "summary": "Fixture verdict tests submission mechanics, not scientific judgment.",
++            },
++            review_inputs,
++            {"verdict": verdict},
++        )
++    if future_observable is not None:
++        coverage = evaluate_objective_coverage(
++            objective, _compiler_plan(), (contract,), (("reference_bundle", _bundle()),)
++        )
++        assert coverage.status == "fail"
++        missing = next(item for item in coverage.targets if item.target_key == "future_target")
++        assert "target_curve_binding_missing" in missing.reason_codes
++
++
++@pytest.mark.parametrize(
++    ("defect", "message"),
++    (
++        ("unknown_target", "unknown objective target_key"),
++        ("unplanned_observable", "observable is absent"),
++        ("unknown_reference", "missing reference series"),
++        ("unknown_case", "unknown experiment case"),
++        ("unknown_check", "must cover every curve-score validation check"),
++        ("unbound_current_check", "did not bind every curve-score validation check"),
++    ),
++)
++def test_partial_curve_scope_keeps_exact_binding_checks(defect, message) -> None:
++    objective = _compiler_objective()
++    target = objective.mandatory_targets[0].model_copy(
++        update={"target_key": "future_target"}
++    )
++    if defect == "unplanned_observable":
++        target = target.model_copy(update={"observable": "future response"})
++    objective = objective.model_copy(
++        update={"mandatory_targets": (*objective.mandatory_targets, target)}
++    )
++    binding = {"target_key": "target_implementation", "reference_series_key": "reference"}
++    cases = ["baseline"]
++    plan = _compiler_plan()
++    if defect == "unknown_target":
++        binding["target_key"] = "absent_target"
++    elif defect == "unplanned_observable":
++        binding["target_key"] = "future_target"
++    elif defect == "unknown_reference":
++        binding["reference_series_key"] = "absent_reference"
++    elif defect == "unknown_case":
++        cases = ["absent_case"]
++    elif defect == "unknown_check":
++        binding["validation_check_keys"] = ["absent_check"]
++    elif defect == "unbound_current_check":
++        value = plan.model_dump(mode="json")
++        proposal = value["proposals"][0]
++        proposal["required_observables"].append("required secondary response")
++        proposal["comparison_contract"]["required_observables"].append("required secondary response")
++        checks = value["validation_plans"][0]["numerical"]["checks"]
++        checks.append({**checks[0], "check_key": "secondary_check", "observable": "required secondary response"})
++        plan = ExperimentPortfolio.model_validate_json(canonical_json(value), strict=True)
++    request = CurveContractCompileInput.model_validate(
++        {
++            "experiment_key": "implementation_check",
++            "target_bindings": [binding],
++            "candidate_case_keys": cases,
++            "comparison_metric": "residual_rms",
++        }
++    )
++    with pytest.raises(SemanticRuleViolation, match=message):
++        compile_curve_contract(
++            request, objective=objective, portfolio=plan, reference_bundle=_bundle()
++        )
+ 
+ 
+ def test_curve_contract_operation_keeps_v1_and_exposes_only_compiler_write_path() -> None:
+--- baseline/tests/operations/test_m3_transform_equivalence.py
++++ candidate/tests/operations/test_m3_transform_equivalence.py
+@@ -69,7 +69,7 @@
+         repository_root=repository_root,
+         work_root=tmp_path / "current",
+     )
+-    assert current["transform_count"] == 18
++    assert current["transform_count"] == 19
+     assert current["guard_count"] == 8
+     assert set(current["catalog_transform_ids"]) == {
+         *(item["operation_id"] for item in current["operations"]),
+--- baseline/tests/operations/test_m6a_direct_instance_management.py
++++ candidate/tests/operations/test_m6a_direct_instance_management.py
+@@ -2,6 +2,7 @@
+ 
+ import http.client
+ import base64
++import json
+ import os
+ import re
+ import sqlite3
+@@ -27,6 +28,7 @@
+ from scidiscovery.artifact_agent.service.scheduler_bindings import (
+     SchedulerInstanceConflict,
+ )
++from tests.operations.test_agent_contract_alignment import experiment_case
+ 
+ 
+ def _setup(tmp_path: Path):
+@@ -651,3 +653,164 @@
+         assert service.session_instance(session_key="sch_" + "7" * 32) is None
+     finally:
+         ui.stop()
++
++
++def test_artifact_catalog_projects_exact_ordered_local_parents_without_writes(tmp_path):
++    from tests.operations.test_general_transform_operations import _register, _root as root_fixture
++
++    runtime, instance, root = root_fixture(tmp_path)
++    old = _register(runtime, instance, name="objective.rev1", raw=b"old constraints",
++                    kind="research_objective", schema="scidiscovery.research-objective.v1")
++    runtime.scheduler_bindings.bind(
++        instance=instance.instance_id, namespace="artifact", name="objective.alias",
++        object_id=old.artifact_id,
++    )
++    _register(runtime, instance, name="objective.rev2", raw=b"new constraints",
++              kind=old.kind, schema=old.schema_id)
++    foreign_instance = runtime.scheduler_bindings.create_instance(
++        name="foreign", title="Foreign instance", objective="Keep names isolated.",
++    )
++    foreign = _register(runtime, foreign_instance, name="foreign.only", raw=b"foreign",
++                        kind="background", schema="example.background.v1")
++    local = _register(runtime, instance, name="analysis", raw=b"local",
++                      kind="background", schema="example.background.v1")
++    _register(runtime, instance, name="plan", raw=b"child", kind="experiment_portfolio",
++              schema="scidiscovery.experiment-portfolio.v1",
++              parents=(local.ref, old.ref, foreign.ref))
++    databases = tuple((tmp_path / "state" / "database").glob("*.sqlite3"))
++    before = {path: path.read_bytes() for path in databases}
++    first = root.call_tool("artifact_catalog", {"name": "plan"})
++    assert first["parent_artifact_names"] == ["analysis", "objective.rev1", None]
++    assert root.call_tool("artifact_catalog", {"name": "objective.rev1"})[
++        "parent_artifact_names"
++    ] == []
++    assert root.call_tool("artifact_catalog", {"name": "plan"}) == first
++    assert {path: path.read_bytes() for path in databases} == before
++    assert not {"parent_refs", "artifact_id", "sha256", "workspace"} & first.keys()
++
++
++def test_artifact_catalog_parent_limit_never_truncates(tmp_path):
++    from scidiscovery.artifact_agent.interfaces.mcp_root import RootToolError
++    from tests.operations.test_general_transform_operations import _register, _root as root_fixture
++
++    runtime, instance, root = root_fixture(tmp_path)
++    parents = tuple(runtime.artifacts.register(
++        str(index).encode(), ArtifactRegistration(
++            kind="background", schema_id="example.background.v1", payload_schema_version=1,
++            media_type="text/plain", creator=runtime.actor,
++        ), idempotency_key=f"unmapped-parent:{index}",
++    ).ref for index in range(4097))
++    for count in (4096, 4097):
++        name = f"many_parents_{count}"
++        _register(runtime, instance, name=name, raw=b"bounded query",
++                  kind="background", schema="example.background.v1", parents=parents[:count])
++        if count == 4096:
++            assert root.call_tool("artifact_catalog", {"name": name})[
++                "parent_artifact_names"
++            ] == [None] * count
++        else:
++            with pytest.raises(RootToolError, match="direct parent limit exceeded"):
++                root.call_tool("artifact_catalog", {"name": name})
++
++
++@pytest.mark.parametrize("revise", (False, True))
++def test_cold_root_recovers_original_plan_context_and_delivers_exact_files(
++    tmp_path, monkeypatch, experiment_case, revise,
++):
++    from scidiscovery.artifact_agent.interfaces.mcp_local_worker import LocalWorkerMCPRouter
++    from scidiscovery.artifact_agent.schema.common import canonical_json
++    from scidiscovery.artifact_agent.schema.research_objective import ResearchObjectiveContract
++    from tests.operations.test_agent_contract_alignment import _catalog, _feedback_root
++    from tests.operations.test_general_transform_operations import _register
++
++    catalog = _catalog()
++    runtime, instance, root, design, intent = _feedback_root(
++        tmp_path, monkeypatch, experiment_case, "science.experiment.design.v1",
++    )
++    runtime.runs.operation_catalog = catalog
++
++    def artifact(name):
++        identifier = runtime.scheduler_bindings.resolve(
++            instance=instance.instance_id, namespace="artifact", name=name,
++        )
++        return runtime.artifacts.get_by_id(identifier)
++
++    original = artifact("research_objective")
++    original_raw = runtime.artifacts.read(original.ref)
++    newer = json.loads(original_raw)
++    newer["mandatory_targets"][0]["observable"] = "A later, different observable"
++    ResearchObjectiveContract.model_validate_json(canonical_json(newer), strict=True)
++    _register(runtime, instance, name="research_objective.rev2", raw=canonical_json(newer),
++              kind=original.kind, schema=original.schema_id, parents=original.parent_refs)
++    # A same-schema feedback parent must not replace the objective used to materialize.
++    design["inputs"].append({"port": "current_progress", "artifact_names": ["research_objective.rev2"]})
++
++    def complete(router, request, payload, verdict="pass", expected_files=None):
++        assert router.call_tool("operation_preflight", request)["admissible"] is True
++        assert router.call_tool("operation_invoke", request)["result"]["state"] == "queued"
++        compiled = catalog.operation(request["operation_id"])
++        worker = LocalWorkerMCPRouter(runtime.runs, operation_id=compiled.spec.operation_id,
++                                      operation_digest=compiled.digest)
++        opened = worker.call_tool("worker_open_assignment", {})
++        if expected_files is not None:
++            assignment = json.loads(Path(opened["assignment_path"]).read_text())
++            inputs = {item["source_name"]: item for item in assignment["inputs"]}
++            for source, raw in expected_files.items():
++                path = Path(opened["workspace_path"], inputs[source]["relative_path"])
++                assert path.read_bytes() == raw
++                assert path.stat().st_mode & 0o777 == 0o400
++        Path(opened["output_directory"], "result.json").write_bytes(canonical_json({
++            "schema_version": 1, "payload": payload,
++            "handoff": {"verdict": verdict, "summary": "One isolated continuation fixture."},
++        }))
++        assert worker.call_tool("worker_submit_result", {})["state"] == "completed"
++        return router.call_tool("run_status", {"name": request["name"]})["output_artifact_name"]
++
++    intent_name = complete(root, design, intent)
++    materialize = {"name": "materialized_plan", "operation_id": "science.experiment.materialize.v1",
++                   "inputs": [{"port": "experiment_design_intent", "artifact_names": [intent_name]},
++                              *[item for item in design["inputs"] if item["port"] != "current_progress"]]}
++    assert root.call_tool("operation_preflight", materialize)["admissible"] is True
++    plan_name = root.call_tool("operation_invoke", materialize)["result"]["outputs"][0]["artifact_name"]
++    if revise:
++        review = {"name": "bounded_review", "operation_id": "science.object.review.v1",
++                  "inputs": [{"port": "experiment_plan", "artifact_names": [plan_name]}],
++                  "instruction": "Review the exact plan."}
++        review_name = complete(root, review, {"review_target": "experiment_portfolio", "verdict": "revise",
++                                             "summary": "Clarify the retained future condition."}, "revise")
++        payload = json.loads(runtime.artifacts.read(artifact(plan_name).ref))
++        payload["priority_rationale"] += " Retain the future target until its condition is resolved."
++        plan_name = complete(root, {"name": "revised_plan", "operation_id": "science.experiment.revise.v1",
++                                    "inputs": [{"port": "prior_draft", "artifact_names": [plan_name]},
++                                               {"port": "change_request", "artifact_names": [review_name]}],
++                                    "instruction": "Clarify only the reviewed rationale."}, payload)
++
++    # New Root facade starts with the selected plan name, not the remembered objective name.
++    cold = RootMCPRouter(RootToolFacade(
++        runtime.artifacts, runtime.intake, runs=runtime.runs, approvals=runtime.approvals,
++        executions=runtime.executions, bindings=runtime.scheduler_bindings,
++        instance=instance.instance_id, operation_catalog=catalog,
++    ))
++    assert cold.call_tool("instance_current", {})["name"] == instance.name
++    cursor = plan_name
++    while True:
++        names = cold.call_tool("artifact_catalog", {"name": cursor})["parent_artifact_names"]
++        parents = [(name, cold.call_tool("artifact_catalog", {"name": name})["schema"]) for name in names]
++        previous = [name for name, schema in parents if schema == "scidiscovery.experiment-portfolio.v1"]
++        if not previous:
++            break
++        assert len(previous) == 1
++        cursor = previous[0]
++    recovered = [name for name, schema in parents if schema == original.schema_id]
++    assert recovered == ["research_objective"]
++    recovered_intent = next(name for name, schema in parents if schema == "scidiscovery.experiment-design-intent.v1")
++    feedback = cold.call_tool("artifact_catalog", {"name": recovered_intent})["parent_artifact_names"]
++    assert "research_objective.rev2" in feedback
++    complete(cold, {"name": "cold_review", "operation_id": "science.object.review.v1",
++                    "inputs": [{"port": "experiment_plan", "artifact_names": [plan_name]},
++                               {"port": "research_objective", "artifact_names": recovered},
++                               {"port": "current_progress", "artifact_names": [recovered_intent]}],
++                    "instruction": "Review only the explicitly recovered originals."},
++             {"review_target": "experiment_portfolio", "verdict": "pass", "summary": "Original context is available."},
++             expected_files={"research_objective": original_raw,
++                             "current_progress": runtime.artifacts.read(artifact(recovered_intent).ref)})
+--- baseline/tests/operations/test_m6c_producer_topology_removal.py
++++ candidate/tests/operations/test_m6c_producer_topology_removal.py
+@@ -223,3 +223,109 @@
+     assert operation_artifact_labels(SimpleNamespace(compiled=internal))[
+         "scientific_claim_admissible"
+     ] == "false"
++
++
++@pytest.mark.parametrize("producer_id, port", (
++    ("tcad.deck.author.initial.v1", "project"),
++    ("tcad.deck.author.revise.v1", "project"),
++    ("tcad.deck.author.runtime-failure.v1", "project"),
++))
++def test_tcad_review_prior_signal_keeps_the_exact_producer_review_edge(producer_id, port):
++    catalog = _catalog()
++    producer = catalog.operation(producer_id)
++    reviewer = catalog.operation("tcad.deck.review.v1")
++    subject = next(item for item in reviewer.spec.inputs if item.name == "project")
++    assert subject.usage == "prior_signal"
++    assert producer.spec.review.reviewer_operation == reviewer.spec.operation_id
++    assert producer.spec.review.reviewer_input_port == subject.name
++    artifact, envelope = _produced_artifact(catalog, producer_id, port, "tcad_subject")
++    routes = _routes(catalog, {artifact.ref.artifact_id: envelope})
++    bound = _bound(reviewer, _input(subject.name, subject.usage, artifact))
++    routes._validate_producer_output_admission(bound)
++    envelope.labels["operation_digest"] = "0" * 64
++    with pytest.raises(OperationInvocationError) as caught:
++        routes._validate_producer_output_admission(bound)
++    assert caught.value.reason_code == "input_producer_contract_changed"
++
++
++_EXISTING_INVENTORY_CONSUMERS = {
++    "science.curve.contract.design.v1": ("reference_bundle",),
++    "science.curve.contract.review.v1": ("reference_bundle",),
++    "science.evidence.audit.intake.v1": ("source_material",),
++    "science.evidence.audit.v1": ("source_material",),
++    "science.evidence.extract.figure.v2": (
++        "paper_source", "figure_request", "figure_manifest", "validation_report",
++        "source_panels", "audit_overlays", "curve_tables",
++    ),
++    "science.figure.evidence.audit.v1": (
++        "paper_source", "figure_request", "figure_manifest", "validation_report",
++        "source_panels", "audit_overlays", "curve_tables",
++    ),
++    "science.figure.request.prepare.v1": ("paper_source",),
++    "tcad.parameter.evidence.audit.v1": (
++        "required_parameter_checklist", "parameter_requirements", "device_parameters",
++        "source_catalog", "source_material",
++    ),
++    "tcad.parameter.evidence.extract.v1": ("source_material",),
++}
++
++
++def test_agent_inventory_exception_has_an_explicit_complete_consumer_inventory(monkeypatch) -> None:
++    from scidiscovery.operations import catalog as catalog_module
++    from scidiscovery.operations.spec import OPERATION_ABI_VERSION
++
++    assert OPERATION_ABI_VERSION == "17"
++    catalog = _catalog()
++    actual = {
++        operation_id: tuple(port.name for port in catalog.operation(operation_id).spec.inputs
++                            if port.usage == "evidence_inventory")
++        for operation_id in catalog.operation_ids()
++        if catalog.operation(operation_id).spec.executor.kind == "agent"
++        and any(port.usage == "evidence_inventory" for port in catalog.operation(operation_id).spec.inputs)
++    }
++    assert actual == {
++        **_EXISTING_INVENTORY_CONSUMERS,
++        "science.experiment.design.v1": ("current_progress", "experiment_results", "result_analysis"),
++        "science.object.review.v1": ("current_progress", "experiment_results", "result_analysis"),
++    }
++    monkeypatch.setattr(catalog_module, "OPERATION_ABI_VERSION", "16")
++    prior_abi = _catalog()
++    assert all(catalog.operation(operation_id).digest != prior_abi.operation(operation_id).digest
++               for operation_id in catalog.operation_ids())
++
++
++@pytest.mark.parametrize("operation_id", tuple(_EXISTING_INVENTORY_CONSUMERS))
++def test_existing_agent_inventory_reads_skip_stale_producer_contracts(operation_id) -> None:
++    catalog = _catalog()
++    artifact, envelope = _produced_artifact(catalog, "science.experiment.revise.v1", "experiment_plan", "stale_inventory")
++    envelope.labels["operation_digest"] = "0" * 64
++    routes = _routes(catalog, {artifact.ref.artifact_id: envelope})
++    routes._operation_output_contract = Mock(side_effect=AssertionError("inventory must not inspect producer qualification"))
++    compiled = catalog.operation(operation_id)
++    for port in compiled.spec.inputs:
++        if port.usage == "evidence_inventory":
++            routes._validate_producer_output_admission(_bound(compiled, _input(port.name, port.usage, artifact)))
++    routes._operation_output_contract.assert_not_called()
++
++
++@pytest.mark.parametrize("usage", ("prior_signal", "claim_evidence", "revision_base", "change_request"))
++def test_non_inventory_inputs_keep_stale_producer_rejection(usage) -> None:
++    catalog = _catalog()
++    artifact, envelope = _produced_artifact(catalog, "science.experiment.revise.v1", "experiment_plan", "stale_subject")
++    envelope.labels["operation_digest"] = "0" * 64
++    routes = _routes(catalog, {artifact.ref.artifact_id: envelope})
++    compiled = catalog.operation("science.experiment.revise.v1")
++    with pytest.raises(OperationInvocationError) as caught:
++        routes._validate_producer_output_admission(_bound(compiled, _input("prior_draft", usage, artifact)))
++    assert caught.value.reason_code == "input_producer_contract_changed"
++
++
++def test_transform_inventory_keeps_producer_contract_validation() -> None:
++    catalog = _catalog()
++    artifact, envelope = _produced_artifact(catalog, "science.experiment.revise.v1", "experiment_plan", "stale_transform_input")
++    envelope.labels["operation_digest"] = "0" * 64
++    routes = _routes(catalog, {artifact.ref.artifact_id: envelope})
++    compiled = catalog.operation("tcad.execution-context.project.v1")
++    with pytest.raises(OperationInvocationError) as caught:
++        routes._validate_producer_output_admission(_bound(compiled, _input("capability", "evidence_inventory", artifact)))
++    assert caught.value.reason_code == "input_producer_contract_changed"
+--- baseline/tests/operations/test_skill_policy_producer_compatibility.py
++++ candidate/tests/operations/test_skill_policy_producer_compatibility.py
+@@ -71,7 +71,7 @@
+ 
+ """
+ 
+-STABLE_EXPERIMENT_PROMPT = """Return exactly one RoleResultEnvelope whose payload is
++HISTORICAL_EXPERIMENT_PROMPT = """Return exactly one RoleResultEnvelope whose payload is
+ the scientific object required by output.schema.json. Without prior_draft,
+ produce the compact ExperimentDesignIntent: select only reviewed hypotheses and
+ design the smallest bounded study that states controls, interventions,
+@@ -306,8 +306,10 @@
+ 
+ def test_stable_prompt_bytes_and_design_revision_digest_isolation(monkeypatch) -> None:
+     assert OPERATION_AGENT_PREAMBLE == STABLE_PREAMBLE
+-    assert EXPERIMENT_PROMPT == STABLE_EXPERIMENT_PROMPT
+-    assert ExperimentResources.experiment_prompt == STABLE_PREAMBLE + STABLE_EXPERIMENT_PROMPT
++    assert EXPERIMENT_PROMPT.startswith(HISTORICAL_EXPERIMENT_PROMPT)
++    assert EXPERIMENT_PROMPT != HISTORICAL_EXPERIMENT_PROMPT
++    assert "current_objectives" in EXPERIMENT_PROMPT
++    assert ExperimentResources.experiment_prompt == STABLE_PREAMBLE + EXPERIMENT_PROMPT
+     assert "execution_context" not in EXPERIMENT_PROMPT
+     assert "execution_context" in EXPERIMENT_DESIGN_PROMPT
+ 
+@@ -349,20 +351,20 @@
+     assert error.value.reason_code == "input_producer_contract_changed"
+ 
+ 
+-def test_versioned_legacy_design_retires_only_the_changed_design_contract() -> None:
+-    assert HISTORICAL_SOURCE == "2edac5d317a74056869a567bd0daa7f556ecbc85"
+-    historical = _catalog(general=_legacy_design_plugin())
++def test_design_prompt_binding_isolation_under_the_current_contract() -> None:
++    # This rewires only design within the current ABI; it is not an old catalog.
++    rewired = _catalog(general=_legacy_design_plugin())
+     repaired = _catalog()
+-    assert historical.operation_ids() == repaired.operation_ids()
++    assert rewired.operation_ids() == repaired.operation_ids()
+     changed = {
+         operation_id
+         for operation_id in repaired.operation_ids()
+-        if historical.operation(operation_id).digest
++        if rewired.operation(operation_id).digest
+         != repaired.operation(operation_id).digest
+     }
+     assert changed == {"science.experiment.design.v1"}
+     assert (
+-        historical.operation("science.experiment.revise.v1").digest
++        rewired.operation("science.experiment.revise.v1").digest
+         == repaired.operation("science.experiment.revise.v1").digest
+     )
+ 
+@@ -421,23 +423,17 @@
+     )
+ 
+ 
+-def test_historical_science_inputs_reach_current_author_but_pre_p2_tcad_retires(
++def test_current_science_reaches_author_while_historical_contracts_retire(
+     tmp_path,
+ ) -> None:
+     historical = _historical_operation_digests(tmp_path)
+     repaired = _catalog()
+-    assert historical["science.experiment.revise.v1"] == repaired.operation(
+-        "science.experiment.revise.v1"
+-    ).digest
+-    assert historical["science.curve.contract.design.v1"] != repaired.operation(
+-        "science.curve.contract.design.v1"
+-    ).digest
+-    assert historical["tcad.deck.author.initial.v1"] != repaired.operation(
+-        "tcad.deck.author.initial.v1"
+-    ).digest
+-    assert historical["tcad.deck.review.v1"] != repaired.operation(
+-        "tcad.deck.review.v1"
+-    ).digest
++    # The goal contract and Operation ABI intentionally retire old qualification.
++    # Derive old identities from untouched archived source, not replacement hashes.
++    assert all(
++        digest != repaired.operation(operation_id).digest
++        for operation_id, digest in historical.items()
++    )
+ 
+     project = tmp_path / "project"
+     project.mkdir()
+@@ -452,7 +448,7 @@
+     instance = runtime.scheduler_bindings.create_instance(
+         name="historical_contract_boundary",
+         title="Historical contract boundary",
+-        objective="Reuse stable science and retire pre-P2 TCAD contracts.",
++        objective="Accept current science and reject retired producer contracts.",
+     )
+     root = RootMCPRouter(
+         RootToolFacade(
+@@ -491,10 +487,10 @@
+     )
+     plan_producer = repaired.operation("science.experiment.revise.v1")
+     curve_producer = repaired.operation("science.curve.contract.design.v1")
+-    plan_artifact = _register_bound(
+-        runtime,
+-        instance,
+-        name="historical_plan",
++    retired_plan = _register_bound(
++        runtime,
++        instance,
++        name="retired_plan",
+         content=plan.canonical_json(),
+         kind=plan_producer.spec.outputs[0].kind,
+         schema_id=plan_producer.spec.outputs[0].schema_id,
+@@ -505,6 +501,35 @@
+             "operation_output_port": plan_producer.spec.outputs[0].name,
+         },
+     )
++    # A separate current fixture must obtain its own independent review.
++    # The retired fixture and its producer labels remain unchanged.
++    plan_artifact = _register_bound(
++        runtime,
++        instance,
++        name="current_plan",
++        content=plan.canonical_json(),
++        kind=plan_producer.spec.outputs[0].kind,
++        schema_id=plan_producer.spec.outputs[0].schema_id,
++        labels={
++            "operation_id": plan_producer.spec.operation_id,
++            "operation_version": plan_producer.spec.version,
++            "operation_digest": plan_producer.digest,
++            "operation_output_port": plan_producer.spec.outputs[0].name,
++        },
++    )
++    retired_review_request = {
++        "name": "review_retired_plan", "operation_id": "science.object.review.v1",
++        "inputs": [{"port": "experiment_plan", "artifact_names": ["retired_plan"]}],
++        "instruction": "Review only the exact immutable subject.",
++    }
++    before_retired_review = root.call_tool("run_list", {})["runs"]
++    rejected = root.call_tool("operation_preflight", retired_review_request)
++    assert rejected["admissible"] is False
++    assert rejected["reason_code"] == "input_producer_contract_changed"
++    with pytest.raises(Exception, match="input_producer_contract_changed"):
++        root.call_tool("operation_invoke", retired_review_request)
++    assert root.call_tool("run_list", {})["runs"] == before_retired_review
++
+     _register_bound(
+         runtime,
+         instance,
+@@ -566,9 +591,9 @@
+         runtime,
+         root,
+         repaired,
+-        name="historical_plan_review",
++        name="current_plan_review",
+         operation_id="science.object.review.v1",
+-        inputs=(("experiment_plan", "historical_plan"),),
++        inputs=(("experiment_plan", "current_plan"),),
+         review_target="experiment_portfolio",
+     )
+     curve_review = _complete_scientific_review(
+@@ -579,7 +604,7 @@
+         operation_id="science.curve.contract.review.v1",
+         inputs=(
+             ("research_objective", "research_objective"),
+-            ("experiment_plan", "historical_plan"),
++            ("experiment_plan", "current_plan"),
+             ("experiment_review", experiment_review),
+             ("curve_contract", "current_curve_contract"),
+             ("reference_bundle", "reference_bundle"),
+@@ -588,7 +613,7 @@
+     )
+     author_inputs = [
+         {"port": "execution_capability", "artifact_names": ["execution_capability"]},
+-        {"port": "experiment_plan", "artifact_names": ["historical_plan"]},
++        {"port": "experiment_plan", "artifact_names": ["current_plan"]},
+         {"port": "experiment_review", "artifact_names": [experiment_review]},
+         {"port": "curve_contract", "artifact_names": ["current_curve_contract"]},
+         {"port": "curve_contract_review", "artifact_names": [curve_review]},
+@@ -597,13 +622,30 @@
+     accepted = root.call_tool(
+         "operation_preflight",
+         {
+-            "name": "current_author_accepts_stable_science",
++            "name": "current_author_accepts_current_science",
+             "operation_id": "tcad.deck.author.initial.v1",
+             "inputs": author_inputs,
+             "instruction": "Author only the exact bounded project.",
+         },
+     )
+     assert accepted["admissible"] is True, accepted
++    retired_author_inputs = [
++        {**item, "artifact_names": ["retired_plan"]}
++        if item["port"] == "experiment_plan" else item
++        for item in author_inputs
++    ]
++    rejected = root.call_tool("operation_preflight", {
++        "name": "current_author_rejects_retired_plan",
++        "operation_id": "tcad.deck.author.initial.v1",
++        "inputs": retired_author_inputs,
++        "instruction": "Author only the exact bounded project.",
++    })
++    assert rejected["admissible"] is False
++    assert rejected["reason_code"] == "input_producer_contract_changed"
++    assert runtime.artifacts.read(retired_plan.ref) == plan.canonical_json()
++    assert runtime.artifacts.catalog(retired_plan.ref).labels["operation_digest"] == historical[
++        "science.experiment.revise.v1"
++    ]
+     assert root.call_tool("run_list", {})["runs"] == before
+     admission = repaired.operation("tcad.deck.author.initial.v1").spec.input_admission
+     assert admission is not None

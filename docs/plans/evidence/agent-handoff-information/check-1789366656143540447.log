@@ -1,0 +1,664 @@
+FF.....FFF........                                                       [100%]
+=================================== FAILURES ===================================
+_________ test_scientific_review_can_submit_one_formal_summary[False] __________
+
+self = <scidiscovery.artifact_agent.interfaces.mcp_root.RootToolFacade object at 0x7f26ca2dcec0>
+values = {'on_conflict': 'reject', 'name': 'summary_review', 'operation_id': 'science.object.review.v1', 'inputs': (OperationInputSelection(port='experiment_plan', artifact_names=('experiment_plan',)),), ...}
+
+    def operation_invoke(self, **values: Any) -> dict[str, Any]:
+        with self._create_lock:
+            try:
+>               bound = self._prepare_operation_call(**values)
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py:205: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py:1132: in _prepare_operation_call
+    bound = preflight_operation(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+compiled = CompiledOperation(plugin_id='general_science', spec=OperationSpec(operation_id='science.object.review.v1', version='1'...he canonical payload must fit the compiled output byte limit.', 'output_paths': ('/',), 'required_inputs': ()}))})})}))
+name = 'summary_review'
+artifacts_by_port = {'experiment_plan': (InvocationArtifact(artifact_name='experiment_plan', ref=ArtifactRef(schema_version=1, artifact_id...torical=False, producer_run_id=None),), 'research_objective': (), 'execution_context': (), 'current_progress': (), ...}
+instruction = None, parameters = {}
+read_artifact = <bound method ArtifactService.read of <scidiscovery.artifact_agent.service.artifacts.ArtifactService object at 0x7f26ca2c3d70>>
+source_name_overrides = None
+
+    def preflight_operation(
+        compiled: CompiledOperation,
+        *,
+        name: str,
+        artifacts_by_port: Mapping[str, tuple[InvocationArtifact, ...]],
+        instruction: str | None,
+        parameters: Mapping[str, Any] | None = None,
+        read_artifact: Callable[[ArtifactRef], bytes] | None = None,
+        source_name_overrides: Mapping[tuple[str, str], str] | None = None,
+    ) -> BoundOperationCall:
+        spec = compiled.spec
+        expected = {port.name: port for port in spec.inputs}
+        if set(artifacts_by_port) != set(expected):
+            missing = next(iter(sorted(set(expected) - set(artifacts_by_port))), None)
+            extra = next(iter(sorted(set(artifacts_by_port) - set(expected))), None)
+            raise OperationInvocationError(
+                "input_port_missing" if missing else "input_port_unknown",
+                port=missing or extra,
+            )
+        try:
+            parameter_map = _OPERATION_PARAMETERS.validate_python(
+                {} if parameters is None else dict(parameters) if isinstance(parameters, Mapping) else parameters,
+                strict=True)
+        except ValidationError as error:
+            raise OperationInvocationError("parameters_not_declared") from error
+        if spec.executor.kind == "agent":
+            if instruction is None or not instruction.strip():
+>               raise OperationInvocationError("instruction_required")
+E               scidiscovery.operations.input_validation.OperationInvocationError: instruction_required: operation
+
+src/scidiscovery/operations/invoke.py:146: OperationInvocationError
+
+The above exception was the direct cause of the following exception:
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-3/test_scientific_review_can_sub0')
+explicit_notes = False
+
+    @pytest.mark.parametrize('explicit_notes', [False, True])
+    def test_scientific_review_can_submit_one_formal_summary(tmp_path, explicit_notes):
+        from tests.operations import test_l4_local_tcad as f
+        catalog, runtime, root, _ = f._system(tmp_path)
+        request = dict(name='summary_review', operation_id='science.object.review.v1',
+            inputs=[dict(port='experiment_plan', artifact_names=['experiment_plan'])])
+>       root.call_tool('operation_invoke', request)
+
+tests/operations/test_analysis_handoff_report.py:222: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/scidiscovery/artifact_agent/interfaces/mcp_root.py:447: in call_tool
+    return getattr(self.facade, name)(**values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <scidiscovery.artifact_agent.interfaces.mcp_root.RootToolFacade object at 0x7f26ca2dcec0>
+values = {'on_conflict': 'reject', 'name': 'summary_review', 'operation_id': 'science.object.review.v1', 'inputs': (OperationInputSelection(port='experiment_plan', artifact_names=('experiment_plan',)),), ...}
+
+    def operation_invoke(self, **values: Any) -> dict[str, Any]:
+        with self._create_lock:
+            try:
+                bound = self._prepare_operation_call(**values)
+                kind = bound.compiled.spec.executor.kind
+                if kind == "agent":
+                    result = self._invoke_agent_operation(
+                        bound,
+                        values["on_conflict"],
+                        resume_from=values.get("resume_from"),
+                        draft_from=values.get("draft_from"),
+                        max_attempts=values.get("max_attempts"),
+                    )
+                elif kind == "transform":
+                    result = self._invoke_compiled_transform(
+                        bound, values["on_conflict"]
+                    )
+                elif kind == "effect":
+                    plan = self._effect_operation_plan(bound)
+                    payloads = tuple(
+                        item for item in bound.inputs if item.port_name == plan.payload_port
+                    )
+                    if len(payloads) != 1 or len(bound.inputs) != 1:
+                        raise OperationInvocationError("effect_payload_not_singular")
+                    result = self._invoke_compiled_effect(
+                        bound, plan, values["on_conflict"]
+                    )
+                elif kind == "approval":
+                    result = self._invoke_approval_operation(
+                        bound, values["on_conflict"]
+                    )
+                else:
+                    raise OperationInvocationError("executor_kind_unknown")
+            except OperationInvocationError as error:
+>               raise RootToolError(
+                    f"operation invocation rejected [{error.reason_code}]", details=error.details
+                ) from error
+E               scidiscovery.artifact_agent.interfaces.mcp_root_shared.RootToolError: operation invocation rejected [instruction_required]
+
+src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py:236: RootToolError
+__________ test_scientific_review_can_submit_one_formal_summary[True] __________
+
+self = <scidiscovery.artifact_agent.interfaces.mcp_root.RootToolFacade object at 0x7f26c9fdd6d0>
+values = {'on_conflict': 'reject', 'name': 'summary_review', 'operation_id': 'science.object.review.v1', 'inputs': (OperationInputSelection(port='experiment_plan', artifact_names=('experiment_plan',)),), ...}
+
+    def operation_invoke(self, **values: Any) -> dict[str, Any]:
+        with self._create_lock:
+            try:
+>               bound = self._prepare_operation_call(**values)
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py:205: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py:1132: in _prepare_operation_call
+    bound = preflight_operation(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+compiled = CompiledOperation(plugin_id='general_science', spec=OperationSpec(operation_id='science.object.review.v1', version='1'...he canonical payload must fit the compiled output byte limit.', 'output_paths': ('/',), 'required_inputs': ()}))})})}))
+name = 'summary_review'
+artifacts_by_port = {'experiment_plan': (InvocationArtifact(artifact_name='experiment_plan', ref=ArtifactRef(schema_version=1, artifact_id...torical=False, producer_run_id=None),), 'research_objective': (), 'execution_context': (), 'current_progress': (), ...}
+instruction = None, parameters = {}
+read_artifact = <bound method ArtifactService.read of <scidiscovery.artifact_agent.service.artifacts.ArtifactService object at 0x7f26c9fdd3a0>>
+source_name_overrides = None
+
+    def preflight_operation(
+        compiled: CompiledOperation,
+        *,
+        name: str,
+        artifacts_by_port: Mapping[str, tuple[InvocationArtifact, ...]],
+        instruction: str | None,
+        parameters: Mapping[str, Any] | None = None,
+        read_artifact: Callable[[ArtifactRef], bytes] | None = None,
+        source_name_overrides: Mapping[tuple[str, str], str] | None = None,
+    ) -> BoundOperationCall:
+        spec = compiled.spec
+        expected = {port.name: port for port in spec.inputs}
+        if set(artifacts_by_port) != set(expected):
+            missing = next(iter(sorted(set(expected) - set(artifacts_by_port))), None)
+            extra = next(iter(sorted(set(artifacts_by_port) - set(expected))), None)
+            raise OperationInvocationError(
+                "input_port_missing" if missing else "input_port_unknown",
+                port=missing or extra,
+            )
+        try:
+            parameter_map = _OPERATION_PARAMETERS.validate_python(
+                {} if parameters is None else dict(parameters) if isinstance(parameters, Mapping) else parameters,
+                strict=True)
+        except ValidationError as error:
+            raise OperationInvocationError("parameters_not_declared") from error
+        if spec.executor.kind == "agent":
+            if instruction is None or not instruction.strip():
+>               raise OperationInvocationError("instruction_required")
+E               scidiscovery.operations.input_validation.OperationInvocationError: instruction_required: operation
+
+src/scidiscovery/operations/invoke.py:146: OperationInvocationError
+
+The above exception was the direct cause of the following exception:
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-3/test_scientific_review_can_sub1')
+explicit_notes = True
+
+    @pytest.mark.parametrize('explicit_notes', [False, True])
+    def test_scientific_review_can_submit_one_formal_summary(tmp_path, explicit_notes):
+        from tests.operations import test_l4_local_tcad as f
+        catalog, runtime, root, _ = f._system(tmp_path)
+        request = dict(name='summary_review', operation_id='science.object.review.v1',
+            inputs=[dict(port='experiment_plan', artifact_names=['experiment_plan'])])
+>       root.call_tool('operation_invoke', request)
+
+tests/operations/test_analysis_handoff_report.py:222: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/scidiscovery/artifact_agent/interfaces/mcp_root.py:447: in call_tool
+    return getattr(self.facade, name)(**values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <scidiscovery.artifact_agent.interfaces.mcp_root.RootToolFacade object at 0x7f26c9fdd6d0>
+values = {'on_conflict': 'reject', 'name': 'summary_review', 'operation_id': 'science.object.review.v1', 'inputs': (OperationInputSelection(port='experiment_plan', artifact_names=('experiment_plan',)),), ...}
+
+    def operation_invoke(self, **values: Any) -> dict[str, Any]:
+        with self._create_lock:
+            try:
+                bound = self._prepare_operation_call(**values)
+                kind = bound.compiled.spec.executor.kind
+                if kind == "agent":
+                    result = self._invoke_agent_operation(
+                        bound,
+                        values["on_conflict"],
+                        resume_from=values.get("resume_from"),
+                        draft_from=values.get("draft_from"),
+                        max_attempts=values.get("max_attempts"),
+                    )
+                elif kind == "transform":
+                    result = self._invoke_compiled_transform(
+                        bound, values["on_conflict"]
+                    )
+                elif kind == "effect":
+                    plan = self._effect_operation_plan(bound)
+                    payloads = tuple(
+                        item for item in bound.inputs if item.port_name == plan.payload_port
+                    )
+                    if len(payloads) != 1 or len(bound.inputs) != 1:
+                        raise OperationInvocationError("effect_payload_not_singular")
+                    result = self._invoke_compiled_effect(
+                        bound, plan, values["on_conflict"]
+                    )
+                elif kind == "approval":
+                    result = self._invoke_approval_operation(
+                        bound, values["on_conflict"]
+                    )
+                else:
+                    raise OperationInvocationError("executor_kind_unknown")
+            except OperationInvocationError as error:
+>               raise RootToolError(
+                    f"operation invocation rejected [{error.reason_code}]", details=error.details
+                ) from error
+E               scidiscovery.artifact_agent.interfaces.mcp_root_shared.RootToolError: operation invocation rejected [instruction_required]
+
+src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py:236: RootToolError
+____ test_formal_gap_and_review_need_no_mechanical_summary_edits[untouched] ____
+
+self = <scidiscovery.artifact_agent.interfaces.mcp_root.RootToolFacade object at 0x7f26c9b9ca10>
+values = {'on_conflict': 'reject', 'name': 'formal_review', 'operation_id': 'tcad.deck.review.v1', 'inputs': (OperationInputSel...('execution_capability',)), OperationInputSelection(port='experiment_plan', artifact_names=('experiment_plan',))), ...}
+
+    def operation_invoke(self, **values: Any) -> dict[str, Any]:
+        with self._create_lock:
+            try:
+>               bound = self._prepare_operation_call(**values)
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py:205: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py:1132: in _prepare_operation_call
+    bound = preflight_operation(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+compiled = CompiledOperation(plugin_id='tcad_artifact', spec=OperationSpec(operation_id='tcad.deck.review.v1', version='2', catal...he canonical payload must fit the compiled output byte limit.', 'output_paths': ('/',), 'required_inputs': ()}))})})}))
+name = 'formal_review'
+artifacts_by_port = {'project': (InvocationArtifact(artifact_name='formal_gap.output', ref=ArtifactRef(schema_version=1, artifact_id='art_...arent_refs=(), labels=(), handoff_verdict=None, historical=False, producer_run_id=None),), 'current_progress': (), ...}
+instruction = None, parameters = {}
+read_artifact = <bound method ArtifactService.read of <scidiscovery.artifact_agent.service.artifacts.ArtifactService object at 0x7f26ca2ce4b0>>
+source_name_overrides = None
+
+    def preflight_operation(
+        compiled: CompiledOperation,
+        *,
+        name: str,
+        artifacts_by_port: Mapping[str, tuple[InvocationArtifact, ...]],
+        instruction: str | None,
+        parameters: Mapping[str, Any] | None = None,
+        read_artifact: Callable[[ArtifactRef], bytes] | None = None,
+        source_name_overrides: Mapping[tuple[str, str], str] | None = None,
+    ) -> BoundOperationCall:
+        spec = compiled.spec
+        expected = {port.name: port for port in spec.inputs}
+        if set(artifacts_by_port) != set(expected):
+            missing = next(iter(sorted(set(expected) - set(artifacts_by_port))), None)
+            extra = next(iter(sorted(set(artifacts_by_port) - set(expected))), None)
+            raise OperationInvocationError(
+                "input_port_missing" if missing else "input_port_unknown",
+                port=missing or extra,
+            )
+        try:
+            parameter_map = _OPERATION_PARAMETERS.validate_python(
+                {} if parameters is None else dict(parameters) if isinstance(parameters, Mapping) else parameters,
+                strict=True)
+        except ValidationError as error:
+            raise OperationInvocationError("parameters_not_declared") from error
+        if spec.executor.kind == "agent":
+            if instruction is None or not instruction.strip():
+>               raise OperationInvocationError("instruction_required")
+E               scidiscovery.operations.input_validation.OperationInvocationError: instruction_required: operation
+
+src/scidiscovery/operations/invoke.py:146: OperationInvocationError
+
+The above exception was the direct cause of the following exception:
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-3/test_formal_gap_and_review_nee0')
+handoff_mode = 'untouched'
+
+    @pytest.mark.parametrize('handoff_mode', ['untouched', 'absent', 'explicit'])
+    def test_formal_gap_and_review_need_no_mechanical_summary_edits(tmp_path, handoff_mode):
+        catalog, runtime, root, _ = fixture._system(tmp_path, solver_kind='sprocess')
+        inputs = [dict(port='execution_capability', artifact_names=['execution_capability']),
+                  dict(port='experiment_plan', artifact_names=['experiment_plan'])]
+        fixture._invoke(root, 'formal_gap', 'tcad.deck.author.initial.v1', inputs)
+        worker = fixture._debug_worker(catalog, runtime, fixture._ImmediateDebugAdapter(), tmp_path / 'debug')
+        opened = worker.call_tool('worker_open_assignment', {})
+        deck = Path(opened['workspace_path'], 'deck')
+        automatic = (deck / 'handoff.json').read_bytes()
+        assert 'summary' not in json.loads(automatic) and 'verdict' not in json.loads(automatic)
+        if handoff_mode == 'absent':
+            (deck / 'handoff.json').unlink()
+        elif handoff_mode == 'explicit':
+            (deck / 'handoff.json').write_bytes(canonical_json(dict(summary='Separate preserved note.', assumptions=['Limited fixture.'])))
+        gap = fixture._task_gap()
+        (deck / 'gap.json').write_bytes(canonical_json(gap))
+        assert worker.call_tool('worker_submit_result', {})['state'] == 'completed'
+        if handoff_mode == 'untouched':
+            assert (deck / 'handoff.json').read_bytes() == automatic
+        status = root.call_tool('run_status', dict(name='formal_gap', output_paths=['/summary']))
+        assert status['selected_output']['items'][0]['value'] == gap['summary']
+        assert status['scheduler_signal']['verdict'] == 'blocked'
+        if handoff_mode == 'explicit':
+            assert status['scheduler_signal']['summary'] == 'Separate preserved note.'
+>       root.call_tool('operation_invoke', dict(name='formal_review', operation_id='tcad.deck.review.v1',
+            inputs=[dict(port='project', artifact_names=[status['output_artifact_name']]), *inputs]))
+
+tests/operations/test_tcad_gap_continuation.py:226: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/scidiscovery/artifact_agent/interfaces/mcp_root.py:447: in call_tool
+    return getattr(self.facade, name)(**values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <scidiscovery.artifact_agent.interfaces.mcp_root.RootToolFacade object at 0x7f26c9b9ca10>
+values = {'on_conflict': 'reject', 'name': 'formal_review', 'operation_id': 'tcad.deck.review.v1', 'inputs': (OperationInputSel...('execution_capability',)), OperationInputSelection(port='experiment_plan', artifact_names=('experiment_plan',))), ...}
+
+    def operation_invoke(self, **values: Any) -> dict[str, Any]:
+        with self._create_lock:
+            try:
+                bound = self._prepare_operation_call(**values)
+                kind = bound.compiled.spec.executor.kind
+                if kind == "agent":
+                    result = self._invoke_agent_operation(
+                        bound,
+                        values["on_conflict"],
+                        resume_from=values.get("resume_from"),
+                        draft_from=values.get("draft_from"),
+                        max_attempts=values.get("max_attempts"),
+                    )
+                elif kind == "transform":
+                    result = self._invoke_compiled_transform(
+                        bound, values["on_conflict"]
+                    )
+                elif kind == "effect":
+                    plan = self._effect_operation_plan(bound)
+                    payloads = tuple(
+                        item for item in bound.inputs if item.port_name == plan.payload_port
+                    )
+                    if len(payloads) != 1 or len(bound.inputs) != 1:
+                        raise OperationInvocationError("effect_payload_not_singular")
+                    result = self._invoke_compiled_effect(
+                        bound, plan, values["on_conflict"]
+                    )
+                elif kind == "approval":
+                    result = self._invoke_approval_operation(
+                        bound, values["on_conflict"]
+                    )
+                else:
+                    raise OperationInvocationError("executor_kind_unknown")
+            except OperationInvocationError as error:
+>               raise RootToolError(
+                    f"operation invocation rejected [{error.reason_code}]", details=error.details
+                ) from error
+E               scidiscovery.artifact_agent.interfaces.mcp_root_shared.RootToolError: operation invocation rejected [instruction_required]
+
+src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py:236: RootToolError
+_____ test_formal_gap_and_review_need_no_mechanical_summary_edits[absent] ______
+
+self = <scidiscovery.artifact_agent.interfaces.mcp_root.RootToolFacade object at 0x7f26c979e630>
+values = {'on_conflict': 'reject', 'name': 'formal_review', 'operation_id': 'tcad.deck.review.v1', 'inputs': (OperationInputSel...('execution_capability',)), OperationInputSelection(port='experiment_plan', artifact_names=('experiment_plan',))), ...}
+
+    def operation_invoke(self, **values: Any) -> dict[str, Any]:
+        with self._create_lock:
+            try:
+>               bound = self._prepare_operation_call(**values)
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py:205: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py:1132: in _prepare_operation_call
+    bound = preflight_operation(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+compiled = CompiledOperation(plugin_id='tcad_artifact', spec=OperationSpec(operation_id='tcad.deck.review.v1', version='2', catal...he canonical payload must fit the compiled output byte limit.', 'output_paths': ('/',), 'required_inputs': ()}))})})}))
+name = 'formal_review'
+artifacts_by_port = {'project': (InvocationArtifact(artifact_name='formal_gap.output', ref=ArtifactRef(schema_version=1, artifact_id='art_...arent_refs=(), labels=(), handoff_verdict=None, historical=False, producer_run_id=None),), 'current_progress': (), ...}
+instruction = None, parameters = {}
+read_artifact = <bound method ArtifactService.read of <scidiscovery.artifact_agent.service.artifacts.ArtifactService object at 0x7f26c979d8b0>>
+source_name_overrides = None
+
+    def preflight_operation(
+        compiled: CompiledOperation,
+        *,
+        name: str,
+        artifacts_by_port: Mapping[str, tuple[InvocationArtifact, ...]],
+        instruction: str | None,
+        parameters: Mapping[str, Any] | None = None,
+        read_artifact: Callable[[ArtifactRef], bytes] | None = None,
+        source_name_overrides: Mapping[tuple[str, str], str] | None = None,
+    ) -> BoundOperationCall:
+        spec = compiled.spec
+        expected = {port.name: port for port in spec.inputs}
+        if set(artifacts_by_port) != set(expected):
+            missing = next(iter(sorted(set(expected) - set(artifacts_by_port))), None)
+            extra = next(iter(sorted(set(artifacts_by_port) - set(expected))), None)
+            raise OperationInvocationError(
+                "input_port_missing" if missing else "input_port_unknown",
+                port=missing or extra,
+            )
+        try:
+            parameter_map = _OPERATION_PARAMETERS.validate_python(
+                {} if parameters is None else dict(parameters) if isinstance(parameters, Mapping) else parameters,
+                strict=True)
+        except ValidationError as error:
+            raise OperationInvocationError("parameters_not_declared") from error
+        if spec.executor.kind == "agent":
+            if instruction is None or not instruction.strip():
+>               raise OperationInvocationError("instruction_required")
+E               scidiscovery.operations.input_validation.OperationInvocationError: instruction_required: operation
+
+src/scidiscovery/operations/invoke.py:146: OperationInvocationError
+
+The above exception was the direct cause of the following exception:
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-3/test_formal_gap_and_review_nee1')
+handoff_mode = 'absent'
+
+    @pytest.mark.parametrize('handoff_mode', ['untouched', 'absent', 'explicit'])
+    def test_formal_gap_and_review_need_no_mechanical_summary_edits(tmp_path, handoff_mode):
+        catalog, runtime, root, _ = fixture._system(tmp_path, solver_kind='sprocess')
+        inputs = [dict(port='execution_capability', artifact_names=['execution_capability']),
+                  dict(port='experiment_plan', artifact_names=['experiment_plan'])]
+        fixture._invoke(root, 'formal_gap', 'tcad.deck.author.initial.v1', inputs)
+        worker = fixture._debug_worker(catalog, runtime, fixture._ImmediateDebugAdapter(), tmp_path / 'debug')
+        opened = worker.call_tool('worker_open_assignment', {})
+        deck = Path(opened['workspace_path'], 'deck')
+        automatic = (deck / 'handoff.json').read_bytes()
+        assert 'summary' not in json.loads(automatic) and 'verdict' not in json.loads(automatic)
+        if handoff_mode == 'absent':
+            (deck / 'handoff.json').unlink()
+        elif handoff_mode == 'explicit':
+            (deck / 'handoff.json').write_bytes(canonical_json(dict(summary='Separate preserved note.', assumptions=['Limited fixture.'])))
+        gap = fixture._task_gap()
+        (deck / 'gap.json').write_bytes(canonical_json(gap))
+        assert worker.call_tool('worker_submit_result', {})['state'] == 'completed'
+        if handoff_mode == 'untouched':
+            assert (deck / 'handoff.json').read_bytes() == automatic
+        status = root.call_tool('run_status', dict(name='formal_gap', output_paths=['/summary']))
+        assert status['selected_output']['items'][0]['value'] == gap['summary']
+        assert status['scheduler_signal']['verdict'] == 'blocked'
+        if handoff_mode == 'explicit':
+            assert status['scheduler_signal']['summary'] == 'Separate preserved note.'
+>       root.call_tool('operation_invoke', dict(name='formal_review', operation_id='tcad.deck.review.v1',
+            inputs=[dict(port='project', artifact_names=[status['output_artifact_name']]), *inputs]))
+
+tests/operations/test_tcad_gap_continuation.py:226: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/scidiscovery/artifact_agent/interfaces/mcp_root.py:447: in call_tool
+    return getattr(self.facade, name)(**values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <scidiscovery.artifact_agent.interfaces.mcp_root.RootToolFacade object at 0x7f26c979e630>
+values = {'on_conflict': 'reject', 'name': 'formal_review', 'operation_id': 'tcad.deck.review.v1', 'inputs': (OperationInputSel...('execution_capability',)), OperationInputSelection(port='experiment_plan', artifact_names=('experiment_plan',))), ...}
+
+    def operation_invoke(self, **values: Any) -> dict[str, Any]:
+        with self._create_lock:
+            try:
+                bound = self._prepare_operation_call(**values)
+                kind = bound.compiled.spec.executor.kind
+                if kind == "agent":
+                    result = self._invoke_agent_operation(
+                        bound,
+                        values["on_conflict"],
+                        resume_from=values.get("resume_from"),
+                        draft_from=values.get("draft_from"),
+                        max_attempts=values.get("max_attempts"),
+                    )
+                elif kind == "transform":
+                    result = self._invoke_compiled_transform(
+                        bound, values["on_conflict"]
+                    )
+                elif kind == "effect":
+                    plan = self._effect_operation_plan(bound)
+                    payloads = tuple(
+                        item for item in bound.inputs if item.port_name == plan.payload_port
+                    )
+                    if len(payloads) != 1 or len(bound.inputs) != 1:
+                        raise OperationInvocationError("effect_payload_not_singular")
+                    result = self._invoke_compiled_effect(
+                        bound, plan, values["on_conflict"]
+                    )
+                elif kind == "approval":
+                    result = self._invoke_approval_operation(
+                        bound, values["on_conflict"]
+                    )
+                else:
+                    raise OperationInvocationError("executor_kind_unknown")
+            except OperationInvocationError as error:
+>               raise RootToolError(
+                    f"operation invocation rejected [{error.reason_code}]", details=error.details
+                ) from error
+E               scidiscovery.artifact_agent.interfaces.mcp_root_shared.RootToolError: operation invocation rejected [instruction_required]
+
+src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py:236: RootToolError
+____ test_formal_gap_and_review_need_no_mechanical_summary_edits[explicit] _____
+
+self = <scidiscovery.artifact_agent.interfaces.mcp_root.RootToolFacade object at 0x7f26ca4ed490>
+values = {'on_conflict': 'reject', 'name': 'formal_review', 'operation_id': 'tcad.deck.review.v1', 'inputs': (OperationInputSel...('execution_capability',)), OperationInputSelection(port='experiment_plan', artifact_names=('experiment_plan',))), ...}
+
+    def operation_invoke(self, **values: Any) -> dict[str, Any]:
+        with self._create_lock:
+            try:
+>               bound = self._prepare_operation_call(**values)
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py:205: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py:1132: in _prepare_operation_call
+    bound = preflight_operation(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+compiled = CompiledOperation(plugin_id='tcad_artifact', spec=OperationSpec(operation_id='tcad.deck.review.v1', version='2', catal...he canonical payload must fit the compiled output byte limit.', 'output_paths': ('/',), 'required_inputs': ()}))})})}))
+name = 'formal_review'
+artifacts_by_port = {'project': (InvocationArtifact(artifact_name='formal_gap.output', ref=ArtifactRef(schema_version=1, artifact_id='art_...arent_refs=(), labels=(), handoff_verdict=None, historical=False, producer_run_id=None),), 'current_progress': (), ...}
+instruction = None, parameters = {}
+read_artifact = <bound method ArtifactService.read of <scidiscovery.artifact_agent.service.artifacts.ArtifactService object at 0x7f26ca6af8f0>>
+source_name_overrides = None
+
+    def preflight_operation(
+        compiled: CompiledOperation,
+        *,
+        name: str,
+        artifacts_by_port: Mapping[str, tuple[InvocationArtifact, ...]],
+        instruction: str | None,
+        parameters: Mapping[str, Any] | None = None,
+        read_artifact: Callable[[ArtifactRef], bytes] | None = None,
+        source_name_overrides: Mapping[tuple[str, str], str] | None = None,
+    ) -> BoundOperationCall:
+        spec = compiled.spec
+        expected = {port.name: port for port in spec.inputs}
+        if set(artifacts_by_port) != set(expected):
+            missing = next(iter(sorted(set(expected) - set(artifacts_by_port))), None)
+            extra = next(iter(sorted(set(artifacts_by_port) - set(expected))), None)
+            raise OperationInvocationError(
+                "input_port_missing" if missing else "input_port_unknown",
+                port=missing or extra,
+            )
+        try:
+            parameter_map = _OPERATION_PARAMETERS.validate_python(
+                {} if parameters is None else dict(parameters) if isinstance(parameters, Mapping) else parameters,
+                strict=True)
+        except ValidationError as error:
+            raise OperationInvocationError("parameters_not_declared") from error
+        if spec.executor.kind == "agent":
+            if instruction is None or not instruction.strip():
+>               raise OperationInvocationError("instruction_required")
+E               scidiscovery.operations.input_validation.OperationInvocationError: instruction_required: operation
+
+src/scidiscovery/operations/invoke.py:146: OperationInvocationError
+
+The above exception was the direct cause of the following exception:
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-3/test_formal_gap_and_review_nee2')
+handoff_mode = 'explicit'
+
+    @pytest.mark.parametrize('handoff_mode', ['untouched', 'absent', 'explicit'])
+    def test_formal_gap_and_review_need_no_mechanical_summary_edits(tmp_path, handoff_mode):
+        catalog, runtime, root, _ = fixture._system(tmp_path, solver_kind='sprocess')
+        inputs = [dict(port='execution_capability', artifact_names=['execution_capability']),
+                  dict(port='experiment_plan', artifact_names=['experiment_plan'])]
+        fixture._invoke(root, 'formal_gap', 'tcad.deck.author.initial.v1', inputs)
+        worker = fixture._debug_worker(catalog, runtime, fixture._ImmediateDebugAdapter(), tmp_path / 'debug')
+        opened = worker.call_tool('worker_open_assignment', {})
+        deck = Path(opened['workspace_path'], 'deck')
+        automatic = (deck / 'handoff.json').read_bytes()
+        assert 'summary' not in json.loads(automatic) and 'verdict' not in json.loads(automatic)
+        if handoff_mode == 'absent':
+            (deck / 'handoff.json').unlink()
+        elif handoff_mode == 'explicit':
+            (deck / 'handoff.json').write_bytes(canonical_json(dict(summary='Separate preserved note.', assumptions=['Limited fixture.'])))
+        gap = fixture._task_gap()
+        (deck / 'gap.json').write_bytes(canonical_json(gap))
+        assert worker.call_tool('worker_submit_result', {})['state'] == 'completed'
+        if handoff_mode == 'untouched':
+            assert (deck / 'handoff.json').read_bytes() == automatic
+        status = root.call_tool('run_status', dict(name='formal_gap', output_paths=['/summary']))
+        assert status['selected_output']['items'][0]['value'] == gap['summary']
+        assert status['scheduler_signal']['verdict'] == 'blocked'
+        if handoff_mode == 'explicit':
+            assert status['scheduler_signal']['summary'] == 'Separate preserved note.'
+>       root.call_tool('operation_invoke', dict(name='formal_review', operation_id='tcad.deck.review.v1',
+            inputs=[dict(port='project', artifact_names=[status['output_artifact_name']]), *inputs]))
+
+tests/operations/test_tcad_gap_continuation.py:226: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/scidiscovery/artifact_agent/interfaces/mcp_root.py:447: in call_tool
+    return getattr(self.facade, name)(**values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <scidiscovery.artifact_agent.interfaces.mcp_root.RootToolFacade object at 0x7f26ca4ed490>
+values = {'on_conflict': 'reject', 'name': 'formal_review', 'operation_id': 'tcad.deck.review.v1', 'inputs': (OperationInputSel...('execution_capability',)), OperationInputSelection(port='experiment_plan', artifact_names=('experiment_plan',))), ...}
+
+    def operation_invoke(self, **values: Any) -> dict[str, Any]:
+        with self._create_lock:
+            try:
+                bound = self._prepare_operation_call(**values)
+                kind = bound.compiled.spec.executor.kind
+                if kind == "agent":
+                    result = self._invoke_agent_operation(
+                        bound,
+                        values["on_conflict"],
+                        resume_from=values.get("resume_from"),
+                        draft_from=values.get("draft_from"),
+                        max_attempts=values.get("max_attempts"),
+                    )
+                elif kind == "transform":
+                    result = self._invoke_compiled_transform(
+                        bound, values["on_conflict"]
+                    )
+                elif kind == "effect":
+                    plan = self._effect_operation_plan(bound)
+                    payloads = tuple(
+                        item for item in bound.inputs if item.port_name == plan.payload_port
+                    )
+                    if len(payloads) != 1 or len(bound.inputs) != 1:
+                        raise OperationInvocationError("effect_payload_not_singular")
+                    result = self._invoke_compiled_effect(
+                        bound, plan, values["on_conflict"]
+                    )
+                elif kind == "approval":
+                    result = self._invoke_approval_operation(
+                        bound, values["on_conflict"]
+                    )
+                else:
+                    raise OperationInvocationError("executor_kind_unknown")
+            except OperationInvocationError as error:
+>               raise RootToolError(
+                    f"operation invocation rejected [{error.reason_code}]", details=error.details
+                ) from error
+E               scidiscovery.artifact_agent.interfaces.mcp_root_shared.RootToolError: operation invocation rejected [instruction_required]
+
+src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py:236: RootToolError
+=========================== short test summary info ============================
+FAILED tests/operations/test_analysis_handoff_report.py::test_scientific_review_can_submit_one_formal_summary[False]
+FAILED tests/operations/test_analysis_handoff_report.py::test_scientific_review_can_submit_one_formal_summary[True]
+FAILED tests/operations/test_tcad_gap_continuation.py::test_formal_gap_and_review_need_no_mechanical_summary_edits[untouched]
+FAILED tests/operations/test_tcad_gap_continuation.py::test_formal_gap_and_review_need_no_mechanical_summary_edits[absent]
+FAILED tests/operations/test_tcad_gap_continuation.py::test_formal_gap_and_review_need_no_mechanical_summary_edits[explicit]
+5 failed, 13 passed, 134 deselected in 10.79s

@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "fixture_id": "r5-e2e-fig4-baseline-recovery-v1",
+  "scientific_question": "为什么本次 Fig.4 基线恢复仍未通过，现有数据能够排除什么、不能证明什么，以及下一项最小且有区分度的 TCAD 检验应如何设计？",
+  "required_result": "至少形成两项仍成立的可证伪解释和一项有区分度的下一实验。",
+  "scientific_scope": {
+    "material": "InGaAs",
+    "paper_panel_label": "Fig.4",
+    "process_temperature_celsius": 480,
+    "target_status": "user_defined_frozen_target_from_prior_project_state",
+    "allowed_claim": "冻结 target 是本回归中精确的用户给定比较目标。",
+    "forbidden_claims": [
+      "冻结 target 是独立合格的论文证据。",
+      "InAlAs、candidate 或 Fig.7 字段支持本任务的科学结论。",
+      "网格差异证明了物理原因或求解器原因。",
+      "历史重放是一次新的 Sentaurus 执行。",
+      "这个单一小任务证明框架具有统计优越性或跨领域通用性。"
+    ]
+  },
+  "evidence_boundary": {
+    "supplied_curve_csv": "当前六项证据来源已包含冻结曲线 CSV，不得把它报告为缺失。",
+    "historical_audit": "历史独立审计属于旧输入集合的记录，其 missing_inputs 必须按当前来源重新判断。",
+    "remaining_unavailable_inputs": [
+      "用于独立重算原始 PLX 到曲线包身份的原始历史 PLX 与执行绑定",
+      "target_metrics 原始字节",
+      "完整 scorer 执行绑定"
+    ],
+    "next_experiment_not_current_source": "当前环境重放或网格 A/B 属于下一项实验，而不是当前证据来源。",
+    "prior_signal_only": "历史 deck diff 的网格差异只能用于提出待检验方向，不能作为因果证据。"
+  }
+}

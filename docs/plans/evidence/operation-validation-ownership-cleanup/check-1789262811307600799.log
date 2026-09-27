@@ -1,0 +1,78 @@
+.......FF                                                                [100%]
+=================================== FAILURES ===================================
+_ test_pre_dispatch_input_fault_is_recorded_with_its_declared_category[False] __
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-263/test_pre_dispatch_input_fault_0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7f4b2db7ac30>
+before_workspace = False
+
+    @pytest.mark.parametrize('before_workspace', [False, True])
+    def test_pre_dispatch_input_fault_is_recorded_with_its_declared_category(tmp_path, monkeypatch, before_workspace):
+        from scidiscovery.artifact_agent.interfaces.mcp import MCPRouter
+        from scidiscovery.artifact_agent.service.run_outputs import RunCheckerError
+        from tests.operations.test_l4_local_tcad import _system
+        _, runtime, root, _ = _system(tmp_path)
+        owner = runtime.runs.backend if before_workspace else runtime.runs
+        method = 'prepare' if before_workspace else '_materialize_workspace'
+        original = getattr(owner, method)
+        attempts = []
+        def fail(*args, **kwargs):
+            attempts.append(True)
+            raise RunCheckerError('admitted execution_capability is invalid JSON', category='admission_defect')
+        monkeypatch.setattr(owner, method, fail)
+        wire = MCPRouter(root, name='preparation_fault_fixture')
+        def call(name, arguments):
+            reply = wire.handle({'jsonrpc': '2.0', 'id': 1, 'method': 'tools/call',
+                'params': {'name': name, 'arguments': arguments}})
+            assert 'error' not in reply, reply
+            return reply['result']['structuredContent']
+        request = dict(name='preparation_fault', operation_id='tcad.deck.author.initial.v1',
+            instruction='Implement the bound fixture plan.', inputs=[
+                {'port': 'execution_capability', 'artifact_names': ['execution_capability']},
+                {'port': 'experiment_plan', 'artifact_names': ['experiment_plan']}])
+        failed = call('operation_invoke', request)
+>       assert failed['state'] == 'failed'
+               ^^^^^^^^^^^^^^^
+E       KeyError: 'state'
+
+tests/operations/test_contract_attempts.py:154: KeyError
+__ test_pre_dispatch_input_fault_is_recorded_with_its_declared_category[True] __
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-263/test_pre_dispatch_input_fault_1')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7f4b2d552e40>
+before_workspace = True
+
+    @pytest.mark.parametrize('before_workspace', [False, True])
+    def test_pre_dispatch_input_fault_is_recorded_with_its_declared_category(tmp_path, monkeypatch, before_workspace):
+        from scidiscovery.artifact_agent.interfaces.mcp import MCPRouter
+        from scidiscovery.artifact_agent.service.run_outputs import RunCheckerError
+        from tests.operations.test_l4_local_tcad import _system
+        _, runtime, root, _ = _system(tmp_path)
+        owner = runtime.runs.backend if before_workspace else runtime.runs
+        method = 'prepare' if before_workspace else '_materialize_workspace'
+        original = getattr(owner, method)
+        attempts = []
+        def fail(*args, **kwargs):
+            attempts.append(True)
+            raise RunCheckerError('admitted execution_capability is invalid JSON', category='admission_defect')
+        monkeypatch.setattr(owner, method, fail)
+        wire = MCPRouter(root, name='preparation_fault_fixture')
+        def call(name, arguments):
+            reply = wire.handle({'jsonrpc': '2.0', 'id': 1, 'method': 'tools/call',
+                'params': {'name': name, 'arguments': arguments}})
+            assert 'error' not in reply, reply
+            return reply['result']['structuredContent']
+        request = dict(name='preparation_fault', operation_id='tcad.deck.author.initial.v1',
+            instruction='Implement the bound fixture plan.', inputs=[
+                {'port': 'execution_capability', 'artifact_names': ['execution_capability']},
+                {'port': 'experiment_plan', 'artifact_names': ['experiment_plan']}])
+        failed = call('operation_invoke', request)
+>       assert failed['state'] == 'failed'
+               ^^^^^^^^^^^^^^^
+E       KeyError: 'state'
+
+tests/operations/test_contract_attempts.py:154: KeyError
+=========================== short test summary info ============================
+FAILED tests/operations/test_contract_attempts.py::test_pre_dispatch_input_fault_is_recorded_with_its_declared_category[False]
+FAILED tests/operations/test_contract_attempts.py::test_pre_dispatch_input_fault_is_recorded_with_its_declared_category[True]
+2 failed, 7 passed, 70 deselected in 7.65s

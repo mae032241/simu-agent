@@ -1,0 +1,39 @@
+F
+=================================== FAILURES ===================================
+_ test_same_calculation_identity_can_use_its_two_supported_representations[both] _
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-271/test_same_calculation_identity0')
+representation = 'both'
+
+    @pytest.mark.parametrize('representation', ['inline', 'saved', 'both'])
+    def test_same_calculation_identity_can_use_its_two_supported_representations(tmp_path, representation):
+>       from tests.operations.test_tcad_result_analysis import analysis_system, open_analysis, analysis_report, write_analysis, raw_request
+
+/home/da/project/ai4s/tcad/git_release/scidiscovery-agent/123/scidiscovery-e5.2/docs/plans/evidence/operation-validation-ownership-cleanup/review_r3_diagnostic_probe.py:29: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+/home/da/miniconda3/lib/python3.12/site-packages/_pytest/assertion/rewrite.py:188: in exec_module
+    exec(co, module.__dict__)
+/home/da/project/ai4s/tcad/git_release/scidiscovery-agent/123/scidiscovery-e5.2/tests/operations/test_tcad_result_analysis.py:23: in <module>
+    from tcad_artifact.plugin import PLUGIN as TCAD_PLUGIN
+/home/da/project/ai4s/tcad/git_release/scidiscovery-agent/123/scidiscovery-e5.2/plugins/tcad_artifact/tcad_artifact/plugin.py:71: in <module>
+    from .result_analysis import COMPONENT_SPECS as RESULT_ANALYSIS_COMPONENT_SPECS
+/home/da/project/ai4s/tcad/git_release/scidiscovery-agent/123/scidiscovery-e5.2/plugins/tcad_artifact/tcad_artifact/result_analysis.py:46: in <module>
+    from .analysis_bindings import source_bindings, JSON_PORTS
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    """Read-only TCAD correspondence projection from the exact bound cohort."""
+    from __future__ import annotations
+    
+    from copy import deepcopy
+    from dataclasses import replace
+    import json
+    from pathlib import Path
+    
+    from curve_score import analysis_workspace
+>   from scidiscovery.artifact_agent.service.analysis_artifacts import analysis_source_claims
+E   ImportError: cannot import name 'analysis_source_claims' from 'scidiscovery.artifact_agent.service.analysis_artifacts' (/tmp/scid-review-r2-before-ylaef485/src/scidiscovery/artifact_agent/service/analysis_artifacts.py)
+
+/home/da/project/ai4s/tcad/git_release/scidiscovery-agent/123/scidiscovery-e5.2/plugins/tcad_artifact/tcad_artifact/analysis_bindings.py:10: ImportError
+=========================== short test summary info ============================
+FAILED ::test_same_calculation_identity_can_use_its_two_supported_representations[both]
+1 failed, 3 deselected in 1.59s

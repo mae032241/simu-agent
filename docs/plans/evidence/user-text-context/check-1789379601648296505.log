@@ -1,0 +1,319 @@
+...F.F...........F.                                                      [100%]
+=================================== FAILURES ===================================
+__________ test_background_reference_is_not_a_formal_parameter_source __________
+
+self = <scidiscovery.artifact_agent.interfaces.mcp_root.RootToolFacade object at 0x7f68e5ee5610>
+values = {'on_conflict': 'reject', 'name': 'extract', 'operation_id': 'tcad.parameter.evidence.extract.v1', 'inputs': (Operatio...e_material', artifact_names=('source',)), OperationInputSelection(port='user_context', artifact_names=('note',))), ...}
+
+    def operation_invoke(self, **values: Any) -> dict[str, Any]:
+        with self._create_lock:
+            try:
+>               bound = self._prepare_operation_call(**values)
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py:205: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py:1136: in _prepare_operation_call
+    bound = preflight_operation(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+compiled = CompiledOperation(plugin_id='tcad_artifact', spec=OperationSpec(operation_id='tcad.parameter.evidence.extract.v1', ver...he canonical payload must fit the compiled output byte limit.', 'output_paths': ('/',), 'required_inputs': ()}))})})}))
+name = 'extract'
+artifacts_by_port = {'source_material': (InvocationArtifact(artifact_name='source', ref=ArtifactRef(schema_version=1, artifact_id='art_486...doff_verdict=None, historical=False, producer_run_id=None, producer_inputs=None),), 'required_parameter_checklist': ()}
+instruction = None, parameters = {}
+read_artifact = <bound method ArtifactService.read of <scidiscovery.artifact_agent.service.artifacts.ArtifactService object at 0x7f68e5af43e0>>
+source_name_overrides = None
+
+    def preflight_operation(
+        compiled: CompiledOperation,
+        *,
+        name: str,
+        artifacts_by_port: Mapping[str, tuple[InvocationArtifact, ...]],
+        instruction: str | None,
+        parameters: Mapping[str, Any] | None = None,
+        read_artifact: Callable[[ArtifactRef], bytes] | None = None,
+        source_name_overrides: Mapping[tuple[str, str], str] | None = None,
+    ) -> BoundOperationCall:
+        spec = compiled.spec
+        expected = {port.name: port for port in spec.inputs}
+        if set(artifacts_by_port) != set(expected):
+            missing = next(iter(sorted(set(expected) - set(artifacts_by_port))), None)
+            extra = next(iter(sorted(set(artifacts_by_port) - set(expected))), None)
+            raise OperationInvocationError(
+                "input_port_missing" if missing else "input_port_unknown",
+                port=missing or extra,
+            )
+        try:
+            parameter_map = _OPERATION_PARAMETERS.validate_python(
+                {} if parameters is None else dict(parameters) if isinstance(parameters, Mapping) else parameters,
+                strict=True)
+        except ValidationError as error:
+            raise OperationInvocationError("parameters_not_declared") from error
+        if spec.executor.kind == "agent":
+            if instruction is None or not instruction.strip():
+>               raise OperationInvocationError("instruction_required")
+E               scidiscovery.operations.input_validation.OperationInvocationError: instruction_required: operation
+
+src/scidiscovery/operations/invoke.py:148: OperationInvocationError
+
+The above exception was the direct cause of the following exception:
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-15/test_background_reference_is_n0')
+
+    def test_background_reference_is_not_a_formal_parameter_source(tmp_path):
+        from pathlib import Path
+        from scidiscovery.artifact_agent.interfaces.mcp_local_worker import LocalWorkerMCPRouter
+        from tests.operations.test_m2_parameter_package import _root as parameter_root, _package, _envelope
+        catalog, runtime, instance, root = parameter_root(tmp_path)
+        root.call_tool("artifact_ingest_text", {"name": "source", "text": "scale=1"})
+        root.call_tool("artifact_ingest_text", {"name": "note", "text": "A user suggestion to assess."})
+>       root.call_tool("operation_invoke", {"name": "extract", "operation_id": "tcad.parameter.evidence.extract.v1",
+            "inputs": [{"port": "source_material", "artifact_names": ["source"]},
+                       {"port": "user_context", "artifact_names": ["note"]}]})
+
+tests/operations/test_user_context_contract.py:137: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/scidiscovery/artifact_agent/interfaces/mcp_root.py:473: in call_tool
+    return getattr(self.facade, name)(**values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <scidiscovery.artifact_agent.interfaces.mcp_root.RootToolFacade object at 0x7f68e5ee5610>
+values = {'on_conflict': 'reject', 'name': 'extract', 'operation_id': 'tcad.parameter.evidence.extract.v1', 'inputs': (Operatio...e_material', artifact_names=('source',)), OperationInputSelection(port='user_context', artifact_names=('note',))), ...}
+
+    def operation_invoke(self, **values: Any) -> dict[str, Any]:
+        with self._create_lock:
+            try:
+                bound = self._prepare_operation_call(**values)
+                kind = bound.compiled.spec.executor.kind
+                if kind == "agent":
+                    result = self._invoke_agent_operation(
+                        bound,
+                        values["on_conflict"],
+                        resume_from=values.get("resume_from"),
+                        draft_from=values.get("draft_from"),
+                        max_attempts=values.get("max_attempts"),
+                    )
+                elif kind == "transform":
+                    result = self._invoke_compiled_transform(
+                        bound, values["on_conflict"]
+                    )
+                elif kind == "effect":
+                    plan = self._effect_operation_plan(bound)
+                    payloads = tuple(
+                        item for item in bound.inputs if item.port_name == plan.payload_port
+                    )
+                    if len(payloads) != 1 or len(bound.inputs) != 1:
+                        raise OperationInvocationError("effect_payload_not_singular")
+                    result = self._invoke_compiled_effect(
+                        bound, plan, values["on_conflict"]
+                    )
+                elif kind == "approval":
+                    result = self._invoke_approval_operation(
+                        bound, values["on_conflict"]
+                    )
+                else:
+                    raise OperationInvocationError("executor_kind_unknown")
+            except OperationInvocationError as error:
+>               raise RootToolError(
+                    f"operation invocation rejected [{error.reason_code}]", details=error.details
+                ) from error
+E               scidiscovery.artifact_agent.interfaces.mcp_root_shared.RootToolError: operation invocation rejected [instruction_required]
+
+src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py:236: RootToolError
+_____ test_added_text_uses_draft_recovery_and_cannot_change_strict_resume ______
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-15/test_added_text_uses_draft_rec0')
+
+    def test_added_text_uses_draft_recovery_and_cannot_change_strict_resume(tmp_path):
+        from copy import deepcopy
+        from pathlib import Path
+        from tests.operations.test_tcad_result_analysis import analysis_system, open_analysis, analysis_report, write_analysis
+        system = analysis_system(tmp_path)
+        _, runtime, root, request, _, _ = system
+        request["max_attempts"] = 2
+        worker, opened = open_analysis(system)
+        scratch = Path(opened["workspace_path"], "scratch", "saved.json")
+        scratch.write_text('{"fixture_value":3}')
+        status = runtime.runs.status(worker._run_id)
+        runtime.runs.record_failure(status.run_id, reason="fixture interruption", expected_state=status.state,
+            expected_last_activity_at=status.last_activity_at)
+        unchanged = {**deepcopy(request), "name": "unchanged", "resume_from": "analysis"}
+        assert root.call_tool("operation_preflight", unchanged)["admissible"]
+        root.call_tool("artifact_ingest_text", {"name": "note", "text": "Continue from the saved calculation; assess this suggestion."})
+        changed = deepcopy(unchanged)
+        changed["inputs"].append({"port": "user_context", "artifact_names": ["note"]})
+        refused = root.call_tool("operation_preflight", changed)
+>       assert not refused["admissible"] and "resume" in refused["reason_code"], refused
+E       AssertionError: {'admissible': False, 'reason_code': 'recovery_source_unavailable', 'port': None, 'executor_kind': None, ...}
+E       assert (not False and 'resume' in 'recovery_source_unavailable')
+
+tests/operations/test_user_context_contract.py:200: AssertionError
+___________ test_run_transaction_rejects_a_second_revision_successor ___________
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-15/test_run_transaction_rejects_a0')
+
+    def test_run_transaction_rejects_a_second_revision_successor(tmp_path) -> None:
+        catalog = _catalog()
+        operation = catalog.operation("science.hypothesis.revise.v1")
+        project = tmp_path / "revision_project"
+        project.mkdir()
+        runtime = open_runtime(project_root=project, state_root=tmp_path / "revision_state")
+        runtime.runs.operation_catalog = catalog
+        instance = runtime.scheduler_bindings.create_instance(
+            name="revision_successor",
+            title="Revision successor",
+            objective="Allow one successor for each bounded revision base.",
+        )
+    
+        def register(name: str, content: bytes, schema: str):
+            envelope = runtime.artifacts.register(
+                content,
+                ArtifactRegistration(
+                    kind="scientific_object",
+                    schema_id=schema,
+                    payload_schema_version=1,
+                    media_type="application/json",
+                    creator=runtime.actor,
+                ),
+                idempotency_key=f"revision-successor:{name}",
+            )
+            runtime.scheduler_bindings.bind(
+                instance=instance.instance_id,
+                namespace="artifact",
+                name=name,
+                object_id=envelope.artifact_id,
+            )
+            return InvocationArtifact(
+                artifact_name=name,
+                ref=envelope.ref,
+                schema_id=schema,
+                media_type="application/json",
+                size_bytes=len(content),
+            )
+    
+        portfolio_bytes = _revision_portfolio_bytes()
+        base = register(
+            "base_portfolio",
+            portfolio_bytes,
+            "scidiscovery.hypothesis-proposal.v2",
+        )
+        request = register(
+            "critic_request",
+            _critic_bytes(),
+            "scidiscovery.critic-review.v2",
+        )
+        foundation = register(
+            "foundation",
+            _revision_foundation_bytes(),
+            "scidiscovery.scientific-foundation.v1",
+        )
+        bound = preflight_operation(
+            operation,
+            name="first_revision",
+            artifacts_by_port={
+                "user_context": (),
+                "prior_draft": (base,),
+                "change_request": (request,),
+                "scientific_foundation": (foundation,),
+            },
+            instruction="Apply the bounded critic correction.",
+            read_artifact=runtime.artifacts.read,
+        )
+        runtime.runs.schedule(
+            bound,
+            instance_id=instance.instance_id,
+            output_binding_name="first_revision.output",
+            output_logical_name="first_revision.output",
+            output_revision=1,
+            output_binding_fingerprint="1" * 64,
+        )
+        worker = LocalWorkerMCPRouter(
+            runtime.runs,
+            operation_id=operation.spec.operation_id,
+            operation_digest=operation.digest,
+        )
+        opened = worker.call_tool("worker_open_assignment", {})
+        Path(opened["output_directory"], "result.json").write_bytes(
+            canonical_json(
+                {
+                    "schema_version": 1,
+                    "handoff": {
+                        "verdict": "pass",
+                        "summary": "The bounded correction preserves stable keys.",
+                    },
+                    "payload": {
+                        **json.loads(portfolio_bytes),
+                        "stage_objective": (
+                            "Separate one bounded mechanism after review correction."
+                        ),
+                    },
+                }
+            )
+        )
+        assert worker.call_tool("worker_submit_result", {})["state"] == "completed"
+    
+        with pytest.raises(RunSlotBusy, match="already has a successor"):
+            runtime.runs.schedule(
+                bound,
+                instance_id=instance.instance_id,
+                output_binding_name="second_revision.output",
+                output_logical_name="second_revision.output",
+                output_revision=1,
+                output_binding_fingerprint="2" * 64,
+            )
+    
+        retry_base = register(
+            "retry_base_portfolio",
+            portfolio_bytes,
+            "scidiscovery.hypothesis-proposal.v2",
+        )
+>       retry_bound = preflight_operation(
+            operation,
+            name="retry_revision",
+            artifacts_by_port={
+                "prior_draft": (retry_base,),
+                "change_request": (request,),
+                "scientific_foundation": (foundation,),
+            },
+            instruction="Retry only after an explicit failed Run.",
+            read_artifact=runtime.artifacts.read,
+        )
+
+tests/operations/test_hypothesis_review_routing.py:726: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+compiled = CompiledOperation(plugin_id='general_science', spec=OperationSpec(operation_id='science.hypothesis.revise.v1', version...e revision must differ from its immutable base.', 'output_paths': ('/',), 'required_inputs': ('prior_draft',)}))})})}))
+name = 'retry_revision'
+artifacts_by_port = {'prior_draft': (InvocationArtifact(artifact_name='retry_base_portfolio', ref=ArtifactRef(schema_version=1, artifact_i...alse, parent_refs=(), labels=(), handoff_verdict=None, historical=False, producer_run_id=None, producer_inputs=None),)}
+instruction = 'Retry only after an explicit failed Run.', parameters = None
+read_artifact = <bound method ArtifactService.read of <scidiscovery.artifact_agent.service.artifacts.ArtifactService object at 0x7f68e5a30830>>
+source_name_overrides = None
+
+    def preflight_operation(
+        compiled: CompiledOperation,
+        *,
+        name: str,
+        artifacts_by_port: Mapping[str, tuple[InvocationArtifact, ...]],
+        instruction: str | None,
+        parameters: Mapping[str, Any] | None = None,
+        read_artifact: Callable[[ArtifactRef], bytes] | None = None,
+        source_name_overrides: Mapping[tuple[str, str], str] | None = None,
+    ) -> BoundOperationCall:
+        spec = compiled.spec
+        expected = {port.name: port for port in spec.inputs}
+        if set(artifacts_by_port) != set(expected):
+            missing = next(iter(sorted(set(expected) - set(artifacts_by_port))), None)
+            extra = next(iter(sorted(set(artifacts_by_port) - set(expected))), None)
+>           raise OperationInvocationError(
+                "input_port_missing" if missing else "input_port_unknown",
+                port=missing or extra,
+            )
+E           scidiscovery.operations.input_validation.OperationInvocationError: input_port_missing: user_context
+
+src/scidiscovery/operations/invoke.py:136: OperationInvocationError
+=========================== short test summary info ============================
+FAILED tests/operations/test_user_context_contract.py::test_background_reference_is_not_a_formal_parameter_source
+FAILED tests/operations/test_user_context_contract.py::test_added_text_uses_draft_recovery_and_cannot_change_strict_resume
+FAILED tests/operations/test_hypothesis_review_routing.py::test_run_transaction_rejects_a_second_revision_successor
+3 failed, 16 passed in 8.06s

@@ -1,0 +1,272 @@
+{
+  "failed_run": {
+    "agent_type": "op_tcad_result_analyze_v1_8314f7794897",
+    "backend": "local_trusted",
+    "candidate_accepted": false,
+    "completed_at": "2026-09-11T14:24:01.701096Z",
+    "created_at": "2026-09-11T14:06:34.170396Z",
+    "deadline_at": "2026-09-11T14:21:34.170396Z",
+    "diagnostic_summary": {
+      "failure": {
+        "category": "run_timeout",
+        "code": "run_timeout",
+        "repairable_by_output": false
+      },
+      "latest_rejection": null,
+      "latest_tool_error": {
+        "category": "tool_failed",
+        "code": "tool_failed",
+        "details": [
+          {
+            "affected_action": "tool_call",
+            "code": "calculation_work_limit",
+            "message": "The tool returned no numeric result; retain its specific reason and limitations.",
+            "path": "$",
+            "phase": "tool_execution",
+            "repairable": false,
+            "schema_version": 1
+          }
+        ],
+        "repairable_by_output": false,
+        "tool_name": "worker_tcad_curve_score"
+      },
+      "recent_errors": [
+        {
+          "category": "tool_failed",
+          "code": "tool_failed",
+          "details": [
+            {
+              "affected_action": "tool_call",
+              "code": "case_mapping_invalid",
+              "message": "analysis case is not present in the bound plan",
+              "path": "$.request.sources[0].case_mapping_basis",
+              "phase": "tool_execution",
+              "repairable": true,
+              "schema_version": 1
+            }
+          ],
+          "repairable_by_output": false,
+          "tool_name": "worker_tcad_curve_score"
+        },
+        {
+          "category": "tool_failed",
+          "code": "tool_failed",
+          "details": [
+            {
+              "affected_action": "tool_call",
+              "code": "case_mapping_invalid",
+              "message": "analysis case is not present in the bound plan",
+              "path": "$.request.sources[0].case_mapping_basis",
+              "phase": "tool_execution",
+              "repairable": true,
+              "schema_version": 1
+            }
+          ],
+          "repairable_by_output": false,
+          "tool_name": "worker_tcad_curve_score"
+        },
+        {
+          "category": "tool_failed",
+          "code": "tool_failed",
+          "details": [
+            {
+              "affected_action": "tool_call",
+              "code": "case_mapping_invalid",
+              "message": "undeclared case mapping requires explicit source evidence",
+              "path": "$.request.sources[0].case_mapping_basis",
+              "phase": "tool_execution",
+              "repairable": true,
+              "schema_version": 1
+            }
+          ],
+          "repairable_by_output": false,
+          "tool_name": "worker_tcad_curve_score"
+        },
+        {
+          "category": "tool_failed",
+          "code": "tool_failed",
+          "details": [
+            {
+              "affected_action": "tool_call",
+              "code": "calculation_work_limit",
+              "message": "The tool returned no numeric result; retain its specific reason and limitations.",
+              "path": "$",
+              "phase": "tool_execution",
+              "repairable": false,
+              "schema_version": 1
+            }
+          ],
+          "repairable_by_output": false,
+          "tool_name": "worker_tcad_curve_score"
+        },
+        {
+          "category": "run_timeout",
+          "code": "run_timeout",
+          "repairable_by_output": false
+        }
+      ],
+      "rejection_count": 0
+    },
+    "draft_from": null,
+    "head_advance": null,
+    "last_activity_at": "2026-09-11T14:21:02.998654Z",
+    "logical_name": "fig4_continuation_execution_analysis_independent_1",
+    "name": "fig4_continuation_execution_analysis_independent_1",
+    "operation_id": "tcad.result.analyze.v1",
+    "output_artifact_name": null,
+    "reason": "Agent 已结束但未形成受控封存输出；控制记录仍为 running 且 Run 截止时间已过。记录本次未完成提交的超时，保留可恢复交付用于新 Run 续接。",
+    "recovery": {
+      "delivery_preserved": true,
+      "draft_available": true,
+      "recovery_pending": false,
+      "resume_available": true
+    },
+    "recovery_available": true,
+    "revision": 1,
+    "scheduler_signal": null,
+    "scheduler_signal_status": "unavailable",
+    "sealed_output": null,
+    "sealed_output_status": "unavailable",
+    "started_at": "2026-09-11T14:07:00.211886Z",
+    "state": "failed"
+  },
+  "request": {
+    "name": "fig4_continuation_execution_analysis_independent_2",
+    "operation_id": "tcad.result.analyze.v1",
+    "inputs": [
+      {
+        "port": "execution_result",
+        "artifact_names": [
+          "fig4_continuation_execution_1.result"
+        ]
+      },
+      {
+        "port": "recovery_manifest",
+        "artifact_names": [
+          "fig4_continuation_execution_analysis_7.output.recovery_manifest"
+        ]
+      },
+      {
+        "port": "prior_analysis",
+        "artifact_names": [
+          "fig4_continuation_execution_analysis_8.output"
+        ]
+      },
+      {
+        "port": "experiment_plan",
+        "artifact_names": [
+          "fig4_continuation_experiment_plan_3"
+        ]
+      },
+      {
+        "port": "experiment_review",
+        "artifact_names": [
+          "fig4_continuation_experiment_review_6.output"
+        ]
+      },
+      {
+        "port": "reviewed_package",
+        "artifact_names": [
+          "fig4_continuation_reviewed_package_2"
+        ]
+      },
+      {
+        "port": "runtime_manifest",
+        "artifact_names": [
+          "fig4_continuation_execution_1.output.tcad_manifest"
+        ]
+      },
+      {
+        "port": "runtime_attestation",
+        "artifact_names": []
+      },
+      {
+        "port": "solver_outputs",
+        "artifact_names": [
+          "fig4_continuation_execution_1.output.solver_log",
+          "fig4_continuation_execution_1.output.fig4_al_own_anchor_primary_plx",
+          "fig4_continuation_execution_analysis_7.output.tool_evidence_028",
+          "fig4_continuation_execution_analysis_7.output.tool_evidence_029",
+          "fig4_continuation_execution_analysis_7.output.tool_evidence_030",
+          "fig4_continuation_execution_analysis_7.output.tool_evidence_031",
+          "fig4_continuation_execution_analysis_7.output.tool_evidence_032"
+        ]
+      },
+      {
+        "port": "diagnostics",
+        "artifact_names": [
+          "fig4_continuation_execution_1.output.tcad_log"
+        ]
+      },
+      {
+        "port": "reference_material",
+        "artifact_names": [
+          "fig4_continuation_reference_bundle_1",
+          "fig4_continuation_figure_materialized_1.curve_tables_001",
+          "fig4_continuation_figure_materialized_1.curve_tables_002"
+        ]
+      },
+      {
+        "port": "current_progress",
+        "artifact_names": [
+          "fig4_continuation_objective_2"
+        ]
+      },
+      {
+        "port": "prior_analysis_manifest",
+        "artifact_names": [
+          "fig4_continuation_execution_analysis_8.output.recovery_manifest"
+        ]
+      }
+    ],
+    "instruction": "对绑定的同一计划、精确原始执行和参考数据作独立结果分析，核验既往封存分析能否可靠支持本轮收尾及下一轮研究选择。以原始输入独立复算支撑关键结论的最小充分定量判据，检查数据集、单位、掩码、插值、权重、必要假设和结论适用范围；不要仅复述既往分析。由你自主决定核验范围和方法，明确哪些结论已独立核实、哪些未核实、是否存在需纠正的问题，并保留总体未完成目标。仅使用本 Operation 当前合同明确授权的能力；若原生有界后处理被允许，可在受控工作区使用并如实报告方法和来源，不得伪装成注册工具 calculation_records 回执。不要修改原始证据、计划或执行状态。无需为缺少评分工具指标自动阻断分析。仅使用已有执行结果，不启动求解器、不访问网络、不安装依赖。资源约束：一次一个计算进程树，含子进程累计 RSS 不超过 512 MiB，达到 448 MiB 时提前停止；不运行全量测试、并行批次或压力测试。",
+    "resume_from": "fig4_continuation_execution_analysis_independent_1"
+  },
+  "preflight": {
+    "admissible": true,
+    "executor_kind": "agent",
+    "port": null,
+    "reason_code": null
+  },
+  "invocation": {
+    "executor_kind": "agent",
+    "operation_id": "tcad.result.analyze.v1",
+    "result": {
+      "agent_type": "op_tcad_result_analyze_v1_8314f7794897",
+      "backend": "local_trusted",
+      "candidate_accepted": false,
+      "completed_at": null,
+      "created_at": "2026-09-11T14:24:27.518547Z",
+      "deadline_at": "2026-09-11T14:39:27.518547Z",
+      "diagnostic_summary": {
+        "failure": null,
+        "latest_rejection": null,
+        "latest_tool_error": null,
+        "recent_errors": [],
+        "rejection_count": 0
+      },
+      "draft_from": null,
+      "head_advance": null,
+      "last_activity_at": null,
+      "logical_name": "fig4_continuation_execution_analysis_independent_2",
+      "name": "fig4_continuation_execution_analysis_independent_2",
+      "operation_id": "tcad.result.analyze.v1",
+      "output_artifact_name": null,
+      "reason": null,
+      "recovery": {
+        "delivery_preserved": false,
+        "draft_available": false,
+        "recovery_pending": false,
+        "resume_available": false
+      },
+      "recovery_available": false,
+      "revision": 1,
+      "scheduler_signal": null,
+      "scheduler_signal_status": "unavailable",
+      "sealed_output": null,
+      "sealed_output_status": "unavailable",
+      "started_at": null,
+      "state": "queued"
+    }
+  }
+}

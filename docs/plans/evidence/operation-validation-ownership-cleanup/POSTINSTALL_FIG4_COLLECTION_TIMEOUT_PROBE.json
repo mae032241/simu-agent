@@ -1,0 +1,68 @@
+{
+  "exception_type": "RuntimeError",
+  "message": "TCAD transport operation exceeded its short bound; stderr log: <temporary-diagnostic-root>/logs/e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855.stderr.log",
+  "cause_type": "TimeoutExpired",
+  "cause_timeout": 30,
+  "preserved_logs": [
+    {
+      "name": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855.stderr.log",
+      "size": 0
+    },
+    {
+      "name": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855.stdout.log",
+      "size": 0
+    }
+  ],
+  "projected_error": {
+    "jsonrpc": "2.0",
+    "id": "diagnostic",
+    "error": {
+      "code": -32000,
+      "message": "Tool execution failed; consult the controlled engineering diagnostics.",
+      "data": {
+        "diagnostics": [
+          {
+            "schema_version": 1,
+            "code": "runtime_failure",
+            "phase": "tool_execution",
+            "path": "$",
+            "message": "Tool execution failed; consult the controlled engineering diagnostics.",
+            "repairable": false,
+            "affected_action": "tool_call"
+          }
+        ]
+      }
+    }
+  },
+  "proxy_timeout_projection": {
+    "jsonrpc": "2.0",
+    "id": "diagnostic",
+    "error": {
+      "code": -32000,
+      "message": "Tool execution failed; consult the controlled engineering diagnostics.",
+      "data": {
+        "diagnostics": [
+          {
+            "schema_version": 1,
+            "code": "runtime_failure",
+            "phase": "tool_execution",
+            "path": "$",
+            "message": "Tool execution failed; consult the controlled engineering diagnostics.",
+            "repairable": false,
+            "affected_action": "tool_call"
+          }
+        ]
+      }
+    }
+  },
+  "installed_source_matches": {
+    "mcp.py": true,
+    "mcp_proxy.py": true,
+    "command_adapter.py": true,
+    "ssh_transport.py": true
+  },
+  "actual_config": {
+    "transport_operation_timeout_seconds": 30,
+    "ssh_operation_timeout_seconds": 120
+  }
+}

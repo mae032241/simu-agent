@@ -1,0 +1,54 @@
+[
+  {
+    "nodeid": "tests/operations/test_root_draft_routes.py::test_root_draft_rejection_creates_no_run[extra0-recovery_sources_mutually_exclusive]",
+    "baseline_log": "check-1789379811600045234.log"
+  },
+  {
+    "nodeid": "tests/operations/test_root_draft_routes.py::test_root_draft_rejection_creates_no_run[extra1-draft_source_unavailable]",
+    "baseline_log": "check-1789379811600045234.log"
+  },
+  {
+    "nodeid": "tests/operations/test_agent_contract_alignment.py::test_sealed_blocked_review_is_readable_as_exact_feedback",
+    "baseline_log": "check-1789380002102577728.log"
+  },
+  {
+    "nodeid": "tests/operations/test_agent_contract_alignment.py::test_review_optional_original_is_visible_and_citations_correct_in_same_run[blocked-False-False]",
+    "baseline_log": "check-1789380002102577728.log"
+  },
+  {
+    "nodeid": "tests/operations/test_agent_contract_alignment.py::test_review_optional_original_is_visible_and_citations_correct_in_same_run[blocked-False-True]",
+    "baseline_log": "check-1789380002102577728.log"
+  },
+  {
+    "nodeid": "tests/operations/test_agent_contract_alignment.py::test_review_optional_original_is_visible_and_citations_correct_in_same_run[blocked-True-False]",
+    "baseline_log": "check-1789380002102577728.log"
+  },
+  {
+    "nodeid": "tests/operations/test_agent_contract_alignment.py::test_review_optional_original_is_visible_and_citations_correct_in_same_run[blocked-True-True]",
+    "baseline_log": "check-1789380002102577728.log"
+  },
+  {
+    "nodeid": "tests/operations/test_incremental_revision_runtime.py::test_revision_workspace_is_copy_on_write_and_publishes_new_snapshot",
+    "baseline_log": "check-1789380002102577728.log"
+  },
+  {
+    "nodeid": "tests/operations/test_incremental_revision_runtime.py::test_revision_recovery_status_matches_exact_resume_preflight",
+    "baseline_log": "check-1789380002102577728.log"
+  },
+  {
+    "nodeid": "tests/operations/test_general_transform_operations.py::test_tcad_execution_context_projection_rejects_non_snapshot_content",
+    "baseline_log": "check-1789380002102577728.log"
+  },
+  {
+    "nodeid": "tests/operations/test_general_transform_operations.py::test_root_projects_execution_context_idempotently_with_exact_parent",
+    "baseline_log": "check-1789380002102577728.log"
+  },
+  {
+    "nodeid": "tests/operations/test_general_transform_operations.py::test_tcad_execution_context_projection_is_narrow_and_composes_with_design",
+    "baseline_log": "check-1789380115420942527.log"
+  },
+  {
+    "nodeid": "tests/operations/test_general_transform_operations.py::test_experiment_design_rejects_mixed_foundation_cohorts",
+    "baseline_log": "check-1789380115420942527.log"
+  }
+]

@@ -1,0 +1,16 @@
+{
+  "command": [
+    "python",
+    "-m",
+    "pytest",
+    "-q",
+    "tests/operations/test_catalog_compile.py::test_builtin_catalog_compiles_exactly_three_architecture_test_operations",
+    "tests/operations/test_l5_hardened_run_backend.py::test_one_tool_model_change_reaches_schema_call_and_identity"
+  ],
+  "exit_code": 0,
+  "seconds": 2.294,
+  "peak_tree_rss_bytes": 113352704,
+  "budget_bytes": 536870912,
+  "early_stop_bytes": 469762048,
+  "memory_terminated": false
+}

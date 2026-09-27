@@ -1,0 +1,6 @@
+Reading additional input from stdin...
+{"type":"thread.started","thread_id":"01a0a459-3fb9-7210-befd-9d28df91d840"}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"I’m dispatching the single isolated child exactly as specified."}}
+{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"MODEL_OVERRIDE_REJECTED"}}
+{"type":"turn.completed","usage":{"input_tokens":29351,"cached_input_tokens":23040,"cache_write_input_tokens":0,"output_tokens":300,"reasoning_output_tokens":231}}

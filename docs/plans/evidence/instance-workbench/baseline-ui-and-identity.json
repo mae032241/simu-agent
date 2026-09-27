@@ -1,0 +1,16 @@
+{
+  "command": [
+    "python",
+    "-m",
+    "pytest",
+    "-q",
+    "tests/operations/test_r4_approval_ui_renderer.py",
+    "tests/operations/test_r4_execution_approval_identity.py",
+    "tests/operations/test_m6a_direct_instance_management.py"
+  ],
+  "exit_code": 0,
+  "stop_reason": null,
+  "duration_seconds": 51.825,
+  "peak_tree_rss_mib": 140.28,
+  "budget_mib": 512
+}

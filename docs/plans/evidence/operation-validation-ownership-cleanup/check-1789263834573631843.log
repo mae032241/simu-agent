@@ -1,0 +1,105 @@
+{"rejection": {"state": "rejected", "diagnostics": [{"schema_version": 1, "code": "output_invalid", "phase": "output_payload", "path": "$.deck.gap.summary", "message": "Minimum length is 1.", "repairable": true, "affected_action": "submit", "type": "string_too_short"}]}, "correcting_handoff_only": "completed"}
+F{"representation": "inline", "same_tool_return": true, "result": {"state": "completed", "receipt": {"head_advance": "not_requested", "completed_at": "2026-09-13T01:43:57.689193Z"}}}
+.{"representation": "saved", "same_tool_return": true, "result": {"state": "completed", "receipt": {"head_advance": "not_requested", "completed_at": "2026-09-13T01:43:55.844237Z"}}}
+.{"representation": "both", "same_tool_return": true, "result": {"state": "rejected", "diagnostics": [{"schema_version": 1, "code": "output_invalid", "phase": "output_context", "path": "$.payload.evidence[2].source_key", "message": "analysis source key has conflicting source mappings", "repairable": true, "affected_action": "submit", "rule_id": "tcad.result_analysis.context_binding", "type": "value_error"}]}}
+F{"runtime_author_log_preflight": {"text/plain": {"admissible": false, "reason_code": "input_output_usage_forbidden", "port": "prior_project", "executor_kind": null, "diagnostics": [{"schema_version": 1, "code": "input_output_usage_forbidden", "phase": "input_admission", "path": "$.inputs.prior_project", "message": "The declared requirement was not satisfied.", "repairable": true, "affected_action": "invoke"}]}, "text/plain; charset=utf-8": {"admissible": false, "reason_code": "input_media_type_mismatch", "port": "solver_log", "executor_kind": null, "diagnostics": [{"schema_version": 1, "code": "input_media_type_mismatch", "phase": "input_admission", "path": "$.inputs.solver_log", "message": "The declared requirement was not satisfied.", "repairable": true, "affected_action": "invoke"}]}}}
+F
+=================================== FAILURES ===================================
+_______________ test_gap_handoff_error_points_to_its_actual_file _______________
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-270/test_gap_handoff_error_points_0')
+
+    def test_gap_handoff_error_points_to_its_actual_file(tmp_path):
+        from tests.operations.test_l4_local_tcad import _system, _invoke, _debug_worker, _ImmediateDebugAdapter, _write_gap
+        catalog, runtime, root, _ = _system(tmp_path, solver_kind='sprocess')
+        _invoke(root, 'gap_author', 'tcad.deck.author.initial.v1', [
+            {'port': 'execution_capability', 'artifact_names': ['execution_capability']},
+            {'port': 'experiment_plan', 'artifact_names': ['experiment_plan']}])
+        worker = _debug_worker(catalog, runtime, _ImmediateDebugAdapter(), tmp_path / 'unused-debug')
+        opened = worker.call_tool('worker_open_assignment', {})
+        _write_gap(opened)
+        handoff = Path(opened['workspace_path']) / 'deck/handoff.json'
+        payload = json.loads(handoff.read_bytes()); payload['summary'] = ''
+        handoff.write_text(json.dumps(payload))
+        rejected = worker.call_tool('worker_submit_result', {})
+        assert rejected['state'] == 'rejected'
+        payload['summary'] = 'Fixed fixture handoff.'; handoff.write_text(json.dumps(payload))
+        corrected = worker.call_tool('worker_submit_result', {})
+        assert corrected['state'] == 'completed'
+        print(json.dumps({'rejection': rejected, 'correcting_handoff_only': corrected['state']}))
+>       assert rejected['diagnostics'][0]['path'] == '$.deck.handoff.summary'
+E       AssertionError: assert '$.deck.gap.summary' == '$.deck.handoff.summary'
+E         
+E         - $.deck.handoff.summary
+E         ?        ^ ^^^^^
+E         + $.deck.gap.summary
+E         ?        ^ ^
+
+docs/plans/evidence/operation-validation-ownership-cleanup/review_r3_diagnostic_probe.py:24: AssertionError
+_ test_same_calculation_identity_can_use_its_two_supported_representations[both] _
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-270/test_same_calculation_identity2')
+representation = 'both'
+
+    @pytest.mark.parametrize('representation', ['inline', 'saved', 'both'])
+    def test_same_calculation_identity_can_use_its_two_supported_representations(tmp_path, representation):
+        from tests.operations.test_tcad_result_analysis import analysis_system, open_analysis, analysis_report, write_analysis, raw_request
+        worker, opened = open_analysis(analysis_system(tmp_path))
+        record = worker.call_tool('worker_tcad_curve_score', {'record_key': 'score', 'request': raw_request()})
+        assert record['status'] == 'computed'
+        report = analysis_report(alias='solver_outputs_001')
+        report['source_references'] = []
+        report['calculation_records'] = [record]
+        locators = {'inline': ['calculation_records:score'], 'saved': [record['calculation_ref']],
+            'both': ['calculation_records:score', record['calculation_ref']]}[representation]
+        for locator in locators:
+            report['evidence'].append({**report['evidence'][0], 'source_key': 'same_score', 'locator': locator})
+        write_analysis(opened, report)
+        result = worker.call_tool('worker_submit_result', {})
+        print(json.dumps({'representation': representation, 'same_tool_return': True, 'result': result}))
+>       assert result['state'] == 'completed'
+E       AssertionError: assert 'rejected' == 'completed'
+E         
+E         - completed
+E         + rejected
+
+docs/plans/evidence/operation-validation-ownership-cleanup/review_r3_diagnostic_probe.py:43: AssertionError
+____________ test_runtime_author_accepts_the_server_log_media_type _____________
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-270/test_runtime_author_accepts_th0')
+
+    def test_runtime_author_accepts_the_server_log_media_type(tmp_path):
+        from tests.operations.test_l4_local_tcad import _system, _project
+        from scidiscovery.artifact_agent.schema.artifact import ArtifactRegistration
+        from scidiscovery.artifact_agent.schema.common import canonical_json
+        _, runtime, root, capability = _system(tmp_path)
+        instance = runtime.scheduler_bindings.list_instances()[0].instance_id
+        def register(name, raw, schema, media='application/json'):
+            record = runtime.artifacts.register(raw, ArtifactRegistration(kind='fixture', schema_id=schema,
+                payload_schema_version=1, media_type=media, creator=runtime.actor), idempotency_key=name)
+            runtime.scheduler_bindings.bind(instance=instance, namespace='artifact', name=name, object_id=record.artifact_id)
+        register('prior', canonical_json(_project(capability).model_dump(mode='json')), 'tcad.deck-project.v1')
+        register('attestation', canonical_json(dict(schema_version=1, verdict='fail', terminal_state='failed', exit_code=1,
+            checks=[dict(check_key='solver_failed', status='fail', rationale='Fixture solver failure.')],
+            solver_native_output_count=0, transport_derived_output_count=0, parser_derived_output_count=0,
+            rationale='Fixture terminal failure.')), 'tcad.runtime-attestation.v1')
+        request = dict(name='runtime_revision', operation_id='tcad.deck.author.runtime-failure.v1',
+            instruction='Fix the fixture runtime failure.', inputs=[
+                dict(port='prior_project', artifact_names=['prior']), dict(port='runtime_attestation', artifact_names=['attestation']),
+                dict(port='execution_capability', artifact_names=['execution_capability']),
+                dict(port='experiment_plan', artifact_names=['experiment_plan'])])
+        replies = {}
+        for name, media in [('plain_log', 'text/plain'), ('server_log', 'text/plain; charset=utf-8')]:
+            register(name, b'fixture solver error\n', 'opaque', media)
+            replies[media] = root.call_tool('operation_preflight', {**request,
+                'inputs': request['inputs'] + [dict(port='solver_log', artifact_names=[name])]})
+        print(json.dumps({'runtime_author_log_preflight': replies}))
+>       assert replies['text/plain']['admissible'] is True
+E       assert False is True
+
+docs/plans/evidence/operation-validation-ownership-cleanup/log_visibility_probes.py:71: AssertionError
+=========================== short test summary info ============================
+FAILED docs/plans/evidence/operation-validation-ownership-cleanup/review_r3_diagnostic_probe.py::test_gap_handoff_error_points_to_its_actual_file
+FAILED docs/plans/evidence/operation-validation-ownership-cleanup/review_r3_diagnostic_probe.py::test_same_calculation_identity_can_use_its_two_supported_representations[both]
+FAILED docs/plans/evidence/operation-validation-ownership-cleanup/log_visibility_probes.py::test_runtime_author_accepts_the_server_log_media_type
+3 failed, 2 passed in 4.50s

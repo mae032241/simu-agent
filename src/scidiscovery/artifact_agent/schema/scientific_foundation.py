@@ -4,9 +4,33 @@ from __future__ import annotations
 
 from typing import Annotated, Literal
 
-from pydantic import Field, model_validator
+from pydantic import Field, ValidationError, model_validator
 
 from .common import Identifier, SchemaModel, canonical_json
+from .research_objective import ResearchObjectiveContract
+
+
+# These declarations are also the Worker-visible field contract. Unknown values
+# remain None; absence of a measurement must never force an invented number.
+PARAMETER_UNIT_RULE = "A parameter with a known value requires a unit; use 'dimensionless' when applicable. Unknown parameters may omit value and unit and explain the gap in statement."
+VALUE_UNIT_RULE = "A unit cannot be declared without a value."
+SOURCE_RULE = "Paper facts, user definitions and runtime observations require evidence_keys naming exact supplied sources."
+RATIONALE_RULE = "Inference, assumption and speculation require rationale explaining the reasoning beyond the statement."
+UNCERTAINTY_RULE = "Numeric uncertainty requires a unit."
+IDENTITY_RULE = "Condition names must be unique within one evidence item."
+FOUNDATION_RULES = (PARAMETER_UNIT_RULE, VALUE_UNIT_RULE, SOURCE_RULE, RATIONALE_RULE,
+    UNCERTAINTY_RULE, IDENTITY_RULE,
+    "Item and conflict keys must be unique. Conflicts reference only declared item keys.",
+    "Unresolved conflicts have no resolution; resolved and accepted-assumption conflicts require resolution.",
+    "A supplied objective contract statement equals the foundation objective and its targets reference declared items.")
+
+
+def _raise_issues(model, issues):
+    if issues:
+        from ...operation_contract import declared_violation
+        raise ValidationError.from_exception_data(type(model).__name__, [
+            {"type": "value_error", "loc": path, "input": None,
+             "ctx": {"error": declared_violation(message)}} for path, message in issues])
 
 
 ScalarValue = str | int | float | bool
@@ -35,13 +59,13 @@ class ApplicabilityCondition(SchemaModel):
 class EvidenceUncertainty(SchemaModel):
     description: Annotated[str, Field(min_length=1, max_length=2048)]
     value: int | float | None = None
-    unit: Annotated[str, Field(min_length=1, max_length=128)] | None = None
+    unit: Annotated[str, Field(min_length=1, max_length=128, description=UNCERTAINTY_RULE)] | None = None
     basis: Annotated[str, Field(min_length=1, max_length=2048)]
 
     @model_validator(mode="after")
     def _numeric_value_has_unit(self) -> EvidenceUncertainty:
         if self.value is not None and self.unit is None:
-            raise ValueError("numeric uncertainty requires a unit")
+            _raise_issues(self, [(("unit",), UNCERTAINTY_RULE)])
         return self
 
 
@@ -67,47 +91,32 @@ class EvidenceItem(SchemaModel):
     ]
     epistemic_status: EpistemicStatus
     statement: Annotated[str, Field(min_length=1, max_length=8192)]
-    value: ScalarValue | None = None
-    unit: Annotated[str, Field(min_length=1, max_length=128)] | None = None
+    value: ScalarValue | None = Field(default=None, description=PARAMETER_UNIT_RULE)
+    unit: Annotated[str, Field(min_length=1, max_length=128, description=VALUE_UNIT_RULE + " " + PARAMETER_UNIT_RULE)] | None = None
     scope: Annotated[str, Field(min_length=1, max_length=4096)]
     conditions: Annotated[
         tuple[ApplicabilityCondition, ...], Field(max_length=64)
     ] = ()
     uncertainty: EvidenceUncertainty | None = None
-    evidence_keys: Annotated[tuple[Identifier, ...], Field(max_length=64)] = ()
-    rationale: Annotated[str, Field(min_length=1, max_length=4096)] | None = None
+    evidence_keys: Annotated[tuple[Identifier, ...], Field(max_length=64, description=SOURCE_RULE)] = ()
+    rationale: Annotated[str, Field(min_length=1, max_length=4096, description=RATIONALE_RULE)] | None = None
     tags: Annotated[tuple[Identifier, ...], Field(max_length=64)] = ()
 
     @model_validator(mode="after")
     def _scientific_basis_is_explicit(self) -> EvidenceItem:
-        if self.item_type == "parameter":
-            if self.value is None:
-                raise ValueError("parameter item requires a value")
-            if self.unit is None:
-                raise ValueError(
-                    "parameter item requires a unit; use 'dimensionless' when applicable"
-                )
+        issues = []
+        if self.item_type == "parameter" and self.value is not None and self.unit is None:
+            issues.append((("unit",), PARAMETER_UNIT_RULE))
         if self.value is None and self.unit is not None:
-            raise ValueError("unit cannot be declared without a value")
-        if self.epistemic_status in {
-            "paper_fact",
-            "user_defined",
-            "runtime_observation",
-        } and not self.evidence_keys:
-            raise ValueError("source-backed evidence item requires evidence_keys")
-        if self.epistemic_status in {
-            "inference",
-            "assumption",
-            "speculation",
-        } and self.rationale is None:
-            raise ValueError("non-factual evidence item requires a rationale")
-        if len(self.evidence_keys) != len(set(self.evidence_keys)):
-            raise ValueError("evidence_keys must be unique")
-        if len(self.tags) != len(set(self.tags)):
-            raise ValueError("tags must be unique")
+            issues.append((("unit",), VALUE_UNIT_RULE))
+        if self.epistemic_status in {"paper_fact", "user_defined", "runtime_observation"} and not self.evidence_keys:
+            issues.append((("evidence_keys",), SOURCE_RULE))
+        if self.epistemic_status in {"inference", "assumption", "speculation"} and self.rationale is None:
+            issues.append((("rationale",), RATIONALE_RULE))
         condition_names = tuple(item.name for item in self.conditions)
         if len(condition_names) != len(set(condition_names)):
-            raise ValueError("condition names must be unique within one evidence item")
+            issues.append((("conditions",), IDENTITY_RULE))
+        _raise_issues(self, issues)
         return self
 
 
@@ -124,8 +133,6 @@ class EvidenceConflict(SchemaModel):
             raise ValueError("unresolved conflict cannot declare a resolution")
         if self.status != "unresolved" and self.resolution is None:
             raise ValueError("resolved conflict requires a resolution")
-        if len(self.item_keys) != len(set(self.item_keys)):
-            raise ValueError("conflict item_keys must be unique")
         return self
 
 
@@ -135,6 +142,7 @@ class ScientificFoundation(SchemaModel):
     title: Annotated[str, Field(min_length=1, max_length=2048)]
     objective: Annotated[str, Field(min_length=1, max_length=8192)]
     summary: Annotated[str, Field(min_length=1, max_length=8192)]
+    objective_contract: ResearchObjectiveContract | None = None
     items: Annotated[tuple[EvidenceItem, ...], Field(min_length=1, max_length=512)]
     evidence: Annotated[
         tuple[FoundationEvidence, ...], Field(max_length=512)
@@ -145,23 +153,24 @@ class ScientificFoundation(SchemaModel):
 
     @model_validator(mode="after")
     def _references_are_local_and_complete(self) -> ScientificFoundation:
+        issues = []
         item_keys = tuple(item.item_key for item in self.items)
-        source_keys = tuple(item.source_key for item in self.evidence)
         conflict_keys = tuple(item.conflict_key for item in self.conflicts)
         if len(item_keys) != len(set(item_keys)):
-            raise ValueError("item_key values must be unique")
-        if len(source_keys) != len(set(source_keys)):
-            raise ValueError("source_key values must be unique")
+            issues.append((("items",), "item_key values must be unique"))
         if len(conflict_keys) != len(set(conflict_keys)):
-            raise ValueError("conflict_key values must be unique")
+            issues.append((("conflicts",), "conflict_key values must be unique"))
         known_items = set(item_keys)
-        known_sources = set(source_keys)
-        for item in self.items:
-            if not set(item.evidence_keys).issubset(known_sources):
-                raise ValueError("evidence item references an undeclared source_key")
-        for conflict in self.conflicts:
+        for index, conflict in enumerate(self.conflicts):
             if not set(conflict.item_keys).issubset(known_items):
-                raise ValueError("conflict references an undeclared item_key")
+                issues.append((("conflicts", index, "item_keys"), "conflict references an undeclared item_key"))
+        if self.objective_contract is not None:
+            if self.objective_contract.statement != self.objective:
+                issues.append((("objective",), "objective contract statement must equal the foundation objective"))
+            for index, target in enumerate(self.objective_contract.mandatory_targets):
+                if not set(target.evidence_item_keys).issubset(known_items):
+                    issues.append((("objective_contract", "mandatory_targets", index, "evidence_item_keys"), "objective target references an undeclared foundation item"))
+        _raise_issues(self, issues)
         return self
 
 

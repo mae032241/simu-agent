@@ -4,24 +4,27 @@ from __future__ import annotations
 
 import os
 import stat
-from importlib import import_module
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from scidiscovery.platforms.roles import load_roles, role_output_json_schema
-
+from scidiscovery.agent_execution_settings import AgentSettings, load_settings
+from scidiscovery.operations.catalog import CompiledCatalog, compile_installed_catalog
 from .schema.refs import ActorRef
-from .context_policy import DEFAULT_CONTEXT_POLICIES, RoleContextPolicies
-from .security import TaskTokenService
 from .service import (
     ApprovalService,
     ArtifactService,
     SecureIntakeService,
-    TaskService,
-    RoleOutputContract,
+    RunService,
     SchedulerBindingService,
     ExecutionService,
+    StateMaintenanceLock,
 )
+from .service.local_workspace import LocalTrustedBackend
+from .service.instance_maintenance import InstanceMaintenance
+
+if TYPE_CHECKING:
+    from .service.hardened_workspace import HardenedWorkerBackend
 
 
 class RuntimeConfigurationError(RuntimeError):
@@ -34,100 +37,126 @@ class ArtifactAgentRuntime:
     state_root: Path
     actor: ActorRef
     artifacts: ArtifactService
-    tokens: TaskTokenService
-    tasks: TaskService
+    runs: RunService
+    local_backend: LocalTrustedBackend | None
+    hardened_backend: HardenedWorkerBackend | None
     intake: SecureIntakeService
     approvals: ApprovalService | None
     executions: ExecutionService | None
     scheduler_bindings: SchedulerBindingService
+    maintenance: StateMaintenanceLock
+    operation_catalog: CompiledCatalog
+    instance_maintenance: InstanceMaintenance | None = None
 
 
 def open_runtime(
     *,
     project_root: Path | str,
     state_root: Path | str,
-    task_token_secret: bytes,
     approval_receipt_secret: bytes | None = None,
     actor_id: str = "root_orchestrator",
     shared_group: bool = False,
+    worker_backend: str = "local",
+    local_workspace_root: Path | str | None = None,
+    agent_settings_file: Path | str | None = None,
+    agent_settings: AgentSettings | None = None,
 ) -> ArtifactAgentRuntime:
     project = Path(project_root).expanduser().resolve()
     state = Path(state_root).expanduser().absolute()
     _validate_state_root(project, state)
+    if worker_backend not in {"local", "hardened"}:
+        raise RuntimeConfigurationError("worker backend is invalid")
+    operation_catalog = compile_installed_catalog()
+    agent_settings = agent_settings or load_settings(agent_settings_file or os.environ.get("SCID_AGENT_SETTINGS_FILE"))
+    scheduler_database_path = state / "database" / "scheduler-bindings.sqlite3"
     actor = ActorRef(actor_id=actor_id, actor_type="service")
-    artifacts = ArtifactService.open(
-        cas_root=state / "artifacts",
-        database_path=state / "database" / "artifact_agent.sqlite3",
-        shared_group=shared_group,
+    maintenance = StateMaintenanceLock(
+        state / "maintenance.lock", shared_group=shared_group
     )
-    tokens = TaskTokenService(
-        database_path=state / "database" / "task_tokens.sqlite3",
-        secret=task_token_secret,
-    )
-    role_output_contracts = {
-        role.name: RoleOutputContract(
-            kind=role.output,
-            format=role.output_format,
-            schema_id=role.output_schema,
-            validator=role.output_validator,
-            json_schema=role_output_json_schema(role),
+    instance_maintenance = InstanceMaintenance(state, maintenance=maintenance)
+    with maintenance.shared():
+        artifacts = ArtifactService.open(
+            cas_root=state / "artifacts",
+            database_path=state / "database" / "artifact_agent.sqlite3",
+            shared_group=shared_group,
         )
-        for role in load_roles()
-    }
-    role_context_policies = {
-        role.name: _load_context_policies(role.context_policies)
-        for role in load_roles()
-    }
-    tasks = TaskService(
-        artifacts=artifacts,
-        tokens=tokens,
-        database_path=state / "database" / "tasks.sqlite3",
-        service_actor=actor,
-        role_output_contracts=role_output_contracts,
-        role_context_policies=role_context_policies,
-    )
-    intake = SecureIntakeService(
-        project_root=project,
-        artifact_service=artifacts,
-        creator=actor,
-    )
-    approvals = (
-        ApprovalService(
-            artifacts=artifacts,
-            database_path=state / "database" / "approvals.sqlite3",
-            service_actor=ActorRef(
-                actor_id="approval_ui_service", actor_type="service"
-            ),
-            receipt_secret=approval_receipt_secret,
+        scheduler_bindings = SchedulerBindingService(scheduler_database_path)
+        local_backend = None
+        hardened_backend = None
+        if worker_backend == "hardened":
+            from .service.hardened_workspace import HardenedWorkerBackend
+
+            hardened_backend = HardenedWorkerBackend(state / "hardened-runs")
+            runs = RunService(
+                artifacts=artifacts,
+                database_path=state / "database" / "runs.sqlite3",
+                service_actor=actor,
+                operation_catalog=operation_catalog,
+                backend=hardened_backend,
+                scheduler_bindings=scheduler_bindings,
+                instance_maintenance=instance_maintenance,
+                agent_settings=agent_settings,
+            )
+        else:
+            local_backend = LocalTrustedBackend(
+                local_workspace_root or project / ".scidiscovery-runs"
+            )
+            runs = RunService(
+                artifacts=artifacts,
+                database_path=state / "database" / "runs.sqlite3",
+                service_actor=actor,
+                operation_catalog=operation_catalog,
+                backend=local_backend,
+                scheduler_bindings=scheduler_bindings,
+                instance_maintenance=instance_maintenance,
+                agent_settings=agent_settings,
+            )
+        intake = SecureIntakeService(
+            project_root=project,
+            artifact_service=artifacts,
+            creator=actor,
         )
-        if approval_receipt_secret is not None
-        else None
-    )
-    executions = (
-        ExecutionService(
-            artifacts=artifacts,
-            approvals=approvals,
-            database_path=state / "database" / "executions.sqlite3",
-            exchange_root=state / "execution-exchange",
-            service_actor=actor,
+        approvals = (
+            ApprovalService(
+                artifacts=artifacts,
+                database_path=state / "database" / "approvals.sqlite3",
+                service_actor=ActorRef(
+                    actor_id="approval_ui_service", actor_type="service"
+                ),
+                receipt_secret=approval_receipt_secret,
+            )
+            if approval_receipt_secret is not None
+            else None
         )
-        if approvals is not None
-        else None
-    )
-    scheduler_bindings = SchedulerBindingService(
-        state / "database" / "scheduler-bindings.sqlite3"
-    )
+        executions = (
+            ExecutionService(
+                artifacts=artifacts,
+                approvals=approvals,
+                database_path=state / "database" / "executions.sqlite3",
+                exchange_root=state / "execution-exchange",
+                service_actor=actor,
+            )
+            if approvals is not None
+            else None
+        )
+        if executions is not None:
+            executions.instance_maintenance = instance_maintenance
+            executions.scheduler_bindings = scheduler_bindings
     return ArtifactAgentRuntime(
         project_root=project,
         state_root=state,
         actor=actor,
         artifacts=artifacts,
-        tokens=tokens,
-        tasks=tasks,
+        runs=runs,
+        local_backend=local_backend,
+        hardened_backend=hardened_backend,
         intake=intake,
         approvals=approvals,
         executions=executions,
         scheduler_bindings=scheduler_bindings,
+        maintenance=maintenance,
+        operation_catalog=operation_catalog,
+        instance_maintenance=instance_maintenance,
     )
 
 
@@ -152,25 +181,6 @@ def _validate_state_root(project: Path, state: Path) -> None:
         raise RuntimeConfigurationError("project root must be an existing directory")
     if state.is_symlink() or (state.exists() and not state.is_dir()):
         raise RuntimeConfigurationError("state root must be a non-symlink directory")
-
-
-def _load_context_policies(locator: str | None) -> RoleContextPolicies:
-    if locator is None:
-        return DEFAULT_CONTEXT_POLICIES
-    module_name, separator, attribute = locator.partition(":")
-    if not separator or not module_name or not attribute:
-        raise RuntimeConfigurationError("role context policy locator is invalid")
-    try:
-        value = getattr(import_module(module_name), attribute)
-    except (ImportError, AttributeError) as error:
-        raise RuntimeConfigurationError(
-            f"role context policies are unavailable: {locator}"
-        ) from error
-    if not isinstance(value, RoleContextPolicies):
-        raise RuntimeConfigurationError(
-            f"role context policies have the wrong type: {locator}"
-        )
-    return value
 
 
 __all__ = [

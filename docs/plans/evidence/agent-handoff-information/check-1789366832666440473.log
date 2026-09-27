@@ -1,0 +1,364 @@
+FFFFFFF.                                                                 [100%]
+=================================== FAILURES ===================================
+_____ test_tcad_compact_report_seals_and_preserves_scientific_claim[pass] ______
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-5/test_tcad_compact_report_seals0')
+verdict = 'pass'
+
+    @pytest.mark.parametrize('verdict', ['pass', 'fail', 'inconclusive', 'invalid_study'])
+    def test_tcad_compact_report_seals_and_preserves_scientific_claim(tmp_path, verdict):
+        system = analysis_system(tmp_path, state='failed' if verdict == 'invalid_study' else 'succeeded',
+            bind_names=() if verdict == 'invalid_study' else ('A', 'B'))
+        worker, opened = open_analysis(system)
+        payload = compact_report(verdict=verdict)
+>       submit_compact(worker, opened, payload)
+
+tests/operations/test_analysis_handoff_report.py:54: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/operations/test_analysis_handoff_report.py:36: in submit_compact
+    profile = tomllib.loads(_operation_toml(worker.compiled, python=Path(sys.executable),
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+compiled = CompiledOperation(plugin_id='tcad_artifact', spec=OperationSpec(operation_id='tcad.result.analyze.v1', version='1', ca...he canonical payload must fit the compiled output byte limit.', 'output_paths': ('/',), 'required_inputs': ()}))})})}))
+python = PosixPath('/home/da/miniconda3/bin/python'), python_path = None
+state_root = PosixPath('/tmp/pytest-of-da/pytest-5/test_tcad_compact_report_seals0/project/.scidiscovery-runs/workspaces/workspace_04d44a6d50754aec96100a706d63b4a5')
+local_workspace_root = None, worker_backend = 'local'
+runtime_plugin_configs = None
+
+    def _operation_toml(
+        compiled: Any,
+        *,
+        python: Path,
+        python_path: Path | None,
+        state_root: Path,
+        local_workspace_root: Path | None = None,
+        worker_backend: str = "hardened",
+        runtime_plugin_configs: Mapping[str, Path] | None = None,
+    ) -> str:
+        """Compile one Agent Operation into the Codex child-Agent profile."""
+    
+        executor = compiled.spec.executor
+        if not _backend_supports_operation(compiled, worker_backend):
+            raise ValueError(
+                "compiled Operation requires native tools unavailable on this backend"
+            )
+        if worker_backend == "local" and local_workspace_root is None:
+>           raise ValueError("local workspace root is required")
+E           ValueError: local workspace root is required
+
+src/scidiscovery/platforms/codex.py:568: ValueError
+_____ test_tcad_compact_report_seals_and_preserves_scientific_claim[fail] ______
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-5/test_tcad_compact_report_seals1')
+verdict = 'fail'
+
+    @pytest.mark.parametrize('verdict', ['pass', 'fail', 'inconclusive', 'invalid_study'])
+    def test_tcad_compact_report_seals_and_preserves_scientific_claim(tmp_path, verdict):
+        system = analysis_system(tmp_path, state='failed' if verdict == 'invalid_study' else 'succeeded',
+            bind_names=() if verdict == 'invalid_study' else ('A', 'B'))
+        worker, opened = open_analysis(system)
+        payload = compact_report(verdict=verdict)
+>       submit_compact(worker, opened, payload)
+
+tests/operations/test_analysis_handoff_report.py:54: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/operations/test_analysis_handoff_report.py:36: in submit_compact
+    profile = tomllib.loads(_operation_toml(worker.compiled, python=Path(sys.executable),
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+compiled = CompiledOperation(plugin_id='tcad_artifact', spec=OperationSpec(operation_id='tcad.result.analyze.v1', version='1', ca...he canonical payload must fit the compiled output byte limit.', 'output_paths': ('/',), 'required_inputs': ()}))})})}))
+python = PosixPath('/home/da/miniconda3/bin/python'), python_path = None
+state_root = PosixPath('/tmp/pytest-of-da/pytest-5/test_tcad_compact_report_seals1/project/.scidiscovery-runs/workspaces/workspace_fa9e327453324b04b3eef33eddb352e5')
+local_workspace_root = None, worker_backend = 'local'
+runtime_plugin_configs = None
+
+    def _operation_toml(
+        compiled: Any,
+        *,
+        python: Path,
+        python_path: Path | None,
+        state_root: Path,
+        local_workspace_root: Path | None = None,
+        worker_backend: str = "hardened",
+        runtime_plugin_configs: Mapping[str, Path] | None = None,
+    ) -> str:
+        """Compile one Agent Operation into the Codex child-Agent profile."""
+    
+        executor = compiled.spec.executor
+        if not _backend_supports_operation(compiled, worker_backend):
+            raise ValueError(
+                "compiled Operation requires native tools unavailable on this backend"
+            )
+        if worker_backend == "local" and local_workspace_root is None:
+>           raise ValueError("local workspace root is required")
+E           ValueError: local workspace root is required
+
+src/scidiscovery/platforms/codex.py:568: ValueError
+_ test_tcad_compact_report_seals_and_preserves_scientific_claim[inconclusive] __
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-5/test_tcad_compact_report_seals2')
+verdict = 'inconclusive'
+
+    @pytest.mark.parametrize('verdict', ['pass', 'fail', 'inconclusive', 'invalid_study'])
+    def test_tcad_compact_report_seals_and_preserves_scientific_claim(tmp_path, verdict):
+        system = analysis_system(tmp_path, state='failed' if verdict == 'invalid_study' else 'succeeded',
+            bind_names=() if verdict == 'invalid_study' else ('A', 'B'))
+        worker, opened = open_analysis(system)
+        payload = compact_report(verdict=verdict)
+>       submit_compact(worker, opened, payload)
+
+tests/operations/test_analysis_handoff_report.py:54: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/operations/test_analysis_handoff_report.py:36: in submit_compact
+    profile = tomllib.loads(_operation_toml(worker.compiled, python=Path(sys.executable),
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+compiled = CompiledOperation(plugin_id='tcad_artifact', spec=OperationSpec(operation_id='tcad.result.analyze.v1', version='1', ca...he canonical payload must fit the compiled output byte limit.', 'output_paths': ('/',), 'required_inputs': ()}))})})}))
+python = PosixPath('/home/da/miniconda3/bin/python'), python_path = None
+state_root = PosixPath('/tmp/pytest-of-da/pytest-5/test_tcad_compact_report_seals2/project/.scidiscovery-runs/workspaces/workspace_f1ae981ac6cf41aa8e84b48c02404b87')
+local_workspace_root = None, worker_backend = 'local'
+runtime_plugin_configs = None
+
+    def _operation_toml(
+        compiled: Any,
+        *,
+        python: Path,
+        python_path: Path | None,
+        state_root: Path,
+        local_workspace_root: Path | None = None,
+        worker_backend: str = "hardened",
+        runtime_plugin_configs: Mapping[str, Path] | None = None,
+    ) -> str:
+        """Compile one Agent Operation into the Codex child-Agent profile."""
+    
+        executor = compiled.spec.executor
+        if not _backend_supports_operation(compiled, worker_backend):
+            raise ValueError(
+                "compiled Operation requires native tools unavailable on this backend"
+            )
+        if worker_backend == "local" and local_workspace_root is None:
+>           raise ValueError("local workspace root is required")
+E           ValueError: local workspace root is required
+
+src/scidiscovery/platforms/codex.py:568: ValueError
+_ test_tcad_compact_report_seals_and_preserves_scientific_claim[invalid_study] _
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-5/test_tcad_compact_report_seals3')
+verdict = 'invalid_study'
+
+    @pytest.mark.parametrize('verdict', ['pass', 'fail', 'inconclusive', 'invalid_study'])
+    def test_tcad_compact_report_seals_and_preserves_scientific_claim(tmp_path, verdict):
+        system = analysis_system(tmp_path, state='failed' if verdict == 'invalid_study' else 'succeeded',
+            bind_names=() if verdict == 'invalid_study' else ('A', 'B'))
+        worker, opened = open_analysis(system)
+        payload = compact_report(verdict=verdict)
+>       submit_compact(worker, opened, payload)
+
+tests/operations/test_analysis_handoff_report.py:54: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/operations/test_analysis_handoff_report.py:36: in submit_compact
+    profile = tomllib.loads(_operation_toml(worker.compiled, python=Path(sys.executable),
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+compiled = CompiledOperation(plugin_id='tcad_artifact', spec=OperationSpec(operation_id='tcad.result.analyze.v1', version='1', ca...he canonical payload must fit the compiled output byte limit.', 'output_paths': ('/',), 'required_inputs': ()}))})})}))
+python = PosixPath('/home/da/miniconda3/bin/python'), python_path = None
+state_root = PosixPath('/tmp/pytest-of-da/pytest-5/test_tcad_compact_report_seals3/project/.scidiscovery-runs/workspaces/workspace_27dde9eb21344a12bb6ecdab3dc2fe2b')
+local_workspace_root = None, worker_backend = 'local'
+runtime_plugin_configs = None
+
+    def _operation_toml(
+        compiled: Any,
+        *,
+        python: Path,
+        python_path: Path | None,
+        state_root: Path,
+        local_workspace_root: Path | None = None,
+        worker_backend: str = "hardened",
+        runtime_plugin_configs: Mapping[str, Path] | None = None,
+    ) -> str:
+        """Compile one Agent Operation into the Codex child-Agent profile."""
+    
+        executor = compiled.spec.executor
+        if not _backend_supports_operation(compiled, worker_backend):
+            raise ValueError(
+                "compiled Operation requires native tools unavailable on this backend"
+            )
+        if worker_backend == "local" and local_workspace_root is None:
+>           raise ValueError("local workspace root is required")
+E           ValueError: local workspace root is required
+
+src/scidiscovery/platforms/codex.py:568: ValueError
+_ test_other_analysis_operations_finalize_compact_drafts_through_mcp[generic] __
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-5/test_other_analysis_operations0')
+kind = 'generic'
+
+    @pytest.mark.parametrize('kind', ['generic', 'curve_error'])
+    def test_other_analysis_operations_finalize_compact_drafts_through_mcp(tmp_path, kind):
+        if kind == 'generic':
+            worker, opened = generic_worker(tmp_path)
+            report = compact_report('experiment_results')
+        else:
+            from curve_score.science_operations import Components
+            package = Components.curve_error_analysis.implementation(
+                {name: (raw,) for name, raw in curve._inputs().items()})['curve_analysis_package'][0]
+            worker, opened = precomputed_worker(tmp_path, package)
+            report = compact_report('curve_analysis_package')
+            assert not any(item['name'] == 'worker_curve_score' for item in worker.list_tools())
+        assert Path(opened['start_here_path']).is_file()
+>       submit_compact(worker, opened, report)
+
+tests/operations/test_analysis_handoff_report.py:93: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/operations/test_analysis_handoff_report.py:36: in submit_compact
+    profile = tomllib.loads(_operation_toml(worker.compiled, python=Path(sys.executable),
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+compiled = CompiledOperation(plugin_id='curve_score', spec=OperationSpec(operation_id='science.result.diagnose.v1', version='3', ...he canonical payload must fit the compiled output byte limit.', 'output_paths': ('/',), 'required_inputs': ()}))})})}))
+python = PosixPath('/home/da/miniconda3/bin/python'), python_path = None
+state_root = PosixPath('/tmp/pytest-of-da/pytest-5/test_other_analysis_operations0/project/.scidiscovery-runs/workspaces/workspace_0bc1904d09b3459981f2dd7600635394')
+local_workspace_root = None, worker_backend = 'local'
+runtime_plugin_configs = None
+
+    def _operation_toml(
+        compiled: Any,
+        *,
+        python: Path,
+        python_path: Path | None,
+        state_root: Path,
+        local_workspace_root: Path | None = None,
+        worker_backend: str = "hardened",
+        runtime_plugin_configs: Mapping[str, Path] | None = None,
+    ) -> str:
+        """Compile one Agent Operation into the Codex child-Agent profile."""
+    
+        executor = compiled.spec.executor
+        if not _backend_supports_operation(compiled, worker_backend):
+            raise ValueError(
+                "compiled Operation requires native tools unavailable on this backend"
+            )
+        if worker_backend == "local" and local_workspace_root is None:
+>           raise ValueError("local workspace root is required")
+E           ValueError: local workspace root is required
+
+src/scidiscovery/platforms/codex.py:568: ValueError
+_ test_other_analysis_operations_finalize_compact_drafts_through_mcp[curve_error] _
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-5/test_other_analysis_operations1')
+kind = 'curve_error'
+
+    @pytest.mark.parametrize('kind', ['generic', 'curve_error'])
+    def test_other_analysis_operations_finalize_compact_drafts_through_mcp(tmp_path, kind):
+        if kind == 'generic':
+            worker, opened = generic_worker(tmp_path)
+            report = compact_report('experiment_results')
+        else:
+            from curve_score.science_operations import Components
+            package = Components.curve_error_analysis.implementation(
+                {name: (raw,) for name, raw in curve._inputs().items()})['curve_analysis_package'][0]
+            worker, opened = precomputed_worker(tmp_path, package)
+            report = compact_report('curve_analysis_package')
+            assert not any(item['name'] == 'worker_curve_score' for item in worker.list_tools())
+        assert Path(opened['start_here_path']).is_file()
+>       submit_compact(worker, opened, report)
+
+tests/operations/test_analysis_handoff_report.py:93: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/operations/test_analysis_handoff_report.py:36: in submit_compact
+    profile = tomllib.loads(_operation_toml(worker.compiled, python=Path(sys.executable),
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+compiled = CompiledOperation(plugin_id='curve_score', spec=OperationSpec(operation_id='science.result.diagnose.curve-error.v1', v...he canonical payload must fit the compiled output byte limit.', 'output_paths': ('/',), 'required_inputs': ()}))})})}))
+python = PosixPath('/home/da/miniconda3/bin/python'), python_path = None
+state_root = PosixPath('/tmp/pytest-of-da/pytest-5/test_other_analysis_operations1/project/.scidiscovery-runs/workspaces/workspace_7d3b370081a843e3b535989a59b261ee')
+local_workspace_root = None, worker_backend = 'local'
+runtime_plugin_configs = None
+
+    def _operation_toml(
+        compiled: Any,
+        *,
+        python: Path,
+        python_path: Path | None,
+        state_root: Path,
+        local_workspace_root: Path | None = None,
+        worker_backend: str = "hardened",
+        runtime_plugin_configs: Mapping[str, Path] | None = None,
+    ) -> str:
+        """Compile one Agent Operation into the Codex child-Agent profile."""
+    
+        executor = compiled.spec.executor
+        if not _backend_supports_operation(compiled, worker_backend):
+            raise ValueError(
+                "compiled Operation requires native tools unavailable on this backend"
+            )
+        if worker_backend == "local" and local_workspace_root is None:
+>           raise ValueError("local workspace root is required")
+E           ValueError: local workspace root is required
+
+src/scidiscovery/platforms/codex.py:568: ValueError
+_ test_sealed_compact_analysis_reaches_next_design_preflight_and_original_input _
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-5/test_sealed_compact_analysis_r0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7fcdd5368d70>
+
+    def test_sealed_compact_analysis_reaches_next_design_preflight_and_original_input(tmp_path, monkeypatch):
+        from scidiscovery.artifact_agent.interfaces.mcp_local_worker import LocalWorkerMCPRouter
+        from tests.operations import test_agent_contract_alignment as alignment
+        from tests.operations import test_general_transform_operations as transforms
+        from tests.operations import test_tcad_result_analysis as tcad
+        open_runtime = tcad.open_runtime
+        monkeypatch.setattr(tcad, 'open_runtime', lambda **kwargs:
+            open_runtime(approval_receipt_secret=b'fixture-only-receipt-key-32-bytes', **kwargs))
+        system = analysis_system(tmp_path)
+        worker, opened = open_analysis(system)
+>       submit_compact(worker, opened, compact_report())
+
+tests/operations/test_analysis_handoff_report.py:124: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/operations/test_analysis_handoff_report.py:36: in submit_compact
+    profile = tomllib.loads(_operation_toml(worker.compiled, python=Path(sys.executable),
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+compiled = CompiledOperation(plugin_id='tcad_artifact', spec=OperationSpec(operation_id='tcad.result.analyze.v1', version='1', ca...he canonical payload must fit the compiled output byte limit.', 'output_paths': ('/',), 'required_inputs': ()}))})})}))
+python = PosixPath('/home/da/miniconda3/bin/python'), python_path = None
+state_root = PosixPath('/tmp/pytest-of-da/pytest-5/test_sealed_compact_analysis_r0/project/.scidiscovery-runs/workspaces/workspace_7b59752c57de42579a2524ba7ece146b')
+local_workspace_root = None, worker_backend = 'local'
+runtime_plugin_configs = None
+
+    def _operation_toml(
+        compiled: Any,
+        *,
+        python: Path,
+        python_path: Path | None,
+        state_root: Path,
+        local_workspace_root: Path | None = None,
+        worker_backend: str = "hardened",
+        runtime_plugin_configs: Mapping[str, Path] | None = None,
+    ) -> str:
+        """Compile one Agent Operation into the Codex child-Agent profile."""
+    
+        executor = compiled.spec.executor
+        if not _backend_supports_operation(compiled, worker_backend):
+            raise ValueError(
+                "compiled Operation requires native tools unavailable on this backend"
+            )
+        if worker_backend == "local" and local_workspace_root is None:
+>           raise ValueError("local workspace root is required")
+E           ValueError: local workspace root is required
+
+src/scidiscovery/platforms/codex.py:568: ValueError
+=============================== warnings summary ===============================
+tests/operations/test_analysis_continuation.py::test_compact_open_and_editable_nested_recovery_with_fresh_runtime
+  /home/da/project/ai4s/tcad/git_release/scidiscovery-agent/123/scidiscovery-e5.2/plugins/tcad_artifact/tcad_artifact/remote_runner_py36.py:884: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    return datetime.utcnow().isoformat(timespec="microseconds") + "Z"
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/operations/test_analysis_handoff_report.py::test_tcad_compact_report_seals_and_preserves_scientific_claim[pass]
+FAILED tests/operations/test_analysis_handoff_report.py::test_tcad_compact_report_seals_and_preserves_scientific_claim[fail]
+FAILED tests/operations/test_analysis_handoff_report.py::test_tcad_compact_report_seals_and_preserves_scientific_claim[inconclusive]
+FAILED tests/operations/test_analysis_handoff_report.py::test_tcad_compact_report_seals_and_preserves_scientific_claim[invalid_study]
+FAILED tests/operations/test_analysis_handoff_report.py::test_other_analysis_operations_finalize_compact_drafts_through_mcp[generic]
+FAILED tests/operations/test_analysis_handoff_report.py::test_other_analysis_operations_finalize_compact_drafts_through_mcp[curve_error]
+FAILED tests/operations/test_analysis_handoff_report.py::test_sealed_compact_analysis_reaches_next_design_preflight_and_original_input
+7 failed, 1 passed, 24 deselected, 1 warning in 8.85s

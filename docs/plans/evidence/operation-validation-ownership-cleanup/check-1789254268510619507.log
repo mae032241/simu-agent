@@ -1,0 +1,23 @@
+........................................................................ [ 47%]
+................F....................................................... [ 94%]
+........                                                                 [100%]
+=================================== FAILURES ===================================
+_ test_mechanical_diagnostics_preserve_scientific_verdict_and_check_references _
+
+    def test_mechanical_diagnostics_preserve_scientific_verdict_and_check_references():
+        raw = curve._passing_diagnosis().model_dump(mode='json')
+        raw['gates']['numerical_validity'] = dict(status='not_evaluable', summary='No curve.')
+        raw.update(overall_verdict='pass', claim_allowed=True)
+        report = LayeredDiagnosisReport.model_validate_json(canonical_json(raw))
+        before = canonical_json(report)
+        assert diagnosis_consistency_issues(report) == ()
+        assert canonical_json(report) == before
+        raw['gates']['observation']['evidence_keys'] = ['unbound_evidence']
+>       with pytest.raises(ValueError, match='undeclared evidence'):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE ValueError
+
+tests/operations/test_analysis_claim_scope.py:44: Failed
+=========================== short test summary info ============================
+FAILED tests/operations/test_analysis_claim_scope.py::test_mechanical_diagnostics_preserve_scientific_verdict_and_check_references
+1 failed, 151 passed, 1 deselected in 45.05s

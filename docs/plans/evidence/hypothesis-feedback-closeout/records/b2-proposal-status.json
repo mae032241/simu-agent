@@ -1,0 +1,241 @@
+{
+  "name": "proposal",
+  "logical_name": "proposal",
+  "revision": 1,
+  "operation_id": "science.hypothesis.propose.v1",
+  "agent_type": "op_science_hypothesis_propose_v1_61021608412d",
+  "execution_profile": {
+    "profile": {
+      "model": "gpt-5.6-sol",
+      "reasoning_effort": "medium",
+      "narrative_language": "zh-CN"
+    },
+    "sources": {
+      "model": "request_snapshot",
+      "reasoning_effort": "request_snapshot",
+      "narrative_language": "request_snapshot"
+    }
+  },
+  "backend": "local_trusted",
+  "state": "completed",
+  "output_artifact_name": "proposal.output",
+  "reason": null,
+  "created_at": "2026-09-16T07:13:25.236281Z",
+  "started_at": "2026-09-16T07:14:18.592283Z",
+  "deadline_at": "2026-09-16T07:28:25.236281Z",
+  "completed_at": "2026-09-16T07:16:33.046900Z",
+  "last_activity_at": "2026-09-16T07:16:33.046900Z",
+  "candidate_accepted": true,
+  "head_advance": "not_requested",
+  "recovery_available": false,
+  "recovery": {
+    "delivery_preserved": false,
+    "resume_available": false,
+    "draft_available": false,
+    "recovery_pending": false,
+    "attempt_budget": {
+      "used": 1,
+      "limit": 1
+    }
+  },
+  "diagnostic_summary": {
+    "latest_tool_error": null,
+    "recent_errors": [],
+    "rejection_count": 0,
+    "latest_rejection": null,
+    "failure": null,
+    "native_coverage": "unobserved",
+    "latest_native_error": null
+  },
+  "tool_timing": [
+    {
+      "tool_name": "worker_open_assignment",
+      "started_at": "2026-09-16T07:14:18.591568+00:00",
+      "completed_at": "2026-09-16T07:14:18.603133+00:00",
+      "duration_seconds": 0.011585
+    },
+    {
+      "tool_name": "worker_submit_result",
+      "started_at": "2026-09-16T07:16:32.929128+00:00",
+      "completed_at": "2026-09-16T07:16:33.059019+00:00",
+      "duration_seconds": 0.129914
+    }
+  ],
+  "draft_from": null,
+  "diagnostic_events": {
+    "events": [],
+    "next_after": null
+  },
+  "bound_inputs": [
+    {
+      "port": "problem_frame",
+      "artifact_names": [
+        "problem_frame"
+      ]
+    },
+    {
+      "port": "scientific_foundation",
+      "artifact_names": [
+        "scientific_foundation"
+      ]
+    },
+    {
+      "port": "experiment_results",
+      "artifact_names": [
+        "experiment_results"
+      ]
+    },
+    {
+      "port": "result_analysis",
+      "artifact_names": [
+        "result_analysis"
+      ]
+    },
+    {
+      "port": "previous_hypotheses",
+      "artifact_names": [
+        "previous_hypotheses"
+      ]
+    }
+  ],
+  "native_execution": {
+    "coverage": "unobserved",
+    "scientific_evidence": false,
+    "reason": "no_records"
+  },
+  "sealed_output_status": "available",
+  "sealed_output": {
+    "artifact_name": "proposal.output",
+    "kind": "hypothesis_portfolio",
+    "schema": "scidiscovery.hypothesis-proposal.v2",
+    "payload": {
+      "contradiction": "既有组合仅含固定斜率线性机制，但本轮 experiment_results 在产生有效输出前因 Newton 迭代不收敛而失败，points 与 reference_measurements 均为空；result_analysis 也将该研究判为 invalid_study。因此当前反馈不支持改变或淘汰线性机制，同时也没有完成原定的候选解释比较，需要保留线性解释并设置可证伪的非线性竞争机制。",
+      "evidence": [
+        {
+          "locator": "scientific_foundation.summary and items[target]",
+          "source_key": "benchmark_spec",
+          "source_type": "frozen_input"
+        },
+        {
+          "locator": "previous_hypotheses.json#/hypotheses/0",
+          "source_key": "previous_hypotheses",
+          "source_type": "frozen_input"
+        },
+        {
+          "locator": "experiment_results.json",
+          "source_key": "experiment_results",
+          "source_type": "runtime_output"
+        },
+        {
+          "locator": "result_analysis.json",
+          "source_key": "result_analysis",
+          "source_type": "inference"
+        }
+      ],
+      "hypotheses": [
+        {
+          "competing_hypothesis_keys": [
+            "saturating_gain"
+          ],
+          "evidence_keys": [
+            "benchmark_spec",
+            "previous_hypotheses"
+          ],
+          "falsifiers": [
+            {
+              "falsifier_key": "linear_any_point_mismatch",
+              "observable": "有效的 response at x=-1,0,1,2",
+              "rejection_condition": "任一预先指定点满足 |y-2x|>0.02，即反驳该固定线性机制。"
+            }
+          ],
+          "hypothesis_key": "linear",
+          "mechanism": "输入通过恒定增益 2 直接映射到响应，不含偏置、曲率或饱和项；这是既有线性候选的原样保留，失败求解并未提供修改其参数的依据。",
+          "parameters": [
+            {
+              "basis": "previous_hypotheses 中既有候选的固定斜率。",
+              "name": "a",
+              "range_description": "a=2",
+              "role": "fixed",
+              "unit": "1"
+            }
+          ],
+          "predictions": [
+            {
+              "expected_outcome": "对 x=-1,0,1,2，模型值依次为 y=-2,0,2,4；所有有效观测应分别落在这些值的 ±0.02 内。",
+              "observable": "response",
+              "prediction_key": "linear_whole_response"
+            },
+            {
+              "expected_outcome": "该对比量的模型值为 0；由单点绝对误差 0.02 推得观测对比量误差界为 ±0.06。",
+              "observable": "response contrast y(2)-2y(1)",
+              "prediction_key": "linear_contrast"
+            }
+          ],
+          "scope": "仅适用于无量纲 x in [-1,2] 的当前合成系统；不适用于无效输出、陈旧预览或真实物理系统。",
+          "statement": "在整个规定区间内，响应满足 y=2x。"
+        },
+        {
+          "competing_hypothesis_keys": [
+            "linear"
+          ],
+          "evidence_keys": [
+            "benchmark_spec"
+          ],
+          "falsifiers": [
+            {
+              "falsifier_key": "no_common_s_fit",
+              "observable": "有效的 response at x=-1,0,1,2",
+              "rejection_condition": "不存在同一个 s in [0.25,1] 使全部预先指定点均满足 |y-2x/(1+s|x|)|<=0.02，即反驳该饱和机制。"
+            }
+          ],
+          "hypothesis_key": "saturating_gain",
+          "mechanism": "零输入附近的增益为 2，但随输入幅值增加，归一化增益 y/x 单调下降；绝对值项使正负输入受到相同的幅值饱和。该机制是待检验竞争解释，并非由失败运行或陈旧预览推得。",
+          "parameters": [
+            {
+              "basis": "为在给定区间内形成与固定线性响应可分辨、且仅含一个自由度的预设检验范围。",
+              "name": "s",
+              "range_description": "0.25 <= s <= 1",
+              "role": "calibratable",
+              "unit": "1"
+            }
+          ],
+          "predictions": [
+            {
+              "expected_outcome": "y(0)=0；对同一个 s，y(-1)=-2/(1+s)、y(1)=2/(1+s)、y(2)=4/(1+2s)，且每个有效观测与相应模型值之差不超过 0.02。",
+              "observable": "response",
+              "prediction_key": "saturation_whole_response"
+            },
+            {
+              "expected_outcome": "当 0.25<=s<=1 时，模型对比量位于约 [-0.667,-0.533]，与线性候选的 0 相隔远大于该观测对比量的 ±0.06 误差界。",
+              "observable": "response contrast y(2)-2y(1)",
+              "prediction_key": "saturation_contrast"
+            }
+          ],
+          "scope": "仅适用于无量纲 x in [-1,2] 的当前合成系统，并要求一组点共享同一 s；不适用于无效输出、陈旧预览或真实物理系统。",
+          "statement": "响应满足 y=2x/(1+s|x|)，其中单一饱和参数 s in [0.25,1]。"
+        }
+      ],
+      "research_objective_key": "objective_expected",
+      "schema_version": 2,
+      "stage_objective": "在不把求解失败或陈旧预览当作观测的前提下，提出少自由度、可由同一组有效响应点直接区分的机制组合。"
+    }
+  },
+  "scheduler_signal_status": "available",
+  "scheduler_signal": {
+    "schema_version": 1,
+    "verdict": "pass",
+    "summary": "已形成两个有序但未获资格认定的可检验机制。失败的 Newton 迭代未产生有效响应点，陈旧预览不用于支持或反驳任何候选；线性候选因此保留，并加入一个单参数饱和竞争机制。",
+    "assumptions": [
+      "每个后续有效观测继续满足绝对误差不超过 0.02。",
+      "仅把明确标记为有效的响应点用于机制比较。"
+    ],
+    "missing_inputs": [
+      "当前没有任何有效响应观测，因而不能评价候选与数据的一致性或选择候选。"
+    ],
+    "next_actions": [
+      "取得覆盖 x=-1,0,1,2 的有效响应后，按预先给出的整响应预测和显式反证条件比较两个候选。",
+      "若再次失败，先定位数值或实现故障，不把失败状态解释为物理机制的反证。"
+    ],
+    "next_action_kind": null
+  }
+}

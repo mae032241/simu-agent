@@ -1,0 +1,352 @@
+[
+  {
+    "operation": "scidiscovery.curve-bundle.figure-evidence.v2",
+    "user_context": false,
+    "old_inputs_unchanged": true,
+    "old_output_contract_preserved": true,
+    "version_unchanged": true
+  },
+  {
+    "operation": "scidiscovery.curve-reference-coverage.v1",
+    "user_context": false,
+    "old_inputs_unchanged": true,
+    "old_output_contract_preserved": true,
+    "version_unchanged": true
+  },
+  {
+    "operation": "scidiscovery.curve-score.v1",
+    "user_context": false,
+    "old_inputs_unchanged": true,
+    "old_output_contract_preserved": true,
+    "version_unchanged": true
+  },
+  {
+    "operation": "scidiscovery.objective-coverage.v1",
+    "user_context": false,
+    "old_inputs_unchanged": true,
+    "old_output_contract_preserved": true,
+    "version_unchanged": true
+  },
+  {
+    "operation": "science.curve.contract.design.v1",
+    "user_context": true,
+    "old_inputs_unchanged": true,
+    "old_output_contract_preserved": true,
+    "version_unchanged": true
+  },
+  {
+    "operation": "science.curve.contract.review.v1",
+    "user_context": true,
+    "old_inputs_unchanged": true,
+    "old_output_contract_preserved": true,
+    "version_unchanged": true
+  },
+  {
+    "operation": "science.curve.error.analyze.v1",
+    "user_context": false,
+    "old_inputs_unchanged": true,
+    "old_output_contract_preserved": true,
+    "version_unchanged": true
+  },
+  {
+    "operation": "science.evidence.audit.intake.v1",
+    "user_context": true,
+    "old_inputs_unchanged": true,
+    "old_output_contract_preserved": true,
+    "version_unchanged": true
+  },
+  {
+    "operation": "science.evidence.audit.v1",
+    "user_context": true,
+    "old_inputs_unchanged": true,
+    "old_output_contract_preserved": true,
+    "version_unchanged": true
+  },
+  {
+    "operation": "science.evidence.extract.figure.v2",
+    "user_context": true,
+    "old_inputs_unchanged": true,
+    "old_output_contract_preserved": true,
+    "version_unchanged": true
+  },
+  {
+    "operation": "science.evidence.extract.v1",
+    "user_context": true,
+    "old_inputs_unchanged": true,
+    "old_output_contract_preserved": true,
+    "version_unchanged": true
+  },
+  {
+    "operation": "science.evidence.qualify.v1",
+    "user_context": false,
+    "old_inputs_unchanged": true,
+    "old_output_contract_preserved": true,
+    "version_unchanged": true
+  },
+  {
+    "operation": "science.evidence.revise-from-critic.v1",
+    "user_context": true,
+    "old_inputs_unchanged": true,
+    "old_output_contract_preserved": true,
+    "version_unchanged": true
+  },
+  {
+    "operation": "science.experiment.design.v1",
+    "user_context": true,
+    "old_inputs_unchanged": true,
+    "old_output_contract_preserved": true,
+    "version_unchanged": true
+  },
+  {
+    "operation": "science.experiment.materialize.v1",
+    "user_context": false,
+    "old_inputs_unchanged": true,
+    "old_output_contract_preserved": true,
+    "version_unchanged": true
+  },
+  {
+    "operation": "science.experiment.revise.v1",
+    "user_context": true,
+    "old_inputs_unchanged": true,
+    "old_output_contract_preserved": true,
+    "version_unchanged": true
+  },
+  {
+    "operation": "science.figure.evidence.audit.v1",
+    "user_context": true,
+    "old_inputs_unchanged": true,
+    "old_output_contract_preserved": true,
+    "version_unchanged": true
+  },
+  {
+    "operation": "science.figure.evidence.materialize.v1",
+    "user_context": false,
+    "old_inputs_unchanged": true,
+    "old_output_contract_preserved": true,
+    "version_unchanged": true
+  },
+  {
+    "operation": "science.figure.request.prepare.v1",
+    "user_context": true,
+    "old_inputs_unchanged": true,
+    "old_output_contract_preserved": true,
+    "version_unchanged": true
+  },
+  {
+    "operation": "science.hypothesis.criticize.v1",
+    "user_context": true,
+    "old_inputs_unchanged": true,
+    "old_output_contract_preserved": true,
+    "version_unchanged": true
+  },
+  {
+    "operation": "science.hypothesis.propose.v1",
+    "user_context": true,
+    "old_inputs_unchanged": true,
+    "old_output_contract_preserved": true,
+    "version_unchanged": true
+  },
+  {
+    "operation": "science.hypothesis.revise.v1",
+    "user_context": true,
+    "old_inputs_unchanged": true,
+    "old_output_contract_preserved": true,
+    "version_unchanged": true
+  },
+  {
+    "operation": "science.intake.revise.v1",
+    "user_context": true,
+    "old_inputs_unchanged": true,
+    "old_output_contract_preserved": true,
+    "version_unchanged": true
+  },
+  {
+    "operation": "science.intake.split.v1",
+    "user_context": false,
+    "old_inputs_unchanged": true,
+    "old_output_contract_preserved": true,
+    "version_unchanged": true
+  },
+  {
+    "operation": "science.object.review.v1",
+    "user_context": true,
+    "old_inputs_unchanged": true,
+    "old_output_contract_preserved": true,
+    "version_unchanged": true
+  },
+  {
+    "operation": "science.objective.project.v1",
+    "user_context": false,
+    "old_inputs_unchanged": true,
+    "old_output_contract_preserved": true,
+    "version_unchanged": true
+  },
+  {
+    "operation": "science.parameter.coverage.v1",
+    "user_context": false,
+    "old_inputs_unchanged": true,
+    "old_output_contract_preserved": true,
+    "version_unchanged": true
+  },
+  {
+    "operation": "science.parameter.uncertainty.v1",
+    "user_context": false,
+    "old_inputs_unchanged": true,
+    "old_output_contract_preserved": true,
+    "version_unchanged": true
+  },
+  {
+    "operation": "science.parameters.qualify.exception.v1",
+    "user_context": false,
+    "old_inputs_unchanged": true,
+    "old_output_contract_preserved": true,
+    "version_unchanged": true
+  },
+  {
+    "operation": "science.parameters.qualify.pass.v1",
+    "user_context": false,
+    "old_inputs_unchanged": true,
+    "old_output_contract_preserved": true,
+    "version_unchanged": true
+  },
+  {
+    "operation": "science.result.diagnose.curve-error.v1",
+    "user_context": true,
+    "old_inputs_unchanged": true,
+    "old_output_contract_preserved": true,
+    "version_unchanged": true
+  },
+  {
+    "operation": "science.result.diagnose.v1",
+    "user_context": true,
+    "old_inputs_unchanged": true,
+    "old_output_contract_preserved": true,
+    "version_unchanged": true
+  },
+  {
+    "operation": "tcad.control-equivalence.v1",
+    "user_context": false,
+    "old_inputs_unchanged": true,
+    "old_output_contract_preserved": true,
+    "version_unchanged": true
+  },
+  {
+    "operation": "tcad.curve-bundle.sprocess-log.v1",
+    "user_context": false,
+    "old_inputs_unchanged": true,
+    "old_output_contract_preserved": true,
+    "version_unchanged": true
+  },
+  {
+    "operation": "tcad.curve-bundle.sprocess-plx.v1",
+    "user_context": false,
+    "old_inputs_unchanged": true,
+    "old_output_contract_preserved": true,
+    "version_unchanged": true
+  },
+  {
+    "operation": "tcad.deck-project-compare.v1",
+    "user_context": false,
+    "old_inputs_unchanged": true,
+    "old_output_contract_preserved": true,
+    "version_unchanged": true
+  },
+  {
+    "operation": "tcad.deck-review-validate.v1",
+    "user_context": false,
+    "old_inputs_unchanged": true,
+    "old_output_contract_preserved": true,
+    "version_unchanged": true
+  },
+  {
+    "operation": "tcad.deck.author.initial.v1",
+    "user_context": true,
+    "old_inputs_unchanged": true,
+    "old_output_contract_preserved": true,
+    "version_unchanged": true
+  },
+  {
+    "operation": "tcad.deck.author.revise.v1",
+    "user_context": true,
+    "old_inputs_unchanged": true,
+    "old_output_contract_preserved": true,
+    "version_unchanged": true
+  },
+  {
+    "operation": "tcad.deck.author.runtime-failure.v1",
+    "user_context": true,
+    "old_inputs_unchanged": true,
+    "old_output_contract_preserved": true,
+    "version_unchanged": true
+  },
+  {
+    "operation": "tcad.deck.review.v1",
+    "user_context": true,
+    "old_inputs_unchanged": true,
+    "old_output_contract_preserved": true,
+    "version_unchanged": true
+  },
+  {
+    "operation": "tcad.execution-context.project.v1",
+    "user_context": false,
+    "old_inputs_unchanged": true,
+    "old_output_contract_preserved": true,
+    "version_unchanged": true
+  },
+  {
+    "operation": "tcad.parameter.evidence.audit.v1",
+    "user_context": true,
+    "old_inputs_unchanged": true,
+    "old_output_contract_preserved": true,
+    "version_unchanged": true
+  },
+  {
+    "operation": "tcad.parameter.evidence.expand.v1",
+    "user_context": false,
+    "old_inputs_unchanged": true,
+    "old_output_contract_preserved": true,
+    "version_unchanged": true
+  },
+  {
+    "operation": "tcad.parameter.evidence.extract.v1",
+    "user_context": true,
+    "old_inputs_unchanged": true,
+    "old_output_contract_preserved": true,
+    "version_unchanged": true
+  },
+  {
+    "operation": "tcad.realization-snapshot-materialize.v1",
+    "user_context": false,
+    "old_inputs_unchanged": true,
+    "old_output_contract_preserved": true,
+    "version_unchanged": true
+  },
+  {
+    "operation": "tcad.result.analyze.v1",
+    "user_context": true,
+    "old_inputs_unchanged": true,
+    "old_output_contract_preserved": true,
+    "version_unchanged": true
+  },
+  {
+    "operation": "tcad.reviewed-deck-package.v2",
+    "user_context": false,
+    "old_inputs_unchanged": true,
+    "old_output_contract_preserved": true,
+    "version_unchanged": true
+  },
+  {
+    "operation": "tcad.runtime-attestation.v1",
+    "user_context": false,
+    "old_inputs_unchanged": true,
+    "old_output_contract_preserved": true,
+    "version_unchanged": true
+  },
+  {
+    "operation": "tcad.study.execute",
+    "user_context": false,
+    "old_inputs_unchanged": true,
+    "old_output_contract_preserved": true,
+    "version_unchanged": true
+  }
+]

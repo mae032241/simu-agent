@@ -1,0 +1,13 @@
+WARNING: The directory '/home/da/.cache/pip' or its parent directory is not owned or is not writable by the current user. The cache has been disabled. Check the permissions and owner of that directory. If executing pip with sudo, you should use sudo's -H flag.
+Looking in indexes: https://mirrors.aliyun.com/pypi/simple/
+Processing ./tests/fixtures/plugins/blind_csv_operation_plugin
+  Preparing metadata (pyproject.toml): started
+  Preparing metadata (pyproject.toml): finished with status 'done'
+Building wheels for collected packages: scidiscovery-blind-csv-test-plugin
+  Building wheel for scidiscovery-blind-csv-test-plugin (pyproject.toml): started
+  Building wheel for scidiscovery-blind-csv-test-plugin (pyproject.toml): finished with status 'done'
+  Created wheel for scidiscovery-blind-csv-test-plugin: filename=scidiscovery_blind_csv_test_plugin-0.1.0-py3-none-any.whl size=6750 sha256=9797a0be88ea1109e2dd9d89a7b0cb4d89728e90664f268013368615a33707ef
+  Stored in directory: /tmp/pip-ephem-wheel-cache-17po_mdm/wheels/24/f1/d9/33337ea8ca7aa883745ead077e92e3136d6a48686ddbf53e43
+Successfully built scidiscovery-blind-csv-test-plugin
+Installing collected packages: scidiscovery-blind-csv-test-plugin
+Successfully installed scidiscovery-blind-csv-test-plugin-0.1.0

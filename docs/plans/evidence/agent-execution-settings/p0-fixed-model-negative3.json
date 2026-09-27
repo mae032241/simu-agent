@@ -1,0 +1,32 @@
+{
+  "command": [
+    "python",
+    "docs/plans/evidence/agent-execution-settings/p0_dispatch.py",
+    "gpt-5.6-luna",
+    "low",
+    "negative"
+  ],
+  "exit_code": 0,
+  "stop_reason": null,
+  "duration_seconds": 47.996,
+  "peak_tree_rss_mib": 340.7,
+  "budget_mib": 512,
+  "peak_processes": [
+    {
+      "name": "codex",
+      "rss_mib": 149.99
+    },
+    {
+      "name": "python",
+      "rss_mib": 88.08
+    },
+    {
+      "name": "python",
+      "rss_mib": 80.91
+    },
+    {
+      "name": "codex-code-mode-host",
+      "rss_mib": 21.71
+    }
+  ]
+}

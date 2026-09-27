@@ -1,0 +1,76 @@
+FF.............                                                          [100%]
+=================================== FAILURES ===================================
+_ test_one_input_cardinality_change_reaches_catalog_preflight_and_root_invoke __
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-96/test_one_input_cardinality_cha0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7fc96dbe57f0>
+
+    def test_one_input_cardinality_change_reaches_catalog_preflight_and_root_invoke(tmp_path, monkeypatch):
+        plugin, admission, _ = _probe_plugin(monkeypatch)
+        digests = []
+        for minimum in (1, 0):
+            admission["allowed"] = True
+            agent = plugin.operations[0]
+            port = agent.inputs[0].model_copy(update={"min_items": minimum})
+            changed = plugin.model_copy(update={"operations": (agent.model_copy(update={"inputs": (port,)}),)})
+>           catalog = compile_catalog((changed,))
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/operations/test_compiled_declaration_consumers.py:58: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/scidiscovery/operations/catalog.py:841: in compile_catalog
+    return _build_compiled_catalog(plugin_map, components, compiled_parts, approval_provider_ids, runtime_factories, runtime_configuration_digests, runtime_identity_digests, used)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/scidiscovery/operations/catalog.py:716: in _build_compiled_catalog
+    _fail("component_unused", plugin_id, field=component_id)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+code = 'component_unused', plugin = 'architecture_fixture', operation = None
+field = 'agent_result_validator'
+
+    def _fail(
+        code: str, plugin: str | None = None, operation: str | None = None,
+        field: str | None = None) -> None:
+>       raise CatalogCompileError(code, plugin_id=plugin, operation_id=operation, field=field)
+E       scidiscovery.operations.catalog.CatalogCompileError: component_unused: architecture_fixture/agent_result_validator
+
+src/scidiscovery/operations/catalog.py:108: CatalogCompileError
+_ test_one_output_required_field_change_reaches_worker_schema_and_formal_submit _
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-96/test_one_output_required_field0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7fc96c1ab530>
+
+    def test_one_output_required_field_change_reaches_worker_schema_and_formal_submit(tmp_path, monkeypatch):
+        plugin, admission, schema = _probe_plugin(monkeypatch)
+        digests = []
+        for required in (False, True):
+            admission["allowed"] = True
+            # Only the existing output resource's required-field declaration changes.
+            schema["required"] = ["declaration_probe"] if required else []
+            monkeypatch.setattr(fixture, "ARCHITECTURE_AGENT_RESULT_SCHEMA", json.dumps(schema))
+>           catalog = compile_catalog((plugin,))
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/operations/test_compiled_declaration_consumers.py:102: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/scidiscovery/operations/catalog.py:841: in compile_catalog
+    return _build_compiled_catalog(plugin_map, components, compiled_parts, approval_provider_ids, runtime_factories, runtime_configuration_digests, runtime_identity_digests, used)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/scidiscovery/operations/catalog.py:716: in _build_compiled_catalog
+    _fail("component_unused", plugin_id, field=component_id)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+code = 'component_unused', plugin = 'architecture_fixture', operation = None
+field = 'agent_result_validator'
+
+    def _fail(
+        code: str, plugin: str | None = None, operation: str | None = None,
+        field: str | None = None) -> None:
+>       raise CatalogCompileError(code, plugin_id=plugin, operation_id=operation, field=field)
+E       scidiscovery.operations.catalog.CatalogCompileError: component_unused: architecture_fixture/agent_result_validator
+
+src/scidiscovery/operations/catalog.py:108: CatalogCompileError
+=========================== short test summary info ============================
+FAILED tests/operations/test_compiled_declaration_consumers.py::test_one_input_cardinality_change_reaches_catalog_preflight_and_root_invoke
+FAILED tests/operations/test_compiled_declaration_consumers.py::test_one_output_required_field_change_reaches_worker_schema_and_formal_submit
+2 failed, 13 passed in 7.78s

@@ -1,0 +1,146 @@
+[
+  {
+    "record": "b1-critic-status.json",
+    "state": "completed",
+    "reason": null,
+    "rejection_count": 0,
+    "requested_profile": {
+      "profile": {
+        "model": "gpt-5.6-sol",
+        "reasoning_effort": "medium",
+        "narrative_language": "zh-CN"
+      },
+      "sources": {
+        "model": "request_snapshot",
+        "reasoning_effort": "request_snapshot",
+        "narrative_language": "request_snapshot"
+      }
+    }
+  },
+  {
+    "record": "b1-design-status.json",
+    "state": "completed",
+    "reason": null,
+    "rejection_count": 1,
+    "requested_profile": {
+      "profile": {
+        "model": "gpt-5.6-sol",
+        "reasoning_effort": "medium",
+        "narrative_language": "zh-CN"
+      },
+      "sources": {
+        "model": "request_snapshot",
+        "reasoning_effort": "request_snapshot",
+        "narrative_language": "request_snapshot"
+      }
+    }
+  },
+  {
+    "record": "b1-proposal-status.json",
+    "state": "failed",
+    "reason": "External test launcher stopped after 165 seconds, before the 900-second Run deadline; no completed submission.",
+    "rejection_count": 0,
+    "requested_profile": {
+      "profile": {
+        "model": "gpt-5.6-sol",
+        "reasoning_effort": "medium",
+        "narrative_language": "zh-CN"
+      },
+      "sources": {
+        "model": "request_snapshot",
+        "reasoning_effort": "request_snapshot",
+        "narrative_language": "request_snapshot"
+      }
+    }
+  },
+  {
+    "record": "b1-proposal_retry-status.json",
+    "state": "completed",
+    "reason": null,
+    "rejection_count": 0,
+    "requested_profile": {
+      "profile": {
+        "model": "gpt-5.6-sol",
+        "reasoning_effort": "medium",
+        "narrative_language": "zh-CN"
+      },
+      "sources": {
+        "model": "request_snapshot",
+        "reasoning_effort": "request_snapshot",
+        "narrative_language": "request_snapshot"
+      }
+    }
+  },
+  {
+    "record": "b2-critic-status.json",
+    "state": "completed",
+    "reason": null,
+    "rejection_count": 0,
+    "requested_profile": {
+      "profile": {
+        "model": "gpt-5.6-sol",
+        "reasoning_effort": "medium",
+        "narrative_language": "zh-CN"
+      },
+      "sources": {
+        "model": "request_snapshot",
+        "reasoning_effort": "request_snapshot",
+        "narrative_language": "request_snapshot"
+      }
+    }
+  },
+  {
+    "record": "b2-proposal-status.json",
+    "state": "completed",
+    "reason": null,
+    "rejection_count": 0,
+    "requested_profile": {
+      "profile": {
+        "model": "gpt-5.6-sol",
+        "reasoning_effort": "medium",
+        "narrative_language": "zh-CN"
+      },
+      "sources": {
+        "model": "request_snapshot",
+        "reasoning_effort": "request_snapshot",
+        "narrative_language": "request_snapshot"
+      }
+    }
+  },
+  {
+    "record": "b3-critic-status.json",
+    "state": "completed",
+    "reason": null,
+    "rejection_count": 0,
+    "requested_profile": {
+      "profile": {
+        "model": "gpt-5.6-sol",
+        "reasoning_effort": "medium",
+        "narrative_language": "zh-CN"
+      },
+      "sources": {
+        "model": "request_snapshot",
+        "reasoning_effort": "request_snapshot",
+        "narrative_language": "request_snapshot"
+      }
+    }
+  },
+  {
+    "record": "b3-proposal-status.json",
+    "state": "completed",
+    "reason": null,
+    "rejection_count": 0,
+    "requested_profile": {
+      "profile": {
+        "model": "gpt-5.6-sol",
+        "reasoning_effort": "medium",
+        "narrative_language": "zh-CN"
+      },
+      "sources": {
+        "model": "request_snapshot",
+        "reasoning_effort": "request_snapshot",
+        "narrative_language": "request_snapshot"
+      }
+    }
+  }
+]

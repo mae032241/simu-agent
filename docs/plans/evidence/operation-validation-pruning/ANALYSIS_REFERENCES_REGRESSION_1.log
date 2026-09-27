@@ -1,0 +1,51 @@
+............................................F
+=================================== FAILURES ===================================
+______ test_deadline_stops_reading_more_inputs_and_error_can_be_replayed _______
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7f44ca6021e0>
+
+    def test_deadline_stops_reading_more_inputs_and_error_can_be_replayed(monkeypatch):
+        from types import SimpleNamespace
+        import curve_score.analysis_tool as tool
+        clock = [0.0]
+        monkeypatch.setattr(tool.time, 'monotonic', lambda: clock[0])
+        sources, request = score_inputs()
+        request['sources'].append({'input_alias': 'second_bundle', 'format': 'bundle'})
+        reads = []
+        def read(name):
+            reads.append(name)
+            clock[0] = 6.0
+            return sources['curve_bundle']
+>       raw = tool.score_tool(AnalysisScoreInput.model_validate_json(canonical_json(dict(record_key='timed', request=request))),
+            SimpleNamespace(remaining_seconds=10, read_evidence=read, finish_attempt=lambda **kwargs: None))
+
+tests/operations/test_result_analysis_tool.py:310: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+plugins/curve_score/curve_score/analysis_tool.py:325: in score_tool
+    return run_score_tool(request, context, evaluate_analysis_request)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+plugins/curve_score/curve_score/analysis_tool.py:321: in run_score_tool
+    return retain_calculation(context, response)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/scidiscovery/artifact_agent/service/analysis_artifacts.py:33: in retain_calculation
+    saved = publish_analysis_file(context, canonical_json(record.model_dump(mode="json")), media_type="application/json",
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+context = namespace(remaining_seconds=10, read_evidence=<function test_deadline_stops_reading_more_inputs_and_error_can_be_repla...tempt=<function test_deadline_stops_reading_more_inputs_and_error_can_be_replayed.<locals>.<lambda> at 0x7f44cabea3e0>)
+raw = b'{"algorithm_version":"analysis-curve-operators.v1","attempt":null,"diagnostics":[],"input_digests":{},"reason_code":..."curve_bundle"},{"format":"bundle","input_alias":"second_bundle"}]},"result":null,"schema_version":1,"status":"error"}'
+media_type = 'application/json', kind = 'calculation_record'
+sources = ('experiment_plan',), suffix = '.json'
+metadata = {'record_key': 'timed'}
+
+    def publish_analysis_file(context, raw, *, media_type, kind, sources, suffix, metadata=None):
+        """Register immutable bytes first; expose only a task-local preview path."""
+>       accepted = context.accept_evidence(raw=raw, media_type=media_type, derived_from=tuple(sources),
+                   ^^^^^^^^^^^^^^^^^^^^^^^
+            metadata={**(metadata or {}), "kind": kind})
+E       AttributeError: 'types.SimpleNamespace' object has no attribute 'accept_evidence'. Did you mean: 'read_evidence'?
+
+src/scidiscovery/artifact_agent/service/analysis_artifacts.py:17: AttributeError
+=========================== short test summary info ============================
+FAILED tests/operations/test_result_analysis_tool.py::test_deadline_stops_reading_more_inputs_and_error_can_be_replayed
+!!!!!!!!!!!!!!!!!!!!!!!!!! stopping after 1 failures !!!!!!!!!!!!!!!!!!!!!!!!!!!
+1 failed, 44 passed, 1 deselected in 18.21s

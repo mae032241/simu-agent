@@ -1,0 +1,163 @@
+..F.FF                                                                   [100%]
+=================================== FAILURES ===================================
+_ test_review_validates_bound_original_context_and_actual_source_aliases[execution_context] _
+
+model = <class 'scidiscovery.artifact_agent.schema.execution_context.ExecutionContext'>
+raw = b'{}', strict = True, admission_port = 'execution_context'
+
+    def parse_bound_json(
+        model: Any, raw: bytes, *, strict: bool = True, admission_port: str | None = None
+    ) -> Any:
+        from pydantic import ValidationError
+        try:
+>           return model.model_validate_json(raw, strict=strict)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           pydantic_core._pydantic_core.ValidationError: 1 validation error for ExecutionContext
+E           domain
+E             Field required [type=missing, input_value={}, input_type=dict]
+E               For further information visit https://errors.pydantic.dev/2.11/v/missing
+
+/tmp/scid-submission-prune-baseline/src/scidiscovery/operations/input_validation.py:201: ValidationError
+
+The above exception was the direct cause of the following exception:
+
+experiment_case = ({'study_kind': 'scientific', 'objective_key': 'objective_expected', 'selected_hypothesis_keys': ['hypothesis_a'], 'pr...research_objective_key":"objective_expected","schema_version":2,"stage_objective":"Separate one bounded mechanism."}'})
+mismatch = 'execution_context'
+
+    @pytest.mark.parametrize("mismatch", ("objective_key", "statement", "execution_context", "unbound_citation"))
+    def test_review_validates_bound_original_context_and_actual_source_aliases(experiment_case, mismatch) -> None:
+        from scidiscovery.artifact_agent.transforms import materialize_experiment_plan
+        from scidiscovery.general_science_experiment_components import _object_review_context, _object_review_inputs
+        from scidiscovery.operations.input_validation import OperationInvocationError
+    
+        intent, inputs = _partial_experiment(experiment_case)
+        plan, _ = materialize_experiment_plan({
+            "experiment_design_intent": canonical_json(intent),
+            "research_objective": inputs["research_objective"],
+            "hypothesis_portfolio": inputs["hypothesis_portfolio"],
+        })
+        sources = {"experiment_plan": plan, "research_objective": inputs["research_objective"]}
+        payload = {"review_target": "experiment_portfolio", "verdict": "revise",
+                   "summary": "Assess the exact original contract."}
+        if mismatch in {"objective_key", "statement"}:
+            objective = json.loads(sources["research_objective"])
+            objective[mismatch] = "different_objective"
+            sources["research_objective"] = canonical_json(objective)
+            error, message = OperationInvocationError, "input_plan_objective_mismatch"
+        elif mismatch == "execution_context":
+            sources["execution_context"] = b"{}"
+            error, message = ValidationError, "ExecutionContext"
+        else:
+            payload["evidence"] = [{"source_key": "experiment_plan_aux", "source_type": "frozen_input",
+                                    "locator": "absent input"}]
+            error, message = SemanticRuleViolation, "actual visible input alias"
+        with pytest.raises(error, match=message):
+            if mismatch == "unbound_citation":
+                _object_review_context(payload, sources, {"verdict": "revise"})
+            else:
+>               _object_review_inputs(sources)
+
+/tmp/scid-submission-prune-baseline/tests/operations/test_agent_contract_alignment.py:1014: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+/tmp/scid-submission-prune-baseline/src/scidiscovery/general_science_experiment_components.py:231: in _object_review_inputs
+    parse_bound_json(ExecutionContext, execution_context, admission_port="execution_context")
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+model = <class 'scidiscovery.artifact_agent.schema.execution_context.ExecutionContext'>
+raw = b'{}', strict = True, admission_port = 'execution_context'
+
+    def parse_bound_json(
+        model: Any, raw: bytes, *, strict: bool = True, admission_port: str | None = None
+    ) -> Any:
+        from pydantic import ValidationError
+        try:
+            return model.model_validate_json(raw, strict=strict)
+        except (ValidationError, UnicodeError) as error:
+            if admission_port is None:
+                raise BoundSourceError("bound_source_schema_invalid") from error
+            failure = OperationInvocationError("input_content_incompatible", port=admission_port, field="/")
+            if isinstance(error, ValidationError):
+                from ..operation_contract import diagnostic_path, validation_diagnostics
+                root = diagnostic_path((admission_port,), (admission_port,), root="$.inputs")
+                details = validation_diagnostics(error, schema=model.model_json_schema(mode="validation"),
+                                                 phase="input_admission", action="invoke")
+                failure.details = tuple(contract_diagnostic("input_content_incompatible",
+                    phase="input_admission", affected_action="invoke", repairable=True,
+                    path=(root + detail["path"].removeprefix("$"))[:512],
+                    message=detail["message"], error_type=detail.get("type")) for detail in details)
+>           raise failure from error
+E           scidiscovery.operations.input_validation.OperationInvocationError: input_content_incompatible: execution_context /
+
+/tmp/scid-submission-prune-baseline/src/scidiscovery/operations/input_validation.py:215: OperationInvocationError
+________ test_root_preflight_rejects_replacing_the_prior_intake_source _________
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-117/test_root_preflight_rejects_re0')
+
+    def test_root_preflight_rejects_replacing_the_prior_intake_source(tmp_path) -> None:
+        catalog = _catalog()
+        project = tmp_path / "project"
+        project.mkdir()
+>       runtime = open_runtime(project_root=project, state_root=tmp_path / "state")
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+/tmp/scid-submission-prune-baseline/tests/operations/test_hypothesis_review_routing.py:392: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+/tmp/scid-submission-prune-baseline/src/scidiscovery/artifact_agent/runtime.py:71: in open_runtime
+    artifacts = ArtifactService.open(
+/tmp/scid-submission-prune-baseline/src/scidiscovery/artifact_agent/service/artifacts.py:48: in open
+    registry = SQLiteArtifactRegistry(database_path)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/tmp/scid-submission-prune-baseline/src/scidiscovery/artifact_agent/storage/sqlite.py:131: in __init__
+    self._initialize()
+/tmp/scid-submission-prune-baseline/src/scidiscovery/artifact_agent/storage/sqlite.py:427: in _initialize
+    connection.executescript(_migration_sql())
+                             ^^^^^^^^^^^^^^^^
+/tmp/scid-submission-prune-baseline/src/scidiscovery/artifact_agent/storage/sqlite.py:623: in _migration_sql
+    .read_text(encoding="utf-8")
+     ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/home/da/miniconda3/lib/python3.12/pathlib.py:1027: in read_text
+    with self.open(mode='r', encoding=encoding, errors=errors) as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = PosixPath('/tmp/scid-submission-prune-baseline/src/scidiscovery/artifact_agent/storage/migrations/0001_artifacts.sql')
+mode = 'r', buffering = -1, encoding = 'utf-8', errors = None, newline = None
+
+    def open(self, mode='r', buffering=-1, encoding=None,
+             errors=None, newline=None):
+        """
+        Open the file pointed to by this path and return a file object, as
+        the built-in open() function does.
+        """
+        if "b" not in mode:
+            encoding = io.text_encoding(encoding)
+>       return io.open(self, mode, buffering, encoding, errors, newline)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       FileNotFoundError: [Errno 2] No such file or directory: '/tmp/scid-submission-prune-baseline/src/scidiscovery/artifact_agent/storage/migrations/0001_artifacts.sql'
+
+/home/da/miniconda3/lib/python3.12/pathlib.py:1013: FileNotFoundError
+______________ test_role_prompts_use_only_packaged_role_resources ______________
+
+    def test_role_prompts_use_only_packaged_role_resources():
+        assert "Read only the exact assignment, declared inputs" in OPERATION_AGENT_PREAMBLE
+        assert "Skill" not in OPERATION_AGENT_PREAMBLE
+        for role in ("author", "reviewer"):
+            prompt = role_pack.role_prompt(role)
+>           assert prompt == (role_pack.role_directory() / f"tcad_deck_{role}.md").read_text("utf-8")
+E           AssertionError: assert 'Research con...reach them.\n' == '---\nname: t...reach them.\n'
+E             
+E             + Research context and responsibilities:
+E             + Evidence establishes source-bound facts; hypotheses propose falsifiable explanations;
+E             + design selects a feasible current objective and retains later objectives and conditions.
+E             + Independent review checks scientific validity and whether the task is deliverable from
+E             + its declared inputs. Authors implement the exact plan within available capabilities;
+E             + execution requires its own authorization; analysis interprets actual results and may...
+E             
+E             ...Full output truncated (204 lines hidden), use '-vv' to show
+
+/tmp/scid-submission-prune-baseline/tests/operations/test_tcad_knowledge_closure.py:27: AssertionError
+=========================== short test summary info ============================
+FAILED ../../../../../../../../../tmp/scid-submission-prune-baseline/tests/operations/test_agent_contract_alignment.py::test_review_validates_bound_original_context_and_actual_source_aliases[execution_context]
+FAILED ../../../../../../../../../tmp/scid-submission-prune-baseline/tests/operations/test_hypothesis_review_routing.py::test_root_preflight_rejects_replacing_the_prior_intake_source
+FAILED ../../../../../../../../../tmp/scid-submission-prune-baseline/tests/operations/test_tcad_knowledge_closure.py::test_role_prompts_use_only_packaged_role_resources
+3 failed, 3 passed in 1.28s

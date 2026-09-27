@@ -1,0 +1,1250 @@
+..........................FF............................................ [ 45%]
+.......................................................................F [ 91%]
+FF............                                                           [100%]
+=================================== FAILURES ===================================
+______ test_collection_97_does_not_override_solver_facts[1-failed-False] _______
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-120/test_collection_97_does_not_ov2')
+solver_code = 1, terminal = 'failed', admitted = False
+
+    @pytest.mark.parametrize('solver_code,terminal,admitted', [(None,'failed',True),(0,'failed',True),(1,'failed',False),(0,'cancelled',False)])
+    def test_collection_97_does_not_override_solver_facts(tmp_path, solver_code, terminal, admitted):
+        import json
+        from scidiscovery.artifact_agent.schema.common import canonical_json
+        from tcad_artifact.project_packager import TCADRuntimeManifest
+        from tests.operations.test_tcad_result_analysis import analysis_system,analysis_report,open_analysis,write_analysis
+        system=analysis_system(tmp_path)
+        catalog,runtime,root,request,artifacts,register=system
+        manifest=json.loads(runtime.artifacts.read(artifacts['manifest'].ref))
+        manifest.update(exit_code=97,terminal_state=terminal,error='fixture collection failure')
+        if solver_code is not None:
+            manifest['solver_exit_code']=solver_code
+        raw=canonical_json(manifest)
+        assert TCADRuntimeManifest.model_validate_json(raw).solver_exit_code==solver_code
+        register('collection_manifest',raw,'opaque',parents=artifacts['manifest'].parent_refs)
+        next(i for i in request['inputs'] if i['port']=='runtime_manifest')['artifact_names']=['collection_manifest']
+        worker,opened=open_analysis(system)
+        report=analysis_report(alias='solver_outputs_001',output_name='A',mapped=True)
+        report['gates']['numerical_validity']['status']='pass'
+        report['gates']['numerical_validity']['summary']='Fixture local numerical condition is supported by the raw product; no overall success claimed.'
+        report['gates']['control_equivalence']=dict(status='fail',summary='Control mismatch remains.',evidence_keys=['raw_evidence'])
+        write_analysis(opened,report)
+        result=worker.call_tool('worker_submit_result',{})
+>       assert result['state']==('completed' if admitted else 'rejected'),result
+E       AssertionError: {'state': 'completed', 'receipt': {'head_advance': 'not_requested', 'completed_at': '2026-09-11T11:32:18.495130Z'}}
+E       assert 'completed' == 'rejected'
+E         
+E         - rejected
+E         + completed
+
+tests/operations/test_analysis_evidence_recovery.py:504: AssertionError
+_____ test_collection_97_does_not_override_solver_facts[0-cancelled-False] _____
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-120/test_collection_97_does_not_ov3')
+solver_code = 0, terminal = 'cancelled', admitted = False
+
+    @pytest.mark.parametrize('solver_code,terminal,admitted', [(None,'failed',True),(0,'failed',True),(1,'failed',False),(0,'cancelled',False)])
+    def test_collection_97_does_not_override_solver_facts(tmp_path, solver_code, terminal, admitted):
+        import json
+        from scidiscovery.artifact_agent.schema.common import canonical_json
+        from tcad_artifact.project_packager import TCADRuntimeManifest
+        from tests.operations.test_tcad_result_analysis import analysis_system,analysis_report,open_analysis,write_analysis
+        system=analysis_system(tmp_path)
+        catalog,runtime,root,request,artifacts,register=system
+        manifest=json.loads(runtime.artifacts.read(artifacts['manifest'].ref))
+        manifest.update(exit_code=97,terminal_state=terminal,error='fixture collection failure')
+        if solver_code is not None:
+            manifest['solver_exit_code']=solver_code
+        raw=canonical_json(manifest)
+        assert TCADRuntimeManifest.model_validate_json(raw).solver_exit_code==solver_code
+        register('collection_manifest',raw,'opaque',parents=artifacts['manifest'].parent_refs)
+        next(i for i in request['inputs'] if i['port']=='runtime_manifest')['artifact_names']=['collection_manifest']
+        worker,opened=open_analysis(system)
+        report=analysis_report(alias='solver_outputs_001',output_name='A',mapped=True)
+        report['gates']['numerical_validity']['status']='pass'
+        report['gates']['numerical_validity']['summary']='Fixture local numerical condition is supported by the raw product; no overall success claimed.'
+        report['gates']['control_equivalence']=dict(status='fail',summary='Control mismatch remains.',evidence_keys=['raw_evidence'])
+        write_analysis(opened,report)
+        result=worker.call_tool('worker_submit_result',{})
+>       assert result['state']==('completed' if admitted else 'rejected'),result
+E       AssertionError: {'state': 'completed', 'receipt': {'head_advance': 'not_requested', 'completed_at': '2026-09-11T11:32:19.233047Z'}}
+E       assert 'completed' == 'rejected'
+E         
+E         - rejected
+E         + completed
+
+tests/operations/test_analysis_evidence_recovery.py:504: AssertionError
+_ test_real_parameter_run_reaches_expansion_audit_and_qualification[no-checklist] _
+
+self = <scidiscovery.artifact_agent.interfaces.mcp_root.RootToolFacade object at 0x7f6dab579820>
+bound = BoundOperationCall(compiled=CompiledOperation(plugin_id='tcad_artifact', spec=OperationSpec(operation_id='science.para...se, producer_run_id=None), exposure='handoff_only', usage='evidence_inventory')), instruction=None, executor_plan=None)
+
+    def _prepare_approval_projection(
+        self, bound: BoundOperationCall
+    ) -> tuple[ReviewDocument, tuple[ApprovalSubjectSnapshot, ...]]:
+        """Read and project the exact approval subjects without changing state."""
+    
+        review = bound.compiled.spec.review
+        contract = review.approval if review is not None else None
+        identity = bound.compiled.approval_identity
+        if contract is None or contract.projector is None or identity is None:
+            raise OperationInvocationError("approval_contract_missing")
+        grouped = {
+            port_name: tuple(
+                item for item in bound.inputs if item.port_name == port_name
+            )
+            for port_name in contract.subject_ports
+        }
+        port_specs = {port.name: port for port in bound.compiled.spec.inputs}
+        if any(
+            not values and port_specs[port_name].min_items > 0
+            for port_name, values in grouped.items()
+        ):
+            raise OperationInvocationError("approval_subject_missing")
+        snapshots: list[ApprovalSubjectSnapshot] = []
+        for port_name in contract.subject_ports:
+            for item_index, item in enumerate(grouped[port_name]):
+                snapshots.append(
+                    ApprovalSubjectSnapshot(
+                        subject_index=len(snapshots),
+                        port_name=port_name,
+                        item_index=item_index,
+                        ref=item.artifact.ref,
+                        schema_id=item.artifact.schema_id,
+                        media_type=item.artifact.media_type,
+                        size_bytes=item.artifact.size_bytes,
+                        parent_refs=item.artifact.parent_refs,
+                        labels=item.artifact.labels,
+                        handoff_verdict=(
+                            signal.verdict if (signal := self._scheduler_signal_for_output(
+                                item.artifact.ref
+                            )) is not None else None
+                        ),
+                        content=self.artifacts.read(item.artifact.ref),
+                    )
+                )
+        context = ApprovalProjectorContext(
+            operation_id=bound.compiled.spec.operation_id,
+            operation_version=bound.compiled.spec.version,
+            operation_digest=bound.compiled.digest,
+            subjects=tuple(snapshots),
+            producer_families=self._approval_producer_families(bound),
+        )
+        projector_key = (
+            f"{contract.projector.plugin_id or bound.compiled.plugin_id}:"
+            f"{contract.projector.component_id}"
+        )
+        try:
+>           document = bound.compiled.implementations[projector_key](context)
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py:474: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+plugins/tcad_artifact/tcad_artifact/parameter_operations.py:812: in <lambda>
+    "projector", lambda context: _parameter_qualification_document(context, "pass")
+                                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+context = ApprovalProjectorContext(operation_id='science.parameters.qualify.pass.v1', operation_version='2', operation_digest='f...=None, review_subject_outputs=(), family_identity='6acb8955755b0e0a4d5fdff4d8f7aeb11cfc1daa919171c22799b338526c8ea5')))
+expected_status = 'pass'
+
+    def _parameter_qualification_document(
+        context: ApprovalProjectorContext, expected_status: str
+    ) -> ReviewDocument:
+        grouped = _subjects_by_port(context)
+        foundation_subject = _one_subject(grouped, "scientific_foundation")
+        package_subject = _one_subject(grouped, "parameter_evidence_package")
+        primary_subject = _one_subject(grouped, "extraction_primary")
+        required_checklist_subject = _optional_subject(
+            grouped, "required_parameter_checklist"
+        )
+        requirements_subject = _one_subject(grouped, "parameter_requirements")
+        parameters_subject = _one_subject(grouped, "device_parameters")
+        catalog_subject = _one_subject(grouped, "source_catalog")
+        coverage_subject = _one_subject(grouped, "parameter_coverage")
+        audit_subject = _one_subject(grouped, "parameter_audit")
+        expanded_families = tuple(
+            item
+            for item in context.producer_families
+            if item.primary_ref == primary_subject.ref
+            and item.operation_id == EXPAND_OPERATION
+        )
+        extraction_families = tuple(
+            item
+            for item in context.producer_families
+            if item.primary_ref == package_subject.ref
+            and item.operation_id == EXTRACT_OPERATION
+        )
+        if len(expanded_families) != 1 or len(extraction_families) != 1:
+            raise ValueError("parameter approval requires exact extraction and expansion families")
+        family = expanded_families[0]
+        extraction_family = extraction_families[0]
+        if (
+            family.reviewer_operation != AUDIT_OPERATION
+            or family.review_subject_outputs != ("scientific_intake",)
+        ):
+            raise ValueError("parameter expansion has an invalid review contract")
+        if (
+            len(extraction_family.members) != 1
+            or extraction_family.members[0].port_name != "parameter_evidence_package"
+            or extraction_family.members[0].ref != package_subject.ref
+        ):
+            raise ValueError("parameter package does not belong to the extraction Run")
+        expected_members = {
+            "parameter_requirements": requirements_subject.ref,
+            "device_parameters": parameters_subject.ref,
+            "source_catalog": catalog_subject.ref,
+        }
+        member_by_port = {item.port_name: item for item in family.members[1:]}
+        if set(member_by_port) != set(expected_members) or any(
+            member_by_port[name].ref != ref for name, ref in expected_members.items()
+        ):
+            raise ValueError("parameter approval does not bind the complete output family")
+        for name, subject in (
+            ("scientific_intake", primary_subject),
+            ("parameter_requirements", requirements_subject),
+            ("device_parameters", parameters_subject),
+            ("source_catalog", catalog_subject),
+        ):
+            if subject.parent_refs != (package_subject.ref,):
+                raise ValueError(f"{name} is not an exact deterministic expansion")
+        unexpected_source_kinds = {
+            source.source_kind
+            for source in extraction_family.evidence_sources
+            if source.source_kind != "run_input"
+        }
+        if unexpected_source_kinds:
+            raise ValueError("parameter extraction has an unsupported evidence-source kind")
+        frozen_sources = extraction_family.evidence_sources
+        frozen_refs = tuple(source.ref for source in frozen_sources)
+        expected_source_keys = {source.source_name for source in frozen_sources}
+        if (
+            len(expected_source_keys) != len(frozen_sources)
+            or len(set(frozen_refs)) != len(frozen_refs)
+        ):
+            raise ValueError("parameter extraction source identities must be unique")
+        if tuple(item.ref for item in grouped.get("frozen_sources", ())) != frozen_refs:
+            raise ValueError("parameter approval omits or adds a frozen source")
+        checklist_refs = (
+            ()
+            if required_checklist_subject is None
+            else (required_checklist_subject.ref,)
+        )
+        if package_subject.parent_refs != (*checklist_refs, *frozen_refs):
+            raise ValueError(
+                "parameter package does not preserve its exact extraction inputs"
+            )
+    
+        package = ParameterEvidencePackage.model_validate_json(
+            package_subject.content, strict=True
+        )
+        intake = ScientificIntake.model_validate_json(primary_subject.content, strict=True)
+        foundation = ScientificFoundation.model_validate_json(
+            foundation_subject.content, strict=True
+        )
+        requirements = DeviceParameterRequirementSet.model_validate_json(
+            requirements_subject.content, strict=True
+        )
+        if required_checklist_subject is not None:
+            required_checklist = DeviceParameterRequirementSet.model_validate_json(
+                required_checklist_subject.content, strict=True
+            )
+            if _scientific_requirement_fields(required_checklist) != (
+                _scientific_requirement_fields(requirements)
+            ):
+                raise ValueError(
+                    "extracted parameter requirements differ from the supplied checklist"
+                )
+        selected = DeviceParameterSet.model_validate_json(parameters_subject.content, strict=True)
+        catalog = EvidenceSourceCatalog.model_validate_json(catalog_subject.content, strict=True)
+        if {item.source_key for item in catalog.sources} != expected_source_keys:
+            raise ValueError("parameter source catalog differs from frozen Run inputs")
+        supplied_coverage = DeviceParameterCoverageReport.model_validate_json(
+            coverage_subject.content, strict=True
+        )
+        if (
+            package.scientific_intake != intake
+            or package.parameter_requirements != requirements
+            or package.device_parameters != selected
+            or package.source_catalog != catalog
+        ):
+            raise ValueError("expanded parameter objects differ from the Agent package")
+        if foundation != intake.scientific_foundation:
+            raise ValueError("parameter foundation differs from extraction primary")
+        _require_transform_output(
+            foundation_subject,
+            operation_id="science.intake.split.v1",
+            port_name="scientific_foundation",
+            parent_refs=(primary_subject.ref, audit_subject.ref),
+        )
+        if not (foundation.objective == requirements.objective == selected.objective):
+            raise ValueError("parameter review subjects have different objectives")
+        _require_transform_output(
+            coverage_subject,
+            operation_id=COVERAGE_OPERATION,
+            port_name="parameter_coverage",
+            parent_refs=(requirements_subject.ref, parameters_subject.ref, catalog_subject.ref),
+        )
+        recomputed = evaluate_device_parameter_coverage(requirements, selected, catalog)
+        if supplied_coverage != recomputed or coverage_subject.content != recomputed.canonical_json():
+            raise ValueError("parameter coverage differs from deterministic recomputation")
+        if recomputed.status != expected_status:
+            raise ValueError("parameter coverage does not match this approval Operation")
+        audit_labels = _labels(audit_subject)
+        if (
+            audit_labels.get("operation_id") != AUDIT_OPERATION
+            or audit_subject.handoff_verdict != "pass"
+        ):
+>           raise ValueError("parameter audit is not an independent passing Operation result")
+E           ValueError: parameter audit is not an independent passing Operation result
+
+plugins/tcad_artifact/tcad_artifact/parameter_operations.py:628: ValueError
+
+The above exception was the direct cause of the following exception:
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-120/test_real_parameter_run_reache0')
+with_checklist = False
+
+    @pytest.mark.parametrize("with_checklist", (False, True), ids=("no-checklist", "checklist"))
+    def test_real_parameter_run_reaches_expansion_audit_and_qualification(
+        tmp_path, with_checklist: bool,
+    ) -> None:
+        catalog, runtime, instance, root = _root(tmp_path)
+        source = runtime.artifacts.register(
+            b"scale = 1\n",
+            ArtifactRegistration(
+                kind="parameter_source",
+                schema_id="opaque",
+                payload_schema_version=1,
+                media_type="text/plain",
+                creator=runtime.actor,
+            ),
+            idempotency_key="m2:real-parameter-source",
+        )
+        runtime.scheduler_bindings.bind(
+            instance=instance.instance_id,
+            namespace="artifact",
+            name="parameter_source",
+            object_id=source.artifact_id,
+        )
+        checklist_name = None
+        if with_checklist:
+            checklist_name = "required_parameter_checklist"
+            checklist = runtime.artifacts.register(
+                _package().parameter_requirements.canonical_json(),
+                ArtifactRegistration(
+                    kind="device_parameter_requirements",
+                    schema_id="scidiscovery.device-parameter-requirements.v1",
+                    payload_schema_version=1,
+                    media_type="application/json",
+                    creator=runtime.actor,
+                ),
+                idempotency_key="m2:required-parameter-checklist",
+            )
+            runtime.scheduler_bindings.bind(
+                instance=instance.instance_id,
+                namespace="artifact",
+                name=checklist_name,
+                object_id=checklist.artifact_id,
+            )
+        extraction_inputs = [
+            {"port": "source_material", "artifact_names": ["parameter_source"]}
+        ]
+        if checklist_name is not None:
+            extraction_inputs.insert(
+                0,
+                {
+                    "port": "required_parameter_checklist",
+                    "artifact_names": [checklist_name],
+                },
+            )
+        root.call_tool(
+            "operation_invoke",
+            {
+                "name": "extract_parameters",
+                "operation_id": "tcad.parameter.evidence.extract.v1",
+                "inputs": extraction_inputs,
+                "instruction": "Extract the exact frozen parameter declaration.",
+            },
+        )
+        package_name = _complete_agent(
+            catalog,
+            runtime,
+            "tcad.parameter.evidence.extract.v1",
+            _package("source_material").model_dump(mode="json"),
+        )
+        expand_request = {
+            "name": "expanded_parameters",
+            "operation_id": EXPAND_OPERATION,
+            "inputs": [
+                {
+                    "port": "parameter_evidence_package",
+                    "artifact_names": [package_name],
+                }
+            ],
+        }
+        assert root.call_tool("operation_preflight", expand_request)["admissible"] is True
+        expanded = root.call_tool("operation_invoke", expand_request)["result"]["outputs"]
+        expanded_names = {item["output_label"]: item["artifact_name"] for item in expanded}
+        coverage_name = root.call_tool(
+            "operation_invoke",
+            {
+                "name": "parameter_coverage",
+                "operation_id": COVERAGE_OPERATION,
+                "inputs": [
+                    {
+                        "port": "parameter_requirements",
+                        "artifact_names": [expanded_names["parameter_requirements"]],
+                    },
+                    {
+                        "port": "device_parameters",
+                        "artifact_names": [expanded_names["device_parameters"]],
+                    },
+                    {
+                        "port": "source_catalog",
+                        "artifact_names": [expanded_names["source_catalog"]],
+                    },
+                ],
+            },
+        )["result"]["outputs"][0]["artifact_name"]
+        audit_inputs = [
+            {
+                "port": "parameter_evidence_package",
+                "artifact_names": [package_name],
+            },
+            {
+                "port": "scientific_intake",
+                "artifact_names": [expanded_names["primary"]],
+            },
+            {
+                "port": "parameter_requirements",
+                "artifact_names": [expanded_names["parameter_requirements"]],
+            },
+            {
+                "port": "device_parameters",
+                "artifact_names": [expanded_names["device_parameters"]],
+            },
+            {
+                "port": "source_catalog",
+                "artifact_names": [expanded_names["source_catalog"]],
+            },
+            {"port": "parameter_coverage", "artifact_names": [coverage_name]},
+            {"port": "source_material", "artifact_names": ["parameter_source"]},
+        ]
+        if checklist_name is not None:
+            audit_inputs.insert(
+                2,
+                {
+                    "port": "required_parameter_checklist",
+                    "artifact_names": [checklist_name],
+                },
+            )
+        audit_request = {
+            "name": "parameter_audit",
+            "operation_id": AUDIT_OPERATION,
+            "inputs": audit_inputs,
+            "instruction": "Audit the exact package, expansion, coverage, and source.",
+        }
+        assert root.call_tool("operation_preflight", audit_request)["admissible"] is True
+        root.call_tool("operation_invoke", audit_request)
+        audit_payload = {
+            "schema_version": 1,
+            "checks": [
+                {
+                    "check_key": check_key,
+                    "subject": "The bounded parameter family is exact.",
+                    "status": "pass",
+                    "basis": "The frozen source and deterministic objects agree.",
+                    "evidence_keys": ["source_material"],
+                }
+                for check_key in (
+                    "parameter_completeness",
+                    "source_traceability",
+                    "source_independence",
+                    "unit_condition_consistency",
+                )
+            ],
+            "evidence": [
+                {
+                    "source_key": "source_material",
+                    "source_type": "frozen_input",
+                    "locator": "source_material:line-1",
+                }
+            ],
+        }
+        audit_name = _complete_agent(catalog, runtime, AUDIT_OPERATION, audit_payload)
+        split = root.call_tool(
+            "operation_invoke",
+            {
+                "name": "parameter_frame",
+                "operation_id": "science.intake.split.v1",
+                "inputs": [
+                    {
+                        "port": "scientific_intake",
+                        "artifact_names": [expanded_names["primary"]],
+                    },
+                    {"port": "evidence_audit", "artifact_names": [audit_name]},
+                ],
+            },
+        )["result"]["outputs"]
+        split_names = {item["output_label"]: item["artifact_name"] for item in split}
+        approval_inputs = [
+            {
+                "port": "scientific_foundation",
+                "artifact_names": [split_names["scientific_foundation"]],
+            },
+            {
+                "port": "parameter_evidence_package",
+                "artifact_names": [package_name],
+            },
+            {
+                "port": "extraction_primary",
+                "artifact_names": [expanded_names["primary"]],
+            },
+            {
+                "port": "parameter_requirements",
+                "artifact_names": [expanded_names["parameter_requirements"]],
+            },
+            {
+                "port": "device_parameters",
+                "artifact_names": [expanded_names["device_parameters"]],
+            },
+            {
+                "port": "source_catalog",
+                "artifact_names": [expanded_names["source_catalog"]],
+            },
+            {"port": "parameter_coverage", "artifact_names": [coverage_name]},
+            {"port": "parameter_audit", "artifact_names": [audit_name]},
+            {"port": "frozen_sources", "artifact_names": ["parameter_source"]},
+        ]
+        if checklist_name is not None:
+            approval_inputs.insert(
+                3,
+                {
+                    "port": "required_parameter_checklist",
+                    "artifact_names": [checklist_name],
+                },
+            )
+        approval_request = {
+            "name": "qualify_parameters",
+            "operation_id": PASS_APPROVAL_OPERATION,
+            "inputs": approval_inputs,
+        }
+        assert root.call_tool("operation_preflight", approval_request)["admissible"] is True
+        approval = root.call_tool("operation_invoke", approval_request)
+        assert approval["result"]["status"] == "pending"
+    
+        # The saved audit is history after its contract changes, not a new approval witness.
+        from scidiscovery.operations.invoke import OperationInvocationError
+        from scidiscovery.artifact_agent.interfaces.mcp_root import OperationCallInput
+        typed = OperationCallInput.model_validate(approval_request)
+        values = {**typed.model_dump(exclude={"inputs"}), "inputs": typed.inputs}
+        bound = root.facade._prepare_operation_call(**values)
+        changed = TCAD_PLUGIN.model_copy(update={"operations": tuple(
+            op.model_copy(update={"version": "auditor-upgrade"})
+            if op.operation_id == AUDIT_OPERATION else op for op in TCAD_PLUGIN.operations)})
+        upgraded = compile_catalog((CORE_PLUGIN, GENERAL_PLUGIN, CURVE_PLUGIN, changed))
+        runtime.runs.operation_catalog = root.facade._operation_catalog = upgraded
+        with pytest.raises(OperationInvocationError, match="approval_projector_failed"):
+>           root.facade._prepare_approval_projection(bound)
+
+tests/operations/test_m2_parameter_package.py:521: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <scidiscovery.artifact_agent.interfaces.mcp_root.RootToolFacade object at 0x7f6dab579820>
+bound = BoundOperationCall(compiled=CompiledOperation(plugin_id='tcad_artifact', spec=OperationSpec(operation_id='science.para...se, producer_run_id=None), exposure='handoff_only', usage='evidence_inventory')), instruction=None, executor_plan=None)
+
+    def _prepare_approval_projection(
+        self, bound: BoundOperationCall
+    ) -> tuple[ReviewDocument, tuple[ApprovalSubjectSnapshot, ...]]:
+        """Read and project the exact approval subjects without changing state."""
+    
+        review = bound.compiled.spec.review
+        contract = review.approval if review is not None else None
+        identity = bound.compiled.approval_identity
+        if contract is None or contract.projector is None or identity is None:
+            raise OperationInvocationError("approval_contract_missing")
+        grouped = {
+            port_name: tuple(
+                item for item in bound.inputs if item.port_name == port_name
+            )
+            for port_name in contract.subject_ports
+        }
+        port_specs = {port.name: port for port in bound.compiled.spec.inputs}
+        if any(
+            not values and port_specs[port_name].min_items > 0
+            for port_name, values in grouped.items()
+        ):
+            raise OperationInvocationError("approval_subject_missing")
+        snapshots: list[ApprovalSubjectSnapshot] = []
+        for port_name in contract.subject_ports:
+            for item_index, item in enumerate(grouped[port_name]):
+                snapshots.append(
+                    ApprovalSubjectSnapshot(
+                        subject_index=len(snapshots),
+                        port_name=port_name,
+                        item_index=item_index,
+                        ref=item.artifact.ref,
+                        schema_id=item.artifact.schema_id,
+                        media_type=item.artifact.media_type,
+                        size_bytes=item.artifact.size_bytes,
+                        parent_refs=item.artifact.parent_refs,
+                        labels=item.artifact.labels,
+                        handoff_verdict=(
+                            signal.verdict if (signal := self._scheduler_signal_for_output(
+                                item.artifact.ref
+                            )) is not None else None
+                        ),
+                        content=self.artifacts.read(item.artifact.ref),
+                    )
+                )
+        context = ApprovalProjectorContext(
+            operation_id=bound.compiled.spec.operation_id,
+            operation_version=bound.compiled.spec.version,
+            operation_digest=bound.compiled.digest,
+            subjects=tuple(snapshots),
+            producer_families=self._approval_producer_families(bound),
+        )
+        projector_key = (
+            f"{contract.projector.plugin_id or bound.compiled.plugin_id}:"
+            f"{contract.projector.component_id}"
+        )
+        try:
+            document = bound.compiled.implementations[projector_key](context)
+        except Exception as error:
+>           raise OperationEngineeringError("approval_projector_failed") from error
+E           scidiscovery.operations.input_validation.OperationEngineeringError: approval_projector_failed
+
+src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py:476: OperationEngineeringError
+_ test_real_parameter_run_reaches_expansion_audit_and_qualification[checklist] _
+
+self = <scidiscovery.artifact_agent.interfaces.mcp_root.RootToolFacade object at 0x7f6dab2c6750>
+bound = BoundOperationCall(compiled=CompiledOperation(plugin_id='tcad_artifact', spec=OperationSpec(operation_id='science.para...se, producer_run_id=None), exposure='handoff_only', usage='evidence_inventory')), instruction=None, executor_plan=None)
+
+    def _prepare_approval_projection(
+        self, bound: BoundOperationCall
+    ) -> tuple[ReviewDocument, tuple[ApprovalSubjectSnapshot, ...]]:
+        """Read and project the exact approval subjects without changing state."""
+    
+        review = bound.compiled.spec.review
+        contract = review.approval if review is not None else None
+        identity = bound.compiled.approval_identity
+        if contract is None or contract.projector is None or identity is None:
+            raise OperationInvocationError("approval_contract_missing")
+        grouped = {
+            port_name: tuple(
+                item for item in bound.inputs if item.port_name == port_name
+            )
+            for port_name in contract.subject_ports
+        }
+        port_specs = {port.name: port for port in bound.compiled.spec.inputs}
+        if any(
+            not values and port_specs[port_name].min_items > 0
+            for port_name, values in grouped.items()
+        ):
+            raise OperationInvocationError("approval_subject_missing")
+        snapshots: list[ApprovalSubjectSnapshot] = []
+        for port_name in contract.subject_ports:
+            for item_index, item in enumerate(grouped[port_name]):
+                snapshots.append(
+                    ApprovalSubjectSnapshot(
+                        subject_index=len(snapshots),
+                        port_name=port_name,
+                        item_index=item_index,
+                        ref=item.artifact.ref,
+                        schema_id=item.artifact.schema_id,
+                        media_type=item.artifact.media_type,
+                        size_bytes=item.artifact.size_bytes,
+                        parent_refs=item.artifact.parent_refs,
+                        labels=item.artifact.labels,
+                        handoff_verdict=(
+                            signal.verdict if (signal := self._scheduler_signal_for_output(
+                                item.artifact.ref
+                            )) is not None else None
+                        ),
+                        content=self.artifacts.read(item.artifact.ref),
+                    )
+                )
+        context = ApprovalProjectorContext(
+            operation_id=bound.compiled.spec.operation_id,
+            operation_version=bound.compiled.spec.version,
+            operation_digest=bound.compiled.digest,
+            subjects=tuple(snapshots),
+            producer_families=self._approval_producer_families(bound),
+        )
+        projector_key = (
+            f"{contract.projector.plugin_id or bound.compiled.plugin_id}:"
+            f"{contract.projector.component_id}"
+        )
+        try:
+>           document = bound.compiled.implementations[projector_key](context)
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py:474: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+plugins/tcad_artifact/tcad_artifact/parameter_operations.py:812: in <lambda>
+    "projector", lambda context: _parameter_qualification_document(context, "pass")
+                                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+context = ApprovalProjectorContext(operation_id='science.parameters.qualify.pass.v1', operation_version='2', operation_digest='f...=None, review_subject_outputs=(), family_identity='a86a4b36447574d45913dfe69ffed8f3ac4d57ae93222ed4e2f50ab5f0417b91')))
+expected_status = 'pass'
+
+    def _parameter_qualification_document(
+        context: ApprovalProjectorContext, expected_status: str
+    ) -> ReviewDocument:
+        grouped = _subjects_by_port(context)
+        foundation_subject = _one_subject(grouped, "scientific_foundation")
+        package_subject = _one_subject(grouped, "parameter_evidence_package")
+        primary_subject = _one_subject(grouped, "extraction_primary")
+        required_checklist_subject = _optional_subject(
+            grouped, "required_parameter_checklist"
+        )
+        requirements_subject = _one_subject(grouped, "parameter_requirements")
+        parameters_subject = _one_subject(grouped, "device_parameters")
+        catalog_subject = _one_subject(grouped, "source_catalog")
+        coverage_subject = _one_subject(grouped, "parameter_coverage")
+        audit_subject = _one_subject(grouped, "parameter_audit")
+        expanded_families = tuple(
+            item
+            for item in context.producer_families
+            if item.primary_ref == primary_subject.ref
+            and item.operation_id == EXPAND_OPERATION
+        )
+        extraction_families = tuple(
+            item
+            for item in context.producer_families
+            if item.primary_ref == package_subject.ref
+            and item.operation_id == EXTRACT_OPERATION
+        )
+        if len(expanded_families) != 1 or len(extraction_families) != 1:
+            raise ValueError("parameter approval requires exact extraction and expansion families")
+        family = expanded_families[0]
+        extraction_family = extraction_families[0]
+        if (
+            family.reviewer_operation != AUDIT_OPERATION
+            or family.review_subject_outputs != ("scientific_intake",)
+        ):
+            raise ValueError("parameter expansion has an invalid review contract")
+        if (
+            len(extraction_family.members) != 1
+            or extraction_family.members[0].port_name != "parameter_evidence_package"
+            or extraction_family.members[0].ref != package_subject.ref
+        ):
+            raise ValueError("parameter package does not belong to the extraction Run")
+        expected_members = {
+            "parameter_requirements": requirements_subject.ref,
+            "device_parameters": parameters_subject.ref,
+            "source_catalog": catalog_subject.ref,
+        }
+        member_by_port = {item.port_name: item for item in family.members[1:]}
+        if set(member_by_port) != set(expected_members) or any(
+            member_by_port[name].ref != ref for name, ref in expected_members.items()
+        ):
+            raise ValueError("parameter approval does not bind the complete output family")
+        for name, subject in (
+            ("scientific_intake", primary_subject),
+            ("parameter_requirements", requirements_subject),
+            ("device_parameters", parameters_subject),
+            ("source_catalog", catalog_subject),
+        ):
+            if subject.parent_refs != (package_subject.ref,):
+                raise ValueError(f"{name} is not an exact deterministic expansion")
+        unexpected_source_kinds = {
+            source.source_kind
+            for source in extraction_family.evidence_sources
+            if source.source_kind != "run_input"
+        }
+        if unexpected_source_kinds:
+            raise ValueError("parameter extraction has an unsupported evidence-source kind")
+        frozen_sources = extraction_family.evidence_sources
+        frozen_refs = tuple(source.ref for source in frozen_sources)
+        expected_source_keys = {source.source_name for source in frozen_sources}
+        if (
+            len(expected_source_keys) != len(frozen_sources)
+            or len(set(frozen_refs)) != len(frozen_refs)
+        ):
+            raise ValueError("parameter extraction source identities must be unique")
+        if tuple(item.ref for item in grouped.get("frozen_sources", ())) != frozen_refs:
+            raise ValueError("parameter approval omits or adds a frozen source")
+        checklist_refs = (
+            ()
+            if required_checklist_subject is None
+            else (required_checklist_subject.ref,)
+        )
+        if package_subject.parent_refs != (*checklist_refs, *frozen_refs):
+            raise ValueError(
+                "parameter package does not preserve its exact extraction inputs"
+            )
+    
+        package = ParameterEvidencePackage.model_validate_json(
+            package_subject.content, strict=True
+        )
+        intake = ScientificIntake.model_validate_json(primary_subject.content, strict=True)
+        foundation = ScientificFoundation.model_validate_json(
+            foundation_subject.content, strict=True
+        )
+        requirements = DeviceParameterRequirementSet.model_validate_json(
+            requirements_subject.content, strict=True
+        )
+        if required_checklist_subject is not None:
+            required_checklist = DeviceParameterRequirementSet.model_validate_json(
+                required_checklist_subject.content, strict=True
+            )
+            if _scientific_requirement_fields(required_checklist) != (
+                _scientific_requirement_fields(requirements)
+            ):
+                raise ValueError(
+                    "extracted parameter requirements differ from the supplied checklist"
+                )
+        selected = DeviceParameterSet.model_validate_json(parameters_subject.content, strict=True)
+        catalog = EvidenceSourceCatalog.model_validate_json(catalog_subject.content, strict=True)
+        if {item.source_key for item in catalog.sources} != expected_source_keys:
+            raise ValueError("parameter source catalog differs from frozen Run inputs")
+        supplied_coverage = DeviceParameterCoverageReport.model_validate_json(
+            coverage_subject.content, strict=True
+        )
+        if (
+            package.scientific_intake != intake
+            or package.parameter_requirements != requirements
+            or package.device_parameters != selected
+            or package.source_catalog != catalog
+        ):
+            raise ValueError("expanded parameter objects differ from the Agent package")
+        if foundation != intake.scientific_foundation:
+            raise ValueError("parameter foundation differs from extraction primary")
+        _require_transform_output(
+            foundation_subject,
+            operation_id="science.intake.split.v1",
+            port_name="scientific_foundation",
+            parent_refs=(primary_subject.ref, audit_subject.ref),
+        )
+        if not (foundation.objective == requirements.objective == selected.objective):
+            raise ValueError("parameter review subjects have different objectives")
+        _require_transform_output(
+            coverage_subject,
+            operation_id=COVERAGE_OPERATION,
+            port_name="parameter_coverage",
+            parent_refs=(requirements_subject.ref, parameters_subject.ref, catalog_subject.ref),
+        )
+        recomputed = evaluate_device_parameter_coverage(requirements, selected, catalog)
+        if supplied_coverage != recomputed or coverage_subject.content != recomputed.canonical_json():
+            raise ValueError("parameter coverage differs from deterministic recomputation")
+        if recomputed.status != expected_status:
+            raise ValueError("parameter coverage does not match this approval Operation")
+        audit_labels = _labels(audit_subject)
+        if (
+            audit_labels.get("operation_id") != AUDIT_OPERATION
+            or audit_subject.handoff_verdict != "pass"
+        ):
+>           raise ValueError("parameter audit is not an independent passing Operation result")
+E           ValueError: parameter audit is not an independent passing Operation result
+
+plugins/tcad_artifact/tcad_artifact/parameter_operations.py:628: ValueError
+
+The above exception was the direct cause of the following exception:
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-120/test_real_parameter_run_reache1')
+with_checklist = True
+
+    @pytest.mark.parametrize("with_checklist", (False, True), ids=("no-checklist", "checklist"))
+    def test_real_parameter_run_reaches_expansion_audit_and_qualification(
+        tmp_path, with_checklist: bool,
+    ) -> None:
+        catalog, runtime, instance, root = _root(tmp_path)
+        source = runtime.artifacts.register(
+            b"scale = 1\n",
+            ArtifactRegistration(
+                kind="parameter_source",
+                schema_id="opaque",
+                payload_schema_version=1,
+                media_type="text/plain",
+                creator=runtime.actor,
+            ),
+            idempotency_key="m2:real-parameter-source",
+        )
+        runtime.scheduler_bindings.bind(
+            instance=instance.instance_id,
+            namespace="artifact",
+            name="parameter_source",
+            object_id=source.artifact_id,
+        )
+        checklist_name = None
+        if with_checklist:
+            checklist_name = "required_parameter_checklist"
+            checklist = runtime.artifacts.register(
+                _package().parameter_requirements.canonical_json(),
+                ArtifactRegistration(
+                    kind="device_parameter_requirements",
+                    schema_id="scidiscovery.device-parameter-requirements.v1",
+                    payload_schema_version=1,
+                    media_type="application/json",
+                    creator=runtime.actor,
+                ),
+                idempotency_key="m2:required-parameter-checklist",
+            )
+            runtime.scheduler_bindings.bind(
+                instance=instance.instance_id,
+                namespace="artifact",
+                name=checklist_name,
+                object_id=checklist.artifact_id,
+            )
+        extraction_inputs = [
+            {"port": "source_material", "artifact_names": ["parameter_source"]}
+        ]
+        if checklist_name is not None:
+            extraction_inputs.insert(
+                0,
+                {
+                    "port": "required_parameter_checklist",
+                    "artifact_names": [checklist_name],
+                },
+            )
+        root.call_tool(
+            "operation_invoke",
+            {
+                "name": "extract_parameters",
+                "operation_id": "tcad.parameter.evidence.extract.v1",
+                "inputs": extraction_inputs,
+                "instruction": "Extract the exact frozen parameter declaration.",
+            },
+        )
+        package_name = _complete_agent(
+            catalog,
+            runtime,
+            "tcad.parameter.evidence.extract.v1",
+            _package("source_material").model_dump(mode="json"),
+        )
+        expand_request = {
+            "name": "expanded_parameters",
+            "operation_id": EXPAND_OPERATION,
+            "inputs": [
+                {
+                    "port": "parameter_evidence_package",
+                    "artifact_names": [package_name],
+                }
+            ],
+        }
+        assert root.call_tool("operation_preflight", expand_request)["admissible"] is True
+        expanded = root.call_tool("operation_invoke", expand_request)["result"]["outputs"]
+        expanded_names = {item["output_label"]: item["artifact_name"] for item in expanded}
+        coverage_name = root.call_tool(
+            "operation_invoke",
+            {
+                "name": "parameter_coverage",
+                "operation_id": COVERAGE_OPERATION,
+                "inputs": [
+                    {
+                        "port": "parameter_requirements",
+                        "artifact_names": [expanded_names["parameter_requirements"]],
+                    },
+                    {
+                        "port": "device_parameters",
+                        "artifact_names": [expanded_names["device_parameters"]],
+                    },
+                    {
+                        "port": "source_catalog",
+                        "artifact_names": [expanded_names["source_catalog"]],
+                    },
+                ],
+            },
+        )["result"]["outputs"][0]["artifact_name"]
+        audit_inputs = [
+            {
+                "port": "parameter_evidence_package",
+                "artifact_names": [package_name],
+            },
+            {
+                "port": "scientific_intake",
+                "artifact_names": [expanded_names["primary"]],
+            },
+            {
+                "port": "parameter_requirements",
+                "artifact_names": [expanded_names["parameter_requirements"]],
+            },
+            {
+                "port": "device_parameters",
+                "artifact_names": [expanded_names["device_parameters"]],
+            },
+            {
+                "port": "source_catalog",
+                "artifact_names": [expanded_names["source_catalog"]],
+            },
+            {"port": "parameter_coverage", "artifact_names": [coverage_name]},
+            {"port": "source_material", "artifact_names": ["parameter_source"]},
+        ]
+        if checklist_name is not None:
+            audit_inputs.insert(
+                2,
+                {
+                    "port": "required_parameter_checklist",
+                    "artifact_names": [checklist_name],
+                },
+            )
+        audit_request = {
+            "name": "parameter_audit",
+            "operation_id": AUDIT_OPERATION,
+            "inputs": audit_inputs,
+            "instruction": "Audit the exact package, expansion, coverage, and source.",
+        }
+        assert root.call_tool("operation_preflight", audit_request)["admissible"] is True
+        root.call_tool("operation_invoke", audit_request)
+        audit_payload = {
+            "schema_version": 1,
+            "checks": [
+                {
+                    "check_key": check_key,
+                    "subject": "The bounded parameter family is exact.",
+                    "status": "pass",
+                    "basis": "The frozen source and deterministic objects agree.",
+                    "evidence_keys": ["source_material"],
+                }
+                for check_key in (
+                    "parameter_completeness",
+                    "source_traceability",
+                    "source_independence",
+                    "unit_condition_consistency",
+                )
+            ],
+            "evidence": [
+                {
+                    "source_key": "source_material",
+                    "source_type": "frozen_input",
+                    "locator": "source_material:line-1",
+                }
+            ],
+        }
+        audit_name = _complete_agent(catalog, runtime, AUDIT_OPERATION, audit_payload)
+        split = root.call_tool(
+            "operation_invoke",
+            {
+                "name": "parameter_frame",
+                "operation_id": "science.intake.split.v1",
+                "inputs": [
+                    {
+                        "port": "scientific_intake",
+                        "artifact_names": [expanded_names["primary"]],
+                    },
+                    {"port": "evidence_audit", "artifact_names": [audit_name]},
+                ],
+            },
+        )["result"]["outputs"]
+        split_names = {item["output_label"]: item["artifact_name"] for item in split}
+        approval_inputs = [
+            {
+                "port": "scientific_foundation",
+                "artifact_names": [split_names["scientific_foundation"]],
+            },
+            {
+                "port": "parameter_evidence_package",
+                "artifact_names": [package_name],
+            },
+            {
+                "port": "extraction_primary",
+                "artifact_names": [expanded_names["primary"]],
+            },
+            {
+                "port": "parameter_requirements",
+                "artifact_names": [expanded_names["parameter_requirements"]],
+            },
+            {
+                "port": "device_parameters",
+                "artifact_names": [expanded_names["device_parameters"]],
+            },
+            {
+                "port": "source_catalog",
+                "artifact_names": [expanded_names["source_catalog"]],
+            },
+            {"port": "parameter_coverage", "artifact_names": [coverage_name]},
+            {"port": "parameter_audit", "artifact_names": [audit_name]},
+            {"port": "frozen_sources", "artifact_names": ["parameter_source"]},
+        ]
+        if checklist_name is not None:
+            approval_inputs.insert(
+                3,
+                {
+                    "port": "required_parameter_checklist",
+                    "artifact_names": [checklist_name],
+                },
+            )
+        approval_request = {
+            "name": "qualify_parameters",
+            "operation_id": PASS_APPROVAL_OPERATION,
+            "inputs": approval_inputs,
+        }
+        assert root.call_tool("operation_preflight", approval_request)["admissible"] is True
+        approval = root.call_tool("operation_invoke", approval_request)
+        assert approval["result"]["status"] == "pending"
+    
+        # The saved audit is history after its contract changes, not a new approval witness.
+        from scidiscovery.operations.invoke import OperationInvocationError
+        from scidiscovery.artifact_agent.interfaces.mcp_root import OperationCallInput
+        typed = OperationCallInput.model_validate(approval_request)
+        values = {**typed.model_dump(exclude={"inputs"}), "inputs": typed.inputs}
+        bound = root.facade._prepare_operation_call(**values)
+        changed = TCAD_PLUGIN.model_copy(update={"operations": tuple(
+            op.model_copy(update={"version": "auditor-upgrade"})
+            if op.operation_id == AUDIT_OPERATION else op for op in TCAD_PLUGIN.operations)})
+        upgraded = compile_catalog((CORE_PLUGIN, GENERAL_PLUGIN, CURVE_PLUGIN, changed))
+        runtime.runs.operation_catalog = root.facade._operation_catalog = upgraded
+        with pytest.raises(OperationInvocationError, match="approval_projector_failed"):
+>           root.facade._prepare_approval_projection(bound)
+
+tests/operations/test_m2_parameter_package.py:521: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <scidiscovery.artifact_agent.interfaces.mcp_root.RootToolFacade object at 0x7f6dab2c6750>
+bound = BoundOperationCall(compiled=CompiledOperation(plugin_id='tcad_artifact', spec=OperationSpec(operation_id='science.para...se, producer_run_id=None), exposure='handoff_only', usage='evidence_inventory')), instruction=None, executor_plan=None)
+
+    def _prepare_approval_projection(
+        self, bound: BoundOperationCall
+    ) -> tuple[ReviewDocument, tuple[ApprovalSubjectSnapshot, ...]]:
+        """Read and project the exact approval subjects without changing state."""
+    
+        review = bound.compiled.spec.review
+        contract = review.approval if review is not None else None
+        identity = bound.compiled.approval_identity
+        if contract is None or contract.projector is None or identity is None:
+            raise OperationInvocationError("approval_contract_missing")
+        grouped = {
+            port_name: tuple(
+                item for item in bound.inputs if item.port_name == port_name
+            )
+            for port_name in contract.subject_ports
+        }
+        port_specs = {port.name: port for port in bound.compiled.spec.inputs}
+        if any(
+            not values and port_specs[port_name].min_items > 0
+            for port_name, values in grouped.items()
+        ):
+            raise OperationInvocationError("approval_subject_missing")
+        snapshots: list[ApprovalSubjectSnapshot] = []
+        for port_name in contract.subject_ports:
+            for item_index, item in enumerate(grouped[port_name]):
+                snapshots.append(
+                    ApprovalSubjectSnapshot(
+                        subject_index=len(snapshots),
+                        port_name=port_name,
+                        item_index=item_index,
+                        ref=item.artifact.ref,
+                        schema_id=item.artifact.schema_id,
+                        media_type=item.artifact.media_type,
+                        size_bytes=item.artifact.size_bytes,
+                        parent_refs=item.artifact.parent_refs,
+                        labels=item.artifact.labels,
+                        handoff_verdict=(
+                            signal.verdict if (signal := self._scheduler_signal_for_output(
+                                item.artifact.ref
+                            )) is not None else None
+                        ),
+                        content=self.artifacts.read(item.artifact.ref),
+                    )
+                )
+        context = ApprovalProjectorContext(
+            operation_id=bound.compiled.spec.operation_id,
+            operation_version=bound.compiled.spec.version,
+            operation_digest=bound.compiled.digest,
+            subjects=tuple(snapshots),
+            producer_families=self._approval_producer_families(bound),
+        )
+        projector_key = (
+            f"{contract.projector.plugin_id or bound.compiled.plugin_id}:"
+            f"{contract.projector.component_id}"
+        )
+        try:
+            document = bound.compiled.implementations[projector_key](context)
+        except Exception as error:
+>           raise OperationEngineeringError("approval_projector_failed") from error
+E           scidiscovery.operations.input_validation.OperationEngineeringError: approval_projector_failed
+
+src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py:476: OperationEngineeringError
+________ test_parameter_run_rejects_package_with_invented_source_alias _________
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-120/test_parameter_run_rejects_pac0')
+
+    def test_parameter_run_rejects_package_with_invented_source_alias(tmp_path) -> None:
+        catalog, runtime, instance, root = _root(tmp_path)
+        source = runtime.artifacts.register(
+            b"scale = 1\n",
+            ArtifactRegistration(
+                kind="parameter_source",
+                schema_id="opaque",
+                payload_schema_version=1,
+                media_type="text/plain",
+                creator=runtime.actor,
+            ),
+            idempotency_key="m2:alias-source",
+        )
+        runtime.scheduler_bindings.bind(
+            instance=instance.instance_id,
+            namespace="artifact",
+            name="parameter_source",
+            object_id=source.artifact_id,
+        )
+        root.call_tool(
+            "operation_invoke",
+            {
+                "name": "extract_parameters",
+                "operation_id": "tcad.parameter.evidence.extract.v1",
+                "inputs": [
+                    {
+                        "port": "source_material",
+                        "artifact_names": ["parameter_source"],
+                    }
+                ],
+                "instruction": "Exercise exact source alias validation.",
+            },
+        )
+        compiled = catalog.operation("tcad.parameter.evidence.extract.v1")
+        worker = LocalWorkerMCPRouter(
+            runtime.runs,
+            operation_id=compiled.spec.operation_id,
+            operation_digest=compiled.digest,
+        )
+        opened = worker.call_tool("worker_open_assignment", {})
+        result_schema = json.loads(
+            Path(opened["workspace_path"], "schema", "result.schema.json").read_text(
+                "utf-8"
+            )
+        )
+        package_schema = result_schema["properties"]["payload"]
+        intake_ref = package_schema["properties"]["scientific_intake"]["$ref"]
+        intake_schema = package_schema["$defs"][intake_ref.removeprefix("#/$defs/")]
+        foundation_ref = intake_schema["properties"]["scientific_foundation"]["$ref"]
+        foundation_schema = package_schema["$defs"][
+            foundation_ref.removeprefix("#/$defs/")
+        ]
+        projected_source = foundation_schema["properties"]["evidence"]["items"][
+            "allOf"
+        ][-1]["properties"]["source_key"]
+        assert projected_source["enum"] == ["source_material"]
+        Path(opened["output_directory"], "result.json").write_bytes(
+            _envelope(_package("invented_source").model_dump(mode="json"))
+        )
+    
+        rejected = worker.call_tool("worker_submit_result", {})
+        assert rejected["state"] == "rejected"
+>       assert rejected["diagnostics"] == [
+            {
+                "path": (
+                    "$.payload.scientific_intake.scientific_foundation."
+                    "evidence[0].source_key"
+                ),
+                "message": "'invented_source' is not one of ['source_material']",
+                "type": "json_schema.enum",
+                "rule_id": "runtime.schema",
+            }
+        ]
+E       assert [{'schema_ver...schema.enum'}] == [{'path': '$....time.schema'}]
+E         
+E         At index 0 diff: {'schema_version': 1, 'code': 'output_invalid', 'phase': 'output_payload', 'path': '$.payload.scientific_intake.scientific_foundation.evidence[0].source_key', 'message': 'Value does not satisfy the declared JSON Schema constraint.', 'repairable': True, 'affected_action': 'submit', 'rule_id': 'runtime.schema', 'type': 'json_schema.enum'} != {'path': '$.payload.scientific_intake.scientific_foundation.evidence[0].source_key', 'message': "'invented_source' is not one of ['source_material']", 'type': 'json_schema.enum', 'rule_id': 'runtime.schema'}
+E         Use -v to get more diff
+
+tests/operations/test_m2_parameter_package.py:847: AssertionError
+=========================== short test summary info ============================
+FAILED tests/operations/test_analysis_evidence_recovery.py::test_collection_97_does_not_override_solver_facts[1-failed-False]
+FAILED tests/operations/test_analysis_evidence_recovery.py::test_collection_97_does_not_override_solver_facts[0-cancelled-False]
+FAILED tests/operations/test_m2_parameter_package.py::test_real_parameter_run_reaches_expansion_audit_and_qualification[no-checklist]
+FAILED tests/operations/test_m2_parameter_package.py::test_real_parameter_run_reaches_expansion_audit_and_qualification[checklist]
+FAILED tests/operations/test_m2_parameter_package.py::test_parameter_run_rejects_package_with_invented_source_alias
+5 failed, 153 passed in 45.27s

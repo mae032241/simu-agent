@@ -30,15 +30,6 @@ def _safe_path(value: object) -> bool:
     return not path.is_absolute() and all(part not in {"", ".", ".."} for part in path.parts)
 
 
-def _solver_kind(profile: object) -> str | None:
-    text = str(profile).lower()
-    if "sprocess" in text:
-        return "sprocess"
-    if "sdevice" in text:
-        return "sdevice"
-    return None
-
-
 def validate(project: Any) -> list[dict[str, str]]:
     findings: list[dict[str, str]] = []
 
@@ -49,16 +40,18 @@ def validate(project: Any) -> list[dict[str, str]]:
         return [{"level": "error", "code": "project.type", "message": "project must be a JSON object"}]
 
     profile = project.get("tool_profile")
+    kind = project.get("solver_kind")
     entrypoint = project.get("entrypoint")
     files = project.get("files")
     arguments = project.get("arguments", [])
     outputs = project.get("expected_outputs", [])
+    runtime_assertions = project.get("runtime_assertions", [])
+    realization_manifest = project.get("realization_manifest", [])
 
     if not isinstance(profile, str) or not profile:
         add("error", "profile.missing", "tool_profile must be a nonempty string")
-    kind = _solver_kind(profile)
-    if kind is None:
-        add("warning", "profile.unknown", "tool_profile does not identify sprocess or sdevice")
+    if kind not in {"sprocess", "sdevice", "shell_runner", "deterministic_tool"}:
+        add("error", "solver_kind.invalid", "solver_kind must be an explicit supported capability")
 
     if not _safe_path(entrypoint):
         add("error", "entrypoint.path", "entrypoint must be a safe project-relative path")
@@ -94,6 +87,20 @@ def validate(project: Any) -> list[dict[str, str]]:
             add("error", "entrypoint.shell", f"direct {kind} entrypoint contains shell-runner syntax")
         if isinstance(arguments, list) and any(str(value) in {"submit", "worker", "status"} for value in arguments):
             add("error", "arguments.scheduler", f"direct {kind} arguments contain job-scheduler commands")
+        if runtime_assertions:
+            add(
+                "error",
+                "runtime_assertions.post_execution",
+                f"direct {kind} deck must leave runtime_assertions empty",
+            )
+        if isinstance(realization_manifest, list):
+            for index, item in enumerate(realization_manifest):
+                if isinstance(item, dict) and item.get("implementation_status") == "unsupported":
+                    add(
+                        "error",
+                        "manifest.unsupported",
+                        f"realization_manifest[{index}] is not an implemented deck requirement",
+                    )
 
     if not isinstance(arguments, list) or not all(isinstance(value, str) for value in arguments):
         add("error", "arguments.type", "arguments must be an array of strings")
@@ -120,6 +127,7 @@ def validate(project: Any) -> list[dict[str, str]]:
     if not isinstance(outputs, list):
         add("error", "outputs.type", "expected_outputs must be an array")
     else:
+        native_suffixes = {".tdr", ".plx", ".plt", ".log"}
         for index, item in enumerate(outputs):
             if not isinstance(item, dict):
                 add("error", "outputs.item", f"expected_outputs[{index}] must be an object")
@@ -140,6 +148,16 @@ def validate(project: Any) -> list[dict[str, str]]:
                 output_paths.add(path)
             if path in input_paths:
                 add("error", "outputs.overwrite_input", f"output overwrites project input: {path}")
+            if (
+                kind in {"sprocess", "sdevice"}
+                and isinstance(path, str)
+                and PurePosixPath(path).suffix.lower() not in native_suffixes
+            ):
+                add(
+                    "error",
+                    "outputs.post_execution",
+                    f"direct {kind} output is not raw solver-native TDR/PLX/PLT/log: {path}",
+                )
 
     return findings
 

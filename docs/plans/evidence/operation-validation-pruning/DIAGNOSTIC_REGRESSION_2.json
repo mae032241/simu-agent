@@ -1,0 +1,20 @@
+{
+  "command": [
+    "python",
+    "-m",
+    "pytest",
+    "-q",
+    "-x",
+    "tests/operations/test_analysis_diagnostic_tool.py",
+    "tests/operations/test_analysis_evidence_recovery.py",
+    "tests/operations/test_m2_curve_analysis_boundary.py::test_curve_analysis_transform_and_single_file_agent_complete_real_run",
+    "tests/operations/test_m2_curve_analysis_boundary.py::test_curve_analysis_package_and_plot_bundle_fail_closed_on_tampering",
+    "tests/operations/test_m2_curve_analysis_boundary.py::test_obsolete_curve_analysis_worker_tool_is_removed"
+  ],
+  "exit_code": 1,
+  "seconds": 29.851,
+  "peak_tree_rss_bytes": 270938112,
+  "budget_bytes": 536870912,
+  "early_stop_bytes": 469762048,
+  "memory_terminated": false
+}

@@ -2,13 +2,32 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Literal
+from typing import Annotated, Literal, Any
 
 from pydantic import Field
 
+from .approval import CompiledApprovalIdentity
 from .artifact import MediaType, UtcRfc3339
-from .common import Identifier, SchemaModel, Sha256
+from .common import (
+    Identifier,
+    SchemaModel,
+    Sha256,
+    canonical_json as encode_canonical_json,
+)
 from .refs import ArtifactRef
+
+
+class ExecutionAdmission(SchemaModel):
+    """Domain adapter judgment over administrator configuration and exact budget."""
+
+    outcome: Literal["policy", "require_human_approval", "deny"]
+    policy_digest: Sha256
+    policy: dict[str, Any]
+    budget: dict[str, int]
+    allowance: dict[str, int]
+    outside_allowance: Literal["require_human_approval", "deny"]
+    budget_key: Sha256
+    reason: Annotated[str, Field(min_length=1, max_length=1024)]
 
 
 class ExecutionRequest(SchemaModel):
@@ -17,6 +36,18 @@ class ExecutionRequest(SchemaModel):
     preparation_profile: Identifier
     payload_ref: ArtifactRef
     created_at: UtcRfc3339
+    compiled_identity: CompiledApprovalIdentity | None = None
+
+    def canonical_json(self) -> bytes:
+        if self.compiled_identity is not None:
+            return encode_canonical_json(self)
+        return encode_canonical_json(
+            {
+                field_name: getattr(self, field_name)
+                for field_name in type(self).model_fields
+                if field_name != "compiled_identity"
+            }
+        )
 
 
 class LocalFileDescriptor(SchemaModel):

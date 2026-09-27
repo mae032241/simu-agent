@@ -1,0 +1,53 @@
+{
+  "execution_name": "fig4_iterative_alignment_execution_postinstall_1",
+  "control_state": "succeeded",
+  "result_registered": false,
+  "scientific_analysis_started": false,
+  "observed_incidents": [
+    {
+      "action": "execution_sync",
+      "observed": "Two calls returned generic runtime_failure after approximately 10 seconds; the first response additionally exposed an unsafe JSON.parse assumption in the scheduler's tool-unwrapping snippet.",
+      "classification": "engineering collection/transport failure; not scientific output rejection",
+      "scheduler_correction": "Subsequent calls preserve structuredContent or raw text safely."
+    },
+    {
+      "action": "execution_outputs",
+      "observed": "Called before collected state and received the same generic runtime_failure.",
+      "classification": "The requirement to collect before listing immutable outputs is reasonable; the diagnostic projection is inadequate."
+    }
+  ],
+  "root_cause_evidence": [
+    "Configured CommandTCADExecutorAdapter operation_timeout_seconds is 30; SSH transport operation_timeout_seconds is 120.",
+    "ExecutionBridge.sync records terminal succeeded before adapter.collect and ingests results only after collect returns.",
+    "SSH collect downloads every descriptor serially and does not skip previously downloaded valid files before remote.get.",
+    "Empty stdout/stderr transport logs first appeared at 2026-09-13T04:01:54.383443Z. The installed command adapter creates this empty stderr record in its subprocess.TimeoutExpired handler.",
+    "A bounded installed-code synthetic timeout probe reproduced the original RuntimeError, chained TimeoutExpired(30), empty log records and loss of specific information in rpc_error.",
+    "The installed Root proxy has a 10-second default and two observed calls returned at approximately that duration. The actual proxy launch timeout was not independently recovered."
+  ],
+  "diagnostic_visibility_defects": [
+    "rpc_error converts non-DiagnosticError exceptions into a generic runtime_failure with no cause or concrete error reference.",
+    "The proxy uses the same conversion for its own errors.",
+    "Command timeout preservation can retain only empty child stdout/stderr while the useful timeout exception remains outside those logs.",
+    "No matching scidiscovery-control journal entries were returned for the incident interval."
+  ],
+  "verified_source_files": [
+    "mcp.py",
+    "mcp_proxy.py",
+    "command_adapter.py",
+    "ssh_transport.py"
+  ],
+  "status_of_fix": "No production source, deployment configuration, VM file or scientific object was edited.",
+  "proposed_bounded_recovery": {
+    "action": "Raise only the existing command-adapter operation_timeout_seconds from 30 to 300, restart the control service, and synchronize the SAME approved execution to collect its existing results.",
+    "scientific_changes": [],
+    "requires_new_solver_execution": false,
+    "requires_new_scientific_approval": false,
+    "limits": "This is a bounded recovery configuration, not a complete fix for synchronous collection or diagnostic projection."
+  },
+  "remaining_work": [
+    "Collect exact original output family and manifest.",
+    "Run compiled TCAD result analysis against the original plan/review and Fig.4 reference evidence.",
+    "Finish a supported scientific conclusion.",
+    "Address and test timeout/error projection and collection continuation as engineering follow-up."
+  ]
+}

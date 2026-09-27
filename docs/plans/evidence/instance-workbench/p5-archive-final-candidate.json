@@ -1,0 +1,32 @@
+{
+  "command": [
+    "python",
+    "-m",
+    "pytest",
+    "-q",
+    "tests/operations/test_instance_archive.py",
+    "tests/operations/test_instance_archive_scale.py",
+    "tests/operations/test_instance_management_http.py",
+    "tests/operations/test_instance_management_render.py",
+    "tests/operations/test_instance_archive_install.py"
+  ],
+  "exit_code": 1,
+  "stop_reason": null,
+  "duration_seconds": 22.822,
+  "peak_tree_rss_mib": 141.04,
+  "budget_mib": 512,
+  "peak_processes": [
+    {
+      "name": "python",
+      "rss_mib": 127.06
+    },
+    {
+      "name": "python",
+      "rss_mib": 10.0
+    },
+    {
+      "name": "bash",
+      "rss_mib": 3.98
+    }
+  ]
+}

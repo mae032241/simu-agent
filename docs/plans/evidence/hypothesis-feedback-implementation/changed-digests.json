@@ -1,0 +1,38 @@
+{
+  "science.figure.request.prepare.v1": {
+    "before": "c535b7e92d86d7f0a1bd084c7215216763db273ea32df64a54a30cc6988eec90",
+    "after": "370c19971ef4e7799bbc8e8929eb54b50e767175730bb1832e00e35fb1af9f09"
+  },
+  "science.hypothesis.criticize.v1": {
+    "before": "13d1ed31d91888c7642b097a4f63bded6ffbb99a7e4b6ed8cca83b89ccb934bc",
+    "after": "30c45576f8cf98e13211e1c4420fca510e469f6202fef7137dc0a2a7a14c0831"
+  },
+  "science.hypothesis.propose.v1": {
+    "before": "0539c09057ead12cdc8cd474812dc2a69622132d54ff0788479d6c64120a9b7e",
+    "after": "6fe9e31c8020230e3c6d29ff299116c45ae0ce304a412b11179d553c88cfcca7"
+  },
+  "science.hypothesis.revise.v1": {
+    "before": "751982c97a56f0796ea6309767a34b2282fc008ed2e4c6513120e954eb99044c",
+    "after": "d7a1772cef40d04d93e1a865b476680dfa31eead6fac88093cef37b44f678c41"
+  },
+  "science.result.diagnose.v1": {
+    "before": "e94eab67f6552568ca75d32d819eb48a93a26ab31f4b0b1020200504144e29b1",
+    "after": "c97eacf9ab019f8a7c2fd4e470273a73f6a164a3eed33cfe1f5cc141d68b2e62"
+  },
+  "tcad.deck.author.initial.v1": {
+    "before": "7f6e7d228690d54f8cfba3f81833db4ea239294a5e4d58df1a9e58f79d72fd40",
+    "after": "f94a3bb71cff5061b1d449afe53fcffae5643c3c537e314c2ba9397c0e6fb3ac"
+  },
+  "tcad.deck.author.revise.v1": {
+    "before": "c67e7ecd373b048675b052a2b4c18a0059efb7b743a295eac9b45e62ddc2e40c",
+    "after": "c0f71d999ae22c50477c91bb93e809436077a9a62f3af7fbd7bb9c036cd85cd4"
+  },
+  "tcad.deck.author.runtime-failure.v1": {
+    "before": "6c25c45ac10611110f5f237f4cb7bcd241ca524121f94d628b257500ff7aa97b",
+    "after": "4b15ebe88773dc91657e3867f10ed67b3ed819a22a3125919258287f4db97c46"
+  },
+  "tcad.result.analyze.v1": {
+    "before": "0197a6aa222236dd992ba677fc777db93b8162096a0c906fea7bd697fe0c6fca",
+    "after": "406e6d2bd714433e750bc366b6b6f04de41926c8200f88417d56cab9d5aafe64"
+  }
+}

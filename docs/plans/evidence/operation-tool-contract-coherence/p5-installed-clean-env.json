@@ -1,0 +1,24 @@
+{
+  "command": [
+    "env",
+    "-u",
+    "PYTHONPATH",
+    "python",
+    "-m",
+    "pytest",
+    "-q",
+    "tests/operations/test_catalog_installed_entrypoint.py",
+    "tests/operations/test_analysis_tool_installed.py",
+    "tests/operations/test_baseline_transform_lifecycle.py",
+    "tests/operations/test_baseline_effect_lifecycle.py",
+    "tests/operations/test_m7_effect_fixture.py",
+    "-k",
+    "not test_clean_installed_pure_mcp_plugin_completes_a_hardened_run"
+  ],
+  "exit_code": 1,
+  "seconds": 88.625,
+  "peak_tree_rss_bytes": 234934272,
+  "budget_bytes": 536870912,
+  "early_stop_bytes": 469762048,
+  "memory_terminated": false
+}

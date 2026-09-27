@@ -1,0 +1,203 @@
+schema_version: 1
+registry_id: scidiscovery-r5l-architecture-constraints.v1
+updated_at: '2026-09-04'
+assessment_states: [pending_review, conformant, known_issue]
+constraints:
+  - id: AUTH-001
+    title: 控制面是唯一事实权威
+    requirement: 实例、Artifact、Run、current，以及按 Operation 启用的审批、资格、执行和结果登记只能由控制面建立和解释。
+    prohibited: Worker、UI、插件、文件快照或图运行时建立第二套 current、资格、终态或执行事实。
+    assessment: conformant
+    evidence: H3-A 已删除 research_state.py 和安装期 YAML current 校验；无 YAML 的 installed-wheel 测试证明数据库 ResearchInstance 与绑定是唯一运行时 current。
+  - id: AUTH-002
+    title: Worker 只接收科学别名和无身份 Run 文件
+    requirement: Worker 不得接收内部 Artifact、Run、Approval、session、token 或外部执行标识。
+    prohibited: 通过 Run 指令、文件名或聊天向 Worker 暴露控制身份，或让 Worker 直接读取控制库。
+    assessment: pending_review
+    evidence: L2/L4 真实 Agent 只读取 assignment 中的科学别名和工作区路径；跨 Run 原生隔离因 SEC-002 保持未关闭，本项继续 pending_review。
+  - id: AUTH-003
+    title: 科学能力只由 OperationSpec 授权
+    requirement: catalog、preflight、invoke、assignment、submit、receipt 和 reconcile 必须消费同一编译合同；端口用途、上下文资源、可选资格、预算、工具和副作用都由该合同授权。
+    prohibited: Root、Run、profile、Schema 名称、插件实现表或隐藏工具路由建立第二份能力白名单或绕过 OperationSpec。
+    assessment: pending_review
+    evidence: L6 双重终审确认 WorkspaceBackend 的 assignment、Codex profile 和实际 router 使用同一有效工具投影，缺少 Hardened 创建工具时在 Run 前拒绝；Local 原生工具隔离仍受 SEC-002 限制，本项保持 pending_review。
+  - id: IMM-001
+    title: Artifact 与收据不可变
+    requirement: 已登记字节、父链、合同身份、终态和收据不得原地修改。
+    prohibited: 覆盖 CAS 字节、修改已登记父链，或用同一记录表示不同内容。
+    assessment: pending_review
+    evidence: L2 Run 不变量、候选崩溃窗口、重复提交和 current CAS 回归已通过；尚未完成 Artifact 存储层的独立逐项耐久性审计，保持 pending_review。
+  - id: IMM-002
+    title: 完整请求身份与显式修订
+    requirement: 行为变化进入完整请求指纹；内容变化创建新 revision，只有完整指纹相同才幂等。
+    prohibited: 仅按 semantic name、角色或部分输入复用旧请求，或让 revision 继承旧审查与资格。
+    assessment: pending_review
+    evidence: L3 精确 revision/review 正反例证明旧审查不继承；同名异指纹由绑定服务拒绝或建 revision。
+  - id: LIN-001
+    title: 原始目标贯穿科学行为
+    requirement: 科学假设和实验必须绑定批准的原始目标，目标不是 claim evidence。
+    prohibited: 无目标启动科学机制、Worker 静默改写目标，或把目标文本冒充证据。
+    assessment: pending_review
+    evidence: 原始 objective 由 ResearchInstance 和 Run 冻结输入传入；未完成单独科学有效性复核，保持 pending_review。
+  - id: LIN-002
+    title: 传递 currentness 与完整资格集合
+    requirement: currentness 递归验证父链和资格；分别批准的对象不得拼接为完整资格。
+    prohibited: 消费 stale 后代、拼接不同 cohort，或使 revision 自动继承资格。
+    assessment: pending_review
+    evidence: L2 递归 current 与提交竞态、L3 revision 审查、L5 可选 PromotionPolicy 回归已通过；保持 pending_review 等待跨策略总审查。
+  - id: EVD-001
+    title: 外部来源冻结并精确定位
+    requirement: 网页、论文、图表和运行结果先冻结再使用，主张能够定位原始内容。
+    prohibited: 以搜索摘要、裸 URL、Worker 记忆或无法复核的内部代号建立主张。
+    assessment: pending_review
+    evidence: 来源 Artifact、网页冻结和证据 Schema 测试存在；L6 未独立复核所有 locator 场景，保持 pending_review。
+  - id: EVD-002
+    title: 多来源独立性和冲突保留
+    requirement: 来源条件和冲突必须保留，控制层不得平均或投票替代审查者判断。
+    prohibited: 把镜像计作独立来源、删除条件冲突，或为凑集合伪造 observation。
+    assessment: pending_review
+    evidence: EvidenceAudit 严格 Schema 与审查 Operation 已覆盖；来源独立性科学验收未在 L6 重做，保持 pending_review。
+  - id: UNC-001
+    title: 不确定性显式表达
+    requirement: 未知、范围和可调性必须显式，缺失值不得由控制层补写。
+    prohibited: 为缺失参数发明默认值、范围或可调性，或把 unbounded 缺口静默降级。
+    assessment: pending_review
+    evidence: 参数、实验意图和缺失值严格 Schema 测试存在；L6 未逐领域复核，保持 pending_review。
+  - id: UNC-002
+    title: 调参与机制具有可辨识对照
+    requirement: nuisance 与 mechanism 必须通过独立或交叉对照区分。
+    prohibited: 在唯一对照中同时改变机制和 nuisance，或遗漏、平均、插值候选。
+    assessment: pending_review
+    evidence: 通用实验设计 Schema/Transform 回归存在；机制可辨识性的科学审查仍由 Worker，保持 pending_review。
+  - id: TOP-001
+    title: 从当前矛盾选择行为
+    requirement: 调度 Agent 根据当前矛盾选择 Operation，依赖只表示准入，不构成固定阶段。
+    prohibited: 按角色完成状态或阶段号机械推进，或无条件插入 ideation/review。
+    assessment: pending_review
+    evidence: scheduler prompt 只从 public catalog 选 Operation，依赖仅作准入且代码无阶段 DAG；保持 pending_review 等待真实长期调度复核。
+  - id: TOP-002
+    title: Readiness 与准入等价
+    requirement: 报告 ready 的精确绑定必须能被同一 preflight 接受，未知合同失败关闭。
+    prohibited: readiness 隐藏 blocker、推荐实际不可调用的行为，或未知 Operation 回退到角色默认。
+    assessment: pending_review
+    evidence: L1—L6 catalog/preflight/invoke 正反例及后端 capability 等价测试已通过；M7 真实入口发现 Approval preflight 未执行与 invoke 相同的 projector，完整 producer family 错配可预检通过后调用失败，必须闭合后再复核。
+  - id: ROLE-001
+    title: Worker 拥有科学内容
+    requirement: Worker 生成科学判断，控制层只物化上下文和机械字段且不得覆盖科学内容。
+    prohibited: 控制层补写参数、来源取舍、候选排序、机制解释或 verdict；把展示功能提升为科学任务。
+    assessment: pending_review
+    evidence: H1 排序所有权测试以及 L2/L3/L4 真实 Agent 文件输出证明控制面不补科学结论。
+  - id: ROLE-002
+    title: 角色合同全生命周期一致
+    requirement: dispatch、assignment、validation、submit 和 receipt 必须验证同一 Operation 合同。
+    prohibited: 合同退休或摘要漂移后继续派发/提交，或不同 Operation 因复用角色而合并权限。
+    assessment: pending_review
+    evidence: L6 双重终审确认 catalog 摘要、精确 Operation 槽、Local/Hardened assignment-profile-router 恒等和提交校验正反例；旧 Task/collection/finalizing 角色合同不再分发；集合输出仍未实现，保持 pending_review。
+  - id: DET-001
+    title: 机械关系由版本化程序生成
+    requirement: 格式转换、集合展开和显式 Metric 必须确定、可重放并保留父链。
+    prohibited: 让 Agent 手工展开机械字段、用未版本化脚本生成正式派生结果，或丢失父链。
+    assessment: pending_review
+    evidence: 通用、曲线与 TCAD Transform 重放、端口和父链测试已通过；可选论文图迁移实现尚未达到已冻结 Fig.4 资格实现的种子走廊、局部定义域、遮挡和部分未决语义，不能把函数级确定性等同于科学等价，闭合前保持 pending_review。
+  - id: DET-002
+    title: 确定性程序不替代科研选择
+    requirement: 控制与 Transform 不得选择假设、实验优先级、来源取舍或科学结论。
+    prohibited: materializer 自动选择目标或排序，Metric 直接写 hypothesis assessment、诊断或知识结论。
+    assessment: conformant
+    evidence: H1 已删除实验 Schema 与 materializer 的固定价值公式和排序否决；Agent 反公式排序及两层排列负例通过，独立审查见 R5_H_H1_INDEPENDENT_REVIEW.zh-CN.md。
+  - id: HIL-001
+    title: 人工决定只来自精确 loopback UI
+    requirement: 对话和成功进程不构成批准，决定绑定精确可见对象和合同。
+    prohibited: scheduler 代写人工决定、把聊天确认转换为审批，或审批 revision 时沿用旧决定。
+    assessment: pending_review
+    evidence: L3 人工决定可选、精确 revision review、聊天不能代替 UI 和重复决定回归已通过。
+  - id: HIL-002
+    title: 科学资格与执行授权分离
+    requirement: 科学资格和外部执行分别审批，页面必须明确对象、依据、风险和后果。
+    prohibited: 一次审批同时授权科学资格和执行，或以内部 key、摘要和平铺 JSON 代替可审计内容。
+    assessment: pending_review
+    evidence: H5 第二轮独立复审确认科学资格与执行审批仍为两个精确合同且不共享决定；但 M7 真实通用证据资格页面仍主要呈现多个完整 JSON 根对象，用户无法有效审阅依据、缺口和后果，必须修复并完成人工可读性复核后才能恢复 conformant。
+  - id: CQRS-001
+    title: 查询对逻辑状态纯读
+    requirement: status、list、readiness 和页面 GET 不得推进 timeout、receipt、审批或结果绑定。
+    prohibited: 查询写数据库、轮换令牌、发布输出，或因时间经过在读路径落库状态。
+    assessment: pending_review
+    evidence: L2 status/list/readiness 纯读与显式失败命令测试已通过；保持 pending_review 等待全服务复核。
+  - id: CQRS-002
+    title: 状态推进使用幂等命令
+    requirement: timeout、审批后果、Run 收据和执行结果只由显式 command/reconcile 推进。
+    prohibited: 同一 consequence 重复发布，或不经 compare-and-set 覆盖新的活动状态。
+    assessment: pending_review
+    evidence: L2 Run CAS/恢复、审批 consequence 和 Execution reconcile 回归已通过；尚未完成全部显式命令在进程崩溃窗口下的逐项耐久性审计，保持 pending_review。
+  - id: EFF-001
+    title: 外部副作用分离提交、领域状态和收集
+    requirement: 提交成功不得等同于领域完成或结果已收集。
+    prohibited: 用单一 succeeded 状态替代提交、领域运行和结果收集三个事实。
+    assessment: pending_review
+    evidence: Effect 生命周期与实例关闭回归覆盖提交、领域状态和收集分离；尚未进行真实远端执行器的长任务与失联恢复审计，保持 pending_review。
+  - id: EFF-002
+    title: 未知提交只能权威查回
+    requirement: submission unknown 不得盲目重发；adapter、Metric 和诊断职责分离。
+    prohibited: unknown 状态自动重提、取消或收集，或 execution adapter 解释科学 Metric 和 verdict。
+    assessment: pending_review
+    evidence: M7.3 统一要求 Effect adapter 按冻结描述符先权威 lookup、再幂等 submit；外部响应丢失和本地登记失败均在重启后查回同一任务，lookup 不可用时零提交，TCAD socket/command/SSH/remote runner 映射经独立探针复核。真实远端失联仍未验收，保持 pending_review。
+  - id: PLG-001
+    title: 通用核心不拥有领域规则
+    requirement: 领域 Schema、算法、工具、角色和 adapter 由插件提供，核心不按领域名称分支。
+    prohibited: 核心按 TCAD、曲线、Schema、角色、profile 或插件名称分派科学能力。
+    assessment: conformant
+    evidence: H2b 第五轮审查确认曲线能力归插件；L6 又将通用 Artifact kind 和推荐行动改为插件可声明的稳定标识，reviewed-equivalence 文本领域中性，并以非 TCAD 回归确认核心 Schema/结果不含 Deck 或 TCAD 语义。
+  - id: PLG-002
+    title: 插件可独立组合
+    requirement: 插件可独立安装、禁用、组合和升级；缺失时核心正常，失败升级参加统一回滚；依赖方向从专业领域指向可复用能力，不能反向依赖 TCAD。
+    prohibited: 插件卸载破坏核心或历史 Artifact、失败升级留下半代际，或 deployment hook 建立独立事务权威。
+    assessment: conformant
+    evidence: H2b 第五轮独立审查和四种安装组合验证 curve_score 仅依赖 scidiscovery，TCAD 按需单向复用曲线能力，缺失任一领域插件时核心仍可编译运行。
+  - id: SEC-001
+    title: 不可信来源没有控制权限
+    requirement: 来源正文不能改变工具、路径、审批、网络或执行权限。
+    prohibited: 依据论文/网页指令调用未授权工具、开放网络、写控制字段或逃逸 Run 路径。
+    assessment: pending_review
+    evidence: SSRF、路径逃逸、秘密模式和 Operation 工具白名单负例已通过；M7.3 又以含恶意控制指令的冻结 CSV 验证 assignment、领域 MCP、web、Approval 和 Execution 权限均不扩张。原生跨目录能力受 SEC-002 限制，本项保持 pending_review。
+  - id: SEC-002
+    title: Worker、文件和工具最小授权
+    requirement: Worker 只能访问 Run 文件和声明工具；发布拒绝秘密、机器路径和未声明二进制。
+    prohibited: Worker 跨 Run 读写、复用 token、调用其他 Operation 工具，或把提示词禁令冒充技术沙箱。
+    assessment: known_issue
+    evidence: 当前阶段明确采用可信本地软隔离；领域 Worker MCP 和正式结果提交仍有服务端门禁，但 Local Agent 的原生文件可见性仅受任务目录与提示约束。强隔离不再是当前原型完成门，因此本项诚实保持 known_issue，不能宣称 conformant。
+  - id: RES-001
+    title: 大对象流式且上下文有界
+    requirement: 大附件走流式 CAS，Worker 上下文只包含声明输入。
+    prohibited: 将大 PDF/曲线全量载入内存、内联进工具调用，或用 all_inputs 覆盖精确端口。
+    assessment: pending_review
+    evidence: Run 输入/输出字节上限、PDF 有界提取和未绑定输入拒绝测试存在；未实现通用大附件流式 Run，保持 pending_review。
+  - id: RES-002
+    title: Run、恢复和并发有界
+    requirement: 时间、字节、来源、缓存、恢复和并发必须有界，进程重启不得扩权或换 Run。
+    prohibited: 无限提高预算、返回无界历史、重启后重新按角色领 Run，或截短已封存结果的最终提交窗口。
+    assessment: pending_review
+    evidence: L2 deadline/失败草稿和 L5 每 Run fencing/跨 Run 并行测试已通过；M7.2 又以真实恢复和重启负例证明同一恢复根的整棵后代树受 Operation max_attempts 总次数限制，超限 preflight/invoke 零 Run 拒绝；开发测试进程限制在 8 GiB 内。
+  - id: UI-001
+    title: 审批信息具有科学层次
+    requirement: 页面优先展示决策问题、关键结果、来源、限制和风险，不得默认平铺完整 JSON。
+    prohibited: 默认展开所有 raw subjects、以内部标识为主要标签，或隐藏冲突和缺口。
+    assessment: known_issue
+    evidence: renderer 能折叠 raw subjects，但通用证据资格 projector 仍把多个完整对象作为编译视图的根 JSON 树；用户在真实 M7 页面中多次确认内容几乎不可审批。当前仅记录为已知问题，完成针对性 projector 摘要和真实人工复核前不得宣称符合。
+  - id: UI-002
+    title: 数值、状态和维护结果可审计
+    requirement: 单位、条件、数值精度、状态和维护操作结果必须清晰且可复核。
+    prohibited: 展示丢失单位/条件/合法精度，或维护操作只报成功而不展示精确结果与 blocker。
+    assessment: pending_review
+    evidence: H5 真实 D4 数据桌面与窄屏验收。
+  - id: MIG-001
+    title: 不可证明的旧资格不升级
+    requirement: 旧 label、latest、approval 或 current.yaml 不得自动成为当前资格或 current。
+    prohibited: 自动升级旧审批和不完整指纹，或把 legacy current.yaml 当作运行事实权威。
+    assessment: conformant
+    evidence: H3-A 后安装与运行路径均不读取或升级 legacy current.yaml；H3-C 候选还证明孤立旧 binding 原始行可保留但不会合成实例或进入 current/candidate 入口。历史科学状态不兼容是本轮明确取舍。
+  - id: MIG-002
+    title: 发布代际和回滚可证明
+    requirement: 干净安装、重启、失败恢复和回滚必须通过实际发布入口验证。
+    prohibited: 仅凭源码测试宣称部署正确、未经演练切换生产，或用当前合同改写历史收据。
+    assessment: pending_review
+    evidence: L6 clean-wheel、Local/Hardened 平台组合、旧 Worker unit 事务删除/失败回滚和安装事务测试已通过；真实机器升级仍待发布演练，保持 pending_review。

@@ -1,0 +1,25 @@
+{
+  "command": [
+    "python",
+    "docs/plans/evidence/instance-workbench/browser_check.py"
+  ],
+  "exit_code": 0,
+  "stop_reason": null,
+  "duration_seconds": 3.224,
+  "peak_tree_rss_mib": 458.69,
+  "budget_mib": 512,
+  "peak_processes": [
+    {
+      "name": "chrome-headless-shell",
+      "rss_mib": 242.66
+    },
+    {
+      "name": "MainThread",
+      "rss_mib": 126.79
+    },
+    {
+      "name": "python",
+      "rss_mib": 89.24
+    }
+  ]
+}

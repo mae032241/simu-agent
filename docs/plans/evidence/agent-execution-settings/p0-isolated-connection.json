@@ -1,0 +1,35 @@
+{
+  "command": [
+    "python",
+    "/tmp/scid-execution-settings-p0/launch_isolated.py",
+    "exec",
+    "--ignore-user-config",
+    "--ephemeral",
+    "--json",
+    "--skip-git-repo-check",
+    "-C",
+    "/tmp/scid-execution-settings-p0/connection",
+    "-c",
+    "model_reasoning_effort=\"low\"",
+    "-m",
+    "gpt-5.6-luna",
+    "-s",
+    "read-only",
+    "Reply exactly P0_CONNECTION_OK. Do not use any tools. This checks model connectivity only."
+  ],
+  "exit_code": 0,
+  "stop_reason": null,
+  "duration_seconds": 12.793,
+  "peak_tree_rss_mib": 422.54,
+  "budget_mib": 512,
+  "peak_processes": [
+    {
+      "name": "codex",
+      "rss_mib": 211.27
+    },
+    {
+      "name": "tokio-rt-worker",
+      "rss_mib": 211.27
+    }
+  ]
+}

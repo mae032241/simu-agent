@@ -1,0 +1,270 @@
+{
+  "content": [
+    {
+      "type": "text",
+      "text": "{\"agent_type\":\"op_science_object_review_v1_f6fdf24c8242\",\"backend\":\"local_trusted\",\"candidate_accepted\":true,\"completed_at\":\"2026-09-11T15:27:24.844836Z\",\"created_at\":\"2026-09-11T15:22:15.307423Z\",\"deadline_at\":\"2026-09-11T15:32:15.307423Z\",\"diagnostic_summary\":{\"failure\":null,\"latest_rejection\":null,\"latest_tool_error\":null,\"recent_errors\":[],\"rejection_count\":0},\"draft_from\":null,\"head_advance\":\"not_requested\",\"last_activity_at\":\"2026-09-11T15:27:24.844836Z\",\"logical_name\":\"fig4_continuation_experiment_closure_review_1\",\"name\":\"fig4_continuation_experiment_closure_review_1\",\"operation_id\":\"science.object.review.v1\",\"output_artifact_name\":\"fig4_continuation_experiment_closure_review_1.output\",\"reason\":null,\"recovery\":{\"delivery_preserved\":false,\"draft_available\":false,\"recovery_pending\":false,\"resume_available\":false},\"recovery_available\":false,\"revision\":1,\"scheduler_signal\":{\"assumptions\":[],\"missing_inputs\":[],\"next_action_kind\":null,\"next_actions\":[\"保持 experiment.fig4.raw_boundary_counterfactual 当前阶段关闭，不再原样执行同一六案例家族。\",\"若继续总体机制分离，先另行取得一个有限、可改变剖面形状的结构模型及其操作数、边界、输出和判别规则的资格化依据，再做后端可行性与匹配审查。\",\"若要求强于当前 inconclusive 的尾部结论，先取得系列身份、检测状态和独立不确定度一致的合格作者原始 SIMS 行。\"],\"schema_version\":1,\"summary\":\"收尾修订通过独立科学审查。它以合同要求的非空 proposal、current_objectives 和 priority_order 保存原六案例实验的完整历史，同时在 priority_rationale、资源说明、验证说明和新增阶段关闭停止条件中反复明确：两个当前目标均已完成但均为 inconclusive，当前六案例不得原样重跑。修订没有改变案例、物理设置、身份映射、预测、阈值或验证检查；它也保留原 failed/97 执行终态，并把该终态与恢复后 13 个必需科学产物已完整覆盖区分开。总体机制分离仍未闭合，更强尾部结论及新的形状改变结构模型均被保留为需另行资格化和审查的后续条件。本通过仅评价该计划作为历史收尾记录的科学一致性，不构成新的科学基础资格、执行授权或人类批准。\",\"verdict\":\"pass\"},\"scheduler_signal_status\":\"available\",\"sealed_output\":{\"artifact_name\":\"fig4_continuation_experiment_closure_review_1.output\",\"kind\":\"scientific_review\",\"payload\":{\"evidence\":[{\"excerpt\":\"修订计划把唯一 proposal 明确限定为关闭的历史记录，标记两个 current_objectives 为 Completed—Inconclusive，并保存六案例、预注册判别、验证门和阶段关闭停止条件。\",\"locator\":\"/priority_order, /priority_rationale, /proposals/0, /validation_plans/0\",\"schema_version\":1,\"source_key\":\"experiment_plan\",\"source_type\":\"frozen_input\"},{\"excerpt\":\"原目标要求覆盖材料分辨剖面和前沿/尾部对比，并把 mechanism_separation 比较保留为总体闭合要求。\",\"locator\":\"/mandatory_targets and /closure_requirements\",\"schema_version\":1,\"source_key\":\"research_objective\",\"source_type\":\"frozen_input\"},{\"excerpt\":\"上下文只绑定 SProcess、Sentaurus R-2020.09；capability_statements 与 limitations 为空。\",\"locator\":\"/\",\"schema_version\":1,\"source_key\":\"execution_context\",\"source_type\":\"frozen_input\"},{\"excerpt\":\"原六案例计划提供用于逐字段核对的历史基线，包括案例、比较变量、预测、阈值、验证和后续条件。\",\"locator\":\"/priority_rationale, /proposals/0\",\"schema_version\":1,\"source_key\":\"current_progress_001\",\"source_type\":\"frozen_input\"},{\"excerpt\":\"原独立审查要求把两个当前目标标为已完成且 inconclusive，更新优先级和价值判断，停止原样重跑，并保留结构性反事实与更强尾部证据为条件性后续工作。\",\"locator\":\"/verdict, /findings, /next_actions, /summary\",\"schema_version\":1,\"source_key\":\"current_progress_002\",\"source_type\":\"frozen_input\"},{\"excerpt\":\"匹配实现包记录六案例源码、案例绑定和通过态实现审查，支持核对原案例身份与设置。\",\"locator\":\"/project/case_parameter_bindings, /project/files, /review\",\"schema_version\":1,\"source_key\":\"current_progress_003\",\"source_type\":\"frozen_input\"},{\"excerpt\":\"受控恢复记录保存五条补充 PLX 和六条实际 *_fps.tdr 的原执行谱系与内容摘要；重复检查记录不改变唯一产物身份。\",\"locator\":\"/records\",\"schema_version\":1,\"source_key\":\"current_progress_004\",\"source_type\":\"frozen_input\"},{\"excerpt\":\"原 execution_result 的 terminal_state 为 failed。\",\"locator\":\"/terminal_state and /output_refs\",\"schema_version\":1,\"source_key\":\"experiment_results_001\",\"source_type\":\"runtime_output\"},{\"excerpt\":\"运行后收集器因缺少声明的 results/fig4_al_own_anchor_primary.tdr 返回 exit_code 97；终态为 failed。\",\"locator\":\"/error, /exit_code, /outputs and /terminal_state\",\"schema_version\":1,\"source_key\":\"experiment_results_002\",\"source_type\":\"runtime_output\"},{\"excerpt\":\"最新恢复分析判定 13 个必需产物已覆盖、数值收敛通过；自锚 WRMSE 为 2.2445359 与 2.0127536 decade，两个假设均为 inconclusive，原 failed/97 保持不变。\",\"locator\":\"/summary, /gates, /hypothesis_assessments, /objective_assessment and /remaining_contradiction\",\"schema_version\":1,\"source_key\":\"result_analysis_001\",\"source_type\":\"frozen_input\"},{\"excerpt\":\"先前独立复算给出描述性 G=-0.01408761，并显示中心尾部 T 对 M0-M2/S0-S2 的响应跨预注册类别；充分性失败阻止机制反驳。\",\"locator\":\"/summary, /gates/observation and /hypothesis_assessments\",\"schema_version\":1,\"source_key\":\"result_analysis_002\",\"source_type\":\"frozen_input\"}],\"evidence_item_keys\":[],\"findings\":[{\"epistemic_status\":\"inference\",\"evidence_keys\":[\"experiment_plan\",\"current_progress_001\",\"current_progress_002\"],\"finding_key\":\"review.minimal_revision_preserves_protocol\",\"rationale\":\"逐字段核对显示案例、comparison_contract、frozen_invariants、prediction_tests 和 validation checks 未被结果反向改写；变化集中在原审查要求的收尾字段。\",\"schema_version\":1,\"statement\":\"修订保持原六案例物理设置、案例身份、比较变量、预测测试、判别阈值和验证检查，仅改变完成状态及其历史解释，并新增阶段关闭停止条件。\"},{\"epistemic_status\":\"inference\",\"evidence_keys\":[\"experiment_plan\",\"result_analysis_001\",\"result_analysis_002\"],\"finding_key\":\"review.completed_outcomes_remain_inconclusive\",\"rationale\":\"两材料 own-anchor WRMSE 远超 0.15-decade 充分性门，且 M0-M2/S0-S2 的 T 响应跨低、中、高类别，正好落入预注册 inconclusive 条件。\",\"schema_version\":1,\"statement\":\"两个当前目标被如实记录为已完成且均为 inconclusive；负 G 只作描述，尾部类别的不稳定性也未被提升为支持或排除结论。\"},{\"epistemic_status\":\"inference\",\"evidence_keys\":[\"experiment_plan\",\"current_progress_003\",\"current_progress_004\",\"experiment_results_001\",\"experiment_results_002\",\"result_analysis_001\"],\"finding_key\":\"review.execution_history_and_recovery_separated\",\"rationale\":\"原结果仍显示 failed 和 exit 97；恢复记录及最新分析只补齐实际输出到原执行的受控映射，计划的 physical validation rationale 明确保留该差异。\",\"schema_version\":1,\"statement\":\"计划没有把原外部执行改写为成功；它把不可变的 failed/97 收集终态与恢复后科学证据集合已覆盖全部 13 个必需产物明确分开。\"},{\"epistemic_status\":\"inference\",\"evidence_keys\":[\"experiment_plan\",\"current_progress_002\"],\"finding_key\":\"review.nonempty_fields_are_unambiguous_history\",\"rationale\":\"priority_rationale 明说这些字段因 schema 非空约束保留，resource_estimate 明说记录已完成工作，validation rationales 使用 completed outcome，第一条 stop condition 又显式禁止同一六案例重跑。\",\"schema_version\":1,\"statement\":\"合同要求的非空 proposal、current_objectives 与 priority_order 足以作为完整历史收尾记录，且不会合理地被解释为要求重新执行。\"},{\"epistemic_status\":\"inference\",\"evidence_keys\":[\"experiment_plan\",\"research_objective\",\"current_progress_002\",\"result_analysis_001\"],\"finding_key\":\"review.overall_closure_and_later_conditions_retained\",\"rationale\":\"计划保留原 objectives 中的条件性机制比较，并在优先级与价值说明中指出充分性和稳定尾部前提均未满足；它没有生成模型方程、参数、边界或新机制事实。\",\"schema_version\":1,\"statement\":\"两个 mandatory_targets 已在合格子集边界内覆盖，但总体 mechanism_separation 仍未闭合；新的形状改变结构模型与更强尾部证据均被保留为另行资格化的后续条件。\"},{\"epistemic_status\":\"inference\",\"evidence_keys\":[\"experiment_plan\",\"execution_context\"],\"finding_key\":\"review.future_feasibility_remains_conditioned\",\"rationale\":\"execution_context 未给出未来模型所需的能力和限制，受审计划没有把这种后续可行性错误地当作当前收尾前提或现成资格。\",\"schema_version\":1,\"statement\":\"当前执行上下文足以识别历史后端，却不足以独立确认尚未选择的新结构性反事实可实现；计划正确地把该确认留给模型选定后的后端可行性和匹配审查。\"}],\"global_confounders\":[\"材料标签与 D 配对，因此现有实验不能分离一般材料效应与扩散率效应。\",\"冻结常数 D/固定边界家族对两材料剖面均严重不充分，边界增益没有机制解释资格。\",\"共享支持、缺口、检测状态和不确定度使尾部类别依赖掩码。\",\"原外部执行终态仍为 failed/97；恢复完整性只支持有限科学分析，不建立成功执行声明。\"],\"hypothesis_reviews\":[{\"confounders\":[\"冻结常数 D/固定边界家族未通过两材料 own-anchor adequacy。\",\"材料标签始终与论文报告的 D 配对。\",\"现有案例没有改变剖面形状的结构性物理。\"],\"falsifiability\":\"pass\",\"hypothesis_key\":\"hypothesis.surface_boundary_control\",\"identifiability\":\"pass\",\"missing_inputs\":[],\"physical_plausibility\":\"pass\",\"rationale\":\"原协议在充分性与收敛门通过时对有限边界锚点假设具有明确支持、反驳和 inconclusive 区域，因此其条件性可证伪性与可辨识性仍成立。实际 own-anchor 充分性失败只决定本轮结果为 inconclusive，并表明同一边界幅度家族不能解决剩余结构性矛盾；修订忠实保留了这个边界。\",\"schema_version\":1,\"smallest_resolving_action\":\"保持当前六案例结果为 inconclusive 并关闭原样重跑；若继续机制分离，另行资格化并审查一个只引入一种剖面形状改变结构的有限反事实及新的充分性和判别门。\"},{\"confounders\":[\"shared_occlusion 行不是独立观测。\",\"缺失 point_index 不允许跨越。\",\"检测状态和独立不确定度仍限制更强尾部结论。\",\"中心 T 类别随预注册掩码变化。\"],\"falsifiability\":\"pass\",\"hypothesis_key\":\"hypothesis.tail_support_artifact\",\"identifiability\":\"pass\",\"missing_inputs\":[],\"physical_plausibility\":\"pass\",\"rationale\":\"原协议对稳定支持、稳定排除和场景依赖的 inconclusive 区域有预注册定义，因而有限问题本身可证伪且条件性可辨识。实际 M0-M2/S0-S2 结果跨多个类别，说明当前证据落入预定 inconclusive 区域；修订没有事后改变掩码、阈值、相邻规则或证据资格边界。\",\"schema_version\":1,\"smallest_resolving_action\":\"无需重跑 TCAD；若需要超出当前 inconclusive 的结论，先取得系列身份明确、检测状态一致且带独立不确定度的合格作者原始 SIMS 行，再按原无跨缺口规则归约。\"}],\"next_actions\":[\"将本六案例 ExperimentPortfolio 保持为已完成且两个处分均 inconclusive 的关闭历史；不要原样重跑。\",\"总体机制分离只有在另行资格化一个有限、形状改变的结构模型并完成后端可行性和匹配审查后才能进入新实验。\",\"更强尾部结论只有在合格作者原始 SIMS 行补齐系列身份、检测状态和独立不确定度后再评估。\",\"若未来因独立需求创建新的外部执行记录，先把六个 TDR expected_outputs 改为实际 *_fps.tdr 路径并完成匹配实现审查；该维护不是当前科学证据缺口。\"],\"review_target\":\"experiment_portfolio\",\"schema_version\":1,\"summary\":\"受审对象是收尾修订后的完整 ExperimentPortfolio。与绑定的原计划相比，修订只更新了完成状态、优先级与价值说明、资源与验证的历史说明，并新增明确的阶段关闭停止条件；六个案例、物理与数值设置、比较身份、冻结不变量、预测测试、判别阈值和验证检查保持不变。绑定分析支持两个 current_objectives 均已履行其注册比较，但充分性失败和掩码类别变化使两项处分均只能为 inconclusive。计划清楚区分原外部执行不可变的 failed/97 与受控恢复后科学产物完整性，且明确停止为补齐当前证据而重跑。总体 mechanism_separation closure_requirement 与更强尾部结论均作为条件性后续工作保留，没有被当前完成状态冒充，也没有引入未绑定的新模型、参数或机制事实。非空 proposal、current_objectives 与 priority_order 在全文中被限定为合同所需的关闭历史记录，不能合理解释为新的执行请求。因此该修订已忠实、最小且充分地回应原独立审查。通过不授予执行批准、项目维护资格或后续科学基础资格。\",\"verdict\":\"pass\"},\"schema\":\"scidiscovery.scientific-review.v1\"},\"sealed_output_status\":\"available\",\"started_at\":\"2026-09-11T15:22:37.891914Z\",\"state\":\"completed\"}"
+    }
+  ],
+  "structuredContent": {
+    "agent_type": "op_science_object_review_v1_f6fdf24c8242",
+    "backend": "local_trusted",
+    "candidate_accepted": true,
+    "completed_at": "2026-09-11T15:27:24.844836Z",
+    "created_at": "2026-09-11T15:22:15.307423Z",
+    "deadline_at": "2026-09-11T15:32:15.307423Z",
+    "diagnostic_summary": {
+      "failure": null,
+      "latest_rejection": null,
+      "latest_tool_error": null,
+      "recent_errors": [],
+      "rejection_count": 0
+    },
+    "draft_from": null,
+    "head_advance": "not_requested",
+    "last_activity_at": "2026-09-11T15:27:24.844836Z",
+    "logical_name": "fig4_continuation_experiment_closure_review_1",
+    "name": "fig4_continuation_experiment_closure_review_1",
+    "operation_id": "science.object.review.v1",
+    "output_artifact_name": "fig4_continuation_experiment_closure_review_1.output",
+    "reason": null,
+    "recovery": {
+      "delivery_preserved": false,
+      "draft_available": false,
+      "recovery_pending": false,
+      "resume_available": false
+    },
+    "recovery_available": false,
+    "revision": 1,
+    "scheduler_signal": {
+      "assumptions": [],
+      "missing_inputs": [],
+      "next_action_kind": null,
+      "next_actions": [
+        "保持 experiment.fig4.raw_boundary_counterfactual 当前阶段关闭，不再原样执行同一六案例家族。",
+        "若继续总体机制分离，先另行取得一个有限、可改变剖面形状的结构模型及其操作数、边界、输出和判别规则的资格化依据，再做后端可行性与匹配审查。",
+        "若要求强于当前 inconclusive 的尾部结论，先取得系列身份、检测状态和独立不确定度一致的合格作者原始 SIMS 行。"
+      ],
+      "schema_version": 1,
+      "summary": "收尾修订通过独立科学审查。它以合同要求的非空 proposal、current_objectives 和 priority_order 保存原六案例实验的完整历史，同时在 priority_rationale、资源说明、验证说明和新增阶段关闭停止条件中反复明确：两个当前目标均已完成但均为 inconclusive，当前六案例不得原样重跑。修订没有改变案例、物理设置、身份映射、预测、阈值或验证检查；它也保留原 failed/97 执行终态，并把该终态与恢复后 13 个必需科学产物已完整覆盖区分开。总体机制分离仍未闭合，更强尾部结论及新的形状改变结构模型均被保留为需另行资格化和审查的后续条件。本通过仅评价该计划作为历史收尾记录的科学一致性，不构成新的科学基础资格、执行授权或人类批准。",
+      "verdict": "pass"
+    },
+    "scheduler_signal_status": "available",
+    "sealed_output": {
+      "artifact_name": "fig4_continuation_experiment_closure_review_1.output",
+      "kind": "scientific_review",
+      "payload": {
+        "evidence": [
+          {
+            "excerpt": "修订计划把唯一 proposal 明确限定为关闭的历史记录，标记两个 current_objectives 为 Completed—Inconclusive，并保存六案例、预注册判别、验证门和阶段关闭停止条件。",
+            "locator": "/priority_order, /priority_rationale, /proposals/0, /validation_plans/0",
+            "schema_version": 1,
+            "source_key": "experiment_plan",
+            "source_type": "frozen_input"
+          },
+          {
+            "excerpt": "原目标要求覆盖材料分辨剖面和前沿/尾部对比，并把 mechanism_separation 比较保留为总体闭合要求。",
+            "locator": "/mandatory_targets and /closure_requirements",
+            "schema_version": 1,
+            "source_key": "research_objective",
+            "source_type": "frozen_input"
+          },
+          {
+            "excerpt": "上下文只绑定 SProcess、Sentaurus R-2020.09；capability_statements 与 limitations 为空。",
+            "locator": "/",
+            "schema_version": 1,
+            "source_key": "execution_context",
+            "source_type": "frozen_input"
+          },
+          {
+            "excerpt": "原六案例计划提供用于逐字段核对的历史基线，包括案例、比较变量、预测、阈值、验证和后续条件。",
+            "locator": "/priority_rationale, /proposals/0",
+            "schema_version": 1,
+            "source_key": "current_progress_001",
+            "source_type": "frozen_input"
+          },
+          {
+            "excerpt": "原独立审查要求把两个当前目标标为已完成且 inconclusive，更新优先级和价值判断，停止原样重跑，并保留结构性反事实与更强尾部证据为条件性后续工作。",
+            "locator": "/verdict, /findings, /next_actions, /summary",
+            "schema_version": 1,
+            "source_key": "current_progress_002",
+            "source_type": "frozen_input"
+          },
+          {
+            "excerpt": "匹配实现包记录六案例源码、案例绑定和通过态实现审查，支持核对原案例身份与设置。",
+            "locator": "/project/case_parameter_bindings, /project/files, /review",
+            "schema_version": 1,
+            "source_key": "current_progress_003",
+            "source_type": "frozen_input"
+          },
+          {
+            "excerpt": "受控恢复记录保存五条补充 PLX 和六条实际 *_fps.tdr 的原执行谱系与内容摘要；重复检查记录不改变唯一产物身份。",
+            "locator": "/records",
+            "schema_version": 1,
+            "source_key": "current_progress_004",
+            "source_type": "frozen_input"
+          },
+          {
+            "excerpt": "原 execution_result 的 terminal_state 为 failed。",
+            "locator": "/terminal_state and /output_refs",
+            "schema_version": 1,
+            "source_key": "experiment_results_001",
+            "source_type": "runtime_output"
+          },
+          {
+            "excerpt": "运行后收集器因缺少声明的 results/fig4_al_own_anchor_primary.tdr 返回 exit_code 97；终态为 failed。",
+            "locator": "/error, /exit_code, /outputs and /terminal_state",
+            "schema_version": 1,
+            "source_key": "experiment_results_002",
+            "source_type": "runtime_output"
+          },
+          {
+            "excerpt": "最新恢复分析判定 13 个必需产物已覆盖、数值收敛通过；自锚 WRMSE 为 2.2445359 与 2.0127536 decade，两个假设均为 inconclusive，原 failed/97 保持不变。",
+            "locator": "/summary, /gates, /hypothesis_assessments, /objective_assessment and /remaining_contradiction",
+            "schema_version": 1,
+            "source_key": "result_analysis_001",
+            "source_type": "frozen_input"
+          },
+          {
+            "excerpt": "先前独立复算给出描述性 G=-0.01408761，并显示中心尾部 T 对 M0-M2/S0-S2 的响应跨预注册类别；充分性失败阻止机制反驳。",
+            "locator": "/summary, /gates/observation and /hypothesis_assessments",
+            "schema_version": 1,
+            "source_key": "result_analysis_002",
+            "source_type": "frozen_input"
+          }
+        ],
+        "evidence_item_keys": [],
+        "findings": [
+          {
+            "epistemic_status": "inference",
+            "evidence_keys": [
+              "experiment_plan",
+              "current_progress_001",
+              "current_progress_002"
+            ],
+            "finding_key": "review.minimal_revision_preserves_protocol",
+            "rationale": "逐字段核对显示案例、comparison_contract、frozen_invariants、prediction_tests 和 validation checks 未被结果反向改写；变化集中在原审查要求的收尾字段。",
+            "schema_version": 1,
+            "statement": "修订保持原六案例物理设置、案例身份、比较变量、预测测试、判别阈值和验证检查，仅改变完成状态及其历史解释，并新增阶段关闭停止条件。"
+          },
+          {
+            "epistemic_status": "inference",
+            "evidence_keys": [
+              "experiment_plan",
+              "result_analysis_001",
+              "result_analysis_002"
+            ],
+            "finding_key": "review.completed_outcomes_remain_inconclusive",
+            "rationale": "两材料 own-anchor WRMSE 远超 0.15-decade 充分性门，且 M0-M2/S0-S2 的 T 响应跨低、中、高类别，正好落入预注册 inconclusive 条件。",
+            "schema_version": 1,
+            "statement": "两个当前目标被如实记录为已完成且均为 inconclusive；负 G 只作描述，尾部类别的不稳定性也未被提升为支持或排除结论。"
+          },
+          {
+            "epistemic_status": "inference",
+            "evidence_keys": [
+              "experiment_plan",
+              "current_progress_003",
+              "current_progress_004",
+              "experiment_results_001",
+              "experiment_results_002",
+              "result_analysis_001"
+            ],
+            "finding_key": "review.execution_history_and_recovery_separated",
+            "rationale": "原结果仍显示 failed 和 exit 97；恢复记录及最新分析只补齐实际输出到原执行的受控映射，计划的 physical validation rationale 明确保留该差异。",
+            "schema_version": 1,
+            "statement": "计划没有把原外部执行改写为成功；它把不可变的 failed/97 收集终态与恢复后科学证据集合已覆盖全部 13 个必需产物明确分开。"
+          },
+          {
+            "epistemic_status": "inference",
+            "evidence_keys": [
+              "experiment_plan",
+              "current_progress_002"
+            ],
+            "finding_key": "review.nonempty_fields_are_unambiguous_history",
+            "rationale": "priority_rationale 明说这些字段因 schema 非空约束保留，resource_estimate 明说记录已完成工作，validation rationales 使用 completed outcome，第一条 stop condition 又显式禁止同一六案例重跑。",
+            "schema_version": 1,
+            "statement": "合同要求的非空 proposal、current_objectives 与 priority_order 足以作为完整历史收尾记录，且不会合理地被解释为要求重新执行。"
+          },
+          {
+            "epistemic_status": "inference",
+            "evidence_keys": [
+              "experiment_plan",
+              "research_objective",
+              "current_progress_002",
+              "result_analysis_001"
+            ],
+            "finding_key": "review.overall_closure_and_later_conditions_retained",
+            "rationale": "计划保留原 objectives 中的条件性机制比较，并在优先级与价值说明中指出充分性和稳定尾部前提均未满足；它没有生成模型方程、参数、边界或新机制事实。",
+            "schema_version": 1,
+            "statement": "两个 mandatory_targets 已在合格子集边界内覆盖，但总体 mechanism_separation 仍未闭合；新的形状改变结构模型与更强尾部证据均被保留为另行资格化的后续条件。"
+          },
+          {
+            "epistemic_status": "inference",
+            "evidence_keys": [
+              "experiment_plan",
+              "execution_context"
+            ],
+            "finding_key": "review.future_feasibility_remains_conditioned",
+            "rationale": "execution_context 未给出未来模型所需的能力和限制，受审计划没有把这种后续可行性错误地当作当前收尾前提或现成资格。",
+            "schema_version": 1,
+            "statement": "当前执行上下文足以识别历史后端，却不足以独立确认尚未选择的新结构性反事实可实现；计划正确地把该确认留给模型选定后的后端可行性和匹配审查。"
+          }
+        ],
+        "global_confounders": [
+          "材料标签与 D 配对，因此现有实验不能分离一般材料效应与扩散率效应。",
+          "冻结常数 D/固定边界家族对两材料剖面均严重不充分，边界增益没有机制解释资格。",
+          "共享支持、缺口、检测状态和不确定度使尾部类别依赖掩码。",
+          "原外部执行终态仍为 failed/97；恢复完整性只支持有限科学分析，不建立成功执行声明。"
+        ],
+        "hypothesis_reviews": [
+          {
+            "confounders": [
+              "冻结常数 D/固定边界家族未通过两材料 own-anchor adequacy。",
+              "材料标签始终与论文报告的 D 配对。",
+              "现有案例没有改变剖面形状的结构性物理。"
+            ],
+            "falsifiability": "pass",
+            "hypothesis_key": "hypothesis.surface_boundary_control",
+            "identifiability": "pass",
+            "missing_inputs": [],
+            "physical_plausibility": "pass",
+            "rationale": "原协议在充分性与收敛门通过时对有限边界锚点假设具有明确支持、反驳和 inconclusive 区域，因此其条件性可证伪性与可辨识性仍成立。实际 own-anchor 充分性失败只决定本轮结果为 inconclusive，并表明同一边界幅度家族不能解决剩余结构性矛盾；修订忠实保留了这个边界。",
+            "schema_version": 1,
+            "smallest_resolving_action": "保持当前六案例结果为 inconclusive 并关闭原样重跑；若继续机制分离，另行资格化并审查一个只引入一种剖面形状改变结构的有限反事实及新的充分性和判别门。"
+          },
+          {
+            "confounders": [
+              "shared_occlusion 行不是独立观测。",
+              "缺失 point_index 不允许跨越。",
+              "检测状态和独立不确定度仍限制更强尾部结论。",
+              "中心 T 类别随预注册掩码变化。"
+            ],
+            "falsifiability": "pass",
+            "hypothesis_key": "hypothesis.tail_support_artifact",
+            "identifiability": "pass",
+            "missing_inputs": [],
+            "physical_plausibility": "pass",
+            "rationale": "原协议对稳定支持、稳定排除和场景依赖的 inconclusive 区域有预注册定义，因而有限问题本身可证伪且条件性可辨识。实际 M0-M2/S0-S2 结果跨多个类别，说明当前证据落入预定 inconclusive 区域；修订没有事后改变掩码、阈值、相邻规则或证据资格边界。",
+            "schema_version": 1,
+            "smallest_resolving_action": "无需重跑 TCAD；若需要超出当前 inconclusive 的结论，先取得系列身份明确、检测状态一致且带独立不确定度的合格作者原始 SIMS 行，再按原无跨缺口规则归约。"
+          }
+        ],
+        "next_actions": [
+          "将本六案例 ExperimentPortfolio 保持为已完成且两个处分均 inconclusive 的关闭历史；不要原样重跑。",
+          "总体机制分离只有在另行资格化一个有限、形状改变的结构模型并完成后端可行性和匹配审查后才能进入新实验。",
+          "更强尾部结论只有在合格作者原始 SIMS 行补齐系列身份、检测状态和独立不确定度后再评估。",
+          "若未来因独立需求创建新的外部执行记录，先把六个 TDR expected_outputs 改为实际 *_fps.tdr 路径并完成匹配实现审查；该维护不是当前科学证据缺口。"
+        ],
+        "review_target": "experiment_portfolio",
+        "schema_version": 1,
+        "summary": "受审对象是收尾修订后的完整 ExperimentPortfolio。与绑定的原计划相比，修订只更新了完成状态、优先级与价值说明、资源与验证的历史说明，并新增明确的阶段关闭停止条件；六个案例、物理与数值设置、比较身份、冻结不变量、预测测试、判别阈值和验证检查保持不变。绑定分析支持两个 current_objectives 均已履行其注册比较，但充分性失败和掩码类别变化使两项处分均只能为 inconclusive。计划清楚区分原外部执行不可变的 failed/97 与受控恢复后科学产物完整性，且明确停止为补齐当前证据而重跑。总体 mechanism_separation closure_requirement 与更强尾部结论均作为条件性后续工作保留，没有被当前完成状态冒充，也没有引入未绑定的新模型、参数或机制事实。非空 proposal、current_objectives 与 priority_order 在全文中被限定为合同所需的关闭历史记录，不能合理解释为新的执行请求。因此该修订已忠实、最小且充分地回应原独立审查。通过不授予执行批准、项目维护资格或后续科学基础资格。",
+        "verdict": "pass"
+      },
+      "schema": "scidiscovery.scientific-review.v1"
+    },
+    "sealed_output_status": "available",
+    "started_at": "2026-09-11T15:22:37.891914Z",
+    "state": "completed"
+  },
+  "isError": false
+}
+

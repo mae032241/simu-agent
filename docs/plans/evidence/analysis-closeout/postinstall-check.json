@@ -1,0 +1,57 @@
+{
+  "checked_at": "2026-09-12T14:23:21.229469+00:00",
+  "files": [
+    {
+      "source": "plugins/curve_score/curve_score/analysis_workspace.py",
+      "installed": "/opt/scidiscovery-m7/site/curve_score/analysis_workspace.py",
+      "expected_sha256": "b4952e7b1f8208370abb8fa18c07eb9a597e670250e9506053f5f8193b12e3c7",
+      "present": true,
+      "installed_sha256": "b4952e7b1f8208370abb8fa18c07eb9a597e670250e9506053f5f8193b12e3c7",
+      "matches": true
+    },
+    {
+      "source": "src/scidiscovery/artifact_agent/service/local_process_observation.py",
+      "installed": "/opt/scidiscovery-m7/site/scidiscovery/artifact_agent/service/local_process_observation.py",
+      "expected_sha256": "14dee17d9a76cd1fb7f8516e76133f310a4568921ddafeb91a4cbf66ffab84e0",
+      "present": true,
+      "installed_sha256": "14dee17d9a76cd1fb7f8516e76133f310a4568921ddafeb91a4cbf66ffab84e0",
+      "matches": true
+    },
+    {
+      "source": "src/scidiscovery/artifact_agent/interfaces/mcp_root_run_routes.py",
+      "installed": "/opt/scidiscovery-m7/site/scidiscovery/artifact_agent/interfaces/mcp_root_run_routes.py",
+      "expected_sha256": "5c742c562c775cdd4ceced4729a83fc62d06c140019d216984ae65c403562562",
+      "present": true,
+      "installed_sha256": "5c742c562c775cdd4ceced4729a83fc62d06c140019d216984ae65c403562562",
+      "matches": true
+    },
+    {
+      "source": "src/scidiscovery/artifact_agent/service/tool_evidence.py",
+      "installed": "/opt/scidiscovery-m7/site/scidiscovery/artifact_agent/service/tool_evidence.py",
+      "expected_sha256": "094e0985094b290a41f96846430d880ab841efcda48f8043c81aa62811ac150e",
+      "present": true,
+      "installed_sha256": "094e0985094b290a41f96846430d880ab841efcda48f8043c81aa62811ac150e",
+      "matches": true
+    },
+    {
+      "source": "src/scidiscovery/artifact_agent/service/runs.py",
+      "installed": "/opt/scidiscovery-m7/site/scidiscovery/artifact_agent/service/runs.py",
+      "expected_sha256": "fc58697872810138cd9d50d6b9f53fc798170857a09981741b32869d94bd027a",
+      "present": true,
+      "installed_sha256": "fc58697872810138cd9d50d6b9f53fc798170857a09981741b32869d94bd027a",
+      "matches": true
+    },
+    {
+      "source": "src/scidiscovery/artifact_agent/interfaces/mcp_local_worker.py",
+      "installed": "/opt/scidiscovery-m7/site/scidiscovery/artifact_agent/interfaces/mcp_local_worker.py",
+      "expected_sha256": "89ce55563a1f39341fae6732341339a7db40f4fd41354258120ffc88451bb724",
+      "present": true,
+      "installed_sha256": "89ce55563a1f39341fae6732341339a7db40f4fd41354258120ffc88451bb724",
+      "matches": true
+    }
+  ],
+  "all_six_match": true,
+  "service_status": "ExecMainStartTimestamp=Sat 2026-09-12 22:22:15 CST\nId=scidiscovery-control.service\nActiveState=active\nSubState=running\n\nExecMainStartTimestamp=Sat 2026-09-12 22:22:15 CST\nId=scidiscovery-approval-ui.service\nActiveState=active\nSubState=running\n",
+  "session_state": "unbound",
+  "production_recovery_verified": false
+}

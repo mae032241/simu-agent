@@ -11,16 +11,13 @@ from pathlib import Path
 from typing import Any, Sequence
 
 from ..approval_ui import ApprovalUI
-from ..portable_bundle import (
-    export_active_research_bundle,
-    import_active_research_bundle,
-    load_active_bundle_selection,
-    verify_active_research_bundle,
-)
 from .mcp_root import RootToolFacade
 from ..runtime import open_runtime, read_secret_file
 from ..schema.approval import LocalIdentityRef
 from ..schema.common import canonical_json
+from ..service import (
+    StateMaintenanceLock,
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -29,18 +26,20 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--state-root", type=Path, default=Path(".scidiscovery-state")
     )
-    parser.add_argument("--task-secret-file", type=Path)
     parser.add_argument("--approval-secret-file", type=Path)
     parser.add_argument("--shared-group", action="store_true")
     parser.add_argument("--instance")
     commands = parser.add_subparsers(dest="command", required=True)
 
     initialize = commands.add_parser("init")
-    initialize.add_argument("platform", choices=("codex", "claude", "both"))
+    initialize.add_argument("platform", choices=("codex",))
     initialize.add_argument("--python", type=Path, default=Path(sys.executable))
     initialize.add_argument("--control-socket", type=Path, required=True)
-    initialize.add_argument("--worker-socket", type=Path, required=True)
+    initialize.add_argument(
+        "--worker-backend", choices=("local", "hardened"), default="local"
+    )
     initialize.add_argument("--dry-run", action="store_true")
+    initialize.add_argument("--plugin-config", action="append", default=[])
 
     ingest = commands.add_parser("ingest-file")
     ingest.add_argument("name")
@@ -82,6 +81,11 @@ def build_parser() -> argparse.ArgumentParser:
     serve_ui.add_argument("--port", type=int, default=0)
     serve_ui.add_argument("--identity-id", default="local_user")
     serve_ui.add_argument("--display-name", default="Local user")
+    serve_ui.add_argument("--local-workspace-root", type=Path)
+    serve_ui.add_argument("--plugin-config", action="append", default=[])
+    serve_ui.add_argument(
+        "--worker-backend", choices=("local", "hardened"), default="local"
+    )
     return parser
 
 
@@ -100,13 +104,18 @@ def _run(args: argparse.Namespace) -> Any:
     state = args.state_root.expanduser().absolute()
     if args.command == "init":
         from scidiscovery.platforms import initialize_platform
+        from ..runtime_plugin_bindings import parse_plugin_config_assignments
 
         report = initialize_platform(
             args.platform,
             args.project_root,
             python_executable=args.python,
             control_socket=args.control_socket,
-            worker_socket=args.worker_socket,
+            state_root=state,
+            worker_backend=args.worker_backend,
+            runtime_plugin_configs=parse_plugin_config_assignments(
+                tuple(args.plugin_config)
+            ),
             dry_run=args.dry_run,
         )
         return {
@@ -115,12 +124,23 @@ def _run(args: argparse.Namespace) -> Any:
             "unchanged": [str(path) for path in report.unchanged],
         }
     if args.command == "active-bundle-export":
-        return export_active_research_bundle(
-            state_root=state,
-            selection=load_active_bundle_selection(args.selection),
-            output=args.output,
+        from ..portable_bundle import (
+            export_active_research_bundle,
+            load_active_bundle_selection,
         )
+
+        maintenance = StateMaintenanceLock(
+            state / "maintenance.lock", shared_group=args.shared_group
+        )
+        with maintenance.shared():
+            return export_active_research_bundle(
+                state_root=state,
+                selection=load_active_bundle_selection(args.selection),
+                output=args.output,
+            )
     if args.command == "active-bundle-verify":
+        from ..portable_bundle import verify_active_research_bundle
+
         manifest = verify_active_research_bundle(args.bundle)
         return {
             "bundle_name": manifest.bundle_name,
@@ -132,83 +152,108 @@ def _run(args: argparse.Namespace) -> Any:
             "status": "verified",
         }
 
+    approval_secret = read_secret_file(
+        args.approval_secret_file or state / "secrets" / "approval-receipt.key",
+        label="approval receipt",
+    )
     runtime = open_runtime(
         project_root=args.project_root,
         state_root=state,
-        task_token_secret=read_secret_file(
-            args.task_secret_file or state / "secrets" / "task-token.key",
-            label="task token",
-        ),
-        approval_receipt_secret=read_secret_file(
-            args.approval_secret_file or state / "secrets" / "approval-receipt.key",
-            label="approval receipt",
-        ),
+        approval_receipt_secret=approval_secret,
         actor_id="admin_cli",
         shared_group=args.shared_group,
+        worker_backend=getattr(args, "worker_backend", "local"),
+        local_workspace_root=getattr(args, "local_workspace_root", None),
     )
     if args.command == "instance-create":
-        return _instance_value(
-            runtime.scheduler_bindings.create_instance(
-                name=args.name, title=args.title, objective=args.objective
-            )
-        )
-    if args.command == "instance-list":
-        return {
-            "instances": [
-                _instance_value(value)
-                for value in runtime.scheduler_bindings.list_instances(
-                    state=args.state
+        with runtime.maintenance.shared():
+            return _instance_value(
+                runtime.scheduler_bindings.create_instance(
+                    name=args.name, title=args.title, objective=args.objective
                 )
-            ]
-        }
+            )
+    if args.command == "instance-list":
+        with runtime.maintenance.shared():
+            return {
+                "instances": [
+                    _instance_value(value)
+                    for value in runtime.scheduler_bindings.list_instances(
+                        state=args.state
+                    )
+                ]
+            }
     if args.command == "instance-close":
-        instance = runtime.scheduler_bindings.select_instance(name=args.name)
-        return RootToolFacade(
-            runtime.artifacts,
-            runtime.intake,
-            tasks=runtime.tasks,
-            approvals=runtime.approvals,
-            executions=runtime.executions,
-            bindings=runtime.scheduler_bindings,
-            instance=instance.instance_id,
-        ).instance_close()
+        with runtime.maintenance.shared():
+            instance = runtime.scheduler_bindings.select_instance(name=args.name)
+            return RootToolFacade(
+                runtime.artifacts,
+                runtime.intake,
+                runs=runtime.runs,
+                approvals=runtime.approvals,
+                executions=runtime.executions,
+                bindings=runtime.scheduler_bindings,
+                instance=instance.instance_id,
+                operation_catalog=runtime.operation_catalog,
+            ).instance_close()
     if args.command == "active-bundle-import":
+        from ..portable_bundle import import_active_research_bundle
+
         if args.instance is None:
             raise ValueError("--instance is required for active bundle import")
-        return import_active_research_bundle(
-            runtime=runtime,
-            instance_name=args.instance,
-            bundle_path=args.bundle,
-        )
+        with runtime.maintenance.shared():
+            return import_active_research_bundle(
+                runtime=runtime,
+                instance_name=args.instance,
+                bundle_path=args.bundle,
+            )
     if args.command in {"ingest-file", "artifact-catalog", "approval-status"}:
         if args.instance is None:
             raise ValueError("--instance is required for instance-scoped commands")
-        instance = runtime.scheduler_bindings.select_instance(name=args.instance)
-        facade = RootToolFacade(
-            runtime.artifacts,
-            runtime.intake,
-            tasks=runtime.tasks,
-            approvals=runtime.approvals,
-            executions=runtime.executions,
-            bindings=runtime.scheduler_bindings,
-            instance=instance.instance_id,
-        )
-        if args.command == "ingest-file":
-            return facade.artifact_ingest_file(
-                name=args.name,
-                relative_path=args.relative_path,
-                media_type=args.media_type,
-                on_conflict=args.on_conflict,
+        with runtime.maintenance.shared():
+            instance = runtime.scheduler_bindings.select_instance(name=args.instance)
+            facade = RootToolFacade(
+                runtime.artifacts,
+                runtime.intake,
+                runs=runtime.runs,
+                approvals=runtime.approvals,
+                executions=runtime.executions,
+                bindings=runtime.scheduler_bindings,
+                instance=instance.instance_id,
+                operation_catalog=runtime.operation_catalog,
             )
-        if args.command == "artifact-catalog":
-            return facade.artifact_catalog(name=args.name)
-        return facade.approval_status(name=args.name)
+            if args.command == "ingest-file":
+                return facade.artifact_ingest_file(
+                    name=args.name,
+                    relative_path=args.relative_path,
+                    media_type=args.media_type,
+                    on_conflict=args.on_conflict,
+                )
+            if args.command == "artifact-catalog":
+                return facade.artifact_catalog(name=args.name)
+            return facade.approval_status(name=args.name)
     if args.command == "serve-approval-ui":
+        assert runtime.approvals is not None
+        from ..approval_ui.read_model import InstanceReadModel
+        from ..approval_ui.trajectory import TrajectoryStore
+        from ..service.engineering_diagnostics import EngineeringDiagnostics
+        from ..service.execution_collection import ExecutionCollection
+        from ..service.instance_archive import InstanceArchive
+        from ..runtime_plugin_bindings import parse_plugin_config_assignments
+        plugin_configs = parse_plugin_config_assignments(tuple(args.plugin_config))
         ui = ApprovalUI(
             runtime.approvals,
             host=args.host,
             port=args.port,
             bindings=runtime.scheduler_bindings,
+            instance_management_secret=approval_secret,
+            maintenance=runtime.maintenance,
+            instance_archive=InstanceArchive(runtime, gate=runtime.instance_maintenance, plugin_configs=plugin_configs),
+            trajectory_store=TrajectoryStore(state / "ui" / "workbench.sqlite3"),
+            read_model=InstanceReadModel(artifacts=runtime.artifacts, bindings=runtime.scheduler_bindings,
+                runs=runtime.runs, approvals=runtime.approvals, executions=runtime.executions,
+                operation_catalog=runtime.operation_catalog,
+                engineering_diagnostics=EngineeringDiagnostics(state / "engineering-diagnostics"),
+                execution_collection=ExecutionCollection(runtime.executions, plugin_configs={})),
             local_identity=LocalIdentityRef(
                 identity_id=args.identity_id,
                 display_name=args.display_name,

@@ -1,0 +1,1484 @@
+FFFF                                                                     [100%]
+=================================== FAILURES ===================================
+_____ test_unpublished_analysis_survives_failure_and_new_assignment[False] _____
+
+self = <scidiscovery.artifact_agent.service.runs.RunService object at 0x7f339f6a4ef0>
+bound = BoundOperationCall(compiled=CompiledOperation(plugin_id='tcad_artifact', spec=OperationSpec(operation_id='tcad.result....posure='on_demand', usage='evidence_inventory')), instruction='Analyze the bound fixture outputs.', executor_plan=None)
+instance_id = 'ins_e6762ccca4514cef8702fc1798deac11'
+output_binding_name = 'analysis.output', output_logical_name = 'analysis.output'
+output_revision = 1
+output_binding_fingerprint = '0a4f75b540aa12691f4d8ab1b04272a703f1f000b0e60271ddf9b6ba3e1fdfa9'
+resume_from = None, draft_from = None, draft_digest = None
+
+    def schedule(
+        self,
+        bound: BoundOperationCall,
+        *,
+        instance_id: str,
+        output_binding_name: str,
+        output_logical_name: str,
+        output_revision: int,
+        output_binding_fingerprint: str,
+        resume_from: str | None = None,
+        draft_from: str | None = None,
+        draft_digest: str | None = None,
+    ) -> str:
+        if resume_from is not None and draft_from is not None:
+            raise RunStateConflict("resume_from and draft_from are mutually exclusive")
+        if draft_digest is not None and draft_from is None:
+            raise RunStateConflict("draft digest requires a source Run")
+        compiled = bound.compiled
+        if compiled.spec.executor.kind != "agent":
+            raise ValueError("RunService accepts Agent operations only")
+        if not self.backend.supports_operation(compiled):
+            raise RunError("runtime backend does not support the compiled Operation")
+        if any(port.collection is not None for port in compiled.spec.outputs) and not tool_evidence_ports(compiled):
+            raise RunError("minimal local Run does not yet support output collections")
+        if compiled.spec.limits is None:
+            raise ValueError("compiled operation has no limits")
+        # Reconstruct the call from authoritative records before any Run/workspace write.
+        by_port = {port.name: [] for port in compiled.spec.inputs}
+        for item in bound.inputs:
+            envelope = self.artifacts.catalog(item.artifact.ref)
+            producer = self.completed_for_output(envelope.ref)
+            by_port.setdefault(item.port_name, []).append(InvocationArtifact(
+                artifact_name=item.artifact_name, ref=envelope.ref, schema_id=envelope.schema_id,
+                media_type=envelope.media_type, size_bytes=envelope.size_bytes,
+                parent_refs=envelope.parent_refs, labels=tuple(envelope.labels.items()),
+                producer_run_id=producer.run_id if producer else None,
+                current=self.input_is_current(instance_id=instance_id,
+                    artifact_name=item.artifact_name, artifact_ref=envelope.ref),
+                handoff_verdict=(self.signal_for_output(envelope.ref, require_current=False).verdict
+                    if self.signal_for_output(envelope.ref, require_current=False) else None),
+                historical=item.artifact.historical,
+            ))
+        bound = preflight_operation(compiled, name=bound.name,
+            artifacts_by_port={name: tuple(items) for name, items in by_port.items()},
+            instruction=bound.instruction, read_artifact=self.artifacts.read,
+            source_name_overrides={(item.port_name, item.artifact_name): item.source_name
+                                   for item in bound.inputs})
+        raw_inputs = tuple(
+            RunInputBinding(
+                port_name=item.port_name,
+                source_name=item.source_name,
+                artifact_name=item.artifact_name,
+                artifact_ref=item.artifact.ref,
+                media_type=item.artifact.media_type,
+                exposure=item.exposure,
+                usage=item.usage,
+                require_current=next(
+                    port.require_current
+                    for port in compiled.spec.inputs
+                    if port.name == item.port_name
+                ),
+            )
+            for item in bound.inputs
+        )
+        for item in raw_inputs:
+            self.artifacts.verify(item.artifact_ref)
+        run_id = f"run_{uuid.uuid4().hex}"
+        created_at = timestamp()
+        deadline_at = future(created_at, compiled.spec.limits.timeout_seconds)
+        recovery_digest: str | None = None
+        with self._connect() as connection:
+            self._attach_scheduler(connection)
+            connection.execute("BEGIN IMMEDIATE")
+            frozen_inputs = self.current.freeze(connection, instance_id, raw_inputs)
+            active_revision = active_direct_revision_ports(
+                compiled, (item.port_name for item in frozen_inputs)
+            )
+            revision_base = (
+                None
+                if active_revision is None
+                else next(
+                    item.artifact_ref
+                    for item in frozen_inputs
+                    if item.port_name == active_revision[0].name
+                )
+            )
+            if (
+                revision_base is not None
+                and compiled.spec.review is not None
+                and compiled.spec.review.max_revisions
+                and self._revision_successor(
+                    connection,
+                    instance_id=instance_id,
+                    operation_digest=compiled.digest,
+                    base_ref=revision_base,
+                )
+                is not None
+            ):
+                connection.execute("ROLLBACK")
+                raise RunSlotBusy("this revision base already has a successor Run")
+            if resume_from is not None:
+                source = status_from_row(self._row(connection, resume_from))
+                recovery_digest = self._validate_resume(
+                    connection,
+                    source,
+                    compiled.digest,
+                    tuple(item.artifact_ref for item in frozen_inputs),
+                    compiled.spec.limits.max_attempts,
+                )
+            if resume_from is not None and source.instance_id != instance_id:
+                raise RunStateConflict("recovery source belongs to another instance")
+            if draft_from is not None:
+                source = status_from_row(self._row(connection, draft_from))
+                recovery_digest = self._validate_draft_source(
+                    connection, source, compiled=compiled, instance_id=instance_id
+                )
+                if draft_digest is not None and draft_digest != recovery_digest:
+                    raise RunStateConflict("draft source digest changed")
+            request_digest = canonical_sha256(
+                {
+                    "operation_id": compiled.spec.operation_id,
+                    "operation_version": compiled.spec.version,
+                    "operation_digest": compiled.digest,
+                    "backend": self.backend.backend_id,
+                    "backend_version": self.backend.backend_version,
+                    "backend_capabilities": self.backend.capabilities,
+                    "instance_id": instance_id,
+                    "output_binding": {
+                        "name": output_binding_name,
+                        "logical_name": output_logical_name,
+                        "revision": output_revision,
+                        "request_fingerprint": output_binding_fingerprint,
+                    },
+                    "instruction": bound.instruction or "",
+                    "inputs": json.loads(inputs_json(frozen_inputs)),
+                    "limits": compiled.spec.limits.model_dump(mode="json"),
+                    "resume_from": resume_from,
+                    **({"draft_from": draft_from, "draft_digest": recovery_digest}
+                       if draft_from is not None else {}),
+                    "recovery_digest": recovery_digest,
+                }
+            )
+            try:
+                connection.execute(
+                    """
+                    INSERT INTO runs (
+                        run_id, instance_id, operation_id, operation_version,
+                        operation_digest, agent_type, instruction, inputs_json,
+                        backend_id, backend_version, backend_capabilities_json,
+                        output_binding_name, output_logical_name,
+                        output_revision, output_binding_fingerprint,
+                        request_digest, resume_from_run_id, draft_from_run_id, recovery_policy_json,
+                        state, created_at, deadline_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                              ?, ?, 'queued', ?, ?)
+                    """,
+                    (
+                        run_id,
+                        instance_id,
+                        compiled.spec.operation_id,
+                        compiled.spec.version,
+                        compiled.digest,
+                        operation_agent_type(compiled),
+                        bound.instruction or "",
+                        inputs_json(frozen_inputs),
+                        self.backend.backend_id,
+                        self.backend.backend_version,
+                        canonical_json(self.backend.capabilities),
+                        output_binding_name,
+                        output_logical_name,
+                        output_revision,
+                        output_binding_fingerprint,
+                        request_digest,
+                        resume_from,
+                        draft_from,
+                        canonical_json(self._recovery_policy(compiled)),
+                        created_at,
+                        deadline_at,
+                    ),
+                )
+            except sqlite3.IntegrityError as error:
+                connection.execute("ROLLBACK")
+                raise RunSlotBusy(
+                    "this compiled Operation already has an unopened or running Run"
+                ) from error
+            connection.execute("COMMIT")
+        try:
+            materialized_inputs = tuple(
+                WorkspaceInput(
+                    name=item.source_name,
+                    media_type=item.media_type,
+                    content=self.artifacts.read(item.artifact_ref),
+                )
+                for item in frozen_inputs
+                if item.exposure != "handoff_only"
+            )
+            input_bytes = {item.name: item.content for item in materialized_inputs}
+            direct_revision = active_direct_revision_ports(
+                compiled, (item.port_name for item in frozen_inputs)
+            )
+>           workspace_hooks = operation_workspace_hooks(compiled)
+                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+src/scidiscovery/artifact_agent/service/runs.py:303: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+compiled = CompiledOperation(plugin_id='tcad_artifact', spec=OperationSpec(operation_id='tcad.result.analyze.v1', version='1', ca...he canonical payload must fit the compiled output byte limit.', 'output_paths': ('/',), 'required_inputs': ()}))})})}))
+
+    def operation_workspace_hooks(
+        compiled: CompiledOperation,
+    ) -> Mapping[str, Callable[..., Any]]:
+        """Resolve the hook dependencies of this operation's workspace component."""
+    
+        template = compiled.permission_template
+        if template is None:
+            return MappingProxyType({})
+        workspace = compiled.component_specs[template.workspace]
+        hooks: dict[str, Callable[..., Any]] = {}
+        for reference in workspace.resources:
+            key = f"{reference.plugin_id or compiled.plugin_id}:{reference.component_id}"
+>           component = compiled.component_specs[key]
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           KeyError: 'tcad_artifact:analysis_materializer'
+
+src/scidiscovery/operations/workspace.py:124: KeyError
+
+During handling of the above exception, another exception occurred:
+
+self = <scidiscovery.artifact_agent.interfaces.mcp_root.RootToolFacade object at 0x7f339f6a5130>
+bound = BoundOperationCall(compiled=CompiledOperation(plugin_id='tcad_artifact', spec=OperationSpec(operation_id='tcad.result....posure='on_demand', usage='evidence_inventory')), instruction='Analyze the bound fixture outputs.', executor_plan=None)
+on_conflict = 'reject', resume_from = None, draft_from = None
+
+    def _invoke_local_run(
+        self,
+        bound: BoundOperationCall,
+        on_conflict: str,
+        *,
+        resume_from: str | None,
+        draft_from: str | None = None,
+    ) -> dict[str, Any]:
+        resume_run_id, draft_run_id, draft_digest, fingerprint, target = self._prepare_local_run(
+            bound, on_conflict, resume_from=resume_from, draft_from=draft_from
+        )
+        if target.existing_object_id is not None:
+            return self.run_status(name=target.name)
+        output_name = _derived_name(target.name, "output")
+        output_logical_name = _derived_name(target.logical_name, "output")
+        output_fingerprint = canonical_sha256(
+            {"run_request": fingerprint, "output": "primary"}
+        )
+        try:
+>           run_id = self.runs.schedule(
+                bound,
+                instance_id=self._instance_id(),
+                output_binding_name=output_name,
+                output_logical_name=output_logical_name,
+                output_revision=target.revision,
+                output_binding_fingerprint=output_fingerprint,
+                resume_from=resume_run_id,
+                draft_from=draft_run_id,
+                draft_digest=draft_digest,
+            )
+
+src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py:265: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/scidiscovery/artifact_agent/service/runs.py:341: in schedule
+    self.record_failure(
+src/scidiscovery/artifact_agent/service/runs.py:604: in record_failure
+    return self._finish_failed_workspace(self.status(run_id))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/scidiscovery/artifact_agent/service/runs.py:635: in _finish_failed_workspace
+    snapshotter = operation_workspace_hooks(compiled).get("workspace_snapshotter")
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+compiled = CompiledOperation(plugin_id='tcad_artifact', spec=OperationSpec(operation_id='tcad.result.analyze.v1', version='1', ca...he canonical payload must fit the compiled output byte limit.', 'output_paths': ('/',), 'required_inputs': ()}))})})}))
+
+    def operation_workspace_hooks(
+        compiled: CompiledOperation,
+    ) -> Mapping[str, Callable[..., Any]]:
+        """Resolve the hook dependencies of this operation's workspace component."""
+    
+        template = compiled.permission_template
+        if template is None:
+            return MappingProxyType({})
+        workspace = compiled.component_specs[template.workspace]
+        hooks: dict[str, Callable[..., Any]] = {}
+        for reference in workspace.resources:
+            key = f"{reference.plugin_id or compiled.plugin_id}:{reference.component_id}"
+>           component = compiled.component_specs[key]
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           KeyError: 'tcad_artifact:analysis_materializer'
+
+src/scidiscovery/operations/workspace.py:124: KeyError
+
+The above exception was the direct cause of the following exception:
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-183/test_unpublished_analysis_surv0')
+reuse_route = False
+
+    @pytest.mark.parametrize('reuse_route', [False, True])
+    def test_unpublished_analysis_survives_failure_and_new_assignment(tmp_path, reuse_route):
+        from copy import deepcopy
+        import subprocess
+        import sys
+        from scidiscovery.artifact_agent.interfaces.mcp_local_worker import LocalWorkerMCPRouter
+>       system, worker, opened, _ = recovery_system(tmp_path)
+                                    ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/operations/test_analysis_evidence_recovery.py:14: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/operations/test_analysis_evidence_recovery.py:110: in recovery_system
+    root.call_tool('operation_invoke',request)
+src/scidiscovery/artifact_agent/interfaces/mcp_root.py:403: in call_tool
+    return getattr(self.facade, name)(**values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py:196: in operation_invoke
+    result = self._invoke_agent_operation(
+src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py:242: in _invoke_agent_operation
+    return self._invoke_local_run(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <scidiscovery.artifact_agent.interfaces.mcp_root.RootToolFacade object at 0x7f339f6a5130>
+bound = BoundOperationCall(compiled=CompiledOperation(plugin_id='tcad_artifact', spec=OperationSpec(operation_id='tcad.result....posure='on_demand', usage='evidence_inventory')), instruction='Analyze the bound fixture outputs.', executor_plan=None)
+on_conflict = 'reject', resume_from = None, draft_from = None
+
+    def _invoke_local_run(
+        self,
+        bound: BoundOperationCall,
+        on_conflict: str,
+        *,
+        resume_from: str | None,
+        draft_from: str | None = None,
+    ) -> dict[str, Any]:
+        resume_run_id, draft_run_id, draft_digest, fingerprint, target = self._prepare_local_run(
+            bound, on_conflict, resume_from=resume_from, draft_from=draft_from
+        )
+        if target.existing_object_id is not None:
+            return self.run_status(name=target.name)
+        output_name = _derived_name(target.name, "output")
+        output_logical_name = _derived_name(target.logical_name, "output")
+        output_fingerprint = canonical_sha256(
+            {"run_request": fingerprint, "output": "primary"}
+        )
+        try:
+            run_id = self.runs.schedule(
+                bound,
+                instance_id=self._instance_id(),
+                output_binding_name=output_name,
+                output_logical_name=output_logical_name,
+                output_revision=target.revision,
+                output_binding_fingerprint=output_fingerprint,
+                resume_from=resume_run_id,
+                draft_from=draft_run_id,
+                draft_digest=draft_digest,
+            )
+        except Exception as error:
+>           raise OperationEngineeringError("local_run_creation_failed") from error
+E           scidiscovery.operations.input_validation.OperationEngineeringError: local_run_creation_failed
+
+src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py:277: OperationEngineeringError
+_____ test_unpublished_analysis_survives_failure_and_new_assignment[True] ______
+
+self = <scidiscovery.artifact_agent.service.runs.RunService object at 0x7f33a004d0a0>
+bound = BoundOperationCall(compiled=CompiledOperation(plugin_id='tcad_artifact', spec=OperationSpec(operation_id='tcad.result....posure='on_demand', usage='evidence_inventory')), instruction='Analyze the bound fixture outputs.', executor_plan=None)
+instance_id = 'ins_6c26b6719a9e403faa9b0fb4903a6b8e'
+output_binding_name = 'analysis.output', output_logical_name = 'analysis.output'
+output_revision = 1
+output_binding_fingerprint = '60f35a05249cbee32ec2f54272aa0265c7a8cd1abb442bfbced99d55b1c647db'
+resume_from = None, draft_from = None, draft_digest = None
+
+    def schedule(
+        self,
+        bound: BoundOperationCall,
+        *,
+        instance_id: str,
+        output_binding_name: str,
+        output_logical_name: str,
+        output_revision: int,
+        output_binding_fingerprint: str,
+        resume_from: str | None = None,
+        draft_from: str | None = None,
+        draft_digest: str | None = None,
+    ) -> str:
+        if resume_from is not None and draft_from is not None:
+            raise RunStateConflict("resume_from and draft_from are mutually exclusive")
+        if draft_digest is not None and draft_from is None:
+            raise RunStateConflict("draft digest requires a source Run")
+        compiled = bound.compiled
+        if compiled.spec.executor.kind != "agent":
+            raise ValueError("RunService accepts Agent operations only")
+        if not self.backend.supports_operation(compiled):
+            raise RunError("runtime backend does not support the compiled Operation")
+        if any(port.collection is not None for port in compiled.spec.outputs) and not tool_evidence_ports(compiled):
+            raise RunError("minimal local Run does not yet support output collections")
+        if compiled.spec.limits is None:
+            raise ValueError("compiled operation has no limits")
+        # Reconstruct the call from authoritative records before any Run/workspace write.
+        by_port = {port.name: [] for port in compiled.spec.inputs}
+        for item in bound.inputs:
+            envelope = self.artifacts.catalog(item.artifact.ref)
+            producer = self.completed_for_output(envelope.ref)
+            by_port.setdefault(item.port_name, []).append(InvocationArtifact(
+                artifact_name=item.artifact_name, ref=envelope.ref, schema_id=envelope.schema_id,
+                media_type=envelope.media_type, size_bytes=envelope.size_bytes,
+                parent_refs=envelope.parent_refs, labels=tuple(envelope.labels.items()),
+                producer_run_id=producer.run_id if producer else None,
+                current=self.input_is_current(instance_id=instance_id,
+                    artifact_name=item.artifact_name, artifact_ref=envelope.ref),
+                handoff_verdict=(self.signal_for_output(envelope.ref, require_current=False).verdict
+                    if self.signal_for_output(envelope.ref, require_current=False) else None),
+                historical=item.artifact.historical,
+            ))
+        bound = preflight_operation(compiled, name=bound.name,
+            artifacts_by_port={name: tuple(items) for name, items in by_port.items()},
+            instruction=bound.instruction, read_artifact=self.artifacts.read,
+            source_name_overrides={(item.port_name, item.artifact_name): item.source_name
+                                   for item in bound.inputs})
+        raw_inputs = tuple(
+            RunInputBinding(
+                port_name=item.port_name,
+                source_name=item.source_name,
+                artifact_name=item.artifact_name,
+                artifact_ref=item.artifact.ref,
+                media_type=item.artifact.media_type,
+                exposure=item.exposure,
+                usage=item.usage,
+                require_current=next(
+                    port.require_current
+                    for port in compiled.spec.inputs
+                    if port.name == item.port_name
+                ),
+            )
+            for item in bound.inputs
+        )
+        for item in raw_inputs:
+            self.artifacts.verify(item.artifact_ref)
+        run_id = f"run_{uuid.uuid4().hex}"
+        created_at = timestamp()
+        deadline_at = future(created_at, compiled.spec.limits.timeout_seconds)
+        recovery_digest: str | None = None
+        with self._connect() as connection:
+            self._attach_scheduler(connection)
+            connection.execute("BEGIN IMMEDIATE")
+            frozen_inputs = self.current.freeze(connection, instance_id, raw_inputs)
+            active_revision = active_direct_revision_ports(
+                compiled, (item.port_name for item in frozen_inputs)
+            )
+            revision_base = (
+                None
+                if active_revision is None
+                else next(
+                    item.artifact_ref
+                    for item in frozen_inputs
+                    if item.port_name == active_revision[0].name
+                )
+            )
+            if (
+                revision_base is not None
+                and compiled.spec.review is not None
+                and compiled.spec.review.max_revisions
+                and self._revision_successor(
+                    connection,
+                    instance_id=instance_id,
+                    operation_digest=compiled.digest,
+                    base_ref=revision_base,
+                )
+                is not None
+            ):
+                connection.execute("ROLLBACK")
+                raise RunSlotBusy("this revision base already has a successor Run")
+            if resume_from is not None:
+                source = status_from_row(self._row(connection, resume_from))
+                recovery_digest = self._validate_resume(
+                    connection,
+                    source,
+                    compiled.digest,
+                    tuple(item.artifact_ref for item in frozen_inputs),
+                    compiled.spec.limits.max_attempts,
+                )
+            if resume_from is not None and source.instance_id != instance_id:
+                raise RunStateConflict("recovery source belongs to another instance")
+            if draft_from is not None:
+                source = status_from_row(self._row(connection, draft_from))
+                recovery_digest = self._validate_draft_source(
+                    connection, source, compiled=compiled, instance_id=instance_id
+                )
+                if draft_digest is not None and draft_digest != recovery_digest:
+                    raise RunStateConflict("draft source digest changed")
+            request_digest = canonical_sha256(
+                {
+                    "operation_id": compiled.spec.operation_id,
+                    "operation_version": compiled.spec.version,
+                    "operation_digest": compiled.digest,
+                    "backend": self.backend.backend_id,
+                    "backend_version": self.backend.backend_version,
+                    "backend_capabilities": self.backend.capabilities,
+                    "instance_id": instance_id,
+                    "output_binding": {
+                        "name": output_binding_name,
+                        "logical_name": output_logical_name,
+                        "revision": output_revision,
+                        "request_fingerprint": output_binding_fingerprint,
+                    },
+                    "instruction": bound.instruction or "",
+                    "inputs": json.loads(inputs_json(frozen_inputs)),
+                    "limits": compiled.spec.limits.model_dump(mode="json"),
+                    "resume_from": resume_from,
+                    **({"draft_from": draft_from, "draft_digest": recovery_digest}
+                       if draft_from is not None else {}),
+                    "recovery_digest": recovery_digest,
+                }
+            )
+            try:
+                connection.execute(
+                    """
+                    INSERT INTO runs (
+                        run_id, instance_id, operation_id, operation_version,
+                        operation_digest, agent_type, instruction, inputs_json,
+                        backend_id, backend_version, backend_capabilities_json,
+                        output_binding_name, output_logical_name,
+                        output_revision, output_binding_fingerprint,
+                        request_digest, resume_from_run_id, draft_from_run_id, recovery_policy_json,
+                        state, created_at, deadline_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                              ?, ?, 'queued', ?, ?)
+                    """,
+                    (
+                        run_id,
+                        instance_id,
+                        compiled.spec.operation_id,
+                        compiled.spec.version,
+                        compiled.digest,
+                        operation_agent_type(compiled),
+                        bound.instruction or "",
+                        inputs_json(frozen_inputs),
+                        self.backend.backend_id,
+                        self.backend.backend_version,
+                        canonical_json(self.backend.capabilities),
+                        output_binding_name,
+                        output_logical_name,
+                        output_revision,
+                        output_binding_fingerprint,
+                        request_digest,
+                        resume_from,
+                        draft_from,
+                        canonical_json(self._recovery_policy(compiled)),
+                        created_at,
+                        deadline_at,
+                    ),
+                )
+            except sqlite3.IntegrityError as error:
+                connection.execute("ROLLBACK")
+                raise RunSlotBusy(
+                    "this compiled Operation already has an unopened or running Run"
+                ) from error
+            connection.execute("COMMIT")
+        try:
+            materialized_inputs = tuple(
+                WorkspaceInput(
+                    name=item.source_name,
+                    media_type=item.media_type,
+                    content=self.artifacts.read(item.artifact_ref),
+                )
+                for item in frozen_inputs
+                if item.exposure != "handoff_only"
+            )
+            input_bytes = {item.name: item.content for item in materialized_inputs}
+            direct_revision = active_direct_revision_ports(
+                compiled, (item.port_name for item in frozen_inputs)
+            )
+>           workspace_hooks = operation_workspace_hooks(compiled)
+                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+src/scidiscovery/artifact_agent/service/runs.py:303: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+compiled = CompiledOperation(plugin_id='tcad_artifact', spec=OperationSpec(operation_id='tcad.result.analyze.v1', version='1', ca...he canonical payload must fit the compiled output byte limit.', 'output_paths': ('/',), 'required_inputs': ()}))})})}))
+
+    def operation_workspace_hooks(
+        compiled: CompiledOperation,
+    ) -> Mapping[str, Callable[..., Any]]:
+        """Resolve the hook dependencies of this operation's workspace component."""
+    
+        template = compiled.permission_template
+        if template is None:
+            return MappingProxyType({})
+        workspace = compiled.component_specs[template.workspace]
+        hooks: dict[str, Callable[..., Any]] = {}
+        for reference in workspace.resources:
+            key = f"{reference.plugin_id or compiled.plugin_id}:{reference.component_id}"
+>           component = compiled.component_specs[key]
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           KeyError: 'tcad_artifact:analysis_materializer'
+
+src/scidiscovery/operations/workspace.py:124: KeyError
+
+During handling of the above exception, another exception occurred:
+
+self = <scidiscovery.artifact_agent.interfaces.mcp_root.RootToolFacade object at 0x7f339f3deae0>
+bound = BoundOperationCall(compiled=CompiledOperation(plugin_id='tcad_artifact', spec=OperationSpec(operation_id='tcad.result....posure='on_demand', usage='evidence_inventory')), instruction='Analyze the bound fixture outputs.', executor_plan=None)
+on_conflict = 'reject', resume_from = None, draft_from = None
+
+    def _invoke_local_run(
+        self,
+        bound: BoundOperationCall,
+        on_conflict: str,
+        *,
+        resume_from: str | None,
+        draft_from: str | None = None,
+    ) -> dict[str, Any]:
+        resume_run_id, draft_run_id, draft_digest, fingerprint, target = self._prepare_local_run(
+            bound, on_conflict, resume_from=resume_from, draft_from=draft_from
+        )
+        if target.existing_object_id is not None:
+            return self.run_status(name=target.name)
+        output_name = _derived_name(target.name, "output")
+        output_logical_name = _derived_name(target.logical_name, "output")
+        output_fingerprint = canonical_sha256(
+            {"run_request": fingerprint, "output": "primary"}
+        )
+        try:
+>           run_id = self.runs.schedule(
+                bound,
+                instance_id=self._instance_id(),
+                output_binding_name=output_name,
+                output_logical_name=output_logical_name,
+                output_revision=target.revision,
+                output_binding_fingerprint=output_fingerprint,
+                resume_from=resume_run_id,
+                draft_from=draft_run_id,
+                draft_digest=draft_digest,
+            )
+
+src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py:265: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/scidiscovery/artifact_agent/service/runs.py:341: in schedule
+    self.record_failure(
+src/scidiscovery/artifact_agent/service/runs.py:604: in record_failure
+    return self._finish_failed_workspace(self.status(run_id))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/scidiscovery/artifact_agent/service/runs.py:635: in _finish_failed_workspace
+    snapshotter = operation_workspace_hooks(compiled).get("workspace_snapshotter")
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+compiled = CompiledOperation(plugin_id='tcad_artifact', spec=OperationSpec(operation_id='tcad.result.analyze.v1', version='1', ca...he canonical payload must fit the compiled output byte limit.', 'output_paths': ('/',), 'required_inputs': ()}))})})}))
+
+    def operation_workspace_hooks(
+        compiled: CompiledOperation,
+    ) -> Mapping[str, Callable[..., Any]]:
+        """Resolve the hook dependencies of this operation's workspace component."""
+    
+        template = compiled.permission_template
+        if template is None:
+            return MappingProxyType({})
+        workspace = compiled.component_specs[template.workspace]
+        hooks: dict[str, Callable[..., Any]] = {}
+        for reference in workspace.resources:
+            key = f"{reference.plugin_id or compiled.plugin_id}:{reference.component_id}"
+>           component = compiled.component_specs[key]
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           KeyError: 'tcad_artifact:analysis_materializer'
+
+src/scidiscovery/operations/workspace.py:124: KeyError
+
+The above exception was the direct cause of the following exception:
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-183/test_unpublished_analysis_surv1')
+reuse_route = True
+
+    @pytest.mark.parametrize('reuse_route', [False, True])
+    def test_unpublished_analysis_survives_failure_and_new_assignment(tmp_path, reuse_route):
+        from copy import deepcopy
+        import subprocess
+        import sys
+        from scidiscovery.artifact_agent.interfaces.mcp_local_worker import LocalWorkerMCPRouter
+>       system, worker, opened, _ = recovery_system(tmp_path)
+                                    ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/operations/test_analysis_evidence_recovery.py:14: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/operations/test_analysis_evidence_recovery.py:110: in recovery_system
+    root.call_tool('operation_invoke',request)
+src/scidiscovery/artifact_agent/interfaces/mcp_root.py:403: in call_tool
+    return getattr(self.facade, name)(**values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py:196: in operation_invoke
+    result = self._invoke_agent_operation(
+src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py:242: in _invoke_agent_operation
+    return self._invoke_local_run(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <scidiscovery.artifact_agent.interfaces.mcp_root.RootToolFacade object at 0x7f339f3deae0>
+bound = BoundOperationCall(compiled=CompiledOperation(plugin_id='tcad_artifact', spec=OperationSpec(operation_id='tcad.result....posure='on_demand', usage='evidence_inventory')), instruction='Analyze the bound fixture outputs.', executor_plan=None)
+on_conflict = 'reject', resume_from = None, draft_from = None
+
+    def _invoke_local_run(
+        self,
+        bound: BoundOperationCall,
+        on_conflict: str,
+        *,
+        resume_from: str | None,
+        draft_from: str | None = None,
+    ) -> dict[str, Any]:
+        resume_run_id, draft_run_id, draft_digest, fingerprint, target = self._prepare_local_run(
+            bound, on_conflict, resume_from=resume_from, draft_from=draft_from
+        )
+        if target.existing_object_id is not None:
+            return self.run_status(name=target.name)
+        output_name = _derived_name(target.name, "output")
+        output_logical_name = _derived_name(target.logical_name, "output")
+        output_fingerprint = canonical_sha256(
+            {"run_request": fingerprint, "output": "primary"}
+        )
+        try:
+            run_id = self.runs.schedule(
+                bound,
+                instance_id=self._instance_id(),
+                output_binding_name=output_name,
+                output_logical_name=output_logical_name,
+                output_revision=target.revision,
+                output_binding_fingerprint=output_fingerprint,
+                resume_from=resume_run_id,
+                draft_from=draft_run_id,
+                draft_digest=draft_digest,
+            )
+        except Exception as error:
+>           raise OperationEngineeringError("local_run_creation_failed") from error
+E           scidiscovery.operations.input_validation.OperationEngineeringError: local_run_creation_failed
+
+src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py:277: OperationEngineeringError
+__________ test_native_writer_after_failure_keeps_original_directory ___________
+
+self = <scidiscovery.artifact_agent.service.runs.RunService object at 0x7f339f92edb0>
+bound = BoundOperationCall(compiled=CompiledOperation(plugin_id='tcad_artifact', spec=OperationSpec(operation_id='tcad.result....posure='on_demand', usage='evidence_inventory')), instruction='Analyze the bound fixture outputs.', executor_plan=None)
+instance_id = 'ins_2438d5b03c8f4576a89e2cebda2fb9e4'
+output_binding_name = 'analysis.output', output_logical_name = 'analysis.output'
+output_revision = 1
+output_binding_fingerprint = '05b0662710f89ae868c3a3ac2df6561947a7d5b93ec25d0188ac19c7916bb620'
+resume_from = None, draft_from = None, draft_digest = None
+
+    def schedule(
+        self,
+        bound: BoundOperationCall,
+        *,
+        instance_id: str,
+        output_binding_name: str,
+        output_logical_name: str,
+        output_revision: int,
+        output_binding_fingerprint: str,
+        resume_from: str | None = None,
+        draft_from: str | None = None,
+        draft_digest: str | None = None,
+    ) -> str:
+        if resume_from is not None and draft_from is not None:
+            raise RunStateConflict("resume_from and draft_from are mutually exclusive")
+        if draft_digest is not None and draft_from is None:
+            raise RunStateConflict("draft digest requires a source Run")
+        compiled = bound.compiled
+        if compiled.spec.executor.kind != "agent":
+            raise ValueError("RunService accepts Agent operations only")
+        if not self.backend.supports_operation(compiled):
+            raise RunError("runtime backend does not support the compiled Operation")
+        if any(port.collection is not None for port in compiled.spec.outputs) and not tool_evidence_ports(compiled):
+            raise RunError("minimal local Run does not yet support output collections")
+        if compiled.spec.limits is None:
+            raise ValueError("compiled operation has no limits")
+        # Reconstruct the call from authoritative records before any Run/workspace write.
+        by_port = {port.name: [] for port in compiled.spec.inputs}
+        for item in bound.inputs:
+            envelope = self.artifacts.catalog(item.artifact.ref)
+            producer = self.completed_for_output(envelope.ref)
+            by_port.setdefault(item.port_name, []).append(InvocationArtifact(
+                artifact_name=item.artifact_name, ref=envelope.ref, schema_id=envelope.schema_id,
+                media_type=envelope.media_type, size_bytes=envelope.size_bytes,
+                parent_refs=envelope.parent_refs, labels=tuple(envelope.labels.items()),
+                producer_run_id=producer.run_id if producer else None,
+                current=self.input_is_current(instance_id=instance_id,
+                    artifact_name=item.artifact_name, artifact_ref=envelope.ref),
+                handoff_verdict=(self.signal_for_output(envelope.ref, require_current=False).verdict
+                    if self.signal_for_output(envelope.ref, require_current=False) else None),
+                historical=item.artifact.historical,
+            ))
+        bound = preflight_operation(compiled, name=bound.name,
+            artifacts_by_port={name: tuple(items) for name, items in by_port.items()},
+            instruction=bound.instruction, read_artifact=self.artifacts.read,
+            source_name_overrides={(item.port_name, item.artifact_name): item.source_name
+                                   for item in bound.inputs})
+        raw_inputs = tuple(
+            RunInputBinding(
+                port_name=item.port_name,
+                source_name=item.source_name,
+                artifact_name=item.artifact_name,
+                artifact_ref=item.artifact.ref,
+                media_type=item.artifact.media_type,
+                exposure=item.exposure,
+                usage=item.usage,
+                require_current=next(
+                    port.require_current
+                    for port in compiled.spec.inputs
+                    if port.name == item.port_name
+                ),
+            )
+            for item in bound.inputs
+        )
+        for item in raw_inputs:
+            self.artifacts.verify(item.artifact_ref)
+        run_id = f"run_{uuid.uuid4().hex}"
+        created_at = timestamp()
+        deadline_at = future(created_at, compiled.spec.limits.timeout_seconds)
+        recovery_digest: str | None = None
+        with self._connect() as connection:
+            self._attach_scheduler(connection)
+            connection.execute("BEGIN IMMEDIATE")
+            frozen_inputs = self.current.freeze(connection, instance_id, raw_inputs)
+            active_revision = active_direct_revision_ports(
+                compiled, (item.port_name for item in frozen_inputs)
+            )
+            revision_base = (
+                None
+                if active_revision is None
+                else next(
+                    item.artifact_ref
+                    for item in frozen_inputs
+                    if item.port_name == active_revision[0].name
+                )
+            )
+            if (
+                revision_base is not None
+                and compiled.spec.review is not None
+                and compiled.spec.review.max_revisions
+                and self._revision_successor(
+                    connection,
+                    instance_id=instance_id,
+                    operation_digest=compiled.digest,
+                    base_ref=revision_base,
+                )
+                is not None
+            ):
+                connection.execute("ROLLBACK")
+                raise RunSlotBusy("this revision base already has a successor Run")
+            if resume_from is not None:
+                source = status_from_row(self._row(connection, resume_from))
+                recovery_digest = self._validate_resume(
+                    connection,
+                    source,
+                    compiled.digest,
+                    tuple(item.artifact_ref for item in frozen_inputs),
+                    compiled.spec.limits.max_attempts,
+                )
+            if resume_from is not None and source.instance_id != instance_id:
+                raise RunStateConflict("recovery source belongs to another instance")
+            if draft_from is not None:
+                source = status_from_row(self._row(connection, draft_from))
+                recovery_digest = self._validate_draft_source(
+                    connection, source, compiled=compiled, instance_id=instance_id
+                )
+                if draft_digest is not None and draft_digest != recovery_digest:
+                    raise RunStateConflict("draft source digest changed")
+            request_digest = canonical_sha256(
+                {
+                    "operation_id": compiled.spec.operation_id,
+                    "operation_version": compiled.spec.version,
+                    "operation_digest": compiled.digest,
+                    "backend": self.backend.backend_id,
+                    "backend_version": self.backend.backend_version,
+                    "backend_capabilities": self.backend.capabilities,
+                    "instance_id": instance_id,
+                    "output_binding": {
+                        "name": output_binding_name,
+                        "logical_name": output_logical_name,
+                        "revision": output_revision,
+                        "request_fingerprint": output_binding_fingerprint,
+                    },
+                    "instruction": bound.instruction or "",
+                    "inputs": json.loads(inputs_json(frozen_inputs)),
+                    "limits": compiled.spec.limits.model_dump(mode="json"),
+                    "resume_from": resume_from,
+                    **({"draft_from": draft_from, "draft_digest": recovery_digest}
+                       if draft_from is not None else {}),
+                    "recovery_digest": recovery_digest,
+                }
+            )
+            try:
+                connection.execute(
+                    """
+                    INSERT INTO runs (
+                        run_id, instance_id, operation_id, operation_version,
+                        operation_digest, agent_type, instruction, inputs_json,
+                        backend_id, backend_version, backend_capabilities_json,
+                        output_binding_name, output_logical_name,
+                        output_revision, output_binding_fingerprint,
+                        request_digest, resume_from_run_id, draft_from_run_id, recovery_policy_json,
+                        state, created_at, deadline_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                              ?, ?, 'queued', ?, ?)
+                    """,
+                    (
+                        run_id,
+                        instance_id,
+                        compiled.spec.operation_id,
+                        compiled.spec.version,
+                        compiled.digest,
+                        operation_agent_type(compiled),
+                        bound.instruction or "",
+                        inputs_json(frozen_inputs),
+                        self.backend.backend_id,
+                        self.backend.backend_version,
+                        canonical_json(self.backend.capabilities),
+                        output_binding_name,
+                        output_logical_name,
+                        output_revision,
+                        output_binding_fingerprint,
+                        request_digest,
+                        resume_from,
+                        draft_from,
+                        canonical_json(self._recovery_policy(compiled)),
+                        created_at,
+                        deadline_at,
+                    ),
+                )
+            except sqlite3.IntegrityError as error:
+                connection.execute("ROLLBACK")
+                raise RunSlotBusy(
+                    "this compiled Operation already has an unopened or running Run"
+                ) from error
+            connection.execute("COMMIT")
+        try:
+            materialized_inputs = tuple(
+                WorkspaceInput(
+                    name=item.source_name,
+                    media_type=item.media_type,
+                    content=self.artifacts.read(item.artifact_ref),
+                )
+                for item in frozen_inputs
+                if item.exposure != "handoff_only"
+            )
+            input_bytes = {item.name: item.content for item in materialized_inputs}
+            direct_revision = active_direct_revision_ports(
+                compiled, (item.port_name for item in frozen_inputs)
+            )
+>           workspace_hooks = operation_workspace_hooks(compiled)
+                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+src/scidiscovery/artifact_agent/service/runs.py:303: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+compiled = CompiledOperation(plugin_id='tcad_artifact', spec=OperationSpec(operation_id='tcad.result.analyze.v1', version='1', ca...he canonical payload must fit the compiled output byte limit.', 'output_paths': ('/',), 'required_inputs': ()}))})})}))
+
+    def operation_workspace_hooks(
+        compiled: CompiledOperation,
+    ) -> Mapping[str, Callable[..., Any]]:
+        """Resolve the hook dependencies of this operation's workspace component."""
+    
+        template = compiled.permission_template
+        if template is None:
+            return MappingProxyType({})
+        workspace = compiled.component_specs[template.workspace]
+        hooks: dict[str, Callable[..., Any]] = {}
+        for reference in workspace.resources:
+            key = f"{reference.plugin_id or compiled.plugin_id}:{reference.component_id}"
+>           component = compiled.component_specs[key]
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           KeyError: 'tcad_artifact:analysis_materializer'
+
+src/scidiscovery/operations/workspace.py:124: KeyError
+
+During handling of the above exception, another exception occurred:
+
+self = <scidiscovery.artifact_agent.interfaces.mcp_root.RootToolFacade object at 0x7f339fd66ae0>
+bound = BoundOperationCall(compiled=CompiledOperation(plugin_id='tcad_artifact', spec=OperationSpec(operation_id='tcad.result....posure='on_demand', usage='evidence_inventory')), instruction='Analyze the bound fixture outputs.', executor_plan=None)
+on_conflict = 'reject', resume_from = None, draft_from = None
+
+    def _invoke_local_run(
+        self,
+        bound: BoundOperationCall,
+        on_conflict: str,
+        *,
+        resume_from: str | None,
+        draft_from: str | None = None,
+    ) -> dict[str, Any]:
+        resume_run_id, draft_run_id, draft_digest, fingerprint, target = self._prepare_local_run(
+            bound, on_conflict, resume_from=resume_from, draft_from=draft_from
+        )
+        if target.existing_object_id is not None:
+            return self.run_status(name=target.name)
+        output_name = _derived_name(target.name, "output")
+        output_logical_name = _derived_name(target.logical_name, "output")
+        output_fingerprint = canonical_sha256(
+            {"run_request": fingerprint, "output": "primary"}
+        )
+        try:
+>           run_id = self.runs.schedule(
+                bound,
+                instance_id=self._instance_id(),
+                output_binding_name=output_name,
+                output_logical_name=output_logical_name,
+                output_revision=target.revision,
+                output_binding_fingerprint=output_fingerprint,
+                resume_from=resume_run_id,
+                draft_from=draft_run_id,
+                draft_digest=draft_digest,
+            )
+
+src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py:265: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/scidiscovery/artifact_agent/service/runs.py:341: in schedule
+    self.record_failure(
+src/scidiscovery/artifact_agent/service/runs.py:604: in record_failure
+    return self._finish_failed_workspace(self.status(run_id))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/scidiscovery/artifact_agent/service/runs.py:635: in _finish_failed_workspace
+    snapshotter = operation_workspace_hooks(compiled).get("workspace_snapshotter")
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+compiled = CompiledOperation(plugin_id='tcad_artifact', spec=OperationSpec(operation_id='tcad.result.analyze.v1', version='1', ca...he canonical payload must fit the compiled output byte limit.', 'output_paths': ('/',), 'required_inputs': ()}))})})}))
+
+    def operation_workspace_hooks(
+        compiled: CompiledOperation,
+    ) -> Mapping[str, Callable[..., Any]]:
+        """Resolve the hook dependencies of this operation's workspace component."""
+    
+        template = compiled.permission_template
+        if template is None:
+            return MappingProxyType({})
+        workspace = compiled.component_specs[template.workspace]
+        hooks: dict[str, Callable[..., Any]] = {}
+        for reference in workspace.resources:
+            key = f"{reference.plugin_id or compiled.plugin_id}:{reference.component_id}"
+>           component = compiled.component_specs[key]
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           KeyError: 'tcad_artifact:analysis_materializer'
+
+src/scidiscovery/operations/workspace.py:124: KeyError
+
+The above exception was the direct cause of the following exception:
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-183/test_native_writer_after_failu0')
+
+    def test_native_writer_after_failure_keeps_original_directory(tmp_path):
+        import subprocess
+        import sys
+>       system, worker, opened, _ = recovery_system(tmp_path)
+                                    ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/operations/test_analysis_evidence_recovery.py:54: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/operations/test_analysis_evidence_recovery.py:110: in recovery_system
+    root.call_tool('operation_invoke',request)
+src/scidiscovery/artifact_agent/interfaces/mcp_root.py:403: in call_tool
+    return getattr(self.facade, name)(**values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py:196: in operation_invoke
+    result = self._invoke_agent_operation(
+src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py:242: in _invoke_agent_operation
+    return self._invoke_local_run(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <scidiscovery.artifact_agent.interfaces.mcp_root.RootToolFacade object at 0x7f339fd66ae0>
+bound = BoundOperationCall(compiled=CompiledOperation(plugin_id='tcad_artifact', spec=OperationSpec(operation_id='tcad.result....posure='on_demand', usage='evidence_inventory')), instruction='Analyze the bound fixture outputs.', executor_plan=None)
+on_conflict = 'reject', resume_from = None, draft_from = None
+
+    def _invoke_local_run(
+        self,
+        bound: BoundOperationCall,
+        on_conflict: str,
+        *,
+        resume_from: str | None,
+        draft_from: str | None = None,
+    ) -> dict[str, Any]:
+        resume_run_id, draft_run_id, draft_digest, fingerprint, target = self._prepare_local_run(
+            bound, on_conflict, resume_from=resume_from, draft_from=draft_from
+        )
+        if target.existing_object_id is not None:
+            return self.run_status(name=target.name)
+        output_name = _derived_name(target.name, "output")
+        output_logical_name = _derived_name(target.logical_name, "output")
+        output_fingerprint = canonical_sha256(
+            {"run_request": fingerprint, "output": "primary"}
+        )
+        try:
+            run_id = self.runs.schedule(
+                bound,
+                instance_id=self._instance_id(),
+                output_binding_name=output_name,
+                output_logical_name=output_logical_name,
+                output_revision=target.revision,
+                output_binding_fingerprint=output_fingerprint,
+                resume_from=resume_run_id,
+                draft_from=draft_run_id,
+                draft_digest=draft_digest,
+            )
+        except Exception as error:
+>           raise OperationEngineeringError("local_run_creation_failed") from error
+E           scidiscovery.operations.input_validation.OperationEngineeringError: local_run_creation_failed
+
+src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py:277: OperationEngineeringError
+__________ test_failed_run_preserves_tool_evidence_for_new_bound_run ___________
+
+self = <scidiscovery.artifact_agent.service.runs.RunService object at 0x7f339ee6bf80>
+bound = BoundOperationCall(compiled=CompiledOperation(plugin_id='tcad_artifact', spec=OperationSpec(operation_id='tcad.result....posure='on_demand', usage='evidence_inventory')), instruction='Analyze the bound fixture outputs.', executor_plan=None)
+instance_id = 'ins_c1598115083648868a250b7ba279b5bc'
+output_binding_name = 'analysis.output', output_logical_name = 'analysis.output'
+output_revision = 1
+output_binding_fingerprint = 'fdbf17b7320dcce3bdbaec569854e9aaaab0e6a10a6287058515c76193971e15'
+resume_from = None, draft_from = None, draft_digest = None
+
+    def schedule(
+        self,
+        bound: BoundOperationCall,
+        *,
+        instance_id: str,
+        output_binding_name: str,
+        output_logical_name: str,
+        output_revision: int,
+        output_binding_fingerprint: str,
+        resume_from: str | None = None,
+        draft_from: str | None = None,
+        draft_digest: str | None = None,
+    ) -> str:
+        if resume_from is not None and draft_from is not None:
+            raise RunStateConflict("resume_from and draft_from are mutually exclusive")
+        if draft_digest is not None and draft_from is None:
+            raise RunStateConflict("draft digest requires a source Run")
+        compiled = bound.compiled
+        if compiled.spec.executor.kind != "agent":
+            raise ValueError("RunService accepts Agent operations only")
+        if not self.backend.supports_operation(compiled):
+            raise RunError("runtime backend does not support the compiled Operation")
+        if any(port.collection is not None for port in compiled.spec.outputs) and not tool_evidence_ports(compiled):
+            raise RunError("minimal local Run does not yet support output collections")
+        if compiled.spec.limits is None:
+            raise ValueError("compiled operation has no limits")
+        # Reconstruct the call from authoritative records before any Run/workspace write.
+        by_port = {port.name: [] for port in compiled.spec.inputs}
+        for item in bound.inputs:
+            envelope = self.artifacts.catalog(item.artifact.ref)
+            producer = self.completed_for_output(envelope.ref)
+            by_port.setdefault(item.port_name, []).append(InvocationArtifact(
+                artifact_name=item.artifact_name, ref=envelope.ref, schema_id=envelope.schema_id,
+                media_type=envelope.media_type, size_bytes=envelope.size_bytes,
+                parent_refs=envelope.parent_refs, labels=tuple(envelope.labels.items()),
+                producer_run_id=producer.run_id if producer else None,
+                current=self.input_is_current(instance_id=instance_id,
+                    artifact_name=item.artifact_name, artifact_ref=envelope.ref),
+                handoff_verdict=(self.signal_for_output(envelope.ref, require_current=False).verdict
+                    if self.signal_for_output(envelope.ref, require_current=False) else None),
+                historical=item.artifact.historical,
+            ))
+        bound = preflight_operation(compiled, name=bound.name,
+            artifacts_by_port={name: tuple(items) for name, items in by_port.items()},
+            instruction=bound.instruction, read_artifact=self.artifacts.read,
+            source_name_overrides={(item.port_name, item.artifact_name): item.source_name
+                                   for item in bound.inputs})
+        raw_inputs = tuple(
+            RunInputBinding(
+                port_name=item.port_name,
+                source_name=item.source_name,
+                artifact_name=item.artifact_name,
+                artifact_ref=item.artifact.ref,
+                media_type=item.artifact.media_type,
+                exposure=item.exposure,
+                usage=item.usage,
+                require_current=next(
+                    port.require_current
+                    for port in compiled.spec.inputs
+                    if port.name == item.port_name
+                ),
+            )
+            for item in bound.inputs
+        )
+        for item in raw_inputs:
+            self.artifacts.verify(item.artifact_ref)
+        run_id = f"run_{uuid.uuid4().hex}"
+        created_at = timestamp()
+        deadline_at = future(created_at, compiled.spec.limits.timeout_seconds)
+        recovery_digest: str | None = None
+        with self._connect() as connection:
+            self._attach_scheduler(connection)
+            connection.execute("BEGIN IMMEDIATE")
+            frozen_inputs = self.current.freeze(connection, instance_id, raw_inputs)
+            active_revision = active_direct_revision_ports(
+                compiled, (item.port_name for item in frozen_inputs)
+            )
+            revision_base = (
+                None
+                if active_revision is None
+                else next(
+                    item.artifact_ref
+                    for item in frozen_inputs
+                    if item.port_name == active_revision[0].name
+                )
+            )
+            if (
+                revision_base is not None
+                and compiled.spec.review is not None
+                and compiled.spec.review.max_revisions
+                and self._revision_successor(
+                    connection,
+                    instance_id=instance_id,
+                    operation_digest=compiled.digest,
+                    base_ref=revision_base,
+                )
+                is not None
+            ):
+                connection.execute("ROLLBACK")
+                raise RunSlotBusy("this revision base already has a successor Run")
+            if resume_from is not None:
+                source = status_from_row(self._row(connection, resume_from))
+                recovery_digest = self._validate_resume(
+                    connection,
+                    source,
+                    compiled.digest,
+                    tuple(item.artifact_ref for item in frozen_inputs),
+                    compiled.spec.limits.max_attempts,
+                )
+            if resume_from is not None and source.instance_id != instance_id:
+                raise RunStateConflict("recovery source belongs to another instance")
+            if draft_from is not None:
+                source = status_from_row(self._row(connection, draft_from))
+                recovery_digest = self._validate_draft_source(
+                    connection, source, compiled=compiled, instance_id=instance_id
+                )
+                if draft_digest is not None and draft_digest != recovery_digest:
+                    raise RunStateConflict("draft source digest changed")
+            request_digest = canonical_sha256(
+                {
+                    "operation_id": compiled.spec.operation_id,
+                    "operation_version": compiled.spec.version,
+                    "operation_digest": compiled.digest,
+                    "backend": self.backend.backend_id,
+                    "backend_version": self.backend.backend_version,
+                    "backend_capabilities": self.backend.capabilities,
+                    "instance_id": instance_id,
+                    "output_binding": {
+                        "name": output_binding_name,
+                        "logical_name": output_logical_name,
+                        "revision": output_revision,
+                        "request_fingerprint": output_binding_fingerprint,
+                    },
+                    "instruction": bound.instruction or "",
+                    "inputs": json.loads(inputs_json(frozen_inputs)),
+                    "limits": compiled.spec.limits.model_dump(mode="json"),
+                    "resume_from": resume_from,
+                    **({"draft_from": draft_from, "draft_digest": recovery_digest}
+                       if draft_from is not None else {}),
+                    "recovery_digest": recovery_digest,
+                }
+            )
+            try:
+                connection.execute(
+                    """
+                    INSERT INTO runs (
+                        run_id, instance_id, operation_id, operation_version,
+                        operation_digest, agent_type, instruction, inputs_json,
+                        backend_id, backend_version, backend_capabilities_json,
+                        output_binding_name, output_logical_name,
+                        output_revision, output_binding_fingerprint,
+                        request_digest, resume_from_run_id, draft_from_run_id, recovery_policy_json,
+                        state, created_at, deadline_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                              ?, ?, 'queued', ?, ?)
+                    """,
+                    (
+                        run_id,
+                        instance_id,
+                        compiled.spec.operation_id,
+                        compiled.spec.version,
+                        compiled.digest,
+                        operation_agent_type(compiled),
+                        bound.instruction or "",
+                        inputs_json(frozen_inputs),
+                        self.backend.backend_id,
+                        self.backend.backend_version,
+                        canonical_json(self.backend.capabilities),
+                        output_binding_name,
+                        output_logical_name,
+                        output_revision,
+                        output_binding_fingerprint,
+                        request_digest,
+                        resume_from,
+                        draft_from,
+                        canonical_json(self._recovery_policy(compiled)),
+                        created_at,
+                        deadline_at,
+                    ),
+                )
+            except sqlite3.IntegrityError as error:
+                connection.execute("ROLLBACK")
+                raise RunSlotBusy(
+                    "this compiled Operation already has an unopened or running Run"
+                ) from error
+            connection.execute("COMMIT")
+        try:
+            materialized_inputs = tuple(
+                WorkspaceInput(
+                    name=item.source_name,
+                    media_type=item.media_type,
+                    content=self.artifacts.read(item.artifact_ref),
+                )
+                for item in frozen_inputs
+                if item.exposure != "handoff_only"
+            )
+            input_bytes = {item.name: item.content for item in materialized_inputs}
+            direct_revision = active_direct_revision_ports(
+                compiled, (item.port_name for item in frozen_inputs)
+            )
+>           workspace_hooks = operation_workspace_hooks(compiled)
+                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+src/scidiscovery/artifact_agent/service/runs.py:303: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+compiled = CompiledOperation(plugin_id='tcad_artifact', spec=OperationSpec(operation_id='tcad.result.analyze.v1', version='1', ca...he canonical payload must fit the compiled output byte limit.', 'output_paths': ('/',), 'required_inputs': ()}))})})}))
+
+    def operation_workspace_hooks(
+        compiled: CompiledOperation,
+    ) -> Mapping[str, Callable[..., Any]]:
+        """Resolve the hook dependencies of this operation's workspace component."""
+    
+        template = compiled.permission_template
+        if template is None:
+            return MappingProxyType({})
+        workspace = compiled.component_specs[template.workspace]
+        hooks: dict[str, Callable[..., Any]] = {}
+        for reference in workspace.resources:
+            key = f"{reference.plugin_id or compiled.plugin_id}:{reference.component_id}"
+>           component = compiled.component_specs[key]
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           KeyError: 'tcad_artifact:analysis_materializer'
+
+src/scidiscovery/operations/workspace.py:124: KeyError
+
+During handling of the above exception, another exception occurred:
+
+self = <scidiscovery.artifact_agent.interfaces.mcp_root.RootToolFacade object at 0x7f339f77b740>
+bound = BoundOperationCall(compiled=CompiledOperation(plugin_id='tcad_artifact', spec=OperationSpec(operation_id='tcad.result....posure='on_demand', usage='evidence_inventory')), instruction='Analyze the bound fixture outputs.', executor_plan=None)
+on_conflict = 'reject', resume_from = None, draft_from = None
+
+    def _invoke_local_run(
+        self,
+        bound: BoundOperationCall,
+        on_conflict: str,
+        *,
+        resume_from: str | None,
+        draft_from: str | None = None,
+    ) -> dict[str, Any]:
+        resume_run_id, draft_run_id, draft_digest, fingerprint, target = self._prepare_local_run(
+            bound, on_conflict, resume_from=resume_from, draft_from=draft_from
+        )
+        if target.existing_object_id is not None:
+            return self.run_status(name=target.name)
+        output_name = _derived_name(target.name, "output")
+        output_logical_name = _derived_name(target.logical_name, "output")
+        output_fingerprint = canonical_sha256(
+            {"run_request": fingerprint, "output": "primary"}
+        )
+        try:
+>           run_id = self.runs.schedule(
+                bound,
+                instance_id=self._instance_id(),
+                output_binding_name=output_name,
+                output_logical_name=output_logical_name,
+                output_revision=target.revision,
+                output_binding_fingerprint=output_fingerprint,
+                resume_from=resume_run_id,
+                draft_from=draft_run_id,
+                draft_digest=draft_digest,
+            )
+
+src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py:265: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/scidiscovery/artifact_agent/service/runs.py:341: in schedule
+    self.record_failure(
+src/scidiscovery/artifact_agent/service/runs.py:604: in record_failure
+    return self._finish_failed_workspace(self.status(run_id))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/scidiscovery/artifact_agent/service/runs.py:635: in _finish_failed_workspace
+    snapshotter = operation_workspace_hooks(compiled).get("workspace_snapshotter")
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+compiled = CompiledOperation(plugin_id='tcad_artifact', spec=OperationSpec(operation_id='tcad.result.analyze.v1', version='1', ca...he canonical payload must fit the compiled output byte limit.', 'output_paths': ('/',), 'required_inputs': ()}))})})}))
+
+    def operation_workspace_hooks(
+        compiled: CompiledOperation,
+    ) -> Mapping[str, Callable[..., Any]]:
+        """Resolve the hook dependencies of this operation's workspace component."""
+    
+        template = compiled.permission_template
+        if template is None:
+            return MappingProxyType({})
+        workspace = compiled.component_specs[template.workspace]
+        hooks: dict[str, Callable[..., Any]] = {}
+        for reference in workspace.resources:
+            key = f"{reference.plugin_id or compiled.plugin_id}:{reference.component_id}"
+>           component = compiled.component_specs[key]
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           KeyError: 'tcad_artifact:analysis_materializer'
+
+src/scidiscovery/operations/workspace.py:124: KeyError
+
+The above exception was the direct cause of the following exception:
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-183/test_failed_run_preserves_tool0')
+
+    def test_failed_run_preserves_tool_evidence_for_new_bound_run(tmp_path):
+        from copy import deepcopy
+        from tests.operations.test_tcad_result_analysis import analysis_report,write_analysis,open_analysis
+>       system,worker,opened,directory=recovery_system(tmp_path)
+                                       ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/operations/test_analysis_evidence_recovery.py:262: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/operations/test_analysis_evidence_recovery.py:110: in recovery_system
+    root.call_tool('operation_invoke',request)
+src/scidiscovery/artifact_agent/interfaces/mcp_root.py:403: in call_tool
+    return getattr(self.facade, name)(**values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py:196: in operation_invoke
+    result = self._invoke_agent_operation(
+src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py:242: in _invoke_agent_operation
+    return self._invoke_local_run(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <scidiscovery.artifact_agent.interfaces.mcp_root.RootToolFacade object at 0x7f339f77b740>
+bound = BoundOperationCall(compiled=CompiledOperation(plugin_id='tcad_artifact', spec=OperationSpec(operation_id='tcad.result....posure='on_demand', usage='evidence_inventory')), instruction='Analyze the bound fixture outputs.', executor_plan=None)
+on_conflict = 'reject', resume_from = None, draft_from = None
+
+    def _invoke_local_run(
+        self,
+        bound: BoundOperationCall,
+        on_conflict: str,
+        *,
+        resume_from: str | None,
+        draft_from: str | None = None,
+    ) -> dict[str, Any]:
+        resume_run_id, draft_run_id, draft_digest, fingerprint, target = self._prepare_local_run(
+            bound, on_conflict, resume_from=resume_from, draft_from=draft_from
+        )
+        if target.existing_object_id is not None:
+            return self.run_status(name=target.name)
+        output_name = _derived_name(target.name, "output")
+        output_logical_name = _derived_name(target.logical_name, "output")
+        output_fingerprint = canonical_sha256(
+            {"run_request": fingerprint, "output": "primary"}
+        )
+        try:
+            run_id = self.runs.schedule(
+                bound,
+                instance_id=self._instance_id(),
+                output_binding_name=output_name,
+                output_logical_name=output_logical_name,
+                output_revision=target.revision,
+                output_binding_fingerprint=output_fingerprint,
+                resume_from=resume_run_id,
+                draft_from=draft_run_id,
+                draft_digest=draft_digest,
+            )
+        except Exception as error:
+>           raise OperationEngineeringError("local_run_creation_failed") from error
+E           scidiscovery.operations.input_validation.OperationEngineeringError: local_run_creation_failed
+
+src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py:277: OperationEngineeringError
+=========================== short test summary info ============================
+FAILED tests/operations/test_analysis_evidence_recovery.py::test_unpublished_analysis_survives_failure_and_new_assignment[False]
+FAILED tests/operations/test_analysis_evidence_recovery.py::test_unpublished_analysis_survives_failure_and_new_assignment[True]
+FAILED tests/operations/test_analysis_evidence_recovery.py::test_native_writer_after_failure_keeps_original_directory
+FAILED tests/operations/test_analysis_evidence_recovery.py::test_failed_run_preserves_tool_evidence_for_new_bound_run
+4 failed, 29 deselected in 4.50s

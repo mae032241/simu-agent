@@ -1,0 +1,47 @@
+..F.......                                                               [100%]
+=================================== FAILURES ===================================
+___ test_experiment_review_reports_a_verdict_without_selecting_an_operation ____
+
+    def test_experiment_review_reports_a_verdict_without_selecting_an_operation() -> None:
+        payload = {
+            "review_target": "experiment_portfolio",
+            "verdict": "revise",
+            "summary": "One bounded correction is required.",
+        }
+>       _object_review_context(payload, {"experiment_plan": b"{}"}, {"verdict": "revise"})
+
+tests/operations/test_hypothesis_review_routing.py:252: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+payload = {'review_target': 'experiment_portfolio', 'verdict': 'revise', 'summary': 'One bounded correction is required.'}
+sources = {'experiment_plan': b'{}'}, handoff = {'verdict': 'revise'}
+
+    def _object_review_context(
+        payload: dict[str, Any], sources: dict[str, bytes], handoff: dict[str, Any]
+    ) -> None:
+        if "experiment_plan" not in sources:
+            raise SemanticRuleViolation("review target is absent")
+>       plan = ExperimentPortfolio.model_validate_json(
+            sources["experiment_plan"], strict=True
+        )
+E       pydantic_core._pydantic_core.ValidationError: 5 validation errors for ExperimentPortfolio
+E       objective
+E         Field required [type=missing, input_value={}, input_type=dict]
+E           For further information visit https://errors.pydantic.dev/2.11/v/missing
+E       proposals
+E         Field required [type=missing, input_value={}, input_type=dict]
+E           For further information visit https://errors.pydantic.dev/2.11/v/missing
+E       validation_plans
+E         Field required [type=missing, input_value={}, input_type=dict]
+E           For further information visit https://errors.pydantic.dev/2.11/v/missing
+E       priority_order
+E         Field required [type=missing, input_value={}, input_type=dict]
+E           For further information visit https://errors.pydantic.dev/2.11/v/missing
+E       priority_rationale
+E         Field required [type=missing, input_value={}, input_type=dict]
+E           For further information visit https://errors.pydantic.dev/2.11/v/missing
+
+src/scidiscovery/general_science_experiment_components.py:202: ValidationError
+=========================== short test summary info ============================
+FAILED tests/operations/test_hypothesis_review_routing.py::test_experiment_review_reports_a_verdict_without_selecting_an_operation
+1 failed, 9 passed in 1.21s

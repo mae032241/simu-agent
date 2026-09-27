@@ -1,0 +1,934 @@
+{
+  "baseline_commit": "404aeb14c6ebc4b08bac599db91eaee54c103f48",
+  "consumer_files": {
+    "approval_request_create": {
+      "current-doc": [],
+      "dynamic-entry": [],
+      "historical-doc": [
+        "docs/plans/R4_DOMAIN_PLUGIN_UI_IMPLEMENTATION.zh-CN.md",
+        "docs/plans/R5_0_BASELINE_AND_DELETION_INVENTORY.zh-CN.md",
+        "docs/plans/R5_CONTROL_WEIGHT_REMOVAL_IMPLEMENTATION.zh-CN.md",
+        "docs/plans/reviews/R4_D_A_APPROVAL_VIEW_DESIGN_INDEPENDENT_REVIEW.zh-CN.md",
+        "docs/plans/reviews/R4_D_B_CORE_APPROVAL_IMPLEMENTATION_INDEPENDENT_REVIEW.zh-CN.md",
+        "docs/plans/reviews/R4_D_B_CORE_APPROVAL_IMPLEMENTATION_INDEPENDENT_REVIEW_ROUND2.zh-CN.md"
+      ],
+      "production": [
+        "src/scidiscovery/artifact_agent/interfaces/mcp_root.py"
+      ],
+      "test": [
+        "tests/operations/test_r4_approval_operation.py"
+      ]
+    },
+    "artifact_transform": {
+      "current-doc": [
+        "AGENTS.md",
+        "docs/ARCHITECTURE.md",
+        "docs/ARCHITECTURE.zh-CN.md"
+      ],
+      "dynamic-entry": [
+        "roles/scheduler.md"
+      ],
+      "historical-doc": [
+        "docs/plans/INCREMENTAL_CONTEXT_AND_REVISION_REMEDIATION_PLAN.zh-CN.md",
+        "docs/plans/OPERATION_SPEC_MINIMAL_REFACTOR_PLAN.zh-CN.md",
+        "docs/plans/R2_UNIFIED_OPERATION_INVOKE_IMPLEMENTATION.zh-CN.md",
+        "docs/plans/R3_GENERIC_OPERATIONS_IMPLEMENTATION.zh-CN.md",
+        "docs/plans/R5_0_BASELINE_AND_DELETION_INVENTORY.zh-CN.md",
+        "docs/plans/R5_CONTROL_WEIGHT_REMOVAL_IMPLEMENTATION.zh-CN.md",
+        "docs/plans/SCIENTIFIC_QUALIFICATION_KERNEL_V2_IMPLEMENTATION_PLAN.zh-CN.md",
+        "docs/plans/reviews/R2_UNIFIED_OPERATION_INVOKE_INDEPENDENT_REVIEW.zh-CN.md",
+        "docs/plans/reviews/R3_C_GENERIC_TRANSFORMS_INDEPENDENT_REVIEW.zh-CN.md",
+        "docs/plans/reviews/R3_D_LEGACY_SPECIAL_CASE_REMOVAL_INDEPENDENT_REVIEW.zh-CN.md",
+        "docs/plans/reviews/R3_TOTAL_INDEPENDENT_REVIEW.zh-CN.md",
+        "docs/plans/reviews/R4_B_INDEPENDENT_REVIEW.zh-CN.md",
+        "docs/plans/reviews/R4_FINAL_MANIFEST_AND_CLOSURE_INDEPENDENT_REVIEW.zh-CN.md",
+        "docs/plans/reviews/R4_FUNCTIONAL_DECOUPLING_AND_OCCAM_INDEPENDENT_REVIEW.zh-CN.md",
+        "docs/plans/reviews/R5_0_BASELINE_AND_DELETION_INDEPENDENT_REVIEW.zh-CN.md"
+      ],
+      "production": [
+        "src/scidiscovery/artifact_agent/interfaces/mcp_root.py"
+      ],
+      "test": [
+        "tests/operations/test_general_transform_operations.py",
+        "tests/operations/test_tcad_operation_plugin.py"
+      ]
+    },
+    "broken_operation_entry_point": {
+      "current-doc": [],
+      "dynamic-entry": [],
+      "historical-doc": [
+        "docs/plans/OPERATION_SPEC_MINIMAL_REFACTOR_PLAN.zh-CN.md",
+        "docs/plans/R0_8765_BASELINE_CHARACTERIZATION.zh-CN.md",
+        "docs/plans/R4_DOMAIN_PLUGIN_UI_IMPLEMENTATION.zh-CN.md",
+        "docs/plans/R5_0_BASELINE_AND_DELETION_INVENTORY.zh-CN.md",
+        "docs/plans/R5_CONTROL_WEIGHT_REMOVAL_IMPLEMENTATION.zh-CN.md",
+        "docs/plans/reviews/R0_8765_BASELINE_INDEPENDENT_REVIEW.zh-CN.md",
+        "docs/plans/reviews/R4_C_B_CURVE_PLUGIN_INDEPENDENT_REVIEW.zh-CN.md",
+        "docs/plans/reviews/R4_C_C_PROJECT_PLUGIN_INDEPENDENT_REVIEW.zh-CN.md",
+        "docs/plans/reviews/R4_C_C_PROJECT_PLUGIN_INDEPENDENT_REVIEW_ROUND2.zh-CN.md",
+        "docs/plans/reviews/R4_FINAL_MANIFEST_AND_CLOSURE_INDEPENDENT_REVIEW.zh-CN.md",
+        "docs/plans/reviews/R4_FINAL_MANIFEST_AND_CLOSURE_INDEPENDENT_REVIEW_ROUND2.zh-CN.md"
+      ],
+      "production": [],
+      "test": [
+        "tests/operations/test_baseline_plugin_discovery.py"
+      ]
+    },
+    "core_context_policy": {
+      "current-doc": [],
+      "dynamic-entry": [],
+      "historical-doc": [
+        "docs/plans/R3_GENERIC_OPERATIONS_IMPLEMENTATION.zh-CN.md",
+        "docs/plans/R5_0_BASELINE_AND_DELETION_INVENTORY.zh-CN.md",
+        "docs/plans/R5_CONTROL_WEIGHT_REMOVAL_IMPLEMENTATION.zh-CN.md",
+        "docs/plans/SCIENTIFIC_OPERATION_CONTRACT_AND_KNOWLEDGE_CLOSURE_HANDOFF.zh-CN.md",
+        "docs/plans/reviews/R3_D_LEGACY_SPECIAL_CASE_REMOVAL_INDEPENDENT_REVIEW.zh-CN.md",
+        "docs/plans/reviews/R4_C_C_PROJECT_PLUGIN_INDEPENDENT_REVIEW.zh-CN.md",
+        "docs/plans/reviews/R4_FUNCTIONAL_DECOUPLING_AND_OCCAM_INDEPENDENT_REVIEW.zh-CN.md"
+      ],
+      "production": [
+        "src/scidiscovery/platforms/roles.py"
+      ],
+      "test": [
+        "tests/artifact_agent/test_platform_configuration.py"
+      ]
+    },
+    "device_parameter_bundle_validator": {
+      "current-doc": [],
+      "dynamic-entry": [],
+      "historical-doc": [
+        "docs/plans/R5_CONTROL_WEIGHT_REMOVAL_IMPLEMENTATION.zh-CN.md",
+        "docs/plans/reviews/R4_D_B_CORE_APPROVAL_IMPLEMENTATION_INDEPENDENT_REVIEW_ROUND2.zh-CN.md"
+      ],
+      "production": [
+        "src/scidiscovery/artifact_agent/service/tasks.py"
+      ],
+      "test": []
+    },
+    "device_parameter_schema": {
+      "current-doc": [],
+      "dynamic-entry": [],
+      "historical-doc": [],
+      "production": [
+        "src/scidiscovery/artifact_agent/schema/__init__.py",
+        "src/scidiscovery/artifact_agent/schema/experiment_intent.py",
+        "src/scidiscovery/artifact_agent/service/tasks.py",
+        "src/scidiscovery/artifact_agent/transforms.py",
+        "src/scidiscovery/general_science_plugin.py",
+        "src/scidiscovery/general_transform_operations.py",
+        "src/scidiscovery/platforms/roles.py",
+        "plugins/tcad_artifact/tcad_artifact/plugin.py",
+        "plugins/tcad_artifact/tcad_artifact/project_packager.py"
+      ],
+      "test": [
+        "tests/operations/test_general_transform_operations.py",
+        "tests/operations/test_r4_approval_operation.py"
+      ]
+    },
+    "execution_request_create": {
+      "current-doc": [
+        "docs/TCAD_AGENT_REAUDIT.zh-CN.md"
+      ],
+      "dynamic-entry": [],
+      "historical-doc": [
+        "docs/plans/OPERATION_SPEC_MINIMAL_REFACTOR_PLAN.zh-CN.md",
+        "docs/plans/R4_DOMAIN_PLUGIN_UI_IMPLEMENTATION.zh-CN.md",
+        "docs/plans/R5_0_BASELINE_AND_DELETION_INVENTORY.zh-CN.md",
+        "docs/plans/R5_CONTROL_WEIGHT_REMOVAL_IMPLEMENTATION.zh-CN.md",
+        "docs/plans/reviews/R2_UNIFIED_OPERATION_INVOKE_INDEPENDENT_REVIEW.zh-CN.md",
+        "docs/plans/reviews/R4_B_INDEPENDENT_REVIEW.zh-CN.md",
+        "docs/plans/reviews/R4_D_C_EXECUTION_IDENTITY_INDEPENDENT_REVIEW.zh-CN.md",
+        "docs/plans/reviews/R4_FINAL_MANIFEST_AND_CLOSURE_INDEPENDENT_REVIEW.zh-CN.md"
+      ],
+      "production": [
+        "src/scidiscovery/artifact_agent/interfaces/mcp_root.py"
+      ],
+      "test": [
+        "tests/operations/test_baseline_effect_lifecycle.py",
+        "tests/operations/test_r4_execution_approval_identity.py"
+      ]
+    },
+    "legacy_role_entry_point": {
+      "current-doc": [],
+      "dynamic-entry": [],
+      "historical-doc": [
+        "docs/plans/OPERATION_SPEC_MINIMAL_REFACTOR_PLAN.zh-CN.md",
+        "docs/plans/R0_8765_BASELINE_CHARACTERIZATION.zh-CN.md",
+        "docs/plans/R4_DOMAIN_PLUGIN_UI_IMPLEMENTATION.zh-CN.md",
+        "docs/plans/R5_0_BASELINE_AND_DELETION_INVENTORY.zh-CN.md",
+        "docs/plans/R5_CONTROL_WEIGHT_REMOVAL_IMPLEMENTATION.zh-CN.md",
+        "docs/plans/reviews/R4_A_INDEPENDENT_REVIEW.zh-CN.md",
+        "docs/plans/reviews/R4_FUNCTIONAL_DECOUPLING_AND_OCCAM_INDEPENDENT_REVIEW.zh-CN.md"
+      ],
+      "production": [
+        "src/scidiscovery/platforms/roles.py"
+      ],
+      "test": [
+        "tests/operations/test_baseline_plugin_discovery.py"
+      ]
+    },
+    "legacy_transform_entry_point": {
+      "current-doc": [],
+      "dynamic-entry": [
+        "deploy/install.sh"
+      ],
+      "historical-doc": [
+        "docs/plans/CURVE_SCORE_AND_CONTROL_EQUIVALENCE_IMPLEMENTATION_PLAN.zh-CN.md",
+        "docs/plans/OPERATION_SPEC_MINIMAL_REFACTOR_PLAN.zh-CN.md",
+        "docs/plans/R0_8765_BASELINE_CHARACTERIZATION.zh-CN.md",
+        "docs/plans/R4_DOMAIN_PLUGIN_UI_IMPLEMENTATION.zh-CN.md",
+        "docs/plans/R5_0_BASELINE_AND_DELETION_INVENTORY.zh-CN.md",
+        "docs/plans/R5_CONTROL_WEIGHT_REMOVAL_IMPLEMENTATION.zh-CN.md",
+        "docs/plans/reviews/R4_A_INDEPENDENT_REVIEW_ROUND4.zh-CN.md",
+        "docs/plans/reviews/R4_B_INDEPENDENT_REVIEW.zh-CN.md",
+        "docs/plans/reviews/R4_C_B_CURVE_PLUGIN_INDEPENDENT_REVIEW.zh-CN.md",
+        "docs/plans/reviews/R4_C_C_PROJECT_PLUGIN_INDEPENDENT_REVIEW.zh-CN.md",
+        "docs/plans/reviews/R4_C_C_PROJECT_PLUGIN_INDEPENDENT_REVIEW_ROUND2.zh-CN.md",
+        "docs/plans/reviews/R4_FINAL_MANIFEST_AND_CLOSURE_INDEPENDENT_REVIEW.zh-CN.md",
+        "docs/plans/reviews/R4_FINAL_MANIFEST_AND_CLOSURE_INDEPENDENT_REVIEW_ROUND2.zh-CN.md",
+        "docs/plans/reviews/R4_FUNCTIONAL_DECOUPLING_AND_OCCAM_INDEPENDENT_REVIEW.zh-CN.md"
+      ],
+      "production": [
+        "src/scidiscovery/artifact_agent/transforms.py"
+      ],
+      "test": [
+        "tests/operations/test_baseline_plugin_discovery.py"
+      ]
+    },
+    "load_roles": {
+      "current-doc": [
+        "docs/ARCHITECTURE.md",
+        "docs/ARCHITECTURE.zh-CN.md"
+      ],
+      "dynamic-entry": [
+        "deploy/install.sh"
+      ],
+      "historical-doc": [
+        "docs/plans/R5_0_BASELINE_AND_DELETION_INVENTORY.zh-CN.md",
+        "docs/plans/R5_CONTROL_WEIGHT_REMOVAL_IMPLEMENTATION.zh-CN.md",
+        "docs/plans/reviews/R2_UNIFIED_OPERATION_INVOKE_INDEPENDENT_REVIEW.zh-CN.md",
+        "docs/plans/reviews/R3_D_LEGACY_SPECIAL_CASE_REMOVAL_INDEPENDENT_REVIEW.zh-CN.md",
+        "docs/plans/reviews/R5_0_BASELINE_AND_DELETION_INDEPENDENT_REVIEW.zh-CN.md",
+        "docs/plans/reviews/R5_PLAN_INDEPENDENT_REVIEW.zh-CN.md",
+        "docs/plans/reviews/R5_PLAN_INDEPENDENT_REVIEW_ROUND2.zh-CN.md"
+      ],
+      "production": [
+        "src/scidiscovery/artifact_agent/runtime.py",
+        "src/scidiscovery/platforms/codex.py",
+        "src/scidiscovery/platforms/roles.py"
+      ],
+      "test": [
+        "tests/artifact_agent/test_platform_configuration.py",
+        "tests/operations/test_baseline_plugin_discovery.py",
+        "tests/operations/test_baseline_role_contracts.py",
+        "tests/operations/test_r3_catalog_authority.py"
+      ]
+    },
+    "load_transform_adapters": {
+      "current-doc": [
+        "docs/ARCHITECTURE.md",
+        "docs/ARCHITECTURE.zh-CN.md"
+      ],
+      "dynamic-entry": [
+        "deploy/install.sh"
+      ],
+      "historical-doc": [
+        "docs/plans/R5_0_BASELINE_AND_DELETION_INVENTORY.zh-CN.md",
+        "docs/plans/R5_CONTROL_WEIGHT_REMOVAL_IMPLEMENTATION.zh-CN.md",
+        "docs/plans/reviews/R4_C_C_PROJECT_PLUGIN_INDEPENDENT_REVIEW.zh-CN.md",
+        "docs/plans/reviews/R4_C_C_PROJECT_PLUGIN_INDEPENDENT_REVIEW_ROUND2.zh-CN.md",
+        "docs/plans/reviews/R4_FUNCTIONAL_DECOUPLING_AND_OCCAM_INDEPENDENT_REVIEW.zh-CN.md",
+        "docs/plans/reviews/R5_PLAN_INDEPENDENT_REVIEW.zh-CN.md",
+        "docs/plans/reviews/R5_PLAN_INDEPENDENT_REVIEW_ROUND2.zh-CN.md"
+      ],
+      "production": [
+        "src/scidiscovery/artifact_agent/interfaces/mcp_daemon.py",
+        "src/scidiscovery/artifact_agent/transforms.py"
+      ],
+      "test": [
+        "tests/operations/test_baseline_plugin_discovery.py"
+      ]
+    },
+    "parameter_operation_ids": {
+      "current-doc": [
+        "AGENTS.md"
+      ],
+      "dynamic-entry": [
+        "roles/scheduler.md"
+      ],
+      "historical-doc": [
+        "docs/plans/R4_DOMAIN_PLUGIN_UI_IMPLEMENTATION.zh-CN.md",
+        "docs/plans/R5_CONTROL_WEIGHT_REMOVAL_IMPLEMENTATION.zh-CN.md",
+        "docs/plans/reviews/R3_C_GENERIC_TRANSFORMS_INDEPENDENT_REVIEW.zh-CN.md",
+        "docs/plans/reviews/R4_A_INDEPENDENT_REVIEW_ROUND3.zh-CN.md",
+        "docs/plans/reviews/R4_A_INDEPENDENT_REVIEW_ROUND4.zh-CN.md",
+        "docs/plans/reviews/R4_D_B_CORE_APPROVAL_IMPLEMENTATION_INDEPENDENT_REVIEW_ROUND2.zh-CN.md",
+        "docs/plans/reviews/R4_D_B_CORE_APPROVAL_IMPLEMENTATION_INDEPENDENT_REVIEW_ROUND3.zh-CN.md",
+        "docs/plans/reviews/R4_D_B_MANIFEST_CLOSURE_INDEPENDENT_REVIEW.zh-CN.md",
+        "docs/plans/reviews/R4_FINAL_MANIFEST_AND_CLOSURE_INDEPENDENT_REVIEW.zh-CN.md",
+        "docs/plans/reviews/R4_FINAL_MANIFEST_AND_CLOSURE_INDEPENDENT_REVIEW_ROUND2.zh-CN.md"
+      ],
+      "production": [
+        "src/scidiscovery/general_science_plugin.py",
+        "src/scidiscovery/general_transform_operations.py",
+        "plugins/tcad_artifact/tcad_artifact/plugin.py"
+      ],
+      "test": [
+        "tests/operations/test_catalog_installed_entrypoint.py",
+        "tests/operations/test_operation_invoke_installed.py",
+        "tests/operations/test_r4_approval_operation.py",
+        "tests/operations/test_tcad_operation_plugin.py"
+      ]
+    },
+    "producer_family_hardcoding": {
+      "current-doc": [],
+      "dynamic-entry": [
+        "roles/common.md"
+      ],
+      "historical-doc": [
+        "docs/plans/INCREMENTAL_CONTEXT_AND_REVISION_REMEDIATION_PLAN.zh-CN.md",
+        "docs/plans/R4_DOMAIN_PLUGIN_UI_IMPLEMENTATION.zh-CN.md",
+        "docs/plans/R5_0_BASELINE_AND_DELETION_INVENTORY.zh-CN.md",
+        "docs/plans/R5_CONTROL_WEIGHT_REMOVAL_IMPLEMENTATION.zh-CN.md",
+        "docs/plans/reviews/R4_D_A_APPROVAL_VIEW_DESIGN_INDEPENDENT_REVIEW.zh-CN.md",
+        "docs/plans/reviews/R4_D_A_APPROVAL_VIEW_DESIGN_INDEPENDENT_REVIEW_ROUND2.zh-CN.md",
+        "docs/plans/reviews/R4_D_A_APPROVAL_VIEW_DESIGN_INDEPENDENT_REVIEW_ROUND3.zh-CN.md",
+        "docs/plans/reviews/R4_D_A_APPROVAL_VIEW_DESIGN_INDEPENDENT_REVIEW_ROUND4.zh-CN.md",
+        "docs/plans/reviews/R4_FUNCTIONAL_DECOUPLING_AND_OCCAM_INDEPENDENT_REVIEW.zh-CN.md"
+      ],
+      "production": [
+        "src/scidiscovery/artifact_agent/core_context_policies.py",
+        "src/scidiscovery/artifact_agent/interfaces/mcp_root.py",
+        "src/scidiscovery/artifact_agent/service/tasks.py",
+        "src/scidiscovery/artifact_agent/transforms.py",
+        "src/scidiscovery/general_science_plugin.py",
+        "src/scidiscovery/general_transform_operations.py",
+        "src/scidiscovery/operations/invoke.py"
+      ],
+      "test": [
+        "tests/operations/test_general_science_plugin.py",
+        "tests/operations/test_general_transform_operations.py",
+        "tests/operations/test_r4_approval_operation.py"
+      ]
+    },
+    "role_runtime_profile": {
+      "current-doc": [],
+      "dynamic-entry": [],
+      "historical-doc": [
+        "docs/plans/R5_0_BASELINE_AND_DELETION_INVENTORY.zh-CN.md",
+        "docs/plans/R5_CONTROL_WEIGHT_REMOVAL_IMPLEMENTATION.zh-CN.md",
+        "docs/plans/reviews/R5_PLAN_INDEPENDENT_REVIEW.zh-CN.md"
+      ],
+      "production": [
+        "src/scidiscovery/scheduler_topology.py"
+      ],
+      "test": [
+        "tests/operations/test_baseline_role_contracts.py"
+      ]
+    },
+    "scientific_readiness": {
+      "current-doc": [
+        "AGENTS.md"
+      ],
+      "dynamic-entry": [
+        "roles/scheduler.md"
+      ],
+      "historical-doc": [
+        "docs/plans/FIG4_P6_ALPHA_CLOSURE_LIVE_AUDIT.zh-CN.md",
+        "docs/plans/OPERATION_SPEC_MINIMAL_REFACTOR_PLAN.zh-CN.md",
+        "docs/plans/R3_GENERIC_OPERATIONS_IMPLEMENTATION.zh-CN.md",
+        "docs/plans/R5_0_BASELINE_AND_DELETION_INVENTORY.zh-CN.md",
+        "docs/plans/R5_CONTROL_WEIGHT_REMOVAL_IMPLEMENTATION.zh-CN.md",
+        "docs/plans/SCIENTIFIC_QUALIFICATION_KERNEL_V2_IMPLEMENTATION_PLAN.zh-CN.md",
+        "docs/plans/TCAD_ALPHA_SCIENTIFIC_LOOP_PLAN.zh-CN.md",
+        "docs/plans/reviews/R2_UNIFIED_OPERATION_INVOKE_INDEPENDENT_REVIEW.zh-CN.md",
+        "docs/plans/reviews/R4_C_A_BOUNDARY_INDEPENDENT_REVIEW.zh-CN.md",
+        "docs/plans/reviews/R4_C_A_BOUNDARY_INDEPENDENT_REVIEW_ROUND2.zh-CN.md",
+        "docs/plans/reviews/R4_D_B_CORE_APPROVAL_IMPLEMENTATION_INDEPENDENT_REVIEW_ROUND2.zh-CN.md",
+        "docs/plans/reviews/R4_D_B_CORE_APPROVAL_IMPLEMENTATION_INDEPENDENT_REVIEW_ROUND3.zh-CN.md",
+        "docs/plans/reviews/R4_D_B_CORE_APPROVAL_IMPLEMENTATION_INDEPENDENT_REVIEW_ROUND5.zh-CN.md",
+        "docs/plans/reviews/R4_FUNCTIONAL_DECOUPLING_AND_OCCAM_INDEPENDENT_REVIEW.zh-CN.md"
+      ],
+      "production": [
+        "src/scidiscovery/artifact_agent/interfaces/mcp_root.py"
+      ],
+      "test": [
+        "tests/operations/test_general_science_plugin.py",
+        "tests/operations/test_r4_approval_operation.py"
+      ]
+    },
+    "task_schedule": {
+      "current-doc": [
+        "AGENTS.md",
+        "docs/ARCHITECTURE.md",
+        "docs/ARCHITECTURE.zh-CN.md"
+      ],
+      "dynamic-entry": [
+        "roles/scheduler.md"
+      ],
+      "historical-doc": [
+        "docs/plans/FIG4_P6_ALPHA_CLOSURE_LIVE_AUDIT.zh-CN.md",
+        "docs/plans/OPERATION_SPEC_MINIMAL_REFACTOR_PLAN.zh-CN.md",
+        "docs/plans/R2_UNIFIED_OPERATION_INVOKE_IMPLEMENTATION.zh-CN.md",
+        "docs/plans/R3_GENERIC_OPERATIONS_IMPLEMENTATION.zh-CN.md",
+        "docs/plans/R4_DOMAIN_PLUGIN_UI_IMPLEMENTATION.zh-CN.md",
+        "docs/plans/R5_0_BASELINE_AND_DELETION_INVENTORY.zh-CN.md",
+        "docs/plans/R5_CONTROL_WEIGHT_REMOVAL_IMPLEMENTATION.zh-CN.md",
+        "docs/plans/SCIENTIFIC_QUALIFICATION_KERNEL_V2_IMPLEMENTATION_PLAN.zh-CN.md",
+        "docs/plans/reviews/R2_UNIFIED_OPERATION_INVOKE_INDEPENDENT_REVIEW.zh-CN.md",
+        "docs/plans/reviews/R3_D_LEGACY_SPECIAL_CASE_REMOVAL_INDEPENDENT_REVIEW.zh-CN.md",
+        "docs/plans/reviews/R3_TOTAL_INDEPENDENT_REVIEW.zh-CN.md",
+        "docs/plans/reviews/R4_A_INDEPENDENT_REVIEW.zh-CN.md",
+        "docs/plans/reviews/R4_D_A_APPROVAL_VIEW_DESIGN_INDEPENDENT_REVIEW_ROUND2.zh-CN.md",
+        "docs/plans/reviews/R4_D_A_APPROVAL_VIEW_DESIGN_INDEPENDENT_REVIEW_ROUND3.zh-CN.md",
+        "docs/plans/reviews/R4_D_A_APPROVAL_VIEW_DESIGN_INDEPENDENT_REVIEW_ROUND4.zh-CN.md",
+        "docs/plans/reviews/R4_FINAL_MANIFEST_AND_CLOSURE_INDEPENDENT_REVIEW.zh-CN.md",
+        "docs/plans/reviews/R4_FUNCTIONAL_DECOUPLING_AND_OCCAM_INDEPENDENT_REVIEW.zh-CN.md",
+        "docs/plans/reviews/R5_0_BASELINE_AND_DELETION_INDEPENDENT_REVIEW.zh-CN.md",
+        "docs/plans/reviews/R5_PLAN_INDEPENDENT_REVIEW.zh-CN.md"
+      ],
+      "production": [
+        "src/scidiscovery/artifact_agent/interfaces/mcp_root.py"
+      ],
+      "test": [
+        "tests/operations/test_baseline_agent_lifecycle.py",
+        "tests/operations/test_general_science_plugin.py",
+        "tests/operations/test_r3_catalog_authority.py",
+        "tests/operations/test_r4_approval_operation.py"
+      ]
+    }
+  },
+  "consumer_occurrence_counts": {
+    "approval_request_create": {
+      "current-doc": 0,
+      "dynamic-entry": 0,
+      "historical-doc": 6,
+      "production": 3,
+      "test": 1
+    },
+    "artifact_transform": {
+      "current-doc": 3,
+      "dynamic-entry": 1,
+      "historical-doc": 29,
+      "production": 4,
+      "test": 2
+    },
+    "broken_operation_entry_point": {
+      "current-doc": 0,
+      "dynamic-entry": 0,
+      "historical-doc": 15,
+      "production": 0,
+      "test": 5
+    },
+    "core_context_policy": {
+      "current-doc": 0,
+      "dynamic-entry": 0,
+      "historical-doc": 10,
+      "production": 2,
+      "test": 2
+    },
+    "device_parameter_bundle_validator": {
+      "current-doc": 0,
+      "dynamic-entry": 0,
+      "historical-doc": 2,
+      "production": 4,
+      "test": 0
+    },
+    "device_parameter_schema": {
+      "current-doc": 0,
+      "dynamic-entry": 0,
+      "historical-doc": 0,
+      "production": 12,
+      "test": 2
+    },
+    "execution_request_create": {
+      "current-doc": 1,
+      "dynamic-entry": 0,
+      "historical-doc": 10,
+      "production": 4,
+      "test": 2
+    },
+    "legacy_role_entry_point": {
+      "current-doc": 0,
+      "dynamic-entry": 0,
+      "historical-doc": 7,
+      "production": 1,
+      "test": 3
+    },
+    "legacy_transform_entry_point": {
+      "current-doc": 0,
+      "dynamic-entry": 1,
+      "historical-doc": 20,
+      "production": 1,
+      "test": 5
+    },
+    "load_roles": {
+      "current-doc": 2,
+      "dynamic-entry": 2,
+      "historical-doc": 14,
+      "production": 7,
+      "test": 10
+    },
+    "load_transform_adapters": {
+      "current-doc": 2,
+      "dynamic-entry": 2,
+      "historical-doc": 10,
+      "production": 4,
+      "test": 6
+    },
+    "parameter_operation_ids": {
+      "current-doc": 2,
+      "dynamic-entry": 2,
+      "historical-doc": 19,
+      "production": 9,
+      "test": 20
+    },
+    "producer_family_hardcoding": {
+      "current-doc": 0,
+      "dynamic-entry": 2,
+      "historical-doc": 27,
+      "production": 57,
+      "test": 51
+    },
+    "role_runtime_profile": {
+      "current-doc": 0,
+      "dynamic-entry": 0,
+      "historical-doc": 5,
+      "production": 9,
+      "test": 2
+    },
+    "scientific_readiness": {
+      "current-doc": 1,
+      "dynamic-entry": 1,
+      "historical-doc": 20,
+      "production": 2,
+      "test": 10
+    },
+    "task_schedule": {
+      "current-doc": 3,
+      "dynamic-entry": 1,
+      "historical-doc": 33,
+      "production": 3,
+      "test": 9
+    }
+  },
+  "deployment": {
+    "install_sh_lines": 1026
+  },
+  "generic_core_domain_tokens": {
+    "count": 112,
+    "locations_sha256": "2693553469914fe7a7084ee146d2f8236847fc88315f73e57e16b2c5162dff2f"
+  },
+  "operations_package": {
+    "files": 7,
+    "lines": 2060
+  },
+  "production_python": {
+    "files": 126,
+    "lines": 62533
+  },
+  "r0_core": {
+    "baseline_lines": {
+      "src/scidiscovery/artifact_agent/approval_ui/render.py": 3153,
+      "src/scidiscovery/artifact_agent/interfaces/mcp_root.py": 2616,
+      "src/scidiscovery/artifact_agent/runtime.py": 256,
+      "src/scidiscovery/artifact_agent/service/tasks.py": 6952,
+      "src/scidiscovery/platforms/roles.py": 339,
+      "src/scidiscovery/scheduler_topology.py": 341
+    },
+    "baseline_total": 13657,
+    "paths": [
+      "src/scidiscovery/scheduler_topology.py",
+      "src/scidiscovery/platforms/roles.py",
+      "src/scidiscovery/artifact_agent/runtime.py",
+      "src/scidiscovery/artifact_agent/interfaces/mcp_root.py",
+      "src/scidiscovery/artifact_agent/service/tasks.py",
+      "src/scidiscovery/artifact_agent/approval_ui/render.py"
+    ],
+    "r5_0_lines": {
+      "src/scidiscovery/artifact_agent/approval_ui/render.py": 370,
+      "src/scidiscovery/artifact_agent/interfaces/mcp_root.py": 3531,
+      "src/scidiscovery/artifact_agent/runtime.py": 200,
+      "src/scidiscovery/artifact_agent/service/tasks.py": 6786,
+      "src/scidiscovery/platforms/roles.py": 342,
+      "src/scidiscovery/scheduler_topology.py": 68
+    },
+    "r5_0_total": 11297
+  },
+  "responsibilities": {
+    "src/scidiscovery/artifact_agent/approval_ui/render.py": {
+      "lines_by_path": {
+        "src/scidiscovery/artifact_agent/approval_ui/render.py": 370
+      },
+      "successor_paths": [
+        "src/scidiscovery/artifact_agent/approval_ui/render.py"
+      ],
+      "top_level_definitions_by_path": {
+        "src/scidiscovery/artifact_agent/approval_ui/render.py": [
+          "ClassDef:ReviewContext",
+          "FunctionDef:render_review",
+          "FunctionDef:_render_document",
+          "FunctionDef:_render_document_item",
+          "FunctionDef:_render_fallback_notice",
+          "FunctionDef:_render_review_context",
+          "FunctionDef:_render_raw_subjects",
+          "FunctionDef:_render_subject_metadata",
+          "FunctionDef:_render_decision",
+          "FunctionDef:_render_request_metadata",
+          "FunctionDef:_subject_href",
+          "FunctionDef:_json_pointer_value",
+          "FunctionDef:_escaped_json",
+          "FunctionDef:_display_scalar"
+        ]
+      },
+      "total_lines": 370
+    },
+    "src/scidiscovery/artifact_agent/interfaces/mcp_root.py": {
+      "lines_by_path": {
+        "src/scidiscovery/artifact_agent/interfaces/mcp_root.py": 3531
+      },
+      "successor_paths": [
+        "src/scidiscovery/artifact_agent/interfaces/mcp_root.py"
+      ],
+      "top_level_definitions_by_path": {
+        "src/scidiscovery/artifact_agent/interfaces/mcp_root.py": [
+          "ClassDef:RootToolError",
+          "ClassDef:RootToolInput",
+          "ClassDef:EmptyInput",
+          "ClassDef:OperationCatalogInput",
+          "ClassDef:NamedInput",
+          "ClassDef:InstancePrepareInput",
+          "ClassDef:InstanceListInput",
+          "ClassDef:RevisionInput",
+          "ClassDef:IngestFileInput",
+          "ClassDef:TransformInputSelection",
+          "ClassDef:ArtifactTransformInput",
+          "ClassDef:OperationInputSelection",
+          "ClassDef:OperationCallInput",
+          "ClassDef:ScientificCurrentSelectInput",
+          "ClassDef:TaskInputSelection",
+          "ClassDef:TaskScheduleInput",
+          "ClassDef:TaskListInput",
+          "ClassDef:DispatchInput",
+          "ClassDef:FailureInput",
+          "ClassDef:ApprovalOptionInput",
+          "ClassDef:ApprovalDisplayTranslationInput",
+          "ClassDef:ApprovalPresentationInput",
+          "ClassDef:ApprovalCreateInput",
+          "ClassDef:ApprovalListInput",
+          "ClassDef:ExecutionCreateInput",
+          "ClassDef:ExecutionCapabilitiesInput",
+          "ClassDef:ExecutionCapabilityBindInput",
+          "ClassDef:ExecutionListInput",
+          "ClassDef:RootTool",
+          "ClassDef:_CreationTarget",
+          "ClassDef:RootToolFacade",
+          "ClassDef:RootMCPRouter",
+          "FunctionDef:_metric_report_has_complete_plan_coverage",
+          "FunctionDef:_derived_name",
+          "FunctionDef:_operation_artifact_labels",
+          "FunctionDef:_identity_word"
+        ]
+      },
+      "total_lines": 3531
+    },
+    "src/scidiscovery/artifact_agent/interfaces/mcp_worker.py": {
+      "lines_by_path": {
+        "src/scidiscovery/artifact_agent/interfaces/mcp_worker.py": 1387
+      },
+      "successor_paths": [
+        "src/scidiscovery/artifact_agent/interfaces/mcp_worker.py"
+      ],
+      "top_level_definitions_by_path": {
+        "src/scidiscovery/artifact_agent/interfaces/mcp_worker.py": [
+          "ClassDef:WorkerToolError",
+          "ClassDef:WorkerToolInput",
+          "ClassDef:ReadInput",
+          "ClassDef:NamedInput",
+          "ClassDef:PdfInput",
+          "ClassDef:TableInput",
+          "ClassDef:ProfileInput",
+          "ClassDef:ValidateOutputInput",
+          "ClassDef:AnalysisInput",
+          "ClassDef:CurveAnalyzeInput",
+          "ClassDef:WebEvidenceInput",
+          "ClassDef:FinalizeInput",
+          "ClassDef:ResultUploadChunk",
+          "ClassDef:WorkerFilePathInput",
+          "ClassDef:WorkerFileWriteBeginInput",
+          "ClassDef:WorkerFileWriteChunkInput",
+          "ClassDef:WorkerFilePatchInput",
+          "ClassDef:WorkerJsonPatchOperation",
+          "ClassDef:WorkerFileJsonPatchInput",
+          "ClassDef:WorkerFileMoveInput",
+          "ClassDef:WorkerTool",
+          "FunctionDef:_builtin_tool_component",
+          "ClassDef:WorkerMCPRouter",
+          "FunctionDef:_write_curve_analysis_outputs",
+          "FunctionDef:_read_table",
+          "FunctionDef:_profile_input",
+          "FunctionDef:_run_analysis",
+          "FunctionDef:_scientific_paper_evidence_script",
+          "FunctionDef:_scientific_paper_evidence_validator_script",
+          "FunctionDef:_scientific_paper_evidence_renderer_script",
+          "FunctionDef:_set_analysis_limits"
+        ]
+      },
+      "total_lines": 1387
+    },
+    "src/scidiscovery/artifact_agent/runtime.py": {
+      "lines_by_path": {
+        "src/scidiscovery/artifact_agent/runtime.py": 200
+      },
+      "successor_paths": [
+        "src/scidiscovery/artifact_agent/runtime.py"
+      ],
+      "top_level_definitions_by_path": {
+        "src/scidiscovery/artifact_agent/runtime.py": [
+          "ClassDef:RuntimeConfigurationError",
+          "ClassDef:ArtifactAgentRuntime",
+          "FunctionDef:open_runtime",
+          "FunctionDef:read_secret_file",
+          "FunctionDef:_validate_state_root",
+          "FunctionDef:_load_context_policies"
+        ]
+      },
+      "total_lines": 200
+    },
+    "src/scidiscovery/artifact_agent/service/tasks.py": {
+      "lines_by_path": {
+        "src/scidiscovery/artifact_agent/service/tasks.py": 6786
+      },
+      "successor_paths": [
+        "src/scidiscovery/artifact_agent/service/tasks.py"
+      ],
+      "top_level_definitions_by_path": {
+        "src/scidiscovery/artifact_agent/service/tasks.py": [
+          "ClassDef:TaskServiceError",
+          "ClassDef:TaskNotReady",
+          "ClassDef:TaskStateConflict",
+          "ClassDef:TaskInputError",
+          "FunctionDef:_same_device_parameter_checklist",
+          "FunctionDef:_resolve_json_pointer",
+          "ClassDef:RoleOutputVariant",
+          "ClassDef:RoleOutputContract",
+          "ClassDef:DispatchTicket",
+          "ClassDef:ExactDispatchTicket",
+          "ClassDef:OperationCommitPrecondition",
+          "ClassDef:TaskStatusView",
+          "ClassDef:TaskWebEvidenceView",
+          "ClassDef:WebEvidenceMaterializationView",
+          "ClassDef:TaskPdfExcerptView",
+          "ClassDef:PdfTextExtractionView",
+          "ClassDef:TaskOutputArtifactView",
+          "ClassDef:_ValidatedOutputArtifact",
+          "ClassDef:_WorkspaceSnapshotFile",
+          "ClassDef:_WorkerFileTarget",
+          "ClassDef:TaskService",
+          "FunctionDef:_network_domain_matches",
+          "FunctionDef:_parse_ref",
+          "FunctionDef:_parse_optional_ref",
+          "FunctionDef:_pdf_text_pages",
+          "FunctionDef:_timestamp",
+          "FunctionDef:_parse_timestamp",
+          "FunctionDef:_seconds_between",
+          "FunctionDef:_add_duration",
+          "FunctionDef:_bounded_provisional_diagnostics",
+          "FunctionDef:_operation_labels",
+          "FunctionDef:_operation_output_labels",
+          "FunctionDef:_task_input_filename",
+          "FunctionDef:_write_immutable_file",
+          "FunctionDef:_validated_provisional_relative_path",
+          "FunctionDef:_validated_worker_file_path",
+          "FunctionDef:_read_worker_upload_metadata",
+          "FunctionDef:_prepare_worker_file_parent",
+          "FunctionDef:_replace_worker_file",
+          "FunctionDef:_atomic_worker_file_write",
+          "FunctionDef:_read_regular_worker_file",
+          "FunctionDef:_is_parseable_json",
+          "FunctionDef:_require_patchable_worker_json",
+          "FunctionDef:_apply_worker_json_patch",
+          "FunctionDef:_worker_json_pointer_tokens",
+          "FunctionDef:_worker_json_pointer_get",
+          "FunctionDef:_worker_json_list_index",
+          "FunctionDef:_bounded_utf8",
+          "FunctionDef:_patch_line_preview",
+          "FunctionDef:_patch_context_not_found_message",
+          "FunctionDef:_patch_context_ambiguous_message",
+          "FunctionDef:_apply_unified_patch",
+          "FunctionDef:_apply_codex_patch",
+          "FunctionDef:_apply_worker_patch",
+          "FunctionDef:_read_regular_output_file",
+          "FunctionDef:_collection_output_paths",
+          "FunctionDef:_bundle_error",
+          "FunctionDef:_write_control_output_file",
+          "FunctionDef:_lease_seconds",
+          "FunctionDef:_input_access_modes",
+          "FunctionDef:_decode_agent_task",
+          "FunctionDef:_encode_output",
+          "FunctionDef:_validate_role_output",
+          "FunctionDef:_validate_revision_scope",
+          "FunctionDef:_validate_contextual_role_output",
+          "FunctionDef:_validate_collection_bundle",
+          "FunctionDef:_validation_details",
+          "FunctionDef:_validation_json_pointer",
+          "FunctionDef:_validation_reason_code",
+          "FunctionDef:_validation_expected_contract",
+          "FunctionDef:_validation_fix_hint",
+          "FunctionDef:_prefix_validation_paths"
+        ]
+      },
+      "total_lines": 6786
+    },
+    "src/scidiscovery/general_science_plugin.py": {
+      "lines_by_path": {
+        "src/scidiscovery/general_science_plugin.py": 2470
+      },
+      "successor_paths": [
+        "src/scidiscovery/general_science_plugin.py"
+      ],
+      "top_level_definitions_by_path": {
+        "src/scidiscovery/general_science_plugin.py": [
+          "FunctionDef:_schema",
+          "FunctionDef:_payload_validator",
+          "FunctionDef:_json_codec",
+          "FunctionDef:_opaque_codec",
+          "FunctionDef:_nonempty",
+          "FunctionDef:_experiment_context",
+          "FunctionDef:_diagnosis_context",
+          "FunctionDef:_revision_context",
+          "FunctionDef:_critic_portfolio_context",
+          "FunctionDef:_validate_audit_handoff_and_sources",
+          "FunctionDef:_evidence_audit_context",
+          "FunctionDef:_hypothesis_audit_context",
+          "FunctionDef:_object_review_context",
+          "FunctionDef:_figure_bundle_validator",
+          "FunctionDef:_curve_plot_bundle_validator",
+          "FunctionDef:_agent_marker",
+          "FunctionDef:_semantic_contract",
+          "ClassDef:Resources",
+          "ClassDef:Components",
+          "FunctionDef:_subjects_by_port",
+          "FunctionDef:_one_subject",
+          "FunctionDef:_parse_subject",
+          "FunctionDef:_labels",
+          "FunctionDef:_require_transform_output",
+          "FunctionDef:_unique_family_source_refs",
+          "FunctionDef:_require_passing_audit",
+          "FunctionDef:_review_document",
+          "FunctionDef:_evidence_qualification_document",
+          "FunctionDef:_parameter_qualification_document",
+          "FunctionDef:_ref",
+          "FunctionDef:_input",
+          "FunctionDef:_output",
+          "FunctionDef:_schema_component",
+          "FunctionDef:_semantic_component",
+          "FunctionDef:_agent",
+          "FunctionDef:_audit_output",
+          "FunctionDef:_revision_operation",
+          "FunctionDef:_approval_operation",
+          "FunctionDef:_component_specs"
+        ]
+      },
+      "total_lines": 2470
+    },
+    "src/scidiscovery/general_transform_operations.py": {
+      "lines_by_path": {
+        "src/scidiscovery/general_transform_operations.py": 1095
+      },
+      "successor_paths": [
+        "src/scidiscovery/general_transform_operations.py"
+      ],
+      "top_level_definitions_by_path": {
+        "src/scidiscovery/general_transform_operations.py": [
+          "FunctionDef:_schema",
+          "FunctionDef:_strict_validator",
+          "FunctionDef:_experiment_portfolio_validator",
+          "FunctionDef:_one",
+          "FunctionDef:_run_legacy",
+          "FunctionDef:_intake_split",
+          "FunctionDef:_objective_project",
+          "FunctionDef:_candidate_eligibility",
+          "FunctionDef:_experiment_materialize",
+          "FunctionDef:_parameter_coverage",
+          "FunctionDef:_parameter_uncertainty",
+          "FunctionDef:_knowledge_update",
+          "FunctionDef:_structured_revision_apply",
+          "FunctionDef:_unchanged_evidence_receipt",
+          "ClassDef:_RequiredParentage",
+          "ClassDef:Resources",
+          "ClassDef:Components",
+          "FunctionDef:_input",
+          "FunctionDef:_output",
+          "FunctionDef:_transform",
+          "FunctionDef:component_specs"
+        ]
+      },
+      "total_lines": 1095
+    },
+    "src/scidiscovery/operations/catalog.py": {
+      "lines_by_path": {
+        "src/scidiscovery/operations/catalog.py": 636
+      },
+      "successor_paths": [
+        "src/scidiscovery/operations/catalog.py"
+      ],
+      "top_level_definitions_by_path": {
+        "src/scidiscovery/operations/catalog.py": [
+          "ClassDef:CatalogCompileError",
+          "ClassDef:CompiledCatalog",
+          "FunctionDef:_fail",
+          "FunctionDef:_load_implementation",
+          "FunctionDef:_resource_digest",
+          "FunctionDef:_qualified",
+          "FunctionDef:_approval_option_id",
+          "FunctionDef:compile_catalog",
+          "FunctionDef:compile_installed_catalog"
+        ]
+      },
+      "total_lines": 636
+    },
+    "src/scidiscovery/platforms/roles.py": {
+      "lines_by_path": {
+        "src/scidiscovery/platforms/roles.py": 342
+      },
+      "successor_paths": [
+        "src/scidiscovery/platforms/roles.py"
+      ],
+      "top_level_definitions_by_path": {
+        "src/scidiscovery/platforms/roles.py": [
+          "ClassDef:RoleDefinition",
+          "FunctionDef:load_roles",
+          "FunctionDef:load_role_prompt",
+          "FunctionDef:role_output_json_schema",
+          "FunctionDef:legacy_domain_collection_profiles",
+          "FunctionDef:load_scheduler_prompt",
+          "FunctionDef:render_worker_prompt",
+          "FunctionDef:_compose_prompt",
+          "FunctionDef:_required",
+          "FunctionDef:_read_role",
+          "FunctionDef:_role_directory",
+          "FunctionDef:_role_path"
+        ]
+      },
+      "total_lines": 342
+    },
+    "src/scidiscovery/scheduler_topology.py": {
+      "lines_by_path": {
+        "src/scidiscovery/scheduler_topology.py": 68
+      },
+      "successor_paths": [
+        "src/scidiscovery/scheduler_topology.py"
+      ],
+      "top_level_definitions_by_path": {
+        "src/scidiscovery/scheduler_topology.py": [
+          "ClassDef:RoleRuntimeProfile",
+          "FunctionDef:ready_operations",
+          "FunctionDef:role_runtime_profile"
+        ]
+      },
+      "total_lines": 68
+    }
+  },
+  "schema_version": 2
+}

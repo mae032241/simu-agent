@@ -1,0 +1,894 @@
+{
+  "candidate": "p4-candidate-final.json",
+  "collection": "p4-collection.log",
+  "collected_tests": 686,
+  "reused": [
+    {
+      "file": "tests/operations/test_agent_contract_alignment.py",
+      "log": "p3-feedback-focused.log",
+      "collected_tests": 110,
+      "sha256": "8575f1aed0985c0f6765099717490f431dbd14f9c17e121619a359fc3af1b35d"
+    },
+    {
+      "file": "tests/operations/test_general_transform_operations.py",
+      "log": "p3-feedback-focused.log",
+      "collected_tests": 18,
+      "sha256": "037d50b29c30f3cbdbc943baede61f1fc9c08b41276f8b84a87dbfd9a328a50b"
+    },
+    {
+      "file": "tests/operations/test_catalog_negative_cases.py",
+      "log": "p3-feedback-focused.log",
+      "collected_tests": 59,
+      "sha256": "a5319f4569386133e5a1e7ee778a21d4190c2f9a3f472f91378ece9c985f410c"
+    },
+    {
+      "file": "tests/operations/test_m6c_producer_topology_removal.py",
+      "log": "p3-feedback-focused.log",
+      "collected_tests": 25,
+      "sha256": "28682feeb28d759c210ff4354f9757b3e26f361d0ca1688c337d88f46f0d1d4d"
+    },
+    {
+      "file": "tests/operations/test_m6a_direct_instance_management.py",
+      "log": "p3-parent-query-final.log",
+      "collected_tests": 13,
+      "sha256": "7711ca9988f0d8627a802caa8477ac88e586d736c92973f9c7de22cced44a7a2"
+    },
+    {
+      "file": "tests/operations/test_skill_policy_producer_compatibility.py",
+      "log": "p3-parent-query-and-retirement.log",
+      "collected_tests": 5,
+      "sha256": "052d0fda4f617824c9aec20afdbb7845c5c7da7cd27f98b588356012ec50f144"
+    },
+    {
+      "file": "tests/operations/test_m2_curve_analysis_boundary.py",
+      "log": "p4-review-check-binding-after.log",
+      "collected_tests": 27,
+      "sha256": "f1670913c7cb083c7c86e7f5d73bf2c1c5d37398e060d13bf23cad57cc831176"
+    }
+  ],
+  "batches": [
+    {
+      "files": [
+        "tests/artifact_agent/test_artifact_audit.py"
+      ],
+      "command": [
+        "/home/da/miniconda3/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/artifact_agent/test_artifact_audit.py"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 1.27,
+      "log": "p4-test_artifact_audit-1.log",
+      "summary": [
+        "8 passed in 0.70s"
+      ]
+    },
+    {
+      "files": [
+        "tests/artifact_agent/test_deploy_scripts.py"
+      ],
+      "command": [
+        "/home/da/miniconda3/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/artifact_agent/test_deploy_scripts.py"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 9.0,
+      "log": "p4-test_deploy_scripts-1.log",
+      "summary": [
+        "63 passed in 8.74s"
+      ]
+    },
+    {
+      "files": [
+        "tests/artifact_agent/test_platform_configuration.py"
+      ],
+      "command": [
+        "/home/da/miniconda3/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/artifact_agent/test_platform_configuration.py"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 1.82,
+      "log": "p4-test_platform_configuration-1.log",
+      "summary": [
+        "14 passed in 1.50s"
+      ]
+    },
+    {
+      "files": [
+        "tests/operations/test_architecture_constraint_matrix.py"
+      ],
+      "command": [
+        "/home/da/miniconda3/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/operations/test_architecture_constraint_matrix.py"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 0.26,
+      "log": "p4-test_architecture_constraint_matrix-1.log",
+      "summary": [
+        "1 passed in 0.04s"
+      ]
+    },
+    {
+      "files": [
+        "tests/operations/test_baseline_structure_metrics.py"
+      ],
+      "command": [
+        "/home/da/miniconda3/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/operations/test_baseline_structure_metrics.py"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 0.47,
+      "log": "p4-test_baseline_structure_metrics-1.log",
+      "summary": [
+        "1 passed in 0.20s"
+      ]
+    },
+    {
+      "files": [
+        "tests/operations/test_catalog_compile.py"
+      ],
+      "command": [
+        "/home/da/miniconda3/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/operations/test_catalog_compile.py"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 0.87,
+      "log": "p4-test_catalog_compile-1.log",
+      "summary": [
+        "25 passed in 0.56s"
+      ]
+    },
+    {
+      "files": [
+        "tests/operations/test_e54_plugin_removal.py"
+      ],
+      "command": [
+        "/home/da/miniconda3/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/operations/test_e54_plugin_removal.py"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 0.72,
+      "log": "p4-test_e54_plugin_removal-1.log",
+      "summary": [
+        "3 passed in 0.41s"
+      ]
+    },
+    {
+      "files": [
+        "tests/operations/test_figure_semantic_compilation.py"
+      ],
+      "command": [
+        "/home/da/miniconda3/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/operations/test_figure_semantic_compilation.py"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 0.67,
+      "log": "p4-test_figure_semantic_compilation-1.log",
+      "summary": [
+        "8 passed in 0.39s"
+      ]
+    },
+    {
+      "files": [
+        "tests/operations/test_h2b_domain_boundaries.py"
+      ],
+      "command": [
+        "/home/da/miniconda3/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/operations/test_h2b_domain_boundaries.py"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 0.97,
+      "log": "p4-test_h2b_domain_boundaries-1.log",
+      "summary": [
+        "4 passed in 0.66s"
+      ]
+    },
+    {
+      "files": [
+        "tests/operations/test_hypothesis_objective_boundary.py"
+      ],
+      "command": [
+        "/home/da/miniconda3/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/operations/test_hypothesis_objective_boundary.py"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 0.32,
+      "log": "p4-test_hypothesis_objective_boundary-1.log",
+      "summary": [
+        "5 passed in 0.07s"
+      ]
+    },
+    {
+      "files": [
+        "tests/operations/test_hypothesis_review_routing.py"
+      ],
+      "command": [
+        "/home/da/miniconda3/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/operations/test_hypothesis_review_routing.py"
+      ],
+      "exit_code": 1,
+      "duration_seconds": 1.52,
+      "log": "p4-test_hypothesis_review_routing-1.log",
+      "summary": [
+        "1 failed, 9 passed in 1.21s"
+      ]
+    },
+    {
+      "files": [
+        "tests/operations/test_hypothesis_review_routing.py"
+      ],
+      "command": [
+        "/home/da/miniconda3/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/operations/test_hypothesis_review_routing.py"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 1.72,
+      "log": "p4-test_hypothesis_review_routing-2.log",
+      "summary": [
+        "10 passed in 1.33s"
+      ]
+    },
+    {
+      "files": [
+        "tests/operations/test_incremental_revision_runtime.py"
+      ],
+      "command": [
+        "/home/da/miniconda3/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/operations/test_incremental_revision_runtime.py"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 2.52,
+      "log": "p4-test_incremental_revision_runtime-1.log",
+      "summary": [
+        "20 passed in 2.20s"
+      ]
+    },
+    {
+      "files": [
+        "tests/operations/test_independent_codex_worker_launcher.py"
+      ],
+      "command": [
+        "/home/da/miniconda3/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/operations/test_independent_codex_worker_launcher.py"
+      ],
+      "exit_code": 1,
+      "duration_seconds": 1.57,
+      "log": "p4-test_independent_codex_worker_launcher-1.log",
+      "summary": [
+        "1 failed, 8 passed in 1.24s"
+      ]
+    },
+    {
+      "files": [
+        "tests/operations/test_independent_codex_worker_launcher.py"
+      ],
+      "command": [
+        "/home/da/miniconda3/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/operations/test_independent_codex_worker_launcher.py"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 1.72,
+      "log": "p4-test_independent_codex_worker_launcher-2.log",
+      "summary": [
+        "9 passed in 1.35s"
+      ]
+    },
+    {
+      "files": [
+        "tests/operations/test_invoke_preflight.py"
+      ],
+      "command": [
+        "/home/da/miniconda3/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/operations/test_invoke_preflight.py"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 0.37,
+      "log": "p4-test_invoke_preflight-1.log",
+      "summary": [
+        "4 passed in 0.10s"
+      ]
+    },
+    {
+      "files": [
+        "tests/operations/test_l2_local_run.py"
+      ],
+      "command": [
+        "/home/da/miniconda3/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/operations/test_l2_local_run.py"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 1.27,
+      "log": "p4-test_l2_local_run-1.log",
+      "summary": [
+        "6 passed in 0.94s"
+      ]
+    },
+    {
+      "files": [
+        "tests/operations/test_l2_run_invariants.py"
+      ],
+      "command": [
+        "/home/da/miniconda3/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/operations/test_l2_run_invariants.py"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 5.58,
+      "log": "p4-test_l2_run_invariants-1.log",
+      "summary": [
+        "21 passed in 5.22s"
+      ]
+    },
+    {
+      "files": [
+        "tests/operations/test_l3_review_and_human_policy.py"
+      ],
+      "command": [
+        "/home/da/miniconda3/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/operations/test_l3_review_and_human_policy.py"
+      ],
+      "exit_code": 1,
+      "duration_seconds": 1.22,
+      "log": "p4-test_l3_review_and_human_policy-1.log",
+      "summary": [
+        "1 failed, 2 passed in 0.88s"
+      ]
+    },
+    {
+      "files": [
+        "tests/operations/test_l3_review_and_human_policy.py"
+      ],
+      "command": [
+        "/home/da/miniconda3/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/operations/test_l3_review_and_human_policy.py"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 1.97,
+      "log": "p4-test_l3_review_and_human_policy-2.log",
+      "summary": [
+        "3 passed in 1.36s"
+      ]
+    },
+    {
+      "files": [
+        "tests/operations/test_l4_live_tcad_revision_evidence.py"
+      ],
+      "command": [
+        "/home/da/miniconda3/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/operations/test_l4_live_tcad_revision_evidence.py"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 0.72,
+      "log": "p4-test_l4_live_tcad_revision_evidence-1.log",
+      "summary": [
+        "3 passed in 0.40s"
+      ]
+    },
+    {
+      "files": [
+        "tests/operations/test_l4_local_tcad.py"
+      ],
+      "command": [
+        "/home/da/miniconda3/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/operations/test_l4_local_tcad.py"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 12.8,
+      "log": "p4-test_l4_local_tcad-1.log",
+      "summary": [
+        "84 passed in 12.46s"
+      ]
+    },
+    {
+      "files": [
+        "tests/operations/test_l5_hardened_run_backend.py"
+      ],
+      "command": [
+        "/home/da/miniconda3/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/operations/test_l5_hardened_run_backend.py"
+      ],
+      "exit_code": 1,
+      "duration_seconds": 1.92,
+      "log": "p4-test_l5_hardened_run_backend-1.log",
+      "summary": [
+        "6 failed, 4 passed in 1.60s"
+      ]
+    },
+    {
+      "files": [
+        "tests/operations/test_l6_domain_neutral_core.py"
+      ],
+      "command": [
+        "/home/da/miniconda3/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/operations/test_l6_domain_neutral_core.py"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 0.67,
+      "log": "p4-test_l6_domain_neutral_core-1.log",
+      "summary": [
+        "3 passed in 0.10s"
+      ]
+    },
+    {
+      "files": [
+        "tests/operations/test_l6_runtime_capabilities.py"
+      ],
+      "command": [
+        "/home/da/miniconda3/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/operations/test_l6_runtime_capabilities.py"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 1.12,
+      "log": "p4-test_l6_runtime_capabilities-1.log",
+      "summary": [
+        "1 passed in 0.77s"
+      ]
+    },
+    {
+      "files": [
+        "tests/operations/test_m2_optional_figure_plugin.py"
+      ],
+      "command": [
+        "/home/da/miniconda3/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/operations/test_m2_optional_figure_plugin.py"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 1.32,
+      "log": "p4-test_m2_optional_figure_plugin-1.log",
+      "summary": [
+        "3 passed in 0.99s"
+      ]
+    },
+    {
+      "files": [
+        "tests/operations/test_m2_parameter_package.py"
+      ],
+      "command": [
+        "/home/da/miniconda3/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/operations/test_m2_parameter_package.py"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 3.67,
+      "log": "p4-test_m2_parameter_package-1.log",
+      "summary": [
+        "8 passed in 3.33s"
+      ]
+    },
+    {
+      "files": [
+        "tests/operations/test_m3_transform_adapter_removal.py"
+      ],
+      "command": [
+        "/home/da/miniconda3/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/operations/test_m3_transform_adapter_removal.py"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 0.27,
+      "log": "p4-test_m3_transform_adapter_removal-1.log",
+      "summary": [
+        "2 passed in 0.05s"
+      ]
+    },
+    {
+      "files": [
+        "tests/operations/test_m3_transform_equivalence.py"
+      ],
+      "command": [
+        "/home/da/miniconda3/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/operations/test_m3_transform_equivalence.py"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 13.0,
+      "log": "p4-test_m3_transform_equivalence-1.log",
+      "summary": [
+        "1 passed in 12.73s"
+      ]
+    },
+    {
+      "files": [
+        "tests/operations/test_m4_scientific_semantic_bridge_removal.py"
+      ],
+      "command": [
+        "/home/da/miniconda3/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/operations/test_m4_scientific_semantic_bridge_removal.py"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 0.87,
+      "log": "p4-test_m4_scientific_semantic_bridge_removal-1.log",
+      "summary": [
+        "3 passed in 0.55s"
+      ]
+    },
+    {
+      "files": [
+        "tests/operations/test_m5_plugin_ownership_and_default_surface.py"
+      ],
+      "command": [
+        "/home/da/miniconda3/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/operations/test_m5_plugin_ownership_and_default_surface.py"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 2.17,
+      "log": "p4-test_m5_plugin_ownership_and_default_surface-1.log",
+      "summary": [
+        "6 passed in 1.83s"
+      ]
+    },
+    {
+      "files": [
+        "tests/operations/test_m6b_operation_input_admission.py"
+      ],
+      "command": [
+        "/home/da/miniconda3/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/operations/test_m6b_operation_input_admission.py"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 0.97,
+      "log": "p4-test_m6b_operation_input_admission-1.log",
+      "summary": [
+        "8 passed in 0.63s"
+      ]
+    },
+    {
+      "files": [
+        "tests/operations/test_minimal_figure_extraction.py"
+      ],
+      "command": [
+        "/home/da/miniconda3/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/operations/test_minimal_figure_extraction.py"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 0.82,
+      "log": "p4-test_minimal_figure_extraction-1.log",
+      "summary": [
+        "9 passed in 0.56s"
+      ]
+    },
+    {
+      "files": [
+        "tests/operations/test_r1_no_storage_change.py"
+      ],
+      "command": [
+        "/home/da/miniconda3/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/operations/test_r1_no_storage_change.py"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 0.37,
+      "log": "p4-test_r1_no_storage_change-1.log",
+      "summary": [
+        "1 passed in 0.12s"
+      ]
+    },
+    {
+      "files": [
+        "tests/operations/test_r3_catalog_authority.py"
+      ],
+      "command": [
+        "/home/da/miniconda3/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/operations/test_r3_catalog_authority.py"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 0.87,
+      "log": "p4-test_r3_catalog_authority-1.log",
+      "summary": [
+        "7 passed in 0.56s"
+      ]
+    },
+    {
+      "files": [
+        "tests/operations/test_r4_approval_ui_renderer.py"
+      ],
+      "command": [
+        "/home/da/miniconda3/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/operations/test_r4_approval_ui_renderer.py"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 1.72,
+      "log": "p4-test_r4_approval_ui_renderer-1.log",
+      "summary": [
+        "4 passed in 1.39s"
+      ]
+    },
+    {
+      "files": [
+        "tests/operations/test_r4_execution_approval_identity.py"
+      ],
+      "command": [
+        "/home/da/miniconda3/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/operations/test_r4_execution_approval_identity.py"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 3.93,
+      "log": "p4-test_r4_execution_approval_identity-1.log",
+      "summary": [
+        "16 passed in 3.60s"
+      ]
+    },
+    {
+      "files": [
+        "tests/operations/test_r5_catalog_stages.py"
+      ],
+      "command": [
+        "/home/da/miniconda3/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/operations/test_r5_catalog_stages.py"
+      ],
+      "exit_code": 1,
+      "duration_seconds": 3.32,
+      "log": "p4-test_r5_catalog_stages-1.log",
+      "summary": [
+        "1 failed, 4 passed in 3.06s"
+      ]
+    },
+    {
+      "files": [
+        "tests/operations/test_r5_catalog_stages.py"
+      ],
+      "command": [
+        "/home/da/miniconda3/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/operations/test_r5_catalog_stages.py"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 3.22,
+      "log": "p4-test_r5_catalog_stages-2.log",
+      "summary": [
+        "5 passed in 2.92s"
+      ]
+    },
+    {
+      "files": [
+        "tests/operations/test_r5_general_plugin_split.py"
+      ],
+      "command": [
+        "/home/da/miniconda3/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/operations/test_r5_general_plugin_split.py"
+      ],
+      "exit_code": 1,
+      "duration_seconds": 1.72,
+      "log": "p4-test_r5_general_plugin_split-1.log",
+      "summary": [
+        "3 failed, 1 passed in 1.48s"
+      ]
+    },
+    {
+      "files": [
+        "tests/operations/test_runtime_plugin_configuration.py"
+      ],
+      "command": [
+        "/home/da/miniconda3/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/operations/test_runtime_plugin_configuration.py"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 1.37,
+      "log": "p4-test_runtime_plugin_configuration-1.log",
+      "summary": [
+        "2 passed in 0.92s"
+      ]
+    },
+    {
+      "files": [
+        "tests/operations/test_spec.py"
+      ],
+      "command": [
+        "/home/da/miniconda3/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/operations/test_spec.py"
+      ],
+      "exit_code": 1,
+      "duration_seconds": 0.37,
+      "log": "p4-test_spec-1.log",
+      "summary": [
+        "1 failed, 4 passed in 0.10s"
+      ]
+    },
+    {
+      "files": [
+        "tests/operations/test_spec.py"
+      ],
+      "command": [
+        "/home/da/miniconda3/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/operations/test_spec.py"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 0.72,
+      "log": "p4-test_spec-2.log",
+      "summary": [
+        "5 passed in 0.17s"
+      ]
+    },
+    {
+      "files": [
+        "tests/operations/test_tcad_knowledge_closure.py"
+      ],
+      "command": [
+        "/home/da/miniconda3/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/operations/test_tcad_knowledge_closure.py"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 5.48,
+      "log": "p4-test_tcad_knowledge_closure-1.log",
+      "summary": [
+        "3 passed in 5.23s"
+      ]
+    },
+    {
+      "files": [
+        "tests/operations/test_baseline_effect_lifecycle.py",
+        "tests/operations/test_baseline_role_contracts.py",
+        "tests/operations/test_baseline_transform_lifecycle.py",
+        "tests/operations/test_catalog_installed_entrypoint.py",
+        "tests/operations/test_l1_minimal_runtime_projection.py",
+        "tests/operations/test_m7_effect_fixture.py"
+      ],
+      "command": [
+        "/home/da/miniconda3/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/operations/test_baseline_effect_lifecycle.py",
+        "tests/operations/test_baseline_role_contracts.py",
+        "tests/operations/test_baseline_transform_lifecycle.py",
+        "tests/operations/test_catalog_installed_entrypoint.py",
+        "tests/operations/test_l1_minimal_runtime_projection.py",
+        "tests/operations/test_m7_effect_fixture.py"
+      ],
+      "exit_code": 1,
+      "duration_seconds": 58.36,
+      "log": "p4-installed-wheel-batch-1.log",
+      "summary": [
+        "1 failed, 35 passed in 58.08s"
+      ]
+    }
+  ],
+  "investigated_baseline_failures": [
+    {
+      "file": "tests/operations/test_l5_hardened_run_backend.py",
+      "evidence": "p4-hardened-baseline-analysis.json",
+      "disposition": "Preserve the six failures; do not weaken reviewer availability or add an unrelated fixture capability. Source equality establishes this configuration predates the candidate; no frozen-baseline pytest rerun is claimed."
+    },
+    {
+      "file": "tests/operations/test_r5_general_plugin_split.py",
+      "evidence": "p4-structure-baseline-analysis.json",
+      "disposition": "Preserve three stale structural snapshot/ceiling failures pending independent scope assessment. Frozen baseline already has 63 components/public execution context and exceeds every old line ceiling; current approved declarations add 118 lines. No threshold or formatter-only changes."
+    }
+  ],
+  "summary": {
+    "passed": 676,
+    "failed": 10,
+    "skipped": 0,
+    "collected_tests": 686,
+    "covered_files": 52,
+    "missing_files": [],
+    "all_tests_passed": false,
+    "installed_batch": "p4-installed-wheel-batch-1.log",
+    "installed_result": "35 passed, 1 failed; sole failure is the unchanged optional Hardened reviewer runtime gate."
+  }
+}

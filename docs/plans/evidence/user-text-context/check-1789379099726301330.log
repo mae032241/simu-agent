@@ -1,0 +1,9 @@
+Traceback (most recent call last):
+  File "/tmp/scid-user-text-impl-20260914/catalog_snapshot.py", line 7, in <module>
+    from tcad_artifact.plugin import PLUGIN as TCAD
+  File "/home/da/project/ai4s/tcad/git_release/scidiscovery-agent/123/scidiscovery-e5.2/plugins/tcad_artifact/tcad_artifact/plugin.py", line 67, in <module>
+    from .parameter_operations import COMPONENT_SPECS as PARAMETER_COMPONENT_SPECS
+  File "/home/da/project/ai4s/tcad/git_release/scidiscovery-agent/123/scidiscovery-e5.2/plugins/tcad_artifact/tcad_artifact/parameter_operations.py", line 942
+    return with_user_context(OperationSpec(
+                             ^^^^^^^^^^^^^^
+SyntaxError: invalid syntax. Perhaps you forgot a comma?

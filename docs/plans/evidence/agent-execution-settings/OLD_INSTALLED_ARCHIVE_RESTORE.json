@@ -1,0 +1,9 @@
+{
+  "old_runtime": "/opt/scidiscovery-m7/site/scidiscovery/artifact_agent/runtime.py",
+  "candidate_runtime": "/tmp/scid-execution-settings-installed/venv/lib/python3.12/site-packages/scidiscovery/__init__.py",
+  "restored": true,
+  "historical_profile": null,
+  "old_result_bytes_unchanged": true,
+  "archive_bytes_unchanged": true,
+  "instance_overrides_restored_as_empty": true
+}

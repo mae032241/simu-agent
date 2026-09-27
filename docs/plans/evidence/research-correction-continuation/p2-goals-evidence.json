@@ -1,0 +1,63 @@
+{
+  "scope": "P2 generic experiment objectives and optional independent review context",
+  "plan_sha256": "9e9ca01559d712b69a7d48d3f58797174e9dcb546dd5bc1e1d344a15ba6e43a8",
+  "production_files": {
+    "src/scidiscovery/artifact_agent/schema/experiment_intent.py": "5d8ec401c0d7cd4f6eab189444651cd475a301fb3f763368a8fd93c9e51fabb0",
+    "src/scidiscovery/artifact_agent/schema/experiment.py": "036372e79de8ec7db1a3cdae69110bc617134503aabc83c624f91a4b4b69d762",
+    "src/scidiscovery/general_science_experiment_operations.py": "88b6aa00b57d54b9424aa6e160c7cc9dcafb41094a3dc5b1b028be6ff39ee158",
+    "src/scidiscovery/general_science_experiment_components.py": "bc395c40dd1d18029b0877b22cf0a2de937d85bec4729b8e10a0de71ad27ce73"
+  },
+  "test_files": {
+    "tests/operations/test_agent_contract_alignment.py": "6211c4b54a5fc12cc345f312e9e9596f80473195917563c76713614a78cb9ec9",
+    "tests/operations/test_general_transform_operations.py": "f938a65dcc96bdca1496615c6695c7a128cd72cdf0b669c241b1a97081c73b94",
+    "tests/operations/test_l4_local_tcad.py": "daed897ecfbb396344dfc442a35bc949284679e413aa5ef7d84c9677b448e282",
+    "tests/operations/test_h2b_domain_boundaries.py": "4a8ebb65db66057881a5e0b39c2b32f8d08f09c87e395f0e1a23dae42cabd048",
+    "tests/operations/m3_transform_equivalence_runner.py": "7a3bafca0efb87577eec5f867c97834898538e2540769f4180c926a18d172369",
+    "tests/operations/test_catalog_installed_entrypoint.py": "40b54c7a76cfbdf568c6e13ab5d252bb50580a4453314813c1801e58bf63d920"
+  },
+  "checks": [
+    {
+      "command": "python -m pytest -q tests/operations/test_agent_contract_alignment.py tests/operations/test_general_transform_operations.py",
+      "result": "107 passed in 9.62s",
+      "log": "p2-goals-focused.log"
+    },
+    {
+      "command": "python -m pytest -q tests/operations/test_l4_local_tcad.py tests/operations/test_h2b_domain_boundaries.py tests/operations/test_m4_scientific_semantic_bridge_removal.py",
+      "result": "91 passed in 13.07s",
+      "log": "p2-goals-fixtures.log"
+    },
+    {
+      "command": "python -m pytest -q tests/operations/test_m3_transform_equivalence.py",
+      "result": "1 failed in 1.16s",
+      "reason": "The corpus does not include the existing tcad.execution-context.project.v1 catalog operation; failure occurs in catalog membership validation before corpus execution.",
+      "log": "p2-goals-transform-equivalence.log"
+    },
+    {
+      "command": "git diff --check -- <owned files>",
+      "result": "pass"
+    }
+  ],
+  "covered_behavior": [
+    "Intent and proposal goal list required fields, nonempty values, length and count bounds, uniqueness, and exact current subset",
+    "Strict Python tuple inputs and verbatim whitespace preservation",
+    "Materialization prepends and exactly deduplicates global objective, retains other goals, current goals, rationale and priority rationale",
+    "Maximum 16 intent objectives become 17 formal objectives without expanding case or resource counts",
+    "Local goal selection may defer another mandatory observable while preserving original target and closure contract",
+    "Real local Run submit correction for invalid intent subset and invalid full revision global objective/subset",
+    "Independent review optional original objective and execution context appear as exact read-only Worker inputs",
+    "Review pass/revise/blocked results reject unbound evidence aliases and complete after same-Run correction",
+    "Review original key/statement mismatch and invalid execution context validation"
+  ],
+  "not_run": [
+    "installed wheel",
+    "full suite",
+    "real scientific MCP",
+    "solver",
+    "platform"
+  ],
+  "deferred": [
+    "P3 wildcard feedback ports, inventory admission, ABI and scheduler query changes remain with parent.",
+    "Historical skill compatibility tests contain frozen pre-P2 prompt and experiment-revise digest equality assumptions; reported to parent for intentional contract retirement decision, no edits made here."
+  ],
+  "scientific_claims": "No scientific result, verdict, qualification, deployment, or real study completion is asserted."
+}

@@ -1,0 +1,13 @@
+.....................................F
+=================================== FAILURES ===================================
+___________ test_local_tcad_finalizer_rejects_an_output_root_symlink ___________
+tests/operations/test_l4_local_tcad.py:1590: in test_local_tcad_finalizer_rejects_an_output_root_symlink
+    assert rejected["state"] == "rejected"
+E   AssertionError: assert 'failed' == 'rejected'
+E     
+E     - rejected
+E     + failed
+=========================== short test summary info ============================
+FAILED tests/operations/test_l4_local_tcad.py::test_local_tcad_finalizer_rejects_an_output_root_symlink
+!!!!!!!!!!!!!!!!!!!!!!!!!! stopping after 1 failures !!!!!!!!!!!!!!!!!!!!!!!!!!!
+1 failed, 37 passed in 15.21s

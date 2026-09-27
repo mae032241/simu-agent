@@ -1,0 +1,24 @@
+{
+  "command": [
+    "env",
+    "PYTHONPATH=src:plugins/tcad_artifact:plugins/curve_score:plugins/curve_figure_evidence:/opt/scidiscovery-m7/site",
+    "python",
+    "docs/plans/evidence/content-display/browser_replay.py",
+    "curves"
+  ],
+  "exit_code": 1,
+  "stop_reason": null,
+  "duration_seconds": 2.045,
+  "peak_tree_rss_mib": 327.71,
+  "budget_mib": 512,
+  "peak_processes": [
+    {
+      "name": "chrome-headless-shell",
+      "rss_mib": 249.75
+    },
+    {
+      "name": "python",
+      "rss_mib": 77.96
+    }
+  ]
+}

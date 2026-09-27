@@ -1,0 +1,148 @@
+.........F.FFFF...F.....F............................................... [ 54%]
+............................................................             [100%]
+=================================== FAILURES ===================================
+_________________ test_tool_audit_covers_exact_published_names _________________
+
+    def test_tool_audit_covers_exact_published_names():
+        from scidiscovery.artifact_agent.interfaces.mcp_root import ROOT_TOOLS
+        from tests.operations.test_agent_contract_alignment import _catalog
+        from scidiscovery.operations.tooling import operation_local_worker_tools
+        from pathlib import Path
+        catalog = _catalog()
+        audit = json.loads((Path(__file__).parents[2]/'docs/plans/evidence/mcp-response-levels/tool-inventory.json').read_bytes())
+        assert {item['name'] for item in audit['root']} == {item.name for item in ROOT_TOOLS}
+        actual = {tool.name for key in catalog.operation_ids() if catalog.operation(key).spec.executor.kind == 'agent'
+            for tool in operation_local_worker_tools(catalog.operation(key))}
+>       assert {item['name'] for item in audit['worker'] + audit['lifecycle']} == actual
+E       AssertionError: assert {'worker_anal...e_score', ...} == {'worker_anal..._output', ...}
+E         
+E         Extra items in the left set:
+E         'worker_file_write_begin'
+E         'worker_curve_figure_preview'
+E         'worker_file_write_commit'
+E         'worker_file_json_patch'
+E         'worker_file_delete'...
+E         
+E         ...Full output truncated (8 lines hidden), use '-vv' to show
+
+tests/operations/test_mcp_response_views.py:156: AssertionError
+___________ test_root_draft_source_handoff_is_not_scientific_output ____________
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-140/test_root_draft_source_handoff0')
+
+    def test_root_draft_source_handoff_is_not_scientific_output(tmp_path):
+        catalog, runtime, _, _, root = _system(tmp_path)
+        status = _failed_source(catalog, runtime, root)
+>       assert status["sealed_output"] is None
+               ^^^^^^^^^^^^^^^^^^^^^^^
+E       KeyError: 'sealed_output'
+
+tests/operations/test_root_draft_routes.py:71: KeyError
+_ test_root_draft_rejection_creates_no_run[extra0-recovery_sources_mutually_exclusive] _
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-140/test_root_draft_rejection_crea0')
+extra = {'draft_from': 'missing', 'resume_from': 'missing'}
+reason = 'recovery_sources_mutually_exclusive'
+
+    @pytest.mark.parametrize("extra, reason", [
+        ({"draft_from": "missing", "resume_from": "missing"}, "recovery_sources_mutually_exclusive"),
+        ({"draft_from": "missing"}, "draft_source_unavailable"),
+    ])
+    def test_root_draft_rejection_creates_no_run(tmp_path, extra, reason):
+        _, _, _, _, root = _system(tmp_path)
+        request = _request("rejected_draft", **extra)
+        assert root.call_tool("operation_preflight", request)["reason_code"] == reason
+        with pytest.raises(RootToolError, match=reason):
+            root.call_tool("operation_invoke", request)
+>       assert root.call_tool("run_list", {}) == {"runs": []}
+E       AssertionError: assert {'runs': [], ...before': None} == {'runs': []}
+E         
+E         Omitting 1 identical items, use -vv to show
+E         Left contains 1 more item:
+E         {'next_before': None}
+E         Use -v to get more diff
+
+tests/operations/test_root_draft_routes.py:99: AssertionError
+__ test_root_draft_rejection_creates_no_run[extra1-draft_source_unavailable] ___
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-140/test_root_draft_rejection_crea1')
+extra = {'draft_from': 'missing'}, reason = 'draft_source_unavailable'
+
+    @pytest.mark.parametrize("extra, reason", [
+        ({"draft_from": "missing", "resume_from": "missing"}, "recovery_sources_mutually_exclusive"),
+        ({"draft_from": "missing"}, "draft_source_unavailable"),
+    ])
+    def test_root_draft_rejection_creates_no_run(tmp_path, extra, reason):
+        _, _, _, _, root = _system(tmp_path)
+        request = _request("rejected_draft", **extra)
+        assert root.call_tool("operation_preflight", request)["reason_code"] == reason
+        with pytest.raises(RootToolError, match=reason):
+            root.call_tool("operation_invoke", request)
+>       assert root.call_tool("run_list", {}) == {"runs": []}
+E       AssertionError: assert {'runs': [], ...before': None} == {'runs': []}
+E         
+E         Omitting 1 identical items, use -vv to show
+E         Left contains 1 more item:
+E         {'next_before': None}
+E         Use -v to get more diff
+
+tests/operations/test_root_draft_routes.py:99: AssertionError
+_____________ test_root_draft_fingerprint_binds_controlled_digest ______________
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-140/test_root_draft_fingerprint_bi0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7f44521b6c00>
+
+    def test_root_draft_fingerprint_binds_controlled_digest(tmp_path, monkeypatch):
+        catalog, runtime, _, _, root = _system(tmp_path)
+        _failed_source(catalog, runtime, root)
+        request = OperationCallInput.model_validate(_request("new_run", draft_from="draft_source"))
+        values = request.model_dump()
+        values["inputs"] = request.inputs
+>       bound = root.facade._prepare_operation_call(**values)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       TypeError: RootOperationRoutes._prepare_operation_call() got an unexpected keyword argument 'execution_profile'
+
+tests/operations/test_root_draft_routes.py:108: TypeError
+_____ test_schedule_rechecks_attempt_budget_after_another_run_consumes_it ______
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-140/test_schedule_rechecks_attempt0')
+
+    def test_schedule_rechecks_attempt_budget_after_another_run_consumes_it(tmp_path):
+        from scidiscovery.artifact_agent.service.run_records import RunAttemptLimit
+        catalog, runtime, instance, _, root = _system(tmp_path)
+        _failed_source(catalog, runtime, root)
+        request = OperationCallInput.model_validate(_request("stale", draft_from="draft_source", max_attempts=2))
+        values = request.model_dump(); values["inputs"] = request.inputs
+>       bound = root.facade._prepare_operation_call(**values)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       TypeError: RootOperationRoutes._prepare_operation_call() got an unexpected keyword argument 'execution_profile'
+
+tests/operations/test_root_draft_routes.py:204: TypeError
+_________ test_attempt_budget_mcp_contract_and_non_agent_applicability _________
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-140/test_attempt_budget_mcp_contra0')
+
+    def test_attempt_budget_mcp_contract_and_non_agent_applicability(tmp_path):
+        from scidiscovery.artifact_agent.interfaces.mcp import MCPRouter
+        catalog, _, _, _, root = _system(tmp_path)
+        router = MCPRouter(root, name='root_fixture')
+        schema = router.handle(dict(jsonrpc='2.0',id=1,method='tools/list'))['result']['tools']
+        for name in ['operation_preflight', 'operation_invoke']:
+            contract = next(t for t in schema if t['name'] == name)['inputSchema']
+            assert contract['properties']['max_attempts']['anyOf'][0] == dict(type='integer',minimum=1)
+            assert 'max_attempts' not in contract.get('required', [])
+        items = root.call_tool('operation_catalog', {'scope':'all'})['operations']
+>       assert next(i for i in items if i['operation_id'] == 'blind.csv.observe.v1')['default_max_attempts'] == 2
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       KeyError: 'default_max_attempts'
+
+tests/operations/test_root_draft_routes.py:232: KeyError
+=========================== short test summary info ============================
+FAILED tests/operations/test_mcp_response_views.py::test_tool_audit_covers_exact_published_names
+FAILED tests/operations/test_root_draft_routes.py::test_root_draft_source_handoff_is_not_scientific_output
+FAILED tests/operations/test_root_draft_routes.py::test_root_draft_rejection_creates_no_run[extra0-recovery_sources_mutually_exclusive]
+FAILED tests/operations/test_root_draft_routes.py::test_root_draft_rejection_creates_no_run[extra1-draft_source_unavailable]
+FAILED tests/operations/test_root_draft_routes.py::test_root_draft_fingerprint_binds_controlled_digest
+FAILED tests/operations/test_root_draft_routes.py::test_schedule_rechecks_attempt_budget_after_another_run_consumes_it
+FAILED tests/operations/test_root_draft_routes.py::test_attempt_budget_mcp_contract_and_non_agent_applicability
+7 failed, 125 passed, 13 deselected in 40.29s

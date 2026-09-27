@@ -1,0 +1,16 @@
+{
+  "command": [
+    "python",
+    "-m",
+    "pytest",
+    "-q",
+    "tests/operations/test_instance_read_model.py",
+    "tests/operations/test_instance_browser_access.py",
+    "tests/operations/test_instance_browser_http.py"
+  ],
+  "exit_code": 0,
+  "stop_reason": null,
+  "duration_seconds": 5.325,
+  "peak_tree_rss_mib": 112.5,
+  "budget_mib": 512
+}

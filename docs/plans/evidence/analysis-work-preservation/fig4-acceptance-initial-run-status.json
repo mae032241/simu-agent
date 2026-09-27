@@ -1,0 +1,52 @@
+{
+  "source": "scidiscovery.run_status",
+  "scope": "bound instance M7-test0",
+  "note": "Read-only initial status; not a new execution or scientific conclusion.",
+  "status": {
+    "agent_type": "op_tcad_result_analyze_v1_91ac5851c7e5",
+    "backend": "local_trusted",
+    "candidate_accepted": false,
+    "completed_at": "2026-09-12T05:58:14.132716Z",
+    "created_at": "2026-09-12T05:42:47.813814Z",
+    "deadline_at": "2026-09-12T05:57:47.813814Z",
+    "diagnostic_summary": {
+      "failure": {
+        "category": "run_timeout",
+        "code": "run_timeout",
+        "repairable_by_output": false
+      },
+      "latest_rejection": null,
+      "latest_tool_error": null,
+      "recent_errors": [
+        {
+          "category": "run_timeout",
+          "code": "run_timeout",
+          "repairable_by_output": false
+        }
+      ],
+      "rejection_count": 0
+    },
+    "draft_from": null,
+    "head_advance": null,
+    "last_activity_at": "2026-09-12T05:42:59.577325Z",
+    "logical_name": "fig4_morphology_analysis_3",
+    "name": "fig4_morphology_analysis_3",
+    "operation_id": "tcad.result.analyze.v1",
+    "output_artifact_name": null,
+    "reason": "The declared deadline elapsed before submission of the remaining sensitivity analysis. No output rejection or controlled tool error was observed. Preserve the bounded failure and any recovery material; do not treat the published previous central-stage results as completion of the missing work.",
+    "recovery": {
+      "delivery_preserved": true,
+      "draft_available": true,
+      "recovery_pending": false,
+      "resume_available": true
+    },
+    "recovery_available": true,
+    "revision": 1,
+    "scheduler_signal": null,
+    "scheduler_signal_status": "unavailable",
+    "sealed_output": null,
+    "sealed_output_status": "unavailable",
+    "started_at": "2026-09-12T05:42:59.577325Z",
+    "state": "failed"
+  }
+}

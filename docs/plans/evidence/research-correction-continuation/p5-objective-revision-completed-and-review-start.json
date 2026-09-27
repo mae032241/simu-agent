@@ -1,0 +1,498 @@
+{
+  "recorded_at": "2026-09-08 14:01:35 UTC",
+  "scope": "Only objective_contract was added to the complete sealed Intake; exact independent review pending.",
+  "revision_completed": {
+    "agent_type": "op_science_evidence_extract_figure_v2_bc4404c0d76c",
+    "backend": "local_trusted",
+    "candidate_accepted": true,
+    "completed_at": "2026-09-08T14:00:18.111881Z",
+    "created_at": "2026-09-08T13:54:47.532146Z",
+    "deadline_at": "2026-09-08T14:04:47.532146Z",
+    "head_advance": "not_requested",
+    "last_activity_at": "2026-09-08T14:00:18.111881Z",
+    "logical_name": "fig4_continuation_intake_objective_revision_1",
+    "name": "fig4_continuation_intake_objective_revision_1",
+    "operation_id": "science.evidence.extract.figure.v2",
+    "output_artifact_name": "fig4_continuation_intake_objective_revision_1.output",
+    "reason": null,
+    "recovery_available": false,
+    "revision": 1,
+    "scheduler_signal": {
+      "assumptions": [],
+      "missing_inputs": [],
+      "next_action_kind": null,
+      "next_actions": [],
+      "schema_version": 1,
+      "summary": "The complete revised Intake adds the formal objective contract required by review, translating only the already stated target and mechanism-signature observables and their bounded support into typed targets. All supplied evidence, unresolved gaps and detection-limit conflict, missing inputs, claim limits, and stop conditions are preserved.",
+      "verdict": "pass"
+    },
+    "sealed_output": {
+      "artifact_name": "fig4_continuation_intake_objective_revision_1.output",
+      "kind": "scientific_intake",
+      "payload": {
+        "problem_frame": {
+          "assumptions": [],
+          "claim_boundary": {
+            "allowed_claim": "The supplied family supports a bounded comparison of the digitized Fig. 4 Zn profiles for single-layer In0.83Al0.17As and In0.83Ga0.17As at 480 degrees C for 8 min, together with the paper's own reported interpretation and fit parameters, subject to the recorded gaps, shared support, pixel-calibration uncertainty, and detection-limit conflict.",
+            "excluded_claims": [
+              "The curve tables are author-supplied raw SIMS data.",
+              "The In0.83Al0.17As profile is continuously observed across all depths.",
+              "The visible D proportional to C and erfc fit curves were digitized in this family.",
+              "The supplied evidence alone proves either diffusion mechanism or fully specifies a TCAD model.",
+              "The evidence contains 800 degrees C or 900 degrees C curves or parameters.",
+              "The deterministic integrity result is an independent scientific qualification."
+            ],
+            "required_conditions": [
+              "Treat the CSV values as digitized observations derived from figure pixels, not author-supplied raw SIMS data.",
+              "Retain point-index and source-column gaps and do not interpolate across the large In0.83Al0.17As gap.",
+              "Retain shared-occlusion provenance and do not convert it into independent direct-pixel support.",
+              "Do not use rows below the stated approximate SIMS detection limit as securely quantified until the flag mismatch is resolved.",
+              "Restrict interpretation to the paper's supplied single-layer 480 degrees C, 8 min condition."
+            ]
+          },
+          "current_contradiction": "The paper describes concentration-dependent kick-out diffusion in the high-concentration region and a deeper low-concentration VCD-related region in lightly doped In0.83Ga0.17As. The supplied digitized profiles make the material-dependent fronts and tails reviewable, but the In0.83Al0.17As trace has a large source-column gap and the tables mark no rows below the paper's approximate SIMS detection limit even though some digitized concentrations are lower than that limit.",
+          "foundation_item_keys": [
+            "paper.identity",
+            "fig4.experiment_conditions",
+            "fig4.axes_and_identity",
+            "fig4.family_integrity",
+            "fig4.inalas_profile",
+            "fig4.ingaas_profile",
+            "fig4.visual_comparison",
+            "fig4.author_interpretation",
+            "fig4.author_fit_parameters",
+            "fig4.sims_detection_limit"
+          ],
+          "objective": "Use the supplied paper evidence to support later selection of falsifiable hypotheses and design of a minimal TCAD control experiment, while this Intake is limited to evidence extraction and does not select a hypothesis.",
+          "observables": [
+            {
+              "acceptance_relevance": "A later comparison may use only the observed, appropriately qualified portions of these digitized profiles and must preserve discontinuities.",
+              "description": "Digitized Zn concentration versus depth for the two legend-bound material series, retaining gaps and support ownership.",
+              "foundation_item_keys": [
+                "fig4.axes_and_identity",
+                "fig4.inalas_profile",
+                "fig4.ingaas_profile"
+              ],
+              "observable_key": "observable.profile_shape_by_material",
+              "role": "target"
+            },
+            {
+              "acceptance_relevance": "The relative front and tail shapes can discriminate later model predictions only under the supplied thermal and sample conditions.",
+              "description": "Relative depth of the steep concentration front and the presence of a low-concentration tail for each material.",
+              "foundation_item_keys": [
+                "fig4.visual_comparison",
+                "fig4.author_interpretation"
+              ],
+              "observable_key": "observable.front_and_tail_contrast",
+              "role": "mechanism_signature"
+            },
+            {
+              "acceptance_relevance": "Concentrations near or below the stated SIMS limit cannot support a strong quantitative fit until the unresolved flag mismatch is independently reviewed.",
+              "description": "Consistency between the paper's approximate SIMS detection limit and row-level below-limit flags in the digitized tables.",
+              "foundation_item_keys": [
+                "fig4.family_integrity",
+                "fig4.sims_detection_limit",
+                "fig4.inalas_profile",
+                "fig4.ingaas_profile"
+              ],
+              "observable_key": "observable.detection_limit_consistency",
+              "role": "numerical_diagnostic"
+            }
+          ],
+          "open_questions": [
+            "Why are zero rows flagged below the SIMS detection limit when 114 digitized rows are numerically below the paper's approximate 3 x 10^15 cm^-3 limit?",
+            "What source-visible occlusion or extraction constraint accounts for the 235-pixel maximum gap in the In0.83Al0.17As table?",
+            "Which independently sourced TCAD boundary conditions and defect parameters are required before the paper-level mechanism interpretation can be simulated?"
+          ],
+          "scientific_question": "What observations and author-reported conditions in the supplied Fig. 4 family can constrain later falsifiable hypotheses and a minimal TCAD comparison of zinc diffusion in In0.83Al0.17As and In0.83Ga0.17As?",
+          "scope": "Only the supplied 480 degrees C, 8 min, single-layer Fig. 4 family: the paper, typed request, manifest, deterministic validation report, one source panel, two audit overlays, and two curve tables. Blue fitted curves are visible but were not digitized as requested series.",
+          "stop_conditions": [
+            "Stop quantitative use of a curve interval when its support requires interpolation across an undeclared or unresolved gap.",
+            "Stop quantitative claims for concentrations at or below the approximate SIMS detection limit until the row-flag mismatch is resolved.",
+            "Stop TCAD parameterization when a required boundary condition, defect population, or kinetic parameter is absent from the supplied sources.",
+            "Stop rather than introduce unsupported 800 degrees C or 900 degrees C evidence."
+          ],
+          "title": "Bounded evidence frame for zinc diffusion in single-layer In0.83Al0.17As and In0.83Ga0.17As"
+        },
+        "schema_version": 1,
+        "scientific_foundation": {
+          "conflicts": [
+            {
+              "conflict_key": "fig4.sims_limit_flag_mismatch",
+              "item_keys": [
+                "fig4.family_integrity",
+                "fig4.inalas_profile",
+                "fig4.ingaas_profile",
+                "fig4.sims_detection_limit"
+              ],
+              "resolution": null,
+              "statement": "The paper and source panel place the approximate SIMS detection limit at 3 x 10^15 cm^-3. Direct inspection of the immutable tables finds 104 In0.83Al0.17As rows and 10 In0.83Ga0.17As rows numerically below that value, while all below_sims_detection_limit fields are zero and the deterministic report records zero below-limit rows. The report remains recorded exactly as valid; the supplied family does not resolve whether those 114 low rows should be quantitatively eligible.",
+              "status": "unresolved"
+            }
+          ],
+          "evidence": [
+            {
+              "locator": "paper_source, pages 1-7 including Fig. 4 context and Table I",
+              "source_key": "paper_source",
+              "source_type": "frozen_input",
+              "title": "Supplied paper PDF"
+            },
+            {
+              "locator": "figure_request input",
+              "source_key": "figure_request",
+              "source_type": "frozen_input",
+              "title": "Typed Fig. 4 digitization request"
+            },
+            {
+              "locator": "figure_manifest input",
+              "source_key": "figure_manifest",
+              "source_type": "frozen_input",
+              "title": "Deterministic figure evidence manifest"
+            },
+            {
+              "locator": "validation_report input",
+              "source_key": "validation_report",
+              "source_type": "frozen_input",
+              "title": "Deterministic figure evidence validation report"
+            },
+            {
+              "locator": "source_panels input",
+              "source_key": "source_panels",
+              "source_type": "frozen_input",
+              "title": "Recovered Fig. 4 source panel"
+            },
+            {
+              "locator": "audit_overlays_001 input",
+              "source_key": "audit_overlays_001",
+              "source_type": "frozen_input",
+              "title": "Identity and fidelity audit overlay"
+            },
+            {
+              "locator": "audit_overlays_002 input",
+              "source_key": "audit_overlays_002",
+              "source_type": "frozen_input",
+              "title": "Numeric redraw audit overlay"
+            },
+            {
+              "locator": "curve_tables_001 input",
+              "source_key": "curve_tables_001",
+              "source_type": "frozen_input",
+              "title": "Digitized In0.83Al0.17As curve table"
+            },
+            {
+              "locator": "curve_tables_002 input",
+              "source_key": "curve_tables_002",
+              "source_type": "frozen_input",
+              "title": "Digitized In0.83Ga0.17As curve table"
+            }
+          ],
+          "items": [
+            {
+              "epistemic_status": "paper_fact",
+              "evidence_keys": [
+                "paper_source"
+              ],
+              "item_key": "paper.identity",
+              "item_type": "fact",
+              "scope": "Bibliographic identity of the supplied paper.",
+              "statement": "The supplied article is 'Rapid zinc diffusion behaviors in lightly doped extended wavelength In0.83Ga0.17As focal plane arrays,' J. Appl. Phys. 137, 123103 (2025), DOI 10.1063/5.0242861."
+            },
+            {
+              "epistemic_status": "paper_fact",
+              "evidence_keys": [
+                "paper_source"
+              ],
+              "item_key": "fig4.experiment_conditions",
+              "item_type": "fact",
+              "scope": "Paper-described condition for the single-layer profiles associated with Figs. 3 and 4; it does not establish other temperatures or device-stack conditions.",
+              "statement": "The Fig. 4 single-layer profiles derive from sealed-ampoule zinc diffusion of In0.83Al0.17As and In0.83Ga0.17As at 480 degrees C for 8 min and were measured by SIMS."
+            },
+            {
+              "epistemic_status": "runtime_observation",
+              "evidence_keys": [
+                "figure_request",
+                "source_panels",
+                "figure_manifest"
+              ],
+              "item_key": "fig4.axes_and_identity",
+              "item_type": "target_data",
+              "scope": "Panel main of Fig. 4 only.",
+              "statement": "The typed request and source panel define a 0.0 to 0.8 micrometer linear depth axis and a 10^15 to 10^20 cm^-3 log10 Zn concentration axis. The requested measured series are solid black In0.83Al0.17As and solid red In0.83Ga0.17As, each bound to a visible legend label; the manifest records both bindings as matched."
+            },
+            {
+              "epistemic_status": "runtime_observation",
+              "evidence_keys": [
+                "figure_manifest",
+                "validation_report"
+              ],
+              "item_key": "fig4.family_integrity",
+              "item_type": "constraint",
+              "scope": "Exact immutable figure family identified by bundle fingerprint 8702fefaceacecad92c32296f775ba8892cb75a826693a92b9cf6184e093a496.",
+              "statement": "The supplied deterministic report records integrity_status valid, source_status qualified, two curve tables, 1266 total and observed rows, 1266 rows marked quantitatively eligible, 1179 direct-pixel rows, 87 shared-occlusion rows, and zero below-detection-limit rows. These are report outputs and are not an independent scientific qualification by this Intake."
+            },
+            {
+              "epistemic_status": "runtime_observation",
+              "evidence_keys": [
+                "curve_tables_001",
+                "audit_overlays_001",
+                "audit_overlays_002",
+                "validation_report"
+              ],
+              "item_key": "fig4.inalas_profile",
+              "item_type": "target_data",
+              "scope": "Digitized pixel evidence only; the numeric redraw and identity/fidelity overlay are review aids, not author raw measurements.",
+              "statement": "The In0.83Al0.17As CSV contains 501 observed rows from 0.00990099 to 0.79009901 micrometers and digitized concentrations from 1.7012542798525858 x 10^15 to 3.218787511821249 x 10^19 cm^-3. The report counts 477 direct rows and 24 shared rows. Its maximum source-column gap is 235 pixels; direct continuity is therefore not established across the corresponding early-depth interval."
+            },
+            {
+              "epistemic_status": "runtime_observation",
+              "evidence_keys": [
+                "curve_tables_002",
+                "audit_overlays_001",
+                "audit_overlays_002",
+                "validation_report"
+              ],
+              "item_key": "fig4.ingaas_profile",
+              "item_type": "target_data",
+              "scope": "Digitized pixel evidence only; gaps and shared support remain part of the evidence identity.",
+              "statement": "The In0.83Ga0.17As CSV contains 765 observed rows from 0.00990099 to 0.79009901 micrometers and digitized concentrations from 1.7012542798525858 x 10^15 to 5.549927761300058 x 10^19 cm^-3. The report counts 702 direct rows and 63 shared rows and records a maximum source-column gap of 18 pixels."
+            },
+            {
+              "epistemic_status": "runtime_observation",
+              "evidence_keys": [
+                "source_panels",
+                "audit_overlays_002",
+                "curve_tables_001",
+                "curve_tables_002"
+              ],
+              "item_key": "fig4.visual_comparison",
+              "item_type": "prior_observation",
+              "scope": "Qualitative comparison supported by the supplied panel, overlays, and digitized tables; no new fit or causal attribution is made.",
+              "statement": "In the source panel and numeric redraw, the red In0.83Ga0.17As profile undergoes its steep concentration drop at a shallower depth than the black In0.83Al0.17As profile. After their fronts, digitized values fluctuate in a low-concentration tail near the bottom decades of the plotted range."
+            },
+            {
+              "epistemic_status": "paper_fact",
+              "evidence_keys": [
+                "paper_source"
+              ],
+              "item_key": "fig4.author_interpretation",
+              "item_type": "fact",
+              "scope": "Author interpretation associated with Fig. 4; it is not independently proven by the digitized family.",
+              "statement": "The paper states that D proportional to C describes the high-concentration region above the calculated intrinsic carrier concentration ni = 5.4 x 10^16 cm^-3 at 480 degrees C, while an erfc solution for the VCD model describes the low-concentration In0.83Ga0.17As frontier. The authors state that intrinsic diffusion is less obvious in In0.83Al0.17As than in In0.83Ga0.17As."
+            },
+            {
+              "epistemic_status": "paper_fact",
+              "evidence_keys": [
+                "paper_source"
+              ],
+              "item_key": "fig4.author_fit_parameters",
+              "item_type": "fact",
+              "scope": "Author-reported fitted quantities from Table I, distinct from the supplied digitized curve rows and not a complete TCAD parameter set.",
+              "statement": "For the 480 degrees C single-layer profiles, Table I reports model-A diffusion coefficients DA of 1.59 x 10^-12 cm^2/s for In0.83Al0.17As and 1.05 x 10^-12 cm^2/s for In0.83Ga0.17As, and model-B DB of 1.14 x 10^-11 cm^2/s for In0.83Ga0.17As; the corresponding reported surface concentrations are 6.85 x 10^19, 8.35 x 10^19, and 1.47 x 10^16 cm^-3, respectively."
+            },
+            {
+              "epistemic_status": "paper_fact",
+              "evidence_keys": [
+                "paper_source",
+                "source_panels"
+              ],
+              "item_key": "fig4.sims_detection_limit",
+              "item_type": "constraint",
+              "scope": "Approximate measurement limit for interpreting the low-concentration part of Fig. 4.",
+              "statement": "The paper states that the SIMS Zn detection limit is about 3 x 10^15 cm^-3, and the source panel displays a horizontal SIMS Detection Limit near that value."
+            }
+          ],
+          "missing_inputs": [
+            "Author-supplied raw SIMS data and measurement uncertainty are not present; only the paper and pixel-digitized curves are supplied.",
+            "The blue D proportional to C and erfc fit curves visible in Fig. 4 were not requested or supplied as curve tables.",
+            "The family does not provide the full surface-boundary history, vacancy or complex-defect concentrations, reaction constants, or a complete TCAD-ready material parameter set.",
+            "No 800 degrees C or 900 degrees C curves or experimentally supported parameters are present.",
+            "The supplied evidence does not explain the physical or extraction origin of the 235-pixel In0.83Al0.17As trace gap."
+          ],
+          "objective": "Use the supplied paper evidence to support later selection of falsifiable hypotheses and design of a minimal TCAD control experiment, while this Intake is limited to evidence extraction and does not select a hypothesis.",
+          "objective_contract": {
+            "closure_requirements": [
+              {
+                "description": "Both already stated bounded observables must be covered while retaining the supplied gaps, shared-support ownership, detection-limit qualification, and thermal-condition scope.",
+                "requirement_key": "objective_requirement.existing_target_coverage",
+                "requirement_type": "target_coverage",
+                "target_keys": [
+                  "objective_target.profile_shape_by_material",
+                  "objective_target.front_and_tail_contrast"
+                ]
+              },
+              {
+                "comparison_purposes": [
+                  "mechanism_separation"
+                ],
+                "description": "Overall objective closure requires a later comparison for mechanism separation; this Intake supplies the evidence bounds and does not select a hypothesis or a current experiment target.",
+                "requirement_key": "objective_requirement.mechanism_comparison",
+                "requirement_type": "comparison_present"
+              }
+            ],
+            "intent": "mechanism_discrimination",
+            "mandatory_targets": [
+              {
+                "evidence_item_keys": [
+                  "fig4.axes_and_identity",
+                  "fig4.inalas_profile",
+                  "fig4.ingaas_profile"
+                ],
+                "observable": "Digitized Zn concentration versus depth for the two legend-bound material series, retaining gaps and support ownership.",
+                "rationale": "This is the existing target observable needed for a later bounded material comparison; only observed portions meeting the claim boundary and stop conditions can be used.",
+                "support_requirement": "qualified_subset",
+                "target_key": "objective_target.profile_shape_by_material"
+              },
+              {
+                "evidence_item_keys": [
+                  "fig4.visual_comparison",
+                  "fig4.author_interpretation"
+                ],
+                "observable": "Relative depth of the steep concentration front and the presence of a low-concentration tail for each material.",
+                "rationale": "This is the existing mechanism-signature observable that can constrain later falsifiable hypotheses without treating the authors' interpretation as proof.",
+                "support_requirement": "qualified_subset",
+                "target_key": "objective_target.front_and_tail_contrast"
+              }
+            ],
+            "objective_key": "objective.fig4_mechanism_discrimination",
+            "statement": "Use the supplied paper evidence to support later selection of falsifiable hypotheses and design of a minimal TCAD control experiment, while this Intake is limited to evidence extraction and does not select a hypothesis."
+          },
+          "open_questions": [
+            "Can the below-detection-limit flags be reconciled with the paper's approximate SIMS limit without changing the immutable curve points?",
+            "Which intervals of the low-concentration tails remain scientifically usable after applying the SIMS limit?",
+            "What additional source-bound parameters are needed to turn the author-reported model interpretation into a falsifiable TCAD comparison?"
+          ],
+          "summary": "The source panel contains two solid, legend-identified Zn profiles plotted against depth on a logarithmic concentration axis. The supplied manifest binds the black In0.83Al0.17As and red In0.83Ga0.17As traces and the deterministic report verifies the immutable family structure. The digitized red profile has an earlier steep front than the black profile; both tables include low-concentration tail values. These are pixel-derived observations. The paper separately reports the single-layer thermal condition, model interpretation, and fitted coefficients. Quantitative use remains limited by the black-profile gap and an unresolved SIMS detection-limit flag mismatch.",
+          "title": "Scientific foundation from the supplied InGaAs/InAlAs Fig. 4 family"
+        }
+      },
+      "schema": "scidiscovery.scientific-intake.v1"
+    },
+    "sealed_output_status": "available",
+    "started_at": "2026-09-08T13:55:17.708341Z",
+    "state": "completed"
+  },
+  "preservation_check": {
+    "only_added_objective_contract": true,
+    "prior_artifact": "fig4_continuation_intake_2.output",
+    "revised_artifact": "fig4_continuation_intake_objective_revision_1.output"
+  },
+  "revised_intake_metadata": {
+    "created_at": "2026-09-08T14:00:18.098253Z",
+    "kind": "scientific_intake",
+    "labels": {
+      "operation_consequence": "scientific",
+      "operation_digest": "bc4404c0d76c04bcc2b5c83424befaef92c03719baa1bfb9a123ec3912ed8569",
+      "operation_output_port": "scientific_intake",
+      "operation_version": "1"
+    },
+    "logical_name": "fig4_continuation_intake_objective_revision_1.output",
+    "media_type": "application/json",
+    "name": "fig4_continuation_intake_objective_revision_1.output",
+    "parent_artifact_names": [
+      "ingaas_inalas_fig4_source_paper",
+      "fig4_continuation_figure_request_1.output",
+      "fig4_continuation_figure_materialized_1",
+      "fig4_continuation_figure_materialized_1.validation_report",
+      "fig4_continuation_figure_materialized_1.source_panels",
+      "fig4_continuation_figure_materialized_1.audit_overlays_001",
+      "fig4_continuation_figure_materialized_1.audit_overlays_002",
+      "fig4_continuation_figure_materialized_1.curve_tables_001",
+      "fig4_continuation_figure_materialized_1.curve_tables_002",
+      "fig4_continuation_intake_2.output",
+      "fig4_continuation_intake_objective_audit_1.output"
+    ],
+    "payload_schema_version": 1,
+    "revision": 1,
+    "schema": "scidiscovery.scientific-intake.v1",
+    "size_bytes": 17530
+  },
+  "audit_request": {
+    "name": "fig4_continuation_intake_objective_revision_audit_1",
+    "operation_id": "science.figure.evidence.audit.v1",
+    "inputs": [
+      {
+        "port": "scientific_intake",
+        "artifact_names": [
+          "fig4_continuation_intake_objective_revision_1.output"
+        ]
+      },
+      {
+        "port": "paper_source",
+        "artifact_names": [
+          "ingaas_inalas_fig4_source_paper"
+        ]
+      },
+      {
+        "port": "figure_request",
+        "artifact_names": [
+          "fig4_continuation_figure_request_1.output"
+        ]
+      },
+      {
+        "port": "figure_manifest",
+        "artifact_names": [
+          "fig4_continuation_figure_materialized_1"
+        ]
+      },
+      {
+        "port": "validation_report",
+        "artifact_names": [
+          "fig4_continuation_figure_materialized_1.validation_report"
+        ]
+      },
+      {
+        "port": "source_panels",
+        "artifact_names": [
+          "fig4_continuation_figure_materialized_1.source_panels"
+        ]
+      },
+      {
+        "port": "audit_overlays",
+        "artifact_names": [
+          "fig4_continuation_figure_materialized_1.audit_overlays_001",
+          "fig4_continuation_figure_materialized_1.audit_overlays_002"
+        ]
+      },
+      {
+        "port": "curve_tables",
+        "artifact_names": [
+          "fig4_continuation_figure_materialized_1.curve_tables_001",
+          "fig4_continuation_figure_materialized_1.curve_tables_002"
+        ]
+      }
+    ],
+    "instruction": "独立审查绑定的完整 ScientificIntake 与其精确图证 family。除证据事实、曲线身份和限制的忠实性外，明确检查 scientific_foundation.objective_contract 是否完整表达该 Intake 已陈述的研究目的及观测量，能否供后续目标投影和假设阶段使用，是否错误引入新科学目标、未经证实的参数或绕过已声明限制。总体目标保留与本轮实验子目标选择应区分：目标合同供后续设计者判断当前最小实验和后续条件，不要求 Intake 提前选择本轮实验，也不把总体目标尚未完成等同于当前证据表述错误。准确判断曲线缺口和检出限标记冲突的影响范围，保留它们的未决状态。请提交完整独立审查；是否通过由确切原件和理由决定。"
+  },
+  "audit_preflight": {
+    "admissible": true,
+    "executor_kind": "agent",
+    "port": null,
+    "reason_code": null
+  },
+  "audit_invocation": {
+    "executor_kind": "agent",
+    "operation_id": "science.figure.evidence.audit.v1",
+    "result": {
+      "agent_type": "op_science_figure_evidence_audit_v1_f8abce8f8476",
+      "backend": "local_trusted",
+      "candidate_accepted": false,
+      "completed_at": null,
+      "created_at": "2026-09-08T14:01:04.747509Z",
+      "deadline_at": "2026-09-08T14:11:04.747509Z",
+      "head_advance": null,
+      "last_activity_at": null,
+      "logical_name": "fig4_continuation_intake_objective_revision_audit_1",
+      "name": "fig4_continuation_intake_objective_revision_audit_1",
+      "operation_id": "science.figure.evidence.audit.v1",
+      "output_artifact_name": null,
+      "reason": null,
+      "recovery_available": false,
+      "revision": 1,
+      "scheduler_signal": null,
+      "sealed_output": null,
+      "sealed_output_status": "unavailable",
+      "started_at": null,
+      "state": "queued"
+    }
+  }
+}

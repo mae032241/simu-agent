@@ -1,0 +1,1 @@
+{"native_ssh_running": true, "lock_fd_numbers": [3, 4], "native_ssh_locks_accessible": [false, true], "actual_executable": "/usr/bin/ssh", "network_used": false}

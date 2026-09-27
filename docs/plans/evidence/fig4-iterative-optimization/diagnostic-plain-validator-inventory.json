@@ -1,0 +1,3309 @@
+{
+  "scope": "AST scan of actual src and plugin source, excluding tests/build/dist/cache. Pydantic validator bodies only; static sites do not imply reachable production Operations or useless rules.",
+  "sites": [
+    {
+      "file": "src/scidiscovery/artifact_agent/portable_bundle.py",
+      "line": 62,
+      "model": "ActiveBundleSelection",
+      "validator": "_validate_selection",
+      "exception": "ValueError",
+      "message": "active bundle selection requires at least one Artifact"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/portable_bundle.py",
+      "line": 64,
+      "model": "ActiveBundleSelection",
+      "validator": "_validate_selection",
+      "exception": "ValueError",
+      "message": "active bundle Artifact names must be unique"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/portable_bundle.py",
+      "line": 67,
+      "model": "ActiveBundleSelection",
+      "validator": "_validate_selection",
+      "exception": "ValueError",
+      "message": "active bundle unresolved inputs must be unique"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/portable_bundle.py",
+      "line": 107,
+      "model": "ActiveBundleEntry",
+      "validator": "_validate_entry",
+      "exception": "ValueError",
+      "message": "active bundle payload path must match its SHA-256"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/portable_bundle.py",
+      "line": 109,
+      "model": "ActiveBundleEntry",
+      "validator": "_validate_entry",
+      "exception": "ValueError",
+      "message": "active bundle semantic names must be unique"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/portable_bundle.py",
+      "line": 111,
+      "model": "ActiveBundleEntry",
+      "validator": "_validate_entry",
+      "exception": "ValueError",
+      "message": "active bundle parent keys must be unique"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/portable_bundle.py",
+      "line": 117,
+      "model": "ActiveBundleEntry",
+      "validator": "_validate_entry",
+      "exception": "ValueError",
+      "message": "omitted parent content references must be unique"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/portable_bundle.py",
+      "line": 119,
+      "model": "ActiveBundleEntry",
+      "validator": "_validate_entry",
+      "exception": "ValueError",
+      "message": "removed label keys must be unique"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/portable_bundle.py",
+      "line": 134,
+      "model": "ActiveResearchBundle",
+      "validator": "_validate_graph",
+      "exception": "ValueError",
+      "message": "unsupported active research bundle schema"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/portable_bundle.py",
+      "line": 136,
+      "model": "ActiveResearchBundle",
+      "validator": "_validate_graph",
+      "exception": "ValueError",
+      "message": "active research bundle has no entries"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/portable_bundle.py",
+      "line": 139,
+      "model": "ActiveResearchBundle",
+      "validator": "_validate_graph",
+      "exception": "ValueError",
+      "message": "active research bundle entry keys must be unique"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/portable_bundle.py",
+      "line": 144,
+      "model": "ActiveResearchBundle",
+      "validator": "_validate_graph",
+      "exception": "ValueError",
+      "message": "active research bundle has no bound semantic Artifacts"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/portable_bundle.py",
+      "line": 146,
+      "model": "ActiveResearchBundle",
+      "validator": "_validate_graph",
+      "exception": "ValueError",
+      "message": "active research bundle semantic names must be unique"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/portable_bundle.py",
+      "line": 152,
+      "model": "ActiveResearchBundle",
+      "validator": "_validate_graph",
+      "exception": "ValueError",
+      "message": "active bundle entries must use topological reference order"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/interfaces/mcp_worker_protocol.py",
+      "line": 53,
+      "model": "WorkerJsonPatchOperation",
+      "validator": "_value_matches_operation",
+      "exception": "ValueError",
+      "message": "remove operation must not declare value"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/interfaces/mcp_worker_protocol.py",
+      "line": 55,
+      "model": "WorkerJsonPatchOperation",
+      "validator": "_value_matches_operation",
+      "exception": "ValueError",
+      "message": "test, add, and replace operations require value"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/interfaces/mcp_worker_protocol.py",
+      "line": 71,
+      "model": "WorkerFileJsonPatchInput",
+      "validator": "_patch_has_compare_and_swap_guard",
+      "exception": "ValueError",
+      "message": "JSON patch requires expected_digest or at least one test operation"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/layered_diagnosis.py",
+      "line": 31,
+      "model": "ScientificGateResult",
+      "validator": "_decisive_gate_has_evidence",
+      "exception": "ValueError",
+      "message": "passing or failing gate requires evidence_keys"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/layered_diagnosis.py",
+      "line": 120,
+      "model": "CalculationRecord",
+      "validator": "_bounded_status",
+      "exception": "ValueError",
+      "message": "calculation record exceeds 32 KiB"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/research_objective.py",
+      "line": 124,
+      "model": "ObjectiveClosureRequirement",
+      "validator": "_subjects_match_type",
+      "exception": "ValueError",
+      "message": "target_coverage requires target_keys"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/research_objective.py",
+      "line": 126,
+      "model": "ObjectiveClosureRequirement",
+      "validator": "_subjects_match_type",
+      "exception": "ValueError",
+      "message": "target_coverage accepts only target_keys"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/research_objective.py",
+      "line": 129,
+      "model": "ObjectiveClosureRequirement",
+      "validator": "_subjects_match_type",
+      "exception": "ValueError",
+      "message": "comparison_present requires comparison_purposes"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/research_objective.py",
+      "line": 131,
+      "model": "ObjectiveClosureRequirement",
+      "validator": "_subjects_match_type",
+      "exception": "ValueError",
+      "message": "comparison_present cannot declare validation_check_keys"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/research_objective.py",
+      "line": 136,
+      "model": "ObjectiveClosureRequirement",
+      "validator": "_subjects_match_type",
+      "exception": "ValueError",
+      "message": "validation_check_present requires validation_check_keys"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/research_objective.py",
+      "line": 140,
+      "model": "ObjectiveClosureRequirement",
+      "validator": "_subjects_match_type",
+      "exception": "ValueError",
+      "message": "validation_check_present accepts only validation_check_keys"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/research_objective.py",
+      "line": 164,
+      "model": "ResearchObjectiveContract",
+      "validator": "_objective_is_complete",
+      "exception": "ValueError",
+      "message": "objective target keys must be unique"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/research_objective.py",
+      "line": 166,
+      "model": "ResearchObjectiveContract",
+      "validator": "_objective_is_complete",
+      "exception": "ValueError",
+      "message": "objective closure requirement keys must be unique"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/research_objective.py",
+      "line": 168,
+      "model": "ResearchObjectiveContract",
+      "validator": "_objective_is_complete",
+      "exception": "ValueError",
+      "message": "external-reproduction objective requires a mandatory external target"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/research_objective.py",
+      "line": 174,
+      "model": "ResearchObjectiveContract",
+      "validator": "_objective_is_complete",
+      "exception": "ValueError",
+      "message": "closure requirement references an unknown target"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/comparison.py",
+      "line": 38,
+      "model": "RealizationSnapshot",
+      "validator": "_values_are_unambiguous",
+      "exception": "ValueError",
+      "message": "realization variable_key values must be unique"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/comparison.py",
+      "line": 40,
+      "model": "RealizationSnapshot",
+      "validator": "_values_are_unambiguous",
+      "exception": "ValueError",
+      "message": "realization scientific paths must be unique"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/comparison.py",
+      "line": 44,
+      "model": "RealizationSnapshot",
+      "validator": "_values_are_unambiguous",
+      "exception": "ValueError",
+      "message": "realization source artifact digests must be unique"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/comparison.py",
+      "line": 90,
+      "model": "ControlEquivalenceReport",
+      "validator": "_status_is_derived",
+      "exception": "ValueError",
+      "message": "control-equivalence status does not match differences"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/comparison.py",
+      "line": 92,
+      "model": "ControlEquivalenceReport",
+      "validator": "_status_is_derived",
+      "exception": "ValueError",
+      "message": "physical claim is evaluable only after control equivalence passes"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/comparison.py",
+      "line": 108,
+      "model": "ExperimentControlEquivalenceReport",
+      "validator": "_snapshot_digests_are_unique",
+      "exception": "ValueError",
+      "message": "experiment realization snapshot digests must be unique"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/comparison.py",
+      "line": 110,
+      "model": "ExperimentControlEquivalenceReport",
+      "validator": "_snapshot_digests_are_unique",
+      "exception": "ValueError",
+      "message": "passing experiment requires at least two snapshots"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/comparison.py",
+      "line": 141,
+      "model": "StudyControlEquivalenceReport",
+      "validator": "_status_is_derived",
+      "exception": "ValueError",
+      "message": "study control-equivalence report cannot be empty"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/comparison.py",
+      "line": 143,
+      "model": "StudyControlEquivalenceReport",
+      "validator": "_status_is_derived",
+      "exception": "ValueError",
+      "message": "study control-equivalence experiment keys must be unique"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/comparison.py",
+      "line": 145,
+      "model": "StudyControlEquivalenceReport",
+      "validator": "_status_is_derived",
+      "exception": "ValueError",
+      "message": "study experiment cannot be both compared and single-case"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/comparison.py",
+      "line": 157,
+      "model": "StudyControlEquivalenceReport",
+      "validator": "_status_is_derived",
+      "exception": "ValueError",
+      "message": "study control-equivalence status is not derived"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/comparison.py",
+      "line": 159,
+      "model": "StudyControlEquivalenceReport",
+      "validator": "_status_is_derived",
+      "exception": "ValueError",
+      "message": "study physical claim is evaluable only after every comparison passes"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/scientific_foundation.py",
+      "line": 45,
+      "model": "EvidenceUncertainty",
+      "validator": "_numeric_value_has_unit",
+      "exception": "ValueError",
+      "message": "numeric uncertainty requires a unit"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/scientific_foundation.py",
+      "line": 92,
+      "model": "EvidenceItem",
+      "validator": "_scientific_basis_is_explicit",
+      "exception": "ValueError",
+      "message": "unit cannot be declared without a value"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/scientific_foundation.py",
+      "line": 98,
+      "model": "EvidenceItem",
+      "validator": "_scientific_basis_is_explicit",
+      "exception": "ValueError",
+      "message": "source-backed evidence item requires evidence_keys"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/scientific_foundation.py",
+      "line": 104,
+      "model": "EvidenceItem",
+      "validator": "_scientific_basis_is_explicit",
+      "exception": "ValueError",
+      "message": "non-factual evidence item requires a rationale"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/scientific_foundation.py",
+      "line": 107,
+      "model": "EvidenceItem",
+      "validator": "_scientific_basis_is_explicit",
+      "exception": "ValueError",
+      "message": "condition names must be unique within one evidence item"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/scientific_foundation.py",
+      "line": 86,
+      "model": "EvidenceItem",
+      "validator": "_scientific_basis_is_explicit",
+      "exception": "ValueError",
+      "message": "parameter item requires a value"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/scientific_foundation.py",
+      "line": 88,
+      "model": "EvidenceItem",
+      "validator": "_scientific_basis_is_explicit",
+      "exception": "ValueError",
+      "message": "parameter item requires a unit; use 'dimensionless' when applicable"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/scientific_foundation.py",
+      "line": 121,
+      "model": "EvidenceConflict",
+      "validator": "_resolution_matches_status",
+      "exception": "ValueError",
+      "message": "unresolved conflict cannot declare a resolution"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/scientific_foundation.py",
+      "line": 123,
+      "model": "EvidenceConflict",
+      "validator": "_resolution_matches_status",
+      "exception": "ValueError",
+      "message": "resolved conflict requires a resolution"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/scientific_foundation.py",
+      "line": 148,
+      "model": "ScientificFoundation",
+      "validator": "_references_are_local_and_complete",
+      "exception": "ValueError",
+      "message": "item_key values must be unique"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/scientific_foundation.py",
+      "line": 150,
+      "model": "ScientificFoundation",
+      "validator": "_references_are_local_and_complete",
+      "exception": "ValueError",
+      "message": "conflict_key values must be unique"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/scientific_foundation.py",
+      "line": 155,
+      "model": "ScientificFoundation",
+      "validator": "_references_are_local_and_complete",
+      "exception": "ValueError",
+      "message": "evidence item references an undeclared source_key"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/scientific_foundation.py",
+      "line": 158,
+      "model": "ScientificFoundation",
+      "validator": "_references_are_local_and_complete",
+      "exception": "ValueError",
+      "message": "conflict references an undeclared item_key"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/scientific_foundation.py",
+      "line": 161,
+      "model": "ScientificFoundation",
+      "validator": "_references_are_local_and_complete",
+      "exception": "ValueError",
+      "message": "objective contract statement must equal the foundation objective"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/scientific_foundation.py",
+      "line": 166,
+      "model": "ScientificFoundation",
+      "validator": "_references_are_local_and_complete",
+      "exception": "ValueError",
+      "message": "objective target references an undeclared foundation item"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/experiment_intent.py",
+      "line": 76,
+      "model": "IntentComparisonVariable",
+      "validator": "_override_and_tolerance_contract",
+      "exception": "ValueError",
+      "message": "intent variable case overrides must be unique"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/experiment_intent.py",
+      "line": 79,
+      "model": "IntentComparisonVariable",
+      "validator": "_override_and_tolerance_contract",
+      "exception": "ValueError",
+      "message": "absolute_tolerance requires tolerance"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/experiment_intent.py",
+      "line": 82,
+      "model": "IntentComparisonVariable",
+      "validator": "_override_and_tolerance_contract",
+      "exception": "ValueError",
+      "message": "absolute_tolerance requires numeric values"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/experiment_intent.py",
+      "line": 84,
+      "model": "IntentComparisonVariable",
+      "validator": "_override_and_tolerance_contract",
+      "exception": "ValueError",
+      "message": "tolerance is only valid with absolute_tolerance"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/experiment_intent.py",
+      "line": 126,
+      "model": "IntentValidationDimension",
+      "validator": "_deterministic_keys_are_unique",
+      "exception": "ValueError",
+      "message": "deterministic validation check keys must be unique"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/experiment_intent.py",
+      "line": 181,
+      "model": "ExperimentProposalIntent",
+      "validator": "_intent_is_bounded",
+      "exception": "ValueError",
+      "message": "current_objectives must be an exact subset of objectives"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/experiment_intent.py",
+      "line": 183,
+      "model": "ExperimentProposalIntent",
+      "validator": "_intent_is_bounded",
+      "exception": "ValueError",
+      "message": "intent requires exactly one complete validation_plan or compact validation_intent"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/experiment_intent.py",
+      "line": 190,
+      "model": "ExperimentProposalIntent",
+      "validator": "_intent_is_bounded",
+      "exception": "ValueError",
+      "message": "intent validation plan experiment_key differs"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/experiment_intent.py",
+      "line": 179,
+      "model": "ExperimentProposalIntent",
+      "validator": "_intent_is_bounded",
+      "exception": "ValueError",
+      "message": "<dynamic message>"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/experiment_intent.py",
+      "line": 194,
+      "model": "ExperimentProposalIntent",
+      "validator": "_intent_is_bounded",
+      "exception": "ValueError",
+      "message": "comparison variables require an explicit baseline for materialization"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/experiment_intent.py",
+      "line": 199,
+      "model": "ExperimentProposalIntent",
+      "validator": "_intent_is_bounded",
+      "exception": "ValueError",
+      "message": "intent baseline case is undeclared"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/experiment_intent.py",
+      "line": 204,
+      "model": "ExperimentProposalIntent",
+      "validator": "_intent_is_bounded",
+      "exception": "ValueError",
+      "message": "intent baseline must be a baseline or control case"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/experiment_intent.py",
+      "line": 206,
+      "model": "ExperimentProposalIntent",
+      "validator": "_intent_is_bounded",
+      "exception": "ValueError",
+      "message": "intent comparison requires cases and variables"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/experiment_intent.py",
+      "line": 210,
+      "model": "ExperimentProposalIntent",
+      "validator": "_intent_is_bounded",
+      "exception": "ValueError",
+      "message": "intent baseline value cannot also be overridden"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/experiment_intent.py",
+      "line": 212,
+      "model": "ExperimentProposalIntent",
+      "validator": "_intent_is_bounded",
+      "exception": "ValueError",
+      "message": "intent variable override references an unknown case"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/experiment_intent.py",
+      "line": 219,
+      "model": "ExperimentProposalIntent",
+      "validator": "_intent_is_bounded",
+      "exception": "ValueError",
+      "message": "intended_change intent variable must vary"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/experiment_intent.py",
+      "line": 221,
+      "model": "ExperimentProposalIntent",
+      "validator": "_intent_is_bounded",
+      "exception": "ValueError",
+      "message": "frozen intent variable must not vary"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/experiment_intent.py",
+      "line": 248,
+      "model": "ExperimentDesignIntent",
+      "validator": "_portfolio_intent_is_complete",
+      "exception": "ValueError",
+      "message": "intent experiment_key values must be unique"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/experiment_intent.py",
+      "line": 252,
+      "model": "ExperimentDesignIntent",
+      "validator": "_portfolio_intent_is_complete",
+      "exception": "ValueError",
+      "message": "intent priority_order must contain every experiment once"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/experiment_intent.py",
+      "line": 256,
+      "model": "ExperimentDesignIntent",
+      "validator": "_portfolio_intent_is_complete",
+      "exception": "ValueError",
+      "message": "intent proposal references an unselected hypothesis"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/experiment_intent.py",
+      "line": 259,
+      "model": "ExperimentDesignIntent",
+      "validator": "_portfolio_intent_is_complete",
+      "exception": "ValueError",
+      "message": "scientific intent requires objective and hypotheses"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/experiment_intent.py",
+      "line": 261,
+      "model": "ExperimentDesignIntent",
+      "validator": "_portfolio_intent_is_complete",
+      "exception": "ValueError",
+      "message": "scientific intent cannot declare engineering_objective"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/experiment_intent.py",
+      "line": 268,
+      "model": "ExperimentDesignIntent",
+      "validator": "_portfolio_intent_is_complete",
+      "exception": "ValueError",
+      "message": "engineering intent requires only an engineering objective"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/experiment_intent.py",
+      "line": 295,
+      "model": "ExperimentPlanMaterializationReport",
+      "validator": "_source_hashes_are_all_present_or_absent",
+      "exception": "ValueError",
+      "message": "materialization source hashes must be all present or absent"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/scientific_output.py",
+      "line": 55,
+      "model": "ScientificRoleOutput",
+      "validator": "_references_exist",
+      "exception": "ValueError",
+      "message": "evidence source_key values must be unique"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/scientific_output.py",
+      "line": 59,
+      "model": "ScientificRoleOutput",
+      "validator": "_references_exist",
+      "exception": "ValueError",
+      "message": "finding evidence_keys must be unique"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/scientific_output.py",
+      "line": 61,
+      "model": "ScientificRoleOutput",
+      "validator": "_references_exist",
+      "exception": "ValueError",
+      "message": "finding references an undeclared evidence key"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/scientific_output.py",
+      "line": 67,
+      "model": "ScientificRoleOutput",
+      "validator": "_references_exist",
+      "exception": "ValueError",
+      "message": "source-backed finding requires evidence"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/artifact.py",
+      "line": 55,
+      "model": "ArtifactRegistration",
+      "validator": "_validate_media_type",
+      "exception": "ValueError",
+      "message": "media_type must be a complete RFC-style media type"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/artifact.py",
+      "line": 61,
+      "model": "ArtifactRegistration",
+      "validator": "_validate_media_type",
+      "exception": "ValueError",
+      "message": "media_type contains an invalid parameter"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/artifact.py",
+      "line": 68,
+      "model": "ArtifactRegistration",
+      "validator": "_validate_provenance",
+      "exception": "ValueError",
+      "message": "parent_refs must be ordered and free of duplicates"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/artifact.py",
+      "line": 111,
+      "model": "ArtifactEnvelope",
+      "validator": "_validate_created_at",
+      "exception": "ValueError",
+      "message": "created_at must use UTC"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/artifact.py",
+      "line": 109,
+      "model": "ArtifactEnvelope",
+      "validator": "_validate_created_at",
+      "exception": "ValueError",
+      "message": "created_at must be a valid UTC RFC 3339 timestamp"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/artifact.py",
+      "line": 118,
+      "model": "ArtifactEnvelope",
+      "validator": "_validate_provenance",
+      "exception": "ValueError",
+      "message": "parent_refs must be ordered and free of duplicates"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/experiment.py",
+      "line": 47,
+      "model": "MetricThreshold",
+      "validator": "_range_matches_operator",
+      "exception": "ValueError",
+      "message": "between threshold requires upper_value >= value"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/experiment.py",
+      "line": 49,
+      "model": "MetricThreshold",
+      "validator": "_range_matches_operator",
+      "exception": "ValueError",
+      "message": "upper_value is only valid for a between threshold"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/experiment.py",
+      "line": 67,
+      "model": "ExperimentFactor",
+      "validator": "_values_are_unique",
+      "exception": "ValueError",
+      "message": "factor values must be unique"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/experiment.py",
+      "line": 89,
+      "model": "ExperimentCase",
+      "validator": "_setting_names_are_unique",
+      "exception": "ValueError",
+      "message": "case setting names must be unique"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/experiment.py",
+      "line": 125,
+      "model": "ComparisonVariable",
+      "validator": "_comparison_semantics_are_explicit",
+      "exception": "ValueError",
+      "message": "comparison variable case expectations must be unique"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/experiment.py",
+      "line": 128,
+      "model": "ComparisonVariable",
+      "validator": "_comparison_semantics_are_explicit",
+      "exception": "ValueError",
+      "message": "intended_change variable must vary between cases"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/experiment.py",
+      "line": 130,
+      "model": "ComparisonVariable",
+      "validator": "_comparison_semantics_are_explicit",
+      "exception": "ValueError",
+      "message": "frozen variable must have the same value in every case"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/experiment.py",
+      "line": 133,
+      "model": "ComparisonVariable",
+      "validator": "_comparison_semantics_are_explicit",
+      "exception": "ValueError",
+      "message": "absolute_tolerance requires tolerance"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/experiment.py",
+      "line": 135,
+      "model": "ComparisonVariable",
+      "validator": "_comparison_semantics_are_explicit",
+      "exception": "ValueError",
+      "message": "absolute_tolerance requires numeric expectations"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/experiment.py",
+      "line": 137,
+      "model": "ComparisonVariable",
+      "validator": "_comparison_semantics_are_explicit",
+      "exception": "ValueError",
+      "message": "tolerance is only valid with absolute_tolerance"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/experiment.py",
+      "line": 171,
+      "model": "ComparisonContract",
+      "validator": "_contract_keys_are_unique",
+      "exception": "ValueError",
+      "message": "baseline cannot also be a comparison case"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/experiment.py",
+      "line": 180,
+      "model": "ComparisonContract",
+      "validator": "_contract_keys_are_unique",
+      "exception": "ValueError",
+      "message": "<dynamic message>"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/experiment.py",
+      "line": 184,
+      "model": "ComparisonContract",
+      "validator": "_contract_keys_are_unique",
+      "exception": "ValueError",
+      "message": "every comparison variable must cover the exact compared cases"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/experiment.py",
+      "line": 269,
+      "model": "ExperimentProposal",
+      "validator": "_proposal_is_bounded",
+      "exception": "ValueError",
+      "message": "resource case_count must equal the declared case count"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/experiment.py",
+      "line": 273,
+      "model": "ExperimentProposal",
+      "validator": "_proposal_is_bounded",
+      "exception": "ValueError",
+      "message": "prediction test references an undeclared hypothesis"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/experiment.py",
+      "line": 280,
+      "model": "ExperimentProposal",
+      "validator": "_proposal_is_bounded",
+      "exception": "ValueError",
+      "message": "comparison contract references an undeclared experiment case"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/experiment.py",
+      "line": 285,
+      "model": "ExperimentProposal",
+      "validator": "_proposal_is_bounded",
+      "exception": "ValueError",
+      "message": "comparison baseline must name a baseline or control case"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/experiment.py",
+      "line": 292,
+      "model": "ExperimentProposal",
+      "validator": "_proposal_is_bounded",
+      "exception": "ValueError",
+      "message": "intended comparison variable references an undeclared factor"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/experiment.py",
+      "line": 316,
+      "model": "ExperimentProposal",
+      "validator": "_proposal_is_bounded",
+      "exception": "ValueError",
+      "message": "comparison contract references an undeclared observable"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/experiment.py",
+      "line": 323,
+      "model": "ExperimentProposal",
+      "validator": "_proposal_is_bounded",
+      "exception": "ValueError",
+      "message": "identifiability claim references an undeclared experiment hypothesis"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/experiment.py",
+      "line": 329,
+      "model": "ExperimentProposal",
+      "validator": "_proposal_is_bounded",
+      "exception": "ValueError",
+      "message": "identifiability claim references an unrequired observable"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/experiment.py",
+      "line": 242,
+      "model": "ExperimentProposal",
+      "validator": "_proposal_is_bounded",
+      "exception": "ValueError",
+      "message": "<dynamic message>"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/experiment.py",
+      "line": 251,
+      "model": "ExperimentProposal",
+      "validator": "_proposal_is_bounded",
+      "exception": "ValueError",
+      "message": "case settings must cover every changed factor exactly"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/experiment.py",
+      "line": 301,
+      "model": "ExperimentProposal",
+      "validator": "_proposal_is_bounded",
+      "exception": "ValueError",
+      "message": "<dynamic message>"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/experiment.py",
+      "line": 305,
+      "model": "ExperimentProposal",
+      "validator": "_proposal_is_bounded",
+      "exception": "ValueError",
+      "message": "<dynamic message>"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/experiment.py",
+      "line": 257,
+      "model": "ExperimentProposal",
+      "validator": "_proposal_is_bounded",
+      "exception": "ValueError",
+      "message": "<dynamic message>"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/experiment.py",
+      "line": 264,
+      "model": "ExperimentProposal",
+      "validator": "_proposal_is_bounded",
+      "exception": "ValueError",
+      "message": "<dynamic message>"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/experiment.py",
+      "line": 311,
+      "model": "ExperimentProposal",
+      "validator": "_proposal_is_bounded",
+      "exception": "ValueError",
+      "message": "<dynamic message>"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/experiment.py",
+      "line": 350,
+      "model": "ValidationCheck",
+      "validator": "_threshold_matches_evaluation",
+      "exception": "ValueError",
+      "message": "deterministic evaluator profile and metric must be supplied together"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/experiment.py",
+      "line": 354,
+      "model": "ValidationCheck",
+      "validator": "_threshold_matches_evaluation",
+      "exception": "ValueError",
+      "message": "deterministic_threshold check requires threshold"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/experiment.py",
+      "line": 357,
+      "model": "ValidationCheck",
+      "validator": "_threshold_matches_evaluation",
+      "exception": "ValueError",
+      "message": "reviewed_qualitative check cannot declare threshold"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/experiment.py",
+      "line": 359,
+      "model": "ValidationCheck",
+      "validator": "_threshold_matches_evaluation",
+      "exception": "ValueError",
+      "message": "reviewed_qualitative check cannot declare a deterministic evaluator"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/experiment.py",
+      "line": 373,
+      "model": "ValidationDimensionPlan",
+      "validator": "_applicability_matches_checks",
+      "exception": "ValueError",
+      "message": "required validation dimension needs at least one check"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/experiment.py",
+      "line": 375,
+      "model": "ValidationDimensionPlan",
+      "validator": "_applicability_matches_checks",
+      "exception": "ValueError",
+      "message": "not_applicable validation dimension cannot contain checks"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/experiment.py",
+      "line": 378,
+      "model": "ValidationDimensionPlan",
+      "validator": "_applicability_matches_checks",
+      "exception": "ValueError",
+      "message": "validation check_key values must be unique within a dimension"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/experiment.py",
+      "line": 398,
+      "model": "ValidationPlan",
+      "validator": "_check_keys_are_globally_unique",
+      "exception": "ValueError",
+      "message": "validation check_key values must be globally unique"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/experiment.py",
+      "line": 425,
+      "model": "ExperimentPortfolio",
+      "validator": "_portfolio_is_complete_and_ranked",
+      "exception": "ValueError",
+      "message": "experiment_key values must be unique"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/experiment.py",
+      "line": 427,
+      "model": "ExperimentPortfolio",
+      "validator": "_portfolio_is_complete_and_ranked",
+      "exception": "ValueError",
+      "message": "plan_key values must be unique"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/experiment.py",
+      "line": 431,
+      "model": "ExperimentPortfolio",
+      "validator": "_portfolio_is_complete_and_ranked",
+      "exception": "ValueError",
+      "message": "priority_order must contain every experiment exactly once"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/experiment.py",
+      "line": 439,
+      "model": "ExperimentPortfolio",
+      "validator": "_portfolio_is_complete_and_ranked",
+      "exception": "ValueError",
+      "message": "every experiment requires exactly one validation plan"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/experiment.py",
+      "line": 437,
+      "model": "ExperimentPortfolio",
+      "validator": "_portfolio_is_complete_and_ranked",
+      "exception": "ValueError",
+      "message": "proposal references an unselected hypothesis"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/experiment.py",
+      "line": 442,
+      "model": "ExperimentPortfolio",
+      "validator": "_portfolio_is_complete_and_ranked",
+      "exception": "ValueError",
+      "message": "scientific portfolio requires selected hypotheses"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/experiment.py",
+      "line": 444,
+      "model": "ExperimentPortfolio",
+      "validator": "_portfolio_is_complete_and_ranked",
+      "exception": "ValueError",
+      "message": "scientific portfolio requires objective_key"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/validation.py",
+      "line": 43,
+      "model": "HypothesisAssessment",
+      "validator": "_not_tested_has_no_test_claims",
+      "exception": "ValueError",
+      "message": "not_tested assessment cannot claim checked predictions"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/validation.py",
+      "line": 67,
+      "model": "ValidationCheckResult",
+      "validator": "_result_has_required_observation",
+      "exception": "ValueError",
+      "message": "pass/fail validation result requires evidence_keys"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/validation.py",
+      "line": 73,
+      "model": "ValidationCheckResult",
+      "validator": "_result_has_required_observation",
+      "exception": "ValueError",
+      "message": "deterministic pass/fail result requires observed_value"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/validation.py",
+      "line": 79,
+      "model": "ValidationCheckResult",
+      "validator": "_result_has_required_observation",
+      "exception": "ValueError",
+      "message": "deterministic pass/fail result requires a unit"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/validation.py",
+      "line": 81,
+      "model": "ValidationCheckResult",
+      "validator": "_result_has_required_observation",
+      "exception": "ValueError",
+      "message": "unit cannot be declared without observed_value"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/validation.py",
+      "line": 83,
+      "model": "ValidationCheckResult",
+      "validator": "_result_has_required_observation",
+      "exception": "ValueError",
+      "message": "validation evidence_keys must be unique"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/validation.py",
+      "line": 99,
+      "model": "ValidationDimensionReport",
+      "validator": "_status_matches_results",
+      "exception": "ValueError",
+      "message": "active validation dimension requires results"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/validation.py",
+      "line": 102,
+      "model": "ValidationDimensionReport",
+      "validator": "_status_matches_results",
+      "exception": "ValueError",
+      "message": "validation result check_key values must be unique"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/validation.py",
+      "line": 105,
+      "model": "ValidationDimensionReport",
+      "validator": "_status_matches_results",
+      "exception": "ValueError",
+      "message": "passing dimension requires every check to pass"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/validation.py",
+      "line": 107,
+      "model": "ValidationDimensionReport",
+      "validator": "_status_matches_results",
+      "exception": "ValueError",
+      "message": "failed dimension requires at least one failed check"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/validation.py",
+      "line": 111,
+      "model": "ValidationDimensionReport",
+      "validator": "_status_matches_results",
+      "exception": "ValueError",
+      "message": "inconclusive dimension has inconsistent check states"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/validation.py",
+      "line": 96,
+      "model": "ValidationDimensionReport",
+      "validator": "_status_matches_results",
+      "exception": "ValueError",
+      "message": "not_applicable dimension cannot contain results"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/validation.py",
+      "line": 137,
+      "model": "ValidationReport",
+      "validator": "_verdict_is_derived_from_dimensions",
+      "exception": "ValueError",
+      "message": "validation source_key values must be unique"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/validation.py",
+      "line": 143,
+      "model": "ValidationReport",
+      "validator": "_verdict_is_derived_from_dimensions",
+      "exception": "ValueError",
+      "message": "validation result check_key values must be globally unique"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/validation.py",
+      "line": 156,
+      "model": "ValidationReport",
+      "validator": "_verdict_is_derived_from_dimensions",
+      "exception": "ValueError",
+      "message": "overall_verdict does not match dimension results"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/validation.py",
+      "line": 158,
+      "model": "ValidationReport",
+      "validator": "_verdict_is_derived_from_dimensions",
+      "exception": "ValueError",
+      "message": "claim_allowed is true only when all active dimensions pass"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/validation.py",
+      "line": 163,
+      "model": "ValidationReport",
+      "validator": "_verdict_is_derived_from_dimensions",
+      "exception": "ValueError",
+      "message": "a report may assess each hypothesis once"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/validation.py",
+      "line": 146,
+      "model": "ValidationReport",
+      "validator": "_verdict_is_derived_from_dimensions",
+      "exception": "ValueError",
+      "message": "validation result references an undeclared source_key"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/validation.py",
+      "line": 166,
+      "model": "ValidationReport",
+      "validator": "_verdict_is_derived_from_dimensions",
+      "exception": "ValueError",
+      "message": "hypothesis assessment references an undeclared source_key"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/validation.py",
+      "line": 172,
+      "model": "ValidationReport",
+      "validator": "_verdict_is_derived_from_dimensions",
+      "exception": "ValueError",
+      "message": "support requires a numerically valid passing study"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/validation.py",
+      "line": 176,
+      "model": "ValidationReport",
+      "validator": "_verdict_is_derived_from_dimensions",
+      "exception": "ValueError",
+      "message": "contradiction requires a numerically valid failed prediction"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/validation.py",
+      "line": 182,
+      "model": "ValidationReport",
+      "validator": "_verdict_is_derived_from_dimensions",
+      "exception": "ValueError",
+      "message": "inconclusive assessment requires a valid inconclusive study"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/validation.py",
+      "line": 189,
+      "model": "ValidationReport",
+      "validator": "_verdict_is_derived_from_dimensions",
+      "exception": "ValueError",
+      "message": "invalid_study assessment requires failed or inconclusive numerics"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/validation.py",
+      "line": 197,
+      "model": "ValidationReport",
+      "validator": "_verdict_is_derived_from_dimensions",
+      "exception": "ValueError",
+      "message": "hypothesis assessment needs at least one tested hypothesis"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/validation.py",
+      "line": 201,
+      "model": "ValidationReport",
+      "validator": "_verdict_is_derived_from_dimensions",
+      "exception": "ValueError",
+      "message": "hypothesis assessment needs remaining_contradiction"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/validation.py",
+      "line": 203,
+      "model": "ValidationReport",
+      "validator": "_verdict_is_derived_from_dimensions",
+      "exception": "ValueError",
+      "message": "hypothesis assessment context requires hypothesis_assessments"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/cognitive.py",
+      "line": 53,
+      "model": "ParameterForm",
+      "validator": "_calibratable_parameter_is_bounded",
+      "exception": "ValueError",
+      "message": "calibratable parameter requires range_description"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/cognitive.py",
+      "line": 92,
+      "model": "HypothesisForm",
+      "validator": "_local_keys_are_unique",
+      "exception": "ValueError",
+      "message": "<dynamic message>"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/cognitive.py",
+      "line": 108,
+      "model": "HypothesisProposal",
+      "validator": "_portfolio_is_coherent",
+      "exception": "ValueError",
+      "message": "hypothesis_key values must be unique"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/cognitive.py",
+      "line": 115,
+      "model": "HypothesisProposal",
+      "validator": "_portfolio_is_coherent",
+      "exception": "ValueError",
+      "message": "hypothesis cannot compete with itself"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/cognitive.py",
+      "line": 117,
+      "model": "HypothesisProposal",
+      "validator": "_portfolio_is_coherent",
+      "exception": "ValueError",
+      "message": "hypothesis references an undeclared competitor"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/cognitive.py",
+      "line": 119,
+      "model": "HypothesisProposal",
+      "validator": "_portfolio_is_coherent",
+      "exception": "ValueError",
+      "message": "hypothesis references undeclared evidence"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/cognitive.py",
+      "line": 146,
+      "model": "CriticReview",
+      "validator": "_keys_are_unique",
+      "exception": "ValueError",
+      "message": "a critic may review each hypothesis once"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/cognitive.py",
+      "line": 196,
+      "model": "EvidenceAudit",
+      "validator": "_audit_is_coherent",
+      "exception": "ValueError",
+      "message": "evidence check keys must be unique"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/cognitive.py",
+      "line": 200,
+      "model": "EvidenceAudit",
+      "validator": "_audit_is_coherent",
+      "exception": "ValueError",
+      "message": "evidence check references undeclared evidence"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/approval.py",
+      "line": 55,
+      "model": "ApprovalDisplayTranslation",
+      "validator": "_validate_pointer",
+      "exception": "ValueError",
+      "message": "display translation json_pointer must be absolute"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/approval.py",
+      "line": 71,
+      "model": "ApprovalPresentation",
+      "validator": "_validate_translations",
+      "exception": "ValueError",
+      "message": "display translations must bind unique subject paths"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/approval.py",
+      "line": 73,
+      "model": "ApprovalPresentation",
+      "validator": "_validate_translations",
+      "exception": "ValueError",
+      "message": "display translations exceed the bounded byte budget"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/approval.py",
+      "line": 90,
+      "model": "ReviewDocumentItem",
+      "validator": "_validate_pointer_contract",
+      "exception": "ValueError",
+      "message": "review item requires an absolute JSON pointer"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/approval.py",
+      "line": 93,
+      "model": "ReviewDocumentItem",
+      "validator": "_validate_pointer_contract",
+      "exception": "ValueError",
+      "message": "metadata and download items cannot carry JSON pointers"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/approval.py",
+      "line": 139,
+      "model": "ReviewDocument",
+      "validator": "_validate_document_bounds",
+      "exception": "ValueError",
+      "message": "review document contains too many items"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/approval.py",
+      "line": 141,
+      "model": "ReviewDocument",
+      "validator": "_validate_document_bounds",
+      "exception": "ValueError",
+      "message": "review document exceeds the bounded byte budget"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/approval.py",
+      "line": 171,
+      "model": "ApprovalRequest",
+      "validator": "_validate_request",
+      "exception": "ValueError",
+      "message": "approval subjects must be unique exact refs"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/approval.py",
+      "line": 174,
+      "model": "ApprovalRequest",
+      "validator": "_validate_request",
+      "exception": "ValueError",
+      "message": "approval options must have unique option_id values"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/approval.py",
+      "line": 176,
+      "model": "ApprovalRequest",
+      "validator": "_validate_request",
+      "exception": "ValueError",
+      "message": "subject_set_sha256 does not match subject_refs"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/approval.py",
+      "line": 181,
+      "model": "ApprovalRequest",
+      "validator": "_validate_request",
+      "exception": "ValueError",
+      "message": "display translation subject_index is out of range"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/approval.py",
+      "line": 187,
+      "model": "ApprovalRequest",
+      "validator": "_validate_request",
+      "exception": "ValueError",
+      "message": "review document subject_index is out of range"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/approval.py",
+      "line": 236,
+      "model": "HumanDecision",
+      "validator": "_validate_subject_hash",
+      "exception": "ValueError",
+      "message": "decision subject_set_sha256 does not match subject_refs"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/research_cycle.py",
+      "line": 63,
+      "model": "ProblemFrame",
+      "validator": "_frame_is_closed",
+      "exception": "ValueError",
+      "message": "observable_key values must be unique"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/research_cycle.py",
+      "line": 67,
+      "model": "ProblemFrame",
+      "validator": "_frame_is_closed",
+      "exception": "ValueError",
+      "message": "observable references an undeclared foundation item"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/research_cycle.py",
+      "line": 117,
+      "model": "ScientificReview",
+      "validator": "_review_is_coherent",
+      "exception": "ValueError",
+      "message": "a scientific review may review each hypothesis once"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/research_cycle.py",
+      "line": 124,
+      "model": "ScientificReview",
+      "validator": "_review_is_coherent",
+      "exception": "ValueError",
+      "message": "hypothesis portfolio review requires hypothesis_reviews"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/research_cycle.py",
+      "line": 122,
+      "model": "ScientificReview",
+      "validator": "_review_is_coherent",
+      "exception": "ValueError",
+      "message": "scientific review finding references undeclared evidence"
+    },
+    {
+      "file": "src/scidiscovery/artifact_agent/schema/research_cycle.py",
+      "line": 144,
+      "model": "ScientificIntake",
+      "validator": "_frame_uses_the_supplied_foundation",
+      "exception": "ValueError",
+      "message": "problem frame and scientific foundation objectives differ"
+    },
+    {
+      "file": "plugins/tcad_artifact/tcad_artifact/execution_control.py",
+      "line": 135,
+      "model": "TCADJobSpec",
+      "validator": "_unique_paths",
+      "exception": "ValueError",
+      "message": "archive entry paths must be unique"
+    },
+    {
+      "file": "plugins/tcad_artifact/tcad_artifact/execution_control.py",
+      "line": 137,
+      "model": "TCADJobSpec",
+      "validator": "_unique_paths",
+      "exception": "ValueError",
+      "message": "expected output paths and names must be unique"
+    },
+    {
+      "file": "plugins/tcad_artifact/tcad_artifact/execution_control.py",
+      "line": 139,
+      "model": "TCADJobSpec",
+      "validator": "_unique_paths",
+      "exception": "ValueError",
+      "message": "job argument is invalid"
+    },
+    {
+      "file": "plugins/tcad_artifact/tcad_artifact/execution_control.py",
+      "line": 141,
+      "model": "TCADJobSpec",
+      "validator": "_unique_paths",
+      "exception": "ValueError",
+      "message": "job can declare at most one process-log output"
+    },
+    {
+      "file": "plugins/tcad_artifact/tcad_artifact/execution_control.py",
+      "line": 162,
+      "model": "SolverCapability",
+      "validator": "_absolute_executable",
+      "exception": "ValueError",
+      "message": "tool executable must be absolute"
+    },
+    {
+      "file": "plugins/tcad_artifact/tcad_artifact/execution_control.py",
+      "line": 175,
+      "model": "SolverCapability",
+      "validator": "_public_arguments_are_exact_private_arguments",
+      "exception": "ValueError",
+      "message": "public arguments must be an ordered exact subset of fixed arguments"
+    },
+    {
+      "file": "plugins/tcad_artifact/tcad_artifact/execution_control.py",
+      "line": 241,
+      "model": "SolverCapabilitySnapshot",
+      "validator": "_public_launch_name",
+      "exception": "ValueError",
+      "message": "public launch name must not contain a path"
+    },
+    {
+      "file": "plugins/tcad_artifact/tcad_artifact/execution_control.py",
+      "line": 264,
+      "model": "TCADExecutionPolicy",
+      "validator": "_valid_policy",
+      "exception": "ValueError",
+      "message": "policy roots and tool profiles must be unique"
+    },
+    {
+      "file": "plugins/tcad_artifact/tcad_artifact/command_adapter.py",
+      "line": 40,
+      "model": "CommandAdapterConfig",
+      "validator": "_absolute_executable",
+      "exception": "ValueError",
+      "message": "transport executable must be absolute"
+    },
+    {
+      "file": "plugins/tcad_artifact/tcad_artifact/device_parameters.py",
+      "line": 111,
+      "model": "ParameterAgreementRule",
+      "validator": "_tolerance_matches_rule",
+      "exception": "ValueError",
+      "message": "exact parameter agreement cannot declare tolerance"
+    },
+    {
+      "file": "plugins/tcad_artifact/tcad_artifact/device_parameters.py",
+      "line": 113,
+      "model": "ParameterAgreementRule",
+      "validator": "_tolerance_matches_rule",
+      "exception": "ValueError",
+      "message": "tolerant parameter agreement requires tolerance"
+    },
+    {
+      "file": "plugins/tcad_artifact/tcad_artifact/device_parameters.py",
+      "line": 115,
+      "model": "ParameterAgreementRule",
+      "validator": "_tolerance_matches_rule",
+      "exception": "ValueError",
+      "message": "parameter agreement tolerance must be nonnegative"
+    },
+    {
+      "file": "plugins/tcad_artifact/tcad_artifact/device_parameters.py",
+      "line": 156,
+      "model": "DeviceParameterRequirementSet",
+      "validator": "_parameter_keys_are_unique",
+      "exception": "ValueError",
+      "message": "device parameter requirement keys must be unique"
+    },
+    {
+      "file": "plugins/tcad_artifact/tcad_artifact/device_parameters.py",
+      "line": 191,
+      "model": "EvidenceSourceCatalogEntry",
+      "validator": "_source_identity_is_consistent",
+      "exception": "ValueError",
+      "message": "web source catalog entry requires exact URL metadata"
+    },
+    {
+      "file": "plugins/tcad_artifact/tcad_artifact/device_parameters.py",
+      "line": 186,
+      "model": "EvidenceSourceCatalogEntry",
+      "validator": "_source_identity_is_consistent",
+      "exception": "ValueError",
+      "message": "DOI source work_key must use its normalized DOI"
+    },
+    {
+      "file": "plugins/tcad_artifact/tcad_artifact/device_parameters.py",
+      "line": 208,
+      "model": "EvidenceSourceCatalogEntry",
+      "validator": "_source_identity_is_consistent",
+      "exception": "ValueError",
+      "message": "<dynamic message>"
+    },
+    {
+      "file": "plugins/tcad_artifact/tcad_artifact/device_parameters.py",
+      "line": 201,
+      "model": "EvidenceSourceCatalogEntry",
+      "validator": "_source_identity_is_consistent",
+      "exception": "ValueError",
+      "message": "<dynamic message>"
+    },
+    {
+      "file": "plugins/tcad_artifact/tcad_artifact/device_parameters.py",
+      "line": 224,
+      "model": "EvidenceSourceCatalog",
+      "validator": "_source_keys_are_unique",
+      "exception": "ValueError",
+      "message": "evidence source catalog keys must be unique"
+    },
+    {
+      "file": "plugins/tcad_artifact/tcad_artifact/device_parameters.py",
+      "line": 246,
+      "model": "DeviceParameterObservation",
+      "validator": "_observation_is_valid",
+      "exception": "ValueError",
+      "message": "parameter observation condition names must be unique"
+    },
+    {
+      "file": "plugins/tcad_artifact/tcad_artifact/device_parameters.py",
+      "line": 267,
+      "model": "DeviceParameterTuningSpec",
+      "validator": "_candidate_values_are_numerically_unique",
+      "exception": "ValueError",
+      "message": "parameter tuning candidate values must be numerically unique"
+    },
+    {
+      "file": "plugins/tcad_artifact/tcad_artifact/device_parameters.py",
+      "line": 290,
+      "model": "DeviceParameterClaim",
+      "validator": "_claim_is_valid",
+      "exception": "ValueError",
+      "message": "parameter claim condition names must be unique"
+    },
+    {
+      "file": "plugins/tcad_artifact/tcad_artifact/device_parameters.py",
+      "line": 292,
+      "model": "DeviceParameterClaim",
+      "validator": "_claim_is_valid",
+      "exception": "ValueError",
+      "message": "paper parameter claim requires source observations"
+    },
+    {
+      "file": "plugins/tcad_artifact/tcad_artifact/device_parameters.py",
+      "line": 297,
+      "model": "DeviceParameterClaim",
+      "validator": "_claim_is_valid",
+      "exception": "ValueError",
+      "message": "parameter tuning candidate values must include the selected baseline"
+    },
+    {
+      "file": "plugins/tcad_artifact/tcad_artifact/device_parameters.py",
+      "line": 304,
+      "model": "DeviceParameterClaim",
+      "validator": "_claim_is_valid",
+      "exception": "ValueError",
+      "message": "engineering-prior tuning must be declared as an assumption"
+    },
+    {
+      "file": "plugins/tcad_artifact/tcad_artifact/device_parameters.py",
+      "line": 309,
+      "model": "DeviceParameterClaim",
+      "validator": "_claim_is_valid",
+      "exception": "ValueError",
+      "message": "conflicting-source tuning requires at least two observations"
+    },
+    {
+      "file": "plugins/tcad_artifact/tcad_artifact/device_parameters.py",
+      "line": 317,
+      "model": "DeviceParameterClaim",
+      "validator": "_claim_is_valid",
+      "exception": "ValueError",
+      "message": "conflicting-source tuning candidates must be exact observed values"
+    },
+    {
+      "file": "plugins/tcad_artifact/tcad_artifact/device_parameters.py",
+      "line": 334,
+      "model": "DeviceParameterSet",
+      "validator": "_claim_keys_are_unique",
+      "exception": "ValueError",
+      "message": "device parameter claim keys must be unique"
+    },
+    {
+      "file": "plugins/tcad_artifact/tcad_artifact/device_parameters.py",
+      "line": 350,
+      "model": "ParameterSourceComparison",
+      "validator": "_agreement_requires_comparability",
+      "exception": "ValueError",
+      "message": "parameter source agreement requires comparability"
+    },
+    {
+      "file": "plugins/tcad_artifact/tcad_artifact/device_parameters.py",
+      "line": 398,
+      "model": "ParameterUncertaintyItem",
+      "validator": "_classification_has_exact_values",
+      "exception": "ValueError",
+      "message": "bounded parameter uncertainty requires a baseline and candidates"
+    },
+    {
+      "file": "plugins/tcad_artifact/tcad_artifact/device_parameters.py",
+      "line": 402,
+      "model": "ParameterUncertaintyItem",
+      "validator": "_classification_has_exact_values",
+      "exception": "ValueError",
+      "message": "only bounded parameter uncertainty may declare candidates"
+    },
+    {
+      "file": "plugins/tcad_artifact/tcad_artifact/device_parameters.py",
+      "line": 420,
+      "model": "ParameterUncertaintyProjection",
+      "validator": "_projection_is_consistent",
+      "exception": "ValueError",
+      "message": "parameter uncertainty keys must be unique"
+    },
+    {
+      "file": "plugins/tcad_artifact/tcad_artifact/device_parameters.py",
+      "line": 425,
+      "model": "ParameterUncertaintyProjection",
+      "validator": "_projection_is_consistent",
+      "exception": "ValueError",
+      "message": "parameter uncertainty status differs from its items"
+    },
+    {
+      "file": "plugins/tcad_artifact/tcad_artifact/ssh_transport.py",
+      "line": 51,
+      "model": "SSHTCADTransportConfig",
+      "validator": "_safe_absolute",
+      "exception": "ValueError",
+      "message": "transport command paths must be safe absolute paths"
+    },
+    {
+      "file": "plugins/tcad_artifact/tcad_artifact/runtime_plugin.py",
+      "line": 60,
+      "model": "TCADRuntimeConfig",
+      "validator": "_one_transport",
+      "exception": "ValueError",
+      "message": "socket transport requires only socket_path"
+    },
+    {
+      "file": "plugins/tcad_artifact/tcad_artifact/runtime_plugin.py",
+      "line": 62,
+      "model": "TCADRuntimeConfig",
+      "validator": "_one_transport",
+      "exception": "ValueError",
+      "message": "TCAD socket path must be absolute"
+    },
+    {
+      "file": "plugins/tcad_artifact/tcad_artifact/runtime_plugin.py",
+      "line": 64,
+      "model": "TCADRuntimeConfig",
+      "validator": "_one_transport",
+      "exception": "ValueError",
+      "message": "command transport requires only command_config_path"
+    },
+    {
+      "file": "plugins/tcad_artifact/tcad_artifact/runtime_plugin.py",
+      "line": 66,
+      "model": "TCADRuntimeConfig",
+      "validator": "_one_transport",
+      "exception": "ValueError",
+      "message": "TCAD command config path must be absolute"
+    },
+    {
+      "file": "plugins/tcad_artifact/tcad_artifact/project_packager.py",
+      "line": 150,
+      "model": "ParameterBinding",
+      "validator": "_complete_evidence",
+      "exception": "ValueError",
+      "message": "parameter evidence fields must be supplied together"
+    },
+    {
+      "file": "plugins/tcad_artifact/tcad_artifact/project_packager.py",
+      "line": 158,
+      "model": "ParameterBinding",
+      "validator": "_complete_evidence",
+      "exception": "ValueError",
+      "message": "control-generated parameter binding requires exact source provenance"
+    },
+    {
+      "file": "plugins/tcad_artifact/tcad_artifact/project_packager.py",
+      "line": 162,
+      "model": "ParameterBinding",
+      "validator": "_complete_evidence",
+      "exception": "ValueError",
+      "message": "parameter binding source line range is invalid"
+    },
+    {
+      "file": "plugins/tcad_artifact/tcad_artifact/project_packager.py",
+      "line": 172,
+      "model": "ParameterBinding",
+      "validator": "_complete_evidence",
+      "exception": "ValueError",
+      "message": "agent-declared parameter binding cannot claim control provenance"
+    },
+    {
+      "file": "plugins/tcad_artifact/tcad_artifact/project_packager.py",
+      "line": 223,
+      "model": "CaseParameterBinding",
+      "validator": "_materialization_evidence_is_complete",
+      "exception": "ValueError",
+      "message": "control-generated case binding requires exact source provenance"
+    },
+    {
+      "file": "plugins/tcad_artifact/tcad_artifact/project_packager.py",
+      "line": 227,
+      "model": "CaseParameterBinding",
+      "validator": "_materialization_evidence_is_complete",
+      "exception": "ValueError",
+      "message": "case binding source line range is invalid"
+    },
+    {
+      "file": "plugins/tcad_artifact/tcad_artifact/project_packager.py",
+      "line": 237,
+      "model": "CaseParameterBinding",
+      "validator": "_materialization_evidence_is_complete",
+      "exception": "ValueError",
+      "message": "agent-declared case binding cannot claim control provenance"
+    },
+    {
+      "file": "plugins/tcad_artifact/tcad_artifact/project_packager.py",
+      "line": 294,
+      "model": "ProjectMaterializationReport",
+      "validator": "_status_matches_findings",
+      "exception": "ValueError",
+      "message": "materialization status differs from its findings"
+    },
+    {
+      "file": "plugins/tcad_artifact/tcad_artifact/project_packager.py",
+      "line": 335,
+      "model": "ProjectPreflightAttestation",
+      "validator": "_qualification_matches_result",
+      "exception": "ValueError",
+      "message": "preflight qualification differs from its terminal result"
+    },
+    {
+      "file": "plugins/tcad_artifact/tcad_artifact/project_packager.py",
+      "line": 362,
+      "model": "RuntimeAssertion",
+      "validator": "_parser_requirements_are_consistent",
+      "exception": "ValueError",
+      "message": "required columns apply only to numeric-table assertions"
+    },
+    {
+      "file": "plugins/tcad_artifact/tcad_artifact/project_packager.py",
+      "line": 364,
+      "model": "RuntimeAssertion",
+      "validator": "_parser_requirements_are_consistent",
+      "exception": "ValueError",
+      "message": "runtime assertion required columns must be unique"
+    },
+    {
+      "file": "plugins/tcad_artifact/tcad_artifact/project_packager.py",
+      "line": 426,
+      "model": "RealizationRequirement",
+      "validator": "_implementation_is_explicit",
+      "exception": "ValueError",
+      "message": "unsupported requirement must use static_review"
+    },
+    {
+      "file": "plugins/tcad_artifact/tcad_artifact/project_packager.py",
+      "line": 408,
+      "model": "RealizationRequirement",
+      "validator": "_implementation_is_explicit",
+      "exception": "ValueError",
+      "message": "implemented requirement needs relative_path and locator"
+    },
+    {
+      "file": "plugins/tcad_artifact/tcad_artifact/project_packager.py",
+      "line": 412,
+      "model": "RealizationRequirement",
+      "validator": "_implementation_is_explicit",
+      "exception": "ValueError",
+      "message": "unsupported requirement cannot claim a deck location"
+    },
+    {
+      "file": "plugins/tcad_artifact/tcad_artifact/project_packager.py",
+      "line": 415,
+      "model": "RealizationRequirement",
+      "validator": "_implementation_is_explicit",
+      "exception": "ValueError",
+      "message": "runtime verification requires expected_output_name"
+    },
+    {
+      "file": "plugins/tcad_artifact/tcad_artifact/project_packager.py",
+      "line": 419,
+      "model": "RealizationRequirement",
+      "validator": "_implementation_is_explicit",
+      "exception": "ValueError",
+      "message": "static verification cannot declare expected_output_name"
+    },
+    {
+      "file": "plugins/tcad_artifact/tcad_artifact/project_packager.py",
+      "line": 471,
+      "model": "DeckProjectDraft",
+      "validator": "_consistent_project",
+      "exception": "ValueError",
+      "message": "project file paths must be unique"
+    },
+    {
+      "file": "plugins/tcad_artifact/tcad_artifact/project_packager.py",
+      "line": 473,
+      "model": "DeckProjectDraft",
+      "validator": "_consistent_project",
+      "exception": "ValueError",
+      "message": "entrypoint must name one project file"
+    },
+    {
+      "file": "plugins/tcad_artifact/tcad_artifact/project_packager.py",
+      "line": 478,
+      "model": "DeckProjectDraft",
+      "validator": "_consistent_project",
+      "exception": "ValueError",
+      "message": "development initialization entrypoint must name one project file"
+    },
+    {
+      "file": "plugins/tcad_artifact/tcad_artifact/project_packager.py",
+      "line": 480,
+      "model": "DeckProjectDraft",
+      "validator": "_consistent_project",
+      "exception": "ValueError",
+      "message": "project source exceeds total byte limit"
+    },
+    {
+      "file": "plugins/tcad_artifact/tcad_artifact/project_packager.py",
+      "line": 485,
+      "model": "DeckProjectDraft",
+      "validator": "_consistent_project",
+      "exception": "ValueError",
+      "message": "expected output names and paths must be unique"
+    },
+    {
+      "file": "plugins/tcad_artifact/tcad_artifact/project_packager.py",
+      "line": 487,
+      "model": "DeckProjectDraft",
+      "validator": "_consistent_project",
+      "exception": "ValueError",
+      "message": "expected output must not overwrite a project input"
+    },
+    {
+      "file": "plugins/tcad_artifact/tcad_artifact/project_packager.py",
+      "line": 493,
+      "model": "DeckProjectDraft",
+      "validator": "_consistent_project",
+      "exception": "ValueError",
+      "message": "project input slot names and paths must be unique"
+    },
+    {
+      "file": "plugins/tcad_artifact/tcad_artifact/project_packager.py",
+      "line": 497,
+      "model": "DeckProjectDraft",
+      "validator": "_consistent_project",
+      "exception": "ValueError",
+      "message": "project input slots must not overlap text files or outputs"
+    },
+    {
+      "file": "plugins/tcad_artifact/tcad_artifact/project_packager.py",
+      "line": 501,
+      "model": "DeckProjectDraft",
+      "validator": "_consistent_project",
+      "exception": "ValueError",
+      "message": "parameter binding names must be unique"
+    },
+    {
+      "file": "plugins/tcad_artifact/tcad_artifact/project_packager.py",
+      "line": 507,
+      "model": "DeckProjectDraft",
+      "validator": "_consistent_project",
+      "exception": "ValueError",
+      "message": "case parameter bindings must be unique"
+    },
+    {
+      "file": "plugins/tcad_artifact/tcad_artifact/project_packager.py",
+      "line": 588,
+      "model": "DeckProjectDraft",
+      "validator": "_consistent_project",
+      "exception": "ValueError",
+      "message": "realization requirement keys must be unique"
+    },
+    {
+      "file": "plugins/tcad_artifact/tcad_artifact/project_packager.py",
+      "line": 627,
+      "model": "DeckProjectDraft",
+      "validator": "_consistent_project",
+      "exception": "ValueError",
+      "message": "runtime assertion must reference an expected output"
+    },
+    {
+      "file": "plugins/tcad_artifact/tcad_artifact/project_packager.py",
+      "line": 629,
+      "model": "DeckProjectDraft",
+      "validator": "_consistent_project",
+      "exception": "ValueError",
+      "message": "project argument is invalid"
+    },
+    {
+      "file": "plugins/tcad_artifact/tcad_artifact/project_packager.py",
+      "line": 514,
+      "model": "DeckProjectDraft",
+      "validator": "_consistent_project",
+      "exception": "ValueError",
+      "message": "<dynamic message>"
+    },
+    {
+      "file": "plugins/tcad_artifact/tcad_artifact/project_packager.py",
+      "line": 521,
+      "model": "DeckProjectDraft",
+      "validator": "_consistent_project",
+      "exception": "ValueError",
+      "message": "<dynamic message>"
+    },
+    {
+      "file": "plugins/tcad_artifact/tcad_artifact/project_packager.py",
+      "line": 528,
+      "model": "DeckProjectDraft",
+      "validator": "_consistent_project",
+      "exception": "ValueError",
+      "message": "<dynamic message>"
+    },
+    {
+      "file": "plugins/tcad_artifact/tcad_artifact/project_packager.py",
+      "line": 537,
+      "model": "DeckProjectDraft",
+      "validator": "_consistent_project",
+      "exception": "ValueError",
+      "message": "<dynamic message>"
+    },
+    {
+      "file": "plugins/tcad_artifact/tcad_artifact/project_packager.py",
+      "line": 547,
+      "model": "DeckProjectDraft",
+      "validator": "_consistent_project",
+      "exception": "ValueError",
+      "message": "<dynamic message>"
+    },
+    {
+      "file": "plugins/tcad_artifact/tcad_artifact/project_packager.py",
+      "line": 552,
+      "model": "DeckProjectDraft",
+      "validator": "_consistent_project",
+      "exception": "ValueError",
+      "message": "parameter binding file must exist"
+    },
+    {
+      "file": "plugins/tcad_artifact/tcad_artifact/project_packager.py",
+      "line": 554,
+      "model": "DeckProjectDraft",
+      "validator": "_consistent_project",
+      "exception": "ValueError",
+      "message": "parameter binding locator is absent from its file"
+    },
+    {
+      "file": "plugins/tcad_artifact/tcad_artifact/project_packager.py",
+      "line": 564,
+      "model": "DeckProjectDraft",
+      "validator": "_consistent_project",
+      "exception": "ValueError",
+      "message": "case parameter binding file must exist"
+    },
+    {
+      "file": "plugins/tcad_artifact/tcad_artifact/project_packager.py",
+      "line": 566,
+      "model": "DeckProjectDraft",
+      "validator": "_consistent_project",
+      "exception": "ValueError",
+      "message": "case parameter binding locator must occur exactly once"
+    },
+    {
+      "file": "plugins/tcad_artifact/tcad_artifact/project_packager.py",
+      "line": 573,
+      "model": "DeckProjectDraft",
+      "validator": "_consistent_project",
+      "exception": "ValueError",
+      "message": "case parameter binding value is not present in its exact locator"
+    },
+    {
+      "file": "plugins/tcad_artifact/tcad_artifact/project_packager.py",
+      "line": 608,
+      "model": "DeckProjectDraft",
+      "validator": "_consistent_project",
+      "exception": "ValueError",
+      "message": "realization requirement references an unknown expected output"
+    },
+    {
+      "file": "plugins/tcad_artifact/tcad_artifact/project_packager.py",
+      "line": 613,
+      "model": "DeckProjectDraft",
+      "validator": "_consistent_project",
+      "exception": "ValueError",
+      "message": "parameter binding references an unknown realization requirement"
+    },
+    {
+      "file": "plugins/tcad_artifact/tcad_artifact/project_packager.py",
+      "line": 618,
+      "model": "DeckProjectDraft",
+      "validator": "_consistent_project",
+      "exception": "ValueError",
+      "message": "case parameter binding references an unknown realization requirement"
+    },
+    {
+      "file": "plugins/tcad_artifact/tcad_artifact/project_packager.py",
+      "line": 639,
+      "model": "DeckProjectDraft",
+      "validator": "_consistent_project",
+      "exception": "ValueError",
+      "message": "materialization report source digest differs"
+    },
+    {
+      "file": "plugins/tcad_artifact/tcad_artifact/project_packager.py",
+      "line": 641,
+      "model": "DeckProjectDraft",
+      "validator": "_consistent_project",
+      "exception": "ValueError",
+      "message": "canonical project materialization did not pass"
+    },
+    {
+      "file": "plugins/tcad_artifact/tcad_artifact/project_packager.py",
+      "line": 559,
+      "model": "DeckProjectDraft",
+      "validator": "_consistent_project",
+      "exception": "ValueError",
+      "message": "control-generated parameter binding source digest differs"
+    },
+    {
+      "file": "plugins/tcad_artifact/tcad_artifact/project_packager.py",
+      "line": 580,
+      "model": "DeckProjectDraft",
+      "validator": "_consistent_project",
+      "exception": "ValueError",
+      "message": "control-generated case binding source digest differs"
+    },
+    {
+      "file": "plugins/tcad_artifact/tcad_artifact/project_packager.py",
+      "line": 601,
+      "model": "DeckProjectDraft",
+      "validator": "_consistent_project",
+      "exception": "ValueError",
+      "message": "realization requirement locator is absent from its file"
+    },
+    {
+      "file": "plugins/tcad_artifact/tcad_artifact/project_packager.py",
+      "line": 645,
+      "model": "DeckProjectDraft",
+      "validator": "_consistent_project",
+      "exception": "ValueError",
+      "message": "debug attestation source digest differs"
+    },
+    {
+      "file": "plugins/tcad_artifact/tcad_artifact/project_packager.py",
+      "line": 647,
+      "model": "DeckProjectDraft",
+      "validator": "_consistent_project",
+      "exception": "ValueError",
+      "message": "debug attestation project digest differs"
+    },
+    {
+      "file": "plugins/tcad_artifact/tcad_artifact/project_packager.py",
+      "line": 597,
+      "model": "DeckProjectDraft",
+      "validator": "_consistent_project",
+      "exception": "ValueError",
+      "message": "realization requirement file must exist"
+    },
+    {
+      "file": "plugins/tcad_artifact/tcad_artifact/project_packager.py",
+      "line": 709,
+      "model": "ImplementationGap",
+      "validator": "_attempt_paths",
+      "exception": "ValueError",
+      "message": "duplicate attempt file path"
+    },
+    {
+      "file": "plugins/tcad_artifact/tcad_artifact/project_packager.py",
+      "line": 712,
+      "model": "ImplementationGap",
+      "validator": "_attempt_paths",
+      "exception": "ValueError",
+      "message": "attempt file is outside the declared source and diagnostic paths"
+    },
+    {
+      "file": "plugins/tcad_artifact/tcad_artifact/project_packager.py",
+      "line": 774,
+      "model": "DeckReviewReport",
+      "validator": "_verdict_matches_review",
+      "exception": "ValueError",
+      "message": "deck requirement reviews must be unique"
+    },
+    {
+      "file": "plugins/tcad_artifact/tcad_artifact/project_packager.py",
+      "line": 822,
+      "model": "ReviewedDeckPackage",
+      "validator": "_package_identity",
+      "exception": "ValueError",
+      "message": "reviewed deck package requires an explicit solver_kind"
+    },
+    {
+      "file": "plugins/tcad_artifact/tcad_artifact/project_packager.py",
+      "line": 828,
+      "model": "ReviewedDeckPackage",
+      "validator": "_package_identity",
+      "exception": "ValueError",
+      "message": "reviewed deck package project or review capability digest differs"
+    },
+    {
+      "file": "plugins/tcad_artifact/tcad_artifact/project_packager.py",
+      "line": 835,
+      "model": "ReviewedDeckPackage",
+      "validator": "_package_identity",
+      "exception": "ValueError",
+      "message": "reviewed deck package capability differs from its project"
+    },
+    {
+      "file": "plugins/tcad_artifact/tcad_artifact/project_packager.py",
+      "line": 839,
+      "model": "ReviewedDeckPackage",
+      "validator": "_package_identity",
+      "exception": "ValueError",
+      "message": "reviewed deck package must resolve every project input slot"
+    },
+    {
+      "file": "plugins/tcad_artifact/tcad_artifact/project_packager.py",
+      "line": 846,
+      "model": "ReviewedDeckPackage",
+      "validator": "_package_identity",
+      "exception": "ValueError",
+      "message": "resolved project input differs from its declared slot"
+    },
+    {
+      "file": "plugins/tcad_artifact/tcad_artifact/project_packager.py",
+      "line": 885,
+      "model": "TCADRuntimeManifest",
+      "validator": "_outputs_are_unique",
+      "exception": "ValueError",
+      "message": "runtime output names and paths must be unique"
+    },
+    {
+      "file": "plugins/tcad_artifact/tcad_artifact/project_packager.py",
+      "line": 920,
+      "model": "RuntimeAttestation",
+      "validator": "_verdict_matches_checks",
+      "exception": "ValueError",
+      "message": "runtime attestation verdict differs from its checks"
+    },
+    {
+      "file": "plugins/tcad_artifact/tcad_artifact/curve_normalizer.py",
+      "line": 46,
+      "model": "SProcessSeriesSpec",
+      "validator": "_point_bounds_are_ordered",
+      "exception": "ValueError",
+      "message": "series max_points must not be below min_points"
+    },
+    {
+      "file": "plugins/tcad_artifact/tcad_artifact/curve_normalizer.py",
+      "line": 64,
+      "model": "SProcessLogSourceSpec",
+      "validator": "_expected_series_are_unique",
+      "exception": "ValueError",
+      "message": "SProcess source series identities must be unique"
+    },
+    {
+      "file": "plugins/curve_figure_evidence/curve_figure_evidence/figure_evidence.py",
+      "line": 63,
+      "model": "FigureEvidenceSource",
+      "validator": "_pdf_provenance_is_complete",
+      "exception": "ValueError",
+      "message": "PDF provenance fields must be supplied together"
+    },
+    {
+      "file": "plugins/curve_figure_evidence/curve_figure_evidence/figure_evidence.py",
+      "line": 66,
+      "model": "FigureEvidenceSource",
+      "validator": "_pdf_provenance_is_complete",
+      "exception": "ValueError",
+      "message": "source page and PDF page must agree"
+    },
+    {
+      "file": "plugins/curve_figure_evidence/curve_figure_evidence/figure_evidence.py",
+      "line": 82,
+      "model": "FigureAxisCalibration",
+      "validator": "_endpoints_define_a_transform",
+      "exception": "ValueError",
+      "message": "axis pixel endpoints must differ"
+    },
+    {
+      "file": "plugins/curve_figure_evidence/curve_figure_evidence/figure_evidence.py",
+      "line": 84,
+      "model": "FigureAxisCalibration",
+      "validator": "_endpoints_define_a_transform",
+      "exception": "ValueError",
+      "message": "axis value endpoints must differ"
+    },
+    {
+      "file": "plugins/curve_figure_evidence/curve_figure_evidence/figure_evidence.py",
+      "line": 88,
+      "model": "FigureAxisCalibration",
+      "validator": "_endpoints_define_a_transform",
+      "exception": "ValueError",
+      "message": "log10 axis values must be positive"
+    },
+    {
+      "file": "plugins/curve_figure_evidence/curve_figure_evidence/figure_evidence.py",
+      "line": 129,
+      "model": "FigureEvidenceSeries",
+      "validator": "_primitive_has_a_compatible_style",
+      "exception": "ValueError",
+      "message": "line and fit_segment series require a line style"
+    },
+    {
+      "file": "plugins/curve_figure_evidence/curve_figure_evidence/figure_evidence.py",
+      "line": 154,
+      "model": "FigureOverdrawSupport",
+      "validator": "_ranges_and_members_are_valid",
+      "exception": "ValueError",
+      "message": "shared-support covered series must be unique"
+    },
+    {
+      "file": "plugins/curve_figure_evidence/curve_figure_evidence/figure_evidence.py",
+      "line": 156,
+      "model": "FigureOverdrawSupport",
+      "validator": "_ranges_and_members_are_valid",
+      "exception": "ValueError",
+      "message": "shared-support visible series cannot be covered"
+    },
+    {
+      "file": "plugins/curve_figure_evidence/curve_figure_evidence/figure_evidence.py",
+      "line": 159,
+      "model": "FigureOverdrawSupport",
+      "validator": "_ranges_and_members_are_valid",
+      "exception": "ValueError",
+      "message": "shared-support pixel ranges must be positive intervals"
+    },
+    {
+      "file": "plugins/curve_figure_evidence/curve_figure_evidence/figure_evidence.py",
+      "line": 177,
+      "model": "FigureCoincidentOverlapSupport",
+      "validator": "_ranges_and_members_are_valid",
+      "exception": "ValueError",
+      "message": "coincident-overlap member series must be unique"
+    },
+    {
+      "file": "plugins/curve_figure_evidence/curve_figure_evidence/figure_evidence.py",
+      "line": 180,
+      "model": "FigureCoincidentOverlapSupport",
+      "validator": "_ranges_and_members_are_valid",
+      "exception": "ValueError",
+      "message": "coincident-overlap pixel ranges must be positive intervals"
+    },
+    {
+      "file": "plugins/curve_figure_evidence/curve_figure_evidence/figure_evidence.py",
+      "line": 206,
+      "model": "FigureEvidencePanel",
+      "validator": "_series_keys_are_unique",
+      "exception": "ValueError",
+      "message": "measured series require calibrated axes"
+    },
+    {
+      "file": "plugins/curve_figure_evidence/curve_figure_evidence/figure_evidence.py",
+      "line": 209,
+      "model": "FigureEvidencePanel",
+      "validator": "_series_keys_are_unique",
+      "exception": "ValueError",
+      "message": "series keys must be unique within a panel"
+    },
+    {
+      "file": "plugins/curve_figure_evidence/curve_figure_evidence/figure_evidence.py",
+      "line": 213,
+      "model": "FigureEvidencePanel",
+      "validator": "_series_keys_are_unique",
+      "exception": "ValueError",
+      "message": "shared-support group keys must be unique within a panel"
+    },
+    {
+      "file": "plugins/curve_figure_evidence/curve_figure_evidence/figure_evidence.py",
+      "line": 223,
+      "model": "FigureEvidencePanel",
+      "validator": "_series_keys_are_unique",
+      "exception": "ValueError",
+      "message": "shared support references an unknown series"
+    },
+    {
+      "file": "plugins/curve_figure_evidence/curve_figure_evidence/figure_evidence.py",
+      "line": 233,
+      "model": "FigureEvidencePanel",
+      "validator": "_series_keys_are_unique",
+      "exception": "ValueError",
+      "message": "shared-support pixel ranges overlap"
+    },
+    {
+      "file": "plugins/curve_figure_evidence/curve_figure_evidence/figure_evidence.py",
+      "line": 279,
+      "model": "FigureEvidenceArtifact",
+      "validator": "_collection_matches_path",
+      "exception": "ValueError",
+      "message": "artifact collection must match its data_item prefix"
+    },
+    {
+      "file": "plugins/curve_figure_evidence/curve_figure_evidence/figure_evidence.py",
+      "line": 294,
+      "model": "FigureEvidenceProvenance",
+      "validator": "_recovery_identity_is_complete",
+      "exception": "ValueError",
+      "message": "recovery tool and version must be supplied together"
+    },
+    {
+      "file": "plugins/curve_figure_evidence/curve_figure_evidence/figure_evidence.py",
+      "line": 301,
+      "model": "FigureEvidenceProvenance",
+      "validator": "_artifact_items_are_unique",
+      "exception": "ValueError",
+      "message": "provenance data_item values must be unique"
+    },
+    {
+      "file": "plugins/curve_figure_evidence/curve_figure_evidence/figure_evidence.py",
+      "line": 322,
+      "model": "FigureEvidenceManifest",
+      "validator": "_manifest_is_internally_consistent",
+      "exception": "ValueError",
+      "message": "figure evidence manifest requires panels and series"
+    },
+    {
+      "file": "plugins/curve_figure_evidence/curve_figure_evidence/figure_evidence.py",
+      "line": 325,
+      "model": "FigureEvidenceManifest",
+      "validator": "_manifest_is_internally_consistent",
+      "exception": "ValueError",
+      "message": "panel keys must be unique"
+    },
+    {
+      "file": "plugins/curve_figure_evidence/curve_figure_evidence/figure_evidence.py",
+      "line": 334,
+      "model": "FigureEvidenceManifest",
+      "validator": "_manifest_is_internally_consistent",
+      "exception": "ValueError",
+      "message": "series data_item values must be unique"
+    },
+    {
+      "file": "plugins/curve_figure_evidence/curve_figure_evidence/figure_evidence.py",
+      "line": 384,
+      "model": "FigureEvidenceManifest",
+      "validator": "_manifest_is_internally_consistent",
+      "exception": "ValueError",
+      "message": "metrics.minimum_visible_fraction is inconsistent"
+    },
+    {
+      "file": "plugins/curve_figure_evidence/curve_figure_evidence/figure_evidence.py",
+      "line": 390,
+      "model": "FigureEvidenceManifest",
+      "validator": "_manifest_is_internally_consistent",
+      "exception": "ValueError",
+      "message": "every curve data_item requires provenance"
+    },
+    {
+      "file": "plugins/curve_figure_evidence/curve_figure_evidence/figure_evidence.py",
+      "line": 396,
+      "model": "FigureEvidenceManifest",
+      "validator": "_manifest_is_internally_consistent",
+      "exception": "ValueError",
+      "message": "source image SHA-256 requires matching source-panel provenance"
+    },
+    {
+      "file": "plugins/curve_figure_evidence/curve_figure_evidence/figure_evidence.py",
+      "line": 340,
+      "model": "FigureEvidenceManifest",
+      "validator": "_manifest_is_internally_consistent",
+      "exception": "ValueError",
+      "message": "ambiguity references an unknown panel or series"
+    },
+    {
+      "file": "plugins/curve_figure_evidence/curve_figure_evidence/figure_evidence.py",
+      "line": 345,
+      "model": "FigureEvidenceManifest",
+      "validator": "_manifest_is_internally_consistent",
+      "exception": "ValueError",
+      "message": "qualified manifest cannot contain ambiguities"
+    },
+    {
+      "file": "plugins/curve_figure_evidence/curve_figure_evidence/figure_evidence.py",
+      "line": 349,
+      "model": "FigureEvidenceManifest",
+      "validator": "_manifest_is_internally_consistent",
+      "exception": "ValueError",
+      "message": "qualified manifest requires matched bindings"
+    },
+    {
+      "file": "plugins/curve_figure_evidence/curve_figure_evidence/figure_evidence.py",
+      "line": 357,
+      "model": "FigureEvidenceManifest",
+      "validator": "_manifest_is_internally_consistent",
+      "exception": "ValueError",
+      "message": "panel x calibration exceeds source width"
+    },
+    {
+      "file": "plugins/curve_figure_evidence/curve_figure_evidence/figure_evidence.py",
+      "line": 359,
+      "model": "FigureEvidenceManifest",
+      "validator": "_manifest_is_internally_consistent",
+      "exception": "ValueError",
+      "message": "panel y calibration exceeds source height"
+    },
+    {
+      "file": "plugins/curve_figure_evidence/curve_figure_evidence/figure_evidence.py",
+      "line": 377,
+      "model": "FigureEvidenceManifest",
+      "validator": "_manifest_is_internally_consistent",
+      "exception": "ValueError",
+      "message": "<dynamic message>"
+    },
+    {
+      "file": "plugins/curve_figure_evidence/curve_figure_evidence/figure_evidence.py",
+      "line": 424,
+      "model": "FigureEvidenceValidationSeries",
+      "validator": "_counts_are_consistent",
+      "exception": "ValueError",
+      "message": "observed row count exceeds total rows"
+    },
+    {
+      "file": "plugins/curve_figure_evidence/curve_figure_evidence/figure_evidence.py",
+      "line": 432,
+      "model": "FigureEvidenceValidationSeries",
+      "validator": "_counts_are_consistent",
+      "exception": "ValueError",
+      "message": "series pixel counts do not match total rows"
+    },
+    {
+      "file": "plugins/curve_figure_evidence/curve_figure_evidence/figure_evidence.py",
+      "line": 434,
+      "model": "FigureEvidenceValidationSeries",
+      "validator": "_counts_are_consistent",
+      "exception": "ValueError",
+      "message": "direct/shared row counts must be supplied together"
+    },
+    {
+      "file": "plugins/curve_figure_evidence/curve_figure_evidence/figure_evidence.py",
+      "line": 439,
+      "model": "FigureEvidenceValidationSeries",
+      "validator": "_counts_are_consistent",
+      "exception": "ValueError",
+      "message": "direct/shared row counts do not match total rows"
+    },
+    {
+      "file": "plugins/curve_figure_evidence/curve_figure_evidence/figure_evidence.py",
+      "line": 430,
+      "model": "FigureEvidenceValidationSeries",
+      "validator": "_counts_are_consistent",
+      "exception": "ValueError",
+      "message": "flagged row count exceeds total rows"
+    },
+    {
+      "file": "plugins/curve_figure_evidence/curve_figure_evidence/figure_evidence.py",
+      "line": 442,
+      "model": "FigureEvidenceValidationSeries",
+      "validator": "_counts_are_consistent",
+      "exception": "ValueError",
+      "message": "empty series cannot declare an index range"
+    },
+    {
+      "file": "plugins/curve_figure_evidence/curve_figure_evidence/figure_evidence.py",
+      "line": 444,
+      "model": "FigureEvidenceValidationSeries",
+      "validator": "_counts_are_consistent",
+      "exception": "ValueError",
+      "message": "empty series cannot declare index gaps"
+    },
+    {
+      "file": "plugins/curve_figure_evidence/curve_figure_evidence/figure_evidence.py",
+      "line": 447,
+      "model": "FigureEvidenceValidationSeries",
+      "validator": "_counts_are_consistent",
+      "exception": "ValueError",
+      "message": "non-empty series requires an index range"
+    },
+    {
+      "file": "plugins/curve_figure_evidence/curve_figure_evidence/figure_evidence.py",
+      "line": 455,
+      "model": "FigureEvidenceValidationSeries",
+      "validator": "_counts_are_consistent",
+      "exception": "ValueError",
+      "message": "series point index gap count is inconsistent"
+    },
+    {
+      "file": "plugins/curve_figure_evidence/curve_figure_evidence/figure_evidence.py",
+      "line": 524,
+      "model": "FigureEvidenceValidationReport",
+      "validator": "_derived_counts_are_consistent",
+      "exception": "ValueError",
+      "message": "figure evidence validation report requires measured series"
+    },
+    {
+      "file": "plugins/curve_figure_evidence/curve_figure_evidence/figure_evidence.py",
+      "line": 529,
+      "model": "FigureEvidenceValidationReport",
+      "validator": "_derived_counts_are_consistent",
+      "exception": "ValueError",
+      "message": "validation report series identities must be unique"
+    },
+    {
+      "file": "plugins/curve_figure_evidence/curve_figure_evidence/figure_evidence.py",
+      "line": 534,
+      "model": "FigureEvidenceValidationReport",
+      "validator": "_derived_counts_are_consistent",
+      "exception": "ValueError",
+      "message": "validation report data items must be unique"
+    },
+    {
+      "file": "plugins/curve_figure_evidence/curve_figure_evidence/figure_evidence.py",
+      "line": 537,
+      "model": "FigureEvidenceValidationReport",
+      "validator": "_derived_counts_are_consistent",
+      "exception": "ValueError",
+      "message": "validation report scientific roles must be unique"
+    },
+    {
+      "file": "plugins/curve_figure_evidence/curve_figure_evidence/figure_evidence.py",
+      "line": 585,
+      "model": "FigureEvidenceValidationReport",
+      "validator": "_derived_counts_are_consistent",
+      "exception": "ValueError",
+      "message": "global unique pixel count exceeds total rows"
+    },
+    {
+      "file": "plugins/curve_figure_evidence/curve_figure_evidence/figure_evidence.py",
+      "line": 590,
+      "model": "FigureEvidenceValidationReport",
+      "validator": "_derived_counts_are_consistent",
+      "exception": "ValueError",
+      "message": "shared pixel count exceeds unique pixel count"
+    },
+    {
+      "file": "plugins/curve_figure_evidence/curve_figure_evidence/figure_evidence.py",
+      "line": 568,
+      "model": "FigureEvidenceValidationReport",
+      "validator": "_derived_counts_are_consistent",
+      "exception": "ValueError",
+      "message": "validator v3/v4/v5 requires direct/shared series counts"
+    },
+    {
+      "file": "plugins/curve_figure_evidence/curve_figure_evidence/figure_evidence.py",
+      "line": 583,
+      "model": "FigureEvidenceValidationReport",
+      "validator": "_derived_counts_are_consistent",
+      "exception": "ValueError",
+      "message": "<dynamic message>"
+    },
+    {
+      "file": "plugins/curve_figure_evidence/curve_figure_evidence/figure_digitization_contract.py",
+      "line": 60,
+      "model": "FigureAxisRequest",
+      "validator": "_ticks_define_an_axis",
+      "exception": "ValueError",
+      "message": "axis tick pixels must differ"
+    },
+    {
+      "file": "plugins/curve_figure_evidence/curve_figure_evidence/figure_digitization_contract.py",
+      "line": 62,
+      "model": "FigureAxisRequest",
+      "validator": "_ticks_define_an_axis",
+      "exception": "ValueError",
+      "message": "axis tick values must differ"
+    },
+    {
+      "file": "plugins/curve_figure_evidence/curve_figure_evidence/figure_digitization_contract.py",
+      "line": 64,
+      "model": "FigureAxisRequest",
+      "validator": "_ticks_define_an_axis",
+      "exception": "ValueError",
+      "message": "log10 axis tick values must be positive"
+    },
+    {
+      "file": "plugins/curve_figure_evidence/curve_figure_evidence/figure_digitization_contract.py",
+      "line": 105,
+      "model": "FigureDigitizationSeries",
+      "validator": "_anchors_are_ordered",
+      "exception": "ValueError",
+      "message": "series seed x coordinates must be strictly increasing"
+    },
+    {
+      "file": "plugins/curve_figure_evidence/curve_figure_evidence/figure_digitization_contract.py",
+      "line": 175,
+      "model": "FigureDigitizationRequest",
+      "validator": "_request_is_bounded_and_self_consistent",
+      "exception": "ValueError",
+      "message": "ready figure request requires plot_bbox, axis_calibration, and series"
+    },
+    {
+      "file": "plugins/curve_figure_evidence/curve_figure_evidence/figure_digitization_contract.py",
+      "line": 184,
+      "model": "FigureDigitizationRequest",
+      "validator": "_request_is_bounded_and_self_consistent",
+      "exception": "ValueError",
+      "message": "plot_bbox exceeds the recovered image"
+    },
+    {
+      "file": "plugins/curve_figure_evidence/curve_figure_evidence/figure_digitization_contract.py",
+      "line": 201,
+      "model": "FigureDigitizationRequest",
+      "validator": "_request_is_bounded_and_self_consistent",
+      "exception": "ValueError",
+      "message": "figure exclusion region exceeds the recovered image"
+    },
+    {
+      "file": "plugins/curve_figure_evidence/curve_figure_evidence/figure_digitization_contract.py",
+      "line": 204,
+      "model": "FigureDigitizationRequest",
+      "validator": "_request_is_bounded_and_self_consistent",
+      "exception": "ValueError",
+      "message": "digitization series keys must be unique"
+    },
+    {
+      "file": "plugins/curve_figure_evidence/curve_figure_evidence/figure_digitization_contract.py",
+      "line": 169,
+      "model": "FigureDigitizationRequest",
+      "validator": "_request_is_bounded_and_self_consistent",
+      "exception": "ValueError",
+      "message": "unresolved figure request requires explicit reasons"
+    },
+    {
+      "file": "plugins/curve_figure_evidence/curve_figure_evidence/figure_digitization_contract.py",
+      "line": 171,
+      "model": "FigureDigitizationRequest",
+      "validator": "_request_is_bounded_and_self_consistent",
+      "exception": "ValueError",
+      "message": "ready figure request cannot declare unresolved reasons"
+    },
+    {
+      "file": "plugins/curve_figure_evidence/curve_figure_evidence/figure_digitization_contract.py",
+      "line": 196,
+      "model": "FigureDigitizationRequest",
+      "validator": "_request_is_bounded_and_self_consistent",
+      "exception": "ValueError",
+      "message": "axis calibration exceeds plot_bbox or recovered image"
+    },
+    {
+      "file": "plugins/curve_figure_evidence/curve_figure_evidence/figure_digitization_contract.py",
+      "line": 211,
+      "model": "FigureDigitizationRequest",
+      "validator": "_request_is_bounded_and_self_consistent",
+      "exception": "ValueError",
+      "message": "<dynamic message>"
+    },
+    {
+      "file": "plugins/curve_figure_evidence/curve_figure_evidence/figure_digitization_contract.py",
+      "line": 217,
+      "model": "FigureDigitizationRequest",
+      "validator": "_request_is_bounded_and_self_consistent",
+      "exception": "ValueError",
+      "message": "<dynamic message>"
+    },
+    {
+      "file": "plugins/curve_figure_evidence/curve_figure_evidence/figure_digitization_contract.py",
+      "line": 225,
+      "model": "FigureDigitizationRequest",
+      "validator": "_request_is_bounded_and_self_consistent",
+      "exception": "ValueError",
+      "message": "<dynamic message>"
+    },
+    {
+      "file": "plugins/curve_score/curve_score/schema.py",
+      "line": 79,
+      "model": "CurveInterval",
+      "validator": "_ordered",
+      "exception": "ValueError",
+      "message": "curve interval stop must exceed start"
+    },
+    {
+      "file": "plugins/curve_score/curve_score/schema.py",
+      "line": 91,
+      "model": "CurveAvailability",
+      "validator": "_reason_matches_status",
+      "exception": "ValueError",
+      "message": "available curve cannot declare an unavailable reason"
+    },
+    {
+      "file": "plugins/curve_score/curve_score/schema.py",
+      "line": 93,
+      "model": "CurveAvailability",
+      "validator": "_reason_matches_status",
+      "exception": "ValueError",
+      "message": "unavailable curve requires a reason code"
+    },
+    {
+      "file": "plugins/curve_score/curve_score/schema.py",
+      "line": 117,
+      "model": "CurveSeries",
+      "validator": "_points_and_intervals_are_coherent",
+      "exception": "ValueError",
+      "message": "available curve requires at least two points"
+    },
+    {
+      "file": "plugins/curve_score/curve_score/schema.py",
+      "line": 120,
+      "model": "CurveSeries",
+      "validator": "_points_and_intervals_are_coherent",
+      "exception": "ValueError",
+      "message": "log10 x-axis requires positive point values"
+    },
+    {
+      "file": "plugins/curve_score/curve_score/schema.py",
+      "line": 122,
+      "model": "CurveSeries",
+      "validator": "_points_and_intervals_are_coherent",
+      "exception": "ValueError",
+      "message": "log10 y-axis requires nonnegative point values"
+    },
+    {
+      "file": "plugins/curve_score/curve_score/schema.py",
+      "line": 131,
+      "model": "CurveSeries",
+      "validator": "_points_and_intervals_are_coherent",
+      "exception": "ValueError",
+      "message": "<dynamic message>"
+    },
+    {
+      "file": "plugins/curve_score/curve_score/schema.py",
+      "line": 135,
+      "model": "CurveSeries",
+      "validator": "_points_and_intervals_are_coherent",
+      "exception": "ValueError",
+      "message": "<dynamic message>"
+    },
+    {
+      "file": "plugins/curve_score/curve_score/schema.py",
+      "line": 153,
+      "model": "CurveSeriesDeclaration",
+      "validator": "_point_bounds_are_ordered",
+      "exception": "ValueError",
+      "message": "curve declaration max_points must not be below min_points"
+    },
+    {
+      "file": "plugins/curve_score/curve_score/schema.py",
+      "line": 169,
+      "model": "CurveBundle",
+      "validator": "_series_are_unique",
+      "exception": "ValueError",
+      "message": "curve bundle series keys must be unique"
+    },
+    {
+      "file": "plugins/curve_score/curve_score/schema.py",
+      "line": 171,
+      "model": "CurveBundle",
+      "validator": "_series_are_unique",
+      "exception": "ValueError",
+      "message": "curve bundle case/role identities must be unique"
+    },
+    {
+      "file": "plugins/curve_score/curve_score/schema.py",
+      "line": 173,
+      "model": "CurveBundle",
+      "validator": "_series_are_unique",
+      "exception": "ValueError",
+      "message": "curve bundle source digests must be unique"
+    },
+    {
+      "file": "plugins/curve_score/curve_score/schema.py",
+      "line": 186,
+      "model": "CurveDomain",
+      "validator": "_ordered",
+      "exception": "ValueError",
+      "message": "curve comparison domain stop must exceed start"
+    },
+    {
+      "file": "plugins/curve_score/curve_score/schema.py",
+      "line": 198,
+      "model": "CurveThreshold",
+      "validator": "_absolute_limit_is_nonnegative",
+      "exception": "ValueError",
+      "message": "absolute threshold must be nonnegative"
+    },
+    {
+      "file": "plugins/curve_score/curve_score/schema.py",
+      "line": 231,
+      "model": "CurveOperatorSpec",
+      "validator": "_parameters_match_operator",
+      "exception": "ValueError",
+      "message": "crossing and width operators require a level"
+    },
+    {
+      "file": "plugins/curve_score/curve_score/schema.py",
+      "line": 234,
+      "model": "CurveOperatorSpec",
+      "validator": "_parameters_match_operator",
+      "exception": "ValueError",
+      "message": "width operator requires a second level"
+    },
+    {
+      "file": "plugins/curve_score/curve_score/schema.py",
+      "line": 236,
+      "model": "CurveOperatorSpec",
+      "validator": "_parameters_match_operator",
+      "exception": "ValueError",
+      "message": "crossing levels are expressed in linear curve values"
+    },
+    {
+      "file": "plugins/curve_score/curve_score/schema.py",
+      "line": 242,
+      "model": "CurveOperatorSpec",
+      "validator": "_parameters_match_operator",
+      "exception": "ValueError",
+      "message": "width levels must differ"
+    },
+    {
+      "file": "plugins/curve_score/curve_score/schema.py",
+      "line": 244,
+      "model": "CurveOperatorSpec",
+      "validator": "_parameters_match_operator",
+      "exception": "ValueError",
+      "message": "point-difference operator requires exactly one x value"
+    },
+    {
+      "file": "plugins/curve_score/curve_score/schema.py",
+      "line": 268,
+      "model": "CurveComparison",
+      "validator": "_operators_are_unique",
+      "exception": "ValueError",
+      "message": "curve comparison operator keys must be unique"
+    },
+    {
+      "file": "plugins/curve_score/curve_score/schema.py",
+      "line": 270,
+      "model": "CurveComparison",
+      "validator": "_operators_are_unique",
+      "exception": "ValueError",
+      "message": "curve comparison requires distinct series"
+    },
+    {
+      "file": "plugins/curve_score/curve_score/schema.py",
+      "line": 297,
+      "model": "CurveComparisonSpec",
+      "validator": "_comparisons_are_unique",
+      "exception": "ValueError",
+      "message": "curve comparison keys must be unique"
+    },
+    {
+      "file": "plugins/curve_score/curve_score/schema.py",
+      "line": 305,
+      "model": "CurveComparisonSpec",
+      "validator": "_comparisons_are_unique",
+      "exception": "ValueError",
+      "message": "curve series declarations must be unique"
+    },
+    {
+      "file": "plugins/curve_score/curve_score/schema.py",
+      "line": 335,
+      "model": "CurveComparisonSpec",
+      "validator": "_comparisons_are_unique",
+      "exception": "ValueError",
+      "message": "curve reference dispositions must be unique"
+    },
+    {
+      "file": "plugins/curve_score/curve_score/schema.py",
+      "line": 350,
+      "model": "CurveComparisonSpec",
+      "validator": "_comparisons_are_unique",
+      "exception": "ValueError",
+      "message": "compare disposition references a series not actually compared"
+    },
+    {
+      "file": "plugins/curve_score/curve_score/schema.py",
+      "line": 352,
+      "model": "CurveComparisonSpec",
+      "validator": "_comparisons_are_unique",
+      "exception": "ValueError",
+      "message": "a compared reference series cannot be excluded"
+    },
+    {
+      "file": "plugins/curve_score/curve_score/schema.py",
+      "line": 317,
+      "model": "CurveComparisonSpec",
+      "validator": "_comparisons_are_unique",
+      "exception": "ValueError",
+      "message": "curve comparison references an undeclared series"
+    },
+    {
+      "file": "plugins/curve_score/curve_score/schema.py",
+      "line": 328,
+      "model": "CurveComparisonSpec",
+      "validator": "_comparisons_are_unique",
+      "exception": "ValueError",
+      "message": "target-fit comparison requires external target and solver candidate"
+    },
+    {
+      "file": "plugins/curve_score/curve_score/schema.py",
+      "line": 377,
+      "model": "CurveExperimentContract",
+      "validator": "_objective_bindings_are_unique",
+      "exception": "ValueError",
+      "message": "curve objective target bindings must be unique"
+    },
+    {
+      "file": "plugins/curve_score/curve_score/schema.py",
+      "line": 382,
+      "model": "CurveExperimentContract",
+      "validator": "_objective_bindings_are_unique",
+      "exception": "ValueError",
+      "message": "curve objective binding references an undeclared series"
+    },
+    {
+      "file": "plugins/curve_score/curve_score/schema.py",
+      "line": 600,
+      "model": "CurveReferenceOperatorSupport",
+      "validator": "_status_matches_counts",
+      "exception": "ValueError",
+      "message": "passing reference operator support requires unique crossings"
+    },
+    {
+      "file": "plugins/curve_score/curve_score/schema.py",
+      "line": 602,
+      "model": "CurveReferenceOperatorSupport",
+      "validator": "_status_matches_counts",
+      "exception": "ValueError",
+      "message": "failed reference operator support requires a reason"
+    },
+    {
+      "file": "plugins/curve_score/curve_score/schema.py",
+      "line": 586,
+      "model": "CurveReferenceOperatorSupport",
+      "validator": "_status_matches_counts",
+      "exception": "ValueError",
+      "message": "reference crossings must be finite"
+    },
+    {
+      "file": "plugins/curve_score/curve_score/schema.py",
+      "line": 588,
+      "model": "CurveReferenceOperatorSupport",
+      "validator": "_status_matches_counts",
+      "exception": "ValueError",
+      "message": "reference crossing count must match locations"
+    },
+    {
+      "file": "plugins/curve_score/curve_score/schema.py",
+      "line": 621,
+      "model": "CurveReferenceComparisonSupport",
+      "validator": "_status_matches_support",
+      "exception": "ValueError",
+      "message": "reference comparison support status is inconsistent"
+    },
+    {
+      "file": "plugins/curve_score/curve_score/schema.py",
+      "line": 670,
+      "model": "CurveReferenceCoverageReport",
+      "validator": "_status_matches_coverage",
+      "exception": "ValueError",
+      "message": "curve reference coverage status is inconsistent"
+    },
+    {
+      "file": "plugins/curve_score/curve_score/schema.py",
+      "line": 681,
+      "model": "CurveReferenceCoverageReport",
+      "validator": "_status_matches_coverage",
+      "exception": "ValueError",
+      "message": "curve reference coverage series must be unique"
+    },
+    {
+      "file": "plugins/curve_score/curve_score/schema.py",
+      "line": 694,
+      "model": "CurveMetricCrossingSupport",
+      "validator": "_locations_are_finite",
+      "exception": "ValueError",
+      "message": "metric crossing locations must be finite"
+    },
+    {
+      "file": "plugins/curve_score/curve_score/schema.py",
+      "line": 722,
+      "model": "CurveMetricResult",
+      "validator": "_value_matches_status",
+      "exception": "ValueError",
+      "message": "available metric requires only a finite value"
+    },
+    {
+      "file": "plugins/curve_score/curve_score/schema.py",
+      "line": 724,
+      "model": "CurveMetricResult",
+      "validator": "_value_matches_status",
+      "exception": "ValueError",
+      "message": "unavailable metric requires only a reason code"
+    },
+    {
+      "file": "plugins/curve_score/curve_score/schema.py",
+      "line": 740,
+      "model": "CurveThresholdResult",
+      "validator": "_observed_matches_status",
+      "exception": "ValueError",
+      "message": "evaluated threshold requires an observed value"
+    },
+    {
+      "file": "plugins/curve_score/curve_score/schema.py",
+      "line": 742,
+      "model": "CurveThresholdResult",
+      "validator": "_observed_matches_status",
+      "exception": "ValueError",
+      "message": "unavailable threshold requires a reason code"
+    },
+    {
+      "file": "plugins/curve_score/curve_score/schema.py",
+      "line": 773,
+      "model": "CurveComparisonResult",
+      "validator": "_status_is_derived",
+      "exception": "ValueError",
+      "message": "curve comparison status does not match metrics and checks"
+    },
+    {
+      "file": "plugins/curve_score/curve_score/schema.py",
+      "line": 808,
+      "model": "CurveConsistencyReport",
+      "validator": "_aggregate_is_derived",
+      "exception": "ValueError",
+      "message": "curve report aggregate status is not derived"
+    },
+    {
+      "file": "plugins/curve_score/curve_score/schema.py",
+      "line": 811,
+      "model": "CurveConsistencyReport",
+      "validator": "_aggregate_is_derived",
+      "exception": "ValueError",
+      "message": "covered validation check keys must be unique"
+    },
+    {
+      "file": "plugins/curve_score/curve_score/schema.py",
+      "line": 814,
+      "model": "CurveConsistencyReport",
+      "validator": "_aggregate_is_derived",
+      "exception": "ValueError",
+      "message": "standalone curve report cannot claim validation-plan coverage"
+    },
+    {
+      "file": "plugins/curve_score/curve_score/schema.py",
+      "line": 818,
+      "model": "CurveConsistencyReport",
+      "validator": "_aggregate_is_derived",
+      "exception": "ValueError",
+      "message": "complete-plan curve report requires a plan digest"
+    },
+    {
+      "file": "plugins/curve_score/curve_score/curve_contract_compiler.py",
+      "line": 72,
+      "model": "CurveContractCompileInput",
+      "validator": "_identities_are_unique",
+      "exception": "ValueError",
+      "message": "curve contract target bindings must be unique"
+    },
+    {
+      "file": "plugins/curve_score/curve_score/analysis.py",
+      "line": 81,
+      "model": "CurveErrorSegment",
+      "validator": "_range_and_metrics_are_coherent",
+      "exception": "ValueError",
+      "message": "curve error segment stop precedes start"
+    },
+    {
+      "file": "plugins/curve_score/curve_score/analysis.py",
+      "line": 85,
+      "model": "CurveErrorSegment",
+      "validator": "_range_and_metrics_are_coherent",
+      "exception": "ValueError",
+      "message": "eligible curve error segment requires metrics"
+    },
+    {
+      "file": "plugins/curve_score/curve_score/analysis.py",
+      "line": 87,
+      "model": "CurveErrorSegment",
+      "validator": "_range_and_metrics_are_coherent",
+      "exception": "ValueError",
+      "message": "support-only curve error segment cannot declare metrics"
+    },
+    {
+      "file": "plugins/curve_score/curve_score/analysis.py",
+      "line": 110,
+      "model": "CurveErrorGlobalScore",
+      "validator": "_availability_is_coherent",
+      "exception": "ValueError",
+      "message": "available global score requires only numeric values"
+    },
+    {
+      "file": "plugins/curve_score/curve_score/analysis.py",
+      "line": 116,
+      "model": "CurveErrorGlobalScore",
+      "validator": "_availability_is_coherent",
+      "exception": "ValueError",
+      "message": "unavailable global score requires only a reason code"
+    },
+    {
+      "file": "plugins/curve_score/curve_score/analysis.py",
+      "line": 164,
+      "model": "CurveErrorAnalysisReport",
+      "validator": "_analyses_are_unique",
+      "exception": "ValueError",
+      "message": "curve error analyses must be unique"
+    },
+    {
+      "file": "plugins/curve_score/curve_score/analysis.py",
+      "line": 167,
+      "model": "CurveErrorAnalysisReport",
+      "validator": "_analyses_are_unique",
+      "exception": "ValueError",
+      "message": "curve error plot items must be unique"
+    },
+    {
+      "file": "plugins/curve_score/curve_score/objective.py",
+      "line": 60,
+      "model": "ObjectiveTargetCoverage",
+      "validator": "_status_matches_reasons",
+      "exception": "ValueError",
+      "message": "objective target comparison_keys must be unique"
+    },
+    {
+      "file": "plugins/curve_score/curve_score/objective.py",
+      "line": 62,
+      "model": "ObjectiveTargetCoverage",
+      "validator": "_status_matches_reasons",
+      "exception": "ValueError",
+      "message": "objective target reason_codes must be unique"
+    },
+    {
+      "file": "plugins/curve_score/curve_score/objective.py",
+      "line": 64,
+      "model": "ObjectiveTargetCoverage",
+      "validator": "_status_matches_reasons",
+      "exception": "ValueError",
+      "message": "passing objective target cannot have reason codes"
+    },
+    {
+      "file": "plugins/curve_score/curve_score/objective.py",
+      "line": 66,
+      "model": "ObjectiveTargetCoverage",
+      "validator": "_status_matches_reasons",
+      "exception": "ValueError",
+      "message": "non-passing objective target requires a reason code"
+    },
+    {
+      "file": "plugins/curve_score/curve_score/objective.py",
+      "line": 78,
+      "model": "ObjectiveRequirementCoverage",
+      "validator": "_status_matches_reasons",
+      "exception": "ValueError",
+      "message": "objective requirement reason_codes must be unique"
+    },
+    {
+      "file": "plugins/curve_score/curve_score/objective.py",
+      "line": 80,
+      "model": "ObjectiveRequirementCoverage",
+      "validator": "_status_matches_reasons",
+      "exception": "ValueError",
+      "message": "passing objective requirement cannot have reason codes"
+    },
+    {
+      "file": "plugins/curve_score/curve_score/objective.py",
+      "line": 82,
+      "model": "ObjectiveRequirementCoverage",
+      "validator": "_status_matches_reasons",
+      "exception": "ValueError",
+      "message": "non-passing objective requirement requires a reason code"
+    },
+    {
+      "file": "plugins/curve_score/curve_score/objective.py",
+      "line": 114,
+      "model": "ObjectiveCoverageReport",
+      "validator": "_aggregate_is_derived",
+      "exception": "ValueError",
+      "message": "objective coverage status is not derived from its targets"
+    },
+    {
+      "file": "plugins/curve_score/curve_score/objective.py",
+      "line": 117,
+      "model": "ObjectiveCoverageReport",
+      "validator": "_aggregate_is_derived",
+      "exception": "ValueError",
+      "message": "objective coverage target keys must be unique"
+    },
+    {
+      "file": "plugins/curve_score/curve_score/objective.py",
+      "line": 122,
+      "model": "ObjectiveCoverageReport",
+      "validator": "_aggregate_is_derived",
+      "exception": "ValueError",
+      "message": "objective coverage requirement keys must be unique"
+    }
+  ]
+}

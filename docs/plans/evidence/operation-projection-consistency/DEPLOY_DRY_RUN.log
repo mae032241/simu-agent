@@ -1,0 +1,24 @@
+Source: /home/da/project/ai4s/tcad/git_release/scidiscovery-agent/123/scidiscovery-e5.2
+Workspace: /home/da/project/ai4s/tcad/git_release/scidiscovery-agent/workspace/ingaas_inalas_photodetector
+Codex launch root: /home/da/project/ai4s/tcad/git_release/scidiscovery-agent
+Python: /home/da/miniconda3/bin/python
+Platform: codex
+Worker backend: local
+Plugins: tcad_artifact,curve_score,curve_figure_evidence
+TCAD adapter: /etc/scidiscovery/command-adapter.json
+Selected plugins: tcad_artifact,curve_score,curve_figure_evidence
+Worker backend: local
+source imports: pass
+pip 24.2 from /home/da/miniconda3/lib/python3.12/site-packages/pip (python 3.12)
+base dependency: pydantic=2.11.5
+base dependency: Pillow=12.1.1
+base dependency: jsonschema=4.26.0
+base dependency: setuptools=75.1.0
+base Python dependency check: pass
+figure dependency preflight: pass; uid=1000; python=/home/da/miniconda3/bin/python
+Verified figure dependencies: {"executables":{"pdfimages":"/usr/bin/pdfimages"},"pillow_version":"12.1.1","poppler_version":"22.02.0"}
+Rendered services: scidiscovery-approval-ui.service scidiscovery-control.service 
+netplan-ovs-cleanup.service: Failed to open /run/systemd/system/netplan-ovs-cleanup.service: Permission denied
+/lib/systemd/system/snapd.service:23: Unknown key name 'RestartMode' in section 'Service', ignoring.
+deployment preview: pass
+No package, state, service, or platform configuration was changed.

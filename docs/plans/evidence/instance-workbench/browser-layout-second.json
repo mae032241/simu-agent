@@ -1,0 +1,11 @@
+{
+  "command": [
+    "python",
+    "docs/plans/evidence/instance-workbench/browser_check.py"
+  ],
+  "exit_code": -9,
+  "stop_reason": "memory_budget_exceeded",
+  "duration_seconds": 2.536,
+  "peak_tree_rss_mib": 531.39,
+  "budget_mib": 512
+}

@@ -1,0 +1,134 @@
+{
+  "purpose": "Continue the scientific iteration from the completed evidence-recovery analysis; independently review the existing exact plan with sealed result feedback.",
+  "design_preflight": {
+    "admissible": false,
+    "diagnostics": [
+      {
+        "affected_action": "invoke",
+        "code": "input_independent_review_missing",
+        "message": "The declared requirement was not satisfied.",
+        "path": "$.inputs.hypothesis_portfolio",
+        "phase": "input_admission",
+        "repairable": true,
+        "schema_version": 1
+      }
+    ],
+    "executor_kind": null,
+    "port": "hypothesis_portfolio",
+    "reason_code": "input_independent_review_missing"
+  },
+  "critic_preflight": {
+    "admissible": false,
+    "diagnostics": [
+      {
+        "affected_action": "invoke",
+        "code": "input_producer_contract_changed",
+        "message": "The declared requirement was not satisfied.",
+        "path": "$.inputs.scientific_foundation",
+        "phase": "input_admission",
+        "repairable": true,
+        "schema_version": 1
+      }
+    ],
+    "executor_kind": null,
+    "port": "scientific_foundation",
+    "reason_code": "input_producer_contract_changed"
+  },
+  "request": {
+    "name": "fig4_continuation_experiment_completion_review_1",
+    "operation_id": "science.object.review.v1",
+    "inputs": [
+      {
+        "port": "experiment_plan",
+        "artifact_names": [
+          "fig4_continuation_experiment_plan_3"
+        ]
+      },
+      {
+        "port": "research_objective",
+        "artifact_names": [
+          "fig4_continuation_objective_2"
+        ]
+      },
+      {
+        "port": "execution_context",
+        "artifact_names": [
+          "fig4_continuation_execution_context_1"
+        ]
+      },
+      {
+        "port": "current_progress",
+        "artifact_names": [
+          "fig4_continuation_experiment_review_6.output",
+          "fig4_continuation_reviewed_package_2",
+          "fig4_continuation_reference_bundle_1",
+          "fig4_continuation_execution_analysis_3.output.recovery_manifest"
+        ]
+      },
+      {
+        "port": "experiment_results",
+        "artifact_names": [
+          "fig4_continuation_execution_1.result",
+          "fig4_continuation_execution_1.output.tcad_manifest",
+          "fig4_continuation_figure_materialized_1.curve_tables_001",
+          "fig4_continuation_figure_materialized_1.curve_tables_002"
+        ]
+      },
+      {
+        "port": "result_analysis",
+        "artifact_names": [
+          "fig4_continuation_execution_analysis_recovery_complete_1.output",
+          "fig4_continuation_execution_analysis_independent_2.output"
+        ]
+      }
+    ],
+    "instruction": "独立审查绑定的完整实验计划在当前已封存结果和最新恢复完整性分析反馈下的适用性、当前目标完成程度及后续可实施性。审查对象是这份精确计划；结果和分析是反馈证据，不把本任务伪装成不存在的通用结果审查 Operation。区分一个有效实验得到有限/否定结论，与计划自身存在实现或判别缺口；不要因为模型未通过充分性阈值就倒推实验无效。依据最新完整恢复分析评价当前证据，不能把历史 failed 或文件名差异单独当作当前产物仍缺失。核对总体目标、本轮目标和后续条件的衔接：原计划哪些工作已经完成，哪些仍未覆盖，继续执行原计划是否会重复无意义工作，是否确需修订目标、方法或输入。若需要修订，明确有证据支持的最小修改及下游可交付条件；若需要新科学基础资格或未绑定事实，不以审查赋予该权限。不得为了推动流程而强行给 pass 或 revise。只提交审查，不执行实验、不重算已有曲线、不访问网络或安装依赖。资源约束：串行，单计算进程树累计 RSS 不超过 512 MiB，达到 448 MiB 提前停止；不运行全量测试或并行批次。"
+  },
+  "preflight": {
+    "admissible": true,
+    "executor_kind": "agent",
+    "port": null,
+    "reason_code": null
+  },
+  "invocation": {
+    "executor_kind": "agent",
+    "operation_id": "science.object.review.v1",
+    "result": {
+      "agent_type": "op_science_object_review_v1_f6fdf24c8242",
+      "backend": "local_trusted",
+      "candidate_accepted": false,
+      "completed_at": null,
+      "created_at": "2026-09-11T15:03:15.833096Z",
+      "deadline_at": "2026-09-11T15:13:15.833096Z",
+      "diagnostic_summary": {
+        "failure": null,
+        "latest_rejection": null,
+        "latest_tool_error": null,
+        "recent_errors": [],
+        "rejection_count": 0
+      },
+      "draft_from": null,
+      "head_advance": null,
+      "last_activity_at": null,
+      "logical_name": "fig4_continuation_experiment_completion_review_1",
+      "name": "fig4_continuation_experiment_completion_review_1",
+      "operation_id": "science.object.review.v1",
+      "output_artifact_name": null,
+      "reason": null,
+      "recovery": {
+        "delivery_preserved": false,
+        "draft_available": false,
+        "recovery_pending": false,
+        "resume_available": false
+      },
+      "recovery_available": false,
+      "revision": 1,
+      "scheduler_signal": null,
+      "scheduler_signal_status": "unavailable",
+      "sealed_output": null,
+      "sealed_output_status": "unavailable",
+      "started_at": null,
+      "state": "queued"
+    }
+  }
+}

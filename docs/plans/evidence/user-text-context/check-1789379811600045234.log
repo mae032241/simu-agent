@@ -1,0 +1,55 @@
+...FF                                                                    [100%]
+=================================== FAILURES ===================================
+_ test_root_draft_rejection_creates_no_run[extra0-recovery_sources_mutually_exclusive] _
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-18/test_root_draft_rejection_crea0')
+extra = {'draft_from': 'missing', 'resume_from': 'missing'}
+reason = 'recovery_sources_mutually_exclusive'
+
+    @pytest.mark.parametrize("extra, reason", [
+        ({"draft_from": "missing", "resume_from": "missing"}, "recovery_sources_mutually_exclusive"),
+        ({"draft_from": "missing"}, "draft_source_unavailable"),
+    ])
+    def test_root_draft_rejection_creates_no_run(tmp_path, extra, reason):
+        _, _, _, _, root = _system(tmp_path)
+        request = _request("rejected_draft", **extra)
+        assert root.call_tool("operation_preflight", request)["reason_code"] == reason
+        with pytest.raises(RootToolError, match=reason):
+            root.call_tool("operation_invoke", request)
+>       assert root.call_tool("run_list", {}) == {"runs": []}
+E       AssertionError: assert {'runs': [], ...before': None} == {'runs': []}
+E         
+E         Omitting 1 identical items, use -vv to show
+E         Left contains 1 more item:
+E         {'next_before': None}
+E         Use -v to get more diff
+
+tests/operations/test_root_draft_routes.py:99: AssertionError
+__ test_root_draft_rejection_creates_no_run[extra1-draft_source_unavailable] ___
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-18/test_root_draft_rejection_crea1')
+extra = {'draft_from': 'missing'}, reason = 'draft_source_unavailable'
+
+    @pytest.mark.parametrize("extra, reason", [
+        ({"draft_from": "missing", "resume_from": "missing"}, "recovery_sources_mutually_exclusive"),
+        ({"draft_from": "missing"}, "draft_source_unavailable"),
+    ])
+    def test_root_draft_rejection_creates_no_run(tmp_path, extra, reason):
+        _, _, _, _, root = _system(tmp_path)
+        request = _request("rejected_draft", **extra)
+        assert root.call_tool("operation_preflight", request)["reason_code"] == reason
+        with pytest.raises(RootToolError, match=reason):
+            root.call_tool("operation_invoke", request)
+>       assert root.call_tool("run_list", {}) == {"runs": []}
+E       AssertionError: assert {'runs': [], ...before': None} == {'runs': []}
+E         
+E         Omitting 1 identical items, use -vv to show
+E         Left contains 1 more item:
+E         {'next_before': None}
+E         Use -v to get more diff
+
+tests/operations/test_root_draft_routes.py:99: AssertionError
+=========================== short test summary info ============================
+FAILED tests/operations/test_root_draft_routes.py::test_root_draft_rejection_creates_no_run[extra0-recovery_sources_mutually_exclusive]
+FAILED tests/operations/test_root_draft_routes.py::test_root_draft_rejection_creates_no_run[extra1-draft_source_unavailable]
+2 failed, 3 passed in 3.33s

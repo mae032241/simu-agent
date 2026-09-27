@@ -1,0 +1,25 @@
+{
+  "command": [
+    "python",
+    "docs/plans/evidence/instance-workbench/browser_check.py"
+  ],
+  "exit_code": -9,
+  "stop_reason": "memory_budget_exceeded",
+  "duration_seconds": 3.426,
+  "peak_tree_rss_mib": 514.55,
+  "budget_mib": 512,
+  "peak_processes": [
+    {
+      "name": "chrome-headless-shell",
+      "rss_mib": 256.66
+    },
+    {
+      "name": "MainThread",
+      "rss_mib": 141.11
+    },
+    {
+      "name": "python",
+      "rss_mib": 116.78
+    }
+  ]
+}

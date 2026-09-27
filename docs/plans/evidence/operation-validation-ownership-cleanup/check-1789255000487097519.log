@@ -1,0 +1,69 @@
+..............................F....                                      [100%]
+=================================== FAILURES ===================================
+_____ test_tool_projection_identity_independent_path_and_publication_gate ______
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-243/test_tool_projection_identity_0')
+
+    def test_tool_projection_identity_independent_path_and_publication_gate(
+        tmp_path: Path,
+    ) -> None:
+        catalog, runtime, _, _, root = _system(tmp_path)
+        _invoke(root, "projection")
+        compiled = catalog.operation("blind.csv.observe.v1")
+        worker = _worker(catalog, runtime)
+        opened = worker.call_tool("worker_open_assignment", {})
+        run_id = runtime.scheduler_bindings.resolve(
+            instance=runtime.scheduler_bindings.list_instances()[0].instance_id,
+            namespace="run",
+            name="projection",
+        )
+        workspace = Path(opened["workspace_path"])
+        assert workspace.name != run_id and run_id not in str(workspace)
+        assignment = json.loads(Path(opened["assignment_path"]).read_text("utf-8"))
+        router_tools = tuple(sorted(item["name"] for item in worker.list_tools()))
+        assert tuple(sorted(assignment["tools"])) == router_tools
+        assert tuple(sorted(operation_local_worker_tool_names(compiled))) == router_tools
+    
+        project = tmp_path / "profile"
+        project.mkdir()
+        (project / "AGENTS.md").write_text("# test\n", encoding="utf-8")
+        initialize(
+            project,
+            python_executable=Path(sys.executable),
+            python_path=Path(__file__).resolve().parents[2] / "src",
+            control_socket=tmp_path / "control.sock",
+            state_root=runtime.state_root,
+            operation_catalog=catalog,
+        )
+        profile = json.loads(json.dumps({}))
+        import tomllib
+    
+        profile = tomllib.loads(
+            (project / ".codex/agents" / f"{operation_agent_type(compiled)}.toml")
+            .read_text("utf-8")
+        )
+        server = profile["mcp_servers"][operation_worker_server_name(compiled)]
+        assert tuple(sorted(server["enabled_tools"])) == router_tools
+        prompt = profile["developer_instructions"]
+        assert "Never use native file writes" not in prompt
+        assert "worker_file_write_begin" not in prompt
+        assert "native Codex file tools" in prompt
+    
+        output = workspace / "output/result.json"
+        escaped = tmp_path / "outside-result.json"
+        escaped.write_bytes(_envelope())
+        output.symlink_to(escaped)
+        rejected = worker.call_tool("worker_submit_result", {})
+>       assert rejected["state"] == "rejected" and "symbolic links" in json.dumps(
+            rejected
+        )
+E       assert ('rejected' == 'rejected'
+E         
+E           rejected and 'symbolic links' in '{"state": "rejected", "diagnostics": [{"schema_version": 1, "code": "output_invalid", "phase": "output_payload", "pat...lared type, bounds, or field relationship.", "repairable": true, "affected_action": "submit", "type": "value_error"}]}')
+E        +  where '{"state": "rejected", "diagnostics": [{"schema_version": 1, "code": "output_invalid", "phase": "output_payload", "pat...lared type, bounds, or field relationship.", "repairable": true, "affected_action": "submit", "type": "value_error"}]}' = <function dumps at 0x7f9f5ea7e980>({'state': 'rejected', 'diagnostics': [{'schema_version': 1, 'code': 'output_invalid', 'phase': 'output_payload', 'path...clared type, bounds, or field relationship.', 'repairable': True, 'affected_action': 'submit', 'type': 'value_error'}]})
+E        +    where <function dumps at 0x7f9f5ea7e980> = json.dumps
+
+tests/operations/test_l2_run_invariants.py:1020: AssertionError
+=========================== short test summary info ============================
+FAILED tests/operations/test_l2_run_invariants.py::test_tool_projection_identity_independent_path_and_publication_gate
+1 failed, 34 passed in 16.53s

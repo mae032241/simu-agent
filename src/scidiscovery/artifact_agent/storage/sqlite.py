@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import re
 import sqlite3
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from functools import lru_cache
@@ -15,7 +16,6 @@ from pydantic import ValidationError
 
 from ..schema.artifact import (
     ArtifactEnvelope,
-    ArtifactEvent,
     ArtifactRegisterRequest,
     artifact_register_mismatches,
 )
@@ -26,9 +26,28 @@ REGISTRY_SCHEMA_VERSION = 1
 IMMUTABLE_TABLES = (
     "artifact_envelopes",
     "artifact_links",
-    "artifact_events",
     "idempotency_records",
 )
+_RETIRED_ARTIFACT_EVENTS_SQL = """
+CREATE TABLE IF NOT EXISTS artifact_events (
+    event_id TEXT PRIMARY KEY,
+    artifact_id TEXT NOT NULL,
+    event_type TEXT NOT NULL CHECK(event_type = 'artifact_registered'),
+    recorded_at TEXT NOT NULL,
+    event_json BLOB NOT NULL,
+    event_sha256 TEXT NOT NULL CHECK(length(event_sha256) = 64),
+    UNIQUE (artifact_id, event_type),
+    FOREIGN KEY (artifact_id) REFERENCES artifact_envelopes(artifact_id)
+);
+CREATE TRIGGER IF NOT EXISTS artifact_events_deny_update
+BEFORE UPDATE ON artifact_events BEGIN
+    SELECT RAISE(ABORT, 'artifact_events is append-only');
+END;
+CREATE TRIGGER IF NOT EXISTS artifact_events_deny_delete
+BEFORE DELETE ON artifact_events BEGIN
+    SELECT RAISE(ABORT, 'artifact_events is append-only');
+END;
+"""
 
 
 class ArtifactRegistryError(RuntimeError):
@@ -85,16 +104,6 @@ class RawLinkRecord:
 
 
 @dataclass(frozen=True)
-class RawEventRecord:
-    event_id: str
-    artifact_id: str
-    event_type: str
-    recorded_at: str
-    event_json: bytes
-    event_sha256: str
-
-
-@dataclass(frozen=True)
 class RawIdempotencyRecord:
     idempotency_key: str
     request_json: bytes
@@ -110,7 +119,6 @@ class RegistryAuditSnapshot:
     integrity: str
     envelopes: tuple[RawEnvelopeRecord, ...]
     links: tuple[RawLinkRecord, ...]
-    events: tuple[RawEventRecord, ...]
     idempotency_records: tuple[RawIdempotencyRecord, ...]
     referenced_digests: frozenset[object]
 
@@ -118,7 +126,8 @@ class RegistryAuditSnapshot:
 class SQLiteArtifactRegistry:
     """Append-only artifact metadata registry at one explicit path."""
 
-    def __init__(self, database_path: Path | str) -> None:
+    def __init__(self, database_path: Path | str, *, deadline_monotonic: float | None = None) -> None:
+        self.deadline_monotonic = deadline_monotonic
         self.database_path = _validate_database_path(database_path)
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
         self._initialize()
@@ -126,7 +135,6 @@ class SQLiteArtifactRegistry:
     def register(
         self,
         envelope: ArtifactEnvelope,
-        event: ArtifactEvent,
         *,
         idempotency_key: str,
         request_json: bytes,
@@ -153,15 +161,8 @@ class SQLiteArtifactRegistry:
             raise ValueError(
                 "request does not produce envelope fields: " + ", ".join(mismatches)
             )
-        if event.artifact_ref != envelope.ref:
-            raise ValueError("event artifact_ref must match the envelope identity")
-
         envelope_json = envelope.canonical_json()
         envelope_sha256 = hashlib.sha256(envelope_json).hexdigest()
-        if event.envelope_sha256 != envelope_sha256:
-            raise ValueError("event envelope_sha256 must match canonical envelope bytes")
-        event_json = event.canonical_json()
-        event_sha256 = hashlib.sha256(event_json).hexdigest()
 
         connection = self._connect()
         try:
@@ -242,22 +243,6 @@ class SQLiteArtifactRegistry:
             self._insert_links(connection, envelope)
             connection.execute(
                 """
-                INSERT INTO artifact_events (
-                    event_id, artifact_id, event_type, recorded_at,
-                    event_json, event_sha256
-                ) VALUES (?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    event.event_id,
-                    envelope.artifact_id,
-                    event.event_type,
-                    event.recorded_at,
-                    event_json,
-                    event_sha256,
-                ),
-            )
-            connection.execute(
-                """
                 INSERT INTO idempotency_records (
                     idempotency_key, request_json, request_sha256, artifact_id,
                     response_json, response_sha256, created_at
@@ -336,6 +321,20 @@ class SQLiteArtifactRegistry:
             ).fetchall()
         return tuple(self._decode_envelope_row(row) for row in rows)
 
+    def linked_children(self, reference: ArtifactRef, *, limit: int = 51) -> tuple[ArtifactEnvelope, ...]:
+        """Bound reverse provenance metadata; callers must enforce instance scope."""
+        if type(limit) is not int or not 1 <= limit <= 101:
+            raise ValueError("linked artifact limit must be between 1 and 101")
+        with self._connect(read_only=True) as connection:
+            rows = connection.execute(
+                "SELECT DISTINCT e.* FROM artifact_envelopes e JOIN artifact_links l "
+                "ON l.source_artifact_id=e.artifact_id WHERE l.target_artifact_id=? "
+                "AND l.target_sha256=? AND l.target_kind=? AND l.target_schema_id=? "
+                "ORDER BY e.created_at, e.artifact_id LIMIT ?",
+                (reference.artifact_id, reference.sha256, reference.kind, reference.schema_id, limit),
+            ).fetchall()
+        return tuple(self._decode_envelope_row(row) for row in rows)
+
     def referenced_digests(self) -> frozenset[str]:
         with self._connect() as connection:
             rows = connection.execute(
@@ -362,13 +361,6 @@ class SQLiteArtifactRegistry:
                 """
             ).fetchall()
         return tuple(RawLinkRecord(**dict(row)) for row in rows)
-
-    def raw_events(self) -> tuple[RawEventRecord, ...]:
-        with self._connect() as connection:
-            rows = connection.execute(
-                "SELECT * FROM artifact_events ORDER BY rowid"
-            ).fetchall()
-        return tuple(RawEventRecord(**dict(row)) for row in rows)
 
     def raw_idempotency_records(self) -> tuple[RawIdempotencyRecord, ...]:
         with self._connect() as connection:
@@ -404,9 +396,6 @@ class SQLiteArtifactRegistry:
                 ORDER BY source_artifact_id, relation, position
                 """
             ).fetchall()
-            event_rows = connection.execute(
-                "SELECT * FROM artifact_events ORDER BY rowid"
-            ).fetchall()
             idempotency_rows = connection.execute(
                 "SELECT * FROM idempotency_records ORDER BY rowid"
             ).fetchall()
@@ -416,7 +405,6 @@ class SQLiteArtifactRegistry:
                     RawEnvelopeRecord(**dict(row)) for row in envelope_rows
                 ),
                 links=tuple(RawLinkRecord(**dict(row)) for row in link_rows),
-                events=tuple(RawEventRecord(**dict(row)) for row in event_rows),
                 idempotency_records=tuple(
                     RawIdempotencyRecord(**dict(row))
                     for row in idempotency_rows
@@ -465,6 +453,9 @@ class SQLiteArtifactRegistry:
             connection.close()
 
     def _connect(self, *, read_only: bool = False) -> sqlite3.Connection:
+        timeout = 30.0 if self.deadline_monotonic is None else min(30.0, self.deadline_monotonic - time.monotonic())
+        if timeout <= 0:
+            raise TimeoutError("artifact registration connection budget exhausted")
         target: Path | str = self.database_path
         parameters: dict[str, object] = {}
         if read_only:
@@ -472,13 +463,13 @@ class SQLiteArtifactRegistry:
             parameters["uri"] = True
         connection = sqlite3.connect(
             target,
-            timeout=30.0,
+            timeout=timeout,
             isolation_level=None,
             **parameters,
         )
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys = ON")
-        connection.execute("PRAGMA busy_timeout = 30000")
+        connection.execute(f"PRAGMA busy_timeout = {max(1, int(timeout * 1000))}")
         if read_only:
             connection.execute("PRAGMA query_only = ON")
         else:
@@ -498,7 +489,7 @@ class SQLiteArtifactRegistry:
             raise RegistryConfigurationError(
                 "artifact registry schema cannot be inspected"
             ) from error
-        if actual != expected:
+        if actual not in (expected, _expected_schema_contract_with_retired_events()):
             raise RegistryConfigurationError(
                 "artifact registry schema differs from migration contract"
             )
@@ -604,8 +595,6 @@ class SQLiteArtifactRegistry:
         ]
         if envelope.supersedes_ref is not None:
             links.append(("supersedes", 0, envelope.supersedes_ref))
-        if envelope.task_ref is not None:
-            links.append(("task", 0, envelope.task_ref))
         connection.executemany(
             """
             INSERT INTO artifact_links (
@@ -633,8 +622,6 @@ def _direct_references(envelope: ArtifactEnvelope) -> tuple[ArtifactRef, ...]:
     references = list(envelope.parent_refs)
     if envelope.supersedes_ref is not None:
         references.append(envelope.supersedes_ref)
-    if envelope.task_ref is not None:
-        references.append(envelope.task_ref)
     return tuple(references)
 
 
@@ -663,6 +650,21 @@ def _expected_schema_contract() -> tuple[object, ...]:
     try:
         connection.execute("PRAGMA foreign_keys = ON")
         connection.executescript(_migration_sql())
+        return _schema_contract(connection)
+    finally:
+        connection.close()
+
+
+@lru_cache(maxsize=1)
+def _expected_schema_contract_with_retired_events() -> tuple[object, ...]:
+    """Accept the exact former v1 event table as inert state, never as authority."""
+
+    connection = sqlite3.connect(":memory:", isolation_level=None)
+    connection.row_factory = sqlite3.Row
+    try:
+        connection.execute("PRAGMA foreign_keys = ON")
+        connection.executescript(_migration_sql())
+        connection.executescript(_RETIRED_ARTIFACT_EVENTS_SQL)
         return _schema_contract(connection)
     finally:
         connection.close()
@@ -765,7 +767,6 @@ __all__ = [
     "ArtifactRegistryError",
     "IdempotencyConflictError",
     "RawEnvelopeRecord",
-    "RawEventRecord",
     "RawIdempotencyRecord",
     "RawLinkRecord",
     "RegistryAuditSnapshot",

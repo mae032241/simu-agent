@@ -1,0 +1,23 @@
+{
+  "command": [
+    "env",
+    "SCID_SETTINGS_PROBE_ROOT=/tmp/scid-execution-settings-candidate",
+    "SCID_SETTINGS_PROBE_INSTANCE=candidate.one",
+    "SCID_SETTINGS_PROBE_SITE=/tmp/scid-execution-settings-installed/venv/lib/python3.12/site-packages",
+    "/tmp/scid-execution-settings-installed/venv/bin/python",
+    "-I",
+    "docs/plans/evidence/agent-execution-settings/p0_fixture.py",
+    "prepare"
+  ],
+  "exit_code": 0,
+  "stop_reason": null,
+  "duration_seconds": 1.611,
+  "peak_tree_rss_mib": 88.99,
+  "budget_mib": 512,
+  "peak_processes": [
+    {
+      "name": "python",
+      "rss_mib": 88.99
+    }
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "command": [
+    "python",
+    "-m",
+    "pytest",
+    "-q",
+    "tests/operations/test_contract_attempts.py",
+    "-k",
+    "specific_terminal_category or unclassified_run_failure",
+    "tests/operations/test_l2_run_invariants.py::test_timeout_reconcile_uses_activity_compare_and_set"
+  ],
+  "exit_code": 0,
+  "seconds": 4.211,
+  "peak_tree_rss_bytes": 136060928,
+  "budget_bytes": 536870912,
+  "early_stop_bytes": 469762048,
+  "memory_terminated": false
+}

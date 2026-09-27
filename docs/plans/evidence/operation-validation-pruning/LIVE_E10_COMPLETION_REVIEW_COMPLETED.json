@@ -1,0 +1,291 @@
+{
+  "agent_type": "op_science_object_review_v1_f6fdf24c8242",
+  "backend": "local_trusted",
+  "candidate_accepted": true,
+  "completed_at": "2026-09-11T15:15:27.386764Z",
+  "created_at": "2026-09-11T15:12:41.200055Z",
+  "deadline_at": "2026-09-11T15:22:41.200055Z",
+  "diagnostic_summary": {
+    "failure": null,
+    "latest_rejection": null,
+    "latest_tool_error": null,
+    "recent_errors": [],
+    "rejection_count": 0
+  },
+  "draft_from": null,
+  "head_advance": "not_requested",
+  "last_activity_at": "2026-09-11T15:15:27.386764Z",
+  "logical_name": "fig4_continuation_experiment_completion_review_2",
+  "name": "fig4_continuation_experiment_completion_review_2",
+  "operation_id": "science.object.review.v1",
+  "output_artifact_name": "fig4_continuation_experiment_completion_review_2.output",
+  "reason": null,
+  "recovery": {
+    "delivery_preserved": false,
+    "draft_available": false,
+    "recovery_pending": false,
+    "resume_available": false
+  },
+  "recovery_available": false,
+  "revision": 1,
+  "scheduler_signal": {
+    "assumptions": [
+      "result_analysis_001 是本 assignment 中最新的恢复完整性分析反馈，并与受审 experiment_key 一致。",
+      "受控恢复补齐当前科学证据集合，但不改写原 execution_result 的 failed/97 终态。"
+    ],
+    "missing_inputs": [],
+    "next_action_kind": null,
+    "next_actions": [
+      "将两个 current_objectives 记录为已完成且结论均为 inconclusive，保留冻结家族不充分和尾部掩码依赖。",
+      "修订 priority_order、priority_rationale 与 value_assessment，移除原样重跑六案例家族的当前优先级。",
+      "另行设计并审查一个可改变剖面形状的有限结构性反事实；所需新机制事实或参数须来自另行绑定的资格化科学基础。",
+      "若未来确需正式重执行，先把六个 TDR 声明路径改为求解器实际生成的 *_fps.tdr 并取得匹配实现审查。",
+      "若要加强尾部伪影结论，先取得检测状态和独立不确定度合格的原始 SIMS 行，再按既有无跨缺口规则归约。"
+    ],
+    "schema_version": 1,
+    "summary": "原六案例实验具有有效的预注册判别与停止规则，并已用完整恢复证据得到其允许的两个 inconclusive 结论；模型不充分不倒推实验无效。当前计划若继续执行会重复已完成工作，故需把当前目标与优先级改为后续有限结构性反事实。未来若另有正式重执行需求，只需先修正 TDR 声明路径；该实现维护不是当前科学证据缺口。",
+    "verdict": "revise"
+  },
+  "scheduler_signal_status": "available",
+  "sealed_output": {
+    "artifact_name": "fig4_continuation_experiment_completion_review_2.output",
+    "kind": "scientific_review",
+    "payload": {
+      "evidence": [
+        {
+          "excerpt": "计划选择六案例冻结常数 D/固定边界家族，声明两个当前目标、充分性与收敛门，并把微观机制比较延后到基础家族充分且尾部对比稳定之后。",
+          "locator": "/priority_order, /priority_rationale, /proposals/0",
+          "schema_version": 1,
+          "source_key": "experiment_plan",
+          "source_type": "frozen_input"
+        },
+        {
+          "excerpt": "总体目标要求覆盖材料分辨剖面、前沿/尾部对比，并保留 mechanism_separation 比较作为闭合要求。",
+          "locator": "/mandatory_targets and /closure_requirements",
+          "schema_version": 1,
+          "source_key": "research_objective",
+          "source_type": "frozen_input"
+        },
+        {
+          "excerpt": "执行上下文绑定 SProcess 与 Sentaurus R-2020.09，但 capability_statements 和 limitations 为空。",
+          "locator": "/",
+          "schema_version": 1,
+          "source_key": "execution_context",
+          "source_type": "frozen_input"
+        },
+        {
+          "excerpt": "前置独立科学审查判定该六案例设计通过，并明确微观机制闭合属于后续条件性工作。",
+          "locator": "/verdict and /summary",
+          "schema_version": 1,
+          "source_key": "current_progress_001",
+          "source_type": "frozen_input"
+        },
+        {
+          "excerpt": "匹配实现审查确认六案例源代码忠实实现冻结 PDE、案例参数、双边界、独立重建和原始输出，并由预检与初始化证明支持。",
+          "locator": "/review",
+          "schema_version": 1,
+          "source_key": "current_progress_002",
+          "source_type": "frozen_input"
+        },
+        {
+          "excerpt": "恢复记录把实际 *_fps.tdr 与恢复 PLX 受控接纳到同一原 execution_result 谱系，并保留声明输出名和实际路径映射。",
+          "locator": "/records",
+          "schema_version": 1,
+          "source_key": "current_progress_004",
+          "source_type": "frozen_input"
+        },
+        {
+          "excerpt": "原 execution_result 的 terminal_state 为 failed。",
+          "locator": "/terminal_state",
+          "schema_version": 1,
+          "source_key": "experiment_results_001",
+          "source_type": "runtime_output"
+        },
+        {
+          "excerpt": "运行后收集器因声明的未加 _fps TDR 路径缺失而返回 exit_code 97；日志和首个 PLX 已被收集。",
+          "locator": "/error, /exit_code and /outputs",
+          "schema_version": 1,
+          "source_key": "experiment_results_002",
+          "source_type": "runtime_output"
+        },
+        {
+          "excerpt": "最新完整恢复分析确认 13 个必需产物均被覆盖、数值收敛通过；自锚 WRMSE 为 2.2445359/2.0127536 decade，冻结家族不充分，两个假设结果均为 inconclusive。",
+          "locator": "/summary, /gates, /objective_assessment and /remaining_contradiction",
+          "schema_version": 1,
+          "source_key": "result_analysis_001",
+          "source_type": "frozen_input"
+        },
+        {
+          "excerpt": "先前独立复算给出 G=-0.01408761 但因充分性失败不能触发反驳门，并显示中心 T 的相对变化跨预注册类别。",
+          "locator": "/summary and /hypothesis_assessments",
+          "schema_version": 1,
+          "source_key": "result_analysis_002",
+          "source_type": "frozen_input"
+        }
+      ],
+      "evidence_item_keys": [],
+      "findings": [
+        {
+          "epistemic_status": "inference",
+          "evidence_keys": [
+            "experiment_plan",
+            "current_progress_001",
+            "current_progress_002"
+          ],
+          "finding_key": "review.original_experiment_valid",
+          "rationale": "四个主案例给出有限边界锚点比较，两个紧化案例检验线性齐次家族的归一化形状；计划预先规定家族不充分和掩码依赖时返回 inconclusive。",
+          "schema_version": 1,
+          "statement": "六案例实验的原始案例矩阵、验证门、资源判断与有限声明边界科学有效；不充分结果不构成对该设计有效性的倒推否定。"
+        },
+        {
+          "epistemic_status": "inference",
+          "evidence_keys": [
+            "current_progress_004",
+            "experiment_results_001",
+            "experiment_results_002",
+            "result_analysis_001"
+          ],
+          "finding_key": "review.current_evidence_complete",
+          "rationale": "全局日志、六个 PLX 和六个受控接纳 TDR 构成 13 个必需产物；原终态仍不可改写，失败原因是声明 *.tdr 与实际 *_fps.tdr 的收集路径差异。",
+          "schema_version": 1,
+          "statement": "当前恢复后的科学证据集合已覆盖六案例所需原始产物，历史 failed/97 不再等于当前产物缺失。"
+        },
+        {
+          "epistemic_status": "inference",
+          "evidence_keys": [
+            "experiment_plan",
+            "result_analysis_001",
+            "result_analysis_002"
+          ],
+          "finding_key": "review.surface_objective_completed_inconclusive",
+          "rationale": "数值收敛通过，但自锚 WRMSE 约 2.2445/2.0128 decade，远超 0.15；计划明确规定此时不得把负 G 解释为表面边界控制的反证。",
+          "schema_version": 1,
+          "statement": "表面边界当前目标已经完成，但按预注册充分性门只能得到 inconclusive。"
+        },
+        {
+          "epistemic_status": "inference",
+          "evidence_keys": [
+            "experiment_plan",
+            "result_analysis_001",
+            "result_analysis_002"
+          ],
+          "finding_key": "review.tail_objective_completed_inconclusive",
+          "rationale": "相对 T 在 M0-M2/S0-S2 场景中跨低、中和高响应类别，不满足稳定支持或稳定排除规则；更强判断需要合格原始 SIMS 检测状态与独立不确定度。",
+          "schema_version": 1,
+          "statement": "尾部支持敏感性当前目标也已执行其注册比较，现有证据只支持 inconclusive。"
+        },
+        {
+          "epistemic_status": "inference",
+          "evidence_keys": [
+            "experiment_plan",
+            "result_analysis_001"
+          ],
+          "finding_key": "review.current_priority_exhausted",
+          "rationale": "原中等信息增益建立在该反事实尚未产生之上；现在完整结果已证明冻结常数 D/固定边界家族严重不充分，重复边界幅度或相同数值层级不能识别缺失的结构性物理。",
+          "schema_version": 1,
+          "statement": "原 priority_order 与 value_assessment 已被实际结果消耗，继续执行同一六案例家族会重复无信息增益工作。"
+        },
+        {
+          "epistemic_status": "inference",
+          "evidence_keys": [
+            "research_objective",
+            "experiment_plan",
+            "result_analysis_001"
+          ],
+          "finding_key": "review.targets_covered_closure_open",
+          "rationale": "材料分辨剖面进入 WRMSE/G，前沿与尾部对比进入连续 T 与掩码敏感性；这些支持有限结论，却没有提供连续响应与两区 kick-out/VCD 的微观反事实。",
+          "schema_version": 1,
+          "statement": "两个 mandatory_targets 已在其合格子集边界内被覆盖，但总体 mechanism_separation closure_requirement 仍未满足。"
+        },
+        {
+          "epistemic_status": "inference",
+          "evidence_keys": [
+            "experiment_plan",
+            "result_analysis_001"
+          ],
+          "finding_key": "review.deferred_conditions_not_met",
+          "rationale": "最小科学修订是另行选择一个可改变剖面形状的有限结构性反事实；任何新机制模型、参数或事实必须来自另行绑定的资格化基础，本审查不能赋予该资格。",
+          "schema_version": 1,
+          "statement": "计划原定的后续微观比较不能按现有条件分支直接开始，因为基础家族充分和直接像素尾部对比稳定均未成立。"
+        },
+        {
+          "epistemic_status": "inference",
+          "evidence_keys": [
+            "current_progress_004",
+            "experiment_results_002",
+            "result_analysis_001"
+          ],
+          "finding_key": "review.future_execution_maintenance",
+          "rationale": "恢复映射证明当前科学产物存在，但没有修改原项目声明；路径修复是未来执行交付条件，不是当前科学结论的补跑理由。",
+          "schema_version": 1,
+          "statement": "若未来另有正式重执行需求，必须先修正六个 TDR expected_outputs 的 *_fps.tdr 实际路径并取得匹配实现审查。"
+        },
+        {
+          "epistemic_status": "inference",
+          "evidence_keys": [
+            "execution_context"
+          ],
+          "finding_key": "review.future_backend_scope_unverified",
+          "rationale": "上下文未声明能力或限制；未来设计选定具体模型后仍需精确实现输入、领域审查与初始化，这些是后续条件而非本次审查缺失。",
+          "schema_version": 1,
+          "statement": "当前 execution_context 不能独立验证尚未选择的新结构性反事实在 SProcess R-2020.09 中的实现可行性。"
+        }
+      ],
+      "global_confounders": [
+        "材料标签与论文报告的 D 始终配对，因此现有家族不能分离一般材料效应与扩散率效应。",
+        "冻结常数 D/固定边界家族对两材料剖面均严重不充分，使边界增益失去机制解释资格。",
+        "共享支持、缺口、检测状态与不确定度会改变尾部类别；中心掩码结果已经显示场景依赖。",
+        "单组一次敏感性不建立同时多组或概率稳健性。",
+        "历史 failed/97 限制成功执行声明，但受控恢复后的完整产物支持当前有限科学结论。"
+      ],
+      "hypothesis_reviews": [
+        {
+          "confounders": [
+            "冻结常数 D 家族未通过两材料 own-anchor adequacy。",
+            "材料标签与 D 配对。",
+            "现有案例不改变剖面形状的结构性物理。"
+          ],
+          "falsifiability": "pass",
+          "hypothesis_key": "hypothesis.surface_boundary_control",
+          "identifiability": "pass",
+          "missing_inputs": [],
+          "physical_plausibility": "pass",
+          "rationale": "原比较在其有限家族内具有可证伪性和条件性可辨识性；实际结果先触发家族不充分门，因此负 G 不是反证，原样重跑也不能解决剩余结构性矛盾。",
+          "schema_version": 1,
+          "smallest_resolving_action": "结束当前边界幅度家族并保留 inconclusive；另行设计一个有资格化依据、只增加一种可改变剖面形状的结构性反事实，并预注册新的充分性与区分门。"
+        },
+        {
+          "confounders": [
+            "共享像素是依赖观测。",
+            "缺失 point_index 不能跨越。",
+            "检测状态和中心浓度存在资格边界。",
+            "相对 T 类别随预注册掩码场景变化。"
+          ],
+          "falsifiability": "pass",
+          "hypothesis_key": "hypothesis.tail_support_artifact",
+          "identifiability": "pass",
+          "missing_inputs": [],
+          "physical_plausibility": "pass",
+          "rationale": "现有有限比较具备明确的稳定支持、稳定排除和 inconclusive 区域；实际数据落入后者，不代表设计无效，但当前证据不能稳定支持或排除尾部伪影。",
+          "schema_version": 1,
+          "smallest_resolving_action": "无需重跑 TCAD；若需超出当前 inconclusive 的更强结论，取得系列身份明确且带一致检测状态和独立不确定度的合格作者原始 SIMS 行，再应用同一无跨缺口归约。"
+        }
+      ],
+      "next_actions": [
+        "把 experiment.fig4.raw_boundary_counterfactual 的两个 current_objectives 标记为已完成且均为 inconclusive，保留冻结家族不充分与尾部掩码依赖作为后续设计输入。",
+        "修订 priority_order、priority_rationale 与 value_assessment，明确六案例反事实已完成且原样重跑不能区分剩余结构性机制。",
+        "为总体机制分离 closure_requirement 另行设计一个有限结构性反事实；若模型或参数不在当前绑定输入中，先取得相应资格化科学基础。",
+        "把更强尾部判断保留为条件性后续证据任务，而不是当前实验重执行前提。",
+        "仅在未来需要新的正式执行记录时修正六个 TDR expected_outputs 为 *_fps.tdr，并对修订实现完成匹配独立审查。"
+      ],
+      "review_target": "experiment_portfolio",
+      "schema_version": 1,
+      "summary": "受审计划原本是科学有效且资源有界的六案例实验：四个主案例形成材料标记 D 与两个表面锚点的有限比较，两个紧化案例在冻结线性齐次 PDE 下检验每个 D 的归一化形状；完整性、充分性、数值收敛、掩码敏感性和停止规则均已预注册。当前反馈表明实验已经完成其判别责任。恢复后的全局日志、六个 PLX 和六个 TDR 覆盖全部 13 个必需产物，归一化形状收敛通过；但两材料自锚 WRMSE 为 2.2445359 和 2.0127536 decade，远高于 0.15，故按计划冻结家族不充分，G=-0.01408761 仅可描述，不能反驳表面边界控制。尾部 T 对 M0-M2/S0-S2 掩码跨低、中和高类别变化，也只能为 inconclusive。两个 mandatory_targets 已在合格子集边界内被观测和检验，但总体机制分离 closure_requirement 仍未满足。原后续分支要求基础家族充分且直接像素尾部对比稳定；这两个条件均未成立，因此不能直接进入该分支，也不应原样重跑现有六案例。最小修订是结束本轮 current_objectives，更新优先级与价值判断，并另行设计一个有资格化输入支持、可改变剖面形状的有限结构性反事实。历史 failed/97 来自 *.tdr 声明与实际 *_fps.tdr 的收集路径差异；恢复消除了当前产物缺口，但未来再次执行前仍需修正声明。",
+      "verdict": "revise"
+    },
+    "schema": "scidiscovery.scientific-review.v1"
+  },
+  "sealed_output_status": "available",
+  "started_at": "2026-09-11T15:12:58.060727Z",
+  "state": "completed"
+}

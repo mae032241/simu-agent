@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+import fcntl
 import hashlib
+import os
 import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
 from ..schema.artifact import (
     ArtifactEnvelope,
-    ArtifactEvent,
     ArtifactRegisterRequest,
     ArtifactRegistration,
 )
@@ -40,9 +43,10 @@ class ArtifactService:
         cas_root: Path | str,
         database_path: Path | str,
         shared_group: bool = False,
+        deadline_monotonic: float | None = None,
     ) -> ArtifactService:
         # Validate/open the registry before creating the CAS directory.
-        registry = SQLiteArtifactRegistry(database_path)
+        registry = SQLiteArtifactRegistry(database_path, deadline_monotonic=deadline_monotonic)
         return cls(
             ContentAddressedStore(
                 cas_root,
@@ -64,9 +68,32 @@ class ArtifactService:
         if not isinstance(registration, ArtifactRegistration):
             raise TypeError("registration must be an ArtifactRegistration")
 
+        with self._mutation_lock():
+            return self._register_locked(
+                content, registration, idempotency_key=idempotency_key
+            )
+
+    def _register_locked(
+        self,
+        content: bytes,
+        registration: ArtifactRegistration,
+        *,
+        idempotency_key: str,
+    ) -> ArtifactEnvelope:
         cas_object = self.cas.put(content)
         # Full read after CAS publication, before any registry transaction.
         self.cas.verify(cas_object.sha256, expected_size=cas_object.size_bytes)
+        return self._register_cas_object(cas_object, registration, idempotency_key=idempotency_key)
+
+    def register_file(self, path: Path | str, registration: ArtifactRegistration, *,
+                      expected_sha256: str, expected_size: int, idempotency_key: str,
+                      chunk_bytes: int = 1024 * 1024, check_budget=None) -> ArtifactEnvelope:
+        with self._mutation_lock():
+            value = self.cas.put_file(path, expected_sha256=expected_sha256,
+                expected_size=expected_size, chunk_bytes=chunk_bytes, check_budget=check_budget)
+            return self._register_cas_object(value, registration, idempotency_key=idempotency_key)
+
+    def _register_cas_object(self, cas_object, registration, *, idempotency_key):
         request = ArtifactRegisterRequest(
             operation="artifact.register",
             payload_sha256=cas_object.sha256,
@@ -88,21 +115,12 @@ class ArtifactService:
             created_at=created_at,
             parent_refs=registration.parent_refs,
             supersedes_ref=registration.supersedes_ref,
-            task_ref=registration.task_ref,
             labels=registration.labels,
             confidentiality=registration.confidentiality,
             content_encoding=registration.content_encoding,
         )
-        event = ArtifactEvent(
-            event_id=f"evt_{uuid.uuid4().hex}",
-            event_type="artifact_registered",
-            artifact_ref=envelope.ref,
-            envelope_sha256=envelope.content_hash,
-            recorded_at=created_at,
-        )
         result = self.registry.register(
             envelope,
-            event,
             idempotency_key=idempotency_key,
             request_json=request_json,
             request_sha256=request_sha256,
@@ -151,6 +169,36 @@ class ArtifactService:
         envelope = self.registry.resolve(reference)
         self.cas.verify(envelope.sha256, expected_size=envelope.size_bytes)
         return envelope
+
+    @contextmanager
+    def open_original(self, reference: ArtifactRef):
+        """Read a verified original without loading large downloads into memory."""
+        envelope = self.registry.resolve(reference)
+        with self.cas.open_verified(envelope.sha256, expected_size=envelope.size_bytes) as source:
+            yield source
+
+    @contextmanager
+    def _mutation_lock(self) -> Iterator[None]:
+        path = self.registry.database_path.with_name(
+            self.registry.database_path.name + ".mutation.lock"
+        )
+        flags = os.O_RDWR | os.O_CREAT
+        if hasattr(os, "O_NOFOLLOW"):
+            flags |= os.O_NOFOLLOW
+        descriptor = os.open(
+            path,
+            flags,
+            0o660 if self.cas.file_mode == 0o640 else 0o600,
+        )
+        try:
+            os.fchmod(
+                descriptor, 0o660 if self.cas.file_mode == 0o640 else 0o600
+            )
+            fcntl.flock(descriptor, fcntl.LOCK_EX)
+            yield
+        finally:
+            fcntl.flock(descriptor, fcntl.LOCK_UN)
+            os.close(descriptor)
 
 
 def _utc_now() -> str:

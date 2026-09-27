@@ -1,0 +1,1705 @@
+[
+  {
+    "consumer_operation": "scidiscovery.curve-reference-coverage.v1",
+    "subject_port": "experiment_plan",
+    "subject_optional": false,
+    "producer_operation": "science.experiment.materialize.v1",
+    "producer_outputs": [
+      "experiment_plan"
+    ],
+    "reviewer_operation": "science.object.review.v1",
+    "mode": "witness",
+    "candidate_ports": [
+      "experiment_review",
+      "curve_contract_review"
+    ],
+    "status": "requires_bound_validation"
+  },
+  {
+    "consumer_operation": "scidiscovery.curve-reference-coverage.v1",
+    "subject_port": "experiment_plan",
+    "subject_optional": false,
+    "producer_operation": "science.experiment.revise.v1",
+    "producer_outputs": [
+      "experiment_plan"
+    ],
+    "reviewer_operation": "science.object.review.v1",
+    "mode": "witness",
+    "candidate_ports": [
+      "experiment_review",
+      "curve_contract_review"
+    ],
+    "status": "requires_bound_validation"
+  },
+  {
+    "consumer_operation": "scidiscovery.curve-reference-coverage.v1",
+    "subject_port": "curve_contract",
+    "subject_optional": false,
+    "producer_operation": "science.curve.contract.design.v1",
+    "producer_outputs": [
+      "curve_contract"
+    ],
+    "reviewer_operation": "science.curve.contract.review.v1",
+    "mode": "witness",
+    "candidate_ports": [
+      "experiment_review",
+      "curve_contract_review"
+    ],
+    "status": "requires_bound_validation"
+  },
+  {
+    "consumer_operation": "scidiscovery.curve-score.v1",
+    "subject_port": "experiment_plan",
+    "subject_optional": false,
+    "producer_operation": "science.experiment.materialize.v1",
+    "producer_outputs": [
+      "experiment_plan"
+    ],
+    "reviewer_operation": "science.object.review.v1",
+    "mode": "witness",
+    "candidate_ports": [
+      "experiment_review",
+      "curve_contract_review"
+    ],
+    "status": "requires_bound_validation"
+  },
+  {
+    "consumer_operation": "scidiscovery.curve-score.v1",
+    "subject_port": "experiment_plan",
+    "subject_optional": false,
+    "producer_operation": "science.experiment.revise.v1",
+    "producer_outputs": [
+      "experiment_plan"
+    ],
+    "reviewer_operation": "science.object.review.v1",
+    "mode": "witness",
+    "candidate_ports": [
+      "experiment_review",
+      "curve_contract_review"
+    ],
+    "status": "requires_bound_validation"
+  },
+  {
+    "consumer_operation": "scidiscovery.curve-score.v1",
+    "subject_port": "curve_contract",
+    "subject_optional": false,
+    "producer_operation": "science.curve.contract.design.v1",
+    "producer_outputs": [
+      "curve_contract"
+    ],
+    "reviewer_operation": "science.curve.contract.review.v1",
+    "mode": "witness",
+    "candidate_ports": [
+      "experiment_review",
+      "curve_contract_review"
+    ],
+    "status": "requires_bound_validation"
+  },
+  {
+    "consumer_operation": "scidiscovery.objective-coverage.v1",
+    "subject_port": "experiment_plan",
+    "subject_optional": false,
+    "producer_operation": "science.experiment.materialize.v1",
+    "producer_outputs": [
+      "experiment_plan"
+    ],
+    "reviewer_operation": "science.object.review.v1",
+    "mode": "witness",
+    "candidate_ports": [
+      "experiment_review",
+      "curve_contract_reviews"
+    ],
+    "status": "requires_bound_validation"
+  },
+  {
+    "consumer_operation": "scidiscovery.objective-coverage.v1",
+    "subject_port": "experiment_plan",
+    "subject_optional": false,
+    "producer_operation": "science.experiment.revise.v1",
+    "producer_outputs": [
+      "experiment_plan"
+    ],
+    "reviewer_operation": "science.object.review.v1",
+    "mode": "witness",
+    "candidate_ports": [
+      "experiment_review",
+      "curve_contract_reviews"
+    ],
+    "status": "requires_bound_validation"
+  },
+  {
+    "consumer_operation": "scidiscovery.objective-coverage.v1",
+    "subject_port": "curve_contracts",
+    "subject_optional": true,
+    "producer_operation": "science.curve.contract.design.v1",
+    "producer_outputs": [
+      "curve_contract"
+    ],
+    "reviewer_operation": "science.curve.contract.review.v1",
+    "mode": "witness",
+    "candidate_ports": [
+      "experiment_review",
+      "curve_contract_reviews"
+    ],
+    "status": "requires_bound_validation"
+  },
+  {
+    "consumer_operation": "science.curve.contract.design.v1",
+    "subject_port": "experiment_plan",
+    "subject_optional": false,
+    "producer_operation": "science.experiment.materialize.v1",
+    "producer_outputs": [
+      "experiment_plan"
+    ],
+    "reviewer_operation": "science.object.review.v1",
+    "mode": "witness",
+    "candidate_ports": [
+      "experiment_review"
+    ],
+    "status": "requires_bound_validation"
+  },
+  {
+    "consumer_operation": "science.curve.contract.design.v1",
+    "subject_port": "experiment_plan",
+    "subject_optional": false,
+    "producer_operation": "science.experiment.revise.v1",
+    "producer_outputs": [
+      "experiment_plan"
+    ],
+    "reviewer_operation": "science.object.review.v1",
+    "mode": "witness",
+    "candidate_ports": [
+      "experiment_review"
+    ],
+    "status": "requires_bound_validation"
+  },
+  {
+    "consumer_operation": "science.curve.contract.review.v1",
+    "subject_port": "experiment_plan",
+    "subject_optional": false,
+    "producer_operation": "science.experiment.materialize.v1",
+    "producer_outputs": [
+      "experiment_plan"
+    ],
+    "reviewer_operation": "science.object.review.v1",
+    "mode": "witness",
+    "candidate_ports": [
+      "experiment_review"
+    ],
+    "status": "requires_bound_validation"
+  },
+  {
+    "consumer_operation": "science.curve.contract.review.v1",
+    "subject_port": "experiment_plan",
+    "subject_optional": false,
+    "producer_operation": "science.experiment.revise.v1",
+    "producer_outputs": [
+      "experiment_plan"
+    ],
+    "reviewer_operation": "science.object.review.v1",
+    "mode": "witness",
+    "candidate_ports": [
+      "experiment_review"
+    ],
+    "status": "requires_bound_validation"
+  },
+  {
+    "consumer_operation": "science.curve.contract.review.v1",
+    "subject_port": "curve_contract",
+    "subject_optional": false,
+    "producer_operation": "science.curve.contract.design.v1",
+    "producer_outputs": [
+      "curve_contract"
+    ],
+    "reviewer_operation": "science.curve.contract.review.v1",
+    "mode": "review_subject",
+    "candidate_ports": [
+      "experiment_review"
+    ],
+    "status": "requires_bound_validation"
+  },
+  {
+    "consumer_operation": "science.curve.error.analyze.v1",
+    "subject_port": "experiment_plan",
+    "subject_optional": false,
+    "producer_operation": "science.experiment.materialize.v1",
+    "producer_outputs": [
+      "experiment_plan"
+    ],
+    "reviewer_operation": "science.object.review.v1",
+    "mode": "witness",
+    "candidate_ports": [
+      "experiment_review",
+      "curve_contract_review"
+    ],
+    "status": "requires_bound_validation"
+  },
+  {
+    "consumer_operation": "science.curve.error.analyze.v1",
+    "subject_port": "experiment_plan",
+    "subject_optional": false,
+    "producer_operation": "science.experiment.revise.v1",
+    "producer_outputs": [
+      "experiment_plan"
+    ],
+    "reviewer_operation": "science.object.review.v1",
+    "mode": "witness",
+    "candidate_ports": [
+      "experiment_review",
+      "curve_contract_review"
+    ],
+    "status": "requires_bound_validation"
+  },
+  {
+    "consumer_operation": "science.curve.error.analyze.v1",
+    "subject_port": "curve_contract",
+    "subject_optional": false,
+    "producer_operation": "science.curve.contract.design.v1",
+    "producer_outputs": [
+      "curve_contract"
+    ],
+    "reviewer_operation": "science.curve.contract.review.v1",
+    "mode": "witness",
+    "candidate_ports": [
+      "experiment_review",
+      "curve_contract_review"
+    ],
+    "status": "requires_bound_validation"
+  },
+  {
+    "consumer_operation": "science.evidence.audit.intake.v1",
+    "subject_port": "scientific_intake",
+    "subject_optional": false,
+    "producer_operation": "science.evidence.extract.v1",
+    "producer_outputs": [
+      "scientific_intake"
+    ],
+    "reviewer_operation": "science.evidence.audit.intake.v1",
+    "mode": "review_subject",
+    "candidate_ports": [],
+    "status": "requires_bound_validation"
+  },
+  {
+    "consumer_operation": "science.evidence.audit.intake.v1",
+    "subject_port": "scientific_intake",
+    "subject_optional": false,
+    "producer_operation": "science.evidence.revise-from-critic.v1",
+    "producer_outputs": [
+      "scientific_intake"
+    ],
+    "reviewer_operation": "science.evidence.audit.intake.v1",
+    "mode": "review_subject",
+    "candidate_ports": [],
+    "status": "requires_bound_validation"
+  },
+  {
+    "consumer_operation": "science.evidence.audit.intake.v1",
+    "subject_port": "scientific_intake",
+    "subject_optional": false,
+    "producer_operation": "science.intake.revise.v1",
+    "producer_outputs": [
+      "scientific_intake"
+    ],
+    "reviewer_operation": "science.evidence.audit.intake.v1",
+    "mode": "review_subject",
+    "candidate_ports": [],
+    "status": "requires_bound_validation"
+  },
+  {
+    "consumer_operation": "science.evidence.audit.intake.v1",
+    "subject_port": "scientific_intake",
+    "subject_optional": false,
+    "producer_operation": "tcad.parameter.evidence.expand.v1",
+    "producer_outputs": [
+      "scientific_intake"
+    ],
+    "reviewer_operation": "tcad.parameter.evidence.audit.v1",
+    "mode": "witness",
+    "candidate_ports": [],
+    "status": "receiver_missing"
+  },
+  {
+    "consumer_operation": "science.evidence.qualify.v1",
+    "subject_port": "extraction_primary",
+    "subject_optional": false,
+    "producer_operation": "science.evidence.extract.v1",
+    "producer_outputs": [
+      "scientific_intake"
+    ],
+    "reviewer_operation": "science.evidence.audit.intake.v1",
+    "mode": "witness",
+    "candidate_ports": [
+      "producer_outputs",
+      "validation_results",
+      "frozen_sources",
+      "evidence_audit"
+    ],
+    "status": "requires_bound_validation"
+  },
+  {
+    "consumer_operation": "science.evidence.qualify.v1",
+    "subject_port": "extraction_primary",
+    "subject_optional": false,
+    "producer_operation": "science.evidence.revise-from-critic.v1",
+    "producer_outputs": [
+      "scientific_intake"
+    ],
+    "reviewer_operation": "science.evidence.audit.intake.v1",
+    "mode": "witness",
+    "candidate_ports": [
+      "producer_outputs",
+      "validation_results",
+      "frozen_sources",
+      "evidence_audit"
+    ],
+    "status": "requires_bound_validation"
+  },
+  {
+    "consumer_operation": "science.evidence.qualify.v1",
+    "subject_port": "extraction_primary",
+    "subject_optional": false,
+    "producer_operation": "science.intake.revise.v1",
+    "producer_outputs": [
+      "scientific_intake"
+    ],
+    "reviewer_operation": "science.evidence.audit.intake.v1",
+    "mode": "witness",
+    "candidate_ports": [
+      "producer_outputs",
+      "validation_results",
+      "frozen_sources",
+      "evidence_audit"
+    ],
+    "status": "requires_bound_validation"
+  },
+  {
+    "consumer_operation": "science.evidence.qualify.v1",
+    "subject_port": "extraction_primary",
+    "subject_optional": false,
+    "producer_operation": "tcad.parameter.evidence.expand.v1",
+    "producer_outputs": [
+      "scientific_intake"
+    ],
+    "reviewer_operation": "tcad.parameter.evidence.audit.v1",
+    "mode": "witness",
+    "candidate_ports": [
+      "producer_outputs",
+      "validation_results",
+      "frozen_sources",
+      "evidence_audit"
+    ],
+    "status": "requires_bound_validation"
+  },
+  {
+    "consumer_operation": "science.evidence.revise-from-critic.v1",
+    "subject_port": "prior_draft",
+    "subject_optional": false,
+    "producer_operation": "science.evidence.extract.v1",
+    "producer_outputs": [
+      "scientific_intake"
+    ],
+    "reviewer_operation": "science.evidence.audit.intake.v1",
+    "mode": "direct_revision",
+    "candidate_ports": [
+      "intake_audit"
+    ],
+    "status": "requires_bound_validation"
+  },
+  {
+    "consumer_operation": "science.evidence.revise-from-critic.v1",
+    "subject_port": "prior_draft",
+    "subject_optional": false,
+    "producer_operation": "science.evidence.revise-from-critic.v1",
+    "producer_outputs": [
+      "scientific_intake"
+    ],
+    "reviewer_operation": "science.evidence.audit.intake.v1",
+    "mode": "direct_revision",
+    "candidate_ports": [
+      "intake_audit"
+    ],
+    "status": "requires_bound_validation"
+  },
+  {
+    "consumer_operation": "science.evidence.revise-from-critic.v1",
+    "subject_port": "prior_draft",
+    "subject_optional": false,
+    "producer_operation": "science.intake.revise.v1",
+    "producer_outputs": [
+      "scientific_intake"
+    ],
+    "reviewer_operation": "science.evidence.audit.intake.v1",
+    "mode": "direct_revision",
+    "candidate_ports": [
+      "intake_audit"
+    ],
+    "status": "requires_bound_validation"
+  },
+  {
+    "consumer_operation": "science.evidence.revise-from-critic.v1",
+    "subject_port": "prior_draft",
+    "subject_optional": false,
+    "producer_operation": "tcad.parameter.evidence.expand.v1",
+    "producer_outputs": [
+      "scientific_intake"
+    ],
+    "reviewer_operation": "tcad.parameter.evidence.audit.v1",
+    "mode": "direct_revision",
+    "candidate_ports": [
+      "intake_audit"
+    ],
+    "status": "requires_bound_validation"
+  },
+  {
+    "consumer_operation": "science.evidence.revise-from-critic.v1",
+    "subject_port": "hypothesis_portfolio",
+    "subject_optional": false,
+    "producer_operation": "science.hypothesis.propose.v1",
+    "producer_outputs": [
+      "hypothesis_portfolio"
+    ],
+    "reviewer_operation": "science.hypothesis.criticize.v1",
+    "mode": "witness",
+    "candidate_ports": [
+      "change_request"
+    ],
+    "status": "requires_bound_validation"
+  },
+  {
+    "consumer_operation": "science.evidence.revise-from-critic.v1",
+    "subject_port": "hypothesis_portfolio",
+    "subject_optional": false,
+    "producer_operation": "science.hypothesis.revise.v1",
+    "producer_outputs": [
+      "hypothesis_portfolio"
+    ],
+    "reviewer_operation": "science.hypothesis.criticize.v1",
+    "mode": "witness",
+    "candidate_ports": [
+      "change_request"
+    ],
+    "status": "requires_bound_validation"
+  },
+  {
+    "consumer_operation": "science.experiment.design.v1",
+    "subject_port": "hypothesis_portfolio",
+    "subject_optional": false,
+    "producer_operation": "science.hypothesis.propose.v1",
+    "producer_outputs": [
+      "hypothesis_portfolio"
+    ],
+    "reviewer_operation": "science.hypothesis.criticize.v1",
+    "mode": "witness",
+    "candidate_ports": [
+      "critic_review",
+      "current_progress",
+      "experiment_results",
+      "result_analysis"
+    ],
+    "status": "requires_bound_validation"
+  },
+  {
+    "consumer_operation": "science.experiment.design.v1",
+    "subject_port": "hypothesis_portfolio",
+    "subject_optional": false,
+    "producer_operation": "science.hypothesis.revise.v1",
+    "producer_outputs": [
+      "hypothesis_portfolio"
+    ],
+    "reviewer_operation": "science.hypothesis.criticize.v1",
+    "mode": "witness",
+    "candidate_ports": [
+      "critic_review",
+      "current_progress",
+      "experiment_results",
+      "result_analysis"
+    ],
+    "status": "requires_bound_validation"
+  },
+  {
+    "consumer_operation": "science.experiment.materialize.v1",
+    "subject_port": "hypothesis_portfolio",
+    "subject_optional": true,
+    "producer_operation": "science.hypothesis.propose.v1",
+    "producer_outputs": [
+      "hypothesis_portfolio"
+    ],
+    "reviewer_operation": "science.hypothesis.criticize.v1",
+    "mode": "witness",
+    "candidate_ports": [
+      "critic_review"
+    ],
+    "status": "requires_bound_validation"
+  },
+  {
+    "consumer_operation": "science.experiment.materialize.v1",
+    "subject_port": "hypothesis_portfolio",
+    "subject_optional": true,
+    "producer_operation": "science.hypothesis.revise.v1",
+    "producer_outputs": [
+      "hypothesis_portfolio"
+    ],
+    "reviewer_operation": "science.hypothesis.criticize.v1",
+    "mode": "witness",
+    "candidate_ports": [
+      "critic_review"
+    ],
+    "status": "requires_bound_validation"
+  },
+  {
+    "consumer_operation": "science.experiment.revise.v1",
+    "subject_port": "prior_draft",
+    "subject_optional": false,
+    "producer_operation": "science.experiment.materialize.v1",
+    "producer_outputs": [
+      "experiment_plan"
+    ],
+    "reviewer_operation": "science.object.review.v1",
+    "mode": "direct_revision",
+    "candidate_ports": [
+      "change_request",
+      "current_progress"
+    ],
+    "status": "requires_bound_validation"
+  },
+  {
+    "consumer_operation": "science.experiment.revise.v1",
+    "subject_port": "prior_draft",
+    "subject_optional": false,
+    "producer_operation": "science.experiment.revise.v1",
+    "producer_outputs": [
+      "experiment_plan"
+    ],
+    "reviewer_operation": "science.object.review.v1",
+    "mode": "direct_revision",
+    "candidate_ports": [
+      "change_request",
+      "current_progress"
+    ],
+    "status": "requires_bound_validation"
+  },
+  {
+    "consumer_operation": "science.hypothesis.criticize.v1",
+    "subject_port": "hypothesis_portfolio",
+    "subject_optional": false,
+    "producer_operation": "science.hypothesis.propose.v1",
+    "producer_outputs": [
+      "hypothesis_portfolio"
+    ],
+    "reviewer_operation": "science.hypothesis.criticize.v1",
+    "mode": "review_subject",
+    "candidate_ports": [],
+    "status": "requires_bound_validation"
+  },
+  {
+    "consumer_operation": "science.hypothesis.criticize.v1",
+    "subject_port": "hypothesis_portfolio",
+    "subject_optional": false,
+    "producer_operation": "science.hypothesis.revise.v1",
+    "producer_outputs": [
+      "hypothesis_portfolio"
+    ],
+    "reviewer_operation": "science.hypothesis.criticize.v1",
+    "mode": "review_subject",
+    "candidate_ports": [],
+    "status": "requires_bound_validation"
+  },
+  {
+    "consumer_operation": "science.hypothesis.revise.v1",
+    "subject_port": "prior_draft",
+    "subject_optional": false,
+    "producer_operation": "science.hypothesis.propose.v1",
+    "producer_outputs": [
+      "hypothesis_portfolio"
+    ],
+    "reviewer_operation": "science.hypothesis.criticize.v1",
+    "mode": "direct_revision",
+    "candidate_ports": [
+      "change_request"
+    ],
+    "status": "requires_bound_validation"
+  },
+  {
+    "consumer_operation": "science.hypothesis.revise.v1",
+    "subject_port": "prior_draft",
+    "subject_optional": false,
+    "producer_operation": "science.hypothesis.revise.v1",
+    "producer_outputs": [
+      "hypothesis_portfolio"
+    ],
+    "reviewer_operation": "science.hypothesis.criticize.v1",
+    "mode": "direct_revision",
+    "candidate_ports": [
+      "change_request"
+    ],
+    "status": "requires_bound_validation"
+  },
+  {
+    "consumer_operation": "science.intake.revise.v1",
+    "subject_port": "prior_draft",
+    "subject_optional": false,
+    "producer_operation": "science.evidence.extract.v1",
+    "producer_outputs": [
+      "scientific_intake"
+    ],
+    "reviewer_operation": "science.evidence.audit.intake.v1",
+    "mode": "direct_revision",
+    "candidate_ports": [
+      "change_request"
+    ],
+    "status": "requires_bound_validation"
+  },
+  {
+    "consumer_operation": "science.intake.revise.v1",
+    "subject_port": "prior_draft",
+    "subject_optional": false,
+    "producer_operation": "science.evidence.revise-from-critic.v1",
+    "producer_outputs": [
+      "scientific_intake"
+    ],
+    "reviewer_operation": "science.evidence.audit.intake.v1",
+    "mode": "direct_revision",
+    "candidate_ports": [
+      "change_request"
+    ],
+    "status": "requires_bound_validation"
+  },
+  {
+    "consumer_operation": "science.intake.revise.v1",
+    "subject_port": "prior_draft",
+    "subject_optional": false,
+    "producer_operation": "science.intake.revise.v1",
+    "producer_outputs": [
+      "scientific_intake"
+    ],
+    "reviewer_operation": "science.evidence.audit.intake.v1",
+    "mode": "direct_revision",
+    "candidate_ports": [
+      "change_request"
+    ],
+    "status": "requires_bound_validation"
+  },
+  {
+    "consumer_operation": "science.intake.revise.v1",
+    "subject_port": "prior_draft",
+    "subject_optional": false,
+    "producer_operation": "tcad.parameter.evidence.expand.v1",
+    "producer_outputs": [
+      "scientific_intake"
+    ],
+    "reviewer_operation": "tcad.parameter.evidence.audit.v1",
+    "mode": "direct_revision",
+    "candidate_ports": [
+      "change_request"
+    ],
+    "status": "requires_bound_validation"
+  },
+  {
+    "consumer_operation": "science.intake.split.v1",
+    "subject_port": "scientific_intake",
+    "subject_optional": false,
+    "producer_operation": "science.evidence.extract.v1",
+    "producer_outputs": [
+      "scientific_intake"
+    ],
+    "reviewer_operation": "science.evidence.audit.intake.v1",
+    "mode": "witness",
+    "candidate_ports": [
+      "evidence_audit"
+    ],
+    "status": "requires_bound_validation"
+  },
+  {
+    "consumer_operation": "science.intake.split.v1",
+    "subject_port": "scientific_intake",
+    "subject_optional": false,
+    "producer_operation": "science.evidence.revise-from-critic.v1",
+    "producer_outputs": [
+      "scientific_intake"
+    ],
+    "reviewer_operation": "science.evidence.audit.intake.v1",
+    "mode": "witness",
+    "candidate_ports": [
+      "evidence_audit"
+    ],
+    "status": "requires_bound_validation"
+  },
+  {
+    "consumer_operation": "science.intake.split.v1",
+    "subject_port": "scientific_intake",
+    "subject_optional": false,
+    "producer_operation": "science.intake.revise.v1",
+    "producer_outputs": [
+      "scientific_intake"
+    ],
+    "reviewer_operation": "science.evidence.audit.intake.v1",
+    "mode": "witness",
+    "candidate_ports": [
+      "evidence_audit"
+    ],
+    "status": "requires_bound_validation"
+  },
+  {
+    "consumer_operation": "science.intake.split.v1",
+    "subject_port": "scientific_intake",
+    "subject_optional": false,
+    "producer_operation": "tcad.parameter.evidence.expand.v1",
+    "producer_outputs": [
+      "scientific_intake"
+    ],
+    "reviewer_operation": "tcad.parameter.evidence.audit.v1",
+    "mode": "witness",
+    "candidate_ports": [
+      "evidence_audit"
+    ],
+    "status": "requires_bound_validation"
+  },
+  {
+    "consumer_operation": "science.object.review.v1",
+    "subject_port": "experiment_plan",
+    "subject_optional": false,
+    "producer_operation": "science.experiment.materialize.v1",
+    "producer_outputs": [
+      "experiment_plan"
+    ],
+    "reviewer_operation": "science.object.review.v1",
+    "mode": "review_subject",
+    "candidate_ports": [
+      "current_progress",
+      "experiment_results",
+      "result_analysis"
+    ],
+    "status": "requires_bound_validation"
+  },
+  {
+    "consumer_operation": "science.object.review.v1",
+    "subject_port": "experiment_plan",
+    "subject_optional": false,
+    "producer_operation": "science.experiment.revise.v1",
+    "producer_outputs": [
+      "experiment_plan"
+    ],
+    "reviewer_operation": "science.object.review.v1",
+    "mode": "review_subject",
+    "candidate_ports": [
+      "current_progress",
+      "experiment_results",
+      "result_analysis"
+    ],
+    "status": "requires_bound_validation"
+  },
+  {
+    "consumer_operation": "science.parameters.qualify.exception.v1",
+    "subject_port": "extraction_primary",
+    "subject_optional": false,
+    "producer_operation": "science.evidence.extract.v1",
+    "producer_outputs": [
+      "scientific_intake"
+    ],
+    "reviewer_operation": "science.evidence.audit.intake.v1",
+    "mode": "witness",
+    "candidate_ports": [
+      "parameter_audit",
+      "frozen_sources"
+    ],
+    "status": "requires_bound_validation"
+  },
+  {
+    "consumer_operation": "science.parameters.qualify.exception.v1",
+    "subject_port": "extraction_primary",
+    "subject_optional": false,
+    "producer_operation": "science.evidence.revise-from-critic.v1",
+    "producer_outputs": [
+      "scientific_intake"
+    ],
+    "reviewer_operation": "science.evidence.audit.intake.v1",
+    "mode": "witness",
+    "candidate_ports": [
+      "parameter_audit",
+      "frozen_sources"
+    ],
+    "status": "requires_bound_validation"
+  },
+  {
+    "consumer_operation": "science.parameters.qualify.exception.v1",
+    "subject_port": "extraction_primary",
+    "subject_optional": false,
+    "producer_operation": "science.intake.revise.v1",
+    "producer_outputs": [
+      "scientific_intake"
+    ],
+    "reviewer_operation": "science.evidence.audit.intake.v1",
+    "mode": "witness",
+    "candidate_ports": [
+      "parameter_audit",
+      "frozen_sources"
+    ],
+    "status": "requires_bound_validation"
+  },
+  {
+    "consumer_operation": "science.parameters.qualify.exception.v1",
+    "subject_port": "extraction_primary",
+    "subject_optional": false,
+    "producer_operation": "tcad.parameter.evidence.expand.v1",
+    "producer_outputs": [
+      "scientific_intake"
+    ],
+    "reviewer_operation": "tcad.parameter.evidence.audit.v1",
+    "mode": "witness",
+    "candidate_ports": [
+      "parameter_audit",
+      "frozen_sources"
+    ],
+    "status": "requires_bound_validation"
+  },
+  {
+    "consumer_operation": "science.parameters.qualify.pass.v1",
+    "subject_port": "extraction_primary",
+    "subject_optional": false,
+    "producer_operation": "science.evidence.extract.v1",
+    "producer_outputs": [
+      "scientific_intake"
+    ],
+    "reviewer_operation": "science.evidence.audit.intake.v1",
+    "mode": "witness",
+    "candidate_ports": [
+      "parameter_audit",
+      "frozen_sources"
+    ],
+    "status": "requires_bound_validation"
+  },
+  {
+    "consumer_operation": "science.parameters.qualify.pass.v1",
+    "subject_port": "extraction_primary",
+    "subject_optional": false,
+    "producer_operation": "science.evidence.revise-from-critic.v1",
+    "producer_outputs": [
+      "scientific_intake"
+    ],
+    "reviewer_operation": "science.evidence.audit.intake.v1",
+    "mode": "witness",
+    "candidate_ports": [
+      "parameter_audit",
+      "frozen_sources"
+    ],
+    "status": "requires_bound_validation"
+  },
+  {
+    "consumer_operation": "science.parameters.qualify.pass.v1",
+    "subject_port": "extraction_primary",
+    "subject_optional": false,
+    "producer_operation": "science.intake.revise.v1",
+    "producer_outputs": [
+      "scientific_intake"
+    ],
+    "reviewer_operation": "science.evidence.audit.intake.v1",
+    "mode": "witness",
+    "candidate_ports": [
+      "parameter_audit",
+      "frozen_sources"
+    ],
+    "status": "requires_bound_validation"
+  },
+  {
+    "consumer_operation": "science.parameters.qualify.pass.v1",
+    "subject_port": "extraction_primary",
+    "subject_optional": false,
+    "producer_operation": "tcad.parameter.evidence.expand.v1",
+    "producer_outputs": [
+      "scientific_intake"
+    ],
+    "reviewer_operation": "tcad.parameter.evidence.audit.v1",
+    "mode": "witness",
+    "candidate_ports": [
+      "parameter_audit",
+      "frozen_sources"
+    ],
+    "status": "requires_bound_validation"
+  },
+  {
+    "consumer_operation": "science.result.diagnose.v1",
+    "subject_port": "experiment_plan",
+    "subject_optional": false,
+    "producer_operation": "science.experiment.materialize.v1",
+    "producer_outputs": [
+      "experiment_plan"
+    ],
+    "reviewer_operation": "science.object.review.v1",
+    "mode": "witness",
+    "candidate_ports": [
+      "experiment_review",
+      "experiment_results",
+      "reference_material",
+      "current_progress"
+    ],
+    "status": "requires_bound_validation"
+  },
+  {
+    "consumer_operation": "science.result.diagnose.v1",
+    "subject_port": "experiment_plan",
+    "subject_optional": false,
+    "producer_operation": "science.experiment.revise.v1",
+    "producer_outputs": [
+      "experiment_plan"
+    ],
+    "reviewer_operation": "science.object.review.v1",
+    "mode": "witness",
+    "candidate_ports": [
+      "experiment_review",
+      "experiment_results",
+      "reference_material",
+      "current_progress"
+    ],
+    "status": "requires_bound_validation"
+  },
+  {
+    "consumer_operation": "tcad.control-equivalence.v1",
+    "subject_port": "experiment_plan",
+    "subject_optional": false,
+    "producer_operation": "science.experiment.materialize.v1",
+    "producer_outputs": [
+      "experiment_plan"
+    ],
+    "reviewer_operation": "science.object.review.v1",
+    "mode": "witness",
+    "candidate_ports": [],
+    "status": "receiver_missing"
+  },
+  {
+    "consumer_operation": "tcad.control-equivalence.v1",
+    "subject_port": "experiment_plan",
+    "subject_optional": false,
+    "producer_operation": "science.experiment.revise.v1",
+    "producer_outputs": [
+      "experiment_plan"
+    ],
+    "reviewer_operation": "science.object.review.v1",
+    "mode": "witness",
+    "candidate_ports": [],
+    "status": "receiver_missing"
+  },
+  {
+    "consumer_operation": "tcad.curve-bundle.sprocess-log.v1",
+    "subject_port": "experiment_plan",
+    "subject_optional": false,
+    "producer_operation": "science.experiment.materialize.v1",
+    "producer_outputs": [
+      "experiment_plan"
+    ],
+    "reviewer_operation": "science.object.review.v1",
+    "mode": "witness",
+    "candidate_ports": [
+      "experiment_review",
+      "curve_contract_review"
+    ],
+    "status": "requires_bound_validation"
+  },
+  {
+    "consumer_operation": "tcad.curve-bundle.sprocess-log.v1",
+    "subject_port": "experiment_plan",
+    "subject_optional": false,
+    "producer_operation": "science.experiment.revise.v1",
+    "producer_outputs": [
+      "experiment_plan"
+    ],
+    "reviewer_operation": "science.object.review.v1",
+    "mode": "witness",
+    "candidate_ports": [
+      "experiment_review",
+      "curve_contract_review"
+    ],
+    "status": "requires_bound_validation"
+  },
+  {
+    "consumer_operation": "tcad.curve-bundle.sprocess-log.v1",
+    "subject_port": "curve_contract",
+    "subject_optional": false,
+    "producer_operation": "science.curve.contract.design.v1",
+    "producer_outputs": [
+      "curve_contract"
+    ],
+    "reviewer_operation": "science.curve.contract.review.v1",
+    "mode": "witness",
+    "candidate_ports": [
+      "experiment_review",
+      "curve_contract_review"
+    ],
+    "status": "requires_bound_validation"
+  },
+  {
+    "consumer_operation": "tcad.curve-bundle.sprocess-plx.v1",
+    "subject_port": "experiment_plan",
+    "subject_optional": false,
+    "producer_operation": "science.experiment.materialize.v1",
+    "producer_outputs": [
+      "experiment_plan"
+    ],
+    "reviewer_operation": "science.object.review.v1",
+    "mode": "witness",
+    "candidate_ports": [
+      "experiment_review",
+      "curve_contract_review"
+    ],
+    "status": "requires_bound_validation"
+  },
+  {
+    "consumer_operation": "tcad.curve-bundle.sprocess-plx.v1",
+    "subject_port": "experiment_plan",
+    "subject_optional": false,
+    "producer_operation": "science.experiment.revise.v1",
+    "producer_outputs": [
+      "experiment_plan"
+    ],
+    "reviewer_operation": "science.object.review.v1",
+    "mode": "witness",
+    "candidate_ports": [
+      "experiment_review",
+      "curve_contract_review"
+    ],
+    "status": "requires_bound_validation"
+  },
+  {
+    "consumer_operation": "tcad.curve-bundle.sprocess-plx.v1",
+    "subject_port": "curve_contract",
+    "subject_optional": false,
+    "producer_operation": "science.curve.contract.design.v1",
+    "producer_outputs": [
+      "curve_contract"
+    ],
+    "reviewer_operation": "science.curve.contract.review.v1",
+    "mode": "witness",
+    "candidate_ports": [
+      "experiment_review",
+      "curve_contract_review"
+    ],
+    "status": "requires_bound_validation"
+  },
+  {
+    "consumer_operation": "tcad.deck-project-compare.v1",
+    "subject_port": "base_project",
+    "subject_optional": false,
+    "producer_operation": "tcad.deck.author.initial.v1",
+    "producer_outputs": [
+      "project"
+    ],
+    "reviewer_operation": "tcad.deck.review.v1",
+    "mode": "witness",
+    "candidate_ports": [],
+    "status": "receiver_missing"
+  },
+  {
+    "consumer_operation": "tcad.deck-project-compare.v1",
+    "subject_port": "base_project",
+    "subject_optional": false,
+    "producer_operation": "tcad.deck.author.revise.v1",
+    "producer_outputs": [
+      "project"
+    ],
+    "reviewer_operation": "tcad.deck.review.v1",
+    "mode": "witness",
+    "candidate_ports": [],
+    "status": "receiver_missing"
+  },
+  {
+    "consumer_operation": "tcad.deck-project-compare.v1",
+    "subject_port": "base_project",
+    "subject_optional": false,
+    "producer_operation": "tcad.deck.author.runtime-failure.v1",
+    "producer_outputs": [
+      "project"
+    ],
+    "reviewer_operation": "tcad.deck.review.v1",
+    "mode": "witness",
+    "candidate_ports": [],
+    "status": "receiver_missing"
+  },
+  {
+    "consumer_operation": "tcad.deck-project-compare.v1",
+    "subject_port": "revised_project",
+    "subject_optional": false,
+    "producer_operation": "tcad.deck.author.initial.v1",
+    "producer_outputs": [
+      "project"
+    ],
+    "reviewer_operation": "tcad.deck.review.v1",
+    "mode": "witness",
+    "candidate_ports": [],
+    "status": "receiver_missing"
+  },
+  {
+    "consumer_operation": "tcad.deck-project-compare.v1",
+    "subject_port": "revised_project",
+    "subject_optional": false,
+    "producer_operation": "tcad.deck.author.revise.v1",
+    "producer_outputs": [
+      "project"
+    ],
+    "reviewer_operation": "tcad.deck.review.v1",
+    "mode": "witness",
+    "candidate_ports": [],
+    "status": "receiver_missing"
+  },
+  {
+    "consumer_operation": "tcad.deck-project-compare.v1",
+    "subject_port": "revised_project",
+    "subject_optional": false,
+    "producer_operation": "tcad.deck.author.runtime-failure.v1",
+    "producer_outputs": [
+      "project"
+    ],
+    "reviewer_operation": "tcad.deck.review.v1",
+    "mode": "witness",
+    "candidate_ports": [],
+    "status": "receiver_missing"
+  },
+  {
+    "consumer_operation": "tcad.deck-review-validate.v1",
+    "subject_port": "project",
+    "subject_optional": false,
+    "producer_operation": "tcad.deck.author.initial.v1",
+    "producer_outputs": [
+      "project"
+    ],
+    "reviewer_operation": "tcad.deck.review.v1",
+    "mode": "witness",
+    "candidate_ports": [
+      "review"
+    ],
+    "status": "requires_bound_validation"
+  },
+  {
+    "consumer_operation": "tcad.deck-review-validate.v1",
+    "subject_port": "project",
+    "subject_optional": false,
+    "producer_operation": "tcad.deck.author.revise.v1",
+    "producer_outputs": [
+      "project"
+    ],
+    "reviewer_operation": "tcad.deck.review.v1",
+    "mode": "witness",
+    "candidate_ports": [
+      "review"
+    ],
+    "status": "requires_bound_validation"
+  },
+  {
+    "consumer_operation": "tcad.deck-review-validate.v1",
+    "subject_port": "project",
+    "subject_optional": false,
+    "producer_operation": "tcad.deck.author.runtime-failure.v1",
+    "producer_outputs": [
+      "project"
+    ],
+    "reviewer_operation": "tcad.deck.review.v1",
+    "mode": "witness",
+    "candidate_ports": [
+      "review"
+    ],
+    "status": "requires_bound_validation"
+  },
+  {
+    "consumer_operation": "tcad.deck.author.initial.v1",
+    "subject_port": "experiment_plan",
+    "subject_optional": false,
+    "producer_operation": "science.experiment.materialize.v1",
+    "producer_outputs": [
+      "experiment_plan"
+    ],
+    "reviewer_operation": "science.object.review.v1",
+    "mode": "witness",
+    "candidate_ports": [
+      "current_progress",
+      "experiment_review",
+      "curve_contract_review"
+    ],
+    "status": "requires_bound_validation"
+  },
+  {
+    "consumer_operation": "tcad.deck.author.initial.v1",
+    "subject_port": "experiment_plan",
+    "subject_optional": false,
+    "producer_operation": "science.experiment.revise.v1",
+    "producer_outputs": [
+      "experiment_plan"
+    ],
+    "reviewer_operation": "science.object.review.v1",
+    "mode": "witness",
+    "candidate_ports": [
+      "current_progress",
+      "experiment_review",
+      "curve_contract_review"
+    ],
+    "status": "requires_bound_validation"
+  },
+  {
+    "consumer_operation": "tcad.deck.author.initial.v1",
+    "subject_port": "curve_contract",
+    "subject_optional": true,
+    "producer_operation": "science.curve.contract.design.v1",
+    "producer_outputs": [
+      "curve_contract"
+    ],
+    "reviewer_operation": "science.curve.contract.review.v1",
+    "mode": "witness",
+    "candidate_ports": [
+      "current_progress",
+      "experiment_review",
+      "curve_contract_review"
+    ],
+    "status": "requires_bound_validation"
+  },
+  {
+    "consumer_operation": "tcad.deck.author.revise.v1",
+    "subject_port": "prior_project",
+    "subject_optional": false,
+    "producer_operation": "tcad.deck.author.initial.v1",
+    "producer_outputs": [
+      "project"
+    ],
+    "reviewer_operation": "tcad.deck.review.v1",
+    "mode": "direct_revision",
+    "candidate_ports": [
+      "change_request",
+      "current_progress"
+    ],
+    "status": "requires_bound_validation"
+  },
+  {
+    "consumer_operation": "tcad.deck.author.revise.v1",
+    "subject_port": "prior_project",
+    "subject_optional": false,
+    "producer_operation": "tcad.deck.author.revise.v1",
+    "producer_outputs": [
+      "project"
+    ],
+    "reviewer_operation": "tcad.deck.review.v1",
+    "mode": "direct_revision",
+    "candidate_ports": [
+      "change_request",
+      "current_progress"
+    ],
+    "status": "requires_bound_validation"
+  },
+  {
+    "consumer_operation": "tcad.deck.author.revise.v1",
+    "subject_port": "prior_project",
+    "subject_optional": false,
+    "producer_operation": "tcad.deck.author.runtime-failure.v1",
+    "producer_outputs": [
+      "project"
+    ],
+    "reviewer_operation": "tcad.deck.review.v1",
+    "mode": "direct_revision",
+    "candidate_ports": [
+      "change_request",
+      "current_progress"
+    ],
+    "status": "requires_bound_validation"
+  },
+  {
+    "consumer_operation": "tcad.deck.author.revise.v1",
+    "subject_port": "experiment_plan",
+    "subject_optional": false,
+    "producer_operation": "science.experiment.materialize.v1",
+    "producer_outputs": [
+      "experiment_plan"
+    ],
+    "reviewer_operation": "science.object.review.v1",
+    "mode": "witness",
+    "candidate_ports": [
+      "current_progress",
+      "experiment_review",
+      "curve_contract_review"
+    ],
+    "status": "requires_bound_validation"
+  },
+  {
+    "consumer_operation": "tcad.deck.author.revise.v1",
+    "subject_port": "experiment_plan",
+    "subject_optional": false,
+    "producer_operation": "science.experiment.revise.v1",
+    "producer_outputs": [
+      "experiment_plan"
+    ],
+    "reviewer_operation": "science.object.review.v1",
+    "mode": "witness",
+    "candidate_ports": [
+      "current_progress",
+      "experiment_review",
+      "curve_contract_review"
+    ],
+    "status": "requires_bound_validation"
+  },
+  {
+    "consumer_operation": "tcad.deck.author.revise.v1",
+    "subject_port": "curve_contract",
+    "subject_optional": true,
+    "producer_operation": "science.curve.contract.design.v1",
+    "producer_outputs": [
+      "curve_contract"
+    ],
+    "reviewer_operation": "science.curve.contract.review.v1",
+    "mode": "witness",
+    "candidate_ports": [
+      "current_progress",
+      "experiment_review",
+      "curve_contract_review"
+    ],
+    "status": "requires_bound_validation"
+  },
+  {
+    "consumer_operation": "tcad.deck.author.runtime-failure.v1",
+    "subject_port": "prior_project",
+    "subject_optional": false,
+    "producer_operation": "tcad.deck.author.initial.v1",
+    "producer_outputs": [
+      "project"
+    ],
+    "reviewer_operation": "tcad.deck.review.v1",
+    "mode": "direct_revision",
+    "candidate_ports": [
+      "current_progress"
+    ],
+    "status": "requires_bound_validation"
+  },
+  {
+    "consumer_operation": "tcad.deck.author.runtime-failure.v1",
+    "subject_port": "prior_project",
+    "subject_optional": false,
+    "producer_operation": "tcad.deck.author.revise.v1",
+    "producer_outputs": [
+      "project"
+    ],
+    "reviewer_operation": "tcad.deck.review.v1",
+    "mode": "direct_revision",
+    "candidate_ports": [
+      "current_progress"
+    ],
+    "status": "requires_bound_validation"
+  },
+  {
+    "consumer_operation": "tcad.deck.author.runtime-failure.v1",
+    "subject_port": "prior_project",
+    "subject_optional": false,
+    "producer_operation": "tcad.deck.author.runtime-failure.v1",
+    "producer_outputs": [
+      "project"
+    ],
+    "reviewer_operation": "tcad.deck.review.v1",
+    "mode": "direct_revision",
+    "candidate_ports": [
+      "current_progress"
+    ],
+    "status": "requires_bound_validation"
+  },
+  {
+    "consumer_operation": "tcad.deck.author.runtime-failure.v1",
+    "subject_port": "experiment_plan",
+    "subject_optional": false,
+    "producer_operation": "science.experiment.materialize.v1",
+    "producer_outputs": [
+      "experiment_plan"
+    ],
+    "reviewer_operation": "science.object.review.v1",
+    "mode": "witness",
+    "candidate_ports": [
+      "current_progress",
+      "experiment_review",
+      "curve_contract_review"
+    ],
+    "status": "requires_bound_validation"
+  },
+  {
+    "consumer_operation": "tcad.deck.author.runtime-failure.v1",
+    "subject_port": "experiment_plan",
+    "subject_optional": false,
+    "producer_operation": "science.experiment.revise.v1",
+    "producer_outputs": [
+      "experiment_plan"
+    ],
+    "reviewer_operation": "science.object.review.v1",
+    "mode": "witness",
+    "candidate_ports": [
+      "current_progress",
+      "experiment_review",
+      "curve_contract_review"
+    ],
+    "status": "requires_bound_validation"
+  },
+  {
+    "consumer_operation": "tcad.deck.author.runtime-failure.v1",
+    "subject_port": "curve_contract",
+    "subject_optional": true,
+    "producer_operation": "science.curve.contract.design.v1",
+    "producer_outputs": [
+      "curve_contract"
+    ],
+    "reviewer_operation": "science.curve.contract.review.v1",
+    "mode": "witness",
+    "candidate_ports": [
+      "current_progress",
+      "experiment_review",
+      "curve_contract_review"
+    ],
+    "status": "requires_bound_validation"
+  },
+  {
+    "consumer_operation": "tcad.deck.review.v1",
+    "subject_port": "project",
+    "subject_optional": false,
+    "producer_operation": "tcad.deck.author.initial.v1",
+    "producer_outputs": [
+      "project"
+    ],
+    "reviewer_operation": "tcad.deck.review.v1",
+    "mode": "review_subject",
+    "candidate_ports": [
+      "current_progress"
+    ],
+    "status": "requires_bound_validation"
+  },
+  {
+    "consumer_operation": "tcad.deck.review.v1",
+    "subject_port": "project",
+    "subject_optional": false,
+    "producer_operation": "tcad.deck.author.revise.v1",
+    "producer_outputs": [
+      "project"
+    ],
+    "reviewer_operation": "tcad.deck.review.v1",
+    "mode": "review_subject",
+    "candidate_ports": [
+      "current_progress"
+    ],
+    "status": "requires_bound_validation"
+  },
+  {
+    "consumer_operation": "tcad.deck.review.v1",
+    "subject_port": "project",
+    "subject_optional": false,
+    "producer_operation": "tcad.deck.author.runtime-failure.v1",
+    "producer_outputs": [
+      "project"
+    ],
+    "reviewer_operation": "tcad.deck.review.v1",
+    "mode": "review_subject",
+    "candidate_ports": [
+      "current_progress"
+    ],
+    "status": "requires_bound_validation"
+  },
+  {
+    "consumer_operation": "tcad.deck.review.v1",
+    "subject_port": "experiment_plan",
+    "subject_optional": false,
+    "producer_operation": "science.experiment.materialize.v1",
+    "producer_outputs": [
+      "experiment_plan"
+    ],
+    "reviewer_operation": "science.object.review.v1",
+    "mode": "witness",
+    "candidate_ports": [
+      "current_progress",
+      "experiment_review",
+      "curve_contract_review"
+    ],
+    "status": "requires_bound_validation"
+  },
+  {
+    "consumer_operation": "tcad.deck.review.v1",
+    "subject_port": "experiment_plan",
+    "subject_optional": false,
+    "producer_operation": "science.experiment.revise.v1",
+    "producer_outputs": [
+      "experiment_plan"
+    ],
+    "reviewer_operation": "science.object.review.v1",
+    "mode": "witness",
+    "candidate_ports": [
+      "current_progress",
+      "experiment_review",
+      "curve_contract_review"
+    ],
+    "status": "requires_bound_validation"
+  },
+  {
+    "consumer_operation": "tcad.deck.review.v1",
+    "subject_port": "curve_contract",
+    "subject_optional": true,
+    "producer_operation": "science.curve.contract.design.v1",
+    "producer_outputs": [
+      "curve_contract"
+    ],
+    "reviewer_operation": "science.curve.contract.review.v1",
+    "mode": "witness",
+    "candidate_ports": [
+      "current_progress",
+      "experiment_review",
+      "curve_contract_review"
+    ],
+    "status": "requires_bound_validation"
+  },
+  {
+    "consumer_operation": "tcad.parameter.evidence.audit.v1",
+    "subject_port": "scientific_intake",
+    "subject_optional": false,
+    "producer_operation": "science.evidence.extract.v1",
+    "producer_outputs": [
+      "scientific_intake"
+    ],
+    "reviewer_operation": "science.evidence.audit.intake.v1",
+    "mode": "witness",
+    "candidate_ports": [],
+    "status": "receiver_missing"
+  },
+  {
+    "consumer_operation": "tcad.parameter.evidence.audit.v1",
+    "subject_port": "scientific_intake",
+    "subject_optional": false,
+    "producer_operation": "science.evidence.revise-from-critic.v1",
+    "producer_outputs": [
+      "scientific_intake"
+    ],
+    "reviewer_operation": "science.evidence.audit.intake.v1",
+    "mode": "witness",
+    "candidate_ports": [],
+    "status": "receiver_missing"
+  },
+  {
+    "consumer_operation": "tcad.parameter.evidence.audit.v1",
+    "subject_port": "scientific_intake",
+    "subject_optional": false,
+    "producer_operation": "science.intake.revise.v1",
+    "producer_outputs": [
+      "scientific_intake"
+    ],
+    "reviewer_operation": "science.evidence.audit.intake.v1",
+    "mode": "witness",
+    "candidate_ports": [],
+    "status": "receiver_missing"
+  },
+  {
+    "consumer_operation": "tcad.parameter.evidence.audit.v1",
+    "subject_port": "scientific_intake",
+    "subject_optional": false,
+    "producer_operation": "tcad.parameter.evidence.expand.v1",
+    "producer_outputs": [
+      "scientific_intake"
+    ],
+    "reviewer_operation": "tcad.parameter.evidence.audit.v1",
+    "mode": "review_subject",
+    "candidate_ports": [],
+    "status": "requires_bound_validation"
+  },
+  {
+    "consumer_operation": "tcad.result.analyze.v1",
+    "subject_port": "experiment_plan",
+    "subject_optional": false,
+    "producer_operation": "science.experiment.materialize.v1",
+    "producer_outputs": [
+      "experiment_plan"
+    ],
+    "reviewer_operation": "science.object.review.v1",
+    "mode": "witness",
+    "candidate_ports": [
+      "experiment_review",
+      "solver_outputs",
+      "reference_material",
+      "current_progress"
+    ],
+    "status": "requires_bound_validation"
+  },
+  {
+    "consumer_operation": "tcad.result.analyze.v1",
+    "subject_port": "experiment_plan",
+    "subject_optional": false,
+    "producer_operation": "science.experiment.revise.v1",
+    "producer_outputs": [
+      "experiment_plan"
+    ],
+    "reviewer_operation": "science.object.review.v1",
+    "mode": "witness",
+    "candidate_ports": [
+      "experiment_review",
+      "solver_outputs",
+      "reference_material",
+      "current_progress"
+    ],
+    "status": "requires_bound_validation"
+  },
+  {
+    "consumer_operation": "tcad.reviewed-deck-package.v2",
+    "subject_port": "project",
+    "subject_optional": false,
+    "producer_operation": "tcad.deck.author.initial.v1",
+    "producer_outputs": [
+      "project"
+    ],
+    "reviewer_operation": "tcad.deck.review.v1",
+    "mode": "witness",
+    "candidate_ports": [
+      "review"
+    ],
+    "status": "requires_bound_validation"
+  },
+  {
+    "consumer_operation": "tcad.reviewed-deck-package.v2",
+    "subject_port": "project",
+    "subject_optional": false,
+    "producer_operation": "tcad.deck.author.revise.v1",
+    "producer_outputs": [
+      "project"
+    ],
+    "reviewer_operation": "tcad.deck.review.v1",
+    "mode": "witness",
+    "candidate_ports": [
+      "review"
+    ],
+    "status": "requires_bound_validation"
+  },
+  {
+    "consumer_operation": "tcad.reviewed-deck-package.v2",
+    "subject_port": "project",
+    "subject_optional": false,
+    "producer_operation": "tcad.deck.author.runtime-failure.v1",
+    "producer_outputs": [
+      "project"
+    ],
+    "reviewer_operation": "tcad.deck.review.v1",
+    "mode": "witness",
+    "candidate_ports": [
+      "review"
+    ],
+    "status": "requires_bound_validation"
+  },
+  {
+    "consumer_operation": "tcad.reviewed-deck-package.v2",
+    "subject_port": "experiment_plan",
+    "subject_optional": false,
+    "producer_operation": "science.experiment.materialize.v1",
+    "producer_outputs": [
+      "experiment_plan"
+    ],
+    "reviewer_operation": "science.object.review.v1",
+    "mode": "witness",
+    "candidate_ports": [
+      "experiment_review"
+    ],
+    "status": "requires_bound_validation"
+  },
+  {
+    "consumer_operation": "tcad.reviewed-deck-package.v2",
+    "subject_port": "experiment_plan",
+    "subject_optional": false,
+    "producer_operation": "science.experiment.revise.v1",
+    "producer_outputs": [
+      "experiment_plan"
+    ],
+    "reviewer_operation": "science.object.review.v1",
+    "mode": "witness",
+    "candidate_ports": [
+      "experiment_review"
+    ],
+    "status": "requires_bound_validation"
+  }
+]

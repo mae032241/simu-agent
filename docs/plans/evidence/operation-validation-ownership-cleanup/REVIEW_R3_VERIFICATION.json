@@ -1,0 +1,178 @@
+{
+  "independent_review": "not passed: P2 same calculation dual-representation regression; P3 handoff file path",
+  "reviewer": "fresh independent agent, no parent history, read-only, no tests run by child",
+  "production_and_test_sources_unchanged": true,
+  "files": [
+    {
+      "path": "src/scidiscovery/artifact_agent/service/analysis_artifacts.py",
+      "before_sha256": "17543548f36157989387acedd00705ad48260809fc6e98005d63b2019a15f392",
+      "sha256": "a89a4019836e0ef2389e7fc88b31a559d637487ef0d5b5a683619a3ffe15f53e",
+      "actual_sha256": "a89a4019836e0ef2389e7fc88b31a559d637487ef0d5b5a683619a3ffe15f53e"
+    },
+    {
+      "path": "src/scidiscovery/artifact_agent/service/runs.py",
+      "before_sha256": "30ecc83de381998fb49ea0f794fb8778bac79e9fb89008c78a91ea7dce94c779",
+      "sha256": "fd25010ffb9d1918dd101035a90c79715e5a0384431a70bd6c8237abff773cbf",
+      "actual_sha256": "fd25010ffb9d1918dd101035a90c79715e5a0384431a70bd6c8237abff773cbf"
+    },
+    {
+      "path": "plugins/tcad_artifact/tcad_artifact/analysis_bindings.py",
+      "before_sha256": "2434291e4ca5f0b389914f109466ec9c6f4de83cd6a38bb20906998694842a63",
+      "sha256": "442c05ec9eaa22d149a3ed0cea7a0b6f7c5fec8ffccdc53d3273e291de38b21e",
+      "actual_sha256": "442c05ec9eaa22d149a3ed0cea7a0b6f7c5fec8ffccdc53d3273e291de38b21e"
+    },
+    {
+      "path": "plugins/tcad_artifact/tcad_artifact/result_analysis.py",
+      "before_sha256": "e0ef0a89daf7db2a10f9dbab3c3c480d9a65aa8cfc8b1b6e898366702573f7f0",
+      "sha256": "76ea5a641128635087d9241059f8f59b34eadc1ef3d41a558dc1071ae84c49e4",
+      "actual_sha256": "76ea5a641128635087d9241059f8f59b34eadc1ef3d41a558dc1071ae84c49e4"
+    },
+    {
+      "path": "plugins/curve_score/curve_score/science_operations.py",
+      "before_sha256": "f9e71a8c98d46b9159fd32992543fd092ec2d291563d0c323fdd6d1ff437f4f8",
+      "sha256": "d09c52260ce0ddcdb1496412614190c7a947436e2f20d11859a2712df2a35568",
+      "actual_sha256": "d09c52260ce0ddcdb1496412614190c7a947436e2f20d11859a2712df2a35568"
+    },
+    {
+      "path": "tests/operations/test_analysis_continuation.py",
+      "before_sha256": "809bd042d7b9d6cf3eee1972150494b1557dfd6a409227a742f2cc13401c08fd",
+      "sha256": "be93809c382c41890a1c81ffc517c93789bc48b43dc6d313c920f265c8b641d5",
+      "actual_sha256": "be93809c382c41890a1c81ffc517c93789bc48b43dc6d313c920f265c8b641d5"
+    },
+    {
+      "path": "tests/operations/test_tcad_result_analysis.py",
+      "before_sha256": "a5312bfdfb02cce60870fc7b05383240f3dd5f64985ee0390229065b28a093ed",
+      "sha256": "1ed7a5793471a9b39d503ed12c7b246bc0edbc3456a3d7f842eb16abdc3281bf",
+      "actual_sha256": "1ed7a5793471a9b39d503ed12c7b246bc0edbc3456a3d7f842eb16abdc3281bf"
+    },
+    {
+      "path": "tests/operations/test_contract_attempts.py",
+      "before_sha256": "8d0d30ad198d497b758359a117302571bd02cb6196dde8f319f9b3877ed11e39",
+      "sha256": "99f093417465142e605d855bc98527573b6273733ecadfa6e2da6ad9b231f9df",
+      "actual_sha256": "99f093417465142e605d855bc98527573b6273733ecadfa6e2da6ad9b231f9df"
+    },
+    {
+      "path": "tests/operations/test_evidence_reference_ownership.py",
+      "before_sha256": "459f7c0ef86818fc392f77eaf3b238bf039e8035fb82ba73aecc57df77d712f7",
+      "sha256": "dc4ee59a57f2cd90a0fb65c758665b76eba9b0c388340ff468557208783d2dea",
+      "actual_sha256": "dc4ee59a57f2cd90a0fb65c758665b76eba9b0c388340ff468557208783d2dea"
+    }
+  ],
+  "probes": [
+    {
+      "path": "review_r3_diagnostic_probe.py",
+      "sha256": "206def2b0c1c94c9602fb0833c35508f77c7a8a78186d230760edcd2a035c1db"
+    },
+    {
+      "path": "log_visibility_probes.py",
+      "sha256": "1a06f29c47c9806727aa718b2a925b980310f9b9e763138fc3dbd74cd7326a09"
+    }
+  ],
+  "checks": [
+    {
+      "command": [
+        "python",
+        "-m",
+        "pytest",
+        "-q",
+        "-s",
+        "-c",
+        "pyproject.toml",
+        "docs/plans/evidence/operation-validation-ownership-cleanup/log_visibility_probes.py",
+        "tests/operations/test_log_preservation.py::test_middle_error_survives_collection_and_is_located_before_excerpt",
+        "tests/operations/test_log_preservation.py::test_complete_debug_log_is_published_with_the_gap",
+        "tests/operations/test_log_preservation.py::test_real_worker_process_keeps_stderr_and_separate_diagnostic_file"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 3.58,
+      "peak_tree_rss_bytes": 130916352,
+      "stopped": null,
+      "log": "check-1789263555043472364.log"
+    },
+    {
+      "command": [
+        "python",
+        "-m",
+        "pytest",
+        "-q",
+        "-s",
+        "-c",
+        "pyproject.toml",
+        "docs/plans/evidence/operation-validation-ownership-cleanup/review_r3_diagnostic_probe.py",
+        "docs/plans/evidence/operation-validation-ownership-cleanup/log_visibility_probes.py::test_runtime_author_accepts_the_server_log_media_type"
+      ],
+      "exit_code": 1,
+      "duration_seconds": 5.11,
+      "peak_tree_rss_bytes": 128425984,
+      "stopped": null,
+      "log": "check-1789263834573631843.log"
+    },
+    {
+      "command": [
+        "python",
+        "-m",
+        "pytest",
+        "-q",
+        "-s",
+        "-c",
+        "pyproject.toml",
+        "/home/da/project/ai4s/tcad/git_release/scidiscovery-agent/123/scidiscovery-e5.2/docs/plans/evidence/operation-validation-ownership-cleanup/review_r3_diagnostic_probe.py",
+        "-k",
+        "both"
+      ],
+      "exit_code": 1,
+      "duration_seconds": 1.99,
+      "peak_tree_rss_bytes": 96231424,
+      "stopped": null,
+      "log": "check-1789263960976817420.log"
+    },
+    {
+      "command": [
+        "python",
+        "-m",
+        "pytest",
+        "-q",
+        "-s",
+        "-c",
+        "pyproject.toml",
+        "docs/plans/evidence/operation-validation-ownership-cleanup/log_visibility_probes.py::test_runtime_author_accepts_the_server_log_media_type"
+      ],
+      "exit_code": 1,
+      "duration_seconds": 2.35,
+      "peak_tree_rss_bytes": 117694464,
+      "stopped": null,
+      "log": "check-1789264013982505111.log"
+    },
+    {
+      "command": [
+        "python",
+        "-m",
+        "pytest",
+        "-q",
+        "-s",
+        "-c",
+        "pyproject.toml",
+        "review_r3_diagnostic_probe.py",
+        "-k",
+        "both"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 2.41,
+      "peak_tree_rss_bytes": 111026176,
+      "stopped": null,
+      "log": "check-1789264035222055978.log"
+    }
+  ],
+  "baseline_comparison_log": "check-1789264035222055978.log",
+  "baseline_comparison_workdir": "/tmp/scid-review-r2-before-ylaef485",
+  "test_path_failure_log": "check-1789263960976817420.log",
+  "tcad_log_topic": "terminal debug logs readable; active progress absent; debug timestamps omitted; runtime-author log media mismatch",
+  "log_media_probe_limit": "synthetic prior project unqualified; exact solver_log port positive/negative control and Root negative, not full author handoff",
+  "peak_tree_rss_bytes": 130916352,
+  "memory_limit_bytes": 536870912,
+  "resource_limit_stops": [],
+  "diff_check": "passed",
+  "deployment_changed": false,
+  "live_solver_or_vm_test": false,
+  "full_suite_run": false
+}

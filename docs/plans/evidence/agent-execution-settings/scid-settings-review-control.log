@@ -1,0 +1,4 @@
+restore fault: test: before database switch
+index state: restoring
+database instance state: closed
+rollback: archived

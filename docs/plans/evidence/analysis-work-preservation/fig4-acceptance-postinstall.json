@@ -1,0 +1,87 @@
+{
+  "observed_at": "2026-09-12T08:14:11.530259+00:00",
+  "installed_files": [
+    {
+      "source": "plugins/curve_score/curve_score/science_operations.py",
+      "candidate_sha256": "be3b6108ee619359e88f4da37bee050155a2eb7608fdccf803bddb98ef20f7c8",
+      "installed_sha256": "be3b6108ee619359e88f4da37bee050155a2eb7608fdccf803bddb98ef20f7c8",
+      "matches": true
+    },
+    {
+      "source": "plugins/curve_score/curve_score/analysis_files.py",
+      "candidate_sha256": "d08f4193dcdbe3f58ec3f7b76e4660752f86e4be0d951aba076ceb078fd86232",
+      "installed_sha256": "d08f4193dcdbe3f58ec3f7b76e4660752f86e4be0d951aba076ceb078fd86232",
+      "matches": true
+    },
+    {
+      "source": "plugins/tcad_artifact/tcad_artifact/result_analysis.py",
+      "candidate_sha256": "aa15f7c0be6b0767b40c1595525b3a251eedbb7aebedd259fe101dea72fa6fd7",
+      "installed_sha256": "aa15f7c0be6b0767b40c1595525b3a251eedbb7aebedd259fe101dea72fa6fd7",
+      "matches": true
+    },
+    {
+      "source": "src/scidiscovery/artifact_agent/service/runs.py",
+      "candidate_sha256": "c2ffd3ea786c7b4e9228636a2dc61e57b6fece208aba0344e50e493fbfd68a4c",
+      "installed_sha256": "c2ffd3ea786c7b4e9228636a2dc61e57b6fece208aba0344e50e493fbfd68a4c",
+      "matches": true
+    },
+    {
+      "source": "src/scidiscovery/artifact_agent/service/run_assignment.py",
+      "candidate_sha256": "562e34698edbb4b60b0b7afbd3b2b27f401f77e13a06323ba180b15d4029b623",
+      "installed_sha256": "562e34698edbb4b60b0b7afbd3b2b27f401f77e13a06323ba180b15d4029b623",
+      "matches": true
+    },
+    {
+      "source": "src/scidiscovery/artifact_agent/service/local_workspace.py",
+      "candidate_sha256": "180f531c5c664432b36c44331fcf33cb0940e0de0acbb85b59458b66e2bdb8aa",
+      "installed_sha256": "180f531c5c664432b36c44331fcf33cb0940e0de0acbb85b59458b66e2bdb8aa",
+      "matches": true
+    },
+    {
+      "source": "src/scidiscovery/artifact_agent/service/tool_evidence.py",
+      "candidate_sha256": "9cb071185dc512be6a70406641e282f7512e4160a0dc31e3ea76f820cb13022c",
+      "installed_sha256": "9cb071185dc512be6a70406641e282f7512e4160a0dc31e3ea76f820cb13022c",
+      "matches": true
+    },
+    {
+      "source": "src/scidiscovery/artifact_agent/interfaces/mcp_root_run_routes.py",
+      "candidate_sha256": "f172201dd70c014def7f883783b2d6776231d401f0028f0047463abb76c2ad2f",
+      "installed_sha256": "f172201dd70c014def7f883783b2d6776231d401f0028f0047463abb76c2ad2f",
+      "matches": true
+    },
+    {
+      "source": "src/scidiscovery/artifact_agent/interfaces/mcp_root_instance_routes.py",
+      "candidate_sha256": "5d11b850a5c7961ebd7ab50709ab4d82b5aec2378af96022eae0887c3659e06c",
+      "installed_sha256": "5d11b850a5c7961ebd7ab50709ab4d82b5aec2378af96022eae0887c3659e06c",
+      "matches": true
+    },
+    {
+      "source": "src/scidiscovery/artifact_agent/schema/layered_diagnosis.py",
+      "candidate_sha256": "64bfe7cd0aeb94c806523c2731f0b180298787cc9b1431a1f1b49d25338a1f38",
+      "installed_sha256": "64bfe7cd0aeb94c806523c2731f0b180298787cc9b1431a1f1b49d25338a1f38",
+      "matches": true
+    },
+    {
+      "source": "src/scidiscovery/operations/invoke.py",
+      "candidate_sha256": "6571ce8de806980cabd4926cee04fd3e5121511a042ff6b23533d49112965521",
+      "installed_sha256": "6571ce8de806980cabd4926cee04fd3e5121511a042ff6b23533d49112965521",
+      "matches": true
+    },
+    {
+      "source": "plugins/curve_score/curve_score/analysis_workspace.py",
+      "candidate_sha256": "2a7d82b1c51b3b3e483496982dc3cefcdc4a26237baad70479ab2c0f58c05f2d",
+      "installed_sha256": "2a7d82b1c51b3b3e483496982dc3cefcdc4a26237baad70479ab2c0f58c05f2d",
+      "matches": true
+    },
+    {
+      "source": "src/scidiscovery/artifact_agent/service/local_process_observation.py",
+      "candidate_sha256": "3841298e0566ad72d2d78e8ef333a6a9fccba05a54076f4d01c70c8b01563af4",
+      "installed_sha256": "3841298e0566ad72d2d78e8ef333a6a9fccba05a54076f4d01c70c8b01563af4",
+      "matches": true
+    }
+  ],
+  "all_match": true,
+  "instance_current": "unbound",
+  "science_run_started": false,
+  "scope": "Installed file comparison only; loaded catalog and real Fig.4 continuation remain to be verified after UI binding."
+}

@@ -1,1 +1,1 @@
-{"arguments":["--config","/etc/scidiscovery/tcad-transport.json"],"environment":{},"executable":"/usr/local/bin/scidiscovery-tcad-transport","operation_timeout_seconds":30}
+{"arguments":["--config","/etc/scidiscovery/tcad-transport.json"],"environment":{},"executable":"/usr/local/bin/scidiscovery-tcad-transport","operation_timeout_seconds":30,"query_timeout_seconds":5.0}

@@ -1,0 +1,21 @@
+{
+  "command": [
+    "python",
+    "docs/plans/evidence/instance-workbench/final_source_check.py"
+  ],
+  "exit_code": 0,
+  "stop_reason": null,
+  "duration_seconds": 0.404,
+  "peak_tree_rss_mib": 28.48,
+  "budget_mib": 512,
+  "peak_processes": [
+    {
+      "name": "python",
+      "rss_mib": 23.4
+    },
+    {
+      "name": "git",
+      "rss_mib": 5.08
+    }
+  ]
+}

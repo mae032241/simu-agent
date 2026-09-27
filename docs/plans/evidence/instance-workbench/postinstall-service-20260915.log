@@ -1,0 +1,5 @@
+Traceback (most recent call last):
+  File "/tmp/scid_workbench_postinstall_20260915.py", line 41, in <module>
+    providers = sorted({'group': ep.group, 'name': ep.name, 'value': ep.value}
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: '<' not supported between instances of 'dict' and 'dict'

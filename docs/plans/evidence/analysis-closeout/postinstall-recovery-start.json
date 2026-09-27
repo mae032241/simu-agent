@@ -1,0 +1,1024 @@
+{
+  "instance": {
+    "closed_at": null,
+    "created_at": "2026-09-02T23:51:07.737872Z",
+    "name": "M7-test0",
+    "objective": "仅依据 inputs/papers/123103_1_5.0242861.pdf 中可定位的证据，提取目标曲线和器件条件，提出可证伪假设，设计最小 TCAD\r\n    实验，在已启动虚拟机中运行真实 Sentaurus，将仿真与论文实验曲线定量比较，并经独立审查给出结论或下一轮修订；不得引入论文未\r\n    包含的 800°C、900°C 曲线或未经证实的参数。",
+    "state": "active",
+    "title": "M7 完整科学闭环：InGaAs/InAlAs Fig.4 TCAD 复现实验 "
+  },
+  "request": {
+    "name": "fig4_recovery_consistency_verification_1",
+    "operation_id": "tcad.result.analyze.v1",
+    "draft_from": "fig4_morphology_closure_1",
+    "max_attempts": 5,
+    "inputs": [
+      {
+        "artifact_names": [
+          "fig4_continuation_execution_1.result"
+        ],
+        "port": "execution_result"
+      },
+      {
+        "artifact_names": [
+          "fig4_continuation_execution_analysis_3.output.recovery_manifest"
+        ],
+        "port": "recovery_manifest"
+      },
+      {
+        "artifact_names": [
+          "fig4_morphology_closure_2.output"
+        ],
+        "port": "prior_analysis"
+      },
+      {
+        "artifact_names": [
+          "fig4_morphology_closure_2.output.recovery_manifest"
+        ],
+        "port": "prior_analysis_manifest"
+      },
+      {
+        "artifact_names": [
+          "fig4_continuation_experiment_plan_3"
+        ],
+        "port": "experiment_plan"
+      },
+      {
+        "artifact_names": [
+          "fig4_continuation_experiment_review_6.output"
+        ],
+        "port": "experiment_review"
+      },
+      {
+        "artifact_names": [
+          "fig4_continuation_reviewed_package_2"
+        ],
+        "port": "reviewed_package"
+      },
+      {
+        "artifact_names": [
+          "fig4_continuation_execution_1.output.tcad_manifest"
+        ],
+        "port": "runtime_manifest"
+      },
+      {
+        "artifact_names": [
+          "fig4_continuation_execution_1.output.solver_log",
+          "fig4_continuation_execution_1.output.fig4_al_own_anchor_primary_plx",
+          "fig4_continuation_execution_analysis_3.output.tool_evidence_008",
+          "fig4_continuation_execution_analysis_3.output.tool_evidence_010",
+          "fig4_continuation_execution_analysis_3.output.tool_evidence_011"
+        ],
+        "port": "solver_outputs"
+      },
+      {
+        "artifact_names": [
+          "fig4_continuation_execution_1.output.tcad_log"
+        ],
+        "port": "diagnostics"
+      },
+      {
+        "artifact_names": [
+          "fig4_continuation_figure_materialized_1.curve_tables_001",
+          "fig4_continuation_figure_materialized_1.curve_tables_002",
+          "fig4_continuation_figure_materialized_1.source_panels",
+          "fig4_curve_diagnostic_verification_1.output",
+          "fig4_morphology_closure_2.output.tool_evidence_030",
+          "fig4_morphology_closure_2.output.tool_evidence_031",
+          "fig4_morphology_closure_2.output.tool_evidence_032",
+          "fig4_morphology_closure_2.output.tool_evidence_036"
+        ],
+        "port": "reference_material"
+      },
+      {
+        "artifact_names": [
+          "fig4_continuation_objective_2",
+          "fig4_morphology_objective_revision_4.output",
+          "fig4_morphology_objective_review_2.output",
+          "fig4_uncertainty_diagnosis_1.output"
+        ],
+        "port": "current_progress"
+      }
+    ],
+    "instruction": "本轮是安装修复后的有限恢复与结果一致性分析。总体目标、原执行身份、已审回顾性方法、既往完成结果和最新诊断均以显式绑定记录为准。先读简明入口与恢复覆盖/证据采用情况，再按需要查原件。当前最小目标：核对可恢复的阶段工作与已封存形貌成果是否一致，判断恢复中的遗漏或差异是否影响已有科学结论，并给出有依据的有限结论；具体检查对象和必要方法由你根据材料选择。直接使用控制生成的可编辑 scratch 副本，若要改代码只改这个新副本。优先复用现有脚本和已保存数值，只做完成一致性核对所需的小量计算或局部汇总；不要重跑已封存拟合、数字化角点、此前曲线诊断或求解器。旧草稿是工作材料，不自动成为本轮科学证据；未采用的收据不要求补造，使用当前已绑定证据支撑结论，有影响的缺口明确说明。最新封存曲线诊断放在 reference_material，既往总体形貌报告为 prior_analysis。工具是否有必要由你判断，允许不用评分工具而提交有限分析。使用工作区给出的 launcher 执行准备、读取和小量核对，注意 command 模式工作目录是 workspace，Python 脚本模式工作目录是 scratch；检查实际可用依赖，数值先保存，绘图只读已保存数字。计算串行，遵守现有内存和单 Run 截止；本轮优先在约5分钟内交付，至少预留180秒用于发布与提交，单项新计算控制在30秒以内。若工作量不符该范围，停止扩算并交付有限结论。利用既有发布机制保留实际采用的脚本、核对结果及必要工程记录；记录恢复覆盖、是否有权限/路径返工、已完成计算是否重做及真实错误，只记录实际发生的事实，不制造错误或为工程验收增加科学填写负担。机械案例和来源字段优先复用当前控制投影。最终按正式输出合同封存，保留原执行状态和所有未解决研究目标，不把恢复成功等同科学目标成功。"
+  },
+  "preflight": {
+    "admissible": true,
+    "executor_kind": "agent",
+    "port": null,
+    "reason_code": null
+  },
+  "invoke": {
+    "executor_kind": "agent",
+    "operation_id": "tcad.result.analyze.v1",
+    "result": {
+      "agent_type": "op_tcad_result_analyze_v1_0f00eab1da3e",
+      "backend": "local_trusted",
+      "bound_inputs": [
+        {
+          "artifact_names": [
+            "fig4_continuation_execution_1.result"
+          ],
+          "port": "execution_result"
+        },
+        {
+          "artifact_names": [
+            "fig4_continuation_execution_analysis_3.output.recovery_manifest"
+          ],
+          "port": "recovery_manifest"
+        },
+        {
+          "artifact_names": [
+            "fig4_morphology_closure_2.output"
+          ],
+          "port": "prior_analysis"
+        },
+        {
+          "artifact_names": [
+            "fig4_morphology_closure_2.output.recovery_manifest"
+          ],
+          "port": "prior_analysis_manifest"
+        },
+        {
+          "artifact_names": [
+            "fig4_continuation_experiment_plan_3"
+          ],
+          "port": "experiment_plan"
+        },
+        {
+          "artifact_names": [
+            "fig4_continuation_experiment_review_6.output"
+          ],
+          "port": "experiment_review"
+        },
+        {
+          "artifact_names": [
+            "fig4_continuation_reviewed_package_2"
+          ],
+          "port": "reviewed_package"
+        },
+        {
+          "artifact_names": [
+            "fig4_continuation_execution_1.output.tcad_manifest"
+          ],
+          "port": "runtime_manifest"
+        },
+        {
+          "artifact_names": [
+            "fig4_continuation_execution_1.output.solver_log",
+            "fig4_continuation_execution_1.output.fig4_al_own_anchor_primary_plx",
+            "fig4_continuation_execution_analysis_3.output.tool_evidence_008",
+            "fig4_continuation_execution_analysis_3.output.tool_evidence_010",
+            "fig4_continuation_execution_analysis_3.output.tool_evidence_011"
+          ],
+          "port": "solver_outputs"
+        },
+        {
+          "artifact_names": [
+            "fig4_continuation_execution_1.output.tcad_log"
+          ],
+          "port": "diagnostics"
+        },
+        {
+          "artifact_names": [
+            "fig4_continuation_figure_materialized_1.curve_tables_001",
+            "fig4_continuation_figure_materialized_1.curve_tables_002",
+            "fig4_continuation_figure_materialized_1.source_panels",
+            "fig4_curve_diagnostic_verification_1.output",
+            "fig4_morphology_closure_2.output.tool_evidence_030",
+            "fig4_morphology_closure_2.output.tool_evidence_031",
+            "fig4_morphology_closure_2.output.tool_evidence_032",
+            "fig4_morphology_closure_2.output.tool_evidence_036"
+          ],
+          "port": "reference_material"
+        },
+        {
+          "artifact_names": [
+            "fig4_continuation_objective_2",
+            "fig4_morphology_objective_revision_4.output",
+            "fig4_morphology_objective_review_2.output",
+            "fig4_uncertainty_diagnosis_1.output"
+          ],
+          "port": "current_progress"
+        }
+      ],
+      "candidate_accepted": false,
+      "completed_at": null,
+      "created_at": "2026-09-12T14:26:13.951015Z",
+      "deadline_at": "2026-09-12T14:41:13.951015Z",
+      "diagnostic_summary": {
+        "failure": null,
+        "latest_native_error": null,
+        "latest_rejection": null,
+        "latest_tool_error": null,
+        "native_coverage": "unobserved",
+        "recent_errors": [],
+        "rejection_count": 0
+      },
+      "draft_from": "fig4_morphology_closure_1",
+      "head_advance": null,
+      "last_activity_at": null,
+      "logical_name": "fig4_recovery_consistency_verification_1",
+      "name": "fig4_recovery_consistency_verification_1",
+      "native_execution": {
+        "coverage": "unobserved",
+        "scientific_evidence": false
+      },
+      "operation_id": "tcad.result.analyze.v1",
+      "output_artifact_name": null,
+      "reason": null,
+      "recovery": {
+        "attempt_budget": {
+          "limit": 5,
+          "used": 5
+        },
+        "delivery_preserved": false,
+        "draft_available": false,
+        "recovery_pending": false,
+        "resume_available": false,
+        "tool_evidence": {
+          "adopted_count": 0,
+          "not_adopted_record_indices": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5
+          ],
+          "note": "Unadopted receipts remain in the original recovery manifest; draft files are not current scientific evidence.",
+          "preserved_count": 6
+        }
+      },
+      "recovery_available": false,
+      "revision": 1,
+      "scheduler_signal": null,
+      "scheduler_signal_status": "unavailable",
+      "sealed_output": null,
+      "sealed_output_status": "unavailable",
+      "started_at": null,
+      "state": "queued"
+    }
+  },
+  "recovery_source": {
+    "agent_type": "op_tcad_result_analyze_v1_c9f9f2f0d9ea",
+    "backend": "local_trusted",
+    "bound_inputs": [
+      {
+        "artifact_names": [
+          "fig4_continuation_execution_1.result"
+        ],
+        "port": "execution_result"
+      },
+      {
+        "artifact_names": [
+          "fig4_continuation_execution_analysis_3.output.recovery_manifest"
+        ],
+        "port": "recovery_manifest"
+      },
+      {
+        "artifact_names": [
+          "fig4_morphology_analysis_2.output"
+        ],
+        "port": "prior_analysis"
+      },
+      {
+        "artifact_names": [
+          "fig4_morphology_analysis_2.output.recovery_manifest"
+        ],
+        "port": "prior_analysis_manifest"
+      },
+      {
+        "artifact_names": [
+          "fig4_continuation_experiment_plan_3"
+        ],
+        "port": "experiment_plan"
+      },
+      {
+        "artifact_names": [
+          "fig4_continuation_experiment_review_6.output"
+        ],
+        "port": "experiment_review"
+      },
+      {
+        "artifact_names": [
+          "fig4_continuation_reviewed_package_2"
+        ],
+        "port": "reviewed_package"
+      },
+      {
+        "artifact_names": [
+          "fig4_continuation_execution_1.output.tcad_manifest"
+        ],
+        "port": "runtime_manifest"
+      },
+      {
+        "artifact_names": [
+          "fig4_continuation_execution_1.output.solver_log",
+          "fig4_continuation_execution_1.output.fig4_al_own_anchor_primary_plx",
+          "fig4_continuation_execution_analysis_3.output.tool_evidence_007",
+          "fig4_continuation_execution_analysis_3.output.tool_evidence_008",
+          "fig4_continuation_execution_analysis_3.output.tool_evidence_009",
+          "fig4_continuation_execution_analysis_3.output.tool_evidence_010",
+          "fig4_continuation_execution_analysis_3.output.tool_evidence_011",
+          "fig4_continuation_execution_analysis_3.output.tool_evidence_012",
+          "fig4_continuation_execution_analysis_3.output.tool_evidence_018",
+          "fig4_continuation_execution_analysis_3.output.tool_evidence_019",
+          "fig4_continuation_execution_analysis_3.output.tool_evidence_020",
+          "fig4_continuation_execution_analysis_3.output.tool_evidence_021",
+          "fig4_continuation_execution_analysis_3.output.tool_evidence_022"
+        ],
+        "port": "solver_outputs"
+      },
+      {
+        "artifact_names": [
+          "fig4_continuation_execution_1.output.tcad_log"
+        ],
+        "port": "diagnostics"
+      },
+      {
+        "artifact_names": [
+          "fig4_continuation_reference_bundle_1",
+          "fig4_continuation_figure_materialized_1.curve_tables_001",
+          "fig4_continuation_figure_materialized_1.curve_tables_002",
+          "fig4_continuation_figure_materialized_1.source_panels",
+          "fig4_morphology_analysis_2.output.tool_evidence_023",
+          "fig4_morphology_analysis_2.output.tool_evidence_024",
+          "fig4_morphology_analysis_2.output.tool_evidence_025",
+          "fig4_morphology_analysis_2.output.tool_evidence_026"
+        ],
+        "port": "reference_material"
+      },
+      {
+        "artifact_names": [
+          "fig4_continuation_objective_2",
+          "fig4_morphology_objective_revision_4.output",
+          "fig4_morphology_objective_review_2.output",
+          "fig4_continuation_execution_analysis_recovery_complete_1.output"
+        ],
+        "port": "current_progress"
+      }
+    ],
+    "candidate_accepted": false,
+    "completed_at": "2026-09-12T08:31:25.270940Z",
+    "created_at": "2026-09-12T08:16:03.005919Z",
+    "deadline_at": "2026-09-12T08:31:03.005919Z",
+    "diagnostic_summary": {
+      "failure": {
+        "category": "run_timeout",
+        "code": "run_timeout",
+        "repairable_by_output": false
+      },
+      "latest_native_error": {
+        "budget_source": "run_deadline",
+        "cancelled": false,
+        "effective_timeout_seconds": 26.198752880096436,
+        "elapsed_seconds": 0.01986110399593599,
+        "ended_at": "2026-09-12T08:29:01.827063+00:00",
+        "error_type": null,
+        "exit_code": 1,
+        "first_started_at": null,
+        "logs_truncated": false,
+        "peak_rss_kib": 11556,
+        "process_group_stopped": true,
+        "reason": null,
+        "started_at": "2026-09-12T08:29:01.807222+00:00",
+        "state": "finished",
+        "stderr_log": null,
+        "stdout_log": null,
+        "timed_out": false
+      },
+      "latest_rejection": null,
+      "latest_tool_error": null,
+      "native_coverage": "local_launcher",
+      "recent_errors": [
+        {
+          "category": "run_timeout",
+          "code": "run_timeout",
+          "repairable_by_output": false
+        }
+      ],
+      "rejection_count": 0
+    },
+    "draft_from": "fig4_morphology_analysis_3",
+    "head_advance": null,
+    "last_activity_at": "2026-09-12T08:29:57.466916Z",
+    "logical_name": "fig4_morphology_closure_1",
+    "name": "fig4_morphology_closure_1",
+    "native_execution": {
+      "attempt_count": 0,
+      "budget_source": "run_deadline",
+      "cancelled": false,
+      "coverage": "local_launcher",
+      "effective_timeout_seconds": 26.198752880096436,
+      "elapsed_seconds": 0.01986110399593599,
+      "ended_at": "2026-09-12T08:29:01.827063+00:00",
+      "error_count": 1,
+      "error_type": null,
+      "exit_code": 1,
+      "first_started_at": null,
+      "logs_truncated": false,
+      "peak_rss_kib": 11556,
+      "process_group_stopped": true,
+      "reason": null,
+      "recent_errors": [
+        {
+          "budget_source": "run_deadline",
+          "cancelled": false,
+          "effective_timeout_seconds": 26.198752880096436,
+          "elapsed_seconds": 0.01986110399593599,
+          "ended_at": "2026-09-12T08:29:01.827063+00:00",
+          "error_type": null,
+          "exit_code": 1,
+          "first_started_at": null,
+          "logs_truncated": false,
+          "peak_rss_kib": 11556,
+          "process_group_stopped": true,
+          "reason": null,
+          "started_at": "2026-09-12T08:29:01.807222+00:00",
+          "state": "finished",
+          "stderr_log": null,
+          "stdout_log": null,
+          "timed_out": false
+        }
+      ],
+      "scientific_evidence": false,
+      "started_at": "2026-09-12T08:29:01.807222+00:00",
+      "state": "finished",
+      "stderr_log": null,
+      "stdout_log": null,
+      "timed_out": false,
+      "total_stderr_bytes": 0,
+      "total_stdout_bytes": 0
+    },
+    "operation_id": "tcad.result.analyze.v1",
+    "output_artifact_name": null,
+    "reason": "The absolute Run deadline passed before a sealed submission. Root observed native launcher activity and a final short native script exit_code=1 without subprocess timeout; no output rejection or controlled tool error was reported. Preserve the analysis workspace and all saved numerical units and logs for bounded continuation. The exact native exception and delivered coverage still require the controlled recovery record; do not infer scientific failure or redo completed calculations.",
+    "recovery": {
+      "attempt_budget": {
+        "limit": 2,
+        "used": 4
+      },
+      "coverage": {
+        "complete": false,
+        "format": "analysis-work-v1",
+        "normalized_count": 12,
+        "omitted": [
+          {
+            "reason": "unsupported_type",
+            "relative_path": "scratch/.analysis-process/07304a37bc4b4e819fe974c920881703.stderr.raw"
+          },
+          {
+            "reason": "unsupported_type",
+            "relative_path": "scratch/.analysis-process/07304a37bc4b4e819fe974c920881703.stdout.raw"
+          },
+          {
+            "reason": "unsupported_type",
+            "relative_path": "scratch/.analysis-process/3a63107349214015a9157e39741f4647.stderr.raw"
+          },
+          {
+            "reason": "unsupported_type",
+            "relative_path": "scratch/.analysis-process/3a63107349214015a9157e39741f4647.stdout.raw"
+          },
+          {
+            "reason": "unsupported_type",
+            "relative_path": "scratch/.analysis-process/4b8ba008529c43b78be601c7d9097416.stderr.raw"
+          },
+          {
+            "reason": "unsupported_type",
+            "relative_path": "scratch/.analysis-process/4b8ba008529c43b78be601c7d9097416.stdout.raw"
+          },
+          {
+            "reason": "unsupported_type",
+            "relative_path": "scratch/.analysis-process/a259b220aa054f6fa34e3f79d69cc91d.stderr.raw"
+          },
+          {
+            "reason": "unsupported_type",
+            "relative_path": "scratch/.analysis-process/a259b220aa054f6fa34e3f79d69cc91d.stdout.raw"
+          },
+          {
+            "reason": "unsupported_type",
+            "relative_path": "scratch/.analysis-process/df055146feda44149895f9bb3f131b3e.stderr.raw"
+          },
+          {
+            "reason": "unsupported_type",
+            "relative_path": "scratch/.analysis-process/df055146feda44149895f9bb3f131b3e.stdout.raw"
+          },
+          {
+            "reason": "unsupported_type",
+            "relative_path": "scratch/.analysis-process/e3e44f21f63745f693fe60f153eecf60.stderr.raw"
+          },
+          {
+            "reason": "unsupported_type",
+            "relative_path": "scratch/.analysis-process/e3e44f21f63745f693fe60f153eecf60.stdout.raw"
+          },
+          {
+            "reason": "unsupported_type",
+            "relative_path": "scratch/.analysis-process/fc44c57d3b5347a0a8a195c3da98c10f.stderr.raw"
+          },
+          {
+            "reason": "unsupported_type",
+            "relative_path": "scratch/.analysis-process/fc44c57d3b5347a0a8a195c3da98c10f.stdout.raw"
+          },
+          {
+            "reason": "unsupported_type",
+            "relative_path": "scratch/.analysis-process/lock"
+          },
+          {
+            "reason": "unsupported_type",
+            "relative_path": "scratch/.analysis-process/stop"
+          }
+        ],
+        "omitted_count": 16,
+        "original_retained": true,
+        "saved_by_scope": {
+          "output": 2,
+          "scratch": 75
+        },
+        "saved_bytes": 359844,
+        "saved_count": 77,
+        "scope": [
+          "output",
+          "scratch"
+        ],
+        "writers_stopped": "unknown"
+      },
+      "delivery_preserved": true,
+      "draft_available": false,
+      "original_retained": true,
+      "recovery_pending": true,
+      "resume_available": false,
+      "tool_evidence": {
+        "adopted_count": 0,
+        "not_adopted_record_indices": [],
+        "note": "Unadopted receipts remain in the original recovery manifest; draft files are not current scientific evidence.",
+        "preserved_count": 0
+      }
+    },
+    "recovery_available": false,
+    "revision": 1,
+    "scheduler_signal": null,
+    "scheduler_signal_status": "unavailable",
+    "sealed_output": null,
+    "sealed_output_status": "unavailable",
+    "started_at": "2026-09-12T08:16:31.829386Z",
+    "state": "failed"
+  },
+  "previous_open_failure": {
+    "agent_type": "op_tcad_result_analyze_v1_e9b8e0695619",
+    "backend": "local_trusted",
+    "bound_inputs": [
+      {
+        "artifact_names": [
+          "fig4_continuation_execution_1.result"
+        ],
+        "port": "execution_result"
+      },
+      {
+        "artifact_names": [
+          "fig4_continuation_execution_analysis_3.output.recovery_manifest"
+        ],
+        "port": "recovery_manifest"
+      },
+      {
+        "artifact_names": [
+          "fig4_morphology_closure_2.output"
+        ],
+        "port": "prior_analysis"
+      },
+      {
+        "artifact_names": [
+          "fig4_morphology_closure_2.output.recovery_manifest"
+        ],
+        "port": "prior_analysis_manifest"
+      },
+      {
+        "artifact_names": [
+          "fig4_continuation_experiment_plan_3"
+        ],
+        "port": "experiment_plan"
+      },
+      {
+        "artifact_names": [
+          "fig4_continuation_experiment_review_6.output"
+        ],
+        "port": "experiment_review"
+      },
+      {
+        "artifact_names": [
+          "fig4_continuation_reviewed_package_2"
+        ],
+        "port": "reviewed_package"
+      },
+      {
+        "artifact_names": [
+          "fig4_continuation_execution_1.output.tcad_manifest"
+        ],
+        "port": "runtime_manifest"
+      },
+      {
+        "artifact_names": [
+          "fig4_continuation_execution_1.output.solver_log",
+          "fig4_continuation_execution_1.output.fig4_al_own_anchor_primary_plx",
+          "fig4_continuation_execution_analysis_3.output.tool_evidence_008",
+          "fig4_continuation_execution_analysis_3.output.tool_evidence_010",
+          "fig4_continuation_execution_analysis_3.output.tool_evidence_011"
+        ],
+        "port": "solver_outputs"
+      },
+      {
+        "artifact_names": [
+          "fig4_continuation_execution_1.output.tcad_log"
+        ],
+        "port": "diagnostics"
+      },
+      {
+        "artifact_names": [
+          "fig4_continuation_figure_materialized_1.curve_tables_001",
+          "fig4_continuation_figure_materialized_1.curve_tables_002",
+          "fig4_continuation_figure_materialized_1.source_panels",
+          "fig4_morphology_closure_2.output.tool_evidence_029",
+          "fig4_morphology_closure_2.output.tool_evidence_030",
+          "fig4_morphology_closure_2.output.tool_evidence_031",
+          "fig4_morphology_closure_2.output.tool_evidence_032",
+          "fig4_morphology_closure_2.output.tool_evidence_036"
+        ],
+        "port": "reference_material"
+      },
+      {
+        "artifact_names": [
+          "fig4_continuation_objective_2",
+          "fig4_morphology_objective_revision_4.output",
+          "fig4_morphology_objective_review_2.output",
+          "fig4_uncertainty_diagnosis_1.output"
+        ],
+        "port": "current_progress"
+      }
+    ],
+    "candidate_accepted": false,
+    "completed_at": "2026-09-12T12:02:29.609603Z",
+    "created_at": "2026-09-12T12:01:52.319224Z",
+    "deadline_at": "2026-09-12T12:16:52.319224Z",
+    "diagnostic_summary": {
+      "failure": {
+        "category": "integrity_failure",
+        "code": "integrity_failure",
+        "repairable_by_output": false
+      },
+      "latest_native_error": null,
+      "latest_rejection": null,
+      "latest_tool_error": null,
+      "native_coverage": "unobserved",
+      "recent_errors": [
+        {
+          "category": "integrity_failure",
+          "code": "integrity_failure",
+          "repairable_by_output": false
+        }
+      ],
+      "rejection_count": 0
+    },
+    "draft_from": "fig4_morphology_closure_1",
+    "head_advance": null,
+    "last_activity_at": "2026-09-12T12:02:29.531284Z",
+    "logical_name": "fig4_curve_diagnostic_continuation_1",
+    "name": "fig4_curve_diagnostic_continuation_1",
+    "native_execution": {
+      "coverage": "unobserved",
+      "scientific_evidence": false
+    },
+    "operation_id": "tcad.result.analyze.v1",
+    "output_artifact_name": null,
+    "reason": "preserved tool evidence cannot be opened: preserved evidence receipt differs from its origin",
+    "recovery": {
+      "attempt_budget": {
+        "limit": 4,
+        "used": 4
+      },
+      "coverage": {
+        "complete": false,
+        "format": "analysis-work-v1",
+        "normalized_count": 0,
+        "omitted": [
+          {
+            "reason": "unsupported_type",
+            "relative_path": "scratch/.analysis-process/stop"
+          }
+        ],
+        "omitted_count": 1,
+        "original_retained": true,
+        "saved_by_scope": {
+          "output": 1,
+          "scratch": 56
+        },
+        "saved_bytes": 327538,
+        "saved_count": 57,
+        "scope": [
+          "output",
+          "scratch"
+        ],
+        "writers_stopped": "unknown"
+      },
+      "delivery_preserved": true,
+      "draft_available": false,
+      "original_retained": true,
+      "recovery_pending": true,
+      "resume_available": false,
+      "tool_evidence": {
+        "adopted_count": 0,
+        "not_adopted_record_indices": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "note": "Unadopted receipts remain in the original recovery manifest; draft files are not current scientific evidence.",
+        "preserved_count": 6
+      }
+    },
+    "recovery_available": false,
+    "revision": 1,
+    "scheduler_signal": null,
+    "scheduler_signal_status": "unavailable",
+    "sealed_output": null,
+    "sealed_output_status": "unavailable",
+    "started_at": "2026-09-12T12:02:29.531284Z",
+    "state": "failed"
+  },
+  "selected_operation": {
+    "accepts_actions": [],
+    "applies_when": "An exact reviewed plan, package and terminal execution manifest exist, including failed runs.",
+    "catalog_scope": "public",
+    "complete_transform_family": null,
+    "consequence": "scientific",
+    "default_max_attempts": 2,
+    "executor_kind": "agent",
+    "input_admission": null,
+    "input_validation": {
+      "description": "Before creating a Run, bind a structurally valid historical plan and its exact completed science.object.review.v1 scientific_review output, with matching plan parent and passing experiment_portfolio verdict; history grants no current authoring or execution authority. Original solver outputs must match manifest names/media/bytes and declared project paths/cases. Recovered solver outputs instead require the explicitly bound sealed recovery_manifest and execution_result, with exact receipt membership, original execution/project, declared output/case, actual path and byte identity. Same-Run registered tool evidence is admitted by the tool, not by submission. Bind the additional controlled tcad_log to diagnostics, not solver_outputs; diagnostics must share the exact execution lineage. Missing execution products permit limited analysis.",
+      "optional_inputs": [
+        "execution_result",
+        "recovery_manifest",
+        "prior_analysis",
+        "prior_analysis_manifest",
+        "runtime_attestation",
+        "solver_outputs",
+        "diagnostics",
+        "reference_material",
+        "current_progress"
+      ],
+      "phase": "input_admission",
+      "required_inputs": [
+        "experiment_plan",
+        "experiment_review",
+        "reviewed_package",
+        "runtime_manifest"
+      ],
+      "rule_id": "tcad.result_analysis.input_binding"
+    },
+    "inputs": [
+      {
+        "description": "Exact bound TCAD analysis execution_result.",
+        "exposure": "full",
+        "max_item_bytes": 2097152,
+        "max_items": 1,
+        "media_types": [
+          "application/json"
+        ],
+        "min_items": 0,
+        "name": "execution_result",
+        "require_current": false,
+        "required_non_null_fields": [],
+        "schema": "scidiscovery.execution-result",
+        "usage": "evidence_inventory"
+      },
+      {
+        "description": "Exact bound TCAD analysis recovery_manifest.",
+        "exposure": "full",
+        "max_item_bytes": 1048576,
+        "max_items": 1,
+        "media_types": [
+          "application/json"
+        ],
+        "min_items": 0,
+        "name": "recovery_manifest",
+        "require_current": false,
+        "required_non_null_fields": [],
+        "schema": "scidiscovery.tool-evidence-manifest.v1",
+        "usage": "evidence_inventory"
+      },
+      {
+        "description": "Optional exact prior analysis. Bind its own same-producer manifest as prior_analysis_manifest, or bind recovery_manifest once when that same manifest proves both roles.",
+        "exposure": "full",
+        "max_item_bytes": 131072,
+        "max_items": 1,
+        "media_types": [
+          "application/json"
+        ],
+        "min_items": 0,
+        "name": "prior_analysis",
+        "require_current": false,
+        "required_non_null_fields": [],
+        "schema": "scidiscovery.layered-diagnosis.v1",
+        "usage": "evidence_inventory"
+      },
+      {
+        "description": "Same-producer direct manifest parent of prior_analysis. A wrong explicit pair is rejected; use recovery_manifest alone when both purposes use the identical artifact. Bind every reused raw source separately.",
+        "exposure": "full",
+        "max_item_bytes": 1048576,
+        "max_items": 1,
+        "media_types": [
+          "application/json"
+        ],
+        "min_items": 0,
+        "name": "prior_analysis_manifest",
+        "require_current": false,
+        "required_non_null_fields": [],
+        "schema": "scidiscovery.tool-evidence-manifest.v1",
+        "usage": "evidence_inventory"
+      },
+      {
+        "description": "Original execution plan: exact parent of reviewed_package. Put newer retrospective analysis plans in current_progress.",
+        "exposure": "full",
+        "max_item_bytes": 2097152,
+        "max_items": 1,
+        "media_types": [
+          "application/json"
+        ],
+        "min_items": 1,
+        "name": "experiment_plan",
+        "require_current": false,
+        "required_non_null_fields": [],
+        "schema": "scidiscovery.experiment-portfolio.v1",
+        "usage": "evidence_inventory"
+      },
+      {
+        "description": "Exact independent passing review of the original experiment_plan used for execution. New analysis-plan reviews belong in current_progress.",
+        "exposure": "on_demand",
+        "max_item_bytes": 65536,
+        "max_items": 1,
+        "media_types": [
+          "application/json"
+        ],
+        "min_items": 1,
+        "name": "experiment_review",
+        "require_current": false,
+        "required_non_null_fields": [],
+        "schema": "scidiscovery.scientific-review.v1",
+        "usage": "evidence_inventory"
+      },
+      {
+        "description": "Exact bound TCAD analysis reviewed_package.",
+        "exposure": "full",
+        "max_item_bytes": 67108864,
+        "max_items": 1,
+        "media_types": [
+          "application/json"
+        ],
+        "min_items": 1,
+        "name": "reviewed_package",
+        "require_current": false,
+        "required_non_null_fields": [],
+        "schema": "tcad.reviewed-deck-package.v2",
+        "usage": "prior_signal"
+      },
+      {
+        "description": "Exact bound TCAD analysis runtime_manifest.",
+        "exposure": "full",
+        "max_item_bytes": 4194304,
+        "max_items": 1,
+        "media_types": [
+          "application/json"
+        ],
+        "min_items": 1,
+        "name": "runtime_manifest",
+        "require_current": false,
+        "required_non_null_fields": [],
+        "schema": "opaque",
+        "usage": "prior_signal"
+      },
+      {
+        "description": "Exact bound TCAD analysis runtime_attestation.",
+        "exposure": "full",
+        "max_item_bytes": 4194304,
+        "max_items": 1,
+        "media_types": [
+          "application/json"
+        ],
+        "min_items": 0,
+        "name": "runtime_attestation",
+        "require_current": false,
+        "required_non_null_fields": [],
+        "schema": "tcad.runtime-attestation.v1",
+        "usage": "prior_signal"
+      },
+      {
+        "description": "Exact bound TCAD analysis solver_outputs.",
+        "exposure": "on_demand",
+        "max_item_bytes": 33554432,
+        "max_items": 32,
+        "media_types": [
+          "*/*"
+        ],
+        "min_items": 0,
+        "name": "solver_outputs",
+        "require_current": false,
+        "required_non_null_fields": [],
+        "schema": "*",
+        "usage": "evidence_inventory"
+      },
+      {
+        "description": "Exact bound TCAD analysis diagnostics.",
+        "exposure": "on_demand",
+        "max_item_bytes": 33554432,
+        "max_items": 1,
+        "media_types": [
+          "*/*"
+        ],
+        "min_items": 0,
+        "name": "diagnostics",
+        "require_current": false,
+        "required_non_null_fields": [],
+        "schema": "*",
+        "usage": "evidence_inventory"
+      },
+      {
+        "description": "Exact bound TCAD analysis reference_material.",
+        "exposure": "on_demand",
+        "max_item_bytes": 16777216,
+        "max_items": 8,
+        "media_types": [
+          "*/*"
+        ],
+        "min_items": 0,
+        "name": "reference_material",
+        "require_current": false,
+        "required_non_null_fields": [],
+        "schema": "*",
+        "usage": "evidence_inventory"
+      },
+      {
+        "description": "Relevant sealed progress, including any newer retrospective analysis plan and its matching review; these do not replace original execution identity.",
+        "exposure": "on_demand",
+        "max_item_bytes": 2097152,
+        "max_items": 4,
+        "media_types": [
+          "*/*"
+        ],
+        "min_items": 0,
+        "name": "current_progress",
+        "require_current": false,
+        "required_non_null_fields": [],
+        "schema": "*",
+        "usage": "evidence_inventory"
+      }
+    ],
+    "max_files": 34,
+    "max_input_bytes": 536870912,
+    "max_network_requests": 0,
+    "max_output_bytes": 269615104,
+    "native_shell": "inherited_prototype",
+    "native_view_image": true,
+    "network_mode": "none",
+    "not_for": "Solver execution, mandatory pre-experiment curve contracts, or changing raw evidence.",
+    "operation_id": "tcad.result.analyze.v1",
+    "optional_runtime_services": [
+      "tcad_artifact:tcad.output_inspection"
+    ],
+    "outputs": [
+      {
+        "description": "Sealed bounded result analysis and optional replayable calculations.",
+        "max_items": 1,
+        "min_items": 1,
+        "name": "layered_diagnosis",
+        "required_non_null_fields": [],
+        "schema": "scidiscovery.layered-diagnosis.v1"
+      },
+      {
+        "description": "Tool-retained original runtime files, calculation records and declared analysis derivatives.",
+        "max_items": 32,
+        "min_items": 0,
+        "name": "tool_evidence",
+        "required_non_null_fields": [],
+        "schema": "opaque"
+      },
+      {
+        "description": "Service-generated immutable evidence receipts and source mappings.",
+        "max_items": 1,
+        "min_items": 0,
+        "name": "recovery_manifest_output",
+        "required_non_null_fields": [],
+        "schema": "scidiscovery.tool-evidence-manifest.v1"
+      }
+    ],
+    "purpose": "Analyze one exact TCAD execution with optional raw-output scoring.",
+    "requires_human_approval": false,
+    "requires_independent_review": false,
+    "review_edge": null,
+    "timeout_seconds": 900,
+    "version": "1"
+  },
+  "authorization_basis": "User requested fixing/verifying the three closeout items, installed/restarted the reviewed patch and confirmed binding. One new bounded recovery Run after inspecting preserved work and used=4; explicit total budget=5. No unchanged full recomputation."
+}

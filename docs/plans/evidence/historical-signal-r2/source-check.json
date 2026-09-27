@@ -1,0 +1,14 @@
+{
+  "ast_and_nul": "pass",
+  "files": {
+    "src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py": "2c6d7b3ed0950b8f786d11be75a0ddc9dfb3a064ac1a6626bbca2306e7020966",
+    "plugins/tcad_artifact/tcad_artifact/result_analysis.py": "fa07f93f4d7e2639985ff598fae498601b18284b98a87fc4c02d40f47eca061d",
+    "plugins/curve_score/curve_score/science_operations.py": "04fec0a40a64a66eb4bfb37735ba038703b1280ec5607e9c2b109ecfa95ef67b",
+    "tests/operations/test_collector_analysis_handoff.py": "3775b29980fa3107fe86b0efd52f94912d4fcf078621d4189c7f5f74306f8998",
+    "tests/operations/test_result_analysis_tool.py": "4d9a3c5c1dfe97a32577e4ab06ac6ccee45e533e16dd38094bc464d654915c9d",
+    "tests/operations/test_historical_compatibility_paths.py": "914c6c7b5983e3e2a0d093c0d8cfdd5a04b517fa8027fa2c3f1e6611133b7bed",
+    "tests/operations/test_m2_parameter_package.py": "0aec0c0ee3f342a1bfe6d17ac45f9af21810f399029955c449889f502d9f50dc",
+    "tests/operations/test_catalog_installed_entrypoint.py": "d517e94d3afce1b6a50005eaf38f956b3a7343718fbbb3dfc9aa90d6bb9c0730",
+    "tests/operations/test_review_admission_integration.py": "7656caa7358f8fe047739b3ecc36e3cb207676b413a63e12e8ce7b461f2fb3e5"
+  }
+}

@@ -10,6 +10,7 @@ dist/
 
 # Generated AI-platform configuration
 .codex/
+/AGENTS.md
 .claude/
 .mcp.json
 CLAUDE.md
@@ -17,6 +18,7 @@ CLAUDE.md
 # Runtime state and local configuration
 .scidiscovery/
 .scidiscovery-state/
+.scidiscovery-archive/
 agent/runtime/
 config/local/
 *.sqlite
@@ -26,6 +28,7 @@ config/local/
 *.pid
 
 # Scientific and simulator outputs are separate from the framework source
+/workspace/
 logs/
 results/
 sentaurus/

@@ -1,0 +1,18 @@
+{
+  "command": [
+    "python",
+    "docs/plans/evidence/instance-workbench/capture_contracts.py",
+    "docs/plans/evidence/instance-workbench/USABILITY_CONTRACTS.json"
+  ],
+  "exit_code": 0,
+  "stop_reason": null,
+  "duration_seconds": 1.117,
+  "peak_tree_rss_mib": 88.59,
+  "budget_mib": 512,
+  "peak_processes": [
+    {
+      "name": "python",
+      "rss_mib": 88.59
+    }
+  ]
+}

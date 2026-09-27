@@ -1,0 +1,28 @@
+{
+  "command": [
+    "python",
+    "-m",
+    "pip",
+    "install",
+    "--disable-pip-version-check",
+    "--no-deps",
+    "--target",
+    "/tmp/scid-content-browser-libs",
+    "websocket-client"
+  ],
+  "exit_code": 0,
+  "stop_reason": null,
+  "duration_seconds": 1.35,
+  "peak_tree_rss_mib": 67.37,
+  "budget_mib": 512,
+  "peak_processes": [
+    {
+      "name": "python",
+      "rss_mib": 43.89
+    },
+    {
+      "name": "rustc",
+      "rss_mib": 23.47
+    }
+  ]
+}

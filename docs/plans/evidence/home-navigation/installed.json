@@ -1,0 +1,34 @@
+{
+  "command": [
+    "python",
+    "docs/plans/evidence/instance-workbench/install_check.py",
+    "home-navigation-installed"
+  ],
+  "exit_code": 0,
+  "stop_reason": null,
+  "duration_seconds": 16.055,
+  "peak_tree_rss_mib": 394.46,
+  "budget_mib": 512,
+  "peak_processes": [
+    {
+      "name": "python",
+      "rss_mib": 108.57
+    },
+    {
+      "name": "python",
+      "rss_mib": 108.09
+    },
+    {
+      "name": "python",
+      "rss_mib": 104.24
+    },
+    {
+      "name": "python",
+      "rss_mib": 47.75
+    },
+    {
+      "name": "python",
+      "rss_mib": 25.81
+    }
+  ]
+}

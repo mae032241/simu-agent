@@ -1,0 +1,17 @@
+{
+  "source": "/home/da/project/ai4s/tcad/git_release/scidiscovery-agent/123/scidiscovery-e5.2",
+  "ABI": "17",
+  "general_component_count": 63,
+  "execution_context_public": true,
+  "hardened_author_requirements": [],
+  "hardened_reviewer_requirements": [
+    "native_shell"
+  ],
+  "actual_root_preflight": {
+    "admissible": false,
+    "reason_code": "operation_runtime_unavailable",
+    "port": null,
+    "executor_kind": null
+  },
+  "created_runs": []
+}

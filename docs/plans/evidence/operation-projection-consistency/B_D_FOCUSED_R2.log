@@ -1,0 +1,278 @@
+..F.F..                                                                  [100%]
+=================================== FAILURES ===================================
+_ test_open_delivers_frozen_contracts_and_same_identity_legacy_fallback[False-hardened] _
+
+self = <scidiscovery.artifact_agent.interfaces.mcp_root.RootToolFacade object at 0x7f63a9d03890>
+values = {'on_conflict': 'reject', 'name': 'contracts', 'operation_id': 'blind.csv.observe.v1', 'inputs': (OperationInputSelection(port='source_table', artifact_names=('source_csv',)),), ...}
+
+    def operation_invoke(self, **values: Any) -> dict[str, Any]:
+        with self._create_lock:
+            try:
+>               bound = self._prepare_operation_call(**values)
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py:193: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <scidiscovery.artifact_agent.interfaces.mcp_root.RootToolFacade object at 0x7f63a9d03890>
+name = 'contracts', operation_id = 'blind.csv.observe.v1'
+inputs = (OperationInputSelection(port='source_table', artifact_names=('source_csv',)),)
+instruction = 'Read the declared contract.', parameters = {}, resume_from = None
+draft_from = None
+
+    def _prepare_operation_call(
+        self,
+        *,
+        name: str,
+        operation_id: str,
+        inputs: tuple[_OperationInputSelection, ...],
+        instruction: str | None,
+        parameters: dict[str, Any],
+        on_conflict: str,
+        resume_from: str | None = None,
+        draft_from: str | None = None,
+    ) -> BoundOperationCall:
+        del on_conflict
+        if resume_from is not None and draft_from is not None:
+            raise OperationInvocationError("recovery_sources_mutually_exclusive")
+        try:
+            compiled = self._operation_catalog.operation(operation_id)
+        except KeyError as error:
+            raise OperationInvocationError("operation_unknown") from error
+        if compiled.spec.catalog_scope == "internal":
+            raise OperationInvocationError("operation_scope_forbidden")
+        review = compiled.spec.review
+        if (
+            compiled.spec.catalog_scope == "public"
+            and review is not None
+            and review.reviewer_operation is not None
+            and not self._scheduler_operation_available(review.reviewer_operation)
+        ):
+>           raise OperationInvocationError("operation_runtime_unavailable")
+E           scidiscovery.operations.input_validation.OperationInvocationError: operation_runtime_unavailable: operation
+
+src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py:1017: OperationInvocationError
+
+The above exception was the direct cause of the following exception:
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-103/test_open_delivers_frozen_cont1')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7f63a99b2c00>
+backend_kind = 'hardened', legacy = False
+
+    @pytest.mark.parametrize('backend_kind', ['local', 'hardened'])
+    @pytest.mark.parametrize('legacy', [False, True])
+    def test_open_delivers_frozen_contracts_and_same_identity_legacy_fallback(tmp_path, monkeypatch, backend_kind, legacy):
+        from scidiscovery.artifact_agent.interfaces.mcp_local_worker import LocalWorkerMCPRouter
+        from scidiscovery.artifact_agent.interfaces.mcp_hardened_worker import HardenedWorkerMCPRouter
+        from scidiscovery.artifact_agent.service import runs as runs_module
+        from scidiscovery.operations.tooling import operation_tool_contracts
+        from tests.operations.test_tcad_result_analysis import analysis_system
+        router_type = LocalWorkerMCPRouter
+        if backend_kind == 'hardened':
+            # TCAD analysis has collection outputs and is Local-only. Exercise the
+            # existing supported file-tool Operation without bypassing that gate.
+            from tests.operations.test_l5_hardened_run_backend import _system
+            catalog, runtime, _, root = _system(tmp_path)
+            request = dict(name='contracts', operation_id='blind.csv.observe.v1',
+                inputs=[dict(port='source_table', artifact_names=['source_csv'])], instruction='Read the declared contract.')
+            router_type = HardenedWorkerMCPRouter
+        else:
+            catalog, runtime, root, request, _, _ = analysis_system(tmp_path)
+        if legacy:
+            original = runs_module.assignment_json
+            def old_assignment(*args, **kwargs):
+                value = json.loads(original(*args, **kwargs))
+                del value['tool_contracts']
+                return canonical_json(value)
+            monkeypatch.setattr(runs_module, 'assignment_json', old_assignment)
+>       root.call_tool('operation_invoke', request)
+
+tests/operations/test_agent_contract_alignment.py:115: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/scidiscovery/artifact_agent/interfaces/mcp_root.py:403: in call_tool
+    return getattr(self.facade, name)(**values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <scidiscovery.artifact_agent.interfaces.mcp_root.RootToolFacade object at 0x7f63a9d03890>
+values = {'on_conflict': 'reject', 'name': 'contracts', 'operation_id': 'blind.csv.observe.v1', 'inputs': (OperationInputSelection(port='source_table', artifact_names=('source_csv',)),), ...}
+
+    def operation_invoke(self, **values: Any) -> dict[str, Any]:
+        with self._create_lock:
+            try:
+                bound = self._prepare_operation_call(**values)
+                kind = bound.compiled.spec.executor.kind
+                if kind == "agent":
+                    result = self._invoke_agent_operation(
+                        bound,
+                        values["on_conflict"],
+                        resume_from=values.get("resume_from"),
+                        draft_from=values.get("draft_from"),
+                    )
+                elif kind == "transform":
+                    result = self._invoke_compiled_transform(
+                        bound, values["on_conflict"]
+                    )
+                elif kind == "effect":
+                    plan = self._effect_operation_plan(bound)
+                    payloads = tuple(
+                        item for item in bound.inputs if item.port_name == plan.payload_port
+                    )
+                    if len(payloads) != 1 or len(bound.inputs) != 1:
+                        raise OperationInvocationError("effect_payload_not_singular")
+                    result = self._invoke_compiled_effect(
+                        bound, plan, values["on_conflict"]
+                    )
+                elif kind == "approval":
+                    result = self._invoke_approval_operation(
+                        bound, values["on_conflict"]
+                    )
+                else:
+                    raise OperationInvocationError("executor_kind_unknown")
+            except OperationInvocationError as error:
+>               raise RootToolError(
+                    f"operation invocation rejected [{error.reason_code}]", details=error.details
+                ) from error
+E               scidiscovery.artifact_agent.interfaces.mcp_root_shared.RootToolError: operation invocation rejected [operation_runtime_unavailable]
+
+src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py:223: RootToolError
+_ test_open_delivers_frozen_contracts_and_same_identity_legacy_fallback[True-hardened] _
+
+self = <scidiscovery.artifact_agent.interfaces.mcp_root.RootToolFacade object at 0x7f63a9211e80>
+values = {'on_conflict': 'reject', 'name': 'contracts', 'operation_id': 'blind.csv.observe.v1', 'inputs': (OperationInputSelection(port='source_table', artifact_names=('source_csv',)),), ...}
+
+    def operation_invoke(self, **values: Any) -> dict[str, Any]:
+        with self._create_lock:
+            try:
+>               bound = self._prepare_operation_call(**values)
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py:193: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <scidiscovery.artifact_agent.interfaces.mcp_root.RootToolFacade object at 0x7f63a9211e80>
+name = 'contracts', operation_id = 'blind.csv.observe.v1'
+inputs = (OperationInputSelection(port='source_table', artifact_names=('source_csv',)),)
+instruction = 'Read the declared contract.', parameters = {}, resume_from = None
+draft_from = None
+
+    def _prepare_operation_call(
+        self,
+        *,
+        name: str,
+        operation_id: str,
+        inputs: tuple[_OperationInputSelection, ...],
+        instruction: str | None,
+        parameters: dict[str, Any],
+        on_conflict: str,
+        resume_from: str | None = None,
+        draft_from: str | None = None,
+    ) -> BoundOperationCall:
+        del on_conflict
+        if resume_from is not None and draft_from is not None:
+            raise OperationInvocationError("recovery_sources_mutually_exclusive")
+        try:
+            compiled = self._operation_catalog.operation(operation_id)
+        except KeyError as error:
+            raise OperationInvocationError("operation_unknown") from error
+        if compiled.spec.catalog_scope == "internal":
+            raise OperationInvocationError("operation_scope_forbidden")
+        review = compiled.spec.review
+        if (
+            compiled.spec.catalog_scope == "public"
+            and review is not None
+            and review.reviewer_operation is not None
+            and not self._scheduler_operation_available(review.reviewer_operation)
+        ):
+>           raise OperationInvocationError("operation_runtime_unavailable")
+E           scidiscovery.operations.input_validation.OperationInvocationError: operation_runtime_unavailable: operation
+
+src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py:1017: OperationInvocationError
+
+The above exception was the direct cause of the following exception:
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-103/test_open_delivers_frozen_cont3')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7f63a9a5fc50>
+backend_kind = 'hardened', legacy = True
+
+    @pytest.mark.parametrize('backend_kind', ['local', 'hardened'])
+    @pytest.mark.parametrize('legacy', [False, True])
+    def test_open_delivers_frozen_contracts_and_same_identity_legacy_fallback(tmp_path, monkeypatch, backend_kind, legacy):
+        from scidiscovery.artifact_agent.interfaces.mcp_local_worker import LocalWorkerMCPRouter
+        from scidiscovery.artifact_agent.interfaces.mcp_hardened_worker import HardenedWorkerMCPRouter
+        from scidiscovery.artifact_agent.service import runs as runs_module
+        from scidiscovery.operations.tooling import operation_tool_contracts
+        from tests.operations.test_tcad_result_analysis import analysis_system
+        router_type = LocalWorkerMCPRouter
+        if backend_kind == 'hardened':
+            # TCAD analysis has collection outputs and is Local-only. Exercise the
+            # existing supported file-tool Operation without bypassing that gate.
+            from tests.operations.test_l5_hardened_run_backend import _system
+            catalog, runtime, _, root = _system(tmp_path)
+            request = dict(name='contracts', operation_id='blind.csv.observe.v1',
+                inputs=[dict(port='source_table', artifact_names=['source_csv'])], instruction='Read the declared contract.')
+            router_type = HardenedWorkerMCPRouter
+        else:
+            catalog, runtime, root, request, _, _ = analysis_system(tmp_path)
+        if legacy:
+            original = runs_module.assignment_json
+            def old_assignment(*args, **kwargs):
+                value = json.loads(original(*args, **kwargs))
+                del value['tool_contracts']
+                return canonical_json(value)
+            monkeypatch.setattr(runs_module, 'assignment_json', old_assignment)
+>       root.call_tool('operation_invoke', request)
+
+tests/operations/test_agent_contract_alignment.py:115: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/scidiscovery/artifact_agent/interfaces/mcp_root.py:403: in call_tool
+    return getattr(self.facade, name)(**values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <scidiscovery.artifact_agent.interfaces.mcp_root.RootToolFacade object at 0x7f63a9211e80>
+values = {'on_conflict': 'reject', 'name': 'contracts', 'operation_id': 'blind.csv.observe.v1', 'inputs': (OperationInputSelection(port='source_table', artifact_names=('source_csv',)),), ...}
+
+    def operation_invoke(self, **values: Any) -> dict[str, Any]:
+        with self._create_lock:
+            try:
+                bound = self._prepare_operation_call(**values)
+                kind = bound.compiled.spec.executor.kind
+                if kind == "agent":
+                    result = self._invoke_agent_operation(
+                        bound,
+                        values["on_conflict"],
+                        resume_from=values.get("resume_from"),
+                        draft_from=values.get("draft_from"),
+                    )
+                elif kind == "transform":
+                    result = self._invoke_compiled_transform(
+                        bound, values["on_conflict"]
+                    )
+                elif kind == "effect":
+                    plan = self._effect_operation_plan(bound)
+                    payloads = tuple(
+                        item for item in bound.inputs if item.port_name == plan.payload_port
+                    )
+                    if len(payloads) != 1 or len(bound.inputs) != 1:
+                        raise OperationInvocationError("effect_payload_not_singular")
+                    result = self._invoke_compiled_effect(
+                        bound, plan, values["on_conflict"]
+                    )
+                elif kind == "approval":
+                    result = self._invoke_approval_operation(
+                        bound, values["on_conflict"]
+                    )
+                else:
+                    raise OperationInvocationError("executor_kind_unknown")
+            except OperationInvocationError as error:
+>               raise RootToolError(
+                    f"operation invocation rejected [{error.reason_code}]", details=error.details
+                ) from error
+E               scidiscovery.artifact_agent.interfaces.mcp_root_shared.RootToolError: operation invocation rejected [operation_runtime_unavailable]
+
+src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py:223: RootToolError
+=========================== short test summary info ============================
+FAILED tests/operations/test_agent_contract_alignment.py::test_open_delivers_frozen_contracts_and_same_identity_legacy_fallback[False-hardened]
+FAILED tests/operations/test_agent_contract_alignment.py::test_open_delivers_frozen_contracts_and_same_identity_legacy_fallback[True-hardened]
+2 failed, 5 passed, 111 deselected in 3.97s

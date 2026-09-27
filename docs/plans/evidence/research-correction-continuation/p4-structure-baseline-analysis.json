@@ -1,0 +1,60 @@
+{
+  "baseline_component_count": 63,
+  "baseline_public_components": [
+    "audit_validator",
+    "auditor_agent",
+    "auditor_prompt",
+    "critic_review_schema",
+    "evidence_agent",
+    "evidence_audit_context",
+    "evidence_audit_schema",
+    "evidence_audit_semantic_contract",
+    "execution_context_schema",
+    "experiment_portfolio_schema",
+    "hypothesis_schema",
+    "intake_semantic_contract",
+    "intake_source_context",
+    "intake_validator",
+    "json_codec",
+    "opaque_codec",
+    "opaque_schema",
+    "pdf_extract_tool",
+    "research_objective_schema",
+    "scientific_foundation_schema",
+    "scientific_intake_schema",
+    "scientific_review_schema",
+    "wildcard_schema",
+    "workspace"
+  ],
+  "basis": "Imported frozen baseline general_science declarations in a fresh Python process; no scientific Run or pytest executed.",
+  "line_counts": {
+    "src/scidiscovery/general_science_plugin.py": {
+      "frozen_baseline": 1148,
+      "current": 1193,
+      "delta": 45,
+      "current_lines_by_path": {
+        "src/scidiscovery/general_science_agent_operations.py": 653,
+        "src/scidiscovery/general_science_experiment_operations.py": 335,
+        "src/scidiscovery/general_science_plugin.py": 25,
+        "src/scidiscovery/general_science_resources.py": 180
+      }
+    },
+    "src/scidiscovery/general_transform_operations.py": {
+      "frozen_baseline": 1197,
+      "current": 1270,
+      "delta": 73,
+      "current_lines_by_path": {
+        "src/scidiscovery/general_science_components.py": 493,
+        "src/scidiscovery/general_science_control_operations.py": 291,
+        "src/scidiscovery/general_science_experiment_components.py": 486
+      }
+    }
+  },
+  "stale_test_ceilings": {
+    "plugin": 1140,
+    "transform": 1180,
+    "combined": 2310
+  },
+  "actual_failed_log": "p4-test_r5_general_plugin_split-1.log",
+  "decision": "Pending independent minimal-scope review; do not raise ceilings or compress formatting merely to pass."
+}

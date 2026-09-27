@@ -1,0 +1,22 @@
+{
+  "command": [
+    "python",
+    "docs/plans/evidence/content-display/postinstall_browser.py",
+    "curves"
+  ],
+  "exit_code": 0,
+  "stop_reason": null,
+  "duration_seconds": 1.926,
+  "peak_tree_rss_mib": 284.39,
+  "budget_mib": 512,
+  "peak_processes": [
+    {
+      "name": "chrome-headless-shell",
+      "rss_mib": 256.23
+    },
+    {
+      "name": "python",
+      "rss_mib": 28.16
+    }
+  ]
+}

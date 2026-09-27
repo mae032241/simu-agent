@@ -1,75 +1,122 @@
 ---
 name: sentaurus-tcad-code
-description: Author, revise, review, and diagnose standalone Synopsys Sentaurus Process (SProcess) and Sentaurus Device (SDevice) code and project bundles. Use for .cmd/.par decks, solver entrypoints, geometry/material/doping definitions, physical models, numerical solve sequences, parameterization, expected TDR/PLX/PLT/log outputs, and TCAD parser or convergence failures. Do not use for SSH, VMware, IP addresses, license installation, remote scheduling, service deployment, or control-plane identity and approval handling.
+description: Assess TCAD experiment implementation feasibility, or author, revise, review, and diagnose standalone Synopsys Sentaurus Process (SProcess) and Sentaurus Device (SDevice) code. Use for execution-context feasibility, .cmd/.par source, physical models, geometry/material/contact definitions, solve sequences, raw solver outputs, and parser/initialization/convergence failures. Do not use for ordinary evidence extraction, generic hypothesis reasoning, scientific result verdicts, project scheduling, approvals, SSH/VM/license setup, deterministic postprocessing, or scoring.
 ---
 
 # Sentaurus TCAD Code
 
-## Purpose
+Use this Skill to make solver code clearer and faster to produce. Do not turn
+solver authoring into control-plane form filling.
 
-Produce solver-facing SProcess and SDevice code whose physical meaning,
-invocation, inputs, and outputs are explicit. Treat packaging and execution as
-different operations. Never infer how an external scheduler or remote machine
-works.
+## Route by task
 
-## Required Workflow
+Read only the references needed for the current task:
 
-1. Classify each execution unit as `sprocess` or `sdevice`.
-2. Read [execution-contract.md](references/execution-contract.md) before writing
-   or reviewing any project entrypoint.
-3. Read [sprocess.md](references/sprocess.md) for process simulation or
-   [sdevice.md](references/sdevice.md) for electrical/optical device simulation.
-4. Define one direct solver invocation for each execution unit. Split cases
-   when one solver invocation cannot natively and safely express the study.
-5. Keep validated upstream decks byte-identical. Create a derived deck or a
-   small native-language launcher for declared changes; do not reconstruct a
-   known-good deck from memory.
-6. Bind every numerical value to its source, unit, and exact code locator.
-7. Declare every expected TDR, PLX, PLT, log, and current output using the path
-   actually written by the deck.
-8. Run `scripts/validate_deck_project.py <project.json>` for a DeckProject JSON
-   before review or execution.
-9. Read [diagnostics.md](references/diagnostics.md) when a run fails. Stop at
-   the earliest failed layer before interpreting physics.
+| Task | Read | Deliver |
+| --- | --- | --- |
+| TCAD experiment feasibility | Bound `execution_context`, then the matching solver reference and release manual only as needed | Supported solver/release, models, controls, observables, implementation conditions and gaps; no deck authoring or debug |
+| New SProcess source | [execution-contract.md](references/execution-contract.md), then the matching recipe in [sprocess-r2020.09-recipes.md](references/sprocess-r2020.09-recipes.md) | Smallest complete solver source and raw-output declarations |
+| New SDevice source | [execution-contract.md](references/execution-contract.md), then [sdevice.md](references/sdevice.md) | Smallest complete solver source, parameters, and raw outputs |
+| Bounded revision or failed run | Current source and exact change request/log, then [diagnostics.md](references/diagnostics.md) | One diagnostic-backed code correction |
+| Independent deck review | Plan, effective source, and [review.md](references/review.md) | Code/physics fidelity verdict; no edits or execution |
+| Controlled workspace mechanics | [control-materialization.md](references/control-materialization.md) | Source and declarations through the supplied file lifecycle |
 
-## Nonnegotiable Execution Rules
+Do not read every reference by default. Do not search a manual merely to prove
+that familiar, release-indexed syntax exists.
+For experiment design, read `execution_context` first: references explain methods,
+but only that input establishes the environment's support and limits. Record
+missing capability or reference knowledge in resource judgment and handoff.
+Scientific facts remain bound task inputs. This Skill does not expand the
+Operation's write, network, MCP, debug, delegation, approval, or execution rights.
 
-- A solver profile selects a solver executable; it is not merely an environment
-  selector.
-- An SProcess execution unit must give `sprocess` an SProcess command file.
-- An SDevice execution unit must give `sdevice` an SDevice command file.
-- Never place a shell script at the entrypoint of a direct `sprocess` or
-  `sdevice` invocation.
-- Never assume `prepare`, packaging, signing, or staging executes a solver.
-- Never start a second solver, detach a worker, or implement job scheduling
-  inside a solver deck.
-- Use a shell runner only when the declared executable is a shell runner. That
-  is a separate execution type outside this Skill's direct-solver contract.
-- Do not assume version flags such as `-V` or `--version`. Version and
-  capability checks must come from a supplied capability description or a
-  previously validated local example.
-- Do not emit Workbench placeholders such as `@tdr@` in a standalone project
-  unless an explicit preprocessing step is part of the same declared execution
-  unit.
+## Authoring loop
 
-## Review Boundary
+This loop, including the two-minute first write, applies only to authoring and
+code revision. Feasibility design and review do not write source or run debug.
 
-Review both physics and executable semantics. A syntactically valid JSON
-project is not executable evidence. Before passing a deck, reconstruct the
-exact direct command:
+1. Reconstruct the direct invocation: `solver entrypoint arguments...`. Match
+   `sprocess` to an SProcess `.cmd` and `sdevice` to an SDevice `.cmd`.
+2. Freeze the supplied physics, cases, units, changed variables, and raw output
+   needs. Name an unresolved physical choice instead of inventing it.
+3. Write and reread the smallest complete source before broad documentation
+   work. For a normal recipe-covered SProcess task, make the first source write
+   within two minutes.
+4. Choose the shallowest bounded development mode that reaches the changed
+   layer. Use `preflight` only for parser or source-contract changes. A change
+   to structure, material/state initialization, boundaries, model callbacks,
+   case reset, or the first solve requires `initialization`; author and declare
+   a smallest separate initialization entrypoint if none exists. Do not use a
+   successful syntax preflight as a substitute for an unavailable deeper check.
+   On failure, classify the earliest layer and change only its source locator.
+5. Repeat only within the task's explicit debug budget. A nonterminal run or a
+   later warning does not justify another code change.
+6. Declare only raw solver-native TDR, PLX, PLT, and log products. Leave
+   resampling, metrics, thresholds, curve comparison, and interpretation to
+   deterministic postprocessing and diagnosis.
 
-```text
-<solver executable> <entrypoint> <arguments...>
+Prefer a small executable deck over a large self-checking Tcl program. Split
+independent cases into separate entrypoints unless one native procedure can
+recreate the complete structure and state for every direct case call. Never
+hide external solver launches, workers, or scheduling inside a deck.
+
+## Manual lookup policy
+
+Use the supplied execution capability to select the exact solver and release.
+For R-2020.09 SProcess, start from the reviewed recipe. If one construct is
+still missing, run:
+
+Resolve `<skill-dir>` to the discovered directory containing this `SKILL.md`.
+Keep it read-only. Create `<workspace>/scratch` and explicitly set the following
+environment on every helper call; do not rely on a previous shell export:
+
+```bash
+TMPDIR=<workspace>/scratch XDG_CACHE_HOME=<workspace>/scratch PYTHONDONTWRITEBYTECODE=1 \
+python <skill-dir>/scripts/manual_search.py --release R-2020.09 --solver-kind sprocess \
+  --topic custom_conservative_state
+TMPDIR=<workspace>/scratch XDG_CACHE_HOME=<workspace>/scratch PYTHONDONTWRITEBYTECODE=1 \
+python <skill-dir>/scripts/manual_extract.py --release R-2020.09 --solver-kind sprocess \
+  --start-page <returned-start-page> --end-page <returned-end-page>
 ```
 
-Reject the project when the entrypoint language does not match the solver,
-when a case depends on undeclared preprocessing or environment injection, or
-when required outputs cannot be traced to deck statements.
+Use the topic's returned physical PDF page interval (currently 668–669 for this
+topic), not the printed page labels. Helpers may read Skill resources and
+declared task inputs; temporary outputs and caches stay in `scratch/`.
 
-## Scope Boundary
+Use `--query` only for an exact command or diagnostic token not covered by a
+topic. For authoring/revision, before the first source write allow at most one
+targeted lookup. An empty literal search means only “that spelling was not found”; it is not proof
+that the construct is unsupported. Never substitute another release or syntax
+remembered from a different TCAD tool.
 
-This Skill contains no instructions for networks, virtual machines, remote
-transports, credentials, license servers, service managers, approval systems,
-or job schedulers. Receive tool availability and execution capabilities as
-inputs. If they are absent, report the missing capability instead of inventing
-deployment behavior.
+## Hard boundaries
+
+- Own physical realization and solver implementation: geometry, material and
+  composition, transported states, equations, initial/boundary conditions,
+  contacts, meshes, solve sequencing, and raw output statements.
+- Do not own approval, task identity, immutable-record metadata, execution
+  scheduling, remote transport, licenses, or services.
+- Do not embed curve scoring, masks, crossings, CSV/JSON reports, output
+  self-verifiers, observed-data gates, or scientific pass/fail logic.
+- Do not use Workbench placeholders in a standalone direct-solver project
+  unless an explicit preprocessing execution unit is supplied.
+- Do not tune scientific parameters to conceal parser, initialization,
+  convergence, or output-contract failures.
+- Development preflight/smoke/initialization results are provisional code
+  diagnostics, never scientific evidence.
+
+## Completion gates
+
+For authoring/revision, a deck is ready for independent review only when its
+invocation is explicit, source is complete, cases are traceable, required inputs exist, raw
+outputs map to actual solver statements, and the latest permitted diagnostic
+reaches the deepest changed implementation layer or its absence is reported
+fail-closed. Syntax success does not prove initialization, convergence, or
+physical fidelity.
+
+A review may pass only when the effective code implements the supplied
+physical hypothesis and case comparison without an explicit logic bug. The
+reviewer must not require postprocessing, control metadata, or scientific
+thresholds inside solver code.
+
+A diagnosis stops at the earliest failed layer, records the first actionable
+message and source locator, and proposes at most one smallest next correction.

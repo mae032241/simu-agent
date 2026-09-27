@@ -23,7 +23,7 @@ UtcRfc3339 = Annotated[
         )
     ),
 ]
-Confidentiality = Literal["project", "task_private", "approval_only"]
+Confidentiality = Literal["project", "run_private", "approval_only"]
 ContentEncoding = Literal["identity", "gzip", "zstd"]
 
 _MIME_TOKEN = r"[A-Za-z0-9!#$%&'*+.^_`|~-]+"
@@ -44,7 +44,6 @@ class ArtifactRegistration(SchemaModel):
     creator: ActorRef
     parent_refs: tuple[ArtifactRef, ...] = ()
     supersedes_ref: ArtifactRef | None = None
-    task_ref: ArtifactRef | None = None
     labels: dict[Identifier, LabelValue] = Field(default_factory=dict)
     confidentiality: Confidentiality = "project"
     content_encoding: ContentEncoding = "identity"
@@ -93,7 +92,6 @@ class ArtifactEnvelope(SchemaModel):
     created_at: UtcRfc3339
     parent_refs: tuple[ArtifactRef, ...] = ()
     supersedes_ref: ArtifactRef | None = None
-    task_ref: ArtifactRef | None = None
     labels: dict[Identifier, LabelValue] = Field(default_factory=dict)
     confidentiality: Confidentiality = "project"
     content_encoding: ContentEncoding = "identity"
@@ -130,20 +128,6 @@ class ArtifactEnvelope(SchemaModel):
         )
 
 
-class ArtifactEvent(SchemaModel):
-    """Append-only journal entry for one artifact registration."""
-
-    event_id: Identifier
-    event_type: Literal["artifact_registered"]
-    artifact_ref: ArtifactRef
-    envelope_sha256: Sha256
-    recorded_at: UtcRfc3339
-
-    _validate_recorded_at = field_validator("recorded_at")(
-        ArtifactEnvelope._validate_created_at.__func__
-    )
-
-
 def artifact_register_mismatches(
     request: ArtifactRegisterRequest,
     envelope: ArtifactEnvelope,
@@ -169,7 +153,6 @@ def artifact_register_mismatches(
         "creator",
         "parent_refs",
         "supersedes_ref",
-        "task_ref",
         "labels",
         "confidentiality",
         "content_encoding",
@@ -190,7 +173,6 @@ def _reference_identity(reference: ArtifactRef) -> tuple[str, str, str, str]:
 
 __all__ = [
     "ArtifactEnvelope",
-    "ArtifactEvent",
     "ArtifactRegisterRequest",
     "ArtifactRegistration",
     "Confidentiality",

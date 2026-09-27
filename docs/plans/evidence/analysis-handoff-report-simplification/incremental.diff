@@ -1,0 +1,803 @@
+--- before/plugins/curve_score/curve_score/analysis_workspace.py
++++ after/plugins/curve_score/curve_score/analysis_workspace.py
+@@ -22,10 +22,26 @@
+ _SUFFIXES = {".py", ".csv", ".json", ".txt", ".log", ".png"}
+ START = "analysis-start.json"
+ START_LIMIT = 24 * 1024
++READ_VIEW_LIMIT = 32 * 1024
++REPORT_GUIDANCE = """Concentrate the scientific conclusion in payload.summary and overall_verdict.
++Cite key evidence; use optional limitations for restrictions and actual anomalies.
++Write remaining_contradiction and next_action only when needed. Gates and separate
++objective/hypothesis assessments are optional, not a required six-layer form.
++Keep claim_allowed explicit; no omitted gate implies success. Detailed numbers,
++scripts and plots belong in controlled evidence files. For a LayeredDiagnosisReport
++draft, handoff may be omitted: the finalizer generates its verdict and a short
++reference to payload.summary. Do not repeat the conclusion or next action there.
++The sealed envelope schema includes these generated fields; domain-workspace.json
++patch_contract identifies them. Other handoff explanations remain optional.
++"""
+ GUIDANCE = """If the workspace provides analysis-start.json, read it first. It contains
+ bounded verbatim excerpts and exact source pointers, not a new scientific authority.
+-Follow the bound objective, current method and relevant progress to their originals
+-as needed. Read only the selected tool's complete assignment.json tool_contracts entry
++Check the current input index, then follow the bound objective, current method and
++relevant progress to their originals as needed. Do not print complete packages or
++data files merely to acknowledge their bindings. Truncated excerpts are navigation,
++not complete formulas or decision rules; read the referenced original before use.
++Inputs with unknown schemas remain indexed without generated excerpts.
++Read only the selected tool's complete assignment.json tool_contracts entry
+ before calling it. Restored scratch files are editable provisional work; check their
+ assumptions against this Run's inputs. Reuse valid saved numbers for plot-only repairs.
+ Historical runtime observations remain in recovery-draft, separate from this Run.
+@@ -35,6 +51,18 @@
+ stdout/stderr; script mode keeps paths relative to scratch/. Direct platform calls
+ are outside this observation coverage. Missing telemetry never blocks submission.
+ """
++
++
++def view_bytes(value):
++    return (json.dumps(value, ensure_ascii=False, separators=(",", ":")) + "\n").encode()
++
++
++def append_view(view, section, item, limit):
++    """Bound only presentation, retaining a pointer to the full input index."""
++    view[section].append(item)
++    if len(view_bytes(view)) > limit - 512:
++        view[section].pop()
++        view["omitted"] += 1
+ 
+ 
+ def _json_file(root, relative, limit=2 * 1024 * 1024):
+@@ -80,7 +108,7 @@
+         return
+     fields = {
+         "scidiscovery.experiment-portfolio.v1": ("objective", "priority_rationale"),
+-        "scidiscovery.layered-diagnosis.v1": ("summary", "remaining_contradiction", "next_action", "analysis_method", "method_changes"),
++        "scidiscovery.layered-diagnosis.v1": ("summary", "limitations", "remaining_contradiction", "next_action", "analysis_method", "method_changes"),
+         "scidiscovery.research-objective.v1": ("statement",),
+         "scidiscovery.scientific-review.v1": ("summary",),
+     }.get(schema, ())
+@@ -95,7 +123,38 @@
+                         yield f"/proposals/{index}/{name}", proposal[name]
+ 
+ 
+-def _start_file(request, restored):
++def _plan_index(value):
++    """Exact field locations and rosters, with verbatim observable deduplication."""
++    yield {"pointer": "", "fields": list(value), "proposal_count": len(value.get("proposals", ())),
++        "validation_plan_count": len(value.get("validation_plans", ()))}
++    observables = {}
++    for index, proposal in enumerate(value.get("proposals", ())):
++        if not isinstance(proposal, dict):
++            continue
++        pointer = f"/proposals/{index}"
++        yield {"pointer": pointer, "experiment_key": proposal.get("experiment_key"),
++            "fields": list(proposal), "case_count": len(proposal.get("cases", ())),
++            "cases": [{"case_key": case.get("case_key"), "scientific_role": case.get("scientific_role"),
++                "pointer": f"{pointer}/cases/{number}"} for number, case in enumerate(proposal.get("cases", ()))
++                if isinstance(case, dict)]}
++        contract = proposal.get("comparison_contract")
++        if isinstance(contract, dict):
++            yield {"pointer": pointer + "/comparison_contract", "fields": list(contract),
++                "variable_count": len(contract.get("variables", ()))}
++        for parent, content in ((pointer, proposal), (pointer + "/comparison_contract", contract)):
++            if not isinstance(content, dict):
++                continue
++            for number, observable in enumerate(content.get("required_observables", ())):
++                if isinstance(observable, str):
++                    observables.setdefault(observable, []).append(f"{parent}/required_observables/{number}")
++    for text, pointers in observables.items():
++        yield {"observable": text[:768], "excerpt_omitted": len(text) > 768, "pointers": pointers}
++    for index, validation in enumerate(value.get("validation_plans", ())):
++        if isinstance(validation, dict):
++            yield {"pointer": f"/validation_plans/{index}", "fields": list(validation)}
++
++
++def _start_file(request, restored, limit=START_LIMIT):
+     assignment = _json_file(request.workspace, "assignment.json",
+         (request.workspace / "assignment.json").stat().st_size)
+     instruction = assignment.get("instruction", "")
+@@ -103,7 +162,8 @@
+         "instruction_omitted": len(instruction) > 2048,
+         "instruction_source": {"relative_path": "assignment.json", "pointer": "/instruction"},
+         "budget": assignment.get("budget"), "output": assignment.get("output"),
+-        "inputs": [], "excerpts": [], "omitted": 0,
++        "inputs": [], "ports": [], "plan_index": [], "excerpts": [], "omitted": 0,
++        "omission_source": {"relative_path": "assignment.json", "pointer": "/inputs"},
+         "full_assignment": "assignment.json", "tool_contracts": {
+             name: ({"relative_path": "assignment.json", "pointer": "/tool_contracts/" + name}
+                 if "tool_contracts" in assignment else {"open_reply_pointer": "/tool_contracts/" + name})
+@@ -112,16 +172,23 @@
+         "restored_files": [], "copy_omissions": [], "guidance": GUIDANCE}
+ 
+     def append(section, item):
+-        start[section].append(item)
+-        if len(json.dumps(start, ensure_ascii=False).encode()) > START_LIMIT - 512:
+-            start[section].pop()
+-            start["omitted"] += 1
++        append_view(start, section, item, limit)
+ 
+     inputs = assignment.get("inputs", ())
+     # Index all visible originals before excerpts; no current-head ranking.
+     for item in inputs:
+-        append("inputs", {key: item[key] for key in
+-            ("source_name", "port", "relative_path", "historical") if key in item})
++        descriptor = request.binding_descriptors.get(item["source_name"])
++        append("inputs", {**{key: item[key] for key in
++            ("source_name", "port", "relative_path", "historical", "media_type") if key in item},
++            "schema_id": descriptor.artifact_ref.schema_id if descriptor else None,
++            "size_bytes": descriptor.size_bytes if descriptor else None})
++    # Purpose is a port declaration, shared by its files; do not repeat it per curve.
++    seen_ports = set()
++    for item in inputs:
++        if item["port"] not in seen_ports:
++            append("ports", {key: item[key] for key in ("port", "description", "usage", "exposure") if key in item})
++            seen_ports.add(item["port"])
++    observables = []
+     for item in inputs:
+         descriptor = request.binding_descriptors.get(item["source_name"])
+         if descriptor is None or item["port"] not in {
+@@ -131,22 +198,31 @@
+             value = _json_file(request.workspace, item["relative_path"])
+         except (ValueError, OSError, WorkspaceError):
+             continue  # The exact original remains indexed, never a new admission gate.
++        if descriptor.artifact_ref.schema_id == "scidiscovery.experiment-portfolio.v1" and isinstance(value, dict):
++            for entry in _plan_index(value):
++                indexed = {"source_name": item["source_name"], **entry}
++                if "observable" in entry:
++                    observables.append(indexed)
++                else:
++                    append("plan_index", indexed)
+         for pointer, content in _excerpts(value, descriptor.artifact_ref.schema_id):
+             text = content if isinstance(content, str) else json.dumps(content, ensure_ascii=False)
+             append("excerpts", {"source_name": item["source_name"], "pointer": pointer,
+                 "text": text[:768], "omitted": len(text) > 768})
++    for entry in observables:
++        append("plan_index", entry)
+     for path in restored["restored"]:
+         append("restored_files", path)
+     for item in restored["copy_omissions"]:
+         append("copy_omissions", item)
+     write_control_workspace_file(request.workspace, Path(START),
+-        (json.dumps(start, ensure_ascii=False) + "\n").encode(), replace=False, mode=0o400)
+-
+-
+-def materialize(request):
++        view_bytes(start), replace=False, mode=0o400)
++
++
++def materialize(request, *, start_limit=START_LIMIT):
+     (request.workspace / "scratch").mkdir(exist_ok=True, mode=0o700)
+     restored = _restore_scratch(request)
+-    _start_file(request, restored)
++    _start_file(request, restored, start_limit)
+     tool = "tools/local_process_observation.py"
+     available = False
+     if request.edit_protocol == "native":
+@@ -166,6 +242,11 @@
+                 "script_base": "scratch", "optional": True,
+                 "budget": "Timeout is clipped to the Run deadline minus the selected submission reserve. Reserve is adjustable; timing is not required to submit."}},
+         read_paths=(START, "scratch", "recovery-draft", "tools"),
++        patch_contract={"target": "output/result.json", "schema": "scidiscovery.layered-diagnosis.v1",
++            "generated_fields": {"/handoff/verdict": "/payload/overall_verdict",
++                "/handoff/summary": "short reference to /payload/summary"},
++            "draft_may_omit": ["/handoff"],
++            "instruction": REPORT_GUIDANCE},
+     )
+ 
+ 
+--- before/plugins/tcad_artifact/tcad_artifact/analysis_bindings.py
++++ after/plugins/tcad_artifact/tcad_artifact/analysis_bindings.py
+@@ -11,7 +11,7 @@
+ from scidiscovery.artifact_agent.service.local_workspace import (
+     read_control_workspace_file, write_control_workspace_file,
+ )
+-from scidiscovery.artifact_agent.service.result_materialization import finalize_result
++from scidiscovery.artifact_agent.service.result_materialization import finalize_result, materialize_analysis_handoff
+ from scidiscovery.operations.input_validation import ValidationSources, prior_analysis_sources
+ from scidiscovery.operations.spec import CallableComponent
+ 
+@@ -100,18 +100,89 @@
+     return ValidationSources(contents, request.binding_descriptors)
+ 
+ 
++def _case_matrix(proposal, pointer):
++    contract = proposal.get("comparison_contract")
++    if not isinstance(contract, dict):
++        return
++    cases = [contract["baseline_case_key"], *contract["comparison_case_keys"]]
++    yield {"pointer": pointer + "/comparison_contract", "case_columns": cases,
++        "value_locations": "Each row pointer + /expectations/<expectation_indices[column]>/value.",
++        "fields": list(contract)}
++    for number, variable in enumerate(contract.get("variables", ())):
++        expectations = {item["case_key"]: (index, item["value"])
++            for index, item in enumerate(variable["expectations"])}
++        yield {"pointer": f"{pointer}/comparison_contract/variables/{number}",
++            **{key: variable[key] for key in ("variable_key", "scientific_path", "factor_type",
++                "comparison_role", "unit", "equivalence_rule", "tolerance") if key in variable},
++            "expectation_indices": [expectations[case][0] for case in cases],
++            "values": [expectations[case][1] for case in cases]}
++
++
++def reading_view(request, sources, limit):
++    """A bounded display copy; tools and finalization retain source_bindings in full."""
++    by_port = {d.port_name: alias for alias, d in sources.binding_descriptors.items()
++        if d.port_name in JSON_PORTS}
++    plan_alias, package_alias = by_port["experiment_plan"], by_port["reviewed_package"]
++    plan = json.loads(sources[plan_alias])
++    package = json.loads(sources[package_alias])
++    project = package["project"]
++    originals = {alias: {"relative_path": request.input_paths[alias].relative_to(request.workspace).as_posix(),
++        "pointer": ""} for alias in (plan_alias, package_alias)}
++    view = {"sources": {}, "unavailable": [], "project_index": [], "case_matrix": [],
++        "originals": originals, "omitted": 0,
++        "omission_source": {"relative_path": "assignment.json", "pointer": "/inputs"},
++        "matrix_order": "Each variable row uses its own original comparison_contract: baseline_case_key followed by comparison_case_keys. expectation_indices locate the exact case/value even when a header is omitted. Never borrow another proposal's header.",
++        "meaning": "Navigation only. Cite the original input alias and JSON pointer. Embedded source content is not a separate workspace file. Mechanical bindings stay in the frozen original; tools read them in full."}
++
++    def append(section, alias, entry):
++        item = {"source_name": alias, **entry}
++        before = view["omitted"]
++        analysis_workspace.append_view(view, section, item, limit)
++        if view["omitted"] != before and "pointer" in entry:
++            analysis_workspace.append_view(view, section,
++                {"source_name": alias, "pointer": entry["pointer"], "details_omitted": True}, limit)
++
++    append("project_index", package_alias, {"pointer": "/project",
++        **{key: project[key] for key in ("solver_kind", "tool_profile", "entrypoint") if key in project}})
++    if "review" in package:
++        append("project_index", package_alias, {"pointer": "/review"})
++    for index, file in enumerate(project.get("files", ())):
++        append("project_index", package_alias, {"pointer": f"/project/files/{index}/content",
++            "source_file": file["relative_path"], "content_bytes": len(file["content"].encode())})
++    append("project_index", package_alias, {"pointer": "/project/expected_outputs",
++        "output_count": len(project.get("expected_outputs", ())),
++        "names": [item["name"] for item in project.get("expected_outputs", ())]})
++    complete = source_bindings(sources)
++    for alias, binding in complete["sources"].items():
++        # Historical rationale/evidence remain at origin.pointer, not copied again.
++        view["sources"][alias] = {key: value for key, value in binding.items() if key != "case_mapping_basis"}
++        if len(analysis_workspace.view_bytes(view)) > limit - 512:
++            del view["sources"][alias]
++            view["omitted"] += 1
++    for entry in complete["unavailable"]:
++        analysis_workspace.append_view(view, "unavailable", entry, limit)
++    for index, proposal in enumerate(plan.get("proposals", ())):
++        pointer = f"/proposals/{index}"
++        append("case_matrix", plan_alias, {"pointer": pointer, "experiment_key": proposal["experiment_key"],
++            "cases_pointer": pointer + "/cases", "case_count": len(proposal["cases"])})
++        for entry in _case_matrix(proposal, pointer):
++            append("case_matrix", plan_alias, entry)
++    return view
++
++
+ def materialize(request):
+-    result = analysis_workspace.materialize(request)
+-    view = source_bindings(workspace_sources(request))
+-    write_control_workspace_file(request.workspace, Path(VIEW_PATH),
+-        (json.dumps(view, ensure_ascii=False) + "\n").encode(), replace=False, mode=0o400)
+-    # A pointer keeps the start entry bounded even for a large historical basis.
++    # Reserve room for known product correspondence before optional display detail.
++    result = analysis_workspace.materialize(request, start_limit=12 * 1024)
+     path = Path(analysis_workspace.START)
+     start = json.loads(read_control_workspace_file(request.workspace, path, max_bytes=analysis_workspace.START_LIMIT))
+     start["source_bindings"] = {"relative_path": VIEW_PATH,
+-        "meaning": "Declared metadata and prior conditional mappings; no renewed scientific qualification. New tool evidence uses its current descriptor."}
++        "meaning": "Compact project, scientific case matrix and declared/prior conditional mappings. Use originals for omitted details; no renewed qualification."}
++    start_bytes = analysis_workspace.view_bytes(start)
++    view = reading_view(request, workspace_sources(request), analysis_workspace.READ_VIEW_LIMIT - len(start_bytes))
++    write_control_workspace_file(request.workspace, Path(VIEW_PATH),
++        analysis_workspace.view_bytes(view), replace=False, mode=0o400)
+     write_control_workspace_file(request.workspace, path,
+-        (json.dumps(start, ensure_ascii=False) + "\n").encode(), replace=True, mode=0o400)
++        start_bytes, replace=True, mode=0o400)
+     return replace(result, paths={**result.paths, "source_bindings": VIEW_PATH},
+         read_paths=(*result.read_paths, VIEW_PATH))
+ 
+@@ -178,8 +249,10 @@
+ def finalize(request):
+     sources = workspace_sources(request)
+     view = source_bindings(sources)
+-    return finalize_result(request, lambda value: materialize_references(
+-        value["payload"], view, sources.binding_descriptors))
++    def project(value):
++        materialize_analysis_handoff(value)
++        materialize_references(value["payload"], view, sources.binding_descriptors)
++    return finalize_result(request, project)
+ 
+ 
+ MATERIALIZER = CallableComponent("workspace_materializer", materialize)
+--- before/src/scidiscovery/artifact_agent/schema/layered_diagnosis.py
++++ after/src/scidiscovery/artifact_agent/schema/layered_diagnosis.py
+@@ -167,15 +167,16 @@
+     summary: Annotated[str, Field(min_length=1, max_length=8192)]
+     evidence: Annotated[tuple[ValidationEvidence, ...], Field(max_length=256)] = ()
+     source_references: Annotated[tuple[AnalysisSourceReference, ...], Field(max_length=64)] = ()
+-    gates: ScientificGateSequence
++    gates: ScientificGateSequence | None = None
+     overall_verdict: Literal["pass", "fail", "inconclusive", "invalid_study"]
+     claim_allowed: bool
+     objective_assessment: ObjectiveDiagnosisAssessment | None = None
+     hypothesis_assessments: Annotated[
+         tuple[HypothesisAssessment, ...], Field(max_length=32)
+     ] = ()
+-    remaining_contradiction: Annotated[str, Field(min_length=1, max_length=8192)]
+-    next_action: Annotated[str, Field(min_length=1, max_length=4096)]
++    limitations: Annotated[tuple[str, ...], Field(max_length=64)] = ()
++    remaining_contradiction: Annotated[str, Field(min_length=1, max_length=8192)] | None = None
++    next_action: Annotated[str, Field(min_length=1, max_length=4096)] | None = None
+     recommended_task_mode: RecommendedTaskMode | None = None
+     calculation_records: Annotated[tuple[CalculationRecord, ...], Field(max_length=8)] = Field(default=(),
+         description="Legacy inline calculation records remain readable. For new tool results, cite calculation_ref in evidence instead; tools retain records and receipts automatically.")
+--- before/src/scidiscovery/artifact_agent/service/result_materialization.py
++++ after/src/scidiscovery/artifact_agent/service/result_materialization.py
+@@ -43,10 +43,25 @@
+         value['problem_frame']['objective'] = foundation['objective']
+ 
+ 
++def materialize_analysis_handoff(value: dict) -> None:
++    """Project only duplicate transport fields from the analyst's formal report."""
++    payload = value['payload']
++    verdict = {'pass': 'pass', 'fail': 'blocked', 'invalid_study': 'blocked',
++               'inconclusive': 'inconclusive'}.get(str(payload.get('overall_verdict')))
++    if verdict is None or not isinstance(payload.get('summary'), str):
++        return  # Missing scientific content belongs to the existing output checker.
++    handoff = value.setdefault('handoff', {})
++    if isinstance(handoff, dict):
++        handoff['verdict'] = verdict
++        handoff['summary'] = 'Read run_status.sealed_output.payload.summary for the scientific conclusion; payload.next_action contains any scientific recommendation.'
++
++
+ def materialize_general_result(value: dict, schema_id: str) -> None:
+     payload = value['payload']
+     verdict = None
+-    if schema_id == 'scidiscovery.scientific-intake.v1':
++    if schema_id == 'scidiscovery.layered-diagnosis.v1':
++        materialize_analysis_handoff(value)
++    elif schema_id == 'scidiscovery.scientific-intake.v1':
+         materialize_intake(payload)
+     elif schema_id == 'scidiscovery.experiment-portfolio.v1':
+         for proposal in (payload['proposals'] if isinstance(payload.get('proposals'), list) else ()):
+--- before/src/scidiscovery/artifact_agent/schema/claim.py
++++ after/src/scidiscovery/artifact_agent/schema/claim.py
+@@ -6,6 +6,7 @@
+ 
+ from .common import Identifier, SchemaModel
+ from .validation import ValidationReport
++from .layered_diagnosis import LayeredDiagnosisReport
+ 
+ 
+ class ClaimDecision(SchemaModel):
+@@ -25,13 +26,11 @@
+     if isinstance(report, ValidationReport):
+         report_kind = "validation_report"
+         numerical_verdict = report.numerical.status
++    elif isinstance(report, LayeredDiagnosisReport):
++        numerical_verdict = report.gates.numerical_validity.status if report.gates else "not_evaluable"
++        report_kind = "layered_diagnosis"
+     else:
+-        gates = getattr(report, "gates", None)
+-        numerical = getattr(gates, "numerical_validity", None)
+-        numerical_verdict = getattr(numerical, "status", None)
+-        if numerical_verdict is None:
+-            raise TypeError("claim projection requires a supported report contract")
+-        report_kind = "layered_diagnosis"
++        raise TypeError("claim projection requires a supported report contract")
+     return ClaimDecision(
+         report_kind=report_kind,
+         experiment_key=report.experiment_key,
+--- before/plugins/curve_score/curve_score/science_operations.py
++++ after/plugins/curve_score/curve_score/science_operations.py
+@@ -22,7 +22,7 @@
+ from .curve_contract_compiler import validate_compiled_curve_contract, validate_curve_contract_inputs
+ from .diagnostic_tool import DIAGNOSTIC_GUIDANCE, DIAGNOSTIC_PLOT_OUTPUT, record_metric_report
+ from .analysis_files import GUIDANCE as ANALYSIS_FILES_GUIDANCE
+-from .analysis_workspace import GUIDANCE as CONTINUATION_GUIDANCE
++from .analysis_workspace import GUIDANCE as CONTINUATION_GUIDANCE, REPORT_GUIDANCE
+ from scidiscovery.artifact_agent.service.analysis_artifacts import analysis_calculations, analysis_evidence_aliases, calculation_reference_aliases
+ from .schema import (
+     CurveBundle,
+@@ -349,7 +349,7 @@
+         "Recomputing analysis, producing plots, or changing exact scientific inputs.",
+         input_validation=InputValidationSpec(ComponentRef("curve_diagnosis_inputs"), "curve.diagnosis.inputs", "At admission, the analysis package must reproduce from its exact curve inputs and bind a valid curve contract with complete-plan metric coverage. Diagnosis submission does not repeat this input validation or calculation."),
+         agent=ComponentRef("diagnosis_agent"),
+-        workspace=ComponentRef("workspace", plugin_id=_GENERAL_SCIENCE),
++        workspace=ComponentRef("analysis_workspace"),
+         prompt=ComponentRef("curve_diagnosis_prompt"),
+         tools=BASE_TOOLS,
+         native_view_image=True,
+@@ -775,7 +775,7 @@
+     }
+ 
+ 
+-DIAGNOSIS_PROMPT = CONTINUATION_GUIDANCE + """Return one RoleResultEnvelope with LayeredDiagnosisReport payload.
++DIAGNOSIS_PROMPT = CONTINUATION_GUIDANCE + REPORT_GUIDANCE + """Return one RoleResultEnvelope with LayeredDiagnosisReport payload.
+ Analyze the exact plan and bound results, including failures and missing observations.
+ Scoring is optional: worker_curve_score accepts explicit sources and comparison_spec.
+ Do not invent metric implementations, replace unsupported statistics with RMS, or
+@@ -790,12 +790,12 @@
+ a calculation's source mappings into source_references; cite its record instead.
+ Unavailable/unsupported/error records explain limits and cannot support numeric success.
+ No score is a normal path: report valid findings, missing conditions, current objective
+-limits, remaining overall targets, and next steps. Assess each gate from the evidence
+-it uses and the plan's actual dependencies. A missing comparison may leave the overall
++limits, remaining overall targets, and next steps, according to the evidence and the
++plan's actual dependencies. A missing comparison may leave the overall
+ result inconclusive while other evidence supports finite findings or a local objective.
+ A partial metric pass does not establish unperformed comparisons or overall closure.
+ Link computed operators to the selected plan using exact validation_check_key values,
+-and cite their saved calculation_ref from the relevant gate evidence.
++and cite their saved calculation_ref in evidence.
+ Explain which planned checks were completed and how missing or failed checks limit each conclusion.
+ The reviewer assesses scientific sufficiency; submission does not derive the verdict from gate statuses.
+ The optional curve-error helper is never a required next stage.
+@@ -879,7 +879,7 @@
+         OPERATION_AGENT_PREAMBLE + CURVE_CONTRACT_REVIEW_PROMPT
+     )
+     diagnosis_prompt = OPERATION_AGENT_PREAMBLE + DIAGNOSIS_PROMPT
+-    curve_diagnosis_prompt = OPERATION_AGENT_PREAMBLE + """Read any bound curve_analysis_plots with native view_image when useful; these images supplement the fixed package, never supply unbound scientific facts.\nReturn exactly one
++    curve_diagnosis_prompt = OPERATION_AGENT_PREAMBLE + CONTINUATION_GUIDANCE + REPORT_GUIDANCE + """Read any bound curve_analysis_plots with native view_image when useful; these images supplement the fixed package, never supply unbound scientific facts.\nReturn exactly one
+ RoleResultEnvelope whose payload is the LayeredDiagnosisReport required by
+ output.schema.json. Interpret the supplied immutable curve-analysis package,
+ using the evidence and actual dependencies of each conclusion. The package's metric values,
+--- before/plugins/tcad_artifact/tcad_artifact/result_analysis.py
++++ after/plugins/tcad_artifact/tcad_artifact/result_analysis.py
+@@ -44,7 +44,7 @@
+ from .plx_normalizer import SProcessPLXSourceSpec, normalize_sprocess_plx
+ from .project_packager import ReviewedDeckPackage, TCADRuntimeManifest
+ from .analysis_bindings import source_bindings, JSON_PORTS
+-from curve_score.analysis_workspace import GUIDANCE as CONTINUATION_GUIDANCE
++from curve_score.analysis_workspace import GUIDANCE as CONTINUATION_GUIDANCE, REPORT_GUIDANCE
+ 
+ 
+ class TCADSourceIdentity(AnalysisSource):
+@@ -463,7 +463,10 @@
+     validate_analysis_report(report, plan, calculations=calculations)
+ 
+ 
+-PROMPT = OPERATION_AGENT_PREAMBLE + CONTINUATION_GUIDANCE + """Analyze this exact TCAD execution in one Run.
++PROMPT = OPERATION_AGENT_PREAMBLE + CONTINUATION_GUIDANCE + REPORT_GUIDANCE + """Analyze this exact TCAD execution in one Run.
++Read the compact project and scientific case matrix in analysis-bindings.json first;
++follow its original source pointers for implementation details. The control-generated
++case_parameter_bindings ledger is not a required reading or reporting task.
+ Optionally use worker_tcad_inspect_outputs and worker_tcad_accept_output with the bound execution_result to inspect and collect original terminal products. These tools cannot run a solver or edit files. Missing services or ambiguous correspondence permit a limited report. State mapping reasons; a successful collection is not scientific success. Tool-returned evidence aliases and the updated schema/result.schema.json may be used in source_references and scoring in this same Run. Tool evidence includes recovered original files and identified analysis derivatives; it does not change startup inputs. Up to 32 evidence files, 32 MiB each, 256 MiB total, 120s I/O within the Run budget. A declaration/source correction goes back to author; do not alter the scientific task. Old aggregate 97 does not establish solver success: use explicit solver status when present and cite actual step evidence and uncertainty when absent.
+ Return LayeredDiagnosisReport in the declared RoleResultEnvelope. Read bound raw
+ files and logs; scoring is optional. The diagnostics port contains controlled runner
+--- before/src/scidiscovery/platforms/codex.py
++++ after/src/scidiscovery/platforms/codex.py
+@@ -86,7 +86,8 @@
+ payload. Chat is only a bounded lifecycle signal; the sealed Worker result is
+ the sole scientific output. A later explicit task message starts by calling
+ worker_open_assignment again on the same compiled Worker server. If it returns
+-a new opened assignment, reread all current inputs and discard old workspace
++a new opened assignment, verify its current bindings, read the compact task entry
++when provided and follow relevant original inputs as needed. Discard old workspace
+ paths, tool handles and budget assumptions. Memory is not evidence or authority.
+ If no new assignment is available, stop without repeating an old submission.
+ """
+@@ -462,7 +463,9 @@
+         "Use only the Worker MCP server named "
+         f"`{server_name}` and start with `worker_open_assignment`. "
+         "Take the returned workspace_path as the task filesystem root. Read the "
+-        "immutable inputs and schema declared by assignment.json. Before calling a domain tool, "
++        "schema and current input index declared by assignment.json. When a compact task "
++        "entry is provided, read it first, then the original inputs needed for this task; "
++        "an index or excerpt does not replace its source. Before calling a domain tool, "
+         "read its complete tool_contracts entry in the open reply or assignment.json, "
+         "including inputSchema, local $defs, defaults, limits and descriptions. Construct "
+         "arguments from that contract even if the platform renders a parameter as unknown "
+--- before/tests/operations/test_analysis_continuation.py
++++ after/tests/operations/test_analysis_continuation.py
+@@ -120,7 +120,13 @@
+     write_analysis(opened, report)
+     assert worker.call_tool('worker_submit_result', {})['state'] == 'completed'
+     sealed = system[2].call_tool('run_status', {'name':'with_history'})['sealed_output']['payload']
+-    assert sealed['source_references'][0]['case_mapping_basis'] == known['case_mapping_basis']
++    assert 'case_mapping_basis' not in known  # Display points to the preserved prior basis.
++    origin = known['origin']
++    assignment = json.loads(Path(opened['assignment_path']).read_bytes())
++    original_input = next(item for item in assignment['inputs'] if item['source_name'] == origin['input_alias'])
++    original = json.loads((Path(opened['workspace_path']) / original_input['relative_path']).read_bytes())
++    reference = original['source_references'][int(origin['pointer'].rsplit('/', 1)[1])]
++    assert sealed['source_references'][0]['case_mapping_basis'] == reference['case_mapping_basis']
+     request['name'] = 'history_again'
+     next(i for i in request['inputs'] if i['port']=='prior_analysis')['artifact_names'] = ['with_history.output']
+     next(i for i in request['inputs'] if i['port']=='prior_analysis_manifest')['artifact_names'] = ['with_history.output.recovery_manifest']
+--- before/docs/ARCHITECTURE.md
++++ after/docs/ARCHITECTURE.md
+@@ -206,6 +206,27 @@
+ `prior_signal`: incomplete implementation may receive a negative review, while
+ passing review, packaging, and execution retain their implementation requirements.
+ 
++Analysis Workers start with `analysis-start.json`: an input size/purpose index,
++verbatim excerpts and exact original field pointers. TCAD adds a bounded project
++and scientific case matrix in `analysis-bindings.json`. Control-generated case
++binding ledgers remain in immutable originals and server-side tool inputs; they
++are not default reading or reporting tasks. The combined TCAD display budget is
++32 KiB, with original pointers and omission counts when details do not fit.
++Views do not become scientific evidence or change source identity, qualification,
++or native filesystem permissions. Reused Agents verify the new bindings and read
++relevant current originals; they need not reread every complete input file.
++
++`LayeredDiagnosisReport` concentrates conclusions in `summary` and `overall_verdict`,
++with evidence and optional `limitations`. Its complete legacy `gates` object,
++remaining contradiction, next action and additional assessments are optional.
++`claim_allowed` remains an explicit scientific judgment; absent numerical gates
++project to `not_evaluable`. For these analysis reports only, the existing finalizer
++creates handoff verdict and a short reference to the formal summary before sealing.
++The workspace `patch_contract` declares draft omissions; Root reads the sealed
++payload and scheduler signal together. TCAD, generic and fixed curve-error analysis
++share this behavior on their supported local backend. Old Artifact bytes remain
++unchanged; these reading and delivery changes do not add a scoring prerequisite.
++
+ `artifact_catalog(name=...)` returns ordered `parent_artifact_names` for the exact
+ Artifact: `[]` without parents and `null` for a parent without a current-instance
+ binding. Names resolve the stored parent identity, never the latest revision;
+--- before/docs/ARCHITECTURE.zh-CN.md
++++ after/docs/ARCHITECTURE.zh-CN.md
+@@ -125,6 +125,19 @@
+ Deck review 将精确 project 作为 `prior_signal`，实现不完整时可以封存负面审查；通过审查、
+ 包装和执行仍须满足原实现要求。
+ 
++分析 Worker 从 `analysis-start.json` 接手：入口提供输入大小/用途、逐字摘录和原字段位置。
++TCAD 另在 `analysis-bindings.json` 提供有界项目视图和科学案例值矩阵。控制生成的案例绑定账本
++保留在不可变原件和服务端工具输入中，不作为默认阅读或报告任务。TCAD 两份展示文件合计预算
++32 KiB；放不下的细节保留原件指针和遗漏计数。视图不是新科学证据，不改变来源身份、资格或
++native 文件权限。复用 Agent 核对新绑定并读取本轮相关原件，无需全文重读每个输入文件。
++
++`LayeredDiagnosisReport` 以 `summary` 和 `overall_verdict` 集中表达结论，附证据和可选
++`limitations`。旧完整 `gates` 对象、剩余矛盾、下一步和额外评估均可省略。`claim_allowed`
++仍由科学 Agent 明确判断；缺少数值诊断层时，声明投影为 `not_evaluable`。仅这类分析报告由
++既有 finalizer 在封存前生成 handoff 状态及正式摘要的短引用；工作区 `patch_contract` 声明
++草稿可省略字段，Root 同时读取封存正文与调度信号。TCAD、通用和固定曲线误差分析在其支持的
++local backend 共用此行为。历史 Artifact 字节保持不变，也不新增评分前提。
++
+ TCAD 实现缺口可携带控制端捕获的有界源码、声明、尝试记录和诊断文件；它们仍是负面开发记录，
+ 不构成可执行项目。审查和修订均接受该交付；修订把旧诊断恢复到 `reports/history`，必须重新
+ 产生当前源码的完成证明。旧缺口若未捕获文件仍可读取，但不能重建先前失败源码。日志摘录维持
+--- before/docs/plans/README.md
++++ after/docs/plans/README.md
+@@ -5,7 +5,7 @@
+ 
+ ## 当前执行链
+ 
+-- [分析接手视图与正式报告简化修订计划 R0](ANALYSIS_HANDOFF_AND_REPORT_SIMPLIFICATION_PLAN.zh-CN.md)：2026-09-13 待审查提案，尚未开始源码实施。承接既有精简入口与机械引用补全：完整原件保留追溯，默认阅读视图移除案例参数绑定明细，科学结论集中表达，兼容旧报告与声明消费。范围、8个预期生产文件、受限资源测试及真实 Agent 验收见正文；不新增校验、角色、工具或状态机。[本轮结构基线](evidence/analysis-handoff-report-simplification/BASELINE.json)来自已完成的 `fig4_shape_basis_analysis_1`，当前已完成新一轮仿真、收集和分析，总体 Fig.4 对齐目标仍未闭合；下列旧暂停/待安装记录保留其当时事实。
++- [分析接手视图与正式报告简化修订计划 R0](ANALYSIS_HANDOFF_AND_REPORT_SIMPLIFICATION_PLAN.zh-CN.md)：2026-09-13 计划和[独立实现审查](evidence/analysis-handoff-report-simplification/IMPLEMENTATION_REVIEW_R0.zh-CN.md)均 PASS，八个生产文件已完成最小修改。[实施记录](evidence/analysis-handoff-report-simplification/IMPLEMENTATION.zh-CN.md)：139 个不同定向用例通过，两项既有错误码断言在改前快照复现；50项安装目录及三分析角色真实 stdio 提交通过，串行峰值239.3 MiB。完整原件保留、默认视图不展开控制明细、科学结论集中表达、兼容旧报告；Fig4 离线视图28,711字节、156值及13来源对应保留。尚未用户安装或真实 Agent 验收，不宣称耗时收益或总体科学目标完成；下列旧记录保留当时事实。
+ - [重复登记与失败追溯修复](evidence/registration-diagnostics-repair/PLAN.zh-CN.md)：2026-09-13 按用户要求仅修复机械登记拒绝和框架失败追溯；科学判断单列，Fig.4保持在下方暂停节点。源码及定向/隔离安装验证完成，[独立实现复审R2 PASS](evidence/registration-diagnostics-repair/INDEPENDENT_REVIEW_R2.zh-CN.md)绑定R3候选。4项旧回归失败已一并处理；首轮独立审查识别的派生错误定位和失败open归属缺口已修，独立11项通过。精确范围、所有失败及基线复现见[实施记录](evidence/registration-diagnostics-repair/IMPLEMENTATION.zh-CN.md)。用户安装重启并绑定后，[安装后只读核验](evidence/registration-diagnostics-repair/POSTINSTALL.zh-CN.md)通过：13/13生产文件一致，189条历史Run及超过8条的错误历史可分页读出，scoped诊断可读；未补造旧缺失详情，Fig.4仍暂停。不宣称全量测试或真实新Run/科学闭环通过。
+ - [Fig.4 暂停节点与异常审计](evidence/operation-validation-ownership-cleanup/collection-implementation/FIG4_PAUSE_ANOMALY_AUDIT_20260913.zh-CN.md)：2026-09-13 已按用户要求停在新一轮独立科学审查 completed/revise；无 queued/running Run，未启动4个提议案例。审查识别历史数值守卫适用对象不匹配及线性缩放实验信息价值不足。当前4次设计拒绝逐条记录，确认自由文本observable重复登记仍残留；第一优先级为机械拒绝清理和完整失败追溯。公开历史索引有分页/事件窗口限制，不能宣称全部历史拒绝已查清。原有限分析、失败与工程审查记录保持；本次仅审计和文档更新，未实施新修复。
+ - [执行同步、产物收集与工程诊断最小修复计划](EXECUTION_COLLECTION_DIAGNOSTICS_REPAIR_PLAN.zh-CN.md)：2026-09-13 已按[首轮工程审查](evidence/operation-validation-ownership-cleanup/EXECUTION_COLLECTION_PLAN_REVIEW_R1.zh-CN.md)修订，[第二轮工程计划复审 PASS](evidence/operation-validation-ownership-cleanup/EXECUTION_COLLECTION_PLAN_REVIEW_R2.zh-CN.md)；P0—P4 源码、串行定向回归和隔离 wheel 验证已完成，[实施记录](evidence/operation-validation-ownership-cleanup/collection-implementation/EXECUTION_RECORD.zh-CN.md)保留全部通过与失败证据。[R6独立实现/全局复审PASS](evidence/operation-validation-ownership-cleanup/collection-implementation/INDEPENDENT_REVIEW_R6.zh-CN.md)，限Linux local_trusted TCAD控制端；既有Hardened公共workspace冲突与未验收组合保留。已安装并核对32个生产文件；[现场验收](evidence/operation-validation-ownership-cleanup/collection-implementation/POSTINSTALL_RESULT.zh-CN.md)完成原执行43文件收集及有限分析封存，首轮交付超时经新Run续接恢复29项证据，总体对齐/机制目标未完成；两轮计划审查均为主代理复核。计划正文冻结，当前状态以本索引和实施记录为准。补齐可终止的单槽收集进程、正式/调试/恢复的真实预算传递及共同观测行为边界。按[当前未闭合问题清单](evidence/operation-validation-ownership-cleanup/CURRENT_OPEN_BUGS_20260913.zh-CN.md)修复 B1—B5；日志、收集、求解分别定义预算。安装后的计划审查、作者、代码审查均 completed/pass 且零提交拒绝，真实 VM 日志可读；此前原执行成功但收集超时；现同次执行已collected并完成有限分析，未重算求解。下一轮待解决包络边界与尾区可判定性；本轮发现的脚本错误、晚提交和恢复别名误用均见现场记录。
+--- before/docs/plans/ANALYSIS_HANDOFF_AND_REPORT_SIMPLIFICATION_PLAN.zh-CN.md
++++ after/docs/plans/ANALYSIS_HANDOFF_AND_REPORT_SIMPLIFICATION_PLAN.zh-CN.md
+@@ -1,6 +1,8 @@
+ # 分析接手视图与正式报告简化修订计划 R0
+ 
+-日期：2026-09-13。状态：待审查的实施提案；本次仅制定计划，未修改生产源码。
++日期：2026-09-13。状态：独立计划审查 PASS，P0—P4 源码实施与限定工程验证完成，[独立实现审查 PASS](evidence/analysis-handoff-report-simplification/IMPLEMENTATION_REVIEW_R0.zh-CN.md)；安装与真实 Agent 验收待完成。详见 [实施记录](evidence/analysis-handoff-report-simplification/IMPLEMENTATION.zh-CN.md)。
++
++通过范围见 [独立审查 R0](evidence/analysis-handoff-report-simplification/PLAN_REVIEW_R0.zh-CN.md)。审查冻结的 R0 摘要记录于该报告；以下实施内容保持不变。基线快照与串行检查记录见同目录 evidence。验收限定实际支持的 local backend，不声称 hardened 分析已通过。
+ 
+ ## 1. 第一原则与完成目标
+ 
+@@ -183,5 +185,4 @@
+ - 单轮实际耗时与读取量如实对比，不以测试通过或字节减少宣称已证明普遍提速。
+ 
+ 完成顺序：计划审查与必要修订→冻结通过范围→按 P0—P4 实施→独立实现审查→用户安装→真实 Agent 验收。
+-当前只交付计划，不把后续步骤标记为已授权审批或已通过。
+-
++用户已授权通过审查后实施；安装与真实 Agent 验收分别记录，不将工程测试标记为真实运行通过。
+--- /dev/null
++++ after/tests/operations/test_analysis_handoff_report.py
+@@ -0,0 +1,213 @@
++"""Compact reading and delivery through the existing production analysis lifecycle."""
++from copy import deepcopy
++import json
++from pathlib import Path
++from types import SimpleNamespace
++
++import pytest
++
++from scidiscovery.artifact_agent.schema.claim import project_claim_decision
++from scidiscovery.artifact_agent.schema.common import canonical_json, SchemaModel
++from scidiscovery.artifact_agent.schema.layered_diagnosis import LayeredDiagnosisReport
++from tests.operations.test_tcad_result_analysis import analysis_materials, analysis_report, analysis_system, open_analysis
++from tests.operations.test_analysis_claim_scope import generic_worker, precomputed_worker, mcp_call
++from tests.operations import test_m2_curve_analysis_boundary as curve
++
++
++def compact_report(alias='runtime_manifest', verdict='inconclusive'):
++    original = analysis_report(alias=alias)
++    return {key: value for key, value in {**original,
++        'summary': 'Finite fixture finding. ' * 180,
++        'overall_verdict': verdict, 'claim_allowed': verdict == 'pass',
++        'evidence': [dict(source_key=alias, source_type='runtime_output', title='Bound result', locator=alias)],
++        'limitations': ['Only the bound fixture observation is available.'],
++    }.items() if key in {'schema_version', 'study_kind', 'experiment_key', 'plan_key',
++        'summary', 'overall_verdict', 'claim_allowed', 'evidence', 'limitations'}}
++
++
++def submit_compact(worker, opened, payload):
++    domain = json.loads(Path(opened['domain_workspace_path']).read_bytes())
++    assert domain['patch_contract']['draft_may_omit'] == ['/handoff']
++    Path(opened['output_directory'], 'result.json').write_bytes(canonical_json(
++        dict(schema_version=1, payload=payload)))
++    result = mcp_call(worker, 'worker_submit_result', {})['result']['structuredContent']
++    assert result['state'] == 'completed', result
++
++
++@pytest.mark.parametrize('verdict', ['pass', 'fail', 'inconclusive', 'invalid_study'])
++def test_tcad_compact_report_seals_and_preserves_scientific_claim(tmp_path, verdict):
++    system = analysis_system(tmp_path, state='failed' if verdict == 'invalid_study' else 'succeeded',
++        bind_names=() if verdict == 'invalid_study' else ('A', 'B'))
++    worker, opened = open_analysis(system)
++    payload = compact_report(verdict=verdict)
++    submit_compact(worker, opened, payload)
++    status = system[2].call_tool('run_status', {'name': 'analysis'})
++    envelope = status['sealed_output']
++    report = LayeredDiagnosisReport.model_validate_json(canonical_json(envelope['payload']))
++    assert report.summary == payload['summary'] and report.gates is None
++    assert report.remaining_contradiction is report.next_action is None
++    decision = project_claim_decision(report)
++    assert decision.numerical_verdict == 'not_evaluable'
++    assert decision.overall_verdict == verdict and decision.claim_allowed == payload['claim_allowed']
++    handoff = status['scheduler_signal']
++    assert handoff['verdict'] == {'fail': 'blocked', 'invalid_study': 'blocked'}.get(verdict, verdict)
++    assert 'payload.summary' in handoff['summary']
++    assert len(handoff['summary']) < 256 < len(report.summary)
++    # Reuse both compact history and its precise receipts, without rewriting the old Artifact.
++    request = deepcopy(system[3]); request['name'] = 'next_analysis'
++    request['inputs'].extend([
++        dict(port='prior_analysis', artifact_names=['analysis.output']),
++        dict(port='prior_analysis_manifest', artifact_names=['analysis.output.recovery_manifest'])]
++        if verdict in {'pass', 'inconclusive'} else [
++        dict(port='current_progress', artifact_names=['analysis.output'])])
++    _, new_opened = open_analysis((*system[:3], request, *system[4:]))
++    start = json.loads(Path(new_opened['start_here_path']).read_bytes())
++    assert any(item['pointer'] == '/limitations' and 'bound fixture' in item['text'] for item in start['excerpts'])
++    assert system[2].call_tool('run_status', {'name': 'analysis'})['sealed_output'] == envelope
++
++
++@pytest.mark.parametrize('kind', ['generic', 'curve_error'])
++def test_other_analysis_operations_finalize_compact_drafts_through_mcp(tmp_path, kind):
++    if kind == 'generic':
++        worker, opened = generic_worker(tmp_path)
++        report = compact_report('experiment_results')
++    else:
++        from curve_score.science_operations import Components
++        package = Components.curve_error_analysis.implementation(
++            {name: (raw,) for name, raw in curve._inputs().items()})['curve_analysis_package'][0]
++        worker, opened = precomputed_worker(tmp_path, package)
++        report = compact_report('curve_analysis_package')
++        assert not any(item['name'] == 'worker_curve_score' for item in worker.list_tools())
++    assert Path(opened['start_here_path']).is_file()
++    submit_compact(worker, opened, report)
++
++
++def test_handoff_normalizes_only_duplicate_fields_and_unknown_claims_still_fail():
++    from scidiscovery.artifact_agent.service.result_materialization import materialize_general_result
++    value = dict(payload=compact_report(verdict='fail'), handoff=dict(verdict='pass', summary='Old copy',
++        missing_inputs=['Separate input note'], assumptions=['Conditional premise'], next_actions=['Historical extra']))
++    materialize_general_result(value, 'scidiscovery.layered-diagnosis.v1')
++    assert value['handoff']['verdict'] == 'blocked'
++    assert value['handoff']['missing_inputs'] == ['Separate input note']
++    assert value['handoff']['assumptions'] == ['Conditional premise']
++    assert value['handoff']['next_actions'] == ['Historical extra']
++    invalid = dict(payload={'summary': 'Missing scientific verdict'})
++    materialize_general_result(invalid, 'scidiscovery.layered-diagnosis.v1')
++    assert 'handoff' not in invalid
++    with pytest.raises(TypeError, match='supported report'):
++        project_claim_decision(SchemaModel())
++    legacy = LayeredDiagnosisReport.model_validate_json(canonical_json(analysis_report()))
++    assert project_claim_decision(legacy).numerical_verdict == legacy.gates.numerical_validity.status
++
++
++def test_sealed_compact_analysis_reaches_next_design_preflight_and_original_input(tmp_path, monkeypatch):
++    from scidiscovery.artifact_agent.interfaces.mcp_local_worker import LocalWorkerMCPRouter
++    from tests.operations import test_agent_contract_alignment as alignment
++    from tests.operations import test_general_transform_operations as transforms
++    from tests.operations import test_tcad_result_analysis as tcad
++    open_runtime = tcad.open_runtime
++    monkeypatch.setattr(tcad, 'open_runtime', lambda **kwargs:
++        open_runtime(approval_receipt_secret=b'fixture-only-receipt-key-32-bytes', **kwargs))
++    system = analysis_system(tmp_path)
++    worker, opened = open_analysis(system)
++    submit_compact(worker, opened, compact_report())
++    catalog, runtime, root = system[:3]
++    completed = runtime.runs.status(worker._run_id)
++    original = runtime.artifacts.read(completed.output_ref)
++    # Reuse the existing design cohort fixture in the same instance. Its approval
++    # stub belongs to that fixture; this test checks feedback transport, not governance.
++    monkeypatch.setattr(transforms, '_root', lambda *args, **kwargs:
++        (runtime, SimpleNamespace(instance_id=completed.instance_id), root))
++    _, _, _, request, _ = alignment._feedback_root(tmp_path, monkeypatch,
++        alignment.experiment_case.__wrapped__(), 'science.experiment.design.v1', catalog=catalog)
++    request['inputs'].append(dict(port='current_progress', artifact_names=['analysis.output']))
++    checked = root.call_tool('operation_preflight', request)
++    assert checked['admissible'], checked
++    root.call_tool('operation_invoke', request)
++    operation = catalog.operation(request['operation_id'])
++    designer = LocalWorkerMCPRouter(runtime.runs, operation_id=operation.spec.operation_id, operation_digest=operation.digest)
++    opened = designer.call_tool('worker_open_assignment', {})
++    assignment = json.loads(Path(opened['assignment_path']).read_bytes())
++    item = next(item for item in assignment['inputs'] if item['port'] == 'current_progress')
++    assert (Path(opened['workspace_path'])/item['relative_path']).read_bytes() == original
++    assert json.loads(original)['limitations'] == compact_report()['limitations']
++
++
++def pointer(value, path):
++    for part in path.split('/')[1:]:
++        part = part.replace('~1', '/').replace('~0', '~')
++        value = value[int(part)] if isinstance(value, list) else value[part]
++    return value
++
++
++def view_fixture(tmp_path, *, oversized=False):
++    from scidiscovery.operations.workspace import WorkspaceMaterializationRequest
++    plan, package, *_ = analysis_materials()
++    plan, package = plan.model_dump(mode='json'), package.model_dump(mode='json')
++    proposal = plan['proposals'][0]
++    proposal['cases'] = [dict(case_key=f'case_{n}', scientific_role='baseline' if n == 0 else 'perturbation',
++        purpose='Fixture case', settings=[]) for n in range(12)]
++    observable = '完整公式和阈值' * 160
++    proposal['required_observables'] = [observable]
++    proposal['comparison_contract'] = dict(baseline_case_key='case_0',
++        comparison_case_keys=[f'case_{n}' for n in range(1, 12)], required_observables=[observable],
++        variables=[dict(variable_key=f'variable_{n}', scientific_path='Fixture parameter',
++            factor_type='physical', comparison_role='intended_change', unit='um', equivalence_rule='exact',
++            rationale='Read the complete original', expectations=[dict(case_key=f'case_{c}',
++                value=('长值' * 20000 if oversized and n == 0 else c + n / 10)) for c in reversed(range(12))])
++            for n in range(13)])
++    package['project']['case_parameter_bindings'] = [{'control_only_marker': n} for n in range(156)]
++    contents = {'experiment_plan': plan, 'reviewed_package': package, 'current_progress': {'unknown_future_field': 'Kept'}}
++    schemas = {'experiment_plan': 'scidiscovery.experiment-portfolio.v1', 'reviewed_package': 'tcad.reviewed-deck-package.v2',
++        'current_progress': 'future.schema'}
++    inputs, paths, descriptors = [], {}, {}
++    (tmp_path/'inputs').mkdir()
++    for alias, value in contents.items():
++        relative = f'inputs/{alias}.json'; path = tmp_path/relative
++        path.write_bytes(canonical_json(value)); paths[alias] = path
++        descriptors[alias] = SimpleNamespace(port_name=alias, size_bytes=path.stat().st_size,
++            artifact_ref=SimpleNamespace(schema_id=schemas[alias]), output_name=None)
++        inputs.append(dict(source_name=alias, port=alias, relative_path=relative, description='Fixture input',
++            exposure='full', usage='evidence_inventory', media_type='application/json'))
++    (tmp_path/'assignment.json').write_text(json.dumps(dict(inputs=inputs, tools=[])))
++    request = WorkspaceMaterializationRequest(operation_id='fixture', workspace=tmp_path, input_paths=paths,
++        binding_descriptors=descriptors, provisional_roots=(), edit_protocol='native')
++    return request, contents
++
++
++@pytest.mark.parametrize('oversized', [False, True])
++def test_bounded_views_preserve_originals_matrix_values_and_full_rule_pointers(tmp_path, oversized):
++    from tcad_artifact.analysis_bindings import materialize, source_bindings, workspace_sources
++    request, contents = view_fixture(tmp_path, oversized=oversized)
++    originals = {name: path.read_bytes() for name, path in request.input_paths.items()}
++    sources = source_bindings(workspace_sources(request))
++    materialize(request)
++    start_raw, view_raw = ((tmp_path/name).read_bytes() for name in ('analysis-start.json', 'analysis-bindings.json'))
++    assert len(start_raw) + len(view_raw) <= 32 * 1024
++    assert b'control_only_marker' not in start_raw + view_raw
++    assert {name: path.read_bytes() for name, path in request.input_paths.items()} == originals
++    assert source_bindings(workspace_sources(request)) == sources
++    start, view = json.loads(start_raw), json.loads(view_raw)
++    assert {item['source_name'] for item in start['inputs']} == set(contents)
++    assert all(item['size_bytes'] == len(originals[item['source_name']]) for item in start['inputs'])
++    assert next(item for item in start['inputs'] if item['source_name'] == 'current_progress')['schema_id'] == 'future.schema'
++    assert any(item['pointer'] == '/review' for item in view['project_index'])
++    observables = [item for item in start['plan_index'] if 'observable' in item]
++    assert len(observables) == 1 and len(observables[0]['pointers']) == 2
++    for path in observables[0]['pointers']:
++        assert pointer(contents['experiment_plan'], path).startswith(observables[0]['observable'])
++    values = 0
++    for entry in view['case_matrix']:
++        original = pointer(contents[entry['source_name']], entry['pointer'])
++        if 'case_columns' in entry:
++            columns = entry['case_columns']
++        if 'values' in entry:
++            for case, index, value in zip(columns, entry['expectation_indices'], entry['values'], strict=True):
++                assert original['expectations'][index] == {'case_key': case, 'value': value}
++                values += 1
++    assert values == (144 if oversized else 156)
++    assert bool(view['omitted']) == oversized
++    for entry in view['project_index']:
++        original = pointer(contents[entry['source_name']], entry['pointer'])
++        if 'source_file' in entry:
++            assert isinstance(original, str) and len(original.encode()) == entry['content_bytes']

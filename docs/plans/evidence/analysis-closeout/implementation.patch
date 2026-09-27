@@ -1,0 +1,580 @@
+--- before/plugins/curve_score/curve_score/analysis_workspace.py
++++ after/plugins/curve_score/curve_score/analysis_workspace.py
+@@ -29,6 +29,11 @@
+ before calling it. Restored scratch files are editable provisional work; check their
+ assumptions against this Run's inputs. Reuse valid saved numbers for plot-only repairs.
+ Historical runtime observations remain in recovery-draft, separate from this Run.
++When the manifest's local_compute launcher is available, use it for analysis
++scripts and preparation/check commands so failures and bounded logs remain visible.
++Its --command mode runs an argv command from the workspace root and returns bounded
++stdout/stderr; script mode keeps paths relative to scratch/. Direct platform calls
++are outside this observation coverage. Missing telemetry never blocks submission.
+ """
+ 
+ 
+@@ -64,9 +69,9 @@
+             pass
+     return {"scientific_evidence": False, "restored": restored, "copy_omissions": omitted,
+         "coverage": coverage, "restored_count": len(restored), "copy_omitted_count": len(omitted),
+-        "coverage_path": "recovery-draft/" + MANIFEST if request.provisional_roots else None,
++        "coverage_path": "recovery-draft/" + MANIFEST if coverage is not None else None,
+         "historical_runtime_path": "recovery-draft/" + str(local_process_observation.RECORD_DIR)
+-            if request.provisional_roots else None}
++            if request.provisional_roots and (request.provisional_roots[-1] / local_process_observation.RECORD_DIR).is_dir() else None}
+ 
+ 
+ def _excerpts(value, schema):
+@@ -156,9 +161,10 @@
+         manifest_name=FORMAT,
+         manifest={"recovery_format": FORMAT, "retain_original_on_failure": True,
+             "instruction": "Recovery originals are read-only. Safe scratch files have editable copies; inspect analysis-start.json for coverage and original errors. Missing files are not completed."},
+-        paths={"start_here": START, "scratch": "scratch", "recovery_manifest": "recovery-draft/" + MANIFEST,
++        paths={"start_here": START, "scratch": "scratch", "recovery_manifest": restored["coverage_path"],
+             "local_compute": {"path": tool if available else None, "available": available,
+                 "example": "python tools/local_process_observation.py --timeout 240 --submission-reserve 120 analysis.py",
++                "command_example": "python tools/local_process_observation.py --timeout 20 --command cat analysis-start.json",
+                 "script_base": "scratch", "optional": True,
+                 "budget": "Timeout is clipped to the Run deadline minus the selected submission reserve. Reserve is adjustable; timing is not required to submit."}},
+         read_paths=(START, "scratch", "recovery-draft", "tools"),
+--- before/src/scidiscovery/artifact_agent/service/local_process_observation.py
++++ after/src/scidiscovery/artifact_agent/service/local_process_observation.py
+@@ -6,6 +6,7 @@
+ from __future__ import annotations
+ 
+ import argparse
++import builtins
+ from datetime import datetime, timezone
+ import fcntl
+ import json
+@@ -24,6 +25,8 @@
+ RECORD_DIR = Path("scratch/.analysis-process")
+ LOG_LIMIT = 128 * 1024
+ MEMORY_LIMIT = 512 * 1024 * 1024
++ERROR_TYPES = frozenset(name for name, value in vars(builtins).items()
++    if isinstance(value, type) and issubclass(value, BaseException))
+ 
+ 
+ def normalize_log(raw, workspace):
+@@ -78,27 +81,58 @@
+     return directory
+ 
+ 
++def _project_record(value):
++    result = {}
++    for key in ("started_at", "ended_at", "first_started_at"):
++        item = value.get(key)
++        result[key] = item if isinstance(item, str) and re.fullmatch(r"[0-9TZ:+.\-]{1,40}", item) else None
++    for key in ("elapsed_seconds", "effective_timeout_seconds", "exit_code", "peak_rss_kib"):
++        item = value.get(key)
++        result[key] = item if type(item) in (int, float) and math.isfinite(item) else None
++    for key in ("timed_out", "cancelled", "logs_truncated", "process_group_stopped"):
++        result[key] = value.get(key) if type(value.get(key)) is bool else None
++    for key, allowed in {"state": {"running", "finished", "not_started"},
++        "budget_source": {"run_deadline", "unavailable"},
++        "reason": {"insufficient_budget", "launch_failed", "interrupted", None}}.items():
++        item = value.get(key)
++        result[key] = item if isinstance(item, (str, type(None))) and item in allowed else None
++    kind = value.get("error_type")
++    result["error_type"] = kind if isinstance(kind, str) and kind in ERROR_TYPES else None
++    for key in ("stdout_log", "stderr_log"):
++        item = value.get(key)
++        result[key] = item if isinstance(item, str) and re.fullmatch(
++            r"scratch/\.analysis-process/[0-9a-f]{32}\.(stdout|stderr)\.log", item) else None
++    return result
++
++
+ def read_summary(workspace):
+     """Pure, bounded Root projection: no commands, script or log contents."""
+     try:
+         value = _read_json(_directory(workspace) / "latest.json")
+-        result = {"coverage": "local_launcher", "scientific_evidence": False}
+-        for key in ("started_at", "ended_at"):
++        result = {"coverage": "local_launcher", "scientific_evidence": False, **_project_record(value)}
++        for key in ("attempt_count", "error_count", "total_stdout_bytes", "total_stderr_bytes"):
+             item = value.get(key)
+-            result[key] = item if isinstance(item, str) and re.fullmatch(r"[0-9TZ:+.\-]{1,40}", item) else None
+-        for key in ("elapsed_seconds", "effective_timeout_seconds", "exit_code", "peak_rss_kib"):
+-            item = value.get(key)
+-            result[key] = item if type(item) in (int, float) and math.isfinite(item) else None
+-        for key in ("timed_out", "cancelled", "logs_truncated", "process_group_stopped"):
+-            result[key] = value.get(key) if type(value.get(key)) is bool else None
+-        for key, allowed in {"state": {"running", "finished", "not_started"},
+-            "budget_source": {"run_deadline", "unavailable"},
+-            "reason": {"insufficient_budget", "launch_failed", "interrupted", None}}.items():
+-            item = value.get(key)
+-            result[key] = item if isinstance(item, (str, type(None))) and item in allowed else None
++            result[key] = item if type(item) is int and 0 <= item <= 2**63 - 1 else 0
++        history = value.get("recent_errors", [])
++        result["recent_errors"] = [_project_record(item) for item in history[-8:] if isinstance(item, dict)] if isinstance(history, list) else []
++        if "recent_errors" not in value and _failed(result):
++            # Legacy launchers only retained the latest observation, not counts.
++            result.update(recent_errors=[_project_record(value)], error_count=1)
+         return result
+     except (OSError, ValueError, TypeError, AttributeError):
+         return {"coverage": "unobserved", "scientific_evidence": False}
++
++
++def _failed(record):
++    return record.get("exit_code") not in (0, None) or record.get("timed_out") or record.get("cancelled") or record.get("reason")
++
++
++def _save_finished(directory, name, record):
++    if _failed(record):
++        record["error_count"] += 1
++        record["recent_errors"] = [*record["recent_errors"], _project_record(record)][-8:]
++    _write(directory / (name + ".json"), record)
++    _write(directory / "latest.json", record)
+ 
+ 
+ def request_stop(workspace):
+@@ -145,31 +179,41 @@
+     return not _group_exists(process.pid)
+ 
+ 
+-def run(workspace, script, arguments=(), *, timeout, submission_reserve=120):
+-    """Run one task-local Python script; capture bounded logs incrementally."""
++def run(workspace, script, arguments=(), *, timeout, submission_reserve=120, command=False):
++    """Observe Worker execution; argv mode has the same native permissions."""
+     workspace = Path(workspace).absolute()
+     scratch = workspace / "scratch"
+-    relative = Path(script)
+-    if relative.is_absolute() or ".." in relative.parts:
+-        raise ValueError("script must be relative to scratch/")
+-    source = scratch / relative
+-    if source.is_symlink() or not source.is_file() or not source.resolve().is_relative_to(scratch.resolve()):
+-        raise ValueError("script must be a regular task-local file")
++    if command:
++        argv, cwd = [script, *arguments], workspace
++    else:
++        relative = Path(script)
++        if relative.is_absolute() or ".." in relative.parts:
++            raise ValueError("script must be relative to scratch/")
++        source = scratch / relative
++        if source.is_symlink() or not source.is_file() or not source.resolve().is_relative_to(scratch.resolve()):
++            raise ValueError("script must be a regular task-local file")
++        argv, cwd = [sys.executable, "-B", str(relative), *arguments], scratch
+     directory = _directory(workspace); directory.mkdir(exist_ok=True, mode=0o700)
+     lock_fd = os.open(directory / "lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+     with os.fdopen(lock_fd, "w") as lock:
+         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
++        previous = read_summary(workspace)
++        name = uuid.uuid4().hex
+         seconds, budget_source = effective_timeout(workspace, timeout, submission_reserve)
+         record = dict(state="not_started", started_at=None, ended_at=None,
+             effective_timeout_seconds=seconds, budget_source=budget_source,
+             timed_out=False, cancelled=False, process_group_stopped=None)
++        record.update({key: previous.get(key, 0) for key in
++            ("attempt_count", "error_count", "total_stdout_bytes", "total_stderr_bytes")})
++        record.update(attempt_count=record["attempt_count"] + 1,
++            first_started_at=previous.get("first_started_at"), recent_errors=previous.get("recent_errors", []))
+         if seconds <= 0 or (directory / "stop").exists():
+             record.update(reason="insufficient_budget" if seconds <= 0 else "interrupted", ended_at=_now())
+-            _write(directory / "latest.json", record)
++            _save_finished(directory, name, record)
+             return 124
+         started = time.monotonic()
+         record.update(state="running", started_at=_now())
+-        name = uuid.uuid4().hex
++        record["first_started_at"] = record["first_started_at"] or record["started_at"]
+         _write(directory / "latest.json", record)
+         process = None
+         raw_logs = {}
+@@ -178,7 +222,7 @@
+         env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1", "OPENBLAS_NUM_THREADS": "1",
+             "OMP_NUM_THREADS": "1", "MKL_NUM_THREADS": "1", "NUMEXPR_NUM_THREADS": "1"}
+         try:
+-            process = subprocess.Popen([sys.executable, "-B", str(relative), *arguments], cwd=scratch,
++            process = subprocess.Popen(argv, cwd=cwd,
+                 env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                 start_new_session=True, preexec_fn=_limits)
+             with selectors.DefaultSelector() as selector:
+@@ -201,6 +245,10 @@
+                         log = raw_logs[key.data]
+                         available = max(0, LOG_LIMIT - log.tell())
+                         log.write(data[:available]); truncated |= len(data) > available
++                        record["total_" + key.data + "_bytes"] += len(data)
++                        if command and available:
++                            stream = sys.stdout.buffer if key.data == "stdout" else sys.stderr.buffer
++                            stream.write(data[:available]); stream.flush()
+                 if process.poll() is None:
+                     try:
+                         process.wait(timeout=max(.001, seconds - (time.monotonic() - started)))
+@@ -208,29 +256,41 @@
+                         record["timed_out"] = True
+                 record["process_group_stopped"] = _stop_group(process)
+                 rc = 124 if record["timed_out"] or record["cancelled"] else process.returncode
+-        except (OSError, ValueError, KeyboardInterrupt):
++        except (OSError, ValueError, KeyboardInterrupt) as error:
+             record["reason"] = "interrupted" if process else "launch_failed"
++            record["error_type"] = type(error).__name__
++            if not process:
++                raw_logs["stderr"] = (directory / (name + ".stderr.raw")).open("xb")
++                raw = (type(error).__name__ + ": " + str(error) + "\n").encode("utf-8")[:LOG_LIMIT]
++                raw_logs["stderr"].write(raw)
++                record["total_stderr_bytes"] += len(raw)
++                if command:
++                    sys.stderr.buffer.write(raw); sys.stderr.buffer.flush()
+         finally:
+             if process:
+                 record["process_group_stopped"] = _stop_group(process)
+                 for pipe in (process.stdout, process.stderr):
+                     pipe.close()
+-            for log in raw_logs.values():
++            for key, log in raw_logs.items():
+                 log.close()
+                 raw_path = Path(log.name)
+                 raw = raw_path.read_bytes()  # Bounded during capture, at most LOG_LIMIT.
++                if key == "stderr":
++                    kinds = re.findall(rb"(?m)^([A-Za-z]+):", raw)
++                    record["error_type"] = next((kind.decode() for kind in reversed(kinds)
++                        if kind.decode() in ERROR_TYPES), record.get("error_type"))
+                 try:
+                     normalized = normalize_log(raw, workspace)
+                     if truncated:
+                         normalized += b"\n[log truncated at capture limit]\n"
+                     raw_path.with_suffix(".log").write_bytes(normalized)
++                    record[key + "_log"] = raw_path.with_suffix(".log").relative_to(workspace).as_posix()
+                 except (OSError, UnicodeError):
+                     pass
+             record.update(state="finished", ended_at=_now(), elapsed_seconds=time.monotonic()-started,
+                 exit_code=process.returncode if process else None, logs_truncated=truncated,
+                 peak_rss_kib=resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss if sys.platform.startswith("linux") else None)
+-            _write(directory / (name + ".json"), record)
+-            _write(directory / "latest.json", record)
++            _save_finished(directory, name, record)
+         return rc
+ 
+ 
+@@ -238,11 +298,13 @@
+     parser = argparse.ArgumentParser(description=__doc__)
+     parser.add_argument("--timeout", type=float, required=True)
+     parser.add_argument("--submission-reserve", type=float, default=120)
++    parser.add_argument("--command", action="store_true",
++        help="Run an argv command from the workspace root and return bounded stdout/stderr.")
+     parser.add_argument("script")
+     parser.add_argument("arguments", nargs=argparse.REMAINDER)
+     args = parser.parse_args()
+     return run(Path(__file__).resolve().parents[1], args.script, args.arguments,
+-        timeout=args.timeout, submission_reserve=args.submission_reserve)
++        timeout=args.timeout, submission_reserve=args.submission_reserve, command=args.command)
+ 
+ 
+ if __name__ == "__main__":
+--- before/src/scidiscovery/artifact_agent/interfaces/mcp_root_run_routes.py
++++ after/src/scidiscovery/artifact_agent/interfaces/mcp_root_run_routes.py
+@@ -41,6 +41,10 @@
+                 result["native_execution"] = read_summary(self.runs.backend.open(value.run_id).root)
+             except (WorkspaceError, OSError):
+                 result["native_execution"] = {"coverage": "unobserved", "scientific_evidence": False}
++            native = result["native_execution"]
++            result["diagnostic_summary"]["native_coverage"] = native["coverage"]
++            result["diagnostic_summary"]["latest_native_error"] = next(
++                iter(reversed(native.get("recent_errors", []))), None)
+         output_status, output = self._sealed_output(value)
+         result["sealed_output_status"] = output_status
+         result["sealed_output"] = output
+--- before/tests/operations/test_analysis_continuation.py
++++ after/tests/operations/test_analysis_continuation.py
+@@ -16,12 +16,28 @@
+ )
+ 
+ 
++def test_legacy_draft_without_coverage_or_runtime_files_does_not_advertise_them(tmp_path):
++    from curve_score.analysis_workspace import materialize
++    from scidiscovery.operations.workspace import WorkspaceMaterializationRequest
++    draft = tmp_path/'recovery-draft'; (draft/'scratch').mkdir(parents=True)
++    (draft/'scratch/numbers.json').write_text('{"value":3}')
++    (tmp_path/'assignment.json').write_text('{"inputs":[],"tools":[]}')
++    result = materialize(WorkspaceMaterializationRequest(operation_id='fixture', workspace=tmp_path,
++        input_paths={}, provisional_roots=(draft,), edit_protocol='native'))
++    start = json.loads((tmp_path/'analysis-start.json').read_bytes())
++    assert result.paths['recovery_manifest'] is start['recovery']['coverage_path'] is None
++    assert start['recovery']['historical_runtime_path'] is None
++    assert (tmp_path/'scratch/numbers.json').read_text() == '{"value":3}'
++
++
+ def test_compact_open_and_editable_nested_recovery_with_fresh_runtime(tmp_path):
+     from scidiscovery.artifact_agent.service import local_process_observation as observation
+     from tests.operations.test_analysis_evidence_recovery import recovery_system
+     system, worker, opened, _ = recovery_system(tmp_path)
+     root = Path(opened['workspace_path'])
+     start = json.loads(Path(opened['start_here_path']).read_bytes())
++    domain = json.loads((root / 'domain-workspace.json').read_bytes())
++    assert domain['paths']['recovery_manifest'] is start['recovery']['coverage_path'] is None
+     assert 'tool_contracts' not in opened
+     assert start['excerpts'] and all('pointer' in item for item in start['excerpts'])
+     assignment = json.loads(Path(opened['assignment_path']).read_bytes())
+@@ -43,6 +59,10 @@
+     request = deepcopy(system[3]); request.update(name='copied', draft_from='analysis')
+     following, new_opened = open_analysis((*system[:3], request, *system[4:]))
+     new = Path(new_opened['workspace_path']); draft = new / 'recovery-draft'
++    domain = json.loads((new / 'domain-workspace.json').read_bytes())
++    entry = json.loads(Path(new_opened['start_here_path']).read_bytes())
++    assert domain['paths']['recovery_manifest'] == entry['recovery']['coverage_path']
++    assert (new / domain['paths']['recovery_manifest']).is_file()
+     frozen = draft / 'scratch/nested/numbers.json'
+     assert stat.S_IMODE(frozen.stat().st_mode) == 0o400
+     assert stat.S_IMODE((frozen.parent).stat().st_mode) == 0o500
+@@ -110,6 +130,97 @@
+     assert worker.call_tool('worker_submit_result', {})['state'] == 'completed'
+     sealed = system[2].call_tool('run_status', {'name':'history_again'})['sealed_output']['payload']
+     assert sealed['source_references'][0]['case_key'] == 'baseline'
++
++
++def test_native_read_error_survives_success_and_is_visible_in_completed_root_status(tmp_path):
++    system = analysis_system(tmp_path); worker, opened = open_analysis(system)
++    root = Path(opened['workspace_path'])
++    command = [sys.executable, 'tools/local_process_observation.py', '--timeout', '5',
++        '--submission-reserve', '0', '--command', sys.executable, '-c']
++    failed = subprocess.run(command + ['from pathlib import Path; Path("missing-recovery.json").read_text()'],
++        cwd=root, capture_output=True, timeout=10)
++    assert failed.returncode == 1 and b'FileNotFoundError' in failed.stderr
++    assert subprocess.run(command + ['print("prepared")'], cwd=root, capture_output=True, timeout=10).stdout == b'prepared\n'
++    report = analysis_report(alias='solver_outputs_001', output_name='A', mapped=True)
++    write_analysis(opened, report)
++    assert worker.call_tool('worker_submit_result', {})['state'] == 'completed'
++    status = system[2].call_tool('run_status', {'name':'analysis'})
++    native, diagnostic = status['native_execution'], status['diagnostic_summary']
++    assert native['exit_code'] == 0 and native['attempt_count'] == 2 and native['error_count'] == 1
++    error = diagnostic['latest_native_error']
++    assert error['exit_code'] == 1 and error['error_type'] == 'FileNotFoundError'
++    assert 'missing-recovery.json' in (root / error['stderr_log']).read_text()
++    assert diagnostic['rejection_count'] == 0 and diagnostic['failure'] is None
++    assert 'missing-recovery.json' not in json.dumps(diagnostic)
++
++
++@pytest.mark.parametrize('keep_original', [False, True])
++def test_recovery_with_changed_inputs_keeps_draft_and_only_adopts_applicable_receipts(tmp_path, keep_original):
++    system = analysis_system(tmp_path); worker, opened = open_analysis(system)
++    catalog, runtime, facade, request, artifacts, register = system
++    root = Path(opened['workspace_path'])
++    (root / 'scratch/analysis.py').write_text('# saved work\n')
++    (root / 'scratch/numbers.json').write_text('{"value":3}')
++    worker.call_tool('worker_analysis_publish_files', dict(source_aliases=['reference_material'],
++        script_path='scratch/analysis.py', files=[dict(path='scratch/numbers.json',media_type='application/json')],
++        method='Fixture saved calculation.'))
++    receipts = runtime.runs.tool_evidence(worker._run_id)
++    current = runtime.runs.status(worker._run_id)
++    runtime.runs.record_failure(current.run_id, reason='fixture interruption', expected_state='running',
++        expected_last_activity_at=current.last_activity_at)
++    # Same bytes do not substitute for the old Artifact identity.
++    register('new_reference', runtime.artifacts.read(artifacts['reference'].ref), 'opaque', media='text/csv')
++    request = deepcopy(request); request.update(name='changed_inputs', draft_from='analysis', max_attempts=3)
++    next(i for i in request['inputs'] if i['port']=='reference_material')['artifact_names'] = (
++        ['new_reference','reference'] if keep_original else ['new_reference'])
++    worker, opened = open_analysis((*system[:3], request, *system[4:]))
++    adopted = runtime.runs.tool_evidence(worker._run_id)
++    assert adopted == (receipts if keep_original else [])
++    coverage = opened['recovery_evidence']
++    assert coverage['preserved_count'] == len(receipts)
++    assert coverage['adopted_count'] == (len(receipts) if keep_original else 0)
++    assert facade.call_tool('run_status', {'name':'changed_inputs'})['recovery']['tool_evidence'] == coverage
++    new = Path(opened['workspace_path'])
++    assert (new/'scratch/numbers.json').read_text() == (root/'scratch/numbers.json').read_text()
++    (new/'scratch/analysis.py').write_text('# edited safely\n')
++    assert (new/'recovery-draft/scratch/analysis.py').read_text() == '# saved work\n'
++    if keep_original:
++        # Receipt aliases still belong to the original producer after a second recovery.
++        current = runtime.runs.status(worker._run_id)
++        runtime.runs.record_failure(current.run_id, reason='fixture interruption', expected_state='running',
++            expected_last_activity_at=current.last_activity_at)
++        request.update(name='recovered_again', draft_from='changed_inputs')
++        worker, opened = open_analysis((*system[:3], request, *system[4:]))
++        assert runtime.runs.tool_evidence(worker._run_id) == receipts
++    report = analysis_report()
++    write_analysis(opened, report)
++    assert worker.call_tool('worker_submit_result', {})['state'] == 'completed'
++
++
++def test_out_of_scope_receipt_corruption_still_fails_open_with_record_index(tmp_path, monkeypatch):
++    system = analysis_system(tmp_path); worker, opened = open_analysis(system)
++    root = Path(opened['workspace_path']); runtime = system[1]
++    (root/'scratch/work.py').write_text('# saved\n')
++    (root/'scratch/data.json').write_text('{"value":3}')
++    worker.call_tool('worker_analysis_publish_files', dict(source_aliases=['reference_material'],
++        script_path='scratch/work.py', files=[dict(path='scratch/data.json',media_type='application/json')],
++        method='Fixture partial result.'))
++    origin = runtime.runs.status(worker._run_id)
++    runtime.runs.record_failure(origin.run_id, reason='fixture interruption', expected_state='running',
++        expected_last_activity_at=origin.last_activity_at)
++    read = runtime.runs.tool_evidence
++    def corrupted(run_id):
++        records = read(run_id)
++        if run_id == origin.run_id:
++            records[0]['source_ref'] = system[4]['plan'].ref.model_dump(mode='json')
++        return records
++    monkeypatch.setattr(runtime.runs, 'tool_evidence', corrupted)
++    request = deepcopy(system[3]); request.update(name='bad_receipt', draft_from='analysis')
++    request['inputs'] = [i for i in request['inputs'] if i['port'] != 'reference_material']
++    with pytest.raises(Exception, match='preserved tool evidence integrity failure'):
++        open_analysis((*system[:3], request, *system[4:]))
++    status = system[2].call_tool('run_status', {'name':'bad_receipt'})
++    assert status['state'] == 'failed' and 'records[0] receipt differs from its origin' in status['reason']
+ 
+ 
+ @pytest.mark.parametrize('field, value, expected', [
+--- before/tests/operations/test_local_process_observation.py
++++ after/tests/operations/test_local_process_observation.py
+@@ -46,6 +46,9 @@
+     assert summary['peak_rss_kib'] > 0 and summary['process_group_stopped'] is True
+     assert (directory / 'latest.json').read_bytes() == before
+     assert not list(root.rglob('*.pyc'))
++    (directory / 'latest.json').write_text('{"state":"finished","exit_code":1}')
++    legacy = observation.read_summary(root)
++    assert legacy['error_count'] == 1 and legacy['recent_errors'][0]['exit_code'] == 1
+ 
+ 
+ def test_timeout_respects_remaining_run_budget_on_every_retry(tmp_path):
+@@ -115,3 +118,45 @@
+     summary = observation.read_summary(root)
+     assert 'private command' not in json.dumps(summary) and 'secret' not in json.dumps(summary)
+     assert summary['scientific_evidence'] is False
++
++
++def test_argv_launch_failure_history_and_bounded_output(tmp_path):
++    root = workspace(tmp_path, 'pass', remaining=30)
++    command = [sys.executable, 'tools/local_process_observation.py', '--timeout', '5',
++        '--submission-reserve', '0', '--command']
++    failed = subprocess.run(command + ['no-such-observation-executable'],
++        cwd=root, capture_output=True, timeout=8)
++    assert failed.returncode == 1 and b'FileNotFoundError' in failed.stderr
++    first = observation.read_summary(root)
++    assert first['recent_errors'][0]['reason'] == 'launch_failed'
++    assert first['recent_errors'][0]['error_type'] == 'FileNotFoundError'
++    assert (root / first['stderr_log']).is_file()
++    ok = subprocess.run(command + [sys.executable, '-c', 'print("x"*300000)'],
++        cwd=root, capture_output=True, timeout=8)
++    assert ok.returncode == 0 and len(ok.stdout) == observation.LOG_LIMIT
++    summary = observation.read_summary(root)
++    assert summary['attempt_count'] == 2 and summary['error_count'] == 1
++    assert summary['exit_code'] == 0 and summary['logs_truncated'] is True
++    assert summary['total_stdout_bytes'] == 300001
++    assert summary['first_started_at'] == first['started_at']
++    assert summary['recent_errors'] == first['recent_errors']
++    assert 'no-such-observation-executable' not in json.dumps(summary)
++
++
++def test_argv_timeout_and_history_are_bounded_and_do_not_expose_raw_values(tmp_path):
++    root = workspace(tmp_path, 'pass', remaining=30)
++    result = subprocess.run([sys.executable, 'tools/local_process_observation.py', '--timeout', '.1',
++        '--submission-reserve', '0', '--command', sys.executable, '-c', 'import time; time.sleep(3)'],
++        cwd=root, capture_output=True, timeout=5)
++    assert result.returncode == 124
++    summary = observation.read_summary(root)
++    assert summary['recent_errors'][0]['timed_out'] is True
++    assert summary['process_group_stopped'] is True
++    path = root / observation.RECORD_DIR / 'latest.json'
++    record = json.loads(path.read_bytes())
++    record['recent_errors'] *= 12
++    record['recent_errors'][-1].update(error_type='private value', stderr_log='/private/log')
++    path.write_text(json.dumps(record))
++    summary = observation.read_summary(root)
++    assert len(summary['recent_errors']) == 8
++    assert 'private' not in json.dumps(summary)
+--- before/src/scidiscovery/artifact_agent/service/tool_evidence.py
++++ after/src/scidiscovery/artifact_agent/service/tool_evidence.py
+@@ -13,7 +13,7 @@
+ from ..schema.common import canonical_json
+ from ..schema.refs import ArtifactRef
+ from .run_outputs import InputBindingDescriptor, RunCheckerError
+-from .run_records import RunStateConflict
++from .run_records import RunError, RunStateConflict
+ 
+ 
+ class ToolSourceBinding(SchemaModel):
+@@ -520,6 +520,19 @@
+             'remaining_bytes': max(0, remaining['remaining_bytes']-used_bytes),
+             'remaining_seconds': max(0, remaining['remaining_seconds']-used_seconds)}
+ 
++    def recovery_evidence_status(self, value):
++        """Adoption is a projection of exact receipts, separate from draft files."""
++        with self._connect() as connection:
++            row = self._row(connection, value.run_id)
++            source_id = row['draft_from_run_id'] or row['resume_from_run_id']
++        if not source_id:
++            return None
++        previous, current = self.tool_evidence(source_id), self.tool_evidence(value.run_id)
++        omitted = [index for index, record in enumerate(previous) if record not in current]
++        return {'preserved_count':len(previous), 'adopted_count':len(previous)-len(omitted),
++            'not_adopted_record_indices':omitted,
++            'note':'Unadopted receipts remain in the original recovery manifest; draft files are not current scientific evidence.'}
++
+     def adopt_tool_evidence(self, run_id):
+         value=self.status(run_id)
+         if not tool_evidence_ports(self._compiled(value)):
+@@ -532,7 +545,6 @@
+         previous=self.tool_evidence(source_id)
+         if not previous:
+             return
+-        original=next((i.artifact_ref for i in source.inputs if i.port_name=='execution_result'),None)
+         current=next((i.artifact_ref for i in value.inputs if i.port_name=='execution_result'),None)
+         if source.instance_id!=value.instance_id:
+             raise RunCheckerError('preserved tool evidence belongs to another execution',category='integrity_failure')
+@@ -540,22 +552,37 @@
+         if port is None or len(previous) > port.max_items or sum(r['size_bytes'] for r in previous) > port.collection.max_total_bytes:
+             raise RunCheckerError('preserved evidence exceeds this operation capability',category='integrity_failure')
+         available_refs = {item.artifact_ref for item in value.inputs}
+-        for record in previous:
++        for index, record in enumerate(previous):
+             ref=ArtifactRef.model_validate(record['artifact_ref'])
+             try:
+                 raw=self.artifacts.read(ref)
++                envelope=self.artifacts.catalog(ref)
+             except Exception as error:
+                 raise RunCheckerError('preserved evidence bytes unavailable', category='integrity_failure') from error
+             if hashlib.sha256(raw).hexdigest()!=ref.sha256:
+                 raise RunCheckerError('preserved evidence bytes changed',category='integrity_failure')
+-            derived = record['metadata'].get('derived_from', ())
+-            if derived:
+-                parents = tuple(self.source_descriptor(source, alias).artifact_ref for alias in derived)
+-                origin_matches = all(ref in available_refs for ref in parents) and record['source_ref'] == parents[0].model_dump(mode='json')
+-            else:
+-                origin_matches = original is not None and original == current and record['source_ref'] == original.model_dump(mode='json')
++            try:
++                # Receipt aliases belong to the collecting producer, even after
++                # several recoveries changed input aliases in intervening Runs.
++                origin = self.status(envelope.labels.get('tool_producer_run', source_id))
++                derived = record['metadata'].get('derived_from', ())
++                if derived:
++                    parents = tuple(self.source_descriptor(origin, alias).artifact_ref for alias in derived)
++                    origin_matches = record['source_ref'] == parents[0].model_dump(mode='json')
++                    applicable = all(parent in available_refs for parent in parents)
++                else:
++                    original = next((i.artifact_ref for i in origin.inputs if i.port_name=='execution_result'),None)
++                    origin_matches = original is not None and record['source_ref'] == original.model_dump(mode='json')
++                    applicable = original == current
++                origin_matches = origin_matches and origin.instance_id == value.instance_id
++            except (KeyError, ValueError, RunError) as error:
++                raise RunCheckerError(f'preserved evidence records[{index}] origin is unavailable',category='integrity_failure') from error
+             if len(raw) > port.max_item_bytes or not origin_matches:
+-                raise RunCheckerError('preserved evidence receipt differs from its origin',category='integrity_failure')
++                raise RunCheckerError(f'preserved evidence records[{index}] receipt differs from its origin',category='integrity_failure')
++            if not applicable:
++                # A valid old receipt can be outside the new input scope. Keep
++                # its draft/proof without presenting it as current tool evidence.
++                continue
+             if record['alias'] in {item.source_name for item in value.inputs}:
+                 raise RunCheckerError('preserved evidence alias conflicts with current input',category='integrity_failure')
+             key = hashlib.sha256(canonical_json({'sha256':ref.sha256,
+--- before/src/scidiscovery/artifact_agent/service/runs.py
++++ after/src/scidiscovery/artifact_agent/service/runs.py
+@@ -1438,6 +1438,9 @@
+                 "draft_available": draft_available,
+                 "recovery_pending": value.state == "failed" and (
+                     not preserved or (value.recovery_draft or {}).get("recovery_pending", False))}
++        evidence = self.recovery_evidence_status(value)
++        if evidence is not None:
++            result["tool_evidence"] = evidence
+         if value.recovery_draft and "original_retained" in value.recovery_draft:
+             result["original_retained"] = value.recovery_draft["original_retained"]
+         if preserved and draft is not None and value.recovery_draft.get("original_retained") is True:
+--- before/src/scidiscovery/artifact_agent/interfaces/mcp_local_worker.py
++++ after/src/scidiscovery/artifact_agent/interfaces/mcp_local_worker.py
+@@ -271,6 +271,7 @@
+                 else str(self._workspace.domain_workspace_path)
+             ),
+             "remaining_seconds": _remaining(status.deadline_at),
++            **({"recovery_evidence": evidence} if (evidence := self.runs.recovery_evidence_status(status)) is not None else {}),
+         }
+ 
+     def _assignment_tool_contracts(self) -> dict[str, Any]:

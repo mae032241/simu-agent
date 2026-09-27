@@ -1,0 +1,33 @@
+{
+  "created_at": "2026-09-11T02:01:58.722150Z",
+  "kind": "layered_diagnosis",
+  "labels": {
+    "operation_consequence": "scientific",
+    "operation_digest": "9b6e8e050a86b1c1ec4aba6cae38c1ce08b94ea93b56bcf3104ddecceecc3604",
+    "operation_output_port": "layered_diagnosis",
+    "operation_version": "1"
+  },
+  "logical_name": "fig4_continuation_execution_analysis_3.output",
+  "media_type": "application/json",
+  "name": "fig4_continuation_execution_analysis_3.output",
+  "parent_artifact_names": [
+    "fig4_continuation_execution_1.result",
+    "fig4_continuation_experiment_plan_3",
+    "fig4_continuation_experiment_review_6.output",
+    "fig4_continuation_reviewed_package_2",
+    "fig4_continuation_execution_1.output.tcad_manifest",
+    "fig4_continuation_execution_1.output.solver_log",
+    "fig4_continuation_execution_1.output.fig4_al_own_anchor_primary_plx",
+    "fig4_continuation_execution_1.output.tcad_log",
+    "fig4_continuation_reference_bundle_1",
+    "fig4_continuation_figure_materialized_1.curve_tables_001",
+    "fig4_continuation_figure_materialized_1.curve_tables_002",
+    "fig4_continuation_objective_2",
+    "fig4_continuation_execution_analysis_2.output",
+    "fig4_continuation_execution_analysis_3.output.recovery_manifest"
+  ],
+  "payload_schema_version": 1,
+  "revision": 1,
+  "schema": "scidiscovery.layered-diagnosis.v1",
+  "size_bytes": 12349
+}

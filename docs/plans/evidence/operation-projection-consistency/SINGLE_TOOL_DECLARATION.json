@@ -1,0 +1,15 @@
+{
+  "command": [
+    "python",
+    "-m",
+    "pytest",
+    "-q",
+    "tests/operations/test_agent_contract_alignment.py::test_one_tool_field_change_reaches_compiled_mcp_assignment_and_execution"
+  ],
+  "exit_code": 0,
+  "seconds": 3.252,
+  "peak_tree_rss_bytes": 139730944,
+  "budget_bytes": 536870912,
+  "early_stop_bytes": 469762048,
+  "memory_terminated": false
+}

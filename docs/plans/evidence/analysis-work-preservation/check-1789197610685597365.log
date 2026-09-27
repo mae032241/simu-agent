@@ -1,0 +1,189 @@
+FFFF                                                                     [100%]
+=================================== FAILURES ===================================
+_ test_analysis_input_relationship_error_survives_both_entry_points[review-experiment_review-science.object.review.v1] _
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-190/test_analysis_input_relationsh0')
+wrong = 'review', port = 'experiment_review'
+relation = 'science.object.review.v1'
+
+    @pytest.mark.parametrize('wrong,port,relation', [
+        ('review', 'experiment_review', 'science.object.review.v1'),
+        ('package', 'experiment_plan', 'reviewed_package'),
+        ('manifest', 'runtime_manifest', 'reviewed_package'),
+        ('diagnostics', 'diagnostics', 'execution_id'),
+    ])
+    def test_analysis_input_relationship_error_survives_both_entry_points(tmp_path, wrong, port, relation):
+        from copy import deepcopy
+        from tests.operations.test_tcad_result_analysis import analysis_system
+        from scidiscovery.artifact_agent.interfaces.mcp_root import RootToolError
+        system = analysis_system(tmp_path)
+        _, runtime, root, request, artifacts, register = system
+        original = deepcopy(request)
+        if wrong == 'review':
+            register('other_plan', runtime.artifacts.read(artifacts['plan'].ref), artifacts['plan'].schema_id)
+            next(i for i in request['inputs'] if i['port'] == 'experiment_plan')['artifact_names'] = ['other_plan']
+        elif wrong == 'package':
+            register('other_package', runtime.artifacts.read(artifacts['package'].ref), artifacts['package'].schema_id)
+            next(i for i in request['inputs'] if i['port'] == 'reviewed_package')['artifact_names'] = ['other_package']
+        elif wrong == 'manifest':
+            register('other_manifest', runtime.artifacts.read(artifacts['manifest'].ref), 'opaque')
+            next(i for i in request['inputs'] if i['port'] == 'runtime_manifest')['artifact_names'] = ['other_manifest']
+        else:
+            register('foreign_log', b'fixture failure', 'opaque', media='text/plain')
+            request['inputs'].append(dict(port='diagnostics', artifact_names=['foreign_log']))
+        rejected = root.call_tool('operation_preflight', request)
+        assert rejected['admissible'] is False
+        with pytest.raises(RootToolError) as error:
+            root.call_tool('operation_invoke', request)
+        assert error.value.details[0]['path'] == '$.inputs.' + port
+        assert relation in error.value.details[0]['message']
+        assert error.value.details[0] in rejected['diagnostics']
+>       assert root.call_tool('run_list', {}) == {'runs': []}
+E       AssertionError: assert {'runs': [{'n...ew.v1', ...}]} == {'runs': []}
+E         
+E         Differing items:
+E         {'runs': [{'name': 'plan_review', 'logical_name': 'plan_review', 'revision': 1, 'operation_id': 'science.object.review.v1', ...}]} != {'runs': []}
+E         Use -v to get more diff
+
+tests/operations/test_analysis_input_descriptors.py:275: AssertionError
+_ test_analysis_input_relationship_error_survives_both_entry_points[package-experiment_plan-reviewed_package] _
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-190/test_analysis_input_relationsh1')
+wrong = 'package', port = 'experiment_plan', relation = 'reviewed_package'
+
+    @pytest.mark.parametrize('wrong,port,relation', [
+        ('review', 'experiment_review', 'science.object.review.v1'),
+        ('package', 'experiment_plan', 'reviewed_package'),
+        ('manifest', 'runtime_manifest', 'reviewed_package'),
+        ('diagnostics', 'diagnostics', 'execution_id'),
+    ])
+    def test_analysis_input_relationship_error_survives_both_entry_points(tmp_path, wrong, port, relation):
+        from copy import deepcopy
+        from tests.operations.test_tcad_result_analysis import analysis_system
+        from scidiscovery.artifact_agent.interfaces.mcp_root import RootToolError
+        system = analysis_system(tmp_path)
+        _, runtime, root, request, artifacts, register = system
+        original = deepcopy(request)
+        if wrong == 'review':
+            register('other_plan', runtime.artifacts.read(artifacts['plan'].ref), artifacts['plan'].schema_id)
+            next(i for i in request['inputs'] if i['port'] == 'experiment_plan')['artifact_names'] = ['other_plan']
+        elif wrong == 'package':
+            register('other_package', runtime.artifacts.read(artifacts['package'].ref), artifacts['package'].schema_id)
+            next(i for i in request['inputs'] if i['port'] == 'reviewed_package')['artifact_names'] = ['other_package']
+        elif wrong == 'manifest':
+            register('other_manifest', runtime.artifacts.read(artifacts['manifest'].ref), 'opaque')
+            next(i for i in request['inputs'] if i['port'] == 'runtime_manifest')['artifact_names'] = ['other_manifest']
+        else:
+            register('foreign_log', b'fixture failure', 'opaque', media='text/plain')
+            request['inputs'].append(dict(port='diagnostics', artifact_names=['foreign_log']))
+        rejected = root.call_tool('operation_preflight', request)
+        assert rejected['admissible'] is False
+        with pytest.raises(RootToolError) as error:
+            root.call_tool('operation_invoke', request)
+        assert error.value.details[0]['path'] == '$.inputs.' + port
+        assert relation in error.value.details[0]['message']
+        assert error.value.details[0] in rejected['diagnostics']
+>       assert root.call_tool('run_list', {}) == {'runs': []}
+E       AssertionError: assert {'runs': [{'n...ew.v1', ...}]} == {'runs': []}
+E         
+E         Differing items:
+E         {'runs': [{'name': 'plan_review', 'logical_name': 'plan_review', 'revision': 1, 'operation_id': 'science.object.review.v1', ...}]} != {'runs': []}
+E         Use -v to get more diff
+
+tests/operations/test_analysis_input_descriptors.py:275: AssertionError
+_ test_analysis_input_relationship_error_survives_both_entry_points[manifest-runtime_manifest-reviewed_package] _
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-190/test_analysis_input_relationsh2')
+wrong = 'manifest', port = 'runtime_manifest', relation = 'reviewed_package'
+
+    @pytest.mark.parametrize('wrong,port,relation', [
+        ('review', 'experiment_review', 'science.object.review.v1'),
+        ('package', 'experiment_plan', 'reviewed_package'),
+        ('manifest', 'runtime_manifest', 'reviewed_package'),
+        ('diagnostics', 'diagnostics', 'execution_id'),
+    ])
+    def test_analysis_input_relationship_error_survives_both_entry_points(tmp_path, wrong, port, relation):
+        from copy import deepcopy
+        from tests.operations.test_tcad_result_analysis import analysis_system
+        from scidiscovery.artifact_agent.interfaces.mcp_root import RootToolError
+        system = analysis_system(tmp_path)
+        _, runtime, root, request, artifacts, register = system
+        original = deepcopy(request)
+        if wrong == 'review':
+            register('other_plan', runtime.artifacts.read(artifacts['plan'].ref), artifacts['plan'].schema_id)
+            next(i for i in request['inputs'] if i['port'] == 'experiment_plan')['artifact_names'] = ['other_plan']
+        elif wrong == 'package':
+            register('other_package', runtime.artifacts.read(artifacts['package'].ref), artifacts['package'].schema_id)
+            next(i for i in request['inputs'] if i['port'] == 'reviewed_package')['artifact_names'] = ['other_package']
+        elif wrong == 'manifest':
+            register('other_manifest', runtime.artifacts.read(artifacts['manifest'].ref), 'opaque')
+            next(i for i in request['inputs'] if i['port'] == 'runtime_manifest')['artifact_names'] = ['other_manifest']
+        else:
+            register('foreign_log', b'fixture failure', 'opaque', media='text/plain')
+            request['inputs'].append(dict(port='diagnostics', artifact_names=['foreign_log']))
+        rejected = root.call_tool('operation_preflight', request)
+        assert rejected['admissible'] is False
+        with pytest.raises(RootToolError) as error:
+            root.call_tool('operation_invoke', request)
+        assert error.value.details[0]['path'] == '$.inputs.' + port
+        assert relation in error.value.details[0]['message']
+        assert error.value.details[0] in rejected['diagnostics']
+>       assert root.call_tool('run_list', {}) == {'runs': []}
+E       AssertionError: assert {'runs': [{'n...ew.v1', ...}]} == {'runs': []}
+E         
+E         Differing items:
+E         {'runs': [{'name': 'plan_review', 'logical_name': 'plan_review', 'revision': 1, 'operation_id': 'science.object.review.v1', ...}]} != {'runs': []}
+E         Use -v to get more diff
+
+tests/operations/test_analysis_input_descriptors.py:275: AssertionError
+_ test_analysis_input_relationship_error_survives_both_entry_points[diagnostics-diagnostics-execution_id] _
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-190/test_analysis_input_relationsh3')
+wrong = 'diagnostics', port = 'diagnostics', relation = 'execution_id'
+
+    @pytest.mark.parametrize('wrong,port,relation', [
+        ('review', 'experiment_review', 'science.object.review.v1'),
+        ('package', 'experiment_plan', 'reviewed_package'),
+        ('manifest', 'runtime_manifest', 'reviewed_package'),
+        ('diagnostics', 'diagnostics', 'execution_id'),
+    ])
+    def test_analysis_input_relationship_error_survives_both_entry_points(tmp_path, wrong, port, relation):
+        from copy import deepcopy
+        from tests.operations.test_tcad_result_analysis import analysis_system
+        from scidiscovery.artifact_agent.interfaces.mcp_root import RootToolError
+        system = analysis_system(tmp_path)
+        _, runtime, root, request, artifacts, register = system
+        original = deepcopy(request)
+        if wrong == 'review':
+            register('other_plan', runtime.artifacts.read(artifacts['plan'].ref), artifacts['plan'].schema_id)
+            next(i for i in request['inputs'] if i['port'] == 'experiment_plan')['artifact_names'] = ['other_plan']
+        elif wrong == 'package':
+            register('other_package', runtime.artifacts.read(artifacts['package'].ref), artifacts['package'].schema_id)
+            next(i for i in request['inputs'] if i['port'] == 'reviewed_package')['artifact_names'] = ['other_package']
+        elif wrong == 'manifest':
+            register('other_manifest', runtime.artifacts.read(artifacts['manifest'].ref), 'opaque')
+            next(i for i in request['inputs'] if i['port'] == 'runtime_manifest')['artifact_names'] = ['other_manifest']
+        else:
+            register('foreign_log', b'fixture failure', 'opaque', media='text/plain')
+            request['inputs'].append(dict(port='diagnostics', artifact_names=['foreign_log']))
+        rejected = root.call_tool('operation_preflight', request)
+        assert rejected['admissible'] is False
+        with pytest.raises(RootToolError) as error:
+            root.call_tool('operation_invoke', request)
+        assert error.value.details[0]['path'] == '$.inputs.' + port
+        assert relation in error.value.details[0]['message']
+        assert error.value.details[0] in rejected['diagnostics']
+>       assert root.call_tool('run_list', {}) == {'runs': []}
+E       AssertionError: assert {'runs': [{'n...ew.v1', ...}]} == {'runs': []}
+E         
+E         Differing items:
+E         {'runs': [{'name': 'plan_review', 'logical_name': 'plan_review', 'revision': 1, 'operation_id': 'science.object.review.v1', ...}]} != {'runs': []}
+E         Use -v to get more diff
+
+tests/operations/test_analysis_input_descriptors.py:275: AssertionError
+=========================== short test summary info ============================
+FAILED tests/operations/test_analysis_input_descriptors.py::test_analysis_input_relationship_error_survives_both_entry_points[review-experiment_review-science.object.review.v1]
+FAILED tests/operations/test_analysis_input_descriptors.py::test_analysis_input_relationship_error_survives_both_entry_points[package-experiment_plan-reviewed_package]
+FAILED tests/operations/test_analysis_input_descriptors.py::test_analysis_input_relationship_error_survives_both_entry_points[manifest-runtime_manifest-reviewed_package]
+FAILED tests/operations/test_analysis_input_descriptors.py::test_analysis_input_relationship_error_survives_both_entry_points[diagnostics-diagnostics-execution_id]
+4 failed, 17 deselected in 3.32s

@@ -1,0 +1,23 @@
+{
+  "command": [
+    "python",
+    "-m",
+    "pytest",
+    "-q",
+    "tests/operations/test_execution_settings_archive.py",
+    "tests/operations/test_instance_archive.py",
+    "-k",
+    "empty or rollback or resume_after_commit"
+  ],
+  "exit_code": 0,
+  "stop_reason": null,
+  "duration_seconds": 6.131,
+  "peak_tree_rss_mib": 118.72,
+  "budget_mib": 512,
+  "peak_processes": [
+    {
+      "name": "python",
+      "rss_mib": 118.72
+    }
+  ]
+}

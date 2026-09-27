@@ -1,0 +1,111 @@
+FFF.....                                                                 [100%]
+=================================== FAILURES ===================================
+_ test_argument_rejection_is_receipted_before_read_and_sealed_without_raw_files _
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-83/test_argument_rejection_is_rec0')
+
+    def test_argument_rejection_is_receipted_before_read_and_sealed_without_raw_files(tmp_path):
+>       system = analysis_system(tmp_path)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/operations/test_contract_attempts.py:15: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/operations/test_tcad_result_analysis.py:79: in analysis_system
+    catalog = compile_catalog((CORE_PLUGIN, GENERAL_PLUGIN, CURVE_PLUGIN, TCAD_PLUGIN))
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/scidiscovery/operations/catalog.py:836: in compile_catalog
+    compiled_parts, runtime_factories, runtime_configuration_digests, runtime_identity_digests, used = _validate_operation_contracts(plugin_map, components)
+                                                                                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/scidiscovery/operations/catalog.py:331: in _validate_operation_contracts
+    schema_component = _resolve_component(plugin_map, components, used,
+src/scidiscovery/operations/catalog.py:210: in _resolve_component
+    if component is None: _fail("component_reference_missing", owner, field=key)
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+code = 'component_reference_missing', plugin = 'curve_score', operation = None
+field = 'curve_score:curve_diagnosis_schema'
+
+    def _fail(
+        code: str, plugin: str | None = None, operation: str | None = None,
+        field: str | None = None) -> None:
+>       raise CatalogCompileError(code, plugin_id=plugin, operation_id=operation, field=field)
+E       scidiscovery.operations.catalog.CatalogCompileError: component_reference_missing: curve_score/curve_score:curve_diagnosis_schema
+
+src/scidiscovery/operations/catalog.py:108: CatalogCompileError
+_____ test_attempt_limit_and_interrupted_calls_preserve_existing_receipts ______
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-83/test_attempt_limit_and_interru0')
+
+    def test_attempt_limit_and_interrupted_calls_preserve_existing_receipts(tmp_path):
+>       system = analysis_system(tmp_path)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/operations/test_contract_attempts.py:46: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/operations/test_tcad_result_analysis.py:79: in analysis_system
+    catalog = compile_catalog((CORE_PLUGIN, GENERAL_PLUGIN, CURVE_PLUGIN, TCAD_PLUGIN))
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/scidiscovery/operations/catalog.py:836: in compile_catalog
+    compiled_parts, runtime_factories, runtime_configuration_digests, runtime_identity_digests, used = _validate_operation_contracts(plugin_map, components)
+                                                                                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/scidiscovery/operations/catalog.py:331: in _validate_operation_contracts
+    schema_component = _resolve_component(plugin_map, components, used,
+src/scidiscovery/operations/catalog.py:210: in _resolve_component
+    if component is None: _fail("component_reference_missing", owner, field=key)
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+code = 'component_reference_missing', plugin = 'curve_score', operation = None
+field = 'curve_score:curve_diagnosis_schema'
+
+    def _fail(
+        code: str, plugin: str | None = None, operation: str | None = None,
+        field: str | None = None) -> None:
+>       raise CatalogCompileError(code, plugin_id=plugin, operation_id=operation, field=field)
+E       scidiscovery.operations.catalog.CatalogCompileError: component_reference_missing: curve_score/curve_score:curve_diagnosis_schema
+
+src/scidiscovery/operations/catalog.py:108: CatalogCompileError
+__ test_bad_request_is_honest_output_and_historical_proof_without_reexecution __
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-83/test_bad_request_is_honest_out0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7fb839eeede0>
+
+    def test_bad_request_is_honest_output_and_historical_proof_without_reexecution(tmp_path, monkeypatch):
+        from copy import deepcopy
+        from tests.operations.test_tcad_result_analysis import raw_request
+        from curve_score.analysis_tool import ALGORITHM_VERSION
+        import tcad_artifact.result_analysis as module
+>       system=analysis_system(tmp_path)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/operations/test_contract_attempts.py:65: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/operations/test_tcad_result_analysis.py:79: in analysis_system
+    catalog = compile_catalog((CORE_PLUGIN, GENERAL_PLUGIN, CURVE_PLUGIN, TCAD_PLUGIN))
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/scidiscovery/operations/catalog.py:836: in compile_catalog
+    compiled_parts, runtime_factories, runtime_configuration_digests, runtime_identity_digests, used = _validate_operation_contracts(plugin_map, components)
+                                                                                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/scidiscovery/operations/catalog.py:331: in _validate_operation_contracts
+    schema_component = _resolve_component(plugin_map, components, used,
+src/scidiscovery/operations/catalog.py:210: in _resolve_component
+    if component is None: _fail("component_reference_missing", owner, field=key)
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+code = 'component_reference_missing', plugin = 'curve_score', operation = None
+field = 'curve_score:curve_diagnosis_schema'
+
+    def _fail(
+        code: str, plugin: str | None = None, operation: str | None = None,
+        field: str | None = None) -> None:
+>       raise CatalogCompileError(code, plugin_id=plugin, operation_id=operation, field=field)
+E       scidiscovery.operations.catalog.CatalogCompileError: component_reference_missing: curve_score/curve_score:curve_diagnosis_schema
+
+src/scidiscovery/operations/catalog.py:108: CatalogCompileError
+=========================== short test summary info ============================
+FAILED tests/operations/test_contract_attempts.py::test_argument_rejection_is_receipted_before_read_and_sealed_without_raw_files
+FAILED tests/operations/test_contract_attempts.py::test_attempt_limit_and_interrupted_calls_preserve_existing_receipts
+FAILED tests/operations/test_contract_attempts.py::test_bad_request_is_honest_output_and_historical_proof_without_reexecution
+3 failed, 5 passed in 1.04s

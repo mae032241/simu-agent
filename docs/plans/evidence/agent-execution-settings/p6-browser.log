@@ -1,0 +1,5 @@
+Traceback (most recent call last):
+  File "/home/da/project/ai4s/tcad/git_release/scidiscovery-agent/123/scidiscovery-e5.2/docs/plans/evidence/agent-execution-settings/browser_check.py", line 59, in <module>
+    assert time.monotonic()<deadline,'save timeout';time.sleep(.1)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: save timeout

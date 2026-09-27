@@ -1,0 +1,5031 @@
+[
+  {
+    "operation": "scidiscovery.curve-bundle.figure-evidence.v2",
+    "scope": "support",
+    "executor": "transform",
+    "digest": "34099a96e884fb752a6307fd1f52bf2582ebc61b842db2467ed238850d91f9dd",
+    "judgment": "保留图像/表格身份、来源谱系与真实数值支撑；生成 bundle 的结构断言有用。",
+    "findings_reachable": [
+      "F02",
+      "F03",
+      "F04",
+      "F08"
+    ],
+    "components": [
+      "curve_figure_evidence:bundle_figure_evidence",
+      "curve_figure_evidence:figure_parentage",
+      "curve_score:audit_validator",
+      "curve_score:curve_bundle_validator"
+    ],
+    "model_method_indices": [
+      0,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15,
+      17,
+      34,
+      35,
+      36,
+      38,
+      109,
+      110,
+      111,
+      112,
+      113,
+      114,
+      115,
+      116,
+      117,
+      118,
+      119,
+      120,
+      121,
+      122,
+      123
+    ],
+    "input_usage": [
+      {
+        "name": "paper_source",
+        "usage": "evidence_inventory",
+        "require_current": false
+      },
+      {
+        "name": "figure_request",
+        "usage": "evidence_inventory",
+        "require_current": false
+      },
+      {
+        "name": "scientific_intake",
+        "usage": "prior_signal",
+        "require_current": false
+      },
+      {
+        "name": "evidence_audit",
+        "usage": "prior_signal",
+        "require_current": false
+      },
+      {
+        "name": "figure_manifest",
+        "usage": "evidence_inventory",
+        "require_current": false
+      },
+      {
+        "name": "validation_report",
+        "usage": "evidence_inventory",
+        "require_current": false
+      },
+      {
+        "name": "source_panels",
+        "usage": "evidence_inventory",
+        "require_current": false
+      },
+      {
+        "name": "audit_overlays",
+        "usage": "evidence_inventory",
+        "require_current": false
+      },
+      {
+        "name": "curve_tables",
+        "usage": "evidence_inventory",
+        "require_current": false
+      }
+    ],
+    "input_validation": null,
+    "guards": [
+      {
+        "component_id": "figure_parentage",
+        "plugin_id": null
+      }
+    ],
+    "outputs": [
+      {
+        "name": "curve_bundle",
+        "validator": {
+          "component_id": "curve_bundle_validator",
+          "plugin_id": "curve_score"
+        },
+        "validator_rule_id": null,
+        "context_validator": null,
+        "context_rule_id": null,
+        "context_sources": []
+      },
+      {
+        "name": "normalization_audit",
+        "validator": {
+          "component_id": "audit_validator",
+          "plugin_id": "curve_score"
+        },
+        "validator_rule_id": null,
+        "context_validator": null,
+        "context_rule_id": null,
+        "context_sources": []
+      }
+    ]
+  },
+  {
+    "operation": "scidiscovery.curve-reference-coverage.v1",
+    "scope": "support",
+    "executor": "transform",
+    "digest": "369fb4ea85fb703c6d0bba365473391cbac60f070f0917df8cc82b7ea8cb2656",
+    "judgment": "覆盖计算自身正确性有用；关联曲线合同的全使用/方法限制应删。该 support 结果不是自动执行前置。",
+    "findings_reachable": [
+      "F02",
+      "F03",
+      "F04",
+      "F05",
+      "F06",
+      "F07"
+    ],
+    "components": [
+      "curve_score:reference_coverage",
+      "curve_score:reference_coverage_validator"
+    ],
+    "model_method_indices": [
+      0,
+      16,
+      18,
+      19,
+      20,
+      21,
+      22,
+      23,
+      24,
+      25,
+      26,
+      27,
+      28,
+      34,
+      35,
+      36,
+      37,
+      38,
+      39,
+      40,
+      41,
+      42,
+      43,
+      44,
+      45,
+      46,
+      47,
+      48
+    ],
+    "input_usage": [
+      {
+        "name": "experiment_plan",
+        "usage": "claim_evidence",
+        "require_current": false
+      },
+      {
+        "name": "experiment_review",
+        "usage": "prior_signal",
+        "require_current": false
+      },
+      {
+        "name": "curve_contract",
+        "usage": "prior_signal",
+        "require_current": false
+      },
+      {
+        "name": "curve_contract_review",
+        "usage": "prior_signal",
+        "require_current": false
+      },
+      {
+        "name": "reference_bundles",
+        "usage": "evidence_inventory",
+        "require_current": false
+      }
+    ],
+    "input_validation": null,
+    "guards": [],
+    "outputs": [
+      {
+        "name": "coverage_report",
+        "validator": {
+          "component_id": "reference_coverage_validator",
+          "plugin_id": null
+        },
+        "validator_rule_id": null,
+        "context_validator": null,
+        "context_rule_id": null,
+        "context_sources": []
+      }
+    ]
+  },
+  {
+    "operation": "scidiscovery.curve-score.v1",
+    "scope": "support",
+    "executor": "transform",
+    "digest": "b2c5c50812478f1458e6f964a38d68e5c32a4b2630889467a53fe389cb61822b",
+    "judgment": "算子计算条件、精确输入和程序结果聚合有用；科学标签许可表与全参考使用无用。",
+    "findings_reachable": [
+      "F02",
+      "F03",
+      "F04",
+      "F05",
+      "F06",
+      "F07"
+    ],
+    "components": [
+      "curve_score:audit_validator",
+      "curve_score:curve_bundle_validator",
+      "curve_score:metric_report_validator",
+      "curve_score:plot_validator",
+      "curve_score:score_curve_bundle",
+      "curve_score:score_parentage"
+    ],
+    "model_method_indices": [
+      0,
+      16,
+      18,
+      19,
+      20,
+      21,
+      22,
+      23,
+      24,
+      25,
+      26,
+      27,
+      28,
+      34,
+      35,
+      36,
+      37,
+      38,
+      39,
+      40,
+      41,
+      42,
+      43,
+      44,
+      45,
+      49,
+      50,
+      51,
+      52,
+      53
+    ],
+    "input_usage": [
+      {
+        "name": "curve_bundle",
+        "usage": "prior_signal",
+        "require_current": false
+      },
+      {
+        "name": "experiment_plan",
+        "usage": "claim_evidence",
+        "require_current": false
+      },
+      {
+        "name": "experiment_review",
+        "usage": "prior_signal",
+        "require_current": false
+      },
+      {
+        "name": "curve_contract",
+        "usage": "prior_signal",
+        "require_current": false
+      },
+      {
+        "name": "curve_contract_review",
+        "usage": "prior_signal",
+        "require_current": false
+      },
+      {
+        "name": "reference_bundles",
+        "usage": "evidence_inventory",
+        "require_current": false
+      }
+    ],
+    "input_validation": null,
+    "guards": [
+      {
+        "component_id": "score_parentage",
+        "plugin_id": null
+      }
+    ],
+    "outputs": [
+      {
+        "name": "metric_report",
+        "validator": {
+          "component_id": "metric_report_validator",
+          "plugin_id": null
+        },
+        "validator_rule_id": null,
+        "context_validator": null,
+        "context_rule_id": null,
+        "context_sources": []
+      },
+      {
+        "name": "merged_curve_bundle",
+        "validator": {
+          "component_id": "curve_bundle_validator",
+          "plugin_id": null
+        },
+        "validator_rule_id": null,
+        "context_validator": null,
+        "context_rule_id": null,
+        "context_sources": []
+      },
+      {
+        "name": "score_audit",
+        "validator": {
+          "component_id": "audit_validator",
+          "plugin_id": null
+        },
+        "validator_rule_id": null,
+        "context_validator": null,
+        "context_rule_id": null,
+        "context_sources": []
+      },
+      {
+        "name": "comparison_plot",
+        "validator": {
+          "component_id": "plot_validator",
+          "plugin_id": null
+        },
+        "validator_rule_id": null,
+        "context_validator": null,
+        "context_rule_id": null,
+        "context_sources": []
+      }
+    ]
+  },
+  {
+    "operation": "scidiscovery.objective-coverage.v1",
+    "scope": "support",
+    "executor": "transform",
+    "digest": "8355b30cab1eaa41434af023d47f492fb6b80239c783aeb0f666475d0f767406",
+    "judgment": "客观报告覆盖/未覆盖有用；不得从未覆盖直接推导本轮不能做。",
+    "findings_reachable": [
+      "F02",
+      "F03",
+      "F04",
+      "F05",
+      "F06",
+      "F07"
+    ],
+    "components": [
+      "curve_score:objective_coverage",
+      "curve_score:objective_coverage_validator",
+      "curve_score:objective_parentage"
+    ],
+    "model_method_indices": [
+      0,
+      7,
+      8,
+      9,
+      16,
+      18,
+      19,
+      20,
+      21,
+      22,
+      23,
+      24,
+      25,
+      26,
+      27,
+      28,
+      34,
+      35,
+      36,
+      37,
+      38,
+      39,
+      40,
+      41,
+      42,
+      43,
+      44,
+      45,
+      54,
+      55,
+      56
+    ],
+    "input_usage": [
+      {
+        "name": "objective",
+        "usage": "prior_signal",
+        "require_current": false
+      },
+      {
+        "name": "experiment_plan",
+        "usage": "claim_evidence",
+        "require_current": false
+      },
+      {
+        "name": "experiment_review",
+        "usage": "prior_signal",
+        "require_current": false
+      },
+      {
+        "name": "curve_contracts",
+        "usage": "prior_signal",
+        "require_current": false
+      },
+      {
+        "name": "curve_contract_reviews",
+        "usage": "prior_signal",
+        "require_current": false
+      },
+      {
+        "name": "reference_bundles",
+        "usage": "evidence_inventory",
+        "require_current": false
+      }
+    ],
+    "input_validation": null,
+    "guards": [
+      {
+        "component_id": "objective_parentage",
+        "plugin_id": null
+      }
+    ],
+    "outputs": [
+      {
+        "name": "coverage_report",
+        "validator": {
+          "component_id": "objective_coverage_validator",
+          "plugin_id": null
+        },
+        "validator_rule_id": null,
+        "context_validator": null,
+        "context_rule_id": null,
+        "context_sources": []
+      }
+    ]
+  },
+  {
+    "operation": "science.curve.contract.design.v1",
+    "scope": "public",
+    "executor": "agent",
+    "digest": "b43af549dccd96a656f376f64116a3870d64e4bf404b8efcfce1b4b095085977",
+    "judgment": "保留选中目标/序列真实身份；编译器已代填轴、单位和 ID；移除标签控制方法及强制全覆盖。",
+    "findings_reachable": [
+      "F01",
+      "F02",
+      "F03",
+      "F04",
+      "F05",
+      "F06",
+      "F07"
+    ],
+    "components": [
+      "curve_score:curve_contract_context",
+      "curve_score:curve_contract_validator"
+    ],
+    "model_method_indices": [
+      0,
+      7,
+      8,
+      9,
+      16,
+      18,
+      19,
+      20,
+      21,
+      22,
+      23,
+      24,
+      25,
+      26,
+      27,
+      28,
+      34,
+      35,
+      36,
+      37,
+      38,
+      39,
+      40,
+      41,
+      42,
+      43,
+      44,
+      45
+    ],
+    "input_usage": [
+      {
+        "name": "research_objective",
+        "usage": "prior_signal",
+        "require_current": false
+      },
+      {
+        "name": "experiment_plan",
+        "usage": "prior_signal",
+        "require_current": false
+      },
+      {
+        "name": "experiment_review",
+        "usage": "prior_signal",
+        "require_current": false
+      },
+      {
+        "name": "reference_bundle",
+        "usage": "evidence_inventory",
+        "require_current": false
+      }
+    ],
+    "input_validation": null,
+    "guards": [],
+    "outputs": [
+      {
+        "name": "curve_contract",
+        "validator": {
+          "component_id": "curve_contract_validator",
+          "plugin_id": null
+        },
+        "validator_rule_id": "curve.contract.case_metric_closure",
+        "context_validator": {
+          "component_id": "curve_contract_context",
+          "plugin_id": null
+        },
+        "context_rule_id": "curve.contract.objective_binding",
+        "context_sources": [
+          "research_objective",
+          "experiment_plan",
+          "reference_bundle"
+        ]
+      }
+    ]
+  },
+  {
+    "operation": "science.curve.contract.review.v1",
+    "scope": "public",
+    "executor": "agent",
+    "digest": "d34d04b0f27d265591d392a63c9031595e5ca6f8119305439b08816d1ccc7829",
+    "judgment": "保留被审对象/证据身份；修复通用 review 引用过严、诊断丢失、handoff 镜像。",
+    "findings_reachable": [
+      "F01",
+      "F02",
+      "F03",
+      "F04",
+      "F05",
+      "F06",
+      "F07"
+    ],
+    "components": [
+      "curve_score:curve_contract_review_context",
+      "curve_score:scientific_review_validator"
+    ],
+    "model_method_indices": [
+      0,
+      7,
+      8,
+      9,
+      16,
+      18,
+      19,
+      20,
+      21,
+      22,
+      23,
+      24,
+      25,
+      26,
+      27,
+      28,
+      34,
+      35,
+      36,
+      37,
+      38,
+      39,
+      40,
+      41,
+      42,
+      43,
+      44,
+      45
+    ],
+    "input_usage": [
+      {
+        "name": "research_objective",
+        "usage": "prior_signal",
+        "require_current": false
+      },
+      {
+        "name": "experiment_plan",
+        "usage": "prior_signal",
+        "require_current": false
+      },
+      {
+        "name": "experiment_review",
+        "usage": "prior_signal",
+        "require_current": false
+      },
+      {
+        "name": "curve_contract",
+        "usage": "prior_signal",
+        "require_current": false
+      },
+      {
+        "name": "reference_bundle",
+        "usage": "evidence_inventory",
+        "require_current": false
+      }
+    ],
+    "input_validation": null,
+    "guards": [],
+    "outputs": [
+      {
+        "name": "scientific_review",
+        "validator": {
+          "component_id": "scientific_review_validator",
+          "plugin_id": null
+        },
+        "validator_rule_id": "curve.review.verdict_consistency",
+        "context_validator": {
+          "component_id": "curve_contract_review_context",
+          "plugin_id": null
+        },
+        "context_rule_id": "curve.review.subject_binding",
+        "context_sources": [
+          "research_objective",
+          "experiment_plan",
+          "curve_contract",
+          "reference_bundle"
+        ]
+      }
+    ]
+  },
+  {
+    "operation": "science.curve.error.analyze.v1",
+    "scope": "support",
+    "executor": "transform",
+    "digest": "3b638ac4d08b47a4f95a9fcc0599b27b4e0d0f04f77a256857758dd986dd12f9",
+    "judgment": "构建包时验证算法产出可以保留；把 model_validator 内的输入重算移出通用读取。",
+    "findings_reachable": [
+      "F02",
+      "F03",
+      "F04",
+      "F05",
+      "F06",
+      "F07",
+      "F10"
+    ],
+    "components": [
+      "curve_score:curve_analysis_package_validator",
+      "curve_score:curve_error_analysis",
+      "curve_score:nonempty_validator"
+    ],
+    "model_method_indices": [
+      0,
+      16,
+      18,
+      19,
+      20,
+      21,
+      22,
+      23,
+      24,
+      25,
+      26,
+      27,
+      28,
+      34,
+      35,
+      36,
+      37,
+      38,
+      39,
+      40,
+      41,
+      42,
+      43,
+      44,
+      45,
+      49,
+      50,
+      51,
+      52,
+      53,
+      57,
+      58,
+      59,
+      60
+    ],
+    "input_usage": [
+      {
+        "name": "experiment_plan",
+        "usage": "prior_signal",
+        "require_current": false
+      },
+      {
+        "name": "experiment_review",
+        "usage": "prior_signal",
+        "require_current": false
+      },
+      {
+        "name": "curve_contract",
+        "usage": "prior_signal",
+        "require_current": false
+      },
+      {
+        "name": "curve_contract_review",
+        "usage": "prior_signal",
+        "require_current": false
+      },
+      {
+        "name": "metric_report",
+        "usage": "claim_evidence",
+        "require_current": false
+      },
+      {
+        "name": "curve_bundle",
+        "usage": "claim_evidence",
+        "require_current": false
+      }
+    ],
+    "input_validation": null,
+    "guards": [],
+    "outputs": [
+      {
+        "name": "curve_analysis_package",
+        "validator": {
+          "component_id": "curve_analysis_package_validator",
+          "plugin_id": null
+        },
+        "validator_rule_id": "curve.diagnosis.report_consistency",
+        "context_validator": null,
+        "context_rule_id": null,
+        "context_sources": []
+      },
+      {
+        "name": "curve_analysis_plots",
+        "validator": {
+          "component_id": "nonempty_validator",
+          "plugin_id": null
+        },
+        "validator_rule_id": "curve.diagnosis.report_consistency",
+        "context_validator": null,
+        "context_rule_id": null,
+        "context_sources": []
+      }
+    ]
+  },
+  {
+    "operation": "science.evidence.audit.intake.v1",
+    "scope": "public",
+    "executor": "agent",
+    "digest": "946952bdf6981b7fdcfd5dc2058f66597563d57537d0fb2ce9226c1020dfb406",
+    "judgment": "保留原始来源和检查实际对象；决定性来源审查需要证据；handoff 聚合由程序派生。",
+    "findings_reachable": [
+      "F01",
+      "F02",
+      "F03",
+      "F04"
+    ],
+    "components": [
+      "general_science:audit_validator",
+      "general_science:evidence_audit_context"
+    ],
+    "model_method_indices": [
+      0,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15,
+      17
+    ],
+    "input_usage": [
+      {
+        "name": "scientific_intake",
+        "usage": "prior_signal",
+        "require_current": false
+      },
+      {
+        "name": "source_material",
+        "usage": "evidence_inventory",
+        "require_current": false
+      }
+    ],
+    "input_validation": null,
+    "guards": [],
+    "outputs": [
+      {
+        "name": "evidence_audit",
+        "validator": {
+          "component_id": "audit_validator",
+          "plugin_id": null
+        },
+        "validator_rule_id": "evidence.audit.check_consistency",
+        "context_validator": {
+          "component_id": "evidence_audit_context",
+          "plugin_id": null
+        },
+        "context_rule_id": "evidence.audit.source_binding",
+        "context_sources": [
+          "scientific_intake",
+          "source_material"
+        ]
+      }
+    ]
+  },
+  {
+    "operation": "science.evidence.audit.v1",
+    "scope": "public",
+    "executor": "agent",
+    "digest": "e1e9c7e4dd94ec793e5323bf8355f525591f937f50689f98284c51b780d14859",
+    "judgment": "同上；完整 foundation 审计不是要求当前科学目标全部可执行。",
+    "findings_reachable": [
+      "F01",
+      "F02",
+      "F03",
+      "F04"
+    ],
+    "components": [
+      "general_science:audit_validator",
+      "general_science:evidence_audit_context"
+    ],
+    "model_method_indices": [
+      0,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13
+    ],
+    "input_usage": [
+      {
+        "name": "scientific_foundation",
+        "usage": "prior_signal",
+        "require_current": false
+      },
+      {
+        "name": "source_material",
+        "usage": "evidence_inventory",
+        "require_current": false
+      }
+    ],
+    "input_validation": null,
+    "guards": [],
+    "outputs": [
+      {
+        "name": "evidence_audit",
+        "validator": {
+          "component_id": "audit_validator",
+          "plugin_id": null
+        },
+        "validator_rule_id": "evidence.audit.check_consistency",
+        "context_validator": {
+          "component_id": "evidence_audit_context",
+          "plugin_id": null
+        },
+        "context_rule_id": "evidence.audit.source_binding",
+        "context_sources": [
+          "scientific_foundation",
+          "source_material"
+        ]
+      }
+    ]
+  },
+  {
+    "operation": "science.evidence.extract.figure.v2",
+    "scope": "public",
+    "executor": "agent",
+    "digest": "41989135f2687a2d1aaa7f6ee3d3e9f79393fe6825a4e983deb064001af40da0",
+    "judgment": "保留完整确定性 family 谱系；提取应允许忠实有限结论；纯引用/目标镜像应机械化。",
+    "findings_reachable": [
+      "F01",
+      "F02",
+      "F03",
+      "F04",
+      "F08"
+    ],
+    "components": [
+      "curve_figure_evidence:figure_audit_progress_fingerprint",
+      "curve_figure_evidence:figure_revision_parentage",
+      "general_science:intake_source_context",
+      "general_science:intake_validator"
+    ],
+    "model_method_indices": [
+      0,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15,
+      17,
+      109,
+      110,
+      111,
+      112,
+      113,
+      114,
+      115,
+      116,
+      117,
+      118,
+      119,
+      120,
+      121,
+      122,
+      123
+    ],
+    "input_usage": [
+      {
+        "name": "paper_source",
+        "usage": "evidence_inventory",
+        "require_current": false
+      },
+      {
+        "name": "figure_request",
+        "usage": "evidence_inventory",
+        "require_current": false
+      },
+      {
+        "name": "figure_manifest",
+        "usage": "evidence_inventory",
+        "require_current": false
+      },
+      {
+        "name": "validation_report",
+        "usage": "evidence_inventory",
+        "require_current": false
+      },
+      {
+        "name": "source_panels",
+        "usage": "evidence_inventory",
+        "require_current": false
+      },
+      {
+        "name": "audit_overlays",
+        "usage": "evidence_inventory",
+        "require_current": false
+      },
+      {
+        "name": "curve_tables",
+        "usage": "evidence_inventory",
+        "require_current": false
+      },
+      {
+        "name": "prior_draft",
+        "usage": "revision_base",
+        "require_current": false
+      },
+      {
+        "name": "change_request",
+        "usage": "change_request",
+        "require_current": false
+      }
+    ],
+    "input_validation": null,
+    "guards": [
+      {
+        "component_id": "figure_revision_parentage",
+        "plugin_id": null
+      }
+    ],
+    "outputs": [
+      {
+        "name": "scientific_intake",
+        "validator": {
+          "component_id": "intake_validator",
+          "plugin_id": "general_science"
+        },
+        "validator_rule_id": "intake.internal_closure",
+        "context_validator": {
+          "component_id": "intake_source_context",
+          "plugin_id": "general_science"
+        },
+        "context_rule_id": "intake.source_binding",
+        "context_sources": [
+          "paper_source",
+          "figure_request",
+          "figure_manifest",
+          "validation_report",
+          "source_panels",
+          "audit_overlays",
+          "curve_tables"
+        ]
+      }
+    ]
+  },
+  {
+    "operation": "science.evidence.extract.v1",
+    "scope": "public",
+    "executor": "agent",
+    "digest": "4f46fcb94eebc0669e99e965764844c6df3e09d77ed3b3035f5dff9d46f556f8",
+    "judgment": "保留事实/推断区分、来源存在；删除标签/重复引用拒绝，目标镜像机械化。",
+    "findings_reachable": [
+      "F01",
+      "F02",
+      "F03",
+      "F04"
+    ],
+    "components": [
+      "general_science:intake_source_context",
+      "general_science:intake_validator"
+    ],
+    "model_method_indices": [
+      0,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15,
+      17
+    ],
+    "input_usage": [
+      {
+        "name": "source_material",
+        "usage": "claim_evidence",
+        "require_current": false
+      }
+    ],
+    "input_validation": null,
+    "guards": [],
+    "outputs": [
+      {
+        "name": "scientific_intake",
+        "validator": {
+          "component_id": "intake_validator",
+          "plugin_id": null
+        },
+        "validator_rule_id": "intake.internal_closure",
+        "context_validator": {
+          "component_id": "intake_source_context",
+          "plugin_id": null
+        },
+        "context_rule_id": "intake.source_binding",
+        "context_sources": [
+          "source_material"
+        ]
+      }
+    ]
+  },
+  {
+    "operation": "science.evidence.qualify.v1",
+    "scope": "public",
+    "executor": "approval",
+    "digest": "cce374af3d02417814179f2e1dbc3fe143ecc1569b644455ae88615a76d5d2ef",
+    "judgment": "确切独立审查、来源、UI 决定与主题不可变必须保留；不把历史可读等同重新获得资格。",
+    "findings_reachable": [
+      "F02",
+      "F03",
+      "F04"
+    ],
+    "components": [
+      "general_science:evidence_qualification_projector"
+    ],
+    "model_method_indices": [
+      0,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15,
+      17
+    ],
+    "input_usage": [
+      {
+        "name": "scientific_foundation",
+        "usage": "prior_signal",
+        "require_current": false
+      },
+      {
+        "name": "extraction_primary",
+        "usage": "prior_signal",
+        "require_current": false
+      },
+      {
+        "name": "producer_outputs",
+        "usage": "evidence_inventory",
+        "require_current": false
+      },
+      {
+        "name": "validation_results",
+        "usage": "evidence_inventory",
+        "require_current": false
+      },
+      {
+        "name": "frozen_sources",
+        "usage": "evidence_inventory",
+        "require_current": false
+      },
+      {
+        "name": "evidence_audit",
+        "usage": "prior_signal",
+        "require_current": false
+      }
+    ],
+    "input_validation": null,
+    "guards": [],
+    "outputs": []
+  },
+  {
+    "operation": "science.evidence.revise-from-critic.v1",
+    "scope": "public",
+    "executor": "agent",
+    "digest": "99d2b277b543434e30a0317cfd63274148bfbb07626f589838dcf1d445f8c209",
+    "judgment": "保留原基础/假设/批评 cohort 与精确 frozen sources；修订仅限已绑定批评问题；同源引用与镜像需修。",
+    "findings_reachable": [
+      "F01",
+      "F02",
+      "F03",
+      "F04"
+    ],
+    "components": [
+      "general_science:evidence_revision_cohort",
+      "general_science:intake_source_context",
+      "general_science:intake_validator"
+    ],
+    "model_method_indices": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15,
+      17
+    ],
+    "input_usage": [
+      {
+        "name": "prior_draft",
+        "usage": "revision_base",
+        "require_current": false
+      },
+      {
+        "name": "intake_audit",
+        "usage": "prior_signal",
+        "require_current": false
+      },
+      {
+        "name": "scientific_foundation",
+        "usage": "prior_signal",
+        "require_current": false
+      },
+      {
+        "name": "hypothesis_portfolio",
+        "usage": "prior_signal",
+        "require_current": false
+      },
+      {
+        "name": "change_request",
+        "usage": "review_signal",
+        "require_current": false
+      },
+      {
+        "name": "source_material",
+        "usage": "claim_evidence",
+        "require_current": false
+      }
+    ],
+    "input_validation": null,
+    "guards": [
+      {
+        "component_id": "evidence_revision_cohort",
+        "plugin_id": null
+      }
+    ],
+    "outputs": [
+      {
+        "name": "scientific_intake",
+        "validator": {
+          "component_id": "intake_validator",
+          "plugin_id": null
+        },
+        "validator_rule_id": "intake.internal_closure",
+        "context_validator": {
+          "component_id": "intake_source_context",
+          "plugin_id": null
+        },
+        "context_rule_id": "intake.source_binding",
+        "context_sources": [
+          "source_material"
+        ]
+      }
+    ]
+  },
+  {
+    "operation": "science.experiment.design.v1",
+    "scope": "public",
+    "executor": "agent",
+    "digest": "2f30ffcc5f46b959218bda6b04ab12ea4d3fa2cc3009b7a4694f9a052889f203",
+    "judgment": "保留原目标/假设审查 cohort 和所选实验实际条件；设计 intent 已比完整输出轻；相关冗余字段继续控制生成。",
+    "findings_reachable": [
+      "F01",
+      "F02",
+      "F03",
+      "F04"
+    ],
+    "components": [
+      "general_science:experiment_context",
+      "general_science:experiment_inputs",
+      "general_science:experiment_science_cohort",
+      "general_science:experiment_validator"
+    ],
+    "model_method_indices": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      18,
+      19,
+      25,
+      26,
+      27,
+      29,
+      30,
+      31,
+      32
+    ],
+    "input_usage": [
+      {
+        "name": "scientific_foundation",
+        "usage": "prior_signal",
+        "require_current": false
+      },
+      {
+        "name": "research_objective",
+        "usage": "prior_signal",
+        "require_current": false
+      },
+      {
+        "name": "hypothesis_portfolio",
+        "usage": "prior_signal",
+        "require_current": false
+      },
+      {
+        "name": "critic_review",
+        "usage": "prior_signal",
+        "require_current": false
+      },
+      {
+        "name": "execution_context",
+        "usage": "prior_signal",
+        "require_current": false
+      },
+      {
+        "name": "current_progress",
+        "usage": "evidence_inventory",
+        "require_current": false
+      },
+      {
+        "name": "experiment_results",
+        "usage": "evidence_inventory",
+        "require_current": false
+      },
+      {
+        "name": "result_analysis",
+        "usage": "evidence_inventory",
+        "require_current": false
+      }
+    ],
+    "input_validation": {
+      "validator": {
+        "component_id": "experiment_inputs",
+        "plugin_id": null
+      },
+      "rule_id": "science.experiment.design.v1.inputs",
+      "description": "The hypothesis portfolio must match the exact research objective; critic disposition must support design; optional execution context must be structurally valid."
+    },
+    "guards": [
+      {
+        "component_id": "experiment_science_cohort",
+        "plugin_id": null
+      }
+    ],
+    "outputs": [
+      {
+        "name": "experiment_design_intent",
+        "validator": {
+          "component_id": "experiment_validator",
+          "plugin_id": null
+        },
+        "validator_rule_id": "experiment.design.intent_closure",
+        "context_validator": {
+          "component_id": "experiment_context",
+          "plugin_id": null
+        },
+        "context_rule_id": "experiment.design.objective_and_hypothesis_binding",
+        "context_sources": [
+          "research_objective",
+          "hypothesis_portfolio",
+          "critic_review",
+          "execution_context",
+          "current_progress",
+          "experiment_results",
+          "result_analysis"
+        ]
+      }
+    ]
+  },
+  {
+    "operation": "science.experiment.materialize.v1",
+    "scope": "support",
+    "executor": "transform",
+    "digest": "7d568782417d11b00a233a44836bb5b4a4e35cdbdad337094baf9281acd8915c",
+    "judgment": "应承担 case_count、重复目标和机械映射；程序产物不自洽是工程故障，不让设计者重填。",
+    "findings_reachable": [
+      "F02",
+      "F03",
+      "F04",
+      "F05"
+    ],
+    "components": [
+      "general_science:experiment_lineage",
+      "general_science:experiment_materialize",
+      "general_science:experiment_portfolio_validator",
+      "general_science:materialization_report_validator"
+    ],
+    "model_method_indices": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      18,
+      19,
+      20,
+      21,
+      22,
+      23,
+      24,
+      25,
+      26,
+      27,
+      28,
+      29,
+      30,
+      31,
+      32,
+      33
+    ],
+    "input_usage": [
+      {
+        "name": "experiment_design_intent",
+        "usage": "prior_signal",
+        "require_current": false
+      },
+      {
+        "name": "scientific_foundation",
+        "usage": "prior_signal",
+        "require_current": false
+      },
+      {
+        "name": "research_objective",
+        "usage": "prior_signal",
+        "require_current": false
+      },
+      {
+        "name": "hypothesis_portfolio",
+        "usage": "prior_signal",
+        "require_current": false
+      },
+      {
+        "name": "critic_review",
+        "usage": "prior_signal",
+        "require_current": false
+      }
+    ],
+    "input_validation": null,
+    "guards": [
+      {
+        "component_id": "experiment_lineage",
+        "plugin_id": null
+      }
+    ],
+    "outputs": [
+      {
+        "name": "experiment_plan",
+        "validator": {
+          "component_id": "experiment_portfolio_validator",
+          "plugin_id": null
+        },
+        "validator_rule_id": null,
+        "context_validator": null,
+        "context_rule_id": null,
+        "context_sources": []
+      },
+      {
+        "name": "materialization_report",
+        "validator": {
+          "component_id": "materialization_report_validator",
+          "plugin_id": null
+        },
+        "validator_rule_id": null,
+        "context_validator": null,
+        "context_rule_id": null,
+        "context_sources": []
+      }
+    ]
+  },
+  {
+    "operation": "science.experiment.revise.v1",
+    "scope": "public",
+    "executor": "agent",
+    "digest": "d46cc12241b5e0e2e8586393b0649451d54d051cab18d8a59de671a701dc629d",
+    "judgment": "最直接承担完整 Portfolio 表单负担；全案例比较与 observable 等式优先删，派生数据控制生成，修复具体诊断。",
+    "findings_reachable": [
+      "F01",
+      "F02",
+      "F03",
+      "F04",
+      "F05"
+    ],
+    "components": [
+      "general_science:experiment_portfolio_validator",
+      "general_science:experiment_revision_context",
+      "general_science:experiment_revision_inputs"
+    ],
+    "model_method_indices": [
+      0,
+      16,
+      18,
+      19,
+      20,
+      21,
+      22,
+      23,
+      24,
+      25,
+      26,
+      27,
+      28
+    ],
+    "input_usage": [
+      {
+        "name": "prior_draft",
+        "usage": "revision_base",
+        "require_current": false
+      },
+      {
+        "name": "change_request",
+        "usage": "change_request",
+        "require_current": false
+      },
+      {
+        "name": "current_progress",
+        "usage": "evidence_inventory",
+        "require_current": false
+      }
+    ],
+    "input_validation": {
+      "validator": {
+        "component_id": "experiment_revision_inputs",
+        "plugin_id": null
+      },
+      "rule_id": "science.experiment.revise.v1.inputs",
+      "description": "The change request must review the experiment portfolio."
+    },
+    "guards": [],
+    "outputs": [
+      {
+        "name": "experiment_plan",
+        "validator": {
+          "component_id": "experiment_portfolio_validator",
+          "plugin_id": null
+        },
+        "validator_rule_id": "experiment.revision.case_and_validation_closure",
+        "context_validator": {
+          "component_id": "experiment_revision_context",
+          "plugin_id": null
+        },
+        "context_rule_id": "experiment.revision.review_target",
+        "context_sources": [
+          "prior_draft",
+          "change_request",
+          "current_progress"
+        ]
+      }
+    ]
+  },
+  {
+    "operation": "science.figure.evidence.audit.v1",
+    "scope": "public",
+    "executor": "agent",
+    "digest": "039cc500e6e0a2756475e28ea1155bc9053654e4ae8abfdee2e313cd4b4be043",
+    "judgment": "保留 exact family 与来源/共享像素等真实质量证据；不把有限图证直接当伪造。",
+    "findings_reachable": [
+      "F01",
+      "F02",
+      "F03",
+      "F04",
+      "F08"
+    ],
+    "components": [
+      "general_science:audit_validator",
+      "general_science:evidence_audit_context"
+    ],
+    "model_method_indices": [
+      0,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15,
+      17,
+      109,
+      110,
+      111,
+      112,
+      113,
+      114,
+      115,
+      116,
+      117,
+      118,
+      119,
+      120,
+      121,
+      122,
+      123
+    ],
+    "input_usage": [
+      {
+        "name": "scientific_intake",
+        "usage": "prior_signal",
+        "require_current": false
+      },
+      {
+        "name": "paper_source",
+        "usage": "evidence_inventory",
+        "require_current": false
+      },
+      {
+        "name": "figure_request",
+        "usage": "evidence_inventory",
+        "require_current": false
+      },
+      {
+        "name": "figure_manifest",
+        "usage": "evidence_inventory",
+        "require_current": false
+      },
+      {
+        "name": "validation_report",
+        "usage": "evidence_inventory",
+        "require_current": false
+      },
+      {
+        "name": "source_panels",
+        "usage": "evidence_inventory",
+        "require_current": false
+      },
+      {
+        "name": "audit_overlays",
+        "usage": "evidence_inventory",
+        "require_current": false
+      },
+      {
+        "name": "curve_tables",
+        "usage": "evidence_inventory",
+        "require_current": false
+      }
+    ],
+    "input_validation": null,
+    "guards": [],
+    "outputs": [
+      {
+        "name": "evidence_audit",
+        "validator": {
+          "component_id": "audit_validator",
+          "plugin_id": "general_science"
+        },
+        "validator_rule_id": "evidence.audit.check_consistency",
+        "context_validator": {
+          "component_id": "evidence_audit_context",
+          "plugin_id": "general_science"
+        },
+        "context_rule_id": "evidence.audit.source_binding",
+        "context_sources": [
+          "scientific_intake",
+          "paper_source",
+          "figure_request",
+          "figure_manifest",
+          "validation_report",
+          "source_panels",
+          "audit_overlays",
+          "curve_tables"
+        ]
+      }
+    ]
+  },
+  {
+    "operation": "science.figure.evidence.materialize.v1",
+    "scope": "support",
+    "executor": "transform",
+    "digest": "ff3e820657b222167d1b4c22cd2255c387ff5d42cacde1982fe0cc9bda950332",
+    "judgment": "保留 ready 的真实标定/图像来源和产物计数；程序失败归工程；未就绪请求可保存但不能定量提取。",
+    "findings_reachable": [
+      "F08"
+    ],
+    "components": [
+      "curve_figure_evidence:figure_manifest_validator",
+      "curve_figure_evidence:figure_png_validator",
+      "curve_figure_evidence:figure_report_validator",
+      "curve_figure_evidence:materialize_figure_evidence",
+      "curve_figure_evidence:nonempty_validator"
+    ],
+    "model_method_indices": [
+      109,
+      110,
+      111,
+      112,
+      113,
+      114,
+      115,
+      116,
+      117,
+      118,
+      119,
+      120,
+      121,
+      122,
+      123
+    ],
+    "input_usage": [
+      {
+        "name": "paper_source",
+        "usage": "evidence_inventory",
+        "require_current": false
+      },
+      {
+        "name": "figure_request",
+        "usage": "evidence_inventory",
+        "require_current": false
+      }
+    ],
+    "input_validation": null,
+    "guards": [],
+    "outputs": [
+      {
+        "name": "figure_manifest",
+        "validator": {
+          "component_id": "figure_manifest_validator",
+          "plugin_id": null
+        },
+        "validator_rule_id": null,
+        "context_validator": null,
+        "context_rule_id": null,
+        "context_sources": []
+      },
+      {
+        "name": "source_panels",
+        "validator": {
+          "component_id": "figure_png_validator",
+          "plugin_id": null
+        },
+        "validator_rule_id": null,
+        "context_validator": null,
+        "context_rule_id": null,
+        "context_sources": []
+      },
+      {
+        "name": "audit_overlays",
+        "validator": {
+          "component_id": "figure_png_validator",
+          "plugin_id": null
+        },
+        "validator_rule_id": null,
+        "context_validator": null,
+        "context_rule_id": null,
+        "context_sources": []
+      },
+      {
+        "name": "curve_tables",
+        "validator": {
+          "component_id": "nonempty_validator",
+          "plugin_id": null
+        },
+        "validator_rule_id": null,
+        "context_validator": null,
+        "context_rule_id": null,
+        "context_sources": []
+      },
+      {
+        "name": "validation_report",
+        "validator": {
+          "component_id": "figure_report_validator",
+          "plugin_id": null
+        },
+        "validator_rule_id": null,
+        "context_validator": null,
+        "context_rule_id": null,
+        "context_sources": []
+      }
+    ]
+  },
+  {
+    "operation": "science.figure.request.prepare.v1",
+    "scope": "public",
+    "executor": "agent",
+    "digest": "05dfddfcc6866574e63fc64ee5d19a5775c573c8dde6fd660582b1c68f198325",
+    "judgment": "删除 unresolved 不许保存部分成果；保留图像来源、已填几何合法性和 ready 所需完整条件。",
+    "findings_reachable": [
+      "F01",
+      "F02",
+      "F08"
+    ],
+    "components": [
+      "curve_figure_evidence:figure_request_context",
+      "curve_figure_evidence:figure_request_validator"
+    ],
+    "model_method_indices": [
+      0,
+      7,
+      8,
+      9,
+      121,
+      122,
+      123
+    ],
+    "input_usage": [
+      {
+        "name": "paper_source",
+        "usage": "evidence_inventory",
+        "require_current": false
+      },
+      {
+        "name": "research_objective",
+        "usage": "prior_signal",
+        "require_current": false
+      }
+    ],
+    "input_validation": null,
+    "guards": [],
+    "outputs": [
+      {
+        "name": "figure_request",
+        "validator": {
+          "component_id": "figure_request_validator",
+          "plugin_id": null
+        },
+        "validator_rule_id": "curve.figure.request.internal_consistency",
+        "context_validator": {
+          "component_id": "figure_request_context",
+          "plugin_id": null
+        },
+        "context_rule_id": "curve.figure.request.source_binding",
+        "context_sources": [
+          "paper_source"
+        ]
+      }
+    ]
+  },
+  {
+    "operation": "science.hypothesis.criticize.v1",
+    "scope": "public",
+    "executor": "agent",
+    "digest": "52646beea0ec491ef3c199b8a48cb954ac02729a8635cc9901eccbf56f128e15",
+    "judgment": "保留每个绑定假设均受评、引用原假设；批评结论归 Agent，handoff 不让 Agent 重抄。",
+    "findings_reachable": [
+      "F01",
+      "F02",
+      "F03",
+      "F04"
+    ],
+    "components": [
+      "general_science:critic_inputs",
+      "general_science:critic_portfolio_context",
+      "general_science:critic_validator"
+    ],
+    "model_method_indices": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13
+    ],
+    "input_usage": [
+      {
+        "name": "hypothesis_portfolio",
+        "usage": "prior_signal",
+        "require_current": false
+      },
+      {
+        "name": "scientific_foundation",
+        "usage": "claim_evidence",
+        "require_current": false
+      }
+    ],
+    "input_validation": {
+      "validator": {
+        "component_id": "critic_inputs",
+        "plugin_id": null
+      },
+      "rule_id": "science.hypothesis.criticize.v1.inputs",
+      "description": "The exact hypothesis portfolio must contain hypotheses."
+    },
+    "guards": [],
+    "outputs": [
+      {
+        "name": "scientific_review",
+        "validator": {
+          "component_id": "critic_validator",
+          "plugin_id": null
+        },
+        "validator_rule_id": "critic.review_consistency",
+        "context_validator": {
+          "component_id": "critic_portfolio_context",
+          "plugin_id": null
+        },
+        "context_rule_id": "critic.portfolio_binding",
+        "context_sources": [
+          "hypothesis_portfolio"
+        ]
+      }
+    ]
+  },
+  {
+    "operation": "science.hypothesis.propose.v1",
+    "scope": "public",
+    "executor": "agent",
+    "digest": "77fadc6f785eb4fbb7fcf00f8a6c6809aa26b77b829d00daf9eeac4ab151a16e",
+    "judgment": "保留目标身份、假设/预测实体键；对 calibratable 明确范围有用途；不从 schema 判科学真假。",
+    "findings_reachable": [
+      "F01",
+      "F02",
+      "F03",
+      "F04"
+    ],
+    "components": [
+      "general_science:hypothesis_inputs",
+      "general_science:hypothesis_objective_context",
+      "general_science:hypothesis_validator"
+    ],
+    "model_method_indices": [
+      0,
+      1,
+      2,
+      3,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15
+    ],
+    "input_usage": [
+      {
+        "name": "problem_frame",
+        "usage": "prior_signal",
+        "require_current": false
+      },
+      {
+        "name": "scientific_foundation",
+        "usage": "claim_evidence",
+        "require_current": false
+      }
+    ],
+    "input_validation": {
+      "validator": {
+        "component_id": "hypothesis_inputs",
+        "plugin_id": null
+      },
+      "rule_id": "science.hypothesis.propose.v1.inputs",
+      "description": "The scientific foundation must contain its explicit original objective."
+    },
+    "guards": [],
+    "outputs": [
+      {
+        "name": "hypothesis_portfolio",
+        "validator": {
+          "component_id": "hypothesis_validator",
+          "plugin_id": null
+        },
+        "validator_rule_id": "hypothesis.portfolio_closure",
+        "context_validator": {
+          "component_id": "hypothesis_objective_context",
+          "plugin_id": null
+        },
+        "context_rule_id": "hypothesis.objective_binding",
+        "context_sources": [
+          "problem_frame",
+          "scientific_foundation"
+        ]
+      }
+    ]
+  },
+  {
+    "operation": "science.hypothesis.revise.v1",
+    "scope": "public",
+    "executor": "agent",
+    "digest": "134572622ec3dec7c1a915ff3e19cd5dc7438918844d6ca7c2cd062a5f6f6b23",
+    "judgment": "冻结原 portfolio 的假设身份是本 Operation 的有界修订职责；新建不同组合应走 propose；不能误删 revision scope。",
+    "findings_reachable": [
+      "F01",
+      "F02",
+      "F03",
+      "F04"
+    ],
+    "components": [
+      "general_science:critic_progress_fingerprint",
+      "general_science:hypothesis_inputs",
+      "general_science:hypothesis_objective_context",
+      "general_science:hypothesis_validator"
+    ],
+    "model_method_indices": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13
+    ],
+    "input_usage": [
+      {
+        "name": "prior_draft",
+        "usage": "revision_base",
+        "require_current": false
+      },
+      {
+        "name": "change_request",
+        "usage": "change_request",
+        "require_current": false
+      },
+      {
+        "name": "scientific_foundation",
+        "usage": "claim_evidence",
+        "require_current": false
+      }
+    ],
+    "input_validation": {
+      "validator": {
+        "component_id": "hypothesis_inputs",
+        "plugin_id": null
+      },
+      "rule_id": "science.hypothesis.revise.v1.inputs",
+      "description": "The scientific foundation must contain its explicit original objective."
+    },
+    "guards": [],
+    "outputs": [
+      {
+        "name": "hypothesis_portfolio",
+        "validator": {
+          "component_id": "hypothesis_validator",
+          "plugin_id": null
+        },
+        "validator_rule_id": "hypothesis.portfolio_closure",
+        "context_validator": {
+          "component_id": "hypothesis_objective_context",
+          "plugin_id": null
+        },
+        "context_rule_id": "hypothesis.objective_binding",
+        "context_sources": [
+          "prior_draft",
+          "scientific_foundation"
+        ]
+      }
+    ]
+  },
+  {
+    "operation": "science.intake.revise.v1",
+    "scope": "public",
+    "executor": "agent",
+    "digest": "b61613cfc9fbf15c92fc3b1ddbd7cf186f688690e45b275e0277d28b3fe748ba",
+    "judgment": "保留 exact prior/review 来源；允许修正对象事实；同源多定位/机械目标镜像需修。",
+    "findings_reachable": [
+      "F01",
+      "F02",
+      "F03",
+      "F04"
+    ],
+    "components": [
+      "general_science:intake_source_context",
+      "general_science:intake_validator"
+    ],
+    "model_method_indices": [
+      0,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15,
+      17
+    ],
+    "input_usage": [
+      {
+        "name": "prior_draft",
+        "usage": "revision_base",
+        "require_current": false
+      },
+      {
+        "name": "change_request",
+        "usage": "change_request",
+        "require_current": false
+      },
+      {
+        "name": "source_material",
+        "usage": "claim_evidence",
+        "require_current": false
+      }
+    ],
+    "input_validation": null,
+    "guards": [],
+    "outputs": [
+      {
+        "name": "scientific_intake",
+        "validator": {
+          "component_id": "intake_validator",
+          "plugin_id": null
+        },
+        "validator_rule_id": "intake.internal_closure",
+        "context_validator": {
+          "component_id": "intake_source_context",
+          "plugin_id": null
+        },
+        "context_rule_id": "intake.source_binding",
+        "context_sources": [
+          "source_material"
+        ]
+      }
+    ]
+  },
+  {
+    "operation": "science.intake.split.v1",
+    "scope": "support",
+    "executor": "transform",
+    "digest": "7240bf8f9755443878f9b2dc12b8cc55576b7f23d802c619a13a667b97f3e8a7",
+    "judgment": "确定性投影及真实独立 audit 有用；对象内容一致由程序保证。",
+    "findings_reachable": [
+      "F02",
+      "F03",
+      "F04"
+    ],
+    "components": [
+      "general_science:foundation_validator",
+      "general_science:intake_split",
+      "general_science:problem_frame_validator"
+    ],
+    "model_method_indices": [
+      0,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15,
+      17
+    ],
+    "input_usage": [
+      {
+        "name": "scientific_intake",
+        "usage": "prior_signal",
+        "require_current": false
+      },
+      {
+        "name": "evidence_audit",
+        "usage": "prior_signal",
+        "require_current": false
+      }
+    ],
+    "input_validation": null,
+    "guards": [],
+    "outputs": [
+      {
+        "name": "problem_frame",
+        "validator": {
+          "component_id": "problem_frame_validator",
+          "plugin_id": null
+        },
+        "validator_rule_id": null,
+        "context_validator": null,
+        "context_rule_id": null,
+        "context_sources": []
+      },
+      {
+        "name": "scientific_foundation",
+        "validator": {
+          "component_id": "foundation_validator",
+          "plugin_id": null
+        },
+        "validator_rule_id": null,
+        "context_validator": null,
+        "context_rule_id": null,
+        "context_sources": []
+      }
+    ]
+  },
+  {
+    "operation": "science.object.review.v1",
+    "scope": "public",
+    "executor": "agent",
+    "digest": "f6fdf24c8242cc5059effce29fdf6a707c97f7beb9b6980362c2febcd635032a",
+    "judgment": "实际待审计划必须可读；不能因它待修就拒绝审查。当前 review 模型无旧 verdict 公式，但引用/诊断问题仍在。",
+    "findings_reachable": [
+      "F01",
+      "F02",
+      "F03",
+      "F04",
+      "F05"
+    ],
+    "components": [
+      "general_science:object_review_context",
+      "general_science:object_review_inputs",
+      "general_science:review_validator"
+    ],
+    "model_method_indices": [
+      0,
+      7,
+      8,
+      9,
+      16,
+      18,
+      19,
+      20,
+      21,
+      22,
+      23,
+      24,
+      25,
+      26,
+      27,
+      28
+    ],
+    "input_usage": [
+      {
+        "name": "experiment_plan",
+        "usage": "prior_signal",
+        "require_current": false
+      },
+      {
+        "name": "research_objective",
+        "usage": "prior_signal",
+        "require_current": false
+      },
+      {
+        "name": "execution_context",
+        "usage": "prior_signal",
+        "require_current": false
+      },
+      {
+        "name": "current_progress",
+        "usage": "evidence_inventory",
+        "require_current": false
+      },
+      {
+        "name": "experiment_results",
+        "usage": "evidence_inventory",
+        "require_current": false
+      },
+      {
+        "name": "result_analysis",
+        "usage": "evidence_inventory",
+        "require_current": false
+      }
+    ],
+    "input_validation": {
+      "validator": {
+        "component_id": "object_review_inputs",
+        "plugin_id": null
+      },
+      "rule_id": "science.object.review.v1.inputs",
+      "description": "The bound plan and optional original research objective must have matching identity and statement."
+    },
+    "guards": [],
+    "outputs": [
+      {
+        "name": "scientific_review",
+        "validator": {
+          "component_id": "review_validator",
+          "plugin_id": null
+        },
+        "validator_rule_id": "experiment.review.verdict_consistency",
+        "context_validator": {
+          "component_id": "object_review_context",
+          "plugin_id": null
+        },
+        "context_rule_id": "experiment.review.subject_binding",
+        "context_sources": [
+          "experiment_plan",
+          "research_objective",
+          "execution_context",
+          "current_progress",
+          "experiment_results",
+          "result_analysis"
+        ]
+      }
+    ]
+  },
+  {
+    "operation": "science.objective.project.v1",
+    "scope": "support",
+    "executor": "transform",
+    "digest": "58566da4a929eec2c487bca9c9b4687a6b25e1f72189e748c5358d6f4abc8d6e",
+    "judgment": "目标从原 foundation 确定性投影有用；目标副本与原文的同步由程序完成。",
+    "findings_reachable": [
+      "F02",
+      "F03",
+      "F04"
+    ],
+    "components": [
+      "general_science:objective_project",
+      "general_science:objective_validator"
+    ],
+    "model_method_indices": [
+      0,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13
+    ],
+    "input_usage": [
+      {
+        "name": "scientific_foundation",
+        "usage": "prior_signal",
+        "require_current": false
+      }
+    ],
+    "input_validation": null,
+    "guards": [],
+    "outputs": [
+      {
+        "name": "research_objective",
+        "validator": {
+          "component_id": "objective_validator",
+          "plugin_id": null
+        },
+        "validator_rule_id": null,
+        "context_validator": null,
+        "context_rule_id": null,
+        "context_sources": []
+      }
+    ]
+  },
+  {
+    "operation": "science.parameter.coverage.v1",
+    "scope": "support",
+    "executor": "transform",
+    "digest": "a5f508893942fbba0262ed72927fb9e4d6e6b1d88d7e845d17c84a2ea612f6e2",
+    "judgment": "单位/条件比较、独立源去重有科学记录价值；程序报告 status/count 可校验，局部设计不自动承受整套总门。",
+    "findings_reachable": [
+      "F02",
+      "F13"
+    ],
+    "components": [
+      "tcad_artifact:parameter_coverage",
+      "tcad_artifact:parameter_coverage_validator"
+    ],
+    "model_method_indices": [
+      0,
+      72,
+      73,
+      74,
+      75,
+      76,
+      77,
+      78,
+      79,
+      80,
+      81,
+      82,
+      124
+    ],
+    "input_usage": [
+      {
+        "name": "parameter_requirements",
+        "usage": "evidence_inventory",
+        "require_current": false
+      },
+      {
+        "name": "device_parameters",
+        "usage": "evidence_inventory",
+        "require_current": false
+      },
+      {
+        "name": "source_catalog",
+        "usage": "evidence_inventory",
+        "require_current": false
+      }
+    ],
+    "input_validation": null,
+    "guards": [],
+    "outputs": [
+      {
+        "name": "parameter_coverage",
+        "validator": {
+          "component_id": "parameter_coverage_validator",
+          "plugin_id": null
+        },
+        "validator_rule_id": "parameter.reference_and_unit_closure",
+        "context_validator": null,
+        "context_rule_id": null,
+        "context_sources": []
+      }
+    ]
+  },
+  {
+    "operation": "science.parameter.uncertainty.v1",
+    "scope": "support",
+    "executor": "transform",
+    "digest": "82d8cd59a9e5c2be885a9db886de65d994467186c2916367a1cdd38aa755b10b",
+    "judgment": "保留 exact requirements/parameters/coverage 父系；bounded/缺口投影供设计选择，不代替设计可行性判断。",
+    "findings_reachable": [
+      "F02"
+    ],
+    "components": [
+      "tcad_artifact:parameter_uncertainty",
+      "tcad_artifact:parameter_uncertainty_lineage",
+      "tcad_artifact:parameter_uncertainty_validator"
+    ],
+    "model_method_indices": [
+      0,
+      72,
+      73,
+      74,
+      75,
+      78,
+      79,
+      80,
+      81,
+      82,
+      83,
+      84,
+      124
+    ],
+    "input_usage": [
+      {
+        "name": "parameter_requirements",
+        "usage": "evidence_inventory",
+        "require_current": false
+      },
+      {
+        "name": "device_parameters",
+        "usage": "evidence_inventory",
+        "require_current": false
+      },
+      {
+        "name": "parameter_coverage",
+        "usage": "prior_signal",
+        "require_current": false
+      }
+    ],
+    "input_validation": null,
+    "guards": [
+      {
+        "component_id": "parameter_uncertainty_lineage",
+        "plugin_id": null
+      }
+    ],
+    "outputs": [
+      {
+        "name": "parameter_uncertainty",
+        "validator": {
+          "component_id": "parameter_uncertainty_validator",
+          "plugin_id": null
+        },
+        "validator_rule_id": "parameter.reference_and_unit_closure",
+        "context_validator": null,
+        "context_rule_id": null,
+        "context_sources": []
+      }
+    ]
+  },
+  {
+    "operation": "science.parameters.qualify.exception.v1",
+    "scope": "public",
+    "executor": "approval",
+    "digest": "0900d150f34120514223e01ac514c1a83b507b3159cbae4e6fb7844a6186e181",
+    "judgment": "保留精确产物族/审查/UI 理由；只接受 review_required 是当前例外资格定义；重算 coverage 为可优化观察项。",
+    "findings_reachable": [
+      "F02",
+      "F03",
+      "F04"
+    ],
+    "components": [
+      "tcad_artifact:parameter_exception_projector"
+    ],
+    "model_method_indices": [
+      0,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15,
+      17,
+      72,
+      73,
+      74,
+      75,
+      76,
+      77,
+      78,
+      79,
+      80,
+      81,
+      82,
+      106,
+      124
+    ],
+    "input_usage": [
+      {
+        "name": "scientific_foundation",
+        "usage": "prior_signal",
+        "require_current": false
+      },
+      {
+        "name": "parameter_evidence_package",
+        "usage": "evidence_inventory",
+        "require_current": false
+      },
+      {
+        "name": "extraction_primary",
+        "usage": "prior_signal",
+        "require_current": false
+      },
+      {
+        "name": "required_parameter_checklist",
+        "usage": "evidence_inventory",
+        "require_current": false
+      },
+      {
+        "name": "parameter_requirements",
+        "usage": "evidence_inventory",
+        "require_current": false
+      },
+      {
+        "name": "device_parameters",
+        "usage": "evidence_inventory",
+        "require_current": false
+      },
+      {
+        "name": "source_catalog",
+        "usage": "evidence_inventory",
+        "require_current": false
+      },
+      {
+        "name": "parameter_coverage",
+        "usage": "prior_signal",
+        "require_current": false
+      },
+      {
+        "name": "parameter_audit",
+        "usage": "prior_signal",
+        "require_current": false
+      },
+      {
+        "name": "frozen_sources",
+        "usage": "evidence_inventory",
+        "require_current": false
+      }
+    ],
+    "input_validation": null,
+    "guards": [],
+    "outputs": []
+  },
+  {
+    "operation": "science.parameters.qualify.pass.v1",
+    "scope": "public",
+    "executor": "approval",
+    "digest": "f416b7b0ab24f6ae5c5f0c3e92f0e14f0410911ddf9850ec0449dcb70093b724",
+    "judgment": "保留原始来源、完整独立 audit、数值 coverage 与 exact subject；重复源/目标目录字段应控制生成。",
+    "findings_reachable": [
+      "F02",
+      "F03",
+      "F04"
+    ],
+    "components": [
+      "tcad_artifact:parameter_pass_projector"
+    ],
+    "model_method_indices": [
+      0,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15,
+      17,
+      72,
+      73,
+      74,
+      75,
+      76,
+      77,
+      78,
+      79,
+      80,
+      81,
+      82,
+      106,
+      124
+    ],
+    "input_usage": [
+      {
+        "name": "scientific_foundation",
+        "usage": "prior_signal",
+        "require_current": false
+      },
+      {
+        "name": "parameter_evidence_package",
+        "usage": "evidence_inventory",
+        "require_current": false
+      },
+      {
+        "name": "extraction_primary",
+        "usage": "prior_signal",
+        "require_current": false
+      },
+      {
+        "name": "required_parameter_checklist",
+        "usage": "evidence_inventory",
+        "require_current": false
+      },
+      {
+        "name": "parameter_requirements",
+        "usage": "evidence_inventory",
+        "require_current": false
+      },
+      {
+        "name": "device_parameters",
+        "usage": "evidence_inventory",
+        "require_current": false
+      },
+      {
+        "name": "source_catalog",
+        "usage": "evidence_inventory",
+        "require_current": false
+      },
+      {
+        "name": "parameter_coverage",
+        "usage": "prior_signal",
+        "require_current": false
+      },
+      {
+        "name": "parameter_audit",
+        "usage": "prior_signal",
+        "require_current": false
+      },
+      {
+        "name": "frozen_sources",
+        "usage": "evidence_inventory",
+        "require_current": false
+      }
+    ],
+    "input_validation": null,
+    "guards": [],
+    "outputs": []
+  },
+  {
+    "operation": "science.result.diagnose.curve-error.v1",
+    "scope": "public",
+    "executor": "agent",
+    "digest": "edd2ae8d90c1feea9ff9c1c3eb2606ebd9e985126471344c553f869ee14c8dc4",
+    "judgment": "保留引用包与现有计划/分数身份；删除科学结论公式，输出提交不再重算冻结输入。其 complete_plan 入口较窄，通用/TCAD 分析已是可选替代。",
+    "findings_reachable": [
+      "F01",
+      "F02",
+      "F04",
+      "F05",
+      "F06",
+      "F07",
+      "F09",
+      "F10"
+    ],
+    "components": [
+      "curve_score:curve_diagnosis_context",
+      "curve_score:curve_diagnosis_inputs",
+      "curve_score:diagnosis_validator"
+    ],
+    "model_method_indices": [
+      0,
+      18,
+      19,
+      20,
+      21,
+      22,
+      23,
+      24,
+      25,
+      26,
+      27,
+      28,
+      34,
+      35,
+      36,
+      37,
+      38,
+      39,
+      40,
+      41,
+      42,
+      43,
+      44,
+      45,
+      49,
+      50,
+      51,
+      52,
+      53,
+      57,
+      58,
+      59,
+      60,
+      61,
+      62,
+      63,
+      64,
+      65,
+      66
+    ],
+    "input_usage": [
+      {
+        "name": "curve_analysis_package",
+        "usage": "prior_signal",
+        "require_current": false
+      },
+      {
+        "name": "curve_analysis_plots",
+        "usage": "evidence_inventory",
+        "require_current": false
+      }
+    ],
+    "input_validation": {
+      "validator": {
+        "component_id": "curve_diagnosis_inputs",
+        "plugin_id": null
+      },
+      "rule_id": "curve.diagnosis.inputs",
+      "description": "The deterministic analysis package must bind a valid curve contract and its exact complete-plan metric coverage."
+    },
+    "guards": [],
+    "outputs": [
+      {
+        "name": "layered_diagnosis",
+        "validator": {
+          "component_id": "diagnosis_validator",
+          "plugin_id": null
+        },
+        "validator_rule_id": "curve.diagnosis.report_consistency",
+        "context_validator": {
+          "component_id": "curve_diagnosis_context",
+          "plugin_id": null
+        },
+        "context_rule_id": "curve.diagnosis.input_binding",
+        "context_sources": [
+          "curve_analysis_package",
+          "curve_analysis_plots"
+        ]
+      }
+    ]
+  },
+  {
+    "operation": "science.result.diagnose.v1",
+    "scope": "public",
+    "executor": "agent",
+    "digest": "08ccdc52f6141bceffb3fc8e9733db184b32dfd9ff2b3238400b6c78bc9eac6e",
+    "judgment": "保留真实结果与计划谱系、计算收据；删除 triggered=>contradicts、纯去重和工具用途限制。",
+    "findings_reachable": [
+      "F01",
+      "F02",
+      "F03",
+      "F04",
+      "F05",
+      "F06",
+      "F07",
+      "F09"
+    ],
+    "components": [
+      "curve_score:diagnosis_context",
+      "curve_score:diagnosis_identity",
+      "curve_score:diagnosis_inputs",
+      "curve_score:diagnosis_validator"
+    ],
+    "model_method_indices": [
+      0,
+      16,
+      18,
+      19,
+      20,
+      21,
+      22,
+      23,
+      24,
+      25,
+      26,
+      27,
+      28,
+      34,
+      35,
+      36,
+      38,
+      40,
+      49,
+      50,
+      51,
+      52,
+      53,
+      61,
+      62,
+      63,
+      64,
+      65,
+      66
+    ],
+    "input_usage": [
+      {
+        "name": "experiment_plan",
+        "usage": "evidence_inventory",
+        "require_current": false
+      },
+      {
+        "name": "experiment_review",
+        "usage": "evidence_inventory",
+        "require_current": false
+      },
+      {
+        "name": "experiment_results",
+        "usage": "evidence_inventory",
+        "require_current": false
+      },
+      {
+        "name": "reference_material",
+        "usage": "evidence_inventory",
+        "require_current": false
+      },
+      {
+        "name": "current_progress",
+        "usage": "evidence_inventory",
+        "require_current": false
+      },
+      {
+        "name": "prior_analysis",
+        "usage": "evidence_inventory",
+        "require_current": false
+      },
+      {
+        "name": "prior_analysis_manifest",
+        "usage": "evidence_inventory",
+        "require_current": false
+      },
+      {
+        "name": "metric_report",
+        "usage": "claim_evidence",
+        "require_current": false
+      },
+      {
+        "name": "curve_bundle",
+        "usage": "claim_evidence",
+        "require_current": false
+      }
+    ],
+    "input_validation": {
+      "validator": {
+        "component_id": "diagnosis_inputs",
+        "plugin_id": null
+      },
+      "rule_id": "science.diagnosis.history_inputs",
+      "description": "Bind a structurally valid historical plan and its exact completed science.object.review.v1 scientific_review output, with matching plan parent and passing experiment_portfolio verdict. Results must have the exact plan parent. Historical review is evidence for analysis, not current authoring or execution authority."
+    },
+    "guards": [
+      {
+        "component_id": "diagnosis_identity",
+        "plugin_id": null
+      }
+    ],
+    "outputs": [
+      {
+        "name": "layered_diagnosis",
+        "validator": {
+          "component_id": "diagnosis_validator",
+          "plugin_id": null
+        },
+        "validator_rule_id": "curve.diagnosis.report_consistency",
+        "context_validator": {
+          "component_id": "diagnosis_context",
+          "plugin_id": null
+        },
+        "context_rule_id": "curve.diagnosis.input_binding",
+        "context_sources": [
+          "experiment_plan",
+          "experiment_review",
+          "experiment_results",
+          "reference_material",
+          "current_progress",
+          "metric_report",
+          "curve_bundle",
+          "recovery_manifest_output",
+          "prior_analysis",
+          "prior_analysis_manifest",
+          "tool_evidence"
+        ]
+      },
+      {
+        "name": "recovery_manifest_output",
+        "validator": null,
+        "validator_rule_id": null,
+        "context_validator": null,
+        "context_rule_id": null,
+        "context_sources": []
+      },
+      {
+        "name": "tool_evidence",
+        "validator": null,
+        "validator_rule_id": null,
+        "context_validator": null,
+        "context_rule_id": null,
+        "context_sources": []
+      }
+    ]
+  },
+  {
+    "operation": "tcad.control-equivalence.v1",
+    "scope": "support",
+    "executor": "transform",
+    "digest": "1847fb685214ab020dea40cc16a2aec4d640ede39877e18451dcd8ccae7e713d",
+    "judgment": "真实 planned/intended/frozen 与代码快照对比有用；程序计数/聚合有用；不能替代机制判断。",
+    "findings_reachable": [
+      "F04",
+      "F05"
+    ],
+    "components": [
+      "tcad_artifact:control_equivalence"
+    ],
+    "model_method_indices": [
+      0,
+      18,
+      19,
+      20,
+      21,
+      22,
+      23,
+      24,
+      25,
+      26,
+      27,
+      28,
+      67,
+      68,
+      69,
+      70,
+      71,
+      85,
+      86,
+      87,
+      88,
+      89,
+      90,
+      91,
+      92,
+      93,
+      94,
+      95,
+      96,
+      97,
+      99,
+      100,
+      102,
+      103,
+      104,
+      105,
+      124
+    ],
+    "input_usage": [
+      {
+        "name": "experiment_plan",
+        "usage": "claim_evidence",
+        "require_current": false
+      },
+      {
+        "name": "reviewed_packages",
+        "usage": "prior_signal",
+        "require_current": false
+      }
+    ],
+    "input_validation": null,
+    "guards": [],
+    "outputs": [
+      {
+        "name": "control_equivalence",
+        "validator": null,
+        "validator_rule_id": null,
+        "context_validator": null,
+        "context_rule_id": null,
+        "context_sources": []
+      },
+      {
+        "name": "realization_snapshots",
+        "validator": null,
+        "validator_rule_id": null,
+        "context_validator": null,
+        "context_rule_id": null,
+        "context_sources": []
+      },
+      {
+        "name": "control_audit",
+        "validator": null,
+        "validator_rule_id": null,
+        "context_validator": null,
+        "context_rule_id": null,
+        "context_sources": []
+      }
+    ]
+  },
+  {
+    "operation": "tcad.curve-bundle.sprocess-log.v1",
+    "scope": "support",
+    "executor": "transform",
+    "digest": "41c95f656fc98113e5c2c269659308ae57138b755b0a1679f07377e02ff0bc43",
+    "judgment": "日志解析列、单位、案例来源和数据边界有用；不把解析成功叫科学成功。",
+    "findings_reachable": [
+      "F02",
+      "F03",
+      "F04",
+      "F05",
+      "F06",
+      "F07"
+    ],
+    "components": [
+      "curve_score:curve_bundle_validator",
+      "tcad_artifact:curve_bundle_sprocess_log",
+      "tcad_artifact:curve_log_parentage",
+      "tcad_artifact:curve_normalization_audit_validator"
+    ],
+    "model_method_indices": [
+      0,
+      16,
+      18,
+      19,
+      20,
+      21,
+      22,
+      23,
+      24,
+      25,
+      26,
+      27,
+      28,
+      34,
+      35,
+      36,
+      37,
+      38,
+      39,
+      40,
+      41,
+      42,
+      43,
+      44,
+      45,
+      101,
+      107,
+      108,
+      124
+    ],
+    "input_usage": [
+      {
+        "name": "solver_output",
+        "usage": "evidence_inventory",
+        "require_current": false
+      },
+      {
+        "name": "runtime_attestation",
+        "usage": "prior_signal",
+        "require_current": false
+      },
+      {
+        "name": "experiment_plan",
+        "usage": "prior_signal",
+        "require_current": false
+      },
+      {
+        "name": "experiment_review",
+        "usage": "prior_signal",
+        "require_current": false
+      },
+      {
+        "name": "curve_contract",
+        "usage": "prior_signal",
+        "require_current": false
+      },
+      {
+        "name": "curve_contract_review",
+        "usage": "prior_signal",
+        "require_current": false
+      },
+      {
+        "name": "source_spec",
+        "usage": "prior_signal",
+        "require_current": false
+      }
+    ],
+    "input_validation": null,
+    "guards": [
+      {
+        "component_id": "curve_log_parentage",
+        "plugin_id": null
+      }
+    ],
+    "outputs": [
+      {
+        "name": "curve_bundle",
+        "validator": {
+          "component_id": "curve_bundle_validator",
+          "plugin_id": "curve_score"
+        },
+        "validator_rule_id": null,
+        "context_validator": null,
+        "context_rule_id": null,
+        "context_sources": []
+      },
+      {
+        "name": "normalization_audit",
+        "validator": {
+          "component_id": "curve_normalization_audit_validator",
+          "plugin_id": null
+        },
+        "validator_rule_id": null,
+        "context_validator": null,
+        "context_rule_id": null,
+        "context_sources": []
+      }
+    ]
+  },
+  {
+    "operation": "tcad.curve-bundle.sprocess-plx.v1",
+    "scope": "support",
+    "executor": "transform",
+    "digest": "a823604ea451c8314eb25e133986b8d9705544aada909fa56261db36715d74ab",
+    "judgment": "PLX 格式/来源/案例身份有用；不要重复要求 Agent 描述控制已知的身份。",
+    "findings_reachable": [
+      "F02",
+      "F03",
+      "F04",
+      "F05",
+      "F06",
+      "F07"
+    ],
+    "components": [
+      "curve_score:curve_bundle_validator",
+      "tcad_artifact:curve_bundle_sprocess_plx",
+      "tcad_artifact:curve_normalization_audit_validator",
+      "tcad_artifact:curve_plx_parentage"
+    ],
+    "model_method_indices": [
+      0,
+      16,
+      18,
+      19,
+      20,
+      21,
+      22,
+      23,
+      24,
+      25,
+      26,
+      27,
+      28,
+      34,
+      35,
+      36,
+      37,
+      38,
+      39,
+      40,
+      41,
+      42,
+      43,
+      44,
+      45,
+      101,
+      124
+    ],
+    "input_usage": [
+      {
+        "name": "runtime_manifest",
+        "usage": "prior_signal",
+        "require_current": false
+      },
+      {
+        "name": "runtime_attestation",
+        "usage": "prior_signal",
+        "require_current": false
+      },
+      {
+        "name": "experiment_plan",
+        "usage": "prior_signal",
+        "require_current": false
+      },
+      {
+        "name": "experiment_review",
+        "usage": "prior_signal",
+        "require_current": false
+      },
+      {
+        "name": "curve_contract",
+        "usage": "prior_signal",
+        "require_current": false
+      },
+      {
+        "name": "curve_contract_review",
+        "usage": "prior_signal",
+        "require_current": false
+      },
+      {
+        "name": "solver_outputs",
+        "usage": "evidence_inventory",
+        "require_current": false
+      }
+    ],
+    "input_validation": null,
+    "guards": [
+      {
+        "component_id": "curve_plx_parentage",
+        "plugin_id": null
+      }
+    ],
+    "outputs": [
+      {
+        "name": "curve_bundle",
+        "validator": {
+          "component_id": "curve_bundle_validator",
+          "plugin_id": "curve_score"
+        },
+        "validator_rule_id": null,
+        "context_validator": null,
+        "context_rule_id": null,
+        "context_sources": []
+      },
+      {
+        "name": "normalization_audit",
+        "validator": {
+          "component_id": "curve_normalization_audit_validator",
+          "plugin_id": null
+        },
+        "validator_rule_id": null,
+        "context_validator": null,
+        "context_rule_id": null,
+        "context_sources": []
+      }
+    ]
+  },
+  {
+    "operation": "tcad.deck-project-compare.v1",
+    "scope": "support",
+    "executor": "transform",
+    "digest": "b5256e35ad47419ac79b1f9b55c8d296b57f27f280fae942d8a2f482b6f89c33",
+    "judgment": "源码路径与结构有效、机械 diff 有用；无科学总门。",
+    "findings_reachable": [],
+    "components": [
+      "tcad_artifact:deck_compare"
+    ],
+    "model_method_indices": [
+      67,
+      68,
+      85,
+      86,
+      87,
+      88,
+      89,
+      90,
+      91,
+      92,
+      93,
+      94,
+      95,
+      96,
+      98,
+      124
+    ],
+    "input_usage": [
+      {
+        "name": "base_project",
+        "usage": "claim_evidence",
+        "require_current": false
+      },
+      {
+        "name": "revised_project",
+        "usage": "claim_evidence",
+        "require_current": false
+      }
+    ],
+    "input_validation": null,
+    "guards": [],
+    "outputs": [
+      {
+        "name": "project_diff",
+        "validator": null,
+        "validator_rule_id": null,
+        "context_validator": null,
+        "context_rule_id": null,
+        "context_sources": []
+      }
+    ]
+  },
+  {
+    "operation": "tcad.deck-review-validate.v1",
+    "scope": "support",
+    "executor": "transform",
+    "digest": "9e837d81190fbd4d9dec519070800d5eb304d3c5406de76f69c2527bb126020a",
+    "judgment": "将 review 对确切项目的实现覆盖变成程序证明有用；不能据 exit=0 代替实质初始化。",
+    "findings_reachable": [],
+    "components": [
+      "tcad_artifact:review_validate"
+    ],
+    "model_method_indices": [
+      67,
+      68,
+      85,
+      86,
+      87,
+      88,
+      89,
+      90,
+      91,
+      92,
+      93,
+      94,
+      95,
+      96,
+      97,
+      98,
+      99,
+      124
+    ],
+    "input_usage": [
+      {
+        "name": "project",
+        "usage": "claim_evidence",
+        "require_current": false
+      },
+      {
+        "name": "review",
+        "usage": "prior_signal",
+        "require_current": false
+      }
+    ],
+    "input_validation": null,
+    "guards": [],
+    "outputs": [
+      {
+        "name": "review_attestation",
+        "validator": null,
+        "validator_rule_id": null,
+        "context_validator": null,
+        "context_rule_id": null,
+        "context_sources": []
+      }
+    ]
+  },
+  {
+    "operation": "tcad.deck.author.initial.v1",
+    "scope": "public",
+    "executor": "agent",
+    "digest": "2d8ddbae24ab37302480df26491a05db1180cc167fd88989d5ba1a8a5f115140",
+    "judgment": "保留代码/entrypoint/参数值/文件范围和批准身份；gap 可交付；整份 coverage 的输出资格再判应移除。",
+    "findings_reachable": [
+      "F01",
+      "F02",
+      "F03",
+      "F04",
+      "F05",
+      "F06",
+      "F07",
+      "F11"
+    ],
+    "components": [
+      "tcad_artifact:author_context",
+      "tcad_artifact:parameter_cohort_guard",
+      "tcad_artifact:parameter_inputs",
+      "tcad_artifact:project_validator"
+    ],
+    "model_method_indices": [
+      0,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      16,
+      18,
+      19,
+      20,
+      21,
+      22,
+      23,
+      24,
+      25,
+      26,
+      27,
+      28,
+      37,
+      39,
+      40,
+      41,
+      42,
+      43,
+      44,
+      45,
+      67,
+      68,
+      69,
+      70,
+      71,
+      72,
+      73,
+      74,
+      75,
+      76,
+      77,
+      78,
+      79,
+      80,
+      81,
+      82,
+      83,
+      84,
+      85,
+      86,
+      87,
+      88,
+      89,
+      90,
+      91,
+      92,
+      93,
+      94,
+      95,
+      96,
+      98,
+      124
+    ],
+    "input_usage": [
+      {
+        "name": "current_progress",
+        "usage": "evidence_inventory",
+        "require_current": false
+      },
+      {
+        "name": "execution_capability",
+        "usage": "claim_evidence",
+        "require_current": false
+      },
+      {
+        "name": "experiment_plan",
+        "usage": "claim_evidence",
+        "require_current": false
+      },
+      {
+        "name": "curve_contract",
+        "usage": "prior_signal",
+        "require_current": false
+      },
+      {
+        "name": "experiment_review",
+        "usage": "prior_signal",
+        "require_current": false
+      },
+      {
+        "name": "curve_contract_review",
+        "usage": "prior_signal",
+        "require_current": false
+      },
+      {
+        "name": "scientific_foundation",
+        "usage": "claim_evidence",
+        "require_current": false
+      },
+      {
+        "name": "parameter_requirements",
+        "usage": "claim_evidence",
+        "require_current": false
+      },
+      {
+        "name": "device_parameters",
+        "usage": "claim_evidence",
+        "require_current": false
+      },
+      {
+        "name": "source_catalog",
+        "usage": "claim_evidence",
+        "require_current": false
+      },
+      {
+        "name": "parameter_coverage",
+        "usage": "prior_signal",
+        "require_current": false
+      },
+      {
+        "name": "parameter_audit",
+        "usage": "prior_signal",
+        "require_current": false
+      },
+      {
+        "name": "parameter_uncertainty",
+        "usage": "prior_signal",
+        "require_current": false
+      }
+    ],
+    "input_validation": {
+      "validator": {
+        "component_id": "parameter_inputs",
+        "plugin_id": null
+      },
+      "rule_id": "tcad.author.parameter_inputs",
+      "description": "Bound parameter set and coverage must be paired and identify the same set; scientific deficiencies remain reviewable."
+    },
+    "guards": [
+      {
+        "component_id": "parameter_cohort_guard",
+        "plugin_id": null
+      }
+    ],
+    "outputs": [
+      {
+        "name": "project",
+        "validator": {
+          "component_id": "project_validator",
+          "plugin_id": null
+        },
+        "validator_rule_id": "tcad.deck.contract_consistency",
+        "context_validator": {
+          "component_id": "author_context",
+          "plugin_id": null
+        },
+        "context_rule_id": "tcad.deck.input_binding",
+        "context_sources": [
+          "current_progress",
+          "execution_capability",
+          "experiment_plan",
+          "curve_contract",
+          "experiment_review",
+          "scientific_foundation",
+          "parameter_requirements",
+          "device_parameters",
+          "source_catalog",
+          "parameter_coverage",
+          "parameter_audit",
+          "parameter_uncertainty"
+        ]
+      }
+    ]
+  },
+  {
+    "operation": "tcad.deck.author.revise.v1",
+    "scope": "public",
+    "executor": "agent",
+    "digest": "870a8d9c8ecf713e5dfed797fd6f6f514681894a62fc6553358f22baa996cd4b",
+    "judgment": "保留 exact prior/review、scope 和真实代码修订；消除重复资格与机械填写，不让作者接后处理职责。",
+    "findings_reachable": [
+      "F01",
+      "F02",
+      "F03",
+      "F04",
+      "F05",
+      "F06",
+      "F07",
+      "F11"
+    ],
+    "components": [
+      "tcad_artifact:author_context",
+      "tcad_artifact:parameter_cohort_guard",
+      "tcad_artifact:parameter_inputs",
+      "tcad_artifact:project_validator"
+    ],
+    "model_method_indices": [
+      0,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      16,
+      18,
+      19,
+      20,
+      21,
+      22,
+      23,
+      24,
+      25,
+      26,
+      27,
+      28,
+      37,
+      39,
+      40,
+      41,
+      42,
+      43,
+      44,
+      45,
+      67,
+      68,
+      69,
+      70,
+      71,
+      72,
+      73,
+      74,
+      75,
+      76,
+      77,
+      78,
+      79,
+      80,
+      81,
+      82,
+      83,
+      84,
+      85,
+      86,
+      87,
+      88,
+      89,
+      90,
+      91,
+      92,
+      93,
+      94,
+      95,
+      96,
+      97,
+      98,
+      99,
+      124
+    ],
+    "input_usage": [
+      {
+        "name": "prior_project",
+        "usage": "revision_base",
+        "require_current": false
+      },
+      {
+        "name": "change_request",
+        "usage": "change_request",
+        "require_current": false
+      },
+      {
+        "name": "device_grid",
+        "usage": "claim_evidence",
+        "require_current": false
+      },
+      {
+        "name": "current_progress",
+        "usage": "evidence_inventory",
+        "require_current": false
+      },
+      {
+        "name": "execution_capability",
+        "usage": "claim_evidence",
+        "require_current": false
+      },
+      {
+        "name": "experiment_plan",
+        "usage": "claim_evidence",
+        "require_current": false
+      },
+      {
+        "name": "curve_contract",
+        "usage": "prior_signal",
+        "require_current": false
+      },
+      {
+        "name": "experiment_review",
+        "usage": "prior_signal",
+        "require_current": false
+      },
+      {
+        "name": "curve_contract_review",
+        "usage": "prior_signal",
+        "require_current": false
+      },
+      {
+        "name": "scientific_foundation",
+        "usage": "claim_evidence",
+        "require_current": false
+      },
+      {
+        "name": "parameter_requirements",
+        "usage": "claim_evidence",
+        "require_current": false
+      },
+      {
+        "name": "device_parameters",
+        "usage": "claim_evidence",
+        "require_current": false
+      },
+      {
+        "name": "source_catalog",
+        "usage": "claim_evidence",
+        "require_current": false
+      },
+      {
+        "name": "parameter_coverage",
+        "usage": "prior_signal",
+        "require_current": false
+      },
+      {
+        "name": "parameter_audit",
+        "usage": "prior_signal",
+        "require_current": false
+      },
+      {
+        "name": "parameter_uncertainty",
+        "usage": "prior_signal",
+        "require_current": false
+      }
+    ],
+    "input_validation": {
+      "validator": {
+        "component_id": "parameter_inputs",
+        "plugin_id": null
+      },
+      "rule_id": "tcad.author.parameter_inputs",
+      "description": "Bound parameter set and coverage must be paired and identify the same set; scientific deficiencies remain reviewable."
+    },
+    "guards": [
+      {
+        "component_id": "parameter_cohort_guard",
+        "plugin_id": null
+      }
+    ],
+    "outputs": [
+      {
+        "name": "project",
+        "validator": {
+          "component_id": "project_validator",
+          "plugin_id": null
+        },
+        "validator_rule_id": "tcad.deck.contract_consistency",
+        "context_validator": {
+          "component_id": "author_context",
+          "plugin_id": null
+        },
+        "context_rule_id": "tcad.deck.input_binding",
+        "context_sources": [
+          "prior_project",
+          "change_request",
+          "device_grid",
+          "current_progress",
+          "execution_capability",
+          "experiment_plan",
+          "curve_contract",
+          "experiment_review",
+          "scientific_foundation",
+          "parameter_requirements",
+          "device_parameters",
+          "source_catalog",
+          "parameter_coverage",
+          "parameter_audit",
+          "parameter_uncertainty"
+        ]
+      }
+    ]
+  },
+  {
+    "operation": "tcad.deck.author.runtime-failure.v1",
+    "scope": "public",
+    "executor": "agent",
+    "digest": "e39d7d86fe7f6b2339c0ae239efb147a1f10585ab605024456555fa29ec66713",
+    "judgment": "输入必须是对应运行失败/attestation，防对错项目修复；保留代码边界；重复资格同初始 author。",
+    "findings_reachable": [
+      "F01",
+      "F02",
+      "F03",
+      "F04",
+      "F05",
+      "F06",
+      "F07",
+      "F11"
+    ],
+    "components": [
+      "tcad_artifact:parameter_cohort_guard",
+      "tcad_artifact:project_validator",
+      "tcad_artifact:runtime_author_context",
+      "tcad_artifact:runtime_author_inputs"
+    ],
+    "model_method_indices": [
+      0,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      16,
+      18,
+      19,
+      20,
+      21,
+      22,
+      23,
+      24,
+      25,
+      26,
+      27,
+      28,
+      37,
+      39,
+      40,
+      41,
+      42,
+      43,
+      44,
+      45,
+      67,
+      68,
+      69,
+      70,
+      71,
+      72,
+      73,
+      74,
+      75,
+      76,
+      77,
+      78,
+      79,
+      80,
+      81,
+      82,
+      83,
+      84,
+      85,
+      86,
+      87,
+      88,
+      89,
+      90,
+      91,
+      92,
+      93,
+      94,
+      95,
+      96,
+      98,
+      101,
+      124
+    ],
+    "input_usage": [
+      {
+        "name": "prior_project",
+        "usage": "revision_base",
+        "require_current": false
+      },
+      {
+        "name": "runtime_attestation",
+        "usage": "prior_signal",
+        "require_current": false
+      },
+      {
+        "name": "solver_log",
+        "usage": "prior_signal",
+        "require_current": false
+      },
+      {
+        "name": "current_progress",
+        "usage": "evidence_inventory",
+        "require_current": false
+      },
+      {
+        "name": "execution_capability",
+        "usage": "claim_evidence",
+        "require_current": false
+      },
+      {
+        "name": "experiment_plan",
+        "usage": "claim_evidence",
+        "require_current": false
+      },
+      {
+        "name": "curve_contract",
+        "usage": "prior_signal",
+        "require_current": false
+      },
+      {
+        "name": "experiment_review",
+        "usage": "prior_signal",
+        "require_current": false
+      },
+      {
+        "name": "curve_contract_review",
+        "usage": "prior_signal",
+        "require_current": false
+      },
+      {
+        "name": "scientific_foundation",
+        "usage": "claim_evidence",
+        "require_current": false
+      },
+      {
+        "name": "parameter_requirements",
+        "usage": "claim_evidence",
+        "require_current": false
+      },
+      {
+        "name": "device_parameters",
+        "usage": "claim_evidence",
+        "require_current": false
+      },
+      {
+        "name": "source_catalog",
+        "usage": "claim_evidence",
+        "require_current": false
+      },
+      {
+        "name": "parameter_coverage",
+        "usage": "prior_signal",
+        "require_current": false
+      },
+      {
+        "name": "parameter_audit",
+        "usage": "prior_signal",
+        "require_current": false
+      },
+      {
+        "name": "parameter_uncertainty",
+        "usage": "prior_signal",
+        "require_current": false
+      }
+    ],
+    "input_validation": {
+      "validator": {
+        "component_id": "runtime_author_inputs",
+        "plugin_id": null
+      },
+      "rule_id": "tcad.author.runtime_failure.inputs",
+      "description": "The bound runtime attestation must report failure."
+    },
+    "guards": [
+      {
+        "component_id": "parameter_cohort_guard",
+        "plugin_id": null
+      }
+    ],
+    "outputs": [
+      {
+        "name": "project",
+        "validator": {
+          "component_id": "project_validator",
+          "plugin_id": null
+        },
+        "validator_rule_id": "tcad.deck.contract_consistency",
+        "context_validator": {
+          "component_id": "runtime_author_context",
+          "plugin_id": null
+        },
+        "context_rule_id": "tcad.deck.input_binding",
+        "context_sources": [
+          "prior_project",
+          "runtime_attestation",
+          "solver_log",
+          "current_progress",
+          "execution_capability",
+          "experiment_plan",
+          "curve_contract",
+          "experiment_review",
+          "scientific_foundation",
+          "parameter_requirements",
+          "device_parameters",
+          "source_catalog",
+          "parameter_coverage",
+          "parameter_audit",
+          "parameter_uncertainty"
+        ]
+      }
+    ]
+  },
+  {
+    "operation": "tcad.deck.review.v1",
+    "scope": "public",
+    "executor": "agent",
+    "digest": "f739f24406bfa6e2522be32eb5db9678bd13ec55ce0148fe35d7c28c4597361d",
+    "judgment": "可审 implementation_gap/历史项目；pass 授予实现资格需干净覆盖；同一 handoff verdict 应程序投影。",
+    "findings_reachable": [
+      "F01",
+      "F02",
+      "F03",
+      "F04",
+      "F05",
+      "F06",
+      "F07",
+      "F11"
+    ],
+    "components": [
+      "tcad_artifact:parameter_cohort_guard",
+      "tcad_artifact:parameter_inputs",
+      "tcad_artifact:review_context",
+      "tcad_artifact:review_validator"
+    ],
+    "model_method_indices": [
+      0,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      16,
+      18,
+      19,
+      20,
+      21,
+      22,
+      23,
+      24,
+      25,
+      26,
+      27,
+      28,
+      37,
+      39,
+      40,
+      41,
+      42,
+      43,
+      44,
+      45,
+      67,
+      68,
+      69,
+      70,
+      71,
+      72,
+      73,
+      74,
+      75,
+      76,
+      77,
+      78,
+      79,
+      80,
+      81,
+      82,
+      83,
+      84,
+      85,
+      86,
+      87,
+      88,
+      89,
+      90,
+      91,
+      92,
+      93,
+      94,
+      95,
+      96,
+      97,
+      98,
+      99,
+      124
+    ],
+    "input_usage": [
+      {
+        "name": "project",
+        "usage": "prior_signal",
+        "require_current": false
+      },
+      {
+        "name": "current_progress",
+        "usage": "evidence_inventory",
+        "require_current": false
+      },
+      {
+        "name": "execution_capability",
+        "usage": "claim_evidence",
+        "require_current": false
+      },
+      {
+        "name": "experiment_plan",
+        "usage": "claim_evidence",
+        "require_current": false
+      },
+      {
+        "name": "curve_contract",
+        "usage": "prior_signal",
+        "require_current": false
+      },
+      {
+        "name": "experiment_review",
+        "usage": "prior_signal",
+        "require_current": false
+      },
+      {
+        "name": "curve_contract_review",
+        "usage": "prior_signal",
+        "require_current": false
+      },
+      {
+        "name": "scientific_foundation",
+        "usage": "claim_evidence",
+        "require_current": false
+      },
+      {
+        "name": "parameter_requirements",
+        "usage": "claim_evidence",
+        "require_current": false
+      },
+      {
+        "name": "device_parameters",
+        "usage": "claim_evidence",
+        "require_current": false
+      },
+      {
+        "name": "source_catalog",
+        "usage": "claim_evidence",
+        "require_current": false
+      },
+      {
+        "name": "parameter_coverage",
+        "usage": "prior_signal",
+        "require_current": false
+      },
+      {
+        "name": "parameter_audit",
+        "usage": "prior_signal",
+        "require_current": false
+      },
+      {
+        "name": "parameter_uncertainty",
+        "usage": "prior_signal",
+        "require_current": false
+      }
+    ],
+    "input_validation": {
+      "validator": {
+        "component_id": "parameter_inputs",
+        "plugin_id": null
+      },
+      "rule_id": "tcad.review.parameter_inputs",
+      "description": "Bound parameter set and coverage must be paired and identify the same set; failed coverage remains independently reviewable."
+    },
+    "guards": [
+      {
+        "component_id": "parameter_cohort_guard",
+        "plugin_id": null
+      }
+    ],
+    "outputs": [
+      {
+        "name": "review",
+        "validator": {
+          "component_id": "review_validator",
+          "plugin_id": null
+        },
+        "validator_rule_id": "tcad.deck.contract_consistency",
+        "context_validator": {
+          "component_id": "review_context",
+          "plugin_id": null
+        },
+        "context_rule_id": "tcad.deck.input_binding",
+        "context_sources": [
+          "project",
+          "current_progress",
+          "execution_capability",
+          "experiment_plan",
+          "curve_contract",
+          "experiment_review",
+          "scientific_foundation",
+          "parameter_requirements",
+          "device_parameters",
+          "source_catalog",
+          "parameter_coverage",
+          "parameter_audit",
+          "parameter_uncertainty"
+        ]
+      }
+    ]
+  },
+  {
+    "operation": "tcad.execution-context.project.v1",
+    "scope": "support",
+    "executor": "transform",
+    "digest": "67431321235770012bc7efd79ad7cb360ed6be8191ccfd9d40b1b39adc0682bb",
+    "judgment": "实际安装能力投影、公开参数和路径信息边界有用；无科学表单。",
+    "findings_reachable": [],
+    "components": [
+      "tcad_artifact:execution_context_project"
+    ],
+    "model_method_indices": [
+      0,
+      69,
+      70,
+      71,
+      124
+    ],
+    "input_usage": [
+      {
+        "name": "capability",
+        "usage": "prior_signal",
+        "require_current": false
+      }
+    ],
+    "input_validation": null,
+    "guards": [],
+    "outputs": [
+      {
+        "name": "execution_context",
+        "validator": null,
+        "validator_rule_id": null,
+        "context_validator": null,
+        "context_rule_id": null,
+        "context_sources": []
+      }
+    ]
+  },
+  {
+    "operation": "tcad.parameter.evidence.audit.v1",
+    "scope": "public",
+    "executor": "agent",
+    "digest": "5c53ae4b6d54167bcfa23b4de9a38664e3458ceb09d1b8d77ac4dfab945535bb",
+    "judgment": "保留 exact expansion 与原始源独立性；允许引用待审对象指出错误；不强迫重复完整目录。",
+    "findings_reachable": [
+      "F01",
+      "F02",
+      "F03",
+      "F04",
+      "F14"
+    ],
+    "components": [
+      "tcad_artifact:audit_validator",
+      "tcad_artifact:evidence_audit_context",
+      "tcad_artifact:parameter_audit_inputs"
+    ],
+    "model_method_indices": [
+      0,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15,
+      17,
+      72,
+      73,
+      74,
+      75,
+      76,
+      77,
+      78,
+      79,
+      80,
+      81,
+      82,
+      106,
+      124
+    ],
+    "input_usage": [
+      {
+        "name": "parameter_evidence_package",
+        "usage": "prior_signal",
+        "require_current": false
+      },
+      {
+        "name": "scientific_intake",
+        "usage": "prior_signal",
+        "require_current": false
+      },
+      {
+        "name": "required_parameter_checklist",
+        "usage": "evidence_inventory",
+        "require_current": false
+      },
+      {
+        "name": "parameter_requirements",
+        "usage": "evidence_inventory",
+        "require_current": false
+      },
+      {
+        "name": "device_parameters",
+        "usage": "evidence_inventory",
+        "require_current": false
+      },
+      {
+        "name": "source_catalog",
+        "usage": "evidence_inventory",
+        "require_current": false
+      },
+      {
+        "name": "parameter_coverage",
+        "usage": "prior_signal",
+        "require_current": false
+      },
+      {
+        "name": "source_material",
+        "usage": "evidence_inventory",
+        "require_current": false
+      }
+    ],
+    "input_validation": {
+      "validator": {
+        "component_id": "parameter_audit_inputs",
+        "plugin_id": null
+      },
+      "rule_id": "tcad.parameter.audit.inputs",
+      "description": "The exact parameter package must equal every bound expanded family member."
+    },
+    "guards": [],
+    "outputs": [
+      {
+        "name": "evidence_audit",
+        "validator": {
+          "component_id": "audit_validator",
+          "plugin_id": null
+        },
+        "validator_rule_id": "parameter.reference_and_unit_closure",
+        "context_validator": {
+          "component_id": "evidence_audit_context",
+          "plugin_id": null
+        },
+        "context_rule_id": "parameter.source_binding",
+        "context_sources": [
+          "parameter_evidence_package",
+          "scientific_intake",
+          "required_parameter_checklist",
+          "parameter_requirements",
+          "device_parameters",
+          "source_catalog",
+          "parameter_coverage",
+          "source_material"
+        ]
+      }
+    ]
+  },
+  {
+    "operation": "tcad.parameter.evidence.expand.v1",
+    "scope": "support",
+    "executor": "transform",
+    "digest": "cb89608a513d78509691366e235a4e8490efde08e87e9dd41eddbdcc9e72e12b",
+    "judgment": "应承担完整 package 的机械拆分与派生字段；独立 lineage 有用。",
+    "findings_reachable": [
+      "F02",
+      "F03",
+      "F04",
+      "F13"
+    ],
+    "components": [
+      "tcad_artifact:device_parameters_validator",
+      "tcad_artifact:intake_validator",
+      "tcad_artifact:parameter_expand",
+      "tcad_artifact:parameter_requirements_validator",
+      "tcad_artifact:source_catalog_validator"
+    ],
+    "model_method_indices": [
+      0,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15,
+      17,
+      72,
+      73,
+      74,
+      75,
+      76,
+      77,
+      78,
+      79,
+      80,
+      81,
+      106,
+      124
+    ],
+    "input_usage": [
+      {
+        "name": "parameter_evidence_package",
+        "usage": "prior_signal",
+        "require_current": false
+      }
+    ],
+    "input_validation": null,
+    "guards": [],
+    "outputs": [
+      {
+        "name": "scientific_intake",
+        "validator": {
+          "component_id": "intake_validator",
+          "plugin_id": null
+        },
+        "validator_rule_id": "parameter.reference_and_unit_closure",
+        "context_validator": null,
+        "context_rule_id": null,
+        "context_sources": []
+      },
+      {
+        "name": "parameter_requirements",
+        "validator": {
+          "component_id": "parameter_requirements_validator",
+          "plugin_id": null
+        },
+        "validator_rule_id": "parameter.reference_and_unit_closure",
+        "context_validator": null,
+        "context_rule_id": null,
+        "context_sources": []
+      },
+      {
+        "name": "device_parameters",
+        "validator": {
+          "component_id": "device_parameters_validator",
+          "plugin_id": null
+        },
+        "validator_rule_id": "parameter.reference_and_unit_closure",
+        "context_validator": null,
+        "context_rule_id": null,
+        "context_sources": []
+      },
+      {
+        "name": "source_catalog",
+        "validator": {
+          "component_id": "source_catalog_validator",
+          "plugin_id": null
+        },
+        "validator_rule_id": "parameter.reference_and_unit_closure",
+        "context_validator": null,
+        "context_rule_id": null,
+        "context_sources": []
+      }
+    ]
+  },
+  {
+    "operation": "tcad.parameter.evidence.extract.v1",
+    "scope": "public",
+    "executor": "agent",
+    "digest": "dc906d1e979236a635fa14f1ce2606c55c5b01d3ea68fd406dbf27003eaa14c2",
+    "judgment": "事实依据/单位条件/真实引用有用；科学记数法格式与重复目标、来源目录应由控制层规范化。",
+    "findings_reachable": [
+      "F01",
+      "F02",
+      "F03",
+      "F04",
+      "F13"
+    ],
+    "components": [
+      "tcad_artifact:parameter_extract_context",
+      "tcad_artifact:parameter_package_validator"
+    ],
+    "model_method_indices": [
+      0,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15,
+      17,
+      72,
+      73,
+      74,
+      75,
+      76,
+      77,
+      78,
+      79,
+      80,
+      81,
+      106,
+      124
+    ],
+    "input_usage": [
+      {
+        "name": "required_parameter_checklist",
+        "usage": "prior_signal",
+        "require_current": false
+      },
+      {
+        "name": "source_material",
+        "usage": "evidence_inventory",
+        "require_current": false
+      }
+    ],
+    "input_validation": null,
+    "guards": [],
+    "outputs": [
+      {
+        "name": "parameter_evidence_package",
+        "validator": {
+          "component_id": "parameter_package_validator",
+          "plugin_id": null
+        },
+        "validator_rule_id": "parameter.reference_and_unit_closure",
+        "context_validator": {
+          "component_id": "parameter_extract_context",
+          "plugin_id": null
+        },
+        "context_rule_id": "parameter.source_binding",
+        "context_sources": [
+          "required_parameter_checklist",
+          "source_material"
+        ]
+      }
+    ]
+  },
+  {
+    "operation": "tcad.realization-snapshot-materialize.v1",
+    "scope": "support",
+    "executor": "transform",
+    "digest": "1d41f5d90e3e16670e15914cf07789faf9c364427830e5c7beb98b94b962e46f",
+    "judgment": "真实源代码中控制值与合同身份匹配有用；程序生成快照，不让 Agent 搬运。",
+    "findings_reachable": [],
+    "components": [
+      "tcad_artifact:realization_materialize"
+    ],
+    "model_method_indices": [
+      0,
+      22,
+      23,
+      67,
+      68,
+      69,
+      70,
+      71,
+      85,
+      86,
+      87,
+      88,
+      89,
+      90,
+      91,
+      92,
+      93,
+      94,
+      95,
+      96,
+      97,
+      99,
+      100,
+      102,
+      124
+    ],
+    "input_usage": [
+      {
+        "name": "comparison_contract",
+        "usage": "claim_evidence",
+        "require_current": false
+      },
+      {
+        "name": "reviewed_package",
+        "usage": "prior_signal",
+        "require_current": false
+      },
+      {
+        "name": "case",
+        "usage": "prior_signal",
+        "require_current": false
+      }
+    ],
+    "input_validation": null,
+    "guards": [],
+    "outputs": [
+      {
+        "name": "realization_snapshot",
+        "validator": null,
+        "validator_rule_id": null,
+        "context_validator": null,
+        "context_rule_id": null,
+        "context_sources": []
+      }
+    ]
+  },
+  {
+    "operation": "tcad.result.analyze.v1",
+    "scope": "public",
+    "executor": "agent",
+    "digest": "35e959d3358418103780a35814097b452d38779f8e0e424efc2c22a79fb4e125",
+    "judgment": "保留 execution/package/manifest/case 与计算证据；修复精确 locator、科学结论公式与工具用途限制；当前无需评分即可部分结论封存。",
+    "findings_reachable": [
+      "F01",
+      "F02",
+      "F03",
+      "F04",
+      "F05",
+      "F06",
+      "F07",
+      "F09",
+      "F12"
+    ],
+    "components": [
+      "tcad_artifact:result_analysis_context",
+      "tcad_artifact:result_analysis_input",
+      "tcad_artifact:result_analysis_parentage",
+      "tcad_artifact:result_analysis_validator"
+    ],
+    "model_method_indices": [
+      0,
+      16,
+      18,
+      19,
+      20,
+      21,
+      22,
+      23,
+      24,
+      25,
+      26,
+      27,
+      28,
+      61,
+      62,
+      63,
+      64,
+      65,
+      66,
+      67,
+      68,
+      69,
+      70,
+      71,
+      85,
+      86,
+      87,
+      88,
+      89,
+      90,
+      91,
+      92,
+      93,
+      94,
+      95,
+      96,
+      97,
+      99,
+      100,
+      101,
+      124
+    ],
+    "input_usage": [
+      {
+        "name": "execution_result",
+        "usage": "evidence_inventory",
+        "require_current": false
+      },
+      {
+        "name": "recovery_manifest",
+        "usage": "evidence_inventory",
+        "require_current": false
+      },
+      {
+        "name": "prior_analysis",
+        "usage": "evidence_inventory",
+        "require_current": false
+      },
+      {
+        "name": "prior_analysis_manifest",
+        "usage": "evidence_inventory",
+        "require_current": false
+      },
+      {
+        "name": "experiment_plan",
+        "usage": "evidence_inventory",
+        "require_current": false
+      },
+      {
+        "name": "experiment_review",
+        "usage": "evidence_inventory",
+        "require_current": false
+      },
+      {
+        "name": "reviewed_package",
+        "usage": "prior_signal",
+        "require_current": false
+      },
+      {
+        "name": "runtime_manifest",
+        "usage": "prior_signal",
+        "require_current": false
+      },
+      {
+        "name": "runtime_attestation",
+        "usage": "prior_signal",
+        "require_current": false
+      },
+      {
+        "name": "solver_outputs",
+        "usage": "evidence_inventory",
+        "require_current": false
+      },
+      {
+        "name": "diagnostics",
+        "usage": "evidence_inventory",
+        "require_current": false
+      },
+      {
+        "name": "reference_material",
+        "usage": "evidence_inventory",
+        "require_current": false
+      },
+      {
+        "name": "current_progress",
+        "usage": "evidence_inventory",
+        "require_current": false
+      }
+    ],
+    "input_validation": {
+      "validator": {
+        "component_id": "result_analysis_input",
+        "plugin_id": null
+      },
+      "rule_id": "tcad.result_analysis.input_binding",
+      "description": "Before creating a Run, bind a structurally valid historical plan and its exact completed science.object.review.v1 scientific_review output, with matching plan parent and passing experiment_portfolio verdict; history grants no current authoring or execution authority. Original solver outputs must match manifest names/media/bytes and declared project paths/cases. Recovered solver outputs instead require the explicitly bound sealed recovery_manifest and execution_result, with exact receipt membership, original execution/project, declared output/case, actual path and byte identity. Same-Run registered tool evidence is admitted by the tool, not by submission. Bind the additional controlled tcad_log to diagnostics, not solver_outputs; diagnostics must share the exact execution lineage. Missing execution products permit limited analysis."
+    },
+    "guards": [
+      {
+        "component_id": "result_analysis_parentage",
+        "plugin_id": null
+      }
+    ],
+    "outputs": [
+      {
+        "name": "layered_diagnosis",
+        "validator": {
+          "component_id": "result_analysis_validator",
+          "plugin_id": null
+        },
+        "validator_rule_id": "tcad.result_analysis.payload_consistency",
+        "context_validator": {
+          "component_id": "result_analysis_context",
+          "plugin_id": null
+        },
+        "context_rule_id": "tcad.result_analysis.context_binding",
+        "context_sources": [
+          "execution_result",
+          "recovery_manifest",
+          "prior_analysis",
+          "prior_analysis_manifest",
+          "experiment_plan",
+          "experiment_review",
+          "reviewed_package",
+          "runtime_manifest",
+          "runtime_attestation",
+          "solver_outputs",
+          "diagnostics",
+          "reference_material",
+          "current_progress",
+          "tool_evidence",
+          "recovery_manifest_output"
+        ]
+      },
+      {
+        "name": "tool_evidence",
+        "validator": null,
+        "validator_rule_id": null,
+        "context_validator": null,
+        "context_rule_id": null,
+        "context_sources": []
+      },
+      {
+        "name": "recovery_manifest_output",
+        "validator": null,
+        "validator_rule_id": null,
+        "context_validator": null,
+        "context_rule_id": null,
+        "context_sources": []
+      }
+    ]
+  },
+  {
+    "operation": "tcad.reviewed-deck-package.v2",
+    "scope": "support",
+    "executor": "transform",
+    "digest": "b7860038bf54b413f843211f4a379f00761a95909d706d95866b59f55b6f8110",
+    "judgment": "保留通过的确切实现审查、能力、源码与输入文件完整性；这里有执行前实际保护意义。",
+    "findings_reachable": [
+      "F02",
+      "F03",
+      "F04",
+      "F05"
+    ],
+    "components": [
+      "tcad_artifact:package_parentage",
+      "tcad_artifact:reviewed_package"
+    ],
+    "model_method_indices": [
+      0,
+      16,
+      18,
+      19,
+      20,
+      21,
+      22,
+      23,
+      24,
+      25,
+      26,
+      27,
+      28,
+      67,
+      68,
+      69,
+      70,
+      71,
+      85,
+      86,
+      87,
+      88,
+      89,
+      90,
+      91,
+      92,
+      93,
+      94,
+      95,
+      96,
+      97,
+      98,
+      99,
+      100,
+      124
+    ],
+    "input_usage": [
+      {
+        "name": "project",
+        "usage": "claim_evidence",
+        "require_current": false
+      },
+      {
+        "name": "review",
+        "usage": "prior_signal",
+        "require_current": false
+      },
+      {
+        "name": "capability",
+        "usage": "prior_signal",
+        "require_current": false
+      },
+      {
+        "name": "experiment_plan",
+        "usage": "claim_evidence",
+        "require_current": false
+      },
+      {
+        "name": "experiment_review",
+        "usage": "prior_signal",
+        "require_current": false
+      }
+    ],
+    "input_validation": null,
+    "guards": [
+      {
+        "component_id": "package_parentage",
+        "plugin_id": null
+      }
+    ],
+    "outputs": [
+      {
+        "name": "reviewed_package",
+        "validator": null,
+        "validator_rule_id": null,
+        "context_validator": null,
+        "context_rule_id": null,
+        "context_sources": []
+      }
+    ]
+  },
+  {
+    "operation": "tcad.runtime-attestation.v1",
+    "scope": "support",
+    "executor": "transform",
+    "digest": "2f1be8423029547bb4d452d232d9c90d559d69df2e1dad53120c0b069e0bb569",
+    "judgment": "实际输出与运行 manifest 对齐、防缺文件冒充完成有用；失败 attestation 仍是可读可分析结果。",
+    "findings_reachable": [],
+    "components": [
+      "tcad_artifact:runtime_attest",
+      "tcad_artifact:runtime_parentage"
+    ],
+    "model_method_indices": [
+      0,
+      67,
+      68,
+      69,
+      70,
+      71,
+      85,
+      86,
+      87,
+      88,
+      89,
+      90,
+      91,
+      92,
+      93,
+      94,
+      95,
+      96,
+      97,
+      99,
+      100,
+      101,
+      124
+    ],
+    "input_usage": [
+      {
+        "name": "reviewed_package",
+        "usage": "prior_signal",
+        "require_current": false
+      },
+      {
+        "name": "runtime_manifest",
+        "usage": "prior_signal",
+        "require_current": false
+      },
+      {
+        "name": "runtime_outputs",
+        "usage": "evidence_inventory",
+        "require_current": false
+      }
+    ],
+    "input_validation": null,
+    "guards": [
+      {
+        "component_id": "runtime_parentage",
+        "plugin_id": null
+      }
+    ],
+    "outputs": [
+      {
+        "name": "runtime_attestation",
+        "validator": null,
+        "validator_rule_id": null,
+        "context_validator": null,
+        "context_rule_id": null,
+        "context_sources": []
+      }
+    ]
+  },
+  {
+    "operation": "tcad.study.execute",
+    "scope": "public",
+    "executor": "effect",
+    "digest": "f30025ab24f6dc7459187e4b73c0c467ad1bc6d1acddd4194b9d2d208afcf186",
+    "judgment": "保留 exact 审批/编译身份、payload、幂等启动、资源/路径/产物边界；无权根据科学分数决定运行成功。",
+    "findings_reachable": [],
+    "components": [
+      "tcad_artifact:execution_projector",
+      "tcad_artifact:study_execute"
+    ],
+    "model_method_indices": [
+      0,
+      67,
+      68,
+      69,
+      70,
+      71,
+      85,
+      86,
+      87,
+      88,
+      89,
+      90,
+      91,
+      92,
+      93,
+      94,
+      95,
+      96,
+      97,
+      99,
+      100,
+      124
+    ],
+    "input_usage": [
+      {
+        "name": "reviewed_package",
+        "usage": "prior_signal",
+        "require_current": false
+      }
+    ],
+    "input_validation": null,
+    "guards": [],
+    "outputs": [
+      {
+        "name": "execution_request",
+        "validator": null,
+        "validator_rule_id": null,
+        "context_validator": null,
+        "context_rule_id": null,
+        "context_sources": []
+      }
+    ]
+  }
+]

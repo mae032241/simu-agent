@@ -1,0 +1,220 @@
+{
+  "author": {
+    "name": "fig4_iterative_alignment_author_postinstall_1",
+    "state": "completed",
+    "created_at": "2026-09-13T03:39:03.226142Z",
+    "started_at": "2026-09-13T03:39:23.921245Z",
+    "completed_at": "2026-09-13T03:44:58.419061Z",
+    "output_artifact_name": "fig4_iterative_alignment_author_postinstall_1.output",
+    "diagnostic_summary": {
+      "failure": null,
+      "latest_native_error": null,
+      "latest_rejection": null,
+      "latest_tool_error": null,
+      "native_coverage": "unobserved",
+      "recent_errors": [],
+      "rejection_count": 0
+    },
+    "native_execution": {
+      "coverage": "unobserved",
+      "scientific_evidence": false
+    },
+    "scheduler_signal": {
+      "assumptions": [
+        "The material labels remain trace labels while the reviewed custom conservative state is realized in the same inert Silicon host used by the qualified prior implementation."
+      ],
+      "missing_inputs": [],
+      "next_action_kind": null,
+      "next_actions": [
+        "Obtain independent deck review before requesting separately approved full execution."
+      ],
+      "schema_version": 1,
+      "summary": "Complete 20-case SProcess parameter-envelope source with independent case reconstruction, exact bound D/Cs and numerical controls, raw PLX outputs, and solver-produced _fps.tdr declarations. The development initialization entrypoint exercises the production geometry, custom equation, boundary conditions, and first solve; later mechanism and uncertainty objectives remain outside this implementation.",
+      "verdict": "pass"
+    },
+    "preflight_attestation": {
+      "declarations_sha256": "3d5848315ccea8a35b0c5d111c8cea961c8b957313af620c432b68366a2c3437",
+      "diagnostic_layer": "complete",
+      "exit_code": 0,
+      "mode": "preflight",
+      "profile": "tcad.project-preflight.v1",
+      "project_sha256": "3cf41e11b97a04a5b8b51946ed683c6170d5d3ea077f85bdd65547b22e660ee0",
+      "qualified": true,
+      "schema_version": 1,
+      "source_tree_sha256": "d3009d0d01b430f1ad57ebba89779330a99a28664747df57eaa21663d7e66968",
+      "summary": "Direct-solver development check completed within its bounded contract.",
+      "terminal_state": "succeeded"
+    },
+    "initialization_attestation": {
+      "declarations_sha256": "3d5848315ccea8a35b0c5d111c8cea961c8b957313af620c432b68366a2c3437",
+      "diagnostic_layer": "complete",
+      "exit_code": 0,
+      "mode": "initialization",
+      "profile": "tcad.project-initialization.v1",
+      "project_sha256": "3cf41e11b97a04a5b8b51946ed683c6170d5d3ea077f85bdd65547b22e660ee0",
+      "qualified": true,
+      "schema_version": 1,
+      "source_tree_sha256": "d3009d0d01b430f1ad57ebba89779330a99a28664747df57eaa21663d7e66968",
+      "summary": "Direct-solver development check completed within its bounded contract.",
+      "terminal_state": "succeeded"
+    },
+    "resource_limits": {
+      "cpu_time_seconds": 7200,
+      "max_memory_bytes": 8589934592,
+      "max_output_bytes": 67108864,
+      "max_processes": 1,
+      "wall_time_seconds": 7200
+    }
+  },
+  "independent_review": {
+    "request": {
+      "name": "fig4_iterative_alignment_tcad_review_postinstall_1",
+      "operation_id": "tcad.deck.review.v1",
+      "max_attempts": 1,
+      "inputs": [
+        {
+          "port": "project",
+          "artifact_names": [
+            "fig4_iterative_alignment_author_postinstall_1.output"
+          ]
+        },
+        {
+          "port": "experiment_plan",
+          "artifact_names": [
+            "fig4_iterative_alignment_plan_revision_completion_1.output"
+          ]
+        },
+        {
+          "port": "experiment_review",
+          "artifact_names": [
+            "fig4_iterative_alignment_plan_review_postinstall_1.output"
+          ]
+        },
+        {
+          "port": "execution_capability",
+          "artifact_names": [
+            "fig4_continuation_sprocess_capability_1"
+          ]
+        },
+        {
+          "port": "current_progress",
+          "artifact_names": [
+            "fig4_continuation_objective_2",
+            "fig4_continuation_tcad_author_4.output",
+            "fig4_continuation_execution_1.output.tcad_manifest",
+            "fig4_continuation_execution_1.output.tcad_log"
+          ]
+        }
+      ],
+      "instruction": "Independently review the exact submitted implementation against the bound current plan and its matching scientific review. Use the original objective and prior source/execution records as background. Assess physical and code fidelity, exact current-case realization, actual initialization evidence, output collection declarations, and declared serial resource limits. Distinguish current implementation defects from conditions reserved for later analysis or later research. Do not edit source, run a solver, or require curve scoring as an execution prerequisite. Submit the bounded review with concrete evidence and actionable findings."
+    },
+    "preflight": {
+      "admissible": true,
+      "executor_kind": "agent",
+      "port": null,
+      "reason_code": null
+    },
+    "invocation": {
+      "executor_kind": "agent",
+      "operation_id": "tcad.deck.review.v1",
+      "result": {
+        "agent_type": "op_tcad_deck_review_v1_f9ad2acd478a",
+        "backend": "local_trusted",
+        "bound_inputs": [
+          {
+            "artifact_names": [
+              "fig4_iterative_alignment_author_postinstall_1.output"
+            ],
+            "port": "project"
+          },
+          {
+            "artifact_names": [
+              "fig4_continuation_objective_2",
+              "fig4_continuation_tcad_author_4.output",
+              "fig4_continuation_execution_1.output.tcad_manifest",
+              "fig4_continuation_execution_1.output.tcad_log"
+            ],
+            "port": "current_progress"
+          },
+          {
+            "artifact_names": [
+              "fig4_continuation_sprocess_capability_1"
+            ],
+            "port": "execution_capability"
+          },
+          {
+            "artifact_names": [
+              "fig4_iterative_alignment_plan_revision_completion_1.output"
+            ],
+            "port": "experiment_plan"
+          },
+          {
+            "artifact_names": [
+              "fig4_iterative_alignment_plan_review_postinstall_1.output"
+            ],
+            "port": "experiment_review"
+          }
+        ],
+        "candidate_accepted": false,
+        "completed_at": null,
+        "created_at": "2026-09-13T03:48:52.824513Z",
+        "deadline_at": "2026-09-13T03:58:52.824513Z",
+        "diagnostic_summary": {
+          "failure": null,
+          "latest_native_error": null,
+          "latest_rejection": null,
+          "latest_tool_error": null,
+          "native_coverage": "unobserved",
+          "recent_errors": [],
+          "rejection_count": 0
+        },
+        "draft_from": null,
+        "head_advance": null,
+        "last_activity_at": null,
+        "logical_name": "fig4_iterative_alignment_tcad_review_postinstall_1",
+        "name": "fig4_iterative_alignment_tcad_review_postinstall_1",
+        "native_execution": {
+          "coverage": "unobserved",
+          "scientific_evidence": false
+        },
+        "operation_id": "tcad.deck.review.v1",
+        "output_artifact_name": null,
+        "reason": null,
+        "recovery": {
+          "attempt_budget": {
+            "limit": 1,
+            "used": 1
+          },
+          "delivery_preserved": false,
+          "draft_available": false,
+          "recovery_pending": false,
+          "resume_available": false
+        },
+        "recovery_available": false,
+        "revision": 1,
+        "scheduler_signal": null,
+        "scheduler_signal_status": "unavailable",
+        "sealed_output": null,
+        "sealed_output_status": "unavailable",
+        "started_at": null,
+        "state": "queued"
+      }
+    }
+  },
+  "observability_scope_proposal": {
+    "status": "recorded_only_not_implemented",
+    "owner": "control plane and execution adapters",
+    "coverage": [
+      "all Operation lifecycle boundaries",
+      "controlled tool calls",
+      "local process and remote solver execution",
+      "failure preservation and continuation"
+    ],
+    "limits": [
+      "bounded summaries with on-demand full logs",
+      "no hidden reasoning capture",
+      "no scientific output rejection solely for missing telemetry",
+      "distinguish absent integration, no execution, unavailable record and capture errors"
+    ]
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "command": [
+    "python",
+    "-m",
+    "pytest",
+    "-q",
+    "-o",
+    "pythonpath=/tmp/scid-execution-settings-baseline/src . plugins/tcad_artifact plugins/curve_score plugins/curve_figure_evidence tests/fixtures/plugins/architecture_operation_plugin tests/fixtures/plugins/table_observation_plugin tests/fixtures/plugins/blind_csv_operation_plugin",
+    "tests/operations/test_l5_hardened_run_backend.py::test_hardened_stdio_process_recovers_the_exact_running_run"
+  ],
+  "exit_code": 1,
+  "stop_reason": null,
+  "duration_seconds": 1.711,
+  "peak_tree_rss_mib": 102.49,
+  "budget_mib": 512,
+  "peak_processes": [
+    {
+      "name": "python",
+      "rss_mib": 102.49
+    }
+  ]
+}

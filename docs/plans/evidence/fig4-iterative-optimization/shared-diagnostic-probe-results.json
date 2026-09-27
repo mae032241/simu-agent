@@ -1,0 +1,153 @@
+{
+  "scope": "Pure validator and diagnostic conversion probes; not a full Operation execution or full test suite.",
+  "model_probes": [
+    {
+      "model": "ScientificRoleOutput",
+      "phase": "output_payload",
+      "raw": [
+        {
+          "type": "value_error",
+          "loc": [],
+          "msg": "Value error, finding references an undeclared evidence key"
+        }
+      ],
+      "converted": [
+        {
+          "schema_version": 1,
+          "code": "output_invalid",
+          "phase": "output_payload",
+          "path": "$",
+          "message": "Value violates the declared type, bounds, or field relationship.",
+          "repairable": true,
+          "affected_action": "submit",
+          "type": "value_error"
+        }
+      ]
+    },
+    {
+      "model": "ScientificGateResult",
+      "phase": "output_payload",
+      "raw": [
+        {
+          "type": "value_error",
+          "loc": [],
+          "msg": "Value error, passing or failing gate requires evidence_keys"
+        }
+      ],
+      "converted": [
+        {
+          "schema_version": 1,
+          "code": "output_invalid",
+          "phase": "output_payload",
+          "path": "$",
+          "message": "Value violates the declared type, bounds, or field relationship.",
+          "repairable": true,
+          "affected_action": "submit",
+          "type": "value_error"
+        }
+      ]
+    },
+    {
+      "model": "CurveInterval",
+      "phase": "tool_arguments",
+      "raw": [
+        {
+          "type": "value_error",
+          "loc": [],
+          "msg": "Value error, curve interval stop must exceed start"
+        }
+      ],
+      "converted": [
+        {
+          "schema_version": 1,
+          "code": "invalid_arguments",
+          "phase": "tool_arguments",
+          "path": "$",
+          "message": "Value violates the declared type, bounds, or field relationship.",
+          "repairable": true,
+          "affected_action": "tool_call",
+          "type": "value_error"
+        }
+      ]
+    },
+    {
+      "model": "RuntimeAssertion",
+      "phase": "output_payload",
+      "raw": [
+        {
+          "type": "value_error",
+          "loc": [],
+          "msg": "Value error, required columns apply only to numeric-table assertions"
+        }
+      ],
+      "converted": [
+        {
+          "schema_version": 1,
+          "code": "output_invalid",
+          "phase": "output_payload",
+          "path": "$",
+          "message": "Value violates the declared type, bounds, or field relationship.",
+          "repairable": true,
+          "affected_action": "submit",
+          "type": "value_error"
+        }
+      ]
+    },
+    {
+      "model": "CalculationRecord",
+      "phase": "output_payload",
+      "raw": [
+        {
+          "type": "value_error",
+          "loc": [],
+          "msg": "Value error, computed record requires result and no reason"
+        }
+      ],
+      "converted": [
+        {
+          "schema_version": 1,
+          "code": "output_invalid",
+          "phase": "output_payload",
+          "path": "$.result",
+          "message": "computed record requires result and no reason",
+          "repairable": true,
+          "affected_action": "submit",
+          "type": "value_error"
+        }
+      ]
+    }
+  ],
+  "plain_semantic_exception": [
+    {
+      "path": "$",
+      "message": "Declared semantic rule requires correction.",
+      "type": "value_error",
+      "phase": "output_context"
+    }
+  ],
+  "explicit_semantic_exception_control": [
+    {
+      "schema_version": 1,
+      "code": "output_invalid",
+      "phase": "output_context",
+      "path": "$.evidence",
+      "message": "synthetic precise field relation",
+      "repairable": true,
+      "affected_action": "submit",
+      "type": "value_error"
+    }
+  ],
+  "plain_diagnostic_dictionary": [
+    {
+      "schema_version": 1,
+      "code": "output_invalid",
+      "phase": "output_payload",
+      "path": "$.payload",
+      "message": "Value violates the declared type, bounds, or field relationship.",
+      "repairable": true,
+      "affected_action": "submit",
+      "type": "value_error"
+    }
+  ],
+  "peak_rss_kib": 60284
+}

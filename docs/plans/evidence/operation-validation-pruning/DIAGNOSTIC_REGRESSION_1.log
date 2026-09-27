@@ -1,0 +1,26 @@
+........................................................................ [ 47%]
+........................................................................ [ 94%]
+.....F
+=================================== FAILURES ===================================
+________ test_legacy_curve_diagnosis_cannot_pass_with_uncovered_checks _________
+
+    def test_legacy_curve_diagnosis_cannot_pass_with_uncovered_checks() -> None:
+        plan = _plan_with_non_curve_check()
+        contract = _contract()
+        report = evaluate_curve_consistency(
+            _bundle(),
+            contract.comparison_spec,
+            validation_plan_sha256=canonical_sha256(plan.validation_plans[0]),
+            covered_validation_check_keys=("profile_rms",),
+        )
+>       with pytest.raises(
+            SemanticRuleViolation,
+            match="unperformed required quantitative checks cannot pass",
+        ):
+E       Failed: DID NOT RAISE SemanticRuleViolation
+
+tests/operations/test_m2_curve_analysis_boundary.py:1040: Failed
+=========================== short test summary info ============================
+FAILED tests/operations/test_m2_curve_analysis_boundary.py::test_legacy_curve_diagnosis_cannot_pass_with_uncovered_checks
+!!!!!!!!!!!!!!!!!!!!!!!!!! stopping after 1 failures !!!!!!!!!!!!!!!!!!!!!!!!!!!
+1 failed, 149 passed, 1 deselected in 68.44s (0:01:08)

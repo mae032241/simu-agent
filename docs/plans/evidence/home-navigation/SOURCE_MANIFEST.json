@@ -1,0 +1,73 @@
+{
+  "base": "BASELINE_SOURCE.json: working tree after usability R2",
+  "production": [
+    {
+      "path": "src/scidiscovery/artifact_agent/approval_ui/access.py",
+      "before_sha256": "9f8ed62d5707865ff54ba6182dd4164b461e86eefe66ecae2f244cb0508da56e",
+      "sha256": "6cde4ff126928021e2afa9a460ad610382e3f92e882c623f2fc02861834491ba"
+    },
+    {
+      "path": "src/scidiscovery/artifact_agent/approval_ui/app.py",
+      "before_sha256": "6d020af2d3977c64e92c2acb892b1f25c7c2a0b9c0c26268a99bf935152cdfc9",
+      "sha256": "4e138c38bf8f9e3499ae46331a9a8424f26319a47b870a360c3fb91d20826a87"
+    },
+    {
+      "path": "src/scidiscovery/artifact_agent/approval_ui/evidence.py",
+      "before_sha256": "42745b4a1bd755eaacd13ecdcea4316c0533a60577c2d822d1d924d93fcd560c",
+      "sha256": "1cd7b513f8506ea6b592018d119084a979820c40fcbaba754983bdf05af41570"
+    },
+    {
+      "path": "src/scidiscovery/artifact_agent/approval_ui/management_render.py",
+      "before_sha256": "72bee72fb2b91d1cad49515df58b7e843b766033d607cdb9a69b5d9222aab7b3",
+      "sha256": "296c4fdda9e607b0ba2a708b1e7dc0a7a54868a096235d5e8d01cad4936354fd"
+    },
+    {
+      "path": "src/scidiscovery/artifact_agent/approval_ui/render.py",
+      "before_sha256": "56be2877c59cf00fef8586386662720524d8b620c714f93e8dba293c6071c1e5",
+      "sha256": "e49ad8455615a4f6380abbad24bd77d259fb5c7970b0c2d87d0bfc08cade4c9e"
+    },
+    {
+      "path": "src/scidiscovery/artifact_agent/approval_ui/workbench_render.py",
+      "before_sha256": "7bcf02561629e5a6ff1879a6a0dedb33b47d99350d3b03f5966d1875a076d245",
+      "sha256": "c480c03eb1f43c55795aae5d8ce05ada01e29cb518bcca16d577ea65df3334ab"
+    },
+    {
+      "path": "src/scidiscovery/artifact_agent/approval_ui/static/style.css",
+      "before_sha256": "f5feb56b7fb7fb792db7f49a9a6e0e19f3ebe203fc959464790699173ce722b0",
+      "sha256": "55247d32f1c3b9f729c283318393460aad15d2cb612b5c6af9a77ed2c0cc26de"
+    },
+    {
+      "path": "src/scidiscovery/artifact_agent/service/scheduler_bindings.py",
+      "before_sha256": "555dc695192f0e02d2089ce0ae692f5484215034d0983ceaa394fa4abea5eda2",
+      "sha256": "b4805c31e794b34d5717e43548a87f940c3cef394c78f8a0803af33419ba5bf9"
+    },
+    {
+      "path": "src/scidiscovery/artifact_agent/approval_ui/home_render.py",
+      "before_sha256": null,
+      "sha256": "71b997623973beda38dfa2ae0a8fd37264b42d2c7257d1c89ff0948d94c3d6f9"
+    },
+    {
+      "path": "src/scidiscovery/artifact_agent/approval_ui/navigation.py",
+      "before_sha256": null,
+      "sha256": "9f7f49060b74dab0f8088ef34c90b772e67ac1ce8f91dffa3befa88ba96d669a"
+    }
+  ],
+  "tests": [
+    {
+      "path": "tests/operations/test_home_navigation.py",
+      "sha256": "96e4e0d83659a2a45fa883ff493ed5274a65001037d1be55b993a1305864320c"
+    },
+    {
+      "path": "tests/operations/test_instance_workbench_render.py",
+      "sha256": "cd4d2f3d0e9db51fafb62a300617abe5c6cabcf2fa1e4d0d1ff37bfaf6119707"
+    },
+    {
+      "path": "tests/operations/test_instance_management_render.py",
+      "sha256": "3411cbaf5a9836c6f7f9a1c815a69b3332c4d86e650f00c0fcf69f87a566ce05"
+    },
+    {
+      "path": "tests/operations/test_m6a_direct_instance_management.py",
+      "sha256": "391d4713427f18111c5e9c4f54a2af5b4fce60cdbf4b41b59de6351c643a87ad"
+    }
+  ]
+}

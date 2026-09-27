@@ -1,0 +1,82 @@
+{
+  "instance": "M7-test0",
+  "parameter_rows": 14,
+  "categories": {
+    "comparison_variable": 14
+  },
+  "display_counts": {
+    "source_unknown_rows": 14,
+    "acquisition_unknown_rows": 14,
+    "ascii_parameter_names": 14
+  },
+  "original_source_samples": [
+    {
+      "name": "D(u) in u_t=d/dx[D(u)u_x]",
+      "category": "comparison_variable",
+      "schema_id": "scidiscovery.experiment-portfolio.v1",
+      "json_pointer": "/proposals/0/comparison_contract/variables/0",
+      "payload_state": "available",
+      "original_keys": [
+        "comparison_role",
+        "equivalence_rule",
+        "expectations",
+        "factor_type",
+        "rationale",
+        "schema_version",
+        "scientific_path",
+        "tolerance",
+        "unit",
+        "variable_key"
+      ],
+      "has_rationale": true,
+      "has_epistemic_status": false,
+      "has_direct_citation": false
+    },
+    {
+      "name": "D(u) in u_t=d/dx[D(u)u_x]",
+      "category": "comparison_variable",
+      "schema_id": "scidiscovery.experiment-portfolio.v1",
+      "json_pointer": "/proposals/0/comparison_contract/variables/0",
+      "payload_state": "available",
+      "original_keys": [
+        "comparison_role",
+        "equivalence_rule",
+        "expectations",
+        "factor_type",
+        "rationale",
+        "schema_version",
+        "scientific_path",
+        "tolerance",
+        "unit",
+        "variable_key"
+      ],
+      "has_rationale": true,
+      "has_epistemic_status": false,
+      "has_direct_citation": false
+    },
+    {
+      "name": "C=Cs*u",
+      "category": "comparison_variable",
+      "schema_id": "scidiscovery.experiment-portfolio.v1",
+      "json_pointer": "/proposals/0/comparison_contract/variables/1",
+      "payload_state": "available",
+      "original_keys": [
+        "comparison_role",
+        "equivalence_rule",
+        "expectations",
+        "factor_type",
+        "rationale",
+        "schema_version",
+        "scientific_path",
+        "tolerance",
+        "unit",
+        "variable_key"
+      ],
+      "has_rationale": true,
+      "has_epistemic_status": false,
+      "has_direct_citation": false
+    }
+  ],
+  "read_access_posts": 1,
+  "scientific_writes": 0
+}

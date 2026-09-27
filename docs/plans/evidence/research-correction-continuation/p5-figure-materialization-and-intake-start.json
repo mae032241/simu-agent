@@ -1,0 +1,537 @@
+{
+  "observed_at": {
+    "current_time": "2026-09-08 13:12:18 UTC"
+  },
+  "scope": "Controlled P5 scientific-evidence establishment progress. Figure request is completed; materialization artifacts are registered; extraction is only queued at this snapshot. No evidence qualification or TCAD execution claimed.",
+  "figure_request_status": {
+    "agent_type": "op_science_figure_request_prepare_v1_c037eb08724d",
+    "backend": "local_trusted",
+    "candidate_accepted": true,
+    "completed_at": "2026-09-08T13:09:32.922466Z",
+    "created_at": "2026-09-08T13:00:14.447096Z",
+    "deadline_at": "2026-09-08T13:15:14.447096Z",
+    "head_advance": "not_requested",
+    "last_activity_at": "2026-09-08T13:09:32.922466Z",
+    "logical_name": "fig4_continuation_figure_request_1",
+    "name": "fig4_continuation_figure_request_1",
+    "operation_id": "science.figure.request.prepare.v1",
+    "output_artifact_name": "fig4_continuation_figure_request_1.output",
+    "reason": null,
+    "recovery_available": false,
+    "revision": 1,
+    "scheduler_signal": {
+      "assumptions": [],
+      "missing_inputs": [],
+      "next_action_kind": null,
+      "next_actions": [],
+      "schema_version": 1,
+      "summary": "Prepared the Fig. 4 digitization request from the bound PDF source with two visibly legend-bound solid profiles, calibrated axes, guide points, and explicit non-data exclusions. The exact request was checked in both the source-pixel overlay and calibrated numeric redraw.",
+      "verdict": "pass"
+    },
+    "sealed_output": {
+      "artifact_name": "fig4_continuation_figure_request_1.output",
+      "kind": "figure_digitization_request",
+      "payload": {
+        "axis_calibration": {
+          "x": {
+            "scale": "linear",
+            "ticks": [
+              [
+                166,
+                0
+              ],
+              [
+                974,
+                0.8
+              ]
+            ],
+            "uncertainty_px": 1,
+            "unit": "µm"
+          },
+          "y": {
+            "scale": "log10",
+            "ticks": [
+              [
+                35,
+                100000000000000000000
+              ],
+              [
+                685,
+                1000000000000000
+              ]
+            ],
+            "uncertainty_px": 1,
+            "unit": "cm^-3"
+          }
+        },
+        "citation": "Fig. 4. Zinc diffusion profiles of single-layer In0.83Al0.17As and In0.83Ga0.17As.",
+        "exclusion_regions": [
+          [
+            650,
+            45,
+            960,
+            243
+          ],
+          [
+            185,
+            225,
+            500,
+            482
+          ],
+          [
+            166,
+            580,
+            450,
+            632
+          ],
+          [
+            166,
+            35,
+            975,
+            44
+          ],
+          [
+            166,
+            676,
+            975,
+            686
+          ],
+          [
+            166,
+            35,
+            176,
+            686
+          ],
+          [
+            965,
+            35,
+            975,
+            686
+          ]
+        ],
+        "figure": "Fig. 4",
+        "figure_key": "fig4-zinc-diffusion-profiles",
+        "panel_key": "main",
+        "plot_bbox": [
+          166,
+          35,
+          975,
+          686
+        ],
+        "request_status": "ready",
+        "schema_version": "scidiscovery.curve-figure-digitization-request.v2",
+        "series": [
+          {
+            "binding_bbox": [
+              652,
+              48,
+              955,
+              99
+            ],
+            "binding_source": "legend",
+            "color": "#000000",
+            "exclusion_regions": [
+              [
+                176,
+                35,
+                430,
+                676
+              ],
+              [
+                598,
+                35,
+                647,
+                100
+              ],
+              [
+                614,
+                35,
+                632,
+                686
+              ]
+            ],
+            "label": "In0.83Al0.17As",
+            "line_style": "solid",
+            "primitive_kind": "line",
+            "seeds": [
+              [
+                440,
+                105
+              ],
+              [
+                480,
+                115
+              ],
+              [
+                520,
+                136
+              ],
+              [
+                560,
+                160
+              ],
+              [
+                590,
+                194
+              ],
+              [
+                610,
+                300
+              ],
+              [
+                635,
+                520
+              ],
+              [
+                650,
+                528
+              ],
+              [
+                675,
+                590
+              ],
+              [
+                700,
+                590
+              ],
+              [
+                750,
+                588
+              ],
+              [
+                800,
+                615
+              ],
+              [
+                850,
+                620
+              ],
+              [
+                900,
+                625
+              ],
+              [
+                950,
+                620
+              ]
+            ],
+            "series_key": "In0.83Al0.17As",
+            "visible_label": "In0.83Al0.17As"
+          },
+          {
+            "binding_bbox": [
+              652,
+              100,
+              955,
+              146
+            ],
+            "binding_source": "legend",
+            "color": "#ff0000",
+            "exclusion_regions": [
+              [
+                508,
+                35,
+                560,
+                100
+              ],
+              [
+                530,
+                35,
+                548,
+                686
+              ]
+            ],
+            "label": "In0.83Ga0.17As",
+            "line_style": "solid",
+            "primitive_kind": "line",
+            "seeds": [
+              [
+                176,
+                104
+              ],
+              [
+                200,
+                88
+              ],
+              [
+                250,
+                72
+              ],
+              [
+                300,
+                71
+              ],
+              [
+                350,
+                81
+              ],
+              [
+                400,
+                98
+              ],
+              [
+                450,
+                118
+              ],
+              [
+                480,
+                139
+              ],
+              [
+                500,
+                160
+              ],
+              [
+                520,
+                220
+              ],
+              [
+                550,
+                515
+              ],
+              [
+                570,
+                540
+              ],
+              [
+                610,
+                550
+              ],
+              [
+                650,
+                555
+              ],
+              [
+                700,
+                552
+              ],
+              [
+                750,
+                565
+              ],
+              [
+                800,
+                575
+              ],
+              [
+                850,
+                590
+              ],
+              [
+                900,
+                590
+              ],
+              [
+                950,
+                565
+              ]
+            ],
+            "series_key": "In0.83Ga0.17As",
+            "visible_label": "In0.83Ga0.17As"
+          }
+        ],
+        "source": {
+          "document_image_index": 47,
+          "height": 815,
+          "media_type": "application/pdf",
+          "page": 6,
+          "page_image_index": 1,
+          "pdf_object_generation": 0,
+          "pdf_object_id": 241,
+          "recovered_image_sha256": "88358eb5658c75cf7eddb3cb71fab5f2f8d5bf0d6e7252481193142adb19be5a",
+          "recovery_tool": "pdfimages+Pillow",
+          "recovery_tool_version": "pdfimages version 22.02.0; Pillow 12.1.1",
+          "source_kind": "pdf_embedded_image",
+          "source_sha256": "750c8cb5944ed9fe25c5072db084bb0194ed682d5e1ea40f25103f4aa89c05c3",
+          "width": 1000
+        },
+        "unresolved_reasons": []
+      },
+      "schema": "scidiscovery.curve-figure-digitization-request.v2"
+    },
+    "sealed_output_status": "available",
+    "started_at": "2026-09-08T13:00:44.811962Z",
+    "state": "completed"
+  },
+  "materialization_request": {
+    "name": "fig4_continuation_figure_materialized_1",
+    "operation_id": "science.figure.evidence.materialize.v1",
+    "inputs": [
+      {
+        "port": "paper_source",
+        "artifact_names": [
+          "ingaas_inalas_fig4_source_paper"
+        ]
+      },
+      {
+        "port": "figure_request",
+        "artifact_names": [
+          "fig4_continuation_figure_request_1.output"
+        ]
+      }
+    ]
+  },
+  "materialization_preflight": {
+    "admissible": true,
+    "executor_kind": "transform",
+    "port": null,
+    "reason_code": null
+  },
+  "materialization_result": {
+    "executor_kind": "transform",
+    "operation_id": "science.figure.evidence.materialize.v1",
+    "result": {
+      "name": "fig4_continuation_figure_materialized_1",
+      "outputs": [
+        {
+          "artifact_name": "fig4_continuation_figure_materialized_1",
+          "kind": "figure_evidence_manifest",
+          "media_type": "application/json",
+          "output_label": "primary",
+          "schema": "scidiscovery.figure-evidence-manifest.v1",
+          "size_bytes": 6568
+        },
+        {
+          "artifact_name": "fig4_continuation_figure_materialized_1.source_panels",
+          "kind": "figure_source_panel",
+          "media_type": "image/png",
+          "output_label": "source_panels",
+          "schema": "opaque",
+          "size_bytes": 226099
+        },
+        {
+          "artifact_name": "fig4_continuation_figure_materialized_1.audit_overlays_001",
+          "kind": "figure_audit_overlay",
+          "media_type": "image/png",
+          "output_label": "audit_overlays_001",
+          "schema": "opaque",
+          "size_bytes": 467076
+        },
+        {
+          "artifact_name": "fig4_continuation_figure_materialized_1.audit_overlays_002",
+          "kind": "figure_audit_overlay",
+          "media_type": "image/png",
+          "output_label": "audit_overlays_002",
+          "schema": "opaque",
+          "size_bytes": 20775
+        },
+        {
+          "artifact_name": "fig4_continuation_figure_materialized_1.curve_tables_001",
+          "kind": "digitized_curve_table",
+          "media_type": "text/csv",
+          "output_label": "curve_tables_001",
+          "schema": "opaque",
+          "size_bytes": 87590
+        },
+        {
+          "artifact_name": "fig4_continuation_figure_materialized_1.curve_tables_002",
+          "kind": "digitized_curve_table",
+          "media_type": "text/csv",
+          "output_label": "curve_tables_002",
+          "schema": "opaque",
+          "size_bytes": 132955
+        },
+        {
+          "artifact_name": "fig4_continuation_figure_materialized_1.validation_report",
+          "kind": "figure_evidence_validation_report",
+          "media_type": "application/json",
+          "output_label": "validation_report",
+          "schema": "scidiscovery.figure-evidence-validation-report.v1",
+          "size_bytes": 1767
+        }
+      ],
+      "profile": "science.figure.evidence.materialize.v1"
+    }
+  },
+  "intake_request": {
+    "name": "fig4_continuation_intake_1",
+    "operation_id": "science.evidence.extract.figure.v2",
+    "inputs": [
+      {
+        "port": "paper_source",
+        "artifact_names": [
+          "ingaas_inalas_fig4_source_paper"
+        ]
+      },
+      {
+        "port": "figure_request",
+        "artifact_names": [
+          "fig4_continuation_figure_request_1.output"
+        ]
+      },
+      {
+        "port": "figure_manifest",
+        "artifact_names": [
+          "fig4_continuation_figure_materialized_1"
+        ]
+      },
+      {
+        "port": "validation_report",
+        "artifact_names": [
+          "fig4_continuation_figure_materialized_1.validation_report"
+        ]
+      },
+      {
+        "port": "source_panels",
+        "artifact_names": [
+          "fig4_continuation_figure_materialized_1.source_panels"
+        ]
+      },
+      {
+        "port": "audit_overlays",
+        "artifact_names": [
+          "fig4_continuation_figure_materialized_1.audit_overlays_001",
+          "fig4_continuation_figure_materialized_1.audit_overlays_002"
+        ]
+      },
+      {
+        "port": "curve_tables",
+        "artifact_names": [
+          "fig4_continuation_figure_materialized_1.curve_tables_001",
+          "fig4_continuation_figure_materialized_1.curve_tables_002"
+        ]
+      },
+      {
+        "port": "prior_draft",
+        "artifact_names": []
+      },
+      {
+        "port": "change_request",
+        "artifact_names": []
+      }
+    ],
+    "instruction": "围绕绑定论文的 InGaAs/InAlAs Fig.4 复现研究，依据完整图证 family 建立可供后续最小 TCAD 实验设计使用的 ScientificIntake。总体研究目标是从可定位的论文证据提取曲线与器件条件，提出可证伪假设，再将真实 Sentaurus 仿真与论文曲线定量比较。明确证据支持的判断、限制和仍缺的条件；不得引入论文未包含的 800°C、900°C 曲线或未经证实的参数。对尚缺的参数或不可辨识内容如实保留缺口，由后续科学设计判断当前可执行目标。"
+  },
+  "intake_preflight": {
+    "admissible": true,
+    "executor_kind": "agent",
+    "port": null,
+    "reason_code": null
+  },
+  "intake_invocation": {
+    "executor_kind": "agent",
+    "operation_id": "science.evidence.extract.figure.v2",
+    "result": {
+      "agent_type": "op_science_evidence_extract_figure_v2_bc4404c0d76c",
+      "backend": "local_trusted",
+      "candidate_accepted": false,
+      "completed_at": null,
+      "created_at": "2026-09-08T13:11:32.088522Z",
+      "deadline_at": "2026-09-08T13:21:32.088522Z",
+      "head_advance": null,
+      "last_activity_at": null,
+      "logical_name": "fig4_continuation_intake_1",
+      "name": "fig4_continuation_intake_1",
+      "operation_id": "science.evidence.extract.figure.v2",
+      "output_artifact_name": null,
+      "reason": null,
+      "recovery_available": false,
+      "revision": 1,
+      "scheduler_signal": null,
+      "sealed_output": null,
+      "sealed_output_status": "unavailable",
+      "started_at": null,
+      "state": "queued"
+    }
+  }
+}

@@ -1,0 +1,99 @@
+"""Preserve Agent-authored analysis scripts and derived files in the same Run."""
+from pathlib import Path
+from typing import Annotated, Literal
+
+from pydantic import BaseModel, ConfigDict, Field
+
+from scidiscovery.artifact_agent.service.analysis_artifacts import publish_analysis_file
+from scidiscovery.artifact_agent.service.local_workspace import WorkspaceError, read_control_workspace_file
+from scidiscovery.operation_contract import DiagnosticError, contract_diagnostic
+from scidiscovery.operations.tooling import WorkerToolDefinition
+
+MAX_FILE_BYTES = 16 * 1024 * 1024
+MAX_TOTAL_BYTES = 32 * 1024 * 1024
+
+
+class AnalysisFile(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    path: str = Field(description="Relative regular file below the opened Run's scratch/ directory; no symlinks.")
+    media_type: Literal["text/csv", "application/json", "text/plain", "image/png"]
+
+
+class PublishAnalysisFiles(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    source_aliases: Annotated[tuple[str, ...], Field(min_length=1, max_length=40)]
+    script_path: str = Field(description="Relative UTF-8 analysis script below scratch/. Saved with its declared inputs and outputs; publication does not attest execution.")
+    files: Annotated[tuple[AnalysisFile, ...], Field(min_length=1, max_length=8)]
+    method: Annotated[str, Field(min_length=1, max_length=1024,
+        description="Short scientific method summary; full procedure belongs in the saved script and report.")]
+
+
+def publish_files(request, context):
+    """Seal declared local bytes, not a claim that the script was executed."""
+    try:
+        sources = tuple(dict.fromkeys(request.source_aliases))
+        for alias in sources:
+            context.source_descriptor(alias)
+        def read(name, limit):
+            path = Path(name)
+            if path.is_absolute() or not path.parts or path.parts[0] != "scratch":
+                raise ValueError("analysis files must be below scratch/")
+            return read_control_workspace_file(context.workspace, path, max_bytes=limit)
+        script = read(request.script_path, 1024 * 1024)
+        script.decode("utf-8")
+        # Admit the whole local byte set before registering any file.
+        files = []
+        total = len(script)
+        for item in request.files:
+            raw = read(item.path, min(MAX_FILE_BYTES, MAX_TOTAL_BYTES - total))
+            total += len(raw)
+            if item.media_type != "image/png":
+                raw.decode("utf-8")
+            files.append((item, raw))
+        saved_script = publish_analysis_file(context, script, media_type="text/plain",
+            kind="analysis_script", sources=sources, suffix=".py" if request.script_path.endswith(".py") else ".txt",
+            metadata={"method": request.method, "execution_proof": "agent_reported", "file_name": Path(request.script_path).name})
+        outputs = []
+        for item, raw in files:
+            suffix = {"text/csv": ".csv", "application/json": ".json", "text/plain": ".txt", "image/png": ".png"}[item.media_type]
+            saved = publish_analysis_file(context, raw, media_type=item.media_type,
+                kind="analysis_derived", sources=(*sources, saved_script["evidence_alias"]), suffix=suffix,
+                metadata={"script_alias": saved_script["evidence_alias"], "method": request.method,
+                          "execution_proof": "agent_reported", "file_name": Path(item.path).name})
+            outputs.append({**saved, "media_type": item.media_type})
+        return {"status": "retained", "script": saved_script, "files": outputs,
+                "execution_proof": "agent_reported"}
+    except (ValueError, OSError, WorkspaceError) as error:
+        raise DiagnosticError("analysis files could not be retained", details=(contract_diagnostic(
+            "analysis_file_unavailable", phase="tool_execution", affected_action="tool_call",
+            repairable=True, message=str(error)[:1000]),)) from error
+
+
+GUIDANCE = """
+Use the calculation_ref returned by a scoring/diagnostic tool as an evidence
+locator. The control layer has already saved its complete record and receipt;
+do not copy requests, digests, attempt metadata or result arrays into the report.
+Keep calculation_records empty for new calls. Choose evidence source_key/title
+for the scientific claim and use evidence_keys normally. Legacy inline records
+remain readable. If a request is rejected before a calculation_ref exists, cite
+tool_recovery_manifest and explain the reported failure; do not construct a
+calculation record or copy the attempt receipt. To reuse a prior calculation, bind its saved calculation file
+and the paired prior analysis/manifest with the original sources, then cite the
+current file alias; receipt and historical alias handling belong to control.
+When built-in tools cannot express a needed row selection, weighting or other
+analysis method, use the allowed bounded native analysis tools. Preserve the
+script and derived tables/results with worker_analysis_publish_files; its paths
+are relative to scratch/, files are at most 16 MiB each and 32 MiB per call,
+and the script is at most 1 MiB. Cite source aliases and describe the scientific
+method once. Returned derived-data aliases are readable by the scoring and
+diagnostic tools immediately and can be bound in a later Run's reference_material
+inventory; they are derived analysis data, not original solver_outputs. Publication
+preserves bytes and declared derivation, not proof of execution or scientific
+validity. Report weighting/selection rules and limitations; do not relabel an
+exploratory curve statistic as a different preregistered statistic.
+"""
+
+TOOL = WorkerToolDefinition(name="worker_analysis_publish_files",
+    description="Retain a task-local analysis script and derived CSV/JSON/text/PNG files with declared source lineage. Returns reusable evidence aliases; does not execute code or attest its result. Script <=1 MiB; files <=16 MiB each, <=32 MiB per call, within the Run collection budget.",
+    input_model=PublishAnalysisFiles, capability="analysis.publish_files", contextual_handler=publish_files,
+    evidence_ports=("tool_evidence", "recovery_manifest_output"))

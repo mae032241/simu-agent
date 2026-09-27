@@ -1,0 +1,426 @@
+{
+  "request": {
+    "name": "fig4_continuation_execution_analysis_7",
+    "operation_id": "tcad.result.analyze.v1",
+    "inputs": [
+      {
+        "port": "execution_result",
+        "artifact_names": [
+          "fig4_continuation_execution_1.result"
+        ]
+      },
+      {
+        "port": "recovery_manifest",
+        "artifact_names": [
+          "fig4_continuation_execution_analysis_3.output.recovery_manifest"
+        ]
+      },
+      {
+        "port": "prior_analysis",
+        "artifact_names": [
+          "fig4_continuation_execution_analysis_5.output"
+        ]
+      },
+      {
+        "port": "prior_analysis_manifest",
+        "artifact_names": [
+          "fig4_continuation_execution_analysis_5.output.recovery_manifest"
+        ]
+      },
+      {
+        "port": "experiment_plan",
+        "artifact_names": [
+          "fig4_continuation_experiment_plan_3"
+        ]
+      },
+      {
+        "port": "experiment_review",
+        "artifact_names": [
+          "fig4_continuation_experiment_review_6.output"
+        ]
+      },
+      {
+        "port": "reviewed_package",
+        "artifact_names": [
+          "fig4_continuation_reviewed_package_2"
+        ]
+      },
+      {
+        "port": "runtime_manifest",
+        "artifact_names": [
+          "fig4_continuation_execution_1.output.tcad_manifest"
+        ]
+      },
+      {
+        "port": "runtime_attestation",
+        "artifact_names": []
+      },
+      {
+        "port": "solver_outputs",
+        "artifact_names": [
+          "fig4_continuation_execution_1.output.solver_log",
+          "fig4_continuation_execution_1.output.fig4_al_own_anchor_primary_plx",
+          "fig4_continuation_execution_analysis_3.output.tool_evidence_007",
+          "fig4_continuation_execution_analysis_3.output.tool_evidence_008",
+          "fig4_continuation_execution_analysis_3.output.tool_evidence_009",
+          "fig4_continuation_execution_analysis_3.output.tool_evidence_010",
+          "fig4_continuation_execution_analysis_3.output.tool_evidence_011",
+          "fig4_continuation_execution_analysis_3.output.tool_evidence_012",
+          "fig4_continuation_execution_analysis_3.output.tool_evidence_018",
+          "fig4_continuation_execution_analysis_3.output.tool_evidence_019",
+          "fig4_continuation_execution_analysis_3.output.tool_evidence_020",
+          "fig4_continuation_execution_analysis_3.output.tool_evidence_021",
+          "fig4_continuation_execution_analysis_3.output.tool_evidence_022"
+        ]
+      },
+      {
+        "port": "diagnostics",
+        "artifact_names": [
+          "fig4_continuation_execution_1.output.tcad_log"
+        ]
+      },
+      {
+        "port": "reference_material",
+        "artifact_names": [
+          "fig4_continuation_reference_bundle_1",
+          "fig4_continuation_figure_materialized_1.curve_tables_001",
+          "fig4_continuation_figure_materialized_1.curve_tables_002"
+        ]
+      },
+      {
+        "port": "current_progress",
+        "artifact_names": [
+          "fig4_continuation_objective_2"
+        ]
+      }
+    ],
+    "instruction": "依据精确绑定的原始研究目标、计划、匹配审查、既往封存分析与已有执行材料，完成本轮最小充分结果分析。控制层交付的历史失败草稿只作续接起点；按照本轮实际合同重新判断和修订，不把旧拒绝规则或草稿结论当作权威。由分析者自主判断可计算范围、方法及结论限度，必要时使用本 Operation 注册的工具；保留实际计算记录及其收据，不重复抄写已记录的机械身份或案例映射。报告本轮目标的进展、尚未完成的目标及后续条件。仅分析已有执行，不启动求解器。资源约束：一次一个计算进程树，含子进程累计 RSS 不超过 512 MiB，达到 448 MiB 时提前停止；不运行全量测试、并行批次或大规模压力测试。",
+    "draft_from": "fig4_continuation_execution_analysis_6"
+  },
+  "preflight": {
+    "admissible": true,
+    "executor_kind": "agent",
+    "port": null,
+    "reason_code": null
+  },
+  "invocation": {
+    "executor_kind": "agent",
+    "operation_id": "tcad.result.analyze.v1",
+    "result": {
+      "agent_type": "op_tcad_result_analyze_v1_8314f7794897",
+      "backend": "local_trusted",
+      "candidate_accepted": false,
+      "completed_at": null,
+      "created_at": "2026-09-11T13:34:31.594218Z",
+      "deadline_at": "2026-09-11T13:49:31.594218Z",
+      "diagnostic_summary": {
+        "failure": null,
+        "latest_rejection": null,
+        "latest_tool_error": null,
+        "recent_errors": [],
+        "rejection_count": 0
+      },
+      "draft_from": "fig4_continuation_execution_analysis_6",
+      "head_advance": null,
+      "last_activity_at": null,
+      "logical_name": "fig4_continuation_execution_analysis_7",
+      "name": "fig4_continuation_execution_analysis_7",
+      "operation_id": "tcad.result.analyze.v1",
+      "output_artifact_name": null,
+      "reason": null,
+      "recovery": {
+        "delivery_preserved": false,
+        "draft_available": false,
+        "recovery_pending": false,
+        "resume_available": false
+      },
+      "recovery_available": false,
+      "revision": 1,
+      "scheduler_signal": null,
+      "scheduler_signal_status": "unavailable",
+      "sealed_output": null,
+      "sealed_output_status": "unavailable",
+      "started_at": null,
+      "state": "queued"
+    }
+  },
+  "instance": "M7-test0",
+  "purpose": "Installed validation-pruning live continuation using existing terminal execution; no solver or concurrent tests.",
+  "selected_operation": {
+    "accepts_actions": [],
+    "applies_when": "An exact reviewed plan, package and terminal execution manifest exist, including failed runs.",
+    "catalog_scope": "public",
+    "complete_transform_family": null,
+    "consequence": "scientific",
+    "executor_kind": "agent",
+    "input_admission": null,
+    "input_validation": {
+      "description": "Before creating a Run, bind a structurally valid historical plan and its exact completed science.object.review.v1 scientific_review output, with matching plan parent and passing experiment_portfolio verdict; history grants no current authoring or execution authority. Original solver outputs must match manifest names/media/bytes and declared project paths/cases. Recovered solver outputs instead require the explicitly bound sealed recovery_manifest and execution_result, with exact receipt membership, original execution/project, declared output/case, actual path and byte identity. Same-Run registered tool evidence is admitted by the tool, not by submission. Bind the additional controlled tcad_log to diagnostics, not solver_outputs; diagnostics must share the exact execution lineage. Missing execution products permit limited analysis.",
+      "optional_inputs": [
+        "execution_result",
+        "recovery_manifest",
+        "prior_analysis",
+        "prior_analysis_manifest",
+        "runtime_attestation",
+        "solver_outputs",
+        "diagnostics",
+        "reference_material",
+        "current_progress"
+      ],
+      "phase": "input_admission",
+      "required_inputs": [
+        "experiment_plan",
+        "experiment_review",
+        "reviewed_package",
+        "runtime_manifest"
+      ],
+      "rule_id": "tcad.result_analysis.input_binding"
+    },
+    "inputs": [
+      {
+        "description": "Exact bound TCAD analysis execution_result.",
+        "exposure": "full",
+        "max_item_bytes": 2097152,
+        "max_items": 1,
+        "media_types": [
+          "application/json"
+        ],
+        "min_items": 0,
+        "name": "execution_result",
+        "require_current": false,
+        "required_non_null_fields": [],
+        "schema": "scidiscovery.execution-result",
+        "usage": "evidence_inventory"
+      },
+      {
+        "description": "Exact bound TCAD analysis recovery_manifest.",
+        "exposure": "full",
+        "max_item_bytes": 1048576,
+        "max_items": 1,
+        "media_types": [
+          "application/json"
+        ],
+        "min_items": 0,
+        "name": "recovery_manifest",
+        "require_current": false,
+        "required_non_null_fields": [],
+        "schema": "scidiscovery.tool-evidence-manifest.v1",
+        "usage": "evidence_inventory"
+      },
+      {
+        "description": "Optional exact prior analysis. Bind its own same-producer manifest as prior_analysis_manifest, or bind recovery_manifest once when that same manifest proves both roles.",
+        "exposure": "full",
+        "max_item_bytes": 131072,
+        "max_items": 1,
+        "media_types": [
+          "application/json"
+        ],
+        "min_items": 0,
+        "name": "prior_analysis",
+        "require_current": false,
+        "required_non_null_fields": [],
+        "schema": "scidiscovery.layered-diagnosis.v1",
+        "usage": "evidence_inventory"
+      },
+      {
+        "description": "Same-producer direct manifest parent of prior_analysis. A wrong explicit pair is rejected; use recovery_manifest alone when both purposes use the identical artifact. Bind every reused raw source separately.",
+        "exposure": "full",
+        "max_item_bytes": 1048576,
+        "max_items": 1,
+        "media_types": [
+          "application/json"
+        ],
+        "min_items": 0,
+        "name": "prior_analysis_manifest",
+        "require_current": false,
+        "required_non_null_fields": [],
+        "schema": "scidiscovery.tool-evidence-manifest.v1",
+        "usage": "evidence_inventory"
+      },
+      {
+        "description": "Exact bound TCAD analysis experiment_plan.",
+        "exposure": "full",
+        "max_item_bytes": 2097152,
+        "max_items": 1,
+        "media_types": [
+          "application/json"
+        ],
+        "min_items": 1,
+        "name": "experiment_plan",
+        "require_current": false,
+        "required_non_null_fields": [],
+        "schema": "scidiscovery.experiment-portfolio.v1",
+        "usage": "evidence_inventory"
+      },
+      {
+        "description": "Exact bound TCAD analysis experiment_review.",
+        "exposure": "on_demand",
+        "max_item_bytes": 65536,
+        "max_items": 1,
+        "media_types": [
+          "application/json"
+        ],
+        "min_items": 1,
+        "name": "experiment_review",
+        "require_current": false,
+        "required_non_null_fields": [],
+        "schema": "scidiscovery.scientific-review.v1",
+        "usage": "evidence_inventory"
+      },
+      {
+        "description": "Exact bound TCAD analysis reviewed_package.",
+        "exposure": "full",
+        "max_item_bytes": 67108864,
+        "max_items": 1,
+        "media_types": [
+          "application/json"
+        ],
+        "min_items": 1,
+        "name": "reviewed_package",
+        "require_current": false,
+        "required_non_null_fields": [],
+        "schema": "tcad.reviewed-deck-package.v2",
+        "usage": "prior_signal"
+      },
+      {
+        "description": "Exact bound TCAD analysis runtime_manifest.",
+        "exposure": "full",
+        "max_item_bytes": 4194304,
+        "max_items": 1,
+        "media_types": [
+          "application/json"
+        ],
+        "min_items": 1,
+        "name": "runtime_manifest",
+        "require_current": false,
+        "required_non_null_fields": [],
+        "schema": "opaque",
+        "usage": "prior_signal"
+      },
+      {
+        "description": "Exact bound TCAD analysis runtime_attestation.",
+        "exposure": "full",
+        "max_item_bytes": 4194304,
+        "max_items": 1,
+        "media_types": [
+          "application/json"
+        ],
+        "min_items": 0,
+        "name": "runtime_attestation",
+        "require_current": false,
+        "required_non_null_fields": [],
+        "schema": "tcad.runtime-attestation.v1",
+        "usage": "prior_signal"
+      },
+      {
+        "description": "Exact bound TCAD analysis solver_outputs.",
+        "exposure": "on_demand",
+        "max_item_bytes": 33554432,
+        "max_items": 32,
+        "media_types": [
+          "*/*"
+        ],
+        "min_items": 0,
+        "name": "solver_outputs",
+        "require_current": false,
+        "required_non_null_fields": [],
+        "schema": "*",
+        "usage": "evidence_inventory"
+      },
+      {
+        "description": "Exact bound TCAD analysis diagnostics.",
+        "exposure": "on_demand",
+        "max_item_bytes": 33554432,
+        "max_items": 1,
+        "media_types": [
+          "*/*"
+        ],
+        "min_items": 0,
+        "name": "diagnostics",
+        "require_current": false,
+        "required_non_null_fields": [],
+        "schema": "*",
+        "usage": "evidence_inventory"
+      },
+      {
+        "description": "Exact bound TCAD analysis reference_material.",
+        "exposure": "on_demand",
+        "max_item_bytes": 16777216,
+        "max_items": 8,
+        "media_types": [
+          "*/*"
+        ],
+        "min_items": 0,
+        "name": "reference_material",
+        "require_current": false,
+        "required_non_null_fields": [],
+        "schema": "*",
+        "usage": "evidence_inventory"
+      },
+      {
+        "description": "Exact bound TCAD analysis current_progress.",
+        "exposure": "on_demand",
+        "max_item_bytes": 2097152,
+        "max_items": 4,
+        "media_types": [
+          "*/*"
+        ],
+        "min_items": 0,
+        "name": "current_progress",
+        "require_current": false,
+        "required_non_null_fields": [],
+        "schema": "*",
+        "usage": "evidence_inventory"
+      }
+    ],
+    "max_files": 34,
+    "max_input_bytes": 536870912,
+    "max_network_requests": 0,
+    "max_output_bytes": 269615104,
+    "native_shell": "inherited_prototype",
+    "native_view_image": false,
+    "network_mode": "none",
+    "not_for": "Solver execution, mandatory pre-experiment curve contracts, or changing raw evidence.",
+    "operation_id": "tcad.result.analyze.v1",
+    "optional_runtime_services": [
+      "tcad_artifact:tcad.output_inspection"
+    ],
+    "outputs": [
+      {
+        "description": "Sealed bounded result analysis and optional replayable calculations.",
+        "max_items": 1,
+        "min_items": 1,
+        "name": "layered_diagnosis",
+        "required_non_null_fields": [],
+        "schema": "scidiscovery.layered-diagnosis.v1"
+      },
+      {
+        "description": "Original runtime bytes accepted by registered tools only.",
+        "max_items": 32,
+        "min_items": 0,
+        "name": "tool_evidence",
+        "required_non_null_fields": [],
+        "schema": "opaque"
+      },
+      {
+        "description": "Service-generated immutable evidence receipts and source mappings.",
+        "max_items": 1,
+        "min_items": 0,
+        "name": "recovery_manifest_output",
+        "required_non_null_fields": [],
+        "schema": "scidiscovery.tool-evidence-manifest.v1"
+      }
+    ],
+    "purpose": "Analyze one exact TCAD execution with optional raw-output scoring.",
+    "requires_human_approval": false,
+    "requires_independent_review": false,
+    "review_edge": null,
+    "timeout_seconds": 900,
+    "version": "1"
+  },
+  "objective_recovery": [
+    "fig4_continuation_experiment_plan_3",
+    "fig4_continuation_experiment_intent_3.output",
+    "fig4_continuation_objective_2"
+  ]
+}

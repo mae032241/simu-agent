@@ -1,0 +1,346 @@
+--- before/execution_control.py
++++ after/execution_control.py
+@@ -486,14 +486,15 @@
+                         (run_id,),
+                     )
+                 return self.tcad_status(run_id=run_id)
+-            process = subprocess.Popen(
+-                [sys.executable, str(Path(__file__).with_name("worker.py")), str(run_dir)],
+-                cwd=run_dir,
+-                stdin=subprocess.DEVNULL,
+-                stdout=subprocess.DEVNULL,
+-                stderr=subprocess.DEVNULL,
+-                start_new_session=True,
+-            )
++            with (run_dir / "launcher.log").open("xb") as launcher_log:
++                process = subprocess.Popen(
++                    [sys.executable, str(Path(__file__).with_name("worker.py")), str(run_dir)],
++                    cwd=run_dir,
++                    stdin=subprocess.DEVNULL,
++                    stdout=launcher_log,
++                    stderr=subprocess.STDOUT,
++                    start_new_session=True,
++                )
+             _write_new(run_dir / "launcher_pid", f"{process.pid}\n".encode("ascii"), mode=0o440)
+             identity = _process_identity(process.pid)
+             if identity is None:
+@@ -713,7 +714,7 @@
+         outputs.append(
+             _descriptor(
+                 name="tcad_log",
+-                path=run_dir / "worker.log",
++                path=(run_dir / "diagnostic.log") if (run_dir / "diagnostic.log").is_file() else (run_dir / "worker.log"),
+                 media_type="text/plain; charset=utf-8",
+             )
+         )
+--- before/remote_runner_py36.py
++++ after/remote_runner_py36.py
+@@ -309,14 +309,15 @@
+         }
+         _write_new(os.path.join(run_dir, "runtime.json"), _canonical(runtime), 0o440)
+         _write_new(os.path.join(run_dir, "submitted_at"), (_timestamp() + "\n").encode("ascii"), 0o440)
+-        process = subprocess.Popen(
+-            [sys.executable, os.path.abspath(__file__), "--config", config["_config_path"], "--worker", run_dir],
+-            cwd=run_dir,
+-            stdin=subprocess.DEVNULL,
+-            stdout=subprocess.DEVNULL,
+-            stderr=subprocess.DEVNULL,
+-            start_new_session=True,
+-        )
++        with open(os.path.join(run_dir, "launcher.log"), "xb") as launcher_log:
++            process = subprocess.Popen(
++                [sys.executable, os.path.abspath(__file__), "--config", config["_config_path"], "--worker", run_dir],
++                cwd=run_dir,
++                stdin=subprocess.DEVNULL,
++                stdout=launcher_log,
++                stderr=subprocess.STDOUT,
++                start_new_session=True,
++            )
+         _write_new(os.path.join(run_dir, "launcher_pid"), (str(process.pid) + "\n").encode("ascii"), 0o440)
+     return {"run_id": run_id, "state": "accepted", "accepted_at": _timestamp()}
+ 
+@@ -387,7 +388,8 @@
+         ):
+             raise RuntimeError("completed output differs from its manifest")
+         outputs.append(descriptor)
+-    outputs.append(_descriptor("tcad_log", os.path.join(run_dir, "worker.log"), "text/plain; charset=utf-8"))
++    diagnostic = os.path.join(run_dir, "diagnostic.log")
++    outputs.append(_descriptor("tcad_log", diagnostic if os.path.isfile(diagnostic) else os.path.join(run_dir, "worker.log"), "text/plain; charset=utf-8"))
+     outputs.append(_descriptor("tcad_manifest", os.path.join(run_dir, "output_manifest.json"), "application/json"))
+     return {"run_id": run_id, "outputs": outputs}
+ 
+@@ -468,8 +470,8 @@
+             _terminate(process)
+     try:
+         _augment_development_debug_log(run_dir, runtime)
+-    except Exception:
+-        pass
++    except Exception as failure:
++        error = (error + "; diagnostic collection failed: " + str(failure)).lstrip("; ")
+     manifest = {
+         "completed_at": _timestamp(),
+         "error": error,
+@@ -589,8 +591,6 @@
+ 
+ 
+ def _augment_development_debug_log(run_dir, runtime):
+-    if runtime.get("execution_purpose") != "development_debug":
+-        return
+     arguments = runtime.get("arguments")
+     if not isinstance(arguments, list) or not arguments:
+         return
+@@ -604,45 +604,35 @@
+         names.extend(
+             name
+             for name in sorted(os.listdir(work_dir))
+-            if name.endswith(".log") and name != preferred
++            if name.endswith((".log", ".err")) and name != preferred
+         )
+     except OSError:
+         return
+-    solver_log = None
+-    for name in names[:32]:
++    if len(names) > 33:
++        raise ValueError("solver diagnostic file count exceeds 32; original files retained")
++    parts = []
++    total = 0
++    for name in names:
+         candidate = os.path.join(work_dir, name)
+-        try:
+-            metadata = os.lstat(candidate)
+-        except OSError:
++        if not os.path.exists(candidate):
+             continue
+-        if stat.S_ISREG(metadata.st_mode) and not stat.S_ISLNK(metadata.st_mode):
+-            solver_log = candidate
+-            break
+-    if solver_log is None:
++        raw = _read_diagnostic_log(candidate, DEBUG_SOLVER_LOG_BYTES - total)
++        total += len(raw)
++        parts.append(b"\n--- scidiscovery solver diagnostic: " + name.encode("utf-8") + b" ---\n" + raw)
++    if not parts:
+         return
+-    worker_log = os.path.join(run_dir, "worker.log")
+-    stdout = _bounded_excerpt(worker_log, DEBUG_STDOUT_BYTES)
+-    solver = _bounded_excerpt(solver_log, DEBUG_SOLVER_LOG_BYTES)
+-    combined = (
+-        stdout
+-        + b"\n--- scidiscovery solver diagnostic ---\n"
+-        + solver
+-    )
+-    _atomic_write(worker_log, combined, 0o440)
+-
+-
+-def _bounded_excerpt(path, limit):
++    stdout = _read_diagnostic_log(os.path.join(run_dir, "worker.log"), DEBUG_STDOUT_BYTES)
++    _atomic_write(os.path.join(run_dir, "diagnostic.log"), stdout + b"".join(parts), 0o440)
++
++
++def _read_diagnostic_log(path, limit):
+     metadata = os.lstat(path)
+     if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
+         raise ValueError("debug log is not a regular file")
+     with open(path, "rb") as source:
+         if metadata.st_size <= limit:
+             return source.read(limit + 1)
+-        half = limit // 2
+-        head = source.read(half)
+-        source.seek(-half, os.SEEK_END)
+-        tail = source.read(half)
+-    return head + b"\n--- bounded log omission ---\n" + tail
++        raise ValueError("diagnostic log exceeds its capture limit; original file retained")
+ 
+ 
+ def _limits(limits):
+--- before/debug_adapter.py
++++ after/debug_adapter.py
+@@ -437,12 +437,15 @@
+                     content=content,
+                 )
+             )
+-        log_excerpt = _sanitize_log(log_raw)
++        error = str(manifest.get("error", ""))[:4096]
++        diagnostic_raw = ("Runner diagnostic: " + error + "\n").encode("utf-8") + log_raw if error else log_raw
++        diagnostic_log = _sanitize_log(diagnostic_raw, truncate=False)
++        log_excerpt = _sanitize_log(diagnostic_raw)
+         files.append(
+             CollectedTCADDebugFile(
+                 name="debug.log.txt",
+                 media_type="text/plain; charset=utf-8",
+-                content=log_excerpt.encode("utf-8"),
++                content=diagnostic_log.encode("utf-8"),
+             )
+         )
+         terminal = str(manifest.get("terminal_state", "failed"))
+@@ -453,16 +456,19 @@
+         except (TypeError, ValueError):
+             exit_code = 99
+         error = str(manifest.get("error", ""))[:4096]
++        if "diagnostic collection failed:" in error:
++            # Missing diagnostic coverage must not produce a qualified debug proof.
++            terminal = "failed"
+         layer, summary = _earliest_diagnostic(
+             terminal=terminal,
+             exit_code=exit_code,
+             error=error,
+-            log=log_excerpt,
++            log=diagnostic_log,
+             output_count=len(by_name),
+         )
+         source_diagnostic = _source_diagnostic(
+             error=_sanitize_log(error.encode("utf-8")),
+-            log=log_excerpt,
++            log=diagnostic_log,
+         )
+         return CollectedTCADDebugRun(
+             terminal_state=terminal,
+@@ -509,6 +515,8 @@
+     *, terminal: str, exit_code: int, error: str, log: str, output_count: int
+ ) -> tuple[str, str]:
+     combined = (error + "\n" + log).lower()
++    if "diagnostic collection failed:" in error:
++        return "output_contract", "Diagnostic capture is incomplete; original logs retained at the runner."
+     if terminal == "succeeded" and exit_code == 0:
+         return (
+             "complete",
+@@ -632,9 +640,9 @@
+     )
+ 
+ 
+-def _sanitize_log(raw: bytes) -> str:
++def _sanitize_log(raw: bytes, *, truncate: bool = True) -> str:
+     text = raw.decode("utf-8", errors="replace")
+-    if len(text) > _MAX_RESPONSE_LOG_CHARS:
++    if truncate and len(text) > _MAX_RESPONSE_LOG_CHARS:
+         half = _MAX_RESPONSE_LOG_CHARS // 2
+         text = (
+             text[:half]
+--- before/worker.py
++++ after/worker.py
+@@ -95,8 +95,8 @@
+             exit_code = 97
+     try:
+         _augment_development_debug_log(run_dir, job)
+-    except Exception:
+-        pass
++    except Exception as failure:
++        error = f"{error}; diagnostic collection failed: {failure}".lstrip("; ")
+     manifest = {
+         "completed_at": _timestamp(),
+         "error": error,
+@@ -160,8 +160,6 @@
+ 
+ 
+ def _augment_development_debug_log(run_dir: Path, job: dict) -> None:
+-    if job.get("execution_purpose") != "development_debug":
+-        return
+     arguments = job.get("arguments")
+     if not isinstance(arguments, list) or not arguments:
+         return
+@@ -176,36 +174,32 @@
+         for path in sorted(work_dir.glob("*.log"))
+         if path.name != preferred
+     )
+-    solver_log = next(
+-        (
+-            work_dir / name
+-            for name in names[:32]
+-            if (work_dir / name).is_file() and not (work_dir / name).is_symlink()
+-        ),
+-        None,
+-    )
+-    if solver_log is None:
+-        return
+-    stdout = _bounded_excerpt(run_dir / "worker.log", _DEBUG_STDOUT_BYTES)
+-    solver = _bounded_excerpt(solver_log, _DEBUG_SOLVER_LOG_BYTES)
+-    _atomic_bytes(
+-        run_dir / "worker.log",
+-        stdout + b"\n--- scidiscovery solver diagnostic ---\n" + solver,
+-    )
+-
+-
+-def _bounded_excerpt(path: Path, limit: int) -> bytes:
++    names.extend(path.name for path in sorted(work_dir.glob("*.err")))
++    if len(names) > 33:
++        raise ValueError("solver diagnostic file count exceeds 32; original files retained")
++    parts = []
++    total = 0
++    for name in names:
++        path = work_dir / name
++        if not path.exists():
++            continue
++        raw = _read_diagnostic_log(path, _DEBUG_SOLVER_LOG_BYTES - total)
++        total += len(raw)
++        parts.append(b"\n--- scidiscovery solver diagnostic: " + name.encode("utf-8") + b" ---\n" + raw)
++    if not parts:
++        return
++    stdout = _read_diagnostic_log(run_dir / "worker.log", _DEBUG_STDOUT_BYTES)
++    _atomic_bytes(run_dir / "diagnostic.log", stdout + b"".join(parts))
++
++
++def _read_diagnostic_log(path: Path, limit: int) -> bytes:
+     metadata = path.lstat()
+     if path.is_symlink() or not stat.S_ISREG(metadata.st_mode):
+         raise ValueError("debug log is not a regular file")
+     with path.open("rb") as stream:
+         if metadata.st_size <= limit:
+             return stream.read(limit + 1)
+-        half = limit // 2
+-        head = stream.read(half)
+-        stream.seek(-half, os.SEEK_END)
+-        tail = stream.read(half)
+-    return head + b"\n--- bounded log omission ---\n" + tail
++        raise ValueError("diagnostic log exceeds its capture limit; original file retained")
+ 
+ 
+ def _limits(limits: dict) -> None:
+--- before/plugin.py
++++ after/plugin.py
+@@ -378,7 +378,7 @@
+                 "project_validator",
+                 context_validator,
+                 names,
+-                max_bytes=512 * 1024,
++                max_bytes=8 * 1024 * 1024,
+             ),
+         ),
+         consequence="scientific",
+@@ -392,7 +392,7 @@
+         limits=LimitsSpec(
+             timeout_seconds=1200,
+             max_input_bytes=64 * 1024 * 1024,
+-            max_output_bytes=512 * 1024,
++            max_output_bytes=8 * 1024 * 1024,
+             max_files=1,
+             max_attempts=2,
+         ),
+--- before/local_debug_service.py
++++ after/local_debug_service.py
+@@ -175,6 +175,12 @@
+         outputs = []
+         for item in collected.files:
+             _write_private(root / item.name, item.content)
++            if item.name == "debug.log.txt":
++                write_control_workspace_file(
++                    context.workspace,
++                    Path(f"deck/reports/log-{run_name}.txt"),
++                    item.content, replace=False, mode=0o400, create_parents=True,
++                )
+             if item.name != "debug.log.txt":
+                 outputs.append(
+                     {"name": item.name, "media_type": item.media_type, "size_bytes": len(item.content)}
+@@ -189,6 +195,14 @@
+             "diagnostic_layer": collected.diagnostic_layer,
+             "summary": collected.summary,
+             "log_excerpt": collected.log_excerpt,
++            "log_relative_path": (
++                f"deck/reports/log-{run_name}.txt"
++                if any(item.name == "debug.log.txt" for item in collected.files) else None
++            ),
++            "log_excerpt_is_complete": any(
++                item.name == "debug.log.txt" and item.content == collected.log_excerpt.encode("utf-8")
++                for item in collected.files
++            ),
+             "exit_code": collected.exit_code,
+             "outputs": outputs,
+         }

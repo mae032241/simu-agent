@@ -109,12 +109,16 @@ unknown hypotheses, broken update chains, and stale prior states. Both
 deterministic operations preserve the diagnostician's judgment and add none of
 their own.
 
-## Source Acceptance
+## Historical P5 Acceptance
 
-- P5 focused schema, cross-input, projection, and platform tests: 20 passed.
-- Full source regression, including cross-object discovery-chain checks: 156 passed.
+- At the P5 checkpoint, focused schema, cross-input, projection, and platform
+  tests reported 20 passing tests; the then-current full suite reported 156.
 - Existing root and worker lifecycle interfaces are unchanged.
 - No TCAD execution was submitted and no scientific model was accepted.
+
+These counts are historical evidence, not the current release total. Current
+engineering and live-solver qualification status is maintained in
+[TCAD_QUALIFICATION_STATUS.md](TCAD_QUALIFICATION_STATUS.md).
 
 ## Next Gate
 

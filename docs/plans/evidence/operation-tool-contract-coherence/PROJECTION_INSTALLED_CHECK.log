@@ -1,0 +1,25 @@
+{
+  "import_root": "/opt/scidiscovery-m7/site/scidiscovery",
+  "catalog_digest": "adb285db97177f951626220939864f8b899c3c1a0f62422befb256fcd893ecc8",
+  "agent_profiles": 25,
+  "profile_mismatches": [],
+  "root_schemas": 26,
+  "lifecycle_schemas": 3,
+  "wire_request_fields": {
+    "science.figure.request.prepare.v1": {
+      "worker_curve_figure_preview": {
+        "$ref": "#/$defs/FigureDigitizationRequest"
+      }
+    },
+    "science.result.diagnose.v1": {
+      "worker_curve_score": {
+        "$ref": "#/$defs/AnalysisScoreRequest"
+      }
+    },
+    "tcad.result.analyze.v1": {
+      "worker_tcad_curve_score": {
+        "$ref": "#/$defs/TCADScoreRequest"
+      }
+    }
+  }
+}

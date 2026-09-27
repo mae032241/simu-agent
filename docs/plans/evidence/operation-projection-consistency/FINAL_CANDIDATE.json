@@ -1,0 +1,101 @@
+{
+  "head": "2edac5d317a74056869a567bd0daa7f556ecbc85",
+  "plan_sha256": "6547fbe75d3d7b8a3d257a91e62e0f75688093ef0e39506f042323b40c18c1e1",
+  "baseline_file_count": 325,
+  "production": {
+    "plugins/curve_score/curve_score/analysis_tool.py": {
+      "before": "ffacf081d7327e55959ebedf8df29267c32ae07437d53c7389059f3c8eb15d61",
+      "after": "704a090af1e6fc694aa045d8e3d9b3e980c3d3774e1124c83379c239413cb31a"
+    },
+    "src/scidiscovery/artifact_agent/interfaces/mcp_hardened_worker.py": {
+      "before": "f81dac723cf189169ab1a48fca6a4703310c2c40abb4b08cc4d10c4c9f651d24",
+      "after": "8fec3ac7f4b2c7e6df7969dc709605e65e7c8c315cfabc22aeeb009505947308"
+    },
+    "src/scidiscovery/artifact_agent/interfaces/mcp_local_worker.py": {
+      "before": "568d98d93531292d65fbf66afd8558d5054666c133af91289a278341dd4ff285",
+      "after": "6269e722ba79ac600f2b198af96777c501d666c600e2ca458c257c181caf43d9"
+    },
+    "src/scidiscovery/artifact_agent/interfaces/mcp_root.py": {
+      "before": "91d41700557117561f46bf9b81f5ece7baac89e6461948010923e5ef6612ddb0",
+      "after": "0df25c3c0ef4801fb35111d3dd9fb9cb1ee1c98daba402c1ee92b3a0a26e1756"
+    },
+    "src/scidiscovery/artifact_agent/operation_tool_context.py": {
+      "before": "2d03c1ae254e468adf8dc75d62f2ab78f7ae26186e73b7cc897e7d770730cc2d",
+      "after": "ea5972158a6a46f09584da9d8541ea63c8b6e1f103359dbb8acf685e206c7eb0"
+    },
+    "src/scidiscovery/artifact_agent/schema/layered_diagnosis.py": {
+      "before": "9b6ca88f8f9a23da26b0d27890ecbf795e60c945031d12f71c24effa2af6b626",
+      "after": "3401148ea162d2d899586b122b921af573c3e88a936e7ee612e5f658e0667cf7"
+    },
+    "src/scidiscovery/artifact_agent/service/run_assignment.py": {
+      "before": "553e97c3eb25502021335188e4eebfc7f4af01fd9236304f08a846a677f08140",
+      "after": "a3b222b01c38002a0aeefd0e62eecb3a4b2d4463d2fa7172ee3096477efdd0e9"
+    },
+    "src/scidiscovery/artifact_agent/service/run_outputs.py": {
+      "before": "4a400561c24aac1116afb0c1b096b0a59d30889f8c2a8faea8795e81184a4a06",
+      "after": "8e9846a03ecdb101d75e257db67ef9b6078d4341eb1a61d8b0a124b5325401b6"
+    },
+    "src/scidiscovery/artifact_agent/service/runs.py": {
+      "before": "0754e2f1b7f28a53ae399a3ced12b7a43ad5746231bd0d16a628a04eb79b6580",
+      "after": "7eeeba4093c5747e556a2389a4cf913a7e88c797d974e984667f61c5c3b42113"
+    },
+    "src/scidiscovery/artifact_agent/service/tool_evidence.py": {
+      "before": "ecf7e0fefb01ee8bace79176970972edcf41f777f82ddaabbc70cedd6dd1ccd6",
+      "after": "dffc7ac3bf4f39a9e303ea6a384a9d232e030a5878eee4429ec99b7db63febf4"
+    },
+    "src/scidiscovery/operation_contract.py": {
+      "before": "058cc6d51c59ca3eeffa5e5e79ae46f5a34bb2195b7d6f3bc021f51143554fc7",
+      "after": "549139fc33add60a3b4fa0d08cec3482f0327e98faa2da2cf915cd90e1c65a46"
+    },
+    "src/scidiscovery/operations/invoke.py": {
+      "before": "4dcee1ebcae2369e8b47713bddb9862e9d2384f8c92dc6b4ad20bb55af36bae4",
+      "after": "ddc7a15ee092fade527fe3ad1dcbed159921a8c4b5937fea298348cc4b91364a"
+    },
+    "src/scidiscovery/operations/spec.py": {
+      "before": "8d609a3b8bef3396c559e0fa52ebf7eb941dcf71fb7d4ee9d25ec9c3a9ddcb51",
+      "after": "f1c19b5da10b43b5e8494b037f9adfba4df6313f213cb0a8009ebdb1a5563e21"
+    },
+    "src/scidiscovery/operations/tooling.py": {
+      "before": "09274a78357a8d1af823eb9da1b237519bff3c8b65942938b1b299aefae094b0",
+      "after": "6a369ae8632b267e57d175f863d5a55d3fef0b0a9dd865e5973f92d460ab6319"
+    },
+    "src/scidiscovery/platforms/codex.py": {
+      "before": "ad0859a8dedb3f23eda7e93618073577f053d9e0210cdee260bc63e87caccc50",
+      "after": "76386b7ea3a2641ef584eda7cf3f415092b8153693617b7f9483775e6c53c5fa"
+    }
+  },
+  "tests": {
+    "tests/operations/test_agent_contract_alignment.py": {
+      "before": "f2bd667f7ebd9f91b5a5e0d637c099780f685404464bd371b3f0fb74421b5a05",
+      "after": "86e907d631203caf45579184974f877da5be6c68479e5e78298e38ff3d21b751"
+    },
+    "tests/operations/test_analysis_tool_installed.py": {
+      "before": "2e612a09b7258abf114c33de75329cbedbd542a4cb7cb24cd5cd47c172c87515",
+      "after": "a0a56c18eb10cf1fa7a91aba1112b71b8c703892e6508296fc89c5ab5085023f"
+    },
+    "tests/operations/test_contract_attempts.py": {
+      "before": "276ca1aa1fd6239419d12a21e4aecaef23219019ec2f97a61a1f2928973f20ee",
+      "after": "b60fa6e825890d62ccaa72e28353f9a69e5d3a1cc1825c03371c9c69840a9aed"
+    },
+    "tests/operations/test_l2_run_invariants.py": {
+      "before": "0fe0b76616c3934daee17cae1b68abac2c703396621b420333f1081947d7381b",
+      "after": "81df129a1083861183cecd17361761893551c03398364a674fe67aab9fdae729"
+    },
+    "tests/operations/test_score_request_contract.py": {
+      "before": "d1758d6f645d04ac1edeb39fe395a27115e26edc46d30d615ed27657e7121e22",
+      "after": "427122481ed646100e921867467852c37adbf9e6dd5d375ac8e3c53d085ee310"
+    }
+  },
+  "docs": {
+    "docs/plans/README.md": "51d29df07b98c846abe17261ea7798251f2328b977a4d4c91c2c40e000370f5a",
+    "docs/plans/evidence/operation-projection-consistency/EXECUTION_RECORD.zh-CN.md": "85ee37a1d21dba301080e7500770cb75e7422fc097f8982e582b0ef750c1750b",
+    "docs/plans/evidence/operation-projection-consistency/HANDOFF.zh-CN.md": "07125024ef911dfbc291d28ef178cfb29bc27e890b81a1137bc6d25090068f13"
+  },
+  "aggregate_production_sha256": "3edb18611c170494e36f5be37b0ab9bf56c6798f35dc1dbe5c236e525a7ebd90",
+  "highest_observed_tree_rss_bytes": 223473664,
+  "memory_terminated": false,
+  "candidate_identity": "CANDIDATE_IDENTITY_RESULT.json",
+  "production_deployed": false,
+  "E6": "not_verified",
+  "E7": "not_verified"
+}

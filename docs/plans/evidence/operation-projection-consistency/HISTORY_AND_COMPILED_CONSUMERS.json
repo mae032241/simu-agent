@@ -1,0 +1,21 @@
+{
+  "command": [
+    "python",
+    "-m",
+    "pytest",
+    "-q",
+    "--tb=short",
+    "tests/operations/test_r4_author_recovery.py",
+    "tests/operations/test_historical_compatibility_paths.py",
+    "tests/operations/test_compiled_declaration_consumers.py",
+    "tests/operations/test_l2_run_invariants.py::test_source_projection_generation_handles_old_run_without_reusing_it",
+    "tests/operations/test_l2_run_invariants.py::test_draft_source_crosses_contract_but_verifies_files_and_original_budget",
+    "tests/operations/test_l2_run_invariants.py::test_recovery_without_snapshot_keeps_original_and_reports_pending"
+  ],
+  "exit_code": 1,
+  "seconds": 12.716,
+  "peak_tree_rss_bytes": 148348928,
+  "budget_bytes": 536870912,
+  "early_stop_bytes": 469762048,
+  "memory_terminated": false
+}

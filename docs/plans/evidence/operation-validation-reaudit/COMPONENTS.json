@@ -1,0 +1,2208 @@
+[
+  {
+    "key": "curve_figure_evidence:bundle_figure_evidence",
+    "kind": "transform",
+    "implementation": "curve_figure_evidence.operation_transforms:BUNDLE_FIGURE_EVIDENCE",
+    "file": "/opt/scidiscovery-m7/site/curve_figure_evidence/operation_transforms.py",
+    "line": 57,
+    "qualname": "bundle_figure_evidence",
+    "operations": [
+      "scidiscovery.curve-bundle.figure-evidence.v2"
+    ],
+    "source_file": "plugins/curve_figure_evidence/curve_figure_evidence/operation_transforms.py",
+    "review_note": "确定性产物正确性与出处有用；程序错误由工程承担，不能转嫁为科学 Agent 改字。",
+    "related_operation_findings": [
+      "F02",
+      "F03",
+      "F04",
+      "F08"
+    ]
+  },
+  {
+    "key": "curve_figure_evidence:figure_parentage",
+    "kind": "guard",
+    "implementation": "curve_figure_evidence.operation_transforms:FIGURE_PARENTAGE",
+    "file": "/opt/scidiscovery-m7/site/curve_figure_evidence/operation_transforms.py",
+    "line": 114,
+    "qualname": "figure_parentage",
+    "operations": [
+      "scidiscovery.curve-bundle.figure-evidence.v2"
+    ],
+    "source_file": "plugins/curve_figure_evidence/curve_figure_evidence/operation_transforms.py",
+    "review_note": "精确父系/cohort/输入身份检查有用；不能把同对象被审资格当成可执行资格。",
+    "related_operation_findings": [
+      "F02",
+      "F03",
+      "F04",
+      "F08"
+    ]
+  },
+  {
+    "key": "curve_score:audit_validator",
+    "kind": "validator",
+    "implementation": "curve_score.operation_transforms:AUDIT_VALIDATOR",
+    "file": "/opt/scidiscovery-m7/site/curve_score/operation_transforms.py",
+    "line": 68,
+    "qualname": "_json_object",
+    "operations": [
+      "scidiscovery.curve-bundle.figure-evidence.v2",
+      "scidiscovery.curve-score.v1"
+    ],
+    "source_file": "plugins/curve_score/curve_score/operation_transforms.py",
+    "review_note": "payload/model wrapper 不是单一规则：按 METHODS 的叶项和 context 的 FINDINGS 判定，不能整个标成有用。",
+    "related_operation_findings": [
+      "F02",
+      "F03",
+      "F04",
+      "F05",
+      "F06",
+      "F07",
+      "F08"
+    ]
+  },
+  {
+    "key": "curve_score:curve_bundle_validator",
+    "kind": "validator",
+    "implementation": "curve_score.operation_transforms:CURVE_BUNDLE_VALIDATOR",
+    "file": "/opt/scidiscovery-m7/site/curve_score/operation_transforms.py",
+    "line": 59,
+    "qualname": "_model_validator.<locals>.validate",
+    "operations": [
+      "scidiscovery.curve-bundle.figure-evidence.v2",
+      "scidiscovery.curve-score.v1",
+      "tcad.curve-bundle.sprocess-log.v1",
+      "tcad.curve-bundle.sprocess-plx.v1"
+    ],
+    "source_file": "plugins/curve_score/curve_score/operation_transforms.py",
+    "review_note": "payload/model wrapper 不是单一规则：按 METHODS 的叶项和 context 的 FINDINGS 判定，不能整个标成有用。",
+    "related_operation_findings": [
+      "F02",
+      "F03",
+      "F04",
+      "F05",
+      "F06",
+      "F07",
+      "F08"
+    ]
+  },
+  {
+    "key": "curve_score:reference_coverage",
+    "kind": "transform",
+    "implementation": "curve_score.operation_transforms:REFERENCE_COVERAGE",
+    "file": "/opt/scidiscovery-m7/site/curve_score/operation_transforms.py",
+    "line": 111,
+    "qualname": "reference_coverage",
+    "operations": [
+      "scidiscovery.curve-reference-coverage.v1"
+    ],
+    "source_file": "plugins/curve_score/curve_score/operation_transforms.py",
+    "review_note": "确定性产物正确性与出处有用；程序错误由工程承担，不能转嫁为科学 Agent 改字。",
+    "related_operation_findings": [
+      "F02",
+      "F03",
+      "F04",
+      "F05",
+      "F06",
+      "F07"
+    ]
+  },
+  {
+    "key": "curve_score:reference_coverage_validator",
+    "kind": "validator",
+    "implementation": "curve_score.operation_transforms:REFERENCE_COVERAGE_VALIDATOR",
+    "file": "/opt/scidiscovery-m7/site/curve_score/operation_transforms.py",
+    "line": 59,
+    "qualname": "_model_validator.<locals>.validate",
+    "operations": [
+      "scidiscovery.curve-reference-coverage.v1"
+    ],
+    "source_file": "plugins/curve_score/curve_score/operation_transforms.py",
+    "review_note": "payload/model wrapper 不是单一规则：按 METHODS 的叶项和 context 的 FINDINGS 判定，不能整个标成有用。",
+    "related_operation_findings": [
+      "F02",
+      "F03",
+      "F04",
+      "F05",
+      "F06",
+      "F07"
+    ]
+  },
+  {
+    "key": "curve_score:metric_report_validator",
+    "kind": "validator",
+    "implementation": "curve_score.operation_transforms:METRIC_REPORT_VALIDATOR",
+    "file": "/opt/scidiscovery-m7/site/curve_score/operation_transforms.py",
+    "line": 59,
+    "qualname": "_model_validator.<locals>.validate",
+    "operations": [
+      "scidiscovery.curve-score.v1"
+    ],
+    "source_file": "plugins/curve_score/curve_score/operation_transforms.py",
+    "review_note": "payload/model wrapper 不是单一规则：按 METHODS 的叶项和 context 的 FINDINGS 判定，不能整个标成有用。",
+    "related_operation_findings": [
+      "F02",
+      "F03",
+      "F04",
+      "F05",
+      "F06",
+      "F07"
+    ]
+  },
+  {
+    "key": "curve_score:plot_validator",
+    "kind": "validator",
+    "implementation": "curve_score.operation_transforms:PLOT_VALIDATOR",
+    "file": "/opt/scidiscovery-m7/site/curve_score/operation_transforms.py",
+    "line": 74,
+    "qualname": "_png",
+    "operations": [
+      "scidiscovery.curve-score.v1"
+    ],
+    "source_file": "plugins/curve_score/curve_score/operation_transforms.py",
+    "review_note": "payload/model wrapper 不是单一规则：按 METHODS 的叶项和 context 的 FINDINGS 判定，不能整个标成有用。",
+    "related_operation_findings": [
+      "F02",
+      "F03",
+      "F04",
+      "F05",
+      "F06",
+      "F07"
+    ]
+  },
+  {
+    "key": "curve_score:score_curve_bundle",
+    "kind": "transform",
+    "implementation": "curve_score.operation_transforms:SCORE_CURVE_BUNDLE",
+    "file": "/opt/scidiscovery-m7/site/curve_score/operation_transforms.py",
+    "line": 99,
+    "qualname": "score_curve_bundle",
+    "operations": [
+      "scidiscovery.curve-score.v1"
+    ],
+    "source_file": "plugins/curve_score/curve_score/operation_transforms.py",
+    "review_note": "确定性产物正确性与出处有用；程序错误由工程承担，不能转嫁为科学 Agent 改字。",
+    "related_operation_findings": [
+      "F02",
+      "F03",
+      "F04",
+      "F05",
+      "F06",
+      "F07"
+    ]
+  },
+  {
+    "key": "curve_score:score_parentage",
+    "kind": "guard",
+    "implementation": "curve_score.operation_transforms:SCORE_PARENTAGE",
+    "file": "/opt/scidiscovery-m7/site/curve_score/operation_transforms.py",
+    "line": 142,
+    "qualname": "score_parentage",
+    "operations": [
+      "scidiscovery.curve-score.v1"
+    ],
+    "source_file": "plugins/curve_score/curve_score/operation_transforms.py",
+    "review_note": "精确父系/cohort/输入身份检查有用；不能把同对象被审资格当成可执行资格。",
+    "related_operation_findings": [
+      "F02",
+      "F03",
+      "F04",
+      "F05",
+      "F06",
+      "F07"
+    ]
+  },
+  {
+    "key": "curve_score:objective_coverage",
+    "kind": "transform",
+    "implementation": "curve_score.operation_transforms:OBJECTIVE_COVERAGE",
+    "file": "/opt/scidiscovery-m7/site/curve_score/operation_transforms.py",
+    "line": 122,
+    "qualname": "objective_coverage",
+    "operations": [
+      "scidiscovery.objective-coverage.v1"
+    ],
+    "source_file": "plugins/curve_score/curve_score/operation_transforms.py",
+    "review_note": "确定性产物正确性与出处有用；程序错误由工程承担，不能转嫁为科学 Agent 改字。",
+    "related_operation_findings": [
+      "F02",
+      "F03",
+      "F04",
+      "F05",
+      "F06",
+      "F07"
+    ]
+  },
+  {
+    "key": "curve_score:objective_coverage_validator",
+    "kind": "validator",
+    "implementation": "curve_score.operation_transforms:OBJECTIVE_COVERAGE_VALIDATOR",
+    "file": "/opt/scidiscovery-m7/site/curve_score/operation_transforms.py",
+    "line": 59,
+    "qualname": "_model_validator.<locals>.validate",
+    "operations": [
+      "scidiscovery.objective-coverage.v1"
+    ],
+    "source_file": "plugins/curve_score/curve_score/operation_transforms.py",
+    "review_note": "payload/model wrapper 不是单一规则：按 METHODS 的叶项和 context 的 FINDINGS 判定，不能整个标成有用。",
+    "related_operation_findings": [
+      "F02",
+      "F03",
+      "F04",
+      "F05",
+      "F06",
+      "F07"
+    ]
+  },
+  {
+    "key": "curve_score:objective_parentage",
+    "kind": "guard",
+    "implementation": "curve_score.operation_transforms:OBJECTIVE_PARENTAGE",
+    "file": "/opt/scidiscovery-m7/site/curve_score/operation_transforms.py",
+    "line": 152,
+    "qualname": "objective_parentage",
+    "operations": [
+      "scidiscovery.objective-coverage.v1"
+    ],
+    "source_file": "plugins/curve_score/curve_score/operation_transforms.py",
+    "review_note": "精确父系/cohort/输入身份检查有用；不能把同对象被审资格当成可执行资格。",
+    "related_operation_findings": [
+      "F02",
+      "F03",
+      "F04",
+      "F05",
+      "F06",
+      "F07"
+    ]
+  },
+  {
+    "key": "curve_score:curve_contract_context",
+    "kind": "validator",
+    "implementation": "curve_score.science_operations:Components.curve_contract_context",
+    "file": "/opt/scidiscovery-m7/site/curve_score/science_operations.py",
+    "line": 122,
+    "qualname": "_curve_contract_context",
+    "operations": [
+      "science.curve.contract.design.v1"
+    ],
+    "source_file": "plugins/curve_score/curve_score/science_operations.py",
+    "review_note": "payload/model wrapper 不是单一规则：按 METHODS 的叶项和 context 的 FINDINGS 判定，不能整个标成有用。",
+    "related_operation_findings": [
+      "F01",
+      "F02",
+      "F03",
+      "F04",
+      "F05",
+      "F06",
+      "F07"
+    ]
+  },
+  {
+    "key": "curve_score:curve_contract_validator",
+    "kind": "validator",
+    "implementation": "curve_score.operation_transforms:CURVE_CONTRACT_VALIDATOR",
+    "file": "/opt/scidiscovery-m7/site/curve_score/operation_transforms.py",
+    "line": 59,
+    "qualname": "_model_validator.<locals>.validate",
+    "operations": [
+      "science.curve.contract.design.v1"
+    ],
+    "source_file": "plugins/curve_score/curve_score/operation_transforms.py",
+    "review_note": "payload/model wrapper 不是单一规则：按 METHODS 的叶项和 context 的 FINDINGS 判定，不能整个标成有用。",
+    "related_operation_findings": [
+      "F01",
+      "F02",
+      "F03",
+      "F04",
+      "F05",
+      "F06",
+      "F07"
+    ]
+  },
+  {
+    "key": "curve_score:curve_contract_review_context",
+    "kind": "validator",
+    "implementation": "curve_score.science_operations:Components.curve_contract_review_context",
+    "file": "/opt/scidiscovery-m7/site/curve_score/science_operations.py",
+    "line": 140,
+    "qualname": "_curve_contract_review_context",
+    "operations": [
+      "science.curve.contract.review.v1"
+    ],
+    "source_file": "plugins/curve_score/curve_score/science_operations.py",
+    "review_note": "payload/model wrapper 不是单一规则：按 METHODS 的叶项和 context 的 FINDINGS 判定，不能整个标成有用。",
+    "related_operation_findings": [
+      "F01",
+      "F02",
+      "F03",
+      "F04",
+      "F05",
+      "F06",
+      "F07"
+    ]
+  },
+  {
+    "key": "curve_score:scientific_review_validator",
+    "kind": "validator",
+    "implementation": "curve_score.science_operations:Components.scientific_review_validator",
+    "file": "/opt/scidiscovery-m7/site/scidiscovery/operation_declaration.py",
+    "line": 85,
+    "qualname": "payload_validator.<locals>.validate",
+    "operations": [
+      "science.curve.contract.review.v1"
+    ],
+    "source_file": "src/scidiscovery/operation_declaration.py",
+    "review_note": "payload/model wrapper 不是单一规则：按 METHODS 的叶项和 context 的 FINDINGS 判定，不能整个标成有用。",
+    "related_operation_findings": [
+      "F01",
+      "F02",
+      "F03",
+      "F04",
+      "F05",
+      "F06",
+      "F07"
+    ]
+  },
+  {
+    "key": "curve_score:curve_analysis_package_validator",
+    "kind": "validator",
+    "implementation": "curve_score.science_operations:Components.curve_analysis_package_validator",
+    "file": "/opt/scidiscovery-m7/site/curve_score/science_operations.py",
+    "line": 857,
+    "qualname": "Components.<lambda>",
+    "operations": [
+      "science.curve.error.analyze.v1"
+    ],
+    "source_file": "plugins/curve_score/curve_score/science_operations.py",
+    "review_note": "payload/model wrapper 不是单一规则：按 METHODS 的叶项和 context 的 FINDINGS 判定，不能整个标成有用。",
+    "related_operation_findings": [
+      "F02",
+      "F03",
+      "F04",
+      "F05",
+      "F06",
+      "F07",
+      "F10"
+    ]
+  },
+  {
+    "key": "curve_score:curve_error_analysis",
+    "kind": "transform",
+    "implementation": "curve_score.science_operations:Components.curve_error_analysis",
+    "file": "/opt/scidiscovery-m7/site/curve_score/science_operations.py",
+    "line": 682,
+    "qualname": "_curve_error_analysis",
+    "operations": [
+      "science.curve.error.analyze.v1"
+    ],
+    "source_file": "plugins/curve_score/curve_score/science_operations.py",
+    "review_note": "确定性产物正确性与出处有用；程序错误由工程承担，不能转嫁为科学 Agent 改字。",
+    "related_operation_findings": [
+      "F02",
+      "F03",
+      "F04",
+      "F05",
+      "F06",
+      "F07",
+      "F10"
+    ]
+  },
+  {
+    "key": "curve_score:nonempty_validator",
+    "kind": "validator",
+    "implementation": "curve_score.science_operations:_NONEMPTY_COMPONENT",
+    "file": "/opt/scidiscovery-m7/site/curve_score/science_operations.py",
+    "line": 153,
+    "qualname": "_nonempty",
+    "operations": [
+      "science.curve.error.analyze.v1"
+    ],
+    "source_file": "plugins/curve_score/curve_score/science_operations.py",
+    "review_note": "payload/model wrapper 不是单一规则：按 METHODS 的叶项和 context 的 FINDINGS 判定，不能整个标成有用。",
+    "related_operation_findings": [
+      "F02",
+      "F03",
+      "F04",
+      "F05",
+      "F06",
+      "F07",
+      "F10"
+    ]
+  },
+  {
+    "key": "general_science:audit_validator",
+    "kind": "validator",
+    "implementation": "scidiscovery.general_science_components:Components.audit_validator",
+    "file": "/opt/scidiscovery-m7/site/scidiscovery/operation_declaration.py",
+    "line": 85,
+    "qualname": "payload_validator.<locals>.validate",
+    "operations": [
+      "science.evidence.audit.intake.v1",
+      "science.evidence.audit.v1",
+      "science.figure.evidence.audit.v1"
+    ],
+    "source_file": "src/scidiscovery/operation_declaration.py",
+    "review_note": "payload/model wrapper 不是单一规则：按 METHODS 的叶项和 context 的 FINDINGS 判定，不能整个标成有用。",
+    "related_operation_findings": [
+      "F01",
+      "F02",
+      "F03",
+      "F04",
+      "F08"
+    ]
+  },
+  {
+    "key": "general_science:evidence_audit_context",
+    "kind": "validator",
+    "implementation": "scidiscovery.general_science_components:Components.evidence_audit_context",
+    "file": "/opt/scidiscovery-m7/site/scidiscovery/general_science_components.py",
+    "line": 174,
+    "qualname": "_evidence_audit_context",
+    "operations": [
+      "science.evidence.audit.intake.v1",
+      "science.evidence.audit.v1",
+      "science.figure.evidence.audit.v1"
+    ],
+    "source_file": "src/scidiscovery/general_science_components.py",
+    "review_note": "payload/model wrapper 不是单一规则：按 METHODS 的叶项和 context 的 FINDINGS 判定，不能整个标成有用。",
+    "related_operation_findings": [
+      "F01",
+      "F02",
+      "F03",
+      "F04",
+      "F08"
+    ]
+  },
+  {
+    "key": "curve_figure_evidence:figure_audit_progress_fingerprint",
+    "kind": "transform",
+    "implementation": "curve_figure_evidence.figure_science_operations:FIGURE_AUDIT_PROGRESS_FINGERPRINT",
+    "file": "/opt/scidiscovery-m7/site/curve_figure_evidence/figure_science_operations.py",
+    "line": 224,
+    "qualname": "figure_audit_progress_fingerprint",
+    "operations": [
+      "science.evidence.extract.figure.v2"
+    ],
+    "source_file": "plugins/curve_figure_evidence/curve_figure_evidence/figure_science_operations.py",
+    "review_note": "确定性产物正确性与出处有用；程序错误由工程承担，不能转嫁为科学 Agent 改字。",
+    "related_operation_findings": [
+      "F01",
+      "F02",
+      "F03",
+      "F04",
+      "F08"
+    ]
+  },
+  {
+    "key": "curve_figure_evidence:figure_revision_parentage",
+    "kind": "guard",
+    "implementation": "curve_figure_evidence.figure_science_operations:FIGURE_REVISION_PARENTAGE",
+    "file": "/opt/scidiscovery-m7/site/curve_figure_evidence/figure_science_operations.py",
+    "line": 190,
+    "qualname": "figure_revision_parentage",
+    "operations": [
+      "science.evidence.extract.figure.v2"
+    ],
+    "source_file": "plugins/curve_figure_evidence/curve_figure_evidence/figure_science_operations.py",
+    "review_note": "精确父系/cohort/输入身份检查有用；不能把同对象被审资格当成可执行资格。",
+    "related_operation_findings": [
+      "F01",
+      "F02",
+      "F03",
+      "F04",
+      "F08"
+    ]
+  },
+  {
+    "key": "general_science:intake_source_context",
+    "kind": "validator",
+    "implementation": "scidiscovery.general_science_components:Components.intake_source_context",
+    "file": "/opt/scidiscovery-m7/site/scidiscovery/general_science_components.py",
+    "line": 85,
+    "qualname": "_intake_source_context",
+    "operations": [
+      "science.evidence.extract.figure.v2",
+      "science.evidence.extract.v1",
+      "science.evidence.revise-from-critic.v1",
+      "science.intake.revise.v1"
+    ],
+    "source_file": "src/scidiscovery/general_science_components.py",
+    "review_note": "payload/model wrapper 不是单一规则：按 METHODS 的叶项和 context 的 FINDINGS 判定，不能整个标成有用。",
+    "related_operation_findings": [
+      "F01",
+      "F02",
+      "F03",
+      "F04",
+      "F08"
+    ]
+  },
+  {
+    "key": "general_science:intake_validator",
+    "kind": "validator",
+    "implementation": "scidiscovery.general_science_components:Components.intake_validator",
+    "file": "/opt/scidiscovery-m7/site/scidiscovery/operation_declaration.py",
+    "line": 85,
+    "qualname": "payload_validator.<locals>.validate",
+    "operations": [
+      "science.evidence.extract.figure.v2",
+      "science.evidence.extract.v1",
+      "science.evidence.revise-from-critic.v1",
+      "science.intake.revise.v1"
+    ],
+    "source_file": "src/scidiscovery/operation_declaration.py",
+    "review_note": "payload/model wrapper 不是单一规则：按 METHODS 的叶项和 context 的 FINDINGS 判定，不能整个标成有用。",
+    "related_operation_findings": [
+      "F01",
+      "F02",
+      "F03",
+      "F04",
+      "F08"
+    ]
+  },
+  {
+    "key": "general_science:evidence_qualification_projector",
+    "kind": "projector",
+    "implementation": "scidiscovery.general_science_components:Components.evidence_qualification_projector",
+    "file": "/opt/scidiscovery-m7/site/scidiscovery/general_science_components.py",
+    "line": 325,
+    "qualname": "_evidence_qualification_document",
+    "operations": [
+      "science.evidence.qualify.v1"
+    ],
+    "source_file": "src/scidiscovery/general_science_components.py",
+    "review_note": "确切审批主题和资格证据有用；UI 不得改写科学 verdict/替用户批准。",
+    "related_operation_findings": [
+      "F02",
+      "F03",
+      "F04"
+    ]
+  },
+  {
+    "key": "general_science:evidence_revision_cohort",
+    "kind": "guard",
+    "implementation": "scidiscovery.general_science_components:Components.evidence_revision_cohort",
+    "file": "/opt/scidiscovery-m7/site/scidiscovery/general_science_components.py",
+    "line": 99,
+    "qualname": "_evidence_revision_cohort",
+    "operations": [
+      "science.evidence.revise-from-critic.v1"
+    ],
+    "source_file": "src/scidiscovery/general_science_components.py",
+    "review_note": "精确父系/cohort/输入身份检查有用；不能把同对象被审资格当成可执行资格。",
+    "related_operation_findings": [
+      "F01",
+      "F02",
+      "F03",
+      "F04"
+    ]
+  },
+  {
+    "key": "general_science:experiment_context",
+    "kind": "validator",
+    "implementation": "scidiscovery.general_science_experiment_components:ExperimentComponents.experiment_context",
+    "file": "/opt/scidiscovery-m7/site/scidiscovery/general_science_experiment_components.py",
+    "line": 184,
+    "qualname": "_experiment_context",
+    "operations": [
+      "science.experiment.design.v1"
+    ],
+    "source_file": "src/scidiscovery/general_science_experiment_components.py",
+    "review_note": "payload/model wrapper 不是单一规则：按 METHODS 的叶项和 context 的 FINDINGS 判定，不能整个标成有用。",
+    "related_operation_findings": [
+      "F01",
+      "F02",
+      "F03",
+      "F04"
+    ]
+  },
+  {
+    "key": "general_science:experiment_inputs",
+    "kind": "validator",
+    "implementation": "scidiscovery.general_science_experiment_components:ExperimentComponents.experiment_inputs",
+    "file": "/opt/scidiscovery-m7/site/scidiscovery/general_science_experiment_components.py",
+    "line": 167,
+    "qualname": "_experiment_inputs",
+    "operations": [
+      "science.experiment.design.v1"
+    ],
+    "source_file": "src/scidiscovery/general_science_experiment_components.py",
+    "review_note": "payload/model wrapper 不是单一规则：按 METHODS 的叶项和 context 的 FINDINGS 判定，不能整个标成有用。",
+    "related_operation_findings": [
+      "F01",
+      "F02",
+      "F03",
+      "F04"
+    ]
+  },
+  {
+    "key": "general_science:experiment_science_cohort",
+    "kind": "guard",
+    "implementation": "scidiscovery.general_science_experiment_components:ExperimentComponents.experiment_science_cohort",
+    "file": null,
+    "line": null,
+    "qualname": "<class 'scidiscovery.operation_declaration.RequiredParentage'>",
+    "operations": [
+      "science.experiment.design.v1"
+    ],
+    "source_file": null,
+    "review_note": "精确父系/cohort/输入身份检查有用；不能把同对象被审资格当成可执行资格。",
+    "related_operation_findings": [
+      "F01",
+      "F02",
+      "F03",
+      "F04"
+    ]
+  },
+  {
+    "key": "general_science:experiment_validator",
+    "kind": "validator",
+    "implementation": "scidiscovery.general_science_experiment_components:ExperimentComponents.experiment_validator",
+    "file": "/opt/scidiscovery-m7/site/scidiscovery/operation_declaration.py",
+    "line": 85,
+    "qualname": "payload_validator.<locals>.validate",
+    "operations": [
+      "science.experiment.design.v1"
+    ],
+    "source_file": "src/scidiscovery/operation_declaration.py",
+    "review_note": "payload/model wrapper 不是单一规则：按 METHODS 的叶项和 context 的 FINDINGS 判定，不能整个标成有用。",
+    "related_operation_findings": [
+      "F01",
+      "F02",
+      "F03",
+      "F04"
+    ]
+  },
+  {
+    "key": "general_science:experiment_lineage",
+    "kind": "guard",
+    "implementation": "scidiscovery.general_science_experiment_components:ExperimentComponents.experiment_lineage",
+    "file": "/opt/scidiscovery-m7/site/scidiscovery/general_science_experiment_components.py",
+    "line": 151,
+    "qualname": "_materialization_lineage",
+    "operations": [
+      "science.experiment.materialize.v1"
+    ],
+    "source_file": "src/scidiscovery/general_science_experiment_components.py",
+    "review_note": "精确父系/cohort/输入身份检查有用；不能把同对象被审资格当成可执行资格。",
+    "related_operation_findings": [
+      "F02",
+      "F03",
+      "F04",
+      "F05"
+    ]
+  },
+  {
+    "key": "general_science:experiment_materialize",
+    "kind": "transform",
+    "implementation": "scidiscovery.general_science_experiment_components:ExperimentComponents.experiment_materialize",
+    "file": "/opt/scidiscovery-m7/site/scidiscovery/general_science_experiment_components.py",
+    "line": 268,
+    "qualname": "_experiment_materialize",
+    "operations": [
+      "science.experiment.materialize.v1"
+    ],
+    "source_file": "src/scidiscovery/general_science_experiment_components.py",
+    "review_note": "确定性产物正确性与出处有用；程序错误由工程承担，不能转嫁为科学 Agent 改字。",
+    "related_operation_findings": [
+      "F02",
+      "F03",
+      "F04",
+      "F05"
+    ]
+  },
+  {
+    "key": "general_science:experiment_portfolio_validator",
+    "kind": "validator",
+    "implementation": "scidiscovery.general_science_experiment_components:ExperimentComponents.experiment_portfolio_validator",
+    "file": "/opt/scidiscovery-m7/site/scidiscovery/general_science_experiment_components.py",
+    "line": 159,
+    "qualname": "_experiment_portfolio_validator",
+    "operations": [
+      "science.experiment.materialize.v1",
+      "science.experiment.revise.v1"
+    ],
+    "source_file": "src/scidiscovery/general_science_experiment_components.py",
+    "review_note": "payload/model wrapper 不是单一规则：按 METHODS 的叶项和 context 的 FINDINGS 判定，不能整个标成有用。",
+    "related_operation_findings": [
+      "F01",
+      "F02",
+      "F03",
+      "F04",
+      "F05"
+    ]
+  },
+  {
+    "key": "general_science:materialization_report_validator",
+    "kind": "validator",
+    "implementation": "scidiscovery.general_science_experiment_components:ExperimentComponents.materialization_report_validator",
+    "file": "/opt/scidiscovery-m7/site/scidiscovery/general_science_experiment_components.py",
+    "line": 131,
+    "qualname": "_strict_validator.<locals>.validate",
+    "operations": [
+      "science.experiment.materialize.v1"
+    ],
+    "source_file": "src/scidiscovery/general_science_experiment_components.py",
+    "review_note": "payload/model wrapper 不是单一规则：按 METHODS 的叶项和 context 的 FINDINGS 判定，不能整个标成有用。",
+    "related_operation_findings": [
+      "F02",
+      "F03",
+      "F04",
+      "F05"
+    ]
+  },
+  {
+    "key": "general_science:experiment_revision_context",
+    "kind": "validator",
+    "implementation": "scidiscovery.general_science_experiment_components:ExperimentComponents.experiment_revision_context",
+    "file": "/opt/scidiscovery-m7/site/scidiscovery/general_science_experiment_components.py",
+    "line": 196,
+    "qualname": "_experiment_revision_context",
+    "operations": [
+      "science.experiment.revise.v1"
+    ],
+    "source_file": "src/scidiscovery/general_science_experiment_components.py",
+    "review_note": "payload/model wrapper 不是单一规则：按 METHODS 的叶项和 context 的 FINDINGS 判定，不能整个标成有用。",
+    "related_operation_findings": [
+      "F01",
+      "F02",
+      "F03",
+      "F04",
+      "F05"
+    ]
+  },
+  {
+    "key": "general_science:experiment_revision_inputs",
+    "kind": "validator",
+    "implementation": "scidiscovery.general_science_experiment_components:ExperimentComponents.experiment_revision_inputs",
+    "file": "/opt/scidiscovery-m7/site/scidiscovery/general_science_experiment_components.py",
+    "line": 190,
+    "qualname": "_experiment_revision_inputs",
+    "operations": [
+      "science.experiment.revise.v1"
+    ],
+    "source_file": "src/scidiscovery/general_science_experiment_components.py",
+    "review_note": "payload/model wrapper 不是单一规则：按 METHODS 的叶项和 context 的 FINDINGS 判定，不能整个标成有用。",
+    "related_operation_findings": [
+      "F01",
+      "F02",
+      "F03",
+      "F04",
+      "F05"
+    ]
+  },
+  {
+    "key": "curve_figure_evidence:figure_manifest_validator",
+    "kind": "validator",
+    "implementation": "curve_figure_evidence.operation_transforms:FIGURE_MANIFEST_VALIDATOR",
+    "file": "/opt/scidiscovery-m7/site/curve_score/operation_transforms.py",
+    "line": 59,
+    "qualname": "_model_validator.<locals>.validate",
+    "operations": [
+      "science.figure.evidence.materialize.v1"
+    ],
+    "source_file": "plugins/curve_score/curve_score/operation_transforms.py",
+    "review_note": "payload/model wrapper 不是单一规则：按 METHODS 的叶项和 context 的 FINDINGS 判定，不能整个标成有用。",
+    "related_operation_findings": [
+      "F08"
+    ]
+  },
+  {
+    "key": "curve_figure_evidence:figure_png_validator",
+    "kind": "validator",
+    "implementation": "curve_figure_evidence.operation_transforms:PNG_VALIDATOR",
+    "file": "/opt/scidiscovery-m7/site/curve_score/operation_transforms.py",
+    "line": 74,
+    "qualname": "_png",
+    "operations": [
+      "science.figure.evidence.materialize.v1"
+    ],
+    "source_file": "plugins/curve_score/curve_score/operation_transforms.py",
+    "review_note": "payload/model wrapper 不是单一规则：按 METHODS 的叶项和 context 的 FINDINGS 判定，不能整个标成有用。",
+    "related_operation_findings": [
+      "F08"
+    ]
+  },
+  {
+    "key": "curve_figure_evidence:figure_report_validator",
+    "kind": "validator",
+    "implementation": "curve_figure_evidence.operation_transforms:FIGURE_REPORT_VALIDATOR",
+    "file": "/opt/scidiscovery-m7/site/curve_score/operation_transforms.py",
+    "line": 59,
+    "qualname": "_model_validator.<locals>.validate",
+    "operations": [
+      "science.figure.evidence.materialize.v1"
+    ],
+    "source_file": "plugins/curve_score/curve_score/operation_transforms.py",
+    "review_note": "payload/model wrapper 不是单一规则：按 METHODS 的叶项和 context 的 FINDINGS 判定，不能整个标成有用。",
+    "related_operation_findings": [
+      "F08"
+    ]
+  },
+  {
+    "key": "curve_figure_evidence:materialize_figure_evidence",
+    "kind": "transform",
+    "implementation": "curve_figure_evidence.operation_transforms:MATERIALIZE_FIGURE_EVIDENCE",
+    "file": "/opt/scidiscovery-m7/site/curve_figure_evidence/operation_transforms.py",
+    "line": 86,
+    "qualname": "materialize_figure_evidence",
+    "operations": [
+      "science.figure.evidence.materialize.v1"
+    ],
+    "source_file": "plugins/curve_figure_evidence/curve_figure_evidence/operation_transforms.py",
+    "review_note": "确定性产物正确性与出处有用；程序错误由工程承担，不能转嫁为科学 Agent 改字。",
+    "related_operation_findings": [
+      "F08"
+    ]
+  },
+  {
+    "key": "curve_figure_evidence:nonempty_validator",
+    "kind": "validator",
+    "implementation": "curve_score.science_operations:_NONEMPTY_COMPONENT",
+    "file": "/opt/scidiscovery-m7/site/curve_score/science_operations.py",
+    "line": 153,
+    "qualname": "_nonempty",
+    "operations": [
+      "science.figure.evidence.materialize.v1"
+    ],
+    "source_file": "plugins/curve_score/curve_score/science_operations.py",
+    "review_note": "payload/model wrapper 不是单一规则：按 METHODS 的叶项和 context 的 FINDINGS 判定，不能整个标成有用。",
+    "related_operation_findings": [
+      "F08"
+    ]
+  },
+  {
+    "key": "curve_figure_evidence:figure_request_context",
+    "kind": "validator",
+    "implementation": "curve_figure_evidence.figure_science_operations:FIGURE_REQUEST_CONTEXT",
+    "file": "/opt/scidiscovery-m7/site/curve_figure_evidence/figure_science_operations.py",
+    "line": 159,
+    "qualname": "_validate_request_context",
+    "operations": [
+      "science.figure.request.prepare.v1"
+    ],
+    "source_file": "plugins/curve_figure_evidence/curve_figure_evidence/figure_science_operations.py",
+    "review_note": "payload/model wrapper 不是单一规则：按 METHODS 的叶项和 context 的 FINDINGS 判定，不能整个标成有用。",
+    "related_operation_findings": [
+      "F01",
+      "F02",
+      "F08"
+    ]
+  },
+  {
+    "key": "curve_figure_evidence:figure_request_validator",
+    "kind": "validator",
+    "implementation": "curve_figure_evidence.figure_science_operations:FIGURE_REQUEST_VALIDATOR",
+    "file": "/opt/scidiscovery-m7/site/scidiscovery/operation_declaration.py",
+    "line": 85,
+    "qualname": "payload_validator.<locals>.validate",
+    "operations": [
+      "science.figure.request.prepare.v1"
+    ],
+    "source_file": "src/scidiscovery/operation_declaration.py",
+    "review_note": "payload/model wrapper 不是单一规则：按 METHODS 的叶项和 context 的 FINDINGS 判定，不能整个标成有用。",
+    "related_operation_findings": [
+      "F01",
+      "F02",
+      "F08"
+    ]
+  },
+  {
+    "key": "general_science:critic_inputs",
+    "kind": "validator",
+    "implementation": "scidiscovery.general_science_components:Components.critic_inputs",
+    "file": "/opt/scidiscovery-m7/site/scidiscovery/general_science_components.py",
+    "line": 48,
+    "qualname": "_critic_inputs",
+    "operations": [
+      "science.hypothesis.criticize.v1"
+    ],
+    "source_file": "src/scidiscovery/general_science_components.py",
+    "review_note": "payload/model wrapper 不是单一规则：按 METHODS 的叶项和 context 的 FINDINGS 判定，不能整个标成有用。",
+    "related_operation_findings": [
+      "F01",
+      "F02",
+      "F03",
+      "F04"
+    ]
+  },
+  {
+    "key": "general_science:critic_portfolio_context",
+    "kind": "validator",
+    "implementation": "scidiscovery.general_science_components:Components.critic_portfolio_context",
+    "file": "/opt/scidiscovery-m7/site/scidiscovery/general_science_components.py",
+    "line": 62,
+    "qualname": "_critic_portfolio_context",
+    "operations": [
+      "science.hypothesis.criticize.v1"
+    ],
+    "source_file": "src/scidiscovery/general_science_components.py",
+    "review_note": "payload/model wrapper 不是单一规则：按 METHODS 的叶项和 context 的 FINDINGS 判定，不能整个标成有用。",
+    "related_operation_findings": [
+      "F01",
+      "F02",
+      "F03",
+      "F04"
+    ]
+  },
+  {
+    "key": "general_science:critic_validator",
+    "kind": "validator",
+    "implementation": "scidiscovery.general_science_components:Components.critic_validator",
+    "file": "/opt/scidiscovery-m7/site/scidiscovery/operation_declaration.py",
+    "line": 85,
+    "qualname": "payload_validator.<locals>.validate",
+    "operations": [
+      "science.hypothesis.criticize.v1"
+    ],
+    "source_file": "src/scidiscovery/operation_declaration.py",
+    "review_note": "payload/model wrapper 不是单一规则：按 METHODS 的叶项和 context 的 FINDINGS 判定，不能整个标成有用。",
+    "related_operation_findings": [
+      "F01",
+      "F02",
+      "F03",
+      "F04"
+    ]
+  },
+  {
+    "key": "general_science:hypothesis_inputs",
+    "kind": "validator",
+    "implementation": "scidiscovery.general_science_components:Components.hypothesis_inputs",
+    "file": "/opt/scidiscovery-m7/site/scidiscovery/general_science_components.py",
+    "line": 55,
+    "qualname": "_hypothesis_inputs",
+    "operations": [
+      "science.hypothesis.propose.v1",
+      "science.hypothesis.revise.v1"
+    ],
+    "source_file": "src/scidiscovery/general_science_components.py",
+    "review_note": "payload/model wrapper 不是单一规则：按 METHODS 的叶项和 context 的 FINDINGS 判定，不能整个标成有用。",
+    "related_operation_findings": [
+      "F01",
+      "F02",
+      "F03",
+      "F04"
+    ]
+  },
+  {
+    "key": "general_science:hypothesis_objective_context",
+    "kind": "validator",
+    "implementation": "scidiscovery.general_science_components:Components.hypothesis_objective_context",
+    "file": "/opt/scidiscovery-m7/site/scidiscovery/general_science_components.py",
+    "line": 130,
+    "qualname": "_hypothesis_objective_context",
+    "operations": [
+      "science.hypothesis.propose.v1",
+      "science.hypothesis.revise.v1"
+    ],
+    "source_file": "src/scidiscovery/general_science_components.py",
+    "review_note": "payload/model wrapper 不是单一规则：按 METHODS 的叶项和 context 的 FINDINGS 判定，不能整个标成有用。",
+    "related_operation_findings": [
+      "F01",
+      "F02",
+      "F03",
+      "F04"
+    ]
+  },
+  {
+    "key": "general_science:hypothesis_validator",
+    "kind": "validator",
+    "implementation": "scidiscovery.general_science_components:Components.hypothesis_validator",
+    "file": "/opt/scidiscovery-m7/site/scidiscovery/operation_declaration.py",
+    "line": 85,
+    "qualname": "payload_validator.<locals>.validate",
+    "operations": [
+      "science.hypothesis.propose.v1",
+      "science.hypothesis.revise.v1"
+    ],
+    "source_file": "src/scidiscovery/operation_declaration.py",
+    "review_note": "payload/model wrapper 不是单一规则：按 METHODS 的叶项和 context 的 FINDINGS 判定，不能整个标成有用。",
+    "related_operation_findings": [
+      "F01",
+      "F02",
+      "F03",
+      "F04"
+    ]
+  },
+  {
+    "key": "general_science:critic_progress_fingerprint",
+    "kind": "transform",
+    "implementation": "scidiscovery.general_science_components:Components.critic_progress_fingerprint",
+    "file": "/opt/scidiscovery-m7/site/scidiscovery/artifact_agent/schema/cognitive.py",
+    "line": 157,
+    "qualname": "critic_progress_fingerprint",
+    "operations": [
+      "science.hypothesis.revise.v1"
+    ],
+    "source_file": "src/scidiscovery/artifact_agent/schema/cognitive.py",
+    "review_note": "确定性产物正确性与出处有用；程序错误由工程承担，不能转嫁为科学 Agent 改字。",
+    "related_operation_findings": [
+      "F01",
+      "F02",
+      "F03",
+      "F04"
+    ]
+  },
+  {
+    "key": "general_science:foundation_validator",
+    "kind": "validator",
+    "implementation": "scidiscovery.general_science_components:Components.foundation_validator",
+    "file": "/opt/scidiscovery-m7/site/scidiscovery/general_science_components.py",
+    "line": 186,
+    "qualname": "_strict_validator.<locals>.validate",
+    "operations": [
+      "science.intake.split.v1"
+    ],
+    "source_file": "src/scidiscovery/general_science_components.py",
+    "review_note": "payload/model wrapper 不是单一规则：按 METHODS 的叶项和 context 的 FINDINGS 判定，不能整个标成有用。",
+    "related_operation_findings": [
+      "F02",
+      "F03",
+      "F04"
+    ]
+  },
+  {
+    "key": "general_science:intake_split",
+    "kind": "transform",
+    "implementation": "scidiscovery.general_science_components:Components.intake_split",
+    "file": "/opt/scidiscovery-m7/site/scidiscovery/general_science_components.py",
+    "line": 199,
+    "qualname": "_intake_split",
+    "operations": [
+      "science.intake.split.v1"
+    ],
+    "source_file": "src/scidiscovery/general_science_components.py",
+    "review_note": "确定性产物正确性与出处有用；程序错误由工程承担，不能转嫁为科学 Agent 改字。",
+    "related_operation_findings": [
+      "F02",
+      "F03",
+      "F04"
+    ]
+  },
+  {
+    "key": "general_science:problem_frame_validator",
+    "kind": "validator",
+    "implementation": "scidiscovery.general_science_components:Components.problem_frame_validator",
+    "file": "/opt/scidiscovery-m7/site/scidiscovery/general_science_components.py",
+    "line": 186,
+    "qualname": "_strict_validator.<locals>.validate",
+    "operations": [
+      "science.intake.split.v1"
+    ],
+    "source_file": "src/scidiscovery/general_science_components.py",
+    "review_note": "payload/model wrapper 不是单一规则：按 METHODS 的叶项和 context 的 FINDINGS 判定，不能整个标成有用。",
+    "related_operation_findings": [
+      "F02",
+      "F03",
+      "F04"
+    ]
+  },
+  {
+    "key": "general_science:object_review_context",
+    "kind": "validator",
+    "implementation": "scidiscovery.general_science_experiment_components:ExperimentComponents.object_review_context",
+    "file": "/opt/scidiscovery-m7/site/scidiscovery/general_science_experiment_components.py",
+    "line": 234,
+    "qualname": "_object_review_context",
+    "operations": [
+      "science.object.review.v1"
+    ],
+    "source_file": "src/scidiscovery/general_science_experiment_components.py",
+    "review_note": "payload/model wrapper 不是单一规则：按 METHODS 的叶项和 context 的 FINDINGS 判定，不能整个标成有用。",
+    "related_operation_findings": [
+      "F01",
+      "F02",
+      "F03",
+      "F04",
+      "F05"
+    ]
+  },
+  {
+    "key": "general_science:object_review_inputs",
+    "kind": "validator",
+    "implementation": "scidiscovery.general_science_experiment_components:ExperimentComponents.object_review_inputs",
+    "file": "/opt/scidiscovery-m7/site/scidiscovery/general_science_experiment_components.py",
+    "line": 218,
+    "qualname": "_object_review_inputs",
+    "operations": [
+      "science.object.review.v1"
+    ],
+    "source_file": "src/scidiscovery/general_science_experiment_components.py",
+    "review_note": "payload/model wrapper 不是单一规则：按 METHODS 的叶项和 context 的 FINDINGS 判定，不能整个标成有用。",
+    "related_operation_findings": [
+      "F01",
+      "F02",
+      "F03",
+      "F04",
+      "F05"
+    ]
+  },
+  {
+    "key": "general_science:review_validator",
+    "kind": "validator",
+    "implementation": "scidiscovery.general_science_experiment_components:ExperimentComponents.review_validator",
+    "file": "/opt/scidiscovery-m7/site/scidiscovery/operation_declaration.py",
+    "line": 85,
+    "qualname": "payload_validator.<locals>.validate",
+    "operations": [
+      "science.object.review.v1"
+    ],
+    "source_file": "src/scidiscovery/operation_declaration.py",
+    "review_note": "payload/model wrapper 不是单一规则：按 METHODS 的叶项和 context 的 FINDINGS 判定，不能整个标成有用。",
+    "related_operation_findings": [
+      "F01",
+      "F02",
+      "F03",
+      "F04",
+      "F05"
+    ]
+  },
+  {
+    "key": "general_science:objective_project",
+    "kind": "transform",
+    "implementation": "scidiscovery.general_science_experiment_components:ExperimentComponents.objective_project",
+    "file": "/opt/scidiscovery-m7/site/scidiscovery/general_science_experiment_components.py",
+    "line": 256,
+    "qualname": "_objective_project",
+    "operations": [
+      "science.objective.project.v1"
+    ],
+    "source_file": "src/scidiscovery/general_science_experiment_components.py",
+    "review_note": "确定性产物正确性与出处有用；程序错误由工程承担，不能转嫁为科学 Agent 改字。",
+    "related_operation_findings": [
+      "F02",
+      "F03",
+      "F04"
+    ]
+  },
+  {
+    "key": "general_science:objective_validator",
+    "kind": "validator",
+    "implementation": "scidiscovery.general_science_experiment_components:ExperimentComponents.objective_validator",
+    "file": "/opt/scidiscovery-m7/site/scidiscovery/general_science_experiment_components.py",
+    "line": 131,
+    "qualname": "_strict_validator.<locals>.validate",
+    "operations": [
+      "science.objective.project.v1"
+    ],
+    "source_file": "src/scidiscovery/general_science_experiment_components.py",
+    "review_note": "payload/model wrapper 不是单一规则：按 METHODS 的叶项和 context 的 FINDINGS 判定，不能整个标成有用。",
+    "related_operation_findings": [
+      "F02",
+      "F03",
+      "F04"
+    ]
+  },
+  {
+    "key": "tcad_artifact:parameter_coverage",
+    "kind": "transform",
+    "implementation": "tcad_artifact.parameter_operations:COVERAGE_TRANSFORM",
+    "file": "/opt/scidiscovery-m7/site/tcad_artifact/parameter_operations.py",
+    "line": 273,
+    "qualname": "parameter_coverage",
+    "operations": [
+      "science.parameter.coverage.v1"
+    ],
+    "source_file": "plugins/tcad_artifact/tcad_artifact/parameter_operations.py",
+    "review_note": "确定性产物正确性与出处有用；程序错误由工程承担，不能转嫁为科学 Agent 改字。",
+    "related_operation_findings": [
+      "F02",
+      "F13"
+    ]
+  },
+  {
+    "key": "tcad_artifact:parameter_coverage_validator",
+    "kind": "validator",
+    "implementation": "tcad_artifact.parameter_operations:COVERAGE_VALIDATOR",
+    "file": "/opt/scidiscovery-m7/site/tcad_artifact/parameter_operations.py",
+    "line": 183,
+    "qualname": "_strict.<locals>.validate",
+    "operations": [
+      "science.parameter.coverage.v1"
+    ],
+    "source_file": "plugins/tcad_artifact/tcad_artifact/parameter_operations.py",
+    "review_note": "payload/model wrapper 不是单一规则：按 METHODS 的叶项和 context 的 FINDINGS 判定，不能整个标成有用。",
+    "related_operation_findings": [
+      "F02",
+      "F13"
+    ]
+  },
+  {
+    "key": "tcad_artifact:parameter_uncertainty",
+    "kind": "transform",
+    "implementation": "tcad_artifact.parameter_operations:UNCERTAINTY_TRANSFORM",
+    "file": "/opt/scidiscovery-m7/site/tcad_artifact/parameter_operations.py",
+    "line": 290,
+    "qualname": "parameter_uncertainty",
+    "operations": [
+      "science.parameter.uncertainty.v1"
+    ],
+    "source_file": "plugins/tcad_artifact/tcad_artifact/parameter_operations.py",
+    "review_note": "确定性产物正确性与出处有用；程序错误由工程承担，不能转嫁为科学 Agent 改字。",
+    "related_operation_findings": [
+      "F02"
+    ]
+  },
+  {
+    "key": "tcad_artifact:parameter_uncertainty_lineage",
+    "kind": "guard",
+    "implementation": "tcad_artifact.parameter_operations:UNCERTAINTY_LINEAGE",
+    "file": "/opt/scidiscovery-m7/site/tcad_artifact/parameter_operations.py",
+    "line": 307,
+    "qualname": "parameter_uncertainty_lineage",
+    "operations": [
+      "science.parameter.uncertainty.v1"
+    ],
+    "source_file": "plugins/tcad_artifact/tcad_artifact/parameter_operations.py",
+    "review_note": "精确父系/cohort/输入身份检查有用；不能把同对象被审资格当成可执行资格。",
+    "related_operation_findings": [
+      "F02"
+    ]
+  },
+  {
+    "key": "tcad_artifact:parameter_uncertainty_validator",
+    "kind": "validator",
+    "implementation": "tcad_artifact.parameter_operations:UNCERTAINTY_VALIDATOR",
+    "file": "/opt/scidiscovery-m7/site/tcad_artifact/parameter_operations.py",
+    "line": 183,
+    "qualname": "_strict.<locals>.validate",
+    "operations": [
+      "science.parameter.uncertainty.v1"
+    ],
+    "source_file": "plugins/tcad_artifact/tcad_artifact/parameter_operations.py",
+    "review_note": "payload/model wrapper 不是单一规则：按 METHODS 的叶项和 context 的 FINDINGS 判定，不能整个标成有用。",
+    "related_operation_findings": [
+      "F02"
+    ]
+  },
+  {
+    "key": "tcad_artifact:parameter_exception_projector",
+    "kind": "projector",
+    "implementation": "tcad_artifact.parameter_operations:EXCEPTION_PROJECTOR",
+    "file": "/opt/scidiscovery-m7/site/tcad_artifact/parameter_operations.py",
+    "line": 815,
+    "qualname": "<lambda>",
+    "operations": [
+      "science.parameters.qualify.exception.v1"
+    ],
+    "source_file": "plugins/tcad_artifact/tcad_artifact/parameter_operations.py",
+    "review_note": "确切审批主题和资格证据有用；UI 不得改写科学 verdict/替用户批准。",
+    "related_operation_findings": [
+      "F02",
+      "F03",
+      "F04"
+    ]
+  },
+  {
+    "key": "tcad_artifact:parameter_pass_projector",
+    "kind": "projector",
+    "implementation": "tcad_artifact.parameter_operations:PASS_PROJECTOR",
+    "file": "/opt/scidiscovery-m7/site/tcad_artifact/parameter_operations.py",
+    "line": 812,
+    "qualname": "<lambda>",
+    "operations": [
+      "science.parameters.qualify.pass.v1"
+    ],
+    "source_file": "plugins/tcad_artifact/tcad_artifact/parameter_operations.py",
+    "review_note": "确切审批主题和资格证据有用；UI 不得改写科学 verdict/替用户批准。",
+    "related_operation_findings": [
+      "F02",
+      "F03",
+      "F04"
+    ]
+  },
+  {
+    "key": "curve_score:curve_diagnosis_context",
+    "kind": "validator",
+    "implementation": "curve_score.science_operations:Components.curve_diagnosis_context",
+    "file": "/opt/scidiscovery-m7/site/curve_score/science_operations.py",
+    "line": 651,
+    "qualname": "_curve_diagnosis_context",
+    "operations": [
+      "science.result.diagnose.curve-error.v1"
+    ],
+    "source_file": "plugins/curve_score/curve_score/science_operations.py",
+    "review_note": "payload/model wrapper 不是单一规则：按 METHODS 的叶项和 context 的 FINDINGS 判定，不能整个标成有用。",
+    "related_operation_findings": [
+      "F01",
+      "F02",
+      "F04",
+      "F05",
+      "F06",
+      "F07",
+      "F09",
+      "F10"
+    ]
+  },
+  {
+    "key": "curve_score:curve_diagnosis_inputs",
+    "kind": "validator",
+    "implementation": "curve_score.science_operations:Components.curve_diagnosis_inputs",
+    "file": "/opt/scidiscovery-m7/site/curve_score/science_operations.py",
+    "line": 634,
+    "qualname": "_curve_diagnosis_inputs",
+    "operations": [
+      "science.result.diagnose.curve-error.v1"
+    ],
+    "source_file": "plugins/curve_score/curve_score/science_operations.py",
+    "review_note": "payload/model wrapper 不是单一规则：按 METHODS 的叶项和 context 的 FINDINGS 判定，不能整个标成有用。",
+    "related_operation_findings": [
+      "F01",
+      "F02",
+      "F04",
+      "F05",
+      "F06",
+      "F07",
+      "F09",
+      "F10"
+    ]
+  },
+  {
+    "key": "curve_score:diagnosis_validator",
+    "kind": "validator",
+    "implementation": "curve_score.science_operations:Components.diagnosis_validator",
+    "file": "/opt/scidiscovery-m7/site/scidiscovery/operation_declaration.py",
+    "line": 85,
+    "qualname": "payload_validator.<locals>.validate",
+    "operations": [
+      "science.result.diagnose.curve-error.v1",
+      "science.result.diagnose.v1"
+    ],
+    "source_file": "src/scidiscovery/operation_declaration.py",
+    "review_note": "payload/model wrapper 不是单一规则：按 METHODS 的叶项和 context 的 FINDINGS 判定，不能整个标成有用。",
+    "related_operation_findings": [
+      "F01",
+      "F02",
+      "F03",
+      "F04",
+      "F05",
+      "F06",
+      "F07",
+      "F09",
+      "F10"
+    ]
+  },
+  {
+    "key": "curve_score:diagnosis_context",
+    "kind": "validator",
+    "implementation": "curve_score.science_operations:Components.diagnosis_context",
+    "file": "/opt/scidiscovery-m7/site/curve_score/science_operations.py",
+    "line": 580,
+    "qualname": "_diagnosis_context",
+    "operations": [
+      "science.result.diagnose.v1"
+    ],
+    "source_file": "plugins/curve_score/curve_score/science_operations.py",
+    "review_note": "payload/model wrapper 不是单一规则：按 METHODS 的叶项和 context 的 FINDINGS 判定，不能整个标成有用。",
+    "related_operation_findings": [
+      "F01",
+      "F02",
+      "F03",
+      "F04",
+      "F05",
+      "F06",
+      "F07",
+      "F09"
+    ]
+  },
+  {
+    "key": "curve_score:diagnosis_identity",
+    "kind": "guard",
+    "implementation": "curve_score.science_operations:Components.diagnosis_identity",
+    "file": "/opt/scidiscovery-m7/site/curve_score/science_operations.py",
+    "line": 257,
+    "qualname": "_diagnosis_identity",
+    "operations": [
+      "science.result.diagnose.v1"
+    ],
+    "source_file": "plugins/curve_score/curve_score/science_operations.py",
+    "review_note": "精确父系/cohort/输入身份检查有用；不能把同对象被审资格当成可执行资格。",
+    "related_operation_findings": [
+      "F01",
+      "F02",
+      "F03",
+      "F04",
+      "F05",
+      "F06",
+      "F07",
+      "F09"
+    ]
+  },
+  {
+    "key": "curve_score:diagnosis_inputs",
+    "kind": "validator",
+    "implementation": "curve_score.science_operations:Components.diagnosis_inputs",
+    "file": "/opt/scidiscovery-m7/site/curve_score/science_operations.py",
+    "line": 272,
+    "qualname": "_diagnosis_inputs",
+    "operations": [
+      "science.result.diagnose.v1"
+    ],
+    "source_file": "plugins/curve_score/curve_score/science_operations.py",
+    "review_note": "payload/model wrapper 不是单一规则：按 METHODS 的叶项和 context 的 FINDINGS 判定，不能整个标成有用。",
+    "related_operation_findings": [
+      "F01",
+      "F02",
+      "F03",
+      "F04",
+      "F05",
+      "F06",
+      "F07",
+      "F09"
+    ]
+  },
+  {
+    "key": "tcad_artifact:control_equivalence",
+    "kind": "transform",
+    "implementation": "tcad_artifact.operation_transforms:CONTROL_EQUIVALENCE_COMPONENT",
+    "file": "/opt/scidiscovery-m7/site/tcad_artifact/operation_transforms.py",
+    "line": 136,
+    "qualname": "control_equivalence",
+    "operations": [
+      "tcad.control-equivalence.v1"
+    ],
+    "source_file": "plugins/tcad_artifact/tcad_artifact/operation_transforms.py",
+    "review_note": "确定性产物正确性与出处有用；程序错误由工程承担，不能转嫁为科学 Agent 改字。",
+    "related_operation_findings": [
+      "F04",
+      "F05"
+    ]
+  },
+  {
+    "key": "tcad_artifact:curve_bundle_sprocess_log",
+    "kind": "transform",
+    "implementation": "tcad_artifact.curve_operations:LOG_TRANSFORM",
+    "file": "/opt/scidiscovery-m7/site/tcad_artifact/curve_operations.py",
+    "line": 183,
+    "qualname": "bundle_sprocess_log",
+    "operations": [
+      "tcad.curve-bundle.sprocess-log.v1"
+    ],
+    "source_file": "plugins/tcad_artifact/tcad_artifact/curve_operations.py",
+    "review_note": "确定性产物正确性与出处有用；程序错误由工程承担，不能转嫁为科学 Agent 改字。",
+    "related_operation_findings": [
+      "F02",
+      "F03",
+      "F04",
+      "F05",
+      "F06",
+      "F07"
+    ]
+  },
+  {
+    "key": "tcad_artifact:curve_log_parentage",
+    "kind": "guard",
+    "implementation": "tcad_artifact.curve_operations:LOG_GUARD",
+    "file": "/opt/scidiscovery-m7/site/tcad_artifact/curve_operations.py",
+    "line": 250,
+    "qualname": "log_parentage",
+    "operations": [
+      "tcad.curve-bundle.sprocess-log.v1"
+    ],
+    "source_file": "plugins/tcad_artifact/tcad_artifact/curve_operations.py",
+    "review_note": "精确父系/cohort/输入身份检查有用；不能把同对象被审资格当成可执行资格。",
+    "related_operation_findings": [
+      "F02",
+      "F03",
+      "F04",
+      "F05",
+      "F06",
+      "F07"
+    ]
+  },
+  {
+    "key": "tcad_artifact:curve_normalization_audit_validator",
+    "kind": "validator",
+    "implementation": "tcad_artifact.curve_operations:AUDIT_VALIDATOR",
+    "file": "/opt/scidiscovery-m7/site/tcad_artifact/curve_operations.py",
+    "line": 259,
+    "qualname": "_json_object",
+    "operations": [
+      "tcad.curve-bundle.sprocess-log.v1",
+      "tcad.curve-bundle.sprocess-plx.v1"
+    ],
+    "source_file": "plugins/tcad_artifact/tcad_artifact/curve_operations.py",
+    "review_note": "payload/model wrapper 不是单一规则：按 METHODS 的叶项和 context 的 FINDINGS 判定，不能整个标成有用。",
+    "related_operation_findings": [
+      "F02",
+      "F03",
+      "F04",
+      "F05",
+      "F06",
+      "F07"
+    ]
+  },
+  {
+    "key": "tcad_artifact:curve_bundle_sprocess_plx",
+    "kind": "transform",
+    "implementation": "tcad_artifact.curve_operations:PLX_TRANSFORM",
+    "file": "/opt/scidiscovery-m7/site/tcad_artifact/curve_operations.py",
+    "line": 94,
+    "qualname": "bundle_sprocess_plx",
+    "operations": [
+      "tcad.curve-bundle.sprocess-plx.v1"
+    ],
+    "source_file": "plugins/tcad_artifact/tcad_artifact/curve_operations.py",
+    "review_note": "确定性产物正确性与出处有用；程序错误由工程承担，不能转嫁为科学 Agent 改字。",
+    "related_operation_findings": [
+      "F02",
+      "F03",
+      "F04",
+      "F05",
+      "F06",
+      "F07"
+    ]
+  },
+  {
+    "key": "tcad_artifact:curve_plx_parentage",
+    "kind": "guard",
+    "implementation": "tcad_artifact.curve_operations:PLX_GUARD",
+    "file": "/opt/scidiscovery-m7/site/tcad_artifact/curve_operations.py",
+    "line": 233,
+    "qualname": "plx_parentage",
+    "operations": [
+      "tcad.curve-bundle.sprocess-plx.v1"
+    ],
+    "source_file": "plugins/tcad_artifact/tcad_artifact/curve_operations.py",
+    "review_note": "精确父系/cohort/输入身份检查有用；不能把同对象被审资格当成可执行资格。",
+    "related_operation_findings": [
+      "F02",
+      "F03",
+      "F04",
+      "F05",
+      "F06",
+      "F07"
+    ]
+  },
+  {
+    "key": "tcad_artifact:deck_compare",
+    "kind": "transform",
+    "implementation": "tcad_artifact.operation_transforms:COMPARE_COMPONENT",
+    "file": "/opt/scidiscovery-m7/site/tcad_artifact/operation_transforms.py",
+    "line": 80,
+    "qualname": "compare",
+    "operations": [
+      "tcad.deck-project-compare.v1"
+    ],
+    "source_file": "plugins/tcad_artifact/tcad_artifact/operation_transforms.py",
+    "review_note": "确定性产物正确性与出处有用；程序错误由工程承担，不能转嫁为科学 Agent 改字。",
+    "related_operation_findings": []
+  },
+  {
+    "key": "tcad_artifact:review_validate",
+    "kind": "transform",
+    "implementation": "tcad_artifact.operation_transforms:REVIEW_VALIDATION_COMPONENT",
+    "file": "/opt/scidiscovery-m7/site/tcad_artifact/operation_transforms.py",
+    "line": 89,
+    "qualname": "validate_review",
+    "operations": [
+      "tcad.deck-review-validate.v1"
+    ],
+    "source_file": "plugins/tcad_artifact/tcad_artifact/operation_transforms.py",
+    "review_note": "确定性产物正确性与出处有用；程序错误由工程承担，不能转嫁为科学 Agent 改字。",
+    "related_operation_findings": []
+  },
+  {
+    "key": "tcad_artifact:author_context",
+    "kind": "validator",
+    "implementation": "tcad_artifact.plugin:AUTHOR_CONTEXT_COMPONENT",
+    "file": "/opt/scidiscovery-m7/site/tcad_artifact/plugin.py",
+    "line": 94,
+    "qualname": "_author_context",
+    "operations": [
+      "tcad.deck.author.initial.v1",
+      "tcad.deck.author.revise.v1"
+    ],
+    "source_file": "plugins/tcad_artifact/tcad_artifact/plugin.py",
+    "review_note": "payload/model wrapper 不是单一规则：按 METHODS 的叶项和 context 的 FINDINGS 判定，不能整个标成有用。",
+    "related_operation_findings": [
+      "F01",
+      "F02",
+      "F03",
+      "F04",
+      "F05",
+      "F06",
+      "F07",
+      "F11"
+    ]
+  },
+  {
+    "key": "tcad_artifact:parameter_cohort_guard",
+    "kind": "guard",
+    "implementation": "tcad_artifact.plugin:PARAMETER_COHORT_GUARD",
+    "file": "/opt/scidiscovery-m7/site/tcad_artifact/plugin.py",
+    "line": 147,
+    "qualname": "_parameter_cohort_guard",
+    "operations": [
+      "tcad.deck.author.initial.v1",
+      "tcad.deck.author.revise.v1",
+      "tcad.deck.author.runtime-failure.v1",
+      "tcad.deck.review.v1"
+    ],
+    "source_file": "plugins/tcad_artifact/tcad_artifact/plugin.py",
+    "review_note": "精确父系/cohort/输入身份检查有用；不能把同对象被审资格当成可执行资格。",
+    "related_operation_findings": [
+      "F01",
+      "F02",
+      "F03",
+      "F04",
+      "F05",
+      "F06",
+      "F07",
+      "F11"
+    ]
+  },
+  {
+    "key": "tcad_artifact:parameter_inputs",
+    "kind": "validator",
+    "implementation": "tcad_artifact.plugin:PARAMETER_INPUT_COMPONENT",
+    "file": "/opt/scidiscovery-m7/site/tcad_artifact/plugin.py",
+    "line": 100,
+    "qualname": "_parameter_inputs",
+    "operations": [
+      "tcad.deck.author.initial.v1",
+      "tcad.deck.author.revise.v1",
+      "tcad.deck.review.v1"
+    ],
+    "source_file": "plugins/tcad_artifact/tcad_artifact/plugin.py",
+    "review_note": "payload/model wrapper 不是单一规则：按 METHODS 的叶项和 context 的 FINDINGS 判定，不能整个标成有用。",
+    "related_operation_findings": [
+      "F01",
+      "F02",
+      "F03",
+      "F04",
+      "F05",
+      "F06",
+      "F07",
+      "F11"
+    ]
+  },
+  {
+    "key": "tcad_artifact:project_validator",
+    "kind": "validator",
+    "implementation": "tcad_artifact.plugin:PROJECT_VALIDATOR_COMPONENT",
+    "file": "/opt/scidiscovery-m7/site/tcad_artifact/plugin.py",
+    "line": 82,
+    "qualname": "_payload_validator.<locals>.validate",
+    "operations": [
+      "tcad.deck.author.initial.v1",
+      "tcad.deck.author.revise.v1",
+      "tcad.deck.author.runtime-failure.v1"
+    ],
+    "source_file": "plugins/tcad_artifact/tcad_artifact/plugin.py",
+    "review_note": "payload/model wrapper 不是单一规则：按 METHODS 的叶项和 context 的 FINDINGS 判定，不能整个标成有用。",
+    "related_operation_findings": [
+      "F01",
+      "F02",
+      "F03",
+      "F04",
+      "F05",
+      "F06",
+      "F07",
+      "F11"
+    ]
+  },
+  {
+    "key": "tcad_artifact:runtime_author_context",
+    "kind": "validator",
+    "implementation": "tcad_artifact.plugin:RUNTIME_AUTHOR_CONTEXT_COMPONENT",
+    "file": "/opt/scidiscovery-m7/site/tcad_artifact/plugin.py",
+    "line": 121,
+    "qualname": "_runtime_author_context",
+    "operations": [
+      "tcad.deck.author.runtime-failure.v1"
+    ],
+    "source_file": "plugins/tcad_artifact/tcad_artifact/plugin.py",
+    "review_note": "payload/model wrapper 不是单一规则：按 METHODS 的叶项和 context 的 FINDINGS 判定，不能整个标成有用。",
+    "related_operation_findings": [
+      "F01",
+      "F02",
+      "F03",
+      "F04",
+      "F05",
+      "F06",
+      "F07",
+      "F11"
+    ]
+  },
+  {
+    "key": "tcad_artifact:runtime_author_inputs",
+    "kind": "validator",
+    "implementation": "tcad_artifact.plugin:RUNTIME_AUTHOR_INPUT_COMPONENT",
+    "file": "/opt/scidiscovery-m7/site/tcad_artifact/plugin.py",
+    "line": 113,
+    "qualname": "_runtime_author_inputs",
+    "operations": [
+      "tcad.deck.author.runtime-failure.v1"
+    ],
+    "source_file": "plugins/tcad_artifact/tcad_artifact/plugin.py",
+    "review_note": "payload/model wrapper 不是单一规则：按 METHODS 的叶项和 context 的 FINDINGS 判定，不能整个标成有用。",
+    "related_operation_findings": [
+      "F01",
+      "F02",
+      "F03",
+      "F04",
+      "F05",
+      "F06",
+      "F07",
+      "F11"
+    ]
+  },
+  {
+    "key": "tcad_artifact:review_context",
+    "kind": "validator",
+    "implementation": "tcad_artifact.plugin:REVIEW_CONTEXT_COMPONENT",
+    "file": "/opt/scidiscovery-m7/site/tcad_artifact/plugin.py",
+    "line": 127,
+    "qualname": "_review_context",
+    "operations": [
+      "tcad.deck.review.v1"
+    ],
+    "source_file": "plugins/tcad_artifact/tcad_artifact/plugin.py",
+    "review_note": "payload/model wrapper 不是单一规则：按 METHODS 的叶项和 context 的 FINDINGS 判定，不能整个标成有用。",
+    "related_operation_findings": [
+      "F01",
+      "F02",
+      "F03",
+      "F04",
+      "F05",
+      "F06",
+      "F07",
+      "F11"
+    ]
+  },
+  {
+    "key": "tcad_artifact:review_validator",
+    "kind": "validator",
+    "implementation": "tcad_artifact.plugin:REVIEW_VALIDATOR_COMPONENT",
+    "file": "/opt/scidiscovery-m7/site/tcad_artifact/plugin.py",
+    "line": 82,
+    "qualname": "_payload_validator.<locals>.validate",
+    "operations": [
+      "tcad.deck.review.v1"
+    ],
+    "source_file": "plugins/tcad_artifact/tcad_artifact/plugin.py",
+    "review_note": "payload/model wrapper 不是单一规则：按 METHODS 的叶项和 context 的 FINDINGS 判定，不能整个标成有用。",
+    "related_operation_findings": [
+      "F01",
+      "F02",
+      "F03",
+      "F04",
+      "F05",
+      "F06",
+      "F07",
+      "F11"
+    ]
+  },
+  {
+    "key": "tcad_artifact:execution_context_project",
+    "kind": "transform",
+    "implementation": "tcad_artifact.operation_transforms:EXECUTION_CONTEXT_COMPONENT",
+    "file": "/opt/scidiscovery-m7/site/tcad_artifact/operation_transforms.py",
+    "line": 149,
+    "qualname": "project_execution_context",
+    "operations": [
+      "tcad.execution-context.project.v1"
+    ],
+    "source_file": "plugins/tcad_artifact/tcad_artifact/operation_transforms.py",
+    "review_note": "确定性产物正确性与出处有用；程序错误由工程承担，不能转嫁为科学 Agent 改字。",
+    "related_operation_findings": []
+  },
+  {
+    "key": "tcad_artifact:audit_validator",
+    "kind": "validator",
+    "implementation": "tcad_artifact.parameter_operations:AUDIT_VALIDATOR",
+    "file": "/opt/scidiscovery-m7/site/tcad_artifact/parameter_operations.py",
+    "line": 195,
+    "qualname": "_payload.<locals>.validate",
+    "operations": [
+      "tcad.parameter.evidence.audit.v1"
+    ],
+    "source_file": "plugins/tcad_artifact/tcad_artifact/parameter_operations.py",
+    "review_note": "payload/model wrapper 不是单一规则：按 METHODS 的叶项和 context 的 FINDINGS 判定，不能整个标成有用。",
+    "related_operation_findings": [
+      "F01",
+      "F02",
+      "F03",
+      "F04",
+      "F14"
+    ]
+  },
+  {
+    "key": "tcad_artifact:evidence_audit_context",
+    "kind": "validator",
+    "implementation": "tcad_artifact.parameter_operations:AUDIT_CONTEXT_VALIDATOR",
+    "file": "/opt/scidiscovery-m7/site/tcad_artifact/parameter_operations.py",
+    "line": 229,
+    "qualname": "_audit_context",
+    "operations": [
+      "tcad.parameter.evidence.audit.v1"
+    ],
+    "source_file": "plugins/tcad_artifact/tcad_artifact/parameter_operations.py",
+    "review_note": "payload/model wrapper 不是单一规则：按 METHODS 的叶项和 context 的 FINDINGS 判定，不能整个标成有用。",
+    "related_operation_findings": [
+      "F01",
+      "F02",
+      "F03",
+      "F04",
+      "F14"
+    ]
+  },
+  {
+    "key": "tcad_artifact:parameter_audit_inputs",
+    "kind": "validator",
+    "implementation": "tcad_artifact.parameter_operations:AUDIT_INPUT_VALIDATOR",
+    "file": "/opt/scidiscovery-m7/site/tcad_artifact/parameter_operations.py",
+    "line": 207,
+    "qualname": "_audit_inputs",
+    "operations": [
+      "tcad.parameter.evidence.audit.v1"
+    ],
+    "source_file": "plugins/tcad_artifact/tcad_artifact/parameter_operations.py",
+    "review_note": "payload/model wrapper 不是单一规则：按 METHODS 的叶项和 context 的 FINDINGS 判定，不能整个标成有用。",
+    "related_operation_findings": [
+      "F01",
+      "F02",
+      "F03",
+      "F04",
+      "F14"
+    ]
+  },
+  {
+    "key": "tcad_artifact:device_parameters_validator",
+    "kind": "validator",
+    "implementation": "tcad_artifact.parameter_operations:PARAMETERS_VALIDATOR",
+    "file": "/opt/scidiscovery-m7/site/tcad_artifact/parameter_operations.py",
+    "line": 183,
+    "qualname": "_strict.<locals>.validate",
+    "operations": [
+      "tcad.parameter.evidence.expand.v1"
+    ],
+    "source_file": "plugins/tcad_artifact/tcad_artifact/parameter_operations.py",
+    "review_note": "payload/model wrapper 不是单一规则：按 METHODS 的叶项和 context 的 FINDINGS 判定，不能整个标成有用。",
+    "related_operation_findings": [
+      "F02",
+      "F03",
+      "F04",
+      "F13"
+    ]
+  },
+  {
+    "key": "tcad_artifact:intake_validator",
+    "kind": "validator",
+    "implementation": "tcad_artifact.parameter_operations:INTAKE_VALIDATOR",
+    "file": "/opt/scidiscovery-m7/site/tcad_artifact/parameter_operations.py",
+    "line": 195,
+    "qualname": "_payload.<locals>.validate",
+    "operations": [
+      "tcad.parameter.evidence.expand.v1"
+    ],
+    "source_file": "plugins/tcad_artifact/tcad_artifact/parameter_operations.py",
+    "review_note": "payload/model wrapper 不是单一规则：按 METHODS 的叶项和 context 的 FINDINGS 判定，不能整个标成有用。",
+    "related_operation_findings": [
+      "F02",
+      "F03",
+      "F04",
+      "F13"
+    ]
+  },
+  {
+    "key": "tcad_artifact:parameter_expand",
+    "kind": "transform",
+    "implementation": "tcad_artifact.parameter_operations:EXPAND_TRANSFORM",
+    "file": "/opt/scidiscovery-m7/site/tcad_artifact/parameter_operations.py",
+    "line": 368,
+    "qualname": "expand_parameter_evidence",
+    "operations": [
+      "tcad.parameter.evidence.expand.v1"
+    ],
+    "source_file": "plugins/tcad_artifact/tcad_artifact/parameter_operations.py",
+    "review_note": "确定性产物正确性与出处有用；程序错误由工程承担，不能转嫁为科学 Agent 改字。",
+    "related_operation_findings": [
+      "F02",
+      "F03",
+      "F04",
+      "F13"
+    ]
+  },
+  {
+    "key": "tcad_artifact:parameter_requirements_validator",
+    "kind": "validator",
+    "implementation": "tcad_artifact.parameter_operations:REQUIREMENTS_VALIDATOR",
+    "file": "/opt/scidiscovery-m7/site/tcad_artifact/parameter_operations.py",
+    "line": 183,
+    "qualname": "_strict.<locals>.validate",
+    "operations": [
+      "tcad.parameter.evidence.expand.v1"
+    ],
+    "source_file": "plugins/tcad_artifact/tcad_artifact/parameter_operations.py",
+    "review_note": "payload/model wrapper 不是单一规则：按 METHODS 的叶项和 context 的 FINDINGS 判定，不能整个标成有用。",
+    "related_operation_findings": [
+      "F02",
+      "F03",
+      "F04",
+      "F13"
+    ]
+  },
+  {
+    "key": "tcad_artifact:source_catalog_validator",
+    "kind": "validator",
+    "implementation": "tcad_artifact.parameter_operations:CATALOG_VALIDATOR",
+    "file": "/opt/scidiscovery-m7/site/tcad_artifact/parameter_operations.py",
+    "line": 183,
+    "qualname": "_strict.<locals>.validate",
+    "operations": [
+      "tcad.parameter.evidence.expand.v1"
+    ],
+    "source_file": "plugins/tcad_artifact/tcad_artifact/parameter_operations.py",
+    "review_note": "payload/model wrapper 不是单一规则：按 METHODS 的叶项和 context 的 FINDINGS 判定，不能整个标成有用。",
+    "related_operation_findings": [
+      "F02",
+      "F03",
+      "F04",
+      "F13"
+    ]
+  },
+  {
+    "key": "tcad_artifact:parameter_extract_context",
+    "kind": "validator",
+    "implementation": "tcad_artifact.parameter_operations:EXTRACT_CONTEXT_VALIDATOR",
+    "file": "/opt/scidiscovery-m7/site/tcad_artifact/parameter_operations.py",
+    "line": 382,
+    "qualname": "validate_extract_context",
+    "operations": [
+      "tcad.parameter.evidence.extract.v1"
+    ],
+    "source_file": "plugins/tcad_artifact/tcad_artifact/parameter_operations.py",
+    "review_note": "payload/model wrapper 不是单一规则：按 METHODS 的叶项和 context 的 FINDINGS 判定，不能整个标成有用。",
+    "related_operation_findings": [
+      "F01",
+      "F02",
+      "F03",
+      "F04",
+      "F13"
+    ]
+  },
+  {
+    "key": "tcad_artifact:parameter_package_validator",
+    "kind": "validator",
+    "implementation": "tcad_artifact.parameter_operations:PACKAGE_VALIDATOR",
+    "file": "/opt/scidiscovery-m7/site/tcad_artifact/parameter_operations.py",
+    "line": 183,
+    "qualname": "_strict.<locals>.validate",
+    "operations": [
+      "tcad.parameter.evidence.extract.v1"
+    ],
+    "source_file": "plugins/tcad_artifact/tcad_artifact/parameter_operations.py",
+    "review_note": "payload/model wrapper 不是单一规则：按 METHODS 的叶项和 context 的 FINDINGS 判定，不能整个标成有用。",
+    "related_operation_findings": [
+      "F01",
+      "F02",
+      "F03",
+      "F04",
+      "F13"
+    ]
+  },
+  {
+    "key": "tcad_artifact:realization_materialize",
+    "kind": "transform",
+    "implementation": "tcad_artifact.operation_transforms:REALIZATION_COMPONENT",
+    "file": "/opt/scidiscovery-m7/site/tcad_artifact/operation_transforms.py",
+    "line": 124,
+    "qualname": "materialize_realization",
+    "operations": [
+      "tcad.realization-snapshot-materialize.v1"
+    ],
+    "source_file": "plugins/tcad_artifact/tcad_artifact/operation_transforms.py",
+    "review_note": "确定性产物正确性与出处有用；程序错误由工程承担，不能转嫁为科学 Agent 改字。",
+    "related_operation_findings": []
+  },
+  {
+    "key": "tcad_artifact:result_analysis_context",
+    "kind": "validator",
+    "implementation": "tcad_artifact.result_analysis:CONTEXT",
+    "file": "/opt/scidiscovery-m7/site/tcad_artifact/result_analysis.py",
+    "line": 376,
+    "qualname": "analysis_context",
+    "operations": [
+      "tcad.result.analyze.v1"
+    ],
+    "source_file": "plugins/tcad_artifact/tcad_artifact/result_analysis.py",
+    "review_note": "payload/model wrapper 不是单一规则：按 METHODS 的叶项和 context 的 FINDINGS 判定，不能整个标成有用。",
+    "related_operation_findings": [
+      "F01",
+      "F02",
+      "F03",
+      "F04",
+      "F05",
+      "F06",
+      "F07",
+      "F09",
+      "F12"
+    ]
+  },
+  {
+    "key": "tcad_artifact:result_analysis_input",
+    "kind": "validator",
+    "implementation": "tcad_artifact.result_analysis:INPUT_VALIDATOR",
+    "file": "/opt/scidiscovery-m7/site/tcad_artifact/result_analysis.py",
+    "line": 294,
+    "qualname": "validate_analysis_inputs",
+    "operations": [
+      "tcad.result.analyze.v1"
+    ],
+    "source_file": "plugins/tcad_artifact/tcad_artifact/result_analysis.py",
+    "review_note": "payload/model wrapper 不是单一规则：按 METHODS 的叶项和 context 的 FINDINGS 判定，不能整个标成有用。",
+    "related_operation_findings": [
+      "F01",
+      "F02",
+      "F03",
+      "F04",
+      "F05",
+      "F06",
+      "F07",
+      "F09",
+      "F12"
+    ]
+  },
+  {
+    "key": "tcad_artifact:result_analysis_parentage",
+    "kind": "guard",
+    "implementation": "tcad_artifact.result_analysis:GUARD",
+    "file": "/opt/scidiscovery-m7/site/tcad_artifact/result_analysis.py",
+    "line": 85,
+    "qualname": "analysis_parentage",
+    "operations": [
+      "tcad.result.analyze.v1"
+    ],
+    "source_file": "plugins/tcad_artifact/tcad_artifact/result_analysis.py",
+    "review_note": "精确父系/cohort/输入身份检查有用；不能把同对象被审资格当成可执行资格。",
+    "related_operation_findings": [
+      "F01",
+      "F02",
+      "F03",
+      "F04",
+      "F05",
+      "F06",
+      "F07",
+      "F09",
+      "F12"
+    ]
+  },
+  {
+    "key": "tcad_artifact:result_analysis_validator",
+    "kind": "validator",
+    "implementation": "tcad_artifact.result_analysis:DIAGNOSIS_VALIDATOR",
+    "file": "/opt/scidiscovery-m7/site/scidiscovery/operation_declaration.py",
+    "line": 85,
+    "qualname": "payload_validator.<locals>.validate",
+    "operations": [
+      "tcad.result.analyze.v1"
+    ],
+    "source_file": "src/scidiscovery/operation_declaration.py",
+    "review_note": "payload/model wrapper 不是单一规则：按 METHODS 的叶项和 context 的 FINDINGS 判定，不能整个标成有用。",
+    "related_operation_findings": [
+      "F01",
+      "F02",
+      "F03",
+      "F04",
+      "F05",
+      "F06",
+      "F07",
+      "F09",
+      "F12"
+    ]
+  },
+  {
+    "key": "tcad_artifact:package_parentage",
+    "kind": "guard",
+    "implementation": "tcad_artifact.operation_transforms:PACKAGE_PARENTAGE_GUARD",
+    "file": "/opt/scidiscovery-m7/site/tcad_artifact/operation_transforms.py",
+    "line": 171,
+    "qualname": "package_parentage",
+    "operations": [
+      "tcad.reviewed-deck-package.v2"
+    ],
+    "source_file": "plugins/tcad_artifact/tcad_artifact/operation_transforms.py",
+    "review_note": "精确父系/cohort/输入身份检查有用；不能把同对象被审资格当成可执行资格。",
+    "related_operation_findings": [
+      "F02",
+      "F03",
+      "F04",
+      "F05"
+    ]
+  },
+  {
+    "key": "tcad_artifact:reviewed_package",
+    "kind": "transform",
+    "implementation": "tcad_artifact.operation_transforms:PACKAGE_COMPONENT",
+    "file": "/opt/scidiscovery-m7/site/tcad_artifact/operation_transforms.py",
+    "line": 97,
+    "qualname": "package",
+    "operations": [
+      "tcad.reviewed-deck-package.v2"
+    ],
+    "source_file": "plugins/tcad_artifact/tcad_artifact/operation_transforms.py",
+    "review_note": "确定性产物正确性与出处有用；程序错误由工程承担，不能转嫁为科学 Agent 改字。",
+    "related_operation_findings": [
+      "F02",
+      "F03",
+      "F04",
+      "F05"
+    ]
+  },
+  {
+    "key": "tcad_artifact:runtime_attest",
+    "kind": "transform",
+    "implementation": "tcad_artifact.operation_transforms:RUNTIME_ATTEST_COMPONENT",
+    "file": "/opt/scidiscovery-m7/site/tcad_artifact/operation_transforms.py",
+    "line": 105,
+    "qualname": "attest_runtime",
+    "operations": [
+      "tcad.runtime-attestation.v1"
+    ],
+    "source_file": "plugins/tcad_artifact/tcad_artifact/operation_transforms.py",
+    "review_note": "确定性产物正确性与出处有用；程序错误由工程承担，不能转嫁为科学 Agent 改字。",
+    "related_operation_findings": []
+  },
+  {
+    "key": "tcad_artifact:runtime_parentage",
+    "kind": "guard",
+    "implementation": "tcad_artifact.operation_transforms:RUNTIME_PARENTAGE_GUARD",
+    "file": "/opt/scidiscovery-m7/site/tcad_artifact/operation_transforms.py",
+    "line": 183,
+    "qualname": "runtime_parentage",
+    "operations": [
+      "tcad.runtime-attestation.v1"
+    ],
+    "source_file": "plugins/tcad_artifact/tcad_artifact/operation_transforms.py",
+    "review_note": "精确父系/cohort/输入身份检查有用；不能把同对象被审资格当成可执行资格。",
+    "related_operation_findings": []
+  },
+  {
+    "key": "tcad_artifact:execution_projector",
+    "kind": "projector",
+    "implementation": "tcad_artifact.runtime_plugin:EXECUTION_PROJECTOR",
+    "file": "/opt/scidiscovery-m7/site/tcad_artifact/runtime_plugin.py",
+    "line": 109,
+    "qualname": "execution_projector",
+    "operations": [
+      "tcad.study.execute"
+    ],
+    "source_file": "plugins/tcad_artifact/tcad_artifact/runtime_plugin.py",
+    "review_note": "确切审批主题和资格证据有用；UI 不得改写科学 verdict/替用户批准。",
+    "related_operation_findings": []
+  },
+  {
+    "key": "tcad_artifact:study_execute",
+    "kind": "effect",
+    "implementation": "tcad_artifact.runtime_plugin:EXECUTE_EFFECT",
+    "file": "/opt/scidiscovery-m7/site/tcad_artifact/runtime_plugin.py",
+    "line": 101,
+    "qualname": "execute_effect",
+    "operations": [
+      "tcad.study.execute"
+    ],
+    "source_file": "plugins/tcad_artifact/tcad_artifact/runtime_plugin.py",
+    "review_note": "外部副作用的确切批准、幂等与载荷身份必须保留。",
+    "related_operation_findings": []
+  }
+]

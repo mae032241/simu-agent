@@ -1,0 +1,23 @@
+{
+  "command": [
+    "python",
+    "-m",
+    "pytest",
+    "-q",
+    "tests/operations/test_instance_archive_continuation.py",
+    "tests/operations/test_instance_archive.py::test_restore_resume_rebuilds_an_unpublished_stage_with_a_linked_temporary_name",
+    "tests/operations/test_instance_trajectory_read.py",
+    "tests/operations/test_instance_management_http.py"
+  ],
+  "exit_code": 0,
+  "stop_reason": null,
+  "duration_seconds": 9.761,
+  "peak_tree_rss_mib": 133.75,
+  "budget_mib": 512,
+  "peak_processes": [
+    {
+      "name": "python",
+      "rss_mib": 133.75
+    }
+  ]
+}

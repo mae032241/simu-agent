@@ -1,0 +1,62 @@
+FF                                                                       [100%]
+=================================== FAILURES ===================================
+_______ test_run_service_supplies_exact_filtered_descriptors[candidate] ________
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-57/test_run_service_supplies_exac0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7efe5c1d0cb0>
+entry = 'candidate'
+
+    @pytest.mark.parametrize("entry", ["candidate", "submit"])
+    def test_run_service_supplies_exact_filtered_descriptors(tmp_path: Path, monkeypatch, entry):
+        seen = []
+    
+        def checker(payload, sources, handoff):
+            seen.append(sources)
+    
+        runtime, run_id, envelopes = _running_candidate(tmp_path, monkeypatch, checker)
+        if entry == "candidate":
+            runtime.runs.validate_candidate(run_id)
+        else:
+            assert runtime.runs.submit(run_id) == ("completed", ())
+        assert len(seen) == 1
+        sources = seen[0]
+        assert isinstance(sources, dict)
+        assert sources == {"A": b"{}", "B": b"{}"}
+>       assert hasattr(sources, "binding_descriptors"), "RunService discards exact input identity before context validation"
+E       AssertionError: RunService discards exact input identity before context validation
+E       assert False
+E        +  where False = hasattr({'A': b'{}', 'B': b'{}'}, 'binding_descriptors')
+
+tests/operations/test_analysis_input_descriptors.py:94: AssertionError
+_________ test_run_service_supplies_exact_filtered_descriptors[submit] _________
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-57/test_run_service_supplies_exac1')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7efe5c1d0c80>
+entry = 'submit'
+
+    @pytest.mark.parametrize("entry", ["candidate", "submit"])
+    def test_run_service_supplies_exact_filtered_descriptors(tmp_path: Path, monkeypatch, entry):
+        seen = []
+    
+        def checker(payload, sources, handoff):
+            seen.append(sources)
+    
+        runtime, run_id, envelopes = _running_candidate(tmp_path, monkeypatch, checker)
+        if entry == "candidate":
+            runtime.runs.validate_candidate(run_id)
+        else:
+            assert runtime.runs.submit(run_id) == ("completed", ())
+        assert len(seen) == 1
+        sources = seen[0]
+        assert isinstance(sources, dict)
+        assert sources == {"A": b"{}", "B": b"{}"}
+>       assert hasattr(sources, "binding_descriptors"), "RunService discards exact input identity before context validation"
+E       AssertionError: RunService discards exact input identity before context validation
+E       assert False
+E        +  where False = hasattr({'A': b'{}', 'B': b'{}'}, 'binding_descriptors')
+
+tests/operations/test_analysis_input_descriptors.py:94: AssertionError
+=========================== short test summary info ============================
+FAILED tests/operations/test_analysis_input_descriptors.py::test_run_service_supplies_exact_filtered_descriptors[candidate]
+FAILED tests/operations/test_analysis_input_descriptors.py::test_run_service_supplies_exact_filtered_descriptors[submit]
+2 failed in 1.06s

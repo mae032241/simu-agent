@@ -5,11 +5,12 @@
   "host_key_alias": "tcad-vm",
   "identity_file": "/home/user/.ssh/id_ed25519",
   "known_hosts_file": "/home/user/.ssh/known_hosts",
-  "max_transfer_bytes": 536870912,
+  "max_transfer_bytes": 2100000000,
   "operation_timeout_seconds": 120,
   "port": 22,
   "remote_config": "/home/tcad/scidiscovery-tcad/config/runner.json",
   "remote_exchange_root": "/home/tcad/scidiscovery-tcad/exchange",
   "remote_helper": "/home/tcad/scidiscovery-tcad/bin/scidiscovery-tcad-ssh-runner",
-  "ssh_executable": "/usr/bin/ssh"
+  "ssh_executable": "/usr/bin/ssh",
+  "transfer_chunk_bytes": 1048576
 }

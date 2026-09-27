@@ -1,0 +1,16 @@
+{
+  "command": [
+    "python",
+    "-m",
+    "pytest",
+    "-q",
+    "tests/operations/test_score_request_contract.py::test_supported_log_and_linear_metrics_have_independent_known_values",
+    "tests/operations/test_l2_run_invariants.py::test_timeout_reconcile_uses_activity_compare_and_set"
+  ],
+  "exit_code": 0,
+  "seconds": 1.888,
+  "peak_tree_rss_bytes": 119345152,
+  "budget_bytes": 536870912,
+  "early_stop_bytes": 469762048,
+  "memory_terminated": false
+}

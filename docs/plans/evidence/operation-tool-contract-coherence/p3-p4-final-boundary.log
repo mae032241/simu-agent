@@ -1,0 +1,207 @@
+.................................F...........F....F..F.................. [ 67%]
+..................................                                       [100%]
+=================================== FAILURES ===================================
+__________ test_new_run_replays_original_record_from_sealed_evidence ___________
+
+request = TCADScoreInput(record_key='old_alias', request=TCADScoreRequest(sources=(SProcessPLXSource(input_alias='tool_evidence_...cation', metric_profile='smooth_curve', floor_mask=None),), reference_dispositions=(), aggregate_rule='all_required')))
+context = OperationToolContext(services=mappingproxy({}), state={}, workspace=PosixPath('/tmp/pytest-of-da/pytest-87/test_new_ru... 0x7f80967c1280>>, _prior_source_bindings=<function LocalWorkerMCPRouter._context.<locals>.<lambda> at 0x7f8096ceeca0>)
+
+    def tcad_score_tool(request: TCADScoreInput, context: OperationToolContext) -> dict[str, Any]:
+        from scidiscovery.operation_contract import DiagnosticError, contract_diagnostic
+        plan = parse_bound_json(ExperimentPortfolio, context.read_input("experiment_plan"))
+        package = parse_bound_json(ReviewedDeckPackage, context.read_input("reviewed_package"))
+        for index, source in enumerate(request.request.sources):
+            aliases = [source.input_alias]
+            basis = source.case_mapping_basis
+            try:
+                if basis:
+                    for item in basis.evidence_refs:
+                        # A locator is a scientific claim; this read proves availability.
+                        context.read_evidence(item.input_alias)
+                        aliases.append(item.input_alias)
+>               descriptors = {alias:context.source_descriptor(alias) for alias in aliases}
+                                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+plugins/tcad_artifact/tcad_artifact/result_analysis.py:223: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/scidiscovery/artifact_agent/operation_tool_context.py:46: in source_descriptor
+    return self._source_descriptor(name)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/scidiscovery/artifact_agent/interfaces/mcp_local_worker.py:339: in <lambda>
+    _source_descriptor=lambda alias: self.runs.source_descriptor(status, alias),
+                                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <scidiscovery.artifact_agent.service.runs.RunService object at 0x7f8096a13d70>
+value = RunStatus(run_id='run_46a4a94d90234fe6b8c3a768e0af5043', instance_id='ins_9a0cc917f81e4eb590434405350eee5b', operation...63d81a25dd68f85', 'operation_id': 'tcad.result.analyze.v1', 'snapshot_max_bytes': 33554432, 'snapshot_max_files': 132})
+alias = 'tool_evidence_002'
+
+    def source_descriptor(self, value, alias):
+        source = next((item for item in value.inputs if item.source_name == alias), None)
+        if source is not None:
+            envelope = self.artifacts.catalog(source.artifact_ref)
+            producer = self.completed_for_output(source.artifact_ref)
+            return InputBindingDescriptor(source_name=alias, port_name=source.port_name,
+                artifact_ref=source.artifact_ref, media_type=envelope.media_type,
+                size_bytes=envelope.size_bytes, sha256=source.artifact_ref.sha256,
+                output_name=envelope.labels.get("logical_name"), parent_refs=envelope.parent_refs,
+                labels=tuple(envelope.labels.items()), producer_run_id=producer.run_id if producer else None)
+        record = next((r for r in self.tool_evidence(value.run_id) if r["alias"] == alias), None)
+>       if record is None: raise ValueError("unknown controlled source alias")
+                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       ValueError: unknown controlled source alias
+
+src/scidiscovery/artifact_agent/service/tool_evidence.py:180: ValueError
+
+The above exception was the direct cause of the following exception:
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-87/test_new_run_replays_original_0')
+
+    def test_new_run_replays_original_record_from_sealed_evidence(tmp_path):
+        from copy import deepcopy
+        from tests.operations.test_tcad_result_analysis import raw_request,analysis_report,write_analysis,open_analysis
+        system,worker,opened,_=recovery_system(tmp_path)
+        inspected=worker.call_tool('worker_tcad_inspect_outputs',{'relative_path':'A_actual.plx'})
+        accepted=worker.call_tool('worker_tcad_accept_output',dict(evidence_alias=inspected['evidence_alias'],output_name='A',rationale='Exact fixture mapping.',evidence_aliases=[inspected['evidence_alias']]))
+        alias=accepted['evidence_alias']
+        calculation=worker.call_tool('worker_tcad_curve_score',dict(record_key='original',request=raw_request(alias=alias)))
+        report=analysis_report(alias=alias,output_name='A',mapped=True); report['calculation_records']=[calculation]
+        write_analysis(opened,report)
+        assert worker.call_tool('worker_submit_result',{})['state']=='completed'
+        catalog,runtime,root,request,artifacts,register=system
+        request=deepcopy(request);request['name']='next_analysis'
+        request['inputs'].extend([dict(port='prior_analysis',artifact_names=['analysis.output']), dict(port='recovery_manifest',artifact_names=['analysis.output.recovery_manifest']),dict(port='solver_outputs',artifact_names=['analysis.output.'+alias])])
+        # An old audit covers only original products, not evidence obtained later.
+        from scidiscovery.artifact_agent.schema.common import canonical_json
+        original_inputs = runtime.runs.status(worker._run_id).inputs
+        manifest_ref = next(i.artifact_ref for i in original_inputs if i.port_name == 'runtime_manifest')
+        audit = dict(schema_version=1, verdict='pass', terminal_state='succeeded', exit_code=0,
+            checks=[dict(check_key='fixture', status='pass', rationale='Original execution scope only.')],
+            solver_native_output_count=0, transport_derived_output_count=0, parser_derived_output_count=0,
+            rationale='Does not attest subsequently recovered bytes.')
+        register('old_audit', canonical_json(audit), 'tcad.runtime-attestation.v1',
+                 parents=(artifacts['package'].ref, manifest_ref))
+        request['inputs'].append(dict(port='runtime_attestation', artifact_names=['old_audit']))
+        from tests.operations.test_collector_analysis_handoff import _collect_execution
+        foreign = _collect_execution(system, tmp_path/'foreign', name='foreign', output_names=('A',))
+        wrong = deepcopy(request)
+        next(i for i in wrong['inputs'] if i['port']=='solver_outputs')['artifact_names'] = [foreign['A']]
+        assert not root.call_tool('operation_preflight', wrong)['admissible']
+        preflight=root.call_tool('operation_preflight',request)
+        assert preflight['admissible'],preflight
+        next_worker,next_opened=open_analysis((catalog,runtime,root,request,artifacts,register))
+        import json
+        from scidiscovery.artifact_agent.interfaces.mcp_worker_protocol import WorkerToolError
+        assignment=json.loads(Path(next_opened['assignment_path']).read_text())
+        current_alias=assignment['prior_source_bindings'][alias]
+        assert current_alias != alias
+        with pytest.raises((WorkerToolError, ValueError)):
+>           next_worker.call_tool('worker_tcad_curve_score',dict(record_key='old_alias',request=calculation['request']))
+
+tests/operations/test_analysis_evidence_recovery.py:107: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/scidiscovery/artifact_agent/interfaces/mcp_local_worker.py:100: in call_tool
+    result = self._call_tool(name, arguments)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/scidiscovery/artifact_agent/interfaces/mcp_local_worker.py:190: in _call_tool
+    result = registered.contextual_handler(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+request = TCADScoreInput(record_key='old_alias', request=TCADScoreRequest(sources=(SProcessPLXSource(input_alias='tool_evidence_...cation', metric_profile='smooth_curve', floor_mask=None),), reference_dispositions=(), aggregate_rule='all_required')))
+context = OperationToolContext(services=mappingproxy({}), state={}, workspace=PosixPath('/tmp/pytest-of-da/pytest-87/test_new_ru... 0x7f80967c1280>>, _prior_source_bindings=<function LocalWorkerMCPRouter._context.<locals>.<lambda> at 0x7f8096ceeca0>)
+
+    def tcad_score_tool(request: TCADScoreInput, context: OperationToolContext) -> dict[str, Any]:
+        from scidiscovery.operation_contract import DiagnosticError, contract_diagnostic
+        plan = parse_bound_json(ExperimentPortfolio, context.read_input("experiment_plan"))
+        package = parse_bound_json(ReviewedDeckPackage, context.read_input("reviewed_package"))
+        for index, source in enumerate(request.request.sources):
+            aliases = [source.input_alias]
+            basis = source.case_mapping_basis
+            try:
+                if basis:
+                    for item in basis.evidence_refs:
+                        # A locator is a scientific claim; this read proves availability.
+                        context.read_evidence(item.input_alias)
+                        aliases.append(item.input_alias)
+                descriptors = {alias:context.source_descriptor(alias) for alias in aliases}
+            except ValueError as error:
+>               raise DiagnosticError("mapping source is unavailable", details=(contract_diagnostic(
+                    "source_unavailable", phase="tool_execution", affected_action="tool_call",
+                    repairable=True, path=f"$.request.sources[{index}]",
+                    message="The source or mapping evidence alias is not available in this Run."),)) from error
+E               scidiscovery.operation_contract.DiagnosticError: mapping source is unavailable
+
+plugins/tcad_artifact/tcad_artifact/result_analysis.py:225: DiagnosticError
+____________ test_forged_workspace_receipt_cannot_publish_evidence _____________
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-87/test_forged_workspace_receipt_0')
+
+    def test_forged_workspace_receipt_cannot_publish_evidence(tmp_path):
+        from tests.operations.test_tcad_result_analysis import analysis_report,write_analysis
+        system, worker, opened, _ = recovery_system(tmp_path)
+        output = Path(opened['workspace_path'])/'output'
+        (output/'tool-evidence.json').write_text('{"schema_version":1,"records":[{"alias":"forged"}]}')
+        write_analysis(opened, analysis_report())
+        assert worker.call_tool('worker_submit_result', {})['state'] == 'completed'
+>       assert not system[2].call_tool('run_status', {'name':'analysis'}).get('evidence_outputs')
+E       AssertionError: assert not [{'artifact_name': 'analysis.output.recovery_manifest', 'schema': 'scidiscovery.tool-evidence-manifest.v1'}]
+E        +  where [{'artifact_name': 'analysis.output.recovery_manifest', 'schema': 'scidiscovery.tool-evidence-manifest.v1'}] = <built-in method get of dict object at 0x7f8096fb9cc0>('evidence_outputs')
+E        +    where <built-in method get of dict object at 0x7f8096fb9cc0> = {'name': 'analysis', 'logical_name': 'analysis', 'revision': 1, 'operation_id': 'tcad.result.analyze.v1', ...}.get
+E        +      where {'name': 'analysis', 'logical_name': 'analysis', 'revision': 1, 'operation_id': 'tcad.result.analyze.v1', ...} = call_tool('run_status', {'name': 'analysis'})
+E        +        where call_tool = <scidiscovery.artifact_agent.interfaces.mcp_root.RootMCPRouter object at 0x7f8096ba5280>.call_tool
+
+tests/operations/test_analysis_evidence_recovery.py:332: AssertionError
+__ test_collection_declaration_without_trusted_tool_is_rejected_at_both_gates __
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-87/test_collection_declaration_wi0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7f8095d59a90>
+
+    def test_collection_declaration_without_trusted_tool_is_rejected_at_both_gates(tmp_path, monkeypatch):
+        from dataclasses import replace
+        from types import SimpleNamespace
+        from tests.operations.test_tcad_result_analysis import analysis_system
+        from scidiscovery.artifact_agent.service.local_workspace import LocalTrustedBackend
+        from scidiscovery.artifact_agent.service.runs import RunError
+        catalog, runtime, *_ = analysis_system(tmp_path)
+        operation = catalog.operation('tcad.result.analyze.v1')
+        executor = operation.spec.executor.model_copy(update={'tools':()})
+        undeclared = replace(operation,spec=operation.spec.model_copy(update={'executor':executor}))
+>       assert LocalTrustedBackend.unsupported_requirements(undeclared) == ('agent_collection_outputs',)
+E       AssertionError: assert () == ('agent_collection_outputs',)
+E         
+E         Right contains one more item: 'agent_collection_outputs'
+E         Use -v to get more diff
+
+tests/operations/test_analysis_evidence_recovery.py:424: AssertionError
+_______ test_unmapped_inspection_remains_readable_as_next_run_background _______
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-87/test_unmapped_inspection_remai0')
+
+    def test_unmapped_inspection_remains_readable_as_next_run_background(tmp_path):
+        from copy import deepcopy
+        from tests.operations.test_tcad_result_analysis import analysis_report,write_analysis,open_analysis
+        system, worker, opened, _ = recovery_system(tmp_path)
+        inspected = worker.call_tool('worker_tcad_inspect_outputs', {'relative_path':'A_actual.plx'})
+        alias = inspected['evidence_alias']
+        write_analysis(opened, analysis_report(alias=alias))
+        assert worker.call_tool('worker_submit_result', {})['state'] == 'completed'
+        catalog,runtime,root,request,artifacts,register = system
+        request = deepcopy(request)
+        request['name'] = 'background_analysis'
+        request['inputs'].extend([dict(port='recovery_manifest',artifact_names=['analysis.output.recovery_manifest']),
+                                  dict(port='solver_outputs',artifact_names=['analysis.output.'+alias])])
+        next_worker,next_opened = open_analysis((catalog,runtime,root,request,artifacts,register))
+        write_analysis(next_opened, analysis_report(alias=alias))
+>       assert next_worker.call_tool('worker_submit_result', {})['state'] == 'completed'
+E       AssertionError: assert 'rejected' == 'completed'
+E         
+E         - completed
+E         + rejected
+
+tests/operations/test_analysis_evidence_recovery.py:474: AssertionError
+=========================== short test summary info ============================
+FAILED tests/operations/test_analysis_evidence_recovery.py::test_new_run_replays_original_record_from_sealed_evidence
+FAILED tests/operations/test_analysis_evidence_recovery.py::test_forged_workspace_receipt_cannot_publish_evidence
+FAILED tests/operations/test_analysis_evidence_recovery.py::test_collection_declaration_without_trusted_tool_is_rejected_at_both_gates
+FAILED tests/operations/test_analysis_evidence_recovery.py::test_unmapped_inspection_remains_readable_as_next_run_background
+4 failed, 102 passed, 1 deselected in 57.67s

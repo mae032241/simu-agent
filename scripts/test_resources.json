@@ -1,0 +1,14 @@
+{
+  "numeric_threads": 1,
+  "limits": {
+    "address_space_bytes": 2000000000,
+    "observed_tree_rss_stop_bytes": 1500000000,
+    "minimum_available_bytes": 8589934592,
+    "available_drop_stop_bytes": 2000000000,
+    "dirty_stop_bytes": 134217728,
+    "timeout_seconds": 300,
+    "sample_interval_seconds": 0.1,
+    "termination_grace_seconds": 2,
+    "log_bytes": 8388608
+  }
+}

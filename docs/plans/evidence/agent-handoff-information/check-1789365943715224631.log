@@ -1,0 +1,4 @@
+Traceback (most recent call last):
+  File "/tmp/scid-handoff-impl-096a13f/baseline.py", line 7, in <module>
+    from scidiscovery.artifact_agent.interfaces.mcp_local_worker import LocalWorkerToolRouter
+ImportError: cannot import name 'LocalWorkerToolRouter' from 'scidiscovery.artifact_agent.interfaces.mcp_local_worker' (/home/da/project/ai4s/tcad/git_release/scidiscovery-agent/123/scidiscovery-e5.2/src/scidiscovery/artifact_agent/interfaces/mcp_local_worker.py). Did you mean: 'LocalWorkerMCPRouter'?

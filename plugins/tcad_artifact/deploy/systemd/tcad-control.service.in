@@ -9,18 +9,19 @@ User=@EXECUTION_USER@
 Group=@CONTROL_GROUP@
 UMask=0007
 WorkingDirectory=@PROJECT_ROOT@
-Environment=PYTHONPATH=@PYTHONPATH@
+Environment="PYTHONPATH=@PYTHONPATH@"
 Environment=PYTHONNOUSERSITE=1
 RuntimeDirectory=scidiscovery-tcad
 RuntimeDirectoryMode=0770
-ExecStart=@EXECUTION_PYTHON@ -m tcad_artifact.execution_daemon --state-root @EXECUTION_STATE_ROOT@ --policy @EXECUTION_POLICY@ --socket @EXECUTION_SOCKET@
+ExecStartPre="@EXECUTION_PYTHON@" -m scidiscovery.runtime_identity verify --manifest "@RUNTIME_IDENTITY@"
+ExecStart="@EXECUTION_PYTHON@" -m tcad_artifact.execution_daemon --state-root "@EXECUTION_STATE_ROOT@" --policy "@EXECUTION_POLICY@" --socket "@EXECUTION_SOCKET@"
 Restart=on-failure
 RestartSec=2s
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths=@EXECUTION_STATE_ROOT@ @EXECUTION_RUNTIME_ROOT@
+ReadWritePaths="@EXECUTION_STATE_ROOT@" "@EXECUTION_RUNTIME_ROOT@"
 ProtectControlGroups=true
 ProtectKernelModules=true
 ProtectKernelTunables=true

@@ -1,0 +1,327 @@
+{
+  "schema_version": 2,
+  "status": "historical_only_not_current_qualification",
+  "retirement_reason": "E5.4 P1 removed the production case scorer. The frozen operation digests, scorer bindings, and evaluation results below are historical records, not a runnable current qualification manifest.",
+  "fixture_id": "r5-e2e-fig4-baseline-recovery-v1",
+  "purpose": "Bounded regression of scientific-agent reasoning and exact historical replay; not a new solver result or a universality benchmark.",
+  "task": {
+    "path": "tests/fixtures/r5_e2e_tcad/task.zh-CN.md",
+    "sha256": "118cce25a15af961fa68281417bf6171371f755d65850287b9acaa4eea576041"
+  },
+  "evidence_contract": {
+    "path": "tests/fixtures/r5_e2e_tcad/evidence_contract.json",
+    "sha256": "8c45f32fc550ac5e67b3848ba9aceb60f3dbf5ecf6726edfd2c3d65d9b1ad8a8"
+  },
+  "rubric": {
+    "path": "tests/fixtures/r5_e2e_tcad/rubric.json",
+    "sha256": "7e63b5c448ae5fbae48de2c3ab1ed235210b90197b8d900ed45e537dbaf7631e"
+  },
+  "scientific_scope": {
+    "material": "InGaAs",
+    "paper_panel_label": "Fig.4",
+    "process_temperature_celsius": 480,
+    "target_status": "user_defined_frozen_target_from_prior_project_state",
+    "allowed_claim": "The frozen target is the exact user-supplied comparison target for this regression.",
+    "forbidden_claims": [
+      "The target curve is independently qualified paper evidence.",
+      "InAlAs, candidate, or Fig.7 fields support this task's scientific claims.",
+      "A mesh difference proves a physical or solver cause.",
+      "Historical replay is a new Sentaurus execution."
+    ],
+    "prior_signal_only": [
+      "The historical deck diff reports a mesh difference; it may motivate a test but is not causal evidence."
+    ]
+  },
+  "historical_operation_contract": {
+    "selection_rule": "The scheduler still selects one next public action from the current contradiction. This fixture freezes the allowed shortest topology and bindings, not a global stage DAG.",
+    "mandatory_agent_steps": [
+      {
+        "operation_id": "science.evidence.extract.v1",
+        "inputs": {
+          "source_material": [
+            "evaluation_contract",
+            "r5.fixture.fig4-science-source-view.v1:metric_source",
+            "active_bundle_manifest",
+            "historical_independent_audit",
+            "historical_deck_diff_source",
+            "r5.fixture.fig4-science-source-view.v1:curve_source"
+          ]
+        },
+        "outputs": ["scientific_intake"]
+      },
+      {
+        "operation_id": "science.evidence.audit.intake.v1",
+        "inputs": {
+          "scientific_intake": ["science.evidence.extract.v1:scientific_intake"],
+          "source_material": [
+            "evaluation_contract",
+            "r5.fixture.fig4-science-source-view.v1:metric_source",
+            "active_bundle_manifest",
+            "historical_independent_audit",
+            "historical_deck_diff_source",
+            "r5.fixture.fig4-science-source-view.v1:curve_source"
+          ]
+        },
+        "outputs": ["evidence_audit"]
+      },
+      {
+        "operation_id": "science.hypothesis.propose.v1",
+        "inputs": {
+          "problem_frame": ["science.intake.split.v1:problem_frame"],
+          "scientific_foundation": ["science.intake.split.v1:scientific_foundation"]
+        },
+        "outputs": ["hypothesis_portfolio"]
+      },
+      {
+        "operation_id": "science.hypothesis.criticize.v1",
+        "inputs": {
+          "hypothesis_portfolio": ["science.hypothesis.propose.v1:hypothesis_portfolio"],
+          "scientific_foundation": ["science.intake.split.v1:scientific_foundation"]
+        },
+        "outputs": ["scientific_review"]
+      },
+      {
+        "operation_id": "science.experiment.design.v1",
+        "inputs": {
+          "scientific_foundation": ["science.intake.split.v1:scientific_foundation"],
+          "research_objective": ["science.objective.project.v1:research_objective"],
+          "hypothesis_portfolio": ["science.hypothesis.propose.v1:hypothesis_portfolio"],
+          "critic_review": ["science.hypothesis.criticize.v1:scientific_review"]
+        },
+        "outputs": ["experiment_design_intent"]
+      },
+      {
+        "operation_id": "science.object.review.v1",
+        "inputs": {
+          "experiment_plan": ["science.experiment.materialize.v1:experiment_plan"]
+        },
+        "outputs": ["scientific_review"]
+      },
+      {
+        "operation_id": "tcad.deck.author.initial.v1",
+        "inputs": {
+          "execution_capability": ["runtime_bound_tcad_capability"],
+          "experiment_plan": ["science.experiment.materialize.v1:experiment_plan"],
+          "experiment_review": ["science.object.review.v1:scientific_review"]
+        },
+        "outputs": ["project"]
+      },
+      {
+        "operation_id": "tcad.deck.review.v1",
+        "inputs": {
+          "project": ["tcad.deck.author.initial.v1:project"],
+          "execution_capability": ["runtime_bound_tcad_capability"],
+          "experiment_plan": ["science.experiment.materialize.v1:experiment_plan"],
+          "experiment_review": ["science.object.review.v1:scientific_review"]
+        },
+        "outputs": ["review"]
+      }
+    ],
+    "mandatory_support_steps": [
+      {
+        "operation_id": "r5.fixture.fig4-science-source-view.v1",
+        "operation_version": "1",
+      "operation_digest": "00a00cb844abd7a2e2c60674337d3db953b1156363e26d6a48962cb566216274",
+        "inputs": {
+          "metric_report": ["computed_baseline_recovery_metric"],
+          "curve_bundle": ["frozen_curve_bundle"]
+        },
+        "outputs": ["metric_source", "curve_source"]
+      },
+      {
+        "operation_id": "r5.fixture.fig4-replay-profile.qualify.v1",
+        "operation_version": "1",
+      "operation_digest": "73030d88b3c923bd4d59f3a10448b8de9ece46a800a78f33a705d289a3e502b3",
+        "inputs": {
+          "replay_request": ["replay_request"],
+          "replay_profile": ["r5.fixture.fig4-replay.v1:fig4_replay_profile.plx"]
+        },
+        "outputs": ["candidate_profile"]
+      },
+      {
+        "operation_id": "ingaas.fig4-baseline-recovery.v2",
+        "inputs": {
+          "scorer_project": ["historical_replay_project"],
+          "curve_bundle": ["frozen_curve_bundle"],
+          "target_metrics": ["frozen_target_metrics"],
+          "historical_baseline": ["baseline_solver_plx"],
+          "candidate_profile": ["r5.fixture.fig4-replay-profile.qualify.v1:candidate_profile"]
+        },
+        "outputs": ["metric_report"]
+      },
+      {
+        "operation_id": "science.intake.split.v1",
+        "inputs": {
+          "scientific_intake": ["science.evidence.extract.v1:scientific_intake"],
+          "evidence_audit": ["science.evidence.audit.intake.v1:evidence_audit"]
+        },
+        "outputs": ["problem_frame", "scientific_foundation"]
+      },
+      {
+        "operation_id": "science.objective.project.v1",
+        "inputs": {
+          "scientific_foundation": ["science.intake.split.v1:scientific_foundation"]
+        },
+        "outputs": ["research_objective"]
+      },
+      {
+        "operation_id": "science.experiment.materialize.v1",
+        "inputs": {
+          "experiment_design_intent": ["science.experiment.design.v1:experiment_design_intent"],
+          "scientific_foundation": ["science.intake.split.v1:scientific_foundation"],
+          "research_objective": ["science.objective.project.v1:research_objective"],
+          "hypothesis_portfolio": ["science.hypothesis.propose.v1:hypothesis_portfolio"],
+          "critic_review": ["science.hypothesis.criticize.v1:scientific_review"]
+        },
+        "outputs": ["experiment_plan", "materialization_report"]
+      },
+      {
+        "operation_id": "tcad.deck-review-validate.v1",
+        "inputs": {
+          "project": ["tcad.deck.author.initial.v1:project"],
+          "review": ["tcad.deck.review.v1:review"]
+        },
+        "outputs": ["review_attestation"]
+      }
+    ],
+    "mandatory_effect_steps": [
+      {
+        "operation_id": "r5.fixture.fig4-replay.v1",
+        "operation_version": "1",
+      "operation_digest": "005f54a02ffcf0ef39556ada3a880917c822baac25ef24e394144202e20ef663",
+        "inputs": {
+          "replay_request": ["replay_request"]
+        },
+        "outputs": ["execution_request"],
+        "approval": "local_approval_ui_only",
+        "runtime_binding": "r5_e2e_fixture:replay",
+        "preparation_profile": "r5.fig4-historical-replay.v1"
+      }
+    ],
+    "mandatory_approval": {
+      "operation_id": "science.evidence.qualify.v1",
+      "inputs": {
+        "scientific_foundation": ["science.intake.split.v1:scientific_foundation"],
+        "extraction_primary": ["science.evidence.extract.v1:scientific_intake"],
+        "producer_outputs": [],
+        "validation_results": [],
+        "frozen_sources": [
+          "evaluation_contract",
+          "r5.fixture.fig4-science-source-view.v1:metric_source",
+          "active_bundle_manifest",
+          "historical_independent_audit",
+          "historical_deck_diff_source",
+          "r5.fixture.fig4-science-source-view.v1:curve_source"
+        ],
+        "evidence_audit": ["science.evidence.audit.intake.v1:evidence_audit"]
+      },
+      "outputs": [],
+      "decision_authority": "local_approval_ui_only"
+    },
+    "skip_rules": {
+      "hypothesis_branch": "not_skippable_for_this_fixture_because_the_frozen_question_requires_two_live_explanations_and_a_discriminating_next_study",
+      "evidence_audit": "never",
+      "experiment_review": "never",
+      "deck_review": "never",
+      "external_real_solver": "optional_only_after_exact_local_ui_authorization",
+      "generic_package_attestation_curve_score": "not_run_on_the_historical_bundle_because_the_export_omitted_the_exact_legacy_experiment_plan_capability_and_current_review_schema; recreating_or_reparenting_them_is_forbidden",
+      "generic_curve_diagnosis_operation": "not_run_because_the_exact_domain_metric_is_not_a_scidiscovery.curve-consistency-report.v1; scientific diagnosis is evaluated in the sealed intake_hypothesis_experiment outputs and independent rubric, without schema impersonation"
+    }
+  },
+  "historical_replay_adapter": {
+    "adapter_id": "r5_e2e_fixture:replay",
+    "version": "1",
+    "preparation_profile": "r5.fig4-historical-replay.v1",
+    "implementation_path": "tests/fixtures/plugins/r5_e2e_tcad_plugin/r5_e2e_tcad_plugin/runtime.py",
+    "implementation_sha256": "181fcd773b4b1cc2a62abd9dc67056086ac3fb3c4d9a24b6028f58a61e695325",
+    "request_path": "tests/fixtures/r5_e2e_tcad/replay_request.json",
+    "request_sha256": "7a83623203369b829c4fc513028fefa5dde0eb9e0098bbb8603cd05543f4ea69",
+    "exact_request": {
+      "schema_version": 1,
+      "fixture_id": "r5-e2e-fig4-baseline-recovery-v1",
+      "active_bundle_sha256": "684d106dac3baa3026051300c8112d7fecd79cb41d96ed6212b59e511be018e3",
+      "source_project_sha256": "e07da8714fe6423688f14b181f058b7cadaa4be6aa7c845e7ff7acaee997357e"
+    },
+    "boundary": "Copies only four exact historical output files after hash verification; performs no solver or scientific transformation."
+  },
+  "historical_replay_plugin_closure": {
+    "plugin_id": "r5_e2e_fixture",
+    "plugin_version": "0.0.1",
+    "entry_point_group": "scidiscovery.plugins",
+    "entry_point_name": "r5_e2e_fixture",
+    "entry_point_value": "r5_e2e_tcad_plugin:PLUGIN",
+    "installation_scope": "r5_g_evaluation_environment_only",
+    "files": [
+      {"path":"tests/fixtures/plugins/r5_e2e_tcad_plugin/pyproject.toml","sha256":"4f56a0d21ca213d9e67357e25cbae1f9666d0a6e3c18ece9a7309d13eb1f3582"},
+      {"path":"tests/fixtures/plugins/r5_e2e_tcad_plugin/r5_e2e_tcad_plugin/__init__.py","sha256":"a03a27a57ba30627076cc82e6ea6120c11306305029f153faca45ac02c4edaed"},
+      {"path":"tests/fixtures/plugins/r5_e2e_tcad_plugin/r5_e2e_tcad_plugin/plugin.py","sha256":"f04182d98dad711752135b11d834cecdaaaa280c57c11813a3bfbc87248d036b"},
+      {"path":"tests/fixtures/plugins/r5_e2e_tcad_plugin/r5_e2e_tcad_plugin/runtime.py","sha256":"181fcd773b4b1cc2a62abd9dc67056086ac3fb3c4d9a24b6028f58a61e695325"}
+    ],
+    "forbidden_installations": ["core", "full", "full_ingaas"]
+  },
+  "historical_scorer": {
+    "operation_id": "ingaas.fig4-baseline-recovery.v2",
+    "implementation_path": "workspace/ingaas_inalas_photodetector/results/scientific_loops/fig4-baseline-provenance-20260805/score_baseline_provenance.py",
+    "implementation_sha256": "a99ccbcdfc7bd961eb2b8707085f3f7c8c07b7a7b808f680fe1d6dc259a01d94",
+    "contract_locator": {
+      "container_role": "historical_replay_project",
+      "json_pointer": "/files/6/content",
+      "relative_path": "scoring/SCORER_CONTRACT.v2.json",
+      "sha256": "1db0bcc546e2a42fa6e3888da3c83788b79742c0e445782e858b6ef843764a5f"
+    }
+  },
+  "comparison_budget": {
+    "model_authority": "compiled_operation_spec",
+    "multi_agent_models": {
+      "science.evidence.extract.v1": "gpt-5.4",
+      "science.evidence.audit.intake.v1": "gpt-5.4",
+      "science.hypothesis.propose.v1": "gpt-5.4",
+      "science.hypothesis.criticize.v1": "gpt-5.4",
+      "science.experiment.design.v1": "gpt-5.4",
+      "science.object.review.v1": "gpt-5.4",
+      "tcad.deck.author.initial.v1": "gpt-5.4",
+      "tcad.deck.review.v1": "gpt-5.4"
+    },
+    "single_agent_model": "gpt-5.4",
+    "reasoning_effort": "high",
+    "native_tools": ["read", "view_image"],
+    "network": "disabled_for_both_arms",
+    "domain_tools": ["sentaurus_tcad_static_expertise", "tcad_development_debug_for_deck_authoring_only"],
+    "aggregate_input_tokens_max": 120000,
+    "aggregate_output_tokens_max": 60000,
+    "wall_clock_seconds_max": 7200,
+    "single_agent_budget_tolerance_fraction": {
+      "tokens": 0.1,
+      "wall_clock": 0.2
+    },
+    "rule": "The multi-agent arm must use each immutable OperationSpec model and may not patch generated Agent profiles. The single-agent arm uses the same model tier. Both arms record actual model, reasoning, tools, tokens, wall time, and repairs. A run with a different model or tool set is invalid, not adjusted after seeing results."
+  },
+  "files": [
+    {"role":"active_bundle_manifest","path":"workspace/ingaas_inalas_photodetector/research/active_bundles/fig4_baseline_provenance_20260806.bundle/bundle.json","sha256":"684d106dac3baa3026051300c8112d7fecd79cb41d96ed6212b59e511be018e3","size_bytes":15728},
+    {"role":"frozen_curve_bundle","path":"workspace/ingaas_inalas_photodetector/research/active_bundles/fig4_baseline_provenance_20260806.bundle/payloads/0c66052fb28b69f720877d48dee334db5618aa158de652d2c29188befe952e1c","sha256":"0c66052fb28b69f720877d48dee334db5618aa158de652d2c29188befe952e1c","size_bytes":106766},
+    {"role":"frozen_target_metrics","path":"workspace/ingaas_inalas_photodetector/research/active_bundles/fig4_baseline_provenance_20260806.bundle/payloads/62788c59ac86bc744103c3192234136bcfc668c30088f91fe96322b16cd9fcbc","sha256":"62788c59ac86bc744103c3192234136bcfc668c30088f91fe96322b16cd9fcbc","size_bytes":2645},
+    {"role":"baseline_deck","path":"workspace/ingaas_inalas_photodetector/research/active_bundles/fig4_baseline_provenance_20260806.bundle/payloads/aae833e386cf14e7c1a78a574fee8f3647c9f6948dffe9808c0efa8140d446a3","sha256":"aae833e386cf14e7c1a78a574fee8f3647c9f6948dffe9808c0efa8140d446a3","size_bytes":1490},
+    {"role":"baseline_manifest","path":"workspace/ingaas_inalas_photodetector/research/active_bundles/fig4_baseline_provenance_20260806.bundle/payloads/4c710f987b1fcb691d99ad105042f90b8299175c8d9b6d7745bf5ff4a855b8ba","sha256":"4c710f987b1fcb691d99ad105042f90b8299175c8d9b6d7745bf5ff4a855b8ba","size_bytes":1247},
+    {"role":"baseline_solver_plx","path":"workspace/ingaas_inalas_photodetector/research/active_bundles/fig4_baseline_provenance_20260806.bundle/payloads/c99aafe9b80a65fcb7f9b9bc6d7b8b28ebab83ddcc1224b0ae81da7db5c39400","sha256":"c99aafe9b80a65fcb7f9b9bc6d7b8b28ebab83ddcc1224b0ae81da7db5c39400","size_bytes":57322},
+    {"role":"baseline_solver_log","path":"workspace/ingaas_inalas_photodetector/research/active_bundles/fig4_baseline_provenance_20260806.bundle/payloads/fe74872b69f754e255db83b4bae47b36f59fe0cb3c490a1d487225e122e8143a","sha256":"fe74872b69f754e255db83b4bae47b36f59fe0cb3c490a1d487225e122e8143a","size_bytes":257870},
+    {"role":"historical_replay_project","path":"workspace/ingaas_inalas_photodetector/research/active_bundles/fig4_baseline_provenance_20260806.bundle/payloads/e07da8714fe6423688f14b181f058b7cadaa4be6aa7c845e7ff7acaee997357e","sha256":"e07da8714fe6423688f14b181f058b7cadaa4be6aa7c845e7ff7acaee997357e","size_bytes":85000},
+    {"role":"historical_replay_review","path":"workspace/ingaas_inalas_photodetector/research/active_bundles/fig4_baseline_provenance_20260806.bundle/payloads/fdddd2b3b48c9c38958fc6257e23a209270d1fc33bcde322ede9e5f2385b3545","sha256":"fdddd2b3b48c9c38958fc6257e23a209270d1fc33bcde322ede9e5f2385b3545","size_bytes":14664},
+    {"role":"historical_independent_audit","path":"workspace/ingaas_inalas_photodetector/research/active_bundles/fig4_baseline_provenance_20260806.bundle/payloads/72a70ea4834eaf48290b995603ec1a2a1e96ab4984bcc339ca27b5a63550a325","sha256":"72a70ea4834eaf48290b995603ec1a2a1e96ab4984bcc339ca27b5a63550a325","size_bytes":15225},
+    {"role":"replay_solver_plx","logical_name":"fig4_replay_profile.plx","media_type":"application/x-synopsys-plx","path":"workspace/ingaas_inalas_photodetector/research/active_bundles/fig4_baseline_provenance_20260806.bundle/payloads/62dbca930c64d14868617e8982d0fe4a6e2b6f5b7a04f11dcdbe4c5356be06d7","sha256":"62dbca930c64d14868617e8982d0fe4a6e2b6f5b7a04f11dcdbe4c5356be06d7","size_bytes":91063},
+    {"role":"replay_solver_structure","logical_name":"fig4_replay_structure.tdr","media_type":"application/x-synopsys-tdr","path":"workspace/ingaas_inalas_photodetector/research/active_bundles/fig4_baseline_provenance_20260806.bundle/payloads/23567d5a057141a1b7458daef7cadea94f961f56190e172f3d4cb51a5a521c9e","sha256":"23567d5a057141a1b7458daef7cadea94f961f56190e172f3d4cb51a5a521c9e","size_bytes":1049554},
+    {"role":"replay_solver_log","logical_name":"tcad.log","media_type":"text/plain; charset=utf-8","path":"workspace/ingaas_inalas_photodetector/research/active_bundles/fig4_baseline_provenance_20260806.bundle/payloads/a9e649579ffadf9aa41543f3f31e80f19e753affa4bb4fb8094ab9a5f308c61a","sha256":"a9e649579ffadf9aa41543f3f31e80f19e753affa4bb4fb8094ab9a5f308c61a","size_bytes":268158},
+    {"role":"replay_runtime_manifest","logical_name":"runtime_manifest.json","media_type":"application/json","path":"workspace/ingaas_inalas_photodetector/research/active_bundles/fig4_baseline_provenance_20260806.bundle/payloads/cd1fea33bb780e4651006294dc0d01531baf82b7b5d19251dba52eabf47cb172","sha256":"cd1fea33bb780e4651006294dc0d01531baf82b7b5d19251dba52eabf47cb172","size_bytes":607},
+    {"role":"historical_metric_reference","path":"workspace/ingaas_inalas_photodetector/research/active_bundles/fig4_baseline_provenance_20260806.bundle/payloads/9849b697c83351fc079df5fb0ba468f50a3fd777270d88f75f6debead4e56a0a","sha256":"9849b697c83351fc079df5fb0ba468f50a3fd777270d88f75f6debead4e56a0a","size_bytes":3194},
+    {"role":"historical_residual_reference","path":"workspace/ingaas_inalas_photodetector/research/active_bundles/fig4_baseline_provenance_20260806.bundle/payloads/fbf39c5d94f0b6b4b8b640bfaf1a078c0f7f5552ebb310c0b5d94f4ab7a7ec92","sha256":"fbf39c5d94f0b6b4b8b640bfaf1a078c0f7f5552ebb310c0b5d94f4ab7a7ec92","size_bytes":41425},
+    {"role":"historical_deck_diff","path":"workspace/ingaas_inalas_photodetector/research/active_bundles/fig4_baseline_provenance_20260806.bundle/payloads/452135f01515d2e6dd8338538314ece15c41bc3f26b5a0d9f4a80509dd710ee2","sha256":"452135f01515d2e6dd8338538314ece15c41bc3f26b5a0d9f4a80509dd710ee2","size_bytes":3635},
+    {"role":"historical_scorer_manifest","path":"workspace/ingaas_inalas_photodetector/results/scientific_loops/fig4-baseline-provenance-20260805/scorer_execution_manifest.json","sha256":"040e6cdb29f876cee4b4f0d255402462a70ba78be5739d00a5ea24994461ee82","size_bytes":3279},
+    {"role":"historical_scorer_implementation","path":"workspace/ingaas_inalas_photodetector/results/scientific_loops/fig4-baseline-provenance-20260805/score_baseline_provenance.py","sha256":"a99ccbcdfc7bd961eb2b8707085f3f7c8c07b7a7b808f680fe1d6dc259a01d94","size_bytes":15427}
+  ],
+  "solver_evidence": {
+    "mandatory_mode": "historical_raw_output_replay",
+    "real_sentaurus": "optional_only_after_exact_local_ui_authorization",
+    "forbidden_claim": "A replay is not a new Sentaurus execution."
+  },
+  "private_run_root": ".scidiscovery/r5-e2e-private",
+  "sanitized_evidence_root": "deliverables/r5-e2e"
+}

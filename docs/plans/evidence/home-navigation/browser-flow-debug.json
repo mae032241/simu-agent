@@ -1,0 +1,29 @@
+{
+  "command": [
+    "env",
+    "PLAYWRIGHT_BROWSERS_PATH=/tmp/scid-workbench-browsers",
+    "NODE_OPTIONS=--max-old-space-size=64",
+    "python",
+    "docs/plans/evidence/home-navigation/browser_check.py",
+    "flow"
+  ],
+  "exit_code": -9,
+  "stop_reason": "memory_budget_exceeded",
+  "duration_seconds": 2.252,
+  "peak_tree_rss_mib": 516.71,
+  "budget_mib": 512,
+  "peak_processes": [
+    {
+      "name": "chrome-headless-shell",
+      "rss_mib": 300.57
+    },
+    {
+      "name": "MainThread",
+      "rss_mib": 129.58
+    },
+    {
+      "name": "python",
+      "rss_mib": 86.57
+    }
+  ]
+}

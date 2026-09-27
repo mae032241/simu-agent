@@ -12,6 +12,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
 import uuid
 from pathlib import Path
 from typing import Any, Protocol
@@ -20,7 +21,12 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from scidiscovery.artifact_agent.schema.execution import LocalFileDescriptor
 
-from .execution_control import FileDescriptor, TCADJobSpec
+from .transport_logs import preserve_log
+from scidiscovery.plugin_runtime.collection import CollectionContext, run_bounded
+from scidiscovery.plugin_runtime.workspace import atomic_json
+from scidiscovery.plugin_runtime.diagnostics import exception_facts
+
+from .execution_control import FileDescriptor, SolverCapabilitySnapshot, TCADJobSpec
 
 
 class SSHTCADTransportConfig(BaseModel):
@@ -38,7 +44,9 @@ class SSHTCADTransportConfig(BaseModel):
     remote_exchange_root: str = Field(min_length=1, max_length=4096)
     connect_timeout_seconds: int = Field(default=5, ge=1, le=30)
     operation_timeout_seconds: int = Field(default=120, ge=1, le=600)
-    max_transfer_bytes: int = Field(default=512 * 1024 * 1024, ge=1, le=2**40)
+    max_transfer_bytes: int = Field(ge=1, le=2**40)
+    # Buffer tuning is optional; execution authority and transfer quota remain explicit.
+    transfer_chunk_bytes: int = Field(default=1024 * 1024, ge=1)
 
     @field_validator(
         "ssh_executable", "remote_helper", "remote_config", "remote_exchange_root"
@@ -52,12 +60,14 @@ class SSHTCADTransportConfig(BaseModel):
 
 class RemoteClient(Protocol):
     def put(self, relative_path: str, raw: bytes) -> None: ...
+    def put_file(self, relative_path: str, descriptor: FileDescriptor) -> None: ...
     def rpc(self, request: dict[str, Any]) -> dict[str, Any]: ...
     def get(self, local_path: str) -> bytes: ...
+    def get_to(self, local_path: str, destination: Path, max_bytes: int) -> None: ...
 
 
 class SSHRemoteClient:
-    def __init__(self, config: SSHTCADTransportConfig) -> None:
+    def __init__(self, config: SSHTCADTransportConfig, *, diagnostic_root: Path | None = None) -> None:
         executable = Path(config.ssh_executable)
         if not executable.is_file():
             raise ValueError("SSH executable does not exist")
@@ -66,6 +76,23 @@ class SSHRemoteClient:
         ).is_file():
             raise ValueError("destination resolver executable does not exist")
         self.config = config
+        self.diagnostic_root = diagnostic_root
+        self.context = None
+        self.download_progress = lambda _: None
+
+    def _run(self, command, **kwargs):
+        try:
+            if self.context is not None:
+                kwargs["timeout"] = min(kwargs.get("timeout", self.context.remaining_seconds()), self.context.remaining_seconds())
+            return run_bounded(command, input=kwargs.get("input", b""), env=kwargs.get("env"),
+                timeout=kwargs["timeout"], context=self.context,
+                input_stream=kwargs.get("input_stream"), transfer_chunk_bytes=self.config.transfer_chunk_bytes,
+                max_output_bytes=8 * 1024 * 1024)
+        except subprocess.TimeoutExpired as error:
+            if self.diagnostic_root is not None:
+                preserve_log(self.diagnostic_root, "ssh-stderr", error.stderr or b"")
+                preserve_log(self.diagnostic_root, "ssh-stdout", error.stdout or b"")
+            raise
 
     def put(self, relative_path: str, raw: bytes) -> None:
         response, trailing = self._call(
@@ -77,6 +104,16 @@ class SSHRemoteClient:
             },
             raw,
         )
+        if trailing:
+            raise RuntimeError("VM upload returned unexpected bytes")
+        _require_ok(response, "put")
+
+    def put_file(self, relative_path: str, descriptor: FileDescriptor) -> None:
+        if descriptor.size_bytes > self.config.max_transfer_bytes:
+            raise ValueError("upload exceeds configured transfer bound")
+        response, trailing = self._call("put", {"relative_path": relative_path,
+            "sha256": descriptor.sha256, "size_bytes": descriptor.size_bytes}, b"",
+            upload_path=Path(descriptor.local_path))
         if trailing:
             raise RuntimeError("VM upload returned unexpected bytes")
         _require_ok(response, "put")
@@ -101,12 +138,30 @@ class SSHRemoteClient:
             raise RuntimeError("VM download differs from response descriptor")
         return raw
 
+    def get_to(self, local_path: str, destination: Path, max_bytes: int) -> None:
+        response, _ = self._call("get", {"local_path": local_path, "max_bytes": max_bytes}, b"",
+                                 download_to=destination, download_limit=max_bytes)
+        payload = _require_ok(response, "get")
+        digest = hashlib.sha256()
+        size = 0
+        with destination.open("rb") as stream:
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                if self.context:
+                    self.context.remaining_seconds()
+                size += len(chunk)
+                digest.update(chunk)
+        if payload.get("size_bytes") != size or payload.get("sha256") != digest.hexdigest():
+            raise RuntimeError("VM download differs from response descriptor")
+
     def _call(
         self,
         operation: str,
         payload: dict[str, Any],
         body: bytes,
+        *, download_to: Path | None = None, download_limit: int = 0,
+        upload_path: Path | None = None,
     ) -> tuple[dict[str, Any], bytes]:
+        started = time.monotonic()
         request = _canonical(
             {"schema_version": 1, "operation": operation, "payload": payload}
         ) + b"\n" + body
@@ -135,18 +190,65 @@ class SSHRemoteClient:
                 f"{self.config.remote_helper} --config {self.config.remote_config}",
             )
         )
-        completed = subprocess.run(
-            command,
-            input=request,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            env=_transport_environment(self.config.ssh_executable),
-            timeout=self.config.operation_timeout_seconds,
-            check=False,
-        )
+        if download_to is not None:
+            header = bytearray()
+            received = 0
+            parsed = None
+            last_report = 0.0
+            with download_to.open("wb") as stream:
+                def consume(raw):
+                    nonlocal received, parsed, last_report
+                    if parsed is None:
+                        prefix, separator, body = raw.partition(b"\n")
+                        header.extend(prefix)
+                        if len(header) > 1024 * 1024:
+                            raise RuntimeError("VM download header exceeds its bound")
+                        if not separator:
+                            return
+                        parsed = json.loads(header)
+                        raw = body
+                    received += len(raw)
+                    if received > download_limit:
+                        raise RuntimeError("VM download exceeds inspection bound")
+                    stream.write(raw)
+                    now = time.monotonic()
+                    if now - last_report >= .2:
+                        self.download_progress(received)
+                        last_report = now
+                timeout = self.context.remaining_seconds() if self.context else self.config.operation_timeout_seconds
+                timeout_kind = "collection_total" if self.context else "operation_total"
+                if self.context:
+                    file_remaining = self.context.file_timeout_seconds - (time.monotonic() - started)
+                    if file_remaining <= timeout:
+                        timeout, timeout_kind = max(.001, file_remaining), "file_total"
+                try:
+                    completed = run_bounded(command, input=request, env=_transport_environment(self.config.ssh_executable),
+                        timeout=timeout, idle_seconds=self.context.idle_timeout_seconds if self.context else None,
+                        sink=consume, context=self.context, process_group=False, timeout_kind=timeout_kind)
+                except subprocess.TimeoutExpired as error:
+                    if self.diagnostic_root is not None:
+                        preserve_log(self.diagnostic_root, "ssh-stderr", error.stderr or b"")
+                    raise
+                stream.flush(); os.fsync(stream.fileno())
+            if self.diagnostic_root is not None and completed.stderr:
+                preserve_log(self.diagnostic_root, "ssh-stderr", completed.stderr)
+            if completed.returncode:
+                raise subprocess.CalledProcessError(completed.returncode, command, stderr=completed.stderr)
+            if parsed is None:
+                raise RuntimeError("VM download returned no header")
+            self.download_progress(received)
+            return parsed, b""
+        from contextlib import nullcontext
+        with (upload_path.open("rb") if upload_path is not None else nullcontext(None)) as upload:
+            completed = self._run(command, input=request, input_stream=upload,
+                env=_transport_environment(self.config.ssh_executable), timeout=self.config.operation_timeout_seconds)
+        if completed.stderr and self.diagnostic_root is not None:
+            preserve_log(self.diagnostic_root, "ssh-stderr", completed.stderr)
         if completed.returncode != 0:
+            if self.diagnostic_root is not None:
+                preserve_log(self.diagnostic_root, "ssh-stdout", completed.stdout)
             detail = completed.stderr.decode("utf-8", errors="replace").strip()
-            suffix = f": {detail[-2048:]}" if detail else ""
+            suffix = f": {detail}" if detail else ""
             raise RuntimeError(f"VM transport command failed{suffix}")
         header, separator, trailing = completed.stdout.partition(b"\n")
         if not separator or len(header) > 1024 * 1024:
@@ -159,7 +261,7 @@ class SSHRemoteClient:
     def _destination(self) -> str:
         if not self.config.destination_resolver:
             return self.config.destination
-        completed = subprocess.run(
+        completed = self._run(
             list(self.config.destination_resolver),
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
@@ -168,9 +270,13 @@ class SSHRemoteClient:
             timeout=self.config.operation_timeout_seconds,
             check=False,
         )
+        if completed.stderr and self.diagnostic_root is not None:
+            preserve_log(self.diagnostic_root, "ssh-stderr", completed.stderr)
         if completed.returncode != 0:
+            if self.diagnostic_root is not None:
+                preserve_log(self.diagnostic_root, "ssh-stdout", completed.stdout)
             detail = completed.stderr.decode("utf-8", errors="replace").strip()
-            suffix = f": {detail[-2048:]}" if detail else ""
+            suffix = f": {detail}" if detail else ""
             raise RuntimeError(
                 f"VM destination resolver failed with exit code "
                 f"{completed.returncode}{suffix}"
@@ -205,34 +311,81 @@ class SSHTCADTransport:
             raise ValueError("remote exchange root must be absolute")
 
     def handle(self, operation: str, payload: dict[str, Any]) -> dict[str, Any]:
+        context = None
+        if payload.get("collection"):
+            context = CollectionContext(**payload["collection"])
+        elif payload.get("deadline_monotonic") is not None:
+            deadline = payload["deadline_monotonic"]
+            context = CollectionContext(deadline, deadline)
+        if isinstance(self.remote, SSHRemoteClient):
+            self.remote.context = context
+        if context and payload.get("progress_path"):
+            path = Path(payload["progress_path"])
+            context.report_progress = lambda value: atomic_json(path, value)
+        if operation == "execution_policy":
+            return self._rpc("tcad_execution_policy", {})
+        if operation == "capabilities":
+            if payload:
+                raise ValueError("capability discovery accepts no payload")
+            value = self._rpc("tcad_capabilities", {})
+            snapshots = tuple(
+                SolverCapabilitySnapshot.model_validate_json(
+                    _canonical(item), strict=True
+                )
+                for item in value.get("capabilities", ())
+            )
+            if not snapshots:
+                raise RuntimeError("remote TCAD runner returned no capabilities")
+            profiles = tuple(item.profile_id for item in snapshots)
+            if len(profiles) != len(set(profiles)):
+                raise RuntimeError("remote TCAD capability profiles are not unique")
+            return {
+                "capabilities": [item.model_dump(mode="json") for item in snapshots]
+            }
         if operation == "prepare":
             return self._prepare(payload)
+        if operation == "lookup_submission":
+            marker = self._read_marker(payload["submission"])
+            value = self._rpc(
+                "tcad_lookup_submission",
+                {
+                    "submission_sha256": marker["remote_submission"]["sha256"]
+                },
+            )
+            if value.get("found") is False:
+                return {"found": False}
+            return {
+                "found": True,
+                "run_id": value["run_id"],
+                "state": value["state"],
+            }
         if operation == "submit":
             marker = self._read_marker(payload["submission"])
-            value = self._rpc("tcad_submit", {"submission": marker["remote_submission"]})
+            value = self._rpc("tcad_submit", {"submission": marker["remote_submission"], "authorization": payload.get("authorization")})
             return {"run_id": value["run_id"], "state": value["state"]}
         if operation == "status":
             value = self._rpc("tcad_status", {"run_id": payload["run_id"]})
-            return {"state": value["state"]}
+            return {key: value[key] for key in ("state", "progress", "consumed_budget") if key in value}
         if operation == "cancel":
             value = self._rpc("tcad_cancel", {"run_id": payload["run_id"]})
             return {"state": value["state"]}
+        if operation == "inspect_outputs":
+            return self._inspect_outputs(str(payload["run_id"]), payload.get("relative_path"), payload.get("max_bytes", 32*1024*1024))
         if operation == "collect":
-            return self._collect(str(payload["run_id"]))
+            return self._collect(str(payload["run_id"]), context=context)
         raise ValueError("unsupported TCAD transport operation")
 
     def _prepare(self, payload: dict[str, Any]) -> dict[str, Any]:
         job_descriptor = FileDescriptor.model_validate(payload["job_spec"], strict=True)
         archive_descriptor = FileDescriptor.model_validate(payload["archive"], strict=True)
         job_raw = _read_descriptor(job_descriptor)
-        archive_raw = _read_descriptor(archive_descriptor)
         job = TCADJobSpec.model_validate_json(job_raw, strict=True)
         if job.input_archive != archive_descriptor:
             raise ValueError("job archive binding differs from prepare archive")
         digest = hashlib.sha256(job_raw).hexdigest()
         prefix = f"transport/{digest}"
         remote_archive_path = str(self.remote_exchange_root / prefix / "project.tar")
-        self.remote.put(f"{prefix}/project.tar", archive_raw)
+        self.remote.put_file(f"{prefix}/project.tar", archive_descriptor)
         remote_archive = job.input_archive.model_copy(
             update={"local_path": remote_archive_path}
         )
@@ -272,34 +425,86 @@ class SSHTCADTransport:
         FileDescriptor.model_validate(marker.get("remote_submission"), strict=True)
         return marker
 
-    def _collect(self, run_id: str) -> dict[str, Any]:
+    def _inspect_outputs(self, run_id: str, relative_path: str | None, max_bytes: int) -> dict[str, Any]:
+        if not re.fullmatch(r"run_[0-9a-f]{32}", run_id):
+            raise ValueError("invalid TCAD run identity")
+        value = self._rpc("tcad_inspect_outputs", {"run_id": run_id, "relative_path": relative_path, "max_bytes": max_bytes})
+        if value.get("status") != "available" or "file" not in value:
+            return value
+        descriptor = FileDescriptor.model_validate(value["file"], strict=True)
+        if descriptor.size_bytes > min(max_bytes, 32 * 1024 * 1024):
+            raise ValueError("inspection file exceeds limit")
+        path = self.local_result_root / "inspection" / run_id / descriptor.sha256
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=path.parent) as directory:
+            temporary = Path(directory) / "download"
+            self.remote.get_to(descriptor.local_path, temporary, min(max_bytes, 32 * 1024 * 1024))
+            observed = _local_descriptor("candidate", temporary, descriptor.media_type)
+            if observed.size_bytes != descriptor.size_bytes or observed.sha256 != descriptor.sha256:
+                return {"status": "changed_since_inspection", "reason": "download_changed"}
+            os.chmod(temporary, 0o400)
+            if path.exists():
+                existing = _local_descriptor("candidate", path, descriptor.media_type)
+                if existing.sha256 != descriptor.sha256:
+                    raise RuntimeError("immutable inspection copy changed")
+            else:
+                os.link(temporary, path)
+        return {**value, "file": _local_descriptor("candidate", path, descriptor.media_type).model_dump(mode="json")}
+
+    def _collect(self, run_id: str, *, context=None) -> dict[str, Any]:
         if not re.fullmatch(r"run_[0-9a-f]{32}", run_id):
             raise ValueError("invalid TCAD run identity")
         value = self._rpc("tcad_collect", {"run_id": run_id})
         output_directory = self.local_result_root / "runs" / run_id
         outputs: list[dict[str, Any]] = []
         seen: set[str] = set()
+        completed_bytes = 0
+        total_bytes = sum(item["size_bytes"] for item in value["outputs"])
+        def progress(**extra):
+            if context is not None:
+                context.report_progress({"completed_files": len(outputs), "completed_bytes": completed_bytes,
+                    "total_files": len(value["outputs"]), "total_bytes": total_bytes, **extra})
         for item in value["outputs"]:
+            if context is not None:
+                context.remaining_seconds()
             remote_descriptor = FileDescriptor.model_validate(item, strict=True)
             if remote_descriptor.name in seen:
                 raise RuntimeError("remote result names are not unique")
             seen.add(remote_descriptor.name)
-            raw = self.remote.get(remote_descriptor.local_path)
-            if (
-                len(raw) != remote_descriptor.size_bytes
-                or hashlib.sha256(raw).hexdigest() != remote_descriptor.sha256
-            ):
-                raise RuntimeError("downloaded result differs from remote descriptor")
-            name = re.sub(r"[^A-Za-z0-9_.-]+", "_", remote_descriptor.name)
+            name = (remote_descriptor.name if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", remote_descriptor.name)
+                else "output_" + hashlib.sha256(remote_descriptor.name.encode()).hexdigest())
             path = output_directory / name
-            _write_immutable(path, raw)
+            output_directory.mkdir(parents=True, exist_ok=True)
+            if path.is_symlink() or output_directory.is_symlink():
+                raise ValueError("collection cache must not contain symlinks")
+            def matches(candidate):
+                if not candidate.is_file() or candidate.stat().st_size != remote_descriptor.size_bytes:
+                    return False
+                digest = hashlib.sha256()
+                with candidate.open("rb") as stream:
+                    for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                        if context: context.remaining_seconds()
+                        digest.update(chunk)
+                return digest.hexdigest() == remote_descriptor.sha256
+            reused = matches(path)
+            if not reused:
+                temporary = path.with_name(path.name + ".download")
+                if temporary.is_symlink():
+                    raise ValueError("collection temporary file must not be a symlink")
+                try:
+                    if isinstance(self.remote, SSHRemoteClient):
+                        self.remote.download_progress = lambda count: progress(current_file=name, current_file_bytes=count)
+                    self.remote.get_to(remote_descriptor.local_path, temporary, remote_descriptor.size_bytes)
+                    if not matches(temporary):
+                        raise RuntimeError("downloaded result differs from remote descriptor")
+                    os.replace(temporary, path)
+                finally:
+                    temporary.unlink(missing_ok=True)
             outputs.append(
-                _local_descriptor(
-                    remote_descriptor.name,
-                    path,
-                    remote_descriptor.media_type,
-                ).model_dump(mode="json")
+                {**remote_descriptor.model_dump(mode="json"), "local_path": str(path)}
             )
+            completed_bytes += remote_descriptor.size_bytes
+            progress(current_file=None, current_file_bytes=0, reused=reused)
         return {"outputs": outputs}
 
     def _rpc(self, tool: str, arguments: dict[str, Any]) -> dict[str, Any]:
@@ -315,6 +520,8 @@ class SSHTCADTransport:
         if response.get("id") != request_id:
             raise RuntimeError("remote TCAD response identity differs")
         if "error" in response:
+            if tool == "tcad_execution_policy" and response["error"].get("message") == "unknown runner tool":
+                raise RemoteRunnerUpgradeRequired("Remote runner does not support execution policy discovery")
             raise RuntimeError(str(response["error"].get("message", "remote TCAD call failed")))
         try:
             value = response["result"]["structuredContent"]
@@ -367,12 +574,17 @@ def _write_immutable(path: Path, raw: bytes) -> None:
 
 
 def _local_descriptor(name: str, path: Path, media_type: str) -> LocalFileDescriptor:
-    raw = path.read_bytes()
+    digest = hashlib.sha256()
+    size = 0
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            size += len(chunk)
+            digest.update(chunk)
     return LocalFileDescriptor(
         name=name,
         local_path=str(path),
-        sha256=hashlib.sha256(raw).hexdigest(),
-        size_bytes=len(raw),
+        sha256=digest.hexdigest(),
+        size_bytes=size,
         media_type=media_type,
     )
 
@@ -420,13 +632,24 @@ def _transport_environment(executable: str) -> dict[str, str]:
     return environment
 
 
-def _read_config(path: Path) -> SSHTCADTransportConfig:
-    metadata = os.lstat(path)
-    if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
-        raise ValueError("SSH transport configuration must be a regular file")
-    if stat.S_IMODE(metadata.st_mode) & 0o022:
-        raise ValueError("SSH transport configuration must not be group/world writable")
-    return SSHTCADTransportConfig.model_validate_json(path.read_bytes(), strict=True)
+class SSHTransportConfigurationError(ValueError):
+    """Local configuration failure, before any remote operation is attempted."""
+
+
+class RemoteRunnerUpgradeRequired(RuntimeError):
+    """The deployed remote protocol predates mandatory execution policy discovery."""
+
+
+def read_transport_config(path: Path) -> SSHTCADTransportConfig:
+    try:
+        metadata = os.lstat(path)
+        if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
+            raise ValueError("SSH transport configuration must be a regular file")
+        if stat.S_IMODE(metadata.st_mode) & 0o022:
+            raise ValueError("SSH transport configuration must not be group/world writable")
+        return SSHTCADTransportConfig.model_validate_json(path.read_bytes(), strict=True)
+    except (OSError, ValueError) as error:
+        raise SSHTransportConfigurationError("TCAD SSH transport configuration is invalid") from error
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -442,9 +665,11 @@ def main(argv: list[str] | None = None) -> int:
         if request.get("schema_version") != 1 or not isinstance(request.get("payload"), dict):
             raise ValueError("transport request envelope is invalid")
         operation = str(request.get("operation"))
-        config = _read_config(args.config)
+        config = read_transport_config(args.config)
         transport = SSHTCADTransport(
-            SSHRemoteClient(config),
+            SSHRemoteClient(config, diagnostic_root=Path(os.environ.get(
+                "SCIDISCOVERY_TCAD_RESULT_ROOT", "/var/lib/scidiscovery/transport-results"
+            ))),
             local_result_root=os.environ.get(
                 "SCIDISCOVERY_TCAD_RESULT_ROOT", "/var/lib/scidiscovery/transport-results"
             ),
@@ -458,8 +683,13 @@ def main(argv: list[str] | None = None) -> int:
             "operation": operation,
             "ok": False,
             "error": str(error),
+            "engineering": exception_facts(error, layer="ssh_transport", action=operation),
             "payload": {},
         }
+        if isinstance(error, SSHTransportConfigurationError):
+            response["error_code"] = "tcad_transport_configuration_invalid"
+        elif isinstance(error, RemoteRunnerUpgradeRequired):
+            response["error_code"] = "tcad_runner_upgrade_required"
     sys.stdout.buffer.write(_canonical(response))
     return 0
 
@@ -473,5 +703,6 @@ __all__ = [
     "SSHRemoteClient",
     "SSHTCADTransport",
     "SSHTCADTransportConfig",
+    "read_transport_config",
     "main",
 ]

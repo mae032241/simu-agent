@@ -1,0 +1,23 @@
+{
+  "command": [
+    "/tmp/scid-execution-settings-installed/venv/bin/python",
+    "-I",
+    "docs/plans/evidence/agent-execution-settings/browser_check.py",
+    "/home/da/project/ai4s/tcad/git_release/scidiscovery-agent/123/scidiscovery-e5.2/docs/plans/evidence/agent-execution-settings"
+  ],
+  "exit_code": 1,
+  "stop_reason": null,
+  "duration_seconds": 13.131,
+  "peak_tree_rss_mib": 295.55,
+  "budget_mib": 512,
+  "peak_processes": [
+    {
+      "name": "chrome-headless-shell",
+      "rss_mib": 201.45
+    },
+    {
+      "name": "python",
+      "rss_mib": 94.1
+    }
+  ]
+}

@@ -1,0 +1,157 @@
+{
+  "request": {
+    "name": "fig4_continuation_execution_analysis_6",
+    "operation_id": "tcad.result.analyze.v1",
+    "inputs": [
+      {
+        "port": "execution_result",
+        "artifact_names": [
+          "fig4_continuation_execution_1.result"
+        ]
+      },
+      {
+        "port": "recovery_manifest",
+        "artifact_names": [
+          "fig4_continuation_execution_analysis_3.output.recovery_manifest"
+        ]
+      },
+      {
+        "port": "prior_analysis",
+        "artifact_names": [
+          "fig4_continuation_execution_analysis_5.output"
+        ]
+      },
+      {
+        "port": "prior_analysis_manifest",
+        "artifact_names": [
+          "fig4_continuation_execution_analysis_5.output.recovery_manifest"
+        ]
+      },
+      {
+        "port": "experiment_plan",
+        "artifact_names": [
+          "fig4_continuation_experiment_plan_3"
+        ]
+      },
+      {
+        "port": "experiment_review",
+        "artifact_names": [
+          "fig4_continuation_experiment_review_6.output"
+        ]
+      },
+      {
+        "port": "reviewed_package",
+        "artifact_names": [
+          "fig4_continuation_reviewed_package_2"
+        ]
+      },
+      {
+        "port": "runtime_manifest",
+        "artifact_names": [
+          "fig4_continuation_execution_1.output.tcad_manifest"
+        ]
+      },
+      {
+        "port": "runtime_attestation",
+        "artifact_names": []
+      },
+      {
+        "port": "solver_outputs",
+        "artifact_names": [
+          "fig4_continuation_execution_1.output.solver_log",
+          "fig4_continuation_execution_1.output.fig4_al_own_anchor_primary_plx",
+          "fig4_continuation_execution_analysis_3.output.tool_evidence_007",
+          "fig4_continuation_execution_analysis_3.output.tool_evidence_008",
+          "fig4_continuation_execution_analysis_3.output.tool_evidence_009",
+          "fig4_continuation_execution_analysis_3.output.tool_evidence_010",
+          "fig4_continuation_execution_analysis_3.output.tool_evidence_011",
+          "fig4_continuation_execution_analysis_3.output.tool_evidence_012",
+          "fig4_continuation_execution_analysis_3.output.tool_evidence_018",
+          "fig4_continuation_execution_analysis_3.output.tool_evidence_019",
+          "fig4_continuation_execution_analysis_3.output.tool_evidence_020",
+          "fig4_continuation_execution_analysis_3.output.tool_evidence_021",
+          "fig4_continuation_execution_analysis_3.output.tool_evidence_022"
+        ]
+      },
+      {
+        "port": "diagnostics",
+        "artifact_names": [
+          "fig4_continuation_execution_1.output.tcad_log"
+        ]
+      },
+      {
+        "port": "reference_material",
+        "artifact_names": [
+          "fig4_continuation_reference_bundle_1",
+          "fig4_continuation_figure_materialized_1.curve_tables_001",
+          "fig4_continuation_figure_materialized_1.curve_tables_002"
+        ]
+      },
+      {
+        "port": "current_progress",
+        "artifact_names": [
+          "fig4_continuation_objective_2"
+        ]
+      }
+    ],
+    "instruction": "依据绑定的整体研究目标、确切计划、匹配审查、执行结果、恢复证明、原始材料及既往封存分析，完成本轮最小充分结果分析。先读取本轮交付的完整工具合同，自行判断可计算范围及是否、如何调用所注册的分析工具；既往分析关于工具能力及指标对应关系的判断须对照当前合同重新核对，不原样继承。核对并引用实际来源，对能计算的部分保存可追溯记录，论证其是否满足原计划或具有何种有限意义；对不能完成的部分具体区分输入缺口、调用用法、计算语义和资源限制，保留未完成目标与后续条件。仅分析已有执行，不启动求解器。资源约束：一次一个计算进程树，含子进程累计 RSS 不超过 512 MiB，达到 448 MiB 时提前停止；不运行全量测试、并行批次或大规模压力测试。"
+  },
+  "preflight": {
+    "admissible": true,
+    "executor_kind": "agent",
+    "port": null,
+    "reason_code": null
+  },
+  "invocation": {
+    "executor_kind": "agent",
+    "operation_id": "tcad.result.analyze.v1",
+    "result": {
+      "agent_type": "op_tcad_result_analyze_v1_c43feb5f3f65",
+      "backend": "local_trusted",
+      "candidate_accepted": false,
+      "completed_at": null,
+      "created_at": "2026-09-11T10:40:42.369304Z",
+      "deadline_at": "2026-09-11T10:55:42.369304Z",
+      "diagnostic_summary": {
+        "failure": null,
+        "latest_rejection": null,
+        "latest_tool_error": null,
+        "recent_errors": [],
+        "rejection_count": 0
+      },
+      "draft_from": null,
+      "head_advance": null,
+      "last_activity_at": null,
+      "logical_name": "fig4_continuation_execution_analysis_6",
+      "name": "fig4_continuation_execution_analysis_6",
+      "operation_id": "tcad.result.analyze.v1",
+      "output_artifact_name": null,
+      "reason": null,
+      "recovery": {
+        "delivery_preserved": false,
+        "draft_available": false,
+        "recovery_pending": false,
+        "resume_available": false
+      },
+      "recovery_available": false,
+      "revision": 1,
+      "scheduler_signal": null,
+      "scheduler_signal_status": "unavailable",
+      "sealed_output": null,
+      "sealed_output_status": "unavailable",
+      "started_at": null,
+      "state": "queued"
+    }
+  },
+  "fresh_agent": true,
+  "parent_history_inherited": false,
+  "E6": {
+    "status": "not_verified",
+    "reason": "The current native Worker registration addresses the bound production service; the existing separate-process fixture launcher accepts a minimum of 1024 MiB, above this plan's 512 MiB ceiling. No isolated fixture Agent was launched and E7 will not substitute for E6.",
+    "evidence": "scripts/run_compiled_codex_worker.py:391"
+  },
+  "E7": {
+    "status": "running",
+    "scientific_result_accepted": false
+  }
+}

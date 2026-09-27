@@ -1,0 +1,21 @@
+{
+  "command": [
+    "env",
+    "PYTHONPATH=/tmp/scid-execution-settings-p0/site",
+    "python",
+    "docs/plans/evidence/agent-execution-settings/p0_fixture.py",
+    "queue",
+    "dispatch_a4"
+  ],
+  "exit_code": 0,
+  "stop_reason": null,
+  "duration_seconds": 1.647,
+  "peak_tree_rss_mib": 95.25,
+  "budget_mib": 512,
+  "peak_processes": [
+    {
+      "name": "python",
+      "rss_mib": 95.25
+    }
+  ]
+}

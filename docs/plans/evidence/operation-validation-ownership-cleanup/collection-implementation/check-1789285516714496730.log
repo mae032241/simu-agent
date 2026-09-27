@@ -1,0 +1,10 @@
+Traceback (most recent call last):
+  File "<stdin>", line 33, in <module>
+  File "/home/da/miniconda3/lib/python3.12/subprocess.py", line 1209, in communicate
+    stdout, stderr = self._communicate(input, endtime, timeout)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/da/miniconda3/lib/python3.12/subprocess.py", line 2116, in _communicate
+    self._check_timeout(endtime, orig_timeout, stdout, stderr)
+  File "/home/da/miniconda3/lib/python3.12/subprocess.py", line 1253, in _check_timeout
+    raise TimeoutExpired(
+subprocess.TimeoutExpired: Command '['/home/da/miniconda3/bin/python', '-c', "import os,sys\nfrom pathlib import Path\nfrom scidiscovery.artifact_agent.service import execution_collection as module\noriginal=module.os.scandir\ndef failing(path):\n    if str(path)=='/proc':raise OSError(5,'injected /proc enumeration failure')\n    return original(path)\nmodule.os.scandir=failing\nraise SystemExit(module._guard(Path(sys.argv[1])))\n", '/tmp/scid-r5-guard-proc-error-tmgnq30c/request.json']' timed out after 3 seconds

@@ -3,27 +3,66 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import sqlite3
 import stat
 import tempfile
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
 from pydantic import ValidationError
 
-from ..schema.approval import ApprovalRequest, HumanDecision
+from ..schema.approval import (
+    ApprovalRequest,
+    CompiledApprovalIdentity,
+    HumanDecision,
+    execution_decision_authorizes,
+)
 from ..schema.artifact import ArtifactRegistration
 from ..schema.execution import (
+    ExecutionAdmission,
     ExecutionRequest,
     ExecutionResultManifest,
     LocalFileDescriptor,
 )
 from ..schema.refs import ActorRef, ArtifactRef
+from ..schema.common import canonical_json, canonical_sha256
+from ..storage import (
+    ArtifactIdentityConflictError,
+    ArtifactNotFoundError,
+    IdempotencyConflictError,
+)
 from .approvals import ApprovalService
 from .artifacts import ArtifactService
+
+
+# Shared with identity-preserving archive schema projection.
+EXECUTION_POLICY_SCHEMA = """
+                CREATE TABLE IF NOT EXISTS execution_policy_authorizations (
+                    execution_id TEXT NOT NULL, digest TEXT NOT NULL,
+                    record_json BLOB NOT NULL, created_at TEXT NOT NULL,
+                    PRIMARY KEY (execution_id, digest)
+                );
+                CREATE TABLE IF NOT EXISTS execution_current_policy (
+                    execution_id TEXT PRIMARY KEY, digest TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS execution_budget_pools (
+                    executor TEXT NOT NULL, budget_key TEXT NOT NULL,
+                    allowance_json BLOB NOT NULL,
+                    PRIMARY KEY (executor, budget_key)
+                );
+                CREATE TABLE IF NOT EXISTS execution_budget_reservations (
+                    execution_id TEXT PRIMARY KEY, executor TEXT NOT NULL,
+                    budget_key TEXT NOT NULL, reserved_json BLOB NOT NULL,
+                    consumed_json BLOB
+                );
+                CREATE TABLE IF NOT EXISTS execution_prepared_submissions (
+                    execution_id TEXT PRIMARY KEY, descriptor_json BLOB NOT NULL
+                );
+"""
 
 
 class ExecutionServiceError(RuntimeError):
@@ -46,6 +85,7 @@ class ExecutionStatusView:
     external_run_id: str | None
     result_ref: ArtifactRef | None
     created_at: str
+    authorization: dict = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -67,7 +107,9 @@ class ExecutionService:
         database_path: Path | str,
         exchange_root: Path | str,
         service_actor: ActorRef,
+        deadline_monotonic: float | None = None,
     ) -> None:
+        self.deadline_monotonic = deadline_monotonic
         self.artifacts = artifacts
         self.approvals = approvals
         self.database_path = Path(database_path).expanduser().absolute()
@@ -77,39 +119,124 @@ class ExecutionService:
         self.service_actor = service_actor
         self._initialize()
 
+    @staticmethod
+    def resolve_result_scope(*, artifacts, database_path, result_ref):
+        """Trusted read-only lookup from an already bound immutable result."""
+        result = ExecutionResultManifest.model_validate_json(artifacts.read(result_ref), strict=True)
+        with sqlite3.connect(database_path) as connection:
+            connection.row_factory = sqlite3.Row
+            row = connection.execute('SELECT * FROM executions WHERE execution_id=?', (result.execution_id,)).fetchone()
+        if row is None or row['state'] != 'collected' or row['external_run_id'] != result.external_run_id or _parse_ref(row['result_ref_json']) != result_ref:
+            raise ExecutionStateConflict('bound result does not identify a collected execution')
+        return {'executor':row['executor'], 'external_run_id':result.external_run_id,
+                'payload_ref':_parse_ref(row['payload_ref_json']), 'result_ref':result_ref}
+
     def create(
         self,
         *,
         executor: str,
         preparation_profile: str,
         payload_ref: ArtifactRef,
+        compiled_identity: CompiledApprovalIdentity | None = None,
+        labels: dict[str, str] | None = None,
+        execution_id: str | None = None,
     ) -> str:
         self.artifacts.verify(payload_ref)
-        execution_id = f"exe_{uuid.uuid4().hex}"
-        request = ExecutionRequest(
+        execution_id = execution_id or f"exe_{uuid.uuid4().hex}"
+        expected_labels = labels or {}
+        request_artifact_id = "execution_request_" + hashlib.sha256(
+            execution_id.encode("utf-8")
+        ).hexdigest()
+        registration = ArtifactRegistration(
+            artifact_id=request_artifact_id,
+            kind="execution_request",
+            schema_id="scidiscovery.execution-request",
+            payload_schema_version=1,
+            media_type="application/json",
+            creator=self.service_actor,
+            parent_refs=(payload_ref,),
+            labels=expected_labels,
+            confidentiality="approval_only",
+        )
+        idempotency_key = f"execution:{execution_id}:request"
+        with self._connect() as connection:
+            existing = connection.execute(
+                "SELECT * FROM executions WHERE execution_id = ?", (execution_id,)
+            ).fetchone()
+        if existing is not None:
+            request_ref = _parse_ref(existing["request_ref_json"])
+            if (
+                existing["executor"] != executor
+                or _parse_ref(existing["payload_ref_json"]) != payload_ref
+                or request_ref.artifact_id != request_artifact_id
+            ):
+                raise ExecutionServiceError(
+                    "execution identity is already bound to a different request"
+                )
+            request = self._validate_request_artifact(
+                request_ref,
+                execution_id=execution_id,
+                executor=executor,
+                preparation_profile=preparation_profile,
+                payload_ref=payload_ref,
+                compiled_identity=compiled_identity,
+                labels=expected_labels,
+            )
+            replay = self.artifacts.register(
+                request.canonical_json(),
+                registration,
+                idempotency_key=idempotency_key,
+            )
+            if replay.ref != request_ref:
+                raise ExecutionServiceError(
+                    "execution request replay returned a different Artifact"
+                )
+            return execution_id
+        existing_request = self._request_artifact_by_id(
+            request_artifact_id,
+            execution_id=execution_id,
+            executor=executor,
+            preparation_profile=preparation_profile,
+            payload_ref=payload_ref,
+            compiled_identity=compiled_identity,
+            labels=expected_labels,
+        )
+        request = existing_request or ExecutionRequest(
             execution_id=execution_id,
             executor=executor,
             preparation_profile=preparation_profile,
             payload_ref=payload_ref,
             created_at=_timestamp(),
+            compiled_identity=compiled_identity,
         )
-        request_ref = self.artifacts.register(
-            request.canonical_json(),
-            ArtifactRegistration(
-                kind="execution_request",
-                schema_id="scidiscovery.execution-request",
-                payload_schema_version=1,
-                media_type="application/json",
-                creator=self.service_actor,
-                parent_refs=(payload_ref,),
-                confidentiality="approval_only",
-            ),
-            idempotency_key=f"execution:{execution_id}:request",
-        ).ref
+        try:
+            request_envelope = self.artifacts.register(
+                request.canonical_json(),
+                registration,
+                idempotency_key=idempotency_key,
+            )
+        except (ArtifactIdentityConflictError, IdempotencyConflictError):
+            request = self._request_artifact_by_id(
+                request_artifact_id,
+                execution_id=execution_id,
+                executor=executor,
+                preparation_profile=preparation_profile,
+                payload_ref=payload_ref,
+                compiled_identity=compiled_identity,
+                labels=expected_labels,
+            )
+            if request is None:
+                raise
+            request_envelope = self.artifacts.register(
+                request.canonical_json(),
+                registration,
+                idempotency_key=idempotency_key,
+            )
+        request_ref = request_envelope.ref
         with self._connect() as connection:
             connection.execute(
                 """
-                INSERT INTO executions (
+                INSERT OR IGNORE INTO executions (
                     execution_id, executor, request_ref_json, payload_ref_json,
                     state, created_at
                 ) VALUES (?, ?, ?, ?, 'created', ?)
@@ -122,12 +249,98 @@ class ExecutionService:
                     request.created_at,
                 ),
             )
+        with self._connect() as connection:
+            created = self._row(connection, execution_id)
+        if (
+            created["executor"] != executor
+            or _parse_ref(created["request_ref_json"]) != request_ref
+            or _parse_ref(created["payload_ref_json"]) != payload_ref
+        ):
+            raise ExecutionServiceError(
+                "execution identity is already bound to a different request"
+            )
         return execution_id
+
+    def _request_artifact_by_id(
+        self,
+        artifact_id: str,
+        *,
+        execution_id: str,
+        executor: str,
+        preparation_profile: str,
+        payload_ref: ArtifactRef,
+        compiled_identity: CompiledApprovalIdentity | None,
+        labels: dict[str, str],
+    ) -> ExecutionRequest | None:
+        try:
+            envelope = self.artifacts.get_by_id(artifact_id)
+        except ArtifactNotFoundError:
+            return None
+        return self._validate_request_artifact(
+            envelope.ref,
+            execution_id=execution_id,
+            executor=executor,
+            preparation_profile=preparation_profile,
+            payload_ref=payload_ref,
+            compiled_identity=compiled_identity,
+            labels=labels,
+        )
+
+    def _validate_request_artifact(
+        self,
+        request_ref: ArtifactRef,
+        *,
+        execution_id: str,
+        executor: str,
+        preparation_profile: str,
+        payload_ref: ArtifactRef,
+        compiled_identity: CompiledApprovalIdentity | None,
+        labels: dict[str, str],
+    ) -> ExecutionRequest:
+        envelope = self.artifacts.catalog(request_ref)
+        try:
+            request = ExecutionRequest.model_validate_json(
+                self.artifacts.read(request_ref), strict=True
+            )
+        except ValidationError as error:
+            raise ExecutionServiceError(
+                "stored execution request is invalid"
+            ) from error
+        if (
+            request.execution_id != execution_id
+            or request.executor != executor
+            or request.preparation_profile != preparation_profile
+            or request.payload_ref != payload_ref
+            or request.compiled_identity != compiled_identity
+            or envelope.kind != "execution_request"
+            or envelope.schema_id != "scidiscovery.execution-request"
+            or envelope.payload_schema_version != 1
+            or envelope.media_type != "application/json"
+            or envelope.creator != self.service_actor
+            or envelope.parent_refs != (payload_ref,)
+            or envelope.labels != labels
+            or envelope.confidentiality != "approval_only"
+        ):
+            raise ExecutionServiceError(
+                "execution identity is already bound to a different request"
+            )
+        return request
 
     def request_artifact_id(self, execution_id: str) -> str:
         with self._connect() as connection:
             row = self._row(connection, execution_id)
         return _parse_ref(row["request_ref_json"]).artifact_id
+
+    def record_references(self, execution_id: str) -> dict:
+        """Read persisted control references without revalidating old payloads."""
+
+        with self._connect() as connection:
+            row = self._row(connection, execution_id)
+        return {
+            "request_ref": _parse_ref(row["request_ref_json"]),
+            "payload_ref": _parse_ref(row["payload_ref_json"]),
+            "result_ref": _parse_optional_ref(row["result_ref_json"]),
+        }
 
     def approval_subject_refs(self, execution_id: str) -> tuple[ArtifactRef, ArtifactRef]:
         """Return the exact request and executable payload a human must review."""
@@ -157,30 +370,51 @@ class ExecutionService:
             raise ExecutionServiceError("stored execution request is invalid") from error
 
     def authorize(
-        self, *, execution_id: str, approval_id: str
+        self,
+        *,
+        execution_id: str,
+        approval_id: str,
+        compiled_identity: CompiledApprovalIdentity,
     ) -> LocalFileDescriptor:
+        execution_request = self.request(execution_id)
+        if execution_request.compiled_identity != compiled_identity:
+            raise ExecutionApprovalError(
+                "execution request compiled identity is missing or changed"
+            )
         approval = self.approvals.status(approval_id)
         if approval.status != "decided" or approval.decision_ref is None:
             raise ExecutionApprovalError("execution approval is not decided")
         raw_decision = self.artifacts.read(approval.decision_ref)
         decision = HumanDecision.model_validate_json(raw_decision, strict=True)
-        if decision.selected_option != "authorize_execution":
-            raise ExecutionApprovalError("human decision did not authorize execution")
         try:
             request_approval = ApprovalRequest.model_validate_json(
-                self.artifacts.read(decision.approval_request_ref), strict=True
+                self.artifacts.read(approval.approval_request_ref), strict=True
             )
         except ValidationError as error:
             raise ExecutionApprovalError("execution approval request is invalid") from error
+        if decision.approval_request_ref != approval.approval_request_ref:
+            raise ExecutionApprovalError(
+                "execution decision does not bind the stored approval request"
+            )
         if request_approval.kind != "execution_authorization":
             raise ExecutionApprovalError("approval is not an execution authorization")
+        if not execution_decision_authorizes(request_approval, decision):
+            raise ExecutionApprovalError("human decision did not authorize execution")
+        if request_approval.compiled_identity != compiled_identity:
+            raise ExecutionApprovalError(
+                "execution approval compiled identity is missing or changed"
+            )
         connection = self._connect()
         try:
             connection.execute("BEGIN IMMEDIATE")
             row = self._row(connection, execution_id)
             request_ref = _parse_ref(row["request_ref_json"])
             payload_ref = _parse_ref(row["payload_ref_json"])
-            if decision.subject_refs != (request_ref, payload_ref):
+            exact_subjects = (request_ref, payload_ref)
+            if (
+                request_approval.subject_refs != exact_subjects
+                or decision.subject_refs != exact_subjects
+            ):
                 raise ExecutionApprovalError(
                     "human decision does not bind the exact request and payload"
                 )
@@ -191,7 +425,7 @@ class ExecutionService:
                 payload,
                 media_type=self.artifacts.catalog(payload_ref).media_type,
             )
-            if row["state"] == "authorized":
+            if row["state"] == "authorized" and row["decision_ref_json"] is not None:
                 existing_decision = _parse_optional_ref(row["decision_ref_json"])
                 if existing_decision != approval.decision_ref:
                     raise ExecutionStateConflict(
@@ -200,11 +434,11 @@ class ExecutionService:
                 _read_descriptor(descriptor)
                 connection.execute("ROLLBACK")
                 return descriptor
-            if row["state"] != "created":
+            if row["state"] not in {"created", "authorized"}:
                 raise ExecutionStateConflict(
                     "execution is not authorizable from current state"
                 )
-            directory.mkdir(mode=0o770, exist_ok=False)
+            directory.mkdir(mode=0o770, exist_ok=True)
             _write_readonly(Path(descriptor.local_path), payload)
             connection.execute(
                 """
@@ -223,10 +457,246 @@ class ExecutionService:
             connection.close()
         return descriptor
 
+    def authorize_policy(self, *, execution_id: str, admission: ExecutionAdmission,
+                         compiled_identity: CompiledApprovalIdentity, submission_confirmed_absent: bool = False) -> LocalFileDescriptor:
+        request = self.request(execution_id)
+        if request.compiled_identity != compiled_identity or admission.outcome != "policy":
+            raise ExecutionApprovalError("policy authorization has an invalid request binding")
+        if canonical_sha256(admission.policy) != admission.policy_digest:
+            raise ExecutionApprovalError("policy authorization digest differs from its projection")
+        request_ref, payload_ref = self.approval_subject_refs(execution_id)
+        record = {"source": "policy", "request_ref": request_ref.model_dump(mode="json"),
+            "payload_ref": payload_ref.model_dump(mode="json"),
+            "compiled_identity": compiled_identity.model_dump(mode="json"),
+            "admission": admission.model_dump(mode="json")}
+        payload = self.artifacts.read(payload_ref)
+        directory = self.exchange_root / execution_id
+        descriptor = _payload_descriptor(directory / "payload.bin", payload,
+            media_type=self.artifacts.catalog(payload_ref).media_type)
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = self._row(connection, execution_id)
+            if row["state"] not in {"created", "authorized"}:
+                raise ExecutionStateConflict("execution is not policy-authorizable from current state")
+            if row["external_run_id"] is not None:
+                raise ExecutionStateConflict("started execution cannot be reauthorized")
+            prior = self._current_policy_record(connection, execution_id)
+            prepared = connection.execute("SELECT 1 FROM execution_prepared_submissions WHERE execution_id=?", (execution_id,)).fetchone()
+            if prior is not None and prior != record and prepared is not None and not submission_confirmed_absent:
+                raise ExecutionApprovalError("prepared submission must be looked up before policy reauthorization")
+            self._reserve_budget(connection, execution_id, request.executor, admission)
+            directory.mkdir(mode=0o770, exist_ok=True)
+            if Path(descriptor.local_path).exists():
+                _read_descriptor(descriptor)
+            else:
+                _write_readonly(Path(descriptor.local_path), payload)
+            self._record_policy_decision(connection, execution_id, record)
+            connection.execute("UPDATE executions SET state='authorized', decision_ref_json=NULL WHERE execution_id=?", (execution_id,))
+            connection.execute("COMMIT")
+        return descriptor
+
+    @staticmethod
+    def _current_policy_record(connection, execution_id):
+        row = connection.execute("SELECT history.record_json FROM execution_current_policy active JOIN execution_policy_authorizations history ON history.execution_id=active.execution_id AND history.digest=active.digest WHERE active.execution_id=?", (execution_id,)).fetchone()
+        return None if row is None else json.loads(row["record_json"])
+
+    def _record_policy_decision(self, connection, execution_id, record):
+        prior = self._current_policy_record(connection, execution_id)
+        if prior is not None and any(prior[key] != record[key] for key in ("request_ref", "payload_ref", "compiled_identity")):
+            raise ExecutionApprovalError("policy reauthorization changed the exact execution identity")
+        if prior is not None and any(prior["admission"][key] != record["admission"][key] for key in ("budget_key", "budget")):
+            raise ExecutionApprovalError("policy reauthorization changed the frozen budget owner or request")
+        digest = canonical_sha256(record)
+        connection.execute("INSERT OR IGNORE INTO execution_policy_authorizations VALUES (?, ?, ?, ?)",
+            (execution_id, digest, canonical_json(record), _timestamp()))
+        connection.execute("INSERT INTO execution_current_policy VALUES (?, ?) ON CONFLICT(execution_id) DO UPDATE SET digest=excluded.digest", (execution_id, digest))
+
+    def defer_policy(self, *, execution_id, admission):
+        """Record human/deny reassessment; release only a never-prepared reservation."""
+        if admission.outcome not in {"require_human_approval", "deny"}:
+            raise ExecutionApprovalError("policy deferral requires a non-autonomous outcome")
+        if canonical_sha256(admission.policy) != admission.policy_digest:
+            raise ExecutionApprovalError("policy deferral digest differs from its projection")
+        request = self.request(execution_id)
+        request_ref, payload_ref = self.approval_subject_refs(execution_id)
+        record = {"source": "policy", "request_ref": request_ref.model_dump(mode="json"),
+            "payload_ref": payload_ref.model_dump(mode="json"),
+            "compiled_identity": request.compiled_identity.model_dump(mode="json"),
+            "admission": admission.model_dump(mode="json")}
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = self._row(connection, execution_id)
+            if row["state"] not in {"created", "authorized"} or row["external_run_id"] is not None:
+                raise ExecutionStateConflict("submitted execution cannot reopen its budget")
+            self._record_policy_decision(connection, execution_id, record)
+            prepared = connection.execute("SELECT 1 FROM execution_prepared_submissions WHERE execution_id=?", (execution_id,)).fetchone()
+            if prepared is None:
+                connection.execute("DELETE FROM execution_budget_reservations WHERE execution_id=? AND consumed_json IS NULL", (execution_id,))
+                connection.execute("UPDATE executions SET state='created', decision_ref_json=NULL WHERE execution_id=?", (execution_id,))
+            else:
+                connection.execute("UPDATE executions SET decision_ref_json=NULL WHERE execution_id=?", (execution_id,))
+            # A prepared/unknown submission keeps both identity and reservation.
+            # It remains recordable if a subsequent exact lookup finds acceptance.
+            connection.execute("COMMIT")
+
+    def scientific_budget_owner(self, payload_ref: ArtifactRef, schemas: tuple[str, ...]) -> str:
+        return self.scientific_budget_owner_from_refs((payload_ref,), schemas)
+
+    def scientific_budget_owner_from_refs(self, refs: tuple[ArtifactRef, ...], schemas: tuple[str, ...]) -> str:
+        """Use the same lineage traversal before and after payload sealing."""
+        if not schemas:
+            raise ExecutionApprovalError("policy authorization requires a declared scientific budget subject")
+        # Prefer the explicit skeleton; otherwise use the nearest exact detailed
+        # plan. Revision/project/review hashes do not create an allowance pool.
+        for schema in schemas:
+            frontier, seen = refs, set()
+            while frontier:
+                matches, following = set(), []
+                for ref in frontier:
+                    if ref in seen:
+                        continue
+                    seen.add(ref)
+                    envelope = self.artifacts.catalog(ref)
+                    if envelope.schema_id == schema:
+                        matches.add(ref)
+                    else:
+                        following.extend(envelope.parent_refs)
+                if matches:
+                    if len(matches) != 1:
+                        raise ExecutionApprovalError("scientific execution budget subject is ambiguous")
+                    return canonical_sha256(next(iter(matches)))
+                frontier = tuple(following)
+        raise ExecutionApprovalError("scientific execution budget subject is missing")
+
+    @staticmethod
+    def _budget_remaining(connection, executor, admission, execution_id=None):
+        pool = connection.execute("SELECT allowance_json FROM execution_budget_pools WHERE executor=? AND budget_key=?",
+            (executor, admission.budget_key)).fetchone()
+        remaining = dict(admission.allowance) if pool is None else json.loads(pool["allowance_json"])
+        if (set(remaining) != set(admission.budget) or set(admission.allowance) != set(remaining)
+                or any(type(v) is not int or v < 1 for v in (*admission.budget.values(), *admission.allowance.values()))):
+            raise ExecutionApprovalError("execution budget dimensions are invalid")
+        remaining = {key: min(value, admission.allowance[key]) for key, value in remaining.items()}
+        rows = connection.execute("SELECT * FROM execution_budget_reservations WHERE executor=? AND budget_key=?",
+            (executor, admission.budget_key)).fetchall()
+        for row in rows:
+            if row["execution_id"] == execution_id:
+                continue
+            used = json.loads(row["consumed_json"] or row["reserved_json"])
+            for key in remaining:
+                remaining[key] -= used[key]
+        return remaining
+
+    def budget_admission(self, *, executor, admission, execution_id=None, allow_denial=False):
+        with self._connect() as connection:
+            remaining = self._budget_remaining(connection, executor, admission, execution_id)
+        if admission.outcome == "policy" and any(admission.budget[key] > remaining[key] for key in remaining):
+            admission = admission.model_copy(update={"outcome": admission.outside_allowance,
+                "reason": "cumulative_budget_exceeded"})
+        if admission.outcome == "deny" and not allow_denial:
+            raise ExecutionApprovalError("cumulative task budget exhausted: " + json.dumps(remaining, sort_keys=True))
+        return admission
+
+    def _reserve_budget(self, connection, execution_id, executor, admission):
+        existing = connection.execute("SELECT * FROM execution_budget_reservations WHERE execution_id=?", (execution_id,)).fetchone()
+        if existing is not None:
+            if existing["budget_key"] != admission.budget_key or json.loads(existing["reserved_json"]) != dict(admission.budget):
+                raise ExecutionApprovalError("execution reservation differs from its frozen budget")
+            remaining = self._budget_remaining(connection, executor, admission, execution_id)
+            if admission.outcome == "policy" and any(admission.budget[key] > remaining[key] for key in remaining):
+                raise ExecutionApprovalError("cumulative task budget changed before reauthorization")
+            return
+        remaining = self._budget_remaining(connection, executor, admission)
+        if admission.outcome == "policy" and any(admission.budget[key] > remaining[key] for key in remaining):
+            raise ExecutionApprovalError("cumulative task budget changed before reservation")
+        connection.execute("INSERT OR IGNORE INTO execution_budget_pools VALUES (?, ?, ?)",
+            (executor, admission.budget_key, canonical_json(admission.allowance)))
+        connection.execute("INSERT INTO execution_budget_reservations VALUES (?, ?, ?, ?, NULL)",
+            (execution_id, executor, admission.budget_key, canonical_json(admission.budget)))
+
+    def reserve_human_budget(self, execution_id, admission):
+        request = self.request(execution_id)
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = self._row(connection, execution_id)
+            if row["decision_ref_json"] is None:
+                raise ExecutionApprovalError("human budget override requires the exact sealed decision")
+            self._reserve_budget(connection, execution_id, request.executor, admission)
+            connection.execute("COMMIT")
+
+    def budget_owner(self, execution_id):
+        with self._connect() as connection:
+            row = connection.execute("SELECT budget_key FROM execution_budget_reservations WHERE execution_id=?", (execution_id,)).fetchone()
+        return None if row is None else row["budget_key"]
+
+    def settle_budget(self, execution_id, consumed):
+        """Only terminal adapter observations settle a reservation; missing data never refunds."""
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            execution = self._row(connection, execution_id)
+            row = connection.execute("SELECT * FROM execution_budget_reservations WHERE execution_id=?", (execution_id,)).fetchone()
+            if row is None or row["consumed_json"] is not None:
+                return
+            reserved = json.loads(row["reserved_json"])
+            if execution["state"] not in {"succeeded", "failed", "cancelled", "collected"}:
+                raise ExecutionStateConflict("only terminal execution can settle its budget")
+            if set(consumed) != set(reserved) or any(type(v) is not int or v < 0 for v in consumed.values()):
+                raise ExecutionApprovalError("terminal resource observation is invalid")
+            connection.execute("UPDATE execution_budget_reservations SET consumed_json=? WHERE execution_id=?",
+                (canonical_json(consumed), execution_id))
+            connection.execute("COMMIT")
+
+    def authorization(self, execution_id: str) -> dict:
+        with self._connect() as connection:
+            row = self._row(connection, execution_id)
+            if row["decision_ref_json"] is not None:
+                return {"source": "human", "decision_ref": json.loads(row["decision_ref_json"])}
+            value = self._current_policy_record(connection, execution_id)
+        if value is None:
+            return {"source": "none"}
+        if value["admission"]["outcome"] != "policy":
+            return {"source": "none", "outcome": value["admission"]["outcome"],
+                "policy_digest": value["admission"]["policy_digest"], "reason": value["admission"]["reason"],
+                "budget": value["admission"]["budget"], "allowance": value["admission"]["allowance"]}
+        return {"source": "policy", "policy_digest": value["admission"]["policy_digest"],
+            "budget": value["admission"]["budget"], "budget_key": value["admission"]["budget_key"]}
+
+    def prepared_submission(self, execution_id: str) -> LocalFileDescriptor | None:
+        with self._connect() as connection:
+            row = connection.execute("SELECT descriptor_json FROM execution_prepared_submissions WHERE execution_id=?", (execution_id,)).fetchone()
+        return None if row is None else LocalFileDescriptor.model_validate_json(row["descriptor_json"], strict=True)
+
+    def record_prepared_submission(self, execution_id: str, descriptor: LocalFileDescriptor, *, policy_digest: str | None = None) -> None:
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = self._row(connection, execution_id)
+            if row["state"] != "authorized" or row["external_run_id"] is not None:
+                raise ExecutionStateConflict("execution authorization changed before preparation completed")
+            active = self._current_policy_record(connection, execution_id)
+            if policy_digest is not None and (active is None or active["admission"]["policy_digest"] != policy_digest):
+                raise ExecutionApprovalError("policy changed during preparation; reauthorize before submitting")
+            connection.execute("INSERT OR IGNORE INTO execution_prepared_submissions VALUES (?, ?)", (execution_id, descriptor.canonical_json()))
+        if self.prepared_submission(execution_id) != descriptor:
+            raise ExecutionStateConflict("prepared submission differs from frozen execution")
+
     def record_submission(self, *, execution_id: str, external_run_id: str) -> None:
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             row = self._row(connection, execution_id)
+            if (
+                row["state"] in {
+                    "submitted",
+                    "running",
+                    "cancelling",
+                    "succeeded",
+                    "failed",
+                    "cancelled",
+                    "collected",
+                }
+                and row["external_run_id"] == external_run_id
+            ):
+                connection.execute("ROLLBACK")
+                return
             if row["state"] != "authorized":
                 raise ExecutionStateConflict("execution is not submittable from current state")
             connection.execute(
@@ -291,7 +761,11 @@ class ExecutionService:
         execution_id: str,
         external_run_id: str,
         outputs: tuple[LocalFileDescriptor, ...],
+        collected_at: str | None = None,
+        context=None,
     ) -> ArtifactRef:
+        if context is not None:
+            context.remaining_seconds()
         with self._connect() as connection:
             row = self._row(connection, execution_id)
         if row["external_run_id"] != external_run_id:
@@ -304,10 +778,11 @@ class ExecutionService:
         payload_ref = _parse_ref(row["payload_ref_json"])
         output_refs = []
         for descriptor in outputs:
-            content = _read_descriptor(descriptor)
+            if context is not None:
+                context.remaining_seconds()
             output_refs.append(
-                self.artifacts.register(
-                    content,
+                self.artifacts.register_file(
+                    descriptor.local_path,
                     ArtifactRegistration(
                         kind="execution_output",
                         schema_id="opaque",
@@ -317,6 +792,9 @@ class ExecutionService:
                         parent_refs=(request_ref, payload_ref),
                         labels={"execution_id": execution_id, "logical_name": descriptor.name},
                     ),
+                    expected_sha256=descriptor.sha256,
+                    expected_size=descriptor.size_bytes,
+                    check_budget=None if context is None else context.remaining_seconds,
                     idempotency_key=f"execution:{execution_id}:output:{descriptor.name}",
                 ).ref
             )
@@ -325,7 +803,7 @@ class ExecutionService:
             external_run_id=external_run_id,
             terminal_state=row["state"],
             output_refs=tuple(output_refs),
-            collected_at=_timestamp(),
+            collected_at=collected_at or _timestamp(),
         )
         result_ref = self.artifacts.register(
             manifest.canonical_json(),
@@ -339,7 +817,11 @@ class ExecutionService:
             ),
             idempotency_key=f"execution:{execution_id}:result",
         ).ref
+        if context is not None:
+            context.remaining_seconds()
         with self._connect() as connection:
+            if context is not None:
+                connection.execute(f"PRAGMA busy_timeout = {max(1, int(context.remaining_seconds() * 1000))}")
             connection.execute("BEGIN IMMEDIATE")
             current = self._row(connection, execution_id)
             if current["state"] != row["state"]:
@@ -351,6 +833,22 @@ class ExecutionService:
             connection.execute("COMMIT")
         return result_ref
 
+    def observation(self, execution_id: str) -> dict:
+        from .engineering_diagnostics import read_json
+        self.status(execution_id)
+        try:
+            return read_json(self.exchange_root / execution_id / "observation.json")
+        except FileNotFoundError:
+            return {}
+        except (OSError, ValueError) as error:
+            from .engineering_diagnostics import exception_facts
+            return {"observation_error": exception_facts(error, layer="execution_observation", action="read")}
+
+    def save_observation(self, execution_id: str, value: dict) -> None:
+        from .engineering_diagnostics import atomic_json
+        self.status(execution_id)
+        atomic_json(self.exchange_root / execution_id / "observation.json", value)
+
     def status(self, execution_id: str) -> ExecutionStatusView:
         with self._connect() as connection:
             row = self._row(connection, execution_id)
@@ -361,6 +859,7 @@ class ExecutionService:
             external_run_id=row["external_run_id"],
             result_ref=_parse_optional_ref(row["result_ref_json"]),
             created_at=row["created_at"],
+            authorization=self.authorization(execution_id),
         )
 
     def list_statuses(
@@ -395,6 +894,21 @@ class ExecutionService:
         with self._connect() as connection:
             rows = connection.execute(query, parameters).fetchall()
         return tuple(self.status(row["execution_id"]) for row in rows)
+
+    def active_ids(self, *, instance_id: str, scheduler_database_path: Path | str,
+                   limit: int = 31) -> tuple[str, ...]:
+        """Read exact instance-owned unfinished or uncollected execution IDs."""
+        if type(limit) is not int or not 1 <= limit <= 101:
+            raise ValueError("active execution limit must be between 1 and 101")
+        with self._connect() as connection:
+            connection.execute("ATTACH DATABASE ? AS workbench_scope", (str(scheduler_database_path),))
+            rows = connection.execute(
+                "SELECT execution_id FROM executions e WHERE state NOT IN ('collected', 'abandoned') "
+                "AND EXISTS (SELECT 1 FROM workbench_scope.scheduler_bindings b "
+                "WHERE b.instance = ? AND b.namespace = 'execution' AND b.object_id = e.execution_id) "
+                "ORDER BY created_at DESC, execution_id LIMIT ?", (instance_id, limit),
+            ).fetchall()
+        return tuple(str(row["execution_id"]) for row in rows)
 
     def outputs(self, execution_id: str) -> tuple[ExecutionOutputView, ...]:
         """Resolve collected outputs without exposing their payload bytes."""
@@ -445,9 +959,14 @@ class ExecutionService:
                 );
                 """
             )
+            connection.executescript(EXECUTION_POLICY_SCHEMA)
 
     def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.database_path, timeout=30)
+        import time
+        timeout = 30.0 if self.deadline_monotonic is None else min(30.0, self.deadline_monotonic - time.monotonic())
+        if timeout <= 0:
+            raise TimeoutError("execution registration connection budget exhausted")
+        connection = sqlite3.connect(self.database_path, timeout=timeout)
         connection.row_factory = sqlite3.Row
         return connection
 

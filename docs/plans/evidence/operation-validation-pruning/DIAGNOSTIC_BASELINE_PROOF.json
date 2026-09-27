@@ -1,0 +1,12 @@
+{
+  "command": [
+    "python",
+    "/tmp/scid-diagnostic-baseline-proof.py"
+  ],
+  "exit_code": 0,
+  "seconds": 0.616,
+  "peak_tree_rss_bytes": 90734592,
+  "budget_bytes": 536870912,
+  "early_stop_bytes": 469762048,
+  "memory_terminated": false
+}

@@ -1,0 +1,37 @@
+..........F.                                                             [100%]
+=================================== FAILURES ===================================
+___________ test_admitted_package_over_two_mib_still_opens_and_seals ___________
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-212/test_admitted_package_over_two0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7f1720eb0bf0>
+
+    def test_admitted_package_over_two_mib_still_opens_and_seals(tmp_path, monkeypatch):
+        from tests.operations import test_tcad_result_analysis as fixture
+        original = fixture.analysis_materials
+        def large_package(**kwargs):
+            plan, package, manifest, plx, csv = original(**kwargs)
+            files = list(package.project.files)
+            files[0] = files[0].model_copy(update={'content': files[0].content + '\n#' + 'x' * (2 * 1024 * 1024)})
+            package = package.model_copy(update={'project':package.project.model_copy(update={'files':tuple(files)})})
+            assert len(package.model_dump_json().encode()) > 2 * 1024 * 1024
+            return plan, package, manifest, plx, csv
+        monkeypatch.setattr(fixture, 'analysis_materials', large_package)
+>       worker, opened = open_analysis(analysis_system(tmp_path))
+                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/operations/test_analysis_continuation.py:203: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+system = (<scidiscovery.operations.catalog.CompiledCatalog object at 0x7f17216fe480>, ArtifactAgentRuntime(project_root=PosixPa...ntiality='project', content_encoding='identity'), ...}, <function analysis_system.<locals>.register at 0x7f1721699d00>)
+
+    def open_analysis(system):
+        catalog,runtime,root,request,_,_ = system
+        result = root.call_tool('operation_preflight',request)
+>       assert result['admissible'] is True,result
+E       AssertionError: {'field': '/', 'admissible': False, 'reason_code': 'input_content_incompatible', 'port': 'reviewed_package', ...}
+E       assert False is True
+
+tests/operations/test_tcad_result_analysis.py:125: AssertionError
+=========================== short test summary info ============================
+FAILED tests/operations/test_analysis_continuation.py::test_admitted_package_over_two_mib_still_opens_and_seals
+1 failed, 11 passed in 7.14s

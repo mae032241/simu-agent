@@ -1,0 +1,57 @@
+{
+  "recorded_date": "2026-09-09",
+  "controlled_status_before_failure": {
+    "agent_type": "op_science_curve_contract_design_v1_b5cf87adaf79",
+    "backend": "local_trusted",
+    "candidate_accepted": false,
+    "completed_at": null,
+    "created_at": "2026-09-09T04:32:44.956894Z",
+    "deadline_at": "2026-09-09T04:47:44.956894Z",
+    "head_advance": null,
+    "last_activity_at": "2026-09-09T04:39:05.795242Z",
+    "logical_name": "fig4_continuation_curve_contract_1",
+    "name": "fig4_continuation_curve_contract_1",
+    "operation_id": "science.curve.contract.design.v1",
+    "output_artifact_name": null,
+    "reason": null,
+    "recovery_available": false,
+    "revision": 1,
+    "scheduler_signal": null,
+    "sealed_output": null,
+    "sealed_output_status": "unavailable",
+    "started_at": "2026-09-09T04:33:05.734040Z",
+    "state": "running"
+  },
+  "controlled_failure": {
+    "content": [
+      {
+        "type": "text",
+        "text": "{\"agent_type\":\"op_science_curve_contract_design_v1_b5cf87adaf79\",\"backend\":\"local_trusted\",\"candidate_accepted\":false,\"completed_at\":\"2026-09-09T04:39:28.884610Z\",\"created_at\":\"2026-09-09T04:32:44.956894Z\",\"deadline_at\":\"2026-09-09T04:47:44.956894Z\",\"head_advance\":null,\"last_activity_at\":\"2026-09-09T04:39:05.795242Z\",\"logical_name\":\"fig4_continuation_curve_contract_1\",\"name\":\"fig4_continuation_curve_contract_1\",\"operation_id\":\"science.curve.contract.design.v1\",\"output_artifact_name\":null,\"reason\":\"The dispatched child has returned, but controlled run_status remains running with candidate_accepted=false and no sealed output. Record incomplete controlled submission as failed; no scientific content from child transport is accepted.\",\"recovery_available\":false,\"revision\":1,\"scheduler_signal\":null,\"sealed_output\":null,\"sealed_output_status\":\"unavailable\",\"started_at\":\"2026-09-09T04:33:05.734040Z\",\"state\":\"failed\"}"
+      }
+    ],
+    "structuredContent": {
+      "agent_type": "op_science_curve_contract_design_v1_b5cf87adaf79",
+      "backend": "local_trusted",
+      "candidate_accepted": false,
+      "completed_at": "2026-09-09T04:39:28.884610Z",
+      "created_at": "2026-09-09T04:32:44.956894Z",
+      "deadline_at": "2026-09-09T04:47:44.956894Z",
+      "head_advance": null,
+      "last_activity_at": "2026-09-09T04:39:05.795242Z",
+      "logical_name": "fig4_continuation_curve_contract_1",
+      "name": "fig4_continuation_curve_contract_1",
+      "operation_id": "science.curve.contract.design.v1",
+      "output_artifact_name": null,
+      "reason": "The dispatched child has returned, but controlled run_status remains running with candidate_accepted=false and no sealed output. Record incomplete controlled submission as failed; no scientific content from child transport is accepted.",
+      "recovery_available": false,
+      "revision": 1,
+      "scheduler_signal": null,
+      "sealed_output": null,
+      "sealed_output_status": "unavailable",
+      "started_at": "2026-09-09T04:33:05.734040Z",
+      "state": "failed"
+    },
+    "isError": false
+  },
+  "boundary": "No accepted candidate or sealed scientific output was produced. No child transport content is accepted as scientific evidence. Current catalog revision/review operations require exact sealed objects that this failed run did not produce. No curve contract, author result, initialization, solver execution, or overall research completion is claimed."
+}

@@ -1,0 +1,1 @@
+{"operations_unchanged": 50, "worker_contracts_unchanged": true, "changed_root_schemas": ["operation_preflight", "operation_invoke"], "generated_dynamic_roles": 25, "installed_settings_loaded": true, "import_source": "/tmp/scid-execution-settings-installed-final/venv/lib/python3.12/site-packages/scidiscovery/__init__.py"}

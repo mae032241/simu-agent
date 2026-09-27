@@ -4,12 +4,14 @@ import json
 import os
 import sys
 from pathlib import Path
+from typing import Any, Mapping
 
-from scidiscovery.artifact_agent.interfaces.mcp_root import (
-    ROOT_TOOLS as ROOT_MCP_TOOLS,
-)
-from scidiscovery.artifact_agent.interfaces.mcp_worker import (
-    WORKER_TOOLS as WORKER_MCP_TOOLS,
+from scidiscovery.artifact_agent.interfaces.mcp_gateway import GATEWAY_TOOLS
+from scidiscovery.artifact_agent.service.local_workspace import LocalTrustedBackend
+from scidiscovery.operations.catalog import CompiledCatalog, compile_installed_catalog
+from scidiscovery.operations.tooling import (
+    operation_agent_type,
+    operation_agent_description,
 )
 
 try:
@@ -23,34 +25,32 @@ from .common import (
     absolute_project_root,
     commit_text_files,
     managed_block,
+    obsolete_managed_files,
 )
-from .roles import (
-    RoleDefinition,
-    load_roles,
-    load_scheduler_prompt,
-    render_worker_prompt,
-)
+from .scheduler_prompt import load_scheduler_prompt, load_scheduler_guides
 
 
 CONFIG_BEGIN = "# BEGIN SCIDISCOVERY MANAGED MCP"
 CONFIG_END = "# END SCIDISCOVERY MANAGED MCP"
 PROMPT_BEGIN = "<!-- BEGIN SCIDISCOVERY SCHEDULER -->"
 PROMPT_END = "<!-- END SCIDISCOVERY SCHEDULER -->"
-SCHEDULER_TOOLS = tuple(tool.name for tool in ROOT_MCP_TOOLS)
-WORKER_TOOLS = tuple(tool.name for tool in WORKER_MCP_TOOLS)
-CODEX_DISPATCH_INSTRUCTIONS = """
+SCHEDULER_TOOLS = GATEWAY_TOOLS
+OPERATION_COMPLETION_INSTRUCTIONS = """
 
-On Codex, dispatch every ready task with `spawn_agent`. Use the `agent_type`
-returned by control, set `fork_turns="none"`, and ask the child to complete the
-assignment already queued for its worker process. Do not pass task metadata in
-the message. The child must finish through `worker_finalize_file` before the
-scheduler uses its bounded signal.
+Read narrative_instruction on every new assignment, including reuse: it governs
+new prose, never identifiers or exact copied content.
+If tools/local_process_observation.py exists, it can observe permitted commands
+with --timeout and --command under the control-generated resource policy. It
+adds no command, network or filesystem permissions. Read its records for actual
+errors; missing telemetry never prevents submission.
 
-Human decisions are made directly in the loopback approval UI. Give the user
-the exact review URL returned by the relevant approval-request tool, then read
-only `approval_status`; never convert chat text into a decision or call an
-approval write operation on the user's behalf.
-""".strip()
+After worker_submit_result reports completion, the only permitted chat is exactly:
+`已完成受控提交。` No scientific content, verdict, names, paths, identities or hashes.
+On a later explicit task, call worker_open_assignment through the unified MCP
+again. Read the new compact task entry, current bindings and needed originals;
+discard old workspace paths, tool handles and budget assumptions. Memory is not
+evidence or authority. Without a new assignment, stop without resubmitting.
+"""
 
 
 def initialize(
@@ -59,8 +59,12 @@ def initialize(
     python_executable: Path | str | None = None,
     python_path: Path | str | None = None,
     control_socket: Path | str,
-    worker_socket: Path | str,
+    state_root: Path | str | None = None,
+    local_workspace_root: Path | str | None = None,
+    worker_backend: str = "local",
     codex_config_root: Path | str | None = None,
+    operation_catalog: CompiledCatalog | None = None,
+    runtime_plugin_configs: Mapping[str, Path | str] | None = None,
     dry_run: bool = False,
 ) -> GenerationReport:
     root = absolute_project_root(project_root)
@@ -73,27 +77,59 @@ def initialize(
         else Path(__file__).resolve().parents[2]
     )
     socket_path = _absolute_path(control_socket)
-    worker_socket_path = _absolute_path(worker_socket)
+    state_path = _absolute_path(state_root or root / ".scidiscovery-state")
+    local_workspace_path = _absolute_path(
+        local_workspace_root or root / ".scidiscovery-runs"
+    )
+    if worker_backend not in {"local", "hardened"}:
+        raise ValueError("worker_backend must be local or hardened")
     config_root = _absolute_path(codex_config_root or root / ".codex")
 
     desired: dict[Path, str] = {}
     exclusive: set[Path] = set()
     markers: dict[Path, str] = {}
-    for role in load_roles():
-        path = config_root / "agents" / f"{role.name}.toml"
-        desired[path] = _role_toml(
-            role,
+    agent_registrations: dict[str, tuple[str, Path]] = {}
+    catalog = operation_catalog or compile_installed_catalog()
+    plugin_configs = _runtime_plugin_config_paths(runtime_plugin_configs)
+    _validate_runtime_plugin_config_ids(catalog, plugin_configs)
+    for operation_id in catalog.operation_ids():
+        compiled = catalog.operation(operation_id)
+        if (
+            compiled.spec.executor.kind != "agent"
+            or not _backend_supports_operation(compiled, worker_backend)
+        ):
+            continue
+        agent_type = operation_agent_type(compiled)
+        path = config_root / "agents" / f"{agent_type}.toml"
+        desired[path] = _operation_toml(
+            compiled,
             python=python,
             python_path=module_path,
-            worker_socket=worker_socket_path,
+            state_root=state_path,
+            local_workspace_root=local_workspace_path,
+            worker_backend=worker_backend,
+            runtime_plugin_configs=plugin_configs,
         )
         exclusive.add(path)
         markers[path] = "# Generated by SciDiscovery."
+        agent_registrations[agent_type] = (
+            operation_agent_description(compiled),
+            path,
+        )
+    obsolete, obsolete_markers = obsolete_managed_files(
+        config_root / "agents",
+        desired=frozenset(exclusive),
+        pattern="*.toml",
+        marker="# Generated by SciDiscovery.",
+    )
 
     config_path = config_root / "config.toml"
     current_config = _read(config_path)
     _reject_unmanaged_server(current_config)
-    runtime_config = _runtime_config_toml(current_config)
+    runtime_config = _runtime_config_toml(
+        current_config,
+        agent_registrations=agent_registrations,
+    )
     server_config = _proxy_server_toml(
         python=python, socket_path=socket_path, python_path=module_path
     )
@@ -102,18 +138,29 @@ def initialize(
         begin=CONFIG_BEGIN,
         end=CONFIG_END,
         body="\n\n".join(
-            part for part in (runtime_config, server_config) if part
+            part
+            for part in (
+                runtime_config,
+                server_config,
+            )
+            if part
         ),
     )
     tomllib.loads(desired[config_path])
+
+    guide_root = config_root / "scidiscovery-guides"
+    for name, content in load_scheduler_guides().items():
+        path = guide_root / name
+        desired[path] = content
+        exclusive.add(path)
+        markers[path] = "<!-- SCIDISCOVERY MANAGED SCHEDULER GUIDE -->"
 
     prompt_path = root / "AGENTS.md"
     desired[prompt_path] = managed_block(
         _read(prompt_path),
         begin=PROMPT_BEGIN,
         end=PROMPT_END,
-        body=f"{load_scheduler_prompt().rstrip()}\n\n"
-        f"{CODEX_DISPATCH_INSTRUCTIONS}\n",
+        body=load_scheduler_prompt().replace("{{SCHEDULER_GUIDE_ROOT}}", str(guide_root)),
     )
     return commit_text_files(
         platform="codex",
@@ -121,36 +168,298 @@ def initialize(
         desired=desired,
         exclusive=frozenset(exclusive),
         exclusive_markers=markers,
+        obsolete=obsolete,
+        obsolete_markers=obsolete_markers,
         dry_run=dry_run,
     )
 
 
-def _role_toml(
-    role: RoleDefinition,
+def validate_installation_profile(
+    project_root: Path | str,
+    *,
+    workspace: Path | str,
+    python_path: Path | str,
+    operation_catalog: CompiledCatalog | None = None,
+    state_root: Path | str | None = None,
+    local_workspace_root: Path | str | None = None,
+    worker_backend: str = "local",
+    runtime_plugin_configs: Mapping[str, Path | str] | None = None,
+) -> tuple[int, int]:
+    """Verify the installed Codex profile against the same compiled catalog."""
+
+    root = absolute_project_root(project_root)
+    workspace_path = _absolute_path(workspace)
+    module_path = _absolute_path(python_path)
+    state_path = _absolute_path(state_root or root / ".scidiscovery-state")
+    local_workspace_path = _absolute_path(
+        local_workspace_root or root / ".scidiscovery-runs"
+    )
+    catalog = operation_catalog or compile_installed_catalog()
+    plugin_configs = _runtime_plugin_config_paths(runtime_plugin_configs)
+    _validate_runtime_plugin_config_ids(catalog, plugin_configs)
+    operations = tuple(
+        catalog.operation(operation_id)
+        for operation_id in catalog.operation_ids()
+        if catalog.operation(operation_id).spec.executor.kind == "agent"
+        and _backend_supports_operation(
+            catalog.operation(operation_id), worker_backend
+        )
+    )
+    expected_agents = {operation_agent_type(compiled) for compiled in operations}
+    expected_servers = {"scidiscovery"}
+    config = tomllib.loads(
+        root.joinpath(".codex/config.toml").read_text(encoding="utf-8")
+    )
+    servers = config.get("mcp_servers", {})
+    if set(servers) != expected_servers:
+        raise PlatformConflictError("installed Codex MCP set differs from catalog")
+    root_server = servers["scidiscovery"]
+    if (
+        root_server.get("enabled") is not True
+        or root_server.get("env", {}).get("PYTHONPATH") != str(module_path)
+        or root_server.get("env", {}).get("PYTHONNOUSERSITE") != "1"
+        or root_server.get("enabled_tools") != list(SCHEDULER_TOOLS)
+    ):
+        raise PlatformConflictError("installed Codex Root MCP profile is invalid")
+    generated_agents = {
+        item.stem for item in root.joinpath(".codex/agents").glob("*.toml")
+    }
+    if generated_agents != expected_agents:
+        raise PlatformConflictError("installed Codex Agent set differs from catalog")
+    for compiled in operations:
+        agent_type = operation_agent_type(compiled)
+        profile = tomllib.loads(
+            root.joinpath(".codex/agents", f"{agent_type}.toml").read_text(
+                encoding="utf-8"
+            )
+        )
+        if (
+            profile.get("name") != agent_type
+            or "model" in profile
+            or "model_reasoning_effort" in profile
+            or profile.get("web_search") != compiled.spec.executor.native_tools.web_search
+            or "default_permissions" in profile
+            or "permissions" in profile
+            or profile.get("features", {}).get("shell_tool")
+            is not (worker_backend == "local" and compiled.spec.executor.native_tools.shell != "none")
+            or profile.get("features", {}).get("unified_exec")
+            is not (worker_backend == "local" and compiled.spec.executor.native_tools.shell != "none")
+            or profile.get("tools", {}).get("view_image")
+            is not (worker_backend == "local" and compiled.spec.executor.native_tools.view_image)
+            or bool(profile.get("mcp_servers", {}))
+            or (
+                _local_native_tool_instruction(compiled).strip()
+                if worker_backend == "local"
+                else _hardened_worker_instruction(compiled).strip()
+            )
+            not in profile.get("developer_instructions", "")
+        ):
+            raise PlatformConflictError(
+                f"installed Codex Agent profile is invalid: {agent_type}"
+            )
+    if PROMPT_BEGIN not in root.joinpath("AGENTS.md").read_text(encoding="utf-8"):
+        raise PlatformConflictError("installed scheduler prompt is missing")
+    _validate_scheduler_guides(root)
+    try:
+        workspace_path.resolve().relative_to(root.resolve())
+        nested = True
+    except ValueError:
+        nested = False
+    if nested:
+        if workspace_path.joinpath(".codex").exists() or (
+            workspace_path.joinpath("AGENTS.md").exists()
+            and PROMPT_BEGIN
+            in workspace_path.joinpath("AGENTS.md").read_text(encoding="utf-8")
+        ):
+            raise PlatformConflictError("nested workspace shadows framework profile")
+    else:
+        _validate_scheduler_guides(workspace_path)
+        external_config_path = workspace_path / ".codex/config.toml"
+        if not external_config_path.is_file():
+            raise PlatformConflictError("external workspace profile is incomplete")
+        external_config = tomllib.loads(
+            external_config_path.read_text(encoding="utf-8")
+        )
+        copied_agents = {
+            item.stem for item in workspace_path.joinpath(".codex/agents").glob("*.toml")
+        }
+        if (
+            copied_agents != expected_agents
+            or external_config.get("mcp_servers", {}) != servers
+            or PROMPT_BEGIN
+            not in workspace_path.joinpath("AGENTS.md").read_text(encoding="utf-8")
+        ):
+            raise PlatformConflictError("external workspace profile is incomplete")
+        for agent_type in expected_agents:
+            if workspace_path.joinpath(
+                ".codex/agents", f"{agent_type}.toml"
+            ).read_bytes() != root.joinpath(
+                ".codex/agents", f"{agent_type}.toml"
+            ).read_bytes():
+                raise PlatformConflictError(
+                    "external workspace Agent profile differs from framework"
+                )
+    return len(expected_servers), len(expected_agents)
+
+
+def _validate_scheduler_guides(root: Path) -> None:
+    for name, content in load_scheduler_guides().items():
+        path = root / ".codex" / "scidiscovery-guides" / name
+        if not path.is_file() or path.read_text(encoding="utf-8") != content:
+            raise PlatformConflictError(f"installed scheduler guide is missing or stale: {path}")
+
+
+def _local_native_tool_instruction(compiled: Any) -> str:
+    allowed = [
+        "only the Operation tools declared in the current assignment",
+        "optional worker_helper prepare/release and native fresh spawn/wait/close when declared; wait, verify and integrate the helper, never treat it as formal review",
+        "Codex file and code tools inside the opened Run workspace",
+        *(["native view_image for task-local images"] if compiled.spec.executor.native_tools.view_image else []),
+        *(["native web search for discovery; preserve cited originals with the declared source capture tool"]
+          if compiled.spec.executor.native_tools.web_search != "disabled" else []),
+        "read-only references in exact Codex-discovered Skill directories",
+        "helper scratch caches; only installed input/schema readers manage workspace/.read-input",
+    ]
+    forbidden = [
+        "native shell network access",
+        *(["native web search"] if compiled.spec.executor.native_tools.web_search == "disabled" else []),
+        "Root/control-plane MCP tools",
+        "unprepared or recursive native delegation and undeclared Operation tools",
+        "outside-workspace access except exact discovered Skill references",
+        "writing global Skills or following Skill path traversal or symlinks to other host files",
+        "editing inputs, schemas, assignment.json, or sealed candidates",
+    ]
+    return (
+        "\n\nYou are the spawned Operation worker. Project scheduler instructions apply to the parent, not you. "
+        "Use unified scidiscovery: scid_describe for a selected contract, then scid_call. "
+        "Start with worker_open_assignment. If attachment identity is requested, call worker_identity, "
+        "relay only platform thread_id/model/reasoning_effort and wait for attachment; never choose a Run. "
+        "Take workspace_path as the filesystem root and use it as workdir. "
+        "Read start_here_path once: it contains the task, role, input index, output form navigation and workspace rules. "
+        "Do not separately dump assignment.json, domain-workspace.json or all tool contracts. "
+        "Use python tools/read_input.py --file worker-start.json when bounded reading is needed; "
+        "--next continues the last selection and --repeat repeats it. Follow all remaining pages. "
+        "If start_here_path is absent, read the returned assignment's task/role, input, language, budget, "
+        "output and recovery fields. On continuation, reading_guidance identifies unchanged contracts; "
+        "reuse them only while retained, rereading after loss/change. Always read the new task and input changes. "
+        "Startup reading/output sections explain exact input, tool and form navigation. Preserve explicit omissions and "
+        "retain complete scientific contracts; reading receipts do not prove memory. Older readers follow open.input_reading. "
+        "Use native Codex file tools to write output/result.json and other native_edit paths declared in startup.workspace. "
+        "For copy-on-write revision, edit the preinitialized target in place; publication remains a complete immutable snapshot. "
+        "Only read exact Codex-discovered Skills relevant to this subtask; they grant no extra inputs or permissions. "
+        "Do not search repository roots, installed packages, other runs or sibling workspaces for missing facts. "
+        "Keep Skills read-only; do not traverse out or follow escaping symlinks. "
+        "Local scripts read task inputs, registered evidence and permitted Skill resources; "
+        "write scratch files/caches under workspace/scratch. Set TMPDIR and XDG_CACHE_HOME to that scratch "
+        "directory and PYTHONDONTWRITEBYTECODE=1 on each script call. Only installed readers manage .read-input. "
+        "Solver, network, installation, service and domain side effects require declared tools and authorization. "
+        "Optional prepared helpers retain native permissions and fresh context. The owner waits and integrates "
+        "findings/files, checking their method and evidence without automatically repeating the entire calculation. "
+        "If participation=helper, read only your returned task-specific assignment and selected materials; "
+        "describe needed tools. Owner startup/schema/submission directions do not apply unless the subtask needs those files. "
+        "Return findings, reusable calculation files, verification and limitations through native completion; "
+        "do not submit the parent result, seal stages, create approvals or delegate again. "
+        "Owner completion requires worker_submit_result. Correct scientific validation rejections in this workspace. "
+        "Transport failure is not a validation rejection: report it, wait for service recovery and reconcile task state "
+        "before any further submission; do not blindly repeat an uncertain request. "
+        "This trusted-local prompt boundary is not a technical filesystem sandbox.\nAllowed: "
+        + "; ".join(allowed) + ".\nForbidden: " + "; ".join(forbidden) + ".\n"
+    )
+
+
+def _hardened_worker_instruction(compiled: Any) -> str:
+    return (
+        "\n\nYou are the spawned Operation worker, not the interactive scheduler. "
+        "Use unified scidiscovery: scid_describe for a logical capability contract, "
+        "then scid_call for worker_open_assignment and subsequent worker_* actions. "
+        "If the scheduler requests attachment identity, describe and call worker_identity, "
+        "relay only its platform thread_id/model/reasoning_effort, then wait for attachment. "
+        "If awaiting scheduler attachment, report that state and wait. Native shell, "
+        "code execution, file tools, network access and view_image are disabled "
+        "for this Hardened profile. Follow startup returned by worker_open_assignment. "
+        "Read scientific inputs only through declared "
+        "Worker tools and write only through declared `worker_file_*` tools. "
+        "Before calling a domain tool, use scid_describe for its complete contract, "
+        "including inputSchema, local $defs, defaults, "
+        "limits and descriptions. Construct arguments from that contract even if the "
+        "platform renders a parameter as unknown or simplifies an array type incorrectly. "
+        "If assignment.json declares a revision, patch its preinitialized editable "
+        "target rather than recreating the complete object; final publication still "
+        "requires the complete immutable snapshot. "
+        "Optional declared worker_helper permits fresh native spawn/wait/close with the same Hardened role; "
+        "helper participation overrides owner submit directions: follow the inline subtask, select complete tool contracts "
+        "with scid_describe, and return findings through native completion. "
+        "Do not call Root/control-plane capabilities, other Operation capabilities, unprepared or recursive delegation, "
+        "skills, apps or plugins. If any forbidden native tool is unexpectedly "
+        "visible, stop instead of using it. Finish only with "
+        "`worker_submit_result`; a validation rejection may be corrected through "
+        "the same server-side file tools.\n"
+    )
+
+
+def _backend_supports_operation(compiled: Any, worker_backend: str) -> bool:
+    return _backend_type(worker_backend).supports_operation(compiled)
+
+
+def _backend_type(worker_backend: str) -> type[Any]:
+    if worker_backend == "local":
+        return LocalTrustedBackend
+    from scidiscovery.artifact_agent.service.hardened_workspace import (
+        HardenedWorkerBackend,
+    )
+
+    return HardenedWorkerBackend
+
+
+def _backend_tool_names(compiled: Any, worker_backend: str) -> tuple[str, ...]:
+    return _backend_type(worker_backend).assignment_tool_names(compiled)
+
+
+def _operation_toml(
+    compiled: Any,
     *,
     python: Path,
     python_path: Path | None,
-    worker_socket: Path,
+    state_root: Path,
+    local_workspace_root: Path | None = None,
+    worker_backend: str = "hardened",
+    runtime_plugin_configs: Mapping[str, Path] | None = None,
 ) -> str:
-    prompt = render_worker_prompt(role, python_executable=python)
+    """Compile one Agent Operation into the Codex child-Agent profile."""
+
+    executor = compiled.spec.executor
+    if not _backend_supports_operation(compiled, worker_backend):
+        raise ValueError(
+            "compiled Operation requires native tools unavailable on this backend"
+        )
+    if worker_backend == "local" and local_workspace_root is None:
+        raise ValueError("local workspace root is required")
+    if executor.prompt is None:
+        raise ValueError("compiled Agent operation has no prompt")
+    prompt = (
+        (_local_native_tool_instruction(compiled) if worker_backend == "local"
+         else _hardened_worker_instruction(compiled))
+        + "\nFor MCP results, consume structuredContent when present; otherwise read text content once. "
+        "Never emit both representations of the same result, including from functions.exec. "
+        "Preserve isError, distinct diagnostics and needed non-text content such as images.\n"
+        + OPERATION_COMPLETION_INSTRUCTIONS
+    )
+    agent_type = operation_agent_type(compiled)
+    shell_enabled = worker_backend == "local" and executor.native_tools.shell != "none"
     lines = [
         "# Generated by SciDiscovery. Re-run `scid init codex` to update.",
-        f"name = {_quote(role.name)}",
-        f"description = {_quote(role.description)}",
-        'sandbox_mode = "read-only"',
-        'web_search = "live"',
+        f"name = {_quote(agent_type)}",
+        f"description = {_quote(operation_agent_description(compiled))}",
+        f"web_search = {_quote(executor.native_tools.web_search)}",
         f"developer_instructions = {_quote(prompt)}",
         "",
-        "[tools]",
-        "view_image = true",
-        'web_search = { context_size = "high" }',
+        "[features]",
+        f"shell_tool = {str(shell_enabled).lower()}",
+        f"unified_exec = {str(shell_enabled).lower()}",
         "",
-        _worker_proxy_server_toml(
-            python=python,
-            python_path=python_path,
-            socket_path=worker_socket,
-            role=role.name,
-        ),
+        "[tools]",
+        f"view_image = {str(worker_backend == 'local' and executor.native_tools.view_image).lower()}",
+        "",
     ]
     content = "\n".join(lines).rstrip() + "\n"
     tomllib.loads(content)
@@ -188,42 +497,26 @@ def _proxy_server_toml(
     )
 
 
-def _worker_proxy_server_toml(
-    *,
-    python: Path,
-    python_path: Path | None,
-    socket_path: Path,
-    role: str,
-) -> str:
-    args = (
-        "-m",
-        "scidiscovery.artifact_agent.interfaces.mcp_worker_proxy",
-        "--socket",
-        str(socket_path),
-        "--worker-id",
-        role,
-    )
-    return "\n".join(
-        (
-            "[mcp_servers.scidiscovery]",
-            f"command = {_quote(str(python))}",
-            "args = [" + ", ".join(_quote(value) for value in args) + "]",
-            "enabled = true",
-            "required = true",
-            "enabled_tools = ["
-            + ", ".join(_quote(tool) for tool in WORKER_TOOLS)
-            + "]",
-            'default_tools_approval_mode = "approve"',
-            _toml_env(
-                {
-                    "PYTHONNOUSERSITE": "1",
-                    "SCIDISCOVERY_PRINCIPAL": "agent",
-                    "SCIDISCOVERY_ROLE": role,
-                    **({"PYTHONPATH": str(python_path)} if python_path else {}),
-                }
-            ),
+def _runtime_plugin_config_paths(
+    values: Mapping[str, Path | str] | None,
+) -> dict[str, Path]:
+    result: dict[str, Path] = {}
+    for plugin_id, value in (values or {}).items():
+        if not plugin_id or plugin_id in result:
+            raise ValueError("runtime plugin config identity is invalid")
+        result[plugin_id] = _absolute_path(value)
+    return result
+
+
+def _validate_runtime_plugin_config_ids(
+    catalog: CompiledCatalog, values: Mapping[str, Path]
+) -> None:
+    unknown = set(values) - set(catalog.runtime_plugin_ids())
+    if unknown:
+        raise PlatformConflictError(
+            "runtime plugin config is not present in the compiled catalog: "
+            + ", ".join(sorted(unknown))
         )
-    )
 
 
 def _toml_env(values: dict[str, str]) -> str:
@@ -249,7 +542,11 @@ def _reject_unmanaged_server(current: str) -> None:
         )
 
 
-def _runtime_config_toml(current: str) -> str:
+def _runtime_config_toml(
+    current: str,
+    *,
+    agent_registrations: dict[str, tuple[str, Path]],
+) -> str:
     unmanaged = _without_managed_block(current)
     try:
         parsed = tomllib.loads(unmanaged)
@@ -262,9 +559,26 @@ def _runtime_config_toml(current: str) -> str:
     features = parsed.get("features")
     if features is None:
         blocks.append("[features]\nmulti_agent = true")
+        features = {}
     elif not isinstance(features, dict) or features.get("multi_agent") is False:
         raise PlatformConflictError(
             "existing Codex [features] explicitly disables multi_agent"
+        )
+    multi_agent_v2 = features.get("multi_agent_v2")
+    if multi_agent_v2 is None:
+        blocks.append(
+            "[features.multi_agent_v2]\n"
+            "enabled = false\n"
+            "hide_spawn_agent_metadata = false"
+        )
+    elif (
+        not isinstance(multi_agent_v2, dict)
+        or multi_agent_v2.get("enabled") is not False
+        or multi_agent_v2.get("hide_spawn_agent_metadata") is True
+    ):
+        raise PlatformConflictError(
+            "Codex multi_agent_v2 does not expose the agent_type routing "
+            "required by compiled operation Agents"
         )
 
     agents = parsed.get("agents")
@@ -277,6 +591,18 @@ def _runtime_config_toml(current: str) -> str:
     elif not isinstance(agents, dict) or agents.get("enabled") is False:
         raise PlatformConflictError(
             "existing Codex [agents] explicitly disables agents"
+        )
+    for agent_type, (description, config_file) in sorted(
+        agent_registrations.items()
+    ):
+        if isinstance(agents, dict) and agent_type in agents:
+            raise PlatformConflictError(
+                f"existing Codex config owns agents.{agent_type}"
+            )
+        blocks.append(
+            f"[agents.{_quote(agent_type)}]\n"
+            f"description = {_quote(description)}\n"
+            f"config_file = {_quote(str(config_file))}"
         )
     return "\n\n".join(blocks)
 

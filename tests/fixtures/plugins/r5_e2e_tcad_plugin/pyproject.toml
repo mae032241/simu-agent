@@ -1,0 +1,15 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "scidiscovery-r5-e2e-tcad-test-plugin"
+version = "0.0.1"
+requires-python = ">=3.10"
+dependencies = ["scidiscovery-curve-score>=0.2.1"]
+
+[project.entry-points."scidiscovery.plugins"]
+r5_e2e_fixture = "r5_e2e_tcad_plugin:PLUGIN"
+
+[tool.setuptools.packages.find]
+where = ["."]

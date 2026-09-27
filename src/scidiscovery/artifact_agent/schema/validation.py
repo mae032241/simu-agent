@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Sequence
 from typing import Annotated, Literal
 
 from pydantic import Field, model_validator
@@ -11,6 +10,7 @@ from pydantic import Field, model_validator
 from .common import Identifier, SchemaModel, canonical_json
 from .experiment import MetricThreshold, ValidationDimensionPlan, ValidationPlan
 from .scientific_foundation import SourceType
+from .units import convert_value
 
 
 HypothesisAssessmentOutcome = Literal[
@@ -20,17 +20,6 @@ HypothesisAssessmentOutcome = Literal[
     "invalid_study",
     "not_tested",
 ]
-RecommendedTaskMode = Literal[
-    "evidence_intake",
-    "baseline_replay",
-    "baseline_provenance",
-    "deck_revision",
-    "new_mechanism",
-    "result_diagnosis",
-    "stop",
-]
-
-
 class HypothesisAssessment(SchemaModel):
     """A diagnostician's evidence-bound judgment about one tested hypothesis."""
 
@@ -44,20 +33,11 @@ class HypothesisAssessment(SchemaModel):
     rationale: Annotated[str, Field(min_length=1, max_length=4096)]
 
     @model_validator(mode="after")
-    def _references_are_unique(self) -> HypothesisAssessment:
-        for values, label in (
-            (self.evidence_keys, "evidence_keys"),
-            (self.predictions_checked, "predictions_checked"),
-            (self.falsifiers_triggered, "falsifiers_triggered"),
-        ):
-            if len(values) != len(set(values)):
-                raise ValueError(f"hypothesis assessment {label} must be unique")
+    def _not_tested_has_no_test_claims(self) -> HypothesisAssessment:
         if self.outcome == "not_tested" and (
             self.predictions_checked or self.falsifiers_triggered
         ):
             raise ValueError("not_tested assessment cannot claim checked predictions")
-        if self.falsifiers_triggered and self.outcome != "contradicts":
-            raise ValueError("triggered falsifiers require a contradicting outcome")
         return self
 
 
@@ -88,10 +68,14 @@ class ValidationCheckResult(SchemaModel):
             and self.observed_value is None
         ):
             raise ValueError("deterministic pass/fail result requires observed_value")
+        if (
+            self.evaluation_mode == "deterministic_threshold"
+            and self.status in {"pass", "fail"}
+            and self.unit is None
+        ):
+            raise ValueError("deterministic pass/fail result requires a unit")
         if self.observed_value is None and self.unit is not None:
             raise ValueError("unit cannot be declared without observed_value")
-        if len(self.evidence_keys) != len(set(self.evidence_keys)):
-            raise ValueError("validation evidence_keys must be unique")
         return self
 
 
@@ -135,29 +119,18 @@ class ValidationReport(SchemaModel):
     claim_allowed: bool
     deviations: Annotated[tuple[str, ...], Field(max_length=128)] = ()
     next_action: Annotated[str, Field(min_length=1, max_length=4096)]
-    knowledge_update_applicability: Literal["required", "not_applicable"] = (
-        "not_applicable"
-    )
     hypothesis_assessments: Annotated[
         tuple[HypothesisAssessment, ...], Field(max_length=32)
     ] = ()
     remaining_contradiction: Annotated[str, Field(min_length=1, max_length=8192)] | None = None
-    recommended_task_mode: RecommendedTaskMode | None = None
 
     @model_validator(mode="after")
     def _verdict_is_derived_from_dimensions(self) -> ValidationReport:
-        source_keys = tuple(item.source_key for item in self.evidence)
-        if len(source_keys) != len(set(source_keys)):
-            raise ValueError("validation source_key values must be unique")
-        known_sources = set(source_keys)
         dimensions = (self.numerical, self.physical, self.experimental)
         results = tuple(item for dimension in dimensions for item in dimension.results)
         keys = tuple(item.check_key for item in results)
         if len(keys) != len(set(keys)):
             raise ValueError("validation result check_key values must be globally unique")
-        for result in results:
-            if not set(result.evidence_keys).issubset(known_sources):
-                raise ValueError("validation result references an undeclared source_key")
         active = [item.status for item in dimensions if item.status != "not_applicable"]
         derived = (
             "fail"
@@ -176,10 +149,6 @@ class ValidationReport(SchemaModel):
         if len(assessment_keys) != len(set(assessment_keys)):
             raise ValueError("a report may assess each hypothesis once")
         for assessment in self.hypothesis_assessments:
-            if not set(assessment.evidence_keys).issubset(known_sources):
-                raise ValueError(
-                    "hypothesis assessment references an undeclared source_key"
-                )
             if assessment.outcome == "supports" and (
                 derived != "pass" or self.numerical.status != "pass"
             ):
@@ -203,101 +172,50 @@ class ValidationReport(SchemaModel):
                 raise ValueError(
                     "invalid_study assessment requires failed or inconclusive numerics"
                 )
-        if self.knowledge_update_applicability == "required":
-            if not self.hypothesis_assessments:
-                raise ValueError(
-                    "required knowledge update needs hypothesis_assessments"
-                )
+        if self.hypothesis_assessments:
             if all(
                 item.outcome == "not_tested"
                 for item in self.hypothesis_assessments
             ):
                 raise ValueError(
-                    "required knowledge update needs at least one tested hypothesis"
+                    "hypothesis assessment needs at least one tested hypothesis"
                 )
             if self.remaining_contradiction is None:
-                raise ValueError(
-                    "required knowledge update needs remaining_contradiction"
-                )
-            if self.recommended_task_mode is None:
-                raise ValueError(
-                    "required knowledge update needs recommended_task_mode"
-                )
-        elif (
-            self.hypothesis_assessments
-            or self.remaining_contradiction is not None
-            or self.recommended_task_mode is not None
-        ):
+                raise ValueError("hypothesis assessment needs remaining_contradiction")
+        elif self.remaining_contradiction is not None:
             raise ValueError(
-                "not_applicable knowledge update cannot contain transition fields"
+                "hypothesis assessment context requires hypothesis_assessments"
             )
         return self
 
 
-class CurveMetricSummary(SchemaModel):
-    points: Annotated[int, Field(ge=2)]
-    rmse: Annotated[float, Field(ge=0)]
-    normalized_rmse: Annotated[float, Field(ge=0)]
-    mean_absolute_error: Annotated[float, Field(ge=0)]
-    max_absolute_error: Annotated[float, Field(ge=0)]
-    mean_absolute_percentage_error: Annotated[float, Field(ge=0)] | None = None
-    slope_rmse: Annotated[float, Field(ge=0)]
-
-
-def evaluate_threshold(observed: float, threshold: MetricThreshold) -> bool:
+def evaluate_threshold(
+    observed: float,
+    threshold: MetricThreshold,
+    *,
+    observed_unit: str | None,
+) -> bool:
     if not math.isfinite(observed):
         raise ValueError("observed metric must be finite")
+    if observed_unit is None:
+        raise ValueError("observed unit is required")
+    converted = convert_value(
+        observed,
+        source_unit=observed_unit,
+        target_unit=threshold.unit,
+    )
     if threshold.operator == "lt":
-        return observed < threshold.value
+        return converted < threshold.value
     if threshold.operator == "le":
-        return observed <= threshold.value
+        return converted <= threshold.value
     if threshold.operator == "gt":
-        return observed > threshold.value
+        return converted > threshold.value
     if threshold.operator == "ge":
-        return observed >= threshold.value
+        return converted >= threshold.value
     if threshold.operator == "between":
         assert threshold.upper_value is not None
-        return threshold.value <= observed <= threshold.upper_value
-    return math.isclose(observed, threshold.value, rel_tol=1e-12, abs_tol=1e-15)
-
-
-def paired_curve_metrics(
-    reference: Sequence[float], candidate: Sequence[float]
-) -> CurveMetricSummary:
-    if len(reference) != len(candidate) or len(reference) < 2:
-        raise ValueError("paired curves require equal lengths of at least two points")
-    ref = tuple(float(value) for value in reference)
-    cand = tuple(float(value) for value in candidate)
-    if not all(math.isfinite(value) for value in (*ref, *cand)):
-        raise ValueError("paired curves must contain finite values")
-    errors = tuple(right - left for left, right in zip(ref, cand, strict=True))
-    absolute = tuple(abs(value) for value in errors)
-    rmse = math.sqrt(sum(value * value for value in errors) / len(errors))
-    scale = max(ref) - min(ref)
-    if scale == 0:
-        scale = max(max(abs(value) for value in ref), 1.0)
-    percentages = [
-        abs(error / target)
-        for target, error in zip(ref, errors, strict=True)
-        if target != 0
-    ]
-    slope_errors = tuple(
-        (cand[index + 1] - cand[index]) - (ref[index + 1] - ref[index])
-        for index in range(len(ref) - 1)
-    )
-    return CurveMetricSummary(
-        points=len(ref),
-        rmse=rmse,
-        normalized_rmse=rmse / scale,
-        mean_absolute_error=sum(absolute) / len(absolute),
-        max_absolute_error=max(absolute),
-        mean_absolute_percentage_error=(
-            sum(percentages) / len(percentages) if percentages else None
-        ),
-        slope_rmse=math.sqrt(
-            sum(value * value for value in slope_errors) / len(slope_errors)
-        ),
-    )
+        return threshold.value <= converted <= threshold.upper_value
+    return math.isclose(converted, threshold.value, rel_tol=1e-12, abs_tol=1e-15)
 
 
 def relative_conservation_error(
@@ -338,7 +256,11 @@ def validate_report_against_plan(
                 "fail",
             }:
                 assert check.threshold is not None and result.observed_value is not None
-                passed = evaluate_threshold(float(result.observed_value), check.threshold)
+                passed = evaluate_threshold(
+                    float(result.observed_value),
+                    check.threshold,
+                    observed_unit=result.unit,
+                )
                 if (result.status == "pass") != passed:
                     raise ValueError("deterministic validation status disagrees with threshold")
 
@@ -350,16 +272,13 @@ def validate_validation_report(value: dict[str, object]) -> dict[str, object]:
 
 
 __all__ = [
-    "CurveMetricSummary",
     "HypothesisAssessment",
     "HypothesisAssessmentOutcome",
-    "RecommendedTaskMode",
     "ValidationCheckResult",
     "ValidationDimensionReport",
     "ValidationEvidence",
     "ValidationReport",
     "evaluate_threshold",
-    "paired_curve_metrics",
     "relative_conservation_error",
     "validate_report_against_plan",
     "validate_validation_report",

@@ -1,0 +1,117 @@
+......F........................FF......FF..........                      [100%]
+=================================== FAILURES ===================================
+______ test_closed_or_empty_instance_does_not_invent_scientific_objective ______
+
+    def test_closed_or_empty_instance_does_not_invent_scientific_objective() -> None:
+        overview = _overview()
+        overview.update(objective_refs=[], active_tasks=[], presentation=None, display_node=None)
+        page = render_workbench(overview, browse_base="/instance/instance-a", csrf_token="csrf").decode()
+        assert "当前节点的原始目标尚未唯一定位" in page
+        assert "当前没有正在运行的任务" in page
+        assert "Original historical research objective" not in page
+>       assert "/manage" not in page
+E       AssertionError: assert '/manage' not in '<!doctype h...body></html>'
+E         
+E         '/manage' is contained here:
+E           /instances/manage'>实例管理</a><a href='/instance/instance-a'>当前实例</a></nav><a class='skip-link' href='#workbench-content'>跳到主要内容</a><main class='workbench-page' id='workbench-content' data-instance-id='instance-a'><header class='workbench-header'><div class='workspace-brand'>科研工作台 <span>实例视图</span></div><div class='workspace-heading'><h1>Example research</h1><span class='workspace-storage'>研究资料</span></div><nav aria-label='工作台导航'><a class='' href='/instance/instance-a' data-workbench-refresh>刷新记录</a></nav><p class='workbench-update-status' role='status' aria-liv...
+E         
+E         ...Full output truncated (2 lines hidden), use '-vv' to show
+
+tests/operations/test_instance_workbench_render.py:81: AssertionError
+_________ test_archived_workbench_and_nodes_do_not_start_live_updates __________
+
+    def test_archived_workbench_and_nodes_do_not_start_live_updates() -> None:
+        overview = {"instance": INSTANCE, "storage": _status(storage_state="archived", phase="completed"),
+                    "nodes": {"items": [], "next_cursor": None}, "active_tasks": []}
+        page = render_workbench(overview, browse_base="/instance/instance-a", csrf_token="csrf", can_manage=True).decode()
+>       assert "已归档 · 资料只读" in page
+E       assert '已归档 · 资料只读' in "<!doctype html><html lang='zh-CN'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initi...le' aria-hidden='true'>＋</span></summary><div class='research-panel-body'><p></p></div></details></main></body></html>"
+
+tests/operations/test_instance_management_render.py:184: AssertionError
+__ test_artifact_display_preference_keeps_cursor_and_a_way_to_restore_display __
+
+    def test_artifact_display_preference_keeps_cursor_and_a_way_to_restore_display() -> None:
+        overview = {"instance": INSTANCE, "storage": _status(), "preferences": {"show_artifacts": False},
+                    "nodes": {"items": [{"kind": "artifact", "key": "artifact:hidden", "name": "hidden", "state": "registered"}],
+                              "next_cursor": "next-page"}, "active_tasks": []}
+        page = render_workbench(overview, browse_base="/instance/instance-a", csrf_token="csrf", can_manage=True).decode()
+>       assert "artifact%3Ahidden" not in page
+E       AssertionError: assert 'artifact%3Ahidden' not in '<!doctype h...body></html>'
+E         
+E         'artifact%3Ahidden' is contained here:
+E           e-a/nodes/artifact%3Ahidden'>成果 / 转换</a><span class='workbench-state state-registered'>已登记</span></div></div></li></ol><a class='pagination-next' href='/instance/instance-a?cursor=next-page'>更早的研究记录 →</a></div></details><details class='research-panel '><summary><span>实例管理描述与观察记录</span><span class='panel-toggle' aria-hidden='true'>＋</span></summary><div class='research-panel-body'><p></p></div></details></main></body></html>
+E         ?           +++++++++++++++++
+
+tests/operations/test_instance_management_render.py:199: AssertionError
+_______ test_instance_current_is_pure_and_ui_directly_creates_and_binds ________
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-70/test_instance_current_is_pure_0')
+
+    def test_instance_current_is_pure_and_ui_directly_creates_and_binds(
+        tmp_path: Path,
+    ) -> None:
+        runtime, state, secret, ui, base = _setup(tmp_path)
+        root = _root(runtime, session_key="sch_" + "1" * 32, secret=secret, base=base)
+        scheduler_db = state / "database" / "scheduler-bindings.sqlite3"
+        approval_db = state / "database" / "approvals.sqlite3"
+        artifact_db = state / "database" / "artifact_agent.sqlite3"
+        before_scheduler = scheduler_db.read_bytes()
+        before_approvals = _row_count(approval_db, "approval_requests")
+        before_artifacts = _row_count(artifact_db, "artifact_envelopes")
+        try:
+            capability, csrf, page = _management_page(root, base)
+>           assert "创建新实例".encode("utf-8") in page
+E           AssertionError: assert b'\xe5\x88\x9b\xe5\xbb\xba\xe6\x96\xb0\xe5\xae\x9e\xe4\xbe\x8b' in b'<!doctype html><html lang=\'zh-CN\'><head><meta charset=\'utf-8\'><meta name=\'viewport\' content=\'width=device-wid...c\x89\xe5\xbe\x85\xe5\xae\xa1\xe6\x89\xb9\xe4\xba\x8b\xe9\xa1\xb9\xe3\x80\x82</p></div></details></main></body></html>'
+E            +  where b'\xe5\x88\x9b\xe5\xbb\xba\xe6\x96\xb0\xe5\xae\x9e\xe4\xbe\x8b' = <built-in method encode of str object at 0x7fb6451cca30>('utf-8')
+E            +    where <built-in method encode of str object at 0x7fb6451cca30> = '创建新实例'.encode
+
+tests/operations/test_m6a_direct_instance_management.py:141: AssertionError
+____ test_direct_ui_selection_atomically_transfers_the_single_session_owner ____
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-70/test_direct_ui_selection_atomi0')
+
+    def test_direct_ui_selection_atomically_transfers_the_single_session_owner(
+        tmp_path: Path,
+    ) -> None:
+        runtime, _, secret, ui, base = _setup(tmp_path)
+        first = _root(runtime, session_key="sch_" + "2" * 32, secret=secret, base=base)
+        second = _root(runtime, session_key="sch_" + "3" * 32, secret=secret, base=base)
+        try:
+            capability, csrf, _ = _management_page(first, base)
+            status, _, _ = _request(
+                base,
+                "POST",
+                "/instances/create",
+                form={
+                    "capability": capability,
+                    "csrf": csrf,
+                    "name": "m6a.transfer",
+                    "title": "M6-A transfer",
+                    "objective": "Transfer one exact session owner.",
+                },
+            )
+            assert status == 303
+    
+            capability, csrf, page = _management_page(second, base)
+            assert b"m6a.transfer" in page
+            status, _, _ = _request(
+                base,
+                "POST",
+                "/instances/select",
+                form={
+                    "capability": capability,
+                    "csrf": csrf,
+                    "name": "m6a.transfer",
+                },
+            )
+>           assert status == 303
+E           assert 200 == 303
+
+tests/operations/test_m6a_direct_instance_management.py:204: AssertionError
+=========================== short test summary info ============================
+FAILED tests/operations/test_instance_workbench_render.py::test_closed_or_empty_instance_does_not_invent_scientific_objective
+FAILED tests/operations/test_instance_management_render.py::test_archived_workbench_and_nodes_do_not_start_live_updates
+FAILED tests/operations/test_instance_management_render.py::test_artifact_display_preference_keeps_cursor_and_a_way_to_restore_display
+FAILED tests/operations/test_m6a_direct_instance_management.py::test_instance_current_is_pure_and_ui_directly_creates_and_binds
+FAILED tests/operations/test_m6a_direct_instance_management.py::test_direct_ui_selection_atomically_transfers_the_single_session_owner
+5 failed, 46 passed, 1 deselected in 23.65s

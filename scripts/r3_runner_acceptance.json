@@ -1,0 +1,43 @@
+{
+  "status": "authorized_for_bounded_source_validation_20260925",
+  "numeric_threads": 1,
+  "limits": {
+    "address_space_bytes": 1073741824,
+    "observed_tree_rss_stop_bytes": 805306368,
+    "timeout_seconds": 120,
+    "sample_interval_seconds": 0.1,
+    "termination_grace_seconds": 2
+  },
+  "checks": [
+    {
+      "stage": "runner",
+      "node": "tests/operations/test_r3_runner_boundaries.py::test_real_runner_enforces_shared_limits_and_reaps_children"
+    },
+    {
+      "stage": "logs",
+      "node": "tests/operations/test_log_preservation.py::test_real_worker_process_keeps_stderr_and_separate_diagnostic_file"
+    },
+    {
+      "stage": "unknown-submit",
+      "node": "tests/operations/test_r4_execution_approval_identity.py::test_unknown_submission_is_recovered_by_lookup_without_resubmit"
+    },
+    {
+      "stage": "restart-budget",
+      "node": "tests/operations/test_r3_runner_boundaries.py::test_budget_reservations_and_settlement_survive_process_restart"
+    },
+    {
+      "stage": "remote-protocol-local",
+      "node": "tests/operations/test_analysis_evidence_recovery.py::test_ssh_inspection_download_streams_through_remote_protocol"
+    },
+    {
+      "stage": "CAS-stream",
+      "node": "tests/operations/test_r3_runner_boundaries.py::test_control_ingests_and_reads_file_reference_without_whole_file_read"
+    }
+  ],
+  "stage": "small-real-runner-boundaries",
+  "candidate_files": {
+    "tests/operations/test_r3_runner_boundaries.py": "1f674200814b6aa9e03c471c53d10074664b091ae5bfc262a088e336f91c66d0",
+    "plugins/tcad_artifact/tcad_artifact/worker.py": "74199cbd81aadb46aac3e07fc50f666efab10e3c04fd71db191f8c37a24006b4",
+    "plugins/tcad_artifact/tcad_artifact/remote_runner_py36.py": "8fc6b42d17d28a2bb70d8eaceae4a7e89cc2783e96b95c5c7efc2578dc7d236c"
+  }
+}

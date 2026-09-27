@@ -1,0 +1,252 @@
+..................................FFF......F............................ [ 87%]
+..........                                                               [100%]
+=================================== FAILURES ===================================
+____ test_ingestion_process_exit_preserves_idempotent_registration[output] _____
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-37/test_ingestion_process_exit_pr0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7fd1cdf80c80>
+stage = 'output'
+
+    @pytest.mark.parametrize('stage', ['output', 'manifest', 'committed'])
+    def test_ingestion_process_exit_preserves_idempotent_registration(tmp_path, monkeypatch, stage):
+        import os
+        import sys
+        from scidiscovery.artifact_agent.service.execution_collection import ExecutionCollection
+        from scidiscovery.artifact_agent.service.engineering_diagnostics import atomic_json
+        from tests.operations.test_r4_execution_approval_identity import _setup, _create_effect, _decide_execution_approval
+        from tests.operations.test_log_preservation import _descriptor
+        runtime, _, adapter, _, root, _ = _setup(tmp_path)
+        _create_effect(root, name='interrupted')
+        _decide_execution_approval(runtime, root, name='interrupted')
+        root.call_tool('execution_start', {'name':'interrupted'})
+        execution_id = root.facade._resolve('execution','interrupted')
+        value = runtime.executions.status(execution_id)
+        runtime.executions.record_status(execution_id=execution_id,external_run_id=value.external_run_id,state='succeeded')
+        output = tmp_path / 'data'
+        output.write_bytes(b'raw solver output')
+        script = tmp_path / 'crash.py'
+        script.write_text('import os,sys\nfrom pathlib import Path\n'
+            'from scidiscovery.artifact_agent.service.artifacts import ArtifactService\n'
+            'from scidiscovery.artifact_agent.service.executions import ExecutionService\n'
+            'from scidiscovery.artifact_agent.service.execution_collection import _child\n'
+            f'stage={stage!r}\n' +
+            'original=ArtifactService.register\n'
+            'def register(self, content, registration, **kwargs):\n'
+            ' result=original(self,content,registration,**kwargs)\n'
+            ' if (stage=="output" and registration.kind=="execution_output") or (stage=="manifest" and registration.kind=="execution_result"): os._exit(71)\n'
+            ' return result\n'
+            'ArtifactService.register=register\n'
+            'ingest=ExecutionService.ingest_result\n'
+            'def finish(self, **kwargs):\n'
+            ' result=ingest(self,**kwargs)\n'
+            ' if stage=="committed": os._exit(72)\n'
+            ' return result\n'
+            'ExecutionService.ingest_result=finish\n'
+            'raise SystemExit(_child(Path(sys.argv[1])))\n')
+        collector = ExecutionCollection(runtime.executions,plugin_configs={},child_command=[sys.executable,str(script)])
+        root.facade.execution_collection = collector
+        frozen = {'outputs':[_descriptor('profile',output,'text/plain').model_dump(mode='json')],
+            'collected_at':'2026-09-13T00:00:00Z'}
+        atomic_json(collector.directory(execution_id)/'outputs.json', frozen)
+        monkeypatch.setenv('PYTHONPATH',os.pathsep.join(sys.path))
+        try:
+>           collector.collect(execution_id,scope='instance:'+value.instance_id if hasattr(value,'instance_id') else 'fixture',total_seconds=10)
+
+tests/operations/test_execution_collection.py:445: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <scidiscovery.artifact_agent.service.execution_collection.ExecutionCollection object at 0x7fd1ccd22a20>
+execution_id = 'exe_ab2e81a0e91d035618fa616353255c246340c9ede0782ef52e2e28586e0e1476'
+scope = 'fixture', total_seconds = 10
+
+    def collect(self, execution_id, *, scope, total_seconds=COLLECTION_SECONDS):
+        gate = getattr(self.executions, "instance_maintenance", None)
+        lease = None
+        if gate is not None:
+            with gate.global_guard():
+                owner = self.executions.scheduler_bindings.find_owner(namespace="execution", object_id=execution_id)
+                if owner is None or scope != "instance:" + owner[0].instance_id:
+>                   raise ValueError("collection requires its exact instance owner")
+E                   ValueError: collection requires its exact instance owner
+
+src/scidiscovery/artifact_agent/service/execution_collection.py:277: ValueError
+___ test_ingestion_process_exit_preserves_idempotent_registration[manifest] ____
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-37/test_ingestion_process_exit_pr1')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7fd1cd2dbb60>
+stage = 'manifest'
+
+    @pytest.mark.parametrize('stage', ['output', 'manifest', 'committed'])
+    def test_ingestion_process_exit_preserves_idempotent_registration(tmp_path, monkeypatch, stage):
+        import os
+        import sys
+        from scidiscovery.artifact_agent.service.execution_collection import ExecutionCollection
+        from scidiscovery.artifact_agent.service.engineering_diagnostics import atomic_json
+        from tests.operations.test_r4_execution_approval_identity import _setup, _create_effect, _decide_execution_approval
+        from tests.operations.test_log_preservation import _descriptor
+        runtime, _, adapter, _, root, _ = _setup(tmp_path)
+        _create_effect(root, name='interrupted')
+        _decide_execution_approval(runtime, root, name='interrupted')
+        root.call_tool('execution_start', {'name':'interrupted'})
+        execution_id = root.facade._resolve('execution','interrupted')
+        value = runtime.executions.status(execution_id)
+        runtime.executions.record_status(execution_id=execution_id,external_run_id=value.external_run_id,state='succeeded')
+        output = tmp_path / 'data'
+        output.write_bytes(b'raw solver output')
+        script = tmp_path / 'crash.py'
+        script.write_text('import os,sys\nfrom pathlib import Path\n'
+            'from scidiscovery.artifact_agent.service.artifacts import ArtifactService\n'
+            'from scidiscovery.artifact_agent.service.executions import ExecutionService\n'
+            'from scidiscovery.artifact_agent.service.execution_collection import _child\n'
+            f'stage={stage!r}\n' +
+            'original=ArtifactService.register\n'
+            'def register(self, content, registration, **kwargs):\n'
+            ' result=original(self,content,registration,**kwargs)\n'
+            ' if (stage=="output" and registration.kind=="execution_output") or (stage=="manifest" and registration.kind=="execution_result"): os._exit(71)\n'
+            ' return result\n'
+            'ArtifactService.register=register\n'
+            'ingest=ExecutionService.ingest_result\n'
+            'def finish(self, **kwargs):\n'
+            ' result=ingest(self,**kwargs)\n'
+            ' if stage=="committed": os._exit(72)\n'
+            ' return result\n'
+            'ExecutionService.ingest_result=finish\n'
+            'raise SystemExit(_child(Path(sys.argv[1])))\n')
+        collector = ExecutionCollection(runtime.executions,plugin_configs={},child_command=[sys.executable,str(script)])
+        root.facade.execution_collection = collector
+        frozen = {'outputs':[_descriptor('profile',output,'text/plain').model_dump(mode='json')],
+            'collected_at':'2026-09-13T00:00:00Z'}
+        atomic_json(collector.directory(execution_id)/'outputs.json', frozen)
+        monkeypatch.setenv('PYTHONPATH',os.pathsep.join(sys.path))
+        try:
+>           collector.collect(execution_id,scope='instance:'+value.instance_id if hasattr(value,'instance_id') else 'fixture',total_seconds=10)
+
+tests/operations/test_execution_collection.py:445: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <scidiscovery.artifact_agent.service.execution_collection.ExecutionCollection object at 0x7fd1ce69fd70>
+execution_id = 'exe_5e75b920157840ce71da1fd9d75e4cbd3b5ecd806c01632bb91f05999c993c2c'
+scope = 'fixture', total_seconds = 10
+
+    def collect(self, execution_id, *, scope, total_seconds=COLLECTION_SECONDS):
+        gate = getattr(self.executions, "instance_maintenance", None)
+        lease = None
+        if gate is not None:
+            with gate.global_guard():
+                owner = self.executions.scheduler_bindings.find_owner(namespace="execution", object_id=execution_id)
+                if owner is None or scope != "instance:" + owner[0].instance_id:
+>                   raise ValueError("collection requires its exact instance owner")
+E                   ValueError: collection requires its exact instance owner
+
+src/scidiscovery/artifact_agent/service/execution_collection.py:277: ValueError
+___ test_ingestion_process_exit_preserves_idempotent_registration[committed] ___
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-37/test_ingestion_process_exit_pr2')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7fd1ce69ccb0>
+stage = 'committed'
+
+    @pytest.mark.parametrize('stage', ['output', 'manifest', 'committed'])
+    def test_ingestion_process_exit_preserves_idempotent_registration(tmp_path, monkeypatch, stage):
+        import os
+        import sys
+        from scidiscovery.artifact_agent.service.execution_collection import ExecutionCollection
+        from scidiscovery.artifact_agent.service.engineering_diagnostics import atomic_json
+        from tests.operations.test_r4_execution_approval_identity import _setup, _create_effect, _decide_execution_approval
+        from tests.operations.test_log_preservation import _descriptor
+        runtime, _, adapter, _, root, _ = _setup(tmp_path)
+        _create_effect(root, name='interrupted')
+        _decide_execution_approval(runtime, root, name='interrupted')
+        root.call_tool('execution_start', {'name':'interrupted'})
+        execution_id = root.facade._resolve('execution','interrupted')
+        value = runtime.executions.status(execution_id)
+        runtime.executions.record_status(execution_id=execution_id,external_run_id=value.external_run_id,state='succeeded')
+        output = tmp_path / 'data'
+        output.write_bytes(b'raw solver output')
+        script = tmp_path / 'crash.py'
+        script.write_text('import os,sys\nfrom pathlib import Path\n'
+            'from scidiscovery.artifact_agent.service.artifacts import ArtifactService\n'
+            'from scidiscovery.artifact_agent.service.executions import ExecutionService\n'
+            'from scidiscovery.artifact_agent.service.execution_collection import _child\n'
+            f'stage={stage!r}\n' +
+            'original=ArtifactService.register\n'
+            'def register(self, content, registration, **kwargs):\n'
+            ' result=original(self,content,registration,**kwargs)\n'
+            ' if (stage=="output" and registration.kind=="execution_output") or (stage=="manifest" and registration.kind=="execution_result"): os._exit(71)\n'
+            ' return result\n'
+            'ArtifactService.register=register\n'
+            'ingest=ExecutionService.ingest_result\n'
+            'def finish(self, **kwargs):\n'
+            ' result=ingest(self,**kwargs)\n'
+            ' if stage=="committed": os._exit(72)\n'
+            ' return result\n'
+            'ExecutionService.ingest_result=finish\n'
+            'raise SystemExit(_child(Path(sys.argv[1])))\n')
+        collector = ExecutionCollection(runtime.executions,plugin_configs={},child_command=[sys.executable,str(script)])
+        root.facade.execution_collection = collector
+        frozen = {'outputs':[_descriptor('profile',output,'text/plain').model_dump(mode='json')],
+            'collected_at':'2026-09-13T00:00:00Z'}
+        atomic_json(collector.directory(execution_id)/'outputs.json', frozen)
+        monkeypatch.setenv('PYTHONPATH',os.pathsep.join(sys.path))
+        try:
+>           collector.collect(execution_id,scope='instance:'+value.instance_id if hasattr(value,'instance_id') else 'fixture',total_seconds=10)
+
+tests/operations/test_execution_collection.py:445: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <scidiscovery.artifact_agent.service.execution_collection.ExecutionCollection object at 0x7fd1d07b92e0>
+execution_id = 'exe_c3eaa5017dfc5101fc08647978dd0ee0eb327878bd8c5566659fa6d41a008df8'
+scope = 'fixture', total_seconds = 10
+
+    def collect(self, execution_id, *, scope, total_seconds=COLLECTION_SECONDS):
+        gate = getattr(self.executions, "instance_maintenance", None)
+        lease = None
+        if gate is not None:
+            with gate.global_guard():
+                owner = self.executions.scheduler_bindings.find_owner(namespace="execution", object_id=execution_id)
+                if owner is None or scope != "instance:" + owner[0].instance_id:
+>                   raise ValueError("collection requires its exact instance owner")
+E                   ValueError: collection requires its exact instance owner
+
+src/scidiscovery/artifact_agent/service/execution_collection.py:277: ValueError
+____ test_recursive_current_uses_producer_receipts_and_commit_rechecks_head ____
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-37/test_recursive_current_uses_pr0')
+
+    def test_recursive_current_uses_producer_receipts_and_commit_rechecks_head(
+        tmp_path: Path,
+    ) -> None:
+>       catalog, runtime, instance, source, root = _system(
+            tmp_path, require_current=True
+        )
+
+tests/operations/test_l2_run_invariants.py:351: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/operations/test_l2_run_invariants.py:115: in _system
+    catalog = _catalog(require_current=require_current)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/operations/test_l2_run_invariants.py:111: in _catalog
+    return compile_catalog((CORE_PLUGIN, GENERAL_PLUGIN, plugin))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/scidiscovery/operations/catalog.py:839: in compile_catalog
+    compiled_parts, runtime_factories, runtime_configuration_digests, runtime_identity_digests, used = _validate_operation_contracts(plugin_map, components)
+                                                                                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/scidiscovery/operations/catalog.py:369: in _validate_operation_contracts
+    _fail("output_context_invalid", plugin.plugin_id, op_id, port.name)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+code = 'output_context_invalid', plugin = 'blind_csv'
+operation = 'blind.csv.observe.v1', field = 'csv_observation'
+
+    def _fail(
+        code: str, plugin: str | None = None, operation: str | None = None,
+        field: str | None = None) -> None:
+>       raise CatalogCompileError(code, plugin_id=plugin, operation_id=operation, field=field)
+E       scidiscovery.operations.catalog.CatalogCompileError: output_context_invalid: blind_csv/blind.csv.observe.v1/csv_observation
+
+src/scidiscovery/operations/catalog.py:108: CatalogCompileError
+=========================== short test summary info ============================
+FAILED tests/operations/test_execution_collection.py::test_ingestion_process_exit_preserves_idempotent_registration[output]
+FAILED tests/operations/test_execution_collection.py::test_ingestion_process_exit_preserves_idempotent_registration[manifest]
+FAILED tests/operations/test_execution_collection.py::test_ingestion_process_exit_preserves_idempotent_registration[committed]
+FAILED tests/operations/test_l2_run_invariants.py::test_recursive_current_uses_producer_receipts_and_commit_rechecks_head
+4 failed, 78 passed in 75.61s (0:01:15)

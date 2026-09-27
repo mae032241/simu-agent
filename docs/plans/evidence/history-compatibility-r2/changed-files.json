@@ -1,0 +1,72 @@
+[
+  {
+    "path": "src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py",
+    "before_sha256": "19f4ebf06ccf97b12c65750c612f86d8d7c2004fde1af6dd63048bd2cff9caa9",
+    "after_sha256": "48474d56f92ddbb98f2f053c0a8d39bb0cb0c2bbe9dc63dac5af2a7814d3172d"
+  },
+  {
+    "path": "src/scidiscovery/artifact_agent/interfaces/mcp_root_run_routes.py",
+    "before_sha256": "0efced0aedac3001780eed3f335112a14561f6c351dbb0fd9392899381c28431",
+    "after_sha256": "274e7f39433f493320376ec094317e39fb92ccec02a9457547535fdca6c18b81"
+  },
+  {
+    "path": "src/scidiscovery/artifact_agent/interfaces/mcp_root_instance_routes.py",
+    "before_sha256": "516e6322ddb7fe933cefd177aaafddf2d6a386902b67bad66246b471366123c8",
+    "after_sha256": "ffad7e4edbedfa5801a89be3b7f2dbe4f7300ffd5bdf663e738beb8a20d7b2f1"
+  },
+  {
+    "path": "src/scidiscovery/artifact_agent/service/runs.py",
+    "before_sha256": "e02514038f80ceea0b4764e79a31996c350e8288fcc5cebaea266f601b12989c",
+    "after_sha256": "b51f5e78c51c253ff20b26ef064a28ff2a0269c0af4998abb3bb05adb323b404"
+  },
+  {
+    "path": "src/scidiscovery/artifact_agent/service/run_assignment.py",
+    "before_sha256": "4c20c622b41a7bd33f0e289a596e2c57856cf299a855e38195c3acad5710a1d8",
+    "after_sha256": "ec0cd536dbcfa1930d92f9696975acf6f652efbb015eab3ac3f1745d5ee8e9de"
+  },
+  {
+    "path": "src/scidiscovery/operations/invoke.py",
+    "before_sha256": "ec2cd26bbf2289e0d7e15463c0870e26961cb8f637dda0fa98cefa8c093cf419",
+    "after_sha256": "11f1e0793960f4e05628a4dab48a34b09c0af3a7fddcbbd62ce78ee10fe9b149"
+  },
+  {
+    "path": "tests/operations/test_m6c_producer_topology_removal.py",
+    "before_sha256": "5cbe5989319a09466d7c90a3155948aa2787bb8f8cd671facbf1bfb0feafdc78",
+    "after_sha256": "a963f7b382ac9507650ac8c7859197d0ff815ff2e57fb6a766ebd619fb6601fa"
+  },
+  {
+    "path": "tests/operations/test_skill_policy_producer_compatibility.py",
+    "before_sha256": "703407b1326a8db31087b61d9d0e83719d93eab0ea4c67bb77e5099b82cf2361",
+    "after_sha256": "bc3c7453d751bfab70e005f03abd8c0aab16162b2de1acbbd3a61a71405777da"
+  },
+  {
+    "path": "tests/operations/test_l2_local_run.py",
+    "before_sha256": "65afdd64850473628bd8f494a103c1b29741192dc7e99f412f19dab78112e120",
+    "after_sha256": "24c43bb966d39bc601f026b8ddaa640a167cb88fd10a741048a270364c72d155"
+  },
+  {
+    "path": "docs/ARCHITECTURE.md",
+    "before_sha256": "69138873d3c6dfca4b1db00162a796684dd6cc7767008191ed5f9812fb226386",
+    "after_sha256": "d9b062a53a26929f009ab07e48aa862952ac716fe7bcc0b06b7342b4c257df9e"
+  },
+  {
+    "path": "docs/ARCHITECTURE.zh-CN.md",
+    "before_sha256": "8ea161e49d62d13488e141bcf50fa619d6913785558322167b345ca47b7a58c8",
+    "after_sha256": "b7effa172743632132f1f613915ca34da02396647b1c53284473c4cadbd06413"
+  },
+  {
+    "path": "tests/operations/test_hypothesis_review_routing.py",
+    "before_sha256": "4c7ff6f2587a4523cd8da7cd17a994ac56b1e7cfe269db48c94d23a71e48d727",
+    "after_sha256": "18c82c5c6e26049e556079c8a8670e80c8b5e8b148859436b650f222c9a17211"
+  },
+  {
+    "path": "tests/operations/test_l4_local_tcad.py",
+    "before_sha256": "f7fe597e987a12c8b9e6553e8ff7c0ab24e98530948c9273e7bbfe8faf64e055",
+    "after_sha256": "dd0a03246ac24c0b87145bae5ebbc75c4885ef917ac913fb17db55126e34ea8a"
+  },
+  {
+    "path": "tests/operations/test_historical_compatibility_paths.py",
+    "before_sha256": null,
+    "after_sha256": "fb7a60c2aee406383f7f14ae8d6a35f4c0cfcb4f6edcb5ad5933790c8b08766d"
+  }
+]

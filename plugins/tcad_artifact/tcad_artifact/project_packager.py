@@ -1,10 +1,15 @@
-"""Deterministically package a reviewed textual TCAD project for execution."""
+"""Deterministically package a textual TCAD project for execution."""
 
 from __future__ import annotations
 
+from scidiscovery.operations.input_validation import parse_bound_json
+from .debug_contract import DEVELOPMENT_ARTIFACT_LIMIT_BYTES
+
+import base64
 import hashlib
 import io
 import json
+import math
 import os
 import re
 import shutil
@@ -12,15 +17,26 @@ import tarfile
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal, Mapping
 
-from pydantic import Field, ValidationError, field_validator, model_validator
+from pydantic import ConfigDict, RootModel, Field, ValidationError, field_validator, model_validator
+from scidiscovery.artifact_agent.schema.common import canonical_json, canonical_sha256
+from scidiscovery.artifact_agent.schema.experiment import ExperimentPortfolio
+from scidiscovery.operation_contract import SemanticRuleViolation, declared_violation
+from .device_parameters import (
+    DeviceParameterCoverageReport,
+    DeviceParameterSet,
+)
+from scidiscovery.artifact_agent.schema.refs import ArtifactRef
 
 from .execution_control import (
     ArchiveEntry,
     ExpectedOutput,
     FileDescriptor,
     ResourceLimits,
+    SolverCapability,
+    SolverCapabilitySnapshot,
+    SolverKind,
     StrictModel,
     TCADJobSpec,
 )
@@ -47,13 +63,8 @@ def _safe_relative_path(value: str) -> str:
     return value
 
 
-def _direct_solver_kind(tool_profile: str) -> str | None:
-    normalized = tool_profile.lower()
-    if "sprocess" in normalized:
-        return "sprocess"
-    if "sdevice" in normalized:
-        return "sdevice"
-    return None
+def _safe_optional_relative_path(value: str | None) -> str | None:
+    return None if value is None else _safe_relative_path(value)
 
 
 class DeckFile(StrictModel):
@@ -63,26 +74,57 @@ class DeckFile(StrictModel):
     _safe_path = field_validator("relative_path")(_safe_relative_path)
 
 
-class ProjectExpectedOutput(StrictModel):
-    name: str = Field(min_length=1, max_length=256)
+class DeclaredCaseAnchor(StrictModel):
+    experiment_key: str = Field(
+        min_length=1, max_length=256, pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:/-]*$"
+    )
+    case_key: str = Field(
+        min_length=1, max_length=256, pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:/-]*$"
+    )
     relative_path: str = Field(min_length=1, max_length=1024)
-    media_type: str = Field(min_length=3, max_length=255)
-    required: bool = True
-    max_bytes: int = Field(ge=1, le=2**50)
+    locator: str = Field(min_length=1, max_length=4096)
 
     _safe_path = field_validator("relative_path")(_safe_relative_path)
 
 
-class ProjectResourceLimits(StrictModel):
-    wall_time_seconds: int = Field(ge=1, le=604800)
-    cpu_time_seconds: int = Field(ge=1, le=604800)
-    max_memory_bytes: int = Field(ge=1, le=2**50)
-    max_output_bytes: int = Field(ge=1, le=2**50)
-    max_processes: int = Field(ge=1, le=4096)
+class ProjectInputSlot(StrictModel):
+    semantic_name: str = Field(
+        min_length=1,
+        max_length=256,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+    )
+    target_relative_path: str = Field(min_length=1, max_length=1024)
+    media_type: str = Field(min_length=3, max_length=255)
+
+    _safe_target = field_validator("target_relative_path")(_safe_relative_path)
+
+
+class ResolvedProjectInput(StrictModel):
+    semantic_name: str = Field(
+        min_length=1,
+        max_length=256,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+    )
+    target_relative_path: str = Field(min_length=1, max_length=1024)
+    artifact_ref: ArtifactRef
+    media_type: str = Field(min_length=3, max_length=255)
+    size_bytes: int = Field(ge=0, le=2**50)
+
+    _safe_target = field_validator("target_relative_path")(_safe_relative_path)
+
+
+ProjectExpectedOutput = ExpectedOutput
+ProjectResourceLimits = ResourceLimits
 
 
 class ParameterBinding(StrictModel):
     name: str = Field(min_length=1, max_length=256)
+    approved_parameter_key: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=256,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:/-]*$",
+    )
     declared_value: str = Field(min_length=1, max_length=4096)
     unit: str = Field(min_length=1, max_length=128)
     relative_path: str = Field(min_length=1, max_length=1024)
@@ -97,6 +139,15 @@ class ParameterBinding(StrictModel):
     evidence_locator: str | None = Field(default=None, min_length=1, max_length=4096)
     rationale: str | None = Field(default=None, min_length=1, max_length=4096)
     requirement_keys: tuple[str, ...] = Field(default=(), max_length=64)
+    materialization_kind: Literal["agent_declared", "control_generated"] = (
+        "agent_declared"
+    )
+    source_sha256: str | None = Field(
+        default=None, min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$"
+    )
+    source_line_start: int | None = Field(default=None, ge=1)
+    source_line_end: int | None = Field(default=None, ge=1)
+    derivation: str | None = Field(default=None, min_length=1, max_length=4096)
 
     _safe_path = field_validator("relative_path")(_safe_relative_path)
 
@@ -112,14 +163,218 @@ class ParameterBinding(StrictModel):
             item is None for item in evidence
         ):
             raise ValueError("parameter evidence fields must be supplied together")
-        if len(self.requirement_keys) != len(set(self.requirement_keys)):
-            raise ValueError("parameter requirement_keys must be unique")
+        if self.materialization_kind == "control_generated":
+            if (
+                self.source_sha256 is None
+                or self.source_line_start is None
+                or self.source_line_end is None
+                or self.derivation is None
+            ):
+                raise ValueError(
+                    "control-generated parameter binding requires exact source provenance"
+                )
+            if self.source_line_end < self.source_line_start:
+                raise ValueError("parameter binding source line range is invalid")
+        elif any(
+            value is not None
+            for value in (
+                self.source_sha256,
+                self.source_line_start,
+                self.source_line_end,
+                self.derivation,
+            )
+        ):
+            raise ValueError(
+                "agent-declared parameter binding cannot claim control provenance"
+            )
         return self
+
+
+class CaseParameterBinding(StrictModel):
+    """One case-scoped realized control bound to exact solver source text."""
+
+    experiment_key: str = Field(
+        min_length=1,
+        max_length=256,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:/-]*$",
+    )
+    case_key: str = Field(
+        min_length=1,
+        max_length=256,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:/-]*$",
+    )
+    variable_key: str = Field(
+        min_length=1,
+        max_length=256,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:/-]*$",
+    )
+    scientific_path: str = Field(min_length=1, max_length=4096)
+    realized_value: str = Field(min_length=1, max_length=4096)
+    unit: str = Field(min_length=1, max_length=128)
+    relative_path: str = Field(min_length=1, max_length=1024)
+    locator: str = Field(min_length=1, max_length=4096)
+    requirement_keys: tuple[str, ...] = Field(default=(), max_length=64)
+    materialization_kind: Literal["agent_declared", "control_generated"] = (
+        "agent_declared"
+    )
+    source_sha256: str | None = Field(
+        default=None, min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$"
+    )
+    source_line_start: int | None = Field(default=None, ge=1)
+    source_line_end: int | None = Field(default=None, ge=1)
+    derivation: str | None = Field(default=None, min_length=1, max_length=4096)
+
+    _safe_path = field_validator("relative_path")(_safe_relative_path)
+
+    @model_validator(mode="after")
+    def _materialization_evidence_is_complete(self) -> CaseParameterBinding:
+        if self.materialization_kind == "control_generated":
+            if (
+                self.source_sha256 is None
+                or self.source_line_start is None
+                or self.source_line_end is None
+                or self.derivation is None
+            ):
+                raise ValueError(
+                    "control-generated case binding requires exact source provenance"
+                )
+            if self.source_line_end < self.source_line_start:
+                raise ValueError("case binding source line range is invalid")
+        elif any(
+            value is not None
+            for value in (
+                self.source_sha256,
+                self.source_line_start,
+                self.source_line_end,
+                self.derivation,
+            )
+        ):
+            raise ValueError(
+                "agent-declared case binding cannot claim control provenance"
+            )
+        return self
+
+
+class MaterializationFinding(StrictModel):
+    reason_code: Literal[
+        "missing_control_binding",
+        "duplicate_control_anchor",
+        "comment_only_anchor",
+        "unreachable_assignment",
+        "value_mismatch",
+        "unit_mismatch",
+        "missing_requirement_realization",
+        "downstream_only_requirement_in_deck",
+        "implicit_solver_default",
+        "dead_declaration",
+        "raw_output_not_declared",
+        "raw_output_not_produced",
+        "unsupported_syntax",
+        "source_changed_after_materialization",
+    ]
+    severity: Literal["error", "warning"]
+    message: str = Field(min_length=1, max_length=4096)
+    experiment_key: str | None = Field(default=None, max_length=256)
+    case_key: str | None = Field(default=None, max_length=256)
+    variable_key: str | None = Field(default=None, max_length=256)
+    requirement_key: str | None = Field(default=None, max_length=256)
+    source_path: str | None = Field(default=None, max_length=1024)
+    line_start: int | None = Field(default=None, ge=1)
+    line_end: int | None = Field(default=None, ge=1)
+    command_excerpt: str | None = Field(default=None, max_length=1024)
+    expected: str | None = Field(default=None, max_length=4096)
+    observed: str | None = Field(default=None, max_length=4096)
+    suggested_fix_scope: str = Field(min_length=1, max_length=4096)
+
+
+class ProjectMaterializationReport(StrictModel):
+    schema_version: Annotated[int, Field(ge=1, le=1)] = 1
+    profile: Literal["tcad.project-materializer.declared-source.v2"]
+    source_tree_sha256: str = Field(
+        min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$"
+    )
+    status: Literal["pass", "fail"]
+    generated_case_bindings: int = Field(ge=0, le=100000)
+    generated_parameter_bindings: int = Field(ge=0, le=100000)
+    generated_requirements: int = Field(ge=0, le=100000)
+    findings: tuple[MaterializationFinding, ...] = Field(default=(), max_length=4096)
+
+    @model_validator(mode="after")
+    def _status_matches_findings(self) -> ProjectMaterializationReport:
+        has_error = any(item.severity == "error" for item in self.findings)
+        if (self.status == "fail") != has_error:
+            raise ValueError("materialization status differs from its findings")
+        return self
+
+
+class ProjectPreflightAttestation(StrictModel):
+    """Control-owned result of one source-bound solver preflight."""
+
+    schema_version: Annotated[int, Field(ge=1, le=1)] = 1
+    profile: Literal["tcad.project-preflight.v1"] = "tcad.project-preflight.v1"
+    source_tree_sha256: str = Field(
+        min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$"
+    )
+    mode: Literal["preflight"] = "preflight"
+    project_sha256: str | None = Field(
+        default=None, min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$"
+    )
+    declarations_sha256: str | None = Field(
+        default=None, min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$"
+    )
+    terminal_state: Literal["succeeded", "failed", "cancelled"]
+    exit_code: int
+    diagnostic_layer: Literal[
+        "parser",
+        "initialization",
+        "numerical",
+        "output_contract",
+        "resource_limit",
+        "runtime",
+        "complete",
+    ]
+    qualified: bool
+    summary: str = Field(min_length=1, max_length=2048)
+
+    @model_validator(mode="after")
+    def _qualification_matches_result(self) -> ProjectPreflightAttestation:
+        passed = (
+            self.terminal_state == "succeeded"
+            and self.exit_code == 0
+            and self.diagnostic_layer == "complete"
+        )
+        if self.qualified != passed:
+            raise ValueError("preflight qualification differs from its terminal result")
+        return self
+
+
+class ProjectInitializationAttestation(ProjectPreflightAttestation):
+    """Control-owned diagnostic for the declared initialization entrypoint."""
+
+    profile: Literal["tcad.project-initialization.v1"] = "tcad.project-initialization.v1"
+    mode: Literal["initialization"] = "initialization"
 
 
 class RuntimeAssertion(StrictModel):
     description: str = Field(min_length=1, max_length=4096)
     expected_output_name: str = Field(min_length=1, max_length=256)
+    assertion_kind: Literal[
+        "output_present",
+        "file_nonempty",
+        "finite_numeric_table",
+        "solver_log_clean",
+        "tdr_metadata",
+    ] = "output_present"
+    required_columns: tuple[str, ...] = Field(default=(), max_length=4096)
+    min_numeric_rows: int = Field(default=1, ge=1, le=10**9)
+
+    @model_validator(mode="after")
+    def _parser_requirements_are_consistent(self) -> RuntimeAssertion:
+        if self.assertion_kind != "finite_numeric_table" and self.required_columns:
+            raise ValueError("required columns apply only to numeric-table assertions")
+        if len(self.required_columns) != len(set(self.required_columns)):
+            raise ValueError("runtime assertion required columns must be unique")
+        return self
 
 
 class RealizationRequirement(StrictModel):
@@ -184,33 +439,66 @@ class RealizationRequirement(StrictModel):
         return self
 
 
-class DeckProjectDraft(StrictModel):
-    schema_version: Annotated[int, Field(ge=1, le=1)] = 1
-    tool_profile: str = Field(
-        min_length=1,
-        max_length=256,
-        pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:/-]*$",
-    )
+class AttemptFile(DeckFile):
+    """Control-captured source or diagnostic bytes; legacy records are UTF-8."""
+
+    content: str = Field(max_length=DEVELOPMENT_ARTIFACT_LIMIT_BYTES)
+    encoding: Literal["utf8", "base64"] = "utf8"
+
+    def raw_bytes(self) -> bytes:
+        return (base64.b64decode(self.content, validate=True)
+                if self.encoding == "base64" else self.content.encode("utf-8"))
+
+    @model_validator(mode="after")
+    def _bounded_bytes(self) -> AttemptFile:
+        if self.encoding == "base64" and not self.relative_path.startswith("reports/"):
+            raise ValueError("binary attempt files must be diagnostic reports")
+        limit = DEVELOPMENT_ARTIFACT_LIMIT_BYTES if self.relative_path.startswith("reports/") else 8 * 1024 * 1024
+        if len(self.raw_bytes()) > limit:
+            raise ValueError("attempt file exceeds its byte limit")
+        return self
+
+
+class ScientificDeckImplementation(StrictModel):
+    """Standalone scientific implementation shared by author schema and execution package.
+
+    File paths, input-slot names/paths and output names/paths must be unique and
+    disjoint. Entrypoints must identify supplied files; direct solvers require a
+    .cmd entrypoint without shell launchers, nested solvers, scheduler arguments
+    or unresolved Workbench tokens. Combined source bytes obey x-max-source-bytes.
+    Arguments cannot contain NUL bytes.
+    """
+    model_config = ConfigDict(json_schema_extra={"x-max-source-bytes":MAX_PROJECT_BYTES})
+    execution_plan: ExperimentPortfolio | None = None
+    solver_kind: SolverKind | None = None
     files: tuple[DeckFile, ...] = Field(min_length=1, max_length=4096)
+    input_slots: tuple[ProjectInputSlot, ...] = Field(default=(), max_length=4096)
     entrypoint: str = Field(min_length=1, max_length=1024)
-    arguments: tuple[str, ...] = Field(default=(), max_length=256)
-    expected_outputs: tuple[ProjectExpectedOutput, ...] = Field(max_length=4096)
-    parameter_bindings: tuple[ParameterBinding, ...] = Field(default=(), max_length=4096)
-    runtime_assertions: tuple[RuntimeAssertion, ...] = Field(default=(), max_length=4096)
-    realization_manifest: tuple[RealizationRequirement, ...] = Field(
-        default=(), max_length=4096
+    development_initialization_entrypoint: str | None = Field(
+        default=None, min_length=1, max_length=1024
     )
+    arguments: tuple[Annotated[str, Field(max_length=4096, pattern=r"^[^\x00]*$")], ...] = Field(default=(), max_length=256)
+    expected_outputs: tuple[ProjectExpectedOutput, ...] = Field(default=(), max_length=4096)
+    collect_generated_outputs: bool = False
     resource_limits: ProjectResourceLimits
 
     _safe_entrypoint = field_validator("entrypoint")(_safe_relative_path)
+    _safe_initialization_entrypoint = field_validator(
+        "development_initialization_entrypoint"
+    )(_safe_optional_relative_path)
 
     @model_validator(mode="after")
-    def _consistent_project(self) -> DeckProjectDraft:
+    def _consistent_implementation(self):
         file_paths = tuple(item.relative_path for item in self.files)
         if len(file_paths) != len(set(file_paths)):
             raise ValueError("project file paths must be unique")
         if self.entrypoint not in set(file_paths):
             raise ValueError("entrypoint must name one project file")
+        if (
+            self.development_initialization_entrypoint is not None
+            and self.development_initialization_entrypoint not in set(file_paths)
+        ):
+            raise ValueError("development initialization entrypoint must name one project file")
         if sum(len(item.content.encode("utf-8")) for item in self.files) > MAX_PROJECT_BYTES:
             raise ValueError("project source exceeds total byte limit")
 
@@ -220,25 +508,37 @@ class DeckProjectDraft(StrictModel):
             raise ValueError("expected output names and paths must be unique")
         if set(file_paths).intersection(output_paths):
             raise ValueError("expected output must not overwrite a project input")
+        slot_names = tuple(item.semantic_name for item in self.input_slots)
+        slot_paths = tuple(item.target_relative_path for item in self.input_slots)
+        if len(slot_names) != len(set(slot_names)) or len(slot_paths) != len(
+            set(slot_paths)
+        ):
+            raise ValueError("project input slot names and paths must be unique")
+        if set(file_paths).intersection(slot_paths) or set(output_paths).intersection(
+            slot_paths
+        ):
+            raise ValueError("project input slots must not overlap text files or outputs")
 
-        binding_names = tuple(item.name for item in self.parameter_bindings)
-        if len(binding_names) != len(set(binding_names)):
-            raise ValueError("parameter binding names must be unique")
         contents = {item.relative_path: item.content for item in self.files}
-        solver_kind = _direct_solver_kind(self.tool_profile)
+        solver_kind = self.solver_kind
         if solver_kind is not None:
-            if Path(self.entrypoint).suffix.lower() != ".cmd":
+            if solver_kind in {"sprocess", "sdevice"} and Path(
+                self.entrypoint
+            ).suffix.lower() != ".cmd":
                 raise ValueError(
                     f"direct {solver_kind} entrypoint must be a .cmd solver deck"
                 )
             entrypoint_content = contents[self.entrypoint]
-            if any(
+            if solver_kind in {"sprocess", "sdevice"} and any(
                 marker in entrypoint_content for marker in SHELL_ENTRYPOINT_MARKERS
             ):
                 raise ValueError(
                     f"direct {solver_kind} entrypoint contains shell-runner syntax"
                 )
-            if any(value in {"submit", "worker", "status"} for value in self.arguments):
+            if solver_kind in {"sprocess", "sdevice"} and any(
+                value in {"submit", "worker", "status"}
+                for value in self.arguments
+            ):
                 raise ValueError(
                     f"direct {solver_kind} arguments contain scheduler commands"
                 )
@@ -247,16 +547,107 @@ class DeckProjectDraft(StrictModel):
                 for content in contents.values()
                 for token in WORKBENCH_TOKEN.findall(content)
             }
-            if unresolved:
+            if solver_kind in {"sprocess", "sdevice"} and unresolved:
                 raise ValueError(
                     "standalone direct-solver project contains unresolved "
                     "Workbench tokens: " + ", ".join(sorted(unresolved))
                 )
+            nested_solver = re.search(
+                rf"(^|[;\n])\s*(?:exec\s+)?{solver_kind}\b",
+                entrypoint_content,
+                re.IGNORECASE,
+            )
+            if solver_kind in {"sprocess", "sdevice"} and nested_solver:
+                raise ValueError(
+                    f"direct {solver_kind} entrypoint launches a nested solver"
+                )
+        return self
+
+
+class DeckProjectDraft(ScientificDeckImplementation):
+    schema_version: Annotated[int, Field(ge=1, le=1)] = 1
+    tool_profile: str = Field(
+        min_length=1,
+        max_length=256,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:/-]*$",
+    )
+    capability_sha256: str | None = Field(
+        default=None, min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$"
+    )
+    parameter_bindings: tuple[ParameterBinding, ...] = Field(default=(), max_length=4096)
+    case_parameter_bindings: tuple[CaseParameterBinding, ...] = Field(
+        default=(), max_length=100000
+    )
+    # Control-retained declarations, independent of whether a case varies a parameter.
+    # None identifies historical projects which did not retain this information.
+    case_anchors: tuple[DeclaredCaseAnchor, ...] | None = Field(
+        default=None, max_length=100000
+    )
+    runtime_assertions: tuple[RuntimeAssertion, ...] = Field(default=(), max_length=4096)
+    realization_manifest: tuple[RealizationRequirement, ...] = Field(
+        default=(), max_length=4096
+    )
+    materialization_report: ProjectMaterializationReport | None = None
+    preflight_attestation: ProjectPreflightAttestation | None = None
+    initialization_attestation: ProjectInitializationAttestation | None = None
+    development_diagnostics: tuple[AttemptFile, ...] = Field(default=(), max_length=4096)
+
+    @field_validator("development_diagnostics")
+    @classmethod
+    def _diagnostic_paths(cls, values):
+        paths = [item.relative_path for item in values]
+        if len(set(paths)) != len(paths) or any(not path.startswith("reports/") for path in paths):
+            raise ValueError("development diagnostics require unique report paths")
+        return values
+
+
+
+    @model_validator(mode="after")
+    def _consistent_project(self) -> DeckProjectDraft:
+        output_names = tuple(item.name for item in self.expected_outputs)
+        binding_names = tuple(item.name for item in self.parameter_bindings)
+        if len(binding_names) != len(set(binding_names)):
+            raise ValueError("parameter binding names must be unique")
+        case_binding_keys = tuple(
+            (item.experiment_key, item.case_key, item.variable_key)
+            for item in self.case_parameter_bindings
+        )
+        if len(case_binding_keys) != len(set(case_binding_keys)):
+            raise ValueError("case parameter bindings must be unique")
+        contents = {item.relative_path: item.content for item in self.files}
         for binding in self.parameter_bindings:
             if binding.relative_path not in contents:
                 raise ValueError("parameter binding file must exist")
             if binding.locator not in contents[binding.relative_path]:
                 raise ValueError("parameter binding locator is absent from its file")
+            if binding.materialization_kind == "control_generated":
+                if hashlib.sha256(
+                    contents[binding.relative_path].encode("utf-8")
+                ).hexdigest() != binding.source_sha256:
+                    raise ValueError(
+                        "control-generated parameter binding source digest differs"
+                    )
+        for binding in self.case_parameter_bindings:
+            if binding.relative_path not in contents:
+                raise ValueError("case parameter binding file must exist")
+            if contents[binding.relative_path].count(binding.locator) != 1:
+                raise ValueError(
+                    "case parameter binding locator must occur exactly once"
+                )
+            if (
+                binding.materialization_kind == "agent_declared"
+                and binding.realized_value not in binding.locator
+            ):
+                raise ValueError(
+                    "case parameter binding value is not present in its exact locator"
+                )
+            if binding.materialization_kind == "control_generated":
+                if hashlib.sha256(
+                    contents[binding.relative_path].encode("utf-8")
+                ).hexdigest() != binding.source_sha256:
+                    raise ValueError(
+                        "control-generated case binding source digest differs"
+                    )
 
         requirement_keys = tuple(
             item.requirement_key for item in self.realization_manifest
@@ -290,6 +681,11 @@ class DeckProjectDraft(StrictModel):
                 raise ValueError(
                     "parameter binding references an unknown realization requirement"
                 )
+        for binding in self.case_parameter_bindings:
+            if not set(binding.requirement_keys).issubset(known_requirements):
+                raise ValueError(
+                    "case parameter binding references an unknown realization requirement"
+                )
 
         output_name_set = set(output_names)
         if any(
@@ -297,9 +693,33 @@ class DeckProjectDraft(StrictModel):
             for item in self.runtime_assertions
         ):
             raise ValueError("runtime assertion must reference an expected output")
-        if any("\x00" in value or len(value) > 4096 for value in self.arguments):
-            raise ValueError("project argument is invalid")
+        source_tree = hashlib.sha256()
+        for path, content in sorted(contents.items()):
+            source_tree.update(path.encode("utf-8"))
+            source_tree.update(b"\0")
+            source_tree.update(content.encode("utf-8"))
+            source_tree.update(b"\0")
+        source_tree_sha256 = source_tree.hexdigest()
+        if self.materialization_report is not None:
+            if source_tree_sha256 != self.materialization_report.source_tree_sha256:
+                raise ValueError("materialization report source digest differs")
+            if self.materialization_report.status != "pass":
+                raise ValueError("canonical project materialization did not pass")
+        for report in (self.preflight_attestation, self.initialization_attestation):
+            if report is not None:
+                if report.source_tree_sha256 != source_tree_sha256:
+                    raise ValueError("debug attestation source digest differs")
+                if report.project_sha256 is not None and report.project_sha256 != project_debug_sha256(self):
+                    raise ValueError("debug attestation project digest differs")
         return self
+
+
+def project_debug_sha256(project: DeckProjectDraft) -> str:
+    """Bind diagnostic results to source, invocation, and materialized declarations."""
+    return hashlib.sha256(canonical_json(project.model_dump(
+        mode="json",
+        exclude={"preflight_attestation", "initialization_attestation", "materialization_report", "development_diagnostics"},
+    ))).hexdigest()
 
 
 class DeckRequirementReview(StrictModel):
@@ -331,18 +751,83 @@ class DeckReviewFinding(StrictModel):
         return None if value is None else _safe_relative_path(value)
 
 
+class GapAffectedWork(StrictModel):
+    plan_locator: str = Field(min_length=1, max_length=512, pattern=r"^/", description="Existing JSON pointer in the bound scientific_skeleton (new path) or experiment_plan (legacy path).")
+    impact: str = Field(min_length=1, max_length=2048)
+
+
+
+
+class ImplementationGap(StrictModel):
+    """A bounded, non-executable author result, not an incomplete project."""
+
+    schema_version: Literal[1] = 1
+    result_kind: Literal["implementation_gap"]
+    summary: str = Field(min_length=1, max_length=2048)
+    missing_inputs: tuple[Annotated[str, Field(min_length=1, max_length=2048)], ...] = Field(max_length=16)
+    affected_work: tuple[GapAffectedWork, ...] = Field(min_length=1, max_length=16)
+    suggested_resolution: str = Field(min_length=1, max_length=2048)
+    attempt_files: tuple[AttemptFile, ...] = Field(default=(), max_length=128)
+
+    @field_validator("attempt_files")
+    @classmethod
+    def _attempt_paths(cls, files: tuple[AttemptFile, ...]) -> tuple[AttemptFile, ...]:
+        paths = [item.relative_path for item in files]
+        if len(set(paths)) != len(paths):
+            raise ValueError("duplicate attempt file path")
+        for path in paths:
+            if path not in {"project.json", "execution-plan.json", "declarations.json", "attempts.md"} and not path.startswith(("files/", "reports/")):
+                raise ValueError("attempt file is outside the declared source and diagnostic paths")
+        return files
+
+
+class DeckAuthorResult(RootModel[DeckProjectDraft | ImplementationGap]):
+    pass
+
+
+def parse_author_result(raw: bytes) -> DeckProjectDraft | ImplementationGap:
+    return DeckAuthorResult.model_validate_json(raw, strict=True).root
+
+
+def validate_implementation_gap(
+    gap: ImplementationGap, inputs: Mapping[str, bytes | Path], handoff: dict[str, object]
+) -> None:
+    if handoff.get("verdict") != "blocked":
+        raise SemanticRuleViolation("implementation gap requires a blocked handoff")
+    subject = "scientific_skeleton" if "scientific_skeleton" in inputs else "experiment_plan"
+    plan = json.loads(inputs[subject])
+    for index, item in enumerate(gap.affected_work):
+        current = plan
+        try:
+            for token in item.plan_locator[1:].split("/"):
+                token = token.replace("~1", "/").replace("~0", "~")
+                if isinstance(current, list):
+                    if not token.isdecimal() or str(int(token)) != token:
+                        raise ValueError("invalid array index")
+                    current = current[int(token)]
+                else:
+                    current = current[token]
+        except (KeyError, IndexError, TypeError, ValueError) as error:
+            raise declared_violation("gap plan_locator must be an existing JSON pointer in the bound scientific_skeleton or experiment_plan",
+                path=f"$.affected_work[{index}].plan_locator") from error
+
+
 class DeckReviewReport(StrictModel):
     """Independent physical and implementation review of one complete project."""
 
+    scientific_assessment: Literal["pass", "fail", "unknown"] | None = None
     verdict: Literal["pass", "revise", "blocked"]
+    capability_sha256: str | None = Field(
+        default=None, min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$"
+    )
     summary: str = Field(min_length=1, max_length=4096)
     rationale: str = Field(min_length=1, max_length=8192)
     physical_fidelity: Literal["pass", "fail", "unknown"]
     implementation_fidelity: Literal["pass", "fail", "unknown"]
-    syntax_fidelity: Literal["pass", "fail", "unknown"]
+    syntax_fidelity: Literal["pass", "fail", "unknown"] = "unknown"
     numerical_protocol_fidelity: Literal["pass", "fail", "unknown"]
     requirement_reviews: tuple[DeckRequirementReview, ...] = Field(
-        min_length=1, max_length=4096
+        default=(), max_length=4096
     )
     findings: tuple[DeckReviewFinding, ...] = Field(default=(), max_length=256)
     undeclared_defaults: tuple[str, ...] = Field(default=(), max_length=128)
@@ -353,13 +838,14 @@ class DeckReviewReport(StrictModel):
 
     @model_validator(mode="after")
     def _verdict_matches_review(self) -> DeckReviewReport:
+        if self.verdict == "pass" and self.scientific_assessment not in {None, "pass"}:
+            raise ValueError("passing comprehensive review requires passing scientific assessment")
         keys = tuple(item.requirement_key for item in self.requirement_reviews)
         if len(keys) != len(set(keys)):
             raise ValueError("deck requirement reviews must be unique")
         dimensions = {
             self.physical_fidelity,
             self.implementation_fidelity,
-            self.syntax_fidelity,
             self.numerical_protocol_fidelity,
         }
         requirement_statuses = {item.status for item in self.requirement_reviews}
@@ -368,7 +854,8 @@ class DeckReviewReport(StrictModel):
         )
         clean = (
             dimensions == {"pass"}
-            and requirement_statuses == {"pass"}
+            and self.syntax_fidelity != "fail"
+            and requirement_statuses in (set(), {"pass"})
             and not blocking_finding
             and not self.undeclared_defaults
             and not self.unsupported_constructs
@@ -376,27 +863,70 @@ class DeckReviewReport(StrictModel):
         )
         if self.verdict == "pass":
             if not clean or not self.execution_ready:
-                raise ValueError(
-                    "passing deck review requires complete clean coverage and execution_ready"
+                raise declared_violation(
+                    "passing deck review requires complete clean coverage and execution_ready",
+                    path="$.verdict",
                 )
         elif self.execution_ready:
-            raise ValueError("non-passing deck review cannot be execution_ready")
+            raise declared_violation("non-passing deck review cannot be execution_ready", path="$.execution_ready")
         return self
 
 
-class ReviewedDeckPackage(StrictModel):
-    """One exact project paired with its passing independent review."""
 
-    schema_version: Annotated[int, Field(ge=1, le=1)] = 1
+
+def validate_gap_review(gap: ImplementationGap, report: DeckReviewReport) -> None:
+    if report.verdict == "pass" or report.execution_ready or report.requirement_reviews:
+        raise SemanticRuleViolation("implementation gap cannot pass review or claim implemented requirements")
+
+
+class ExecutionPackage(StrictModel):
+    """An immutable execution package; optional review does not grant authorization."""
+
+    schema_version: Annotated[int, Field(ge=2, le=2)] = 2
     project: DeckProjectDraft
-    review: DeckReviewReport
-
+    review: DeckReviewReport | None = None
+    capability: SolverCapabilitySnapshot
+    resolved_inputs: tuple[ResolvedProjectInput, ...] = Field(
+        default=(), max_length=4096
+    )
     @model_validator(mode="after")
-    def _review_qualifies_project(self) -> ReviewedDeckPackage:
-        validate_deck_review_against_project(self.project, self.review)
-        if self.review.verdict != "pass" or not self.review.execution_ready:
-            raise ValueError("reviewed deck package requires a passing execution-ready review")
+    def _package_identity(self) -> ExecutionPackage:
+        if self.project.solver_kind is None:
+            raise ValueError("execution package requires an explicit solver_kind")
+        if (
+            self.project.capability_sha256 != self.capability.capability_sha256
+            or self.review is not None and self.review.capability_sha256
+            not in {None, self.capability.capability_sha256}
+        ):
+            raise ValueError(
+                "execution package project or review capability digest differs"
+            )
+        if (
+            self.capability.profile_id != self.project.tool_profile
+            or self.capability.solver_kind != self.project.solver_kind
+        ):
+            raise ValueError("execution package capability differs from its project")
+        slots = {item.semantic_name: item for item in self.project.input_slots}
+        resolved = {item.semantic_name: item for item in self.resolved_inputs}
+        if len(resolved) != len(self.resolved_inputs) or set(resolved) != set(slots):
+            raise ValueError("execution package must resolve every project input slot")
+        for name, slot in slots.items():
+            item = resolved[name]
+            if (
+                item.target_relative_path != slot.target_relative_path
+                or item.media_type != slot.media_type
+            ):
+                raise ValueError("resolved project input differs from its declared slot")
         return self
+
+
+def validate_execution_package_eligibility(reviewed: ExecutionPackage) -> None:
+    """Retain source/slot/capability integrity; review is an optional assessment.
+
+    Formal review qualification is owned by its immutable control record. Merely
+    embedding a passing report here cannot authorize execution.
+    """
+    ExecutionPackage.model_validate_json(canonical_json(reviewed.model_dump(mode="json")), strict=True)
 
 
 class RuntimeOutputRecord(StrictModel):
@@ -405,12 +935,18 @@ class RuntimeOutputRecord(StrictModel):
     media_type: str = Field(min_length=3, max_length=255)
     sha256: str = Field(min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$")
     size_bytes: int = Field(ge=0, le=2**50)
+    output_class: Literal[
+        "solver_native", "transport_derived", "parser_derived"
+    ] = "solver_native"
 
     _safe_path = field_validator("relative_path")(_safe_relative_path)
 
 
 class TCADRuntimeManifest(StrictModel):
-    started_at: str = Field(min_length=1, max_length=128)
+    resource_usage: dict[str, Any] = Field(default_factory=dict)
+    solver_exit_code: int | None = None
+    collection_errors: tuple[str, ...] = Field(default=(), max_length=4096)
+    started_at: str | None = Field(min_length=1, max_length=128)
     completed_at: str = Field(min_length=1, max_length=128)
     terminal_state: Literal["succeeded", "failed", "cancelled"]
     exit_code: int
@@ -434,6 +970,10 @@ class RuntimeContractCheck(StrictModel):
     )
     status: Literal["pass", "fail"]
     rationale: str = Field(min_length=1, max_length=4096)
+    gate_kind: Literal["transport", "format", "numeric", "runtime_contract"] = (
+        "runtime_contract"
+    )
+    provider_id: str | None = Field(default=None, min_length=1, max_length=256)
 
 
 class RuntimeAttestation(StrictModel):
@@ -443,6 +983,9 @@ class RuntimeAttestation(StrictModel):
     exit_code: int
     checks: tuple[RuntimeContractCheck, ...] = Field(min_length=1, max_length=8192)
     missing_required_outputs: tuple[str, ...] = Field(default=(), max_length=4096)
+    solver_native_output_count: int = Field(ge=0, le=4096)
+    transport_derived_output_count: int = Field(ge=0, le=4096)
+    parser_derived_output_count: int = Field(ge=0, le=4096)
     scope: Literal["execution_contract_only"] = "execution_contract_only"
     rationale: str = Field(min_length=1, max_length=4096)
 
@@ -451,68 +994,6 @@ class RuntimeAttestation(StrictModel):
         failed = any(item.status == "fail" for item in self.checks)
         if (self.verdict == "fail") != failed:
             raise ValueError("runtime attestation verdict differs from its checks")
-        return self
-
-
-class DeckFilePatch(StrictModel):
-    operation: Literal["add", "replace", "delete"]
-    relative_path: str = Field(min_length=1, max_length=1024)
-    content: str | None = Field(default=None, max_length=8 * 1024 * 1024)
-
-    _safe_path = field_validator("relative_path")(_safe_relative_path)
-
-    @model_validator(mode="after")
-    def _content_matches_operation(self) -> DeckFilePatch:
-        if self.operation == "delete" and self.content is not None:
-            raise ValueError("delete file patch must not contain content")
-        if self.operation != "delete" and self.content is None:
-            raise ValueError("add/replace file patch requires content")
-        return self
-
-
-class ParameterBindingPatch(StrictModel):
-    operation: Literal["add", "replace", "delete"]
-    name: str = Field(min_length=1, max_length=256)
-    binding: ParameterBinding | None = None
-
-    @model_validator(mode="after")
-    def _binding_matches_operation(self) -> ParameterBindingPatch:
-        if self.operation == "delete" and self.binding is not None:
-            raise ValueError("delete binding patch must not contain a binding")
-        if self.operation != "delete" and self.binding is None:
-            raise ValueError("add/replace binding patch requires a binding")
-        if self.binding is not None and self.binding.name != self.name:
-            raise ValueError("binding patch name differs from binding name")
-        return self
-
-
-class DeckProjectPatch(StrictModel):
-    """Bounded revision; fields outside files and parameter bindings stay frozen."""
-
-    schema_version: Annotated[int, Field(ge=1, le=1)] = 1
-    file_operations: tuple[DeckFilePatch, ...] = Field(default=(), max_length=4096)
-    parameter_binding_operations: tuple[ParameterBindingPatch, ...] = Field(
-        default=(), max_length=4096
-    )
-    replacement_realization_manifest: tuple[RealizationRequirement, ...] | None = Field(
-        default=None, max_length=4096
-    )
-    rationale: str = Field(min_length=1, max_length=8192)
-
-    @model_validator(mode="after")
-    def _operations_are_unique(self) -> DeckProjectPatch:
-        file_paths = tuple(item.relative_path for item in self.file_operations)
-        binding_names = tuple(item.name for item in self.parameter_binding_operations)
-        if len(file_paths) != len(set(file_paths)):
-            raise ValueError("file patch paths must be unique")
-        if len(binding_names) != len(set(binding_names)):
-            raise ValueError("binding patch names must be unique")
-        if (
-            not file_paths
-            and not binding_names
-            and self.replacement_realization_manifest is None
-        ):
-            raise ValueError("deck patch must contain at least one operation")
         return self
 
 
@@ -527,63 +1008,6 @@ class PackagedTCADProject:
 
 class PackagerError(RuntimeError):
     pass
-
-
-def apply_deck_project_patch(
-    base: DeckProjectDraft, patch: DeckProjectPatch
-) -> DeckProjectDraft:
-    """Apply a bounded revision without allowing unrelated project-field changes."""
-
-    files = {item.relative_path: item for item in base.files}
-    file_order = [item.relative_path for item in base.files]
-    for operation in patch.file_operations:
-        exists = operation.relative_path in files
-        if operation.operation == "add":
-            if exists:
-                raise PackagerError("file patch add target already exists")
-            files[operation.relative_path] = DeckFile(
-                relative_path=operation.relative_path, content=operation.content or ""
-            )
-            file_order.append(operation.relative_path)
-        elif operation.operation == "replace":
-            if not exists:
-                raise PackagerError("file patch replace target does not exist")
-            files[operation.relative_path] = DeckFile(
-                relative_path=operation.relative_path, content=operation.content or ""
-            )
-        else:
-            if not exists:
-                raise PackagerError("file patch delete target does not exist")
-            del files[operation.relative_path]
-            file_order.remove(operation.relative_path)
-
-    bindings = {item.name: item for item in base.parameter_bindings}
-    binding_order = [item.name for item in base.parameter_bindings]
-    for operation in patch.parameter_binding_operations:
-        exists = operation.name in bindings
-        if operation.operation == "add":
-            if exists:
-                raise PackagerError("binding patch add target already exists")
-            assert operation.binding is not None
-            bindings[operation.name] = operation.binding
-            binding_order.append(operation.name)
-        elif operation.operation == "replace":
-            if not exists:
-                raise PackagerError("binding patch replace target does not exist")
-            assert operation.binding is not None
-            bindings[operation.name] = operation.binding
-        else:
-            if not exists:
-                raise PackagerError("binding patch delete target does not exist")
-            del bindings[operation.name]
-            binding_order.remove(operation.name)
-
-    payload = base.model_dump(mode="python")
-    payload["files"] = tuple(files[name] for name in file_order)
-    payload["parameter_bindings"] = tuple(bindings[name] for name in binding_order)
-    if patch.replacement_realization_manifest is not None:
-        payload["realization_manifest"] = patch.replacement_realization_manifest
-    return DeckProjectDraft.model_validate(payload, strict=True)
 
 
 def deck_project_diff(
@@ -612,6 +1036,23 @@ def deck_project_diff(
         for name in sorted(set(base_bindings) | set(revised_bindings))
         if base_bindings.get(name) != revised_bindings.get(name)
     ]
+    base_case_bindings = {
+        (item.experiment_key, item.case_key, item.variable_key): item.model_dump(
+            mode="json"
+        )
+        for item in base.case_parameter_bindings
+    }
+    revised_case_bindings = {
+        (item.experiment_key, item.case_key, item.variable_key): item.model_dump(
+            mode="json"
+        )
+        for item in revised.case_parameter_bindings
+    }
+    case_binding_changes = [
+        "/".join(key)
+        for key in sorted(set(base_case_bindings) | set(revised_case_bindings))
+        if base_case_bindings.get(key) != revised_case_bindings.get(key)
+    ]
     base_requirements = {
         item.requirement_key: item.model_dump(mode="json")
         for item in base.realization_manifest
@@ -625,18 +1066,50 @@ def deck_project_diff(
         for name in sorted(set(base_requirements) | set(revised_requirements))
         if base_requirements.get(name) != revised_requirements.get(name)
     ]
+    base_outputs = {
+        item.name: item.model_dump(mode="json") for item in base.expected_outputs
+    }
+    revised_outputs = {
+        item.name: item.model_dump(mode="json") for item in revised.expected_outputs
+    }
+    expected_output_changes = [
+        name
+        for name in sorted(set(base_outputs) | set(revised_outputs))
+        if base_outputs.get(name) != revised_outputs.get(name)
+    ]
+    base_assertions: dict[str, list[dict[str, object]]] = {}
+    revised_assertions: dict[str, list[dict[str, object]]] = {}
+    for item in base.runtime_assertions:
+        base_assertions.setdefault(item.expected_output_name, []).append(
+            item.model_dump(mode="json")
+        )
+    for item in revised.runtime_assertions:
+        revised_assertions.setdefault(item.expected_output_name, []).append(
+            item.model_dump(mode="json")
+        )
+    runtime_assertion_output_changes = [
+        name
+        for name in sorted(set(base_assertions) | set(revised_assertions))
+        if base_assertions.get(name) != revised_assertions.get(name)
+    ]
     frozen_fields = (
         "tool_profile",
+        "solver_kind",
+        "capability_sha256",
+        "input_slots",
         "entrypoint",
+        "development_initialization_entrypoint",
         "arguments",
-        "expected_outputs",
-        "runtime_assertions",
+        "collect_generated_outputs",
         "resource_limits",
     )
     return {
         "file_changes": file_changes,
         "parameter_binding_changes": binding_changes,
+        "case_parameter_binding_changes": case_binding_changes,
         "realization_requirement_changes": realization_requirement_changes,
+        "expected_output_changes": expected_output_changes,
+        "runtime_assertion_output_changes": runtime_assertion_output_changes,
         "frozen_field_changes": [
             field
             for field in frozen_fields
@@ -648,22 +1121,72 @@ def deck_project_diff(
 def package_deck_project(
     project: DeckProjectDraft,
     *,
+    capability: SolverCapability | SolverCapabilitySnapshot,
+    resolved_inputs: tuple[ResolvedProjectInput, ...] = (),
+    input_payloads: Mapping[str, bytes | Path] | None = None,
     output_root: Path | str,
 ) -> PackagedTCADProject:
     """Create one reproducible package without interpreting its physics."""
 
+    snapshot = (
+        capability.public_snapshot()
+        if isinstance(capability, SolverCapability)
+        else capability
+    )
+    if project.solver_kind is None:
+        raise PackagerError("execution packaging requires an explicit solver_kind")
+    if (
+        snapshot.profile_id != project.tool_profile
+        or snapshot.solver_kind != project.solver_kind
+    ):
+        raise PackagerError("execution capability differs from the deck project")
+    if (
+        project.capability_sha256 is not None
+        and project.capability_sha256 != snapshot.capability_sha256
+    ):
+        raise PackagerError("execution capability digest differs from the deck project")
+    slots = {item.semantic_name: item for item in project.input_slots}
+    resolved = {item.semantic_name: item for item in resolved_inputs}
+    if len(resolved) != len(resolved_inputs) or set(resolved) != set(slots):
+        raise PackagerError("execution packaging requires every project input slot")
+    payloads = dict(input_payloads or {})
+    if set(payloads) != set(slots):
+        raise PackagerError("execution input payloads must cover the exact project slots")
+    binary_files: dict[str, bytes | Path] = {}
+    for name, slot in slots.items():
+        item = resolved[name]
+        if (
+            item.target_relative_path != slot.target_relative_path
+            or item.media_type != slot.media_type
+        ):
+            raise PackagerError("resolved execution input differs from its project slot")
+        raw = payloads[name]
+        if isinstance(raw, Path):
+            digest, size = _file_identity(raw)
+        elif type(raw) is bytes:
+            digest, size = hashlib.sha256(raw).hexdigest(), len(raw)
+        else:
+            raise PackagerError("execution input must be verified bytes or a staged file")
+        if size != item.size_bytes or digest != item.artifact_ref.sha256:
+            raise PackagerError("resolved execution input differs from its artifact ref")
+        binary_files[item.target_relative_path] = raw
     project_raw = _canonical(project.model_dump(mode="python"))
     project_sha256 = hashlib.sha256(project_raw).hexdigest()
+    package_sha256 = hashlib.sha256(
+        project_raw
+        + _canonical(snapshot.model_dump(mode="python"))
+        + _canonical([item.model_dump(mode="python") for item in resolved_inputs])
+    ).hexdigest()
     root = Path(output_root).expanduser().absolute()
     root.mkdir(parents=True, exist_ok=True, mode=0o770)
     if root.is_symlink() or not root.is_dir():
         raise PackagerError("package root must be a non-symlink directory")
-    target = root / f"pkg_{project_sha256}"
+    target = root / f"pkg_{package_sha256}"
     temporary: Path | None = Path(tempfile.mkdtemp(prefix=".package-", dir=root))
     try:
         assert temporary is not None
         archive_path = temporary / "project.tar"
-        entries = _write_archive(project.files, archive_path)
+        entries = _write_archive(project.files, binary_files, archive_path)
         final_archive_path = target / archive_path.name
         archive_descriptor = _descriptor(
             "input_archive",
@@ -672,15 +1195,16 @@ def package_deck_project(
             reported_path=final_archive_path,
         )
         job = TCADJobSpec(
+            execution_purpose="production",
             tool_profile=project.tool_profile,
+            solver_kind=project.solver_kind,
+            capability_sha256=snapshot.capability_sha256,
             input_archive=archive_descriptor,
             archive_entries=entries,
             arguments=(project.entrypoint, *project.arguments),
-            expected_outputs=tuple(
-                ExpectedOutput(**item.model_dump(mode="python"))
-                for item in project.expected_outputs
-            ),
-            limits=ResourceLimits(**project.resource_limits.model_dump(mode="python")),
+            expected_outputs=project.expected_outputs,
+            collect_generated_outputs=project.collect_generated_outputs,
+            limits=project.resource_limits,
         )
         job_path = temporary / "job.json"
         job_path.write_bytes(_canonical(job.model_dump(mode="python")))
@@ -710,59 +1234,384 @@ def package_deck_project(
             shutil.rmtree(temporary, ignore_errors=True)
 
 
-def package_deck_project_json(
+def package_execution_package_json(
     raw: bytes,
     *,
+    input_payloads: Mapping[str, bytes | Path] | None = None,
     output_root: Path | str,
 ) -> PackagedTCADProject:
-    """Validate canonical worker output before creating an execution package."""
+    """Validate one canonical execution package before preparing execution."""
+
+    reviewed = validate_execution_package_json(raw)
+    return package_deck_project(
+        reviewed.project,
+        capability=reviewed.capability,
+        resolved_inputs=reviewed.resolved_inputs,
+        input_payloads=input_payloads,
+        output_root=output_root,
+    )
+
+
+def validate_execution_package_json(raw: bytes) -> ExecutionPackage:
+    """Validate a canonical execution package without creating execution files."""
 
     try:
-        project = DeckProjectDraft.model_validate_json(raw, strict=True)
-    except ValidationError as error:
-        raise PackagerError("deck project artifact is invalid") from error
-    canonical = _canonical(project.model_dump(mode="python"))
-    if raw not in {canonical, canonical + b"\n"}:
-        raise PackagerError("deck project artifact must use canonical JSON")
-    return package_deck_project(project, output_root=output_root)
-
-
-def package_reviewed_deck_json(
-    raw: bytes,
-    *,
-    output_root: Path | str,
-) -> PackagedTCADProject:
-    """Validate one canonical reviewed package before preparing execution."""
-
-    try:
-        reviewed = ReviewedDeckPackage.model_validate_json(raw, strict=True)
-    except ValidationError as error:
-        raise PackagerError("reviewed deck package artifact is invalid") from error
+        reviewed = ExecutionPackage.model_validate_json(raw, strict=True)
+        validate_execution_package_eligibility(reviewed)
+    except ValueError as error:
+        raise PackagerError("execution package artifact is invalid") from error
     canonical = _canonical(reviewed.model_dump(mode="python"))
     if raw not in {canonical, canonical + b"\n"}:
-        raise PackagerError("reviewed deck package artifact must use canonical JSON")
-    return package_deck_project(reviewed.project, output_root=output_root)
+        raise PackagerError("execution package artifact must use canonical JSON")
+    return reviewed
 
 
 def validate_deck_project_output(value: dict[str, object]) -> dict[str, object]:
     """Validate worker content without creating a package or side effect."""
 
-    if not value.get("realization_manifest"):
-        raise ValueError("new deck project requires a non-empty realization_manifest")
+    if value.get("result_kind") == "implementation_gap":
+        return ImplementationGap.model_validate_json(_canonical(value), strict=True).model_dump(mode="json")
+    report = value.get("materialization_report")
+    declared_source = (
+        isinstance(report, dict)
+        and report.get("profile") == "tcad.project-materializer.declared-source.v2"
+    )
+    if not declared_source and not value.get("realization_manifest"):
+        raise SemanticRuleViolation("new deck project requires a non-empty realization_manifest")
+    if not value.get("solver_kind"):
+        raise SemanticRuleViolation("new deck project requires an explicit solver_kind")
+    if not value.get("capability_sha256"):
+        raise SemanticRuleViolation("new deck project requires an exact capability digest")
     project = DeckProjectDraft.model_validate_json(_canonical(value), strict=True)
     requirement_keys = {
         item.requirement_key for item in project.realization_manifest
     }
     for binding in project.parameter_bindings:
         if not binding.requirement_keys:
-            raise ValueError(
+            raise SemanticRuleViolation(
                 "new deck project parameter bindings require requirement_keys"
             )
         if not set(binding.requirement_keys).issubset(requirement_keys):
-            raise ValueError(
+            raise SemanticRuleViolation(
                 "new deck project parameter binding references an unknown requirement"
             )
     return project.model_dump(mode="json")
+
+
+_SOLVER_NATIVE_OUTPUT_SUFFIXES = {
+    "sprocess": frozenset({".tdr", ".plx", ".plt", ".log"}),
+    "sdevice": frozenset({".tdr", ".plx", ".plt", ".log"}),
+}
+
+
+def solver_deck_scope_violations(project: DeckProjectDraft | Mapping[str, Any]) -> tuple[str, ...]:
+    """Return deterministic direct-solver responsibilities outside a deck."""
+
+    if isinstance(project, DeckProjectDraft):
+        project = project.model_dump(mode="json")
+    suffixes = _SOLVER_NATIVE_OUTPUT_SUFFIXES.get(project.get("solver_kind"))
+    if suffixes is None:
+        return ()
+    violations = [
+        f"unsupported_requirement:{item['requirement_key']}"
+        for item in project.get("realization_manifest", ())
+        if item["implementation_status"] == "unsupported"
+    ]
+    violations.extend(
+        f"runtime_assertion:{index}:{item['expected_output_name']}:"
+        f"{item.get('assertion_kind', RuntimeAssertion.model_fields['assertion_kind'].default)}"
+        for index, item in enumerate(project.get("runtime_assertions", ()), start=1)
+    )
+    violations.extend(
+        f"non_solver_native_output:{item['name']}:{item['relative_path']}"
+        for item in project.get("expected_outputs", ())
+        if item.get("capture", "workspace_file") == "workspace_file"
+        and Path(item["relative_path"]).suffix.lower() not in suffixes
+    )
+    return tuple(sorted(violations))
+
+
+def validate_deck_author_task_output(
+    value: dict[str, object],
+    inputs: Mapping[str, bytes | Path],
+    handoff: dict[str, object],
+) -> None:
+    """Keep direct-solver author output inside the solver-code boundary."""
+
+    if value.get("result_kind") == "implementation_gap":
+        validate_implementation_gap(ImplementationGap.model_validate_json(_canonical(value), strict=True), inputs, handoff)
+        return
+    project = DeckProjectDraft.model_validate_json(_canonical(value), strict=True)
+    experiment_plan = inputs.get("experiment_plan")
+    if "scientific_skeleton" in inputs:
+        if project.execution_plan is None:
+            raise SemanticRuleViolation("skeleton author project requires its concrete execution_plan")
+        experiment_plan = canonical_json(project.execution_plan.model_dump(mode="json"))
+    elif project.execution_plan is not None:
+        raise SemanticRuleViolation("legacy author cannot introduce an unbound skeleton execution plan")
+    if experiment_plan is not None:
+        if project.solver_kind == "sprocess" and project.materialization_report is None:
+            raise SemanticRuleViolation(
+                "new SProcess author output must be control-materialized"
+            )
+        validate_project_case_controls(project, experiment_plan)
+    _validate_approved_parameter_bindings(project, inputs)
+    current = set(solver_deck_scope_violations(project))
+    prior_raw = inputs.get("prior_project")
+    if prior_raw is None:
+        if current:
+            raise SemanticRuleViolation(
+                "direct-solver deck contains post-execution or unsupported duties: "
+                + ", ".join(sorted(current))
+            )
+        return
+    # Compare duties with the admitted prior result, without revalidating that
+    # input as a current project. An implementation gap carries no deck duties.
+    prior = json.loads(prior_raw)
+    introduced = current - set(solver_deck_scope_violations(prior))
+    if introduced:
+        raise SemanticRuleViolation(
+            "deck revision introduced post-execution or unsupported duties: "
+            + ", ".join(sorted(introduced))
+        )
+    if handoff.get("verdict") == "pass" and current:
+        raise SemanticRuleViolation(
+            "passing deck revision retains post-execution or unsupported duties: "
+            + ", ".join(sorted(current))
+        )
+
+
+def validate_deck_review_task_output(
+    value: dict[str, object],
+    inputs: Mapping[str, bytes | Path],
+    handoff: dict[str, object],
+) -> None:
+    """Cross-check a formal review against its one exact project input."""
+
+    project_names = tuple(
+        name for name in ("project", "revised_project") if name in inputs
+    )
+    project = parse_bound_json(DeckAuthorResult, inputs[project_names[0]]).root
+    report = DeckReviewReport.model_validate_json(_canonical(value), strict=True)
+    if isinstance(project, ImplementationGap):
+        validate_gap_review(project, report)
+        if handoff.get("verdict") != report.verdict:
+            raise SemanticRuleViolation("deck review handoff verdict differs from its report")
+        if "experiment_plan" in inputs:
+            parse_bound_json(ExperimentPortfolio, inputs["experiment_plan"])
+        capability = json.loads(inputs["execution_capability"])
+        if report.capability_sha256 is not None and report.capability_sha256 != capability.get("capability_sha256"):
+            raise SemanticRuleViolation("gap review capability differs from its exact input")
+        return
+    experiment_plan = (canonical_json(project.execution_plan.model_dump(mode="json"))
+        if project.execution_plan is not None else inputs.get("experiment_plan"))
+    if experiment_plan is not None:
+        if report.verdict == "pass":
+            validate_project_case_controls(project, experiment_plan)
+        else:
+            parse_bound_json(ExperimentPortfolio, experiment_plan)
+    if report.verdict == "pass":
+        _validate_approved_parameter_bindings(project, inputs)
+    if handoff.get("verdict") != report.verdict:
+        raise SemanticRuleViolation("deck review handoff verdict differs from its report")
+    validate_deck_review_against_project(project, report)
+    violations = solver_deck_scope_violations(project)
+    if violations and report.verdict == "pass":
+        raise SemanticRuleViolation(
+            "deck review cannot pass post-execution or unsupported duties: "
+            + ", ".join(violations)
+        )
+
+
+def _validate_approved_parameter_bindings(
+    project: DeckProjectDraft,
+    inputs: Mapping[str, bytes | Path],
+    *,
+    require_implementation: bool = True,
+) -> None:
+    """Keep approved context exact; require value/unit realization when consuming it."""
+    parameter_raw = inputs.get("device_parameters")
+    coverage_raw = inputs.get("parameter_coverage")
+    if parameter_raw is None and coverage_raw is None:
+        if any(
+            item.approved_parameter_key is not None
+            for item in project.parameter_bindings
+        ):
+            raise SemanticRuleViolation(
+                "approved parameter binding requires the exact approved context"
+            )
+        return
+    parameters = parse_bound_json(DeviceParameterSet, parameter_raw)
+    coverage = parse_bound_json(DeviceParameterCoverageReport, coverage_raw)
+    claims = {item.parameter_key: item for item in parameters.claims}
+    coverage_by_key = {item.parameter_key: item for item in coverage.items}
+    for binding in project.parameter_bindings:
+        key = binding.approved_parameter_key
+        if key is None:
+            continue
+        claim = claims.get(key)
+        coverage_item = coverage_by_key.get(key)
+        if claim is None or coverage_item is None:
+            raise SemanticRuleViolation(
+                f"approved_parameter_key is absent from the approved set: {key}"
+            )
+        if coverage_item.status in {"missing", "conflict", "not_comparable"}:
+            raise SemanticRuleViolation(f"approved parameter is not usable by the deck: {key}")
+        if require_implementation and (
+            binding.declared_value != claim.selected_value or binding.unit != claim.unit
+        ):
+            raise SemanticRuleViolation(
+                "project.parameter_bindings "
+                f"{binding.name!r} differs from the exact approved parameter value: {key}; "
+                f"expected={claim.selected_value} {claim.unit}, "
+                f"observed={binding.declared_value} {binding.unit}"
+            )
+
+
+def validate_project_case_controls(
+    project: DeckProjectDraft,
+    experiment_plan: bytes,
+) -> None:
+    """Require exact source-backed case controls before a scientific execution."""
+
+    portfolio = parse_bound_json(ExperimentPortfolio, experiment_plan)
+    expected: dict[tuple[str, str, str], tuple[str, str, object, bool]] = {}
+    declared_cases = set()
+    declared_variables = {}
+    declared_settings = {}
+    for proposal in portfolio.proposals:
+        contract = proposal.comparison_contract
+        variable_keys = {item.name for item in proposal.changed_factors}
+        if contract is not None:
+            variable_keys.update(item.variable_key for item in contract.variables)
+        declared_cases.update((proposal.experiment_key, case.case_key) for case in proposal.cases)
+        declared_variables[proposal.experiment_key] = variable_keys
+        declared_settings.update(
+            ((proposal.experiment_key, case.case_key, item.name), item)
+            for case in proposal.cases for item in case.settings
+        )
+        if contract is None:
+            continue
+        for variable in contract.variables:
+            if not deck_scoped_comparison_variable(variable.scientific_path):
+                continue
+            for expectation in variable.expectations:
+                expected[
+                    (
+                        proposal.experiment_key,
+                        expectation.case_key,
+                        variable.variable_key,
+                    )
+                ] = (
+                    variable.scientific_path,
+                    variable.unit,
+                    expectation.value,
+                    variable.comparison_role == "frozen",
+                )
+    if not expected:
+        return
+    actual = {
+        (item.experiment_key, item.case_key, item.variable_key): item
+        for item in project.case_parameter_bindings
+    }
+    unexpected = sorted(key for key in actual if (
+        key[:2] not in declared_cases or key[2] not in declared_variables.get(key[0], ())
+    ))
+    for key, binding in actual.items():
+        setting = declared_settings.get(key)
+        if key not in expected and setting is not None and (
+            binding.unit != setting.unit
+            or _parse_case_control_value(binding.realized_value, setting.value) != setting.value
+        ):
+            raise SemanticRuleViolation(f"additional case control differs from the experiment plan for {key}")
+    # Additional declared cases and factors need not belong to this comparison.
+    actual = {key: binding for key, binding in actual.items() if key in expected}
+    required_case_keys = {
+        key for key, (_, _, _, frozen) in expected.items() if not frozen
+    }
+    missing = sorted(required_case_keys - set(actual))
+    if missing or unexpected:
+        raise declared_violation(
+            "project case_parameter_bindings must cover every case-varying scientific control and contain no undeclared control",
+            path="$.case_parameter_bindings",
+        )
+    global_bindings = {item.name: item for item in project.parameter_bindings}
+    frozen_variables = {
+        key[2]
+        for key, (_, _, _, frozen) in expected.items()
+        if frozen
+    }
+    for variable_key in frozen_variables:
+        keys = {key for key in expected if key[2] == variable_key}
+        present = keys.intersection(actual)
+        if present and present != keys:
+            raise SemanticRuleViolation(
+                f"case-scoped frozen control is incomplete for {variable_key}"
+            )
+        if not present:
+            try:
+                global_binding = global_bindings[variable_key]
+            except KeyError as error:
+                raise SemanticRuleViolation(
+                    f"frozen comparison control is not source-bound: {variable_key}"
+                ) from error
+            _, unit, expected_value, _ = expected[next(iter(keys))]
+            if global_binding.unit != unit or (
+                _parse_case_control_value(
+                    global_binding.declared_value, expected_value
+                )
+                != expected_value
+            ):
+                raise SemanticRuleViolation(
+                    f"global frozen control differs from the experiment plan: {variable_key}"
+                )
+    for key, binding in actual.items():
+        scientific_path, unit, expected_value, _ = expected[key]
+        if binding.scientific_path != scientific_path or binding.unit != unit:
+            raise SemanticRuleViolation(
+                "case parameter binding path or unit differs from the comparison "
+                f"contract for {key}"
+            )
+        if _parse_case_control_value(binding.realized_value, expected_value) != expected_value:
+            raise SemanticRuleViolation(
+                f"case parameter binding value differs from the experiment plan for {key}"
+            )
+
+
+_DOWNSTREAM_COMPARISON_PATH_PREFIXES = (
+    "analysis.",
+    "diagnosis.",
+    "implementation.curve_score",
+    "implementation.reference_input",
+    "scoring.",
+)
+
+
+def deck_scoped_comparison_variable(scientific_path: str) -> bool:
+    """Return whether a planned comparison variable must be realized by solver code."""
+
+    return not scientific_path.startswith(_DOWNSTREAM_COMPARISON_PATH_PREFIXES)
+
+
+def _parse_case_control_value(raw: str, exemplar: object) -> object:
+    if type(exemplar) is bool:
+        if raw not in {"true", "false"}:
+            raise SemanticRuleViolation("boolean case control must use true or false")
+        return raw == "true"
+    if type(exemplar) is int:
+        try:
+            return int(raw)
+        except ValueError as error:
+            raise SemanticRuleViolation("integer case control is invalid") from error
+    if type(exemplar) is float:
+        try:
+            value = float(raw)
+        except ValueError as error:
+            raise SemanticRuleViolation("numeric case control is invalid") from error
+        if not math.isfinite(value):
+            raise SemanticRuleViolation("numeric case control must be finite")
+        return value
+    return raw
 
 
 def validate_deck_review_report(value: dict[str, object]) -> dict[str, object]:
@@ -775,22 +1624,60 @@ def validate_deck_review_against_project(
 ) -> None:
     """Check that an independent review covers the exact embedded manifest."""
 
+    if project.execution_plan is not None and report.verdict == "pass" and report.scientific_assessment != "pass":
+        raise SemanticRuleViolation("skeleton project requires a comprehensive scientific assessment")
     expected = {item.requirement_key for item in project.realization_manifest}
     observed = {item.requirement_key for item in report.requirement_reviews}
-    if observed != expected:
-        raise ValueError("deck review does not cover the exact realization manifest")
+    if project.materialization_report is None:
+        if observed != expected:
+            raise declared_violation(
+                "deck review does not cover the exact realization manifest",
+                path="$.requirement_reviews",
+            )
+        if report.verdict == "pass" and report.syntax_fidelity != "pass":
+            raise SemanticRuleViolation(
+                "passing direct-deck review requires syntax_fidelity pass; use the "
+                "control-owned qualified preflight_attestation when present"
+            )
+        if report.syntax_fidelity == "pass" and (
+            project.preflight_attestation is None
+            or not project.preflight_attestation.qualified
+        ):
+            raise SemanticRuleViolation(
+                "direct-deck syntax pass requires a source-bound qualified preflight"
+            )
+    if report.execution_ready and (
+            project.preflight_attestation is None
+            or not project.preflight_attestation.qualified
+    ):
+        raise SemanticRuleViolation(
+            "execution-ready deck review requires a source-bound passing preflight"
+        )
     unsupported = {
         item.requirement_key
         for item in project.realization_manifest
         if item.implementation_status == "unsupported"
     }
     if unsupported and report.verdict == "pass":
-        raise ValueError("deck review cannot pass an unsupported requirement")
+        raise SemanticRuleViolation("deck review cannot pass an unsupported requirement")
+    violations = solver_deck_scope_violations(project)
+    if violations and report.verdict == "pass":
+        raise SemanticRuleViolation(
+            "deck review cannot pass post-execution deck duties: "
+            + ", ".join(violations)
+        )
+    if project.materialization_report is None:
+        if project.capability_sha256 != report.capability_sha256:
+            raise SemanticRuleViolation("deck review capability digest differs from its project")
+    elif report.capability_sha256 not in {None, project.capability_sha256}:
+        raise SemanticRuleViolation("deck review capability digest differs from its project")
 
 
 def attest_runtime_contract(
-    reviewed: ReviewedDeckPackage,
+    reviewed: ExecutionPackage,
     manifest: TCADRuntimeManifest,
+    *,
+    output_payloads: Mapping[str, bytes | Path] | None = None,
 ) -> RuntimeAttestation:
     """Verify execution facts without interpreting physical correctness."""
 
@@ -811,6 +1698,29 @@ def attest_runtime_contract(
         )
     )
     observed = {item.name: item for item in manifest.outputs}
+    payloads = dict(output_payloads or {})
+    if not set(payloads).issubset(observed):
+        raise ValueError("runtime payload names must exist in the runtime manifest")
+    for name, raw in payloads.items():
+        if type(raw) is not bytes:
+            raise TypeError("runtime output payload must be bytes")
+        descriptor = observed[name]
+        passed = (
+            len(raw) == descriptor.size_bytes
+            and hashlib.sha256(raw).hexdigest() == descriptor.sha256
+        )
+        checks.append(
+            RuntimeContractCheck(
+                check_key=f"transport_payload_{name}",
+                status="pass" if passed else "fail",
+                rationale=(
+                    f"Collected payload {name} matches its immutable descriptor."
+                    if passed
+                    else f"Collected payload {name} differs from its immutable descriptor."
+                ),
+                gate_kind="transport",
+            )
+        )
     declared = {item.name: item for item in reviewed.project.expected_outputs}
     missing: list[str] = []
     for index, expected in enumerate(reviewed.project.expected_outputs, start=1):
@@ -829,6 +1739,7 @@ def attest_runtime_contract(
                 actual.relative_path == expected.relative_path
                 and actual.media_type == expected.media_type
                 and actual.size_bytes <= expected.max_bytes
+                and (actual.size_bytes > 0 or not expected.required)
             )
             rationale = (
                 f"Collected output {expected.name} matches its declared contract."
@@ -842,33 +1753,51 @@ def attest_runtime_contract(
                 rationale=rationale,
             )
         )
-    undeclared = sorted(set(observed) - set(declared))
+    undeclared = sorted(
+        name
+        for name, item in observed.items()
+        if item.output_class == "solver_native" and name not in declared
+        and not (
+            reviewed.project.collect_generated_outputs
+            and name == "generated_" + hashlib.sha256(item.relative_path.encode("utf-8")).hexdigest()
+        )
+    )
+    generated_count = sum(
+        item.output_class == "solver_native"
+        and item.name.startswith("generated_")
+        and item.name not in declared
+        for item in manifest.outputs
+    )
     checks.append(
         RuntimeContractCheck(
             check_key="undeclared_outputs",
-            status="pass" if not undeclared else "fail",
+            status="pass" if not undeclared and (
+                not reviewed.project.collect_generated_outputs or generated_count
+            ) else "fail",
             rationale=(
-                "No undeclared solver outputs were collected."
+                "Generated solver outputs match their manifest paths and hashes."
+                if not undeclared and reviewed.project.collect_generated_outputs and generated_count
+                else "No undeclared solver outputs were collected."
+                if not undeclared and not reviewed.project.collect_generated_outputs
+                else "Generated-output collection contains no solver files."
                 if not undeclared
                 else "Undeclared outputs were collected: " + ", ".join(undeclared)
             ),
         )
     )
     for index, assertion in enumerate(reviewed.project.runtime_assertions, start=1):
-        passed = assertion.expected_output_name in observed
+        passed, rationale, gate_kind, provider_id = _evaluate_runtime_assertion(
+            assertion,
+            observed.get(assertion.expected_output_name),
+            payloads.get(assertion.expected_output_name),
+        )
         checks.append(
             RuntimeContractCheck(
                 check_key=f"runtime_assertion_{index:04d}",
                 status="pass" if passed else "fail",
-                rationale=(
-                    f"{assertion.description} Evidence output is present: "
-                    f"{assertion.expected_output_name}."
-                    if passed
-                    else (
-                        f"{assertion.description} Evidence output is missing: "
-                        f"{assertion.expected_output_name}."
-                    )
-                ),
+                rationale=f"{assertion.description} {rationale}",
+                gate_kind=gate_kind,
+                provider_id=provider_id,
             )
         )
     verdict = "fail" if any(item.status == "fail" for item in checks) else "pass"
@@ -878,39 +1807,206 @@ def attest_runtime_contract(
         exit_code=manifest.exit_code,
         checks=tuple(checks),
         missing_required_outputs=tuple(missing),
+        solver_native_output_count=sum(
+            item.output_class == "solver_native" for item in manifest.outputs
+        ),
+        transport_derived_output_count=sum(
+            item.output_class == "transport_derived" for item in manifest.outputs
+        ),
+        parser_derived_output_count=sum(
+            item.output_class == "parser_derived" for item in manifest.outputs
+        ),
         rationale=(
-            "This attestation covers only solver termination and the declared output "
+            "This attestation covers only solver termination and the captured output "
             "contract; it does not establish physical correctness or agreement with data."
         ),
     )
 
 
-def validate_deck_project_patch(value: dict[str, object]) -> dict[str, object]:
-    patch = DeckProjectPatch.model_validate_json(_canonical(value), strict=True)
-    return patch.model_dump(mode="json")
+def _evaluate_runtime_assertion(
+    assertion: RuntimeAssertion,
+    output: RuntimeOutputRecord | None,
+    raw: bytes | None,
+) -> tuple[bool, str, Literal["format", "numeric", "runtime_contract"], str | None]:
+    if output is None:
+        return (
+            False,
+            f"Evidence output is missing: {assertion.expected_output_name}.",
+            "runtime_contract",
+            None,
+        )
+    if assertion.assertion_kind == "output_present":
+        return True, "The declared output is present.", "runtime_contract", None
+    if assertion.assertion_kind == "file_nonempty":
+        passed = output.size_bytes > 0
+        return (
+            passed,
+            "The declared output is non-empty."
+            if passed
+            else "The declared output is empty.",
+            "format",
+            "tcad.file-nonempty.v1",
+        )
+    if raw is None:
+        return (
+            False,
+            "Parser input bytes were not bound to the runtime attestation.",
+            "format",
+            None,
+        )
+    if assertion.assertion_kind == "tdr_metadata":
+        return (
+            False,
+            "No qualified TDR metadata provider is configured.",
+            "format",
+            None,
+        )
+    if assertion.assertion_kind == "solver_log_clean":
+        try:
+            text = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            return False, "Solver log is not valid UTF-8.", "format", "tcad.log.v1"
+        lowered = text.lower()
+        passed = not any(
+            marker in lowered
+            for marker in ("fatal error", "segmentation fault", "aborted")
+        )
+        return (
+            passed,
+            "Solver log has no declared fatal marker."
+            if passed
+            else "Solver log contains a fatal marker.",
+            "format",
+            "tcad.log.v1",
+        )
+    return _parse_finite_numeric_table(assertion, output, raw)
+
+
+def _parse_finite_numeric_table(
+    assertion: RuntimeAssertion,
+    output: RuntimeOutputRecord,
+    raw: bytes,
+) -> tuple[bool, str, Literal["numeric"], str]:
+    suffix = Path(output.relative_path).suffix.lower()
+    provider_id = (
+        "tcad.plx-text-table.v1" if suffix == ".plx" else "tcad.plt-text-table.v1"
+    )
+    if suffix not in {".plx", ".plt"}:
+        return (
+            False,
+            "No numeric-table provider matches the output path.",
+            "numeric",
+            provider_id,
+        )
+    try:
+        lines = [
+            line.split() for line in raw.decode("utf-8").splitlines() if line.strip()
+        ]
+    except UnicodeDecodeError:
+        return False, "Numeric table is not valid UTF-8.", "numeric", provider_id
+    if not lines:
+        return False, "Numeric table is empty.", "numeric", provider_id
+    first_is_numeric = all(_finite_number(token) for token in lines[0])
+    header = () if first_is_numeric else tuple(lines.pop(0))
+    if assertion.required_columns and not set(assertion.required_columns).issubset(
+        header
+    ):
+        return (
+            False,
+            "Numeric table is missing required columns.",
+            "numeric",
+            provider_id,
+        )
+    width = len(header) if header else len(lines[0]) if lines else 0
+    passed = (
+        len(lines) >= assertion.min_numeric_rows
+        and width > 0
+        and all(
+            len(row) == width and all(_finite_number(item) for item in row)
+            for row in lines
+        )
+    )
+    return (
+        passed,
+        "Numeric table has the required columns, rows, and finite values."
+        if passed
+        else "Numeric table is truncated, non-finite, or structurally inconsistent.",
+        "numeric",
+        provider_id,
+    )
+
+
+def _finite_number(value: str) -> bool:
+    try:
+        return math.isfinite(float(value))
+    except ValueError:
+        return False
+
+
+def _file_identity(path: Path) -> tuple[str, int]:
+    if path.is_symlink() or not path.is_file():
+        raise PackagerError("execution input must be a regular file")
+    digest, size = hashlib.sha256(), 0
+    with path.open("rb") as source:
+        for block in iter(lambda: source.read(1024 * 1024), b""):
+            size += len(block)
+            digest.update(block)
+    return digest.hexdigest(), size
+
+
+def materialize_execution_inputs(reviewed, artifacts, exchange_directory, chunk_bytes):
+    """Resolve SDevice/native inputs through exact CAS refs, never JSON/base64."""
+    total = sum(len(item.content.encode("utf-8")) for item in reviewed.project.files)
+    total += sum(item.size_bytes for item in reviewed.resolved_inputs)
+    if total > reviewed.project.resource_limits.max_storage_bytes:
+        raise PackagerError("declared inputs exceed task storage budget")
+    directory = exchange_directory / "scientific-inputs"
+    directory.mkdir(exist_ok=True)
+    inputs = {}
+    for item in reviewed.resolved_inputs:
+        envelope = artifacts.catalog(item.artifact_ref)
+        if envelope.size_bytes != item.size_bytes or envelope.media_type != item.media_type:
+            raise PackagerError("resolved input metadata differs from exact CAS original")
+        target = directory / item.artifact_ref.sha256
+        if not target.exists():
+            with artifacts.open_original(item.artifact_ref) as source, target.open("xb") as output:
+                for block in iter(lambda: source.read(chunk_bytes), b""):
+                    output.write(block)
+                output.flush()
+                os.fsync(output.fileno())
+            os.chmod(target, 0o440)
+        inputs[item.semantic_name] = target
+    return inputs
 
 
 def _write_archive(
-    files: tuple[DeckFile, ...], archive_path: Path
+    files: tuple[DeckFile, ...],
+    binary_files: Mapping[str, bytes | Path],
+    archive_path: Path,
 ) -> tuple[ArchiveEntry, ...]:
     entries: list[ArchiveEntry] = []
+    contents = {
+        item.relative_path: item.content.encode("utf-8") for item in files
+    }
+    contents.update(binary_files)
     with tarfile.open(archive_path, "w", format=tarfile.USTAR_FORMAT) as archive:
-        for item in sorted(files, key=lambda value: value.relative_path):
-            raw = item.content.encode("utf-8")
-            info = tarfile.TarInfo(item.relative_path)
-            info.size = len(raw)
+        for relative_path, raw in sorted(contents.items()):
+            info = tarfile.TarInfo(relative_path)
+            digest, size = _file_identity(raw) if isinstance(raw, Path) else (hashlib.sha256(raw).hexdigest(), len(raw))
+            info.size = size
             info.mode = 0o440
             info.uid = 0
             info.gid = 0
             info.uname = ""
             info.gname = ""
             info.mtime = 0
-            archive.addfile(info, fileobj=io.BytesIO(raw))
+            with (raw.open("rb") if isinstance(raw, Path) else io.BytesIO(raw)) as source:
+                archive.addfile(info, fileobj=source)
             entries.append(
                 ArchiveEntry(
-                    relative_path=item.relative_path,
-                    sha256=hashlib.sha256(raw).hexdigest(),
-                    size_bytes=len(raw),
+                    relative_path=relative_path,
+                    sha256=digest,
+                    size_bytes=size,
                 )
             )
     return tuple(entries)
@@ -925,7 +2021,7 @@ def _same_package(candidate: Path, existing: Path) -> bool:
     return all(
         not (existing / name).is_symlink()
         and (existing / name).is_file()
-        and (candidate / name).read_bytes() == (existing / name).read_bytes()
+        and _file_identity(candidate / name) == _file_identity(existing / name)
         for name in names
     )
 
@@ -937,12 +2033,12 @@ def _descriptor(
     *,
     reported_path: Path | None = None,
 ) -> FileDescriptor:
-    raw = path.read_bytes()
+    digest, size = _file_identity(path)
     return FileDescriptor(
         name=name,
         local_path=str(reported_path or path),
-        sha256=hashlib.sha256(raw).hexdigest(),
-        size_bytes=len(raw),
+        sha256=digest,
+        size_bytes=size,
         media_type=media_type,
     )
 
@@ -959,33 +2055,39 @@ def _canonical(value: object) -> bytes:
 
 __all__ = [
     "DeckFile",
-    "DeckFilePatch",
     "DeckProjectDraft",
-    "DeckProjectPatch",
     "DeckRequirementReview",
     "DeckReviewFinding",
     "DeckReviewReport",
-    "ReviewedDeckPackage",
+    "ExecutionPackage",
     "RuntimeAttestation",
     "RuntimeContractCheck",
     "RuntimeOutputRecord",
     "TCADRuntimeManifest",
     "PackagedTCADProject",
     "PackagerError",
+    "CaseParameterBinding",
+    "MaterializationFinding",
     "ParameterBinding",
-    "ParameterBindingPatch",
+    "ProjectInputSlot",
     "ProjectExpectedOutput",
+    "ProjectMaterializationReport",
+    "ProjectPreflightAttestation",
     "ProjectResourceLimits",
     "RealizationRequirement",
+    "ResolvedProjectInput",
     "RuntimeAssertion",
-    "apply_deck_project_patch",
     "attest_runtime_contract",
     "deck_project_diff",
     "package_deck_project",
-    "package_deck_project_json",
-    "package_reviewed_deck_json",
+    "package_execution_package_json",
     "validate_deck_project_output",
-    "validate_deck_project_patch",
+    "validate_deck_author_task_output",
+    "deck_scoped_comparison_variable",
+    "validate_project_case_controls",
     "validate_deck_review_against_project",
     "validate_deck_review_report",
+    "validate_deck_review_task_output",
+    "solver_deck_scope_violations",
+    "validate_execution_package_json",
 ]

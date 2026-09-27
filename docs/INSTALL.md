@@ -5,8 +5,9 @@
 ## 1. Supported Environment
 
 - Linux or WSL2 with systemd
-- Python 3.10 or newer with `pip`
-- Codex CLI, Claude Code, or both
+- Python 3.10 or newer with `pip`, `setuptools>=68`, `packaging`,
+  `pydantic>=2,<3`, and `jsonschema>=4,<5`
+- Codex CLI
 - `poppler-utils` for bounded PDF extraction
 - `bubblewrap` for isolated worker analysis
 - `curl` for service health checks
@@ -22,32 +23,119 @@ sudo apt-get install -y \
   python3 python3-pip poppler-utils bubblewrap curl openssh-client
 ```
 
-The installer uses the selected base Python executable but installs application
-packages and their dependencies into `/opt/scidiscovery/site`. It does not
-create a virtual environment and does not modify Conda base packages.
+The installer uses the selected base Python executable and installs only the
+repository's application packages into `/opt/scidiscovery/site`. It does not
+create a virtual environment, download dependencies, or modify the selected
+Python environment. Provide third-party dependencies before deployment. For a
+Conda base environment:
+
+```bash
+conda install -n base -c conda-forge \
+  'pydantic>=2,<3' 'jsonschema>=4,<5' 'setuptools>=68' packaging pip
+```
+
+The install prints each phase and performs the local package build before it
+stops an existing service deployment. Activation is transactional: exact
+release/configuration targets and SQLite databases are snapshotted, and a
+failed service or MCP health check restores the previous files and service
+state. Successful transaction evidence is retained under
+`/var/backups/scidiscovery/transactions/`.
+
+The generic transactional reinstall entrypoint is:
+
+```bash
+SCID_WORKSPACE="$PWD/workspace/<project-name>" \
+  deploy/reinstall.sh --dry-run
+SCID_WORKSPACE="$PWD/workspace/<project-name>" \
+  deploy/reinstall.sh reinstall
+```
+
+`reinstall.sh` installs no domain plugin by default. Select
+`tcad_artifact,curve_score` or other plugins explicitly with `SCID_PLUGINS`, and an external adapter with
+`SCID_TCAD_COMMAND_CONFIG`. `install` and `reinstall` use the same
+transactional flow; no argument is equivalent to `install`.
+
+Figure curve extraction uses the three generic domain plugins. Preinstall
+Pillow within the plugin's declared package range and Poppler `pdfimages`.
+The Agent supplies axis, tick, and scientific identity information after
+viewing the source figure; the runtime does not use OCR or Tesseract. The
+installer records the actual Pillow and `pdfimages` versions and the absolute
+executable path.
+
+```bash
+export SCID_PYTHON=/absolute/path/to/service/python
+"$SCID_PYTHON" -m pip install --no-index --find-links /srv/scid-offline/wheels 'Pillow>=10.0,<13.0'
+export SCID_PLUGINS=tcad_artifact,curve_score,curve_figure_evidence
+export SCID_PLATFORM=codex SCID_WORKER_BACKEND=local
+export SCID_WORKSPACE=/srv/scid-project
+export SCID_CODEX_LAUNCH_ROOT=/srv/scid-codex
+export SCID_SERVICE_USER="$(id -un)" SCID_SERVICE_GROUP="$(id -gn)"
+deploy/reinstall.sh --dry-run
+# After the installation/review gates have passed:
+deploy/reinstall.sh reinstall
+```
+
+The workspace and launch directories must already exist and be separate from
+the checkout. Run the generic wrapper as the service user. The installer executes
+real Python imports, version calls, and one real embedded-PDF-image recovery under that service
+identity and systemd's effective default PATH before creating the installation
+transaction. The operator's shell PATH is not the dependency check.
+
+The verified binding is written once to
+`site/curve_figure_evidence/figure_dependencies.json` in the staged installation,
+then checked again with the selected service Python before switching and after
+installation. Activation makes the installation prefix read-only. Runtime uses
+the recorded absolute `pdfimages` path and rechecks its version. A tool-version
+change requires a new installation record. An ordinary wheel without this
+supplied record can compile but cannot pass figure installation.
+
+The current trusted Local backend provides soft isolation, not an OS sandbox.
+The production package, runtime resources, default configuration and explicit
+Worker context must not include case geometry, historical answers or paths that
+act as answer-discovery inputs. Historical audit documents may retain locators,
+but the runtime must not consume them. Record readable host probes honestly and
+claim only that those files were not supplied or observed in use; `SEC-002`
+remains a known issue. Check for queued or running old-contract Runs before any
+approved switch; cross-digest recovery is not promised. The figure curve
+Operation does not bind the external `scientific-paper-evidence` skill.
+
+Local Workers may discover installed Skills and read their references on demand;
+Operation tool permissions remain unchanged. The separately managed TCAD Skill
+has deployment-directory integrity checks and transaction rollback. Its bytes
+are not bound to Operation or Run identity, so per-Run reference replay is not
+promised. Validate discovery and helper use in fresh compiled Agent sessions
+after installation; generated-prompt tests alone do not prove that behavior.
+
+After the curve-analysis update, check the compiled catalog in a fresh session: `science.result.diagnose.v1` accepts experiment results directly, with optional curve bundle and metric report inputs. With TCAD enabled, `tcad.result.analyze.v1` provides `worker_tcad_curve_score` for bound raw outputs and reference material. These are alternative analysis entrypoints, not sequential steps. Reinstallation does not refresh Worker tools in an existing session; restart the session. Historical records remain, while current preflight determines qualification after contract changes.
 
 ## 2. Obtain the Source
 
 ```bash
 git clone <repository-url> scidiscovery-agent
 cd scidiscovery-agent
+
+deploy/init_workspace.sh ingaas-paper
+export SCID_WORKSPACE="$PWD/workspace/ingaas-paper"
 ```
+
+The Git repository contains framework source only. Every research project must
+live under the Git-ignored `workspace/<project-name>/` tree; papers, parameters,
+research ledgers, simulator projects, logs, and results belong in that project's
+subdirectories.
 
 Do not run the services from `/mnt/c` under WSL. Use the WSL filesystem, for
 example `~/src/scidiscovery-agent`.
 
 ## 3. Select the AI Platform
 
-`SCID_PLATFORM` accepts:
-
-- `codex` (default): generates `.codex/config.toml`, role TOMLs, and the managed
-  scheduler block in `AGENTS.md`;
-- `claude`: generates `.mcp.json`, `.claude/agents/*.md`, and the managed block
-  in `CLAUDE.md`;
-- `both`: generates both configurations.
+`SCID_PLATFORM` accepts only `codex`. It generates `.codex/config.toml`, role
+TOMLs, and the managed generic scheduler block at the framework source root;
+nested workspaces inherit that configuration.
 
 Generated files contain absolute local paths. Regenerate them on every machine
-and do not commit them.
+and do not commit them. A workspace `AGENTS.md` contains project-specific
+constraints only; installation migrates the old layout by removing its
+duplicate managed scheduler block.
 
 ## 4. Local Deployment Smoke
 
@@ -59,12 +147,15 @@ PYTHON="$(command -v python3)"
 
 # Optional source preview. It requires the dependencies to be importable by
 # the selected base Python.
-SCID_PYTHON="$PYTHON" deploy/install.sh --dry-run
+SCID_WORKSPACE="$SCID_WORKSPACE" \
+  SCID_PYTHON="$PYTHON" deploy/install.sh --dry-run
 
 sudo SCID_PYTHON="$PYTHON" \
+  SCID_WORKSPACE="$SCID_WORKSPACE" \
   SCID_SERVICE_USER="$USER" \
   SCID_SERVICE_GROUP="$(id -gn)" \
   SCID_PLATFORM=codex \
+  SCID_WORKER_BACKEND=local \
   deploy/install.sh install
 ```
 
@@ -72,18 +163,44 @@ The installation creates:
 
 - `/opt/scidiscovery/site`: immutable installed Python packages;
 - `/var/lib/scidiscovery`: control-plane state;
-- `/var/lib/scidiscovery-tcad`: local execution state when used;
+- `/var/lib/scidiscovery/tcad`: execution state only for local-adapter mode;
 - `/etc/scidiscovery`: generated secrets and execution policy;
 - `/run/scidiscovery/control.sock`: Root MCP socket;
-- `/run/scidiscovery-worker/worker.sock`: worker MCP socket;
 - `scidiscovery-control.service`;
-- `scidiscovery-worker.service`;
 - `scidiscovery-approval-ui.service`;
+- per-Operation local stdio MCP profiles for supported Agent Operations; no central worker service;
 - `tcad-control.service` only for local-adapter mode.
 
 The approval UI listens only on <http://127.0.0.1:8765>.
 
-Restart Codex or Claude Code after installation.
+Restart Codex after installation. Start it directly from the framework root:
+
+```bash
+codex -C "$PWD"
+```
+
+You may also start it in the default nested workspace, which inherits the root
+MCP and Subagent configuration:
+
+```bash
+codex -C "$SCID_WORKSPACE"
+```
+
+When Codex is actually launched outside both the source root and workspace, set
+that existing absolute directory as `SCID_CODEX_LAUNCH_ROOT`. The installer
+generates, backs up, and verifies its `.codex` and `AGENTS.md` in the same
+transaction so the launch directory cannot retain stale MCP definitions. When
+`SCID_WORKSPACE` points outside the source tree, the installer emits an
+equivalent project-local runtime profile there because it cannot inherit the
+framework root. This does not duplicate research data or control-plane state.
+
+```bash
+export SCID_CODEX_LAUNCH_ROOT=/absolute/directory/where/codex/is/started
+```
+
+Do not rerun the installer for every Codex session. Reinstall only for the
+initial deployment, an installation-configuration change, or an installed-code
+update.
 
 ## 5. Remote TCAD VM
 
@@ -96,6 +213,7 @@ real license or host data:
 mkdir -p config/local
 cp plugins/tcad_artifact/config/remote-runner.example.json \
   config/local/remote-runner.json
+chmod 600 config/local/remote-runner.json
 ```
 
 Edit the copied file:
@@ -104,6 +222,13 @@ Edit the copied file:
 - set `STROOT`, `PATH`, and license environment variables;
 - add one unique `profile_id` for each allowed solver profile;
 - set VM-user-owned state and exchange roots.
+
+The example explicitly contains one `sprocess` and one `sdevice` profile. Keep
+`solver_kind` and non-empty `release_evidence` on both profiles, and point each
+at an administrator-confirmed executable. Do not infer these values from an
+executable name or from the other profile's environment.
+Copying the file and changing only its permissions is not configuration; the
+installer rejects a byte-for-byte copy of the tracked example.
 
 Install the dependency-free runner through an existing passwordless SSH path:
 
@@ -148,6 +273,42 @@ Edit `/etc/scidiscovery/tcad-transport.json` and set:
 - known-hosts file and stable host-key alias;
 - remote runner, config, and exchange paths.
 
+After an active transport exists, use it for a standard full install whenever
+the runner code or private profiles change. This is also the migration path
+from an older single-profile config to the current dual-profile config:
+
+```bash
+SCID_PYTHON="$(command -v python3)" \
+SCID_REMOTE_RUNNER_CONFIG="$PWD/config/local/remote-runner.json" \
+deploy/install_ssh_tcad_runner.sh install-from-transport --dry-run
+
+SCID_PYTHON="$(command -v python3)" \
+SCID_REMOTE_RUNNER_CONFIG="$PWD/config/local/remote-runner.json" \
+deploy/install_ssh_tcad_runner.sh install-from-transport
+```
+
+`install-from-transport` reads `/etc/scidiscovery/tcad-transport.json` by
+default; set `SCID_TCAD_TRANSPORT_CONFIG` to select another absolute path. It
+reuses the configured SSH executable, identity, destination resolver,
+known-hosts, and exact remote paths. It runs `tcad_capabilities` against the
+candidate runner and config in a temporary directory before replacing both;
+a failed post-commit probe restores the previous files.
+Every install mode that writes the VM requires an explicit
+`SCID_REMOTE_RUNNER_CONFIG` and refuses to deploy the tracked example as the
+private configuration.
+
+Use `upgrade-code` only when the remote `runner.json` already conforms to the
+current schema and only code must change. It neither uploads nor migrates the
+configuration and fails closed against an old schema:
+
+```bash
+SCID_PYTHON="$(command -v python3)" \
+deploy/install_ssh_tcad_runner.sh upgrade-code --dry-run
+
+SCID_PYTHON="$(command -v python3)" \
+deploy/install_ssh_tcad_runner.sh upgrade-code
+```
+
 For Windows OpenSSH from WSL, a typical executable is
 `/mnt/c/Windows/System32/OpenSSH/ssh.exe`; identity and known-hosts values use
 the syntax expected by that executable.
@@ -157,6 +318,7 @@ Install the services with the external adapter selected:
 ```bash
 PYTHON="$(command -v python3)"
 sudo SCID_PYTHON="$PYTHON" \
+  SCID_WORKSPACE="$SCID_WORKSPACE" \
   SCID_SERVICE_USER="$USER" \
   SCID_SERVICE_GROUP="$(id -gn)" \
   SCID_PLATFORM=codex \
@@ -164,9 +326,17 @@ sudo SCID_PYTHON="$PYTHON" \
   deploy/install.sh install
 ```
 
+External adapter mode validates the adapter configuration; the external executor
+supplies execution policy. A leftover local `tcad-policy.json` is neither validated
+nor rewritten or chmod/chowned in this mode. Local socket mode still requires an
+administrator-supplied complete policy matching the current schema. Successful
+installation does not establish live remote policy or solver acceptance.
+
 The external adapter replaces the local `tcad-control.service`. SSH operations
 are bounded and return immediately; the VM runner owns detached execution and
 durable `running`, `status`, and `done` records.
+In this mode, `TCAD_STATE_ROOT` is ignored: installation does not create, change
+ownership of, or back up the local TCAD state directory.
 
 ## 6. Verify
 
@@ -175,7 +345,6 @@ deploy/install.sh status
 
 systemctl is-active \
   scidiscovery-control.service \
-  scidiscovery-worker.service \
   scidiscovery-approval-ui.service
 
 curl -fsS http://127.0.0.1:8765/ >/dev/null
@@ -186,21 +355,73 @@ For an external TCAD setup, first verify SSH and the configured runner with a
 deployment-smoke tool profile. A service health check does not qualify a
 scientific model or a Sentaurus license.
 
+### Instance workbench and archives
+
+Parameter panels offer compact previews and complete pagination for each original,
+separating design choices, cited evidence, and implementation bindings without inferring
+missing sources or uncertainty. Pages contain at most 8 rows; originals above 4 MiB
+retain their download entry. With `curve_figure_evidence` installed, evidence nodes show
+saved paper panels, numerical CSV redraws, and point overlays, with original CSV downloads.
+Association uses the exact saved invocation and manifest. Missing images, output ports,
+or incomplete manifests produce local display gaps without re-extraction or scientific
+requalification. Historical prose translation is deferred; no translation service is required.
+
+This update uses the existing approval UI service and port. It adds no service,
+environment variable, or VM runner protocol; no VM synchronization is needed.
+Reinstall with the existing deployment configuration and restart the services.
+Use the management URL returned by `instance_current` to obtain instance read or
+maintenance access; request a new URL after expiry. An approval link still
+authorizes only its original request, never instance maintenance.
+
+The installer safely creates `<SCID_WORKSPACE>/.scidiscovery-archive/instances`,
+rejects symlinks, and grants the approval UI write access only to that fixed
+archive root rather than the whole workspace. Management supports confirmed
+previews, archive, read-only browsing, restore, and instance UI-cache cleanup.
+There is no permanent-delete action. Restore requires selecting the instance
+again; it does not restart work or extend approvals. Shared originals and
+historical files with unknown ownership are retained and listed. Remote VM
+originals remain remote. This version bounds the target control-record snapshot
+to 32 MiB, individual control-payload reads to 16 MiB, and its file inventory to
+50,000 entries; an oversized target receives an unsupported preview with its
+originals preserved. Incomplete external-reference reads conservatively retain
+shared data and report a gap instead of assuming that no reference exists.
+
+An unknown native writer produces a busy/unknown preview and preserves the files.
+In particular, a terminal LocalTrusted Run alone cannot prove process quiescence;
+this restriction does not affect workbench reading or ordinary scientific work.
+Resume or roll back interrupted maintenance through its page; do not remove the
+journal to force access. Before reverting to old code, restore with the new
+version or retain the archive offline without expecting the old code to resume
+that instance. Installation and uninstall do not delete archives.
+
+See the [implementation record](plans/evidence/instance-workbench/IMPLEMENTATION.zh-CN.md)
+for verification coverage and outstanding production checks.
+
 ## 7. Configuration Reference
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `SCID_WORKSPACE` | repository root inferred from the script | Source/project root |
+| `SCID_WORKSPACE` | `<source-root>/workspace/default` | Existing project workspace; must differ from the source root |
+| `SCID_CODEX_LAUNCH_ROOT` | unset | Optional actual Codex launch directory; receives the same-generation project profile when distinct from source and workspace |
 | `SCID_PYTHON` | first `python3` on `PATH` | Base interpreter |
 | `SCID_SERVICE_USER` | `SUDO_USER` or current user | Service account |
 | `SCID_SERVICE_GROUP` | primary group of service user | Socket/file group |
-| `SCID_PLATFORM` | `codex` | `codex`, `claude`, or `both` |
-| `SCID_ENABLE_INGAAS_FIG4` | `0` | Install the optional domain example when set to `1` |
+| `SCID_PLATFORM` | `codex` | Codex platform selector; other values are rejected |
+| `SCID_WORKER_BACKEND` | `local` | `local` is the trusted native-tool path; `hardened` is the MCP-only file backend, and the value drives daemon, systemd, Codex profiles, and install verification together |
+| `SCID_PLUGINS` | empty | Comma-separated local plugin directory names, for example `tcad_artifact,curve_score,curve_figure_evidence` |
 | `SCID_INSTALL_ROOT` | `/opt/scidiscovery` | Installed package root |
 | `SCID_STATE_ROOT` | `/var/lib/scidiscovery` | Control-plane state |
+| `TCAD_STATE_ROOT` | `${SCID_STATE_ROOT}/tcad` | Local-adapter execution state; ignored for external command transport |
 | `SCID_CONFIG_ROOT` | `/etc/scidiscovery` | Secrets and policy |
 | `SCID_APPROVAL_PORT` | `8765` | Loopback approval UI port |
 | `SCID_TCAD_COMMAND_CONFIG` | unset | External command adapter configuration |
+
+When upgrading a local adapter that already uses a separate state directory,
+set `TCAD_STATE_ROOT` to that existing path. Installation does not migrate it.
+
+`hardened` currently rejects Operations requiring shell, code, or `view_image`,
+so TCAD Deck authoring v1 uses `local`. Effect approval and adapter boundaries
+remain independent of that choice.
 
 The remote-runner script documents additional `SCID_SSH_*`, `SCID_VMRUN_*`,
 and `SCID_REMOTE_*` variables through `--dry-run` output and its source header.
@@ -218,18 +439,89 @@ sudo deploy/install.sh uninstall
 Uninstall removes services but preserves state, configuration, and backups.
 Delete those directories only after an explicit archival decision.
 
+After migrating from the retired `artifact-agent-vnext` or early
+`tcad-control` deployments, audit their exact service roots and duplicate
+user-local packages with:
+
+```bash
+deploy/cleanup_legacy_services.sh --dry-run
+```
+
+If the audit shows the current services are active and no current configuration
+references those roots, remove them and retain the newest three SciDiscovery
+installation backups with:
+
+```bash
+sudo deploy/cleanup_legacy_services.sh clean
+```
+
+The cleanup script never removes `/opt/scidiscovery`, `/etc/scidiscovery`,
+`/var/lib/scidiscovery`, or `/var/lib/scidiscovery-tcad`.
+
 ## 9. Troubleshooting
 
-- **`pydantic` or `pydantic-core` cannot be installed**: verify Python is 3.10+
-  on a supported Linux architecture and that `pip` can access wheels or a local
-  wheelhouse.
+- **A base Python dependency is missing**: install the reported dependency in
+  the selected Conda or system Python environment, then rerun the installer.
+  Deployment itself is offline and does not resolve third-party packages.
 - **MCP socket missing**: inspect
   `journalctl -u scidiscovery-control.service -n 100`.
-- **Worker timeouts**: inspect `task_status` phase timestamps before retrying;
-  do not overwrite an active worker attempt.
+- **Agent Run timeouts**: inspect `run_status`; create a new Run after failure
+  rather than overwriting the old result or current binding.
 - **Approval returns 403**: open the exact URL on the same host and verify the
   process is bound to the intended ResearchInstance.
 - **VM address changed**: use a resolver or update only the private transport
   configuration; never hard-code a discovered address in source.
 - **TCAD job appears stuck**: use short status calls. Never hold SSH open while
   the solver runs.
+
+Controlled analysis evidence recovery requires matching control/Worker packages and the VM helper. After reinstalling locally, use `SCID_PYTHON=/absolute/path/to/python deploy/install_ssh_tcad_runner.sh upgrade-code` to update only helper code using the existing transport configuration. Keep the original result directories and remote configuration. Restart the Codex session before scheduling a new analysis Run. Old helpers return unsupported inspection; ordinary offline analysis remains available. Never resubmit the old execution merely to refresh collection.
+
+## Agent execution settings
+
+The instance directory has separate Agent Settings and archive-management entries. Agent Settings obtains editing access and opens the dedicated settings page; saving stays on that page.
+
+The installer creates `${SCID_CONFIG_ROOT}/agent-settings.json` (default `/etc/scidiscovery/agent-settings.json`) only when absent, with `zh-CN`, `gpt-6-sol`, and `medium` defaults. An existing file that exactly matches the previous generated default is upgraded transactionally to the new default; customized files are preserved. Control and UI services use the same `SCID_AGENT_SETTINGS_FILE`; global-file edits require restarting both services. Missing files retain compatibility defaults; malformed existing files report their path and fields.
+The initial model value comes from the packaged `scidiscovery/default_agent_settings.json`; Agent Operation declarations do not pin a model.
+
+The current M7 configuration matches the previous generated default, so reinstalling upgrades its `defaults.model` to `gpt-6-sol`. If a customized installation keeps an older model, edit that file separately and restart the control and approval UI services. Instance-level model overrides still take precedence; already created Runs retain their frozen execution profiles.
+
+```json
+{"schema_version":1,"defaults":{"narrative_language":"zh-CN","model":"gpt-6-sol","reasoning_effort":"medium"},"operations":{}}
+```
+
+Instance management exposes sparse overrides for narrative language, model, effort and recovery-chain total Run count. The latter three also support installed Operation IDs. Blank fields inherit; resetting removes instance overrides only. Read-only and archived instances cannot save. Saving affects future preflights only: it does not dispatch, execute, approve or rebind a session. Historical reports are not translated and missing historical Run profiles are not backfilled.
+
+The initial upgrade requires installation, role regeneration and reloading Codex to remove fixed role models. Later instance edits need neither new roles nor a restart. Reuse preflight's `normalized_request` for invoke and dispatch its frozen `execution_profile.profile.model` and `reasoning_effort`. The standalone CLI launcher accepts `--model` and `--reasoning-effort`; dynamic roles require both from the queued Run. Requested configuration is not actual model telemetry. VM runner is unchanged and needs no synchronization. Roll back with matching code, roles, database and configuration transaction backups.
+
+## Experiment material and reading budgets
+
+Complete experiments accept exact PDFs, images, CSV, JSON, archives and grids via
+`scientific_materials`; `scientific_files` supports the same types with explicit lazy
+file delivery. Both share the stored-material budget. Small text remains directly
+readable; large or binary files retain exact references until the Worker requests
+`worker_materialize_input(source_name=...)`. Native image viewing is enabled for
+experiment Workers. Startup does not embed file contents or ask for control hashes.
+
+Merge this top-level field into `${SCID_CONFIG_ROOT}/agent-settings.json`, retaining
+other settings (all sizes are bytes):
+
+```json
+{
+  "input_materials": {
+    "max_item_bytes": 2000000000,
+    "max_total_bytes": 2000000000,
+    "inline_max_bytes": 1048576,
+    "inline_total_bytes": 8388608,
+    "transfer_chunk_bytes": 1048576
+  }
+}
+```
+
+The first two limits bound stored individual/aggregate material sizes, the next two
+bound automatic in-memory delivery, and the last bounds streaming copy chunks.
+Existing instance overrides inherit global values; the settings form currently has
+no editing controls for these fields. `scid_describe` reports effective budgets and
+new Runs freeze budgets and delivery modes. Admission errors identify the material;
+do not drop necessary evidence to bypass a rejection. These budgets do not replace
+TCAD execution authorization or solver resource policy. Regenerate roles and reload
+Codex on upgrade; finish tasks bound to old contracts before switching services.

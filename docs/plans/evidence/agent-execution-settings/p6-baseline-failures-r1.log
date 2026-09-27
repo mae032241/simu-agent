@@ -1,0 +1,90 @@
+FF                                                                       [100%]
+=================================== FAILURES ===================================
+____ test_recursive_current_uses_producer_receipts_and_commit_rechecks_head ____
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-97/test_recursive_current_uses_pr0')
+
+    def test_recursive_current_uses_producer_receipts_and_commit_rechecks_head(
+        tmp_path: Path,
+    ) -> None:
+>       catalog, runtime, instance, source, root = _system(
+            tmp_path, require_current=True
+        )
+
+tests/operations/test_l2_run_invariants.py:351: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/operations/test_l2_run_invariants.py:115: in _system
+    catalog = _catalog(require_current=require_current)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/operations/test_l2_run_invariants.py:111: in _catalog
+    return compile_catalog((CORE_PLUGIN, GENERAL_PLUGIN, plugin))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/tmp/scid-execution-settings-baseline/src/scidiscovery/operations/catalog.py:839: in compile_catalog
+    compiled_parts, runtime_factories, runtime_configuration_digests, runtime_identity_digests, used = _validate_operation_contracts(plugin_map, components)
+                                                                                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/tmp/scid-execution-settings-baseline/src/scidiscovery/operations/catalog.py:369: in _validate_operation_contracts
+    _fail("output_context_invalid", plugin.plugin_id, op_id, port.name)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+code = 'output_context_invalid', plugin = 'blind_csv'
+operation = 'blind.csv.observe.v1', field = 'csv_observation'
+
+    def _fail(
+        code: str, plugin: str | None = None, operation: str | None = None,
+        field: str | None = None) -> None:
+>       raise CatalogCompileError(code, plugin_id=plugin, operation_id=operation, field=field)
+E       scidiscovery.operations.catalog.CatalogCompileError: output_context_invalid: blind_csv/blind.csv.observe.v1/csv_observation
+
+/tmp/scid-execution-settings-baseline/src/scidiscovery/operations/catalog.py:108: CatalogCompileError
+__________ test_hardened_stdio_process_recovers_the_exact_running_run __________
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-97/test_hardened_stdio_process_re0')
+
+    def test_hardened_stdio_process_recovers_the_exact_running_run(
+        tmp_path: Path,
+    ) -> None:
+>       catalog, runtime, _, root = _system(tmp_path)
+                                    ^^^^^^^^^^^^^^^^^
+
+tests/operations/test_l5_hardened_run_backend.py:444: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/operations/test_l5_hardened_run_backend.py:71: in _system
+    runtime = open_runtime(
+/tmp/scid-execution-settings-baseline/src/scidiscovery/artifact_agent/runtime.py:74: in open_runtime
+    artifacts = ArtifactService.open(
+/tmp/scid-execution-settings-baseline/src/scidiscovery/artifact_agent/service/artifacts.py:49: in open
+    registry = SQLiteArtifactRegistry(database_path, deadline_monotonic=deadline_monotonic)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/tmp/scid-execution-settings-baseline/src/scidiscovery/artifact_agent/storage/sqlite.py:133: in __init__
+    self._initialize()
+/tmp/scid-execution-settings-baseline/src/scidiscovery/artifact_agent/storage/sqlite.py:443: in _initialize
+    connection.executescript(_migration_sql())
+                             ^^^^^^^^^^^^^^^^
+/tmp/scid-execution-settings-baseline/src/scidiscovery/artifact_agent/storage/sqlite.py:642: in _migration_sql
+    .read_text(encoding="utf-8")
+     ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/home/da/miniconda3/lib/python3.12/pathlib.py:1027: in read_text
+    with self.open(mode='r', encoding=encoding, errors=errors) as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = PosixPath('/tmp/scid-execution-settings-baseline/src/scidiscovery/artifact_agent/storage/migrations/0001_artifacts.sql')
+mode = 'r', buffering = -1, encoding = 'utf-8', errors = None, newline = None
+
+    def open(self, mode='r', buffering=-1, encoding=None,
+             errors=None, newline=None):
+        """
+        Open the file pointed to by this path and return a file object, as
+        the built-in open() function does.
+        """
+        if "b" not in mode:
+            encoding = io.text_encoding(encoding)
+>       return io.open(self, mode, buffering, encoding, errors, newline)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       FileNotFoundError: [Errno 2] No such file or directory: '/tmp/scid-execution-settings-baseline/src/scidiscovery/artifact_agent/storage/migrations/0001_artifacts.sql'
+
+/home/da/miniconda3/lib/python3.12/pathlib.py:1013: FileNotFoundError
+=========================== short test summary info ============================
+FAILED tests/operations/test_l2_run_invariants.py::test_recursive_current_uses_producer_receipts_and_commit_rechecks_head
+FAILED tests/operations/test_l5_hardened_run_backend.py::test_hardened_stdio_process_recovers_the_exact_running_run
+2 failed in 1.23s

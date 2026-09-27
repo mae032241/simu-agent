@@ -1,0 +1,70 @@
+F.......                                                                 [100%]
+=================================== FAILURES ===================================
+_ test_receiver_diagnostic_detects_missing_plan_review_without_blocking_catalog _
+
+    def test_receiver_diagnostic_detects_missing_plan_review_without_blocking_catalog():
+        package_id = "tcad.reviewed-deck-package.v2"
+>       old = replace(TCAD, operations=tuple(
+            replace(op, inputs=tuple(p for p in op.inputs if p.name != "experiment_review"))
+            if op.operation_id == package_id else op for op in TCAD.operations
+        ))
+
+tests/operations/test_review_admission.py:17: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/operations/test_review_admission.py:18: in <genexpr>
+    replace(op, inputs=tuple(p for p in op.inputs if p.name != "experiment_review"))
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+obj = OperationSpec(operation_id='tcad.reviewed-deck-package.v2', version='1', catalog_scope='support', description=Operatio...x_files=8, max_attempts=1, network=NetworkPolicy(mode='none', allowed_domains=(), max_requests=0)), accepts_actions=())
+changes = {'inputs': (InputPortSpec(name='project', description='Exact deterministic TCAD transform input: project.', schema_id=...max_item_bytes=33554432, usage='claim_evidence', exposure='full', require_current=False, required_non_null_fields=()))}
+
+    def replace(obj, /, **changes):
+        """Return a new object replacing specified fields with new values.
+    
+        This is especially useful for frozen classes.  Example usage::
+    
+          @dataclass(frozen=True)
+          class C:
+              x: int
+              y: int
+    
+          c = C(1, 2)
+          c1 = replace(c, x=3)
+          assert c1.x == 3 and c1.y == 2
+        """
+    
+        # We're going to mutate 'changes', but that's okay because it's a
+        # new dict, even if called with 'replace(obj, **my_changes)'.
+    
+        if not _is_dataclass_instance(obj):
+>           raise TypeError("replace() should be called on dataclass instances")
+E           TypeError: replace() should be called on dataclass instances
+
+/home/da/miniconda3/lib/python3.12/dataclasses.py:1559: TypeError
+=========================== short test summary info ============================
+FAILED tests/operations/test_review_admission.py::test_receiver_diagnostic_detects_missing_plan_review_without_blocking_catalog
+1 failed, 7 passed in 3.41s
+Command exited with non-zero status 1
+	Command being timed: "timeout 120 /home/da/miniconda3/bin/python -"
+	User time (seconds): 2.36
+	System time (seconds): 0.18
+	Percent of CPU this job got: 66%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:03.84
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 105928
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 89
+	Minor (reclaiming a frame) page faults: 29476
+	Voluntary context switches: 2781
+	Involuntary context switches: 35
+	Swaps: 0
+	File system inputs: 35944
+	File system outputs: 25304
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 1

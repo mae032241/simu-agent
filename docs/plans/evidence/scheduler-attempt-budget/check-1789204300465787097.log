@@ -1,0 +1,237 @@
+......FF......F                                                          [100%]
+=================================== FAILURES ===================================
+_ test_scheduler_attempt_budget_extends_frozen_chain_and_replays_idempotently[draft_from] _
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-200/test_scheduler_attempt_budget_0')
+route = 'draft_from'
+
+    @pytest.mark.parametrize("route", ["draft_from", "resume_from"])
+    def test_scheduler_attempt_budget_extends_frozen_chain_and_replays_idempotently(tmp_path, route):
+        catalog, runtime, instance, _, root = _system(tmp_path)
+        _failed_source(catalog, runtime, root)
+        source_id = runtime.scheduler_bindings.resolve(
+            instance=instance.instance_id, namespace="run", name="draft_source")
+        original = runtime.runs.status(source_id)
+    
+        def fail_next(request):
+            assert root.call_tool("operation_preflight", request)["admissible"]
+            root.call_tool("operation_invoke", request)
+            worker = _worker(catalog, runtime)
+            opened = worker.call_tool("worker_open_assignment", {})
+            Path(opened["output_directory"], "result.json").write_bytes(_envelope())
+            value = runtime.runs.status(worker._run_id)
+            runtime.runs.record_failure(value.run_id, reason="bounded fixture interruption",
+                expected_state=value.state, expected_last_activity_at=value.last_activity_at)
+            return runtime.runs.status(worker._run_id)
+    
+        fail_next(_request("second", **{route: "draft_source"}))
+        request = _request("third", **{route: "second"})
+        rejection = root.call_tool("operation_preflight", request)
+>       assert rejection["reason_code"] == "recovery_attempt_limit_reached", rejection
+E       AssertionError: {'admissible': False, 'reason_code': 'draft_source_unavailable', 'port': None, 'executor_kind': None, ...}
+E       assert 'draft_source_unavailable' == 'recovery_att...limit_reached'
+E         
+E         - recovery_attempt_limit_reached
+E         + draft_source_unavailable
+
+tests/operations/test_root_draft_routes.py:174: AssertionError
+_ test_scheduler_attempt_budget_extends_frozen_chain_and_replays_idempotently[resume_from] _
+
+self = <scidiscovery.artifact_agent.interfaces.mcp_root.RootToolFacade object at 0x7f0fe7dd51f0>
+bound = BoundOperationCall(compiled=CompiledOperation(plugin_id='blind_csv', spec=OperationSpec(operation_id='blind.csv.observ..._id=None), exposure='full', usage='claim_evidence'),), instruction='Make one bounded observation.', executor_plan=None)
+on_conflict = 'reject', resume_from = 'second', draft_from = None
+max_attempts = None
+
+    def _prepare_local_run(
+        self,
+        bound: BoundOperationCall,
+        on_conflict: str,
+        *,
+        resume_from: str | None,
+        draft_from: str | None = None,
+        max_attempts: int | None = None,
+    ) -> tuple[str | None, str | None, str | None, str, _CreationTarget]:
+        if self.runs is None:
+            raise OperationInvocationError("runtime_backend_unavailable")
+        resume_run_id = (
+            None if resume_from is None else self._resolve("run", resume_from)
+        )
+        draft_run_id = None
+        draft_digest = None
+        if draft_from is not None:
+            try:
+                draft_run_id = self._resolve("run", draft_from)
+                draft_digest = self.runs.validate_draft_source(
+                    draft_run_id, compiled=bound.compiled,
+                    instance_id=self._instance_id(), check_attempts=False,
+                )
+            except Exception as error:
+                raise OperationInvocationError("draft_source_unavailable") from error
+        fingerprint = canonical_sha256(
+            {
+                "operation": bound.compiled.spec.operation_id,
+                "operation_version": bound.compiled.spec.version,
+                "operation_digest": bound.compiled.digest,
+                "instruction": bound.instruction,
+                "inputs": [
+                    {
+                        "port": item.port_name,
+                        "source": item.source_name,
+                        "artifact_name": item.artifact_name,
+                        "artifact_ref": item.artifact.ref,
+                        "usage": item.usage,
+                        "exposure": item.exposure,
+                    }
+                    for item in bound.inputs
+                ],
+                "resume_from": resume_run_id,
+                **({"max_attempts": max_attempts} if max_attempts is not None else {}),
+                **(
+                    {"draft_from": draft_run_id, "draft_digest": draft_digest}
+                    if draft_run_id is not None else {}
+                ),
+            }
+        )
+        try:
+            target = self._creation_target(
+                "run", bound.name, fingerprint, on_conflict
+            )
+        except SchedulerNameConflict as error:
+            raise OperationInvocationError("semantic_name_conflict") from error
+        if target.existing_object_id is None:
+            try:
+                if draft_run_id is not None:
+                    self.runs.validate_draft_source(draft_run_id, compiled=bound.compiled,
+                        instance_id=self._instance_id(), scheduler_max_attempts=max_attempts)
+                if resume_run_id is not None:
+>                   self.runs.validate_resume(resume_run_id, operation_digest=bound.compiled.digest,
+                        input_refs=tuple(item.artifact.ref for item in bound.inputs),
+                        max_attempts=bound.compiled.spec.limits.max_attempts,
+                        scheduler_max_attempts=max_attempts)
+
+src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py:359: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/scidiscovery/artifact_agent/service/runs.py:1256: in validate_resume
+    return self._validate_resume(
+src/scidiscovery/artifact_agent/service/runs.py:1310: in _validate_resume
+    self._check_recovery_attempts(connection, source, max_attempts, scheduler_max_attempts)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <scidiscovery.artifact_agent.service.runs.RunService object at 0x7f0fe7dd46b0>
+connection = <sqlite3.Connection object at 0x7f0fe7460a90>
+source = RunStatus(run_id='run_4642bc073c294686903697794f302e10', instance_id='ins_c944d02ca6a0486b9229d741a002d3d2', operation...ca5745e581f44ab05', 'operation_id': 'blind.csv.observe.v1', 'snapshot_max_bytes': 33554432, 'snapshot_max_files': 132})
+max_attempts = 2, scheduler_max_attempts = None
+
+    def _check_recovery_attempts(self, connection: sqlite3.Connection,
+                                 source: RunStatus, max_attempts: int,
+                                 scheduler_max_attempts: int | None = None) -> None:
+        budget = self._recovery_attempt_budget(connection, source, max_attempts, scheduler_max_attempts)
+        if budget["used"] >= budget["limit"]:
+>           raise RunAttemptLimit(budget["used"], budget["limit"])
+E           scidiscovery.artifact_agent.service.run_records.RunAttemptLimit: recovery attempt limit reached: 2 Runs used, limit 2; scheduler may set max_attempts for a new Run
+
+src/scidiscovery/artifact_agent/service/runs.py:1409: RunAttemptLimit
+
+During handling of the above exception, another exception occurred:
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-200/test_scheduler_attempt_budget_1')
+route = 'resume_from'
+
+    @pytest.mark.parametrize("route", ["draft_from", "resume_from"])
+    def test_scheduler_attempt_budget_extends_frozen_chain_and_replays_idempotently(tmp_path, route):
+        catalog, runtime, instance, _, root = _system(tmp_path)
+        _failed_source(catalog, runtime, root)
+        source_id = runtime.scheduler_bindings.resolve(
+            instance=instance.instance_id, namespace="run", name="draft_source")
+        original = runtime.runs.status(source_id)
+    
+        def fail_next(request):
+            assert root.call_tool("operation_preflight", request)["admissible"]
+            root.call_tool("operation_invoke", request)
+            worker = _worker(catalog, runtime)
+            opened = worker.call_tool("worker_open_assignment", {})
+            Path(opened["output_directory"], "result.json").write_bytes(_envelope())
+            value = runtime.runs.status(worker._run_id)
+            runtime.runs.record_failure(value.run_id, reason="bounded fixture interruption",
+                expected_state=value.state, expected_last_activity_at=value.last_activity_at)
+            return runtime.runs.status(worker._run_id)
+    
+        fail_next(_request("second", **{route: "draft_source"}))
+        request = _request("third", **{route: "second"})
+>       rejection = root.call_tool("operation_preflight", request)
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/operations/test_root_draft_routes.py:173: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/scidiscovery/artifact_agent/interfaces/mcp_root.py:407: in call_tool
+    return getattr(self.facade, name)(**values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py:198: in operation_preflight
+    return preflight_result(prepare)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+src/scidiscovery/operations/invoke.py:285: in preflight_result
+    bound = action()
+            ^^^^^^^^
+src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py:187: in prepare
+    self._prepare_local_run(
+src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py:364: in _prepare_local_run
+    raise _attempt_limit_error(error) from error
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+error = RunAttemptLimit('recovery attempt limit reached: 2 Runs used, limit 2; scheduler may set max_attempts for a new Run')
+
+    def _attempt_limit_error(error: RunAttemptLimit) -> OperationInvocationError:
+>       return OperationInvocationError("recovery_attempt_limit_reached", details=(contract_diagnostic(
+            "recovery_attempt_limit_reached", phase="input_admission", affected_action="invoke",
+            path="$.max_attempts", message=str(error), repairable=True),))
+E       TypeError: OperationInvocationError.__init__() got an unexpected keyword argument 'details'
+
+src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py:61: TypeError
+_ test_three_run_recovery_keeps_colliding_attempt_scopes_and_seals_without_recalculation _
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-200/test_three_run_recovery_keeps_0')
+
+    def test_three_run_recovery_keeps_colliding_attempt_scopes_and_seals_without_recalculation(tmp_path):
+        from copy import deepcopy
+        from tests.operations.test_tcad_result_analysis import analysis_system,open_analysis,raw_request,analysis_report,write_analysis
+        system = analysis_system(tmp_path)
+        catalog,runtime,root,request,artifacts,register = system
+        records = []
+        for name, source in [('analysis', None), ('second', 'analysis')]:
+            current = deepcopy(request); current['name'] = name
+            if source:
+                current['draft_from'] = source
+            worker,opened = open_analysis((catalog,runtime,root,current,artifacts,register))
+            record = worker.call_tool('worker_tcad_curve_score', dict(record_key=name, request=raw_request()))
+            assert record['status'] == 'computed', record
+            records.append(record)
+            report = analysis_report(alias='solver_outputs_001', output_name='A', mapped=True)
+            report['calculation_records'] = [record]
+            write_analysis(opened, report)
+            value = runtime.runs.status(worker._run_id)
+            runtime.runs.record_failure(value.run_id, reason='fixture delivery interrupted',
+                expected_state=value.state, expected_last_activity_at=value.last_activity_at)
+        assert records[0]['attempt']['attempt_key'] == records[1]['attempt']['attempt_key']
+        current = deepcopy(request); current.update(name='third', draft_from='second', max_attempts=3)
+>       worker,opened = open_analysis((catalog,runtime,root,current,artifacts,register))
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/operations/test_analysis_evidence_recovery.py:694: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+system = (<scidiscovery.operations.catalog.CompiledCatalog object at 0x7f0fe806f300>, ArtifactAgentRuntime(project_root=PosixPa...ntiality='project', content_encoding='identity'), ...}, <function analysis_system.<locals>.register at 0x7f0fe8057060>)
+
+    def open_analysis(system):
+        catalog,runtime,root,request,_,_ = system
+        result = root.call_tool('operation_preflight',request)
+>       assert result['admissible'] is True,result
+E       AssertionError: {'admissible': False, 'reason_code': 'draft_source_unavailable', 'port': None, 'executor_kind': None, ...}
+E       assert False is True
+
+tests/operations/test_tcad_result_analysis.py:125: AssertionError
+=========================== short test summary info ============================
+FAILED tests/operations/test_root_draft_routes.py::test_scheduler_attempt_budget_extends_frozen_chain_and_replays_idempotently[draft_from]
+FAILED tests/operations/test_root_draft_routes.py::test_scheduler_attempt_budget_extends_frozen_chain_and_replays_idempotently[resume_from]
+FAILED tests/operations/test_analysis_evidence_recovery.py::test_three_run_recovery_keeps_colliding_attempt_scopes_and_seals_without_recalculation
+3 failed, 12 passed in 5.94s

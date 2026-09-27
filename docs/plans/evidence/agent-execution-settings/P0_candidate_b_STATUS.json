@@ -1,0 +1,103 @@
+{
+  "name": "candidate_b",
+  "logical_name": "candidate_b",
+  "revision": 1,
+  "operation_id": "blind.csv.observe.v1",
+  "agent_type": "op_blind_csv_observe_v1_56b24007eb0b",
+  "execution_profile": {
+    "profile": {
+      "model": "gpt-5.6-sol",
+      "reasoning_effort": "medium",
+      "narrative_language": "en"
+    },
+    "sources": {
+      "model": "request_snapshot",
+      "reasoning_effort": "request_snapshot",
+      "narrative_language": "request_snapshot"
+    }
+  },
+  "backend": "local_trusted",
+  "state": "completed",
+  "output_artifact_name": "candidate_b.output",
+  "reason": null,
+  "created_at": "2026-09-15T09:56:53.484910Z",
+  "started_at": "2026-09-15T09:57:33.289699Z",
+  "deadline_at": "2026-09-15T10:01:53.484910Z",
+  "completed_at": "2026-09-15T09:58:10.044087Z",
+  "last_activity_at": "2026-09-15T09:58:10.044087Z",
+  "candidate_accepted": true,
+  "head_advance": "not_requested",
+  "recovery_available": false,
+  "recovery": {
+    "delivery_preserved": false,
+    "resume_available": false,
+    "draft_available": false,
+    "recovery_pending": false,
+    "attempt_budget": {
+      "used": 1,
+      "limit": 2
+    }
+  },
+  "diagnostic_summary": {
+    "latest_tool_error": null,
+    "recent_errors": [],
+    "rejection_count": 0,
+    "latest_rejection": null,
+    "failure": null,
+    "native_coverage": "unobserved",
+    "latest_native_error": null
+  },
+  "tool_timing": [
+    {
+      "tool_name": "worker_open_assignment",
+      "started_at": "2026-09-15T09:57:33.288981+00:00",
+      "completed_at": "2026-09-15T09:57:33.299377+00:00",
+      "duration_seconds": 0.010408
+    },
+    {
+      "tool_name": "worker_csv_summarize",
+      "started_at": "2026-09-15T09:57:53.050072+00:00",
+      "completed_at": "2026-09-15T09:57:53.059662+00:00",
+      "duration_seconds": 0.009603
+    },
+    {
+      "tool_name": "worker_submit_result",
+      "started_at": "2026-09-15T09:58:09.938937+00:00",
+      "completed_at": "2026-09-15T09:58:10.057025+00:00",
+      "duration_seconds": 0.118106
+    }
+  ],
+  "draft_from": null,
+  "bound_inputs": [
+    {
+      "port": "source_table",
+      "artifact_names": [
+        "source"
+      ]
+    }
+  ],
+  "native_execution": {
+    "coverage": "unobserved",
+    "scientific_evidence": false,
+    "reason": "no_records"
+  },
+  "sealed_output_status": "available",
+  "sealed_output": null,
+  "output_delivery": "omitted",
+  "output_metadata": {
+    "artifact_name": "candidate_b.output",
+    "kind": "observation",
+    "schema": "blind.csv-observation.v1"
+  },
+  "selected_output": null,
+  "scheduler_signal_status": "available",
+  "scheduler_signal": {
+    "schema_version": 1,
+    "verdict": "pass",
+    "summary": "The exact bound CSV was summarized successfully: it contains two rows, columns sample and value, and a mean value of 2.0.",
+    "assumptions": [],
+    "missing_inputs": [],
+    "next_actions": [],
+    "next_action_kind": null
+  }
+}

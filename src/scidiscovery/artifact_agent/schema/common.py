@@ -24,7 +24,6 @@ Sha256 = Annotated[
     str,
     Field(min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$"),
 ]
-
 _Key = TypeVar("_Key")
 _Value = TypeVar("_Value")
 
@@ -210,3 +209,15 @@ def _normalize_json(value: Any, active: set[int] | None = None) -> Any:
         "canonical JSON does not support values of type "
         f"{type(value).__name__}"
     )
+
+
+class ContractDiagnostic(SchemaModel):
+    """Bounded interface diagnostics, never raw exception or input values."""
+    code: Annotated[str, Field(min_length=1, max_length=128, pattern=r"^[a-zA-Z0-9_.-]+$")]
+    phase: Literal["input_admission", "tool_arguments", "tool_execution", "output_payload", "output_context", "integrity", "protocol"]
+    path: Annotated[str, Field(min_length=1, max_length=512)] = "$"
+    message: Annotated[str, Field(min_length=1, max_length=512)]
+    repairable: bool = False
+    affected_action: Literal["invoke", "tool_call", "submit"]
+    rule_id: Annotated[str, Field(min_length=1, max_length=128)] | None = None
+    type: Annotated[str, Field(min_length=1, max_length=128)] | None = None

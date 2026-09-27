@@ -1,0 +1,103 @@
+.FF                                                                      [100%]
+=================================== FAILURES ===================================
+_ test_materialized_sprocess_author_review_package_preserves_case_anchors[reviewed-producer-plan] _
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-17/test_materialized_sprocess_aut1')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7fa0c48af740>
+produced = True
+
+    @pytest.mark.parametrize("produced", (False, True), ids=("imported-plan", "reviewed-producer-plan"))
+    def test_materialized_sprocess_author_review_package_preserves_case_anchors(tmp_path, monkeypatch, produced):
+>       catalog, runtime, root, capability = _system(
+            tmp_path, solver_kind="sprocess", science_plugin=_plan_producer_plugin() if produced else SCIENCE_PLUGIN,
+        )
+
+tests/operations/test_l4_local_tcad.py:1872: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/operations/test_l4_local_tcad.py:312: in _system
+    catalog = compile_catalog((CORE_PLUGIN, science_plugin, CURVE_PLUGIN, TCAD_PLUGIN))
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/scidiscovery/operations/catalog.py:804: in compile_catalog
+    compiled_parts, runtime_factories, runtime_configuration_digests, runtime_identity_digests, used = _validate_operation_contracts(plugin_map, components)
+                                                                                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/scidiscovery/operations/catalog.py:338: in _validate_operation_contracts
+    if checker_issue: _fail(checker_issue[0], plugin.plugin_id, op_id,
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+code = 'semantic_rule_optional_input_required', plugin = 'general_science'
+operation = 'science.fixture.plan.v1'
+field = 'experiment.revision.guidance_0f51d6056d46'
+
+    def _fail(
+        code: str, plugin: str | None = None, operation: str | None = None,
+        field: str | None = None) -> None:
+>       raise CatalogCompileError(code, plugin_id=plugin, operation_id=operation, field=field)
+E       scidiscovery.operations.catalog.CatalogCompileError: semantic_rule_optional_input_required: general_science/science.fixture.plan.v1/experiment.revision.guidance_0f51d6056d46
+
+src/scidiscovery/operations/catalog.py:106: CatalogCompileError
+_____ test_shared_review_requires_every_exact_subject_across_producer_runs _____
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-17/test_shared_review_requires_ev0')
+
+    def test_shared_review_requires_every_exact_subject_across_producer_runs(tmp_path):
+        plugin = _plan_producer_plugin()
+        producer = next(op for op in plugin.operations if op.operation_id == "science.fixture.plan.v1")
+        reviewer = next(op for op in plugin.operations if op.operation_id == "science.object.review.v1")
+        plan_port = reviewer.inputs[0].model_copy(update={"max_items": 2})
+        # This fixture isolates control-plane identity, without a single-plan domain checker.
+        review_output = reviewer.outputs[0].model_copy(update={
+            "context_validator": None, "context_rule_id": None, "context_sources": (),
+        })
+        reviewer = reviewer.model_copy(update={
+            "operation_id": "science.fixture.collection-review.v1",
+            "inputs": (plan_port, *reviewer.inputs[1:]), "outputs": (review_output,),
+        })
+        producer = producer.model_copy(update={
+            "review": producer.review.model_copy(update={"reviewer_operation": reviewer.operation_id}),
+        })
+        from scidiscovery.operations.spec import InputPortSpec
+    
+        review_port = InputPortSpec(
+            name="reviews", description="Exact independent witnesses for the bound plans.",
+            schema_id=review_output.schema_id, media_types=review_output.media_types,
+            codec=review_output.codec, schema_resource=review_output.schema_resource,
+            min_items=0, max_items=2, usage="prior_signal",
+        )
+        consumer = reviewer.model_copy(update={
+            "operation_id": "science.fixture.collection-consume.v1",
+            "inputs": (*reviewer.inputs, review_port),
+        })
+        plugin = plugin.model_copy(update={"operations": (
+            *(op for op in plugin.operations if op.operation_id != producer.operation_id),
+            producer, reviewer, consumer,
+        )})
+>       catalog, runtime, root, _ = _system(tmp_path, science_plugin=plugin)
+                                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/operations/test_review_admission_integration.py:46: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/operations/test_l4_local_tcad.py:312: in _system
+    catalog = compile_catalog((CORE_PLUGIN, science_plugin, CURVE_PLUGIN, TCAD_PLUGIN))
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/scidiscovery/operations/catalog.py:804: in compile_catalog
+    compiled_parts, runtime_factories, runtime_configuration_digests, runtime_identity_digests, used = _validate_operation_contracts(plugin_map, components)
+                                                                                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/scidiscovery/operations/catalog.py:338: in _validate_operation_contracts
+    if checker_issue: _fail(checker_issue[0], plugin.plugin_id, op_id,
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+code = 'semantic_rule_optional_input_required', plugin = 'general_science'
+operation = 'science.fixture.plan.v1'
+field = 'experiment.revision.guidance_0f51d6056d46'
+
+    def _fail(
+        code: str, plugin: str | None = None, operation: str | None = None,
+        field: str | None = None) -> None:
+>       raise CatalogCompileError(code, plugin_id=plugin, operation_id=operation, field=field)
+E       scidiscovery.operations.catalog.CatalogCompileError: semantic_rule_optional_input_required: general_science/science.fixture.plan.v1/experiment.revision.guidance_0f51d6056d46
+
+src/scidiscovery/operations/catalog.py:106: CatalogCompileError
+=========================== short test summary info ============================
+FAILED tests/operations/test_l4_local_tcad.py::test_materialized_sprocess_author_review_package_preserves_case_anchors[reviewed-producer-plan]
+FAILED tests/operations/test_review_admission_integration.py::test_shared_review_requires_every_exact_subject_across_producer_runs
+2 failed, 1 passed in 1.45s

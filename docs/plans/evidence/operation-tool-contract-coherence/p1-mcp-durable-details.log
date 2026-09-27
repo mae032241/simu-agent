@@ -1,0 +1,41 @@
+.......F...                                                              [100%]
+=================================== FAILURES ===================================
+__ test_declared_input_checker_gets_exact_bounded_sources_before_run_creation __
+
+    def test_declared_input_checker_gets_exact_bounded_sources_before_run_creation() -> None:
+        from dataclasses import replace
+        from hashlib import sha256
+        from scidiscovery.operations.spec import ComponentRef, InputValidationSpec, scheduler_operation_view
+        from scidiscovery.operation_contract import operation_input_validation_contract, operation_port_json_schema
+    
+        compiled = compile_catalog((PLUGIN,)).operation("builtin.test.agent")
+        declaration = InputValidationSpec(
+            ComponentRef("nonempty_validator"), "fixture.input_binding",
+            "The input must carry the expected exact content.",
+        )
+        spec = compiled.spec.model_copy(update={"input_validation": declaration})
+        calls = []
+    
+        def checker(sources):
+            calls.append(sources)
+            assert sources["agent_input"] == b"{}"
+            assert sources.binding_descriptors["agent_input"].artifact_ref.sha256 == sha256(b"{}").hexdigest()
+            raise OperationInvocationError("input_fixture_rejected", port="agent_input", field="/fixture")
+    
+        implementations = dict(compiled.implementations)
+        implementations["architecture_fixture:nonempty_validator"] = checker
+        compiled = replace(compiled, spec=spec, implementations=implementations)
+        artifact = _artifact(ref=_artifact().ref.model_copy(update={"sha256": sha256(b"{}").hexdigest()}))
+        with pytest.raises(OperationInvocationError, match="input_fixture_rejected"):
+            preflight_operation(compiled, name="checked", artifacts_by_port={"agent_input": (artifact,)}, instruction="Review.", read_artifact=lambda ref: b"{}")
+        assert len(calls) == 1
+        projection = scheduler_operation_view(spec).input_validation
+        assert projection == operation_input_validation_contract(compiled)
+>       assert operation_port_json_schema(compiled, spec.outputs[0])["x-scidiscovery-input-validation-contract"] == projection
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       KeyError: 'x-scidiscovery-input-validation-contract'
+
+tests/operations/test_invoke_preflight.py:199: KeyError
+=========================== short test summary info ============================
+FAILED tests/operations/test_invoke_preflight.py::test_declared_input_checker_gets_exact_bounded_sources_before_run_creation
+1 failed, 10 passed in 1.56s

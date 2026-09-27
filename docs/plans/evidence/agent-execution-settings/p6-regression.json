@@ -1,0 +1,28 @@
+{
+  "command": [
+    "python",
+    "-m",
+    "pytest",
+    "-q",
+    "tests/operations/test_agent_settings_install.py",
+    "tests/operations/test_agent_settings_ui.py",
+    "tests/operations/test_l2_run_invariants.py",
+    "tests/operations/test_run_status_output_selection.py",
+    "tests/operations/test_l5_hardened_run_backend.py::test_hardened_stdio_process_recovers_the_exact_running_run"
+  ],
+  "exit_code": 1,
+  "stop_reason": null,
+  "duration_seconds": 20.629,
+  "peak_tree_rss_mib": 192.7,
+  "budget_mib": 512,
+  "peak_processes": [
+    {
+      "name": "python",
+      "rss_mib": 129.27
+    },
+    {
+      "name": "python",
+      "rss_mib": 63.43
+    }
+  ]
+}

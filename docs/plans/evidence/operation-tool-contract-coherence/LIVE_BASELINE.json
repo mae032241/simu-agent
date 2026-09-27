@@ -1,0 +1,544 @@
+{
+  "agent_type": "op_tcad_result_analyze_v1_9b6e8e050a86",
+  "backend": "local_trusted",
+  "candidate_accepted": true,
+  "completed_at": "2026-09-11T02:01:58.732412Z",
+  "created_at": "2026-09-11T01:53:21.258268Z",
+  "deadline_at": "2026-09-11T02:08:21.258268Z",
+  "diagnostic_summary": {
+    "failure": null,
+    "latest_rejection": {
+      "category": "output_rejected",
+      "code": "output_rejected",
+      "details": [
+        {
+          "path": "$.payload",
+          "rule_id": "tcad.result_analysis.context_binding"
+        }
+      ],
+      "repairable_by_output": true
+    },
+    "rejection_count": 6
+  },
+  "draft_from": null,
+  "evidence_outputs": [
+    {
+      "artifact_name": "fig4_continuation_execution_analysis_3.output.tool_evidence_001",
+      "schema": "opaque"
+    },
+    {
+      "artifact_name": "fig4_continuation_execution_analysis_3.output.tool_evidence_002",
+      "schema": "opaque"
+    },
+    {
+      "artifact_name": "fig4_continuation_execution_analysis_3.output.tool_evidence_003",
+      "schema": "opaque"
+    },
+    {
+      "artifact_name": "fig4_continuation_execution_analysis_3.output.tool_evidence_004",
+      "schema": "opaque"
+    },
+    {
+      "artifact_name": "fig4_continuation_execution_analysis_3.output.tool_evidence_005",
+      "schema": "opaque"
+    },
+    {
+      "artifact_name": "fig4_continuation_execution_analysis_3.output.tool_evidence_006",
+      "schema": "opaque"
+    },
+    {
+      "artifact_name": "fig4_continuation_execution_analysis_3.output.tool_evidence_007",
+      "schema": "opaque"
+    },
+    {
+      "artifact_name": "fig4_continuation_execution_analysis_3.output.tool_evidence_008",
+      "schema": "opaque"
+    },
+    {
+      "artifact_name": "fig4_continuation_execution_analysis_3.output.tool_evidence_009",
+      "schema": "opaque"
+    },
+    {
+      "artifact_name": "fig4_continuation_execution_analysis_3.output.tool_evidence_010",
+      "schema": "opaque"
+    },
+    {
+      "artifact_name": "fig4_continuation_execution_analysis_3.output.tool_evidence_011",
+      "schema": "opaque"
+    },
+    {
+      "artifact_name": "fig4_continuation_execution_analysis_3.output.tool_evidence_012",
+      "schema": "opaque"
+    },
+    {
+      "artifact_name": "fig4_continuation_execution_analysis_3.output.tool_evidence_013",
+      "schema": "opaque"
+    },
+    {
+      "artifact_name": "fig4_continuation_execution_analysis_3.output.tool_evidence_014",
+      "schema": "opaque"
+    },
+    {
+      "artifact_name": "fig4_continuation_execution_analysis_3.output.tool_evidence_015",
+      "schema": "opaque"
+    },
+    {
+      "artifact_name": "fig4_continuation_execution_analysis_3.output.tool_evidence_016",
+      "schema": "opaque"
+    },
+    {
+      "artifact_name": "fig4_continuation_execution_analysis_3.output.tool_evidence_017",
+      "schema": "opaque"
+    },
+    {
+      "artifact_name": "fig4_continuation_execution_analysis_3.output.tool_evidence_018",
+      "schema": "opaque"
+    },
+    {
+      "artifact_name": "fig4_continuation_execution_analysis_3.output.tool_evidence_019",
+      "schema": "opaque"
+    },
+    {
+      "artifact_name": "fig4_continuation_execution_analysis_3.output.tool_evidence_020",
+      "schema": "opaque"
+    },
+    {
+      "artifact_name": "fig4_continuation_execution_analysis_3.output.tool_evidence_021",
+      "schema": "opaque"
+    },
+    {
+      "artifact_name": "fig4_continuation_execution_analysis_3.output.tool_evidence_022",
+      "schema": "opaque"
+    },
+    {
+      "artifact_name": "fig4_continuation_execution_analysis_3.output.recovery_manifest",
+      "schema": "scidiscovery.tool-evidence-manifest.v1"
+    }
+  ],
+  "head_advance": "not_requested",
+  "last_activity_at": "2026-09-11T02:01:58.732412Z",
+  "logical_name": "fig4_continuation_execution_analysis_3",
+  "name": "fig4_continuation_execution_analysis_3",
+  "operation_id": "tcad.result.analyze.v1",
+  "output_artifact_name": "fig4_continuation_execution_analysis_3.output",
+  "reason": null,
+  "recovery": {
+    "delivery_preserved": false,
+    "draft_available": false,
+    "recovery_pending": false,
+    "resume_available": false
+  },
+  "recovery_available": false,
+  "revision": 1,
+  "scheduler_signal": {
+    "assumptions": [],
+    "missing_inputs": [
+      "六个输出的显式 experiment_key/case_key 声明与匹配的受审项目身份",
+      "按原计划生成的参考掩码、精确行账本、WRMSE、G、T 与类别稳定性计算记录"
+    ],
+    "next_action_kind": null,
+    "next_actions": [
+      "将六个 TDR expected_outputs 路径修正为 SProcess 实际生成的 <stem>_fps.tdr，并为全部十二个科学输出显式声明 experiment_key/case_key。",
+      "对修订项目完成匹配独立审查与受控重执行，再按原检查键进行曲线评分。",
+      "评分可用后依次执行参考掩码复现、own-anchor 充分性、归一化形状收敛、G、T 与类别稳定性门槛。"
+    ],
+    "schema_version": 1,
+    "summary": "原执行的求解器阶段完成了六个案例；同一 Run 的受控检查与接纳恢复了未注册的五个 PLX 和六个带 _fps 后缀的 TDR，并证明原 terminal_state=failed 来自声明路径与 SProcess 实际 TDR 名称不一致。但项目输出声明没有显式 experiment_key/case_key，不能把恢复字节用于逐案例科学评分，两个假设均为无效研究结果。",
+    "verdict": "inconclusive"
+  },
+  "scheduler_signal_status": "available",
+  "sealed_output": {
+    "artifact_name": "fig4_continuation_execution_analysis_3.output",
+    "kind": "layered_diagnosis",
+    "payload": {
+      "analysis_method": "核对绑定执行状态、受审计划和实现包，并用受控原执行检查逐一定位六个 PLX 与六个 solver-native _fps.tdr。依据日志和输出 stem 接纳了声明 output_name，但项目 expected_outputs 的 experiment_key/case_key 均为空；因此不把文件名、相同字节或日志顺序推断为受控逐案例曲线身份，不进行科学评分。",
+      "calculation_records": [],
+      "claim_allowed": false,
+      "evidence": [
+        {
+          "locator": "experiment_plan",
+          "schema_version": 1,
+          "source_key": "experiment_plan",
+          "source_type": "frozen_input",
+          "title": "审定实验计划"
+        },
+        {
+          "locator": "experiment_review",
+          "schema_version": 1,
+          "source_key": "experiment_review",
+          "source_type": "frozen_input",
+          "title": "独立实验审查"
+        },
+        {
+          "locator": "reviewed_package",
+          "schema_version": 1,
+          "source_key": "reviewed_package",
+          "source_type": "frozen_input",
+          "title": "受审 TCAD 项目与实现审查"
+        },
+        {
+          "locator": "runtime_manifest",
+          "schema_version": 1,
+          "source_key": "runtime_manifest",
+          "source_type": "frozen_input",
+          "title": "失败的原执行收集清单"
+        },
+        {
+          "locator": "solver_outputs_001",
+          "schema_version": 1,
+          "source_key": "raw.solver_log",
+          "source_type": "frozen_input",
+          "title": "六案例 SProcess 求解器日志"
+        },
+        {
+          "locator": "solver_outputs_002",
+          "schema_version": 1,
+          "source_key": "raw.al_own_primary_plx",
+          "source_type": "frozen_input",
+          "title": "Al own-anchor primary PLX"
+        },
+        {
+          "locator": "tool_evidence_007",
+          "schema_version": 1,
+          "source_key": "raw.al_high_primary_plx",
+          "source_type": "runtime_output",
+          "title": "Recovered Al high-anchor primary PLX"
+        },
+        {
+          "locator": "tool_evidence_008",
+          "schema_version": 1,
+          "source_key": "raw.ga_own_primary_plx",
+          "source_type": "runtime_output",
+          "title": "Recovered Ga own-anchor primary PLX"
+        },
+        {
+          "locator": "tool_evidence_009",
+          "schema_version": 1,
+          "source_key": "raw.ga_low_primary_plx",
+          "source_type": "runtime_output",
+          "title": "Recovered Ga low-anchor primary PLX"
+        },
+        {
+          "locator": "tool_evidence_010",
+          "schema_version": 1,
+          "source_key": "raw.al_own_tight_plx",
+          "source_type": "runtime_output",
+          "title": "Recovered Al own-anchor tight PLX"
+        },
+        {
+          "locator": "tool_evidence_011",
+          "schema_version": 1,
+          "source_key": "raw.ga_own_tight_plx",
+          "source_type": "runtime_output",
+          "title": "Recovered Ga own-anchor tight PLX"
+        },
+        {
+          "locator": "tool_evidence_012",
+          "schema_version": 1,
+          "source_key": "raw.al_own_primary_tdr",
+          "source_type": "runtime_output",
+          "title": "Accepted Al own-anchor primary TDR"
+        },
+        {
+          "locator": "tool_evidence_018",
+          "schema_version": 1,
+          "source_key": "raw.al_high_primary_tdr",
+          "source_type": "runtime_output",
+          "title": "Accepted Al high-anchor primary TDR"
+        },
+        {
+          "locator": "tool_evidence_019",
+          "schema_version": 1,
+          "source_key": "raw.ga_own_primary_tdr",
+          "source_type": "runtime_output",
+          "title": "Accepted Ga own-anchor primary TDR"
+        },
+        {
+          "locator": "tool_evidence_020",
+          "schema_version": 1,
+          "source_key": "raw.ga_low_primary_tdr",
+          "source_type": "runtime_output",
+          "title": "Accepted Ga low-anchor primary TDR"
+        },
+        {
+          "locator": "tool_evidence_021",
+          "schema_version": 1,
+          "source_key": "raw.al_own_tight_tdr",
+          "source_type": "runtime_output",
+          "title": "Accepted Al own-anchor tight TDR"
+        },
+        {
+          "locator": "tool_evidence_022",
+          "schema_version": 1,
+          "source_key": "raw.ga_own_tight_tdr",
+          "source_type": "runtime_output",
+          "title": "Accepted Ga own-anchor tight TDR"
+        }
+      ],
+      "experiment_key": "experiment.fig4.raw_boundary_counterfactual",
+      "gates": {
+        "control_equivalence": {
+          "evidence_keys": [
+            "experiment_plan",
+            "raw.al_own_primary_plx",
+            "raw.ga_own_primary_plx",
+            "raw.al_own_tight_plx",
+            "raw.ga_own_tight_plx"
+          ],
+          "findings": [],
+          "schema_version": 1,
+          "status": "not_evaluable",
+          "summary": "四个主案例和两个紧化控制均已执行，但没有可用的归一化曲线差异记录，因而不能确认主/紧化数值等价。"
+        },
+        "evidence_identity": {
+          "evidence_keys": [
+            "runtime_manifest",
+            "raw.solver_log",
+            "raw.al_own_primary_plx",
+            "raw.al_high_primary_plx",
+            "raw.ga_own_primary_plx",
+            "raw.ga_low_primary_plx",
+            "raw.al_own_tight_plx",
+            "raw.ga_own_tight_plx",
+            "raw.al_own_primary_tdr",
+            "raw.al_high_primary_tdr",
+            "raw.ga_own_primary_tdr",
+            "raw.ga_low_primary_tdr",
+            "raw.al_own_tight_tdr",
+            "raw.ga_own_tight_tdr"
+          ],
+          "findings": [
+            "原清单只注册 solver_log 与第一个 PLX，并因无后缀 TDR 路径缺失而失败。",
+            "受控检查发现六个精确命名 PLX 和六个与日志 stem 对应的 _fps.tdr；接纳操作保留原字节与输出身份。"
+          ],
+          "schema_version": 1,
+          "status": "inconclusive",
+          "summary": "全部声明 output_name 的六个 PLX 与六个 TDR 已从原执行中受控收集，但项目未显式声明这些输出的 experiment_key/case_key，不能建立逐案例科学身份。"
+        },
+        "implementation_fidelity": {
+          "evidence_keys": [
+            "experiment_plan",
+            "experiment_review",
+            "reviewed_package",
+            "raw.solver_log"
+          ],
+          "findings": [
+            "六个案例均到达 END_CASE，日志未显示方程、初始化或收敛错误。"
+          ],
+          "schema_version": 1,
+          "status": "not_evaluable",
+          "summary": "实现审查与日志支持源码执行，但上游输出案例身份门未通过，不能将恢复产物用于逐案例实现结果判定。"
+        },
+        "numerical_validity": {
+          "evidence_keys": [
+            "raw.solver_log",
+            "raw.al_own_primary_plx",
+            "raw.ga_own_primary_plx",
+            "raw.al_own_tight_plx",
+            "raw.ga_own_tight_plx"
+          ],
+          "findings": [
+            "接纳 output_name 不等同于证明 case_key。"
+          ],
+          "schema_version": 1,
+          "status": "not_evaluable",
+          "summary": "输出案例身份未建立，完整案例分数与归一化形状收敛均不可评价。"
+        },
+        "observation": {
+          "evidence_keys": [
+            "raw.al_own_primary_plx",
+            "raw.al_high_primary_plx",
+            "raw.ga_own_primary_plx",
+            "raw.ga_low_primary_plx",
+            "raw.al_own_tight_plx",
+            "raw.ga_own_tight_plx"
+          ],
+          "findings": [
+            "不能把产物恢复等同于边界增益或尾部支持结论。"
+          ],
+          "schema_version": 1,
+          "status": "not_evaluable",
+          "summary": "六条原始 ZnPhen 剖面存在，但参考掩码、预测采样、WRMSE、G 与 T 未形成受控计算记录。"
+        },
+        "physical_interpretation": {
+          "evidence_keys": [
+            "experiment_plan",
+            "experiment_review",
+            "raw.solver_log"
+          ],
+          "findings": [
+            "求解器完成只证明冻结现象学模型被运行，不证明 kick-out、VCD 或其他缺陷机制。"
+          ],
+          "schema_version": 1,
+          "status": "not_evaluable",
+          "summary": "没有可用的 G、T 或类别稳定性结果，无法支持或反驳表面边界控制或尾部支持伪影；材料标签仍与 D 配对，微观机制分离继续未覆盖。"
+        },
+        "schema_version": 1
+      },
+      "hypothesis_assessments": [
+        {
+          "evidence_keys": [
+            "experiment_plan",
+            "raw.al_own_primary_plx",
+            "raw.al_high_primary_plx",
+            "raw.ga_own_primary_plx",
+            "raw.ga_low_primary_plx"
+          ],
+          "falsifiers_triggered": [],
+          "hypothesis_key": "hypothesis.surface_boundary_control",
+          "outcome": "invalid_study",
+          "predictions_checked": [],
+          "rationale": "2x2 主案例曲线已恢复，但 own-anchor WRMSE、J 与 G 没有受控计算结果，且数值紧化门槛未评价；因此既未达到 G>=0.50 的支持条件，也未达到 G<=0.25 的反驳条件。",
+          "schema_version": 1
+        },
+        {
+          "evidence_keys": [
+            "experiment_plan",
+            "raw.al_own_primary_plx",
+            "raw.ga_own_primary_plx"
+          ],
+          "falsifiers_triggered": [],
+          "hypothesis_key": "hypothesis.tail_support_artifact",
+          "outcome": "invalid_study",
+          "predictions_checked": [],
+          "rationale": "M0-M2/S0-S2 精确行账本、连续邻接 T 和类别稳定性未形成受控记录，不能评价相对 T 的 0.50 支持或 0.10 反驳门槛。",
+          "schema_version": 1
+        }
+      ],
+      "method_changes": [
+        "在同一分析 Run 中增加受控原执行产物恢复：五个未注册 PLX 按精确声明路径接纳，六个 _fps.tdr 依据日志中的逐案例 struct 输出映射到原声明输出名。",
+        "恢复只修正 output_name 对应关系；由于项目没有显式输出案例身份，所有逐案例曲线比较均不可评价。"
+      ],
+      "next_action": "保持六案例物理和数值设置不变，为当前 SProcess 两列 PLX 提供受控解析支持，然后对已接纳的六条曲线按原计划检查键执行参考掩码复现、M0 own-anchor 充分性、主/紧化归一化形状收敛、G、T 和类别稳定性；同时在后续项目修订中把 TDR 声明路径改为实际 _fps.tdr 名称以修复收集失败。",
+      "objective_assessment": {
+        "comparison_keys": [],
+        "evidence_keys": [
+          "experiment_plan",
+          "experiment_review",
+          "raw.solver_log",
+          "raw.al_own_primary_plx",
+          "raw.al_high_primary_plx",
+          "raw.ga_own_primary_plx",
+          "raw.ga_low_primary_plx",
+          "raw.al_own_tight_plx",
+          "raw.ga_own_tight_plx"
+        ],
+        "objective_key": "objective.fig4_mechanism_discrimination",
+        "schema_version": 1,
+        "status": "not_evaluable",
+        "summary": "当前目标所需的六案例原始曲线已恢复，但定量归约不可用；边界锚点增益与低浓度支持敏感性均不能判定。"
+      },
+      "overall_verdict": "invalid_study",
+      "plan_key": "experiment.fig4.raw_boundary_counterfactual/validation",
+      "recommended_task_mode": null,
+      "remaining_contradiction": "仍未回答材料特异表面锚点相对最佳共同锚点是否使联合 M0 对数剖面误差降低至少 50%，也未回答纳入共享遮挡行与不高于 3 x 10^15 cm^-3 行时连续低浓度支持长度和边界类别是否实质变化。恢复的六条曲线消除了原先的产物缺失障碍，但注册解析不支持当前 PLX 布局，故 check.fig4.normalized_shape_convergence、check.fig4.reference_mask_reproduction、check.fig4.own_anchor_adequacy 及其 G/T 判定尚未完成。即使这些门槛通过，材料标签与 D 的配对以及未执行的连续响应与两区有限模型比较仍限制微观机制结论。",
+      "schema_version": 1,
+      "source_references": [
+        {
+          "input_alias": "experiment_plan",
+          "schema_version": 1,
+          "source_key": "experiment_plan"
+        },
+        {
+          "input_alias": "experiment_review",
+          "schema_version": 1,
+          "source_key": "experiment_review"
+        },
+        {
+          "input_alias": "reviewed_package",
+          "schema_version": 1,
+          "source_key": "reviewed_package"
+        },
+        {
+          "input_alias": "runtime_manifest",
+          "schema_version": 1,
+          "source_key": "runtime_manifest"
+        },
+        {
+          "input_alias": "solver_outputs_001",
+          "output_name": "solver_log",
+          "schema_version": 1,
+          "source_key": "raw.solver_log"
+        },
+        {
+          "input_alias": "solver_outputs_002",
+          "output_name": "fig4_al_own_anchor_primary_plx",
+          "schema_version": 1,
+          "source_key": "raw.al_own_primary_plx"
+        },
+        {
+          "input_alias": "tool_evidence_007",
+          "output_name": "fig4_al_high_anchor_primary_plx",
+          "schema_version": 1,
+          "source_key": "raw.al_high_primary_plx"
+        },
+        {
+          "input_alias": "tool_evidence_008",
+          "output_name": "fig4_ga_own_anchor_primary_plx",
+          "schema_version": 1,
+          "source_key": "raw.ga_own_primary_plx"
+        },
+        {
+          "input_alias": "tool_evidence_009",
+          "output_name": "fig4_ga_low_anchor_primary_plx",
+          "schema_version": 1,
+          "source_key": "raw.ga_low_primary_plx"
+        },
+        {
+          "input_alias": "tool_evidence_010",
+          "output_name": "fig4_al_own_anchor_tight_plx",
+          "schema_version": 1,
+          "source_key": "raw.al_own_tight_plx"
+        },
+        {
+          "input_alias": "tool_evidence_011",
+          "output_name": "fig4_ga_own_anchor_tight_plx",
+          "schema_version": 1,
+          "source_key": "raw.ga_own_tight_plx"
+        },
+        {
+          "input_alias": "tool_evidence_012",
+          "output_name": "fig4_al_own_anchor_primary_tdr",
+          "schema_version": 1,
+          "source_key": "raw.al_own_primary_tdr"
+        },
+        {
+          "input_alias": "tool_evidence_018",
+          "output_name": "fig4_al_high_anchor_primary_tdr",
+          "schema_version": 1,
+          "source_key": "raw.al_high_primary_tdr"
+        },
+        {
+          "input_alias": "tool_evidence_019",
+          "output_name": "fig4_ga_own_anchor_primary_tdr",
+          "schema_version": 1,
+          "source_key": "raw.ga_own_primary_tdr"
+        },
+        {
+          "input_alias": "tool_evidence_020",
+          "output_name": "fig4_ga_low_anchor_primary_tdr",
+          "schema_version": 1,
+          "source_key": "raw.ga_low_primary_tdr"
+        },
+        {
+          "input_alias": "tool_evidence_021",
+          "output_name": "fig4_al_own_anchor_tight_tdr",
+          "schema_version": 1,
+          "source_key": "raw.al_own_tight_tdr"
+        },
+        {
+          "input_alias": "tool_evidence_022",
+          "output_name": "fig4_ga_own_anchor_tight_tdr",
+          "schema_version": 1,
+          "source_key": "raw.ga_own_tight_tdr"
+        }
+      ],
+      "study_kind": "scientific",
+      "summary": "绑定 runtime_manifest 以 exit_code 97 和 terminal_state=failed 结束，首个错误是声明的 results/fig4_al_own_anchor_primary.tdr 缺失。绑定求解器日志却显示语法检查完成、六个声明案例全部到达 END_CASE、六次 WritePlx 和六次 struct 均完成，且每个 struct 实际写出 <stem>_fps.tdr。受控原执行检查发现全部六个 PLX 和六个 _fps.tdr；本 Run 将五个未注册 PLX 按其精确声明路径接纳，并依据日志中的逐案例 struct 命令将六个 _fps.tdr 映射到对应的声明输出名。由此可将失败限定为输出声明/收集名称问题，而不是求解器方程、初始化或收敛失败。恢复产物并不自动建立科学成功：注册曲线算子读取四条主/紧化 PLX 时返回 unsupported（tcad_layout_unsupported），因此没有可用的收敛、WRMSE、G、T 或类别稳定性记录。完整曲线存在且案例执行完成，但原计划的定量门槛仍不可评价。"
+    },
+    "schema": "scidiscovery.layered-diagnosis.v1"
+  },
+  "sealed_output_status": "available",
+  "started_at": "2026-09-11T01:53:40.988455Z",
+  "state": "completed"
+}

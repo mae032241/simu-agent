@@ -1,0 +1,17 @@
+{
+  "valid_serialization_unchanged": true,
+  "raw_request_unchanged": true,
+  "schema_limits": [
+    4096,
+    16,
+    16
+  ],
+  "runtime_error_location": [
+    "request",
+    "comparison_spec",
+    "comparisons",
+    0,
+    "evaluation_points"
+  ],
+  "runtime_error_type": "less_than_equal"
+}

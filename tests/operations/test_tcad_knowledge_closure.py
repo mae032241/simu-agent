@@ -1,0 +1,83 @@
+from __future__ import annotations
+
+import json
+import os
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+
+from deploy.install_transaction import _directory_digest
+
+REPOSITORY = Path(__file__).resolve().parents[2]
+SKILL = REPOSITORY / "skills/sentaurus-tcad-code"
+
+
+def test_installed_tcad_resources_and_experiment_capability(installed_probe):
+    """Prove packaged resources without rebuilding a second wheel cohort."""
+    installed_probe("all_domains", r'''
+from pathlib import Path
+from scidiscovery.operations.catalog import compile_installed_catalog
+from tcad_artifact import plugin
+from tcad_artifact.experiment_capability import CAPABILITY
+from tcad_artifact.parameter_operations import EXTRACT_PROMPT
+from scidiscovery.operation_declaration import OPERATION_AGENT_PREAMBLE
+import sys
+assert Path(plugin.__file__).resolve().is_relative_to(Path(sys.prefix).resolve())
+Path.home = lambda: (_ for _ in ()).throw(AssertionError("host skill lookup"))
+catalog = compile_installed_catalog()
+assert catalog.operation("science.experiment.v1").digest
+assert "sentaurus-tcad-code" in CAPABILITY.instructions
+assert EXTRACT_PROMPT == OPERATION_AGENT_PREAMBLE + (Path(plugin.__file__).parent / "roles/parameter_evidence_extractor.md").read_text()
+assert not (Path(plugin.__file__).parent / "SKILL.md").exists()
+''')
+
+
+@pytest.mark.skipif(shutil.which("pdftotext") is None, reason="pdftotext is required")
+def test_all_manual_topics_have_real_anchors_and_helpers_preserve_skill(tmp_path):
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    env = {**os.environ, "TMPDIR": str(scratch), "XDG_CACHE_HOME": str(scratch),
+           "PYTHONDONTWRITEBYTECODE": "1"}
+    before = _directory_digest(SKILL)
+
+    def helper(script, *args, expected=0):
+        result = subprocess.run([sys.executable, str(SKILL / "scripts" / script), *args],
+                                cwd=tmp_path, env=env, capture_output=True, text=True, timeout=120)
+        assert result.returncode == expected, result.stderr
+        return json.loads(result.stdout) if expected == 0 else result.stderr
+
+    anchors = {
+        "preflight_modes": ("--FastMode", "--syntax"),
+        "structure_1d": ("line command", "region command", "init command"),
+        "mesh_refinement": ("refinebox", "grid remesh"),
+        "custom_conservative_state": ("solution name=CX add !negative !damp solve", "pdbSetString Silicon CX Equation"),
+        "equation_callback": ("EquationProc", "UserDiffPreProcess"),
+        "diffuse_command": ("diffuse", "[isolve]", "[maxstep=<n>]"),
+        "raw_plx_output": ("SetPlxList {Temperature Potential}", "WritePlx T_and_P.plx"),
+        "development_modes": ("-i", "Prints the initial solution", "-P <commandfile>"),
+    }
+    topics = json.loads((SKILL / "references/manuals/topics.json").read_text("utf-8"))["topics"]
+    assert {topic["topic"] for topic in topics} == set(anchors)
+    for topic in topics:
+        common = ("--release", topic["release"], "--solver-kind", topic["solver_kind"])
+        found = helper("manual_search.py", *common, "--topic", topic["topic"])
+        extract = helper("manual_extract.py", *common, "--start-page", str(found["start_page"]),
+                         "--end-page", str(found["end_page"]))
+        assert extract["manual_sha256"] == found["manual_sha256"]
+        for anchor in anchors[topic["topic"]]:
+            assert anchor in extract["text"], (topic["topic"], anchor)
+    common = ("--release", "R-2020.09", "--solver-kind", "sprocess")
+    assert helper("manual_search.py", *common, "--query", "solution name=CX")["hits"]
+    assert "unavailable" in helper("manual_search.py", *common, "--topic", "unknown", expected=1)
+    assert "unavailable" in helper("manual_search.py", "--release", "unknown", "--solver-kind",
+                                   "sprocess", "--topic", "structure_1d", expected=1)
+    assert "exceeds" in helper("manual_extract.py", *common, "--start-page", "9999",
+                               "--end-page", "9999", expected=1)
+    assert "positive ordered" in helper("manual_extract.py", *common, "--start-page", "0",
+                                       "--end-page", "1", expected=1)
+    assert _directory_digest(SKILL) == before
+    assert list(scratch.rglob("*.layout.txt"))
+    assert {path.name for path in tmp_path.iterdir()} == {"scratch"}

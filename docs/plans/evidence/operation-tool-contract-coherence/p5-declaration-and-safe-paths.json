@@ -1,0 +1,19 @@
+{
+  "command": [
+    "python",
+    "-m",
+    "pytest",
+    "-q",
+    "tests/operations/test_compiled_declaration_consumers.py",
+    "tests/operations/test_l4_local_tcad.py::test_local_tcad_budget_covers_pending_failure_cache_and_exhaustion",
+    "tests/operations/test_l5_hardened_run_backend.py::test_one_tool_model_change_reaches_schema_call_and_identity",
+    "tests/operations/test_contract_attempts.py",
+    "tests/operations/test_case_mapping_basis.py"
+  ],
+  "exit_code": 1,
+  "seconds": 8.38,
+  "peak_tree_rss_bytes": 151490560,
+  "budget_bytes": 536870912,
+  "early_stop_bytes": 469762048,
+  "memory_terminated": false
+}

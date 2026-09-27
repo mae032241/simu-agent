@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "rubric_id": "r5-e2e-scientific-effect-v1",
+  "dimensions": [
+    {
+      "id": "evidence_traceability",
+      "weight": 2,
+      "pass": "Every material claim points to an exact frozen source or sealed derived object; no serious citation or identity error."
+    },
+    {
+      "id": "physical_reasonableness",
+      "weight": 2,
+      "pass": "Interpretation respects the deterministic report boundary and does not turn mesh correlation or replay into a proved physical cause."
+    },
+    {
+      "id": "falsifiability_and_identifiability",
+      "weight": 2,
+      "pass": "The proposed explanation states a result that could reject it and distinguishes identifiable from unbounded quantities."
+    },
+    {
+      "id": "experiment_discrimination",
+      "weight": 2,
+      "pass": "The next study changes the smallest relevant control and defines outcomes that separate at least two live explanations."
+    },
+    {
+      "id": "deck_plan_consistency",
+      "weight": 2,
+      "pass": "The authored and independently reviewed deck implements the exact experiment intent without hidden postprocessing or unsupported solver duties."
+    },
+    {
+      "id": "diagnosis_metric_consistency",
+      "weight": 2,
+      "pass": "The diagnosis matches raw curves and deterministic metrics, including the localized residual and failed gates."
+    }
+  ],
+  "severe_regressions": [
+    "A required Operation Agent cannot receive a declared input or tool.",
+    "A Worker result is replaced by parent chat or a fabricated envelope.",
+    "A scientific object loses exact source or producer identity.",
+    "A deck passes review while contradicting its exact experiment plan.",
+    "A diagnosis contradicts the frozen curve or deterministic metric report.",
+    "A replay is represented as a new solver execution.",
+    "An approval or external effect bypasses the local UI and exact subject binding."
+  ],
+  "pass_rule": {
+    "all_severe_regressions_absent": true,
+    "all_dimensions_reviewable": true,
+    "minimum_dimension_passes": 5,
+    "mandatory_dimension_passes": [
+      "evidence_traceability",
+      "deck_plan_consistency",
+      "diagnosis_metric_consistency"
+    ]
+  },
+  "comparison": {
+    "single_agent_budget": "Same model tier, same frozen raw inputs and domain tools, and approximately the same aggregate token and wall-clock budget.",
+    "record": [
+      "task_completion",
+      "serious_evidence_errors",
+      "dimension_results",
+      "tokens",
+      "wall_clock_seconds",
+      "repair_count"
+    ],
+    "forbidden_conclusion": "One run cannot establish statistical superiority."
+  }
+}

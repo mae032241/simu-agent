@@ -1,0 +1,139 @@
+FFFF...F.F.......F.F.F....                                               [100%]
+=================================== FAILURES ===================================
+____ test_workbench_has_separate_branches_exact_goals_and_native_pagination ____
+
+    def test_workbench_has_separate_branches_exact_goals_and_native_pagination() -> None:
+        page = render_workbench(_overview(), browse_base="/instance/instance-a", csrf_token="csrf", can_manage=True).decode()
+        for value in ("实例管理描述", "Latest administrative description", "Original historical research objective",
+                      "多个活动分支", "branch-a", "branch-b", "review-old", "solver-old", "成果 / 转换", "人工审批", "外部执行"):
+>           assert value in page
+E           assert '实例管理描述' in "<!doctype html><html lang='zh-CN'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initi...summary><div class='research-panel-body'><p>Latest administrative description</p></div></details></main></body></html>"
+
+tests/operations/test_instance_workbench_render.py:62: AssertionError
+______ test_closed_or_empty_instance_does_not_invent_scientific_objective ______
+
+    def test_closed_or_empty_instance_does_not_invent_scientific_objective() -> None:
+        overview = _overview()
+        overview.update(objective_refs=[], active_tasks=[], presentation=None, display_node=None)
+        page = render_workbench(overview, browse_base="/instance/instance-a", csrf_token="csrf").decode()
+>       assert "请选择历史节点查看其精确绑定的原始目标与本轮计划" in page
+E       assert '请选择历史节点查看其精确绑定的原始目标与本轮计划' in "<!doctype html><html lang='zh-CN'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initi...summary><div class='research-panel-body'><p>Latest administrative description</p></div></details></main></body></html>"
+
+tests/operations/test_instance_workbench_render.py:78: AssertionError
+___ test_node_retains_exact_relationships_and_independent_status_dimensions ____
+
+    def test_node_retains_exact_relationships_and_independent_status_dimensions() -> None:
+        page = render_node(_node(), instance_id="instance-a", presentation=_presentation()).decode()
+        assert page.count("Only one sealed conclusion") == 1
+        assert "private_bulk" not in page
+        assert "must not duplicate this payload" not in page
+        for value in ("Later targets are still open", "inconclusive", "not_evaluated", "运行完成只说明该运行已结束",
+                      "本地计算未观测；耗时与错误情况未知", "draft_available", "recovery_pending", "not_revalidated",
+                      "exact_failure", "/cases/0/contact", "solver", "original-run-id", "old_original_missing"):
+>           assert value in page
+E           assert '运行完成只说明该运行已结束' in "<!doctype html><html lang='zh-CN'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initi...ss='value-text'>old_original_missing</span></dd></div></dl></li></ol></div></details></div></div></main></body></html>"
+
+tests/operations/test_instance_workbench_render.py:93: AssertionError
+_____ test_execution_collection_and_approval_link_are_read_only_navigation _____
+
+    def test_execution_collection_and_approval_link_are_read_only_navigation() -> None:
+        node = {**_metadata("execution", "collected-execution", "collected"), "collection_status": "collected",
+                "collection": {"state": "collected", "recovery_pending": False},
+                "observation": {"payload": {"exit_code": 0, "state": "finished"}}, "gaps": []}
+        page = render_node(node, instance_id="instance-a").decode()
+>       assert "已收集" in page and "执行收集状态" in page and "外部执行与收集" in page
+E       assert ('已收集' in "<!doctype html><html lang='zh-CN'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initi...ances/instance-a/nodes/execution%3Acollected-execution'>查看完整结构化记录</a></div></details></div></div></main></body></html>" and '执行收集状态' in "<!doctype html><html lang='zh-CN'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initi...ances/instance-a/nodes/execution%3Acollected-execution'>查看完整结构化记录</a></div></details></div></div></main></body></html>")
+
+tests/operations/test_instance_workbench_render.py:109: AssertionError
+______ test_large_page_preserves_all_paged_nodes_and_bounds_raw_payloads _______
+
+    def test_large_page_preserves_all_paged_nodes_and_bounds_raw_payloads() -> None:
+        overview = _overview()
+        overview["active_tasks"] = [_metadata("run", f"branch-{index}-" + ":" * 220, "running") for index in range(90)]
+        overview["nodes"]["items"] = [_metadata("artifact", f"result-{index}-" + ":" * 220, "registered") for index in range(100)]
+        overview["presentation"]["sections"][0]["items"][0]["value"] = "'" * 1000000
+        page = render_workbench(overview, browse_base="/instance/instance-a", csrf_token="csrf")
+        assert len(page) <= 256 * 1024
+        text = page.decode()
+        for item in overview["active_tasks"] + overview["nodes"]["items"]:
+>           assert quote(item["key"], safe="") in text
+E           assert 'run%3Abranch-12-%3A%3A%3A%3A%3A%3A%3A%3A%3A%3A%3A%3A%3A%3A%3A%3A%3A%3A%3A%3A%3A%3A%3A%3A%3A%3A%3A%3A%3A%3A%3A%3A%3A%3...A%3A%3A%3A%3A%3A%3A%3A%3A%3A%3A%3A%3A%3A%3A%3A%3A%3A%3A%3A%3A%3A%3A%3A%3A%3A%3A%3A%3A%3A%3A%3A%3A%3A%3A%3A%3A%3A%3A%3A' in "<!doctype html><html lang='zh-CN'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initi...summary><div class='research-panel-body'><p>Latest administrative description</p></div></details></main></body></html>"
+E            +  where 'run%3Abranch-12-%3A%3A%3A%3A%3A%3A%3A%3A%3A%3A%3A%3A%3A%3A%3A%3A%3A%3A%3A%3A%3A%3A%3A%3A%3A%3A%3A%3A%3A%3A%3A%3A%3A%3...A%3A%3A%3A%3A%3A%3A%3A%3A%3A%3A%3A%3A%3A%3A%3A%3A%3A%3A%3A%3A%3A%3A%3A%3A%3A%3A%3A%3A%3A%3A%3A%3A%3A%3A%3A%3A%3A%3A%3A' = quote('run:branch-12-::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::', safe='')
+
+tests/operations/test_instance_workbench_render.py:171: AssertionError
+________ test_readable_sections_parameter_dimensions_and_exact_sources _________
+
+    def test_readable_sections_parameter_dimensions_and_exact_sources() -> None:
+        page = render_presentation(_presentation(), evidence_href=_evidence, image_href=_image)
+        for text in ("Only the original bound objective", "Finite case only", "Later objectives remain uncovered",
+                     "选用值 / 报告值", "298", "300", "ambient", "case-1", "工程假设", "用户给定", "±2 K",
+                     "Original selection reason", "Table 2 / page 7", "2026-01-02T03:04:05Z", "reference_missing"):
+>           assert text in page
+E           assert '选用值 / 报告值' in "<div class='research-presentation'><section class='conclusion-card'><p class='eyebrow'>本节点的正式记录</p><h2>总体与本轮目标</h2><d...t>artifact_id</dt><dd><span class='value-text'>missing-original</span></dd></div></dl></li></ol></div></details></div>"
+
+tests/operations/test_instance_presentation_render.py:48: AssertionError
+____ test_unknown_source_and_uncertainty_are_not_inferred_from_doi_or_null _____
+
+    def test_unknown_source_and_uncertainty_are_not_inferred_from_doi_or_null() -> None:
+        page = render_presentation({"parameters": [{"name": "unrecorded", "selected_value": None,
+            "reported_values": [1, 2], "sources": [{"title": "doi:10.1234/example"}]}]},
+            evidence_href=_evidence, image_href=_image)
+        assert "doi:10.1234/example" in page
+        assert "网络检索" not in page
+        assert "实验测量" not in page
+        assert "null（原记录空值）" in page
+>       assert "未提供估计" in page
+E       assert '未提供估计' in "<div class='research-presentation'><details class='research-panel parameters-panel'><summary><span>关键参数与条件</span><spa...ss='source-gap'>来源未记录</span></li></ul></details></div></details></td></tr></tbody></table></div></div></details></div>"
+
+tests/operations/test_instance_presentation_render.py:112: AssertionError
+___ test_broken_optional_callbacks_and_malformed_provider_fields_are_visible ___
+
+    def test_broken_optional_callbacks_and_malformed_provider_fields_are_visible() -> None:
+        def unavailable(*args: object) -> str:
+            raise ValueError("not authorized")
+    
+        presentation = _presentation()
+        presentation["parameters"].append(None)
+        presentation["sections"].append({"items": "not an item list"})
+        page = render_presentation(presentation, evidence_href=unavailable, image_href=unavailable)
+        assert "Only the original bound objective" in page
+        assert "原件入口不可用" in page
+>       assert "安全预览未提供" in page
+E       assert '安全预览未提供' in "<div class='research-presentation'><section class='conclusion-card'><p class='eyebrow'>本节点的正式记录</p><h2>总体与本轮目标</h2><d...t>artifact_id</dt><dd><span class='value-text'>missing-original</span></dd></div></dl></li></ol></div></details></div>"
+
+tests/operations/test_instance_presentation_render.py:144: AssertionError
+________ test_fixed_review_document_renderer_escapes_all_plugin_values _________
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-60/test_fixed_review_document_ren0')
+
+    def test_fixed_review_document_renderer_escapes_all_plugin_values(
+        tmp_path: Path,
+    ) -> None:
+        runtime = _runtime(tmp_path)
+        launch, review, binary = _malicious_review(runtime)
+        page = render_review(
+            review,
+            access_token=launch.access_token,
+            identity=LocalIdentityRef(
+                identity_id="local_test_user",
+                display_name="<img src=x onerror=alert(5)>",
+            ),
+        ).decode("utf-8")
+    
+>       assert page.count("<script") == 1
+E       assert 2 == 1
+E        +  where 2 = <built-in method count of str object at 0x56352d1a5d30>('<script')
+E        +    where <built-in method count of str object at 0x56352d1a5d30> = "<!doctype html><html lang='zh-CN'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initi...</p><button class='submit-decision' type='submit'>确认并记录决定</button></form></section></aside></div></main></body></html>".count
+
+tests/operations/test_r4_approval_ui_renderer.py:183: AssertionError
+=========================== short test summary info ============================
+FAILED tests/operations/test_instance_workbench_render.py::test_workbench_has_separate_branches_exact_goals_and_native_pagination
+FAILED tests/operations/test_instance_workbench_render.py::test_closed_or_empty_instance_does_not_invent_scientific_objective
+FAILED tests/operations/test_instance_workbench_render.py::test_node_retains_exact_relationships_and_independent_status_dimensions
+FAILED tests/operations/test_instance_workbench_render.py::test_execution_collection_and_approval_link_are_read_only_navigation
+FAILED tests/operations/test_instance_workbench_render.py::test_large_page_preserves_all_paged_nodes_and_bounds_raw_payloads
+FAILED tests/operations/test_instance_presentation_render.py::test_readable_sections_parameter_dimensions_and_exact_sources
+FAILED tests/operations/test_instance_presentation_render.py::test_unknown_source_and_uncertainty_are_not_inferred_from_doi_or_null
+FAILED tests/operations/test_instance_presentation_render.py::test_broken_optional_callbacks_and_malformed_provider_fields_are_visible
+FAILED tests/operations/test_r4_approval_ui_renderer.py::test_fixed_review_document_renderer_escapes_all_plugin_values
+9 failed, 17 passed in 3.85s

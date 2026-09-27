@@ -1,0 +1,12 @@
+{
+  "command": [
+    "python",
+    "/tmp/scid_projection_probe.py"
+  ],
+  "exit_code": 0,
+  "seconds": 2.664,
+  "peak_tree_rss_bytes": 112754688,
+  "budget_bytes": 536870912,
+  "early_stop_bytes": 469762048,
+  "memory_terminated": false
+}

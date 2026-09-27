@@ -1,0 +1,280 @@
+{
+  "observed_at": "2026-09-15T01:57:07.523679+00:00",
+  "service": {
+    "ActiveState": "active",
+    "SubState": "running",
+    "MainPID": "68918",
+    "ActiveEnterTimestamp": "Tue 2026-09-15 09:54:26 CST",
+    "ReadWritePaths": "/var/lib/scidiscovery-m7 /home/da/project/ai4s/tcad/git_release/scidiscovery-agent/workspace/ingaas_inalas_photodetector/.scidiscovery-runs /home/da/project/ai4s/tcad/git_release/scidiscovery-agent/workspace/ingaas_inalas_photodetector/.scidiscovery-archive/instances",
+    "ProtectSystem": "strict",
+    "ProtectHome": "read-only"
+  },
+  "installed_site": "/opt/scidiscovery-m7/site",
+  "files": [
+    {
+      "source": "plugins/tcad_artifact/tcad_artifact/instance_views.py",
+      "installed_sha256": "186f264e065df5c12ae810d9353e64f16a08cea80f9136cd4369fb3550b3e6c3",
+      "matches_reviewed": true,
+      "matches_current_source": true
+    },
+    {
+      "source": "src/scidiscovery/artifact_agent/approval_ui/access.py",
+      "installed_sha256": "9f8ed62d5707865ff54ba6182dd4164b461e86eefe66ecae2f244cb0508da56e",
+      "matches_reviewed": true,
+      "matches_current_source": true
+    },
+    {
+      "source": "src/scidiscovery/artifact_agent/approval_ui/app.py",
+      "installed_sha256": "300eb806fe086bda1aa624a5dfcc19e470910f923e71c2b38bf2699d6b78ab86",
+      "matches_reviewed": true,
+      "matches_current_source": true
+    },
+    {
+      "source": "src/scidiscovery/artifact_agent/approval_ui/evidence.py",
+      "installed_sha256": "42745b4a1bd755eaacd13ecdcea4316c0533a60577c2d822d1d924d93fcd560c",
+      "matches_reviewed": true,
+      "matches_current_source": true
+    },
+    {
+      "source": "src/scidiscovery/artifact_agent/approval_ui/management.py",
+      "installed_sha256": "87f8092ba281bb3e67f2e060dc67c471df4e2953c402141523e0fed373d5ee0a",
+      "matches_reviewed": true,
+      "matches_current_source": true
+    },
+    {
+      "source": "src/scidiscovery/artifact_agent/approval_ui/management_render.py",
+      "installed_sha256": "72bee72fb2b91d1cad49515df58b7e843b766033d607cdb9a69b5d9222aab7b3",
+      "matches_reviewed": true,
+      "matches_current_source": true
+    },
+    {
+      "source": "src/scidiscovery/artifact_agent/approval_ui/presentation.py",
+      "installed_sha256": "59e86368b2666ab8b07ad60c9815d2d5974397396bfad7dd55a0ca178ac60021",
+      "matches_reviewed": true,
+      "matches_current_source": true
+    },
+    {
+      "source": "src/scidiscovery/artifact_agent/approval_ui/presentation_render.py",
+      "installed_sha256": "8b427a0d11998f859c120383b00cd6d4b5f1f3bf304f049c74a4dd99499c6059",
+      "matches_reviewed": true,
+      "matches_current_source": true
+    },
+    {
+      "source": "src/scidiscovery/artifact_agent/approval_ui/read_model.py",
+      "installed_sha256": "c36d3be4c013973a0a0367142d5b5779e834cec91fbb00a6ed6f5ba75e9b4a94",
+      "matches_reviewed": true,
+      "matches_current_source": true
+    },
+    {
+      "source": "src/scidiscovery/artifact_agent/approval_ui/render.py",
+      "installed_sha256": "875027774915af2967e3a360fd6ceb67c57eb56b030cc897d9153c7153e04fa0",
+      "matches_reviewed": true,
+      "matches_current_source": true
+    },
+    {
+      "source": "src/scidiscovery/artifact_agent/approval_ui/static/style.css",
+      "installed_sha256": "4c8a1cda52d8923caca9ae8c425588fc4c4fd14c2d651651555f2e90a46747dd",
+      "matches_reviewed": true,
+      "matches_current_source": true
+    },
+    {
+      "source": "src/scidiscovery/artifact_agent/approval_ui/static/workbench.js",
+      "installed_sha256": "1380540c52e6591ea810621218207f217995b531ba9c4732e1ea113565ff3a3e",
+      "matches_reviewed": true,
+      "matches_current_source": true
+    },
+    {
+      "source": "src/scidiscovery/artifact_agent/approval_ui/trajectory.py",
+      "installed_sha256": "38e3aed5ed34da2fabc786b026cc606a0bc40c1cbb8a9af51041dda584689c00",
+      "matches_reviewed": true,
+      "matches_current_source": true
+    },
+    {
+      "source": "src/scidiscovery/artifact_agent/approval_ui/view_models.py",
+      "installed_sha256": "aa7249dbdc25b63e0ec97d6b813e1eef1d9afda1ea11a472efddce797cdd2f1f",
+      "matches_reviewed": true,
+      "matches_current_source": true
+    },
+    {
+      "source": "src/scidiscovery/artifact_agent/approval_ui/workbench_render.py",
+      "installed_sha256": "3d9f5466f449204ec165c92fd732b352f6ec9a40f7facb3b4e3b200b3b56b414",
+      "matches_reviewed": true,
+      "matches_current_source": true
+    },
+    {
+      "source": "src/scidiscovery/artifact_agent/interfaces/cli.py",
+      "installed_sha256": "bc24978f80a3ed4f96d20e561bdf424694fb50b7298fee8575ad3c4a760e09a1",
+      "matches_reviewed": true,
+      "matches_current_source": true
+    },
+    {
+      "source": "src/scidiscovery/artifact_agent/interfaces/mcp_daemon.py",
+      "installed_sha256": "7d171dc056da5738d4293943d2020eb4832e6cf200e99da9b97fe37c013affff",
+      "matches_reviewed": true,
+      "matches_current_source": true
+    },
+    {
+      "source": "src/scidiscovery/artifact_agent/interfaces/mcp_hardened_worker.py",
+      "installed_sha256": "a133e3cad85cc507b4c0ffdf335b1315dc8506c51f46136157e4657ecbfe3afb",
+      "matches_reviewed": true,
+      "matches_current_source": true
+    },
+    {
+      "source": "src/scidiscovery/artifact_agent/interfaces/mcp_local_worker.py",
+      "installed_sha256": "2cab2874082ccafa98672e030536473ba2afcd2558f9625a8e95ffb348e90e7e",
+      "matches_reviewed": true,
+      "matches_current_source": true
+    },
+    {
+      "source": "src/scidiscovery/artifact_agent/interfaces/mcp_root.py",
+      "installed_sha256": "80fe699735f31fae13fbc71c0d268f3be26c84b3603a144ceb12b83c883de413",
+      "matches_reviewed": true,
+      "matches_current_source": true
+    },
+    {
+      "source": "src/scidiscovery/artifact_agent/interfaces/mcp_root_instance_routes.py",
+      "installed_sha256": "1f0610e50489131c5540a5703b3a03aa7475b6e6946cf7c5b5a5e3edba23c58b",
+      "matches_reviewed": true,
+      "matches_current_source": true
+    },
+    {
+      "source": "src/scidiscovery/artifact_agent/runtime.py",
+      "installed_sha256": "bfbd364bb8a8aaefd5810d189cc8afbd90a922ac199493afceb0d19f7ea8a07d",
+      "matches_reviewed": true,
+      "matches_current_source": true
+    },
+    {
+      "source": "src/scidiscovery/artifact_agent/service/approvals.py",
+      "installed_sha256": "976289a8bcc7bbf258e42f20616ee1eaae3f9a9aa0a2b1a006f530d63946ed12",
+      "matches_reviewed": true,
+      "matches_current_source": true
+    },
+    {
+      "source": "src/scidiscovery/artifact_agent/service/artifacts.py",
+      "installed_sha256": "bdbf65bf947f35a1b2d1fc7f5d226e548c2da24699333627b449f93d1ab4cceb",
+      "matches_reviewed": true,
+      "matches_current_source": true
+    },
+    {
+      "source": "src/scidiscovery/artifact_agent/service/execution_collection.py",
+      "installed_sha256": "75357fa46fcca049ef231e49caa855beb05939b2bac96935e1b46b0f268294f2",
+      "matches_reviewed": true,
+      "matches_current_source": true
+    },
+    {
+      "source": "src/scidiscovery/artifact_agent/service/executions.py",
+      "installed_sha256": "211292453e27ffc4ecac5e1a0b8bc318a981507a02ec756297fc700b1c73d912",
+      "matches_reviewed": true,
+      "matches_current_source": true
+    },
+    {
+      "source": "src/scidiscovery/artifact_agent/service/hardened_workspace.py",
+      "installed_sha256": "243bbcc676269a3797955a600a552796e87e5e10da8c608ecef422b88dff6310",
+      "matches_reviewed": true,
+      "matches_current_source": true
+    },
+    {
+      "source": "src/scidiscovery/artifact_agent/service/instance_archive.py",
+      "installed_sha256": "1dd6f72a31510f1c74b3ef9d379d3050e7fdd6112fb51995c5e2af3c319ae853",
+      "matches_reviewed": true,
+      "matches_current_source": true
+    },
+    {
+      "source": "src/scidiscovery/artifact_agent/service/instance_archive_files.py",
+      "installed_sha256": "9fb5e4ed65260ea0a62f6ac030e7b3ef3d44afec80276850dd5fc1877d1082a1",
+      "matches_reviewed": true,
+      "matches_current_source": true
+    },
+    {
+      "source": "src/scidiscovery/artifact_agent/service/instance_archive_reader.py",
+      "installed_sha256": "32041bfe986a5fe5bbba6282eccfef1f5bf585fd5bef0704b2ba656586c3f3cc",
+      "matches_reviewed": true,
+      "matches_current_source": true
+    },
+    {
+      "source": "src/scidiscovery/artifact_agent/service/instance_archive_records.py",
+      "installed_sha256": "3ae56a92e885b6c8d6837c1b76ebd4fcec1e117f10b9fb6383ff07880a93784f",
+      "matches_reviewed": true,
+      "matches_current_source": true
+    },
+    {
+      "source": "src/scidiscovery/artifact_agent/service/instance_maintenance.py",
+      "installed_sha256": "eb58a90a8ad7f5227aa3d016c831cbd9125f001a113e5aabf8dad6021756c604",
+      "matches_reviewed": true,
+      "matches_current_source": true
+    },
+    {
+      "source": "src/scidiscovery/artifact_agent/service/local_workspace.py",
+      "installed_sha256": "20ae94f21d60dabaac2af4984a5159a998cd51a6a538149a7bdacc0b196a5889",
+      "matches_reviewed": true,
+      "matches_current_source": true
+    },
+    {
+      "source": "src/scidiscovery/artifact_agent/service/runs.py",
+      "installed_sha256": "542554128ed0dd429980394ee78aaac0100b639f974a77edcc06f43715994337",
+      "matches_reviewed": true,
+      "matches_current_source": true
+    },
+    {
+      "source": "src/scidiscovery/artifact_agent/service/scheduler_bindings.py",
+      "installed_sha256": "555dc695192f0e02d2089ce0ae692f5484215034d0983ceaa394fa4abea5eda2",
+      "matches_reviewed": true,
+      "matches_current_source": true
+    },
+    {
+      "source": "src/scidiscovery/artifact_agent/service/tool_evidence.py",
+      "installed_sha256": "0f2ca3a3b54b4cc83a765d0517202f6a46c321c710e387daf88214866aec9cdb",
+      "matches_reviewed": true,
+      "matches_current_source": true
+    },
+    {
+      "source": "src/scidiscovery/artifact_agent/storage/cas.py",
+      "installed_sha256": "9a637a0c1c8f5596fbe21126f9a55031a4111af6f380daedabbe64eadce59a7f",
+      "matches_reviewed": true,
+      "matches_current_source": true
+    },
+    {
+      "source": "src/scidiscovery/artifact_agent/storage/sqlite.py",
+      "installed_sha256": "08564045d5255f050aa7807d2168d84a96de67597982180f312283b6584018b3",
+      "matches_reviewed": true,
+      "matches_current_source": true
+    },
+    {
+      "source": "src/scidiscovery/general_science_views.py",
+      "installed_sha256": "9499d21d2caa27f7d57e37375ab1e4b397f373e0a35cd00ae35f4659dbf28a8f",
+      "matches_reviewed": true,
+      "matches_current_source": true
+    }
+  ],
+  "reviewed_differences": [],
+  "presentation_providers": [
+    {
+      "group": "scidiscovery.instance_views",
+      "name": "general_science",
+      "value": "scidiscovery.general_science_views:build_presentation"
+    },
+    {
+      "group": "scidiscovery.instance_views",
+      "name": "tcad_artifact",
+      "value": "tcad_artifact.instance_views:build_presentation"
+    }
+  ],
+  "http_assets": [
+    {
+      "name": "style.css",
+      "status": 200,
+      "bytes": 17655,
+      "matches_installed": true
+    },
+    {
+      "name": "workbench.js",
+      "status": 200,
+      "bytes": 11183,
+      "matches_installed": true
+    }
+  ],
+  "instance_payload_read": false,
+  "scientific_run_started": false,
+  "archive_action_performed": false,
+  "instance_binding": "pending_user_selection"
+}

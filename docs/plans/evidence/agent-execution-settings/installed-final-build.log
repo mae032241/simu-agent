@@ -1,0 +1,56 @@
+release directory: /tmp/scid-execution-settings-installed-final/source
+archive: /tmp/scid-execution-settings-installed-final/source.tar.gz
+manifest: /tmp/scid-execution-settings-installed-final/source/MANIFEST.sha256
+tracked source files: 292
+git initialized: no
+WARNING: The directory '/home/da/.cache/pip' or its parent directory is not owned or is not writable by the current user. The cache has been disabled. Check the permissions and owner of that directory. If executing pip with sudo, you should use sudo's -H flag.
+Looking in indexes: https://mirrors.aliyun.com/pypi/simple/
+Processing ./source
+  Preparing metadata (pyproject.toml): started
+  Preparing metadata (pyproject.toml): finished with status 'done'
+Building wheels for collected packages: scidiscovery
+  Building wheel for scidiscovery (pyproject.toml): started
+  Building wheel for scidiscovery (pyproject.toml): finished with status 'done'
+  Created wheel for scidiscovery: filename=scidiscovery-0.1.0-py3-none-any.whl size=483290 sha256=fd94159ad172a13d74aba7c562f6deab9284fed4d10339cc8c58b91b224f55d8
+  Stored in directory: /tmp/pip-ephem-wheel-cache-9v5mvkej/wheels/c2/2a/56/2823f9d7c6e581008a4c3b28a493a04d0b6ee495fe2ee0f527
+Successfully built scidiscovery
+WARNING: The directory '/home/da/.cache/pip' or its parent directory is not owned or is not writable by the current user. The cache has been disabled. Check the permissions and owner of that directory. If executing pip with sudo, you should use sudo's -H flag.
+Looking in indexes: https://mirrors.aliyun.com/pypi/simple/
+Processing ./source/plugins/tcad_artifact
+  Preparing metadata (pyproject.toml): started
+  Preparing metadata (pyproject.toml): finished with status 'done'
+Building wheels for collected packages: tcad-artifact
+  Building wheel for tcad-artifact (pyproject.toml): started
+  Building wheel for tcad-artifact (pyproject.toml): finished with status 'done'
+  Created wheel for tcad-artifact: filename=tcad_artifact-0.1.0-py3-none-any.whl size=183736 sha256=52c7eb180947102a8d59475be0db22b5fac54913dff6ff38c27983887ce561c1
+  Stored in directory: /tmp/pip-ephem-wheel-cache-idyz_lig/wheels/f5/7a/8e/170ddd6e879baf79654d08438bab667eefff4119e12bb65d5c
+Successfully built tcad-artifact
+WARNING: The directory '/home/da/.cache/pip' or its parent directory is not owned or is not writable by the current user. The cache has been disabled. Check the permissions and owner of that directory. If executing pip with sudo, you should use sudo's -H flag.
+Looking in indexes: https://mirrors.aliyun.com/pypi/simple/
+Processing ./source/plugins/curve_score
+  Preparing metadata (pyproject.toml): started
+  Preparing metadata (pyproject.toml): finished with status 'done'
+Building wheels for collected packages: scidiscovery-curve-score
+  Building wheel for scidiscovery-curve-score (pyproject.toml): started
+  Building wheel for scidiscovery-curve-score (pyproject.toml): finished with status 'done'
+  Created wheel for scidiscovery-curve-score: filename=scidiscovery_curve_score-0.2.1-py3-none-any.whl size=72205 sha256=73cce0134ceff4c7179b143d6d9a592e9691277742f992b899e22ad3787be986
+  Stored in directory: /tmp/pip-ephem-wheel-cache-jwy2z3qy/wheels/06/c9/d2/59887554bda0c52cb7812184ef3014419fe99424b496545500
+Successfully built scidiscovery-curve-score
+WARNING: The directory '/home/da/.cache/pip' or its parent directory is not owned or is not writable by the current user. The cache has been disabled. Check the permissions and owner of that directory. If executing pip with sudo, you should use sudo's -H flag.
+Looking in indexes: https://mirrors.aliyun.com/pypi/simple/
+Processing ./source/plugins/curve_figure_evidence
+  Preparing metadata (pyproject.toml): started
+  Preparing metadata (pyproject.toml): finished with status 'done'
+Building wheels for collected packages: scidiscovery-curve-figure-evidence
+  Building wheel for scidiscovery-curve-figure-evidence (pyproject.toml): started
+  Building wheel for scidiscovery-curve-figure-evidence (pyproject.toml): finished with status 'done'
+  Created wheel for scidiscovery-curve-figure-evidence: filename=scidiscovery_curve_figure_evidence-0.1.0-py3-none-any.whl size=56963 sha256=c7fa248bf665926f79caf58647e2a59c8b38bb1ddefd3d4f25b1646528fc3c39
+  Stored in directory: /tmp/pip-ephem-wheel-cache-cubax433/wheels/db/4b/72/02dbff66128cf12546a5d9e0fc075b81df4b249afffa65b775
+Successfully built scidiscovery-curve-figure-evidence
+WARNING: The directory '/home/da/.cache/pip' or its parent directory is not owned or is not writable by the current user. The cache has been disabled. Check the permissions and owner of that directory. If executing pip with sudo, you should use sudo's -H flag.
+Processing ./wheels/scidiscovery-0.1.0-py3-none-any.whl
+Processing ./wheels/scidiscovery_curve_figure_evidence-0.1.0-py3-none-any.whl
+Processing ./wheels/scidiscovery_curve_score-0.2.1-py3-none-any.whl
+Processing ./wheels/tcad_artifact-0.1.0-py3-none-any.whl
+Installing collected packages: tcad-artifact, scidiscovery-curve-score, scidiscovery-curve-figure-evidence, scidiscovery
+Successfully installed scidiscovery-0.1.0 scidiscovery-curve-figure-evidence-0.1.0 scidiscovery-curve-score-0.2.1 tcad-artifact-0.1.0

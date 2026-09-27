@@ -1,0 +1,71 @@
+{
+  "files": [
+    {
+      "source": "plugins/curve_score/curve_score/analysis_workspace.py",
+      "installed": "/opt/scidiscovery-m7/site/curve_score/analysis_workspace.py",
+      "exists": true,
+      "matches": true
+    },
+    {
+      "source": "plugins/curve_score/curve_score/science_operations.py",
+      "installed": "/opt/scidiscovery-m7/site/curve_score/science_operations.py",
+      "exists": true,
+      "matches": true
+    },
+    {
+      "source": "plugins/tcad_artifact/tcad_artifact/result_analysis.py",
+      "installed": "/opt/scidiscovery-m7/site/tcad_artifact/result_analysis.py",
+      "exists": true,
+      "matches": true
+    },
+    {
+      "source": "plugins/tcad_artifact/tcad_artifact/analysis_bindings.py",
+      "installed": "/opt/scidiscovery-m7/site/tcad_artifact/analysis_bindings.py",
+      "exists": true,
+      "matches": true
+    },
+    {
+      "source": "src/scidiscovery/operations/workspace.py",
+      "installed": "/opt/scidiscovery-m7/site/scidiscovery/operations/workspace.py",
+      "exists": true,
+      "matches": true
+    },
+    {
+      "source": "src/scidiscovery/artifact_agent/service/runs.py",
+      "installed": "/opt/scidiscovery-m7/site/scidiscovery/artifact_agent/service/runs.py",
+      "exists": true,
+      "matches": true
+    },
+    {
+      "source": "src/scidiscovery/artifact_agent/interfaces/mcp_local_worker.py",
+      "installed": "/opt/scidiscovery-m7/site/scidiscovery/artifact_agent/interfaces/mcp_local_worker.py",
+      "exists": true,
+      "matches": true
+    }
+  ],
+  "services": "MainPID=156273\nId=scidiscovery-control.service\nActiveState=active\nSubState=running\nActiveEnterTimestamp=Sat 2026-09-12 19:09:02 CST\n\nMainPID=156275\nId=scidiscovery-approval-ui.service\nActiveState=active\nSubState=running\nActiveEnterTimestamp=Sat 2026-09-12 19:09:02 CST\n",
+  "service_query_exit": 0,
+  "instance": {
+    "name": "M7-test0",
+    "state": "active",
+    "binding_confirmed": true
+  },
+  "live_validation": {
+    "name": "fig4_uncertainty_diagnosis_1",
+    "state": "completed",
+    "scientific_goal": "Diagnose the sealed uncertainty propagation limits without repeating completed fits.",
+    "startup_inputs": 25,
+    "prior_startup_inputs": 34,
+    "fresh_agent": true,
+    "draft_from": null,
+    "note": "Live editable-recovery replay is not exercised by this fresh completed-record continuation; isolated installed smoke covers that path.",
+    "completed_at": "2026-09-12T11:21:51.825703Z",
+    "created_to_completed_seconds": 322.811,
+    "control_reported_rejections": 0,
+    "report": "LIVE_DIAGNOSIS.zh-CN.md",
+    "evidence": "live-diagnosis-completed.json",
+    "native_read_error_count_reported": 1,
+    "live_case_mapping_exercised": false,
+    "live_editable_recovery_exercised": false
+  }
+}

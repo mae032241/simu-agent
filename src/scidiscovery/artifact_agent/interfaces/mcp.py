@@ -2,97 +2,57 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 import threading
 from typing import Any, Mapping
 
 from ..execution_bridge import ExecutionAdapter, ExecutionBridge
-from ..transforms import ArtifactTransformAdapter, ScientificStateTransformAdapter
 from ..runtime import open_runtime, read_secret_file
 from ..schema.common import canonical_json
+from ...operation_contract import DiagnosticError, contract_diagnostic
 from .mcp_root import RootMCPRouter, RootToolFacade
+from ..service.engineering_diagnostics import exception_facts
 
 
-PROTOCOL_VERSION = "2025-03-26"
-
-
-class MCPRouter:
-    def __init__(self, router: Any, *, name: str) -> None:
-        self.router = router
-        self.name = name
-
-    def handle(self, request: dict[str, Any]) -> dict[str, Any] | None:
-        request_id = request.get("id")
-        try:
-            method = request.get("method")
-            if request.get("jsonrpc") != "2.0" or not isinstance(method, str):
-                raise ValueError("invalid JSON-RPC request")
-            if method == "notifications/initialized":
-                return None
-            if method == "initialize":
-                value = {
-                    "protocolVersion": PROTOCOL_VERSION,
-                    "capabilities": {"tools": {"listChanged": False}},
-                    "serverInfo": {"name": self.name, "version": "1"},
-                }
-            elif method == "tools/list":
-                value = {"tools": self.router.list_tools()}
-            elif method == "tools/call":
-                params = request.get("params") or {}
-                if not isinstance(params, dict):
-                    raise ValueError("tools/call params must be an object")
-                result = self.router.call_tool(
-                    str(params.get("name", "")), params.get("arguments")
-                )
-                value = {
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": canonical_json(result).decode("utf-8"),
-                        }
-                    ],
-                    "structuredContent": result,
-                    "isError": False,
-                }
-            else:
-                raise ValueError("unknown JSON-RPC method")
-            return {"jsonrpc": "2.0", "id": request_id, "result": value}
-        except Exception as error:
-            return {
-                "jsonrpc": "2.0",
-                "id": request_id,
-                "error": {"code": -32000, "message": str(error)},
-            }
+from ...plugin_runtime.transport import PROTOCOL_VERSION, MCPRouter, rpc_error, parse_rpc_line
 
 
 def build_root_router(
     *,
     project_root: Path,
     state_root: Path,
-    task_secret_file: Path,
     approval_secret_file: Path,
     approval_base_url: str | None = "http://127.0.0.1:8765",
     shared_group: bool = False,
     execution_adapters: Mapping[str, ExecutionAdapter] | None = None,
-    transform_adapters: tuple[ArtifactTransformAdapter, ...] = (),
     scheduler_instance: str | None = None,
     scheduler_session_key: str | None = None,
     scheduler_creation_lock: threading.RLock | None = None,
+    worker_backend: str = "local",
+    local_workspace_root: Path | None = None,
+    execution_collection=None,
+    agent_settings=None,
+    unified: bool = False,
+    worker_plugin_configs=None,
 ) -> MCPRouter:
+    approval_secret = read_secret_file(
+        approval_secret_file, label="approval receipt"
+    )
     runtime = open_runtime(
         project_root=project_root,
         state_root=state_root,
-        task_token_secret=read_secret_file(task_secret_file, label="task token"),
-        approval_receipt_secret=read_secret_file(
-            approval_secret_file, label="approval receipt"
-        ),
+        approval_receipt_secret=approval_secret,
         actor_id="root_orchestrator",
         shared_group=shared_group,
+        worker_backend=worker_backend,
+        local_workspace_root=local_workspace_root,
+        agent_settings=agent_settings,
     )
     facade = RootToolFacade(
         runtime.artifacts,
         runtime.intake,
-        tasks=runtime.tasks,
+        runs=runtime.runs,
         approvals=runtime.approvals,
         executions=runtime.executions,
         bindings=runtime.scheduler_bindings,
@@ -112,11 +72,17 @@ def build_root_router(
         execution_bridge=ExecutionBridge(
             runtime.executions, adapters=execution_adapters or {}
         ),
-        transform_adapters=(ScientificStateTransformAdapter(), *transform_adapters),
         approval_base_url=approval_base_url,
+        instance_management_secret=approval_secret,
+        operation_catalog=runtime.operation_catalog,
+        execution_collection=execution_collection,
     )
+    root = RootMCPRouter(facade)
+    if unified:
+        from .mcp_gateway import UnifiedMCPRouter
+        return UnifiedMCPRouter(root, plugin_configs=worker_plugin_configs, worker_backend=worker_backend)
     return MCPRouter(
-        RootMCPRouter(facade),
+        root,
         name="scidiscovery-root",
     )
 

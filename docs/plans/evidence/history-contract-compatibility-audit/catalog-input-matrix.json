@@ -1,0 +1,1900 @@
+[
+  {
+    "operation_id": "scidiscovery.curve-bundle.figure-evidence.v2",
+    "executor": "transform",
+    "scope": "support",
+    "inputs": [
+      {
+        "port": "paper_source",
+        "schema": "opaque",
+        "usage": "evidence_inventory",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "figure_request",
+        "schema": "scidiscovery.curve-figure-digitization-request.v2",
+        "usage": "evidence_inventory",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "scientific_intake",
+        "schema": "scidiscovery.scientific-intake.v1",
+        "usage": "prior_signal",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "evidence_audit",
+        "schema": "scidiscovery.evidence-audit.v1",
+        "usage": "prior_signal",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "figure_manifest",
+        "schema": "scidiscovery.figure-evidence-manifest.v1",
+        "usage": "evidence_inventory",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "validation_report",
+        "schema": "scidiscovery.figure-evidence-validation-report.v1",
+        "usage": "evidence_inventory",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "source_panels",
+        "schema": "opaque",
+        "usage": "evidence_inventory",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "audit_overlays",
+        "schema": "opaque",
+        "usage": "evidence_inventory",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "curve_tables",
+        "schema": "opaque",
+        "usage": "evidence_inventory",
+        "history_rule": "exact_producer_contract"
+      }
+    ]
+  },
+  {
+    "operation_id": "scidiscovery.curve-reference-coverage.v1",
+    "executor": "transform",
+    "scope": "support",
+    "inputs": [
+      {
+        "port": "experiment_plan",
+        "schema": "scidiscovery.experiment-portfolio.v1",
+        "usage": "claim_evidence",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "experiment_review",
+        "schema": "scidiscovery.scientific-review.v1",
+        "usage": "prior_signal",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "curve_contract",
+        "schema": "scidiscovery.curve-experiment-contract.v1",
+        "usage": "prior_signal",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "curve_contract_review",
+        "schema": "scidiscovery.scientific-review.v1",
+        "usage": "prior_signal",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "reference_bundles",
+        "schema": "scidiscovery.curve-bundle.v1",
+        "usage": "evidence_inventory",
+        "history_rule": "exact_producer_contract"
+      }
+    ]
+  },
+  {
+    "operation_id": "scidiscovery.curve-score.v1",
+    "executor": "transform",
+    "scope": "support",
+    "inputs": [
+      {
+        "port": "curve_bundle",
+        "schema": "scidiscovery.curve-bundle.v1",
+        "usage": "prior_signal",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "experiment_plan",
+        "schema": "scidiscovery.experiment-portfolio.v1",
+        "usage": "claim_evidence",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "experiment_review",
+        "schema": "scidiscovery.scientific-review.v1",
+        "usage": "prior_signal",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "curve_contract",
+        "schema": "scidiscovery.curve-experiment-contract.v1",
+        "usage": "prior_signal",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "curve_contract_review",
+        "schema": "scidiscovery.scientific-review.v1",
+        "usage": "prior_signal",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "reference_bundles",
+        "schema": "scidiscovery.curve-bundle.v1",
+        "usage": "evidence_inventory",
+        "history_rule": "exact_producer_contract"
+      }
+    ]
+  },
+  {
+    "operation_id": "scidiscovery.objective-coverage.v1",
+    "executor": "transform",
+    "scope": "support",
+    "inputs": [
+      {
+        "port": "objective",
+        "schema": "scidiscovery.research-objective.v1",
+        "usage": "prior_signal",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "experiment_plan",
+        "schema": "scidiscovery.experiment-portfolio.v1",
+        "usage": "claim_evidence",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "experiment_review",
+        "schema": "scidiscovery.scientific-review.v1",
+        "usage": "prior_signal",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "curve_contracts",
+        "schema": "scidiscovery.curve-experiment-contract.v1",
+        "usage": "prior_signal",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "curve_contract_reviews",
+        "schema": "scidiscovery.scientific-review.v1",
+        "usage": "prior_signal",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "reference_bundles",
+        "schema": "scidiscovery.curve-bundle.v1",
+        "usage": "evidence_inventory",
+        "history_rule": "exact_producer_contract"
+      }
+    ]
+  },
+  {
+    "operation_id": "science.curve.contract.design.v1",
+    "executor": "agent",
+    "scope": "public",
+    "inputs": [
+      {
+        "port": "research_objective",
+        "schema": "scidiscovery.research-objective.v1",
+        "usage": "prior_signal",
+        "history_rule": "current_port_and_review"
+      },
+      {
+        "port": "experiment_plan",
+        "schema": "scidiscovery.experiment-portfolio.v1",
+        "usage": "prior_signal",
+        "history_rule": "current_port_and_review"
+      },
+      {
+        "port": "experiment_review",
+        "schema": "scidiscovery.scientific-review.v1",
+        "usage": "prior_signal",
+        "history_rule": "current_port_and_review"
+      },
+      {
+        "port": "reference_bundle",
+        "schema": "scidiscovery.curve-bundle.v1",
+        "usage": "evidence_inventory",
+        "history_rule": "inventory_read"
+      }
+    ]
+  },
+  {
+    "operation_id": "science.curve.contract.review.v1",
+    "executor": "agent",
+    "scope": "public",
+    "inputs": [
+      {
+        "port": "research_objective",
+        "schema": "scidiscovery.research-objective.v1",
+        "usage": "prior_signal",
+        "history_rule": "current_port_and_review"
+      },
+      {
+        "port": "experiment_plan",
+        "schema": "scidiscovery.experiment-portfolio.v1",
+        "usage": "prior_signal",
+        "history_rule": "current_port_and_review"
+      },
+      {
+        "port": "experiment_review",
+        "schema": "scidiscovery.scientific-review.v1",
+        "usage": "prior_signal",
+        "history_rule": "current_port_and_review"
+      },
+      {
+        "port": "curve_contract",
+        "schema": "scidiscovery.curve-experiment-contract.v1",
+        "usage": "prior_signal",
+        "history_rule": "current_port_and_review"
+      },
+      {
+        "port": "reference_bundle",
+        "schema": "scidiscovery.curve-bundle.v1",
+        "usage": "evidence_inventory",
+        "history_rule": "inventory_read"
+      }
+    ]
+  },
+  {
+    "operation_id": "science.curve.error.analyze.v1",
+    "executor": "transform",
+    "scope": "support",
+    "inputs": [
+      {
+        "port": "experiment_plan",
+        "schema": "scidiscovery.experiment-portfolio.v1",
+        "usage": "prior_signal",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "experiment_review",
+        "schema": "scidiscovery.scientific-review.v1",
+        "usage": "prior_signal",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "curve_contract",
+        "schema": "scidiscovery.curve-experiment-contract.v1",
+        "usage": "prior_signal",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "curve_contract_review",
+        "schema": "scidiscovery.scientific-review.v1",
+        "usage": "prior_signal",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "metric_report",
+        "schema": "scidiscovery.curve-consistency-report.v1",
+        "usage": "claim_evidence",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "curve_bundle",
+        "schema": "scidiscovery.curve-bundle.v1",
+        "usage": "claim_evidence",
+        "history_rule": "exact_producer_contract"
+      }
+    ]
+  },
+  {
+    "operation_id": "science.evidence.audit.intake.v1",
+    "executor": "agent",
+    "scope": "public",
+    "inputs": [
+      {
+        "port": "scientific_intake",
+        "schema": "scidiscovery.scientific-intake.v1",
+        "usage": "prior_signal",
+        "history_rule": "current_port_and_review"
+      },
+      {
+        "port": "source_material",
+        "schema": "opaque",
+        "usage": "evidence_inventory",
+        "history_rule": "inventory_read"
+      }
+    ]
+  },
+  {
+    "operation_id": "science.evidence.audit.v1",
+    "executor": "agent",
+    "scope": "public",
+    "inputs": [
+      {
+        "port": "scientific_foundation",
+        "schema": "scidiscovery.scientific-foundation.v1",
+        "usage": "prior_signal",
+        "history_rule": "current_port_and_review"
+      },
+      {
+        "port": "source_material",
+        "schema": "opaque",
+        "usage": "evidence_inventory",
+        "history_rule": "inventory_read"
+      }
+    ]
+  },
+  {
+    "operation_id": "science.evidence.extract.figure.v2",
+    "executor": "agent",
+    "scope": "public",
+    "inputs": [
+      {
+        "port": "paper_source",
+        "schema": "opaque",
+        "usage": "evidence_inventory",
+        "history_rule": "inventory_read"
+      },
+      {
+        "port": "figure_request",
+        "schema": "scidiscovery.curve-figure-digitization-request.v2",
+        "usage": "evidence_inventory",
+        "history_rule": "inventory_read"
+      },
+      {
+        "port": "figure_manifest",
+        "schema": "scidiscovery.figure-evidence-manifest.v1",
+        "usage": "evidence_inventory",
+        "history_rule": "inventory_read"
+      },
+      {
+        "port": "validation_report",
+        "schema": "scidiscovery.figure-evidence-validation-report.v1",
+        "usage": "evidence_inventory",
+        "history_rule": "inventory_read"
+      },
+      {
+        "port": "source_panels",
+        "schema": "opaque",
+        "usage": "evidence_inventory",
+        "history_rule": "inventory_read"
+      },
+      {
+        "port": "audit_overlays",
+        "schema": "opaque",
+        "usage": "evidence_inventory",
+        "history_rule": "inventory_read"
+      },
+      {
+        "port": "curve_tables",
+        "schema": "opaque",
+        "usage": "evidence_inventory",
+        "history_rule": "inventory_read"
+      },
+      {
+        "port": "prior_draft",
+        "schema": "scidiscovery.scientific-intake.v1",
+        "usage": "revision_base",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "change_request",
+        "schema": "scidiscovery.evidence-audit.v1",
+        "usage": "change_request",
+        "history_rule": "exact_producer_contract"
+      }
+    ]
+  },
+  {
+    "operation_id": "science.evidence.extract.v1",
+    "executor": "agent",
+    "scope": "public",
+    "inputs": [
+      {
+        "port": "source_material",
+        "schema": "opaque",
+        "usage": "claim_evidence",
+        "history_rule": "exact_producer_contract"
+      }
+    ]
+  },
+  {
+    "operation_id": "science.evidence.qualify.v1",
+    "executor": "approval",
+    "scope": "public",
+    "inputs": [
+      {
+        "port": "scientific_foundation",
+        "schema": "scidiscovery.scientific-foundation.v1",
+        "usage": "prior_signal",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "extraction_primary",
+        "schema": "scidiscovery.scientific-intake.v1",
+        "usage": "prior_signal",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "producer_outputs",
+        "schema": "*",
+        "usage": "evidence_inventory",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "validation_results",
+        "schema": "*",
+        "usage": "evidence_inventory",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "frozen_sources",
+        "schema": "*",
+        "usage": "evidence_inventory",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "evidence_audit",
+        "schema": "scidiscovery.evidence-audit.v1",
+        "usage": "prior_signal",
+        "history_rule": "exact_producer_contract"
+      }
+    ]
+  },
+  {
+    "operation_id": "science.evidence.revise-from-critic.v1",
+    "executor": "agent",
+    "scope": "public",
+    "inputs": [
+      {
+        "port": "prior_draft",
+        "schema": "scidiscovery.scientific-intake.v1",
+        "usage": "revision_base",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "intake_audit",
+        "schema": "scidiscovery.evidence-audit.v1",
+        "usage": "prior_signal",
+        "history_rule": "current_port_and_review"
+      },
+      {
+        "port": "scientific_foundation",
+        "schema": "scidiscovery.scientific-foundation.v1",
+        "usage": "prior_signal",
+        "history_rule": "current_port_and_review"
+      },
+      {
+        "port": "hypothesis_portfolio",
+        "schema": "scidiscovery.hypothesis-proposal.v2",
+        "usage": "prior_signal",
+        "history_rule": "current_port_and_review"
+      },
+      {
+        "port": "change_request",
+        "schema": "scidiscovery.critic-review.v2",
+        "usage": "review_signal",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "source_material",
+        "schema": "opaque",
+        "usage": "claim_evidence",
+        "history_rule": "exact_producer_contract"
+      }
+    ]
+  },
+  {
+    "operation_id": "science.experiment.design.v1",
+    "executor": "agent",
+    "scope": "public",
+    "inputs": [
+      {
+        "port": "scientific_foundation",
+        "schema": "scidiscovery.scientific-foundation.v1",
+        "usage": "prior_signal",
+        "history_rule": "current_port_and_review"
+      },
+      {
+        "port": "research_objective",
+        "schema": "scidiscovery.research-objective.v1",
+        "usage": "prior_signal",
+        "history_rule": "current_port_and_review"
+      },
+      {
+        "port": "hypothesis_portfolio",
+        "schema": "scidiscovery.hypothesis-proposal.v2",
+        "usage": "prior_signal",
+        "history_rule": "current_port_and_review"
+      },
+      {
+        "port": "critic_review",
+        "schema": "scidiscovery.critic-review.v2",
+        "usage": "prior_signal",
+        "history_rule": "current_port_and_review"
+      },
+      {
+        "port": "execution_context",
+        "schema": "scidiscovery.execution-context.v1",
+        "usage": "prior_signal",
+        "history_rule": "current_port_and_review"
+      },
+      {
+        "port": "current_progress",
+        "schema": "*",
+        "usage": "evidence_inventory",
+        "history_rule": "inventory_read"
+      },
+      {
+        "port": "experiment_results",
+        "schema": "*",
+        "usage": "evidence_inventory",
+        "history_rule": "inventory_read"
+      },
+      {
+        "port": "result_analysis",
+        "schema": "*",
+        "usage": "evidence_inventory",
+        "history_rule": "inventory_read"
+      }
+    ]
+  },
+  {
+    "operation_id": "science.experiment.materialize.v1",
+    "executor": "transform",
+    "scope": "support",
+    "inputs": [
+      {
+        "port": "experiment_design_intent",
+        "schema": "scidiscovery.experiment-design-intent.v1",
+        "usage": "prior_signal",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "scientific_foundation",
+        "schema": "scidiscovery.scientific-foundation.v1",
+        "usage": "prior_signal",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "research_objective",
+        "schema": "scidiscovery.research-objective.v1",
+        "usage": "prior_signal",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "hypothesis_portfolio",
+        "schema": "scidiscovery.hypothesis-proposal.v2",
+        "usage": "prior_signal",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "critic_review",
+        "schema": "scidiscovery.critic-review.v2",
+        "usage": "prior_signal",
+        "history_rule": "exact_producer_contract"
+      }
+    ]
+  },
+  {
+    "operation_id": "science.experiment.revise.v1",
+    "executor": "agent",
+    "scope": "public",
+    "inputs": [
+      {
+        "port": "prior_draft",
+        "schema": "scidiscovery.experiment-portfolio.v1",
+        "usage": "revision_base",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "change_request",
+        "schema": "scidiscovery.scientific-review.v1",
+        "usage": "change_request",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "current_progress",
+        "schema": "*",
+        "usage": "evidence_inventory",
+        "history_rule": "inventory_read"
+      }
+    ]
+  },
+  {
+    "operation_id": "science.figure.evidence.audit.v1",
+    "executor": "agent",
+    "scope": "public",
+    "inputs": [
+      {
+        "port": "scientific_intake",
+        "schema": "scidiscovery.scientific-intake.v1",
+        "usage": "prior_signal",
+        "history_rule": "current_port_and_review"
+      },
+      {
+        "port": "paper_source",
+        "schema": "opaque",
+        "usage": "evidence_inventory",
+        "history_rule": "inventory_read"
+      },
+      {
+        "port": "figure_request",
+        "schema": "scidiscovery.curve-figure-digitization-request.v2",
+        "usage": "evidence_inventory",
+        "history_rule": "inventory_read"
+      },
+      {
+        "port": "figure_manifest",
+        "schema": "scidiscovery.figure-evidence-manifest.v1",
+        "usage": "evidence_inventory",
+        "history_rule": "inventory_read"
+      },
+      {
+        "port": "validation_report",
+        "schema": "scidiscovery.figure-evidence-validation-report.v1",
+        "usage": "evidence_inventory",
+        "history_rule": "inventory_read"
+      },
+      {
+        "port": "source_panels",
+        "schema": "opaque",
+        "usage": "evidence_inventory",
+        "history_rule": "inventory_read"
+      },
+      {
+        "port": "audit_overlays",
+        "schema": "opaque",
+        "usage": "evidence_inventory",
+        "history_rule": "inventory_read"
+      },
+      {
+        "port": "curve_tables",
+        "schema": "opaque",
+        "usage": "evidence_inventory",
+        "history_rule": "inventory_read"
+      }
+    ]
+  },
+  {
+    "operation_id": "science.figure.evidence.materialize.v1",
+    "executor": "transform",
+    "scope": "support",
+    "inputs": [
+      {
+        "port": "paper_source",
+        "schema": "opaque",
+        "usage": "evidence_inventory",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "figure_request",
+        "schema": "scidiscovery.curve-figure-digitization-request.v2",
+        "usage": "evidence_inventory",
+        "history_rule": "exact_producer_contract"
+      }
+    ]
+  },
+  {
+    "operation_id": "science.figure.request.prepare.v1",
+    "executor": "agent",
+    "scope": "public",
+    "inputs": [
+      {
+        "port": "paper_source",
+        "schema": "opaque",
+        "usage": "evidence_inventory",
+        "history_rule": "inventory_read"
+      },
+      {
+        "port": "research_objective",
+        "schema": "scidiscovery.research-objective.v1",
+        "usage": "prior_signal",
+        "history_rule": "current_port_and_review"
+      }
+    ]
+  },
+  {
+    "operation_id": "science.hypothesis.criticize.v1",
+    "executor": "agent",
+    "scope": "public",
+    "inputs": [
+      {
+        "port": "hypothesis_portfolio",
+        "schema": "scidiscovery.hypothesis-proposal.v2",
+        "usage": "prior_signal",
+        "history_rule": "current_port_and_review"
+      },
+      {
+        "port": "scientific_foundation",
+        "schema": "scidiscovery.scientific-foundation.v1",
+        "usage": "claim_evidence",
+        "history_rule": "exact_producer_contract"
+      }
+    ]
+  },
+  {
+    "operation_id": "science.hypothesis.propose.v1",
+    "executor": "agent",
+    "scope": "public",
+    "inputs": [
+      {
+        "port": "problem_frame",
+        "schema": "scidiscovery.problem-frame.v1",
+        "usage": "prior_signal",
+        "history_rule": "current_port_and_review"
+      },
+      {
+        "port": "scientific_foundation",
+        "schema": "scidiscovery.scientific-foundation.v1",
+        "usage": "claim_evidence",
+        "history_rule": "exact_producer_contract"
+      }
+    ]
+  },
+  {
+    "operation_id": "science.hypothesis.revise.v1",
+    "executor": "agent",
+    "scope": "public",
+    "inputs": [
+      {
+        "port": "prior_draft",
+        "schema": "scidiscovery.hypothesis-proposal.v2",
+        "usage": "revision_base",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "change_request",
+        "schema": "scidiscovery.critic-review.v2",
+        "usage": "change_request",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "scientific_foundation",
+        "schema": "scidiscovery.scientific-foundation.v1",
+        "usage": "claim_evidence",
+        "history_rule": "exact_producer_contract"
+      }
+    ]
+  },
+  {
+    "operation_id": "science.intake.revise.v1",
+    "executor": "agent",
+    "scope": "public",
+    "inputs": [
+      {
+        "port": "prior_draft",
+        "schema": "scidiscovery.scientific-intake.v1",
+        "usage": "revision_base",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "change_request",
+        "schema": "scidiscovery.evidence-audit.v1",
+        "usage": "change_request",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "source_material",
+        "schema": "opaque",
+        "usage": "claim_evidence",
+        "history_rule": "exact_producer_contract"
+      }
+    ]
+  },
+  {
+    "operation_id": "science.intake.split.v1",
+    "executor": "transform",
+    "scope": "support",
+    "inputs": [
+      {
+        "port": "scientific_intake",
+        "schema": "scidiscovery.scientific-intake.v1",
+        "usage": "prior_signal",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "evidence_audit",
+        "schema": "scidiscovery.evidence-audit.v1",
+        "usage": "prior_signal",
+        "history_rule": "exact_producer_contract"
+      }
+    ]
+  },
+  {
+    "operation_id": "science.object.review.v1",
+    "executor": "agent",
+    "scope": "public",
+    "inputs": [
+      {
+        "port": "experiment_plan",
+        "schema": "scidiscovery.experiment-portfolio.v1",
+        "usage": "prior_signal",
+        "history_rule": "current_port_and_review"
+      },
+      {
+        "port": "research_objective",
+        "schema": "scidiscovery.research-objective.v1",
+        "usage": "prior_signal",
+        "history_rule": "current_port_and_review"
+      },
+      {
+        "port": "execution_context",
+        "schema": "scidiscovery.execution-context.v1",
+        "usage": "prior_signal",
+        "history_rule": "current_port_and_review"
+      },
+      {
+        "port": "current_progress",
+        "schema": "*",
+        "usage": "evidence_inventory",
+        "history_rule": "inventory_read"
+      },
+      {
+        "port": "experiment_results",
+        "schema": "*",
+        "usage": "evidence_inventory",
+        "history_rule": "inventory_read"
+      },
+      {
+        "port": "result_analysis",
+        "schema": "*",
+        "usage": "evidence_inventory",
+        "history_rule": "inventory_read"
+      }
+    ]
+  },
+  {
+    "operation_id": "science.objective.project.v1",
+    "executor": "transform",
+    "scope": "support",
+    "inputs": [
+      {
+        "port": "scientific_foundation",
+        "schema": "scidiscovery.scientific-foundation.v1",
+        "usage": "prior_signal",
+        "history_rule": "exact_producer_contract"
+      }
+    ]
+  },
+  {
+    "operation_id": "science.parameter.coverage.v1",
+    "executor": "transform",
+    "scope": "support",
+    "inputs": [
+      {
+        "port": "parameter_requirements",
+        "schema": "scidiscovery.device-parameter-requirements.v1",
+        "usage": "evidence_inventory",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "device_parameters",
+        "schema": "scidiscovery.device-parameter-set.v1",
+        "usage": "evidence_inventory",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "source_catalog",
+        "schema": "scidiscovery.evidence-source-catalog.v1",
+        "usage": "evidence_inventory",
+        "history_rule": "exact_producer_contract"
+      }
+    ]
+  },
+  {
+    "operation_id": "science.parameter.uncertainty.v1",
+    "executor": "transform",
+    "scope": "support",
+    "inputs": [
+      {
+        "port": "parameter_requirements",
+        "schema": "scidiscovery.device-parameter-requirements.v1",
+        "usage": "evidence_inventory",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "device_parameters",
+        "schema": "scidiscovery.device-parameter-set.v1",
+        "usage": "evidence_inventory",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "parameter_coverage",
+        "schema": "scidiscovery.device-parameter-coverage.v1",
+        "usage": "prior_signal",
+        "history_rule": "exact_producer_contract"
+      }
+    ]
+  },
+  {
+    "operation_id": "science.parameters.qualify.exception.v1",
+    "executor": "approval",
+    "scope": "public",
+    "inputs": [
+      {
+        "port": "scientific_foundation",
+        "schema": "scidiscovery.scientific-foundation.v1",
+        "usage": "prior_signal",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "parameter_evidence_package",
+        "schema": "scidiscovery.parameter-evidence-package.v1",
+        "usage": "evidence_inventory",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "extraction_primary",
+        "schema": "scidiscovery.scientific-intake.v1",
+        "usage": "prior_signal",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "required_parameter_checklist",
+        "schema": "scidiscovery.device-parameter-requirements.v1",
+        "usage": "evidence_inventory",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "parameter_requirements",
+        "schema": "scidiscovery.device-parameter-requirements.v1",
+        "usage": "evidence_inventory",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "device_parameters",
+        "schema": "scidiscovery.device-parameter-set.v1",
+        "usage": "evidence_inventory",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "source_catalog",
+        "schema": "scidiscovery.evidence-source-catalog.v1",
+        "usage": "evidence_inventory",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "parameter_coverage",
+        "schema": "scidiscovery.device-parameter-coverage.v1",
+        "usage": "prior_signal",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "parameter_audit",
+        "schema": "scidiscovery.evidence-audit.v1",
+        "usage": "prior_signal",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "frozen_sources",
+        "schema": "*",
+        "usage": "evidence_inventory",
+        "history_rule": "exact_producer_contract"
+      }
+    ]
+  },
+  {
+    "operation_id": "science.parameters.qualify.pass.v1",
+    "executor": "approval",
+    "scope": "public",
+    "inputs": [
+      {
+        "port": "scientific_foundation",
+        "schema": "scidiscovery.scientific-foundation.v1",
+        "usage": "prior_signal",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "parameter_evidence_package",
+        "schema": "scidiscovery.parameter-evidence-package.v1",
+        "usage": "evidence_inventory",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "extraction_primary",
+        "schema": "scidiscovery.scientific-intake.v1",
+        "usage": "prior_signal",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "required_parameter_checklist",
+        "schema": "scidiscovery.device-parameter-requirements.v1",
+        "usage": "evidence_inventory",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "parameter_requirements",
+        "schema": "scidiscovery.device-parameter-requirements.v1",
+        "usage": "evidence_inventory",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "device_parameters",
+        "schema": "scidiscovery.device-parameter-set.v1",
+        "usage": "evidence_inventory",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "source_catalog",
+        "schema": "scidiscovery.evidence-source-catalog.v1",
+        "usage": "evidence_inventory",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "parameter_coverage",
+        "schema": "scidiscovery.device-parameter-coverage.v1",
+        "usage": "prior_signal",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "parameter_audit",
+        "schema": "scidiscovery.evidence-audit.v1",
+        "usage": "prior_signal",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "frozen_sources",
+        "schema": "*",
+        "usage": "evidence_inventory",
+        "history_rule": "exact_producer_contract"
+      }
+    ]
+  },
+  {
+    "operation_id": "science.result.diagnose.curve-error.v1",
+    "executor": "agent",
+    "scope": "public",
+    "inputs": [
+      {
+        "port": "curve_analysis_package",
+        "schema": "scidiscovery.curve-diagnostic-analysis.v1",
+        "usage": "prior_signal",
+        "history_rule": "current_port_and_review"
+      }
+    ]
+  },
+  {
+    "operation_id": "science.result.diagnose.v1",
+    "executor": "agent",
+    "scope": "public",
+    "inputs": [
+      {
+        "port": "experiment_plan",
+        "schema": "scidiscovery.experiment-portfolio.v1",
+        "usage": "prior_signal",
+        "history_rule": "current_port_and_review"
+      },
+      {
+        "port": "experiment_review",
+        "schema": "scidiscovery.scientific-review.v1",
+        "usage": "prior_signal",
+        "history_rule": "current_port_and_review"
+      },
+      {
+        "port": "experiment_results",
+        "schema": "*",
+        "usage": "evidence_inventory",
+        "history_rule": "inventory_read"
+      },
+      {
+        "port": "reference_material",
+        "schema": "*",
+        "usage": "evidence_inventory",
+        "history_rule": "inventory_read"
+      },
+      {
+        "port": "current_progress",
+        "schema": "*",
+        "usage": "evidence_inventory",
+        "history_rule": "inventory_read"
+      },
+      {
+        "port": "metric_report",
+        "schema": "scidiscovery.curve-consistency-report.v1",
+        "usage": "claim_evidence",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "curve_bundle",
+        "schema": "scidiscovery.curve-bundle.v1",
+        "usage": "claim_evidence",
+        "history_rule": "exact_producer_contract"
+      }
+    ]
+  },
+  {
+    "operation_id": "tcad.control-equivalence.v1",
+    "executor": "transform",
+    "scope": "support",
+    "inputs": [
+      {
+        "port": "experiment_plan",
+        "schema": "scidiscovery.experiment-portfolio.v1",
+        "usage": "claim_evidence",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "reviewed_packages",
+        "schema": "tcad.reviewed-deck-package.v2",
+        "usage": "prior_signal",
+        "history_rule": "exact_producer_contract"
+      }
+    ]
+  },
+  {
+    "operation_id": "tcad.curve-bundle.sprocess-log.v1",
+    "executor": "transform",
+    "scope": "support",
+    "inputs": [
+      {
+        "port": "solver_output",
+        "schema": "opaque",
+        "usage": "evidence_inventory",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "runtime_attestation",
+        "schema": "tcad.runtime-attestation.v1",
+        "usage": "prior_signal",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "experiment_plan",
+        "schema": "scidiscovery.experiment-portfolio.v1",
+        "usage": "prior_signal",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "experiment_review",
+        "schema": "scidiscovery.scientific-review.v1",
+        "usage": "prior_signal",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "curve_contract",
+        "schema": "scidiscovery.curve-experiment-contract.v1",
+        "usage": "prior_signal",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "curve_contract_review",
+        "schema": "scidiscovery.scientific-review.v1",
+        "usage": "prior_signal",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "source_spec",
+        "schema": "tcad.sprocess-log-source.v1",
+        "usage": "prior_signal",
+        "history_rule": "exact_producer_contract"
+      }
+    ]
+  },
+  {
+    "operation_id": "tcad.curve-bundle.sprocess-plx.v1",
+    "executor": "transform",
+    "scope": "support",
+    "inputs": [
+      {
+        "port": "runtime_manifest",
+        "schema": "opaque",
+        "usage": "prior_signal",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "runtime_attestation",
+        "schema": "tcad.runtime-attestation.v1",
+        "usage": "prior_signal",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "experiment_plan",
+        "schema": "scidiscovery.experiment-portfolio.v1",
+        "usage": "prior_signal",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "experiment_review",
+        "schema": "scidiscovery.scientific-review.v1",
+        "usage": "prior_signal",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "curve_contract",
+        "schema": "scidiscovery.curve-experiment-contract.v1",
+        "usage": "prior_signal",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "curve_contract_review",
+        "schema": "scidiscovery.scientific-review.v1",
+        "usage": "prior_signal",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "solver_outputs",
+        "schema": "opaque",
+        "usage": "evidence_inventory",
+        "history_rule": "exact_producer_contract"
+      }
+    ]
+  },
+  {
+    "operation_id": "tcad.deck-project-compare.v1",
+    "executor": "transform",
+    "scope": "support",
+    "inputs": [
+      {
+        "port": "base_project",
+        "schema": "tcad.deck-project.v1",
+        "usage": "claim_evidence",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "revised_project",
+        "schema": "tcad.deck-project.v1",
+        "usage": "claim_evidence",
+        "history_rule": "exact_producer_contract"
+      }
+    ]
+  },
+  {
+    "operation_id": "tcad.deck-review-validate.v1",
+    "executor": "transform",
+    "scope": "support",
+    "inputs": [
+      {
+        "port": "project",
+        "schema": "tcad.deck-project.v1",
+        "usage": "claim_evidence",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "review",
+        "schema": "tcad.deck-review-report.v1",
+        "usage": "prior_signal",
+        "history_rule": "exact_producer_contract"
+      }
+    ]
+  },
+  {
+    "operation_id": "tcad.deck.author.initial.v1",
+    "executor": "agent",
+    "scope": "public",
+    "inputs": [
+      {
+        "port": "current_progress",
+        "schema": "*",
+        "usage": "evidence_inventory",
+        "history_rule": "inventory_read"
+      },
+      {
+        "port": "execution_capability",
+        "schema": "tcad.solver-capability.v2",
+        "usage": "claim_evidence",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "experiment_plan",
+        "schema": "scidiscovery.experiment-portfolio.v1",
+        "usage": "claim_evidence",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "curve_contract",
+        "schema": "scidiscovery.curve-experiment-contract.v1",
+        "usage": "prior_signal",
+        "history_rule": "current_port_and_review"
+      },
+      {
+        "port": "experiment_review",
+        "schema": "scidiscovery.scientific-review.v1",
+        "usage": "prior_signal",
+        "history_rule": "current_port_and_review"
+      },
+      {
+        "port": "curve_contract_review",
+        "schema": "scidiscovery.scientific-review.v1",
+        "usage": "prior_signal",
+        "history_rule": "current_port_and_review"
+      },
+      {
+        "port": "scientific_foundation",
+        "schema": "scidiscovery.scientific-foundation.v1",
+        "usage": "claim_evidence",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "parameter_requirements",
+        "schema": "scidiscovery.device-parameter-requirements.v1",
+        "usage": "claim_evidence",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "device_parameters",
+        "schema": "scidiscovery.device-parameter-set.v1",
+        "usage": "claim_evidence",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "source_catalog",
+        "schema": "scidiscovery.evidence-source-catalog.v1",
+        "usage": "claim_evidence",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "parameter_coverage",
+        "schema": "scidiscovery.device-parameter-coverage.v1",
+        "usage": "prior_signal",
+        "history_rule": "current_port_and_review"
+      },
+      {
+        "port": "parameter_audit",
+        "schema": "scidiscovery.evidence-audit.v1",
+        "usage": "prior_signal",
+        "history_rule": "current_port_and_review"
+      },
+      {
+        "port": "parameter_uncertainty",
+        "schema": "scidiscovery.parameter-uncertainty.v1",
+        "usage": "prior_signal",
+        "history_rule": "current_port_and_review"
+      }
+    ]
+  },
+  {
+    "operation_id": "tcad.deck.author.revise.v1",
+    "executor": "agent",
+    "scope": "public",
+    "inputs": [
+      {
+        "port": "prior_project",
+        "schema": "tcad.deck-project.v1",
+        "usage": "revision_base",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "change_request",
+        "schema": "tcad.deck-review-report.v1",
+        "usage": "change_request",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "device_grid",
+        "schema": "opaque",
+        "usage": "claim_evidence",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "current_progress",
+        "schema": "*",
+        "usage": "evidence_inventory",
+        "history_rule": "inventory_read"
+      },
+      {
+        "port": "execution_capability",
+        "schema": "tcad.solver-capability.v2",
+        "usage": "claim_evidence",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "experiment_plan",
+        "schema": "scidiscovery.experiment-portfolio.v1",
+        "usage": "claim_evidence",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "curve_contract",
+        "schema": "scidiscovery.curve-experiment-contract.v1",
+        "usage": "prior_signal",
+        "history_rule": "current_port_and_review"
+      },
+      {
+        "port": "experiment_review",
+        "schema": "scidiscovery.scientific-review.v1",
+        "usage": "prior_signal",
+        "history_rule": "current_port_and_review"
+      },
+      {
+        "port": "curve_contract_review",
+        "schema": "scidiscovery.scientific-review.v1",
+        "usage": "prior_signal",
+        "history_rule": "current_port_and_review"
+      },
+      {
+        "port": "scientific_foundation",
+        "schema": "scidiscovery.scientific-foundation.v1",
+        "usage": "claim_evidence",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "parameter_requirements",
+        "schema": "scidiscovery.device-parameter-requirements.v1",
+        "usage": "claim_evidence",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "device_parameters",
+        "schema": "scidiscovery.device-parameter-set.v1",
+        "usage": "claim_evidence",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "source_catalog",
+        "schema": "scidiscovery.evidence-source-catalog.v1",
+        "usage": "claim_evidence",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "parameter_coverage",
+        "schema": "scidiscovery.device-parameter-coverage.v1",
+        "usage": "prior_signal",
+        "history_rule": "current_port_and_review"
+      },
+      {
+        "port": "parameter_audit",
+        "schema": "scidiscovery.evidence-audit.v1",
+        "usage": "prior_signal",
+        "history_rule": "current_port_and_review"
+      },
+      {
+        "port": "parameter_uncertainty",
+        "schema": "scidiscovery.parameter-uncertainty.v1",
+        "usage": "prior_signal",
+        "history_rule": "current_port_and_review"
+      }
+    ]
+  },
+  {
+    "operation_id": "tcad.deck.author.runtime-failure.v1",
+    "executor": "agent",
+    "scope": "public",
+    "inputs": [
+      {
+        "port": "prior_project",
+        "schema": "tcad.deck-project.v1",
+        "usage": "revision_base",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "runtime_attestation",
+        "schema": "tcad.runtime-attestation.v1",
+        "usage": "prior_signal",
+        "history_rule": "current_port_and_review"
+      },
+      {
+        "port": "solver_log",
+        "schema": "opaque",
+        "usage": "prior_signal",
+        "history_rule": "current_port_and_review"
+      },
+      {
+        "port": "current_progress",
+        "schema": "*",
+        "usage": "evidence_inventory",
+        "history_rule": "inventory_read"
+      },
+      {
+        "port": "execution_capability",
+        "schema": "tcad.solver-capability.v2",
+        "usage": "claim_evidence",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "experiment_plan",
+        "schema": "scidiscovery.experiment-portfolio.v1",
+        "usage": "claim_evidence",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "curve_contract",
+        "schema": "scidiscovery.curve-experiment-contract.v1",
+        "usage": "prior_signal",
+        "history_rule": "current_port_and_review"
+      },
+      {
+        "port": "experiment_review",
+        "schema": "scidiscovery.scientific-review.v1",
+        "usage": "prior_signal",
+        "history_rule": "current_port_and_review"
+      },
+      {
+        "port": "curve_contract_review",
+        "schema": "scidiscovery.scientific-review.v1",
+        "usage": "prior_signal",
+        "history_rule": "current_port_and_review"
+      },
+      {
+        "port": "scientific_foundation",
+        "schema": "scidiscovery.scientific-foundation.v1",
+        "usage": "claim_evidence",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "parameter_requirements",
+        "schema": "scidiscovery.device-parameter-requirements.v1",
+        "usage": "claim_evidence",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "device_parameters",
+        "schema": "scidiscovery.device-parameter-set.v1",
+        "usage": "claim_evidence",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "source_catalog",
+        "schema": "scidiscovery.evidence-source-catalog.v1",
+        "usage": "claim_evidence",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "parameter_coverage",
+        "schema": "scidiscovery.device-parameter-coverage.v1",
+        "usage": "prior_signal",
+        "history_rule": "current_port_and_review"
+      },
+      {
+        "port": "parameter_audit",
+        "schema": "scidiscovery.evidence-audit.v1",
+        "usage": "prior_signal",
+        "history_rule": "current_port_and_review"
+      },
+      {
+        "port": "parameter_uncertainty",
+        "schema": "scidiscovery.parameter-uncertainty.v1",
+        "usage": "prior_signal",
+        "history_rule": "current_port_and_review"
+      }
+    ]
+  },
+  {
+    "operation_id": "tcad.deck.review.v1",
+    "executor": "agent",
+    "scope": "public",
+    "inputs": [
+      {
+        "port": "project",
+        "schema": "tcad.deck-project.v1",
+        "usage": "prior_signal",
+        "history_rule": "current_port_and_review"
+      },
+      {
+        "port": "current_progress",
+        "schema": "*",
+        "usage": "evidence_inventory",
+        "history_rule": "inventory_read"
+      },
+      {
+        "port": "execution_capability",
+        "schema": "tcad.solver-capability.v2",
+        "usage": "claim_evidence",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "experiment_plan",
+        "schema": "scidiscovery.experiment-portfolio.v1",
+        "usage": "claim_evidence",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "curve_contract",
+        "schema": "scidiscovery.curve-experiment-contract.v1",
+        "usage": "prior_signal",
+        "history_rule": "current_port_and_review"
+      },
+      {
+        "port": "experiment_review",
+        "schema": "scidiscovery.scientific-review.v1",
+        "usage": "prior_signal",
+        "history_rule": "current_port_and_review"
+      },
+      {
+        "port": "curve_contract_review",
+        "schema": "scidiscovery.scientific-review.v1",
+        "usage": "prior_signal",
+        "history_rule": "current_port_and_review"
+      },
+      {
+        "port": "scientific_foundation",
+        "schema": "scidiscovery.scientific-foundation.v1",
+        "usage": "claim_evidence",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "parameter_requirements",
+        "schema": "scidiscovery.device-parameter-requirements.v1",
+        "usage": "claim_evidence",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "device_parameters",
+        "schema": "scidiscovery.device-parameter-set.v1",
+        "usage": "claim_evidence",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "source_catalog",
+        "schema": "scidiscovery.evidence-source-catalog.v1",
+        "usage": "claim_evidence",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "parameter_coverage",
+        "schema": "scidiscovery.device-parameter-coverage.v1",
+        "usage": "prior_signal",
+        "history_rule": "current_port_and_review"
+      },
+      {
+        "port": "parameter_audit",
+        "schema": "scidiscovery.evidence-audit.v1",
+        "usage": "prior_signal",
+        "history_rule": "current_port_and_review"
+      },
+      {
+        "port": "parameter_uncertainty",
+        "schema": "scidiscovery.parameter-uncertainty.v1",
+        "usage": "prior_signal",
+        "history_rule": "current_port_and_review"
+      }
+    ]
+  },
+  {
+    "operation_id": "tcad.execution-context.project.v1",
+    "executor": "transform",
+    "scope": "support",
+    "inputs": [
+      {
+        "port": "capability",
+        "schema": "tcad.solver-capability.v2",
+        "usage": "prior_signal",
+        "history_rule": "exact_producer_contract"
+      }
+    ]
+  },
+  {
+    "operation_id": "tcad.parameter.evidence.audit.v1",
+    "executor": "agent",
+    "scope": "public",
+    "inputs": [
+      {
+        "port": "parameter_evidence_package",
+        "schema": "scidiscovery.parameter-evidence-package.v1",
+        "usage": "prior_signal",
+        "history_rule": "current_port_and_review"
+      },
+      {
+        "port": "scientific_intake",
+        "schema": "scidiscovery.scientific-intake.v1",
+        "usage": "prior_signal",
+        "history_rule": "current_port_and_review"
+      },
+      {
+        "port": "required_parameter_checklist",
+        "schema": "scidiscovery.device-parameter-requirements.v1",
+        "usage": "evidence_inventory",
+        "history_rule": "inventory_read"
+      },
+      {
+        "port": "parameter_requirements",
+        "schema": "scidiscovery.device-parameter-requirements.v1",
+        "usage": "evidence_inventory",
+        "history_rule": "inventory_read"
+      },
+      {
+        "port": "device_parameters",
+        "schema": "scidiscovery.device-parameter-set.v1",
+        "usage": "evidence_inventory",
+        "history_rule": "inventory_read"
+      },
+      {
+        "port": "source_catalog",
+        "schema": "scidiscovery.evidence-source-catalog.v1",
+        "usage": "evidence_inventory",
+        "history_rule": "inventory_read"
+      },
+      {
+        "port": "parameter_coverage",
+        "schema": "scidiscovery.device-parameter-coverage.v1",
+        "usage": "prior_signal",
+        "history_rule": "current_port_and_review"
+      },
+      {
+        "port": "source_material",
+        "schema": "opaque",
+        "usage": "evidence_inventory",
+        "history_rule": "inventory_read"
+      }
+    ]
+  },
+  {
+    "operation_id": "tcad.parameter.evidence.expand.v1",
+    "executor": "transform",
+    "scope": "support",
+    "inputs": [
+      {
+        "port": "parameter_evidence_package",
+        "schema": "scidiscovery.parameter-evidence-package.v1",
+        "usage": "prior_signal",
+        "history_rule": "exact_producer_contract"
+      }
+    ]
+  },
+  {
+    "operation_id": "tcad.parameter.evidence.extract.v1",
+    "executor": "agent",
+    "scope": "public",
+    "inputs": [
+      {
+        "port": "required_parameter_checklist",
+        "schema": "scidiscovery.device-parameter-requirements.v1",
+        "usage": "prior_signal",
+        "history_rule": "current_port_and_review"
+      },
+      {
+        "port": "source_material",
+        "schema": "opaque",
+        "usage": "evidence_inventory",
+        "history_rule": "inventory_read"
+      }
+    ]
+  },
+  {
+    "operation_id": "tcad.realization-snapshot-materialize.v1",
+    "executor": "transform",
+    "scope": "support",
+    "inputs": [
+      {
+        "port": "comparison_contract",
+        "schema": "scidiscovery.comparison-contract.v1",
+        "usage": "claim_evidence",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "reviewed_package",
+        "schema": "tcad.reviewed-deck-package.v2",
+        "usage": "prior_signal",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "case",
+        "schema": "tcad.realization-case-binding.v1",
+        "usage": "prior_signal",
+        "history_rule": "exact_producer_contract"
+      }
+    ]
+  },
+  {
+    "operation_id": "tcad.result.analyze.v1",
+    "executor": "agent",
+    "scope": "public",
+    "inputs": [
+      {
+        "port": "experiment_plan",
+        "schema": "scidiscovery.experiment-portfolio.v1",
+        "usage": "prior_signal",
+        "history_rule": "current_port_and_review"
+      },
+      {
+        "port": "experiment_review",
+        "schema": "scidiscovery.scientific-review.v1",
+        "usage": "prior_signal",
+        "history_rule": "current_port_and_review"
+      },
+      {
+        "port": "reviewed_package",
+        "schema": "tcad.reviewed-deck-package.v2",
+        "usage": "prior_signal",
+        "history_rule": "current_port_and_review"
+      },
+      {
+        "port": "runtime_manifest",
+        "schema": "opaque",
+        "usage": "prior_signal",
+        "history_rule": "current_port_and_review"
+      },
+      {
+        "port": "runtime_attestation",
+        "schema": "tcad.runtime-attestation.v1",
+        "usage": "prior_signal",
+        "history_rule": "current_port_and_review"
+      },
+      {
+        "port": "solver_outputs",
+        "schema": "*",
+        "usage": "evidence_inventory",
+        "history_rule": "inventory_read"
+      },
+      {
+        "port": "reference_material",
+        "schema": "*",
+        "usage": "evidence_inventory",
+        "history_rule": "inventory_read"
+      },
+      {
+        "port": "current_progress",
+        "schema": "*",
+        "usage": "evidence_inventory",
+        "history_rule": "inventory_read"
+      }
+    ]
+  },
+  {
+    "operation_id": "tcad.reviewed-deck-package.v2",
+    "executor": "transform",
+    "scope": "support",
+    "inputs": [
+      {
+        "port": "project",
+        "schema": "tcad.deck-project.v1",
+        "usage": "claim_evidence",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "review",
+        "schema": "tcad.deck-review-report.v1",
+        "usage": "prior_signal",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "capability",
+        "schema": "tcad.solver-capability.v2",
+        "usage": "prior_signal",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "experiment_plan",
+        "schema": "scidiscovery.experiment-portfolio.v1",
+        "usage": "claim_evidence",
+        "history_rule": "exact_producer_contract"
+      }
+    ]
+  },
+  {
+    "operation_id": "tcad.runtime-attestation.v1",
+    "executor": "transform",
+    "scope": "support",
+    "inputs": [
+      {
+        "port": "reviewed_package",
+        "schema": "tcad.reviewed-deck-package.v2",
+        "usage": "prior_signal",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "runtime_manifest",
+        "schema": "opaque",
+        "usage": "prior_signal",
+        "history_rule": "exact_producer_contract"
+      },
+      {
+        "port": "runtime_outputs",
+        "schema": "opaque",
+        "usage": "evidence_inventory",
+        "history_rule": "exact_producer_contract"
+      }
+    ]
+  },
+  {
+    "operation_id": "tcad.study.execute",
+    "executor": "effect",
+    "scope": "public",
+    "inputs": [
+      {
+        "port": "reviewed_package",
+        "schema": "tcad.reviewed-deck-package.v2",
+        "usage": "prior_signal",
+        "history_rule": "exact_producer_contract"
+      }
+    ]
+  }
+]

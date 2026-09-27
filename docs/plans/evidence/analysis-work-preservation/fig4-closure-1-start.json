@@ -1,0 +1,398 @@
+{
+  "closure_request": {
+    "operation_id": "tcad.result.analyze.v1",
+    "name": "fig4_morphology_closure_1",
+    "inputs": [
+      {
+        "artifact_names": [
+          "fig4_continuation_execution_1.result"
+        ],
+        "port": "execution_result"
+      },
+      {
+        "artifact_names": [
+          "fig4_continuation_execution_analysis_3.output.recovery_manifest"
+        ],
+        "port": "recovery_manifest"
+      },
+      {
+        "artifact_names": [
+          "fig4_morphology_analysis_2.output"
+        ],
+        "port": "prior_analysis"
+      },
+      {
+        "artifact_names": [
+          "fig4_morphology_analysis_2.output.recovery_manifest"
+        ],
+        "port": "prior_analysis_manifest"
+      },
+      {
+        "artifact_names": [
+          "fig4_continuation_experiment_plan_3"
+        ],
+        "port": "experiment_plan"
+      },
+      {
+        "artifact_names": [
+          "fig4_continuation_experiment_review_6.output"
+        ],
+        "port": "experiment_review"
+      },
+      {
+        "artifact_names": [
+          "fig4_continuation_reviewed_package_2"
+        ],
+        "port": "reviewed_package"
+      },
+      {
+        "artifact_names": [
+          "fig4_continuation_execution_1.output.tcad_manifest"
+        ],
+        "port": "runtime_manifest"
+      },
+      {
+        "artifact_names": [
+          "fig4_continuation_execution_1.output.solver_log",
+          "fig4_continuation_execution_1.output.fig4_al_own_anchor_primary_plx",
+          "fig4_continuation_execution_analysis_3.output.tool_evidence_007",
+          "fig4_continuation_execution_analysis_3.output.tool_evidence_008",
+          "fig4_continuation_execution_analysis_3.output.tool_evidence_009",
+          "fig4_continuation_execution_analysis_3.output.tool_evidence_010",
+          "fig4_continuation_execution_analysis_3.output.tool_evidence_011",
+          "fig4_continuation_execution_analysis_3.output.tool_evidence_012",
+          "fig4_continuation_execution_analysis_3.output.tool_evidence_018",
+          "fig4_continuation_execution_analysis_3.output.tool_evidence_019",
+          "fig4_continuation_execution_analysis_3.output.tool_evidence_020",
+          "fig4_continuation_execution_analysis_3.output.tool_evidence_021",
+          "fig4_continuation_execution_analysis_3.output.tool_evidence_022"
+        ],
+        "port": "solver_outputs"
+      },
+      {
+        "artifact_names": [
+          "fig4_continuation_execution_1.output.tcad_log"
+        ],
+        "port": "diagnostics"
+      },
+      {
+        "artifact_names": [
+          "fig4_continuation_reference_bundle_1",
+          "fig4_continuation_figure_materialized_1.curve_tables_001",
+          "fig4_continuation_figure_materialized_1.curve_tables_002",
+          "fig4_continuation_figure_materialized_1.source_panels",
+          "fig4_morphology_analysis_2.output.tool_evidence_023",
+          "fig4_morphology_analysis_2.output.tool_evidence_024",
+          "fig4_morphology_analysis_2.output.tool_evidence_025",
+          "fig4_morphology_analysis_2.output.tool_evidence_026"
+        ],
+        "port": "reference_material"
+      },
+      {
+        "artifact_names": [
+          "fig4_continuation_objective_2",
+          "fig4_morphology_objective_revision_4.output",
+          "fig4_morphology_objective_review_2.output",
+          "fig4_continuation_execution_analysis_recovery_complete_1.output"
+        ],
+        "port": "current_progress"
+      }
+    ],
+    "draft_from": "fig4_morphology_analysis_3",
+    "instruction": "继续当前 Fig.4 科学闭环。先读取绑定的原研究目标、原执行计划/审查、新回顾性分析计划/匹配审查、前轮封存分析及直接绑定的脚本和数值产物，自主判断可复用工作与剩余最小分析目标。按照正式计划推进尚未完成的形貌不确定性/敏感性分析与可检查的图表，形成有依据的仿真判断，重点回答掺杂深度、曲线形状、前部及尾部平台的一致性；总体可为成功、部分还原或当前模型/证据范围内无法达成，务必说明证据及限制。不得把工程中断当成科学否定，或用未经来源支持的单一 decade 阈值替代形貌目标。优先沿用已有数值文件，草稿仅作未经验证的起始材料；若草稿不存在相关内容，如实区分草稿覆盖不足与正式绑定文件可读，不重新计算全部已完成工作。不得启动求解器。每次仅一个数值进程，RLIMIT_AS 不超过 512 MiB、BLAS/OMP 单线程；使用工作区提供的可选原生进程启动脚本记录耗时、退出与日志并按剩余绝对 Run 预算保留提交余量，若不可用如实保留诊断且不阻断有限报告。先检查实际需要的绘图库，数值按完整工作单元原子落盘，绘图单独读取已保存数值；局部绘图错误只重试绘图。先以一个工作单元实测耗时，再决定本 Run 可完成的剩余范围；不足时提交已保存、可验证的结果及确切未决项，让下一 Run 能接续，不能无变化重跑。使用识图能力核对参考图及生成图，分析方法由你依绑定证据判断。保留原始异常、计算脚本、阶段数值和图表，通过已声明发布工具交付可读取的证据；正式报告引用实际证据，不伪造评分 comparison。对被拒绝的工具调用或提交定位具体字段和原因，并在预算内作局部修正。原执行状态及历史资格保持原样；给出对剩余困难和下一步是否确需设计/模型调整的科学判断，不把所有未来机制识别目标强塞给本轮分析。"
+  },
+  "closure_preflight": {
+    "admissible": true,
+    "executor_kind": "agent",
+    "port": null,
+    "reason_code": null
+  },
+  "closure_invoke": {
+    "executor_kind": "agent",
+    "operation_id": "tcad.result.analyze.v1",
+    "result": {
+      "agent_type": "op_tcad_result_analyze_v1_c9f9f2f0d9ea",
+      "backend": "local_trusted",
+      "bound_inputs": [
+        {
+          "artifact_names": [
+            "fig4_continuation_execution_1.result"
+          ],
+          "port": "execution_result"
+        },
+        {
+          "artifact_names": [
+            "fig4_continuation_execution_analysis_3.output.recovery_manifest"
+          ],
+          "port": "recovery_manifest"
+        },
+        {
+          "artifact_names": [
+            "fig4_morphology_analysis_2.output"
+          ],
+          "port": "prior_analysis"
+        },
+        {
+          "artifact_names": [
+            "fig4_morphology_analysis_2.output.recovery_manifest"
+          ],
+          "port": "prior_analysis_manifest"
+        },
+        {
+          "artifact_names": [
+            "fig4_continuation_experiment_plan_3"
+          ],
+          "port": "experiment_plan"
+        },
+        {
+          "artifact_names": [
+            "fig4_continuation_experiment_review_6.output"
+          ],
+          "port": "experiment_review"
+        },
+        {
+          "artifact_names": [
+            "fig4_continuation_reviewed_package_2"
+          ],
+          "port": "reviewed_package"
+        },
+        {
+          "artifact_names": [
+            "fig4_continuation_execution_1.output.tcad_manifest"
+          ],
+          "port": "runtime_manifest"
+        },
+        {
+          "artifact_names": [
+            "fig4_continuation_execution_1.output.solver_log",
+            "fig4_continuation_execution_1.output.fig4_al_own_anchor_primary_plx",
+            "fig4_continuation_execution_analysis_3.output.tool_evidence_007",
+            "fig4_continuation_execution_analysis_3.output.tool_evidence_008",
+            "fig4_continuation_execution_analysis_3.output.tool_evidence_009",
+            "fig4_continuation_execution_analysis_3.output.tool_evidence_010",
+            "fig4_continuation_execution_analysis_3.output.tool_evidence_011",
+            "fig4_continuation_execution_analysis_3.output.tool_evidence_012",
+            "fig4_continuation_execution_analysis_3.output.tool_evidence_018",
+            "fig4_continuation_execution_analysis_3.output.tool_evidence_019",
+            "fig4_continuation_execution_analysis_3.output.tool_evidence_020",
+            "fig4_continuation_execution_analysis_3.output.tool_evidence_021",
+            "fig4_continuation_execution_analysis_3.output.tool_evidence_022"
+          ],
+          "port": "solver_outputs"
+        },
+        {
+          "artifact_names": [
+            "fig4_continuation_execution_1.output.tcad_log"
+          ],
+          "port": "diagnostics"
+        },
+        {
+          "artifact_names": [
+            "fig4_continuation_reference_bundle_1",
+            "fig4_continuation_figure_materialized_1.curve_tables_001",
+            "fig4_continuation_figure_materialized_1.curve_tables_002",
+            "fig4_continuation_figure_materialized_1.source_panels",
+            "fig4_morphology_analysis_2.output.tool_evidence_023",
+            "fig4_morphology_analysis_2.output.tool_evidence_024",
+            "fig4_morphology_analysis_2.output.tool_evidence_025",
+            "fig4_morphology_analysis_2.output.tool_evidence_026"
+          ],
+          "port": "reference_material"
+        },
+        {
+          "artifact_names": [
+            "fig4_continuation_objective_2",
+            "fig4_morphology_objective_revision_4.output",
+            "fig4_morphology_objective_review_2.output",
+            "fig4_continuation_execution_analysis_recovery_complete_1.output"
+          ],
+          "port": "current_progress"
+        }
+      ],
+      "candidate_accepted": false,
+      "completed_at": null,
+      "created_at": "2026-09-12T08:16:03.005919Z",
+      "deadline_at": "2026-09-12T08:31:03.005919Z",
+      "diagnostic_summary": {
+        "failure": null,
+        "latest_rejection": null,
+        "latest_tool_error": null,
+        "recent_errors": [],
+        "rejection_count": 0
+      },
+      "draft_from": "fig4_morphology_analysis_3",
+      "head_advance": null,
+      "last_activity_at": null,
+      "logical_name": "fig4_morphology_closure_1",
+      "name": "fig4_morphology_closure_1",
+      "native_execution": {
+        "coverage": "unobserved",
+        "scientific_evidence": false
+      },
+      "operation_id": "tcad.result.analyze.v1",
+      "output_artifact_name": null,
+      "reason": null,
+      "recovery": {
+        "delivery_preserved": false,
+        "draft_available": false,
+        "recovery_pending": false,
+        "resume_available": false
+      },
+      "recovery_available": false,
+      "revision": 1,
+      "scheduler_signal": null,
+      "scheduler_signal_status": "unavailable",
+      "sealed_output": null,
+      "sealed_output_status": "unavailable",
+      "started_at": null,
+      "state": "queued"
+    }
+  },
+  "analysis3": {
+    "agent_type": "op_tcad_result_analyze_v1_91ac5851c7e5",
+    "backend": "local_trusted",
+    "bound_inputs": [
+      {
+        "artifact_names": [
+          "fig4_continuation_execution_1.result"
+        ],
+        "port": "execution_result"
+      },
+      {
+        "artifact_names": [
+          "fig4_continuation_execution_analysis_3.output.recovery_manifest"
+        ],
+        "port": "recovery_manifest"
+      },
+      {
+        "artifact_names": [
+          "fig4_morphology_analysis_2.output"
+        ],
+        "port": "prior_analysis"
+      },
+      {
+        "artifact_names": [
+          "fig4_morphology_analysis_2.output.recovery_manifest"
+        ],
+        "port": "prior_analysis_manifest"
+      },
+      {
+        "artifact_names": [
+          "fig4_continuation_experiment_plan_3"
+        ],
+        "port": "experiment_plan"
+      },
+      {
+        "artifact_names": [
+          "fig4_continuation_experiment_review_6.output"
+        ],
+        "port": "experiment_review"
+      },
+      {
+        "artifact_names": [
+          "fig4_continuation_reviewed_package_2"
+        ],
+        "port": "reviewed_package"
+      },
+      {
+        "artifact_names": [
+          "fig4_continuation_execution_1.output.tcad_manifest"
+        ],
+        "port": "runtime_manifest"
+      },
+      {
+        "artifact_names": [
+          "fig4_continuation_execution_1.output.solver_log",
+          "fig4_continuation_execution_1.output.fig4_al_own_anchor_primary_plx",
+          "fig4_continuation_execution_analysis_3.output.tool_evidence_007",
+          "fig4_continuation_execution_analysis_3.output.tool_evidence_008",
+          "fig4_continuation_execution_analysis_3.output.tool_evidence_009",
+          "fig4_continuation_execution_analysis_3.output.tool_evidence_010",
+          "fig4_continuation_execution_analysis_3.output.tool_evidence_011",
+          "fig4_continuation_execution_analysis_3.output.tool_evidence_012",
+          "fig4_continuation_execution_analysis_3.output.tool_evidence_018",
+          "fig4_continuation_execution_analysis_3.output.tool_evidence_019",
+          "fig4_continuation_execution_analysis_3.output.tool_evidence_020",
+          "fig4_continuation_execution_analysis_3.output.tool_evidence_021",
+          "fig4_continuation_execution_analysis_3.output.tool_evidence_022"
+        ],
+        "port": "solver_outputs"
+      },
+      {
+        "artifact_names": [
+          "fig4_continuation_execution_1.output.tcad_log"
+        ],
+        "port": "diagnostics"
+      },
+      {
+        "artifact_names": [
+          "fig4_continuation_reference_bundle_1",
+          "fig4_continuation_figure_materialized_1.curve_tables_001",
+          "fig4_continuation_figure_materialized_1.curve_tables_002",
+          "fig4_continuation_figure_materialized_1.source_panels",
+          "fig4_morphology_analysis_2.output.tool_evidence_023",
+          "fig4_morphology_analysis_2.output.tool_evidence_024",
+          "fig4_morphology_analysis_2.output.tool_evidence_025",
+          "fig4_morphology_analysis_2.output.tool_evidence_026"
+        ],
+        "port": "reference_material"
+      },
+      {
+        "artifact_names": [
+          "fig4_continuation_objective_2",
+          "fig4_morphology_objective_revision_4.output",
+          "fig4_morphology_objective_review_2.output",
+          "fig4_continuation_execution_analysis_recovery_complete_1.output"
+        ],
+        "port": "current_progress"
+      }
+    ],
+    "candidate_accepted": false,
+    "completed_at": "2026-09-12T05:58:14.132716Z",
+    "created_at": "2026-09-12T05:42:47.813814Z",
+    "deadline_at": "2026-09-12T05:57:47.813814Z",
+    "diagnostic_summary": {
+      "failure": {
+        "category": "run_timeout",
+        "code": "run_timeout",
+        "repairable_by_output": false
+      },
+      "latest_rejection": null,
+      "latest_tool_error": null,
+      "recent_errors": [
+        {
+          "category": "run_timeout",
+          "code": "run_timeout",
+          "repairable_by_output": false
+        }
+      ],
+      "rejection_count": 0
+    },
+    "draft_from": null,
+    "head_advance": null,
+    "last_activity_at": "2026-09-12T05:42:59.577325Z",
+    "logical_name": "fig4_morphology_analysis_3",
+    "name": "fig4_morphology_analysis_3",
+    "native_execution": {
+      "coverage": "unobserved",
+      "scientific_evidence": false
+    },
+    "operation_id": "tcad.result.analyze.v1",
+    "output_artifact_name": null,
+    "reason": "The declared deadline elapsed before submission of the remaining sensitivity analysis. No output rejection or controlled tool error was observed. Preserve the bounded failure and any recovery material; do not treat the published previous central-stage results as completion of the missing work.",
+    "recovery": {
+      "delivery_preserved": true,
+      "draft_available": true,
+      "recovery_pending": false,
+      "resume_available": false
+    },
+    "recovery_available": false,
+    "revision": 1,
+    "scheduler_signal": null,
+    "scheduler_signal_status": "unavailable",
+    "sealed_output": null,
+    "sealed_output_status": "unavailable",
+    "started_at": "2026-09-12T05:42:59.577325Z",
+    "state": "failed"
+  }
+}

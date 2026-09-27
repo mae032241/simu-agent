@@ -7,8 +7,8 @@ import os
 import stat
 from pathlib import Path
 
-from scidiscovery.artifact_agent.interfaces.mcp import MCPRouter
-from scidiscovery.interfaces import UnixSocketDaemon
+from scidiscovery.plugin_runtime.transport import MCPRouter
+from scidiscovery.plugin_runtime.transport import UnixSocketDaemon
 
 from .execution_control import TCADExecutionFacade, TCADExecutionPolicy, TCADExecutionRouter
 

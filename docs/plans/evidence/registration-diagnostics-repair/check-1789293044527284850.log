@@ -1,0 +1,89 @@
+FF.                                                                      [100%]
+=================================== FAILURES ===================================
+_ test_prose_and_baseline_labels_survive_submit_materialize_and_review[False] __
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-323/test_prose_and_baseline_labels0')
+experiment_case = ({'study_kind': 'scientific', 'objective_key': 'objective_wrong', 'selected_hypothesis_keys': ['hypothesis_a'], 'propo...research_objective_key":"objective_expected","schema_version":2,"stage_objective":"Separate one bounded mechanism."}'})
+derive_baseline = False
+
+    @pytest.mark.parametrize("derive_baseline", [False, True])
+    def test_prose_and_baseline_labels_survive_submit_materialize_and_review(tmp_path, experiment_case, derive_baseline):
+        intent, sources = deepcopy(experiment_case)
+        intent["objective_key"] = "objective_expected"
+        proposal = intent["proposals"][0]
+        proposal["identifiability_claims"] = [{
+            "hypothesis_key": "hypothesis_a", "observable": "Combined depth and normalized shape response",
+            "distinguishing_outcome": "The response distinguishes the stated alternatives.",
+            "decision_rule": "Review the supplied response.", "ambiguity_conditions": ["Finite support."],
+            "smallest_resolving_control": "The existing bounded comparison.",
+        }]
+        if derive_baseline:
+            proposal.pop("baseline_case_key")
+        else:
+            proposal["cases"][0]["scientific_role"] = "perturbation"
+        (tmp_path / "design").mkdir()
+        (tmp_path / "review").mkdir()
+        runtime, run_id, output = _experiment_run(tmp_path / "design", sources)
+        output.write_bytes(_experiment_envelope(intent))
+        assert runtime.runs.submit(run_id) == ("completed", ())
+        sealed = runtime.artifacts.read(runtime.runs.status(run_id).output_ref)
+        plan = materialize_experiment_design_intent(
+            ExperimentDesignIntent.model_validate_json(sealed),
+            ResearchObjectiveContract.model_validate_json(sources["research_objective"]),
+        )
+        assert plan.proposals[0].comparison_contract.baseline_case_key == "baseline"
+        assert len(plan.proposals[0].comparison_contract.variables) == 1
+        raw = plan.model_dump(mode="json")
+        raw["proposals"][0]["comparison_contract"]["required_observables"] = ["A different description of the same observation"]
+        parsed = ExperimentPortfolio.model_validate_json(canonical_json(raw))
+        runtime, review_id, workspace = _review_run(tmp_path / "review", {"experiment_plan": parsed.canonical_json()})
+        (workspace.output_directory / "result.json").write_bytes(canonical_json({
+            "schema_version": 1, "handoff": {"verdict": "revise", "summary": "Independent coverage review."},
+            "payload": {"review_target": "experiment_portfolio", "verdict": "revise",
+                        "summary": "Scientific coverage remains a reviewer judgment."},
+        }))
+        assert runtime.runs.submit(review_id) == ("completed", ())
+        raw["proposals"][0]["comparison_contract"]["baseline_case_key"] = "unknown_case"
+>       with pytest.raises(ValidationError, match="undeclared experiment case"):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AssertionError: Regex pattern did not match.
+E         Expected regex: 'undeclared experiment case'
+E         Actual message: "2 validation errors for ExperimentPortfolio\nproposals.0.comparison_contract\n  Value error, every comparison variable must cover the exact compared cases [type=value_error, input_value={'baseline_case_key': 'un..._key': 'intervention'}]}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.11/v/value_error\nproposals\n  Tuple should have at least 1 item after validation, not 0 [type=too_short, input_value=[{'cases': [{'case_key': ..., 'schema_version': 1}}], input_type=list]\n    For further information visit https://errors.pydantic.dev/2.11/v/too_short"
+
+tests/operations/test_registration_diagnostics_repair.py:71: AssertionError
+__ test_prose_and_baseline_labels_survive_submit_materialize_and_review[True] __
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-323/test_prose_and_baseline_labels1')
+experiment_case = ({'study_kind': 'scientific', 'objective_key': 'objective_wrong', 'selected_hypothesis_keys': ['hypothesis_a'], 'propo...research_objective_key":"objective_expected","schema_version":2,"stage_objective":"Separate one bounded mechanism."}'})
+derive_baseline = True
+
+    @pytest.mark.parametrize("derive_baseline", [False, True])
+    def test_prose_and_baseline_labels_survive_submit_materialize_and_review(tmp_path, experiment_case, derive_baseline):
+        intent, sources = deepcopy(experiment_case)
+        intent["objective_key"] = "objective_expected"
+        proposal = intent["proposals"][0]
+        proposal["identifiability_claims"] = [{
+            "hypothesis_key": "hypothesis_a", "observable": "Combined depth and normalized shape response",
+            "distinguishing_outcome": "The response distinguishes the stated alternatives.",
+            "decision_rule": "Review the supplied response.", "ambiguity_conditions": ["Finite support."],
+            "smallest_resolving_control": "The existing bounded comparison.",
+        }]
+        if derive_baseline:
+            proposal.pop("baseline_case_key")
+        else:
+            proposal["cases"][0]["scientific_role"] = "perturbation"
+        (tmp_path / "design").mkdir()
+        (tmp_path / "review").mkdir()
+        runtime, run_id, output = _experiment_run(tmp_path / "design", sources)
+        output.write_bytes(_experiment_envelope(intent))
+>       assert runtime.runs.submit(run_id) == ("completed", ())
+E       AssertionError: assert ('rejected', ..._instance'},)) == ('completed', ())
+E         
+E         At index 0 diff: 'rejected' != 'completed'
+E         Use -v to get more diff
+
+tests/operations/test_registration_diagnostics_repair.py:52: AssertionError
+=========================== short test summary info ============================
+FAILED tests/operations/test_registration_diagnostics_repair.py::test_prose_and_baseline_labels_survive_submit_materialize_and_review[False]
+FAILED tests/operations/test_registration_diagnostics_repair.py::test_prose_and_baseline_labels_survive_submit_materialize_and_review[True]
+2 failed, 1 passed, 7 deselected in 3.56s

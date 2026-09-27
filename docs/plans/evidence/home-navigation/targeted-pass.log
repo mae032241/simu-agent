@@ -1,0 +1,27 @@
+.............................F.......F...................                [100%]
+=================================== FAILURES ===================================
+______ test_restore_is_offered_only_for_completed_archive_and_is_explicit ______
+
+    def test_restore_is_offered_only_for_completed_archive_and_is_explicit() -> None:
+        preview = _preview("restore")
+        assert "action='/instance/instance-a/manage/restore'" not in _page(restore_preview=preview)
+        page = _page(status=_status(storage_state="archived", phase="completed"), restore_preview=preview)
+        assert "action='/instance/instance-a/manage/restore'" in page
+>       assert "已归档 · 只读" in page
+E       assert '已归档 · 只读' in "<!doctype html><html lang='zh-CN'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initi...><p>显示偏好只改变列表排版，资料位置与科学记录保持原样。</p><p class='source-gap'>当前显示偏好或可写状态未确认；请在维护空闲后刷新读取。</p></section></main></body></html>"
+
+tests/operations/test_instance_management_render.py:88: AssertionError
+_________ test_archived_workbench_and_nodes_do_not_start_live_updates __________
+
+    def test_archived_workbench_and_nodes_do_not_start_live_updates() -> None:
+        overview = {"instance": INSTANCE, "storage": _status(storage_state="archived", phase="completed"),
+                    "nodes": {"items": [], "next_cursor": None}, "active_tasks": []}
+        page = render_workbench(overview, browse_base="/instance/instance-a", csrf_token="csrf", can_manage=True).decode()
+>       assert "已归档 · 资料只读" in page
+E       assert '已归档 · 资料只读' in "<!doctype html><html lang='zh-CN'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initi...le' aria-hidden='true'>＋</span></summary><div class='research-panel-body'><p></p></div></details></main></body></html>"
+
+tests/operations/test_instance_management_render.py:184: AssertionError
+=========================== short test summary info ============================
+FAILED tests/operations/test_instance_management_render.py::test_restore_is_offered_only_for_completed_archive_and_is_explicit
+FAILED tests/operations/test_instance_management_render.py::test_archived_workbench_and_nodes_do_not_start_live_updates
+2 failed, 55 passed, 1 deselected in 28.48s

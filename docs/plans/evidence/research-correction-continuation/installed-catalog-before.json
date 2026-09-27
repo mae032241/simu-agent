@@ -1,0 +1,4215 @@
+{
+  "operations": [
+    {
+      "accepts_actions": [],
+      "applies_when": "The exact declared immutable curve inputs are available.",
+      "catalog_scope": "support",
+      "complete_transform_family": {
+        "input_ports": [
+          "paper_source",
+          "figure_request"
+        ],
+        "output_ports": [
+          "figure_manifest",
+          "validation_report",
+          "source_panels",
+          "audit_overlays",
+          "curve_tables"
+        ]
+      },
+      "consequence": "scientific",
+      "executor_kind": "transform",
+      "input_admission": null,
+      "inputs": [
+        {
+          "description": "Exact immutable curve operation input: paper_source.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "paper_source",
+          "required_non_null_fields": [],
+          "schema": "opaque"
+        },
+        {
+          "description": "Exact immutable curve operation input: figure_request.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "figure_request",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.curve-figure-digitization-request.v2"
+        },
+        {
+          "description": "Exact immutable curve operation input: scientific_intake.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "scientific_intake",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.scientific-intake.v1"
+        },
+        {
+          "description": "Exact immutable curve operation input: evidence_audit.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "evidence_audit",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.evidence-audit.v1"
+        },
+        {
+          "description": "Exact immutable curve operation input: figure_manifest.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "figure_manifest",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.figure-evidence-manifest.v1"
+        },
+        {
+          "description": "Exact immutable curve operation input: validation_report.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "validation_report",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.figure-evidence-validation-report.v1"
+        },
+        {
+          "description": "Exact immutable curve operation input: source_panels.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "source_panels",
+          "required_non_null_fields": [],
+          "schema": "opaque"
+        },
+        {
+          "description": "Exact immutable curve operation input: audit_overlays.",
+          "max_items": 2,
+          "min_items": 1,
+          "name": "audit_overlays",
+          "required_non_null_fields": [],
+          "schema": "opaque"
+        },
+        {
+          "description": "Exact immutable curve operation input: curve_tables.",
+          "max_items": 32,
+          "min_items": 1,
+          "name": "curve_tables",
+          "required_non_null_fields": [],
+          "schema": "opaque"
+        }
+      ],
+      "max_files": 2,
+      "max_input_bytes": 1073741824,
+      "max_network_requests": 0,
+      "max_output_bytes": 536870912,
+      "native_shell": "none",
+      "native_view_image": false,
+      "network_mode": "none",
+      "not_for": "Selecting scientific targets, interpreting mechanisms, or executing a solver.",
+      "operation_id": "scidiscovery.curve-bundle.figure-evidence.v2",
+      "outputs": [
+        {
+          "description": "Deterministic curve operation output: curve_bundle.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "curve_bundle",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.curve-bundle.v1"
+        },
+        {
+          "description": "Deterministic curve operation output: normalization_audit.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "normalization_audit",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.figure-evidence-curve-normalization-audit.v1"
+        }
+      ],
+      "purpose": "Normalize exact validated figure tables into one canonical evidence library.",
+      "requires_human_approval": false,
+      "requires_independent_review": false,
+      "review_edge": null,
+      "timeout_seconds": 300,
+      "version": "1"
+    },
+    {
+      "accepts_actions": [],
+      "applies_when": "The exact declared immutable curve inputs are available.",
+      "catalog_scope": "support",
+      "complete_transform_family": null,
+      "consequence": "scientific",
+      "executor_kind": "transform",
+      "input_admission": null,
+      "inputs": [
+        {
+          "description": "Exact immutable curve operation input: experiment_plan.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "experiment_plan",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.experiment-portfolio.v1"
+        },
+        {
+          "description": "Exact immutable curve operation input: experiment_review.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "experiment_review",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.scientific-review.v1"
+        },
+        {
+          "description": "Exact immutable curve operation input: curve_contract.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "curve_contract",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.curve-experiment-contract.v1"
+        },
+        {
+          "description": "Exact immutable curve operation input: curve_contract_review.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "curve_contract_review",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.scientific-review.v1"
+        },
+        {
+          "description": "Exact immutable curve operation input: reference_bundles.",
+          "max_items": 256,
+          "min_items": 1,
+          "name": "reference_bundles",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.curve-bundle.v1"
+        }
+      ],
+      "max_files": 1,
+      "max_input_bytes": 1073741824,
+      "max_network_requests": 0,
+      "max_output_bytes": 536870912,
+      "native_shell": "none",
+      "native_view_image": false,
+      "network_mode": "none",
+      "not_for": "Selecting scientific targets, interpreting mechanisms, or executing a solver.",
+      "operation_id": "scidiscovery.curve-reference-coverage.v1",
+      "outputs": [
+        {
+          "description": "Deterministic curve operation output: coverage_report.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "coverage_report",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.curve-reference-coverage.v1"
+        }
+      ],
+      "purpose": "Verify that one experiment plan explicitly disposes every supplied reference series.",
+      "requires_human_approval": false,
+      "requires_independent_review": false,
+      "review_edge": null,
+      "timeout_seconds": 300,
+      "version": "1"
+    },
+    {
+      "accepts_actions": [],
+      "applies_when": "The exact declared immutable curve inputs are available.",
+      "catalog_scope": "support",
+      "complete_transform_family": null,
+      "consequence": "scientific",
+      "executor_kind": "transform",
+      "input_admission": null,
+      "inputs": [
+        {
+          "description": "Exact immutable curve operation input: curve_bundle.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "curve_bundle",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.curve-bundle.v1"
+        },
+        {
+          "description": "Exact immutable curve operation input: experiment_plan.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "experiment_plan",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.experiment-portfolio.v1"
+        },
+        {
+          "description": "Exact immutable curve operation input: experiment_review.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "experiment_review",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.scientific-review.v1"
+        },
+        {
+          "description": "Exact immutable curve operation input: curve_contract.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "curve_contract",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.curve-experiment-contract.v1"
+        },
+        {
+          "description": "Exact immutable curve operation input: curve_contract_review.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "curve_contract_review",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.scientific-review.v1"
+        },
+        {
+          "description": "Exact immutable curve operation input: reference_bundles.",
+          "max_items": 256,
+          "min_items": 0,
+          "name": "reference_bundles",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.curve-bundle.v1"
+        }
+      ],
+      "max_files": 4,
+      "max_input_bytes": 1073741824,
+      "max_network_requests": 0,
+      "max_output_bytes": 536870912,
+      "native_shell": "none",
+      "native_view_image": false,
+      "network_mode": "none",
+      "not_for": "Selecting scientific targets, interpreting mechanisms, or executing a solver.",
+      "operation_id": "scidiscovery.curve-score.v1",
+      "outputs": [
+        {
+          "description": "Deterministic curve operation output: metric_report.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "metric_report",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.curve-consistency-report.v1"
+        },
+        {
+          "description": "Deterministic curve operation output: merged_curve_bundle.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "merged_curve_bundle",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.curve-bundle.v1"
+        },
+        {
+          "description": "Deterministic curve operation output: score_audit.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "score_audit",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.curve-score-audit.v1"
+        },
+        {
+          "description": "Deterministic curve operation output: comparison_plot.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "comparison_plot",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.curve-comparison-plot.v1"
+        }
+      ],
+      "purpose": "Score one canonical solver curve bundle against its pre-registered experiment plan.",
+      "requires_human_approval": false,
+      "requires_independent_review": false,
+      "review_edge": null,
+      "timeout_seconds": 300,
+      "version": "1"
+    },
+    {
+      "accepts_actions": [],
+      "applies_when": "The exact declared immutable curve inputs are available.",
+      "catalog_scope": "support",
+      "complete_transform_family": null,
+      "consequence": "scientific",
+      "executor_kind": "transform",
+      "input_admission": null,
+      "inputs": [
+        {
+          "description": "Exact immutable curve operation input: objective.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "objective",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.research-objective.v1"
+        },
+        {
+          "description": "Exact immutable curve operation input: experiment_plan.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "experiment_plan",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.experiment-portfolio.v1"
+        },
+        {
+          "description": "Exact immutable curve operation input: experiment_review.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "experiment_review",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.scientific-review.v1"
+        },
+        {
+          "description": "Exact immutable curve operation input: curve_contracts.",
+          "max_items": 16,
+          "min_items": 0,
+          "name": "curve_contracts",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.curve-experiment-contract.v1"
+        },
+        {
+          "description": "Exact immutable curve operation input: curve_contract_reviews.",
+          "max_items": 16,
+          "min_items": 0,
+          "name": "curve_contract_reviews",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.scientific-review.v1"
+        },
+        {
+          "description": "Exact immutable curve operation input: reference_bundles.",
+          "max_items": 256,
+          "min_items": 0,
+          "name": "reference_bundles",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.curve-bundle.v1"
+        }
+      ],
+      "max_files": 1,
+      "max_input_bytes": 1073741824,
+      "max_network_requests": 0,
+      "max_output_bytes": 536870912,
+      "native_shell": "none",
+      "native_view_image": false,
+      "network_mode": "none",
+      "not_for": "Selecting scientific targets, interpreting mechanisms, or executing a solver.",
+      "operation_id": "scidiscovery.objective-coverage.v1",
+      "outputs": [
+        {
+          "description": "Deterministic curve operation output: coverage_report.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "coverage_report",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.objective-coverage.v1"
+        }
+      ],
+      "purpose": "Verify exact objective coverage by one experiment plan and its reference libraries.",
+      "requires_human_approval": false,
+      "requires_independent_review": false,
+      "review_edge": null,
+      "timeout_seconds": 300,
+      "version": "1"
+    },
+    {
+      "accepts_actions": [],
+      "applies_when": "A reviewed generic experiment needs curve data and metric bindings.",
+      "catalog_scope": "public",
+      "complete_transform_family": null,
+      "consequence": "scientific",
+      "executor_kind": "agent",
+      "input_admission": null,
+      "inputs": [
+        {
+          "description": "Exact objective for the scientific plan.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "research_objective",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.research-objective.v1"
+        },
+        {
+          "description": "Exact generic experiment portfolio.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "experiment_plan",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.experiment-portfolio.v1"
+        },
+        {
+          "description": "Exact independent review of the generic experiment plan.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "experiment_review",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.scientific-review.v1"
+        },
+        {
+          "description": "Exact normalized reference curves used by the contract compiler.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "reference_bundle",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.curve-bundle.v1"
+        }
+      ],
+      "max_files": 1,
+      "max_input_bytes": 273678336,
+      "max_network_requests": 0,
+      "max_output_bytes": 2097152,
+      "native_shell": "inherited_prototype",
+      "native_view_image": false,
+      "network_mode": "none",
+      "not_for": "Changing generic scientific intent or running a curve evaluator.",
+      "operation_id": "science.curve.contract.design.v1",
+      "outputs": [
+        {
+          "description": "Curve-domain realization of one experiment.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "curve_contract",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.curve-experiment-contract.v1"
+        }
+      ],
+      "purpose": "Realize one generic experiment as an explicit curve-domain contract.",
+      "requires_human_approval": false,
+      "requires_independent_review": true,
+      "review_edge": {
+        "accepted_verdicts": [
+          "pass"
+        ],
+        "reviewer_input_port": "curve_contract",
+        "reviewer_operation": "science.curve.contract.review.v1",
+        "subject_outputs": [
+          "curve_contract"
+        ]
+      },
+      "timeout_seconds": 900,
+      "version": "1"
+    },
+    {
+      "accepts_actions": [],
+      "applies_when": "A curve contract needs domain review before deterministic use.",
+      "catalog_scope": "public",
+      "complete_transform_family": null,
+      "consequence": "scientific",
+      "executor_kind": "agent",
+      "input_admission": null,
+      "inputs": [
+        {
+          "description": "Exact objective for the scientific plan.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "research_objective",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.research-objective.v1"
+        },
+        {
+          "description": "Exact generic experiment portfolio.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "experiment_plan",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.experiment-portfolio.v1"
+        },
+        {
+          "description": "Exact independent review of the generic experiment plan.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "experiment_review",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.scientific-review.v1"
+        },
+        {
+          "description": "Exact curve-domain contract under review.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "curve_contract",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.curve-experiment-contract.v1"
+        },
+        {
+          "description": "Exact normalized reference curves used by the compiler.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "reference_bundle",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.curve-bundle.v1"
+        }
+      ],
+      "max_files": 1,
+      "max_input_bytes": 273678336,
+      "max_network_requests": 0,
+      "max_output_bytes": 65536,
+      "native_shell": "inherited_prototype",
+      "native_view_image": false,
+      "network_mode": "none",
+      "not_for": "Editing the contract or granting human execution approval.",
+      "operation_id": "science.curve.contract.review.v1",
+      "outputs": [
+        {
+          "description": "Independent curve-contract review.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "scientific_review",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.scientific-review.v1"
+        }
+      ],
+      "purpose": "Independently review a curve-domain contract against its generic plan.",
+      "requires_human_approval": false,
+      "requires_independent_review": false,
+      "review_edge": null,
+      "timeout_seconds": 600,
+      "version": "1"
+    },
+    {
+      "accepts_actions": [],
+      "applies_when": "A reviewed curve contract, complete metric report, and exact curve bundle are available.",
+      "catalog_scope": "support",
+      "complete_transform_family": null,
+      "consequence": "scientific",
+      "executor_kind": "transform",
+      "input_admission": null,
+      "inputs": [
+        {
+          "description": "Exact experiment portfolio.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "experiment_plan",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.experiment-portfolio.v1"
+        },
+        {
+          "description": "Exact independent plan review.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "experiment_review",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.scientific-review.v1"
+        },
+        {
+          "description": "Exact reviewed curve-domain contract.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "curve_contract",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.curve-experiment-contract.v1"
+        },
+        {
+          "description": "Exact independent review of the curve-domain contract.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "curve_contract_review",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.scientific-review.v1"
+        },
+        {
+          "description": "Exact deterministic curve comparison report.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "metric_report",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.curve-consistency-report.v1"
+        },
+        {
+          "description": "Canonical curve bundle for residual localization.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "curve_bundle",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.curve-bundle.v1"
+        }
+      ],
+      "max_files": 9,
+      "max_input_bytes": 12582912,
+      "max_network_requests": 0,
+      "max_output_bytes": 20971520,
+      "native_shell": "none",
+      "native_view_image": false,
+      "network_mode": "none",
+      "not_for": "Authoring scientific diagnoses or proposing the next experiment.",
+      "operation_id": "science.curve.error.analyze.v1",
+      "outputs": [
+        {
+          "description": "Exact inputs and reproducible deterministic curve-error analysis.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "curve_analysis_package",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.curve-diagnostic-analysis.v1"
+        },
+        {
+          "description": "Deterministic residual plots bound to the analysis package.",
+          "max_items": 8,
+          "min_items": 1,
+          "name": "curve_analysis_plots",
+          "required_non_null_fields": [],
+          "schema": "opaque"
+        }
+      ],
+      "purpose": "Reproduce failed residual metrics and localize their curve error.",
+      "requires_human_approval": false,
+      "requires_independent_review": false,
+      "review_edge": null,
+      "timeout_seconds": 120,
+      "version": "1"
+    },
+    {
+      "accepts_actions": [],
+      "applies_when": "A provisional intake must be checked before its claims are qualified.",
+      "catalog_scope": "public",
+      "complete_transform_family": null,
+      "consequence": "scientific",
+      "executor_kind": "agent",
+      "input_admission": null,
+      "inputs": [
+        {
+          "description": "Provisional scientific intake under review.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "scientific_intake",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.scientific-intake.v1"
+        },
+        {
+          "description": "Exact frozen source material used by the intake.",
+          "max_items": 6,
+          "min_items": 1,
+          "name": "source_material",
+          "required_non_null_fields": [],
+          "schema": "opaque"
+        }
+      ],
+      "max_files": 1,
+      "max_input_bytes": 101711872,
+      "max_network_requests": 0,
+      "max_output_bytes": 32768,
+      "native_shell": "inherited_prototype",
+      "native_view_image": true,
+      "network_mode": "none",
+      "not_for": "Creating the intake or approving it.",
+      "operation_id": "science.evidence.audit.intake.v1",
+      "outputs": [
+        {
+          "description": "Independent evidence and provenance audit.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "evidence_audit",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.evidence-audit.v1"
+        }
+      ],
+      "purpose": "Audit one extracted ScientificIntake against its exact supplied sources.",
+      "requires_human_approval": false,
+      "requires_independent_review": false,
+      "review_edge": null,
+      "timeout_seconds": 600,
+      "version": "1"
+    },
+    {
+      "accepts_actions": [],
+      "applies_when": "A foundation exists and its source support must be checked independently.",
+      "catalog_scope": "public",
+      "complete_transform_family": null,
+      "consequence": "scientific",
+      "executor_kind": "agent",
+      "input_admission": null,
+      "inputs": [
+        {
+          "description": "Scientific foundation under independent audit.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "scientific_foundation",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.scientific-foundation.v1"
+        },
+        {
+          "description": "Exact frozen source material cited by the foundation.",
+          "max_items": 6,
+          "min_items": 0,
+          "name": "source_material",
+          "required_non_null_fields": [],
+          "schema": "opaque"
+        }
+      ],
+      "max_files": 1,
+      "max_input_bytes": 101711872,
+      "max_network_requests": 0,
+      "max_output_bytes": 32768,
+      "native_shell": "inherited_prototype",
+      "native_view_image": true,
+      "network_mode": "none",
+      "not_for": "Extracting evidence, generating mechanisms, or granting qualification.",
+      "operation_id": "science.evidence.audit.v1",
+      "outputs": [
+        {
+          "description": "Independent evidence and provenance audit.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "evidence_audit",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.evidence-audit.v1"
+        }
+      ],
+      "purpose": "Audit one scientific foundation against its exact supplied sources.",
+      "requires_human_approval": false,
+      "requires_independent_review": false,
+      "review_edge": null,
+      "timeout_seconds": 600,
+      "version": "1"
+    },
+    {
+      "accepts_actions": [],
+      "applies_when": "A complete figure family is available, optionally with its exact Intake and non-passing audit.",
+      "catalog_scope": "public",
+      "complete_transform_family": {
+        "input_ports": [
+          "paper_source",
+          "figure_request"
+        ],
+        "output_ports": [
+          "figure_manifest",
+          "validation_report",
+          "source_panels",
+          "audit_overlays",
+          "curve_tables"
+        ]
+      },
+      "consequence": "scientific",
+      "executor_kind": "agent",
+      "input_admission": {
+        "accepted_options": [],
+        "accepted_provider_operations": [],
+        "approval_kind": null,
+        "approval_subject_ports": [],
+        "cohort_id": "figure_intake_revision",
+        "member_ports": [
+          "prior_draft",
+          "change_request"
+        ]
+      },
+      "inputs": [
+        {
+          "description": "Exact frozen paper PDF or supplied raster source.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "paper_source",
+          "required_non_null_fields": [],
+          "schema": "opaque"
+        },
+        {
+          "description": "Typed source selection, calibration, and visible series anchors.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "figure_request",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.curve-figure-digitization-request.v2"
+        },
+        {
+          "description": "Exact deterministic figure-evidence manifest.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "figure_manifest",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.figure-evidence-manifest.v1"
+        },
+        {
+          "description": "Exact deterministic figure-evidence validation report.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "validation_report",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.figure-evidence-validation-report.v1"
+        },
+        {
+          "description": "Canonical source-panel images recovered by the materializer.",
+          "max_items": 1,
+          "min_items": 0,
+          "name": "source_panels",
+          "required_non_null_fields": [],
+          "schema": "opaque"
+        },
+        {
+          "description": "Pixel-level deterministic audit overlays.",
+          "max_items": 2,
+          "min_items": 0,
+          "name": "audit_overlays",
+          "required_non_null_fields": [],
+          "schema": "opaque"
+        },
+        {
+          "description": "Traceable per-series curve tables.",
+          "max_items": 32,
+          "min_items": 0,
+          "name": "curve_tables",
+          "required_non_null_fields": [],
+          "schema": "opaque"
+        },
+        {
+          "description": "Exact immutable figure ScientificIntake to revise.",
+          "max_items": 1,
+          "min_items": 0,
+          "name": "prior_draft",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.scientific-intake.v1"
+        },
+        {
+          "description": "Exact non-passing independent figure audit requesting correction.",
+          "max_items": 1,
+          "min_items": 0,
+          "name": "change_request",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.evidence-audit.v1"
+        }
+      ],
+      "max_files": 1,
+      "max_input_bytes": 340787200,
+      "max_network_requests": 0,
+      "max_output_bytes": 65536,
+      "native_shell": "inherited_prototype",
+      "native_view_image": true,
+      "network_mode": "none",
+      "not_for": "Digitizing pixels, changing the source family, producing a patch, or qualifying the Intake.",
+      "operation_id": "science.evidence.extract.figure.v2",
+      "outputs": [
+        {
+          "description": "One source-bound scientific intake for the exact figure family.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "scientific_intake",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.scientific-intake.v1"
+        }
+      ],
+      "purpose": "Create or revise one ScientificIntake from a complete deterministic figure family.",
+      "requires_human_approval": false,
+      "requires_independent_review": true,
+      "review_edge": {
+        "accepted_verdicts": [
+          "pass"
+        ],
+        "reviewer_input_port": "scientific_intake",
+        "reviewer_operation": "science.figure.evidence.audit.v1",
+        "subject_outputs": [
+          "scientific_intake"
+        ]
+      },
+      "timeout_seconds": 600,
+      "version": "1"
+    },
+    {
+      "accepts_actions": [],
+      "applies_when": "The objective needs a source-backed problem frame and foundation.",
+      "catalog_scope": "public",
+      "complete_transform_family": null,
+      "consequence": "scientific",
+      "executor_kind": "agent",
+      "input_admission": null,
+      "inputs": [
+        {
+          "description": "Immutable paper, text, table, or user-supplied source.",
+          "max_items": 6,
+          "min_items": 1,
+          "name": "source_material",
+          "required_non_null_fields": [],
+          "schema": "opaque"
+        }
+      ],
+      "max_files": 1,
+      "max_input_bytes": 100663296,
+      "max_network_requests": 0,
+      "max_output_bytes": 65536,
+      "native_shell": "inherited_prototype",
+      "native_view_image": true,
+      "network_mode": "none",
+      "not_for": "Quantitative raster-figure digitization or parameter-specific extraction.",
+      "operation_id": "science.evidence.extract.v1",
+      "outputs": [
+        {
+          "description": "Concise problem frame and source-bound scientific foundation.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "scientific_intake",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.scientific-intake.v1"
+        }
+      ],
+      "purpose": "Extract one bounded ScientificIntake from supplied immutable sources.",
+      "requires_human_approval": false,
+      "requires_independent_review": true,
+      "review_edge": {
+        "accepted_verdicts": [
+          "pass"
+        ],
+        "reviewer_input_port": "scientific_intake",
+        "reviewer_operation": "science.evidence.audit.intake.v1",
+        "subject_outputs": [
+          "scientific_intake"
+        ]
+      },
+      "timeout_seconds": 900,
+      "version": "1"
+    },
+    {
+      "accepts_actions": [],
+      "applies_when": "Extraction, deterministic validation, and an independent audit are complete.",
+      "catalog_scope": "public",
+      "complete_transform_family": null,
+      "consequence": "scientific",
+      "executor_kind": "approval",
+      "input_admission": null,
+      "inputs": [
+        {
+          "description": "Exact foundation split from the final extraction primary.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "scientific_foundation",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.scientific-foundation.v1"
+        },
+        {
+          "description": "Exact final ScientificIntake primary under qualification.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "extraction_primary",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.scientific-intake.v1"
+        },
+        {
+          "description": "Complete non-validation sibling output family.",
+          "max_items": 177,
+          "min_items": 0,
+          "name": "producer_outputs",
+          "required_non_null_fields": [],
+          "schema": "*"
+        },
+        {
+          "description": "Complete deterministic validation result set when applicable.",
+          "max_items": 16,
+          "min_items": 0,
+          "name": "validation_results",
+          "required_non_null_fields": [],
+          "schema": "*"
+        },
+        {
+          "description": "Complete frozen producer evidence-source set.",
+          "max_items": 32,
+          "min_items": 0,
+          "name": "frozen_sources",
+          "required_non_null_fields": [],
+          "schema": "*"
+        },
+        {
+          "description": "Independent audit of the exact final evidence family.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "evidence_audit",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.evidence-audit.v1"
+        }
+      ],
+      "max_files": 1,
+      "max_input_bytes": 536870912,
+      "max_network_requests": 0,
+      "max_output_bytes": 524288,
+      "native_shell": "none",
+      "native_view_image": false,
+      "network_mode": "none",
+      "not_for": "Extracting evidence, repairing a provisional bundle, or granting execution authority.",
+      "operation_id": "science.evidence.qualify.v1",
+      "outputs": [],
+      "purpose": "Create one human qualification review for a complete evidence family.",
+      "requires_human_approval": true,
+      "requires_independent_review": false,
+      "review_edge": null,
+      "timeout_seconds": 60,
+      "version": "1"
+    },
+    {
+      "accepts_actions": [
+        "science.evidence.revise"
+      ],
+      "applies_when": "A critic identifies a missing factual premise in a reviewed hypothesis portfolio.",
+      "catalog_scope": "public",
+      "complete_transform_family": null,
+      "consequence": "scientific",
+      "executor_kind": "agent",
+      "input_admission": {
+        "accepted_options": [
+          "approve"
+        ],
+        "accepted_provider_operations": [
+          "science.evidence.qualify.v1"
+        ],
+        "approval_kind": "scientific_foundation",
+        "approval_subject_ports": [
+          "scientific_foundation"
+        ],
+        "cohort_id": "qualified_foundation",
+        "member_ports": [
+          "scientific_foundation"
+        ]
+      },
+      "inputs": [
+        {
+          "description": "Exact previously audited ScientificIntake to revise.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "prior_draft",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.scientific-intake.v1"
+        },
+        {
+          "description": "Exact passing audit of the prior ScientificIntake.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "intake_audit",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.evidence-audit.v1"
+        },
+        {
+          "description": "Exact qualified foundation derived from the prior intake.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "scientific_foundation",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.scientific-foundation.v1"
+        },
+        {
+          "description": "Exact hypothesis portfolio whose factual premise was challenged.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "hypothesis_portfolio",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.hypothesis-proposal.v2"
+        },
+        {
+          "description": "Exact non-passing critic review that identifies the factual gap addressed by this revision.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "change_request",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.critic-review.v2"
+        },
+        {
+          "description": "Complete unchanged source set frozen by the prior ScientificIntake audit; additions require a separate evidence action.",
+          "max_items": 6,
+          "min_items": 1,
+          "name": "source_material",
+          "required_non_null_fields": [],
+          "schema": "opaque"
+        }
+      ],
+      "max_files": 1,
+      "max_input_bytes": 120586240,
+      "max_network_requests": 0,
+      "max_output_bytes": 65536,
+      "native_shell": "inherited_prototype",
+      "native_view_image": true,
+      "network_mode": "none",
+      "not_for": "Changing a mechanism, adding or replacing sources, designing a measurement algorithm, or re-running generic intake without the exact review chain.",
+      "operation_id": "science.evidence.revise-from-critic.v1",
+      "outputs": [
+        {
+          "description": "Concise problem frame and source-bound scientific foundation.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "scientific_intake",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.scientific-intake.v1"
+        }
+      ],
+      "purpose": "Revise one complete ScientificIntake for an exact hypothesis-review evidence gap.",
+      "requires_human_approval": false,
+      "requires_independent_review": true,
+      "review_edge": {
+        "accepted_verdicts": [
+          "pass"
+        ],
+        "reviewer_input_port": "scientific_intake",
+        "reviewer_operation": "science.evidence.audit.intake.v1",
+        "subject_outputs": [
+          "scientific_intake"
+        ]
+      },
+      "timeout_seconds": 900,
+      "version": "1"
+    },
+    {
+      "accepts_actions": [
+        "science.experiment.design",
+        "science.model-counterfactual.design"
+      ],
+      "applies_when": "A research objective, hypothesis portfolio, and independent critic review are available.",
+      "catalog_scope": "public",
+      "complete_transform_family": null,
+      "consequence": "scientific",
+      "executor_kind": "agent",
+      "input_admission": {
+        "accepted_options": [
+          "approve"
+        ],
+        "accepted_provider_operations": [
+          "science.evidence.qualify.v1"
+        ],
+        "approval_kind": "scientific_foundation",
+        "approval_subject_ports": [
+          "scientific_foundation"
+        ],
+        "cohort_id": "qualified_foundation",
+        "member_ports": [
+          "scientific_foundation"
+        ]
+      },
+      "inputs": [
+        {
+          "description": "Exact approved foundation shared by the objective, portfolio, and critic.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "scientific_foundation",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.scientific-foundation.v1"
+        },
+        {
+          "description": "Exact immutable research objective.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "research_objective",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.research-objective.v1"
+        },
+        {
+          "description": "Exact reviewed hypothesis portfolio.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "hypothesis_portfolio",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.hypothesis-proposal.v2"
+        },
+        {
+          "description": "Exact independent critic review.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "critic_review",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.critic-review.v2"
+        },
+        {
+          "description": "Optional immutable execution capabilities, model coverage, and implementation limits.",
+          "max_items": 1,
+          "min_items": 0,
+          "name": "execution_context",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.execution-context.v1"
+        }
+      ],
+      "max_files": 1,
+      "max_input_bytes": 2097152,
+      "max_network_requests": 0,
+      "max_output_bytes": 65536,
+      "native_shell": "inherited_prototype",
+      "native_view_image": false,
+      "network_mode": "none",
+      "not_for": "Expanding the complete execution plan or implementing domain code.",
+      "operation_id": "science.experiment.design.v1",
+      "outputs": [
+        {
+          "description": "Compact experiment-design intent.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "experiment_design_intent",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.experiment-design-intent.v1"
+        }
+      ],
+      "purpose": "Design the smallest bounded experiment that discriminates reviewed hypotheses.",
+      "requires_human_approval": false,
+      "requires_independent_review": false,
+      "review_edge": null,
+      "timeout_seconds": 900,
+      "version": "1"
+    },
+    {
+      "accepts_actions": [],
+      "applies_when": "A validated compact intent and its optional exact scientific context are bound.",
+      "catalog_scope": "support",
+      "complete_transform_family": null,
+      "consequence": "scientific",
+      "executor_kind": "transform",
+      "input_admission": {
+        "accepted_options": [
+          "approve"
+        ],
+        "accepted_provider_operations": [
+          "science.evidence.qualify.v1"
+        ],
+        "approval_kind": "scientific_foundation",
+        "approval_subject_ports": [
+          "scientific_foundation"
+        ],
+        "cohort_id": "qualified_science_context",
+        "member_ports": [
+          "scientific_foundation",
+          "research_objective",
+          "hypothesis_portfolio",
+          "critic_review"
+        ]
+      },
+      "inputs": [
+        {
+          "description": "Compact intent.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "experiment_design_intent",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.experiment-design-intent.v1"
+        },
+        {
+          "description": "Optional exact approved foundation cohort witness.",
+          "max_items": 1,
+          "min_items": 0,
+          "name": "scientific_foundation",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.scientific-foundation.v1"
+        },
+        {
+          "description": "Optional exact objective.",
+          "max_items": 1,
+          "min_items": 0,
+          "name": "research_objective",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.research-objective.v1"
+        },
+        {
+          "description": "Optional exact hypothesis proposal.",
+          "max_items": 1,
+          "min_items": 0,
+          "name": "hypothesis_portfolio",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.hypothesis-proposal.v2"
+        },
+        {
+          "description": "Optional exact critic review.",
+          "max_items": 1,
+          "min_items": 0,
+          "name": "critic_review",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.critic-review.v2"
+        }
+      ],
+      "max_files": 2,
+      "max_input_bytes": 33554432,
+      "max_network_requests": 0,
+      "max_output_bytes": 16777216,
+      "native_shell": "none",
+      "native_view_image": false,
+      "network_mode": "none",
+      "not_for": "Adding scientific choices absent from the compact intent.",
+      "operation_id": "science.experiment.materialize.v1",
+      "outputs": [
+        {
+          "description": "Complete experiment portfolio.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "experiment_plan",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.experiment-portfolio.v1"
+        },
+        {
+          "description": "Deterministic materialization report.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "materialization_report",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.experiment-plan-materialization.v1"
+        }
+      ],
+      "purpose": "Materialize one compact experiment intent into a complete plan.",
+      "requires_human_approval": false,
+      "requires_independent_review": true,
+      "review_edge": {
+        "accepted_verdicts": [
+          "pass"
+        ],
+        "reviewer_input_port": "experiment_plan",
+        "reviewer_operation": "science.object.review.v1",
+        "subject_outputs": [
+          "experiment_plan"
+        ]
+      },
+      "timeout_seconds": 60,
+      "version": "1"
+    },
+    {
+      "accepts_actions": [],
+      "applies_when": "An exact prior experiment and independent review are available.",
+      "catalog_scope": "public",
+      "complete_transform_family": null,
+      "consequence": "scientific",
+      "executor_kind": "agent",
+      "input_admission": null,
+      "inputs": [
+        {
+          "description": "Exact immutable experiment.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "prior_draft",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.experiment-portfolio.v1"
+        },
+        {
+          "description": "Exact independent review.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "change_request",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.scientific-review.v1"
+        }
+      ],
+      "max_files": 1,
+      "max_input_bytes": 16777216,
+      "max_network_requests": 0,
+      "max_output_bytes": 2097152,
+      "native_shell": "inherited_prototype",
+      "native_view_image": false,
+      "network_mode": "none",
+      "not_for": "Producing a patch, inheriting review qualification, or changing unsupported science.",
+      "operation_id": "science.experiment.revise.v1",
+      "outputs": [
+        {
+          "description": "Complete revised experiment portfolio.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "experiment_plan",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.experiment-portfolio.v1"
+        }
+      ],
+      "purpose": "Revise one complete immutable experiment plan.",
+      "requires_human_approval": false,
+      "requires_independent_review": true,
+      "review_edge": {
+        "accepted_verdicts": [
+          "pass"
+        ],
+        "reviewer_input_port": "experiment_plan",
+        "reviewer_operation": "science.object.review.v1",
+        "subject_outputs": [
+          "experiment_plan"
+        ]
+      },
+      "timeout_seconds": 900,
+      "version": "1"
+    },
+    {
+      "accepts_actions": [],
+      "applies_when": "A provisional figure Intake and every exact sibling attachment exist.",
+      "catalog_scope": "public",
+      "complete_transform_family": {
+        "input_ports": [
+          "paper_source",
+          "figure_request"
+        ],
+        "output_ports": [
+          "figure_manifest",
+          "validation_report",
+          "source_panels",
+          "audit_overlays",
+          "curve_tables"
+        ]
+      },
+      "consequence": "scientific",
+      "executor_kind": "agent",
+      "input_admission": null,
+      "inputs": [
+        {
+          "description": "Provisional Intake produced from the exact figure family.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "scientific_intake",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.scientific-intake.v1"
+        },
+        {
+          "description": "Exact frozen paper PDF or supplied raster source.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "paper_source",
+          "required_non_null_fields": [],
+          "schema": "opaque"
+        },
+        {
+          "description": "Typed source selection, calibration, and visible series anchors.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "figure_request",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.curve-figure-digitization-request.v2"
+        },
+        {
+          "description": "Exact deterministic figure-evidence manifest.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "figure_manifest",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.figure-evidence-manifest.v1"
+        },
+        {
+          "description": "Exact deterministic figure-evidence validation report.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "validation_report",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.figure-evidence-validation-report.v1"
+        },
+        {
+          "description": "Canonical source-panel images recovered by the materializer.",
+          "max_items": 1,
+          "min_items": 0,
+          "name": "source_panels",
+          "required_non_null_fields": [],
+          "schema": "opaque"
+        },
+        {
+          "description": "Pixel-level deterministic audit overlays.",
+          "max_items": 2,
+          "min_items": 0,
+          "name": "audit_overlays",
+          "required_non_null_fields": [],
+          "schema": "opaque"
+        },
+        {
+          "description": "Traceable per-series curve tables.",
+          "max_items": 32,
+          "min_items": 0,
+          "name": "curve_tables",
+          "required_non_null_fields": [],
+          "schema": "opaque"
+        }
+      ],
+      "max_files": 1,
+      "max_input_bytes": 340787200,
+      "max_network_requests": 0,
+      "max_output_bytes": 32768,
+      "native_shell": "inherited_prototype",
+      "native_view_image": true,
+      "network_mode": "none",
+      "not_for": "Digitizing, revising, or qualifying the figure evidence.",
+      "operation_id": "science.figure.evidence.audit.v1",
+      "outputs": [
+        {
+          "description": "Independent audit of one Intake and its complete figure family.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "evidence_audit",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.evidence-audit.v1"
+        }
+      ],
+      "purpose": "Independently audit one Intake against its complete figure family.",
+      "requires_human_approval": false,
+      "requires_independent_review": false,
+      "review_edge": null,
+      "timeout_seconds": 600,
+      "version": "1"
+    },
+    {
+      "accepts_actions": [],
+      "applies_when": "The exact declared immutable curve inputs are available.",
+      "catalog_scope": "support",
+      "complete_transform_family": null,
+      "consequence": "scientific",
+      "executor_kind": "transform",
+      "input_admission": null,
+      "inputs": [
+        {
+          "description": "Exact immutable curve operation input: paper_source.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "paper_source",
+          "required_non_null_fields": [],
+          "schema": "opaque"
+        },
+        {
+          "description": "Exact immutable curve operation input: figure_request.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "figure_request",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.curve-figure-digitization-request.v2"
+        }
+      ],
+      "max_files": 37,
+      "max_input_bytes": 34603008,
+      "max_network_requests": 0,
+      "max_output_bytes": 321912832,
+      "native_shell": "none",
+      "native_view_image": false,
+      "network_mode": "none",
+      "not_for": "Selecting scientific targets, interpreting mechanisms, or executing a solver.",
+      "operation_id": "science.figure.evidence.materialize.v1",
+      "outputs": [
+        {
+          "description": "Deterministic curve operation output: figure_manifest.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "figure_manifest",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.figure-evidence-manifest.v1"
+        },
+        {
+          "description": "Deterministic curve operation output: source_panels.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "source_panels",
+          "required_non_null_fields": [],
+          "schema": "opaque"
+        },
+        {
+          "description": "Deterministic curve operation output: audit_overlays.",
+          "max_items": 2,
+          "min_items": 1,
+          "name": "audit_overlays",
+          "required_non_null_fields": [],
+          "schema": "opaque"
+        },
+        {
+          "description": "Deterministic curve operation output: curve_tables.",
+          "max_items": 32,
+          "min_items": 1,
+          "name": "curve_tables",
+          "required_non_null_fields": [],
+          "schema": "opaque"
+        },
+        {
+          "description": "Deterministic curve operation output: validation_report.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "validation_report",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.figure-evidence-validation-report.v1"
+        }
+      ],
+      "purpose": "Deterministically recover and digitize one exact typed paper figure.",
+      "requires_human_approval": false,
+      "requires_independent_review": false,
+      "review_edge": null,
+      "timeout_seconds": 300,
+      "version": "1"
+    },
+    {
+      "accepts_actions": [],
+      "applies_when": "A frozen PDF or raster may contain a quantitative figure needed as evidence.",
+      "catalog_scope": "public",
+      "complete_transform_family": null,
+      "consequence": "scientific",
+      "executor_kind": "agent",
+      "input_admission": null,
+      "inputs": [
+        {
+          "description": "Exact frozen paper PDF or supplied raster source.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "paper_source",
+          "required_non_null_fields": [],
+          "schema": "opaque"
+        },
+        {
+          "description": "Explicit scientific objective for semantic selection.",
+          "max_items": 1,
+          "min_items": 0,
+          "name": "research_objective",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.research-objective.v1"
+        }
+      ],
+      "max_files": 1,
+      "max_input_bytes": 34603008,
+      "max_network_requests": 0,
+      "max_output_bytes": 1048576,
+      "native_shell": "inherited_prototype",
+      "native_view_image": true,
+      "network_mode": "none",
+      "not_for": "Producing curve points, qualifying evidence, or inferring an ambiguous identity.",
+      "operation_id": "science.figure.request.prepare.v1",
+      "outputs": [
+        {
+          "description": "Source-bound visible calibration and series guidance for deterministic extraction.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "figure_request",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.curve-figure-digitization-request.v2"
+        }
+      ],
+      "purpose": "Select and describe one exact, visibly anchored quantitative paper figure.",
+      "requires_human_approval": false,
+      "requires_independent_review": false,
+      "review_edge": null,
+      "timeout_seconds": 900,
+      "version": "1"
+    },
+    {
+      "accepts_actions": [],
+      "applies_when": "A hypothesis portfolio and its scientific foundation are available.",
+      "catalog_scope": "public",
+      "complete_transform_family": null,
+      "consequence": "scientific",
+      "executor_kind": "agent",
+      "input_admission": {
+        "accepted_options": [
+          "approve"
+        ],
+        "accepted_provider_operations": [
+          "science.evidence.qualify.v1"
+        ],
+        "approval_kind": "scientific_foundation",
+        "approval_subject_ports": [
+          "scientific_foundation"
+        ],
+        "cohort_id": "qualified_foundation",
+        "member_ports": [
+          "scientific_foundation"
+        ]
+      },
+      "inputs": [
+        {
+          "description": "Exact hypothesis proposal under review.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "hypothesis_portfolio",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.hypothesis-proposal.v2"
+        },
+        {
+          "description": "Exact scientific foundation used to challenge the proposal.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "scientific_foundation",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.scientific-foundation.v1"
+        }
+      ],
+      "max_files": 1,
+      "max_input_bytes": 2097152,
+      "max_network_requests": 0,
+      "max_output_bytes": 32768,
+      "native_shell": "inherited_prototype",
+      "native_view_image": false,
+      "network_mode": "none",
+      "not_for": "Generating hypotheses or deciding qualification.",
+      "operation_id": "science.hypothesis.criticize.v1",
+      "outputs": [
+        {
+          "description": "Independent hypothesis critic review.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "scientific_review",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.critic-review.v2"
+        }
+      ],
+      "purpose": "Adversarially review every proposed hypothesis.",
+      "requires_human_approval": false,
+      "requires_independent_review": false,
+      "review_edge": null,
+      "timeout_seconds": 600,
+      "version": "1"
+    },
+    {
+      "accepts_actions": [],
+      "applies_when": "A problem frame and scientific foundation expose an unresolved mechanism.",
+      "catalog_scope": "public",
+      "complete_transform_family": null,
+      "consequence": "scientific",
+      "executor_kind": "agent",
+      "input_admission": {
+        "accepted_options": [
+          "approve"
+        ],
+        "accepted_provider_operations": [
+          "science.evidence.qualify.v1"
+        ],
+        "approval_kind": "scientific_foundation",
+        "approval_subject_ports": [
+          "scientific_foundation"
+        ],
+        "cohort_id": "qualified_foundation",
+        "member_ports": [
+          "scientific_foundation"
+        ]
+      },
+      "inputs": [
+        {
+          "description": "Exact bounded problem frame.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "problem_frame",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.problem-frame.v1"
+        },
+        {
+          "description": "Exact evidence-bearing scientific foundation.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "scientific_foundation",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.scientific-foundation.v1"
+        }
+      ],
+      "max_files": 1,
+      "max_input_bytes": 2097152,
+      "max_network_requests": 0,
+      "max_output_bytes": 65536,
+      "native_shell": "inherited_prototype",
+      "native_view_image": false,
+      "network_mode": "none",
+      "not_for": "Reviewing, selecting, or qualifying hypotheses.",
+      "operation_id": "science.hypothesis.propose.v1",
+      "outputs": [
+        {
+          "description": "Distinct falsifiable hypothesis proposal bound to one global objective.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "hypothesis_portfolio",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.hypothesis-proposal.v2"
+        }
+      ],
+      "purpose": "Propose a small falsifiable portfolio for the current contradiction.",
+      "requires_human_approval": false,
+      "requires_independent_review": true,
+      "review_edge": {
+        "accepted_verdicts": [
+          "pass"
+        ],
+        "reviewer_input_port": "hypothesis_portfolio",
+        "reviewer_operation": "science.hypothesis.criticize.v1",
+        "subject_outputs": [
+          "hypothesis_portfolio"
+        ]
+      },
+      "timeout_seconds": 900,
+      "version": "1"
+    },
+    {
+      "accepts_actions": [
+        "science.hypothesis.revise"
+      ],
+      "applies_when": "An exact prior portfolio and independent critic request require correction.",
+      "catalog_scope": "public",
+      "complete_transform_family": null,
+      "consequence": "scientific",
+      "executor_kind": "agent",
+      "input_admission": {
+        "accepted_options": [
+          "approve"
+        ],
+        "accepted_provider_operations": [
+          "science.evidence.qualify.v1"
+        ],
+        "approval_kind": "scientific_foundation",
+        "approval_subject_ports": [
+          "scientific_foundation"
+        ],
+        "cohort_id": "qualified_foundation",
+        "member_ports": [
+          "scientific_foundation"
+        ]
+      },
+      "inputs": [
+        {
+          "description": "Exact immutable hypothesis portfolio to revise.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "prior_draft",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.hypothesis-proposal.v2"
+        },
+        {
+          "description": "Exact independent critic review requesting correction.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "change_request",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.critic-review.v2"
+        },
+        {
+          "description": "Exact approved scientific foundation bounding the revised portfolio.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "scientific_foundation",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.scientific-foundation.v1"
+        }
+      ],
+      "max_files": 1,
+      "max_input_bytes": 10485760,
+      "max_network_requests": 0,
+      "max_output_bytes": 65536,
+      "native_shell": "inherited_prototype",
+      "native_view_image": false,
+      "network_mode": "none",
+      "not_for": "Producing a patch, inheriting a critic verdict, or expanding the evidence basis.",
+      "operation_id": "science.hypothesis.revise.v1",
+      "outputs": [
+        {
+          "description": "Distinct falsifiable hypothesis proposal bound to one global objective.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "hypothesis_portfolio",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.hypothesis-proposal.v2"
+        }
+      ],
+      "purpose": "Revise one complete hypothesis portfolio within the approved foundation.",
+      "requires_human_approval": false,
+      "requires_independent_review": true,
+      "review_edge": {
+        "accepted_verdicts": [
+          "pass"
+        ],
+        "reviewer_input_port": "hypothesis_portfolio",
+        "reviewer_operation": "science.hypothesis.criticize.v1",
+        "subject_outputs": [
+          "hypothesis_portfolio"
+        ]
+      },
+      "timeout_seconds": 900,
+      "version": "1"
+    },
+    {
+      "accepts_actions": [],
+      "applies_when": "An exact prior intake and independent change request require correction.",
+      "catalog_scope": "public",
+      "complete_transform_family": null,
+      "consequence": "scientific",
+      "executor_kind": "agent",
+      "input_admission": null,
+      "inputs": [
+        {
+          "description": "Exact immutable ScientificIntake to revise.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "prior_draft",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.scientific-intake.v1"
+        },
+        {
+          "description": "Exact independent evidence audit requesting correction.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "change_request",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.evidence-audit.v1"
+        },
+        {
+          "description": "Complete immutable sources supporting the revised intake.",
+          "max_items": 6,
+          "min_items": 1,
+          "name": "source_material",
+          "required_non_null_fields": [],
+          "schema": "opaque"
+        }
+      ],
+      "max_files": 1,
+      "max_input_bytes": 110100480,
+      "max_network_requests": 0,
+      "max_output_bytes": 65536,
+      "native_shell": "inherited_prototype",
+      "native_view_image": true,
+      "network_mode": "none",
+      "not_for": "Producing a patch, inheriting qualification, or changing unsupported facts.",
+      "operation_id": "science.intake.revise.v1",
+      "outputs": [
+        {
+          "description": "Concise problem frame and source-bound scientific foundation.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "scientific_intake",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.scientific-intake.v1"
+        }
+      ],
+      "purpose": "Revise one complete ScientificIntake against its exact sources.",
+      "requires_human_approval": false,
+      "requires_independent_review": true,
+      "review_edge": {
+        "accepted_verdicts": [
+          "pass"
+        ],
+        "reviewer_input_port": "scientific_intake",
+        "reviewer_operation": "science.evidence.audit.intake.v1",
+        "subject_outputs": [
+          "scientific_intake"
+        ]
+      },
+      "timeout_seconds": 900,
+      "version": "1"
+    },
+    {
+      "accepts_actions": [],
+      "applies_when": "A scientific intake exists and its provisional status must be preserved.",
+      "catalog_scope": "support",
+      "complete_transform_family": null,
+      "consequence": "scientific",
+      "executor_kind": "transform",
+      "input_admission": null,
+      "inputs": [
+        {
+          "description": "Exact validated scientific intake.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "scientific_intake",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.scientific-intake.v1"
+        },
+        {
+          "description": "Exact passing independent audit of this scientific intake.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "evidence_audit",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.evidence-audit.v1"
+        }
+      ],
+      "max_files": 2,
+      "max_input_bytes": 33554432,
+      "max_network_requests": 0,
+      "max_output_bytes": 16777216,
+      "native_shell": "none",
+      "native_view_image": false,
+      "network_mode": "none",
+      "not_for": "Extracting new evidence or changing scientific content.",
+      "operation_id": "science.intake.split.v1",
+      "outputs": [
+        {
+          "description": "Problem frame projected from the intake.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "problem_frame",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.problem-frame.v1"
+        },
+        {
+          "description": "Scientific foundation projected from the intake.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "scientific_foundation",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.scientific-foundation.v1"
+        }
+      ],
+      "purpose": "Split one validated scientific intake into its immutable frame and foundation.",
+      "requires_human_approval": false,
+      "requires_independent_review": false,
+      "review_edge": null,
+      "timeout_seconds": 60,
+      "version": "1"
+    },
+    {
+      "accepts_actions": [],
+      "applies_when": "A complete experiment portfolio needs independent scientific review.",
+      "catalog_scope": "public",
+      "complete_transform_family": null,
+      "consequence": "scientific",
+      "executor_kind": "agent",
+      "input_admission": null,
+      "inputs": [
+        {
+          "description": "Complete experiment portfolio under review.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "experiment_plan",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.experiment-portfolio.v1"
+        }
+      ],
+      "max_files": 1,
+      "max_input_bytes": 2097152,
+      "max_network_requests": 0,
+      "max_output_bytes": 65536,
+      "native_shell": "inherited_prototype",
+      "native_view_image": false,
+      "network_mode": "none",
+      "not_for": "Reviewing an unmaterialized intent or granting human approval.",
+      "operation_id": "science.object.review.v1",
+      "outputs": [
+        {
+          "description": "Independent structured review.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "scientific_review",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.scientific-review.v1"
+        }
+      ],
+      "purpose": "Review one complete materialized experiment plan without changing it.",
+      "requires_human_approval": false,
+      "requires_independent_review": false,
+      "review_edge": null,
+      "timeout_seconds": 600,
+      "version": "1"
+    },
+    {
+      "accepts_actions": [],
+      "applies_when": "A qualified foundation declares an explicit objective contract.",
+      "catalog_scope": "support",
+      "complete_transform_family": null,
+      "consequence": "scientific",
+      "executor_kind": "transform",
+      "input_admission": {
+        "accepted_options": [
+          "approve"
+        ],
+        "accepted_provider_operations": [
+          "science.evidence.qualify.v1"
+        ],
+        "approval_kind": "scientific_foundation",
+        "approval_subject_ports": [
+          "scientific_foundation"
+        ],
+        "cohort_id": "qualified_foundation",
+        "member_ports": [
+          "scientific_foundation"
+        ]
+      },
+      "inputs": [
+        {
+          "description": "Qualified foundation containing the objective contract.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "scientific_foundation",
+          "required_non_null_fields": [
+            "objective_contract"
+          ],
+          "schema": "scidiscovery.scientific-foundation.v1"
+        }
+      ],
+      "max_files": 1,
+      "max_input_bytes": 33554432,
+      "max_network_requests": 0,
+      "max_output_bytes": 16777216,
+      "native_shell": "none",
+      "native_view_image": false,
+      "network_mode": "none",
+      "not_for": "Inferring a new objective or changing scientific content.",
+      "operation_id": "science.objective.project.v1",
+      "outputs": [
+        {
+          "description": "Exact research objective contract.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "research_objective",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.research-objective.v1"
+        }
+      ],
+      "purpose": "Project the exact research objective declared by a foundation.",
+      "requires_human_approval": false,
+      "requires_independent_review": false,
+      "review_edge": null,
+      "timeout_seconds": 60,
+      "version": "1"
+    },
+    {
+      "accepts_actions": [],
+      "applies_when": "All exact typed inputs are available.",
+      "catalog_scope": "support",
+      "complete_transform_family": null,
+      "consequence": "scientific",
+      "executor_kind": "transform",
+      "input_admission": null,
+      "inputs": [
+        {
+          "description": "Exact parameter requirements.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "parameter_requirements",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.device-parameter-requirements.v1"
+        },
+        {
+          "description": "Exact selected parameter evidence.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "device_parameters",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.device-parameter-set.v1"
+        },
+        {
+          "description": "Exact source catalog.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "source_catalog",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.evidence-source-catalog.v1"
+        }
+      ],
+      "max_files": 1,
+      "max_input_bytes": 8388608,
+      "max_network_requests": 0,
+      "max_output_bytes": 2097152,
+      "native_shell": "none",
+      "native_view_image": false,
+      "network_mode": "none",
+      "not_for": "Scientific interpretation, source invention, or qualification.",
+      "operation_id": "science.parameter.coverage.v1",
+      "outputs": [
+        {
+          "description": "Deterministic coverage report.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "parameter_coverage",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.device-parameter-coverage.v1"
+        }
+      ],
+      "purpose": "Evaluate exact TCAD parameter evidence coverage without selecting values.",
+      "requires_human_approval": false,
+      "requires_independent_review": false,
+      "review_edge": null,
+      "timeout_seconds": 300,
+      "version": "1"
+    },
+    {
+      "accepts_actions": [],
+      "applies_when": "All exact typed inputs are available.",
+      "catalog_scope": "support",
+      "complete_transform_family": null,
+      "consequence": "scientific",
+      "executor_kind": "transform",
+      "input_admission": {
+        "accepted_options": [
+          "approve",
+          "approve_with_exception"
+        ],
+        "accepted_provider_operations": [
+          "science.parameters.qualify.pass.v1",
+          "science.parameters.qualify.exception.v1"
+        ],
+        "approval_kind": "scientific_foundation",
+        "approval_subject_ports": [
+          "parameter_requirements",
+          "device_parameters",
+          "parameter_coverage"
+        ],
+        "cohort_id": "approved_parameters",
+        "member_ports": [
+          "parameter_requirements",
+          "device_parameters",
+          "parameter_coverage"
+        ]
+      },
+      "inputs": [
+        {
+          "description": "Exact parameter requirements.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "parameter_requirements",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.device-parameter-requirements.v1"
+        },
+        {
+          "description": "Exact selected parameter evidence.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "device_parameters",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.device-parameter-set.v1"
+        },
+        {
+          "description": "Exact deterministic coverage.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "parameter_coverage",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.device-parameter-coverage.v1"
+        }
+      ],
+      "max_files": 1,
+      "max_input_bytes": 8388608,
+      "max_network_requests": 0,
+      "max_output_bytes": 2097152,
+      "native_shell": "none",
+      "native_view_image": false,
+      "network_mode": "none",
+      "not_for": "Scientific interpretation, source invention, or qualification.",
+      "operation_id": "science.parameter.uncertainty.v1",
+      "outputs": [
+        {
+          "description": "Fixed, bounded, or blocking use projection.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "parameter_uncertainty",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.parameter-uncertainty.v1"
+        }
+      ],
+      "purpose": "Project an approved TCAD parameter set into a deterministic use gate.",
+      "requires_human_approval": false,
+      "requires_independent_review": false,
+      "review_edge": null,
+      "timeout_seconds": 300,
+      "version": "1"
+    },
+    {
+      "accepts_actions": [],
+      "applies_when": "Coverage requires review and the exact independent audit passes.",
+      "catalog_scope": "public",
+      "complete_transform_family": null,
+      "consequence": "scientific",
+      "executor_kind": "approval",
+      "input_admission": null,
+      "inputs": [
+        {
+          "description": "Exact foundation split from the extraction primary.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "scientific_foundation",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.scientific-foundation.v1"
+        },
+        {
+          "description": "Exact Agent-produced parameter package.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "parameter_evidence_package",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.parameter-evidence-package.v1"
+        },
+        {
+          "description": "Exact parameter extraction primary.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "extraction_primary",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.scientific-intake.v1"
+        },
+        {
+          "description": "Optional immutable checklist supplied to extraction.",
+          "max_items": 1,
+          "min_items": 0,
+          "name": "required_parameter_checklist",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.device-parameter-requirements.v1"
+        },
+        {
+          "description": "Complete parameter requirement set.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "parameter_requirements",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.device-parameter-requirements.v1"
+        },
+        {
+          "description": "Complete selected parameter set.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "device_parameters",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.device-parameter-set.v1"
+        },
+        {
+          "description": "Complete source catalog.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "source_catalog",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.evidence-source-catalog.v1"
+        },
+        {
+          "description": "Deterministic parameter coverage.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "parameter_coverage",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.device-parameter-coverage.v1"
+        },
+        {
+          "description": "Independent parameter audit.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "parameter_audit",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.evidence-audit.v1"
+        },
+        {
+          "description": "Complete frozen source set.",
+          "max_items": 32,
+          "min_items": 1,
+          "name": "frozen_sources",
+          "required_non_null_fields": [],
+          "schema": "*"
+        }
+      ],
+      "max_files": 1,
+      "max_input_bytes": 536870912,
+      "max_network_requests": 0,
+      "max_output_bytes": 524288,
+      "native_shell": "none",
+      "native_view_image": false,
+      "network_mode": "none",
+      "not_for": "Passing or blocking parameter coverage.",
+      "operation_id": "science.parameters.qualify.exception.v1",
+      "outputs": [],
+      "purpose": "Create one rationale-required exception review for a bounded TCAD parameter set.",
+      "requires_human_approval": true,
+      "requires_independent_review": false,
+      "review_edge": null,
+      "timeout_seconds": 60,
+      "version": "2"
+    },
+    {
+      "accepts_actions": [],
+      "applies_when": "Coverage and the exact independent parameter audit pass.",
+      "catalog_scope": "public",
+      "complete_transform_family": null,
+      "consequence": "scientific",
+      "executor_kind": "approval",
+      "input_admission": null,
+      "inputs": [
+        {
+          "description": "Exact foundation split from the extraction primary.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "scientific_foundation",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.scientific-foundation.v1"
+        },
+        {
+          "description": "Exact Agent-produced parameter package.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "parameter_evidence_package",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.parameter-evidence-package.v1"
+        },
+        {
+          "description": "Exact parameter extraction primary.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "extraction_primary",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.scientific-intake.v1"
+        },
+        {
+          "description": "Optional immutable checklist supplied to extraction.",
+          "max_items": 1,
+          "min_items": 0,
+          "name": "required_parameter_checklist",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.device-parameter-requirements.v1"
+        },
+        {
+          "description": "Complete parameter requirement set.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "parameter_requirements",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.device-parameter-requirements.v1"
+        },
+        {
+          "description": "Complete selected parameter set.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "device_parameters",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.device-parameter-set.v1"
+        },
+        {
+          "description": "Complete source catalog.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "source_catalog",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.evidence-source-catalog.v1"
+        },
+        {
+          "description": "Deterministic parameter coverage.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "parameter_coverage",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.device-parameter-coverage.v1"
+        },
+        {
+          "description": "Independent parameter audit.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "parameter_audit",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.evidence-audit.v1"
+        },
+        {
+          "description": "Complete frozen source set.",
+          "max_items": 32,
+          "min_items": 1,
+          "name": "frozen_sources",
+          "required_non_null_fields": [],
+          "schema": "*"
+        }
+      ],
+      "max_files": 1,
+      "max_input_bytes": 536870912,
+      "max_network_requests": 0,
+      "max_output_bytes": 524288,
+      "native_shell": "none",
+      "native_view_image": false,
+      "network_mode": "none",
+      "not_for": "Review-required or blocking parameter coverage.",
+      "operation_id": "science.parameters.qualify.pass.v1",
+      "outputs": [],
+      "purpose": "Create one human qualification review for a passing TCAD parameter set.",
+      "requires_human_approval": true,
+      "requires_independent_review": false,
+      "review_edge": null,
+      "timeout_seconds": 60,
+      "version": "2"
+    },
+    {
+      "accepts_actions": [],
+      "applies_when": "A deterministic curve-error analysis package localizes a failed residual metric.",
+      "catalog_scope": "public",
+      "complete_transform_family": null,
+      "consequence": "scientific",
+      "executor_kind": "agent",
+      "input_admission": null,
+      "inputs": [
+        {
+          "description": "Exact reproducible curve inputs and deterministic error localization.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "curve_analysis_package",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.curve-diagnostic-analysis.v1"
+        }
+      ],
+      "max_files": 1,
+      "max_input_bytes": 12582912,
+      "max_network_requests": 0,
+      "max_output_bytes": 131072,
+      "native_shell": "inherited_prototype",
+      "native_view_image": false,
+      "network_mode": "none",
+      "not_for": "Recomputing analysis, producing plots, or changing exact scientific inputs.",
+      "operation_id": "science.result.diagnose.curve-error.v1",
+      "outputs": [
+        {
+          "description": "Scientific interpretation of the fixed curve-error analysis.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "layered_diagnosis",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.layered-diagnosis.v1"
+        }
+      ],
+      "purpose": "Interpret one deterministic curve-error analysis package.",
+      "requires_human_approval": false,
+      "requires_independent_review": false,
+      "review_edge": null,
+      "timeout_seconds": 900,
+      "version": "1"
+    },
+    {
+      "accepts_actions": [],
+      "applies_when": "A complete plan and deterministic curve metric report are available.",
+      "catalog_scope": "public",
+      "complete_transform_family": null,
+      "consequence": "scientific",
+      "executor_kind": "agent",
+      "input_admission": null,
+      "inputs": [
+        {
+          "description": "Exact experiment portfolio.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "experiment_plan",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.experiment-portfolio.v1"
+        },
+        {
+          "description": "Exact independent plan review.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "experiment_review",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.scientific-review.v1"
+        },
+        {
+          "description": "Exact reviewed curve-domain contract.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "curve_contract",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.curve-experiment-contract.v1"
+        },
+        {
+          "description": "Exact independent review of the curve-domain contract.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "curve_contract_review",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.scientific-review.v1"
+        },
+        {
+          "description": "Exact deterministic curve comparison report.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "metric_report",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.curve-consistency-report.v1"
+        },
+        {
+          "description": "Optional canonical curve bundle.",
+          "max_items": 1,
+          "min_items": 0,
+          "name": "curve_bundle",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.curve-bundle.v1"
+        }
+      ],
+      "max_files": 1,
+      "max_input_bytes": 12582912,
+      "max_network_requests": 0,
+      "max_output_bytes": 131072,
+      "native_shell": "inherited_prototype",
+      "native_view_image": false,
+      "network_mode": "none",
+      "not_for": "Recomputing canonical metrics, parsing raw outputs, or modifying evidence.",
+      "operation_id": "science.result.diagnose.v1",
+      "outputs": [
+        {
+          "description": "Layered diagnosis bound to exact curve inputs.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "layered_diagnosis",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.layered-diagnosis.v1"
+        }
+      ],
+      "purpose": "Interpret deterministic curve metrics against the pre-registered plan.",
+      "requires_human_approval": false,
+      "requires_independent_review": false,
+      "review_edge": null,
+      "timeout_seconds": 900,
+      "version": "1"
+    },
+    {
+      "accepts_actions": [],
+      "applies_when": "All declared immutable inputs are available.",
+      "catalog_scope": "support",
+      "complete_transform_family": null,
+      "consequence": "scientific",
+      "executor_kind": "transform",
+      "input_admission": null,
+      "inputs": [
+        {
+          "description": "Exact deterministic TCAD transform input: experiment_plan.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "experiment_plan",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.experiment-portfolio.v1"
+        },
+        {
+          "description": "Exact deterministic TCAD transform input: reviewed_packages.",
+          "max_items": 4096,
+          "min_items": 1,
+          "name": "reviewed_packages",
+          "required_non_null_fields": [],
+          "schema": "tcad.reviewed-deck-package.v2"
+        }
+      ],
+      "max_files": 4098,
+      "max_input_bytes": 536870912,
+      "max_network_requests": 0,
+      "max_output_bytes": 289406976,
+      "native_shell": "none",
+      "native_view_image": false,
+      "network_mode": "none",
+      "not_for": "Open-ended scientific judgment or external execution.",
+      "operation_id": "tcad.control-equivalence.v1",
+      "outputs": [
+        {
+          "description": "Deterministic TCAD transform output: control_equivalence.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "control_equivalence",
+          "required_non_null_fields": [],
+          "schema": "tcad.study-control-equivalence.v1"
+        },
+        {
+          "description": "Deterministic TCAD transform output: realization_snapshots.",
+          "max_items": 4096,
+          "min_items": 0,
+          "name": "realization_snapshots",
+          "required_non_null_fields": [],
+          "schema": "tcad.realization-snapshot.v1"
+        },
+        {
+          "description": "Deterministic TCAD transform output: control_audit.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "control_audit",
+          "required_non_null_fields": [],
+          "schema": "tcad.control-equivalence-audit.v1"
+        }
+      ],
+      "purpose": "Evaluate study controls over one or more reviewed TCAD packages.",
+      "requires_human_approval": false,
+      "requires_independent_review": false,
+      "review_edge": null,
+      "timeout_seconds": 300,
+      "version": "1"
+    },
+    {
+      "accepts_actions": [],
+      "applies_when": "Attested TCAD solver output and an exact curve contract are bound.",
+      "catalog_scope": "support",
+      "complete_transform_family": null,
+      "consequence": "scientific",
+      "executor_kind": "transform",
+      "input_admission": null,
+      "inputs": [
+        {
+          "description": "Exact TCAD curve adapter input: solver_output.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "solver_output",
+          "required_non_null_fields": [],
+          "schema": "opaque"
+        },
+        {
+          "description": "Exact TCAD curve adapter input: runtime_attestation.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "runtime_attestation",
+          "required_non_null_fields": [],
+          "schema": "tcad.runtime-attestation.v1"
+        },
+        {
+          "description": "Exact TCAD curve adapter input: experiment_plan.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "experiment_plan",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.experiment-portfolio.v1"
+        },
+        {
+          "description": "Exact TCAD curve adapter input: experiment_review.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "experiment_review",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.scientific-review.v1"
+        },
+        {
+          "description": "Exact TCAD curve adapter input: curve_contract.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "curve_contract",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.curve-experiment-contract.v1"
+        },
+        {
+          "description": "Exact TCAD curve adapter input: curve_contract_review.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "curve_contract_review",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.scientific-review.v1"
+        },
+        {
+          "description": "Exact TCAD curve adapter input: source_spec.",
+          "max_items": 1,
+          "min_items": 0,
+          "name": "source_spec",
+          "required_non_null_fields": [],
+          "schema": "tcad.sprocess-log-source.v1"
+        }
+      ],
+      "max_files": 2,
+      "max_input_bytes": 536870912,
+      "max_network_requests": 0,
+      "max_output_bytes": 285212672,
+      "native_shell": "none",
+      "native_view_image": false,
+      "network_mode": "none",
+      "not_for": "Selecting scientific comparisons, scoring curves, or interpreting results.",
+      "operation_id": "tcad.curve-bundle.sprocess-log.v1",
+      "outputs": [
+        {
+          "description": "Deterministic TCAD curve adapter output: curve_bundle.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "curve_bundle",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.curve-bundle.v1"
+        },
+        {
+          "description": "Deterministic TCAD curve adapter output: normalization_audit.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "normalization_audit",
+          "required_non_null_fields": [],
+          "schema": "tcad.curve-normalization-audit.v1"
+        }
+      ],
+      "purpose": "Normalize one exact attested SProcess log into a canonical curve bundle.",
+      "requires_human_approval": false,
+      "requires_independent_review": false,
+      "review_edge": null,
+      "timeout_seconds": 300,
+      "version": "1"
+    },
+    {
+      "accepts_actions": [],
+      "applies_when": "Attested TCAD solver output and an exact curve contract are bound.",
+      "catalog_scope": "support",
+      "complete_transform_family": null,
+      "consequence": "scientific",
+      "executor_kind": "transform",
+      "input_admission": null,
+      "inputs": [
+        {
+          "description": "Exact TCAD curve adapter input: runtime_manifest.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "runtime_manifest",
+          "required_non_null_fields": [],
+          "schema": "opaque"
+        },
+        {
+          "description": "Exact TCAD curve adapter input: runtime_attestation.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "runtime_attestation",
+          "required_non_null_fields": [],
+          "schema": "tcad.runtime-attestation.v1"
+        },
+        {
+          "description": "Exact TCAD curve adapter input: experiment_plan.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "experiment_plan",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.experiment-portfolio.v1"
+        },
+        {
+          "description": "Exact TCAD curve adapter input: experiment_review.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "experiment_review",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.scientific-review.v1"
+        },
+        {
+          "description": "Exact TCAD curve adapter input: curve_contract.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "curve_contract",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.curve-experiment-contract.v1"
+        },
+        {
+          "description": "Exact TCAD curve adapter input: curve_contract_review.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "curve_contract_review",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.scientific-review.v1"
+        },
+        {
+          "description": "Exact TCAD curve adapter input: solver_outputs.",
+          "max_items": 256,
+          "min_items": 1,
+          "name": "solver_outputs",
+          "required_non_null_fields": [],
+          "schema": "opaque"
+        }
+      ],
+      "max_files": 2,
+      "max_input_bytes": 536870912,
+      "max_network_requests": 0,
+      "max_output_bytes": 285212672,
+      "native_shell": "none",
+      "native_view_image": false,
+      "network_mode": "none",
+      "not_for": "Selecting scientific comparisons, scoring curves, or interpreting results.",
+      "operation_id": "tcad.curve-bundle.sprocess-plx.v1",
+      "outputs": [
+        {
+          "description": "Deterministic TCAD curve adapter output: curve_bundle.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "curve_bundle",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.curve-bundle.v1"
+        },
+        {
+          "description": "Deterministic TCAD curve adapter output: normalization_audit.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "normalization_audit",
+          "required_non_null_fields": [],
+          "schema": "tcad.curve-normalization-audit.v1"
+        }
+      ],
+      "purpose": "Normalize exact manifest-bound SProcess PLX outputs into a canonical curve bundle.",
+      "requires_human_approval": false,
+      "requires_independent_review": false,
+      "review_edge": null,
+      "timeout_seconds": 300,
+      "version": "1"
+    },
+    {
+      "accepts_actions": [],
+      "applies_when": "All declared immutable inputs are available.",
+      "catalog_scope": "support",
+      "complete_transform_family": null,
+      "consequence": "scientific",
+      "executor_kind": "transform",
+      "input_admission": null,
+      "inputs": [
+        {
+          "description": "Exact deterministic TCAD transform input: base_project.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "base_project",
+          "required_non_null_fields": [],
+          "schema": "tcad.deck-project.v1"
+        },
+        {
+          "description": "Exact deterministic TCAD transform input: revised_project.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "revised_project",
+          "required_non_null_fields": [],
+          "schema": "tcad.deck-project.v1"
+        }
+      ],
+      "max_files": 8,
+      "max_input_bytes": 268435456,
+      "max_network_requests": 0,
+      "max_output_bytes": 67108864,
+      "native_shell": "none",
+      "native_view_image": false,
+      "network_mode": "none",
+      "not_for": "Open-ended scientific judgment or external execution.",
+      "operation_id": "tcad.deck-project-compare.v1",
+      "outputs": [
+        {
+          "description": "Deterministic TCAD transform output: project_diff.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "project_diff",
+          "required_non_null_fields": [],
+          "schema": "tcad.deck-project-diff.v1"
+        }
+      ],
+      "purpose": "Compare two exact TCAD project revisions deterministically.",
+      "requires_human_approval": false,
+      "requires_independent_review": false,
+      "review_edge": null,
+      "timeout_seconds": 300,
+      "version": "1"
+    },
+    {
+      "accepts_actions": [],
+      "applies_when": "All declared immutable inputs are available.",
+      "catalog_scope": "support",
+      "complete_transform_family": null,
+      "consequence": "scientific",
+      "executor_kind": "transform",
+      "input_admission": null,
+      "inputs": [
+        {
+          "description": "Exact deterministic TCAD transform input: project.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "project",
+          "required_non_null_fields": [],
+          "schema": "tcad.deck-project.v1"
+        },
+        {
+          "description": "Exact deterministic TCAD transform input: review.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "review",
+          "required_non_null_fields": [],
+          "schema": "tcad.deck-review-report.v1"
+        }
+      ],
+      "max_files": 8,
+      "max_input_bytes": 268435456,
+      "max_network_requests": 0,
+      "max_output_bytes": 67108864,
+      "native_shell": "none",
+      "native_view_image": false,
+      "network_mode": "none",
+      "not_for": "Open-ended scientific judgment or external execution.",
+      "operation_id": "tcad.deck-review-validate.v1",
+      "outputs": [
+        {
+          "description": "Deterministic TCAD transform output: review_attestation.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "review_attestation",
+          "required_non_null_fields": [],
+          "schema": "tcad.deck-review-attestation.v1"
+        }
+      ],
+      "purpose": "Validate one independent TCAD review against its exact project.",
+      "requires_human_approval": false,
+      "requires_independent_review": false,
+      "review_edge": null,
+      "timeout_seconds": 300,
+      "version": "1"
+    },
+    {
+      "accepts_actions": [],
+      "applies_when": "A reviewed plan and solver capability are available.",
+      "catalog_scope": "public",
+      "complete_transform_family": null,
+      "consequence": "scientific",
+      "executor_kind": "agent",
+      "input_admission": {
+        "accepted_options": [
+          "approve",
+          "approve_with_exception"
+        ],
+        "accepted_provider_operations": [
+          "science.parameters.qualify.pass.v1",
+          "science.parameters.qualify.exception.v1"
+        ],
+        "approval_kind": "scientific_foundation",
+        "approval_subject_ports": [
+          "scientific_foundation",
+          "parameter_requirements",
+          "device_parameters",
+          "source_catalog",
+          "parameter_coverage",
+          "parameter_audit"
+        ],
+        "cohort_id": "approved_parameters",
+        "member_ports": [
+          "scientific_foundation",
+          "parameter_requirements",
+          "device_parameters",
+          "source_catalog",
+          "parameter_coverage",
+          "parameter_audit",
+          "parameter_uncertainty"
+        ]
+      },
+      "inputs": [
+        {
+          "description": "Exact TCAD input: execution_capability.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "execution_capability",
+          "required_non_null_fields": [],
+          "schema": "tcad.solver-capability.v2"
+        },
+        {
+          "description": "Exact TCAD input: experiment_plan.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "experiment_plan",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.experiment-portfolio.v1"
+        },
+        {
+          "description": "Exact TCAD input: curve_contract.",
+          "max_items": 1,
+          "min_items": 0,
+          "name": "curve_contract",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.curve-experiment-contract.v1"
+        },
+        {
+          "description": "Exact TCAD input: experiment_review.",
+          "max_items": 1,
+          "min_items": 0,
+          "name": "experiment_review",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.scientific-review.v1"
+        },
+        {
+          "description": "Exact TCAD input: curve_contract_review.",
+          "max_items": 1,
+          "min_items": 0,
+          "name": "curve_contract_review",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.scientific-review.v1"
+        },
+        {
+          "description": "Exact TCAD input: scientific_foundation.",
+          "max_items": 1,
+          "min_items": 0,
+          "name": "scientific_foundation",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.scientific-foundation.v1"
+        },
+        {
+          "description": "Exact TCAD input: parameter_requirements.",
+          "max_items": 1,
+          "min_items": 0,
+          "name": "parameter_requirements",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.device-parameter-requirements.v1"
+        },
+        {
+          "description": "Exact TCAD input: device_parameters.",
+          "max_items": 1,
+          "min_items": 0,
+          "name": "device_parameters",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.device-parameter-set.v1"
+        },
+        {
+          "description": "Exact TCAD input: source_catalog.",
+          "max_items": 1,
+          "min_items": 0,
+          "name": "source_catalog",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.evidence-source-catalog.v1"
+        },
+        {
+          "description": "Exact TCAD input: parameter_coverage.",
+          "max_items": 1,
+          "min_items": 0,
+          "name": "parameter_coverage",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.device-parameter-coverage.v1"
+        },
+        {
+          "description": "Exact TCAD input: parameter_audit.",
+          "max_items": 1,
+          "min_items": 0,
+          "name": "parameter_audit",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.evidence-audit.v1"
+        },
+        {
+          "description": "Exact TCAD input: parameter_uncertainty.",
+          "max_items": 1,
+          "min_items": 0,
+          "name": "parameter_uncertainty",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.parameter-uncertainty.v1"
+        }
+      ],
+      "max_files": 1,
+      "max_input_bytes": 67108864,
+      "max_network_requests": 0,
+      "max_output_bytes": 524288,
+      "native_shell": "inherited_prototype",
+      "native_view_image": false,
+      "network_mode": "none",
+      "not_for": "Postprocessing, scientific diagnosis, or external execution.",
+      "operation_id": "tcad.deck.author.initial.v1",
+      "outputs": [
+        {
+          "description": "Validated TCAD output: project.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "project",
+          "required_non_null_fields": [],
+          "schema": "tcad.deck-project.v1"
+        }
+      ],
+      "purpose": "Author one new TCAD solver project from an exact experiment plan.",
+      "requires_human_approval": false,
+      "requires_independent_review": true,
+      "review_edge": {
+        "accepted_verdicts": [
+          "pass"
+        ],
+        "reviewer_input_port": "project",
+        "reviewer_operation": "tcad.deck.review.v1",
+        "subject_outputs": [
+          "project"
+        ]
+      },
+      "runtime_binding": {
+        "process": "worker",
+        "required": [
+          "tcad_artifact:tcad.development_debug"
+        ],
+        "status": "verified_on_worker_claim"
+      },
+      "timeout_seconds": 1200,
+      "version": "1"
+    },
+    {
+      "accepts_actions": [],
+      "applies_when": "One exact prior project and review request are available.",
+      "catalog_scope": "public",
+      "complete_transform_family": null,
+      "consequence": "scientific",
+      "executor_kind": "agent",
+      "input_admission": {
+        "accepted_options": [
+          "approve",
+          "approve_with_exception"
+        ],
+        "accepted_provider_operations": [
+          "science.parameters.qualify.pass.v1",
+          "science.parameters.qualify.exception.v1"
+        ],
+        "approval_kind": "scientific_foundation",
+        "approval_subject_ports": [
+          "scientific_foundation",
+          "parameter_requirements",
+          "device_parameters",
+          "source_catalog",
+          "parameter_coverage",
+          "parameter_audit"
+        ],
+        "cohort_id": "approved_parameters",
+        "member_ports": [
+          "scientific_foundation",
+          "parameter_requirements",
+          "device_parameters",
+          "source_catalog",
+          "parameter_coverage",
+          "parameter_audit",
+          "parameter_uncertainty"
+        ]
+      },
+      "inputs": [
+        {
+          "description": "Exact TCAD input: prior_project.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "prior_project",
+          "required_non_null_fields": [],
+          "schema": "tcad.deck-project.v1"
+        },
+        {
+          "description": "Exact TCAD input: change_request.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "change_request",
+          "required_non_null_fields": [],
+          "schema": "tcad.deck-review-report.v1"
+        },
+        {
+          "description": "Exact TCAD input: device_grid.",
+          "max_items": 1,
+          "min_items": 0,
+          "name": "device_grid",
+          "required_non_null_fields": [],
+          "schema": "opaque"
+        },
+        {
+          "description": "Exact TCAD input: execution_capability.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "execution_capability",
+          "required_non_null_fields": [],
+          "schema": "tcad.solver-capability.v2"
+        },
+        {
+          "description": "Exact TCAD input: experiment_plan.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "experiment_plan",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.experiment-portfolio.v1"
+        },
+        {
+          "description": "Exact TCAD input: curve_contract.",
+          "max_items": 1,
+          "min_items": 0,
+          "name": "curve_contract",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.curve-experiment-contract.v1"
+        },
+        {
+          "description": "Exact TCAD input: experiment_review.",
+          "max_items": 1,
+          "min_items": 0,
+          "name": "experiment_review",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.scientific-review.v1"
+        },
+        {
+          "description": "Exact TCAD input: curve_contract_review.",
+          "max_items": 1,
+          "min_items": 0,
+          "name": "curve_contract_review",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.scientific-review.v1"
+        },
+        {
+          "description": "Exact TCAD input: scientific_foundation.",
+          "max_items": 1,
+          "min_items": 0,
+          "name": "scientific_foundation",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.scientific-foundation.v1"
+        },
+        {
+          "description": "Exact TCAD input: parameter_requirements.",
+          "max_items": 1,
+          "min_items": 0,
+          "name": "parameter_requirements",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.device-parameter-requirements.v1"
+        },
+        {
+          "description": "Exact TCAD input: device_parameters.",
+          "max_items": 1,
+          "min_items": 0,
+          "name": "device_parameters",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.device-parameter-set.v1"
+        },
+        {
+          "description": "Exact TCAD input: source_catalog.",
+          "max_items": 1,
+          "min_items": 0,
+          "name": "source_catalog",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.evidence-source-catalog.v1"
+        },
+        {
+          "description": "Exact TCAD input: parameter_coverage.",
+          "max_items": 1,
+          "min_items": 0,
+          "name": "parameter_coverage",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.device-parameter-coverage.v1"
+        },
+        {
+          "description": "Exact TCAD input: parameter_audit.",
+          "max_items": 1,
+          "min_items": 0,
+          "name": "parameter_audit",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.evidence-audit.v1"
+        },
+        {
+          "description": "Exact TCAD input: parameter_uncertainty.",
+          "max_items": 1,
+          "min_items": 0,
+          "name": "parameter_uncertainty",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.parameter-uncertainty.v1"
+        }
+      ],
+      "max_files": 1,
+      "max_input_bytes": 67108864,
+      "max_network_requests": 0,
+      "max_output_bytes": 524288,
+      "native_shell": "inherited_prototype",
+      "native_view_image": false,
+      "network_mode": "none",
+      "not_for": "Redesigning the scientific experiment.",
+      "operation_id": "tcad.deck.author.revise.v1",
+      "outputs": [
+        {
+          "description": "Validated TCAD output: project.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "project",
+          "required_non_null_fields": [],
+          "schema": "tcad.deck-project.v1"
+        }
+      ],
+      "purpose": "Apply one bounded independently requested TCAD source revision.",
+      "requires_human_approval": false,
+      "requires_independent_review": true,
+      "review_edge": {
+        "accepted_verdicts": [
+          "pass"
+        ],
+        "reviewer_input_port": "project",
+        "reviewer_operation": "tcad.deck.review.v1",
+        "subject_outputs": [
+          "project"
+        ]
+      },
+      "runtime_binding": {
+        "process": "worker",
+        "required": [
+          "tcad_artifact:tcad.development_debug"
+        ],
+        "status": "verified_on_worker_claim"
+      },
+      "timeout_seconds": 1200,
+      "version": "1"
+    },
+    {
+      "accepts_actions": [],
+      "applies_when": "A failing runtime attestation and exact solver log are available.",
+      "catalog_scope": "public",
+      "complete_transform_family": null,
+      "consequence": "scientific",
+      "executor_kind": "agent",
+      "input_admission": {
+        "accepted_options": [
+          "approve",
+          "approve_with_exception"
+        ],
+        "accepted_provider_operations": [
+          "science.parameters.qualify.pass.v1",
+          "science.parameters.qualify.exception.v1"
+        ],
+        "approval_kind": "scientific_foundation",
+        "approval_subject_ports": [
+          "scientific_foundation",
+          "parameter_requirements",
+          "device_parameters",
+          "source_catalog",
+          "parameter_coverage",
+          "parameter_audit"
+        ],
+        "cohort_id": "approved_parameters",
+        "member_ports": [
+          "scientific_foundation",
+          "parameter_requirements",
+          "device_parameters",
+          "source_catalog",
+          "parameter_coverage",
+          "parameter_audit",
+          "parameter_uncertainty"
+        ]
+      },
+      "inputs": [
+        {
+          "description": "Exact TCAD input: prior_project.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "prior_project",
+          "required_non_null_fields": [],
+          "schema": "tcad.deck-project.v1"
+        },
+        {
+          "description": "Exact TCAD input: runtime_attestation.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "runtime_attestation",
+          "required_non_null_fields": [],
+          "schema": "tcad.runtime-attestation.v1"
+        },
+        {
+          "description": "Exact TCAD input: solver_log.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "solver_log",
+          "required_non_null_fields": [],
+          "schema": "opaque"
+        },
+        {
+          "description": "Exact TCAD input: execution_capability.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "execution_capability",
+          "required_non_null_fields": [],
+          "schema": "tcad.solver-capability.v2"
+        },
+        {
+          "description": "Exact TCAD input: experiment_plan.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "experiment_plan",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.experiment-portfolio.v1"
+        },
+        {
+          "description": "Exact TCAD input: curve_contract.",
+          "max_items": 1,
+          "min_items": 0,
+          "name": "curve_contract",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.curve-experiment-contract.v1"
+        },
+        {
+          "description": "Exact TCAD input: experiment_review.",
+          "max_items": 1,
+          "min_items": 0,
+          "name": "experiment_review",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.scientific-review.v1"
+        },
+        {
+          "description": "Exact TCAD input: curve_contract_review.",
+          "max_items": 1,
+          "min_items": 0,
+          "name": "curve_contract_review",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.scientific-review.v1"
+        },
+        {
+          "description": "Exact TCAD input: scientific_foundation.",
+          "max_items": 1,
+          "min_items": 0,
+          "name": "scientific_foundation",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.scientific-foundation.v1"
+        },
+        {
+          "description": "Exact TCAD input: parameter_requirements.",
+          "max_items": 1,
+          "min_items": 0,
+          "name": "parameter_requirements",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.device-parameter-requirements.v1"
+        },
+        {
+          "description": "Exact TCAD input: device_parameters.",
+          "max_items": 1,
+          "min_items": 0,
+          "name": "device_parameters",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.device-parameter-set.v1"
+        },
+        {
+          "description": "Exact TCAD input: source_catalog.",
+          "max_items": 1,
+          "min_items": 0,
+          "name": "source_catalog",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.evidence-source-catalog.v1"
+        },
+        {
+          "description": "Exact TCAD input: parameter_coverage.",
+          "max_items": 1,
+          "min_items": 0,
+          "name": "parameter_coverage",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.device-parameter-coverage.v1"
+        },
+        {
+          "description": "Exact TCAD input: parameter_audit.",
+          "max_items": 1,
+          "min_items": 0,
+          "name": "parameter_audit",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.evidence-audit.v1"
+        },
+        {
+          "description": "Exact TCAD input: parameter_uncertainty.",
+          "max_items": 1,
+          "min_items": 0,
+          "name": "parameter_uncertainty",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.parameter-uncertainty.v1"
+        }
+      ],
+      "max_files": 1,
+      "max_input_bytes": 67108864,
+      "max_network_requests": 0,
+      "max_output_bytes": 524288,
+      "native_shell": "inherited_prototype",
+      "native_view_image": false,
+      "network_mode": "none",
+      "not_for": "Hypothesis changes or broad deck redesign.",
+      "operation_id": "tcad.deck.author.runtime-failure.v1",
+      "outputs": [
+        {
+          "description": "Validated TCAD output: project.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "project",
+          "required_non_null_fields": [],
+          "schema": "tcad.deck-project.v1"
+        }
+      ],
+      "purpose": "Correct one concrete TCAD runtime failure without changing the study.",
+      "requires_human_approval": false,
+      "requires_independent_review": true,
+      "review_edge": {
+        "accepted_verdicts": [
+          "pass"
+        ],
+        "reviewer_input_port": "project",
+        "reviewer_operation": "tcad.deck.review.v1",
+        "subject_outputs": [
+          "project"
+        ]
+      },
+      "runtime_binding": {
+        "process": "worker",
+        "required": [
+          "tcad_artifact:tcad.development_debug"
+        ],
+        "status": "verified_on_worker_claim"
+      },
+      "timeout_seconds": 1200,
+      "version": "1"
+    },
+    {
+      "accepts_actions": [],
+      "applies_when": "A complete author project, plan, and capability are available.",
+      "catalog_scope": "public",
+      "complete_transform_family": null,
+      "consequence": "scientific",
+      "executor_kind": "agent",
+      "input_admission": {
+        "accepted_options": [
+          "approve",
+          "approve_with_exception"
+        ],
+        "accepted_provider_operations": [
+          "science.parameters.qualify.pass.v1",
+          "science.parameters.qualify.exception.v1"
+        ],
+        "approval_kind": "scientific_foundation",
+        "approval_subject_ports": [
+          "scientific_foundation",
+          "parameter_requirements",
+          "device_parameters",
+          "source_catalog",
+          "parameter_coverage",
+          "parameter_audit"
+        ],
+        "cohort_id": "approved_parameters",
+        "member_ports": [
+          "scientific_foundation",
+          "parameter_requirements",
+          "device_parameters",
+          "source_catalog",
+          "parameter_coverage",
+          "parameter_audit",
+          "parameter_uncertainty"
+        ]
+      },
+      "inputs": [
+        {
+          "description": "Exact TCAD input: project.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "project",
+          "required_non_null_fields": [],
+          "schema": "tcad.deck-project.v1"
+        },
+        {
+          "description": "Exact TCAD input: execution_capability.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "execution_capability",
+          "required_non_null_fields": [],
+          "schema": "tcad.solver-capability.v2"
+        },
+        {
+          "description": "Exact TCAD input: experiment_plan.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "experiment_plan",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.experiment-portfolio.v1"
+        },
+        {
+          "description": "Exact TCAD input: curve_contract.",
+          "max_items": 1,
+          "min_items": 0,
+          "name": "curve_contract",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.curve-experiment-contract.v1"
+        },
+        {
+          "description": "Exact TCAD input: experiment_review.",
+          "max_items": 1,
+          "min_items": 0,
+          "name": "experiment_review",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.scientific-review.v1"
+        },
+        {
+          "description": "Exact TCAD input: curve_contract_review.",
+          "max_items": 1,
+          "min_items": 0,
+          "name": "curve_contract_review",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.scientific-review.v1"
+        },
+        {
+          "description": "Exact TCAD input: scientific_foundation.",
+          "max_items": 1,
+          "min_items": 0,
+          "name": "scientific_foundation",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.scientific-foundation.v1"
+        },
+        {
+          "description": "Exact TCAD input: parameter_requirements.",
+          "max_items": 1,
+          "min_items": 0,
+          "name": "parameter_requirements",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.device-parameter-requirements.v1"
+        },
+        {
+          "description": "Exact TCAD input: device_parameters.",
+          "max_items": 1,
+          "min_items": 0,
+          "name": "device_parameters",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.device-parameter-set.v1"
+        },
+        {
+          "description": "Exact TCAD input: source_catalog.",
+          "max_items": 1,
+          "min_items": 0,
+          "name": "source_catalog",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.evidence-source-catalog.v1"
+        },
+        {
+          "description": "Exact TCAD input: parameter_coverage.",
+          "max_items": 1,
+          "min_items": 0,
+          "name": "parameter_coverage",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.device-parameter-coverage.v1"
+        },
+        {
+          "description": "Exact TCAD input: parameter_audit.",
+          "max_items": 1,
+          "min_items": 0,
+          "name": "parameter_audit",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.evidence-audit.v1"
+        },
+        {
+          "description": "Exact TCAD input: parameter_uncertainty.",
+          "max_items": 1,
+          "min_items": 0,
+          "name": "parameter_uncertainty",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.parameter-uncertainty.v1"
+        }
+      ],
+      "max_files": 1,
+      "max_input_bytes": 33554432,
+      "max_network_requests": 0,
+      "max_output_bytes": 131072,
+      "native_shell": "inherited_prototype",
+      "native_view_image": false,
+      "network_mode": "none",
+      "not_for": "Editing the project or running a solver.",
+      "operation_id": "tcad.deck.review.v1",
+      "outputs": [
+        {
+          "description": "Validated TCAD output: review.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "review",
+          "required_non_null_fields": [],
+          "schema": "tcad.deck-review-report.v1"
+        }
+      ],
+      "purpose": "Independently review an exact TCAD project for physical and code fidelity.",
+      "requires_human_approval": false,
+      "requires_independent_review": false,
+      "review_edge": null,
+      "timeout_seconds": 600,
+      "version": "1"
+    },
+    {
+      "accepts_actions": [],
+      "applies_when": "All declared immutable inputs are available.",
+      "catalog_scope": "support",
+      "complete_transform_family": null,
+      "consequence": "scientific",
+      "executor_kind": "transform",
+      "input_admission": null,
+      "inputs": [
+        {
+          "description": "Exact deterministic TCAD transform input: capability.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "capability",
+          "required_non_null_fields": [],
+          "schema": "tcad.solver-capability.v2"
+        }
+      ],
+      "max_files": 1,
+      "max_input_bytes": 65536,
+      "max_network_requests": 0,
+      "max_output_bytes": 65536,
+      "native_shell": "none",
+      "native_view_image": false,
+      "network_mode": "none",
+      "not_for": "Open-ended scientific judgment or external execution.",
+      "operation_id": "tcad.execution-context.project.v1",
+      "outputs": [
+        {
+          "description": "Domain-neutral execution context projected from one TCAD capability snapshot.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "execution_context",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.execution-context.v1"
+        }
+      ],
+      "purpose": "Project one public TCAD capability snapshot into a domain-neutral execution context.",
+      "requires_human_approval": false,
+      "requires_independent_review": false,
+      "review_edge": null,
+      "timeout_seconds": 300,
+      "version": "1"
+    },
+    {
+      "accepts_actions": [],
+      "applies_when": "Extraction and deterministic coverage are complete.",
+      "catalog_scope": "public",
+      "complete_transform_family": null,
+      "consequence": "scientific",
+      "executor_kind": "agent",
+      "input_admission": null,
+      "inputs": [
+        {
+          "description": "Exact Agent package under review.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "parameter_evidence_package",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.parameter-evidence-package.v1"
+        },
+        {
+          "description": "Extraction primary under review.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "scientific_intake",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.scientific-intake.v1"
+        },
+        {
+          "description": "Optional immutable checklist supplied to extraction.",
+          "max_items": 1,
+          "min_items": 0,
+          "name": "required_parameter_checklist",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.device-parameter-requirements.v1"
+        },
+        {
+          "description": "Exact extracted checklist.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "parameter_requirements",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.device-parameter-requirements.v1"
+        },
+        {
+          "description": "Exact selected parameter set.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "device_parameters",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.device-parameter-set.v1"
+        },
+        {
+          "description": "Exact source catalog.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "source_catalog",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.evidence-source-catalog.v1"
+        },
+        {
+          "description": "Deterministic coverage report.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "parameter_coverage",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.device-parameter-coverage.v1"
+        },
+        {
+          "description": "Every exact frozen source declared by the extraction family.",
+          "max_items": 32,
+          "min_items": 1,
+          "name": "source_material",
+          "required_non_null_fields": [],
+          "schema": "opaque"
+        }
+      ],
+      "max_files": 1,
+      "max_input_bytes": 1082130432,
+      "max_network_requests": 0,
+      "max_output_bytes": 32768,
+      "native_shell": "inherited_prototype",
+      "native_view_image": true,
+      "network_mode": "none",
+      "not_for": "Extracting, repairing, qualifying, or averaging parameter evidence.",
+      "operation_id": "tcad.parameter.evidence.audit.v1",
+      "outputs": [
+        {
+          "description": "Independent parameter completeness, traceability, independence, and unit audit.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "evidence_audit",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.evidence-audit.v1"
+        }
+      ],
+      "purpose": "Independently audit one exact TCAD parameter family and all frozen sources.",
+      "requires_human_approval": false,
+      "requires_independent_review": false,
+      "review_edge": null,
+      "timeout_seconds": 900,
+      "version": "1"
+    },
+    {
+      "accepts_actions": [],
+      "applies_when": "All exact typed inputs are available.",
+      "catalog_scope": "support",
+      "complete_transform_family": null,
+      "consequence": "scientific",
+      "executor_kind": "transform",
+      "input_admission": null,
+      "inputs": [
+        {
+          "description": "Exact provisional TCAD parameter package.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "parameter_evidence_package",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.parameter-evidence-package.v1"
+        }
+      ],
+      "max_files": 4,
+      "max_input_bytes": 8388608,
+      "max_network_requests": 0,
+      "max_output_bytes": 7340032,
+      "native_shell": "none",
+      "native_view_image": false,
+      "network_mode": "none",
+      "not_for": "Scientific interpretation, source invention, or qualification.",
+      "operation_id": "tcad.parameter.evidence.expand.v1",
+      "outputs": [
+        {
+          "description": "Parameter-scoped scientific intake and source-bound foundation.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "scientific_intake",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.scientific-intake.v1"
+        },
+        {
+          "description": "Exact TCAD parameter checklist.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "parameter_requirements",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.device-parameter-requirements.v1"
+        },
+        {
+          "description": "Selected values and all competing source observations.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "device_parameters",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.device-parameter-set.v1"
+        },
+        {
+          "description": "Exact catalog of every parameter evidence source.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "source_catalog",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.evidence-source-catalog.v1"
+        }
+      ],
+      "purpose": "Mechanically expand one validated TCAD parameter package into typed objects.",
+      "requires_human_approval": false,
+      "requires_independent_review": true,
+      "review_edge": {
+        "accepted_verdicts": [
+          "pass"
+        ],
+        "reviewer_input_port": "scientific_intake",
+        "reviewer_operation": "tcad.parameter.evidence.audit.v1",
+        "subject_outputs": [
+          "scientific_intake"
+        ]
+      },
+      "timeout_seconds": 300,
+      "version": "1"
+    },
+    {
+      "accepts_actions": [],
+      "applies_when": "A bounded TCAD objective and exact frozen sources are available.",
+      "catalog_scope": "public",
+      "complete_transform_family": null,
+      "consequence": "scientific",
+      "executor_kind": "agent",
+      "input_admission": null,
+      "inputs": [
+        {
+          "description": "Optional immutable TCAD parameter checklist whose scientific fields must be preserved.",
+          "max_items": 1,
+          "min_items": 0,
+          "name": "required_parameter_checklist",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.device-parameter-requirements.v1"
+        },
+        {
+          "description": "Exact frozen device description, paper, table, or user source.",
+          "max_items": 32,
+          "min_items": 1,
+          "name": "source_material",
+          "required_non_null_fields": [],
+          "schema": "opaque"
+        }
+      ],
+      "max_files": 1,
+      "max_input_bytes": 1074790400,
+      "max_network_requests": 0,
+      "max_output_bytes": 7340032,
+      "native_shell": "inherited_prototype",
+      "native_view_image": true,
+      "network_mode": "none",
+      "not_for": "Generic evidence extraction, figure digitization, or parameter qualification.",
+      "operation_id": "tcad.parameter.evidence.extract.v1",
+      "outputs": [
+        {
+          "description": "One source-bound TCAD parameter package before deterministic expansion.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "parameter_evidence_package",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.parameter-evidence-package.v1"
+        }
+      ],
+      "purpose": "Extract one complete source-bound TCAD device-parameter family.",
+      "requires_human_approval": false,
+      "requires_independent_review": false,
+      "review_edge": null,
+      "timeout_seconds": 1200,
+      "version": "1"
+    },
+    {
+      "accepts_actions": [],
+      "applies_when": "All declared immutable inputs are available.",
+      "catalog_scope": "support",
+      "complete_transform_family": null,
+      "consequence": "scientific",
+      "executor_kind": "transform",
+      "input_admission": null,
+      "inputs": [
+        {
+          "description": "Exact deterministic TCAD transform input: comparison_contract.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "comparison_contract",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.comparison-contract.v1"
+        },
+        {
+          "description": "Exact deterministic TCAD transform input: reviewed_package.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "reviewed_package",
+          "required_non_null_fields": [],
+          "schema": "tcad.reviewed-deck-package.v2"
+        },
+        {
+          "description": "Exact deterministic TCAD transform input: case.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "case",
+          "required_non_null_fields": [],
+          "schema": "tcad.realization-case-binding.v1"
+        }
+      ],
+      "max_files": 8,
+      "max_input_bytes": 268435456,
+      "max_network_requests": 0,
+      "max_output_bytes": 67108864,
+      "native_shell": "none",
+      "native_view_image": false,
+      "network_mode": "none",
+      "not_for": "Open-ended scientific judgment or external execution.",
+      "operation_id": "tcad.realization-snapshot-materialize.v1",
+      "outputs": [
+        {
+          "description": "Deterministic TCAD transform output: realization_snapshot.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "realization_snapshot",
+          "required_non_null_fields": [],
+          "schema": "tcad.realization-snapshot.v1"
+        }
+      ],
+      "purpose": "Materialize one exact TCAD case realization from a reviewed package.",
+      "requires_human_approval": false,
+      "requires_independent_review": false,
+      "review_edge": null,
+      "timeout_seconds": 300,
+      "version": "1"
+    },
+    {
+      "accepts_actions": [],
+      "applies_when": "All declared immutable inputs are available.",
+      "catalog_scope": "support",
+      "complete_transform_family": null,
+      "consequence": "scientific",
+      "executor_kind": "transform",
+      "input_admission": null,
+      "inputs": [
+        {
+          "description": "Exact deterministic TCAD transform input: project.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "project",
+          "required_non_null_fields": [],
+          "schema": "tcad.deck-project.v1"
+        },
+        {
+          "description": "Exact deterministic TCAD transform input: review.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "review",
+          "required_non_null_fields": [],
+          "schema": "tcad.deck-review-report.v1"
+        },
+        {
+          "description": "Exact deterministic TCAD transform input: capability.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "capability",
+          "required_non_null_fields": [],
+          "schema": "tcad.solver-capability.v2"
+        },
+        {
+          "description": "Exact deterministic TCAD transform input: experiment_plan.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "experiment_plan",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.experiment-portfolio.v1"
+        }
+      ],
+      "max_files": 8,
+      "max_input_bytes": 268435456,
+      "max_network_requests": 0,
+      "max_output_bytes": 67108864,
+      "native_shell": "none",
+      "native_view_image": false,
+      "network_mode": "none",
+      "not_for": "Open-ended scientific judgment or external execution.",
+      "operation_id": "tcad.reviewed-deck-package.v2",
+      "outputs": [
+        {
+          "description": "Deterministic TCAD transform output: reviewed_package.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "reviewed_package",
+          "required_non_null_fields": [],
+          "schema": "tcad.reviewed-deck-package.v2"
+        }
+      ],
+      "purpose": "Package one qualified reviewed TCAD project for controlled execution.",
+      "requires_human_approval": false,
+      "requires_independent_review": false,
+      "review_edge": null,
+      "timeout_seconds": 300,
+      "version": "1"
+    },
+    {
+      "accepts_actions": [],
+      "applies_when": "All declared immutable inputs are available.",
+      "catalog_scope": "support",
+      "complete_transform_family": null,
+      "consequence": "scientific",
+      "executor_kind": "transform",
+      "input_admission": null,
+      "inputs": [
+        {
+          "description": "Exact deterministic TCAD transform input: reviewed_package.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "reviewed_package",
+          "required_non_null_fields": [],
+          "schema": "tcad.reviewed-deck-package.v2"
+        },
+        {
+          "description": "Exact deterministic TCAD transform input: runtime_manifest.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "runtime_manifest",
+          "required_non_null_fields": [],
+          "schema": "opaque"
+        },
+        {
+          "description": "Exact deterministic TCAD transform input: runtime_outputs.",
+          "max_items": 4096,
+          "min_items": 0,
+          "name": "runtime_outputs",
+          "required_non_null_fields": [],
+          "schema": "opaque"
+        }
+      ],
+      "max_files": 8,
+      "max_input_bytes": 536870912,
+      "max_network_requests": 0,
+      "max_output_bytes": 67108864,
+      "native_shell": "none",
+      "native_view_image": false,
+      "network_mode": "none",
+      "not_for": "Open-ended scientific judgment or external execution.",
+      "operation_id": "tcad.runtime-attestation.v1",
+      "outputs": [
+        {
+          "description": "Deterministic TCAD transform output: runtime_attestation.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "runtime_attestation",
+          "required_non_null_fields": [],
+          "schema": "tcad.runtime-attestation.v1"
+        }
+      ],
+      "purpose": "Attest raw execution outputs against one exact reviewed TCAD package.",
+      "requires_human_approval": false,
+      "requires_independent_review": false,
+      "review_edge": null,
+      "timeout_seconds": 300,
+      "version": "1"
+    },
+    {
+      "accepts_actions": [],
+      "applies_when": "A packaged project and configured TCAD runtime are available.",
+      "catalog_scope": "public",
+      "complete_transform_family": null,
+      "consequence": "external",
+      "executor_kind": "effect",
+      "input_admission": null,
+      "inputs": [
+        {
+          "description": "Exact TCAD input: reviewed_package.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "reviewed_package",
+          "required_non_null_fields": [],
+          "schema": "tcad.reviewed-deck-package.v2"
+        }
+      ],
+      "max_files": 1,
+      "max_input_bytes": 67108864,
+      "max_network_requests": 0,
+      "max_output_bytes": 65536,
+      "native_shell": "none",
+      "native_view_image": false,
+      "network_mode": "none",
+      "not_for": "Development debugging, unreviewed projects, or scientific interpretation.",
+      "operation_id": "tcad.study.execute",
+      "outputs": [
+        {
+          "description": "Controlled request for one exact TCAD execution.",
+          "max_items": 1,
+          "min_items": 1,
+          "name": "execution_request",
+          "required_non_null_fields": [],
+          "schema": "scidiscovery.execution-request"
+        }
+      ],
+      "purpose": "Create one controlled execution request for an exact reviewed TCAD package.",
+      "requires_human_approval": true,
+      "requires_independent_review": false,
+      "review_edge": null,
+      "runtime_binding": {
+        "process": "control",
+        "required": [
+          "tcad_artifact:tcad"
+        ],
+        "status": "available"
+      },
+      "timeout_seconds": 300,
+      "version": "1"
+    }
+  ],
+  "scope": "all"
+}

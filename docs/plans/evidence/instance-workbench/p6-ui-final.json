@@ -1,0 +1,31 @@
+{
+  "command": [
+    "python",
+    "-m",
+    "pytest",
+    "-q",
+    "tests/operations/test_instance_approval_presentation.py",
+    "tests/operations/test_instance_browser_access.py",
+    "tests/operations/test_instance_browser_http.py",
+    "tests/operations/test_instance_events.py",
+    "tests/operations/test_instance_evidence.py",
+    "tests/operations/test_instance_presentation_render.py",
+    "tests/operations/test_instance_presentations.py",
+    "tests/operations/test_instance_read_model.py",
+    "tests/operations/test_instance_trajectory_cache.py",
+    "tests/operations/test_instance_trajectory_read.py",
+    "tests/operations/test_instance_workbench_render.py",
+    "tests/operations/test_r4_approval_ui_renderer.py"
+  ],
+  "exit_code": 0,
+  "stop_reason": null,
+  "duration_seconds": 14.387,
+  "peak_tree_rss_mib": 143.04,
+  "budget_mib": 512,
+  "peak_processes": [
+    {
+      "name": "python",
+      "rss_mib": 143.04
+    }
+  ]
+}

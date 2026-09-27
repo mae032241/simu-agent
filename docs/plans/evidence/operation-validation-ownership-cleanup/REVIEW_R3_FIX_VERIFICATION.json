@@ -1,0 +1,187 @@
+{
+  "baseline": "REVIEW_R3_FIX_BASELINE.json",
+  "snapshot": "/tmp/scid-review-r3-before-d8chkyhu",
+  "production_files": [
+    {
+      "path": "plugins/curve_score/curve_score/science_operations.py",
+      "before_sha256": "d09c52260ce0ddcdb1496412614190c7a947436e2f20d11859a2712df2a35568",
+      "sha256": "784719055ee7d18c3a1435866a28b3d9e745f90cc6fd955e6d445bff0372f487"
+    },
+    {
+      "path": "plugins/tcad_artifact/tcad_artifact/command_adapter.py",
+      "before_sha256": "c47c13ed233212f1dd929b2de216377923c0cfa02917c7d3eb9f2ec31d0a7f92",
+      "sha256": "2974055f65e21cac93e216dc7a55330d4f822afc39ccb3c1e087b1576954679b"
+    },
+    {
+      "path": "plugins/tcad_artifact/tcad_artifact/debug_adapter.py",
+      "before_sha256": "93fd71c0b029ad14e62fb10518225c2a1af18968f275279703ded9814220c839",
+      "sha256": "151b894e058c975448002956fb90873df5b508b500902510ece181ccd26bf3ce"
+    },
+    {
+      "path": "plugins/tcad_artifact/tcad_artifact/debug_contract.py",
+      "before_sha256": "f825f8cda98dfff4a7de97b95fab89da5fd22bed36fadee3ca1708c918beeb42",
+      "sha256": "b7de9a4227a558eb067989e31eb2e395618c7f982e341ee1efe1916f5ff683b0"
+    },
+    {
+      "path": "plugins/tcad_artifact/tcad_artifact/execution_adapter.py",
+      "before_sha256": "e198fdd73121fc29d8f56d87ddd7f5f0979e80d5adff8ea1c37e370cd1140ebc",
+      "sha256": "b15cc67d5d00dd71c81231c0c32e867fc6510f28b3ec117467dda553d01534df"
+    },
+    {
+      "path": "plugins/tcad_artifact/tcad_artifact/execution_control.py",
+      "before_sha256": "96c230bd2c823de4b9f8b062feb9143961c9954c4dbc2da629223d7403cda634",
+      "sha256": "093214bcfc605a63766993cb87635fc251a82eb1e16b6c96fb16ac2e6ebef9a2"
+    },
+    {
+      "path": "plugins/tcad_artifact/tcad_artifact/local_debug_service.py",
+      "before_sha256": "fd12e3cfd4f93fe117f3a1d584dd375a73f423e9a64e23083fe691833b4b87b6",
+      "sha256": "dd41ec285365c05bbf7e75c5976ce95a8ca8065438c07412b769f00f2757294b"
+    },
+    {
+      "path": "plugins/tcad_artifact/tcad_artifact/operation_workspace.py",
+      "before_sha256": "d2e6928f084bba0b519aebead7479277942f83551c5748d09c158c7eac4d1805",
+      "sha256": "6ac738215073366dac429132334522bf191de393c332ccb89fd13f86a782e1e5"
+    },
+    {
+      "path": "plugins/tcad_artifact/tcad_artifact/plugin.py",
+      "before_sha256": "88d1d13630d950a7627c24003cc8cc3760e6a3922fb4e671f7d7af786df5f8ef",
+      "sha256": "76e1977a8cbb634fcf6d0027c64440cee4c8e42da4bf3775732eccefbdbfcb90"
+    },
+    {
+      "path": "plugins/tcad_artifact/tcad_artifact/remote_runner_py36.py",
+      "before_sha256": "bfb0481c4843533801564a49d3b084f3a014dc7bac69922d386fc18a4b5d8164",
+      "sha256": "bf8372e70af057114075c1b08a4303ad5ad32f3bc5bfce32ca6e8c35ff882c18"
+    },
+    {
+      "path": "plugins/tcad_artifact/tcad_artifact/result_analysis.py",
+      "before_sha256": "76ea5a641128635087d9241059f8f59b34eadc1ef3d41a558dc1071ae84c49e4",
+      "sha256": "b45d8d33e7427b6326533f81d85116bd79c1a51a21bd3dcd96609f12fc40be22"
+    },
+    {
+      "path": "plugins/tcad_artifact/tcad_artifact/roles/tcad_deck_author.md",
+      "before_sha256": "00285b3737561da15a8a36c41c37a3054ac544145371ff55f44033f6f125556c",
+      "sha256": "c3e6bb40b92c457b8898c2a0cdc0d3f23036eb6287812202bd5000f8a827f6d3"
+    },
+    {
+      "path": "plugins/tcad_artifact/tcad_artifact/ssh_transport.py",
+      "before_sha256": "f1aa411a443b22607097ccec8fc7d2236286ae497989e45b0e54444e1b9b01f9",
+      "sha256": "f0f6b3f9587450fdfa4b3a4125e4f5fa83481943a6824ba70a107f23fcd34d9b"
+    },
+    {
+      "path": "plugins/tcad_artifact/tcad_artifact/worker.py",
+      "before_sha256": "f969bedc467db757b6d3072bc121d7ff24493b3d1efb369f970818891231e0d2",
+      "sha256": "37ba4a8727e9e4041231b4a8269abe39c4b033fb7030956942bd5f1239eaa560"
+    },
+    {
+      "path": "src/scidiscovery/artifact_agent/execution_bridge.py",
+      "before_sha256": "25019cb82a2271ca0748e5b86fc668357af2823e2ccb2c51b404d002237bfa45",
+      "sha256": "1c6909c238c3ba0f041c1718b8b57dca39cfc63dea201d47de90a3ebf8b6104f"
+    },
+    {
+      "path": "src/scidiscovery/artifact_agent/interfaces/mcp_root_execution_routes.py",
+      "before_sha256": "388e2b9f678f9f1ecb3ffa8ec5bf691df60eb2cb3ef45e336ef03846c8280c1d",
+      "sha256": "16ac2a19d99a1ace61ba81fcf2fa9ff28f1495cebfbdf09864c0e629e78588d6"
+    },
+    {
+      "path": "src/scidiscovery/artifact_agent/service/analysis_artifacts.py",
+      "before_sha256": "a89a4019836e0ef2389e7fc88b31a559d637487ef0d5b5a683619a3ffe15f53e",
+      "sha256": "78f276d12f2bbef29222b7ba0208f60e5602b3df4def314f71546ea51f281a2e"
+    }
+  ],
+  "test_files": [
+    {
+      "path": "tests/operations/test_analysis_artifact_references.py",
+      "before_sha256": "7205fd7110b8abf9de51282a7b88e60403289175cb70767d784f35e5acb07291",
+      "sha256": "7e992d70cc97de16e2d69931ea4bf2e8db8a6a9b2cb24f8a6930a333af6285c0"
+    },
+    {
+      "path": "tests/operations/test_l4_local_tcad.py",
+      "before_sha256": "6762bade6d86b77a7cef473a7a50a36bab2266921ccf6db5b9681915ceafc8c0",
+      "sha256": "b875198f44c7f34a9af66eaeeccadfeb2bf3b76366cc3f8c35cfd9d3e78520fc"
+    },
+    {
+      "path": "tests/operations/test_tcad_log_progress.py",
+      "before_sha256": null,
+      "sha256": "1e5f1b6876ff5da49735c7763379214a07d799a842df2c1b7e2ed86b121cb03e"
+    }
+  ],
+  "status": "completed_independent_review_pass",
+  "deployed": false,
+  "real_solver_executed": false,
+  "independent_review": "INDEPENDENT_REVIEW_R3_FIX.zh-CN.md",
+  "independent_final_hash_matches": "20/20",
+  "checks": [
+    {
+      "command": [
+        "python",
+        "-m",
+        "pytest",
+        "-q",
+        "-c",
+        "pyproject.toml",
+        "tests/operations/test_analysis_artifact_references.py",
+        "tests/operations/test_log_preservation.py",
+        "tests/operations/test_l4_local_tcad.py",
+        "-k",
+        "not stress"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 51.77,
+      "peak_tree_rss_bytes": 153247744,
+      "stopped": null,
+      "log": "check-1789267255816735454.log"
+    },
+    {
+      "command": [
+        "python",
+        "-m",
+        "pytest",
+        "-q",
+        "-c",
+        "pyproject.toml",
+        "tests/operations/test_analysis_artifact_references.py",
+        "tests/operations/test_tcad_log_progress.py"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 25.06,
+      "peak_tree_rss_bytes": 240304128,
+      "stopped": null,
+      "log": "check-1789267992598962851.log"
+    },
+    {
+      "command": [
+        "python",
+        "-m",
+        "pytest",
+        "-q",
+        "-c",
+        "pyproject.toml",
+        "tests/operations/test_tcad_result_analysis.py",
+        "tests/operations/test_evidence_reference_ownership.py",
+        "tests/operations/test_analysis_claim_scope.py",
+        "tests/operations/test_architecture_constraint_matrix.py",
+        "tests/operations/test_l4_local_tcad.py::test_author_gap_submits_without_source_and_has_independent_review",
+        "-k",
+        "not stress"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 44.93,
+      "peak_tree_rss_bytes": 143183872,
+      "stopped": null,
+      "log": "check-1789268051058413290.log"
+    }
+  ],
+  "peak_tree_rss_bytes": 240304128,
+  "resource_policy": {
+    "serial": true,
+    "address_space_mib": 512,
+    "process_tree_rss_mib": 512,
+    "wall_seconds": 150,
+    "numerical_library_threads": 1
+  },
+  "remote_python36_syntax": "AST feature_version=(3,6) passed; interpreter not executed",
+  "retained_failures": [
+    "check-1789267428087966062.log",
+    "check-1789267805835665904.log"
+  ]
+}

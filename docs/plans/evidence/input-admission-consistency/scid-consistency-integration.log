@@ -1,0 +1,125 @@
+.FF                                                                      [100%]
+=================================== FAILURES ===================================
+_ test_materialized_sprocess_author_review_package_preserves_case_anchors[reviewed-producer-plan] _
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-15/test_materialized_sprocess_aut1')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7f1e316c84d0>
+produced = True
+
+    @pytest.mark.parametrize("produced", (False, True), ids=("imported-plan", "reviewed-producer-plan"))
+    def test_materialized_sprocess_author_review_package_preserves_case_anchors(tmp_path, monkeypatch, produced):
+>       catalog, runtime, root, capability = _system(
+            tmp_path, solver_kind="sprocess", science_plugin=_plan_producer_plugin() if produced else SCIENCE_PLUGIN,
+        )
+
+tests/operations/test_l4_local_tcad.py:1870: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/operations/test_l4_local_tcad.py:312: in _system
+    catalog = compile_catalog((CORE_PLUGIN, science_plugin, CURVE_PLUGIN, TCAD_PLUGIN))
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/scidiscovery/operations/catalog.py:804: in compile_catalog
+    compiled_parts, runtime_factories, runtime_configuration_digests, runtime_identity_digests, used = _validate_operation_contracts(plugin_map, components)
+                                                                                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/scidiscovery/operations/catalog.py:304: in _validate_operation_contracts
+    _fail("operation_ports_empty", plugin.plugin_id, op_id)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+code = 'operation_ports_empty', plugin = 'general_science'
+operation = 'science.fixture.plan.v1', field = None
+
+    def _fail(
+        code: str, plugin: str | None = None, operation: str | None = None,
+        field: str | None = None) -> None:
+>       raise CatalogCompileError(code, plugin_id=plugin, operation_id=operation, field=field)
+E       scidiscovery.operations.catalog.CatalogCompileError: operation_ports_empty: general_science/science.fixture.plan.v1
+
+src/scidiscovery/operations/catalog.py:106: CatalogCompileError
+_____ test_shared_review_requires_every_exact_subject_across_producer_runs _____
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-15/test_shared_review_requires_ev0')
+
+    def test_shared_review_requires_every_exact_subject_across_producer_runs(tmp_path):
+        plugin = _plan_producer_plugin()
+        producer = next(op for op in plugin.operations if op.operation_id == "science.fixture.plan.v1")
+        reviewer = next(op for op in plugin.operations if op.operation_id == "science.object.review.v1")
+        plan_port = reviewer.inputs[0].model_copy(update={"max_items": 2})
+        # This fixture isolates control-plane identity, without a single-plan domain checker.
+        review_output = reviewer.outputs[0].model_copy(update={
+            "context_validator": None, "context_rule_id": None, "context_sources": (),
+        })
+        reviewer = reviewer.model_copy(update={
+            "operation_id": "science.fixture.collection-review.v1",
+            "inputs": (plan_port,), "outputs": (review_output,),
+        })
+        producer = producer.model_copy(update={
+            "review": producer.review.model_copy(update={"reviewer_operation": reviewer.operation_id}),
+        })
+        from scidiscovery.operations.spec import InputPortSpec
+    
+        review_port = InputPortSpec(
+            name="reviews", description="Exact independent witnesses for the bound plans.",
+            schema_id=review_output.schema_id, media_types=review_output.media_types,
+            codec=review_output.codec, schema_resource=review_output.schema_resource,
+            min_items=0, max_items=2, usage="prior_signal",
+        )
+        consumer = reviewer.model_copy(update={
+            "operation_id": "science.fixture.collection-consume.v1",
+            "inputs": (plan_port, review_port),
+        })
+        plugin = plugin.model_copy(update={"operations": (
+            *(op for op in plugin.operations if op.operation_id != producer.operation_id),
+            producer, reviewer, consumer,
+        )})
+>       catalog, runtime, root, _ = _system(tmp_path, science_plugin=plugin)
+                                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/operations/test_review_admission_integration.py:46: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/operations/test_l4_local_tcad.py:312: in _system
+    catalog = compile_catalog((CORE_PLUGIN, science_plugin, CURVE_PLUGIN, TCAD_PLUGIN))
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/scidiscovery/operations/catalog.py:804: in compile_catalog
+    compiled_parts, runtime_factories, runtime_configuration_digests, runtime_identity_digests, used = _validate_operation_contracts(plugin_map, components)
+                                                                                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/scidiscovery/operations/catalog.py:304: in _validate_operation_contracts
+    _fail("operation_ports_empty", plugin.plugin_id, op_id)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+code = 'operation_ports_empty', plugin = 'general_science'
+operation = 'science.fixture.plan.v1', field = None
+
+    def _fail(
+        code: str, plugin: str | None = None, operation: str | None = None,
+        field: str | None = None) -> None:
+>       raise CatalogCompileError(code, plugin_id=plugin, operation_id=operation, field=field)
+E       scidiscovery.operations.catalog.CatalogCompileError: operation_ports_empty: general_science/science.fixture.plan.v1
+
+src/scidiscovery/operations/catalog.py:106: CatalogCompileError
+=========================== short test summary info ============================
+FAILED tests/operations/test_l4_local_tcad.py::test_materialized_sprocess_author_review_package_preserves_case_anchors[reviewed-producer-plan]
+FAILED tests/operations/test_review_admission_integration.py::test_shared_review_requires_every_exact_subject_across_producer_runs
+2 failed, 1 passed in 1.49s
+Command exited with non-zero status 1
+	Command being timed: "timeout 120 /home/da/miniconda3/bin/python -"
+	User time (seconds): 1.51
+	System time (seconds): 0.06
+	Percent of CPU this job got: 81%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:01.93
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 106860
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 69
+	Minor (reclaiming a frame) page faults: 29318
+	Voluntary context switches: 1109
+	Involuntary context switches: 15
+	Swaps: 0
+	File system inputs: 36736
+	File system outputs: 5720
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 1

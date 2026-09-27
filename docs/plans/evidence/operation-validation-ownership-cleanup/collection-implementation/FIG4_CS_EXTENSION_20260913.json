@@ -1,0 +1,1288 @@
+{
+  "schema_version": 1,
+  "instance": "M7-test0",
+  "stage": "paused_after_independent_scientific_review",
+  "prior_analysis": "fig4_iterative_alignment_analysis_delivery_1",
+  "solver_restarted": false,
+  "design_request": {
+    "name": "fig4_iterative_alignment_next_design_1",
+    "operation_id": "science.experiment.design.v1",
+    "inputs": [
+      {
+        "port": "scientific_foundation",
+        "artifact_names": [
+          "fig4_continuation_intake_split_2.scientific_foundation"
+        ]
+      },
+      {
+        "port": "research_objective",
+        "artifact_names": [
+          "fig4_continuation_objective_2"
+        ]
+      },
+      {
+        "port": "hypothesis_portfolio",
+        "artifact_names": [
+          "fig4_continuation_hypothesis_revision_1.output"
+        ]
+      },
+      {
+        "port": "critic_review",
+        "artifact_names": [
+          "fig4_continuation_hypothesis_critic_3.output"
+        ]
+      },
+      {
+        "port": "execution_context",
+        "artifact_names": [
+          "fig4_continuation_execution_context_1"
+        ]
+      },
+      {
+        "port": "current_progress",
+        "artifact_names": [
+          "fig4_iterative_alignment_plan_revision_completion_1.output",
+          "fig4_iterative_alignment_plan_review_postinstall_1.output",
+          "fig4_iterative_alignment_author_postinstall_1.output"
+        ]
+      },
+      {
+        "port": "experiment_results",
+        "artifact_names": [
+          "fig4_iterative_alignment_execution_postinstall_1.result",
+          "fig4_iterative_alignment_analysis_delivery_1.output.tool_evidence_022",
+          "fig4_continuation_figure_materialized_1.curve_tables_001",
+          "fig4_continuation_figure_materialized_1.curve_tables_002"
+        ]
+      },
+      {
+        "port": "result_analysis",
+        "artifact_names": [
+          "fig4_iterative_alignment_analysis_delivery_1.output",
+          "fig4_iterative_alignment_analysis_delivery_1.output.recovery_manifest",
+          "fig4_morphology_closure_2.output"
+        ]
+      }
+    ],
+    "instruction": "继续所绑定的 Fig.4 研究，以绑定原始总体目标及当前正式计划中的目标修订为依据。阅读最新已封存分析与精确证据，自主判断当前最小且可执行的下一项实验；不要将分析中的后续建议当作必须照抄的方案。任务的终点是有证据支持的良好对齐，或对达不到对齐的具体原因与适用范围给出可检验、有限结论。保持掺杂深度、曲线形状及前后平台目标，明确本轮可回答什么、停止条件以及仍需何种条件；不要把未被本轮支持的目标强加为作者实现前提。充分复用已执行和已分析记录，控制案例、运行与分析工作量；给作者完整实现条件，分析专属数据判断由分析角色负责。若现有资料只能支持有限观测或模型反事实，明确区分，不扩大成唯一微观机制。按预算尽早完成紧凑设计意图。"
+  },
+  "design_status": {
+    "agent_type": "op_science_experiment_design_v1_b7eebc3e412b",
+    "backend": "local_trusted",
+    "bound_inputs": [
+      {
+        "artifact_names": [
+          "fig4_continuation_intake_split_2.scientific_foundation"
+        ],
+        "port": "scientific_foundation"
+      },
+      {
+        "artifact_names": [
+          "fig4_continuation_objective_2"
+        ],
+        "port": "research_objective"
+      },
+      {
+        "artifact_names": [
+          "fig4_continuation_hypothesis_revision_1.output"
+        ],
+        "port": "hypothesis_portfolio"
+      },
+      {
+        "artifact_names": [
+          "fig4_continuation_hypothesis_critic_3.output"
+        ],
+        "port": "critic_review"
+      },
+      {
+        "artifact_names": [
+          "fig4_continuation_execution_context_1"
+        ],
+        "port": "execution_context"
+      },
+      {
+        "artifact_names": [
+          "fig4_iterative_alignment_plan_revision_completion_1.output",
+          "fig4_iterative_alignment_plan_review_postinstall_1.output",
+          "fig4_iterative_alignment_author_postinstall_1.output"
+        ],
+        "port": "current_progress"
+      },
+      {
+        "artifact_names": [
+          "fig4_iterative_alignment_execution_postinstall_1.result",
+          "fig4_iterative_alignment_analysis_delivery_1.output.tool_evidence_022",
+          "fig4_continuation_figure_materialized_1.curve_tables_001",
+          "fig4_continuation_figure_materialized_1.curve_tables_002"
+        ],
+        "port": "experiment_results"
+      },
+      {
+        "artifact_names": [
+          "fig4_iterative_alignment_analysis_delivery_1.output",
+          "fig4_iterative_alignment_analysis_delivery_1.output.recovery_manifest",
+          "fig4_morphology_closure_2.output"
+        ],
+        "port": "result_analysis"
+      }
+    ],
+    "candidate_accepted": true,
+    "completed_at": "2026-09-13T09:16:21.058992Z",
+    "created_at": "2026-09-13T09:07:31.912992Z",
+    "deadline_at": "2026-09-13T09:22:31.912992Z",
+    "diagnostic_summary": {
+      "failure": null,
+      "latest_native_error": null,
+      "latest_rejection": {
+        "category": "output_rejected",
+        "code": "output_rejected",
+        "details": [
+          {
+            "affected_action": "submit",
+            "code": "output_invalid",
+            "message": "identifiability claim references an unrequired observable",
+            "path": "$.payload",
+            "phase": "output_context",
+            "repairable": true,
+            "rule_id": "experiment.design.objective_and_hypothesis_binding",
+            "schema_version": 1,
+            "type": "value_error"
+          }
+        ],
+        "repairable_by_output": true
+      },
+      "latest_tool_error": null,
+      "native_coverage": "unobserved",
+      "recent_errors": [
+        {
+          "category": "output_rejected",
+          "code": "output_rejected",
+          "details": [
+            {
+              "affected_action": "submit",
+              "code": "output_invalid",
+              "message": "comparison variables require an explicit baseline for materialization",
+              "path": "$.payload.proposals[0]",
+              "phase": "output_payload",
+              "repairable": true,
+              "rule_id": "experiment.design.intent_closure",
+              "schema_version": 1,
+              "type": "value_error"
+            },
+            {
+              "affected_action": "submit",
+              "code": "output_invalid",
+              "message": "Minimum length is 1.",
+              "path": "$.payload.proposals",
+              "phase": "output_payload",
+              "repairable": true,
+              "rule_id": "experiment.design.intent_closure",
+              "schema_version": 1,
+              "type": "too_short"
+            }
+          ],
+          "repairable_by_output": true
+        },
+        {
+          "category": "output_rejected",
+          "code": "output_rejected",
+          "details": [
+            {
+              "affected_action": "submit",
+              "code": "output_invalid",
+              "message": "intent baseline must be a baseline or control case",
+              "path": "$.payload.proposals[0]",
+              "phase": "output_payload",
+              "repairable": true,
+              "rule_id": "experiment.design.intent_closure",
+              "schema_version": 1,
+              "type": "value_error"
+            },
+            {
+              "affected_action": "submit",
+              "code": "output_invalid",
+              "message": "Minimum length is 1.",
+              "path": "$.payload.proposals",
+              "phase": "output_payload",
+              "repairable": true,
+              "rule_id": "experiment.design.intent_closure",
+              "schema_version": 1,
+              "type": "too_short"
+            }
+          ],
+          "repairable_by_output": true
+        },
+        {
+          "category": "output_rejected",
+          "code": "output_rejected",
+          "details": [
+            {
+              "affected_action": "submit",
+              "code": "output_invalid",
+              "message": "frozen intent variable must not vary",
+              "path": "$.payload.proposals[0]",
+              "phase": "output_payload",
+              "repairable": true,
+              "rule_id": "experiment.design.intent_closure",
+              "schema_version": 1,
+              "type": "value_error"
+            },
+            {
+              "affected_action": "submit",
+              "code": "output_invalid",
+              "message": "Minimum length is 1.",
+              "path": "$.payload.proposals",
+              "phase": "output_payload",
+              "repairable": true,
+              "rule_id": "experiment.design.intent_closure",
+              "schema_version": 1,
+              "type": "too_short"
+            }
+          ],
+          "repairable_by_output": true
+        },
+        {
+          "category": "output_rejected",
+          "code": "output_rejected",
+          "details": [
+            {
+              "affected_action": "submit",
+              "code": "output_invalid",
+              "message": "identifiability claim references an unrequired observable",
+              "path": "$.payload",
+              "phase": "output_context",
+              "repairable": true,
+              "rule_id": "experiment.design.objective_and_hypothesis_binding",
+              "schema_version": 1,
+              "type": "value_error"
+            }
+          ],
+          "repairable_by_output": true
+        }
+      ],
+      "rejection_count": 4
+    },
+    "draft_from": null,
+    "head_advance": "not_requested",
+    "last_activity_at": "2026-09-13T09:16:21.058992Z",
+    "logical_name": "fig4_iterative_alignment_next_design_1",
+    "name": "fig4_iterative_alignment_next_design_1",
+    "native_execution": {
+      "coverage": "unobserved",
+      "reason": "no_records",
+      "scientific_evidence": false
+    },
+    "operation_id": "science.experiment.design.v1",
+    "output_artifact_name": "fig4_iterative_alignment_next_design_1.output",
+    "reason": null,
+    "recovery": {
+      "attempt_budget": {
+        "limit": 1,
+        "used": 1
+      },
+      "delivery_preserved": false,
+      "draft_available": false,
+      "recovery_pending": false,
+      "resume_available": false
+    },
+    "recovery_available": false,
+    "revision": 1,
+    "scheduler_signal": {
+      "assumptions": [
+        "The exact prior 1.2*Cs_mid primary profiles and their sealed reductions remain immutable comparison inputs and are not rerun.",
+        "The prior custom linear constant-D SProcess realization can be revised by adding exact case calls without changing its equation, state semantics, geometry construction, boundaries, or raw-output pattern."
+      ],
+      "missing_inputs": [
+        "For uncertainty-qualified compatibility or a quantitative tail-platform claim: a reviewed joint digitization-uncertainty representation preserving point_index order, gaps, shared groups, positivity, and strict within-block x order, or qualified author raw SIMS rows with detection status and joint uncertainty.",
+        "The bound execution_context has null capability_statements and limitations; it identifies SProcess R-2020.09 but does not independently declare custom conservative-state, independent-case, or PLX/TDR capabilities. Reuse feasibility is supported by the bound successful prior realization/results and still requires matching implementation review.",
+        "For later microscopic mechanism separation: a separately reviewed finite shape-changing model family with equations, boundary conditions, outputs, and a decision rule."
+      ],
+      "next_action_kind": "independent_scientific_review",
+      "next_actions": [
+        "Independently review this four-case design against the sealed prior plan, successful execution, and analysis.",
+        "If the design passes, revise the existing SProcess R-2020.09 source with the four exact case calls and actual *_fps.tdr declarations, then obtain implementation review and separate execution approval.",
+        "Analyze the four new profiles together with the two sealed 1.2*Cs_mid representatives using the registered guards, bracketing, shape, and claim-boundary rules; do not rerun prior solver or morphology units.",
+        "Pursue a finite shape-changing counterfactual only if the bounded constant-Cs result remains insufficient and the intended claim does not require unavailable tail uncertainty."
+      ],
+      "schema_version": 1,
+      "summary": "The smallest current study is a four-case, one-sided Cs extension of the completed constant-D/constant-Cs envelope: one 1.4*Cs_mid primary case and one matched tight numerical sentinel for each material, with D fixed at the previously selected D_mid. The sealed 1.2*Cs_mid representatives already nearly match front level but remain too deep by 0.282975 um and 0.198119 um and retain 1.838940-decade and 1.713324-decade held-out RMS errors. The extension tests whether the front-level optimum is bracketed while preserving the existing central-M0 reduction, numerical guards, curve-shape observables, gaps, and tail-support limits. It can establish a finite constant-Cs insufficiency or a bounded directional result; it cannot establish absolute compatibility, material causation, or a microscopic kick-out/VCD mechanism.",
+      "verdict": "pass"
+    },
+    "scheduler_signal_status": "available",
+    "sealed_output": {
+      "artifact_name": "fig4_iterative_alignment_next_design_1.output",
+      "kind": "experiment_design_intent",
+      "payload": {
+        "engineering_objective": null,
+        "objective_key": "objective.fig4_mechanism_discrimination",
+        "priority_order": [
+          "experiment.fig4.cs_highside_extension"
+        ],
+        "priority_rationale": "The completed 20-case envelope found one unique representative per material at D_mid and the tested high-Cs boundary. Both representatives reduced front-level error to 0.005931 and 0.009095 decade, but x1 remained 0.282975 and 0.198119 um too deep and held-out RMS remained 1.838940 and 1.713324 decade. A single natural grid step from 1.2 to 1.4 times each sealed Cs_mid, paired with one tight sentinel per material, is therefore the smallest experiment that can remove the boundary-truncation ambiguity. Repeating D levels cannot answer that exact ambiguity because the prior 3 by 3 grid already selected D_mid, and repeating the 60 morphology units or invalid digitization corners adds no information. The tail-support-artifact hypothesis and a shape-changing mechanism comparison remain later objectives because the current evidence cannot qualify the tail platforms or independently identify a microscopic mechanism.",
+        "proposals": [
+          {
+            "baseline_case_key": "case.fig4.al_cs_highside_1p4_primary",
+            "cases": [
+              {
+                "case_key": "case.fig4.al_cs_highside_1p4_primary",
+                "purpose": "In0.83Al0.17As primary high-side boundary case at D_mid=1.1328047035807787e-12 cm^2/s and Cs=1.4*4.7223237488924746e19=6.611253248449464e19 cm^-3. Compare with the sealed case.fig4.al_iter_dmid_chigh_primary at 1.2*Cs_mid; this tested value is not a paper material parameter.",
+                "schema_version": 1,
+                "scientific_role": "baseline"
+              },
+              {
+                "case_key": "case.fig4.al_cs_highside_1p4_tight",
+                "purpose": "Matched-physics In0.83Al0.17As tight sentinel at the same D and Cs as case.fig4.al_cs_highside_1p4_primary, with the declared longer domain, halved spacings, and halved maxstep to propagate numerical guards.",
+                "schema_version": 1,
+                "scientific_role": "convergence"
+              },
+              {
+                "case_key": "case.fig4.ga_cs_highside_1p4_primary",
+                "purpose": "In0.83Ga0.17As primary high-side boundary case at D_mid=8.380386299740483e-13 cm^2/s and Cs=1.4*5.523622345128945e19=7.733071283180523e19 cm^-3. Compare with the sealed case.fig4.ga_iter_dmid_chigh_primary at 1.2*Cs_mid; this tested value is not a paper material parameter.",
+                "schema_version": 1,
+                "scientific_role": "perturbation"
+              },
+              {
+                "case_key": "case.fig4.ga_cs_highside_1p4_tight",
+                "purpose": "Matched-physics In0.83Ga0.17As tight sentinel at the same D and Cs as case.fig4.ga_cs_highside_1p4_primary, with the declared longer domain, halved spacings, and halved maxstep to propagate numerical guards.",
+                "schema_version": 1,
+                "scientific_role": "convergence"
+              }
+            ],
+            "current_objectives": [
+              "Determine separately for In0.83Al0.17As and In0.83Ga0.17As whether one finite high-side extension from the sealed 1.2*Cs_mid representative to 1.4*Cs_mid brackets the central-M0 front level while D remains at D_mid, and whether front depth and held-out normalized shape remain unimproved beyond propagated numerical guards; return either bounded constant-Cs insufficiency or an explicitly truncated result."
+            ],
+            "experiment_key": "experiment.fig4.cs_highside_extension",
+            "frozen_invariants": [
+              "Use the already reviewed one-dimensional family partial C/partial t = D*partial^2 C/partial x^2 on 0<x<L, with C(x,0)=0 cm^-3, C(0,t)=Cs, and C(L,t)=0 cm^-3. Temperature is 480 Celsius and duration is 480 s.",
+              "Use the existing fresh nonnegative custom conservative concentration state and common solver-supported inert host. Do not activate built-in Zn diffusion, activation, defect, alloy, concentration-dependent, electric-field, or time-dependent source-history physics.",
+              "Fix D at the sealed D_mid for each material: 1.1328047035807787e-12 cm^2/s for In0.83Al0.17As and 8.380386299740483e-13 cm^2/s for In0.83Ga0.17As. Material labels remain paired with these tested coefficients and cannot identify a material-only effect.",
+              "Each case reconstructs geometry, mesh, state, initial condition, and both boundaries independently. Cases run serially with max_processes=1 and explicit temperature, duration, length, spacing, and maxstep units.",
+              "Primary numerics use L=2.4476634882848627 um, surface spacing 0.001 um, maximum spacing 0.005 um, and maxstep 4 s. Matched tight sentinels use L=3.671495232427294 um, surface spacing 0.0005 um, maximum spacing 0.0025 um, and maxstep 2 s.",
+              "Emit one solver-native ZnPhen x-C PLX, the actual *_fps.tdr structure, a bounded log segment, terminal state, and case manifest per case. Postprocessing, evidence masks, interpolation, metrics, thresholds, and scientific decisions remain outside solver source.",
+              "The sealed 1.2*Cs_mid representative cases, the completed 60 morphology units, and the 48 ineligible digitization corners are immutable historical evidence and are not rerun or rewritten.",
+              "Central M0 remains observed=1, eligible=1, direct_pixel, y_value>3e15 cm^-3, and y_value>y_uncertainty, with nonempty shared_group total weight one and no interpolation across nonconsecutive point_index gaps. It contains 359 InAlAs rows and 702 InGaAs rows.",
+              "Candidate selection uses only the fixed front-window weighted mean L_F and the first unique within-block L_F-1 crossing x1. Transition width W13, the 257-point front-aligned residual trace, held-out RMS, and tail level/slope remain excluded from selection.",
+              "The absence of a qualified tail block or unique reference x3 yields not_determinable for the affected W13 or tail metric and does not block the front-level/depth conclusion. No result establishes absolute reproduction, uncertainty-qualified compatibility, kick-out, VCD, a defect species, or a unique microscopic mechanism."
+            ],
+            "hypothesis_keys": [
+              "hypothesis.surface_boundary_control"
+            ],
+            "identifiability_claims": [
+              {
+                "ambiguity_conditions": [
+                  "Any missing or nonfinite primary/tight product or failure of the predicted linear amplitude and x1-invariance response.",
+                  "W13 or tail metrics remain not_determinable when the reference lacks a unique x3 or a qualified tail block; this limits tail claims but not the front-level/depth decision.",
+                  "Central M0 has no valid joint digitization uncertainty, so no outcome establishes absolute compatibility or good alignment.",
+                  "Material label remains paired with D_mid, and no shape-changing family is run, so microscopic mechanism and material-only effects remain unidentified."
+                ],
+                "competing_hypothesis_key": "hypothesis.continuous_material_response",
+                "decision_rule": "Require 4/4 complete cases, parameter closure, scale-law fidelity, and exact M0 partition. If both materials bracket L_F and neither material improves x1 and held-out RMS beyond 2*(old delta+new delta), reject joint front/shape sufficiency of constant Cs at the tested D_mid. If a material remains below L_F_ref, return high-side truncation for that material. If a guarded shape improvement occurs, retain the surface hypothesis as unresolved within the extended range.",
+                "distinguishing_outcome": "Front-level bracketing with no guarded x1 or held-out-shape improvement identifies bounded constant-Cs amplitude insufficiency and motivates, but does not validate, a later shape-changing counterfactual.",
+                "hypothesis_key": "hypothesis.surface_boundary_control",
+                "observable": "Guarded front-level bracketing together with x1 and normalized held-out shape response at fixed D_mid.",
+                "schema_version": 1,
+                "smallest_resolving_control": "One matched tight sentinel at the new 1.4*Cs_mid condition per material, compared with the immutable prior 1.2*Cs_mid primary and its sealed numerical guard."
+              }
+            ],
+            "objectives": [
+              "Use the supplied paper evidence to support later selection of falsifiable hypotheses and design of a minimal TCAD control experiment, while this Intake is limited to evidence extraction and does not select a hypothesis.",
+              "Determine separately for In0.83Al0.17As and In0.83Ga0.17As whether one finite high-side extension from the sealed 1.2*Cs_mid representative to 1.4*Cs_mid brackets the central-M0 front level while D remains at D_mid, and whether front depth and held-out normalized shape remain unimproved beyond propagated numerical guards; return either bounded constant-Cs insufficiency or an explicitly truncated result.",
+              "If a valid joint uncertainty representation or qualified raw SIMS evidence becomes available, later determine uncertainty-qualified compatibility and whether the front and tail platforms are quantitatively supported without bridging gaps or upgrading shared/detection-limited rows.",
+              "If the bounded constant-boundary family remains shape-insufficient and the direct-pixel above-limit contrast is adequate, later compare the reviewed continuous material response with the reviewed two-regime kick-out/VCD phenomenology using a separately reviewed finite model family."
+            ],
+            "prediction_tests": [
+              {
+                "expected_result": "The frozen linear family predicts Delta L_F=log10(1.4/1.2)=0.06694678963061322 decade and x1 invariance. Accept the response only when abs(Delta L_F-0.06694678963061322)<=2*(delta_F_old+delta_F_new) and abs(Delta x1)<=2*(delta_x_old+delta_x_new).",
+                "falsifying_result": "If either guarded equality fails, reject implementation/model-response fidelity for that material and do not use the extension to assess the physical hypothesis.",
+                "hypothesis_key": "hypothesis.surface_boundary_control",
+                "observable": "For each material, Delta L_F between the sealed D_mid,1.2*Cs_mid primary and the new D_mid,1.4*Cs_mid primary, with old and new primary-tight deltas propagated.",
+                "prediction_key": "prediction.fig4.cs_extension.log_amplitude",
+                "schema_version": 1
+              },
+              {
+                "expected_result": "The old point is below the reference beyond its 2*delta_F guard and the new point is above it beyond its 2*delta_F guard, bracketing the front-level match. The frozen-family prediction is an outer-point overshoot of 0.061015374358866836 decade for InAlAs and 0.057851359486640774 decade for InGaAs.",
+                "falsifying_result": "If the new point remains below the reference beyond the guard, the finite Cs envelope remains high-side truncated; stop this round and report the exact remaining deficit rather than adding cases.",
+                "hypothesis_key": "hypothesis.surface_boundary_control",
+                "observable": "Reference, sealed 1.2*Cs_mid, and new 1.4*Cs_mid central-M0 front levels for each material.",
+                "prediction_key": "prediction.fig4.cs_extension.front_bracket",
+                "schema_version": 1
+              },
+              {
+                "expected_result": "A constant-Cs amplitude change should leave x1 and normalized shape unchanged within propagated primary-tight guards. If front level is bracketed while x1 and held-out shape do not improve beyond those guards, conclude that constant Cs alone is insufficient for joint front-depth/shape alignment within the frozen D_mid family.",
+                "falsifying_result": "The bounded surface-only insufficiency conclusion is falsified if, with implementation fidelity passing, both x1 error and held-out RMS improve beyond their propagated guards and no available W13 or tail metric worsens; retain a directional surface-boundary result instead.",
+                "hypothesis_key": "hypothesis.surface_boundary_control",
+                "observable": "Material-specific x1 error, W13 error when determinable, 257-point held-out RMS, and tail level/slope when qualified, comparing the sealed 1.2*Cs_mid representative with the new 1.4*Cs_mid primary.",
+                "prediction_key": "prediction.fig4.cs_extension.shape_sufficiency",
+                "schema_version": 1
+              }
+            ],
+            "required_observables": [
+              "Guarded front-level bracketing together with x1 and normalized held-out shape response at fixed D_mid.",
+              "For each four new cases: exact case key, material label, D in cm^2/s, Cs in cm^-3, 480 Celsius, 480 s, domain and mesh spacings in um, maxstep in s, terminal state, raw ZnPhen x-C PLX, actual *_fps.tdr identity, log segment, and product hashes.",
+              "Immutable comparison operands: InAlAs case.fig4.al_iter_dmid_chigh_primary uses D=1.1328047035807787e-12 cm^2/s and Cs=5.66678849867097e19 cm^-3, with L_F=19.229126399936554, x1=0.7160325010750073 um, front-level error=0.005931415271746232 decade, x1 error=0.28297456419853456 um, held-out RMS=1.838939850888953 decade, delta_F_old=7.068696916689987e-7 decade, and delta_x_old=9.487182176526332e-7 um.",
+              "Immutable comparison operands: InGaAs case.fig4.ga_iter_dmid_chigh_primary uses D=8.380386299740483e-13 cm^2/s and Cs=6.628346814154734e19 cm^-3, with L_F=19.5454013374828, x1=0.5488988392604419 um, front-level error=0.009095430143972294 decade, x1 error=0.1981193492377622 um, held-out RMS=1.7133239052481863 decade, delta_F_old=2.280959101597091e-7 decade, and delta_x_old=1.0377318717669226e-6 um.",
+              "Reference operands remain L_F_ref=19.2350578152083 and x1_ref=0.4330579368764727 um for InAlAs, and L_F_ref=19.554496767626773 and x1_ref=0.3507794900226797 um for InGaAs.",
+              "For each material compute L_F on the unchanged fixed front window and x1 as the first unique within-block L_F-1 crossing, then report signed Delta L_F and Delta x1 from the sealed 1.2*Cs_mid primary, new primary-tight deltas, and the propagated guards 2*(delta_old+delta_new).",
+              "Report the scale-law residual Delta L_F-log10(7/6), x1-invariance residual, and whether the two Cs points bracket L_F_ref beyond their numerical guards. If bracketed, report the log-linear interpolated Cs*=Cs_1.2*10^(L_F_ref-L_F_1.2) as a derived estimate only: 5.744714089993801e19 cm^-3 for InAlAs and 6.76862812233398e19 cm^-3 for InGaAs; do not create an unplanned solver case or call Cs* a material fact.",
+              "Using the unchanged calibration exclusion, form u=x-x1 and z=log10(C)-L_F; generate the same 257 endpoint-inclusive u>0 grid without gap bridging and report W13 error when the unique x3 exists, held-out RMS in decade, and tail level/slope only when the last qualified block at or beyond x3 contains at least three independent units.",
+              "For InAlAs preserve the current qualified result that the reference x3 is computable but the representative tail block is absent; for InGaAs preserve that reference x3/W13 and tail are not determinable under the registered crossing/support rules unless the exact new reduction changes only the candidate-side availability. Do not substitute smoothing, whole-curve MSE, or below-limit/shared rows.",
+              "A material-specific disposition ledger with: implementation/model-response invalid; high-side envelope still truncated; front level bracketed but constant-Cs depth/shape insufficient; or directional surface-boundary result retained. Each disposition includes exact operands, guard comparisons, missing held-out metrics, and claim limits.",
+              "An execution completeness ledger and a postprocessing partition ledger. All four cases and all used M0 independent units must appear exactly once, and plots may read only saved numeric products."
+            ],
+            "resource_estimate": {
+              "relative_cost": "low",
+              "runtime_basis": "Four serial one-dimensional SProcess cases reuse the successful R-2020.09 custom-state implementation: two new 1.4*Cs_mid primary profiles and two matched tight sentinels. This is 20% of the completed 20-case solver count. No old solver case, 60-unit morphology fit, or invalid digitization corner is recomputed. The bound execution_context identifies SProcess R-2020.09 but has null capability statements; authoring feasibility therefore remains conditioned on reuse of the exact prior implementation and matching implementation review.",
+              "schema_version": 1
+            },
+            "schema_version": 1,
+            "stop_conditions": [
+              "Stop before execution if an author cannot reuse the exact custom linear-state implementation, independent case reconstruction, or actual *_fps.tdr declarations under SProcess R-2020.09; return that capability gap for implementation review rather than changing physics.",
+              "Stop the material-specific interpretation if either the primary or tight case is missing/nonfinite, case settings differ from the plan, or the guarded log-amplitude/x1-invariance response fails.",
+              "If the new 1.4*Cs_mid front level remains below the reference beyond its propagated guard, label that material high-side truncated and stop this round; do not add another Cs value without a new reviewed design.",
+              "If the old and new points bracket the reference, compute and report the derived Cs* but do not execute it in this round. Use x1 and held-out responses to decide bounded constant-Cs sufficiency.",
+              "If front level is bracketed while x1 and held-out RMS do not improve beyond propagated guards, stop the constant-Cs calibration loop and report tested-family depth/shape insufficiency; further Cs-only cases have no registered information value.",
+              "Keep W13 or tail level/slope not_determinable whenever the registered unique-crossing or three-independent-unit support rule fails. Do not bridge gaps, admit shared/below-limit rows, smooth crossings, or invent an uncertainty tolerance.",
+              "Do not rerun the sealed 1.2*Cs_mid cases, the completed 60 morphology units, or the 48 invalid digitization corners. Preserve all prior execution identities and results.",
+              "Do not infer absolute good alignment, uncertainty-qualified compatibility, material-only effects, kick-out, VCD, defect identity, or transfer to another temperature/device stack from any outcome."
+            ],
+            "validation_intent": {
+              "experimental": {
+                "deterministic_checks": [
+                  {
+                    "acceptance_condition": "The fraction is 1.0; calibration observations never enter held-out RMS or tail fits, and no gap is bridged.",
+                    "basis": "Selection and validation must remain disjoint to support a shape-insufficiency conclusion.",
+                    "check_key": "check.fig4.cs_extension.data_partition",
+                    "evaluator_metric": "data_partition_audit_fraction",
+                    "evaluator_profile": "profile.fig4.cs_highside_extension",
+                    "failure_action": "Return affected metrics not determinable without changing row eligibility or interpolation rules.",
+                    "metric": "Fraction of used independent units assigned exactly once to calibration, held-out validation, or excluded-with-reason categories.",
+                    "observable": "Exact central-M0 row ledger with calibration front-window/crossing tags, held-out u>0 tags, shared-group weights, gap states, and exclusions.",
+                    "schema_version": 1,
+                    "threshold": {
+                      "operator": "equal",
+                      "schema_version": 1,
+                      "unit": "dimensionless",
+                      "upper_value": null,
+                      "value": 1
+                    }
+                  }
+                ],
+                "rationale": "The exact M0 identity and calibration/held-out separation protect the bounded front and shape claims; unavailable tail support remains explicit.",
+                "reviewed_checks": [
+                  {
+                    "acceptance_condition": "Claims report bracketing, truncation, or relative constant-Cs insufficiency only and retain not-determinable tail metrics; no absolute alignment, compatibility, material causation, or microscopic mechanism is asserted.",
+                    "basis": "The supplied evidence has invalid joint digitization corners, incomplete tail support, paired material/D labels, and no shape-changing comparison.",
+                    "failure_action": "Revise claim language while preserving exact numeric results and missing-input conditions.",
+                    "metric": "Compliance with bounded central-M0, finite-family, tail-support, uncertainty, and mechanism claim limits.",
+                    "observable": "Final material-specific disposition and narrative claims.",
+                    "schema_version": 1
+                  }
+                ],
+                "schema_version": 1
+              },
+              "numerical": {
+                "deterministic_checks": [
+                  {
+                    "acceptance_condition": "All 4/4 identities occur exactly once and all declared paths match produced filenames.",
+                    "basis": "A missing case or output makes the intended material-specific comparison incomplete.",
+                    "check_key": "check.fig4.cs_extension.case_completeness",
+                    "evaluator_metric": "case_product_completeness_fraction",
+                    "evaluator_profile": "profile.fig4.cs_highside_extension",
+                    "failure_action": "Preserve completed cases, withhold the affected material disposition, and return only the failed case for bounded correction after required review and authorization.",
+                    "metric": "Fraction of the four exact case identities with complete finite mutually consistent products.",
+                    "observable": "Four case manifests and their PLX, actual *_fps.tdr, log, and terminal-state products.",
+                    "schema_version": 1,
+                    "threshold": {
+                      "operator": "equal",
+                      "schema_version": 1,
+                      "unit": "dimensionless",
+                      "upper_value": null,
+                      "value": 1
+                    }
+                  },
+                  {
+                    "acceptance_condition": "Coverage equals 1.0 for both materials; no missing metric is replaced by another statistic.",
+                    "basis": "Old and new numerical sensitivity must both enter a cross-run difference guard.",
+                    "check_key": "check.fig4.cs_extension.guard_coverage",
+                    "evaluator_metric": "numerical_guard_coverage_fraction",
+                    "evaluator_profile": "profile.fig4.cs_highside_extension",
+                    "failure_action": "Return the affected comparison not determinable and identify the missing operand.",
+                    "metric": "Fraction of required available metrics with finite new deltas and propagated 2*(old delta+new delta) guards, with unavailable metrics carrying exact preregistered reasons.",
+                    "observable": "New primary-tight reductions for L_F, x1, W13 when available, held-out RMS, and qualified tail metrics.",
+                    "schema_version": 1,
+                    "threshold": {
+                      "operator": "equal",
+                      "schema_version": 1,
+                      "unit": "dimensionless",
+                      "upper_value": null,
+                      "value": 1
+                    }
+                  }
+                ],
+                "rationale": "Four complete independent outputs and a matched tight sentinel for each material are required before guarded comparisons.",
+                "reviewed_checks": [],
+                "schema_version": 1
+              },
+              "physical": {
+                "deterministic_checks": [
+                  {
+                    "acceptance_condition": "Closure equals 1.0 and no built-in or shape-changing physics is introduced.",
+                    "basis": "Only a controlled high-side Cs change answers the current objective.",
+                    "check_key": "check.fig4.cs_extension.parameter_closure",
+                    "evaluator_metric": "case_setting_closure_fraction",
+                    "evaluator_profile": "profile.fig4.cs_highside_extension",
+                    "failure_action": "Stop interpretation and return the exact mismatch for implementation revision.",
+                    "metric": "Fraction of declared settings reproduced exactly, allowing only the registered primary/tight numerical differences.",
+                    "observable": "Source and logged case settings for D, Cs, PDE, initial/boundary conditions, thermal history, geometry, and numerical tiers.",
+                    "schema_version": 1,
+                    "threshold": {
+                      "operator": "equal",
+                      "schema_version": 1,
+                      "unit": "dimensionless",
+                      "upper_value": null,
+                      "value": 1
+                    }
+                  },
+                  {
+                    "acceptance_condition": "Both materials satisfy both guarded equalities and the fraction is 1.0.",
+                    "basis": "The frozen linear PDE makes Cs an amplitude scale; this check precedes any physical interpretation.",
+                    "check_key": "check.fig4.cs_extension.linear_response",
+                    "evaluator_metric": "linear_response_pass_fraction",
+                    "evaluator_profile": "profile.fig4.cs_highside_extension",
+                    "failure_action": "Classify the affected material as implementation/model-response invalid and do not issue a hypothesis disposition.",
+                    "metric": "Fraction of materials satisfying abs(Delta L_F-log10(7/6))<=2*(delta_F_old+delta_F_new) and abs(Delta x1)<=2*(delta_x_old+delta_x_new).",
+                    "observable": "Guarded Delta L_F and Delta x1 for both materials.",
+                    "schema_version": 1,
+                    "threshold": {
+                      "operator": "equal",
+                      "schema_version": 1,
+                      "unit": "dimensionless",
+                      "upper_value": null,
+                      "value": 1
+                    }
+                  }
+                ],
+                "rationale": "The study is interpretable only if Cs is the sole physical intervention and the frozen linear-family response is reproduced.",
+                "reviewed_checks": [],
+                "schema_version": 1
+              },
+              "schema_version": 1
+            },
+            "value_assessment": {
+              "added_free_parameters": 0,
+              "cost": "low",
+              "discrimination_power": "medium",
+              "evidence_support": "high",
+              "information_gain": "high",
+              "rationale": "This round covers the unresolved high-Cs boundary of the original front/depth target for both materials and retains the original curve-shape and front/tail observables through the unchanged held-out reduction. It is minimal because only one new physical point plus one numerical sentinel per material is needed after the sealed 3 by 3 grids selected D_mid/high-Cs. The 1.4 factor is the next exact 0.2*Cs_mid grid step and introduces no fitted parameter. A bracketed front level with invariant x1/shape gives a finite reason that good joint alignment is unavailable in the frozen constant-Cs family; a still-low front level gives an exact truncation result. Tail-platform compatibility is deferred because its registered reference support is absent or ambiguous and the joint digitization corners are invalid; that deferral limits tail and absolute-alignment claims but does not undermine the front-level/depth test. Microscopic mechanism separation remains later work requiring a reviewed shape-changing family, explicit equations and boundaries, outputs, a decision rule, declared SProcess capability, and matching reviews.",
+              "schema_version": 1
+            },
+            "variables": [
+              {
+                "baseline_value": "In0.83Al0.17As",
+                "case_overrides": [
+                  {
+                    "case_key": "case.fig4.ga_cs_highside_1p4_primary",
+                    "schema_version": 1,
+                    "value": "In0.83Ga0.17As"
+                  },
+                  {
+                    "case_key": "case.fig4.ga_cs_highside_1p4_tight",
+                    "schema_version": 1,
+                    "value": "In0.83Ga0.17As"
+                  }
+                ],
+                "comparison_role": "permitted_difference",
+                "equivalence_rule": "exact",
+                "factor_type": "implementation",
+                "rationale": "Labels preserve separate material ledgers; the custom equation does not use label-dependent host properties.",
+                "schema_version": 1,
+                "scientific_path": "structure.material_comparison_label",
+                "tolerance": null,
+                "unit": "category",
+                "variable_key": "variable.fig4.material_label"
+              },
+              {
+                "baseline_value": 1.1328047035807787e-12,
+                "case_overrides": [
+                  {
+                    "case_key": "case.fig4.ga_cs_highside_1p4_primary",
+                    "schema_version": 1,
+                    "value": 8.380386299740483e-13
+                  },
+                  {
+                    "case_key": "case.fig4.ga_cs_highside_1p4_tight",
+                    "schema_version": 1,
+                    "value": 8.380386299740483e-13
+                  }
+                ],
+                "comparison_role": "permitted_difference",
+                "equivalence_rule": "exact",
+                "factor_type": "physical",
+                "rationale": "Each material is held at the D_mid selected by the sealed 3 by 3 envelope so only the unresolved high-Cs boundary is extended.",
+                "schema_version": 1,
+                "scientific_path": "physics.custom_state.diffusivity",
+                "tolerance": null,
+                "unit": "cm^2/s",
+                "variable_key": "variable.fig4.diffusivity"
+              },
+              {
+                "baseline_value": 66112532484494640000,
+                "case_overrides": [
+                  {
+                    "case_key": "case.fig4.ga_cs_highside_1p4_primary",
+                    "schema_version": 1,
+                    "value": 77330712831805230000
+                  },
+                  {
+                    "case_key": "case.fig4.ga_cs_highside_1p4_tight",
+                    "schema_version": 1,
+                    "value": 77330712831805230000
+                  }
+                ],
+                "comparison_role": "intended_change",
+                "equivalence_rule": "exact",
+                "factor_type": "physical",
+                "rationale": "These are the next natural 0.2*Cs_mid high-side grid values after the sealed 1.2*Cs_mid boundary cases: 1.4*4.7223237488924746e19 and 1.4*5.523622345128945e19 cm^-3.",
+                "schema_version": 1,
+                "scientific_path": "boundary.front.fixed_concentration",
+                "tolerance": null,
+                "unit": "cm^-3",
+                "variable_key": "variable.fig4.surface_concentration"
+              },
+              {
+                "baseline_value": 480,
+                "case_overrides": [],
+                "comparison_role": "frozen",
+                "equivalence_rule": "exact",
+                "factor_type": "physical",
+                "rationale": "The bound Fig. 4 experiment condition is fixed.",
+                "schema_version": 1,
+                "scientific_path": "thermal.temperature",
+                "tolerance": null,
+                "unit": "Celsius",
+                "variable_key": "variable.fig4.temperature"
+              },
+              {
+                "baseline_value": 480,
+                "case_overrides": [],
+                "comparison_role": "frozen",
+                "equivalence_rule": "exact",
+                "factor_type": "physical",
+                "rationale": "Eight minutes is exactly 480 s and remains fixed.",
+                "schema_version": 1,
+                "scientific_path": "thermal.duration",
+                "tolerance": null,
+                "unit": "s",
+                "variable_key": "variable.fig4.duration"
+              },
+              {
+                "baseline_value": 0,
+                "case_overrides": [],
+                "comparison_role": "frozen",
+                "equivalence_rule": "exact",
+                "factor_type": "physical",
+                "rationale": "All cases reuse the reviewed zero initial custom state.",
+                "schema_version": 1,
+                "scientific_path": "initial_condition.custom_state",
+                "tolerance": null,
+                "unit": "cm^-3",
+                "variable_key": "variable.fig4.initial_concentration"
+              },
+              {
+                "baseline_value": 0,
+                "case_overrides": [],
+                "comparison_role": "frozen",
+                "equivalence_rule": "exact",
+                "factor_type": "physical",
+                "rationale": "The back Dirichlet boundary remains zero.",
+                "schema_version": 1,
+                "scientific_path": "boundary.back.fixed_concentration",
+                "tolerance": null,
+                "unit": "cm^-3",
+                "variable_key": "variable.fig4.back_boundary_concentration"
+              },
+              {
+                "baseline_value": 2.4476634882848627,
+                "case_overrides": [
+                  {
+                    "case_key": "case.fig4.al_cs_highside_1p4_tight",
+                    "schema_version": 1,
+                    "value": 3.671495232427294
+                  },
+                  {
+                    "case_key": "case.fig4.ga_cs_highside_1p4_tight",
+                    "schema_version": 1,
+                    "value": 3.671495232427294
+                  }
+                ],
+                "comparison_role": "permitted_difference",
+                "equivalence_rule": "exact",
+                "factor_type": "numerical",
+                "rationale": "Only the tight sentinels extend the domain under the previously reviewed numerical tier.",
+                "schema_version": 1,
+                "scientific_path": "numerics.domain_length",
+                "tolerance": null,
+                "unit": "um",
+                "variable_key": "variable.fig4.domain_length"
+              },
+              {
+                "baseline_value": 0.001,
+                "case_overrides": [
+                  {
+                    "case_key": "case.fig4.al_cs_highside_1p4_tight",
+                    "schema_version": 1,
+                    "value": 0.0005
+                  },
+                  {
+                    "case_key": "case.fig4.ga_cs_highside_1p4_tight",
+                    "schema_version": 1,
+                    "value": 0.0005
+                  }
+                ],
+                "comparison_role": "permitted_difference",
+                "equivalence_rule": "exact",
+                "factor_type": "numerical",
+                "rationale": "The tight sentinels halve only the surface spacing.",
+                "schema_version": 1,
+                "scientific_path": "numerics.surface_spacing",
+                "tolerance": null,
+                "unit": "um",
+                "variable_key": "variable.fig4.surface_mesh_spacing"
+              },
+              {
+                "baseline_value": 0.005,
+                "case_overrides": [
+                  {
+                    "case_key": "case.fig4.al_cs_highside_1p4_tight",
+                    "schema_version": 1,
+                    "value": 0.0025
+                  },
+                  {
+                    "case_key": "case.fig4.ga_cs_highside_1p4_tight",
+                    "schema_version": 1,
+                    "value": 0.0025
+                  }
+                ],
+                "comparison_role": "permitted_difference",
+                "equivalence_rule": "exact",
+                "factor_type": "numerical",
+                "rationale": "The tight sentinels halve only the maximum spacing.",
+                "schema_version": 1,
+                "scientific_path": "numerics.maximum_spacing",
+                "tolerance": null,
+                "unit": "um",
+                "variable_key": "variable.fig4.maximum_mesh_spacing"
+              },
+              {
+                "baseline_value": 4,
+                "case_overrides": [
+                  {
+                    "case_key": "case.fig4.al_cs_highside_1p4_tight",
+                    "schema_version": 1,
+                    "value": 2
+                  },
+                  {
+                    "case_key": "case.fig4.ga_cs_highside_1p4_tight",
+                    "schema_version": 1,
+                    "value": 2
+                  }
+                ],
+                "comparison_role": "permitted_difference",
+                "equivalence_rule": "exact",
+                "factor_type": "numerical",
+                "rationale": "The tight sentinels halve only the maximum time step.",
+                "schema_version": 1,
+                "scientific_path": "numerics.diffuse.maxstep",
+                "tolerance": null,
+                "unit": "s",
+                "variable_key": "variable.fig4.maximum_time_step"
+              }
+            ]
+          }
+        ],
+        "schema_version": 1,
+        "selected_hypothesis_keys": [
+          "hypothesis.surface_boundary_control"
+        ],
+        "study_kind": "scientific"
+      },
+      "schema": "scidiscovery.experiment-design-intent.v1"
+    },
+    "sealed_output_status": "available",
+    "started_at": "2026-09-13T09:07:56.201504Z",
+    "state": "completed",
+    "tool_timing": [
+      {
+        "completed_at": "2026-09-13T09:07:56.211490+00:00",
+        "duration_seconds": 0.010158,
+        "started_at": "2026-09-13T09:07:56.201352+00:00",
+        "tool_name": "worker_open_assignment"
+      },
+      {
+        "completed_at": "2026-09-13T09:12:09.194899+00:00",
+        "duration_seconds": 0.103364,
+        "started_at": "2026-09-13T09:12:09.092775+00:00",
+        "tool_name": "worker_heartbeat"
+      },
+      {
+        "completed_at": "2026-09-13T09:15:23.047201+00:00",
+        "duration_seconds": 0.616057,
+        "started_at": "2026-09-13T09:15:22.431189+00:00",
+        "tool_name": "worker_submit_result"
+      },
+      {
+        "completed_at": "2026-09-13T09:15:37.362890+00:00",
+        "duration_seconds": 0.153412,
+        "started_at": "2026-09-13T09:15:37.209501+00:00",
+        "tool_name": "worker_submit_result"
+      },
+      {
+        "completed_at": "2026-09-13T09:15:55.363396+00:00",
+        "duration_seconds": 0.680493,
+        "started_at": "2026-09-13T09:15:54.682923+00:00",
+        "tool_name": "worker_submit_result"
+      },
+      {
+        "completed_at": "2026-09-13T09:16:07.892284+00:00",
+        "duration_seconds": 0.16916,
+        "started_at": "2026-09-13T09:16:07.723151+00:00",
+        "tool_name": "worker_submit_result"
+      },
+      {
+        "completed_at": "2026-09-13T09:16:21.073660+00:00",
+        "duration_seconds": 0.19501,
+        "started_at": "2026-09-13T09:16:20.878668+00:00",
+        "tool_name": "worker_submit_result"
+      }
+    ]
+  },
+  "materialization_request": {
+    "name": "fig4_cs_highside_extension_plan_1",
+    "operation_id": "science.experiment.materialize.v1",
+    "inputs": [
+      {
+        "port": "experiment_design_intent",
+        "artifact_names": [
+          "fig4_iterative_alignment_next_design_1.output"
+        ]
+      },
+      {
+        "port": "scientific_foundation",
+        "artifact_names": [
+          "fig4_continuation_intake_split_2.scientific_foundation"
+        ]
+      },
+      {
+        "port": "research_objective",
+        "artifact_names": [
+          "fig4_continuation_objective_2"
+        ]
+      },
+      {
+        "port": "hypothesis_portfolio",
+        "artifact_names": [
+          "fig4_continuation_hypothesis_revision_1.output"
+        ]
+      },
+      {
+        "port": "critic_review",
+        "artifact_names": [
+          "fig4_continuation_hypothesis_critic_3.output"
+        ]
+      }
+    ]
+  },
+  "materialization_result": {
+    "executor_kind": "transform",
+    "operation_id": "science.experiment.materialize.v1",
+    "result": {
+      "name": "fig4_cs_highside_extension_plan_1",
+      "outputs": [
+        {
+          "artifact_name": "fig4_cs_highside_extension_plan_1",
+          "kind": "experiment_portfolio",
+          "media_type": "application/json",
+          "output_label": "primary",
+          "schema": "scidiscovery.experiment-portfolio.v1",
+          "size_bytes": 36943
+        },
+        {
+          "artifact_name": "fig4_cs_highside_extension_plan_1.materialization_report",
+          "kind": "experiment_plan_materialization_report",
+          "media_type": "application/json",
+          "output_label": "materialization_report",
+          "schema": "scidiscovery.experiment-plan-materialization.v1",
+          "size_bytes": 521
+        }
+      ],
+      "profile": "science.experiment.materialize.v1"
+    }
+  },
+  "review_request": {
+    "name": "fig4_cs_highside_extension_plan_review_1",
+    "operation_id": "science.object.review.v1",
+    "inputs": [
+      {
+        "port": "experiment_plan",
+        "artifact_names": [
+          "fig4_cs_highside_extension_plan_1"
+        ]
+      },
+      {
+        "port": "research_objective",
+        "artifact_names": [
+          "fig4_continuation_objective_2"
+        ]
+      },
+      {
+        "port": "execution_context",
+        "artifact_names": [
+          "fig4_continuation_execution_context_1"
+        ]
+      },
+      {
+        "port": "current_progress",
+        "artifact_names": [
+          "fig4_iterative_alignment_plan_revision_completion_1.output",
+          "fig4_iterative_alignment_plan_review_postinstall_1.output",
+          "fig4_iterative_alignment_author_postinstall_1.output"
+        ]
+      },
+      {
+        "port": "experiment_results",
+        "artifact_names": [
+          "fig4_iterative_alignment_execution_postinstall_1.result",
+          "fig4_iterative_alignment_analysis_delivery_1.output.tool_evidence_022",
+          "fig4_continuation_figure_materialized_1.curve_tables_001",
+          "fig4_continuation_figure_materialized_1.curve_tables_002"
+        ]
+      },
+      {
+        "port": "result_analysis",
+        "artifact_names": [
+          "fig4_iterative_alignment_analysis_delivery_1.output",
+          "fig4_iterative_alignment_analysis_delivery_1.output.recovery_manifest",
+          "fig4_morphology_closure_2.output"
+        ]
+      }
+    ],
+    "instruction": "独立审查本轮完整计划与原始总体目标、已封存进展、实际实现和结果的匹配度。重点判断最小实验的信息价值、参数与历史比较/数值守卫是否有精确来源、每个判定是否可由声明输入完成、实施与分析职责是否清晰、部分目标缺失是否被正确限定。区分固定参数子族的有限不足与整个物理族或微观机制结论；审查已有线性模型预测是否足以支持本轮止损判定。若存在真实实施或科学判断缺口，请提出最小且完整的修订要求；不要用通过并要求下游补齐关键条件转嫁缺口，不因未覆盖全部总体目标自动拒绝。"
+  },
+  "review_status": {
+    "agent_type": "op_science_object_review_v1_888654d1bfc3",
+    "backend": "local_trusted",
+    "bound_inputs": [
+      {
+        "artifact_names": [
+          "fig4_cs_highside_extension_plan_1"
+        ],
+        "port": "experiment_plan"
+      },
+      {
+        "artifact_names": [
+          "fig4_continuation_objective_2"
+        ],
+        "port": "research_objective"
+      },
+      {
+        "artifact_names": [
+          "fig4_continuation_execution_context_1"
+        ],
+        "port": "execution_context"
+      },
+      {
+        "artifact_names": [
+          "fig4_iterative_alignment_plan_revision_completion_1.output",
+          "fig4_iterative_alignment_plan_review_postinstall_1.output",
+          "fig4_iterative_alignment_author_postinstall_1.output"
+        ],
+        "port": "current_progress"
+      },
+      {
+        "artifact_names": [
+          "fig4_iterative_alignment_execution_postinstall_1.result",
+          "fig4_iterative_alignment_analysis_delivery_1.output.tool_evidence_022",
+          "fig4_continuation_figure_materialized_1.curve_tables_001",
+          "fig4_continuation_figure_materialized_1.curve_tables_002"
+        ],
+        "port": "experiment_results"
+      },
+      {
+        "artifact_names": [
+          "fig4_iterative_alignment_analysis_delivery_1.output",
+          "fig4_iterative_alignment_analysis_delivery_1.output.recovery_manifest",
+          "fig4_morphology_closure_2.output"
+        ],
+        "port": "result_analysis"
+      }
+    ],
+    "candidate_accepted": true,
+    "completed_at": "2026-09-13T09:22:05.669132Z",
+    "created_at": "2026-09-13T09:17:07.520177Z",
+    "deadline_at": "2026-09-13T09:27:07.520177Z",
+    "diagnostic_summary": {
+      "failure": null,
+      "latest_native_error": null,
+      "latest_rejection": null,
+      "latest_tool_error": null,
+      "native_coverage": "unobserved",
+      "recent_errors": [],
+      "rejection_count": 0
+    },
+    "draft_from": null,
+    "head_advance": "not_requested",
+    "last_activity_at": "2026-09-13T09:22:05.669132Z",
+    "logical_name": "fig4_cs_highside_extension_plan_review_1",
+    "name": "fig4_cs_highside_extension_plan_review_1",
+    "native_execution": {
+      "coverage": "unobserved",
+      "reason": "no_records",
+      "scientific_evidence": false
+    },
+    "operation_id": "science.object.review.v1",
+    "output_artifact_name": "fig4_cs_highside_extension_plan_review_1.output",
+    "reason": null,
+    "recovery": {
+      "attempt_budget": {
+        "limit": 1,
+        "used": 1
+      },
+      "delivery_preserved": false,
+      "draft_available": false,
+      "recovery_pending": false,
+      "resume_available": false
+    },
+    "recovery_available": false,
+    "revision": 1,
+    "scheduler_signal": {
+      "assumptions": [
+        "The frozen equation, zero initial state, fixed Dirichlet boundaries, and postprocessing definitions in experiment_plan are applied exactly.",
+        "If solver execution is retained, the exact prior realization in current_progress_003 is supplied to the author; execution_context alone does not state the required capabilities."
+      ],
+      "missing_inputs": [
+        "For any retained cross-execution guarded comparison, an exact primary-tight numerical guard at each material's D_mid and 1.2*Cs_mid old point, or an independently justified bound that explicitly permits transport of the low-D sentinel guard to D_mid."
+      ],
+      "next_action_kind": null,
+      "next_actions": [
+        "Revise the current experiment to deterministically apply the declared linear scale law to the sealed 1.2*Cs_mid results, report the already determined brackets, derived Cs*, invariant x1 and normalized held-out shape, and close only the constant-Cs subfamily claim.",
+        "If a solver check is retained for engineering assurance, correct the historical guard identity, provide matched old-point guards or a justified transport bound, and classify the cases as implementation verification with commensurate cost and information-value rationale.",
+        "Keep tail-support qualification and a separately reviewed shape-changing mechanism comparison as later objectives under their stated evidence and capability conditions."
+      ],
+      "schema_version": 1,
+      "summary": "The proposed four-case extension is technically realizable from the supplied prior SProcess project, but it is not a valid minimal scientific experiment as written. Its old numerical guards are not matched to the sealed D_mid, 1.2*Cs_mid representatives, and every scientifically admissible 1.4*Cs_mid outcome is already fixed by the frozen linear scaling law. Revise the current objective to a deterministic closure analysis, or supply exact matched old-point guards and reframe any retained solver run as implementation verification rather than new scientific discrimination.",
+      "verdict": "revise"
+    },
+    "scheduler_signal_status": "available",
+    "sealed_output": {
+      "artifact_name": "fig4_cs_highside_extension_plan_review_1.output",
+      "kind": "scientific_review",
+      "payload": {
+        "evidence": [
+          {
+            "locator": "/proposals/0/current_objectives,/proposals/0/frozen_invariants,/proposals/0/prediction_tests,/proposals/0/comparison_contract,/proposals/0/required_observables,/proposals/0/resource_estimate,/proposals/0/value_assessment,/proposals/0/stop_conditions",
+            "schema_version": 1,
+            "source_key": "experiment_plan",
+            "source_type": "frozen_input"
+          },
+          {
+            "locator": "/materials/0/sentinel,/materials/0/representative,/materials/0/delta_x_um,/materials/0/delta_front_level_decade,/materials/0/heldout_deltas,/materials/0/directional_checks,/materials/1/sentinel,/materials/1/representative,/materials/1/delta_x_um,/materials/1/delta_front_level_decade,/materials/1/heldout_deltas,/materials/1/directional_checks,/checks,/runtime",
+            "schema_version": 1,
+            "source_key": "experiment_results_002",
+            "source_type": "frozen_input"
+          },
+          {
+            "locator": "/summary,/gates,/remaining_contradiction,/objective_assessment,/next_action",
+            "schema_version": 1,
+            "source_key": "result_analysis_001",
+            "source_type": "frozen_input"
+          },
+          {
+            "locator": "/solver_kind,/tool_profile,/entrypoint,/files,/expected_outputs,/initialization_attestation,/preflight_attestation,/materialization_report",
+            "schema_version": 1,
+            "source_key": "current_progress_003",
+            "source_type": "frozen_input"
+          },
+          {
+            "locator": "/implementation_backend,/implementation_kind,/release_label,/capability_statements,/limitations",
+            "schema_version": 1,
+            "source_key": "execution_context",
+            "source_type": "frozen_input"
+          },
+          {
+            "locator": "/mandatory_targets,/closure_requirements",
+            "schema_version": 1,
+            "source_key": "research_objective",
+            "source_type": "frozen_input"
+          },
+          {
+            "locator": "/terminal_state,/output_refs,/collected_at",
+            "schema_version": 1,
+            "source_key": "experiment_results_001",
+            "source_type": "frozen_input"
+          }
+        ],
+        "evidence_item_keys": [
+          "experiment_plan",
+          "research_objective",
+          "execution_context",
+          "current_progress_003",
+          "experiment_results_001",
+          "experiment_results_002",
+          "result_analysis_001"
+        ],
+        "findings": [
+          {
+            "epistemic_status": "inference",
+            "evidence_keys": [
+              "experiment_plan",
+              "experiment_results_002"
+            ],
+            "finding_key": "review.guard_identity_mismatch",
+            "rationale": "A cross-run propagated guard must describe the numerical sensitivity of the exact old operand or have an explicit, supported transport rule. Substituting a different D point while calling it matched makes the registered comparisons scientifically underdetermined.",
+            "schema_version": 1,
+            "statement": "The plan labels delta_F_old, delta_x_old, and the historical held-out sensitivities as guards for the sealed D_mid, 1.2*Cs_mid representatives, but the supplied result identifies each tight sentinel at low-D/high-Cs. No matched tight result for either selected D_mid old point is supplied."
+          },
+          {
+            "epistemic_status": "inference",
+            "evidence_keys": [
+              "experiment_plan",
+              "experiment_results_002",
+              "result_analysis_001"
+            ],
+            "finding_key": "review.linear_extension_is_deterministic",
+            "rationale": "The plan itself preregisters this exact scale law, and the sealed three-level Cs responses already follow the expected logarithmic increments. Any guarded failure is therefore an implementation/model-response failure, not a competing scientific outcome.",
+            "schema_version": 1,
+            "statement": "Within the frozen homogeneous linear PDE, replacing 1.2*Cs_mid by 1.4*Cs_mid multiplies the entire concentration profile by 7/6, adds log10(7/6) to L_F, and leaves x1, W13 when defined, and the front-aligned normalized residual unchanged."
+          },
+          {
+            "epistemic_status": "inference",
+            "evidence_keys": [
+              "experiment_plan",
+              "experiment_results_002",
+              "result_analysis_001"
+            ],
+            "finding_key": "review.stop_loss_already_determined",
+            "rationale": "The predicted front overshoots and derived Cs* values in the plan reproduce direct arithmetic from the sealed old levels. Because x1 and normalized shape are scale invariant, the valid response cannot enter the plan's directional shape-improvement branch.",
+            "schema_version": 1,
+            "statement": "Applying the declared scale law to the sealed representatives predicts that both 1.4*Cs_mid points bracket their reference front levels while retaining the existing depth errors and normalized held-out RMS. The bounded conclusion that constant Cs cannot jointly correct front level and shape at fixed D_mid is therefore available without new solver execution."
+          },
+          {
+            "epistemic_status": "inference",
+            "evidence_keys": [
+              "current_progress_003",
+              "experiment_results_001",
+              "experiment_results_002",
+              "execution_context"
+            ],
+            "finding_key": "review.implementation_reuse_feasible_but_conditioned",
+            "rationale": "This is not an implementation impossibility. It limits what may be handed to an author and reinforces that a retained run would verify reuse fidelity rather than discriminate the current scientific alternatives.",
+            "schema_version": 1,
+            "statement": "The four proposed SProcess cases are technically realizable if the exact prior project is passed to the author: the supplied realization contains the custom-state source, successful initialization and preflight attestations, actual *_fps.tdr declarations, and a successfully collected 20-case execution. The sparse execution_context alone does not independently establish those capabilities."
+          },
+          {
+            "epistemic_status": "inference",
+            "evidence_keys": [
+              "experiment_plan",
+              "research_objective",
+              "experiment_results_002",
+              "result_analysis_001"
+            ],
+            "finding_key": "review.original_scope_deferral_is_valid",
+            "rationale": "Partial coverage does not invalidate the bounded front/depth inference, but neither the deterministic extension nor its solver verification may be described as closing the original mechanism-discrimination objective.",
+            "schema_version": 1,
+            "statement": "The current fixed-D_mid, constant-Cs conclusion can address only a bounded parameter subfamily. Missing qualified tail support, invalid joint digitization corners, material/D pairing, and the absence of a shape-changing family prevent overall mechanism separation, and the plan correctly retains these as later conditions rather than current execution prerequisites."
+          }
+        ],
+        "global_confounders": [
+          "The historical tight sentinels are at low D rather than at the selected D_mid old points, so the plan's propagated old-point numerical guards lack exact operand identity.",
+          "Material label remains paired with material-specific D_mid, preventing a material-only causal comparison.",
+          "The exact constant-D, constant-Cs linear model admits only amplitude scaling under the proposed intervention, so it cannot identify a shape-changing mechanism or microscopic defect process.",
+          "Joint digitization uncertainty and qualified tail support remain unavailable, preventing absolute compatibility and tail-platform claims."
+        ],
+        "hypothesis_reviews": [
+          {
+            "confounders": [
+              "The accepted model-response gate fixes the 1.4*Cs_mid result algebraically; departures are classified as implementation/model-response invalid before scientific interpretation.",
+              "The old numerical guard is transported from low D without a declared justification.",
+              "No shape-changing family is compared, and material remains paired with D_mid."
+            ],
+            "falsifiability": "fail",
+            "hypothesis_key": "hypothesis.surface_boundary_control",
+            "identifiability": "fail",
+            "missing_inputs": [
+              "If solver verification is retained, matched D_mid, 1.2*Cs_mid numerical sensitivities or an explicit evidence-supported transport bound for the low-D sentinel deltas."
+            ],
+            "physical_plausibility": "pass",
+            "rationale": "The proposed cases can check code fidelity but do not provide a scientific falsifier or identify the named physical hypothesis: every response admitted by the linear-response gate has the same bracketing and invariant-shape disposition. The bounded constant-Cs inadequacy is already identifiable from the sealed results plus the declared model; mechanism-level identifiability requires a different intervention.",
+            "schema_version": 1,
+            "smallest_resolving_action": "Use a deterministic analysis of the sealed D_mid, 1.2*Cs_mid profiles and the exact linear scale law to close the constant-Cs subfamily without new solver cases. If the broader mechanism question remains active, separately design a finite shape-changing counterfactual with explicit equations, boundaries, capability evidence, observables, and a decision rule."
+          }
+        ],
+        "next_actions": [
+          "Replace the four-case scientific experiment with a deterministic closure calculation using the sealed representative values and the exact linear scaling law; retain the same bounded claim limits.",
+          "Correct every reference to the prior low-D tight sentinel and do not describe its deltas as matched D_mid old-point guards.",
+          "If an engineering solver check is still desired, explicitly bind current_progress_003 to authoring, add matched old-point numerical support or a justified transport rule, and revise resource and value rationales accordingly.",
+          "Leave uncertainty-qualified tail assessment and mechanism separation to later work requiring their already stated evidence and shape-changing-model conditions."
+        ],
+        "review_target": "experiment_portfolio",
+        "schema_version": 1,
+        "summary": "The plan has clear case identities, frozen physics, stopping rules, and appropriately bounded claims, and the supplied prior realization plus successful 20-case execution demonstrate that the SProcess method is technically reusable. It nevertheless requires revision for two material defects. First, the stated old deltas are not matched guards for the selected D_mid, 1.2*Cs_mid representatives: the sealed tight sentinels and the reported delta_F, delta_x, and held-out deltas belong to low-D/high-Cs cases. Second, the frozen linear boundary-value problem makes concentration proportional to Cs. From the sealed representatives, increasing Cs by 7/6 necessarily predicts L_F=19.296073189567167 and 19.612348127113414, bracketing the references by 0.061015374358866836 and 0.057851359486640774 decade, while x1 and the front-aligned normalized shape remain invariant. Thus the stated stop-loss conclusion for the constant-Cs, fixed-D_mid subfamily already follows from declared inputs; four new solver cases add implementation verification, not the claimed high scientific information gain. The uncovered tail-support and microscopic-mechanism targets correctly remain later work and do not themselves invalidate this bounded conclusion.",
+        "verdict": "revise"
+      },
+      "schema": "scidiscovery.scientific-review.v1"
+    },
+    "sealed_output_status": "available",
+    "started_at": "2026-09-13T09:17:28.117803Z",
+    "state": "completed",
+    "tool_timing": [
+      {
+        "completed_at": "2026-09-13T09:17:28.125380+00:00",
+        "duration_seconds": 0.007723,
+        "started_at": "2026-09-13T09:17:28.117675+00:00",
+        "tool_name": "worker_open_assignment"
+      },
+      {
+        "completed_at": "2026-09-13T09:22:05.684224+00:00",
+        "duration_seconds": 0.262679,
+        "started_at": "2026-09-13T09:22:05.421960+00:00",
+        "tool_name": "worker_submit_result"
+      }
+    ]
+  },
+  "engineering_observations": {
+    "design_rejections": 4,
+    "recovered_in_same_run": true,
+    "installed_validators_match_source": true,
+    "classification": {
+      "baseline_required": "Current materializer requires an in-proposal baseline; scientific necessity is not established for a historical comparison.",
+      "baseline_role": "Redundant baseline role registration after an explicit baseline selection.",
+      "frozen_variable": "Internal consistency rule has value, but global scope may conflict with within-material invariance; diagnostic does not identify the variable, so this occurrence cannot be classified conclusively.",
+      "observable_registration": "Exact duplicate free-text membership check does not establish scientific observable coverage."
+    },
+    "source_files": [
+      "src/scidiscovery/artifact_agent/schema/experiment_intent.py",
+      "src/scidiscovery/artifact_agent/schema/experiment.py"
+    ],
+    "code_changed": false,
+    "observable_rule_history": {
+      "first_recorded_commit": "404aeb1",
+      "previous_audit": "docs/plans/evidence/operation-validation-reaudit/METHODS.json",
+      "prior_classification": "mixed: preserve selected comparison references/values/units; derive count and remove full-case/full-observable equality",
+      "finding": "The free-text observable membership rule was inventoried but retained as reference integrity; current installed and source bytes match.",
+      "call_chain": [
+        "validate_experiment_design_intent_task_output",
+        "materialize_experiment_design_intent",
+        "ExperimentProposal._proposal_is_bounded"
+      ],
+      "fix_candidate": "Remove duplicate free-text membership refusal; scientific coverage belongs to independent scientific review. No source changed in this iteration."
+    }
+  },
+  "pause": {
+    "requested_by_user": true,
+    "queued_runs": 0,
+    "running_runs": 0,
+    "new_solver_started": false,
+    "next_scientific_action_created": false
+  }
+}

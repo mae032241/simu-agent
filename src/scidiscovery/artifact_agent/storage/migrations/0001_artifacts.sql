@@ -30,17 +30,6 @@ CREATE TABLE IF NOT EXISTS artifact_links (
         REFERENCES artifact_envelopes(artifact_id, payload_sha256, kind, schema_id)
 );
 
-CREATE TABLE IF NOT EXISTS artifact_events (
-    event_id TEXT PRIMARY KEY,
-    artifact_id TEXT NOT NULL,
-    event_type TEXT NOT NULL CHECK(event_type = 'artifact_registered'),
-    recorded_at TEXT NOT NULL,
-    event_json BLOB NOT NULL,
-    event_sha256 TEXT NOT NULL CHECK(length(event_sha256) = 64),
-    UNIQUE (artifact_id, event_type),
-    FOREIGN KEY (artifact_id) REFERENCES artifact_envelopes(artifact_id)
-);
-
 CREATE TABLE IF NOT EXISTS idempotency_records (
     idempotency_key TEXT PRIMARY KEY,
     request_json BLOB NOT NULL,
@@ -73,15 +62,6 @@ END;
 CREATE TRIGGER IF NOT EXISTS artifact_links_deny_delete
 BEFORE DELETE ON artifact_links BEGIN
     SELECT RAISE(ABORT, 'artifact_links is append-only');
-END;
-
-CREATE TRIGGER IF NOT EXISTS artifact_events_deny_update
-BEFORE UPDATE ON artifact_events BEGIN
-    SELECT RAISE(ABORT, 'artifact_events is append-only');
-END;
-CREATE TRIGGER IF NOT EXISTS artifact_events_deny_delete
-BEFORE DELETE ON artifact_events BEGIN
-    SELECT RAISE(ABORT, 'artifact_events is append-only');
 END;
 
 CREATE TRIGGER IF NOT EXISTS idempotency_records_deny_update

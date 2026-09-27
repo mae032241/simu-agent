@@ -1,0 +1,25 @@
+{
+  "command": [
+    "env",
+    "PYTHONPATH=/tmp/scid-execution-settings-baseline/src",
+    "python",
+    "-m",
+    "pytest",
+    "-q",
+    "-o",
+    "pythonpath=",
+    "tests/operations/test_l2_run_invariants.py::test_recursive_current_uses_producer_receipts_and_commit_rechecks_head",
+    "tests/operations/test_l5_hardened_run_backend.py::test_hardened_stdio_process_recovers_the_exact_running_run"
+  ],
+  "exit_code": 4,
+  "stop_reason": null,
+  "duration_seconds": 0.404,
+  "peak_tree_rss_mib": 54.15,
+  "budget_mib": 512,
+  "peak_processes": [
+    {
+      "name": "python",
+      "rss_mib": 54.15
+    }
+  ]
+}

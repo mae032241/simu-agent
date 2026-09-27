@@ -1,0 +1,2112 @@
+{
+  "recorded_at_utc": "2026-09-12T01:18:11Z",
+  "scope": "Selected latest-50 Run metadata; no drafts or child scientific content; final revision/review results appended separately.",
+  "runs": [
+    {
+      "name": "fig4_morphology_objective_revision_1",
+      "operation_id": "science.experiment.revise.v1",
+      "state": "failed",
+      "created_at": "2026-09-12T01:00:49.543298Z",
+      "started_at": "2026-09-12T01:01:23.037969Z",
+      "deadline_at": "2026-09-12T01:15:49.543298Z",
+      "completed_at": "2026-09-12T01:17:33.418389Z",
+      "output_artifact_name": null,
+      "reason": "超过本 Run 的 900 秒截止时间仍未形成受控封存输出；控制端未记录工具错误或输出拒绝。中止超时任务，保留交付与诊断；不能把运行时间或未封存草稿当作目标已完成修订。下一 Run 将把任务限定为沿用既有完整计划的最小字段更新。",
+      "diagnostic_summary": {
+        "failure": {
+          "category": "run_timeout",
+          "code": "run_timeout",
+          "repairable_by_output": false
+        },
+        "latest_rejection": null,
+        "latest_tool_error": null,
+        "recent_errors": [
+          {
+            "category": "run_timeout",
+            "code": "run_timeout",
+            "repairable_by_output": false
+          }
+        ],
+        "rejection_count": 0
+      }
+    },
+    {
+      "name": "fig4_morphology_objective_change_review_2",
+      "operation_id": "science.object.review.v1",
+      "state": "completed",
+      "created_at": "2026-09-12T00:55:00.018741Z",
+      "started_at": "2026-09-12T00:55:14.145839Z",
+      "deadline_at": "2026-09-12T01:05:00.018741Z",
+      "completed_at": "2026-09-12T00:57:16.488086Z",
+      "output_artifact_name": "fig4_morphology_objective_change_review_2.output",
+      "reason": null,
+      "diagnostic_summary": {
+        "failure": null,
+        "latest_rejection": null,
+        "latest_tool_error": null,
+        "recent_errors": [],
+        "rejection_count": 0
+      }
+    },
+    {
+      "name": "fig4_morphology_objective_change_review_1",
+      "operation_id": "science.object.review.v1",
+      "state": "failed",
+      "created_at": "2026-09-12T00:46:31.010182Z",
+      "started_at": "2026-09-12T00:46:49.844990Z",
+      "deadline_at": "2026-09-12T00:56:31.010182Z",
+      "completed_at": "2026-09-12T00:54:28.933999Z",
+      "output_artifact_name": null,
+      "reason": "同一 ScientificReview 结构错误已重复四次，公开诊断仅定位 $.payload，未说明具体字段。中止无效重试并保留工程记录；将以同一绑定、补明现有输出结构规则的新 Run 继续独立审查。此失败不表达科学审查结论。",
+      "diagnostic_summary": {
+        "failure": {
+          "category": "runtime_failure",
+          "code": "runtime_failure",
+          "repairable_by_output": false
+        },
+        "latest_rejection": {
+          "category": "output_rejected",
+          "code": "output_rejected",
+          "details": [
+            {
+              "affected_action": "submit",
+              "code": "output_invalid",
+              "message": "Value violates the declared type, bounds, or field relationship.",
+              "path": "$.payload",
+              "phase": "output_payload",
+              "repairable": true,
+              "rule_id": "experiment.review.verdict_consistency",
+              "schema_version": 1,
+              "type": "value_error"
+            }
+          ],
+          "repairable_by_output": true
+        },
+        "latest_tool_error": null,
+        "recent_errors": [
+          {
+            "category": "output_rejected",
+            "code": "output_rejected",
+            "details": [
+              {
+                "affected_action": "submit",
+                "code": "output_invalid",
+                "message": "Value violates the declared type, bounds, or field relationship.",
+                "path": "$.payload",
+                "phase": "output_payload",
+                "repairable": true,
+                "rule_id": "experiment.review.verdict_consistency",
+                "schema_version": 1,
+                "type": "value_error"
+              }
+            ],
+            "repairable_by_output": true
+          },
+          {
+            "category": "output_rejected",
+            "code": "output_rejected",
+            "details": [
+              {
+                "affected_action": "submit",
+                "code": "output_invalid",
+                "message": "Value violates the declared type, bounds, or field relationship.",
+                "path": "$.payload",
+                "phase": "output_payload",
+                "repairable": true,
+                "rule_id": "experiment.review.verdict_consistency",
+                "schema_version": 1,
+                "type": "value_error"
+              }
+            ],
+            "repairable_by_output": true
+          },
+          {
+            "category": "output_rejected",
+            "code": "output_rejected",
+            "details": [
+              {
+                "affected_action": "submit",
+                "code": "output_invalid",
+                "message": "Value violates the declared type, bounds, or field relationship.",
+                "path": "$.payload",
+                "phase": "output_payload",
+                "repairable": true,
+                "rule_id": "experiment.review.verdict_consistency",
+                "schema_version": 1,
+                "type": "value_error"
+              }
+            ],
+            "repairable_by_output": true
+          },
+          {
+            "category": "output_rejected",
+            "code": "output_rejected",
+            "details": [
+              {
+                "affected_action": "submit",
+                "code": "output_invalid",
+                "message": "Value violates the declared type, bounds, or field relationship.",
+                "path": "$.payload",
+                "phase": "output_payload",
+                "repairable": true,
+                "rule_id": "experiment.review.verdict_consistency",
+                "schema_version": 1,
+                "type": "value_error"
+              }
+            ],
+            "repairable_by_output": true
+          },
+          {
+            "category": "output_rejected",
+            "code": "output_rejected",
+            "details": [
+              {
+                "affected_action": "submit",
+                "code": "output_invalid",
+                "message": "Value violates the declared type, bounds, or field relationship.",
+                "path": "$.payload",
+                "phase": "output_payload",
+                "repairable": true,
+                "rule_id": "experiment.review.verdict_consistency",
+                "schema_version": 1,
+                "type": "value_error"
+              }
+            ],
+            "repairable_by_output": true
+          },
+          {
+            "category": "runtime_failure",
+            "code": "runtime_failure",
+            "repairable_by_output": false
+          }
+        ],
+        "rejection_count": 5
+      }
+    },
+    {
+      "name": "fig4_continuation_analysis_artifact_retest_1",
+      "operation_id": "tcad.result.analyze.v1",
+      "state": "completed",
+      "created_at": "2026-09-12T00:31:11.215864Z",
+      "started_at": "2026-09-12T00:31:30.143867Z",
+      "deadline_at": "2026-09-12T00:46:11.215864Z",
+      "completed_at": "2026-09-12T00:36:46.772422Z",
+      "output_artifact_name": "fig4_continuation_analysis_artifact_retest_1.output",
+      "reason": null,
+      "diagnostic_summary": {
+        "failure": null,
+        "latest_rejection": null,
+        "latest_tool_error": null,
+        "recent_errors": [],
+        "rejection_count": 0
+      }
+    },
+    {
+      "name": "fig4_continuation_residual_diagnosis_retest_1",
+      "operation_id": "tcad.result.analyze.v1",
+      "state": "completed",
+      "created_at": "2026-09-11T23:34:19.886007Z",
+      "started_at": "2026-09-11T23:34:39.675834Z",
+      "deadline_at": "2026-09-11T23:49:19.886007Z",
+      "completed_at": "2026-09-11T23:41:50.982874Z",
+      "output_artifact_name": "fig4_continuation_residual_diagnosis_retest_1.output",
+      "reason": null,
+      "diagnostic_summary": {
+        "failure": null,
+        "latest_rejection": null,
+        "latest_tool_error": {
+          "category": "tool_failed",
+          "code": "tool_failed",
+          "details": [
+            {
+              "affected_action": "tool_call",
+              "code": "diagnostic_unavailable",
+              "message": "1 validation error for CalculationRecord\n  Value error, calculation record exceeds 32 KiB [type=value_error, input_value={'record_key': 'diagnosti...sical_interpretation'}}}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.11/v/value_error",
+              "path": "$",
+              "phase": "tool_execution",
+              "repairable": false,
+              "schema_version": 1
+            }
+          ],
+          "repairable_by_output": false,
+          "tool_name": "worker_tcad_curve_diagnose"
+        },
+        "recent_errors": [
+          {
+            "category": "tool_failed",
+            "code": "tool_failed",
+            "details": [
+              {
+                "affected_action": "tool_call",
+                "code": "diagnostic_unavailable",
+                "message": "1 validation error for CalculationRecord\n  Value error, calculation record exceeds 32 KiB [type=value_error, input_value={'record_key': 'diagnosti...sical_interpretation'}}}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.11/v/value_error",
+                "path": "$",
+                "phase": "tool_execution",
+                "repairable": false,
+                "schema_version": 1
+              }
+            ],
+            "repairable_by_output": false,
+            "tool_name": "worker_tcad_curve_diagnose"
+          },
+          {
+            "category": "tool_failed",
+            "code": "tool_failed",
+            "details": [
+              {
+                "affected_action": "tool_call",
+                "code": "diagnostic_unavailable",
+                "message": "1 validation error for CalculationRecord\n  Value error, calculation record exceeds 32 KiB [type=value_error, input_value={'record_key': 'diagnosti...sical_interpretation'}}}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.11/v/value_error",
+                "path": "$",
+                "phase": "tool_execution",
+                "repairable": false,
+                "schema_version": 1
+              }
+            ],
+            "repairable_by_output": false,
+            "tool_name": "worker_tcad_curve_diagnose"
+          }
+        ],
+        "rejection_count": 0
+      }
+    },
+    {
+      "name": "fig4_continuation_experiment_completion_review_2",
+      "operation_id": "science.object.review.v1",
+      "state": "completed",
+      "created_at": "2026-09-11T15:12:41.200055Z",
+      "started_at": "2026-09-11T15:12:58.060727Z",
+      "deadline_at": "2026-09-11T15:22:41.200055Z",
+      "completed_at": "2026-09-11T15:15:27.386764Z",
+      "output_artifact_name": "fig4_continuation_experiment_completion_review_2.output",
+      "reason": null,
+      "diagnostic_summary": {
+        "failure": null,
+        "latest_rejection": null,
+        "latest_tool_error": null,
+        "recent_errors": [],
+        "rejection_count": 0
+      }
+    },
+    {
+      "name": "fig4_continuation_experiment_completion_review_1",
+      "operation_id": "science.object.review.v1",
+      "state": "failed",
+      "created_at": "2026-09-11T15:03:15.833096Z",
+      "started_at": "2026-09-11T15:03:41.143578Z",
+      "deadline_at": "2026-09-11T15:13:15.833096Z",
+      "completed_at": "2026-09-11T15:12:01.475777Z",
+      "output_artifact_name": null,
+      "reason": "同一输出结构规则重复拒绝 10 次以上，公开诊断未定位具体字段。中止无效重试并保留草稿，在补明实际结构要求的新 Run 中继续；本记录不表达科学审查结论。",
+      "diagnostic_summary": {
+        "failure": {
+          "category": "runtime_failure",
+          "code": "runtime_failure",
+          "repairable_by_output": false
+        },
+        "latest_rejection": {
+          "category": "output_rejected",
+          "code": "output_rejected",
+          "details": [
+            {
+              "affected_action": "submit",
+              "code": "output_invalid",
+              "message": "Value violates the declared type, bounds, or field relationship.",
+              "path": "$.payload",
+              "phase": "output_payload",
+              "repairable": true,
+              "rule_id": "experiment.review.verdict_consistency",
+              "schema_version": 1,
+              "type": "value_error"
+            }
+          ],
+          "repairable_by_output": true
+        },
+        "latest_tool_error": null,
+        "recent_errors": [
+          {
+            "category": "output_rejected",
+            "code": "output_rejected",
+            "details": [
+              {
+                "affected_action": "submit",
+                "code": "output_invalid",
+                "message": "Value violates the declared type, bounds, or field relationship.",
+                "path": "$.payload",
+                "phase": "output_payload",
+                "repairable": true,
+                "rule_id": "experiment.review.verdict_consistency",
+                "schema_version": 1,
+                "type": "value_error"
+              }
+            ],
+            "repairable_by_output": true
+          },
+          {
+            "category": "output_rejected",
+            "code": "output_rejected",
+            "details": [
+              {
+                "affected_action": "submit",
+                "code": "output_invalid",
+                "message": "Value violates the declared type, bounds, or field relationship.",
+                "path": "$.payload",
+                "phase": "output_payload",
+                "repairable": true,
+                "rule_id": "experiment.review.verdict_consistency",
+                "schema_version": 1,
+                "type": "value_error"
+              }
+            ],
+            "repairable_by_output": true
+          },
+          {
+            "category": "output_rejected",
+            "code": "output_rejected",
+            "details": [
+              {
+                "affected_action": "submit",
+                "code": "output_invalid",
+                "message": "Value violates the declared type, bounds, or field relationship.",
+                "path": "$.payload",
+                "phase": "output_payload",
+                "repairable": true,
+                "rule_id": "experiment.review.verdict_consistency",
+                "schema_version": 1,
+                "type": "value_error"
+              }
+            ],
+            "repairable_by_output": true
+          },
+          {
+            "category": "output_rejected",
+            "code": "output_rejected",
+            "details": [
+              {
+                "affected_action": "submit",
+                "code": "output_invalid",
+                "message": "Value violates the declared type, bounds, or field relationship.",
+                "path": "$.payload",
+                "phase": "output_payload",
+                "repairable": true,
+                "rule_id": "experiment.review.verdict_consistency",
+                "schema_version": 1,
+                "type": "value_error"
+              }
+            ],
+            "repairable_by_output": true
+          },
+          {
+            "category": "output_rejected",
+            "code": "output_rejected",
+            "details": [
+              {
+                "affected_action": "submit",
+                "code": "output_invalid",
+                "message": "Value violates the declared type, bounds, or field relationship.",
+                "path": "$.payload",
+                "phase": "output_payload",
+                "repairable": true,
+                "rule_id": "experiment.review.verdict_consistency",
+                "schema_version": 1,
+                "type": "value_error"
+              }
+            ],
+            "repairable_by_output": true
+          },
+          {
+            "category": "output_rejected",
+            "code": "output_rejected",
+            "details": [
+              {
+                "affected_action": "submit",
+                "code": "output_invalid",
+                "message": "Value violates the declared type, bounds, or field relationship.",
+                "path": "$.payload",
+                "phase": "output_payload",
+                "repairable": true,
+                "rule_id": "experiment.review.verdict_consistency",
+                "schema_version": 1,
+                "type": "value_error"
+              }
+            ],
+            "repairable_by_output": true
+          },
+          {
+            "category": "output_rejected",
+            "code": "output_rejected",
+            "details": [
+              {
+                "affected_action": "submit",
+                "code": "output_invalid",
+                "message": "Value violates the declared type, bounds, or field relationship.",
+                "path": "$.payload",
+                "phase": "output_payload",
+                "repairable": true,
+                "rule_id": "experiment.review.verdict_consistency",
+                "schema_version": 1,
+                "type": "value_error"
+              }
+            ],
+            "repairable_by_output": true
+          },
+          {
+            "category": "runtime_failure",
+            "code": "runtime_failure",
+            "repairable_by_output": false
+          }
+        ],
+        "rejection_count": 10
+      }
+    },
+    {
+      "name": "fig4_continuation_execution_analysis_recovery_complete_1",
+      "operation_id": "tcad.result.analyze.v1",
+      "state": "completed",
+      "created_at": "2026-09-11T14:36:33.268920Z",
+      "started_at": "2026-09-11T14:36:51.743372Z",
+      "deadline_at": "2026-09-11T14:51:33.268920Z",
+      "completed_at": "2026-09-11T14:47:45.006136Z",
+      "output_artifact_name": "fig4_continuation_execution_analysis_recovery_complete_1.output",
+      "reason": null,
+      "diagnostic_summary": {
+        "failure": null,
+        "latest_rejection": {
+          "category": "output_rejected",
+          "code": "output_rejected",
+          "details": [
+            {
+              "affected_action": "submit",
+              "code": "output_invalid",
+              "message": "Value violates the declared type, bounds, or field relationship.",
+              "path": "$.payload",
+              "phase": "output_context",
+              "repairable": true,
+              "rule_id": "tcad.result_analysis.context_binding",
+              "schema_version": 1,
+              "type": "value_error"
+            }
+          ],
+          "repairable_by_output": true
+        },
+        "latest_tool_error": null,
+        "recent_errors": [
+          {
+            "category": "output_rejected",
+            "code": "output_rejected",
+            "details": [
+              {
+                "affected_action": "submit",
+                "code": "output_invalid",
+                "message": "Value violates the declared type, bounds, or field relationship.",
+                "path": "$.payload",
+                "phase": "output_context",
+                "repairable": true,
+                "rule_id": "tcad.result_analysis.context_binding",
+                "schema_version": 1,
+                "type": "value_error"
+              }
+            ],
+            "repairable_by_output": true
+          },
+          {
+            "category": "output_rejected",
+            "code": "output_rejected",
+            "details": [
+              {
+                "affected_action": "submit",
+                "code": "output_invalid",
+                "message": "Value violates the declared type, bounds, or field relationship.",
+                "path": "$.payload",
+                "phase": "output_context",
+                "repairable": true,
+                "rule_id": "tcad.result_analysis.context_binding",
+                "schema_version": 1,
+                "type": "value_error"
+              }
+            ],
+            "repairable_by_output": true
+          }
+        ],
+        "rejection_count": 2
+      }
+    },
+    {
+      "name": "fig4_continuation_execution_analysis_independent_2",
+      "operation_id": "tcad.result.analyze.v1",
+      "state": "completed",
+      "created_at": "2026-09-11T14:24:27.518547Z",
+      "started_at": "2026-09-11T14:24:41.694287Z",
+      "deadline_at": "2026-09-11T14:39:27.518547Z",
+      "completed_at": "2026-09-11T14:29:32.191571Z",
+      "output_artifact_name": "fig4_continuation_execution_analysis_independent_2.output",
+      "reason": null,
+      "diagnostic_summary": {
+        "failure": null,
+        "latest_rejection": null,
+        "latest_tool_error": null,
+        "recent_errors": [],
+        "rejection_count": 0
+      }
+    },
+    {
+      "name": "fig4_continuation_execution_analysis_independent_1",
+      "operation_id": "tcad.result.analyze.v1",
+      "state": "failed",
+      "created_at": "2026-09-11T14:06:34.170396Z",
+      "started_at": "2026-09-11T14:07:00.211886Z",
+      "deadline_at": "2026-09-11T14:21:34.170396Z",
+      "completed_at": "2026-09-11T14:24:01.701096Z",
+      "output_artifact_name": null,
+      "reason": "Agent 已结束但未形成受控封存输出；控制记录仍为 running 且 Run 截止时间已过。记录本次未完成提交的超时，保留可恢复交付用于新 Run 续接。",
+      "diagnostic_summary": {
+        "failure": {
+          "category": "run_timeout",
+          "code": "run_timeout",
+          "repairable_by_output": false
+        },
+        "latest_rejection": null,
+        "latest_tool_error": {
+          "category": "tool_failed",
+          "code": "tool_failed",
+          "details": [
+            {
+              "affected_action": "tool_call",
+              "code": "calculation_work_limit",
+              "message": "The tool returned no numeric result; retain its specific reason and limitations.",
+              "path": "$",
+              "phase": "tool_execution",
+              "repairable": false,
+              "schema_version": 1
+            }
+          ],
+          "repairable_by_output": false,
+          "tool_name": "worker_tcad_curve_score"
+        },
+        "recent_errors": [
+          {
+            "category": "tool_failed",
+            "code": "tool_failed",
+            "details": [
+              {
+                "affected_action": "tool_call",
+                "code": "case_mapping_invalid",
+                "message": "analysis case is not present in the bound plan",
+                "path": "$.request.sources[0].case_mapping_basis",
+                "phase": "tool_execution",
+                "repairable": true,
+                "schema_version": 1
+              }
+            ],
+            "repairable_by_output": false,
+            "tool_name": "worker_tcad_curve_score"
+          },
+          {
+            "category": "tool_failed",
+            "code": "tool_failed",
+            "details": [
+              {
+                "affected_action": "tool_call",
+                "code": "case_mapping_invalid",
+                "message": "analysis case is not present in the bound plan",
+                "path": "$.request.sources[0].case_mapping_basis",
+                "phase": "tool_execution",
+                "repairable": true,
+                "schema_version": 1
+              }
+            ],
+            "repairable_by_output": false,
+            "tool_name": "worker_tcad_curve_score"
+          },
+          {
+            "category": "tool_failed",
+            "code": "tool_failed",
+            "details": [
+              {
+                "affected_action": "tool_call",
+                "code": "case_mapping_invalid",
+                "message": "undeclared case mapping requires explicit source evidence",
+                "path": "$.request.sources[0].case_mapping_basis",
+                "phase": "tool_execution",
+                "repairable": true,
+                "schema_version": 1
+              }
+            ],
+            "repairable_by_output": false,
+            "tool_name": "worker_tcad_curve_score"
+          },
+          {
+            "category": "tool_failed",
+            "code": "tool_failed",
+            "details": [
+              {
+                "affected_action": "tool_call",
+                "code": "calculation_work_limit",
+                "message": "The tool returned no numeric result; retain its specific reason and limitations.",
+                "path": "$",
+                "phase": "tool_execution",
+                "repairable": false,
+                "schema_version": 1
+              }
+            ],
+            "repairable_by_output": false,
+            "tool_name": "worker_tcad_curve_score"
+          },
+          {
+            "category": "run_timeout",
+            "code": "run_timeout",
+            "repairable_by_output": false
+          }
+        ],
+        "rejection_count": 0
+      }
+    },
+    {
+      "name": "fig4_continuation_execution_analysis_8",
+      "operation_id": "tcad.result.analyze.v1",
+      "state": "completed",
+      "created_at": "2026-09-11T13:56:53.350307Z",
+      "started_at": "2026-09-11T13:57:11.599811Z",
+      "deadline_at": "2026-09-11T14:11:53.350307Z",
+      "completed_at": "2026-09-11T14:05:41.316694Z",
+      "output_artifact_name": "fig4_continuation_execution_analysis_8.output",
+      "reason": null,
+      "diagnostic_summary": {
+        "failure": null,
+        "latest_rejection": {
+          "category": "output_rejected",
+          "code": "output_rejected",
+          "details": [
+            {
+              "affected_action": "submit",
+              "code": "output_invalid",
+              "message": "objective assessment references an unknown comparison",
+              "path": "$.payload.objective_assessment",
+              "phase": "output_context",
+              "repairable": true,
+              "rule_id": "tcad.result_analysis.context_binding",
+              "schema_version": 1,
+              "type": "value_error"
+            }
+          ],
+          "repairable_by_output": true
+        },
+        "latest_tool_error": null,
+        "recent_errors": [
+          {
+            "category": "output_rejected",
+            "code": "output_rejected",
+            "details": [
+              {
+                "affected_action": "submit",
+                "code": "output_invalid",
+                "message": "objective assessment references an unknown comparison",
+                "path": "$.payload.objective_assessment",
+                "phase": "output_context",
+                "repairable": true,
+                "rule_id": "tcad.result_analysis.context_binding",
+                "schema_version": 1,
+                "type": "value_error"
+              }
+            ],
+            "repairable_by_output": true
+          }
+        ],
+        "rejection_count": 1
+      }
+    },
+    {
+      "name": "fig4_continuation_execution_analysis_7",
+      "operation_id": "tcad.result.analyze.v1",
+      "state": "completed",
+      "created_at": "2026-09-11T13:34:31.594218Z",
+      "started_at": "2026-09-11T13:34:55.966105Z",
+      "deadline_at": "2026-09-11T13:49:31.594218Z",
+      "completed_at": "2026-09-11T13:39:58.108670Z",
+      "output_artifact_name": "fig4_continuation_execution_analysis_7.output",
+      "reason": null,
+      "diagnostic_summary": {
+        "failure": null,
+        "latest_rejection": {
+          "category": "output_rejected",
+          "code": "output_rejected",
+          "details": [
+            {
+              "affected_action": "submit",
+              "code": "output_invalid",
+              "message": "Value violates the declared type, bounds, or field relationship.",
+              "path": "$.payload",
+              "phase": "output_context",
+              "repairable": true,
+              "rule_id": "tcad.result_analysis.context_binding",
+              "schema_version": 1,
+              "type": "value_error"
+            }
+          ],
+          "repairable_by_output": true
+        },
+        "latest_tool_error": null,
+        "recent_errors": [
+          {
+            "category": "output_rejected",
+            "code": "output_rejected",
+            "details": [
+              {
+                "affected_action": "submit",
+                "code": "output_invalid",
+                "message": "Value violates the declared type, bounds, or field relationship.",
+                "path": "$.payload",
+                "phase": "output_context",
+                "repairable": true,
+                "rule_id": "tcad.result_analysis.context_binding",
+                "schema_version": 1,
+                "type": "value_error"
+              }
+            ],
+            "repairable_by_output": true
+          }
+        ],
+        "rejection_count": 1
+      }
+    },
+    {
+      "name": "fig4_continuation_execution_analysis_6",
+      "operation_id": "tcad.result.analyze.v1",
+      "state": "failed",
+      "created_at": "2026-09-11T10:40:42.369304Z",
+      "started_at": "2026-09-11T10:41:03.484668Z",
+      "deadline_at": "2026-09-11T10:55:42.369304Z",
+      "completed_at": "2026-09-11T10:56:41.727881Z",
+      "output_artifact_name": null,
+      "reason": "deadline_exceeded_before_sealed_analysis; repeated output rejection and calculation replay budget exhaustion",
+      "diagnostic_summary": {
+        "failure": {
+          "category": "run_timeout",
+          "code": "run_timeout",
+          "repairable_by_output": false
+        },
+        "latest_rejection": {
+          "category": "output_rejected",
+          "code": "output_rejected",
+          "details": [
+            {
+              "affected_action": "submit",
+              "code": "output_invalid",
+              "message": "calculation replay budget exhausted; remove this calculation and submit limited analysis",
+              "path": "$.payload",
+              "phase": "output_context",
+              "repairable": true,
+              "rule_id": "tcad.result_analysis.context_binding",
+              "schema_version": 1,
+              "type": "value_error"
+            }
+          ],
+          "repairable_by_output": true
+        },
+        "latest_tool_error": {
+          "category": "tool_failed",
+          "code": "tool_failed",
+          "details": [
+            {
+              "affected_action": "tool_call",
+              "code": "calculation_work_limit",
+              "message": "The tool returned no numeric result; retain its specific reason and limitations.",
+              "path": "$",
+              "phase": "tool_execution",
+              "repairable": false,
+              "schema_version": 1
+            }
+          ],
+          "repairable_by_output": false,
+          "tool_name": "worker_tcad_curve_score"
+        },
+        "recent_errors": [
+          {
+            "category": "output_rejected",
+            "code": "output_rejected",
+            "details": [
+              {
+                "affected_action": "submit",
+                "code": "output_invalid",
+                "message": "Value violates the declared type, bounds, or field relationship.",
+                "path": "$.payload.hypothesis_assessments[0]",
+                "phase": "output_payload",
+                "repairable": true,
+                "rule_id": "tcad.result_analysis.payload_consistency",
+                "schema_version": 1,
+                "type": "value_error"
+              }
+            ],
+            "repairable_by_output": true
+          },
+          {
+            "category": "output_rejected",
+            "code": "output_rejected",
+            "details": [
+              {
+                "affected_action": "submit",
+                "code": "output_invalid",
+                "message": "Value violates the declared type, bounds, or field relationship.",
+                "path": "$.payload",
+                "phase": "output_context",
+                "repairable": true,
+                "rule_id": "tcad.result_analysis.context_binding",
+                "schema_version": 1,
+                "type": "value_error"
+              }
+            ],
+            "repairable_by_output": true
+          },
+          {
+            "category": "output_rejected",
+            "code": "output_rejected",
+            "details": [
+              {
+                "affected_action": "submit",
+                "code": "output_invalid",
+                "message": "Value violates the declared type, bounds, or field relationship.",
+                "path": "$.payload",
+                "phase": "output_context",
+                "repairable": true,
+                "rule_id": "tcad.result_analysis.context_binding",
+                "schema_version": 1,
+                "type": "value_error"
+              }
+            ],
+            "repairable_by_output": true
+          },
+          {
+            "category": "output_rejected",
+            "code": "output_rejected",
+            "details": [
+              {
+                "affected_action": "submit",
+                "code": "output_invalid",
+                "message": "computed case mapping requires the same formal source reference and basis",
+                "path": "$.payload",
+                "phase": "output_context",
+                "repairable": true,
+                "rule_id": "tcad.result_analysis.context_binding",
+                "schema_version": 1,
+                "type": "value_error"
+              }
+            ],
+            "repairable_by_output": true
+          },
+          {
+            "category": "output_rejected",
+            "code": "output_rejected",
+            "details": [
+              {
+                "affected_action": "submit",
+                "code": "output_invalid",
+                "message": "Value violates the declared type, bounds, or field relationship.",
+                "path": "$.payload",
+                "phase": "output_context",
+                "repairable": true,
+                "rule_id": "tcad.result_analysis.context_binding",
+                "schema_version": 1,
+                "type": "value_error"
+              }
+            ],
+            "repairable_by_output": true
+          },
+          {
+            "category": "output_rejected",
+            "code": "output_rejected",
+            "details": [
+              {
+                "affected_action": "submit",
+                "code": "output_invalid",
+                "message": "Value violates the declared type, bounds, or field relationship.",
+                "path": "$.payload",
+                "phase": "output_context",
+                "repairable": true,
+                "rule_id": "tcad.result_analysis.context_binding",
+                "schema_version": 1,
+                "type": "value_error"
+              }
+            ],
+            "repairable_by_output": true
+          },
+          {
+            "category": "output_rejected",
+            "code": "output_rejected",
+            "details": [
+              {
+                "affected_action": "submit",
+                "code": "output_invalid",
+                "message": "calculation replay budget exhausted; remove this calculation and submit limited analysis",
+                "path": "$.payload",
+                "phase": "output_context",
+                "repairable": true,
+                "rule_id": "tcad.result_analysis.context_binding",
+                "schema_version": 1,
+                "type": "value_error"
+              }
+            ],
+            "repairable_by_output": true
+          },
+          {
+            "category": "run_timeout",
+            "code": "run_timeout",
+            "repairable_by_output": false
+          }
+        ],
+        "rejection_count": 7
+      }
+    },
+    {
+      "name": "fig4_continuation_execution_analysis_5",
+      "operation_id": "tcad.result.analyze.v1",
+      "state": "completed",
+      "created_at": "2026-09-11T07:35:40.464854Z",
+      "started_at": "2026-09-11T07:35:52.039760Z",
+      "deadline_at": "2026-09-11T07:50:40.464854Z",
+      "completed_at": "2026-09-11T07:45:09.504963Z",
+      "output_artifact_name": "fig4_continuation_execution_analysis_5.output",
+      "reason": null,
+      "diagnostic_summary": {
+        "failure": null,
+        "latest_rejection": {
+          "category": "output_rejected",
+          "code": "output_rejected",
+          "details": [
+            {
+              "affected_action": "submit",
+              "code": "output_invalid",
+              "message": "computed case mapping requires the same formal source reference and basis",
+              "path": "$.payload",
+              "phase": "output_context",
+              "repairable": true,
+              "rule_id": "tcad.result_analysis.context_binding",
+              "schema_version": 1,
+              "type": "value_error"
+            }
+          ],
+          "repairable_by_output": true
+        },
+        "latest_tool_error": null,
+        "recent_errors": [
+          {
+            "category": "output_rejected",
+            "code": "output_rejected",
+            "details": [
+              {
+                "affected_action": "submit",
+                "code": "output_invalid",
+                "message": "Value violates the declared type, bounds, or field relationship.",
+                "path": "$.payload.source_references[12]",
+                "phase": "output_payload",
+                "repairable": true,
+                "rule_id": "tcad.result_analysis.payload_consistency",
+                "schema_version": 1,
+                "type": "value_error"
+              },
+              {
+                "affected_action": "submit",
+                "code": "output_invalid",
+                "message": "Value violates the declared type, bounds, or field relationship.",
+                "path": "$.payload.source_references[13]",
+                "phase": "output_payload",
+                "repairable": true,
+                "rule_id": "tcad.result_analysis.payload_consistency",
+                "schema_version": 1,
+                "type": "value_error"
+              },
+              {
+                "affected_action": "submit",
+                "code": "output_invalid",
+                "message": "Value violates the declared type, bounds, or field relationship.",
+                "path": "$.payload.source_references[14]",
+                "phase": "output_payload",
+                "repairable": true,
+                "rule_id": "tcad.result_analysis.payload_consistency",
+                "schema_version": 1,
+                "type": "value_error"
+              },
+              {
+                "affected_action": "submit",
+                "code": "output_invalid",
+                "message": "Value violates the declared type, bounds, or field relationship.",
+                "path": "$.payload.source_references[15]",
+                "phase": "output_payload",
+                "repairable": true,
+                "rule_id": "tcad.result_analysis.payload_consistency",
+                "schema_version": 1,
+                "type": "value_error"
+              },
+              {
+                "affected_action": "submit",
+                "code": "output_invalid",
+                "message": "Value violates the declared type, bounds, or field relationship.",
+                "path": "$.payload.source_references[16]",
+                "phase": "output_payload",
+                "repairable": true,
+                "rule_id": "tcad.result_analysis.payload_consistency",
+                "schema_version": 1,
+                "type": "value_error"
+              },
+              {
+                "affected_action": "submit",
+                "code": "output_invalid",
+                "message": "Value violates the declared type, bounds, or field relationship.",
+                "path": "$.payload.source_references[17]",
+                "phase": "output_payload",
+                "repairable": true,
+                "rule_id": "tcad.result_analysis.payload_consistency",
+                "schema_version": 1,
+                "type": "value_error"
+              },
+              {
+                "affected_action": "submit",
+                "code": "output_invalid",
+                "message": "Value violates the declared type, bounds, or field relationship.",
+                "path": "$.payload.source_references[18]",
+                "phase": "output_payload",
+                "repairable": true,
+                "rule_id": "tcad.result_analysis.payload_consistency",
+                "schema_version": 1,
+                "type": "value_error"
+              },
+              {
+                "affected_action": "submit",
+                "code": "output_invalid",
+                "message": "Value violates the declared type, bounds, or field relationship.",
+                "path": "$.payload.source_references[19]",
+                "phase": "output_payload",
+                "repairable": true,
+                "rule_id": "tcad.result_analysis.payload_consistency",
+                "schema_version": 1,
+                "type": "value_error"
+              },
+              {
+                "affected_action": "submit",
+                "code": "output_invalid",
+                "message": "Value violates the declared type, bounds, or field relationship.",
+                "path": "$.payload.source_references[20]",
+                "phase": "output_payload",
+                "repairable": true,
+                "rule_id": "tcad.result_analysis.payload_consistency",
+                "schema_version": 1,
+                "type": "value_error"
+              },
+              {
+                "affected_action": "submit",
+                "code": "output_invalid",
+                "message": "Value violates the declared type, bounds, or field relationship.",
+                "path": "$.payload.source_references[21]",
+                "phase": "output_payload",
+                "repairable": true,
+                "rule_id": "tcad.result_analysis.payload_consistency",
+                "schema_version": 1,
+                "type": "value_error"
+              },
+              {
+                "affected_action": "submit",
+                "code": "output_invalid",
+                "message": "Value violates the declared type, bounds, or field relationship.",
+                "path": "$.payload.source_references[22]",
+                "phase": "output_payload",
+                "repairable": true,
+                "rule_id": "tcad.result_analysis.payload_consistency",
+                "schema_version": 1,
+                "type": "value_error"
+              },
+              {
+                "affected_action": "submit",
+                "code": "output_invalid",
+                "message": "Value violates the declared type, bounds, or field relationship.",
+                "path": "$.payload.source_references[23]",
+                "phase": "output_payload",
+                "repairable": true,
+                "rule_id": "tcad.result_analysis.payload_consistency",
+                "schema_version": 1,
+                "type": "value_error"
+              }
+            ],
+            "repairable_by_output": true
+          },
+          {
+            "category": "output_rejected",
+            "code": "output_rejected",
+            "details": [
+              {
+                "affected_action": "submit",
+                "code": "output_invalid",
+                "message": "Value violates the declared type, bounds, or field relationship.",
+                "path": "$.payload",
+                "phase": "output_context",
+                "repairable": true,
+                "rule_id": "tcad.result_analysis.context_binding",
+                "schema_version": 1,
+                "type": "value_error"
+              }
+            ],
+            "repairable_by_output": true
+          },
+          {
+            "category": "output_rejected",
+            "code": "output_rejected",
+            "details": [
+              {
+                "affected_action": "submit",
+                "code": "output_invalid",
+                "message": "Value violates the declared type, bounds, or field relationship.",
+                "path": "$.payload",
+                "phase": "output_context",
+                "repairable": true,
+                "rule_id": "tcad.result_analysis.context_binding",
+                "schema_version": 1,
+                "type": "value_error"
+              }
+            ],
+            "repairable_by_output": true
+          },
+          {
+            "category": "output_rejected",
+            "code": "output_rejected",
+            "details": [
+              {
+                "affected_action": "submit",
+                "code": "output_invalid",
+                "message": "Value violates the declared type, bounds, or field relationship.",
+                "path": "$.payload.calculation_records[0]",
+                "phase": "output_payload",
+                "repairable": true,
+                "rule_id": "tcad.result_analysis.payload_consistency",
+                "schema_version": 1,
+                "type": "value_error"
+              },
+              {
+                "affected_action": "submit",
+                "code": "output_invalid",
+                "message": "Value violates the declared type, bounds, or field relationship.",
+                "path": "$.payload.calculation_records[1]",
+                "phase": "output_payload",
+                "repairable": true,
+                "rule_id": "tcad.result_analysis.payload_consistency",
+                "schema_version": 1,
+                "type": "value_error"
+              },
+              {
+                "affected_action": "submit",
+                "code": "output_invalid",
+                "message": "Value violates the declared type, bounds, or field relationship.",
+                "path": "$.payload.calculation_records[2]",
+                "phase": "output_payload",
+                "repairable": true,
+                "rule_id": "tcad.result_analysis.payload_consistency",
+                "schema_version": 1,
+                "type": "value_error"
+              },
+              {
+                "affected_action": "submit",
+                "code": "output_invalid",
+                "message": "Value violates the declared type, bounds, or field relationship.",
+                "path": "$.payload.calculation_records[3]",
+                "phase": "output_payload",
+                "repairable": true,
+                "rule_id": "tcad.result_analysis.payload_consistency",
+                "schema_version": 1,
+                "type": "value_error"
+              },
+              {
+                "affected_action": "submit",
+                "code": "output_invalid",
+                "message": "Value violates the declared type, bounds, or field relationship.",
+                "path": "$.payload.calculation_records[4]",
+                "phase": "output_payload",
+                "repairable": true,
+                "rule_id": "tcad.result_analysis.payload_consistency",
+                "schema_version": 1,
+                "type": "value_error"
+              }
+            ],
+            "repairable_by_output": true
+          },
+          {
+            "category": "output_rejected",
+            "code": "output_rejected",
+            "details": [
+              {
+                "affected_action": "submit",
+                "code": "output_invalid",
+                "message": "Value violates the declared type, bounds, or field relationship.",
+                "path": "$.payload",
+                "phase": "output_context",
+                "repairable": true,
+                "rule_id": "tcad.result_analysis.context_binding",
+                "schema_version": 1,
+                "type": "value_error"
+              }
+            ],
+            "repairable_by_output": true
+          },
+          {
+            "category": "output_rejected",
+            "code": "output_rejected",
+            "details": [
+              {
+                "affected_action": "submit",
+                "code": "output_invalid",
+                "message": "computed case mapping requires the same formal source reference and basis",
+                "path": "$.payload",
+                "phase": "output_context",
+                "repairable": true,
+                "rule_id": "tcad.result_analysis.context_binding",
+                "schema_version": 1,
+                "type": "value_error"
+              }
+            ],
+            "repairable_by_output": true
+          }
+        ],
+        "rejection_count": 6
+      }
+    },
+    {
+      "name": "fig4_continuation_execution_analysis_4",
+      "operation_id": "tcad.result.analyze.v1",
+      "state": "failed",
+      "created_at": "2026-09-11T07:17:56.413189Z",
+      "started_at": "2026-09-11T07:18:20.549559Z",
+      "deadline_at": "2026-09-11T07:32:56.413189Z",
+      "completed_at": "2026-09-11T07:35:20.784419Z",
+      "output_artifact_name": null,
+      "reason": "run_deadline_exceeded_after_worker_return_without_sealed_result",
+      "diagnostic_summary": {
+        "failure": {
+          "category": "checker_failure",
+          "code": "checker_failure",
+          "repairable_by_output": false
+        },
+        "latest_rejection": {
+          "category": "output_rejected",
+          "code": "output_rejected",
+          "details": [
+            {
+              "affected_action": "submit",
+              "code": "output_invalid",
+              "message": "Value violates the declared type, bounds, or field relationship.",
+              "path": "$.payload",
+              "phase": "output_context",
+              "repairable": true,
+              "rule_id": "tcad.result_analysis.context_binding",
+              "schema_version": 1,
+              "type": "value_error"
+            }
+          ],
+          "repairable_by_output": true
+        },
+        "latest_tool_error": {
+          "category": "tool_failed",
+          "code": "tool_failed",
+          "details": [
+            {
+              "affected_action": "tool_call",
+              "code": "calculation_work_limit",
+              "message": "The tool returned no numeric result; retain its specific reason and limitations.",
+              "path": "$",
+              "phase": "tool_execution",
+              "repairable": false,
+              "schema_version": 1
+            }
+          ],
+          "repairable_by_output": false,
+          "tool_name": "worker_tcad_curve_score"
+        },
+        "recent_errors": [
+          {
+            "category": "tool_failed",
+            "code": "tool_failed",
+            "details": [
+              {
+                "affected_action": "tool_call",
+                "code": "invalid_arguments",
+                "message": "Value violates the declared type, bounds, or field relationship.",
+                "path": "$.request.comparison_spec.comparisons",
+                "phase": "tool_arguments",
+                "repairable": true,
+                "schema_version": 1,
+                "type": "too_short"
+              }
+            ],
+            "repairable_by_output": false,
+            "tool_name": "worker_tcad_curve_score"
+          },
+          {
+            "category": "tool_failed",
+            "code": "tool_failed",
+            "details": [
+              {
+                "affected_action": "tool_call",
+                "code": "invalid_arguments",
+                "message": "Required field is missing.",
+                "path": "$.request.comparison_spec.comparisons[0].comparison_key",
+                "phase": "tool_arguments",
+                "repairable": true,
+                "schema_version": 1,
+                "type": "missing"
+              },
+              {
+                "affected_action": "tool_call",
+                "code": "invalid_arguments",
+                "message": "Required field is missing.",
+                "path": "$.request.comparison_spec.comparisons[0].reference_series",
+                "phase": "tool_arguments",
+                "repairable": true,
+                "schema_version": 1,
+                "type": "missing"
+              },
+              {
+                "affected_action": "tool_call",
+                "code": "invalid_arguments",
+                "message": "Required field is missing.",
+                "path": "$.request.comparison_spec.comparisons[0].candidate_series",
+                "phase": "tool_arguments",
+                "repairable": true,
+                "schema_version": 1,
+                "type": "missing"
+              },
+              {
+                "affected_action": "tool_call",
+                "code": "invalid_arguments",
+                "message": "Required field is missing.",
+                "path": "$.request.comparison_spec.comparisons[0].domain",
+                "phase": "tool_arguments",
+                "repairable": true,
+                "schema_version": 1,
+                "type": "missing"
+              },
+              {
+                "affected_action": "tool_call",
+                "code": "invalid_arguments",
+                "message": "Required field is missing.",
+                "path": "$.request.comparison_spec.comparisons[0].interpolation",
+                "phase": "tool_arguments",
+                "repairable": true,
+                "schema_version": 1,
+                "type": "missing"
+              },
+              {
+                "affected_action": "tool_call",
+                "code": "invalid_arguments",
+                "message": "Required field is missing.",
+                "path": "$.request.comparison_spec.comparisons[0].operators",
+                "phase": "tool_arguments",
+                "repairable": true,
+                "schema_version": 1,
+                "type": "missing"
+              },
+              {
+                "affected_action": "tool_call",
+                "code": "invalid_arguments",
+                "message": "Value violates the declared type, bounds, or field relationship.",
+                "path": "$.request.comparison_spec.comparisons",
+                "phase": "tool_arguments",
+                "repairable": true,
+                "schema_version": 1,
+                "type": "too_short"
+              }
+            ],
+            "repairable_by_output": false,
+            "tool_name": "worker_tcad_curve_score"
+          },
+          {
+            "category": "tool_failed",
+            "code": "tool_failed",
+            "details": [
+              {
+                "affected_action": "tool_call",
+                "code": "invalid_arguments",
+                "message": "Required field is missing.",
+                "path": "$.request.comparison_spec.comparisons[0].domain.start",
+                "phase": "tool_arguments",
+                "repairable": true,
+                "schema_version": 1,
+                "type": "missing"
+              },
+              {
+                "affected_action": "tool_call",
+                "code": "invalid_arguments",
+                "message": "Required field is missing.",
+                "path": "$.request.comparison_spec.comparisons[0].domain.stop",
+                "phase": "tool_arguments",
+                "repairable": true,
+                "schema_version": 1,
+                "type": "missing"
+              },
+              {
+                "affected_action": "tool_call",
+                "code": "invalid_arguments",
+                "message": "Required field is missing.",
+                "path": "$.request.comparison_spec.comparisons[0].domain.unit",
+                "phase": "tool_arguments",
+                "repairable": true,
+                "schema_version": 1,
+                "type": "missing"
+              },
+              {
+                "affected_action": "tool_call",
+                "code": "invalid_arguments",
+                "message": "Supported values: 'linear_y' or 'log10_y'",
+                "path": "$.request.comparison_spec.comparisons[0].interpolation",
+                "phase": "tool_arguments",
+                "repairable": true,
+                "schema_version": 1,
+                "type": "literal_error"
+              },
+              {
+                "affected_action": "tool_call",
+                "code": "invalid_arguments",
+                "message": "Required field is missing.",
+                "path": "$.request.comparison_spec.comparisons[0].operators[0].operator_key",
+                "phase": "tool_arguments",
+                "repairable": true,
+                "schema_version": 1,
+                "type": "missing"
+              },
+              {
+                "affected_action": "tool_call",
+                "code": "invalid_arguments",
+                "message": "Required field is missing.",
+                "path": "$.request.comparison_spec.comparisons[0].operators[0].kind",
+                "phase": "tool_arguments",
+                "repairable": true,
+                "schema_version": 1,
+                "type": "missing"
+              },
+              {
+                "affected_action": "tool_call",
+                "code": "invalid_arguments",
+                "message": "Value violates the declared type, bounds, or field relationship.",
+                "path": "$.request.comparison_spec.comparisons[0].operators",
+                "phase": "tool_arguments",
+                "repairable": true,
+                "schema_version": 1,
+                "type": "too_short"
+              },
+              {
+                "affected_action": "tool_call",
+                "code": "invalid_arguments",
+                "message": "Required field is missing.",
+                "path": "$.request.comparison_spec.comparisons[1].domain.start",
+                "phase": "tool_arguments",
+                "repairable": true,
+                "schema_version": 1,
+                "type": "missing"
+              },
+              {
+                "affected_action": "tool_call",
+                "code": "invalid_arguments",
+                "message": "Required field is missing.",
+                "path": "$.request.comparison_spec.comparisons[1].domain.stop",
+                "phase": "tool_arguments",
+                "repairable": true,
+                "schema_version": 1,
+                "type": "missing"
+              },
+              {
+                "affected_action": "tool_call",
+                "code": "invalid_arguments",
+                "message": "Required field is missing.",
+                "path": "$.request.comparison_spec.comparisons[1].domain.unit",
+                "phase": "tool_arguments",
+                "repairable": true,
+                "schema_version": 1,
+                "type": "missing"
+              },
+              {
+                "affected_action": "tool_call",
+                "code": "invalid_arguments",
+                "message": "Supported values: 'linear_y' or 'log10_y'",
+                "path": "$.request.comparison_spec.comparisons[1].interpolation",
+                "phase": "tool_arguments",
+                "repairable": true,
+                "schema_version": 1,
+                "type": "literal_error"
+              },
+              {
+                "affected_action": "tool_call",
+                "code": "invalid_arguments",
+                "message": "Required field is missing.",
+                "path": "$.request.comparison_spec.comparisons[1].operators[0].operator_key",
+                "phase": "tool_arguments",
+                "repairable": true,
+                "schema_version": 1,
+                "type": "missing"
+              },
+              {
+                "affected_action": "tool_call",
+                "code": "invalid_arguments",
+                "message": "Required field is missing.",
+                "path": "$.request.comparison_spec.comparisons[1].operators[0].kind",
+                "phase": "tool_arguments",
+                "repairable": true,
+                "schema_version": 1,
+                "type": "missing"
+              },
+              {
+                "affected_action": "tool_call",
+                "code": "invalid_arguments",
+                "message": "Value violates the declared type, bounds, or field relationship.",
+                "path": "$.request.comparison_spec.comparisons[1].operators",
+                "phase": "tool_arguments",
+                "repairable": true,
+                "schema_version": 1,
+                "type": "too_short"
+              },
+              {
+                "affected_action": "tool_call",
+                "code": "invalid_arguments",
+                "message": "Value violates the declared type, bounds, or field relationship.",
+                "path": "$.request.comparison_spec.comparisons",
+                "phase": "tool_arguments",
+                "repairable": true,
+                "schema_version": 1,
+                "type": "too_short"
+              }
+            ],
+            "repairable_by_output": false,
+            "tool_name": "worker_tcad_curve_score"
+          },
+          {
+            "category": "tool_failed",
+            "code": "tool_failed",
+            "details": [
+              {
+                "affected_action": "tool_call",
+                "code": "invalid_arguments",
+                "message": "Supported values: 'point_difference', 'residual_rms', 'residual_max_abs', 'mean_signed_difference', 'crossing_shift' or 'width_shift'",
+                "path": "$.request.comparison_spec.comparisons[0].operators[0].kind",
+                "phase": "tool_arguments",
+                "repairable": true,
+                "schema_version": 1,
+                "type": "literal_error"
+              },
+              {
+                "affected_action": "tool_call",
+                "code": "invalid_arguments",
+                "message": "Supported values: 'point_difference', 'residual_rms', 'residual_max_abs', 'mean_signed_difference', 'crossing_shift' or 'width_shift'",
+                "path": "$.request.comparison_spec.comparisons[0].operators[1].kind",
+                "phase": "tool_arguments",
+                "repairable": true,
+                "schema_version": 1,
+                "type": "literal_error"
+              },
+              {
+                "affected_action": "tool_call",
+                "code": "invalid_arguments",
+                "message": "Value violates the declared type, bounds, or field relationship.",
+                "path": "$.request.comparison_spec.comparisons[0].operators",
+                "phase": "tool_arguments",
+                "repairable": true,
+                "schema_version": 1,
+                "type": "too_short"
+              },
+              {
+                "affected_action": "tool_call",
+                "code": "invalid_arguments",
+                "message": "Supported values: 'point_difference', 'residual_rms', 'residual_max_abs', 'mean_signed_difference', 'crossing_shift' or 'width_shift'",
+                "path": "$.request.comparison_spec.comparisons[1].operators[0].kind",
+                "phase": "tool_arguments",
+                "repairable": true,
+                "schema_version": 1,
+                "type": "literal_error"
+              },
+              {
+                "affected_action": "tool_call",
+                "code": "invalid_arguments",
+                "message": "Supported values: 'point_difference', 'residual_rms', 'residual_max_abs', 'mean_signed_difference', 'crossing_shift' or 'width_shift'",
+                "path": "$.request.comparison_spec.comparisons[1].operators[1].kind",
+                "phase": "tool_arguments",
+                "repairable": true,
+                "schema_version": 1,
+                "type": "literal_error"
+              },
+              {
+                "affected_action": "tool_call",
+                "code": "invalid_arguments",
+                "message": "Value violates the declared type, bounds, or field relationship.",
+                "path": "$.request.comparison_spec.comparisons[1].operators",
+                "phase": "tool_arguments",
+                "repairable": true,
+                "schema_version": 1,
+                "type": "too_short"
+              },
+              {
+                "affected_action": "tool_call",
+                "code": "invalid_arguments",
+                "message": "Value violates the declared type, bounds, or field relationship.",
+                "path": "$.request.comparison_spec.comparisons",
+                "phase": "tool_arguments",
+                "repairable": true,
+                "schema_version": 1,
+                "type": "too_short"
+              }
+            ],
+            "repairable_by_output": false,
+            "tool_name": "worker_tcad_curve_score"
+          },
+          {
+            "category": "tool_failed",
+            "code": "tool_failed",
+            "details": [
+              {
+                "affected_action": "tool_call",
+                "code": "calculation_work_limit",
+                "message": "The tool returned no numeric result; retain its specific reason and limitations.",
+                "path": "$",
+                "phase": "tool_execution",
+                "repairable": false,
+                "schema_version": 1
+              }
+            ],
+            "repairable_by_output": false,
+            "tool_name": "worker_tcad_curve_score"
+          },
+          {
+            "category": "output_rejected",
+            "code": "output_rejected",
+            "details": [
+              {
+                "affected_action": "submit",
+                "code": "output_invalid",
+                "message": "Value violates the declared type, bounds, or field relationship.",
+                "path": "$.payload.source_references[11]",
+                "phase": "output_payload",
+                "repairable": true,
+                "rule_id": "tcad.result_analysis.payload_consistency",
+                "schema_version": 1,
+                "type": "value_error"
+              }
+            ],
+            "repairable_by_output": true
+          },
+          {
+            "category": "output_rejected",
+            "code": "output_rejected",
+            "details": [
+              {
+                "affected_action": "submit",
+                "code": "output_invalid",
+                "message": "Value violates the declared type, bounds, or field relationship.",
+                "path": "$.payload",
+                "phase": "output_context",
+                "repairable": true,
+                "rule_id": "tcad.result_analysis.context_binding",
+                "schema_version": 1,
+                "type": "value_error"
+              }
+            ],
+            "repairable_by_output": true
+          },
+          {
+            "category": "checker_failure",
+            "code": "checker_failure",
+            "repairable_by_output": false
+          }
+        ],
+        "rejection_count": 2
+      }
+    },
+    {
+      "name": "fig4_continuation_execution_analysis_3",
+      "operation_id": "tcad.result.analyze.v1",
+      "state": "completed",
+      "created_at": "2026-09-11T01:53:21.258268Z",
+      "started_at": "2026-09-11T01:53:40.988455Z",
+      "deadline_at": "2026-09-11T02:08:21.258268Z",
+      "completed_at": "2026-09-11T02:01:58.732412Z",
+      "output_artifact_name": "fig4_continuation_execution_analysis_3.output",
+      "reason": null,
+      "diagnostic_summary": {
+        "failure": null,
+        "latest_rejection": {
+          "category": "output_rejected",
+          "code": "output_rejected",
+          "details": [
+            {
+              "path": "$.payload",
+              "rule_id": "tcad.result_analysis.context_binding"
+            }
+          ],
+          "repairable_by_output": true
+        },
+        "latest_tool_error": null,
+        "recent_errors": [
+          {
+            "category": "output_rejected",
+            "code": "output_rejected",
+            "details": [
+              {
+                "path": "$.payload",
+                "rule_id": "tcad.result_analysis.payload_consistency"
+              }
+            ],
+            "repairable_by_output": true
+          },
+          {
+            "category": "output_rejected",
+            "code": "output_rejected",
+            "details": [
+              {
+                "path": "$.payload",
+                "rule_id": "tcad.result_analysis.payload_consistency"
+              }
+            ],
+            "repairable_by_output": true
+          },
+          {
+            "category": "output_rejected",
+            "code": "output_rejected",
+            "details": [
+              {
+                "path": "$.payload",
+                "rule_id": "tcad.result_analysis.payload_consistency"
+              }
+            ],
+            "repairable_by_output": true
+          },
+          {
+            "category": "output_rejected",
+            "code": "output_rejected",
+            "details": [
+              {
+                "path": "$.payload",
+                "rule_id": "tcad.result_analysis.payload_consistency"
+              }
+            ],
+            "repairable_by_output": true
+          },
+          {
+            "category": "output_rejected",
+            "code": "output_rejected",
+            "details": [
+              {
+                "path": "$.payload",
+                "rule_id": "tcad.result_analysis.context_binding"
+              }
+            ],
+            "repairable_by_output": true
+          },
+          {
+            "category": "output_rejected",
+            "code": "output_rejected",
+            "details": [
+              {
+                "path": "$.payload",
+                "rule_id": "tcad.result_analysis.context_binding"
+              }
+            ],
+            "repairable_by_output": true
+          }
+        ],
+        "rejection_count": 6
+      }
+    },
+    {
+      "name": "fig4_continuation_execution_analysis_2",
+      "operation_id": "tcad.result.analyze.v1",
+      "state": "completed",
+      "created_at": "2026-09-10T11:37:20.870952Z",
+      "started_at": "2026-09-10T11:37:48.804593Z",
+      "deadline_at": "2026-09-10T11:52:20.870952Z",
+      "completed_at": "2026-09-10T11:45:19.157638Z",
+      "output_artifact_name": "fig4_continuation_execution_analysis_2.output",
+      "reason": null,
+      "diagnostic_summary": {
+        "failure": null,
+        "latest_rejection": {
+          "category": "output_rejected",
+          "code": "output_rejected",
+          "details": [
+            {
+              "path": "$.payload",
+              "rule_id": "tcad.result_analysis.payload_consistency"
+            }
+          ],
+          "repairable_by_output": true
+        },
+        "latest_tool_error": null,
+        "recent_errors": [
+          {
+            "category": "output_rejected",
+            "code": "output_rejected",
+            "details": [
+              {
+                "path": "$.payload",
+                "rule_id": "tcad.result_analysis.payload_consistency"
+              }
+            ],
+            "repairable_by_output": true
+          }
+        ],
+        "rejection_count": 1
+      }
+    },
+    {
+      "name": "fig4_continuation_execution_analysis_1",
+      "operation_id": "tcad.result.analyze.v1",
+      "state": "failed",
+      "created_at": "2026-09-10T07:05:47.258182Z",
+      "started_at": "2026-09-10T07:06:09.512411Z",
+      "deadline_at": "2026-09-10T07:20:47.258182Z",
+      "completed_at": "2026-09-10T07:19:01.599380Z",
+      "output_artifact_name": null,
+      "reason": "Stopped after repeated output rejection: tcad.result_analysis.context_binding; bound solver output name, media type or bytes differ from manifest. Immutable input contract mismatch requires engineering correction, not payload retries.",
+      "diagnostic_summary": {
+        "failure": null,
+        "latest_rejection": null,
+        "latest_tool_error": null,
+        "recent_errors": [],
+        "rejection_count": 8
+      }
+    }
+  ],
+  "terminal_updates_20260912": [
+    {
+      "name": "fig4_morphology_objective_revision_1",
+      "operation_id": "science.experiment.revise.v1",
+      "state": "failed",
+      "created_at": "2026-09-12T01:00:49.543298Z",
+      "started_at": "2026-09-12T01:01:23.037969Z",
+      "deadline_at": "2026-09-12T01:15:49.543298Z",
+      "completed_at": "2026-09-12T01:17:33.418389Z",
+      "output_artifact_name": null,
+      "reason": "超过本 Run 的 900 秒截止时间仍未形成受控封存输出；控制端未记录工具错误或输出拒绝。中止超时任务，保留交付与诊断；不能把运行时间或未封存草稿当作目标已完成修订。下一 Run 将把任务限定为沿用既有完整计划的最小字段更新。",
+      "diagnostic_summary": {
+        "failure": {
+          "category": "run_timeout",
+          "code": "run_timeout",
+          "repairable_by_output": false
+        },
+        "latest_rejection": null,
+        "latest_tool_error": null,
+        "recent_errors": [
+          {
+            "category": "run_timeout",
+            "code": "run_timeout",
+            "repairable_by_output": false
+          }
+        ],
+        "rejection_count": 0
+      },
+      "recovery": {
+        "delivery_preserved": true,
+        "draft_available": false,
+        "recovery_pending": false,
+        "resume_available": false
+      }
+    },
+    {
+      "name": "fig4_morphology_objective_revision_2",
+      "operation_id": "science.experiment.revise.v1",
+      "state": "failed",
+      "created_at": "2026-09-12T01:18:11.554743Z",
+      "started_at": "2026-09-12T01:18:29.421152Z",
+      "deadline_at": "2026-09-12T01:33:11.554743Z",
+      "completed_at": "2026-09-12T01:26:54.478042Z",
+      "output_artifact_name": null,
+      "reason": "experiment.revision.case_and_validation_closure 已连续三次返回 proposals[0] 泛化 value_error 及 proposals too_short，没有可操作的关系原因。停止无效重试，保全草稿；新 Run 将补明当前源码既有的 proposal 结构关系，科学目标及输入不变。此失败不表达科学结论。",
+      "diagnostic_summary": {
+        "failure": {
+          "category": "runtime_failure",
+          "code": "runtime_failure",
+          "repairable_by_output": false
+        },
+        "latest_rejection": {
+          "category": "output_rejected",
+          "code": "output_rejected",
+          "details": [
+            {
+              "affected_action": "submit",
+              "code": "output_invalid",
+              "message": "Value violates the declared type, bounds, or field relationship.",
+              "path": "$.payload.proposals[0]",
+              "phase": "output_payload",
+              "repairable": true,
+              "rule_id": "experiment.revision.case_and_validation_closure",
+              "schema_version": 1,
+              "type": "value_error"
+            },
+            {
+              "affected_action": "submit",
+              "code": "output_invalid",
+              "message": "Minimum length is 1.",
+              "path": "$.payload.proposals",
+              "phase": "output_payload",
+              "repairable": true,
+              "rule_id": "experiment.revision.case_and_validation_closure",
+              "schema_version": 1,
+              "type": "too_short"
+            }
+          ],
+          "repairable_by_output": true
+        },
+        "latest_tool_error": null,
+        "recent_errors": [
+          {
+            "category": "output_rejected",
+            "code": "output_rejected",
+            "details": [
+              {
+                "affected_action": "submit",
+                "code": "output_invalid",
+                "message": "Value violates the declared type, bounds, or field relationship.",
+                "path": "$.payload.proposals[0]",
+                "phase": "output_payload",
+                "repairable": true,
+                "rule_id": "experiment.revision.case_and_validation_closure",
+                "schema_version": 1,
+                "type": "value_error"
+              },
+              {
+                "affected_action": "submit",
+                "code": "output_invalid",
+                "message": "Minimum length is 1.",
+                "path": "$.payload.proposals",
+                "phase": "output_payload",
+                "repairable": true,
+                "rule_id": "experiment.revision.case_and_validation_closure",
+                "schema_version": 1,
+                "type": "too_short"
+              }
+            ],
+            "repairable_by_output": true
+          },
+          {
+            "category": "output_rejected",
+            "code": "output_rejected",
+            "details": [
+              {
+                "affected_action": "submit",
+                "code": "output_invalid",
+                "message": "Value violates the declared type, bounds, or field relationship.",
+                "path": "$.payload.proposals[0]",
+                "phase": "output_payload",
+                "repairable": true,
+                "rule_id": "experiment.revision.case_and_validation_closure",
+                "schema_version": 1,
+                "type": "value_error"
+              },
+              {
+                "affected_action": "submit",
+                "code": "output_invalid",
+                "message": "Minimum length is 1.",
+                "path": "$.payload.proposals",
+                "phase": "output_payload",
+                "repairable": true,
+                "rule_id": "experiment.revision.case_and_validation_closure",
+                "schema_version": 1,
+                "type": "too_short"
+              }
+            ],
+            "repairable_by_output": true
+          },
+          {
+            "category": "output_rejected",
+            "code": "output_rejected",
+            "details": [
+              {
+                "affected_action": "submit",
+                "code": "output_invalid",
+                "message": "Value violates the declared type, bounds, or field relationship.",
+                "path": "$.payload.proposals[0]",
+                "phase": "output_payload",
+                "repairable": true,
+                "rule_id": "experiment.revision.case_and_validation_closure",
+                "schema_version": 1,
+                "type": "value_error"
+              },
+              {
+                "affected_action": "submit",
+                "code": "output_invalid",
+                "message": "Minimum length is 1.",
+                "path": "$.payload.proposals",
+                "phase": "output_payload",
+                "repairable": true,
+                "rule_id": "experiment.revision.case_and_validation_closure",
+                "schema_version": 1,
+                "type": "too_short"
+              }
+            ],
+            "repairable_by_output": true
+          },
+          {
+            "category": "runtime_failure",
+            "code": "runtime_failure",
+            "repairable_by_output": false
+          }
+        ],
+        "rejection_count": 3
+      },
+      "recovery": {
+        "delivery_preserved": true,
+        "draft_available": false,
+        "recovery_pending": false,
+        "resume_available": false
+      }
+    },
+    {
+      "name": "fig4_morphology_objective_revision_3",
+      "operation_id": "science.experiment.revise.v1",
+      "state": "completed",
+      "created_at": "2026-09-12T01:27:46.346548Z",
+      "started_at": "2026-09-12T01:28:12.518407Z",
+      "deadline_at": "2026-09-12T01:42:46.346548Z",
+      "completed_at": "2026-09-12T01:34:58.407701Z",
+      "output_artifact_name": "fig4_morphology_objective_revision_3.output",
+      "reason": null,
+      "diagnostic_summary": {
+        "failure": null,
+        "latest_rejection": null,
+        "latest_tool_error": null,
+        "recent_errors": [],
+        "rejection_count": 0
+      },
+      "recovery": {
+        "delivery_preserved": false,
+        "draft_available": false,
+        "recovery_pending": false,
+        "resume_available": false
+      }
+    },
+    {
+      "name": "fig4_morphology_objective_revision_review_1",
+      "operation_id": "science.object.review.v1",
+      "state": "failed",
+      "created_at": "2026-09-12T01:36:18.544737Z",
+      "started_at": "2026-09-12T01:36:40.746104Z",
+      "deadline_at": "2026-09-12T01:46:18.544737Z",
+      "completed_at": "2026-09-12T01:37:50.397819Z",
+      "output_artifact_name": null,
+      "reason": "用户明确要求暂停当前独立科学审查，先定位现有校验阻断。终止本 Run；这不是计划被科学否决，也不表达任何未封存审查结论。",
+      "diagnostic_summary": {
+        "failure": {
+          "category": "runtime_failure",
+          "code": "runtime_failure",
+          "repairable_by_output": false
+        },
+        "latest_rejection": null,
+        "latest_tool_error": null,
+        "recent_errors": [
+          {
+            "category": "runtime_failure",
+            "code": "runtime_failure",
+            "repairable_by_output": false
+          }
+        ],
+        "rejection_count": 0
+      },
+      "recovery": {
+        "delivery_preserved": false,
+        "draft_available": false,
+        "recovery_pending": true,
+        "resume_available": false
+      }
+    }
+  ],
+  "terminal_updates_note": "Original snapshot retained. Later exact statuses show revision 3 sealed without rejection, final review stopped by user, and recovery chain unavailable after two allowed attempts."
+}

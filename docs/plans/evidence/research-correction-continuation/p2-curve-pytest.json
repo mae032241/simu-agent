@@ -1,0 +1,11 @@
+{
+  "command": [
+    "/home/da/miniconda3/bin/python",
+    "-m",
+    "pytest",
+    "-q",
+    "tests/operations/test_m2_curve_analysis_boundary.py"
+  ],
+  "exit_code": 0,
+  "elapsed_seconds": 7.905
+}

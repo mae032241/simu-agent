@@ -1,0 +1,11 @@
+{
+  "status": "pass",
+  "root": "/tmp/scid-registration-installed-ysvvfdle",
+  "wheels": [
+    "tcad_artifact-0.1.0-py3-none-any.whl",
+    "scidiscovery-0.1.0-py3-none-any.whl",
+    "scidiscovery_curve_figure_evidence-0.1.0-py3-none-any.whl",
+    "scidiscovery_curve_score-0.2.1-py3-none-any.whl"
+  ],
+  "boundary": "wheel imports and MCP router; no live Agent, daemon, VM or solver"
+}

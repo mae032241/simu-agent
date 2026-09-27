@@ -1,0 +1,146 @@
+{
+  "base": "be5da77acdbf98054e0b096fc4e940de560d4ba1",
+  "checkpoint_tag": "checkpoint/fig4-before-historical-compatibility-20260912",
+  "production_files": [
+    {
+      "path": "src/scidiscovery/artifact_agent/service/runs.py",
+      "sha256": "1f6f48a2047c768cde600cd22594890ea185dc7cf7eb285a23eae4e57c6eec61"
+    },
+    {
+      "path": "src/scidiscovery/artifact_agent/service/approvals.py",
+      "sha256": "16530c99f64b700740cdfeab0fc482686fe01333c2bfce7ca5c15bc974eb617d"
+    },
+    {
+      "path": "src/scidiscovery/artifact_agent/interfaces/mcp_root_operation_routes.py",
+      "sha256": "ae019f77f985a330b23196be07b63be0e7a0bdc51454cfd6c29ce32ebadf511f"
+    }
+  ],
+  "unique_passed_tests": 82,
+  "preexisting_failure": "test_m6c_producer_topology_removal.py::test_agent_inventory_exception_has_an_explicit_complete_consumer_inventory",
+  "preexisting_failure_reproduced_on_base": true,
+  "peak_tree_rss_bytes": 192790528,
+  "checks": [
+    {
+      "command": [
+        "python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/operations/test_completed_science_compatibility.py",
+        "-x"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 6.71,
+      "peak_tree_rss_bytes": 126644224,
+      "stopped": null,
+      "log": "check-1789226162306468628.log"
+    },
+    {
+      "command": [
+        "python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/operations/test_m6c_producer_topology_removal.py",
+        "tests/operations/test_review_admission_integration.py",
+        "tests/operations/test_l3_review_and_human_policy.py",
+        "tests/operations/test_m6b_operation_input_admission.py",
+        "-x"
+      ],
+      "exit_code": 1,
+      "duration_seconds": 2.83,
+      "peak_tree_rss_bytes": 117063680,
+      "stopped": null,
+      "log": "check-1789226188724190428.log"
+    },
+    {
+      "command": [
+        "python",
+        "-c",
+        "import os,pathlib,sys; p=pathlib.Path(\"docs/plans/evidence/fig4-iterative-optimization/baseline-path.txt\").read_text().strip(); os.chdir(p); os.execv(sys.executable,[sys.executable,\"-m\",\"pytest\",\"-q\",\"tests/operations/test_m6c_producer_topology_removal.py::test_agent_inventory_exception_has_an_explicit_complete_consumer_inventory\"])"
+      ],
+      "exit_code": 1,
+      "duration_seconds": 1.57,
+      "peak_tree_rss_bytes": 99610624,
+      "stopped": null,
+      "log": "check-1789226245398448290.log"
+    },
+    {
+      "command": [
+        "python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/operations/test_completed_science_compatibility.py",
+        "-k",
+        "direct_revision",
+        "-x"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 3.18,
+      "peak_tree_rss_bytes": 123768832,
+      "stopped": null,
+      "log": "check-1789226307248065546.log"
+    },
+    {
+      "command": [
+        "python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/operations/test_m6c_producer_topology_removal.py",
+        "tests/operations/test_review_admission_integration.py",
+        "tests/operations/test_l3_review_and_human_policy.py",
+        "tests/operations/test_m6b_operation_input_admission.py",
+        "-k",
+        "not agent_inventory_exception_has_an_explicit_complete_consumer_inventory",
+        "-x"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 8.68,
+      "peak_tree_rss_bytes": 129204224,
+      "stopped": null,
+      "log": "check-1789226345730083881.log"
+    },
+    {
+      "command": [
+        "python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/operations/test_historical_compatibility_paths.py",
+        "tests/operations/test_r4_execution_approval_identity.py",
+        "-x"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 11.15,
+      "peak_tree_rss_bytes": 127700992,
+      "stopped": null,
+      "log": "check-1789226395060751589.log"
+    },
+    {
+      "command": [
+        "python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/operations/test_completed_science_compatibility.py::test_completed_review_reuse_is_separate_from_run_identity",
+        "tests/operations/test_m6c_producer_topology_removal.py::test_same_version_runtime_drift_preserves_claim_port_type_boundary",
+        "tests/operations/test_l2_run_invariants.py::test_draft_source_crosses_contract_but_verifies_files_and_original_budget",
+        "tests/operations/test_l2_run_invariants.py::test_unavailable_contract_preserves_latest_domain_files_and_reconciles",
+        "tests/operations/test_l2_run_invariants.py::test_recovery_rejects_changed_backend_identity_before_scheduling",
+        "tests/operations/test_l2_run_invariants.py::test_source_projection_generation_handles_old_run_without_reusing_it",
+        "tests/operations/test_l2_run_invariants.py::test_real_stdio_worker_process_opens_calls_registered_tool_and_submits",
+        "-x"
+      ],
+      "exit_code": 0,
+      "duration_seconds": 8.63,
+      "peak_tree_rss_bytes": 192790528,
+      "stopped": null,
+      "log": "check-1789226438141467503.log"
+    }
+  ],
+  "deployed": false,
+  "live_preflight_retested": false,
+  "scientific_plan_revision_invoked": false
+}

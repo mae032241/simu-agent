@@ -7,7 +7,7 @@ from typing import Annotated, Literal
 from pydantic import Field, model_validator
 
 from .common import Identifier, SchemaModel, canonical_json
-from .scientific_foundation import ScientificFoundation
+from .scientific_foundation import ScientificFoundation, _raise_issues
 from .scientific_output import EvidenceCitation, ScientificFinding
 
 
@@ -24,12 +24,6 @@ class ResearchObservable(SchemaModel):
         tuple[Identifier, ...], Field(min_length=1, max_length=64)
     ]
     acceptance_relevance: Annotated[str, Field(min_length=1, max_length=4096)]
-
-    @model_validator(mode="after")
-    def _references_are_unique(self) -> ResearchObservable:
-        if len(self.foundation_item_keys) != len(set(self.foundation_item_keys)):
-            raise ValueError("observable foundation_item_keys must be unique")
-        return self
 
 
 class ClaimBoundary(SchemaModel):
@@ -65,14 +59,14 @@ class ProblemFrame(SchemaModel):
     def _frame_is_closed(self) -> ProblemFrame:
         foundation_keys = tuple(self.foundation_item_keys)
         observable_keys = tuple(item.observable_key for item in self.observables)
-        if len(foundation_keys) != len(set(foundation_keys)):
-            raise ValueError("problem foundation_item_keys must be unique")
+        issues = []
         if len(observable_keys) != len(set(observable_keys)):
-            raise ValueError("observable_key values must be unique")
+            issues.append((("observables",), "observable_key values must be unique"))
         known = set(foundation_keys)
-        for observable in self.observables:
+        for index, observable in enumerate(self.observables):
             if not set(observable.foundation_item_keys).issubset(known):
-                raise ValueError("observable references an undeclared foundation item")
+                issues.append((("observables", index, "foundation_item_keys"), "observable references an undeclared foundation item"))
+        _raise_issues(self, issues)
         return self
 
 
@@ -94,12 +88,15 @@ class HypothesisReview(SchemaModel):
 
 
 class ScientificReview(SchemaModel):
-    """A critic's structured scientific review, not a control-plane decision."""
+    """A reviewer's scientific verdict; individual dimension statuses do not derive it."""
 
     review_target: Literal[
         "problem_frame",
         "hypothesis_portfolio",
         "experiment_portfolio",
+        "experiment_scientific_skeleton",
+        "domain_contract",
+        "observation",
         "realization",
         "diagnosis",
     ]
@@ -121,111 +118,13 @@ class ScientificReview(SchemaModel):
         keys = tuple(item.hypothesis_key for item in self.hypothesis_reviews)
         if len(keys) != len(set(keys)):
             raise ValueError("a scientific review may review each hypothesis once")
-        if len(self.evidence_item_keys) != len(set(self.evidence_item_keys)):
-            raise ValueError("scientific review evidence_item_keys must be unique")
-        source_keys = tuple(item.source_key for item in self.evidence)
-        if len(source_keys) != len(set(source_keys)):
-            raise ValueError("scientific review evidence source_key values must be unique")
-        known_sources = set(source_keys)
-        for finding in self.findings:
-            if not set(finding.evidence_keys).issubset(known_sources):
-                raise ValueError("scientific review finding references undeclared evidence")
         if self.review_target == "hypothesis_portfolio" and not self.hypothesis_reviews:
             raise ValueError("hypothesis portfolio review requires hypothesis_reviews")
-        if self.verdict == "pass" and any(
-            "fail"
-            in {
-                item.physical_plausibility,
-                item.falsifiability,
-                item.identifiability,
-            }
-            for item in self.hypothesis_reviews
-        ):
-            raise ValueError("passing review cannot contain a failed hypothesis dimension")
         return self
 
 
-ArtifactKind = Literal[
-    "scientific_intake",
-    "problem_frame",
-    "scientific_foundation",
-    "hypothesis_portfolio",
-    "scientific_review",
-    "evidence_audit",
-    "candidate_eligibility",
-    "experiment_portfolio",
-    "tcad_project",
-    "deck_review",
-    "packaged_project",
-    "execution_result",
-    "runtime_attestation",
-    "control_equivalence_report",
-    "metric_report",
-    "validation_report",
-    "layered_diagnosis",
-    "knowledge_state",
-]
-ClaimEvaluability = Literal["not_evaluable", "evaluable", "accepted"]
-ExecutionReadiness = Literal["not_ready", "ready", "authorized", "completed"]
-
-
-class ScientificReadiness(SchemaModel):
-    """Scientific inventory and unresolved needs; deliberately not a workflow graph."""
-
-    current_contradiction: Annotated[str, Field(min_length=1, max_length=8192)]
-    available_artifacts: Annotated[
-        tuple[ArtifactKind, ...], Field(max_length=32)
-    ] = ()
-    unresolved_needs: Annotated[tuple[str, ...], Field(max_length=128)] = ()
-    blockers: Annotated[tuple[str, ...], Field(max_length=128)] = ()
-    claim_evaluability: ClaimEvaluability
-    execution_readiness: ExecutionReadiness
-    suggested_capabilities: Annotated[
-        tuple[Identifier, ...], Field(max_length=32)
-    ] = ()
-    rationale: Annotated[str, Field(min_length=1, max_length=4096)]
-
-    @model_validator(mode="after")
-    def _inventory_is_unique_and_coherent(self) -> ScientificReadiness:
-        if len(self.available_artifacts) != len(set(self.available_artifacts)):
-            raise ValueError("available_artifacts must be unique")
-        if len(self.suggested_capabilities) != len(set(self.suggested_capabilities)):
-            raise ValueError("suggested_capabilities must be unique")
-        if self.claim_evaluability == "accepted" and "validation_report" not in set(
-            self.available_artifacts
-        ):
-            raise ValueError("accepted claim requires a validation_report")
-        if self.execution_readiness == "completed" and "execution_result" not in set(
-            self.available_artifacts
-        ):
-            raise ValueError("completed execution requires an execution_result")
-        return self
-
-
-class ScientificObjectStatus(SchemaModel):
-    """One semantic scientific object without storage identity."""
-
-    semantic_name: Annotated[str, Field(min_length=1, max_length=256)]
-    kind: ArtifactKind
-    schema_id: Annotated[str, Field(min_length=1, max_length=512)]
-    revision: int = Field(ge=1)
-    qualification: Literal["qualified", "human_review_required"] = "qualified"
-
-
-class ScientificClosureStatus(SchemaModel):
-    """Read-only projection used by a scheduler to choose the next action."""
-
-    readiness: ScientificReadiness
-    objects: Annotated[tuple[ScientificObjectStatus, ...], Field(max_length=256)] = ()
-    available_actions: Annotated[tuple[Identifier, ...], Field(max_length=64)] = ()
-
-    @model_validator(mode="after")
-    def _actions_match_readiness(self) -> ScientificClosureStatus:
-        if len(self.available_actions) != len(set(self.available_actions)):
-            raise ValueError("available_actions must be unique")
-        if self.available_actions != self.readiness.suggested_capabilities:
-            raise ValueError("available_actions must match suggested_capabilities")
-        return self
+# Plugin-defined kinds remain stable identifiers rather than a core-owned enum.
+ArtifactKind = Identifier
 
 
 class ScientificIntake(SchemaModel):
@@ -236,11 +135,13 @@ class ScientificIntake(SchemaModel):
 
     @model_validator(mode="after")
     def _frame_uses_the_supplied_foundation(self) -> ScientificIntake:
-        validate_problem_frame_against_foundation(
-            self.problem_frame, self.scientific_foundation
-        )
+        issues = []
+        known = {item.item_key for item in self.scientific_foundation.items}
+        if not set(self.problem_frame.foundation_item_keys).issubset(known):
+            issues.append((("problem_frame", "foundation_item_keys"), "problem frame references an unknown foundation item"))
         if self.problem_frame.objective != self.scientific_foundation.objective:
-            raise ValueError("problem frame and scientific foundation objectives differ")
+            issues.append((("problem_frame", "objective"), "problem frame and scientific foundation objectives differ"))
+        _raise_issues(self, issues)
         return self
 
 
@@ -273,16 +174,11 @@ def validate_scientific_intake(value: dict[str, object]) -> dict[str, object]:
 __all__ = [
     "ArtifactKind",
     "ClaimBoundary",
-    "ClaimEvaluability",
-    "ExecutionReadiness",
     "HypothesisReview",
     "ProblemFrame",
     "ResearchObservable",
     "ReviewStatus",
     "ReviewVerdict",
-    "ScientificReadiness",
-    "ScientificObjectStatus",
-    "ScientificClosureStatus",
     "ScientificReview",
     "ScientificIntake",
     "validate_problem_frame",

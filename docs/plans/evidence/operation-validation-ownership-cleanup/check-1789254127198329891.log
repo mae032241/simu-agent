@@ -1,0 +1,59 @@
+........................................................................ [ 43%]
+........................................................................ [ 86%]
+..........F..FF........                                                  [100%]
+=================================== FAILURES ===================================
+_____ test_parameter_audit_can_cite_its_subject_but_not_an_unbound_source ______
+
+    def test_parameter_audit_can_cite_its_subject_but_not_an_unbound_source():
+        raw = {'checks': [{'check_key': 'missing', 'subject': 'requirements', 'status': 'fail',
+                          'basis': 'The exact subject omits a needed condition.', 'evidence_keys': ['parameter_requirements']}],
+               'evidence': [{'source_key': 'parameter_requirements', 'source_type': 'frozen_input', 'locator': '/parameters/0'}]}
+        _audit_context(raw, {'parameter_requirements': b'{}'}, {'verdict': 'blocked'})
+>       with pytest.raises(SemanticRuleViolation, match='unbound source'):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AssertionError: Regex pattern did not match.
+E         Expected regex: 'unbound source'
+E         Actual message: 'Evidence citation must name a source bound to this task.'
+
+tests/operations/test_validation_reaudit_removal.py:206: AssertionError
+_ test_tcad_local_locator_survives_submission_and_wrong_alias_still_rejects[False] _
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-237/test_tcad_local_locator_surviv0')
+mapped = False
+
+    @pytest.mark.parametrize('mapped', [False, True])
+    def test_tcad_local_locator_survives_submission_and_wrong_alias_still_rejects(tmp_path, mapped):
+        worker, opened = open_analysis(analysis_system(tmp_path))
+        report = analysis_report(alias='solver_outputs_001', output_name='A', mapped=mapped)
+        report['evidence'][0]['locator'] = 'unbound_alias:lines-1-3'
+        write_analysis(opened, report)
+>       assert worker.call_tool('worker_submit_result', {})['state'] == 'rejected'
+E       AssertionError: assert 'completed' == 'rejected'
+E         
+E         - rejected
+E         + completed
+
+tests/operations/test_validation_reaudit_removal.py:259: AssertionError
+_ test_tcad_local_locator_survives_submission_and_wrong_alias_still_rejects[True] _
+
+tmp_path = PosixPath('/tmp/pytest-of-da/pytest-237/test_tcad_local_locator_surviv1')
+mapped = True
+
+    @pytest.mark.parametrize('mapped', [False, True])
+    def test_tcad_local_locator_survives_submission_and_wrong_alias_still_rejects(tmp_path, mapped):
+        worker, opened = open_analysis(analysis_system(tmp_path))
+        report = analysis_report(alias='solver_outputs_001', output_name='A', mapped=mapped)
+        report['evidence'][0]['locator'] = 'unbound_alias:lines-1-3'
+        write_analysis(opened, report)
+>       assert worker.call_tool('worker_submit_result', {})['state'] == 'rejected'
+E       AssertionError: assert 'completed' == 'rejected'
+E         
+E         - rejected
+E         + completed
+
+tests/operations/test_validation_reaudit_removal.py:259: AssertionError
+=========================== short test summary info ============================
+FAILED tests/operations/test_validation_reaudit_removal.py::test_parameter_audit_can_cite_its_subject_but_not_an_unbound_source
+FAILED tests/operations/test_validation_reaudit_removal.py::test_tcad_local_locator_survives_submission_and_wrong_alias_still_rejects[False]
+FAILED tests/operations/test_validation_reaudit_removal.py::test_tcad_local_locator_survives_submission_and_wrong_alias_still_rejects[True]
+3 failed, 164 passed in 41.80s

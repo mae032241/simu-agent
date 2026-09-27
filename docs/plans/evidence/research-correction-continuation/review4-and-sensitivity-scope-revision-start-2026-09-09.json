@@ -1,0 +1,268 @@
+{
+  "recorded_date": "2026-09-09",
+  "review": {
+    "agent_type": "op_science_object_review_v1_e079a8680e7c",
+    "backend": "local_trusted",
+    "candidate_accepted": true,
+    "completed_at": "2026-09-09T04:20:28.849754Z",
+    "created_at": "2026-09-09T04:14:29.381096Z",
+    "deadline_at": "2026-09-09T04:24:29.381096Z",
+    "head_advance": "not_requested",
+    "last_activity_at": "2026-09-09T04:20:28.849754Z",
+    "logical_name": "fig4_continuation_experiment_review_4",
+    "name": "fig4_continuation_experiment_review_4",
+    "operation_id": "science.object.review.v1",
+    "output_artifact_name": "fig4_continuation_experiment_review_4.output",
+    "reason": null,
+    "recovery_available": false,
+    "revision": 1,
+    "scheduler_signal": {
+      "assumptions": [
+        "The review treats the supplied CSV tables as pixel-digitized observations and does not treat them as new simulation outputs or author raw SIMS measurements.",
+        "Because execution_context supplies no capability statements or limitations, feasibility is assessed only conditionally on the plan's fresh domain review and initialization gates."
+      ],
+      "missing_inputs": [],
+      "next_action_kind": "bounded_experiment_plan_revision",
+      "next_actions": [
+        "Revise only the deterministic sensitivity construction and its validation assertion so that decision-gate endpoints provably enclose the declared simultaneous perturbation set, or narrow the claims and gates to the explicitly tested one-group-at-a-time perturbation set.",
+        "Retain the verified finite masks, eight cases, exact pre-implementation row-ledger audit, original-target coverage, and later-work conditions unchanged."
+      ],
+      "schema_version": 1,
+      "summary": "The revised finite masks correctly remove every row with nonfinite two-sided log perturbations, and the supplied tables independently reproduce all declared M0-M2, S0-S2, excluded-row, and threshold-gap counts. The objective, cases, stop rules, resource judgment, and deferred mechanism work are proportionate and preserve the original mandatory targets. One material defect remains: summing group effects measured only with all other groups nominal is not, for nonlinear WRMSE, J, G, T, and relative-T calculations, a guaranteed bound on simultaneous admissible group perturbations. Replace that construction with a demonstrably enclosing deterministic bound, or explicitly restrict it to a one-group-at-a-time sensitivity score and remove bound-based support/rejection claims. No solver cases or statistical model need be added.",
+      "verdict": "revise"
+    },
+    "sealed_output": {
+      "artifact_name": "fig4_continuation_experiment_review_4.output",
+      "kind": "scientific_review",
+      "payload": {
+        "evidence": [
+          {
+            "excerpt": "M0-M2 require y_value>y_uncertainty; the plan defines B_Q as the sum of one-group-at-a-time maximum departures plus the numerical departure.",
+            "locator": "proposals[0].frozen_invariants, cases, comparison_contract, prediction_tests, stop_conditions, resource_estimate, value_assessment; top-level priority_rationale and validation_plans",
+            "schema_version": 1,
+            "source_key": "experiment_plan",
+            "source_type": "frozen_input"
+          },
+          {
+            "excerpt": "The mandatory targets are the two material profiles and their front/tail contrast; overall closure also retains a later mechanism-separation comparison.",
+            "locator": "objective_key, statement, mandatory_targets, and closure_requirements",
+            "schema_version": 1,
+            "source_key": "research_objective",
+            "source_type": "frozen_input"
+          },
+          {
+            "excerpt": "The backend is SProcess in Sentaurus R-2020.09, while capability_statements and limitations are null.",
+            "locator": "complete object",
+            "schema_version": 1,
+            "source_key": "execution_context",
+            "source_type": "frozen_input"
+          },
+          {
+            "excerpt": "Direct evaluation yields finite-mask counts 359, 383, 439 and broader-mask counts 373, 397, 501, with 14, 14, 62 excluded rows.",
+            "locator": "all 501 In0.83Al0.17As CSV rows; fields used by M0-M2/S0-S2 and point_index adjacency",
+            "schema_version": 1,
+            "source_key": "experiment_results_001",
+            "source_type": "frozen_input"
+          },
+          {
+            "excerpt": "Direct evaluation yields finite-mask counts 702, 753, 757 and broader-mask counts 702, 755, 765, with 0, 2, 8 excluded rows.",
+            "locator": "all 765 In0.83Ga0.17As CSV rows; fields used by M0-M2/S0-S2 and point_index adjacency",
+            "schema_version": 1,
+            "source_key": "experiment_results_002",
+            "source_type": "frozen_input"
+          },
+          {
+            "excerpt": "The prior review identified selected rows with unavailable two-sided log uncertainty and unsupported probabilistic 95% interval semantics as the two material defects.",
+            "locator": "summary, findings finite_uncertainty_failure and unsupported_interval_coverage, and hypothesis_reviews",
+            "schema_version": 1,
+            "source_key": "current_progress_002",
+            "source_type": "frozen_input"
+          },
+          {
+            "excerpt": "The visible successful initialization belongs to a different realization and does not qualify this experiment.",
+            "locator": "initialization_attestation, preflight_attestation, and effective source for the differently keyed prior realization",
+            "schema_version": 1,
+            "source_key": "current_progress_004",
+            "source_type": "frozen_input"
+          }
+        ],
+        "evidence_item_keys": [
+          "experiment_plan",
+          "research_objective",
+          "execution_context",
+          "experiment_results_001",
+          "experiment_results_002",
+          "current_progress_002",
+          "current_progress_004"
+        ],
+        "findings": [
+          {
+            "epistemic_status": "inference",
+            "evidence_keys": [
+              "experiment_plan",
+              "experiment_results_001",
+              "experiment_results_002"
+            ],
+            "finding_key": "finite_mask_blocker_resolved",
+            "rationale": "The InAlAs counts are M0/M1/M2=359/383/439 versus S0/S1/S2=373/397/501, and the InGaAs counts are 702/753/757 versus 702/755/765. The differences are exactly 14/0, 14/2, and 62/8. Thus every decision-mask row has positive y_value-y_uncertainty and finite asymmetric log endpoints.",
+            "schema_version": 1,
+            "statement": "The revised M0-M2 predicates exclude all rows whose y_value is less than or equal to y_uncertainty, and every declared finite-mask, broader-mask, and excluded-row count is reproduced by the exact supplied tables."
+          },
+          {
+            "epistemic_status": "inference",
+            "evidence_keys": [
+              "experiment_plan",
+              "experiment_results_001",
+              "experiment_results_002"
+            ],
+            "finding_key": "row_identity_and_adjacency_executable",
+            "rationale": "The row-level fields needed by every predicate and dependence group are present. Direct adjacency inspection retains the stated threshold-region discontinuities from point_index 447 to 466 for InAlAs and 363 to 382 for InGaAs. Requiring exact ledger reproduction as a pre-implementation stop gate is sufficient; embedding hundreds of row identities in the plan is unnecessary.",
+            "schema_version": 1,
+            "statement": "Exact row identities, shared-group provenance, and point-index adjacency are available from the bound tables, and the plan's no-bridging rule uniquely determines the finite and excluded-row ledgers before implementation."
+          },
+          {
+            "epistemic_status": "inference",
+            "evidence_keys": [
+              "experiment_plan"
+            ],
+            "finding_key": "nominal_group_sum_not_joint_bound",
+            "rationale": "Each b_g is the maximum departure when group g is perturbed and all other groups remain nominal. For nonlinear square roots, minima, ratios, absolute relative changes, and threshold-dependent categories, interaction terms can make a simultaneous multi-group departure larger than the sum of departures measured only at the nominal background. Summation is a valid enclosing argument only if each group bound is uniform over all admissible settings of the other groups, or if the calculation uses another verified enclosure method. The current validation check confirms arithmetic completeness but not enclosure.",
+            "schema_version": 1,
+            "statement": "The additive one-group-at-a-time construction does not generally enclose simultaneous admissible perturbations of the nonlinear decision metrics, so its endpoints cannot yet serve as deterministic robustness bounds for support or rejection."
+          },
+          {
+            "epistemic_status": "inference",
+            "evidence_keys": [
+              "experiment_plan",
+              "research_objective",
+              "execution_context",
+              "current_progress_004"
+            ],
+            "finding_key": "objective_scope_resource_and_priority_aligned",
+            "rationale": "Whole-profile finite-mask error uses both material-resolved profiles, while contiguous support length addresses the front/tail contrast without interpolating gaps. The plan limits claims to the frozen constant-D, constant-boundary family and defers microscopic mechanism separation under explicit adequacy and stability conditions. Four factorial cells and four tightened reruns are low-cost and reuse outputs across masks. Fresh exact-source domain review and initialization are correctly required because execution_context supplies no capability evidence and the visible historical initialization is differently keyed.",
+            "schema_version": 1,
+            "statement": "The current selection covers both original mandatory observables for this bounded experiment, preserves the later mechanism-comparison closure condition, and uses a proportionate eight-case design whose execution feasibility remains explicitly conditional."
+          }
+        ],
+        "global_confounders": [
+          "Pixel-digitized observations are not author raw SIMS measurements, and all-zero detection-limit flags conflict with some central concentrations at or below 3e15 cm^-3.",
+          "Material identity remains paired with its paper-reported material-specific diffusion coefficient, restricting causal claims to the declared phenomenological family.",
+          "The current sensitivity calculation does not establish enclosure under simultaneous perturbation of multiple dependence groups.",
+          "Backend feasibility is not independently established by execution_context and depends on the declared fresh domain review and initialization gates."
+        ],
+        "hypothesis_reviews": [
+          {
+            "confounders": [
+              "The G decision combines nonlinear WRMSE, root-mean-square, minimum, and ratio operations for which nominal one-group departures do not guarantee a simultaneous-perturbation bound.",
+              "Material and fixed material-specific D remain paired, so conclusions apply only within the frozen anchor family."
+            ],
+            "falsifiability": "pass",
+            "hypothesis_key": "hypothesis.surface_boundary_control",
+            "identifiability": "fail",
+            "missing_inputs": [],
+            "physical_plausibility": "pass",
+            "rationale": "The 2 x 2 boundary intervention and explicit 0.50/0.25 outcomes are falsifiable, and the finite-mask blocker is resolved. Robust support or rejection is not identifiable under the stated broader perturbation interpretation until the envelope endpoints are proven to enclose that perturbation set.",
+            "schema_version": 1,
+            "smallest_resolving_action": "Keep the cases, masks, adequacy gate, and numerical convergence gate; replace E_G and its component envelopes with a verified deterministic enclosure over the declared admissible perturbations, or restrict the decision claim to the exact one-group-at-a-time sensitivity set."
+          },
+          {
+            "confounders": [
+              "Relative-T and category decisions are nonlinear and can respond to simultaneous group perturbations outside the nominal one-group sensitivity calculation.",
+              "M2 remains sensitivity-only evidence because central concentrations conflict with the all-zero detection-limit flags."
+            ],
+            "falsifiability": "pass",
+            "hypothesis_key": "hypothesis.tail_support_artifact",
+            "identifiability": "fail",
+            "missing_inputs": [],
+            "physical_plausibility": "pass",
+            "rationale": "The masks, support-length statistic, adjacency rule, and 50%/10% outcomes form a finite falsifiable test. The present endpoints do not establish robustness to simultaneous admissible evidence perturbations, so the claimed artifact disposition is not yet identifiable at the stated scope.",
+            "schema_version": 1,
+            "smallest_resolving_action": "Retain the finite masks and exact no-gap T definition, but compute a verified deterministic enclosure for T and relative-T over the declared perturbation set, or narrow the support/rejection rule to the explicitly tested one-group-at-a-time scenarios."
+          }
+        ],
+        "next_actions": [
+          "Revise the deterministic envelope definition so each component bound is uniform over other admissible group settings, or use a verified interval enclosure for WRMSE, J, G, T, and relative T.",
+          "If retaining the current nominal one-group calculation, call it a sensitivity score, define its perturbation set explicitly, and remove any claim that its endpoints bound simultaneous digitization uncertainty.",
+          "After that bounded correction, run the already declared exact reference-ledger audit and fresh domain review/initialization before implementation or execution; retain later microscopic mechanism work under the existing conditions."
+        ],
+        "review_target": "experiment_portfolio",
+        "schema_version": 1,
+        "summary": "The revision resolves the finite-log-uncertainty blocker: direct recomputation from the bound row tables gives M0 counts 359/702, M1 383/753, and M2 439/757 for InAlAs/InGaAs, with S0 373/702, S1 397/755, and S2 501/765 and excluded counts 14/0, 14/2, and 62/8. The exact row identities are present and the no-missing-index adjacency rule is executable, including the documented 447-to-466 and 363-to-382 gaps. The original objective and both mandatory observables are covered within a bounded constant-D boundary counterfactual, while microscopic mechanism separation and stronger empirical claims remain properly conditional later work. The four physical cells plus four convergence reruns are proportionate, and feasibility is correctly gated because the supplied execution context does not independently establish backend capability. However, the replacement additive sensitivity interval is not generally an enclosing deterministic bound: each b_g is evaluated with every other group nominal, so nonlinear interaction under simultaneous group perturbations can exceed the sum of nominal one-group departures. Because G and relative-T support/rejection use those endpoints as robustness gates, this is material to identifiability. The smallest correction is a rigorous enclosing deterministic calculation over the declared perturbation set, such as verified interval propagation or bounded differences uniform over the other admissible coordinates; alternatively, label the current quantity as a one-group-at-a-time sensitivity score and cease using it to claim robustness outside that tested set. No additional TCAD cases or probabilistic uncertainty system are required.",
+        "verdict": "revise"
+      },
+      "schema": "scidiscovery.scientific-review.v1"
+    },
+    "sealed_output_status": "available",
+    "started_at": "2026-09-09T04:14:48.952185Z",
+    "state": "completed"
+  },
+  "revision_request": {
+    "name": "fig4_continuation_experiment_plan_revision_3",
+    "operation_id": "science.experiment.revise.v1",
+    "inputs": [
+      {
+        "port": "prior_draft",
+        "artifact_names": [
+          "fig4_continuation_experiment_plan_revision_2.output"
+        ]
+      },
+      {
+        "port": "change_request",
+        "artifact_names": [
+          "fig4_continuation_experiment_review_4.output"
+        ]
+      }
+    ],
+    "instruction": "按确切独立审查作最小修订，只处理逐组敏感性计算与其声称的扰动覆盖范围不一致这一项。优先考虑审查明确允许的收窄主张与测试集合，避免为首版新增复杂不确定度系统；具体科学判断由你作出，必须确保判断条件、解释、正式检查全篇一致，不能用名称变化掩盖实质缺陷。保持已经逐行核验通过的掩码、数量、八工况、原目标及后续目标条件。提交完整修订计划；若无法以这些输入完成有益的有界修订，请明确缺项或停止理由。"
+  },
+  "revision_preflight": {
+    "content": [
+      {
+        "type": "text",
+        "text": "{\"admissible\":true,\"executor_kind\":\"agent\",\"port\":null,\"reason_code\":null}"
+      }
+    ],
+    "structuredContent": {
+      "admissible": true,
+      "executor_kind": "agent",
+      "port": null,
+      "reason_code": null
+    },
+    "isError": false
+  },
+  "revision_invocation": {
+    "content": [
+      {
+        "type": "text",
+        "text": "{\"executor_kind\":\"agent\",\"operation_id\":\"science.experiment.revise.v1\",\"result\":{\"agent_type\":\"op_science_experiment_revise_v1_d533e82f29eb\",\"backend\":\"local_trusted\",\"candidate_accepted\":false,\"completed_at\":null,\"created_at\":\"2026-09-09T04:21:00.094334Z\",\"deadline_at\":\"2026-09-09T04:36:00.094334Z\",\"head_advance\":null,\"last_activity_at\":null,\"logical_name\":\"fig4_continuation_experiment_plan_revision_3\",\"name\":\"fig4_continuation_experiment_plan_revision_3\",\"operation_id\":\"science.experiment.revise.v1\",\"output_artifact_name\":null,\"reason\":null,\"recovery_available\":false,\"revision\":1,\"scheduler_signal\":null,\"sealed_output\":null,\"sealed_output_status\":\"unavailable\",\"started_at\":null,\"state\":\"queued\"}}"
+      }
+    ],
+    "structuredContent": {
+      "executor_kind": "agent",
+      "operation_id": "science.experiment.revise.v1",
+      "result": {
+        "agent_type": "op_science_experiment_revise_v1_d533e82f29eb",
+        "backend": "local_trusted",
+        "candidate_accepted": false,
+        "completed_at": null,
+        "created_at": "2026-09-09T04:21:00.094334Z",
+        "deadline_at": "2026-09-09T04:36:00.094334Z",
+        "head_advance": null,
+        "last_activity_at": null,
+        "logical_name": "fig4_continuation_experiment_plan_revision_3",
+        "name": "fig4_continuation_experiment_plan_revision_3",
+        "operation_id": "science.experiment.revise.v1",
+        "output_artifact_name": null,
+        "reason": null,
+        "recovery_available": false,
+        "revision": 1,
+        "scheduler_signal": null,
+        "sealed_output": null,
+        "sealed_output_status": "unavailable",
+        "started_at": null,
+        "state": "queued"
+      }
+    },
+    "isError": false
+  }
+}

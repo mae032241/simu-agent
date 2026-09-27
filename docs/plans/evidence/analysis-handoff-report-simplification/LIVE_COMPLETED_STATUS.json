@@ -1,0 +1,443 @@
+{
+  "agent_type": "op_tcad_result_analyze_v1_1e5b01a08c98",
+  "backend": "local_trusted",
+  "bound_inputs": [
+    {
+      "artifact_names": [
+        "fig4_shape_basis_analysis_1.output"
+      ],
+      "port": "prior_analysis"
+    },
+    {
+      "artifact_names": [
+        "fig4_shape_basis_analysis_1.output.recovery_manifest"
+      ],
+      "port": "prior_analysis_manifest"
+    },
+    {
+      "artifact_names": [
+        "fig4_shape_counterfactual_plan_revision_2.output"
+      ],
+      "port": "experiment_plan"
+    },
+    {
+      "artifact_names": [
+        "fig4_shape_counterfactual_plan_review_3.output"
+      ],
+      "port": "experiment_review"
+    },
+    {
+      "artifact_names": [
+        "fig4_shape_basis_reviewed_package_1"
+      ],
+      "port": "reviewed_package"
+    },
+    {
+      "artifact_names": [
+        "fig4_shape_basis_execution_1.output.tcad_manifest"
+      ],
+      "port": "runtime_manifest"
+    },
+    {
+      "artifact_names": [
+        "fig4_shape_basis_execution_1.output.solver_log",
+        "fig4_shape_basis_execution_1.output.fig4_ga_D0_primary_plx",
+        "fig4_shape_basis_execution_1.output.fig4_ga_Dmid_primary_plx",
+        "fig4_shape_basis_execution_1.output.fig4_ga_DB_primary_plx",
+        "fig4_shape_basis_execution_1.output.fig4_ga_D0_tight_plx",
+        "fig4_shape_basis_execution_1.output.fig4_ga_Dmid_tight_plx",
+        "fig4_shape_basis_execution_1.output.fig4_ga_DB_tight_plx",
+        "fig4_shape_basis_execution_1.output.fig4_al_D0_primary_plx",
+        "fig4_shape_basis_execution_1.output.fig4_al_Dmid_primary_plx",
+        "fig4_shape_basis_execution_1.output.fig4_al_DB_primary_plx",
+        "fig4_shape_basis_execution_1.output.fig4_al_D0_tight_plx",
+        "fig4_shape_basis_execution_1.output.fig4_al_Dmid_tight_plx",
+        "fig4_shape_basis_execution_1.output.fig4_al_DB_tight_plx"
+      ],
+      "port": "solver_outputs"
+    },
+    {
+      "artifact_names": [
+        "fig4_shape_basis_execution_1.output.tcad_log"
+      ],
+      "port": "diagnostics"
+    },
+    {
+      "artifact_names": [
+        "fig4_continuation_figure_materialized_1.curve_tables_001",
+        "fig4_continuation_figure_materialized_1.curve_tables_002",
+        "fig4_continuation_figure_materialized_1.source_panels",
+        "fig4_shape_basis_analysis_1.output.tool_evidence_001",
+        "fig4_shape_basis_analysis_1.output.tool_evidence_004",
+        "fig4_shape_basis_analysis_1.output.tool_evidence_005",
+        "fig4_shape_basis_analysis_1.output.tool_evidence_006",
+        "fig4_shape_basis_analysis_1.output.tool_evidence_008"
+      ],
+      "port": "reference_material"
+    },
+    {
+      "artifact_names": [
+        "fig4_continuation_objective_2",
+        "fig4_constant_cs_closure_analysis_1.output",
+        "fig4_iterative_alignment_analysis_delivery_1.output"
+      ],
+      "port": "current_progress"
+    }
+  ],
+  "candidate_accepted": true,
+  "completed_at": "2026-09-13T23:01:04.484646Z",
+  "created_at": "2026-09-13T22:52:41.863766Z",
+  "deadline_at": "2026-09-13T23:07:41.863766Z",
+  "diagnostic_summary": {
+    "failure": null,
+    "latest_native_error": {
+      "budget_source": "run_deadline",
+      "cancelled": false,
+      "effective_timeout_seconds": 30,
+      "elapsed_seconds": 0.05029270000522956,
+      "ended_at": "2026-09-13T22:55:04.306392+00:00",
+      "error_type": "FileNotFoundError",
+      "exit_code": null,
+      "first_started_at": "2026-09-13T22:53:36.152665+00:00",
+      "logs_truncated": false,
+      "peak_rss_kib": 10680,
+      "process_group_stopped": null,
+      "reason": "launch_failed",
+      "started_at": "2026-09-13T22:55:04.256127+00:00",
+      "state": "finished",
+      "stderr_log": "scratch/.analysis-process/eecef4fca0194e6882a55e96b5804c90.stderr.log",
+      "stdout_log": null,
+      "timed_out": false
+    },
+    "latest_rejection": null,
+    "latest_tool_error": null,
+    "native_coverage": "local_launcher",
+    "recent_errors": [],
+    "rejection_count": 0
+  },
+  "draft_from": null,
+  "evidence_outputs": [
+    {
+      "artifact_name": "fig4_compact_analysis_acceptance_1.output.tool_evidence_001",
+      "schema": "opaque"
+    },
+    {
+      "artifact_name": "fig4_compact_analysis_acceptance_1.output.tool_evidence_002",
+      "schema": "opaque"
+    },
+    {
+      "artifact_name": "fig4_compact_analysis_acceptance_1.output.recovery_manifest",
+      "schema": "scidiscovery.tool-evidence-manifest.v1"
+    }
+  ],
+  "head_advance": "not_requested",
+  "last_activity_at": "2026-09-13T23:01:04.484646Z",
+  "logical_name": "fig4_compact_analysis_acceptance_1",
+  "name": "fig4_compact_analysis_acceptance_1",
+  "native_execution": {
+    "attempt_count": 16,
+    "budget_source": "run_deadline",
+    "cancelled": false,
+    "coverage": "local_launcher",
+    "effective_timeout_seconds": 60,
+    "elapsed_seconds": 0.08961579704191536,
+    "ended_at": "2026-09-13T22:58:34.343519+00:00",
+    "error_count": 2,
+    "error_type": null,
+    "exit_code": 0,
+    "first_started_at": "2026-09-13T22:53:36.152665+00:00",
+    "logs_truncated": false,
+    "observation_status": "available",
+    "peak_rss_kib": 18508,
+    "process_group_stopped": true,
+    "reason": null,
+    "recent_errors": [
+      {
+        "budget_source": "run_deadline",
+        "cancelled": false,
+        "effective_timeout_seconds": 30,
+        "elapsed_seconds": 0.01697358099045232,
+        "ended_at": "2026-09-13T22:54:22.146926+00:00",
+        "error_type": "SyntaxError",
+        "exit_code": 1,
+        "first_started_at": "2026-09-13T22:53:36.152665+00:00",
+        "logs_truncated": false,
+        "peak_rss_kib": 10680,
+        "process_group_stopped": true,
+        "reason": null,
+        "started_at": "2026-09-13T22:54:22.129977+00:00",
+        "state": "finished",
+        "stderr_log": "scratch/.analysis-process/aa9e10ab96e54abaa2a6a734c9d9861c.stderr.log",
+        "stdout_log": "scratch/.analysis-process/aa9e10ab96e54abaa2a6a734c9d9861c.stdout.log",
+        "timed_out": false
+      },
+      {
+        "budget_source": "run_deadline",
+        "cancelled": false,
+        "effective_timeout_seconds": 30,
+        "elapsed_seconds": 0.05029270000522956,
+        "ended_at": "2026-09-13T22:55:04.306392+00:00",
+        "error_type": "FileNotFoundError",
+        "exit_code": null,
+        "first_started_at": "2026-09-13T22:53:36.152665+00:00",
+        "logs_truncated": false,
+        "peak_rss_kib": 10680,
+        "process_group_stopped": null,
+        "reason": "launch_failed",
+        "started_at": "2026-09-13T22:55:04.256127+00:00",
+        "state": "finished",
+        "stderr_log": "scratch/.analysis-process/eecef4fca0194e6882a55e96b5804c90.stderr.log",
+        "stdout_log": null,
+        "timed_out": false
+      }
+    ],
+    "scientific_evidence": false,
+    "started_at": "2026-09-13T22:58:34.253929+00:00",
+    "state": "finished",
+    "stderr_log": "scratch/.analysis-process/90fe52646b774b159e656ad0dca193e2.stderr.log",
+    "stdout_log": "scratch/.analysis-process/90fe52646b774b159e656ad0dca193e2.stdout.log",
+    "timed_out": false,
+    "total_stderr_bytes": 1708,
+    "total_stdout_bytes": 192399
+  },
+  "operation_id": "tcad.result.analyze.v1",
+  "output_artifact_name": "fig4_compact_analysis_acceptance_1.output",
+  "reason": null,
+  "recovery": {
+    "attempt_budget": {
+      "limit": 2,
+      "used": 1
+    },
+    "delivery_preserved": false,
+    "draft_available": false,
+    "recovery_pending": false,
+    "resume_available": false
+  },
+  "recovery_available": false,
+  "revision": 1,
+  "scheduler_signal": {
+    "assumptions": [],
+    "missing_inputs": [],
+    "next_action_kind": null,
+    "next_actions": [],
+    "schema_version": 1,
+    "summary": "Read run_status.sealed_output.payload.summary for the scientific conclusion; payload.next_action contains any scientific recommendation.",
+    "verdict": "inconclusive"
+  },
+  "scheduler_signal_status": "available",
+  "sealed_output": {
+    "artifact_name": "fig4_compact_analysis_acceptance_1.output",
+    "kind": "layered_diagnosis",
+    "payload": {
+      "analysis_method": "采用experiment_plan中两个材料块的原注册行掩码、shared_group权重、primary/tight有限数值守卫、逐对G>2U且相对改善至少0.10的唯一胜者规则，以及跨材料g/h规则。复用prior_analysis_manifest精确配对并由本轮reference_material重新绑定的封存归约脚本、材料账本、跨材料账本、3558行残差表和叠图；没有重跑求解器、重新拟合、扩大家族或重做完整归约。本轮仅核对这些文件的字节/摘要身份，从材料账本重算g/h与高浓度守卫，检查残差行/案例/分层结构和有限性，并对全局日志及12个PLX做有界标记和格式检查。注册曲线工具不能表达原计划要求的逐基函数log插值后在线性浓度域组合、固定point_index排除和分层shared_group权重，且适用数值已经封存，因此未调用。",
+      "calculation_records": [],
+      "claim_allowed": true,
+      "evidence": [
+        {
+          "locator": "/objective_key,/statement,/mandatory_targets,/closure_requirements",
+          "schema_version": 1,
+          "source_key": "current_progress_001",
+          "source_type": "frozen_input",
+          "title": "总体目标、强制目标与闭合要求"
+        },
+        {
+          "locator": "/proposals/0/comparison_contract,/proposals/1/comparison_contract,/validation_plans",
+          "schema_version": 1,
+          "source_key": "experiment_plan",
+          "source_type": "frozen_input",
+          "title": "两个材料块的行、指标、唯一胜者和跨材料决策合同"
+        },
+        {
+          "locator": "/verdict,/findings,/hypothesis_reviews,/global_confounders",
+          "schema_version": 1,
+          "source_key": "experiment_review",
+          "source_type": "frozen_input",
+          "title": "匹配原始计划的独立通过审查"
+        },
+        {
+          "locator": "/terminal_state,/solver_exit_code,/exit_code,/outputs,/error",
+          "schema_version": 1,
+          "source_key": "runtime_manifest",
+          "source_type": "runtime_output",
+          "title": "成功终态、零退出码和注册产品清单"
+        },
+        {
+          "locator": "BEGIN_BASIS, END_BASIS, CASE_ANCHOR and terminal summary",
+          "schema_version": 1,
+          "source_key": "solver_outputs_001",
+          "source_type": "runtime_output",
+          "title": "12个基函数案例的全局执行标记"
+        },
+        {
+          "locator": "/analysis_method,/summary,/hypothesis_assessments,/remaining_contradiction,/method_changes",
+          "schema_version": 1,
+          "source_key": "prior_analysis",
+          "source_type": "frozen_input",
+          "title": "精确先前分析的方法、数值、处置和结论限制"
+        },
+        {
+          "locator": "/bindings,/records",
+          "schema_version": 1,
+          "source_key": "prior_analysis_manifest",
+          "source_type": "frozen_input",
+          "title": "先前分析的精确输入与工具证据manifest"
+        },
+        {
+          "locator": "/materials",
+          "schema_version": 1,
+          "source_key": "reference_material_005",
+          "source_type": "frozen_input",
+          "title": "两材料三家族指标、数值差、逐对门和处置账本"
+        },
+        {
+          "locator": "/materials,/gates,/disposition",
+          "schema_version": 1,
+          "source_key": "reference_material_006",
+          "source_type": "frozen_input",
+          "title": "跨材料g/h、高浓度守卫和wrong-material处置账本"
+        },
+        {
+          "locator": "all rows",
+          "schema_version": 1,
+          "source_key": "reference_material_007",
+          "source_type": "frozen_input",
+          "title": "3558行固定参考位置上的家族残差"
+        },
+        {
+          "locator": "complete PNG",
+          "schema_version": 1,
+          "source_key": "reference_material_008",
+          "source_type": "frozen_input",
+          "title": "从封存残差生成的两材料三家族叠图"
+        },
+        {
+          "locator": "/startup_views,/originals_and_fields_consulted,/reused_sealed_values,/new_acceptance_checks,/errors_encountered",
+          "schema_version": 1,
+          "source_key": "tool_evidence_002",
+          "source_type": "runtime_output",
+          "title": "本轮入口字节、原件查阅、复用数值、新检查和实际错误处理记录"
+        }
+      ],
+      "experiment_key": "experiment.fig4.shape_counterfactual.ingaas",
+      "hypothesis_assessments": [
+        {
+          "evidence_keys": [
+            "experiment_plan",
+            "reference_material_005",
+            "reference_material_006",
+            "tool_evidence_002"
+          ],
+          "falsifiers_triggered": [
+            "falsifier.fig4.shape.wrong_material_signature"
+          ],
+          "hypothesis_key": "hypothesis.two_regime_kickout_vcd",
+          "outcome": "contradicts",
+          "predictions_checked": [
+            "prediction.fig4.shape.ga_additive_gain",
+            "prediction.fig4.shape.al_symmetric_control"
+          ],
+          "rationale": "只针对本轮注册的固定三家族材料选择性additive签名：additive不是InGaAs唯一局部胜者，高浓度守卫和跨材料不等式均失败，并且g_Al>=g_Ga，故触发显式wrong-material反证。该结果不能外推为对所有kick-out或VCD微观模型的反证。",
+          "schema_version": 1
+        },
+        {
+          "evidence_keys": [
+            "experiment_plan",
+            "reference_material_005",
+            "reference_material_007",
+            "reference_material_008"
+          ],
+          "falsifiers_triggered": [],
+          "hypothesis_key": "hypothesis.continuous_material_response",
+          "outcome": "inconclusive",
+          "predictions_checked": [
+            "prediction.fig4.shape.ga_continuous_parsimony",
+            "prediction.fig4.shape.al_continuous_control"
+          ],
+          "rationale": "固定三点log-D smooth代理在两材料的E_all和E_low均略差于constant，且没有家族达到唯一胜者门；这只能判定该固定代理，不足以判断一般连续响应律。",
+          "schema_version": 1
+        },
+        {
+          "evidence_keys": [
+            "experiment_plan",
+            "reference_material_005",
+            "reference_material_007",
+            "reference_material_008"
+          ],
+          "falsifiers_triggered": [],
+          "hypothesis_key": "hypothesis.surface_boundary_control",
+          "outcome": "inconclusive",
+          "predictions_checked": [
+            "prediction.fig4.shape.constant_control"
+          ],
+          "rationale": "constant仅有最小点估计优势，改善远低于10%门，且系统性残差仍大；该证据既不能支持也不能反驳有限surface-boundary control。",
+          "schema_version": 1
+        }
+      ],
+      "limitations": [
+        "结论只覆盖480摄氏度、480秒、固定Cs与D锚点下的constant、固定三点smooth和finite additive三家族。",
+        "primary/tight只提供计划注册的有限数值守卫，不建立渐近收敛阶。",
+        "联合数字化不确定度和合格原始SIMS尾区支持仍不可用，因此不能宣称绝对相容、尾区闭合或平台形状闭合。",
+        "单一热条件和三个固定现象学家族不能识别一般连续D(C)、边界历史或微观机制。",
+        "叠图的视觉检查仅为辅助；科学处置来自封存账本中的注册指标和判据。"
+      ],
+      "method_changes": [
+        "沿用封存归约对PLX全域非负的处理：比较点的各基函数括住节点仍必须正且有限；主域在第一个Silicon背边界零节点终止，并排除同坐标之后的Oxide支撑行。",
+        "沿用数值与绘图入口分离；本轮只复核封存数值和图，没有重新执行数值归约。"
+      ],
+      "next_action": "停止扩展同一三家族和同一系数。若继续总体目标，使用本轮有限反证与残差账本设计并独立审查一个具有明确方程、边界、可实现观测量和决策规则的新shape-changing反事实或额外热条件；若目标是绝对相容或尾区结论，则先补充并审查联合数字化不确定度或合格原始SIMS尾区证据。",
+      "objective_assessment": {
+        "comparison_keys": [],
+        "evidence_keys": [
+          "current_progress_001",
+          "reference_material_005",
+          "reference_material_006",
+          "reference_material_007",
+          "reference_material_008",
+          "tool_evidence_002"
+        ],
+        "objective_key": "objective.fig4_mechanism_discrimination",
+        "schema_version": 1,
+        "status": "inconclusive",
+        "summary": "注册的12基函数、两材料、三家族有限比较已经完整回答：两材料均无阈值级唯一偏好，有限材料选择性additive签名被wrong-material规则反驳。该结果减少候选空间，但没有闭合总体的深度/形状、绝对相容或微观机制目标。"
+      },
+      "overall_verdict": "inconclusive",
+      "plan_key": "experiment.fig4.shape_counterfactual.ingaas/validation",
+      "recommended_task_mode": null,
+      "remaining_contradiction": "在固定条件下三家族在两材料中央M0行集上几乎重合且都对低浓度参考高出约2.5至2.9 decade。有限additive签名呈现错误材料方向并被反驳，但现有比较不能解释共同的大残差，也不能决定一般连续律、边界历史、原始尾区支持或微观机制。",
+      "schema_version": 1,
+      "source_references": [
+        {
+          "input_alias": "solver_outputs_001",
+          "output_name": "solver_log",
+          "source_key": "solver_outputs_001"
+        }
+      ],
+      "study_kind": "scientific",
+      "summary": "runtime_manifest仍报告terminal_state=succeeded、solver_exit_code=0和exit_code=0；全局日志的12组BEGIN_BASIS/END_BASIS/CASE_ANCHOR与12个绑定ShapeBasis PLX通过本轮有界检查。旧manifest中的归约脚本、材料账本、跨材料账本、残差表和叠图与本轮五个reference_material的字节数及SHA-256全部一致，3558行残差保持12个材料-家族-层级单元和固定378/215行身份。封存E_low(primary)为InGaAs constant 2.5147150603、smooth 2.5173911481、additive 2.5164040470 decade，InAlAs为2.8573989861、2.8590984161、2.8583976111；constant虽为两材料最小点估计，但所有相对改善都远低于注册的10%门，所以没有唯一家族偏好。重算得到g_Ga=-0.0006716414、g_Al=-0.0003494874，g_Ga-g_Al=-0.0003221539，小于要求的0.1000051593；InGaAs additive的E_high相对constant恶化0.0001970042 decade，也大于6.5383e-7守卫。因g_Al>=g_Ga且操作数有限，注册的wrong-material有限签名反证成立。叠图和E_all约2.44至2.70 decade同时表明三家族几乎重合且系统性高于参考。由此可反驳本轮固定材料选择性additive签名，但不能识别一般连续D(C)、边界历史、surface control或微观kick-out/VCD机制；总体目标仍为inconclusive。"
+    },
+    "schema": "scidiscovery.layered-diagnosis.v1"
+  },
+  "sealed_output_status": "available",
+  "started_at": "2026-09-13T22:53:01.540385Z",
+  "state": "completed",
+  "tool_timing": [
+    {
+      "completed_at": "2026-09-13T22:53:01.559396+00:00",
+      "duration_seconds": 0.019163,
+      "started_at": "2026-09-13T22:53:01.540252+00:00",
+      "tool_name": "worker_open_assignment"
+    },
+    {
+      "completed_at": "2026-09-13T22:59:07.960956+00:00",
+      "duration_seconds": 0.292254,
+      "started_at": "2026-09-13T22:59:07.668722+00:00",
+      "tool_name": "worker_analysis_publish_files"
+    },
+    {
+      "completed_at": "2026-09-13T23:01:04.501989+00:00",
+      "duration_seconds": 0.515559,
+      "started_at": "2026-09-13T23:01:03.986452+00:00",
+      "tool_name": "worker_submit_result"
+    }
+  ]
+}

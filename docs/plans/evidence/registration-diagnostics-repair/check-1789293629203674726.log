@@ -1,0 +1,16 @@
+Traceback (most recent call last):
+  File "/home/da/project/ai4s/tcad/git_release/scidiscovery-agent/123/scidiscovery-e5.2/docs/plans/evidence/registration-diagnostics-repair/installed_smoke.py", line 71, in <module>
+    print(run([python, "-c", probe], env=clean).strip())
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/da/project/ai4s/tcad/git_release/scidiscovery-agent/123/scidiscovery-e5.2/docs/plans/evidence/registration-diagnostics-repair/installed_smoke.py", line 20, in run
+    raise RuntimeError(f"exit {result.returncode}:\n{result.stdout[-6000:]}\n{result.stderr[-6000:]}")
+RuntimeError: exit 1:
+
+Traceback (most recent call last):
+  File "<string>", line 16, in <module>
+  File "/home/da/project/ai4s/tcad/git_release/scidiscovery-agent/123/scidiscovery-e5.2/tests/operations/test_registration_diagnostics_repair.py", line 18, in <module>
+    from tests.operations.test_agent_contract_alignment import (
+  File "/home/da/project/ai4s/tcad/git_release/scidiscovery-agent/123/scidiscovery-e5.2/tests/operations/test_agent_contract_alignment.py", line 40, in <module>
+    from curve_figure_evidence.figure_science_operations import AUDIT_PROMPT as FIGURE_AUDIT_PROMPT
+ModuleNotFoundError: No module named 'curve_figure_evidence'
+
