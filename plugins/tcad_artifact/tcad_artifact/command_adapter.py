@@ -303,9 +303,12 @@ class CommandTCADExecutorAdapter:
         return outputs
 
     def _call(self, operation: str, payload: dict[str, Any], *, context=None) -> dict[str, Any]:
-        if operation in {"status", "capabilities", "execution_policy"}:
-            payload = {**payload, "deadline_monotonic": time.monotonic() + self.config.query_timeout_seconds}
         deadline = payload.get("deadline_monotonic")
+        if operation in {"status", "capabilities", "execution_policy"}:
+            # Bound the whole command locally without changing its business
+            # payload: discovery transports require an empty object.
+            query_deadline = time.monotonic() + self.config.query_timeout_seconds
+            deadline = min(deadline, query_deadline) if deadline is not None else query_deadline
         timeout = context.remaining_seconds() if context is not None else max(.001, deadline - time.monotonic()) if deadline is not None else self.config.operation_timeout_seconds
         if deadline is not None and deadline <= time.monotonic():
             raise TimeoutError("TCAD transport request deadline exhausted before start")

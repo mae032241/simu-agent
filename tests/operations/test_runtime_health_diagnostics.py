@@ -86,20 +86,107 @@ def test_health_reuses_capability_probe_and_never_mutates_execution(monkeypatch)
     assert len(calls) == 2
 
 
-@pytest.mark.parametrize("operation", ["capabilities", "execution_policy"])
+@pytest.mark.parametrize("operation", ["capabilities", "execution_policy", "status"])
 def test_readonly_command_probe_uses_one_configured_total_query_budget(tmp_path, monkeypatch, operation):
     import sys
     from tcad_artifact import command_adapter
+    from tcad_artifact.ssh_transport import SSHTCADTransport
     calls = []
+    payload = {"run_id": "existing-job"} if operation == "status" else {}
+    class Remote:
+        def rpc(self, request):
+            assert request["params"] == {"name": "tcad_" + operation, "arguments": payload}
+            value = {"capabilities": [{"profile_id": "fixture", "solver_kind": "sdevice",
+                "launch_name": "sdevice", "public_release_label": "Fixture",
+                "private_fixed_argument_count": 0, "private_fixed_arguments_sha256": "a" * 64,
+                "private_release_evidence_bytes": 1, "private_release_evidence_sha256": "b" * 64,
+                "capability_sha256": "c" * 64}]} if operation == "capabilities" else {"state": "succeeded"}
+            return {"id": request["id"], "result": {"structuredContent": value}}
+    transport = SSHTCADTransport(Remote(), local_result_root=tmp_path / "ssh-results")
     def run(argv, **kwargs):
         request = json.loads(kwargs["input"])
+        assert request["payload"] == payload
         calls.append((request["operation"], kwargs["timeout"]))
         return SimpleNamespace(returncode=0, stderr=b"", stdout=json.dumps({
-            "schema_version": 1, "operation": operation, "ok": True, "payload": {}}).encode())
+            "schema_version": 1, "operation": operation, "ok": True,
+            "payload": transport.handle(request["operation"], request["payload"])}).encode())
     monkeypatch.setattr(command_adapter, "run_bounded", run)
     adapter = command_adapter.CommandTCADExecutorAdapter(command_adapter.CommandAdapterConfig(
         executable=sys.executable, query_timeout_seconds=.25, operation_timeout_seconds=30),
         local_result_root=tmp_path)
-    adapter._call(operation, {})
+    adapter._call(operation, payload)
     assert len(calls) == 1 and calls[0][0] == operation
     assert 0 < calls[0][1] <= .25
+
+
+@pytest.mark.process_e2e
+def test_command_capabilities_reaches_ssh_handler_with_empty_payload(tmp_path):
+    import os
+    import sys
+    from tcad_artifact.command_adapter import CommandAdapterConfig, CommandTCADExecutorAdapter
+    script = tmp_path / "transport.py"
+    script.write_text('''import json, sys
+from pathlib import Path
+from tcad_artifact.ssh_transport import SSHTCADTransport
+class Remote:
+    def rpc(self, request):
+        assert request['params'] == {'name':'tcad_capabilities', 'arguments':{}}
+        capability = dict(profile_id='fixture', solver_kind='sdevice', launch_name='sdevice',
+            public_release_label='Fixture', private_fixed_argument_count=0,
+            private_fixed_arguments_sha256='a'*64, private_release_evidence_bytes=1,
+            private_release_evidence_sha256='b'*64, capability_sha256='c'*64)
+        return {'id':request['id'], 'result':{'structuredContent':{'capabilities':[capability]}}}
+request = json.load(sys.stdin)
+assert request == {'schema_version':1, 'operation':'capabilities', 'payload':{}}
+transport = SSHTCADTransport(Remote(), local_result_root=Path(__file__).parent/'remote-results')
+value = transport.handle(request['operation'], request['payload'])
+print(json.dumps({'schema_version':1, 'operation':request['operation'], 'ok':True, 'payload':value}))
+''')
+    adapter = CommandTCADExecutorAdapter(CommandAdapterConfig(executable=sys.executable,
+        arguments=(str(script),), environment={"PYTHONPATH": os.pathsep.join(sys.path)},
+        query_timeout_seconds=5.), local_result_root=tmp_path / "results")
+    assert [capability.key for capability in adapter.capabilities()] == ["fixture"]
+
+
+@pytest.mark.process_e2e
+@pytest.mark.parametrize("operation", ["capabilities", "execution_policy", "status"])
+def test_query_total_timeout_stops_command_and_its_child(tmp_path, operation):
+    import os
+    from pathlib import Path
+    import signal
+    import subprocess
+    import sys
+    import time
+    from tcad_artifact.command_adapter import CommandAdapterConfig, CommandTCADExecutorAdapter
+    script = '''import json, os, sys, time
+request = json.load(sys.stdin)
+assert request['payload'] == ({'run_id':'existing-job'} if request['operation']=='status' else {})
+child = os.fork()
+if child == 0:
+    time.sleep(30)
+else:
+    print(json.dumps([os.getpid(), child]), flush=True)
+    time.sleep(30)
+'''
+    adapter = CommandTCADExecutorAdapter(CommandAdapterConfig(executable=sys.executable,
+        arguments=("-c", script), query_timeout_seconds=.5, operation_timeout_seconds=30),
+        local_result_root=tmp_path)
+    started = time.monotonic()
+    with pytest.raises(RuntimeError, match="short bound") as caught:
+        adapter._call(operation, {"run_id": "existing-job"} if operation == "status" else {})
+    cause = caught.value.__cause__
+    assert isinstance(cause, subprocess.TimeoutExpired)
+    assert 0 < cause.timeout <= .5
+    assert time.monotonic() - started < 3
+    pids = json.loads(cause.stdout)
+    try:
+        for pid in pids:
+            stat = Path(f"/proc/{pid}/stat")
+            assert not stat.exists() or stat.read_text().split()[2] == "Z"
+    finally:
+        # Cleanup remains explicit if a regression leaves a descendant running.
+        for pid in pids:
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
