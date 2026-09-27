@@ -60,6 +60,13 @@ DOCUMENTS = (
 TOOLS = (
     "scripts/build_git_release.py",
     "scripts/run_tests.py",
+    "scripts/installed_candidates.py",
+    "scripts/probe_native_code_mode.py",
+    "scripts/probe_root_host.py",
+    "scripts/probe_root_host_live.py",
+    "scripts/probe_root_lifecycle.py",
+    "scripts/root_host_resources.json",
+    "scripts/root_host_ws_client.py",
     "scripts/test_resources.json",
     "scripts/test_resources_ci.json",
     "scripts/compiled_worker_process_guard.py",
