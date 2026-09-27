@@ -5,7 +5,7 @@ from ...operations.tooling import reference_policy
 from ...operations.invoke import OperationInvocationError
 from ...reference_tools import ReferencePolicy
 from ..schema.refs import ArtifactRef
-from .reference_access import _matches, _pointer
+from .reference_access import ReferenceAccessError, _matches, _pointer
 from .run_records import RunContractUnavailable, RunError
 from .scheduler_bindings import SchedulerBindingError
 
@@ -31,7 +31,15 @@ def output_sources(runs, value, compiled, port_name, raw):
     known = set(bindings) | diagnostics
     aliases = []
     for path in port.evidence_paths:
-        aliases.extend(citation['source_key'] for citation in _pointer(document, path))
+        try:
+            citations = _pointer(document, path)
+        except ReferenceAccessError as error:
+            if error.code != 'reference_selector_missing':
+                raise
+            # Validated scientific forms may omit their optional citation ledger.
+            # Direct evidence keys are still covered by the declared rules below.
+            continue
+        aliases.extend(citation['source_key'] for citation in citations)
     mapping = {}
     if port.schema_id == 'scidiscovery.layered-diagnosis.v1':
         from types import SimpleNamespace
@@ -97,6 +105,17 @@ def scientific_use_restricted(runs, references, *, ignore_labels=(), policy=None
                 producer = runs.status(producer_id)
             except RunError as error:
                 raise ScientificProvenanceError('Scientific receipt producer is unavailable.') from error
+            if (envelope.schema_id == 'scidiscovery.tool-evidence-manifest.v1'
+                    and envelope.labels.get('operation_output_port') == 'recovery_manifest_output'
+                    and envelope.labels.get('operation_digest') == producer.operation_digest
+                    and producer.state == 'completed' and producer.output_ref is not None
+                    and ref in runs.artifacts.catalog(producer.output_ref).parent_refs
+                    and runs.completed_for_output(ref) == producer):
+                # The sealed inventory is control evidence, not a file receipt.
+                # Its producer's actual adopted citations carry scientific limits;
+                # arbitrary bound background and unused receipts are not adopted.
+                pending.append((producer.output_ref, False))
+                continue
             records = [record for record in runs.tool_evidence(producer_id)
                        if ArtifactRef.model_validate(record['artifact_ref']) == ref]
             if len(records) != 1:

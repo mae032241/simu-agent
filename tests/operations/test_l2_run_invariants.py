@@ -1018,6 +1018,7 @@ def test_control_startup_reconciles_only_expired_active_runs(
     monkeypatch.setattr(mcp_daemon, "UnixSocketDaemon", FakeDaemon)
     secret = tmp_path / "approval.key"
     secret.write_bytes(b"x" * 32)
+    secret.chmod(0o600)
     assert mcp_daemon.main(
         [
             "--project-root", str(tmp_path / "project"),

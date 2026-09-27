@@ -202,6 +202,10 @@ A 可以独立发布：现有交互研究不依赖后台 Root，也应更稳定�
 - [ ] 记录可安装提交、配置迁移、停服/切换方式、在途操作处理、恢复条件与已知限制。
 - [ ] 交给 B：已验证的合同投影、用量和诊断接口、实际支持的 Worker 路径、配置版本及未解决事项。
 
+**源码发现与定向修复（2026-09-28）：**`f77f1ff` 全局 source 发现 1622 passed、23 failed、97 deselected（`/tmp/scid-a6-source-f77f1ff/batch-001/pytest.log`）。21 个失败来自旧测试条件：daemon secret 缺少 `0600`、review kind 修改误伤控制附件端口、typed consumer 沿用仅适用于 material/file 的配置预算占位。已修正 fixture，生产权限和预算约束不放宽。另 2 个生产问题已修复：可省略的 evidence ledger 不再当作必填读取，并声明 audit/foundation/intake/review 的直接科学引用；精确封存的控制 manifest 根据 completed producer 的实际采用引用继承限制，不把其全部背景父对象作为科学依赖，也不接受复制标签作为生产回执。
+
+定向 source `/tmp/scid-a6-repair-01/result.json`：68 passed，覆盖全部原失败及新增受限来源 → hidden proof → Transform、可省略 ledger、未采用受限背景、伪造 manifest 对照；`/tmp/scid-a6-repair-02/result.json`：引用读取与历史合同 32 passed。两批串行、默认资源保护，进程树峰值分别为 139243520 / 134836224 B，无资源止损；未重复全局源码或安装。此处只记源码修复证据，安装候选与真实链路验收仍待下续。
+
 **Git 节点：**A 发布候选与简短证据索引。源码通过、安装通过、真实链路通过分别标注。
 回滚先核对在途调用并保存事实，不倒退数据库抹掉已接受的外部动作；旧版不兼容时保留状态并明确人工恢复路径。
 

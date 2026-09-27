@@ -53,6 +53,7 @@ def test_control_daemon_passes_backend_choice_to_the_only_root_runtime(
     )
     secret = tmp_path / "approval.key"
     secret.write_bytes(b"x" * 32)
+    secret.chmod(0o600)
     runtime = tmp_path / "run"
     runtime.mkdir()
     local_workspace_root = tmp_path / "worker-workspaces"

@@ -20,7 +20,7 @@ def _port(name, description, schema, **kwargs):
     return base.model_copy(update={'schema_id': schema, 'schema_resource': ComponentRef('tool_evidence_schema')}) if schema == 'scidiscovery.tool-evidence-manifest.v1' else base
 
 
-def _system(tmp_path, monkeypatch, *, hidden_transform=False, consumer=None):
+def _system(tmp_path, monkeypatch, *, hidden_transform=False, consumer=None, restricted_source=False):
     operations = []
     for op in GENERAL.operations:
         if op.operation_id == 'science.intake.split.v1' and hidden_transform:
@@ -56,7 +56,7 @@ def _system(tmp_path, monkeypatch, *, hidden_transform=False, consumer=None):
     catalog = compile_catalog((CORE_PLUGIN, GENERAL.model_copy(update={'operations': tuple(operations)}), CURVE, TCAD))
     runtime, instance, root = _root(tmp_path, catalog=catalog)
     runtime.runs.operation_catalog = catalog
-    _register(runtime, instance, name='source', raw=b'Exact source.', kind='source', schema='opaque', media_type='text/plain')
+    _register(runtime, instance, name='source', raw=b'Exact source.', kind='source', schema='opaque', media_type='text/plain', provisional=restricted_source)
     payload = json.loads(_intake().canonical_json().replace(b'"paper"', b'"source_material"'))
     intake = _complete(runtime, root, 'author', 'science.evidence.extract.v1', {'source_material': 'source'}, payload)
     audit_payload = {'checks': [{'check_key': 'source_traceability', 'subject': 'Frozen source',
@@ -70,12 +70,17 @@ def _system(tmp_path, monkeypatch, *, hidden_transform=False, consumer=None):
     return runtime, instance, root, request
 
 
-def test_transform_uses_exact_hidden_ref_after_independent_audit(tmp_path, monkeypatch):
-    runtime, instance, root, request = _system(tmp_path, monkeypatch, hidden_transform=True, consumer="sibling")
+@pytest.mark.parametrize('restricted', [False, True])
+def test_transform_uses_exact_hidden_ref_after_independent_audit(tmp_path, monkeypatch, restricted):
+    runtime, instance, root, request = _system(tmp_path, monkeypatch, hidden_transform=True, consumer="sibling", restricted_source=restricted)
     assert root.call_tool('operation_preflight', request)['admissible']
     root.call_tool('operation_invoke', request)
     output = _artifact(runtime, instance, 'split')
     assert len(output.parent_refs) == len(set(output.parent_refs)) == 3
+    assert (output.labels.get('scientific_claim_admissible') == 'false') is restricted
+    from scidiscovery.artifact_agent.service.scientific_usage import scientific_use_restricted
+    proof = next(ref for ref in output.parent_refs if ref.schema_id == 'scidiscovery.tool-evidence-manifest.v1')
+    assert scientific_use_restricted(runtime.runs, (proof,)) is restricted
     consume = {'name': 'downstream', 'operation_id': 'science.evidence.extract.v1',
         'inputs': [{'port': 'source_material', 'artifact_names': ['source']},
                    {'port': 'frame_anchor', 'artifact_names': ['split']}],

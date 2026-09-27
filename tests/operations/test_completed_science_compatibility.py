@@ -52,7 +52,8 @@ def test_completed_review_reuse_is_separate_from_run_identity(tmp_path, change):
             operation = operation.model_copy(update={"version": "2"})
         if name == "blind.csv.review.v1" and change == "review_kind":
             operation = operation.model_copy(update={"outputs": tuple(
-                port.model_copy(update={"kind": "new_review_kind"}) for port in operation.outputs)})
+                port.model_copy(update={"kind": "new_review_kind"})
+                if port.name == original.labels["operation_output_port"] else port for port in operation.outputs)})
         operations.append(operation)
     current = compile_catalog((CORE_PLUGIN, GENERAL_PLUGIN,
         BLIND_PLUGIN.model_copy(update={"operations": tuple(operations)})))

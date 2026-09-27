@@ -25,7 +25,7 @@ def system(tmp_path):
         consumers.append(extract.model_copy(update={'operation_id': f'science.fixture.consume_{suffix}.v1', 'review': None,
             'inputs': tuple(port.model_copy(update={'schema_id': schema, 'schema_resource': ComponentRef(resource),
                 'media_types': ('application/json',), 'codec': ComponentRef('json_codec'),
-                'usage': 'claim_evidence', 'exposure': 'on_demand'}) if port.name == 'source_material' else port
+                'usage': 'claim_evidence', 'exposure': 'on_demand', 'max_item_bytes': 1024 * 1024}) if port.name == 'source_material' else port
                 for port in extract.inputs)}))
     project = next(op for op in PLUGIN.operations if op.operation_id == 'science.objective.project.v1')
     project = project.model_copy(update={'operation_id': 'science.fixture.project.v1', 'input_admission': None})

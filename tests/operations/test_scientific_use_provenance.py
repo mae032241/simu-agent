@@ -16,7 +16,7 @@ from tests.operations.worker_fixtures import attached_worker
 def system(tmp_path):
     extract = next(op for op in PLUGIN.operations if op.operation_id == 'science.evidence.extract.v1')
     consumer = extract.model_copy(update={'operation_id': 'science.fixture.consume.v1', 'review': None,
-        'inputs': tuple(port.model_copy(update={'usage': 'claim_evidence', 'schema_id': 'opaque', 'schema_resource': extract.outputs[1].schema_resource, 'media_types': ('text/csv',), 'exposure': 'on_demand'})
+        'inputs': tuple(port.model_copy(update={'usage': 'claim_evidence', 'schema_id': 'opaque', 'schema_resource': extract.outputs[1].schema_resource, 'media_types': ('text/csv',), 'exposure': 'on_demand', 'max_item_bytes': 1024 * 1024})
                         if port.name == 'source_material' else port for port in extract.inputs)})
     intake_port = extract.outputs[0]
     intake_consumer = consumer.model_copy(update={'operation_id': 'science.fixture.consume_intake.v1',
@@ -134,3 +134,33 @@ def test_unavailable_historical_provenance_returns_explicit_admission_error(tmp_
         monkeypatch.setattr(runtime.runs, '_compiled', unavailable)
     result = consume(root, 'evidence.output')
     assert result['reason_code'] == 'input_scientific_provenance_unavailable', result
+
+
+@pytest.mark.parametrize('restricted', [False, True])
+def test_optional_ledger_keeps_direct_citation_limits_and_exact_control_manifest(tmp_path, restricted):
+    import json
+    from tests.operations.test_general_transform_operations import _intake
+    from scidiscovery.artifact_agent.service.scientific_usage import ScientificProvenanceError, scientific_use_restricted
+
+    runtime, root, worker, opened, aliases = system(tmp_path)
+    payload = _intake().model_dump(mode='json')
+    payload['scientific_foundation'].pop('evidence')
+    payload['scientific_foundation']['items'][0]['evidence_keys'] = [aliases['feedback' if restricted else 'source_material']]
+    Path(opened['output_directory'], 'result.json').write_text(json.dumps({
+        'handoff': {'verdict': 'pass', 'summary': 'Direct source citation.'}, 'payload': payload}))
+    assert worker.call_tool('worker_submit_result', {})['state'] == 'completed'
+    producer = runtime.runs.status(worker._run_id)
+    envelope = runtime.artifacts.catalog(producer.output_ref)
+    manifest = next(runtime.artifacts.catalog(ref) for ref in envelope.parent_refs
+                    if ref.schema_id == 'scidiscovery.tool-evidence-manifest.v1')
+    assert scientific_use_restricted(runtime.runs, (manifest.ref,)) is restricted
+    result = consume(root, 'evidence.output')
+    assert result['admissible'] is not restricted, result
+    # Equal bytes and copied producer labels do not prove sealed manifest identity.
+    copied = runtime.artifacts.register(runtime.artifacts.read(manifest.ref), ArtifactRegistration(
+        kind=manifest.kind, schema_id=manifest.schema_id, payload_schema_version=1,
+        media_type=manifest.media_type, creator=runtime.actor, parent_refs=manifest.parent_refs,
+        labels=manifest.labels), idempotency_key='copied-manifest')
+    assert copied.ref != manifest.ref
+    with pytest.raises(ScientificProvenanceError, match='unique exact producer receipt'):
+        scientific_use_restricted(runtime.runs, (copied.ref,))
