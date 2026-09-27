@@ -2050,8 +2050,6 @@ def test_git_release_builder_emits_clean_manifested_source(tmp_path: Path) -> No
             if anchor:
                 assert f'id="{anchor}"' in linked.read_text(), (relative, link)
         assert "plans/RESEARCH_TASK_REFACTOR_R4" not in text
-    for relative in release["DOCUMENT_PROJECTIONS"]:
-        assert entries[relative] == hashlib.sha256((output / relative).read_bytes()).hexdigest()
 
     receipt_root = Path(os.environ["SCID_TEST_LOG_DIR"])
     receipt_root.mkdir(parents=True, exist_ok=True)
@@ -2111,22 +2109,6 @@ probe_approval_ui
         assert 'timed out' in result.stderr and 'Address already in use' in result.stderr
     elif not accepted:
         assert 'HTTP 503' in result.stderr
-
-
-def test_release_document_projection_preserves_sources_and_is_idempotent(tmp_path):
-    import runpy
-    release = runpy.run_path(str(Path(__file__).resolve().parents[2] / "scripts/build_git_release.py"))
-    for relative, replacements in release["DOCUMENT_PROJECTIONS"].items():
-        path = tmp_path / relative
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text("\n".join(original for original, _ in replacements))
-    release["_project_documents"](tmp_path)
-    expected = {p: (tmp_path / p).read_bytes() for p in release["DOCUMENT_PROJECTIONS"]}
-    release["_project_documents"](tmp_path)
-    assert expected == {p: (tmp_path / p).read_bytes() for p in expected}
-    (tmp_path / "docs/ARCHITECTURE.md").write_text("unrecognized current reference")
-    with pytest.raises(ValueError, match="projection drift"):
-        release["_project_documents"](tmp_path)
 
 
 @pytest.mark.parametrize("content", ["/home/" + "private-person/state",

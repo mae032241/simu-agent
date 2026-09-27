@@ -1,4 +1,0 @@
-restore fault: test: before database switch
-index state: restoring
-database instance state: closed
-rollback incorrectly rejected: ArchiveError restore database switch committed; resume is required

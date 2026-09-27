@@ -1,8 +1,0 @@
-{
-  "report_path": "docs/plans/reviews/OPERATION_TOOL_CONTRACT_COHERENCE_IMPLEMENTATION_REVIEW.zh-CN.md",
-  "report_sha256": "0922f12c34ccdc51c08f219d7683b4822cf54c6b13b747675faf53d5a491df3c",
-  "verdict": "PASS",
-  "scope": "frozen engineering increment and P5; P6 remains incomplete",
-  "necessary_blockers": 0,
-  "freeze_sha256": "4e2260cc4d54ff15156ec57b47a6f25821bdeeabe476253d8020065ad8e7f9d3"
-}

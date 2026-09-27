@@ -1,5 +1,0 @@
-WARNING: The directory '/home/da/.cache/pip' or its parent directory is not owned or is not writable by the current user. The cache has been disabled. Check the permissions and owner of that directory. If executing pip with sudo, you should use sudo's -H flag.
-WARNING: Requirement '/tmp/scid-execution-settings-installed/fixture-wheels/scidiscovery_blind_csv_fixture-0.1.0-py3-none-any.whl' looks like a filename, but the file does not exist
-Processing /tmp/scid-execution-settings-installed/fixture-wheels/scidiscovery_blind_csv_fixture-0.1.0-py3-none-any.whl
-ERROR: Could not install packages due to an OSError: [Errno 2] No such file or directory: '/tmp/scid-execution-settings-installed/fixture-wheels/scidiscovery_blind_csv_fixture-0.1.0-py3-none-any.whl'
-

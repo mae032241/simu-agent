@@ -274,12 +274,9 @@ control retain private recovery and engineering records.
 
 ## Validation status
 
-The previous source node (`6adf018`) has bounded serial evidence for 1386 source,
-16 installed and 54 process cases, recorded in the
-[R4 plan](plans/RESEARCH_TASK_REFACTOR_R4.zh-CN.md). Those results are historical
-evidence for that node, not automatic qualification of later edits. The current
-boundary cleanup uses focused source checks; its exact results are recorded in the
-same plan. No live model, solver or deployed-service acceptance is claimed here.
+See the [release validation status](RELEASE.md#current-status) for candidate-bound
+results and open acceptance limits. Plugin API declarations and focused source
+checks do not establish live model, solver or deployed-service qualification.
 
 ### Worker startup and authoring visibility
 

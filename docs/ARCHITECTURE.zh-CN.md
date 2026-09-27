@@ -2,8 +2,7 @@
 
 简体中文 | [English](ARCHITECTURE.md)
 
-本文描述当前通用插件平台和完整科研任务。实施与验收进度以
-[R4 主计划](plans/RESEARCH_TASK_REFACTOR_R4.zh-CN.md) 为准。
+本文描述当前通用插件平台和完整科研任务。公开实现与验证状态见[发布说明](RELEASE.zh-CN.md#current-status)。
 历史计划与审计仅描述其记录的候选，不覆盖当前合同；静态实现不代表运行验收通过。
 
 ## 1. 设计原则
@@ -13,7 +12,7 @@ SciDiscovery 的基本行为原子是 `OperationSpec`。它是一份不可变、
 独立审查、人工审批与副作用要求；具体 codec、validator、guard、projector、workspace hook、
 Worker tool 和 runtime factory 由插件内的窄组件实现。
 
-当前 Operation ABI 20 要求 Agent 输出引用结构化语义合同。每条不能由 JSON Schema 表达的规则
+当前 Operation ABI 23 要求 Agent 输出引用结构化语义合同。每条不能由 JSON Schema 表达的规则
 具有稳定 `rule_id`、说明、输出路径和所需输入；编译器拒绝未知输入以及把可选端口暗中声明为必需
 输入的规则。每个 Python 内容或上下文校验器必须绑定其中一个已声明 `rule_id`，否则目录编译失败。
 编译器把这份合同和从端口、校验器绑定及修订形状机械派生的校验合同嵌入同一份
@@ -441,7 +440,7 @@ UI 内只有一个有界观测器，订阅时轮询节点元数据并通过 SSE 
 为恢复原活动编号，Run 库新增一个全局 `run_activity_sequence` 分配器；普通活动写入在原事务内
 分配 rowid。它不属于实例快照，避免一个实例归档后，其他实例重用其历史活动编号。科学 Schema、
 Operation 和工具合同保持不变；归档定向事务恢复原 append-only 触发器，维护清单不属于可清缓存。
-范围、故障证据和部署边界见[实施记录](plans/evidence/instance-workbench/IMPLEMENTATION.zh-CN.md)。
+历史记录的排除范围见[发布说明](RELEASE.zh-CN.md#publication-scope)。
 
 ## 原生权限角色与外部证据
 

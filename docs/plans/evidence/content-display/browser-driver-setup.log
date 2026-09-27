@@ -1,6 +1,0 @@
-WARNING: The directory '/home/da/.cache/pip' or its parent directory is not owned or is not writable by the current user. The cache has been disabled. Check the permissions and owner of that directory. If executing pip with sudo, you should use sudo's -H flag.
-Looking in indexes: https://mirrors.aliyun.com/pypi/simple/
-Collecting websocket-client
-  Downloading https://mirrors.aliyun.com/pypi/packages/d5/d2/cc4dc1271e464942db7ee278baae2daa99ee77cb2af744025c04da585a3e/websocket_client-1.9.2-py3-none-any.whl (95 kB)
-Installing collected packages: websocket-client
-Successfully installed websocket-client-1.9.2

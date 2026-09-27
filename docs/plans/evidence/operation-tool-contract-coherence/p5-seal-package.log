@@ -1,5 +1,0 @@
-Traceback (most recent call last):
-  File "/tmp/scid_coherence_seal.py", line 36, in <module>
-    assert z.read(entry)==(path/entry).read_bytes(),entry
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-AssertionError: scidiscovery/operations/catalog.py

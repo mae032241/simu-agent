@@ -347,7 +347,7 @@ LocalTrusted 历史 Run 不能单凭终态证明无写入者，这个限制不�
 归档/恢复中断应在管理页继续或回退，不能删除维护日志强行解锁。回滚旧代码前须使用新版完成
 恢复，或将已归档实例保留为旧版无法续跑的离线资料。安装、卸载不删除归档。
 
-验收范围与未完成的生产现场项见[实施记录](plans/evidence/instance-workbench/IMPLEMENTATION.zh-CN.md)。
+验收范围与未完成的生产现场项见[发布说明](RELEASE.zh-CN.md#current-status)。
 
 ## 7. 主要配置变量
 

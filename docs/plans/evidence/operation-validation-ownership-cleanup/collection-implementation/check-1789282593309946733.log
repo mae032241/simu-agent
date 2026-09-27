@@ -1,8 +1,0 @@
-.                                                                        [100%]
-=============================== warnings summary ===============================
-tests/operations/test_analysis_evidence_recovery.py::test_local_evidence_hash_consumes_same_inspection_budget
-  /home/da/project/ai4s/tcad/git_release/scidiscovery-agent/123/scidiscovery-e5.2/plugins/tcad_artifact/tcad_artifact/remote_runner_py36.py:884: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
-    return datetime.utcnow().isoformat(timespec="microseconds") + "Z"
-
--- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
-1 passed, 1 warning in 3.12s

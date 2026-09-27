@@ -142,8 +142,8 @@ explicit units. Global settings merge with explicit instance fields when a Run i
 created; recovery retains its snapshot. Export and collection also respect remaining
 Run time. Raising a transfer limit does not authorize a larger solver job.
 
-Current implementation and unverified acceptance items are recorded in the single
-[R4 plan](../../docs/plans/RESEARCH_TASK_REFACTOR_R4.zh-CN.md). Historical solver or
+Current implementation and unverified acceptance items are summarized in the
+[release status](../../docs/RELEASE.md#current-status). Historical solver or
 helper transport probes are not full scientific-chain acceptance.
 
 ### Revision budgets, file bindings and diagnostic recovery

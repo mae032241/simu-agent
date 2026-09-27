@@ -1,6 +1,0 @@
-WARNING: proceeding, even though we could not create PATH aliases: Refusing to create helper binaries under temporary dir "/tmp" (codex_home: AbsolutePathBuf("/tmp/scid-execution-settings-p0/cli-home"))
-Reading additional input from stdin...
-{"type":"thread.started","thread_id":"01a0a446-ad24-7ca3-9eac-dc61be17c5c6"}
-{"type":"turn.started"}
-{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"P0_CONNECTION_OK"}}
-{"type":"turn.completed","usage":{"input_tokens":12187,"cached_input_tokens":8960,"cache_write_input_tokens":0,"output_tokens":8,"reasoning_output_tokens":0}}

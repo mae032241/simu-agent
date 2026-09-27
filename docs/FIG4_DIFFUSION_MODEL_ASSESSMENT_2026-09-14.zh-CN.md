@@ -8,7 +8,7 @@
 
 ## 1. 既往实验实际上检验了什么
 
-[已封存的基线计划](plans/evidence/operation-validation-pruning/LIVE_E10_CLOSURE_REVISION_COMPLETED.json)规定：
+[已封存的基线计划](reference-data/fig4-baseline-plan.json)规定：
 
 - 使用自定义、非负的守恒浓度状态。
 - 求解一维常数扩散方程，案例之间改变指定的扩散系数和表面浓度。
@@ -18,7 +18,7 @@
 
 因此，这几轮应准确描述为“针对 InGaAs 数据的有效扩散模型检验”，不能仅凭案例被标记为 InGaAs，就认为已建立并核验完整的 InGaAs 材料物理模型。共同载体是否确实不影响方程，是实际实现仍需满足的条件。
 
-[后续封存设计](plans/evidence/operation-validation-ownership-cleanup/collection-implementation/FIG4_CS_EXTENSION_20260913.json)继续保留这些限制。其中：
+[后续封存设计](reference-data/fig4-cs-extension.json)继续保留这些限制。其中：
 
 | 量 | 已记录的用途 | 不应作出的推断 |
 | --- | --- | --- |

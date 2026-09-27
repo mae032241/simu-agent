@@ -1,6 +1,0 @@
-{
-  "src/scidiscovery/artifact_agent/service/result_materialization.py": "c166e16f39bb8d38628c7fd4f4c8178f044a116372ab9855e598741035f3cb6d",
-  "src/scidiscovery/general_science_components.py": "b38b342d02c4104dc03fc22c3717e506634dcd6ad4124cf1c992cdbd3e945bcc",
-  "tests/operations/test_agent_contract_alignment.py": "2a4ec6c4bcc7658aaf7352c2ebc89b736bdac304ae82b4856a3d03107e72451b",
-  "tests/operations/test_analysis_tool_installed.py": "b669aa11a48fd247b4d0effdbb1f7e680c61d16d1f693194c6ab763634110742"
-}

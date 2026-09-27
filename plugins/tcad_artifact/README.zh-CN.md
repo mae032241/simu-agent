@@ -89,7 +89,7 @@ reservation，失败与未知提交也不退款。
 `idle_timeout_seconds`（30），单位分别为字节与秒。创建 Run 时合并公共值和实例显式字段，
 恢复保留原快照；导出与收集还受 Run 剩余时限约束。扩大传输上限不授权更大的求解器任务。
 
-当前实现和未验收事项只在 [R4 主计划](../../docs/plans/RESEARCH_TASK_REFACTOR_R4.zh-CN.md) 中记录；
+当前实现和未验收事项见[发布状态](../../docs/RELEASE.zh-CN.md#current-status)；
 历史求解器或助手传输探针不能代替完整科学链验收。
 
 ### 修订额度、文件绑定与诊断恢复

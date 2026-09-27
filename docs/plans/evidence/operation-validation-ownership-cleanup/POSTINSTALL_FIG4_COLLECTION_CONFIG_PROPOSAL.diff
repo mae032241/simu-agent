@@ -1,9 +1,0 @@
---- command-adapter.json (installed)
-+++ command-adapter.json (proposed)
-@@ -5,5 +5,5 @@
-   ],
-   "environment": {},
-   "executable": "/usr/local/bin/scidiscovery-tcad-transport",
--  "operation_timeout_seconds": 30
-+  "operation_timeout_seconds": 300
- }

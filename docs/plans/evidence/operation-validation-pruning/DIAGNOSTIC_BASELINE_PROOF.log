@@ -1,1 +1,0 @@
-BEFORE CHANGE: the old validator also accepts this limited result; the legacy auto-rejection expectation already fails.

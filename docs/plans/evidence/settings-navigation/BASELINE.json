@@ -1,7 +1,0 @@
-{
-  "src/scidiscovery/artifact_agent/approval_ui/home_render.py": "71b997623973beda38dfa2ae0a8fd37264b42d2c7257d1c89ff0948d94c3d6f9",
-  "src/scidiscovery/artifact_agent/approval_ui/app.py": "a75688f8cb36159eeeb8b85f3fe042bfa19a089e02454791b99325df50aee6e7",
-  "src/scidiscovery/artifact_agent/approval_ui/management_render.py": "335a04508790ab5a53e4c89fd20410b857e1e5b818025d222a99bc7628248323",
-  "src/scidiscovery/artifact_agent/approval_ui/agent_settings.py": "2ace239819db2cd19a54af8c14b343c15d7e02d01b2a96f4cd6930407affc64f",
-  "tests/operations/test_agent_settings_ui.py": "2ef6e33f8b41f0a6ed15cd7fd3ffbb3ffb62c06904c04d2bec5aeca88ef6f389"
-}

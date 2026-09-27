@@ -1,4 +1,0 @@
-{"pending_keys": ["budget", "development_only", "mode", "phase", "reserved_wall_seconds_for_run", "run_name", "scientific_claim_admissible", "state"], "terminal_keys": ["budget", "development_only", "diagnostic_layer", "exit_code", "log_excerpt", "log_excerpt_is_complete", "log_relative_path", "mode", "outputs", "phase", "reserved_wall_seconds_for_run", "run_name", "scientific_claim_admissible", "state", "summary"], "terminal_log_readable": true, "budget_is_reserved_upper_bound": 60}
-.{"server_manifest_has_timestamps": true, "debug_result_keys": ["diagnostic_layer", "exit_code", "files", "log_excerpt", "source_diagnostic", "summary", "terminal_state"], "debug_file_names": ["debug.log.txt"]}
-........
-9 passed in 2.99s

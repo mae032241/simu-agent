@@ -3,8 +3,7 @@
 [简体中文](ARCHITECTURE.zh-CN.md) | English
 
 This document describes the current generic plugin platform and complete research
-tasks. The active implementation and acceptance plan is
-[Research Task Refactor R4](plans/RESEARCH_TASK_REFACTOR_R4.zh-CN.md).
+tasks. See the [public implementation and validation status](RELEASE.md#current-status).
 Historical plans and audits describe their recorded candidates; they do not override
 current contracts. Static implementation does not establish runtime acceptance.
 
@@ -17,7 +16,7 @@ limits, workspace, tools, network, review, approval, and effect requirements.
 Narrow plugin components implement codecs, validators, guards, projectors,
 workspace hooks, worker tools, and runtime factories.
 
-Operation ABI 20 requires every Agent output to reference a structured semantic
+Operation ABI 23 requires every Agent output to reference a structured semantic
 contract. Each rule that is not expressible in JSON Schema has a stable
 `rule_id`, description, output paths, and required inputs. Compilation rejects
 unknown inputs and rules that silently make an optional port required. The
@@ -681,9 +680,7 @@ rowids across archive/restore. Normal activity writes allocate inside their
 original transaction. This counter stays outside instance snapshots so another
 instance cannot reuse archived event IDs. Scientific schemas, Operations and tool
 contracts remain unchanged. Directed archive transactions restore original
-append-only triggers; the maintenance journal is not disposable UI cache. See the
-[implementation record](plans/evidence/instance-workbench/IMPLEMENTATION.zh-CN.md)
-for scope, failure evidence and deployment limits.
+append-only triggers; the maintenance journal is not disposable UI cache. See [release scope and omitted historical records](RELEASE.md#publication-scope).
 
 ## Native capability profiles and external evidence
 

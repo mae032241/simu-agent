@@ -1,4 +1,0 @@
-  File "/tmp/scid_coherence_seal.py", line 28
-    source_maps={'scidiscovery-0.1.0-py3-none-any.whl':[(root/'src','scidiscovery/')], 'scidiscovery_curve_score-0.2.1-py3-none-any.whl':[(root/'plugins/curve_score','curve_score/')],'tcad_artifact-0.1.0-py3-none-any.whl':[(root/'plugins/tcad_artifact','tcad_artifact/')],'scidiscovery_curve_figure_evidence-0.1.0-py3-none-any.whl':[(root/'plugins/curve_figure_evidence','curve_figure_evidence/')]:[(root/'plugins/table_observation','table_observation/')]}
-                                                                                                                                                                                                                                                                                                                                                                                                             ^
-SyntaxError: invalid syntax

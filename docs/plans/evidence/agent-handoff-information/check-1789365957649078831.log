@@ -1,5 +1,0 @@
-Traceback (most recent call last):
-  File "/tmp/scid-handoff-impl-096a13f/baseline.py", line 13, in <module>
-    original=RootToolFacade.call_tool
-             ^^^^^^^^^^^^^^^^^^^^^^^^
-AttributeError: type object 'RootToolFacade' has no attribute 'call_tool'

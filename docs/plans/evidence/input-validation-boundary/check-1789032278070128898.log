@@ -1,5 +1,0 @@
-Traceback (most recent call last):
-  File "/home/da/project/ai4s/tcad/git_release/scidiscovery-agent/123/scidiscovery-e5.2/docs/plans/evidence/input-validation-boundary/installed_root_probe.py", line 15, in <module>
-    root=RootMCPRouter(RootToolFacade(runtime.artifacts,runtime.intake,runs=runtime.runs,
-                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-TypeError: RootToolFacade.__init__() missing 3 required keyword-only arguments: 'approvals', 'executions', and 'instance'

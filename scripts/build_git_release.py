@@ -17,7 +17,6 @@ from pathlib import Path
 
 ROOT_FILES = (
     ".gitattributes",
-    "BASELINE_8765.zh-CN.md",
     "CHANGELOG.md",
     ".gitignore",
     "CONTRIBUTING.md",
@@ -45,8 +44,6 @@ DOCUMENTS = (
     "docs/ARCHITECTURE.md",
     "docs/ARCHITECTURE.zh-CN.md",
     "docs/PLUGIN_RUNTIME_API.md",
-    "docs/TCAD_AGENT_AUDIT.zh-CN.md",
-    "docs/TCAD_AGENT_REAUDIT.zh-CN.md",
     "docs/TCAD_QUALIFICATION_STATUS.md",
     "docs/TCAD_QUALIFICATION_STATUS.zh-CN.md",
     "docs/SCIENTIFIC_PAPER_EVIDENCE_QUALIFICATION.zh-CN.md",
@@ -55,7 +52,6 @@ DOCUMENTS = (
     "docs/RELEASE.md",
     "docs/RELEASE.zh-CN.md",
     "docs/role-result-json-protocol-v1.md",
-    "docs/scientific_discovery_layer.md",
     "docs/tcad_transport_contract.md",
     "docs/architecture/SCIENTIFIC_AGENT_DESIGN_CHARTER.zh-CN.md",
     "docs/architecture/SCIENTIFIC_AGENT_CONSTRAINTS.yaml",
@@ -74,46 +70,6 @@ TOOLS = (
     "scripts/evaluate_tcad_skill_ab.py",
     "scripts/evaluate_tcad_skill_ab_holdout.py",
 )
-
-
-# The research archive is not a public source dependency. Only generated copies
-# receive these explicit editorial projections; the source history stays intact.
-DOCUMENT_PROJECTIONS = {
-    "docs/ARCHITECTURE.md": (
-        ("The active implementation and acceptance plan is\n"
-         "[Research Task Refactor R4](plans/RESEARCH_TASK_REFACTOR_R4.zh-CN.md).",
-         "See the [public implementation and validation status](RELEASE.md#current-status)."),
-        ("See the\n[implementation record](plans/evidence/instance-workbench/IMPLEMENTATION.zh-CN.md)\n"
-         "for scope, failure evidence and deployment limits.",
-         "See [release scope and omitted historical records](RELEASE.md#publication-scope)."),
-    ),
-    "docs/ARCHITECTURE.zh-CN.md": (
-        ("实施与验收进度以\n[R4 主计划](plans/RESEARCH_TASK_REFACTOR_R4.zh-CN.md) 为准。",
-         "公开实现与验证状态见[发布说明](RELEASE.zh-CN.md#current-status)。"),
-        ("范围、故障证据和部署边界见[实施记录](plans/evidence/instance-workbench/IMPLEMENTATION.zh-CN.md)。",
-         "历史记录的排除范围见[发布说明](RELEASE.zh-CN.md#publication-scope)。"),
-    ),
-    "docs/PLUGIN_RUNTIME_API.md": (
-        ("recorded in the\n[R4 plan](plans/RESEARCH_TASK_REFACTOR_R4.zh-CN.md).",
-         "summarized in the\n[public validation status](RELEASE.md#current-status)."),
-        ("its exact results are recorded in the\nsame plan.",
-         "exact per-change receipts remain in the private R4 research archive,\n"
-         "outside this source release."),
-    ),
-}
-
-
-def _project_documents(root: Path) -> None:
-    for relative, replacements in DOCUMENT_PROJECTIONS.items():
-        path = root / relative
-        text = path.read_text(encoding="utf-8")
-        for original, public in replacements:
-            # A generated release can itself be used as the next release source.
-            if original in text:
-                text = text.replace(original, public)
-            elif public not in text:
-                raise ValueError(f"release document projection drift: {relative}")
-        path.write_text(text, encoding="utf-8")
 
 
 IGNORED_NAMES = {
@@ -348,7 +304,6 @@ def main() -> int:
     for relative in TOOLS:
         _copy_path(source / relative, output / relative)
 
-    _project_documents(output)
     _normalize_text(output)
     _normalize_modes(output)
     _scan_release(output)

@@ -11,13 +11,31 @@ intents, and LocalTrusted execution. See [Architecture](ARCHITECTURE.md),
 LocalTrusted assumes cooperative local Agents and the host user; it does not isolate
 hostile processes sharing the control user's OS identity.
 
-The internal R4 document remains the single implementation and acceptance plan.
-Its research history is not shipped. The previous source node `6adf018` has recorded
-bounded evidence for 1386 source, 16 installed and 54 process cases. Later fixes
-require their own receipts; these historical counts do not qualify newer bytes.
-Source release collection and isolated wheel checks do not establish live model,
-solver, deployment, or Python sdist acceptance. Run the relevant checks below for
-each release candidate and retain the emitted `result.json` and logs.
+Current Operation ABI is 23. Source node `775b3e8` and merge node `5a90f3f`
+have identical trees. The recorded approval-fix verification for that source was
+1593 source cases passed (70 cases in other lanes deselected), with a 2,000,000,000
+byte address-space cap and an observed process-tree RSS peak of 304,713,728 bytes.
+Focused checks covered 49 cases, including actual local HTTP approval routes with
+a test execution adapter and an isolated replay of the original approval receipt.
+These are prior candidate results, not tests rerun by this documentation cleanup.
+Raw receipts remain outside the source release; this summary is not a replacement
+for those receipts or proof that the current installation contains the fix.
+
+Open limits:
+
+- SEC-002 remains open: LocalTrusted does not isolate processes sharing its UID.
+- Earlier live figure and short SProcess initialization checks do not establish a
+  complete Fig.4 research result, H0/H1 verdict, or full SDevice realization.
+- Root/Worker/helper token savings have not been established by a controlled
+  comparison. Helper use alone is not evidence of lower total cost.
+- Source checks do not qualify installed/process/live lanes for newer bytes.
+  Instance archive/restore requires verified writer quiescence; real deployment,
+  systemd and scientific continuation checks remain candidate-specific.
+- Pending and known-issue entries in the architecture constraint registry remain
+  open for reassessment. Removing historical reports does not close them.
+
+Run the relevant checks below for each release candidate and retain its emitted
+`result.json`, logs and source identity outside the source tree.
 
 <a id="publication-scope"></a>
 ## Source publication scope
@@ -29,19 +47,20 @@ CI configurations, and scripts imported or launched by those tests. The retired
 it was removed after confirming no production consumer. No test is silently
 excluded to hide a missing private dependency.
 
-All `docs/plans/` history, including raw research evidence and the private R4 plan,
-is excluded. Original research documents are not edited. In the generated copies
-only, the English/Chinese Architecture introductions and archive implementation
-links point to these public status/scope sections, with explicit public labels.
-The Plugin runtime API validation paragraph links here and identifies omitted
-private receipts. These are publication projections, not a replacement plan or
-new acceptance evidence. `MANIFEST.sha256` hashes the projected release bytes.
-Other historical citations in shipped audit documents describe archived material;
-they do not make that private archive part of this delivery.
+Process documents, raw acceptance output, duplicate reviews and source backups
+have been removed from the current tree. Their original content remains in Git at
+`5a90f3fa33135c8b151a547e2eceed0d102eea95`; for example, use
+`git show 5a90f3f:docs/plans/HISTORY.md` to locate old records. This does not rewrite
+Git history or erase unresolved findings. The retained Fig.4 discussion and its two
+direct source snapshots are research references, excluded from the release.
 
-## 2026-09-24 breaking update (working tree)
+Published architecture, installation and plugin documents link directly to these
+status/scope sections. The builder copies the maintained text without a second set
+of editorial replacements. `MANIFEST.sha256` hashes the generated release bytes.
 
-Operation ABI is now 19. The UI no longer reads Task-era databases or old Artifact
+## Historical compatibility break: 2026-09-24
+
+That revision introduced Operation ABI 19 (the current ABI is 23). The UI no longer reads Task-era databases or old Artifact
 envelopes containing `task_ref`. Removed formats include experiment-intent `validation_plan`,
 `next_action_kind` / `recommended_task_mode` / `accepts_actions`, the
 `scid_describe.representation` parameter, and the five-column SProcess CSV fallback.

@@ -1,4 +1,0 @@
-WARNING: The directory '/home/da/.cache/pip' or its parent directory is not owned or is not writable by the current user. The cache has been disabled. Check the permissions and owner of that directory. If executing pip with sudo, you should use sudo's -H flag.
-Processing /tmp/scid-execution-settings-installed/fixture-wheels/scidiscovery_blind_csv_test_plugin-0.1.0-py3-none-any.whl
-Installing collected packages: scidiscovery-blind-csv-test-plugin
-Successfully installed scidiscovery-blind-csv-test-plugin-0.1.0

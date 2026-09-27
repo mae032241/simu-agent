@@ -394,8 +394,7 @@ journal to force access. Before reverting to old code, restore with the new
 version or retain the archive offline without expecting the old code to resume
 that instance. Installation and uninstall do not delete archives.
 
-See the [implementation record](plans/evidence/instance-workbench/IMPLEMENTATION.zh-CN.md)
-for verification coverage and outstanding production checks.
+See [validation scope and outstanding checks](RELEASE.md#current-status).
 
 ## 7. Configuration Reference
 

@@ -1,1 +1,0 @@
-{"actual_call": "watch_parent -> SSHRemoteClient._run -> run_bounded -> /usr/bin/ssh", "lock_fd_numbers": [100, 101], "actual_lock_inodes_retained": [false, false], "fd_links": {"100": null, "101": null}, "same_private_group": true, "native_ssh_running": true, "network_used": false}

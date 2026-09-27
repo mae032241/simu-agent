@@ -1,9 +1,0 @@
-{
-  "scope": "Frozen baseline, isolated declaration/admission probes; no Runtime or scientific action.",
-  "wildcard_on_demand_issue": "input_wildcard_invalid",
-  "historical_agent_inventory": {
-    "type": "OperationInvocationError",
-    "reason_code": "input_producer_contract_changed",
-    "port": null
-  }
-}
