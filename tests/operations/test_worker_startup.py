@@ -124,3 +124,46 @@ def test_input_pointer_errors_offer_navigation_without_changing_rfc_semantics():
         select({'checks': []}, '/summary')
     with pytest.raises(ValueError, match='out of range'):
         select(value, '/checks/0')
+
+
+@pytest.mark.parametrize('identity,first_visible,first_exposure,expected', [
+    ('same', True, 'on_demand', True),
+    ('different', True, 'on_demand', False),
+    ('same', False, 'on_demand', False),
+    ('same', True, 'handoff_only', False),
+])
+def test_original_reuse_requires_exact_identity_and_visible_alias(
+    identity, first_visible, first_exposure, expected,
+):
+    from dataclasses import replace
+    from scidiscovery.artifact_agent.schema.refs import ArtifactRef
+    from scidiscovery.artifact_agent.service.run_assignment import assignment_json
+    from scidiscovery.artifact_agent.service.run_records import RunInputBinding
+    from scidiscovery.artifact_agent.service.worker_start import startup_document
+    from scidiscovery.operations.invoke import BoundInput, BoundOperationCall, InvocationArtifact
+
+    compiled = compile_catalog((CORE_PLUGIN, GENERAL_PLUGIN)).operation('science.evidence.extract.v1')
+    # Exercise projection visibility, not admission of a new plugin contract.
+    spec = compiled.spec.model_copy(update={'inputs': tuple(
+        port.model_copy(update={'agent_visible': first_visible}) if port.name == 'source_material' else port
+        for port in compiled.spec.inputs)})
+    compiled = replace(compiled, spec=spec)
+    original = ArtifactRef(artifact_id='original', sha256='a' * 64, kind='source', schema_id='opaque')
+    other = original if identity == 'same' else original.model_copy(update={'artifact_id': 'other'})
+    bindings, inputs = [], []
+    for port, alias, ref, exposure, usage in (
+        ('source_material', 'evidence', original, first_exposure, 'claim'),
+        ('user_context', 'context', other, 'on_demand', 'prior_signal'),
+    ):
+        # Even matching names and digests must not merge distinct registrations.
+        bindings.append(RunInputBinding(port, alias, 'same-name', ref, 'text/plain', exposure, usage, False))
+        inputs.append(BoundInput(port, alias, 'same-name', InvocationArtifact(
+            artifact_name='same-name', ref=ref, schema_id='opaque', media_type='text/plain', size_bytes=10), exposure, usage))
+    start = startup_document(json.loads(assignment_json(BoundOperationCall(
+        compiled=compiled, name='reuse', inputs=tuple(inputs), instruction=None), tuple(bindings), tool_names=())))
+    context = next(item for item in start['inputs'] if item['source_name'] == 'context')
+    assert context.get('same_source_as') == ('evidence' if expected else None)
+    assert context['usage'] == 'prior_signal'
+    assert ('same_source_as' in start['reading']['inputs']) == expected
+    if not first_visible or first_exposure == 'handoff_only':
+        assert [item['source_name'] for item in start['inputs']] == ['context']

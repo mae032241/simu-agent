@@ -115,6 +115,9 @@ def calculation_sources(record, sources):
                     matches = [name for name, descriptor in descriptors.items()
                                if descriptor.artifact_ref == binding.artifact_ref]
                     if len(matches) > 1:
+                        matches = [name for name in matches
+                                   if descriptors[name].port_name == binding.port_name]
+                    if len(matches) > 1:
                         raise SemanticRuleViolation("recovery source identity is ambiguous")
                     if matches:
                         aliases[old] = matches[0]
@@ -385,7 +388,7 @@ class ToolEvidenceMixin(ReferenceAccessMixin):
                 raise ValueError('tool evidence needs the bound execution result')
             source_ref = source.artifact_ref
             derived_refs = ()
-        parent_refs = [item.artifact_ref for item in value.inputs]
+        parent_refs = list(dict.fromkeys(item.artifact_ref for item in value.inputs))
         for ref in trusted_parent_refs:
             self.artifacts.verify(ref)
             if ref not in parent_refs:

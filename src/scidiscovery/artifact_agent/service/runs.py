@@ -1560,7 +1560,7 @@ class RunService(ToolEvidenceMixin):
                 payload_schema_version=validated.payload_schema_version,
                 media_type=validated.media_type,
                 creator=ActorRef(actor_id=f"{value.operation_id[:96]}.{value.operation_digest[:12]}", actor_type="agent_worker"),
-                parent_refs=tuple(item.artifact_ref for item in value.inputs) + extra_parents,
+                parent_refs=tuple(dict.fromkeys((*[item.artifact_ref for item in value.inputs], *extra_parents))),
                 labels={
                     "operation_id": value.operation_id,
                     "operation_version": value.operation_version,

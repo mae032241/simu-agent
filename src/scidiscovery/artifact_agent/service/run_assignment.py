@@ -126,7 +126,15 @@ def assignment_json(
     assignment.pop("prior_source_bindings", None)
     visible = {port.name: port for port in bound.compiled.spec.inputs if port.agent_visible}
     assignment["inputs"] = [item for item in assignment["inputs"] if item["port"] in visible]
+    refs = {item.source_name: item.artifact_ref for item in inputs}
+    first_visible_source = {}
     for item in assignment["inputs"]:
+        # Reuse reads only for the exact immutable object. Equal bytes or names
+        # do not establish identity, and hidden aliases must never become hints.
+        source = item["source_name"]
+        first = first_visible_source.setdefault(refs[source], source)
+        if first != source:
+            item["same_source_as"] = first
         item.pop("artifact_ref", None)
         item.pop("port", None)
     return canonical_json(assignment)

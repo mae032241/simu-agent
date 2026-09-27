@@ -38,6 +38,48 @@ def test_user_context_is_declared_only_on_public_agents():
             assert ("user_context" in output.context_sources) == (output.context_validator is not None)
 
 
+def test_one_user_original_can_be_source_and_context_through_sealed_delivery(tmp_path, monkeypatch):
+    catalog = compile_catalog((CORE_PLUGIN, GENERAL_PLUGIN))
+    runtime, instance, root = _root(tmp_path, catalog=catalog)
+    root.call_tool("artifact_ingest_text", {"name": "source", "text": "Original observation and task context."})
+    source = _artifact(runtime, instance, "source")
+    request = dict(name="duplicate", operation_id="science.evidence.extract.v1",
+        instruction="Extract only the original.", inputs=[
+            dict(port="source_material", artifact_names=["source", "source"])])
+    refused = root.call_tool("operation_preflight", request)
+    assert not refused["admissible"] and refused["reason_code"] == "input_artifact_duplicate"
+    payload = json.loads(_intake().canonical_json().replace(b'"paper"', b'"source_material"'))
+    submit = runtime.runs.submit
+    def publish_then_submit(run_id, *args, **kwargs):
+        from pathlib import Path
+        from scidiscovery.artifact_agent.schema.refs import ArtifactRef
+        workspace = runtime.runs.backend.open(run_id)
+        start = json.loads(Path(workspace.root, "worker-start.json").read_bytes())
+        sources = {item["source_name"]: item for item in start["inputs"]}
+        assert sources["user_context"]["same_source_as"] == "source_material"
+        assert "same_source_as" not in sources["source_material"]
+        assert sources["user_context"]["usage"] == "prior_signal"
+        assert "citation permissions" in start["reading"]["inputs"]
+        assert all("port" not in item and "artifact_ref" not in item for item in sources.values())
+        receipt = runtime.runs.accept_tool_evidence(run_id, tool_name="fixture_derivation",
+            allowed_ports=("tool_evidence",), raw=b"Derived fixture", media_type="text/plain",
+            metadata={}, derived_from=("source_material", "user_context"))
+        parents = runtime.artifacts.catalog(ArtifactRef.model_validate(receipt["artifact_ref"])).parent_refs
+        assert parents == (source.ref,)
+        return submit(run_id, *args, **kwargs)
+    monkeypatch.setattr(runtime.runs, "submit", publish_then_submit)
+    output = _complete(runtime, root, "extract", "science.evidence.extract.v1",
+        {"source_material": "source", "user_context": "source"}, payload)
+    run_id = runtime.scheduler_bindings.resolve(instance=instance.instance_id, namespace="run", name="extract")
+    saved = runtime.runs.status(run_id)
+    assert {(item.port_name, item.source_name, item.artifact_ref) for item in saved.inputs} == {
+        ("source_material", "source_material", source.ref), ("user_context", "user_context", source.ref)}
+    sealed = _artifact(runtime, instance, output)
+    assert source.ref in sealed.parent_refs
+    assert len(sealed.parent_refs) == len(set(sealed.parent_refs))
+    assert root.call_tool("run_status", {"name": "extract"})["state"] == "completed"
+
+
 def test_background_reference_is_not_a_formal_parameter_source(tmp_path):
     from pathlib import Path
     from scidiscovery.artifact_agent.interfaces.mcp_local_worker import LocalWorkerMCPRouter

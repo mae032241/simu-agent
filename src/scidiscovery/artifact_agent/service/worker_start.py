@@ -40,6 +40,10 @@ def startup_document(assignment: dict, domain: dict | None = None) -> dict:
             'JSON Patch responses reference the last full response, never a prior delta. '
             'Retain unchanged contracts; --full restores lost context.',
     }
+    if any('same_source_as' in item for item in assignment.get('inputs', ())):
+        result['reading']['inputs'] += (
+            ' same_source_as identifies the same frozen original under another visible alias: reuse bytes already read. '
+            'Each alias retains its own purpose and citation permissions; equivalence grants no review or qualification.')
     if domain:
         result['workspace'] = {key: domain[key] for key in ('manifest', 'paths', 'read_paths', 'patch_contract') if key in domain}
     if 'worker_materialize_input' in assignment.get('tools', ()):

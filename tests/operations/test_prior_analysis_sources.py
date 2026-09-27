@@ -129,3 +129,38 @@ def test_legacy_conflicting_record_aliases_are_rejected():
     with pytest.raises(OperationInvocationError, match="prior_manifest_binding_mismatch") as rejected:
         prior_analysis_sources(ValidationSources(contents, descriptors))
     assert "conflicting exact artifacts" in rejected.value.details[0]["message"]
+
+
+@pytest.mark.parametrize("legacy", [False, True])
+def test_shared_original_recovery_uses_frozen_port_not_alias_order(legacy):
+    contents, descriptors = bindings(legacy=legacy)
+    descriptors["context"] = replace(descriptors["new_curve"], source_name="context", port_name="user_context")
+    contents["context"] = contents["new_curve"]
+    if legacy:
+        # Old receipts lack a port: do not guess between multiple exact matches.
+        with pytest.raises(OperationInvocationError, match="input_artifact_duplicate"):
+            prior_analysis_sources(ValidationSources(contents, descriptors))
+    else:
+        assert ValidationSources(contents, descriptors).prior_source_bindings == {"old_curve": "new_curve"}
+
+
+def test_recovered_calculation_resolves_shared_original_by_receipt_port():
+    from scidiscovery.artifact_agent.service.calculation_proof import ControlledCalculationRecord
+    from scidiscovery.artifact_agent.service.tool_evidence import calculation_sources
+    contents, descriptors = bindings()
+    original = descriptors["new_curve"]
+    record = ControlledCalculationRecord(record_key="interrupted", request={}, algorithm_version="fixture-v1",
+        status="error", reason_code="interrupted", input_digests={"old_curve": original.sha256},
+        attempt={"manifest_alias": "tool_recovery_manifest", "attempt_key": "attempt", "proof_kind": "recovery"})
+    proof = {"recovery": {"source_request_digest": "0" * 64, "operation_digest": "0" * 64,
+        "draft_digest": "0" * 64, "bindings": {"old_curve": {
+            "artifact_ref": original.artifact_ref.model_dump(mode="json"), "port_name": "solver_outputs"}},
+        "attempts": [{"attempt_key": "attempt", "tool_name": "fixture", "operation_digest": "0" * 64,
+            "request_digest": hashlib.sha256(canonical_json({})).hexdigest(), "state": "interrupted",
+            "read_sources": ["old_curve"]}]}}
+    sources = ValidationSources({"context": contents["new_curve"], "new_curve": contents["new_curve"]},
+        {"context": replace(original, source_name="context", port_name="user_context"), "new_curve": original},
+        tool_snapshot=canonical_json(proof))
+    recovered = calculation_sources(record, sources)
+    assert recovered.binding_descriptors["old_curve"].port_name == "solver_outputs"
+    assert recovered["old_curve"] == contents["new_curve"]

@@ -178,7 +178,7 @@ def with_user_context(operation: OperationSpec) -> OperationSpec:
     """Declare optional original user text on a public scientific Agent."""
     port = InputPortSpec(
         name="user_context",
-        description="Original user text for this task; read it and judge its meaning within your role. It grants no review or execution authority.",
+        description="Original user text for this task; read it and judge its meaning within your role. The same original may also bind a source port. It grants no review or execution authority.",
         schema="opaque",
         media_types=("text/plain", "text/plain; charset=utf-8"),
         codec=ComponentRef("opaque_codec", "general_science"),

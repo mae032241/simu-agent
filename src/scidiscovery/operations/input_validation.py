@@ -213,6 +213,9 @@ def prior_analysis_sources(sources: Mapping[str, bytes]) -> Mapping[str, Any] | 
             raise OperationInvocationError("prior_manifest_binding_mismatch", port=proof.port_name,
                 message="The recovery manifest names an exact source that is not its direct parent.")
         matches = [d.source_name for d in descriptors.values() if d.artifact_ref == identity]
+        if len(matches) > 1 and old in manifest.bindings:
+            matches = [name for name in matches
+                       if descriptors[name].port_name == manifest.bindings[old].port_name]
         if len(matches) > 1:
             raise OperationInvocationError("input_artifact_duplicate")
         if matches:

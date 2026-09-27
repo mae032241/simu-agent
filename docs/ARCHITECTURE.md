@@ -275,6 +275,13 @@ contracts or scientific originals. Long entries can use the existing paginated
 input reader; instructions are never silently truncated. The entry is a disposable
 projection, not another task record, permission source or submission gate.
 
+When visible input aliases bind the same exact immutable ArtifactRef, later entries
+carry `same_source_as` pointing to the first visible alias. Workers can reuse bytes
+already read while retaining each alias's purpose and citation permissions. Equal
+names or hashes alone do not establish equivalence; hidden and handoff-only inputs
+cannot supply this navigation hint. No bindings, qualifications or parent identities
+are merged by the projection.
+
 `analysis-start.json` is optional navigation for input size/purpose, original field
 pointers, verbatim excerpts and recovery coverage. It no longer repeats task,
 output, tool-contract or continuation instructions. TCAD additionally provides

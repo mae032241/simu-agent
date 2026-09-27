@@ -189,6 +189,10 @@ def preflight_operation(
     total_bytes = 0
     material_bytes = 0
     for port in spec.inputs:
+        # Agent Runs freeze port bindings separately from unique parent refs.
+        # Other executors still use ordered parents to recover input bindings.
+        if spec.executor.kind == "agent":
+            seen_refs = set()
         artifacts = artifacts_by_port[port.name]
         controlled_material = port.exposure in {"material", "file_reference"}
         _validate_port_binding(port, artifacts, max_item_bytes=material_input_limit(port, material_settings))
