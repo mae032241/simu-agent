@@ -1,0 +1,9 @@
+{
+  "limit_address_space": false,
+  "startup_timeout_seconds": 120,
+  "instance_wait_timeout_seconds": 900,
+  "execution_timeout_seconds": 1200,
+  "worker_wakeup_timeout_seconds": 30,
+  "native_probe_timeout_seconds": 5,
+  "native_probe_frame_bytes": 65536
+}

@@ -18,7 +18,10 @@ import subprocess
 import sys
 import time
 
-from compiled_worker_process_guard import _descendant_rss_kib, _signal_processes
+try:
+    from scripts.compiled_worker_process_guard import _descendant_rss_kib, _signal_processes
+except ModuleNotFoundError:  # Direct execution puts scripts/ on sys.path.
+    from compiled_worker_process_guard import _descendant_rss_kib, _signal_processes
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CONFIG = ROOT / "scripts/test_resources.json"
@@ -30,7 +33,7 @@ def memory() -> dict[str, int]:
     return {key: int(fields[key].split()[0]) * 1024 for key in ("MemAvailable", "Dirty")}
 
 
-def run_one(command, environment, limits, output, lock_fd):
+def run_one(command, environment, limits, output, lock_fd, *, limit_address_space=True):
     """Stream output to a capped log; always clean the child group and observed tree."""
     baseline = memory()
     if (baseline["MemAvailable"] < limits["minimum_available_bytes"]
@@ -39,7 +42,8 @@ def run_one(command, environment, limits, output, lock_fd):
                 "memory": baseline, "elapsed_seconds": 0, "observed_tree_rss_high_water_bytes": 0}
 
     def restrict():
-        resource.setrlimit(resource.RLIMIT_AS, (limits["address_space_bytes"],) * 2)
+        if limit_address_space:
+            resource.setrlimit(resource.RLIMIT_AS, (limits["address_space_bytes"],) * 2)
         resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
 
     started = time.monotonic()
@@ -110,7 +114,8 @@ def run_one(command, environment, limits, output, lock_fd):
             "elapsed_seconds": round(time.monotonic() - started, 3),
             "observed_tree_rss_high_water_bytes": peak,
             "system_memory_baseline": baseline, "system_memory_final": current,
-            "memory_stop_triggers": memory_triggers}
+            "memory_stop_triggers": memory_triggers,
+            "address_space_limit_enabled": limit_address_space}
 
 
 def main():

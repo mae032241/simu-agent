@@ -17,6 +17,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+host-probe = ["aiohttp>=3.10,<4"]
 test = [
   "PyYAML>=6,<7",
   "pytest>=8,<10",
