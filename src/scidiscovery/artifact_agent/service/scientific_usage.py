@@ -137,7 +137,7 @@ def scientific_use_restricted(runs, references, *, ignore_labels=(), policy=None
             pending.extend((item.ref, False) for item in family.producer_inputs)
             continue
         try:
-            compiled = runs._compiled(producer)
+            compiled = runs.compiled_operation(producer)
         except RunContractUnavailable:
             pending.extend((parent, True) for parent in envelope.parent_refs)
             continue

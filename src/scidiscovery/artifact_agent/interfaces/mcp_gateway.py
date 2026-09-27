@@ -85,11 +85,6 @@ class UnifiedMCPRouter:
         self.facade = root.facade
         self.connections = self.facade.runs.worker_connections
         self.plugin_configs = plugin_configs or {}
-        coordinator = getattr(self.facade.runs, "experiment_executions", None)
-        if coordinator is not None:
-            coordinator.services_for = lambda operation_id: load_operation_services(
-                self.facade.runs.operation_catalog, operation_id, self.plugin_configs,
-                self.facade.runs.database_path.parent.parent)
         self._workers = {}
         self._run_state = {}
         self._lock = threading.RLock()

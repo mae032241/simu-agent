@@ -26,7 +26,7 @@ from ..service.scheduler_bindings import SchedulerBindingService
 from ..service import StateMaintenanceLock
 from ..service.instance_maintenance import InstanceMaintenance
 from ..service.execution_collection import ExecutionCollection, open_collection_executions
-from ..runtime import open_runtime
+from ..runtime import open_runtime, read_secret_file
 from scidiscovery.operations.catalog import compile_installed_catalog
 from ..runtime_plugin_bindings import (
     load_runtime_plugin_contributions,
@@ -181,6 +181,11 @@ def main(argv: list[str] | None = None) -> int:
         worker_backend=args.worker_backend,
         local_workspace_root=args.local_workspace_root,
         agent_settings=agent_settings,
+        approval_receipt_secret=read_secret_file(args.approval_secret_file, label="approval receipt"),
+        execution_adapters=contributions.execution_adapters,
+        execution_collection=collection,
+        worker_plugin_configs=plugin_configs,
+        approval_base_url=args.approval_base_url,
     )
     with maintenance.shared():
         startup_runtime.runs.reconcile_expired_active()

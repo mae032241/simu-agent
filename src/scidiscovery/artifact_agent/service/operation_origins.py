@@ -428,7 +428,7 @@ class OperationOrigins:
         return bool(
             (port.schema_id == "*" or envelope.schema_id == port.schema_id)
             and (port.media_types == ("*/*",) or envelope.media_type in port.media_types)
-            and envelope.size_bytes <= port.max_item_bytes
+            and (port.max_item_bytes is None or envelope.size_bytes <= port.max_item_bytes)
         )
 
     @staticmethod
@@ -438,7 +438,7 @@ class OperationOrigins:
             and envelope.schema_id == port.schema_id
             and envelope.payload_schema_version == port.payload_schema_version
             and envelope.media_type in port.media_types
-            and envelope.size_bytes <= port.max_item_bytes
+            and (port.max_item_bytes is None or envelope.size_bytes <= port.max_item_bytes)
         )
 
     def _derive_operation_inputs(self, compiled, resolved):

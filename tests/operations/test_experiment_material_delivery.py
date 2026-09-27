@@ -155,6 +155,31 @@ def test_material_budget_rejects_before_any_content_read(catalog):
     assert next(v for v in bound.inputs if v.artifact_name=='paper').exposure=='file_reference'
 
 
+def test_configuration_owned_declarations_use_default_and_explicit_frozen_limits(catalog):
+    from scidiscovery.artifact_agent.schema.refs import ArtifactRef
+    from scidiscovery.operations.invoke import material_input_limit
+    compiled = catalog.operation('science.evidence.extract.v1')
+    port = next(p for p in compiled.spec.inputs if p.name == 'source_material')
+    assert port.max_item_bytes is None
+    assert material_input_limit(port, MaterialInputSettings()) == 2_000_000_000
+    attachment = next(p for p in compiled.spec.outputs if p.name == 'attachments')
+    assert attachment.max_item_bytes is None and attachment.collection.max_total_bytes is None
+    assert port.model_copy(update={'exposure': 'on_demand'}).issue() == 'port_size_invalid'
+    assert attachment.model_copy(update={'agent_visible': True}).issue() == 'port_size_invalid'
+    def bound(size, **kwargs):
+        artifact = InvocationArtifact('paper', ArtifactRef(artifact_id='paper', kind='material',
+            sha256='a' * 64, schema_id='opaque'), 'opaque', 'application/pdf', size)
+        inputs = {p.name: () for p in compiled.spec.inputs}
+        inputs['source_material'] = (artifact,)
+        return preflight_operation(compiled, name='extract', artifacts_by_port=inputs,
+            instruction='Read the exact material.', read_artifact=lambda _: pytest.fail('file must stay lazy'), **kwargs)
+    assert bound(2_000_000_000).inputs[0].exposure == 'file_reference'
+    with pytest.raises(OperationInvocationError, match='input_item_too_large'):
+        bound(2_000_000_001)
+    assert bound(2_000_000_001, material_settings=MaterialInputSettings(
+        max_item_bytes=3_000_000_000, max_total_bytes=3_000_000_000)).inputs[0].exposure == 'file_reference'
+
+
 def test_instance_material_settings_merge_and_freeze_without_changing_model(tmp_path):
     from scidiscovery.artifact_agent.service.runs import RunService
     from types import SimpleNamespace

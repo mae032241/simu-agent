@@ -77,15 +77,44 @@ def _real_experiment(tmp_path, monkeypatch, solver="sprocess", before_submit=Non
     from scidiscovery.artifact_agent.schema.artifact import ArtifactRegistration
     from scidiscovery.artifact_agent.schema.common import canonical_json
     from scidiscovery.artifact_agent.schema.execution import LocalFileDescriptor
-    from scidiscovery.artifact_agent.execution_bridge import ExecutionBridge, AdapterCapability
-    from scidiscovery.artifact_agent.service.experiment_execution import ExperimentExecution, bind_experiment_services
+    from scidiscovery.artifact_agent.execution_bridge import AdapterCapability
+    from scidiscovery.artifact_agent.service.experiment_execution import bind_experiment_services
     from tests.operations.tcad_policy_fixtures import policy_snapshot
     catalog = compile_catalog((CORE_PLUGIN, science, curve, tcad))
     monkeypatch.setattr(runtime_module, "compile_installed_catalog", lambda: catalog)
     project = tmp_path / "project"
     project.mkdir()
+    capability = canonical_json(dict(profile_id=solver, solver_kind=solver, launch_name=solver,
+        public_release_label="Fixture", private_fixed_argument_count=0, private_fixed_arguments_sha256="a"*64,
+        private_release_evidence_bytes=1, private_release_evidence_sha256="b"*64, capability_sha256="c"*64))
+    class Adapter:
+        submits = 0
+        state = "running"
+        wall_seconds = 1
+        def lookup_submission(self, submission):
+            return ("external_fixture", self.state) if self.submits else None
+        def capabilities(self):
+            return (AdapterCapability(solver, "solver", "tcad.solver-capability.v2", 2,
+                "application/json", capability, {"solver_kind":solver}),)
+        def execution_admission(self, payload, **kwargs):
+            return policy_snapshot().admission(budget={"max_storage_bytes":1024, "wall_time_seconds":self.wall_seconds}, budget_key="d"*64)
+        def prepare(self, payload, **kwargs): return payload
+        def submit(self, submission, **kwargs):
+            self.submits += 1
+            return "external_fixture", self.state
+        def status(self, external): return self.state
+    adapter = Adapter()
+    def collect(execution_id, **kwargs):
+        output = tmp_path / "observation.txt"
+        output.write_bytes(b"observed fixture\n")
+        descriptor = LocalFileDescriptor(name="observation", local_path=str(output), media_type="text/plain",
+            size_bytes=output.stat().st_size, sha256=hashlib.sha256(output.read_bytes()).hexdigest())
+        runtime.executions.ingest_result(execution_id=execution_id, external_run_id=runtime.executions.status(execution_id).external_run_id,
+            outputs=(descriptor, descriptor.model_copy(update={"name":"binary", "media_type":"application/octet-stream"}),
+                descriptor.model_copy(update={"name":"tcad_manifest"})))
     runtime = runtime_module.open_runtime(project_root=project, state_root=tmp_path / "state",
-        approval_receipt_secret=b"a"*32)
+        approval_receipt_secret=b"a"*32, execution_adapters={"tcad_artifact:tcad":adapter},
+        execution_collection=SimpleNamespace(collect=collect))
     instance = runtime.scheduler_bindings.create_instance(name="experiment", title="Bounded experiment", objective="Observe a fixture.")
     objective = runtime.artifacts.register(canonical_json({"objective_key":"objective", "intent":"engineering",
         "statement":"Observe a fixture.", "closure_requirements":[{"requirement_key":"observation",
@@ -107,37 +136,7 @@ def _real_experiment(tmp_path, monkeypatch, solver="sprocess", before_submit=Non
         "inputs":inputs, "instruction":"Observe the fixture."})
     assert created["result"]["state"] == "queued", created
     assert "operation_digest" not in json.dumps(created)
-    capability = canonical_json(dict(profile_id=solver, solver_kind=solver, launch_name=solver,
-        public_release_label="Fixture", private_fixed_argument_count=0, private_fixed_arguments_sha256="a"*64,
-        private_release_evidence_bytes=1, private_release_evidence_sha256="b"*64, capability_sha256="c"*64))
-    class Adapter:
-        submits = 0
-        state = "running"
-        wall_seconds = 1
-        def lookup_submission(self, submission):
-            return ("external_fixture", self.state) if self.submits else None
-        def capabilities(self):
-            return (AdapterCapability(solver, "solver", "tcad.solver-capability.v2", 2,
-                "application/json", capability, {"solver_kind":solver}),)
-        def execution_admission(self, payload, **kwargs):
-            return policy_snapshot().admission(budget={"max_storage_bytes":1024, "wall_time_seconds":self.wall_seconds}, budget_key="d"*64)
-        def prepare(self, payload, **kwargs): return payload
-        def submit(self, submission, **kwargs):
-            self.submits += 1
-            return "external_fixture", self.state
-        def status(self, external): return self.state
-    adapter = Adapter()
-    bridge = ExecutionBridge(runtime.executions, adapters={"tcad_artifact:tcad":adapter})
-    def collect(execution_id, **kwargs):
-        output = tmp_path / "observation.txt"
-        output.write_bytes(b"observed fixture\n")
-        descriptor = LocalFileDescriptor(name="observation", local_path=str(output), media_type="text/plain",
-            size_bytes=output.stat().st_size, sha256=hashlib.sha256(output.read_bytes()).hexdigest())
-        runtime.executions.ingest_result(execution_id=execution_id, external_run_id=runtime.executions.status(execution_id).external_run_id,
-            outputs=(descriptor, descriptor.model_copy(update={"name":"binary", "media_type":"application/octet-stream"}),
-                descriptor.model_copy(update={"name":"tcad_manifest"})))
-    coordinator = runtime.runs.experiment_executions = ExperimentExecution(runs=runtime.runs, executions=runtime.executions, bridge=bridge,
-        collection=SimpleNamespace(collect=collect), approval_base_url=None)
+    coordinator = runtime.runs.experiment_executions
     compiled = catalog.operation("science.experiment.v1")
     from tcad_artifact.local_debug_service import LocalTCADDebugService
     from tcad_artifact.debug_contract import PreparedTCADDebugRun, CollectedTCADDebugRun, CollectedTCADDebugFile

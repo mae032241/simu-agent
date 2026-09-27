@@ -10,7 +10,7 @@ visibility and versioned schema IDs remain necessary platform contracts.
 Support is attached to the values and callbacks below, at their existing import
 paths. It does not cover every symbol in their containing packages. Source type
 annotations and compiled schemas are authoritative; this reference does not define
-parallel types. Current plugin protocol is `1`, Operation ABI is `23`, and component
+parallel types. Current plugin protocol is `1`, Operation ABI is `24`, and component
 protocol versions are declared independently. Changing an implementation or resource
 still changes compiled identity.
 
@@ -24,6 +24,15 @@ Its bytes are absent from in-memory validation mappings. Tools use
 path without handling private identities. Material limits are shown in Root's
 contract and frozen in the Run; they do not authorize solver execution or qualify
 scientific claims. Other input ports retain their declared semantic/content limits.
+
+ABI 24 permits `max_item_bytes=None` only for wildcard material/file-reference
+inputs and control-owned attachments, whose collection also declares
+`max_total_bytes=None`. This means the existing frozen `input_materials` or
+`attachments` settings own the byte budget; it never means unlimited bytes.
+Root contracts project effective input limits and Worker startup includes frozen
+budgets. Static attachment contracts identify their settings source. Ordinary
+scientific ports still require positive declared limits. No new plugin callback
+or Agent field is introduced; older compiled identities remain distinct.
 
 Scientific Agent tasks with native shell access declared through `with_reference_access` also expose
 `worker_publish_files(files=[{path, purpose}], source_aliases=[...])`. Files live
@@ -81,6 +90,11 @@ alias)`, `source_alias(context, ref)`, `diagnostic_context(context, *, service_n
 `ExperimentMethod` supplies `key`/`content`; `SealedImplementation` supplies exact
 `artifact_ref`/`content`. Commands still pass the task's frozen execution and budget
 gates; these callbacks cannot bind another Run or expose the coordinator.
+The host constructs one coordinator when it creates its RunService, with the
+operation-service loader supplied at construction. Root facades and gateways do
+not replace it. Runtime/daemon and standalone Worker assembly use this same owner
+for cancellation and finalization; the plugin continues to receive only the
+existing scoped `ExperimentTools` protocol.
 `read_implementation` accepts exact implementations created in or explicitly bound
 to the task, retaining original receipts. `source_alias` resolves an immutable file
 reference to a currently available alias; previous-task aliases are never identities.

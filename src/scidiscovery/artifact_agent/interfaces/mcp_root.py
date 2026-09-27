@@ -348,10 +348,6 @@ class RootToolFacade(
         self.execution_bridge = execution_bridge
         self.execution_collection = execution_collection
         self.approval_base_url = approval_base_url
-        if runs is not None and executions is not None and execution_bridge is not None:
-            from ..service.experiment_execution import ExperimentExecution
-            runs.experiment_executions = ExperimentExecution(runs=runs, executions=executions, bridge=execution_bridge,
-                collection=execution_collection, approval_base_url=approval_base_url)
         self.instance_management_secret = instance_management_secret
         self._operation_catalog = operation_catalog or compile_installed_catalog()
         self._create_lock = creation_lock or threading.RLock()

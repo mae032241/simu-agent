@@ -497,9 +497,8 @@ def _static_output_validation_contract(
         "operation_id": spec.operation_id,
         "operation_version": spec.version,
         "output_port": port.name,
-        "max_output_bytes": min(
-            port.max_item_bytes, spec.limits.max_output_bytes
-        ),
+        **({"byte_budget_source": "frozen attachments settings"} if port.max_item_bytes is None else {
+            "max_output_bytes": min(port.max_item_bytes, spec.limits.max_output_bytes)}),
         "context_sources": context_sources,
         "checkers": checkers,
         "rules": rules,

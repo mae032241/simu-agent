@@ -770,6 +770,11 @@ def build_local_worker_router(
     scheduler_bindings = SchedulerBindingService(
         state / "database" / "scheduler-bindings.sqlite3"
     )
+    compiled = catalog.operation(operation_id)
+    from ..service.experiment_execution import open_experiment_services, bind_experiment_services
+    experiment_factory = (lambda owner: open_experiment_services(owner, catalog, state_root=state,
+        plugin_configs=plugin_configs or {}, approval_secret_file=approval_secret_file,
+        approval_base_url=approval_base_url)) if compiled.spec.executor.capability is not None else None
     runs = RunService(
         artifacts=artifacts,
         database_path=state / "database" / "runs.sqlite3",
@@ -777,15 +782,11 @@ def build_local_worker_router(
         operation_catalog=catalog,
         backend=backend,
         scheduler_bindings=scheduler_bindings,
+        experiment_execution_factory=experiment_factory,
     )
     services = dict(tool_services or {})
-    compiled = catalog.operation(operation_id)
     if compiled.spec.executor.capability is not None:
-        from ..service.experiment_execution import open_experiment_services, bind_experiment_services
-        coordinator = open_experiment_services(runs, catalog, state_root=state,
-            plugin_configs=plugin_configs or {}, approval_secret_file=approval_secret_file,
-            approval_base_url=approval_base_url)
-        bind_experiment_services(runs, compiled, services, coordinator=coordinator)
+        bind_experiment_services(runs, compiled, services)
     return MCPRouter(
         LocalWorkerMCPRouter(
             runs,

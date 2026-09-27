@@ -14,11 +14,11 @@ from ..schema.artifact import ArtifactRegistration
 
 
 class ExperimentExecution:
-    def __init__(self, *, runs, executions, bridge, collection, approval_base_url):
+    def __init__(self, *, runs, executions, bridge, collection, approval_base_url, services_for=None):
         self.runs, self.executions = runs, executions
         self.bridge, self.collection = bridge, collection
         self.approval_base_url = approval_base_url
-        self.services_for = None
+        self.services_for = services_for
         self.worker_services = {}
 
     def task_origin(self, run):
@@ -126,16 +126,7 @@ class ExperimentExecution:
         return records[0]
 
     def _cancel(self, execution_id):
-        status = self.executions.status(execution_id)
-        if status.state in {"created", "authorized"}:
-            prepared = self.executions.prepared_submission(execution_id)
-            found = None if prepared is None else self.bridge._adapter(status.executor).lookup_submission(prepared)
-            if found is None:
-                self.executions.abandon(execution_id)
-                return
-            self.bridge._record_started(execution_id, *found)
-        if self.executions.status(execution_id).state != "abandoned":
-            self.bridge.cancel(execution_id=execution_id)
+        self.bridge.cancel_or_abandon(execution_id=execution_id)
 
     def _io_settings(self, context):
         from ...agent_execution_settings import ExecutionIOSettings
@@ -448,11 +439,9 @@ def open_experiment_services(runs, catalog, *, state_root, plugin_configs,
             receipt_secret=read_secret_file(approval_secret_file, label="approval receipt"))
     adapters = load_runtime_plugin_contributions(catalog, plugin_configs,
         mode="control", state_root=state_root).execution_adapters
-    coordinator = ExperimentExecution(runs=runs, executions=executions,
+    from ..worker_services import load_operation_services
+    return ExperimentExecution(runs=runs, executions=executions,
         bridge=ExecutionBridge(executions, adapters=adapters),
         collection=ExecutionCollection(executions, plugin_configs={key: str(path) for key, path in plugin_configs.items()}),
-        approval_base_url=approval_base_url)
-    from ..worker_services import load_operation_services
-    runs.experiment_executions = coordinator
-    coordinator.services_for = lambda operation_id: load_operation_services(catalog, operation_id, plugin_configs, state_root)
-    return coordinator
+        approval_base_url=approval_base_url,
+        services_for=lambda operation_id: load_operation_services(catalog, operation_id, plugin_configs, state_root))

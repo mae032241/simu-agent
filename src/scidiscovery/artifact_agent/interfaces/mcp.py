@@ -7,7 +7,7 @@ from pathlib import Path
 import threading
 from typing import Any, Mapping
 
-from ..execution_bridge import ExecutionAdapter, ExecutionBridge
+from ..execution_bridge import ExecutionAdapter
 from ..runtime import open_runtime, read_secret_file
 from ..schema.common import canonical_json
 from ...operation_contract import DiagnosticError, contract_diagnostic
@@ -48,6 +48,10 @@ def build_root_router(
         worker_backend=worker_backend,
         local_workspace_root=local_workspace_root,
         agent_settings=agent_settings,
+        execution_adapters=execution_adapters or {},
+        execution_collection=execution_collection,
+        worker_plugin_configs=worker_plugin_configs,
+        approval_base_url=approval_base_url,
     )
     facade = RootToolFacade(
         runtime.artifacts,
@@ -69,9 +73,7 @@ def build_root_router(
         ),
         session_key=scheduler_session_key,
         creation_lock=scheduler_creation_lock,
-        execution_bridge=ExecutionBridge(
-            runtime.executions, adapters=execution_adapters or {}
-        ),
+        execution_bridge=runtime.execution_bridge,
         approval_base_url=approval_base_url,
         instance_management_secret=approval_secret,
         operation_catalog=runtime.operation_catalog,

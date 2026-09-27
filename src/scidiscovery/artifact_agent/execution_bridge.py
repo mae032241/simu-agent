@@ -298,6 +298,28 @@ class ExecutionBridge:
         self.executions.save_observation(execution_id, observation)
         return observation.get("progress")
 
+    def cancel_or_abandon(self, *, execution_id: str) -> None:
+        """Cancel owned work, abandoning only after authoritative absence.
+
+        A prepared submission may have been accepted remotely without a local
+        receipt. A failed lookup preserves that uncertainty and never submits.
+        """
+        status = self.executions.status(execution_id)
+        if status.state in {"created", "authorized"}:
+            prepared = self.executions.prepared_submission(execution_id)
+            try:
+                found = None if prepared is None else self._adapter(status.executor).lookup_submission(prepared)
+                if found is not None:
+                    self._record_started(execution_id, *found)
+            except Exception as error:
+                error.failure_stage = "submission_unknown"
+                raise
+            if found is None:
+                self.executions.abandon(execution_id)
+                return
+        if self.executions.status(execution_id).state != "abandoned":
+            self.cancel(execution_id=execution_id)
+
     def cancel(self, *, execution_id: str) -> None:
         current = self.executions.status(execution_id)
         if current.state in {"succeeded", "failed", "cancelled", "collected"}:

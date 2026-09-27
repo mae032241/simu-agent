@@ -106,6 +106,7 @@ class RunService(ToolEvidenceMixin):
         scheduler_bindings: SchedulerBindingService,
         instance_maintenance=None,
         agent_settings: AgentSettings | None = None,
+        experiment_execution_factory=None,
     ) -> None:
         self.agent_settings = agent_settings or AgentSettings()
         self.artifacts = artifacts
@@ -125,7 +126,7 @@ class RunService(ToolEvidenceMixin):
         self._initialize()
         from .worker_connections import WorkerConnections
         self.worker_connections = WorkerConnections(self)
-        self.experiment_executions = None
+        self.experiment_executions = experiment_execution_factory(self) if experiment_execution_factory else None
 
     def material_input_settings(self, instance_id=None):
         values = self.agent_settings.input_materials.model_dump()

@@ -8,7 +8,7 @@ from typing import Any, Literal, Mapping
 from types import MappingProxyType
 from pydantic import BaseModel, ConfigDict, Field
 PLUGIN_PROTOCOL_VERSION = "1"
-OPERATION_ABI_VERSION = "23"
+OPERATION_ABI_VERSION = "24"
 _ID = re.compile(r"^[a-z][a-z0-9_.-]{0,127}$")
 _JSON_POINTER = re.compile(r"^/(?:[^~/]|~[01])*(?:/(?:[^~/]|~[01])*)*$")
 _DOMAIN = re.compile(r"^(?:\*\.)?[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
@@ -80,7 +80,7 @@ class WorkspaceContract(FrozenSpec):
     input_directory: str = "inputs"; output_directory: str = "output"
     scratch_directory: str = "scratch"
 class CollectionSpec(FrozenSpec):
-    max_total_bytes: int; bundle_validator: ComponentRef | None = None
+    max_total_bytes: int | None; bundle_validator: ComponentRef | None = None
 class OperationDescription(FrozenSpec):
     purpose: str; applies_when: str
     not_for: str
@@ -93,7 +93,9 @@ class PortSpec(FrozenSpec):
     schema_resource: ComponentRef
     min_items: int = 1
     max_items: int = 1
-    max_item_bytes: int = 1024 * 1024
+    # None means bytes are owned by the existing frozen runtime settings.
+    # Only wildcard file inputs and control attachments may use this value.
+    max_item_bytes: int | None = 1024 * 1024
     agent_visible: bool = True
     def issue(self) -> str | None:
         if (not _ID.fullmatch(self.name) or not all((self.description, self.schema_id))
@@ -102,7 +104,7 @@ class PortSpec(FrozenSpec):
             return "port_invalid"
         if self.min_items < 0 or self.max_items < max(1, self.min_items):
             return "port_cardinality_invalid"
-        return "port_size_invalid" if self.max_item_bytes <= 0 else None
+        return "port_size_invalid" if self.max_item_bytes is not None and self.max_item_bytes <= 0 else None
 class InputDerivationSpec(FrozenSpec):
     """Exact producer traversal; never schema, recency or content matching."""
     anchor_port: str
@@ -119,6 +121,10 @@ class InputPortSpec(PortSpec):
     # Top-level JSON fields that must be present and non-null before invocation.
     required_non_null_fields: tuple[str, ...] = ()
     def issue(self) -> str | None:
+        if self.max_item_bytes is None and not (
+            self.schema_id == "*" and self.exposure in {"material", "file_reference"}
+        ):
+            return "port_size_invalid"
         if self.exposure in {"material", "file_reference"} and self.required_non_null_fields:
             return "file_reference_contract_invalid"
         if self.exposure == "material" and (self.schema_id != "*" or self.usage != "evidence_inventory"):
@@ -155,6 +161,11 @@ class OutputPortSpec(PortSpec):
     context_sources: tuple[str, ...] = ()
     evidence_paths: tuple[str, ...] = ()
     def issue(self) -> str | None:
+        if (self.max_item_bytes is None or (self.collection and self.collection.max_total_bytes is None)) and not (
+            self.name == "attachments" and not self.agent_visible and self.kind == "scientific_attachment"
+            and self.max_item_bytes is None and self.collection is not None and self.collection.max_total_bytes is None
+        ):
+            return "port_size_invalid"
         issue = super().issue() or (None if self.kind else "port_invalid")
         if issue is not None:
             return issue
@@ -393,15 +404,17 @@ class OperationSpec(FrozenSpec):
     def bounds_issue(self) -> str | None:
         if self.limits is None:
             return "limits_invalid"
+        fixed = tuple(p for p in self.outputs if not (self.executor.kind == "agent" and p.name == "attachments"))
+        if any(p.max_item_bytes is None or (p.collection and p.collection.max_total_bytes is None) for p in fixed):
+            return "input_or_collection_limit_invalid"
         # Core attachments stream directly to CAS under frozen runtime settings;
         # they never consume the candidate workspace's in-memory/file allowance.
         output_bytes = sum(
             p.collection.max_total_bytes if p.collection else p.max_items * p.max_item_bytes
-            for p in self.outputs
-            if not (self.executor.kind == "agent" and p.name == "attachments")
+            for p in fixed
         )
         if any(
-            p.collection and p.collection.max_total_bytes <= 0 for p in self.outputs
+            p.collection and p.collection.max_total_bytes is not None and p.collection.max_total_bytes <= 0 for p in self.outputs
         ):
             return "input_or_collection_limit_invalid"
         if (output_bytes > self.limits.max_output_bytes
@@ -473,7 +486,7 @@ class SchedulerInputPortView(SchedulerPortView):
     exposure: str
     require_current: bool
     media_types: tuple[str, ...]
-    max_item_bytes: int
+    max_item_bytes: int | None
 class SchedulerReviewEdgeView(FrozenSpec):
     policy: Literal["optional"] = "optional"
     reviewer_operation: str; reviewer_input_port: str

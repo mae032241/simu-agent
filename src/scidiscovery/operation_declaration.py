@@ -148,8 +148,8 @@ def with_reference_access(operation: OperationSpec) -> OperationSpec:
                 kind="scientific_attachment", schema="opaque", media_types=("*/*",),
                 codec=ComponentRef("opaque_codec", "general_science"),
                 schema_resource=ComponentRef("opaque_schema", "general_science"),
-                min_items=0, max_items=128, max_item_bytes=2**63-1,
-                collection=CollectionSpec(max_total_bytes=2**63-1), agent_visible=False))
+                min_items=0, max_items=128, max_item_bytes=None,
+                collection=CollectionSpec(max_total_bytes=None), agent_visible=False))
     added = not any(port.name == "recovery_manifest_output" for port in outputs)
     if added:
         outputs = (*outputs, OutputPortSpec(

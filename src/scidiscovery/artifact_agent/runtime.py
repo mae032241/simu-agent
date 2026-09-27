@@ -54,6 +54,7 @@ class ArtifactAgentRuntime:
     maintenance: StateMaintenanceLock
     operation_catalog: CompiledCatalog
     instance_maintenance: InstanceMaintenance | None = None
+    execution_bridge: object | None = None
 
 
 def open_runtime(
@@ -67,6 +68,10 @@ def open_runtime(
     local_workspace_root: Path | str | None = None,
     agent_settings_file: Path | str | None = None,
     agent_settings: AgentSettings | None = None,
+    execution_adapters=None,
+    execution_collection=None,
+    worker_plugin_configs=None,
+    approval_base_url: str | None = None,
 ) -> ArtifactAgentRuntime:
     project = Path(project_root).expanduser().resolve()
     state = Path(state_root).expanduser().absolute()
@@ -89,16 +94,6 @@ def open_runtime(
         scheduler_bindings = SchedulerBindingService(scheduler_database_path)
         local_backend = LocalTrustedBackend(
             local_workspace_root or project / ".scidiscovery-runs"
-        )
-        runs = RunService(
-            artifacts=artifacts,
-            database_path=state / "database" / "runs.sqlite3",
-            service_actor=actor,
-            operation_catalog=operation_catalog,
-            backend=local_backend,
-            scheduler_bindings=scheduler_bindings,
-            instance_maintenance=instance_maintenance,
-            agent_settings=agent_settings,
         )
         intake = SecureIntakeService(
             project_root=project,
@@ -131,6 +126,30 @@ def open_runtime(
         if executions is not None:
             executions.instance_maintenance = instance_maintenance
             executions.scheduler_bindings = scheduler_bindings
+        bridge, experiment_factory = None, None
+        if execution_adapters is not None:
+            if executions is None:
+                raise RuntimeConfigurationError("experiment execution requires an approval receipt secret")
+            from .execution_bridge import ExecutionBridge
+            from .service.experiment_execution import ExperimentExecution
+            from .worker_services import load_operation_services
+            bridge = ExecutionBridge(executions, adapters=execution_adapters)
+            experiment_factory = lambda owner: ExperimentExecution(
+                runs=owner, executions=executions, bridge=bridge,
+                collection=execution_collection, approval_base_url=approval_base_url,
+                services_for=lambda operation_id: load_operation_services(
+                    operation_catalog, operation_id, worker_plugin_configs or {}, state))
+        runs = RunService(
+            artifacts=artifacts,
+            database_path=state / "database" / "runs.sqlite3",
+            service_actor=actor,
+            operation_catalog=operation_catalog,
+            backend=local_backend,
+            scheduler_bindings=scheduler_bindings,
+            instance_maintenance=instance_maintenance,
+            agent_settings=agent_settings,
+            experiment_execution_factory=experiment_factory,
+        )
     return ArtifactAgentRuntime(
         project_root=project,
         state_root=state,
@@ -145,6 +164,7 @@ def open_runtime(
         maintenance=maintenance,
         operation_catalog=operation_catalog,
         instance_maintenance=instance_maintenance,
+        execution_bridge=bridge,
     )
 
 

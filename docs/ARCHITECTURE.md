@@ -377,6 +377,20 @@ analysis retains its existing execution policy, other roles inherit their prior
 environment and limits. Missing or damaged observation is reported explicitly
 and never adds a scientific submission requirement.
 
+Runtime assembly supplies the experiment coordinator once when constructing
+RunService, including its operation-service loader. Root facades and gateways
+only consume it; creating another view cannot replace cancellation/finalization
+authority. Daemon startup reconciliation and standalone Worker assembly include
+the same dependencies. `ExecutionBridge.cancel_or_abandon` owns authoritative
+prepared-submission lookup before abandoning or cancelling; uncertain lookup
+preserves the existing identity and does not submit.
+
+Operation ABI 24 replaces implicit infinite byte sentinels with `None` only for
+wildcard material/file inputs and control attachments. Existing frozen settings
+own those budgets. Root/Worker views retain effective limits or an explicit
+settings source; ordinary scientific ports still require positive static limits.
+Historical archives and scheduler fingerprints retain their original encodings.
+
 Known failure boundaries add safe recovery facts: configuration repair belongs to
 the administrator; a failed connection is retryable only when no bytes were sent;
 policy rejection requires repair; an uncertain submission requires lookup of the
