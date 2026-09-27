@@ -35,14 +35,17 @@ def test_compact_open_and_editable_nested_recovery_with_fresh_runtime(tmp_path):
     from tests.operations.test_analysis_evidence_recovery import recovery_system
     system, worker, opened, _ = recovery_system(tmp_path)
     root = Path(opened['workspace_path'])
-    start = json.loads(Path(opened['start_here_path']).read_bytes())
+    entry = json.loads(Path(opened['start_here_path']).read_bytes())
+    start = json.loads((root / entry['workspace']['paths']['analysis_navigation']).read_bytes())
     domain = json.loads((root / 'domain-workspace.json').read_bytes())
     assert domain['paths']['recovery_manifest'] is start['recovery']['coverage_path'] is None
     assert 'tool_contracts' not in opened
     assert start['excerpts'] and all('pointer' in item for item in start['excerpts'])
     assignment = json.loads(Path(opened['assignment_path']).read_bytes())
     contracts = assignment['tool_contracts']
-    assert set(start['tool_contracts']) == set(contracts)
+    assert set(entry['tools']) == set(contracts)
+    assert 'tool_contracts' not in entry
+    assert 'instruction' not in start and 'guidance' not in start
     assert len(canonical_json(opened)) < len(canonical_json(contracts))
     assert Path(opened['start_here_path']).stat().st_size <= 24 * 1024
     scratch = root / 'scratch'; (scratch / 'nested').mkdir()
@@ -61,10 +64,11 @@ def test_compact_open_and_editable_nested_recovery_with_fresh_runtime(tmp_path):
     new = Path(new_opened['workspace_path']); draft = new / 'recovery-draft'
     domain = json.loads((new / 'domain-workspace.json').read_bytes())
     entry = json.loads(Path(new_opened['start_here_path']).read_bytes())
+    navigation = json.loads((new / entry['workspace']['paths']['analysis_navigation']).read_bytes())
     from curve_score.analysis_workspace import GUIDANCE, REPORT_GUIDANCE
-    assert entry['guidance'] == start['guidance'] == GUIDANCE
+    assert entry['workspace']['manifest']['instruction'] == GUIDANCE
     assert domain['patch_contract']['instruction'] == REPORT_GUIDANCE
-    assert domain['paths']['recovery_manifest'] == entry['recovery']['coverage_path']
+    assert domain['paths']['recovery_manifest'] == navigation['recovery']['coverage_path']
     assert (new / domain['paths']['recovery_manifest']).is_file()
     frozen = draft / 'scratch/nested/numbers.json'
     assert stat.S_IMODE(frozen.stat().st_mode) == 0o400
@@ -84,11 +88,12 @@ def test_compact_open_and_editable_nested_recovery_with_fresh_runtime(tmp_path):
     assert (draft / 'scratch/plot.py').read_text() == script
     # Contract navigation does not depend on optional analysis navigation.
     domain = json.loads((new / 'domain-workspace.json').read_text())
-    domain['paths'].pop('start_here')
+    domain['paths'].pop('analysis_navigation')
     (new / 'domain-workspace.json').chmod(0o600)
     (new / 'domain-workspace.json').write_text(json.dumps(domain))
     reopened = following.call_tool('worker_open_assignment', {})
-    assert 'tool_contracts' not in reopened and 'start_here_path' not in reopened
+    assert 'tool_contracts' not in reopened
+    assert Path(reopened['start_here_path']).is_file()
     assert json.loads(Path(reopened['tool_contracts_path']).read_bytes())['tool_contracts'] == contracts
 
 

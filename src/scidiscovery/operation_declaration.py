@@ -28,65 +28,31 @@ from .operations.spec import (
 )
 
 
-RESEARCH_WORK_CONTEXT = """Research responsibilities (composable, not a mandatory sequence):
-Evidence establishes source-bound facts; hypotheses propose falsifiable explanations;
-design selects feasible current objectives and retains later goals and conditions.
-Independent review checks validity and deliverability from declared inputs. Authors
-implement the exact plan within available capabilities. Execution requires separate
-authorization; analysis interprets actual results, including limited or inconclusive
-findings. Only the scheduler selects Operations.
-
-Read the bound overall objective, exact task and relevant progress. Background and
-past verdicts grant no current claim or execution qualification; a producer's handoff
-is not automatically in its payload. Never assume shared chat, unbound files or
-another role's tools. Report missing context without inventing replacements.
-Read bound user_context originals and judge their meaning and evidential weight:
-requirements, suggestions and claims are not verified evidence, independent review
-or execution approval. Report scope/input gaps; no acknowledgment form is needed.
-
-Distinguish missing implementation inputs, capability/responsibility mismatch and
-later analysis conditions. Later conditions need not block authoring. Redesign may
-defer work, narrow objectives, change a supported method or explain infeasibility;
-it need not do every missing task. Do not repeat impossible assignments unchanged
-or create placeholder success. Independent reviewers assess the exact subject,
-not hidden author reasoning. Global awareness grants no extra authority or access.
-
-Keep local detail proportional to the current research decision. Pursue additional
-checks only when they can materially change the conclusion, next action or execution
-validity; judge precision against evidence uncertainty and the intended claim.
-Once evidence supports a scoped conclusion, deliver it with limitations instead of
-refining indefinitely. Reviewers distinguish material defects from optional polish;
-do not turn the latter into blockers. Use existing evidence and tools before adding
-experiments. Never silently relax a frozen requirement: explain disproportionate
-requirements through the existing redesign path. Preserve required review and approval.
+RESEARCH_WORK_CONTEXT = """Own the scientific conclusion of this complete task. Read the exact objective,
+relevant progress and bound user_context. User claims, old verdicts and producer
+handoffs are not verified evidence, independent review or execution approval.
+Do not infer shared chat or missing facts. Preserve gaps, uncertainty and deferred
+conditions; distinguish missing evidence from infeasible work or a scope mismatch.
+Use sufficient existing evidence. Extra checks should change a conclusion, next
+question or execution validity; optional polish is not a blocking defect. Deliver
+bounded findings instead of repeating unchanged impossible work or inventing success.
+Independent review concerns the exact subject. Only the scheduler selects tasks;
+ordinary task stages do not require review. Explicit qualification and execution
+policies still apply. Global context grants no additional authority.
 
 """
 
 
-OPERATION_AGENT_PREAMBLE = RESEARCH_WORK_CONTEXT + """This is one bounded compiled scientific Operation.
-Read its exact assignment, declared inputs, registered tool evidence and output contract.
-External discovery requires explicit current-Operation permission; preserve new factual
-support with its declared source tool before citing it. Do not search
-the project repository, framework source, installed packages, historical runs or
-sibling workspaces. Missing task-local evidence is a bounded gap.
-The runtime appends authoritative backend lifecycle, filesystem and tool rules;
-visibility is not authorization. Correct output rejections using rule_id, field
-paths, the compiled Schema and its two contract pointers in assignment.json;
-never reverse engineer the validator from framework source.
-
-Read for a concrete task question: use the compact entry and input index first,
-then needed original sections, JSON paths, curves or images. Do not print entire
-assignments, tool maps, directories or logs just to discover their contents.
-Retain already-read contracts within this assignment; refresh after a new assignment
-or contract loss/change. Do not truncate a contract or required scientific evidence.
-
-Write scientific fields once; workspace finalizers supply the mechanical copies
-specified by the role and output contract, never scientific choices, findings,
-goals or evidence. Deliver scientific content through the declared submit action,
-not chat.
+OPERATION_AGENT_PREAMBLE = RESEARCH_WORK_CONTEXT + """Follow the startup entry and this task's authoring form. Read original evidence
+for the current question; indexes and excerpts are navigation, not substitutes.
+Preserve new external factual support with the declared source tool before citing.
+Write scientific fields once; control completes mechanical copies. Scientific
+judgments, goals, findings and limitations remain yours. Repair declared output
+errors using their field paths, rule IDs and the form; never inspect framework
+source to reverse engineer hidden requirements. Backend instructions own filesystem,
+tool and lifecycle permissions. Deliver through the declared submit action.
 
 """
-
 
 def schema_resource(model: type[BaseModel], schema_id: str) -> str:
     value = model.model_json_schema(mode="validation")

@@ -533,7 +533,7 @@ def _curve_error_analysis(
     }
 
 
-DIAGNOSIS_PROMPT = """Read analysis-start.json first for the input index and full continuation guidance.\nRead domain-workspace.json /patch_contract for the complete draft/report instructions.\nReturn one RoleResultEnvelope with LayeredDiagnosisReport payload.
+DIAGNOSIS_PROMPT = """Return one RoleResultEnvelope with LayeredDiagnosisReport payload.
 Analyze the exact plan and bound results, including failures and missing observations.
 Scoring is optional: worker_curve_score accepts explicit sources and comparison_spec.
 Do not invent metric implementations, replace unsupported statistics with RMS, or

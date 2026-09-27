@@ -1,9 +1,11 @@
-"""Read exact sections of the current output schema; never validate or rewrite it.
+"""Read exact sections of the Agent authoring form; never validate or rewrite it.
 
 Default: envelope, payload fields, shared rules and required reference closure.
 --field NAME also expands that payload field's complete reference closure.
 --definitions-only adds field details to an already retained current overview.
---full always returns the original schema after context loss. The CLI keeps only
+--full returns the complete authoring form, never the sealed artifact schema.
+--field names a field inside payload, not an envelope member such as handoff.
+The CLI keeps only
 disposable task-local reading metadata; no scientific state or framework imports.
 """
 from __future__ import annotations
@@ -61,7 +63,9 @@ def read_schema(schema, fields=(), *, full=False, definitions_only=False):
     properties = payload.get('properties', {})
     for name in fields:
         if name not in properties:
-            raise ValueError('Unknown payload field: ' + name)
+            raise ValueError('Unknown payload field: ' + name + '. Choose from: '
+                + ', '.join(properties) + '. Omit --field for the overview; --full includes handoff. '
+                'Do not pass the payload wrapper as a field.')
     nodes, resources, bases, definitions = {}, {'': ''}, {}, []
 
     def index(node, path='', base=''):

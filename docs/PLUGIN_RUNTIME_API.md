@@ -10,7 +10,7 @@ visibility and versioned schema IDs remain necessary platform contracts.
 Support is attached to the values and callbacks below, at their existing import
 paths. It does not cover every symbol in their containing packages. Source type
 annotations and compiled schemas are authoritative; this reference does not define
-parallel types. Current plugin protocol is `1`, Operation ABI is `20`, and component
+parallel types. Current plugin protocol is `1`, Operation ABI is `21`, and component
 protocol versions are declared independently. Changing an implementation or resource
 still changes compiled identity.
 
@@ -244,3 +244,17 @@ The previous source node (`6adf018`) has bounded serial evidence for 1386 source
 evidence for that node, not automatic qualification of later edits. The current
 boundary cleanup uses focused source checks; its exact results are recorded in the
 same plan. No live model, solver or deployed-service acceptance is claimed here.
+
+### Worker startup and authoring visibility
+
+Control derives `worker-start.json` from the frozen assignment and workspace manifest.
+Plugins put domain read/edit rules and report guidance in their existing
+`WorkspaceMaterializationResult`; optional navigation files should not repeat the
+task, role, tool-contract map or output contract. Helpers receive their selected
+subtask materials instead. No new plugin hook or registration is required.
+
+The paired `WorkspaceFinalizer` still owns which fields control completes. The
+Worker form preserves scientific rules, source aliases and byte limits while
+omitting input admission metadata, internal port/checker dependencies and Operation
+identity. Full form reading never switches to the sealed artifact schema. Plain
+finalizers retain the fields they have not declared and implemented as derived.

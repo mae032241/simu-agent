@@ -72,8 +72,9 @@ def assignment_json(
                         + workspace_input_filename(item.source_name, item.media_type)
                     ),
                     "media_type": item.media_type,
-                    **({"materialization": "controlled_tool_stream_only", "artifact_ref": item.artifact_ref.model_dump(mode="json"),
-                        "size_bytes": next(value.artifact.size_bytes for value in bound.inputs if value.source_name == item.source_name)}
+                    "size_bytes": next(value.artifact.size_bytes for value in bound.inputs if value.source_name == item.source_name),
+                    "schema_id": item.artifact_ref.schema_id,
+                    **({"materialization": "controlled_tool_stream_only", "artifact_ref": item.artifact_ref.model_dump(mode="json")}
                        if item.exposure == "file_reference" else {}),
                     **({"reference_availability": "unknown"} if "worker_reference_read" in tool_names else {}),
                     "usage": item.usage,
@@ -197,7 +198,9 @@ def result_schema_json(
     input_source_ports: dict[str, str] | None = None,
 ) -> bytes:
     if input_source_ports is not None:
+        from ...operations.tooling import reference_source_ports
         visible = {item.name for item in (*compiled.spec.inputs, *compiled.spec.outputs) if item.agent_visible}
+        visible.update(reference_source_ports(compiled))
         input_source_ports = {alias:name for alias,name in input_source_ports.items() if name in visible}
     port = operation_primary_output(compiled)
     envelope = RoleResultEnvelope[Any].model_json_schema(mode="validation")
@@ -209,6 +212,22 @@ def result_schema_json(
     finalizer = operation_workspace_hooks(compiled).get("workspace_finalizer")
     if isinstance(finalizer, WorkspaceFinalizer):
         envelope = finalizer.draft_schema(envelope, port.schema_id, input_source_ports)
+    # Compilation/admission metadata belongs to control, not the authoring form.
+    # Keep the exact scientific rules and limits, with task aliases for sources.
+    payload = envelope['properties']['payload']
+    payload.pop('x-scidiscovery-input-validation-contract', None)
+    validation = payload.get('x-scidiscovery-validation-contract', {})
+    payload['x-scidiscovery-validation-contract'] = {
+        key: validation[key] for key in ('max_output_bytes', 'rules') if key in validation}
+    for contract_name in ('x-scidiscovery-semantic-constraints', 'x-scidiscovery-validation-contract'):
+        for rule in payload.get(contract_name, {}).get('rules', ()):
+            if rule['rule_id'] == 'runtime.envelope' and isinstance(finalizer, WorkspaceFinalizer):
+                rule['description'] = 'The result file must match this authoring form; control completes the sealed envelope.'
+            ports = rule.pop('required_inputs', ())
+            if ports and input_source_ports is not None:
+                rule['sources'] = [alias for alias, name in input_source_ports.items() if name in ports]
+    for source in payload.get('x-scidiscovery-readable-evidence', ()):
+        source.pop('port', None)
     return canonical_json(envelope)
 
 

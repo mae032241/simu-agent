@@ -43,8 +43,13 @@ def select(value, pointer):
     for part in pointer[1:].split('/'):
         key = part.replace('~1', '/').replace('~0', '~')
         if isinstance(value, dict):
+            if key not in value:
+                raise ValueError('JSON Pointer member is absent. Use --directory to discover actual keys; '
+                    'omit --pointer for the root ("/" selects an empty-key member).')
             value = value[key]
         elif isinstance(value, list) and re.fullmatch(r'0|[1-9][0-9]*', key):
+            if int(key) >= len(value):
+                raise ValueError('JSON Pointer array index is out of range.')
             value = value[int(key)]
         else:
             raise ValueError('pointer does not identify a value')

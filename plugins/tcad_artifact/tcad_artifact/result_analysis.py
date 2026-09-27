@@ -443,8 +443,7 @@ def analysis_context(payload: dict[str, Any], sources: Mapping[str, bytes], hand
     validate_analysis_report(report, plan, calculations=calculations)
 
 
-PROMPT = OPERATION_AGENT_PREAMBLE + """Analyze this exact TCAD execution in one Run. Read analysis-start.json, then
-its needed originals and domain-workspace.json /patch_contract for draft/report rules.
+PROMPT = OPERATION_AGENT_PREAMBLE + """Analyze this exact TCAD execution in one Run.
 analysis-bindings.json indexes the project and scientific cases; follow its source
 pointers for implementation details. The case_parameter_bindings ledger is not a
 reading or reporting task. Return LayeredDiagnosisReport in RoleResultEnvelope.
@@ -463,9 +462,8 @@ remains optional Worker advice, not a scheduling command.
 
 For terminal product recovery, worker_tcad_inspect_outputs and worker_tcad_accept_output
 use bound execution_result. Read the selected tool's complete contract before use.
-Recovery allows up to 32 evidence files, 32 MiB each, 256 MiB total and 120s I/O
-within the Run budget. They inspect/collect originals, never run a
-solver or edit files. Explain correspondence; collection is not scientific success.
+The selected recovery tool contract owns file, byte and I/O limits within the Run
+budget. These tools collect originals; they never run a solver or edit files. Explain correspondence; collection is not scientific success.
 Missing services or ambiguous correspondence allow limited analysis. New evidence
 aliases and the refreshed schema/result.schema.json can be used immediately, without
 changing frozen startup inputs. Declaration/source correction belongs to the author.

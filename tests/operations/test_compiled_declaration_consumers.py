@@ -175,7 +175,7 @@ def test_one_output_required_field_change_reaches_worker_schema_and_formal_submi
         assert payload_schema["properties"]["declaration_probe"] == {"type": "integer"}
         assert "digest" not in assignment["operation"]
         assert runtime.runs.status(worker._run_id).operation_digest == compiled.digest
-        assert payload_schema["x-scidiscovery-validation-contract"]["operation_digest"] == compiled.digest
+        assert "operation_digest" not in payload_schema["x-scidiscovery-validation-contract"]
         payload = {"summary": "A bounded architecture fixture result."}
         submitted = _submit(worker, opened, payload)
         if required:

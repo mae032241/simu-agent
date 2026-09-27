@@ -73,47 +73,30 @@ def publish_files(request, context):
 
 
 GUIDANCE = """
-Cite returned calculation_ref in evidence_keys or optional evidence source_key/locator.
-List the returned alias with worker_reference_read, then read its content reference.
-Numerical evidence is sealed by the tool; reports cite its alias without copying records. If a tool rejects the
-request, report its reason and scientific limitation. For historical reuse, select the
-prior analysis and use its cited scientific materials; original provenance is resolved
-by the service.
-
-When built-in methods cannot express required selection or weighting, use permitted
-bounded native analysis. Preserve scripts and derived results with
-worker_analysis_publish_files; read its contract for workspace-relative paths and
-size limits. Cite sources and explain method/selection/weighting and limits once.
-Returned data aliases are immediately usable for scoring/diagnostics and later
-reference_material, not original solver_outputs. Publication proves retained bytes
-and lineage, not execution or scientific validity. Do not relabel exploratory
-statistics as preregistered tests.
-
-When the scientific judgment compares reference and candidate curves and bound data
-and an available plotting implementation are sufficient, publish a reference/candidate
-overlay PNG by default. Add a residual plot only when its distribution affects the
-judgment. Choose the scale and residual definition scientifically. Axes must state
-units, legends must bind curve identities, and plotted bounds must equal the actual
-comparison domain. Cite each returned image evidence alias in the formal report and
-state which conclusion or limitation it supports. Plots supplement numerical records,
-sources and the formal conclusion; they never replace them.
-
-Before plotting, test parsing and one small work unit; atomically save each completed
-unit (temporary file then replace). Separate compute from plot: plot reads saved
-numbers, never implicitly refits. Check only needed plotting dependencies or use an
-available implementation. On import/render failure preserve numbers and the exact
-error; report why the figure is absent, then retry plotting alone or deliver limited
-findings. Reuse checkpoints only when inputs/method/parameters match; numerical changes
-recompute affected units and retain old versions. Partial writes and process exit
-success are not completed science.
-
-Read domain-workspace.json for the optional observed computation launcher. Timeout is
-clipped to the Run deadline minus adjustable submission reserve. Use measured unit
-time for bounded batches; if retry cannot fit, publish completed units and gaps.
-Timing, launcher, scoring and plots are not submission prerequisites. On continuation,
-read assignment.recovery_draft and its coverage manifest; use only that immutable
-subset copied to new scratch. Empty scratch does not establish missing recovery.
+Cite calculation_ref aliases without copying tool records. Read selected originals
+through worker_reference_read; control resolves provenance. A rejected or unavailable
+calculation limits the conclusion, not submission of supported finite findings.
+When built-in methods cannot express required selection/weighting, use permitted
+bounded native analysis. Retain scripts and derived files with
+worker_analysis_publish_files; its complete contract owns paths and size limits.
+Explain method, selection, weighting and limitations once. Returned aliases support
+scoring and later reference_material, not original solver_outputs. Publication proves
+retained bytes and lineage, not execution or scientific validity. Distinguish
+exploration from preregistered tests.
+For reference/candidate comparisons, publish an overlay when bound data and an
+available plotting implementation suffice; add residuals only when useful to the
+judgment. Choose scales scientifically, label units/identities and actual comparison
+domain, and cite each image's contribution. Plots supplement numbers and conclusions.
+Test parsing and a small unit first. Save completed numerical units atomically and
+plot from saved numbers; never refit merely to repair a plot. On rendering failure,
+retain numbers/errors and retry plotting alone or deliver limitations. Reuse only
+when inputs/method/parameters match; numerical changes recompute affected units,
+retaining old versions. Partial files or exit success do not prove completed science.
+Startup workspace/recovery sections own the optional launcher and saved-work
+navigation. Budget remaining time for delivery; preserve completed units and gaps.
+Timing, launcher, scoring and plots are not submission prerequisites.
 """
+
 
 TOOL = WorkerToolDefinition(name="worker_analysis_publish_files",
     description="Retain a task-local analysis script and derived CSV/JSON/text/PNG files with declared source lineage. Returns reusable evidence aliases; does not execute code or attest its result. Script <=1 MiB; files <=16 MiB each, <=32 MiB per call, within the Run collection budget.",

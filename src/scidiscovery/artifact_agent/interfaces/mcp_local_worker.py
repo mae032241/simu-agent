@@ -117,7 +117,7 @@ class LocalWorkerMCPRouter:
             "Skills and the parent's permitted native/scientific tools, and make requested local edits or already authorized checks. "
             "Stay within the same workspace and authorization. You are not the task owner or an independent reviewer. "
             "Owner submission and stage-sealing directions in shared materials do not apply to you. Do not submit, seal stages, "
-            "create approvals or delegate again. Return concise findings, changed file references, verification and limitations "
+            "create approvals or delegate again. Return concise findings, reusable calculation files, verification and limitations "
             "through native completion to the responsible parent. Do not create a formal result receipt. "
             "Read the selected material navigation below; unresolved material names remain gaps. "
             "Use scid_describe for a selected tool's complete contract and retain it while unchanged and in context. "
@@ -492,16 +492,8 @@ class LocalWorkerMCPRouter:
         assignment = json.loads(read_control_workspace_file(self._workspace.root,
             Path("assignment.json"), max_bytes=self._workspace.assignment_path.stat().st_size))
         contracts = self._tool_contract_location(assignment)
-        if self._workspace.domain_workspace_path is not None:
-            try:
-                domain = json.loads(read_control_workspace_file(self._workspace.root,
-                    Path("domain-workspace.json"), max_bytes=1024 * 1024))
-                start = domain.get("paths", {}).get("start_here")
-                if isinstance(start, str) and "tool_contracts" in assignment:
-                    read_control_workspace_file(self._workspace.root, Path(start), max_bytes=24 * 1024)
-                    contracts["start_here_path"] = str(self._workspace.root / start)
-            except (ValueError, WorkspaceError):
-                pass  # Old workspaces keep their exact existing contract entry.
+        from ..service.worker_start import write_worker_start
+        contracts['start_here_path'] = str(write_worker_start(self._workspace, assignment))
         return {
             "state": "opened",
             "narrative_instruction": narrative_instruction(

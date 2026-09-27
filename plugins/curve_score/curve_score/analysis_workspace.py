@@ -37,26 +37,14 @@ these into the sealed handoff. Other handoff explanations remain optional.
 When no experiment plan is supplied, omit plan and experiment identifiers; do not
 invent placeholders. A supplied plan retains its exact scientific selections.
 """
-GUIDANCE = """If the workspace provides analysis-start.json, read it first. It contains
-bounded verbatim excerpts and exact source pointers, not a new scientific authority.
-Check the current input index and read this Run's user_context originals first.
-Each artifact_name is navigation-only context; tools, evidence and reports must use
-the corresponding source_name. An artifact_name never grants access as a second alias.
-If the index omits inputs, follow omission_source to the complete assignment input
-index. Then follow the bound objective, current method and
-relevant progress to their originals as needed. Do not print complete packages or
-data files merely to acknowledge their bindings. Truncated excerpts are navigation,
-not complete formulas or decision rules; read the referenced original before use.
-Inputs with unknown schemas remain indexed without generated excerpts.
-Read only the selected tool's complete assignment.json tool_contracts entry
-before calling it. Restored scratch files are editable provisional work; check their
-assumptions against this Run's inputs. Reuse valid saved numbers for plot-only repairs.
-Historical runtime observations remain in recovery-draft, separate from this Run.
-When the manifest's local_compute launcher is available, use it for analysis
-scripts and preparation/check commands so failures and bounded logs remain visible.
-Its --command mode runs an argv command from the workspace root and returns a short
-observation with log paths; --display raw is for stdout data consumers; script mode keeps paths relative to scratch/. Direct platform calls
-are outside this observation coverage. Missing telemetry never blocks submission.
+GUIDANCE = """analysis-start.json is optional navigation for plan fields, prior findings and
+recovery coverage. Its excerpts do not replace originals. Restored scratch files
+are provisional editable work; check assumptions against current inputs and reuse
+valid calculations for plot-only repairs. Old runtime observations remain in
+recovery-draft. For local computations use paths.local_compute when available:
+script paths are relative to scratch/; --command runs argv from the workspace root.
+Missing telemetry does not block submission. Recovery originals are read-only;
+missing files are not completed work.
 """
 
 
@@ -164,19 +152,10 @@ def _plan_index(value):
 def _start_file(request, restored, limit=START_LIMIT):
     assignment = _json_file(request.workspace, "assignment.json",
         (request.workspace / "assignment.json").stat().st_size)
-    instruction = assignment.get("instruction", "")
-    start = {"schema_version": 1, "instruction": instruction[:2048],
-        "instruction_omitted": len(instruction) > 2048,
-        "instruction_source": {"relative_path": "assignment.json", "pointer": "/instruction"},
-        "budget": assignment.get("budget"), "output": assignment.get("output"),
-        "inputs": [], "input_purposes": [], "plan_index": [], "excerpts": [], "omitted": 0,
+    start = {"inputs": [], "input_purposes": [], "plan_index": [], "excerpts": [], "omitted": 0,
         "omission_source": {"relative_path": "assignment.json", "pointer": "/inputs"},
-        "full_assignment": "assignment.json", "tool_contracts": {
-            name: ({"relative_path": "assignment.json", "pointer": "/tool_contracts/" + name}
-                if "tool_contracts" in assignment else {"open_reply_pointer": "/tool_contracts/" + name})
-            for name in assignment.get("tools", ())},
         "recovery": {key: value for key, value in restored.items() if key not in {"restored", "copy_omissions"}},
-        "restored_files": [], "copy_omissions": [], "guidance": GUIDANCE}
+        "restored_files": [], "copy_omissions": []}
 
     def append(section, item):
         append_view(start, section, item, limit)
@@ -243,11 +222,11 @@ def materialize(request, *, start_limit=START_LIMIT):
     return WorkspaceMaterializationResult(
         manifest_name=FORMAT,
         manifest={"recovery_format": FORMAT, "retain_original_on_failure": True,
-            "instruction": "Recovery originals are read-only. Safe scratch files have editable copies; inspect analysis-start.json for coverage and original errors. Missing files are not completed."},
-        paths={"start_here": START, "scratch": "scratch", "recovery_manifest": restored["coverage_path"],
+            "instruction": GUIDANCE},
+        paths={"analysis_navigation": START, "scratch": "scratch", "recovery_manifest": restored["coverage_path"],
             "local_compute": {"path": tool if available else None, "available": available,
                 "example": "python tools/local_process_observation.py --timeout 240 --submission-reserve 120 analysis.py",
-                "command_example": "python tools/local_process_observation.py --timeout 20 --display raw --command cat analysis-start.json",
+                "command_example": "python tools/local_process_observation.py --timeout 20 --display raw --command python scratch/check.py",
                 "script_base": "scratch", "optional": True,
                 "budget": "Timeout is clipped to the Run deadline minus the selected submission reserve. Reserve is adjustable; timing is not required to submit."}},
         read_paths=(START, "scratch", "recovery-draft", "tools"),

@@ -216,7 +216,11 @@ def test_hardened_helper_receives_inline_subtask_without_native_reads(tmp_path):
     assert helper['write_protocol'] == 'server_file_tools'
     assert 'tool_contracts' not in helper and 'output' not in helper
     contract = rpc('scid_describe', {'name': 'worker_heartbeat'}, 'helper', 'owner')
-    assert contract['inputSchema'] == owner['tool_contracts']['worker_heartbeat']['inputSchema']
+    assert 'tool_contracts' not in owner
+    assert 'read' not in owner['startup']['output']
+    assert owner['startup']['output']['form_contract']['properties']['payload']
+    owner_contract = rpc('scid_describe', {'name': 'worker_heartbeat'}, 'owner')
+    assert contract['inputSchema'] == owner_contract['inputSchema']
 
 
 

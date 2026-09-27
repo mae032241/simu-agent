@@ -126,7 +126,9 @@ def test_open_delivers_frozen_contracts_and_same_identity_legacy_fallback(tmp_pa
     assignment = json.loads(frozen)
     assert all("port" not in item and "artifact_ref" not in item for item in assignment["inputs"])
     if backend_kind == 'hardened':
-        contracts = opened['tool_contracts']  # No native file read: necessary inline contract.
+        assert 'tool_contracts' not in opened and opened['startup']['role_instructions']
+        contracts = {tool['name']: {k: tool[k] for k in ('description', 'inputSchema')}
+                     for tool in worker.list_tools()}
     else:
         contracts = json.loads(Path(opened['tool_contracts_path']).read_bytes())
         if opened['tool_contracts_pointer']:
@@ -151,7 +153,8 @@ def test_open_delivers_frozen_contracts_and_same_identity_legacy_fallback(tmp_pa
     if backend_kind == 'local':
         assert reopened['tool_contracts_path'] == opened['tool_contracts_path']
     else:
-        assert reopened['tool_contracts'] == contracts
+        assert reopened['startup'] == opened['startup']
+        assert 'tool_contracts' not in reopened
     assert path.read_bytes() == frozen
     if backend_kind == 'hardened' and not legacy:
         from scidiscovery.artifact_agent.interfaces.mcp import MCPRouter

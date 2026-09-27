@@ -23,7 +23,7 @@ def _context_entry(opened, *, origin):
     item, = [item for item in assignment["inputs"] if item["source_name"] == "user_context"]
     expected_keys = {"source_name", "artifact_name", "artifact_name_usage",
         "description", "relative_path", "media_type", "reference_availability",
-        "usage", "exposure", "historical"}
+        "usage", "exposure", "historical", "size_bytes", "schema_id"}
     if origin is not None:
         expected_keys.add("source_origin")
         assert item["source_origin"] == origin
@@ -49,7 +49,7 @@ def _context_entry(opened, *, origin):
             assert "source_origin" not in indexed
         else:
             assert indexed["source_origin"] == origin
-        assert not any(entry["source_name"] == item["source_name"] for entry in start["excerpts"])
+        assert not any(entry["source_name"] == item["source_name"] for entry in json.loads((Path(opened["workspace_path"]) / start["workspace"]["paths"]["analysis_navigation"]).read_bytes())["excerpts"])
         assert original not in start_raw
     return assignment, original
 
@@ -166,7 +166,7 @@ def test_full_analysis_index_keeps_original_context_reachable(tmp_path):
     assert len(raw) <= 12 * 1024 and start["omitted"] > 0
     assert not any(item["source_name"] == context_alias for item in start["inputs"])
     navigation = start["omission_source"]
-    assert navigation == {"relative_path": start["full_assignment"], "pointer": "/inputs"}
+    assert navigation == {"relative_path": "assignment.json", "pointer": "/inputs"}
     full = json.loads((tmp_path / navigation["relative_path"]).read_bytes())
     entry, = [item for item in full["inputs"] if item["source_name"] == context_alias]
     assert entry["source_origin"] == "user_via_scheduler"

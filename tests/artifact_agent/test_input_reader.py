@@ -47,7 +47,7 @@ def test_version_selection_and_boundaries(tmp_path):
     with pytest.raises(ValueError,match='within'):
         page(tmp_path,'link')
     path.write_text('{"x":1}')
-    with pytest.raises(KeyError):
+    with pytest.raises(ValueError, match='--directory'):
         page(tmp_path,'data',pointer='/absent')
     with pytest.raises(ValueError):
         page(tmp_path,'data',pointer='/bad~2')

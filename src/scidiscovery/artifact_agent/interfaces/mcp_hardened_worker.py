@@ -217,14 +217,25 @@ class HardenedWorkerMCPRouter(LocalWorkerMCPRouter):
             reply["instruction"] = "Follow the inline subtask; use scid_describe for needed complete tool contracts."
             reply["write_protocol"] = "server_file_tools"
             return reply
+        from ..service.worker_start import startup_document
+        assignment = json.loads(self._workspace.assignment_path.read_bytes())
+        domain = (json.loads(self._workspace.domain_workspace_path.read_bytes())
+                  if self._workspace.domain_workspace_path else None)
+        startup = startup_document(assignment, domain)
+        startup['reading'] = {'inputs': 'Use declared Worker tools to read selected originals.',
+            'tools': 'Use scid_describe for the selected complete tool contract.'}
+        startup['output'].pop('read', None)
+        startup['output']['instruction'] = 'Fill the inline authoring form using declared file tools; control completes mechanical fields.'
+        startup['output']['form_contract'] = json.loads(
+            (self._workspace.root / 'schema/result.schema.json').read_bytes())
         return {
             "state": "opened",
-            "role_instructions": json.loads(self._workspace.assignment_path.read_bytes()).get("role_instructions", ""),
+            "startup": startup,
             "narrative_instruction": narrative_instruction(
                 status.execution_profile["profile"] if status.execution_profile else None),
             "workspace_path": str(self._workspace.root),
             "assignment_path": str(self._workspace.assignment_path),
-            "tool_contracts": self._assignment_tool_contracts(),
+            "contract_reading": "Use scid_describe for the selected tool's complete contract.",
             "output_directory": str(self._workspace.output_directory),
             "domain_workspace_path": (
                 None

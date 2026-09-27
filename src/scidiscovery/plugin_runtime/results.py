@@ -33,7 +33,7 @@ RESULT_COPIES = {
     'scidiscovery.experiment-report.v1': {'/handoff/summary': '/payload/summary'},
     'scidiscovery.experiment-review.v1': {'/handoff/summary': '/payload/summary'},
 }
-RESULT_PROJECTION_VERSION = '1'
+RESULT_PROJECTION_VERSION = '2'
 
 VERDICT_PROJECTIONS = {
     'scidiscovery.layered-diagnosis.v1', 'scidiscovery.scientific-review.v1',
@@ -175,6 +175,12 @@ def finalize_result(request: WorkspaceFinalizationRequest, project: Callable[[di
     except (UnicodeDecodeError, json.JSONDecodeError):
         # The existing envelope checker owns malformed JSON and its diagnostics.
         return raw
+    if isinstance(value, dict) and not isinstance(value.get('payload'), dict):
+        # Diagnose the author's missing content before the sealed envelope parser
+        # could request control-owned schema_version or generated handoff fields.
+        raise WorkspaceProtocolError('Supply the scientific payload as a JSON object.', details=({
+            'path': '$.payload', 'message': 'Supply the scientific payload as a JSON object.',
+            'type': 'object_type', 'rule_id': 'runtime.envelope'},))
     if isinstance(value, dict) and isinstance(value.get('payload'), dict):
         original = json.loads(raw)
         project(value)

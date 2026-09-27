@@ -268,22 +268,27 @@ Continuing a completed node creates a new Run with explicit original inputs. Fai
 work with changed inputs uses `draft_from`; `resume_from` retains exact input and
 contract identity. User text cannot replace an independent review or UI approval.
 
-Analysis Workers start with `analysis-start.json`: an input size/purpose index,
-verbatim excerpts and exact original field pointers. TCAD adds a bounded project
-and scientific case matrix in `analysis-bindings.json`. Control-generated case
-binding ledgers remain in immutable originals and server-side tool inputs; they
-are not default reading or reporting tasks. The combined TCAD display budget is
-32 KiB, with original pointers and omission counts when details do not fit.
-Views do not become scientific evidence or change source identity, qualification,
-or native filesystem permissions. Reused Agents verify the new bindings and read
-relevant current originals; they need not reread every complete input file. The full
-continuation guidance lives in `analysis-start.json`, and report instructions in the
-workspace `patch_contract`; analysis role prompts provide short navigation.
+Every local owner Worker starts with `worker-start.json`, derived from its frozen
+assignment and the domain workspace manifest. It supplies the complete task/role,
+input index, language, budget, revision/recovery instructions, authoring-form
+navigation and domain read/edit rules in one entry. It does not preload tool
+contracts or scientific originals. Long entries can use the existing paginated
+input reader; instructions are never silently truncated. The entry is a disposable
+projection, not another task record, permission source or submission gate.
 
-Local Worker open returns the frozen assignment tool-contract path and pointer
-independently of analysis navigation. Workers read the selected tool contract before
-use, including its complete Schema and local definitions. Old assignments without
-contracts retain their frozen fallback; Hardened retains inline contracts. Corrupt
+`analysis-start.json` is optional navigation for input size/purpose, original field
+pointers, verbatim excerpts and recovery coverage. It no longer repeats task,
+output, tool-contract or continuation instructions. TCAD additionally provides
+`analysis-bindings.json` for the project and scientific case matrix. Their combined
+navigation budget is 32 KiB, with original pointers and omission counts. Internal
+case binding ledgers remain in originals and control tools. These views do not
+change source identity, scientific qualification or filesystem permissions.
+
+Local open retains the frozen tool-contract path for on-demand reading. Hardened
+open supplies the same startup content and authoring form inline, without native
+reader commands or the complete tool-contract map; selected tools use
+`scid_describe`. Helpers retain their separate subtask and selected inputs, without
+owner instructions or the owner's form unless their task needs it. Corrupt
 assignments are engineering errors, never permission to substitute newer contracts.
 TCAD authors put initialization coverage and untested reset paths in source comments
 before their final source-bound diagnostics, so the reviewer receives and independently
@@ -293,12 +298,11 @@ checks those statements with the sealed project. Comments are not execution proo
 with evidence and optional `limitations`. Its complete legacy `gates` object,
 remaining contradiction, next action and hypothesis assessments are optional. For
 new outputs of the supported generic, fixed curve-error and TCAD analysis producer
-versions, an exact scoped plan with a non-null `objective_key` requires the existing
-`objective_assessment`; a null key keeps it optional and does not authorize inventing
-one. This is a producer context rule, not a v1 reader or prior-admission migration.
+versions, `objective_assessment` is optional. When supplied, it must use the exact
+scoped plan’s non-null `objective_key`; a missing key never authorizes inventing one.
 `claim_allowed` remains an explicit scientific judgment; absent numerical gates
 project to `not_evaluable`. For these analysis reports, the existing finalizer
-creates handoff verdict and a short reference to the formal summary before sealing.
+copies the formal summary and derives the handoff verdict before sealing.
 The workspace `patch_contract` declares draft omissions; Root reads the sealed
 payload and scheduler signal together. TCAD, generic and fixed curve-error analysis
 share this behavior on their supported local backend. Old Artifact bytes remain
@@ -394,8 +398,8 @@ resources compiled for that Operation, then submits through the unified
 lifecycle. A chat completion is an untrusted
 transport signal; the sealed Run output is the scientific result.
 
-`assignment.json` points the Worker to the structural, semantic, and validation
-contracts embedded in `result.schema.json`. JSON Schema owns required fields,
+`worker-start.json` points the Worker to the authoring form in
+`schema/result.schema.json`, including its structural and scientific rules. JSON Schema owns required fields,
 types, enums, ranges, and basic nesting. The semantic contract only adds
 cross-field or input-binding rules that Schema cannot express. A context
 validator may consume only declared sources and cannot reinterpret an omitted
@@ -701,10 +705,15 @@ changes no executable schema or scientific output. Old workspaces retain direct
 reading; Hardened permissions do not gain native execution.
 
 Local workspaces also provide `tools/read_output_schema.py`, a read-only view of
-`schema/result.schema.json`. It retains envelope/payload structure and all shared
+`schema/result.schema.json`, the Agent authoring form projected by the actual
+paired finalizer. Mechanical fields, internal port/checker wiring, Operation digest
+and input admission metadata stay with control. Scientific rules, limits and
+source aliases remain visible. It retains envelope/payload structure and all shared
 rules, expands required references and selected `--field` closures, and lists exact
 pointers for unexpanded definitions. `--definitions-only` supplements a retained
-current overview; `--full` returns the original. This view is not a validation schema.
+current overview; `--full` returns the complete authoring form, including any
+required scientific handoff, never the sealed artifact contract. `--field` selects
+a payload member, not the payload wrapper. This view is not a validation schema.
 Nested resource IDs and recursive local references are resolved against that same
 file; unsupported/dynamic/external references fall back to full reading, with an
 explicit reason. The CLI keeps disposable schema-reading metadata under `.read-input/` to avoid

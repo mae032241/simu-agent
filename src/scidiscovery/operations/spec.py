@@ -8,7 +8,7 @@ from typing import Any, Literal, Mapping
 from types import MappingProxyType
 from pydantic import BaseModel, ConfigDict, Field
 PLUGIN_PROTOCOL_VERSION = "1"
-OPERATION_ABI_VERSION = "20"
+OPERATION_ABI_VERSION = "21"
 _ID = re.compile(r"^[a-z][a-z0-9_.-]{0,127}$")
 _JSON_POINTER = re.compile(r"^/(?:[^~/]|~[01])*(?:/(?:[^~/]|~[01])*)*$")
 _DOMAIN = re.compile(r"^(?:\*\.)?[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"

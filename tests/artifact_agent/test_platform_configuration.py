@@ -182,19 +182,19 @@ def test_codex_profile_contains_root_and_compiled_operation_boundaries(
         assert "role_instructions_sha256" not in role["developer_instructions"]
         assert "--repeat" in role["developer_instructions"]
         assert "workspace/.read-input" in role["developer_instructions"]
-        assert "inputs/objective reference" in role["developer_instructions"]
-        assert "spawned Operation worker, not the interactive scheduler" in role[
+        assert "task and input changes" in role["developer_instructions"]
+        assert "Project scheduler instructions apply to the parent, not you" in role[
             "developer_instructions"
         ]
-        assert "trusted-local backend" in role["developer_instructions"]
+        assert "trusted-local prompt boundary" in role["developer_instructions"]
         instructions = role["developer_instructions"]
-        assert "exact Skill directories discovered by Codex" in instructions
-        assert "Keep global Skills read-only" in instructions
-        assert "TMPDIR=<workspace>/scratch" in instructions
-        assert "XDG_CACHE_HOME=<workspace>/scratch" in instructions
+        assert "exact Codex-discovered Skills relevant to this subtask" in instructions
+        assert "Keep Skills read-only" in instructions
+        assert "Set TMPDIR and XDG_CACHE_HOME" in instructions
+        assert "workspace/scratch" in instructions
         assert "PYTHONDONTWRITEBYTECODE=1" in instructions
-        assert "do not rely on a previous shell export" in instructions
-        assert "not unbound scientific facts" in instructions
+        assert "on each script call" in instructions
+        assert "they grant no extra inputs or permissions" in instructions
         assert "sole filesystem root" not in instructions
         assert "skills" not in role
         assert "the only permitted chat" in role["developer_instructions"]
@@ -236,7 +236,7 @@ def test_codex_hardened_profile_remains_explicitly_compilable(tmp_path: Path) ->
         assert not profile.get("mcp_servers")
         assert "scid_call" in profile["developer_instructions"]
         assert "skills, apps or plugins" in profile["developer_instructions"]
-        assert "TMPDIR=<workspace>/scratch" not in profile["developer_instructions"]
+        assert "Set TMPDIR and XDG_CACHE_HOME" not in profile["developer_instructions"]
     report = initialize_platform(
         "codex",
         project,

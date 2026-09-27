@@ -420,10 +420,9 @@ def test_local_run_uses_native_files_one_domain_tool_and_one_terminal_authority(
         item["rule_id"]
         for item in validation_contract["rules"]
     } == {"runtime.files", "runtime.envelope", "runtime.schema", "runtime.size"}
-    assert {item["phase"]: item["rule_id"] for item in validation_contract["checkers"]} == {
-        "payload": "blind.payload_consistency",
-        "context": "blind.context_binding",
-    }
+    assert 'checkers' not in validation_contract
+    assert {'blind.payload_consistency', 'blind.context_binding'} <= {
+        rule['rule_id'] for rule in payload_schema['x-scidiscovery-semantic-constraints']['rules']}
     input_path = workspace / assignment["inputs"][0]["relative_path"]
     assert input_path.read_bytes() == raw
     summary = worker.call_tool("worker_csv_summarize", {})

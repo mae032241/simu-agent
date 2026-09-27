@@ -163,26 +163,28 @@ Root 的 `artifact_ingest_text(name, text, on_conflict)` 将 1—8,192 个有效
 新科学主张。完成节点通过显式原输入创建新 Run；失败工作改变输入后使用 `draft_from`，
 `resume_from` 保留精确输入及合同身份要求。用户文本不能替代独立审查或 UI 审批。
 
-分析 Worker 从 `analysis-start.json` 接手：入口提供输入大小/用途、逐字摘录和原字段位置。
-TCAD 另在 `analysis-bindings.json` 提供有界项目视图和科学案例值矩阵。控制生成的案例绑定账本
-保留在不可变原件和服务端工具输入中，不作为默认阅读或报告任务。TCAD 两份展示文件合计预算
-32 KiB；放不下的细节保留原件指针和遗漏计数。视图不是新科学证据，不改变来源身份、资格或
-native 文件权限。复用 Agent 核对新绑定并读取本轮相关原件，无需全文重读每个输入文件。完整
-接续指导位于 `analysis-start.json`，报告说明位于工作区 `patch_contract`；分析角色提示只保留短导航。
+所有 Local 任务负责人从 `worker-start.json` 接手。该文件由冻结 assignment 和领域工作区
+manifest 派生，一次提供完整任务/角色、输入索引、语言、预算、修订/恢复说明、Agent 表单导航和
+领域读写规则，不预加载工具合同或科学原件。长入口可用已有分页读取器读取，不静默截断指令。
+它只是可再生成视图，不增加任务记录、权限来源或提交 gate。
 
-Local Worker 打开任务时返回不可变 assignment 的工具合同位置和指针，不再依赖分析导航是否存在。
-Worker 使用工具前读取所选工具的完整 Schema 及局部定义。旧 assignment 缺合同字段时保留冻结
-fallback；Hardened 保留内联合同。assignment 损坏是工程错误，不能用更新后的合同替代。
+`analysis-start.json` 改为按需导航：提供输入大小/用途、原字段位置、逐字摘录和恢复覆盖，
+不再重复任务、输出、工具合同和接续指令。TCAD 另在 `analysis-bindings.json` 提供项目和科学
+案例矩阵；两份导航合计预算 32 KiB，遗漏有原件指针和计数。内部案例绑定账本留在原件与控制工具，
+视图不改变来源身份、科学资格或文件权限。
+
+Local 打开任务保留按需读取工具合同的冻结位置。Hardened 内联提供相同启动内容和 Agent 表单，
+不提供本地读取命令或整份工具合同表；所选工具通过 `scid_describe` 查阅。内部助手保留独立子任务
+和选定材料，除非子任务需要，不读取负责人指令或表单。assignment 损坏是工程错误，不能以新合同替代。
 TCAD 作者在最后一次源码诊断前，把初始化覆盖与未测试 reset 路径写入源码注释，使其随封存项目
 到达审查者；审查者独立核对说明与实际源码、证明。源码注释本身不是执行证明。
 
 `LayeredDiagnosisReport` 以 `summary` 和 `overall_verdict` 集中表达结论，附证据和可选
 `limitations`。旧完整 `gates` 对象、剩余矛盾、下一步和逐假设评估均可省略。受支持的通用、固定
-曲线误差与 TCAD 分析 producer 新版本在 exact scope plan 的 `objective_key` 非空时，要求填写
-既有 `objective_assessment`；key 为空时仍可省略，也不得据此发明身份。这是 producer context
-规则，不是 v1 reader 或 prior 准入迁移。`claim_allowed`
+曲线误差与 TCAD 分析 producer 的 `objective_assessment` 均可省略；填写时必须使用精确
+作用域计划的非空 `objective_key`，缺少 key 不能发明身份。`claim_allowed`
 仍由科学 Agent 明确判断；缺少数值诊断层时，声明投影为 `not_evaluable`。这类分析报告由
-既有 finalizer 在封存前生成 handoff 状态及正式摘要的短引用；工作区 `patch_contract` 声明
+既有 finalizer 在封存前派生 handoff 状态并复制正式摘要；工作区 `patch_contract` 声明
 草稿可省略字段，Root 同时读取封存正文与调度信号。TCAD、通用和固定曲线误差分析在其支持的
 local backend 共用此行为。历史 Artifact 字节保持不变，也不新增评分前提。
 Scheduler 把 completed Run 的实际 scope、封存科学事实与用户成本约束下的工作价值判断分开；
@@ -454,10 +456,13 @@ JSON Patch，始终引用最近一次完整响应，不引用前次差异。工�
 仍然保留基准。回执故障不拒绝科研任务。不新增 MCP、合同注册表、科研状态或权限，不改变
 实际 Schema 和成果。旧工作区仍可直接读原合同；Hardened 不新增原生执行权限。
 
-Local 工作区还提供 `tools/read_output_schema.py`，仅读取当前 `schema/result.schema.json`。
+Local 工作区还提供 `tools/read_output_schema.py`，仅读取当前 `schema/result.schema.json` 中的
+Agent 填写表单。实际配对的 finalizer 负责移除机械字段；内部端口/校验器接线、Operation 摘要与
+输入准入元数据留在控制层。科学规则、限制和来源别名仍完整提供。
 默认保留 envelope/payload 字段结构、所有公共约束，展开必填引用以及 `--field` 选择字段的完整
 引用闭包，并列出未展开定义的原文位置。`--definitions-only` 为已保留的当前总览补读字段；
-`--full` 返回完整原文。阅读视图不是新的校验 Schema。嵌套资源 ID 与循环本地引用从同一原件
+`--full` 返回完整 Agent 表单，包括需要 Agent 判断的 handoff，不返回封存产物合同。
+`--field` 选择 payload 内的字段，不接受 payload 外壳。阅读视图不是新的校验 Schema。嵌套资源 ID 与循环本地引用从同一原件
 解析；不支持、动态或外部引用说明原因并退回全文。CLI 在 `.read-input/` 保存可丢弃的 Schema 阅读元数据，多 --field 合并处理，后续只补充
 未返回的定义、不重印总览；回复或上下文丢失时 --full 恢复原文。缓存缺失、损坏或不可写
 退回完整所需视图，不建立科研状态或记忆证明；每次读取当前文件。

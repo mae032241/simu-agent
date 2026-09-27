@@ -72,22 +72,16 @@ DIAGNOSTIC_PLOT_OUTPUT = OutputPortSpec(
 )
 
 DIAGNOSTIC_GUIDANCE = """
-Choose methods for the current uncertainty. If a scalar cannot explain a discrepancy,
-consider {diagnostic_tool} for local residuals, contributions and overlay/residual
-images; read its exact contract before calling. No new curve contract/review or
-mandatory diagnostic stage is required. Full traces and segments remain at returned
-details aliases/paths. Use native view_image when helpful: previews are read-only,
-task-local, and their evidence is sealed with the Run. A residual segment boundary
-is not a gradient change point or physical interface. Crossing/width metrics remain
-available through scoring. Distinguish exploration from preregistered tests, record
-method changes, and choose a justified next step or bounded stopping reason.
-A computed metric does not imply successful rendering: inspect diagnostics, images and details.
-A returned checkpoint alias preserves exact numerical work; retry this tool with
-checkpoint_alias and the unchanged request/sources to render without recomputing.
-After continuation only control-adopted checkpoint evidence is reusable, never an
-edited workspace copy. Changed scientific inputs or methods require new computation.
-Unavailable diagnostics allow limited conclusions; never substitute another metric
-for an unsupported statistic. Calculation citation rules below apply to both tools.
+If scalar scores cannot explain a discrepancy, consider {diagnostic_tool} for
+local residuals, contributions and overlay/residual images; read its contract on
+selection. Diagnostics are optional, with no new mandatory review/stage. Returned
+details aliases retain full traces; view task-local images when useful. Residual
+segments are not gradient change points or physical interfaces; crossing/width
+metrics use scoring. Distinguish exploration and record method changes.
+Numerical completion does not prove successful rendering. A returned checkpoint_alias
+supports render-only retry with unchanged request/sources. After continuation reuse
+only control-adopted checkpoints, never edited copies; changed inputs/methods require
+recomputation. Unsupported statistics must not be silently replaced by other metrics.
 """
 
 
