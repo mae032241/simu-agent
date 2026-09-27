@@ -64,6 +64,7 @@ TOOLS = (
     "scripts/probe_native_code_mode.py",
     "scripts/probe_root_host.py",
     "scripts/probe_root_host_live.py",
+    "scripts/root_host_upgrade.py",
     "scripts/probe_root_lifecycle.py",
     "scripts/root_host_resources.json",
     "scripts/root_host_ws_client.py",

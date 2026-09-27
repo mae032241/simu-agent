@@ -3,6 +3,8 @@
 Run prepare under Codex; run start in an ordinary host terminal. Read progress.json
 and latest-root-message.txt, select the instance in the UI, then run continue.
 Startup, human selection and execution have separate configured time budgets.
+prepare-upgrade copies stopped candidate state with --from-candidate, reusing the
+program from --installed-candidate. Keep that installation for the candidate's life.
 Resume reuses actual platform threads and existing state; it never renews a Run
 deadline. Resource stop still does not prove independent Worker life.
 """
@@ -467,16 +469,29 @@ def supervised(root, action):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=("prepare", "check", "verify", "native", "stop", "start", "resume", "lifecycle", "lifecycle-resume", "continue", "supervise", "supervise-resume", "supervise-lifecycle", "supervise-lifecycle-resume", "_prepare", "_live", "_resume", "_lifecycle", "_lifecycle-resume", "_check", "_verify", "_native"))
+    parser.add_argument("action", choices=("prepare", "prepare-upgrade", "check", "verify", "native", "stop", "start", "resume", "lifecycle", "lifecycle-resume", "continue", "supervise", "supervise-resume", "supervise-lifecycle", "supervise-lifecycle-resume", "_prepare", "_prepare-upgrade", "_live", "_resume", "_lifecycle", "_lifecycle-resume", "_check", "_verify", "_native"))
     parser.add_argument("--candidate", type=Path, required=True)
+    parser.add_argument("--from-candidate", type=Path, help="Stopped candidate whose scientific state is copied")
+    parser.add_argument("--installed-candidate", type=Path, help="Candidate providing the new installed program")
     args = parser.parse_args()
     root = args.candidate.resolve()
     os.umask(0o077)
-    if args.action == "prepare":
+    if args.action in ("prepare", "prepare-upgrade"):
         if len(os.fsencode(root / "control.sock")) >= 104:
             parser.error("candidate path too long for Unix socket; use a short persistent workspace path")
+        if args.action == "prepare-upgrade":
+            if args.from_candidate is None or args.installed_candidate is None:
+                parser.error("prepare-upgrade requires --from-candidate and --installed-candidate")
+            for path in (args.from_candidate.resolve(), args.installed_candidate.resolve()):
+                if root == path or root in path.parents or path in root.parents:
+                    parser.error("upgrade candidate must be separate from source and installation")
+                if not (path / "candidate.json").is_file():
+                    parser.error("source and installation must be prepared candidates")
         root.mkdir(parents=True, exist_ok=False)
-        return supervised(root, "prepare")
+        if args.action == "prepare-upgrade":
+            write(root / "upgrade-source.json", {"source_candidate": str(args.from_candidate.resolve()),
+                "installed_candidate": str(args.installed_candidate.resolve())})
+        return supervised(root, args.action)
     if args.action == "native":
         return supervised(root, "native")
     if args.action == "stop":
@@ -543,6 +558,12 @@ def main():
         raise RuntimeError("supervision_required")
     if args.action == "_prepare":
         prepare(root)
+    elif args.action == "_prepare-upgrade":
+        try:
+            from scripts.root_host_upgrade import prepare_upgrade
+        except ModuleNotFoundError:
+            from root_host_upgrade import prepare_upgrade
+        prepare_upgrade(root)
     elif args.action == "_native":
         result = probe_native_code_mode(Path(os.environ["SCID_TEST_LOG_DIR"]), json.loads(HOST_RESOURCES.read_text()))
         write(Path(os.environ["SCID_TEST_LOG_DIR"]).parent / "host-check.json", result)
