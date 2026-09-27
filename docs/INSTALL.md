@@ -326,6 +326,12 @@ sudo SCID_PYTHON="$PYTHON" \
   deploy/install.sh install
 ```
 
+External adapter mode validates the adapter configuration; the external executor
+supplies execution policy. A leftover local `tcad-policy.json` is neither validated
+nor rewritten or chmod/chowned in this mode. Local socket mode still requires an
+administrator-supplied complete policy matching the current schema. Successful
+installation does not establish live remote policy or solver acceptance.
+
 The external adapter replaces the local `tcad-control.service`. SSH operations
 are bounded and return immediately; the VM runner owns detached execution and
 durable `running`, `status`, and `done` records.

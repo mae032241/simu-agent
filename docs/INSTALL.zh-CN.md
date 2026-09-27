@@ -298,6 +298,11 @@ sudo SCID_PYTHON="$PYTHON" \
   deploy/install.sh install
 ```
 
+外部适配器模式只校验适配器配置；执行策略由外部执行器返回。本机遗留的
+`tcad-policy.json` 不参与此模式的校验，也不会被改写或调整权限。本地 socket
+模式仍要求管理员提供符合当前 schema 的完整策略。安装成功不代表远端策略或
+求解器已经通过真实执行验收。
+
 外部适配器会替代本地 `tcad-control.service`。每次 SSH 操作都必须短时返回；后台
 执行和持久 `running`、`status`、`done` 记录由 VM Runner 负责。
 该模式忽略 `TCAD_STATE_ROOT`：安装器不创建本地 TCAD 状态目录、不修改其权限，也不备份其中的数据库。

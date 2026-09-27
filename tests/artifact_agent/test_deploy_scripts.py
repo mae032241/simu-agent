@@ -459,6 +459,69 @@ def test_tcad_runtime_configuration_is_owned_and_executed_by_plugin(
     }
 
 
+@pytest.mark.parametrize("transport,policy_kind,valid_adapter,success", [
+    ("socket", "current", True, True),
+    ("socket", "legacy", True, False),
+    ("socket", "missing", True, False),
+    ("command", "current", True, True),
+    ("command", "legacy", True, True),
+    ("command", "missing", True, True),
+    ("command", "legacy", False, False),
+])
+def test_installer_configures_only_selected_tcad_transport(
+    tmp_path: Path, transport: str, policy_kind: str, valid_adapter: bool, success: bool,
+) -> None:
+    project = Path(__file__).resolve().parents[2]
+    config = tmp_path / "config"
+    config.mkdir()
+    site = tmp_path / "install/site"
+    site.mkdir(parents=True)
+    for package, source in (
+        ("scidiscovery", project / "src/scidiscovery"),
+        ("tcad_artifact", project / "plugins/tcad_artifact/tcad_artifact"),
+    ):
+        (site / package).symlink_to(source, target_is_directory=True)
+    policy = config / "tcad-policy.json"
+    if policy_kind != "missing":
+        data = json.loads((project / "plugins/tcad_artifact/config/execution-policy.example.json").read_text())
+        if policy_kind == "legacy":
+            for key in ("agent_execution_policy", "runner", "debug"):
+                del data[key]
+        policy.write_text(json.dumps(data))
+    before = policy.read_bytes() if policy.exists() else None
+    adapter = config / "adapter.json"
+    adapter.write_text(json.dumps({"executable": "/usr/bin/true"} if valid_adapter else {}))
+    plugin = config / "tcad-plugin.json"
+    plugin.write_text('{"previous":"configuration"}')
+    permissions = tmp_path / "permissions.log"
+    result = subprocess.run([
+        "bash", "-c", '''
+source "$1"
+chown() { printf '%s\\n' "$@" >> "$PERMISSIONS_LOG"; }
+chmod() { printf '%s\\n' "$@" >> "$PERMISSIONS_LOG"; }
+configure_tcad_runtime
+''', "bash", str(project / "deploy/install.sh")],
+        cwd=project, capture_output=True, text=True, timeout=15,
+        env={**os.environ, "SCID_PYTHON": sys.executable,
+             "SCID_INSTALL_ROOT": str(site.parent), "SCID_CONFIG_ROOT": str(config),
+             "SCID_TCAD_COMMAND_CONFIG": str(adapter) if transport == "command" else "",
+             "PERMISSIONS_LOG": str(permissions)},
+    )
+    assert (result.returncode == 0) == success, result.stderr
+    assert (policy.read_bytes() if policy.exists() else None) == before
+    if success:
+        expected = ({"transport": "command", "command_config_path": str(adapter)}
+                    if transport == "command" else
+                    {"transport": "socket", "socket_path": "/run/scidiscovery-tcad/control.sock"})
+        assert json.loads(plugin.read_text()) == expected
+        touched = permissions.read_text().splitlines()
+        assert str(plugin) in touched
+        assert (str(policy) in touched) == (transport == "socket")
+    else:
+        assert json.loads(plugin.read_text()) == {"previous": "configuration"}
+        assert not permissions.exists()
+
+
 def test_skill_install_integrity_removal_and_rollback(tmp_path: Path) -> None:
     import grp
     import pwd

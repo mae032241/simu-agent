@@ -691,6 +691,7 @@ EOF
 }
 
 configure_tcad_runtime() {
+    local -a configuration_files=("${CONFIG_ROOT}/tcad-plugin.json")
     local -a command=(
         "$PYTHON" "${SOURCE_ROOT}/plugins/tcad_artifact/deploy/configure_runtime.py"
         --policy "${CONFIG_ROOT}/tcad-policy.json"
@@ -700,9 +701,11 @@ configure_tcad_runtime() {
     )
     [[ -z "$TCAD_COMMAND_CONFIG" ]] || command+=(--command-config "$TCAD_COMMAND_CONFIG")
     PYTHONNOUSERSITE=1 PYTHONPATH="$SITE_ROOT" "${command[@]}"
-    chown root:"$SERVICE_GROUP" \
-        "${CONFIG_ROOT}/tcad-policy.json" "${CONFIG_ROOT}/tcad-plugin.json"
-    chmod 0640 "${CONFIG_ROOT}/tcad-policy.json" "${CONFIG_ROOT}/tcad-plugin.json"
+    if [[ -z "$TCAD_COMMAND_CONFIG" ]]; then
+        configuration_files+=("${CONFIG_ROOT}/tcad-policy.json")
+    fi
+    chown root:"$SERVICE_GROUP" "${configuration_files[@]}"
+    chmod 0640 "${configuration_files[@]}"
 }
 
 retire_legacy_worker_unit() {
