@@ -99,10 +99,17 @@ def instance_result(reply: dict, ui_url: str) -> dict:
     return value
 
 
-def prepare(root: Path):
+def prepare(root: Path, *, distribution="core", plugin_configs=None, task=None):
+    if distribution not in {"core", "all_domains"}:
+        raise ValueError("unsupported acceptance distribution")
+    if task is not None and (not isinstance(task, str) or not task.strip()):
+        raise ValueError("acceptance task must be nonempty text")
+    plugin_configs = {name: str(Path(path).resolve()) for name, path in (plugin_configs or {}).items()}
+    plugin_arguments = [argument for name, path in plugin_configs.items()
+                        for argument in ("--plugin-config", name + "=" + path)]
     build = root / "build"
     build.mkdir()
-    installed = create_environments(guard.ROOT, build)["core"]
+    installed = create_environments(guard.ROOT, build)[distribution]
     project = installed.workdir
     environment = dict(os.environ)
     environment.pop("PYTHONPATH", None)
@@ -110,7 +117,7 @@ def prepare(root: Path):
     environment["PYTHONNOUSERSITE"] = "1"
     _run_logged([str(installed.python), "-m", "scidiscovery.artifact_agent.interfaces.cli",
         "--project-root", str(project), "--state-root", str(root / "state"), "init", "codex",
-        "--python", str(installed.python), "--control-socket", str(root / "control.sock")],
+        "--python", str(installed.python), "--control-socket", str(root / "control.sock"), *plugin_arguments],
         cwd=project, env=environment, timeout=120)
     # Freeze the normal host's chosen model settings; never read/copy auth files.
     config = Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex"))) / "config.toml"
@@ -127,7 +134,9 @@ def prepare(root: Path):
                 for p in (build / "wheelhouse").glob("*.whl")}
     write(root / "candidate.json", {"python": str(installed.python), "project": str(project),
         "head": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=guard.ROOT, text=True).strip(),
-        "wheels": manifest, "profile": profile, "scope": "core only; no TCAD",
+        "wheels": manifest, "profile": profile, "distribution": distribution,
+        "plugin_configs": plugin_configs, "task": TASK if task is None else task,
+        "scope": "core only; no TCAD" if distribution == "core" else "core and three domain plugins; task defines live acceptance scope",
         "b0a_passed": False})
 
 
@@ -245,10 +254,13 @@ class Host:
 
     def start_services(self):
         root, python = self.root, self.config["python"]
+        plugin_arguments = [argument for name, path in self.config.get("plugin_configs", {}).items()
+                            for argument in ("--plugin-config", name + "=" + path)]
         base = [python, "-m", "scidiscovery.artifact_agent.interfaces.cli", "--project-root", self.config["project"],
                 "--state-root", str(root / "state"), "--approval-secret-file", str(root / "approval-secret")]
         self.launch(base + ["serve-approval-ui", "--port", "0", "--worker-backend", "local",
-            "--local-workspace-root", str(Path(self.config["project"]) / ".scidiscovery-runs")], "ui")
+            "--local-workspace-root", str(Path(self.config["project"]) / ".scidiscovery-runs"),
+            *plugin_arguments], "ui")
         deadline = time.monotonic() + 20
         url = None
         while time.monotonic() < deadline and url is None:
@@ -268,7 +280,7 @@ class Host:
             "--socket", str(root / "control.sock"), "--approval-secret-file", str(root / "approval-secret"),
             "--approval-base-url", url, "--worker-backend", "local",
             "--local-workspace-root", str(Path(self.config["project"]) / ".scidiscovery-runs"),
-            "--runtime-summary", str(root / "runtime-summary.json")], "daemon")
+            "--runtime-summary", str(root / "runtime-summary.json"), *plugin_arguments], "daemon")
         deadline = time.monotonic() + 20
         while not (root / "control.sock").exists():
             if time.monotonic() > deadline or any(p.poll() is not None for p in self.children):
@@ -379,7 +391,7 @@ class Host:
             self.turn(RESUME_TASK)
             self.status("root_returned_requires_sealed_audit", resumed=True)
             return
-        self.turn(TASK)
+        self.turn(self.config.get("task", TASK))
         self.status("root_returned_requires_sealed_audit")
 
     def save_usage(self):

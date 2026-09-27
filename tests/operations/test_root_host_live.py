@@ -25,12 +25,13 @@ def test_cli_loads_generated_override_keys(tmp_path):
     assert "unrecognized configuration" not in result.stderr
 
 
-@pytest.mark.parametrize("failure,verify_only,resume,worker_completed", [(v, False, False, False) for v in
+@pytest.mark.parametrize("failure,verify_only,resume,worker_completed,custom_task", [(v, False, False, False, None) for v in
     ("config", "tools", "rpc_error", "tool_error", "no_url", "wrong_origin", "not_selected", "turn", None)]
-    + [(None, True, False, False), (None, False, True, False), ("resume_identity", False, True, False),
-       ("worker_identity", False, True, False), (None, False, True, True)])
+    + [(None, True, False, False, None), (None, False, True, False, None), ("resume_identity", False, True, False, None),
+       ("worker_identity", False, True, False, None), (None, False, True, True, None),
+       (None, False, False, False, "Frozen candidate acceptance task")])
 @pytest.mark.process_e2e
-def test_host_never_uses_model_for_bootstrap_or_failed_prechecks(tmp_path, monkeypatch, failure, verify_only, resume, worker_completed):
+def test_host_never_uses_model_for_bootstrap_or_failed_prechecks(tmp_path, monkeypatch, failure, verify_only, resume, worker_completed, custom_task):
     project = tmp_path / "project"
     (project / ".codex").mkdir(parents=True)
     (project / ".codex/config.toml").write_text('[agents]\nenabled = true\n')
@@ -38,7 +39,8 @@ def test_host_never_uses_model_for_bootstrap_or_failed_prechecks(tmp_path, monke
     logs.mkdir()
     monkeypatch.setenv("SCID_TEST_LOG_DIR", str(logs))
     monkeypatch.setenv("CODEX_HOME", str(tmp_path / "unused-personal"))
-    live.write(tmp_path / "candidate.json", {"python": sys.executable, "project": str(project), "profile": {}})
+    live.write(tmp_path / "candidate.json", {"python": sys.executable, "project": str(project), "profile": {},
+                                           **({"task": custom_task} if custom_task is not None else {})})
     fake = tmp_path / "fake-codex"
     requests = tmp_path / "requests.jsonl"
     if resume:
@@ -129,6 +131,9 @@ for line in sys.stdin:
     assert not usage["b0a_passed"]
     if failure in (None,"turn") and not verify_only:
         assert usage["threads"]["root-from-peer"]["inputTokens"] == 25
+        if not resume:
+            prompt = next(v['params']['input'][0]['text'] for v in calls if v.get('method') == 'turn/start')
+            assert prompt == (live.TASK if custom_task is None else custom_task)
     assert not list(tmp_path.rglob("auth.json"))
     if resume:
         assert not any(v.get("method") == "thread/start" for v in calls)
