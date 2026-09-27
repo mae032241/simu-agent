@@ -2,7 +2,7 @@
 
 import json
 
-from ...agent_execution_settings import HelperSettings
+from ...agent_execution_settings import HelperSettings, ExecutionProfile
 from ...operations.tooling import operation_agent_type
 from ..schema.common import canonical_json
 
@@ -138,11 +138,26 @@ class WorkerConnections:
         run = self.runs.running_task(run_id)
         lineage = self.runs.task_lineage(run_id)
         origin = lineage[-1].run_id
-        settings = HelperSettings.model_validate((run.recovery_policy or {}).get("helpers", {"max_depth": 0}))
+        saved_settings = (run.recovery_policy or {}).get("helpers", {"max_depth": 0})
+        settings = HelperSettings.model_validate({"profiles": {}, **saved_settings})
         if request.action == "prepare" and (not request.task or not settings.max_depth or not settings.max_active):
             raise RunStateConflict("Provide a scientific subtask; helper access must be enabled for this task.")
-        raw = canonical_json({"task": request.task, "materials": request.materials})
-        if len(raw) > settings.max_input_bytes:
+        selected = request.profile or settings.default_profile
+        work = {"task": request.task, "materials": request.materials, "profile": selected}
+        profile = dict(run.execution_profile["profile"])
+        input_limit, call_limit = settings.max_input_bytes, settings.max_calls
+        if request.action == "prepare" and selected != "inherit":
+            configured = settings.profiles.get(selected)
+            if configured is None or configured.model is None or configured.reasoning_effort is None:
+                raise RunStateConflict("The selected helper profile is not configured; choose inherit or repair helper configuration.")
+            profile.update(model=configured.model, reasoning_effort=configured.reasoning_effort)
+            if configured.max_input_bytes is not None:
+                input_limit = min(input_limit, configured.max_input_bytes)
+            if configured.max_calls is not None:
+                call_limit = min(call_limit, configured.max_calls)
+        profile = ExecutionProfile.model_validate(profile).model_dump()
+        raw = canonical_json({**work, "execution_profile": profile})
+        if request.action == "prepare" and len(canonical_json({"task":request.task, "materials":request.materials})) > input_limit:
             raise RunStateConflict("Helper task and references exceed the configured input byte limit.")
         with self.runs._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
@@ -160,29 +175,44 @@ class WorkerConnections:
                 return {"name": request.name, "access": "released", "native_thread_state": "unknown",
                     "instruction": "Use native stop/close if work remains active. Permission release does not stop native tools or assert thread termination."}
             if old is not None:
-                if bytes(old['request_json']) != raw:
+                previous = json.loads(old['request_json'])
+                previous_work = {"task":previous['task'], "materials":previous['materials'],
+                                 "profile":previous.get('profile', 'inherit')}
+                if previous_work != work:
                     raise RunStateConflict("This subtask name already identifies different work; choose a new scientific name.")
+                profile = self.helper_profile(run, old)
                 # A lost prepare response is idempotent. Bound/released helpers never spawn again implicitly.
                 if old['thread_id'] is not None or old['released_at'] is not None or old['run_id'] != run_id:
                     return {"name": request.name, "access": "released" if old['released_at'] else "admitted",
                         "instruction": "Use the existing native helper. Do not respawn this subtask; its result and lifecycle belong to the platform."}
             else:
-                rows = connection.execute("SELECT released_at FROM worker_participants WHERE task_origin=?", (origin,)).fetchall()
+                rows = connection.execute("SELECT released_at,request_json FROM worker_participants WHERE task_origin=?", (origin,)).fetchall()
                 # Historical CLI reservations consume the same original call allowance.
                 legacy = sum(connection.execute("SELECT COUNT(*) FROM run_activity WHERE run_id=? AND activity='helper_reserved'", (item.run_id,)).fetchone()[0] for item in lineage)
                 if len(rows) + legacy >= settings.max_calls:
                     raise RunStateConflict("The original task's helper admission allowance is exhausted.")
+                profile_calls = sum(json.loads(row['request_json']).get('profile', 'inherit') == selected for row in rows)
+                if profile_calls >= call_limit:
+                    raise RunStateConflict("The selected helper profile's original task allowance is exhausted.")
                 if sum(row['released_at'] is None for row in rows) >= settings.max_active:
                     raise RunStateConflict("Integrate or stop the current helper, then release its access before another subtask.")
                 connection.execute("INSERT INTO worker_participants(run_id,task_origin,name,request_json,platform_session,owner_thread,prepared_at) VALUES(?,?,?,?,?,?,?)",
                     (run_id, origin, request.name, raw, owner['platform_session'], owner['thread_id'], timestamp()))
         return {"name": request.name, "access": "prepared", "dispatch": {
             "agent_type": operation_agent_type(self.runs.compiled_operation(run)),
-            "context": "fresh", "task_name": request.name,
+            "context": "fresh", "task_name": request.name, "profile": selected,
+            "model": profile["model"], "reasoning_effort": profile["reasoning_effort"],
             "message": "Open worker_open_assignment for the prepared internal subtask. Follow its helper participation instructions; do not submit the parent task.",
-            "instruction": "Spawn this native role with fork_context=false or fork_turns=none, without model overrides or parent history. If a native spawn response is lost, inspect its existing task by this name; never repeat an uncertain spawn. Wait for native completion and integrate its findings/files. Use worker_helper release afterwards; native close remains a platform action."}}
+            "instruction": "Spawn this native role with fork_context=false or fork_turns=none, with exactly the returned model/reasoning_effort and without parent history. If a native spawn response is lost, inspect its existing task by this name; never repeat an uncertain spawn. Wait for native completion and integrate its findings/files. Use worker_helper release afterwards; native close remains a platform action."}}
 
-    def participant(self, *, platform_session, thread_id, parent_thread=None, admit=False):
+    @staticmethod
+    def helper_profile(run, participant):
+        saved = json.loads(participant['request_json']).get('execution_profile')
+        # Existing admitted helpers predate selectable profiles and inherit their Run.
+        return saved if saved is not None else run.execution_profile['profile']
+
+    def participant(self, *, platform_session, thread_id, parent_thread=None, admit=False,
+                    model=None, reasoning_effort=None):
         """Resolve an existing helper or admit exactly one prepared direct child."""
         with self.runs._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
@@ -207,6 +237,9 @@ class WorkerConnections:
                     raise WorkerNotAttached("The task owner has not prepared a helper subtask")
                 run = self.runs.running_task(row['run_id'])
                 self._require_independent(connection, run, platform_session, thread_id)
+                expected = self.helper_profile(run, row)
+                if (canonical_model_id(model), reasoning_effort) != (canonical_model_id(expected['model']), expected['reasoning_effort']):
+                    raise RunStateConflict("Helper platform model/effort do not match its frozen profile; use the prepared dispatch.")
                 connection.execute("UPDATE worker_participants SET thread_id=?,admitted_at=? WHERE task_origin=? AND name=?", (thread_id, timestamp(), row['task_origin'], row['name']))
                 row = dict(row)
                 row['thread_id'] = thread_id

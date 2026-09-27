@@ -25,6 +25,8 @@ from ..service import StateMaintenanceLock
 from ..service.instance_maintenance import InstanceMaintenance
 from ..service.execution_collection import ExecutionCollection, open_collection_executions
 from ..runtime import open_runtime
+from ..execution_bridge import ExecutionBridge
+from ..service.lifecycle import LifecycleReconciler
 from scidiscovery.operations.catalog import compile_installed_catalog
 from ..runtime_plugin_bindings import (
     load_runtime_plugin_contributions,
@@ -182,6 +184,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     with maintenance.shared():
         startup_runtime.runs.reconcile_expired_active()
+    lifecycle = LifecycleReconciler(runs=startup_runtime.runs,
+        bridge=ExecutionBridge(collection.executions, adapters=contributions.execution_adapters),
+        settings=agent_settings.lifecycle)
     router = RootBrokerRouter(
         lambda proxy_id: build_root_router(
             project_root=project_root,
@@ -204,14 +209,17 @@ def main(argv: list[str] | None = None) -> int:
         client_bindings=client_bindings,
     )
     def stop(*_):
+        lifecycle.close()
         collection.close()
         signal.signal(signal.SIGTERM, signal.SIG_DFL)
         os.kill(os.getpid(), signal.SIGTERM)
     previous_term = signal.signal(signal.SIGTERM, stop)
     try:
+        lifecycle.start()
         UnixSocketDaemon(args.socket, router, max_connections=args.max_connections,
             socket_mode=0o660).serve_forever()
     finally:
+        lifecycle.close()
         collection.close()
         signal.signal(signal.SIGTERM, previous_term)
     return 0

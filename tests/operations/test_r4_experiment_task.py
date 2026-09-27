@@ -344,6 +344,7 @@ def test_debug_recovery_cancellation_preserves_original_budget(tmp_path):
     subject = ArtifactRef(artifact_id="objective", sha256="a"*64, kind="objective", schema_id="scidiscovery.research-objective.v1")
     calls = []
     adapter = SimpleNamespace(lookup_submission=lambda descriptor: ("external_debug", "running"),
+        status=lambda external: "running",
         cancel=lambda external: calls.append(external) or "cancelled")
     service = LocalTCADDebugService(adapter=adapter, exchange_root=tmp_path)
     directory = tmp_path / "budgets"

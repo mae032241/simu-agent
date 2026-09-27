@@ -75,7 +75,8 @@ from .run_records import (
     status_from_row,
     timestamp,
 )
-from .scheduler_bindings import SchedulerBindingService
+from .scheduler_bindings import SchedulerBindingService, SchedulerInstanceClosed
+from .instance_maintenance import InstanceMaintenanceUnavailable
 
 
 from .tool_evidence import ToolEvidenceMixin
@@ -291,7 +292,12 @@ class RunService(ToolEvidenceMixin):
         if resume_from is None and draft_from is None:
             instance_settings = parse_settings(self.scheduler_bindings.agent_settings(instance_id)["settings"])
             for key in ("helpers", "execution_io", "attachments"):
-                recovery_policy[key].update(getattr(instance_settings, key).model_dump(exclude_unset=True))
+                override = getattr(instance_settings, key).model_dump(exclude_unset=True)
+                if key == "helpers":
+                    from ...agent_execution_settings import merge_helper_settings
+                    recovery_policy[key] = merge_helper_settings(recovery_policy[key], override)
+                else:
+                    recovery_policy[key].update(override)
         with self._connect() as connection:
             self._attach_scheduler(connection)
             connection.execute("BEGIN IMMEDIATE")
@@ -798,13 +804,9 @@ class RunService(ToolEvidenceMixin):
         if value.state != "failed":
             raise RunStateConflict("Run is not failed")
         self.worker_connections.release_helpers(value.run_id)
-        coordinator = getattr(self, "experiment_executions", None)
-        if coordinator is not None:
-            try:
-                coordinator.cancel_owned(value)
-            except Exception:
-                self._pending_recovery(value, "external_cancellation_pending")
-                return self.status(value.run_id)
+        # Worker lifetime and external execution lifetime are independent. Preserve
+        # authorized jobs and their immutable bindings for resume or Root recovery.
+        # Cancellation is an explicit execution command, never failure cleanup.
         if value.recovery_draft and value.recovery_draft.get("draft_digest"):
             # A delivered immutable subset stays frozen. Pending native writers
             # are not cleared merely because another failure request arrived.
@@ -914,13 +916,32 @@ class RunService(ToolEvidenceMixin):
             expected_last_activity_at=value.last_activity_at,
         )
 
-    def reconcile_expired_active(self) -> int:
-        """Fail expired active Runs at an explicit lifecycle coordination point."""
+    def task_recovery_available(self, origin: str, *, instance_id: str) -> bool:
+        """Only an entirely failed recovery lineage can be taken over by Root."""
         with self._connect() as connection:
-            run_ids = [row[0] for row in connection.execute(
+            rows = connection.execute("""
+                WITH RECURSIVE family(run_id, state) AS (
+                    SELECT run_id, state FROM runs WHERE run_id=? AND instance_id=?
+                    UNION
+                    SELECT r.run_id, r.state FROM runs r JOIN family f
+                      ON r.resume_from_run_id=f.run_id OR r.draft_from_run_id=f.run_id
+                    WHERE r.instance_id=?
+                ) SELECT state FROM family
+            """, (origin, instance_id, instance_id)).fetchall()
+        return bool(rows) and all(row[0] == "failed" for row in rows)
+
+    def expired_active_ids(self, *, after: str = "", limit: int = 32) -> tuple[str, ...]:
+        with self._connect() as connection:
+            return tuple(row[0] for row in connection.execute(
                 "SELECT run_id FROM runs WHERE state IN ('queued','running') "
-                "ORDER BY deadline_at, run_id"
-            )]
+                "AND deadline_at <= ? AND run_id > ? ORDER BY run_id LIMIT ?",
+                (timestamp(), after, limit)))
+
+    def reconcile_expired_active(self, *, limit: int | None = None, run_ids=None,
+            reason: str = "Run deadline expired during control startup reconciliation") -> int:
+        """Fail expired active Runs at an explicit lifecycle coordination point."""
+        if run_ids is None:
+            run_ids = self.expired_active_ids(limit=limit if limit is not None else -1)
         failed = 0
         for run_id in run_ids:
             for _ in range(3):
@@ -928,15 +949,18 @@ class RunService(ToolEvidenceMixin):
                 if value.state not in {"queued", "running"} or not expired(value.deadline_at):
                     break
                 try:
-                    self.record_failure(
-                        run_id,
-                        reason="Run deadline expired during control startup reconciliation",
-                        expected_state=value.state,
-                        expected_last_activity_at=value.last_activity_at,
-                        timed_out=True,
-                    )
+                    with self.instance_maintenance.guard(value.instance_id):
+                        self.scheduler_bindings.require_active_instance(instance_id=value.instance_id)
+                        self.record_failure(
+                            run_id, reason=reason,
+                            expected_state=value.state,
+                            expected_last_activity_at=value.last_activity_at,
+                            timed_out=True,
+                        )
                 except RunStateConflict:
                     continue
+                except (InstanceMaintenanceUnavailable, SchedulerInstanceClosed):
+                    break  # Archives and closed instances are not live lifecycle targets.
                 failed += 1
                 break
             else:

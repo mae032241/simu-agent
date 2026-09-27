@@ -309,32 +309,18 @@ def operation_invoke_contract(value, *, revision_policy):
 def execution_summary(value):
     result = pick(value, "name", "state", "solver_state", "result_artifact_name",
                   "status_observed_at", "progress_observed_at", "reason", "observation_error",
-                  "authorization", "authorization_required")
+                  "authorization", "authorization_required", "recovery")
     progress = value.get("progress") or {}
     if "progress" in value:
         result["progress"] = (None if value["progress"] is None else pick(progress,
             "elapsed_seconds", "started_at", "completed_at", "observed_at", "state", "exit_code",
             "reason", "error", "diagnostic_ref", "diagnostics", "observation_error"))
-    tails = progress.get("log_tails", [])
-    if tails:
-        result["progress"]["logs_available"] = True
-        groups = {}
-        for index, item in enumerate(tails):
-            tail = item.get("tail", "")
-            digest = hashlib.sha256(tail.encode("utf-8")).hexdigest()
-            group = groups.setdefault(digest, {"sha256": digest, "sources": [],
-                "pointers": [], "excerpt": tail[-384:], "omitted_characters": max(0, len(tail)-384)})
-            group["sources"].append(item.get("source"))
-            group["pointers"].append(f"/progress/log_tails/{index}")
-        entries = list(groups.values())
-        for entry in entries:
-            entry["sources_omitted"] = max(0, len(entry["sources"])-8)
-            entry["sources"] = entry["sources"][:8]
-            entry["pointers"] = entry["pointers"][:8]
-        # The raw detail response remains unchanged. This index is navigation,
-        # and explicitly marks both excerpt omissions and unlisted log groups.
-        result["progress"]["log_index"] = entries[:4]
-        result["progress"]["log_groups_omitted"] = max(0, len(entries)-4)
+    if isinstance(progress, dict) and isinstance(progress.get("log_tails"), list):
+        from ...plugin_runtime.experiment import progress_summary
+        result["progress"].update(progress_summary(progress))
+    if isinstance(progress, dict) and progress.get("log_tails") and progress.get("log_cache_state") != "released":
+        result["logs"] = {"tool": "scid_call", "arguments": {"name": "execution_logs",
+            "surface": "execution", "arguments": {"name": value.get("name")}}}
     if "collection" in value:
         result["collection"] = pick(value["collection"], "state", "accepted", "busy",
             "completed_bytes", "total_bytes", "completed_files", "total_files",
@@ -349,6 +335,11 @@ def root_response(name, value, arguments):
     """Never replace a scientific object, precise request, or error with a verdict."""
     detail = arguments.get("view") == "detail"
     if name in {"execution_status", "execution_sync", "execution_start", "execution_cancel", "execution_abandon"}:
+        if detail and isinstance(value.get("progress"), dict):
+            from ...plugin_runtime.experiment import progress_summary
+            # Even status detail does not implicitly deliver log bodies.
+            value = {**value, "progress": {**{key: item for key, item in value["progress"].items()
+                if key != "log_tails"}, **progress_summary(value["progress"])}}
         return value if detail else execution_summary(value)
     if name == "operation_invoke":
         kind = value.get("executor_kind")
@@ -413,9 +404,11 @@ def root_response(name, value, arguments):
         if name == "run_list":
             return {**value, field: [item if detail and run_is_terminal(item.get("state"))
                 else run_intent_projection(item, intent="status") for item in value[field]]}
+        if name == "execution_list" and detail:
+            return {**value, field: [root_response("execution_status", item, arguments) for item in value[field]]}
         if not detail:
             value = {**value, field: [pick(item, "name", "state", "status", "operation_id",
-                        "output_artifact_name", "selected_option") for item in value[field]]}
+                        "output_artifact_name", "selected_option", "recovery") for item in value[field]]}
         return value
     if name == "artifact_catalog" and arguments.get("view") == "parents":
         return value

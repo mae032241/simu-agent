@@ -1042,8 +1042,9 @@ def test_control_startup_reconciles_only_expired_active_runs(
 
 
 @pytest.mark.process_e2e
+@pytest.mark.parametrize("expires_after_startup", [False, True])
 def test_real_control_daemon_reconciles_expired_run_before_proxy_serves(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, expires_after_startup: bool
 ) -> None:
     from scidiscovery.artifact_agent.interfaces import mcp_daemon
 
@@ -1052,11 +1053,15 @@ def test_real_control_daemon_reconciles_expired_run_before_proxy_serves(
     run_id = runtime.scheduler_bindings.resolve(
         instance=instance.instance_id, namespace="run", name="expired_before_restart"
     )
-    with sqlite3.connect(runtime.runs.database_path) as connection:
-        connection.execute(
-            "UPDATE runs SET deadline_at = ? WHERE run_id = ?",
-            ("2000-01-01T00:00:00.000000Z", run_id),
-        )
+    def expire():
+        with sqlite3.connect(runtime.runs.database_path) as connection:
+            connection.execute("UPDATE runs SET deadline_at=? WHERE run_id=?",
+                ("2000-01-01T00:00:00.000000Z", run_id))
+    if not expires_after_startup:
+        expire()
+    from scidiscovery.agent_execution_settings import AgentSettings, LifecycleSettings
+    monkeypatch.setattr(mcp_daemon, "load_settings", lambda _: AgentSettings(
+        lifecycle=LifecycleSettings(interval_seconds=1, batch_size=1)))
     monkeypatch.setattr(mcp_daemon, "compile_installed_catalog", lambda: catalog)
     secret = tmp_path / "approval.key"
     secret.write_bytes(b"x" * 32)
@@ -1087,6 +1092,12 @@ def test_real_control_daemon_reconciles_expired_run_before_proxy_serves(
         )
         assert probe.returncode == 0, probe.stderr
         assert "result" in json.loads(probe.stdout)
+        if expires_after_startup:
+            assert runtime.runs.status(run_id).state == "queued"
+            expire()
+            deadline = time.monotonic() + 5
+            while runtime.runs.status(run_id).state != "failed" and time.monotonic() < deadline:
+                time.sleep(.05)
         assert runtime.runs.status(run_id).state == "failed"
         assert _invoke(root, "after_real_restart")["result"]["state"] == "queued"
     finally:
@@ -1699,3 +1710,42 @@ def test_recovery_without_snapshot_keeps_original_and_reports_pending(
     report = root.call_tool("diagnostic_read", {"reference": engineering["reference"], "section": "traceback"})
     assert "snapshot write failed" in report["text"]
     assert "fixture-secret" not in report["text"] and "/srv/private" not in report["text"]
+
+
+def test_control_daemon_reconciles_deadline_that_expires_after_startup(tmp_path, monkeypatch):
+    import threading
+    import time
+    from scidiscovery.agent_execution_settings import AgentSettings, LifecycleSettings
+    from scidiscovery.artifact_agent.interfaces import mcp_daemon
+    catalog, runtime, instance, _, root = _system(tmp_path)
+    _invoke(root, "expires_while_serving")
+    run_id = runtime.scheduler_bindings.resolve(instance=instance.instance_id,
+        namespace="run", name="expires_while_serving")
+
+    class FakeDaemon:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def serve_forever(self):
+            assert runtime.runs.status(run_id).state == "queued"
+            with sqlite3.connect(runtime.runs.database_path) as connection:
+                connection.execute("UPDATE runs SET deadline_at=? WHERE run_id=?",
+                    ("2000-01-01T00:00:00.000000Z", run_id))
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline and runtime.runs.status(run_id).state != "failed":
+                threading.Event().wait(.05)
+            assert runtime.runs.status(run_id).state == "failed"
+
+    monkeypatch.setattr(mcp_daemon, "compile_installed_catalog", lambda: catalog)
+    monkeypatch.setattr(mcp_daemon, "UnixSocketDaemon", FakeDaemon)
+    monkeypatch.setattr(mcp_daemon, "load_settings", lambda _: AgentSettings(
+        lifecycle=LifecycleSettings(interval_seconds=1, batch_size=1)))
+    secret = tmp_path / "approval.key"
+    secret.write_bytes(b"x" * 32)
+    assert mcp_daemon.main([
+        "--project-root", str(tmp_path / "project"), "--state-root", str(tmp_path / "state"),
+        "--socket", str(tmp_path / "control.sock"), "--approval-secret-file", str(secret),
+        "--worker-backend", "local", "--local-workspace-root", str(tmp_path / "workspaces"),
+        "--runtime-summary", str(tmp_path / "summary.json")]) == 0
+    assert "lifecycle reconciliation" in runtime.runs.status(run_id).reason
+    assert not any(t.name == "scid-lifecycle" for t in threading.enumerate())

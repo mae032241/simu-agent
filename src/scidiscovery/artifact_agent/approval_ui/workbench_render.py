@@ -129,7 +129,44 @@ def _node_card(node: dict, instance_id: str, *, compact: bool = False) -> str:
         extra=(" title='" + html.escape(str(node.get("name", key)), quote=True) + "'") if not compact else "")
     return (f"<li class='trajectory-node node-{css_kind}'><span class='trajectory-dot' aria-hidden='true'></span>"
         "<div class='trajectory-content'><div class='node-card-heading'>" + link + _state(node.get("state"))
-        + "</div>" + _time(node.get("source_time") or node.get("created_at")) + "</div></li>")
+        + "</div>" + _time(node.get("source_time") or node.get("created_at"))
+        + _execution_progress(node) + "</div></li>")
+
+
+def _execution_progress(node: dict) -> str:
+    observation = _dict(node.get("execution_progress"))
+    if not observation and not node.get("collection_progress"):
+        return ""
+    progress = _dict(observation.get("progress"))
+    body = "最近观测：" + (_time(observation.get("observed_at")) or "尚未取得")
+    if observation.get("progress_observed_at"):
+        body += "；进度采样：" + _time(observation["progress_observed_at"])
+    if "elapsed_seconds" in progress:
+        body += "；观测时已运行 " + _text(progress["elapsed_seconds"], 32) + " 秒"
+    if observation.get("refresh_failed"):
+        body += "；最近刷新失败，保留上次观测，不能据此判断求解器是否仍在推进"
+    for log in _list(progress.get("log_activity"))[:2]:
+        log = _dict(log)
+        body += "<br>日志更新：" + (_time(log.get("updated_at")) or "未记录")
+        if log.get("last_line"):
+            body += " · " + _text(log["last_line"])
+    indicator = ""
+    if node.get("state") in {"submitted", "running", "cancelling"} and not observation.get("refresh_failed"):
+        indicator = ("<progress aria-label='仿真尚未确认结束，完成比例未知'></progress> "
+            "仿真完成比例未知；运行指示不代表求解仍在推进。<br>")
+    collection = _dict(node.get("collection_progress"))
+    phase = {"inspect_manifest": "读取冻结文件清单", "verify_cache": "校验已有文件",
+             "download_archive": "下载结果归档", "extract_archive": "解包并校验结果"}.get(collection.get("phase"))
+    if phase:
+        body += "<br>收集阶段：" + phase
+    if collection.get("phase") == "download_archive" and type(collection.get("archive_bytes")) is int:
+        body += "；归档已接收 " + str(collection["archive_bytes"]) + " 字节"
+    completed, total = collection.get("completed_bytes"), collection.get("total_bytes")
+    if type(completed) is int and type(total) is int and 0 <= completed <= total and total > 0:
+        body += (f"<br>结果文件已校验：<progress value='{completed}' max='{total}' "
+            f"aria-label='结果文件校验进度'></progress> {completed / total:.1%} "
+            f"（{completed} / {total} 字节）；收集状态：{_text(node.get('collection_status'))}")
+    return "<p class='execution-progress'>" + indicator + body + "</p>"
 
 
 def _goal_panel(view: dict, instance_id: str) -> str:
@@ -370,39 +407,44 @@ def _sealed_stages(node: dict, instance_id: str) -> str:
             body += "<p>原文尚有后续内容。</p>" + link({"stage_reference": material["reference"],
                 "stage_text_offset": material["next_text_offset"]}, "下一段原文")
     for item in page.get("items", []):
-        body += "<article class='stage-delivery'><h3>" + _text(phases.get(item.get("stage"), item.get("stage")))
-        body += " · " + _text(kinds.get(item.get("delivery_kind"), item.get("delivery_kind"))) + " · v" + str(item["version"]) + "</h3>"
-        if item.get("origin") == "reused":
-            body += "<p>复用已有封存材料，保留原始来源。</p>"
-        if item.get("unavailable_materials"):
-            body += "<p>部分原始依据未绑定到当前任务；请查看原材料的来源记录。</p>"
+        title = str(phases.get(item.get("stage"), item.get("stage")))
+        title += " · " + str(kinds.get(item.get("delivery_kind"), item.get("delivery_kind"))) + " · v" + str(item["version"])
         if item.get("adopted") is not None:
-            body += "<p>" + ("最终采用" if item["adopted"] else "未被最终报告采用") + "</p>"
+            title += " · " + ("最终采用" if item["adopted"] else "未采用")
+        entry = ""
+        if item.get("origin") == "reused":
+            entry += "<p>复用已有封存材料，保留原始来源。</p>"
+        if item.get("unavailable_materials"):
+            entry += "<p>部分原始依据未绑定到当前任务；请查看原材料的来源记录。</p>"
+        if item.get("adopted") is not None:
+            entry += "<p>" + ("最终采用" if item["adopted"] else "未被最终报告采用") + "</p>"
         for key, label in (("conclusion", "结论"), ("remaining_question", "未决问题"), ("summary", "执行摘要")):
             if item.get(key):
-                body += "<h4>" + label + "</h4><p>" + html.escape(item[key]) + "</p>"
+                entry += "<h4>" + label + "</h4><p>" + html.escape(item[key]) + "</p>"
         facts = {key: item[key] for key in ("limitations", "state", "mode", "exit_code", "terminal_state", "files", "file_count", "outputs", "missing_outputs") if key in item}
         if facts:
-            body += render_json_value(facts, max_bytes=8192)
-        body += "<p>依据/产物引用：</p><ul>"
+            entry += render_json_value(facts, max_bytes=8192)
+        entry += "<p>依据/产物引用：</p><ul>"
         for source in item.get("materials", []):
             label = source.get("artifact_name") or source["reference"]
             target = (link({"stage_reference": source["reference"]}, label)
                 if source["source_kind"] == "sealed_material" else
                 _link(_node_href(instance_id, "artifact:" + label), label) if source.get("artifact_name") else _text(label))
-            body += "<li>" + target + "</li>"
-        body += "</ul>"
-        body += link({"stage_reference": item["reference"]}, item["reference"] + " · 读取科学材料")
+            entry += "<li>" + target + "</li>"
+        entry += "</ul>"
+        entry += link({"stage_reference": item["reference"]}, item["reference"] + " · 读取科学材料")
         if item.get("omitted_fields"):
-            body += "<p>预览有省略，请按引用读取分段原文。</p>"
-        body += "</article>"
+            entry += "<p>预览有省略，请按引用读取分段原文。</p>"
+        body += fold_panel(title, entry, class_name="stage-delivery")
     if not page.get("items") and material is None:
         body += "<p>此页没有已封存阶段材料。</p>"
     if page.get("offset", 0):
         body += link({"stage_offset": 0}, "首批阶段")
     if page.get("next_offset") is not None:
         body += link({"stage_offset": page["next_offset"]}, "后续阶段版本")
-    return _section("已封存阶段与版本历史", body, section_id="sealed-stages")
+    panel = fold_panel("已封存阶段与版本历史", body, count=page.get("total", len(page.get("items", []))),
+        class_name="stage-history", expanded=isinstance(material, dict) or bool(page.get("offset", 0)))
+    return "<section id='sealed-stages'>" + panel + "</section>"
 
 
 def render_node(node: dict, *, instance_id: str, presentation: dict | None = None) -> bytes:
@@ -451,6 +493,7 @@ def render_node(node: dict, *, instance_id: str, presentation: dict | None = Non
         logs += render_json_value(native,max_bytes=6144) + fold_panel("工具时间与保存工作", render_json_value({"工具时间":node.get("tool_timing"),"恢复记录":node.get("recovery")},max_bytes=8192))
     if node.get("kind") == "execution":
         metadata["执行收集状态"] = human_value(node.get("collection_status"))
+        logs += _execution_progress(node)
         logs += "<h3>外部执行与收集</h3>" + render_json_value({"收集":node.get("collection"),"观测":node.get("observation")},max_bytes=8192)
     details = fold_panel("依据与日志", logs + _relationships(node,instance_id))
     originals = ("<h3>原始输入</h3>" + _references(node.get("inputs"),instance_id)

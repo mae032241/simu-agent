@@ -8,6 +8,8 @@ class HelperRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     name: str = Field(pattern=r"^[a-z][a-z0-9_-]{0,47}$", description="Scientific subtask name, also used as the native task name.")
     action: Literal["prepare", "release"] = "prepare"
+    profile: Literal["inherit", "lightweight"] | None = Field(default=None,
+        description="Optional helper model profile; omission uses configured default. inherit matches the parent; lightweight uses the configured smaller model. Both keep the same permitted tools.")
     task: str = Field(default="", max_length=16384, description="Bounded scientific question, investigation, code change or already authorized local validation.")
     materials: list[str] = Field(default_factory=list, max_length=16,
         description="Select relevant input source_name aliases or task workspace paths for the helper's initial navigation. No materials are expanded by default; unknown references remain gaps. The helper can investigate further within the parent's existing permissions.")
@@ -20,6 +22,8 @@ def call_helper(request, context):
 HELPER_TOOL = WorkerToolDefinition(
     name="worker_helper", capability="run.internal_helper", owner_only=True,
     description=("Prepare an optional native helper subtask, then use the returned native dispatch instructions with fresh context. "
+        "Choose inherit for parent-level model capability or lightweight for bounded work suited to the configured smaller model. "
+        "Use the returned frozen model/reasoning_effort when spawning; never guess or silently upgrade. "
         "The helper inherits this task's workspace, Skills and allowed tools; you wait for the native completion notification, "
         "verify and integrate its findings or files, and remain responsible for final delivery. "
         "Use existing deterministic tools for simple counts, slopes or ranges; delegate a complete subproblem when independent investigation or context relief is useful. "

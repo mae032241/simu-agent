@@ -41,12 +41,38 @@ class DefaultSettings(OperationSettings):
     narrative_language: Language | None = None
 
 
+class HelperProfileSettings(SettingsValue):
+    model: str | None = Field(default=None, min_length=1, max_length=256)
+    reasoning_effort: ReasoningEffort | None = None
+    max_calls: int | None = Field(default=None, ge=0, le=32)
+    max_input_bytes: int | None = Field(default=None, ge=512, le=262144)
+
+
+def packaged_helper_profiles() -> dict:
+    source = Path(__file__).with_name("default_agent_settings.json")
+    values = json.loads(source.read_text(encoding="utf-8"))["helpers"]["profiles"]
+    return {name: HelperProfileSettings.model_validate(value) for name, value in values.items()}
+
+
 class HelperSettings(SettingsValue):
-    """Run tool-access admissions, not native thread or model token limits."""
+    """Run tool admissions and frozen model choices, not native token hard limits."""
+    default_profile: Literal["inherit", "lightweight"] = "inherit"
+    profiles: dict[Literal["lightweight"], HelperProfileSettings] = Field(default_factory=packaged_helper_profiles)
     max_depth: Literal[0, 1] = 1
     max_active: Literal[0, 1] = 1
     max_calls: int = Field(default=4, ge=0, le=32)
     max_input_bytes: int = Field(default=32768, ge=512, le=262144)
+
+
+def merge_helper_settings(base: dict, override: dict) -> dict:
+    """Instance profile fields inherit global values; explicit empty profiles disables them."""
+    result = {**base, **{key:value for key,value in override.items() if key != "profiles"}}
+    if "profiles" in override:
+        profiles = dict(base.get("profiles", {})) if override["profiles"] else {}
+        for name, value in override["profiles"].items():
+            profiles[name] = {**profiles.get(name, {}), **value}
+        result["profiles"] = profiles
+    return HelperSettings.model_validate(result).model_dump()
 
 
 class ExecutionIOSettings(SettingsValue):
@@ -56,6 +82,12 @@ class ExecutionIOSettings(SettingsValue):
     collection_timeout_seconds: int = Field(default=600, ge=1)
     file_timeout_seconds: int = Field(default=120, ge=1)
     idle_timeout_seconds: int = Field(default=30, ge=1)
+
+
+class LifecycleSettings(SettingsValue):
+    """Control daemon reconciliation; global settings, no model calls or submissions."""
+    interval_seconds: int = Field(default=30, ge=1, le=3600)
+    batch_size: int = Field(default=32, ge=1, le=256)
 
 
 class MaterialInputSettings(SettingsValue):
@@ -81,6 +113,7 @@ class AgentSettings(SettingsValue):
     operations: dict[str, OperationSettings] = Field(default_factory=dict)
     helpers: HelperSettings = Field(default_factory=HelperSettings)
     execution_io: ExecutionIOSettings = Field(default_factory=ExecutionIOSettings)
+    lifecycle: LifecycleSettings = Field(default_factory=LifecycleSettings)
     input_materials: MaterialInputSettings = Field(default_factory=MaterialInputSettings)
     attachments: AttachmentSettings = Field(default_factory=AttachmentSettings)
 

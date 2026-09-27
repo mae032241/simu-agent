@@ -111,7 +111,8 @@ class LocalWorkerMCPRouter:
         """A separate projection; never overwrite the task owner's assignment/schema."""
         source = json.loads(read_control_workspace_file(self._workspace.root,
             Path("assignment.json"), max_bytes=self._workspace.assignment_path.stat().st_size))
-        task = json.loads(self.participant['request_json'])
+        saved = json.loads(self.participant['request_json'])
+        task = {key:saved[key] for key in ("task", "materials")}
         instruction = (
             "You are an internal helper for this scientific subtask. Investigate relevant task files, use appropriate "
             "Skills and the parent's permitted native/scientific tools, and make requested local edits or already authorized checks. "

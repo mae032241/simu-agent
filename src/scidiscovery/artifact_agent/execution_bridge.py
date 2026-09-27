@@ -230,10 +230,10 @@ class ExecutionBridge:
         current = self.executions.status(execution_id)
         if current.external_run_id is None:
             raise ExecutionServiceError("execution has no submitted external run")
-        adapter = self._adapter(current.executor)
         observation = self.executions.observation(execution_id)
         from datetime import datetime, timezone
         try:
+            adapter = self._adapter(current.executor)
             reader = getattr(adapter, "status_details", None)
             details = (reader(current.external_run_id) if callable(reader)
                        else {"state": adapter.status(current.external_run_id)})

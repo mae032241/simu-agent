@@ -256,7 +256,7 @@ class RootExecutionRoutes:
                 if admission is not None and self.executions.status(execution_id).state in {"created", "authorized"}:
                     self.executions.defer_policy(execution_id=execution_id, admission=admission)
                 approval = self._ensure_execution_approval(name=target.name)
-            status = self.execution_status(name=target.name)
+            status = self._execution_status_snapshot(name=target.name)
         return {**status, "approval": approval,
                 **({"prepared_outputs": [{"port": plan.payload_port, "artifact_name": prepared_name}]}
                    if prepared_name is not None else {})}
@@ -510,16 +510,28 @@ class RootExecutionRoutes:
 
     def execution_abandon(self, *, name: str) -> dict[str, Any]:
         self.executions.abandon(self._resolve("execution", name))
-        return self.execution_status(name=name)
+        return self._execution_status_snapshot(name=name)
 
     def execution_cancel(self, *, name: str) -> dict[str, Any]:
         if self.execution_bridge is None:
             raise RootToolError("no execution bridge is configured")
         self.execution_bridge.cancel(execution_id=self._resolve("execution", name))
-        return self.execution_status(name=name)
+        return self._execution_status_snapshot(name=name)
 
     def execution_status(self, *, name: str) -> dict[str, Any]:
-        binding = self._binding("execution", name)
+        execution_id = self._resolve("execution", name, allow_task_recovery=True)
+        status = self.executions.status(execution_id)
+        if (status.external_run_id is not None
+                and status.state in {"submitted", "running", "cancelling"}):
+            if self.execution_bridge is None:
+                raise RootToolError("Cannot refresh execution status: no execution bridge is configured")
+            self.execution_bridge.sync(execution_id=execution_id,
+                diagnostic_scope="instance:" + self._instance_id())
+        return self._execution_status_snapshot(name=name)
+
+    def _execution_status_snapshot(self, *, name: str) -> dict[str, Any]:
+        """Saved state for inventories and responses to actions already performed."""
+        binding = self._binding("execution", name, allow_task_recovery=True)
         status = self.executions.status(binding.object_id)
         result_artifact_name = None
         if status.result_ref is not None:
@@ -537,14 +549,25 @@ class RootExecutionRoutes:
             "state": status.state,
             "result_artifact_name": result_artifact_name,
             "created_at": status.created_at,
+            **({"recovery": {
+                "task_name": self.bindings.find_name(instance=self._instance_id(), namespace="run",
+                    object_id=self._task_execution_owner(binding.object_id)),
+                "actions": ["execution_status", "execution_sync", "execution_logs", "execution_collect", "execution_outputs"],
+                "resubmission_allowed": False,
+            }} if self._task_managed_execution(binding.object_id) else {}),
             "authorization": self.executions.authorization(binding.object_id),
             **self.executions.observation(binding.object_id),
             **({"collection": self.execution_collection.summary(binding.object_id)}
                if self.execution_collection is not None else {}),
         }
 
+    def execution_logs(self, *, name: str, log_index: int = 0, direction: str = "tail", cursor: str | None = None) -> dict:
+        execution_id = self._resolve("execution", name, allow_task_recovery=True)
+        return self.executions.cached_log(execution_id, log_index=log_index, direction=direction, cursor=cursor,
+            max_bytes=self.runs.agent_settings.execution_io.read_page_bytes)
+
     def execution_collect(self, *, name: str, total_seconds: float) -> dict:
-        execution_id = self._resolve("execution", name)
+        execution_id = self._resolve("execution", name, allow_task_recovery=True)
         if self.execution_collection is None:
             raise RootToolError("execution collection requires the configured control-service coordinator")
         result = self.execution_collection.collect(execution_id,
@@ -555,16 +578,17 @@ class RootExecutionRoutes:
         from .mcp_response_views import page
         def values():
             for binding in self.bindings.list(instance=self._instance_id(), namespace="execution"):
-                if self._task_managed_execution(binding.object_id):
+                if (self._task_managed_execution(binding.object_id)
+                        and not self._execution_recoverable(binding.object_id)):
                     continue
-                item = self.execution_status(name=binding.name)
+                item = self._execution_status_snapshot(name=binding.name)
                 if state is None or item["state"] == state:
                     yield item
         items, cursor = page(values(), key="name", limit=limit, before=before)
         return {"executions": items, "next_before": cursor}
 
     def execution_outputs(self, *, name: str) -> dict[str, Any]:
-        execution_id = self._resolve("execution", name)
+        execution_id = self._resolve("execution", name, allow_task_recovery=True)
         result_name = self._publish_execution_result(name=name)
         outputs = []
         for value in self.executions.outputs(execution_id):
@@ -601,25 +625,25 @@ class RootExecutionRoutes:
                 budget_subject_schemas=effect_operation_plan(compiled).budget_subject_schemas,
             )
         except ExecutionAuthorizationRequired:
-            return {**self.execution_status(name=name),
+            return {**self._execution_status_snapshot(name=name),
                 "approval": self._ensure_execution_approval(name=name),
                 "authorization_required": "human"}
-        return self.execution_status(name=name)
+        return self._execution_status_snapshot(name=name)
 
     def execution_sync(self, *, name: str) -> dict[str, Any]:
         if self.execution_bridge is None:
             raise RootToolError("no execution bridge is configured")
-        execution_id = self._resolve("execution", name)
+        execution_id = self._resolve("execution", name, allow_task_recovery=True)
         progress = self.execution_bridge.sync(execution_id=execution_id,
             diagnostic_scope="instance:" + self._instance_id())
         self._publish_execution_result(name=name)
-        result = self.execution_status(name=name)
+        result = self._execution_status_snapshot(name=name)
         if progress is not None:
             result["progress"] = progress
         return result
 
     def _publish_execution_result(self, *, name: str) -> str | None:
-        status = self.executions.status(self._resolve("execution", name))
+        status = self.executions.status(self._resolve("execution", name, allow_task_recovery=True))
         if status.result_ref is None:
             return None
         result_name = _derived_name(name, "result")

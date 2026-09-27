@@ -92,8 +92,8 @@ def debug_summary(context, run_name, response):
         "scientific_claim_admissible", "diagnostic_layer", "summary", "exit_code", "diagnostics",
         "source_diagnostic", "log_relative_path", "delivery_budget", "budget", "reserved_wall_seconds_for_run", "missing_outputs") if key in full}
     if isinstance(full.get("progress"), dict):
-        result["progress"] = {key: full["progress"][key] for key in
-            ("elapsed_seconds", "observed_at", "started_at", "completed_at") if key in full["progress"]}
+        from scidiscovery.plugin_runtime.experiment import progress_summary
+        result["progress"] = progress_summary(full["progress"])
     result.update(details_path=str(path), output_count=len(full.get("outputs", [])))
     return result
 
@@ -168,6 +168,10 @@ class LocalTCADDebugService:
                         continue
                     external, state = found
                     record = {**record, "external_run_id": external, "state": _state(state)}
+                if record["state"] not in _TERMINAL:
+                    # The persisted reservation is not a live observation. An owner
+                    # may have exited before recording the diagnostic's terminal state.
+                    record = {**record, "state": _state(self.adapter.status(external))}
                 if cancel and record["state"] not in _TERMINAL:
                     record["state"] = _state(self.adapter.cancel(external))
                 active = active or record["state"] not in _TERMINAL
@@ -207,6 +211,7 @@ class LocalTCADDebugService:
             record = record or reservation["record"]
             external = record.get("external_run_id")
             state = record["state"]
+            details = {}
             try:
                 if external is None:
                     from scidiscovery.artifact_agent.schema.execution import LocalFileDescriptor
@@ -216,7 +221,9 @@ class LocalTCADDebugService:
                         return {**absent, "allowance_reserved": True}
                     external, state = found
                 if state not in _TERMINAL:
-                    state = self.adapter.status(external)
+                    reader = getattr(self.adapter, "status_details", None)
+                    details = reader(external) if callable(reader) else {"state": self.adapter.status(external)}
+                    state = details["state"]
             except Exception as error:
                 from scidiscovery.operation_contract import DiagnosticError, contract_diagnostic
                 message = ("Diagnostic status could not be confirmed. This read-only query did not submit a job. "
@@ -224,8 +231,11 @@ class LocalTCADDebugService:
                 raise DiagnosticError(message, details=(contract_diagnostic("tcad_debug_status_unknown",
                     phase="tool_execution", affected_action="tool_call", message=message),)) from error
             response = record.get("response", {})
+            from scidiscovery.plugin_runtime.experiment import progress_summary
+            progress = details.get("progress", response.get("progress"))
             return {"name": run_name, "mode": record["mode"], "state": _state(state),
                 "submission": "submitted", "allowance_reserved": True,
+                **({"progress": progress_summary(progress)} if isinstance(progress, dict) else {}),
                 **{key: response[key] for key in ("summary", "exit_code", "missing_outputs") if key in response}}
 
     @staticmethod

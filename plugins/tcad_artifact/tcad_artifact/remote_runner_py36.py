@@ -6,6 +6,7 @@ from __future__ import print_function
 import argparse
 import fcntl
 import hashlib
+import io
 import json
 import os
 import re
@@ -207,6 +208,8 @@ def _handle(config, request, input_stream, output_stream):
         _write_response(output_stream, operation, {"stored": True})
     elif operation == "get" and "max_bytes" in payload:
         _stream_get(config, payload, output_stream)
+    elif operation == "get_archive":
+        _stream_get_archive(config, payload, output_stream)
     elif operation == "rpc":
         response = _rpc(config, payload)
         _write_response(output_stream, operation, {"response": response})
@@ -271,6 +274,44 @@ def _stream_get(config, payload, output_stream):
             if sent > limit:
                 raise ValueError("inspection download changed")
             output_stream.write(chunk)
+    output_stream.flush()
+
+
+def _stream_get_archive(config, payload, output_stream):
+    """Standard tar stream with a frozen list; no remote archive or full-file buffer."""
+    files = payload.get("files")
+    if not isinstance(files, list) or not files:
+        raise ValueError("archive download requires file descriptors")
+    _write_response(output_stream, "get_archive", {"files": len(files)})
+    digest = hashlib.sha256()
+    class HashedStream:
+        def write(self, data):
+            digest.update(data)
+            return output_stream.write(data)
+    with tarfile.open(fileobj=HashedStream(), mode="w|", format=tarfile.GNU_FORMAT) as archive:
+        manifest = _canonical(files)
+        info = tarfile.TarInfo("manifest.json")
+        info.size = len(manifest)
+        archive.addfile(info, io.BytesIO(manifest))
+        for index, item in enumerate(files):
+            path = os.path.abspath(item["local_path"])
+            _require_within(path, config["result_root"])
+            _require_within(os.path.realpath(path), os.path.realpath(config["result_root"]))
+            size, expected = item["size_bytes"], item["sha256"]
+            if type(size) is not int or not 0 <= size <= config["max_transfer_bytes"] or not _valid_sha(expected):
+                raise ValueError("invalid archive download descriptor")
+            descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | os.O_NONBLOCK)
+            with os.fdopen(descriptor, "rb") as stream:
+                metadata = os.fstat(stream.fileno())
+                if not stat.S_ISREG(metadata.st_mode) or metadata.st_size != size:
+                    raise ValueError("archive download differs from descriptor")
+                info = tarfile.TarInfo("files/%d" % index)
+                info.size = size
+                archive.addfile(info, stream)
+                if stream.read(1):
+                    raise ValueError("archive source changed since inspection")
+    # Fixed-size transport checksum trailer, removed before local tar decoding.
+    output_stream.write(b"sha256:" + digest.hexdigest().encode("ascii") + b"\n")
     output_stream.flush()
 
 
@@ -1236,10 +1277,15 @@ def _job_progress(run_dir):
             raw, metadata = _progress_read(directory, name, 2048, tail=True)
             # Drop a partial first line: its redaction context may be omitted.
             truncated = metadata.st_size > len(raw)
-            text = raw.decode("utf-8", errors="replace")
+            start_byte = max(0, metadata.st_size - 2048)
             if truncated:
-                text = text.partition("\n")[2]
+                skipped, separator, raw = raw.partition(b"\n")
+                start_byte += len(skipped) + len(separator)
+            text = raw.decode("utf-8", errors="replace")
+            stream_identity = "%s:%s:%s:%s" % (directory, name, metadata.st_dev, metadata.st_ino)
             result["log_tails"].append({
+                "stream_id": hashlib.sha256(stream_identity.encode("utf-8")).hexdigest(),
+                "start_byte": start_byte,
                 "source": "stdout" if directory == run_dir else "solver_log",
                 "tail": _redact_log(text), "size_bytes": metadata.st_size,
                 "updated_at": datetime.utcfromtimestamp(metadata.st_mtime).isoformat(timespec="microseconds") + "Z",

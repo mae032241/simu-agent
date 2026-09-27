@@ -831,6 +831,15 @@ class ExecutionService:
                 (result_ref.canonical_json(), execution_id),
             )
             connection.execute("COMMIT")
+        # The manifest and all declared outputs are durable before cache cleanup.
+        try:
+            saved = self.observation(execution_id)
+            if saved:
+                self.save_observation(execution_id, saved)
+        except (OSError, ValueError, sqlite3.Error):
+            # Cache cleanup must not turn committed collection into a false failure.
+            import logging
+            logging.getLogger(__name__).warning("Collected execution log cache cleanup deferred")
         return result_ref
 
     def observation(self, execution_id: str) -> dict:
@@ -846,8 +855,43 @@ class ExecutionService:
 
     def save_observation(self, execution_id: str, value: dict) -> None:
         from .engineering_diagnostics import atomic_json
-        self.status(execution_id)
-        atomic_json(self.exchange_root / execution_id / "observation.json", value)
+        # Serialize against collection commit: a concurrent late refresh cannot
+        # restore discarded log bodies after this execution is collected.
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            if self._row(connection, execution_id)["state"] == "collected":
+                progress = value.get("progress")
+                if isinstance(progress, dict):
+                    logs = progress.get("log_tails")
+                    progress = {**progress, "log_cache_state": "released"}
+                    if isinstance(logs, list):
+                        progress["log_tails"] = [{k: item[k] for k in
+                            ("source", "size_bytes", "updated_at", "truncated") if k in item}
+                            for item in logs if isinstance(item, dict)]
+                    value = {**value, "progress": progress}
+            atomic_json(self.exchange_root / execution_id / "observation.json", value)
+
+    def cached_log(self, execution_id: str, *, log_index: int, direction: str = "tail",
+                   cursor: str | None = None, max_bytes: int) -> dict:
+        """Read this execution's latest, earlier or incremental diagnostic cache page."""
+        from .execution_log_reader import invalid, log_page
+        if type(log_index) is not int or log_index < 0:
+            raise invalid("log_index must be a nonnegative integer")
+        if type(max_bytes) is not int or max_bytes < 4:
+            raise invalid("log page budget must fit a UTF-8 character")
+        if self.status(execution_id).state == "collected":
+            return {"cache_state":"released", "source":"collected_outputs", "before":None, "after":None}
+        observation = self.observation(execution_id)
+        logs = (observation.get("progress") or {}).get("log_tails") or []
+        if not logs:
+            return {"cache_state":"unavailable", "before":None, "after":None,
+                "observed_at":observation.get("progress_observed_at"),
+                **({"observation_error":observation["observation_error"]} if observation.get("observation_error") else {})}
+        if log_index >= len(logs):
+            raise invalid("Select 0 <= log_index < log_count from this execution's status")
+        return {"cache_state":"available", "log_index":log_index,
+            "observed_at":observation.get("progress_observed_at"), "updated_at":logs[log_index].get("updated_at"),
+            **log_page(execution_id, log_index, logs[log_index], direction=direction, cursor=cursor, max_bytes=max_bytes)}
 
     def status(self, execution_id: str) -> ExecutionStatusView:
         with self._connect() as connection:
@@ -861,6 +905,14 @@ class ExecutionService:
             created_at=row["created_at"],
             authorization=self.authorization(execution_id),
         )
+
+    def observation_candidates(self, *, after: str = "", limit: int = 32) -> tuple[str, ...]:
+        """Keyset page of already submitted jobs; never resolves uncertain submissions."""
+        with self._connect() as connection:
+            return tuple(row[0] for row in connection.execute(
+                "SELECT execution_id FROM executions WHERE execution_id > ? "
+                "AND state IN ('submitted','running','cancelling') "
+                "AND external_run_id IS NOT NULL ORDER BY execution_id LIMIT ?", (after, limit)))
 
     def list_statuses(
         self, *, state: str | None = None, limit: int = 50

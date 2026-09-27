@@ -332,9 +332,9 @@ def approval_heading(kind: object) -> tuple[str, str]:
     return headings.get(kind, neutral) if isinstance(kind, str) else neutral
 
 
-def fold_panel(title: str, body: str, *, count: int | None = None, class_name: str = "") -> str:
+def fold_panel(title: str, body: str, *, count: int | None = None, class_name: str = "", expanded: bool = False) -> str:
     badge = f"<span class='panel-count'>{count}</span>" if count is not None else ""
-    return (f"<details class='research-panel {class_name}'><summary><span>{_text(title)}</span>{badge}"
+    return (f"<details class='research-panel {class_name}'{' open' if expanded else ''}><summary><span>{_text(title)}</span>{badge}"
             "<span class='panel-toggle' aria-hidden='true'>＋</span></summary>"
             f"<div class='research-panel-body'>{body}</div></details>")
 

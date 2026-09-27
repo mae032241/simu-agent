@@ -110,7 +110,7 @@ def test_execution_ownership_uses_request_not_reused_package(tmp_path, monkeypat
         name="experiment-" + f.run_id + "-pending", object_id=new_id)
     with pytest.raises(RunOutputError):
         f.coordinator.require_idle(f.runs.status(f.run_id))
-    f.coordinator.cancel_owned(f.runs.status(f.run_id))
+    f.coordinator._cancel(new_id)
     assert executions.status(new_id).state == "abandoned"
     assert executions.status(old_execution).state == "collected"
 
@@ -120,6 +120,52 @@ def test_old_implementation_execution_and_validity_can_be_adopted_by_exact_ref(t
     aliases = [i.source_name for i in f.runs.status(f.run_id).inputs if i.port_name == "scientific_materials"]
     result = submit(f, aliases)
     assert result["state"] == "completed", result
+
+
+@pytest.mark.parametrize("stale_diagnostic", [False, True])
+def test_abandoned_requests_do_not_block_collected_experiment_delivery(tmp_path, monkeypatch, stale_diagnostic):
+    f = continuation(tmp_path, monkeypatch, all_stages=True)
+    executions = f.runtime.executions
+    collected_id = next(b.object_id for b in f.runtime.scheduler_bindings.list(
+        instance=f.instance.instance_id, namespace="execution")
+        if executions.status(b.object_id).state == "collected")
+    request = executions.request(collected_id)
+    for name in ("old_first", "old_second"):
+        execution_id = "exe_" + name
+        executions.create(executor=request.executor, preparation_profile=request.preparation_profile,
+            payload_ref=request.payload_ref, execution_id=execution_id,
+            compiled_identity=request.compiled_identity, labels={"experiment_run":f.run_id})
+        f.runtime.scheduler_bindings.bind(instance=f.instance.instance_id, namespace="execution",
+            name="experiment-" + f.run_id + "-" + name, object_id=execution_id)
+        executions.abandon(execution_id)
+    if stale_diagnostic:
+        ledger_path = next((tmp_path / "debug/budgets").glob("*.json"))
+        ledger = json.loads(ledger_path.read_bytes())
+        ledger["runs"]["diagnostic"].update(run_id=f.run_id, state="running")
+        ledger_path.write_bytes(canonical_json(ledger))
+        debugger = f.coordinator.worker_services["tcad_artifact:tcad.development_debug"].adapter
+        monkeypatch.setattr(debugger, "status", lambda _: "running", raising=False)
+    # Recover the interrupted owner, retaining its requests and exact input receipts.
+    value = f.runs.status(f.run_id)
+    f.runs.record_failure(f.run_id, reason="fixture owner interrupted", expected_state="running",
+        expected_last_activity_at=value.last_activity_at)
+    recovered = f.root.call_tool("operation_invoke", {**f.invocation, "name":"recovered",
+        "draft_from":"continuation"})
+    assert recovered["result"]["state"] == "queued", recovered
+    recovered_id = f.runtime.scheduler_bindings.resolve(instance=f.instance.instance_id, namespace="run", name="recovered")
+    f.runs.worker_connections.attach(run_id=recovered_id, platform_session="recovery-fixture", thread_id="recovered")
+    compiled = f.catalog.operation("science.experiment.v1")
+    services = bind_experiment_services(f.runs, compiled, dict(f.coordinator.worker_services), coordinator=f.coordinator)
+    f.worker = LocalWorkerMCPRouter(f.runs, operation_id=compiled.spec.operation_id,
+        operation_digest=compiled.digest, tool_services=services)
+    f.workspace = Path(f.worker.call_tool("worker_open_assignment", {})["workspace_path"])
+    aliases = [i.source_name for i in f.runs.status(f.run_id).inputs if i.port_name == "scientific_materials"]
+    if stale_diagnostic:
+        assert submit(f, aliases)["state"] == "rejected"  # An actually active diagnostic still blocks delivery.
+        monkeypatch.setattr(debugger, "status", lambda _: "succeeded")
+    result = submit(f, aliases)
+    assert result["state"] == "completed", result
+    assert executions.status(collected_id).state == "collected"
 
 
 def test_diagnostic_reuse_never_changes_implementation_or_takes_over_active_job(tmp_path, monkeypatch):

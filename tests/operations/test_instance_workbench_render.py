@@ -202,3 +202,32 @@ def test_progressive_script_uses_text_content_and_preserves_native_links() -> No
     assert "innerHTML" not in script
     assert "credentials: \"same-origin\"" in script
     assert "original.href = link.href" in script
+
+
+def test_execution_indicator_never_fabricates_solver_percentage():
+    from scidiscovery.artifact_agent.approval_ui.workbench_render import _execution_progress
+    node = {"state": "running", "execution_progress": {
+        "observed_at": "2026-09-27T08:09:23Z", "progress": {"elapsed_seconds": 1780}}}
+    running = _execution_progress(node)
+    assert "<progress aria-label=" in running and "完成比例未知" in running
+    assert "1780" in running and "value=" not in running
+    node["execution_progress"]["refresh_failed"] = True
+    assert "<progress" not in _execution_progress(node)
+    assert "刷新失败" in _execution_progress(node)
+    node.update(state="succeeded", collection_status="running",
+        collection_progress={"completed_bytes": 128, "total_bytes": 512})
+    transfer = _execution_progress(node)
+    assert "value='128' max='512'" in transfer and "25.0%" in transfer
+    assert "结果文件已校验" in transfer and "完成比例未知" not in transfer
+    node["collection_progress"]["total_bytes"] = None
+    assert "<progress" not in _execution_progress(node)
+
+
+def test_archive_download_progress_is_distinct_from_verified_files():
+    from scidiscovery.artifact_agent.approval_ui.workbench_render import _execution_progress
+    node = {"state": "succeeded", "execution_progress": {}, "collection_status": "running",
+            "collection_progress": {"phase": "download_archive", "archive_bytes": 123456,
+                                    "completed_bytes": 0, "total_bytes": 900000}}
+    value = _execution_progress(node)
+    assert "下载结果归档" in value and "123456 字节" in value
+    assert "结果文件已校验" in value and "0.0%" in value

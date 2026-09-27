@@ -81,6 +81,10 @@ alias)`, `source_alias(context, ref)`, `diagnostic_context(context, *, service_n
 `ExperimentMethod` supplies `key`/`content`; `SealedImplementation` supplies exact
 `artifact_ref`/`content`. Commands still pass the task's frozen execution and budget
 gates; these callbacks cannot bind another Run or expose the coordinator.
+`progress_summary(progress)` projects executor timing and up to two log metadata
+records, without log text. Only UI callers opt into redacted, bounded last-line
+previews with `include_log_text=True`. Missing timing is not estimated. This projection carries
+operational observations, never a completion percentage or scientific verdict.
 `read_implementation` accepts exact implementations created in or explicitly bound
 to the task, retaining original receipts. `source_alias` resolves an immutable file
 reference to a currently available alias; previous-task aliases are never identities.

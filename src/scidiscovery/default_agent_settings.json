@@ -6,6 +6,7 @@
     "reasoning_effort": "medium"
   },
   "operations": {},
+  "lifecycle": {"interval_seconds": 30, "batch_size": 32},
   "input_materials": {
     "max_item_bytes": 2000000000,
     "max_total_bytes": 2000000000,
@@ -18,5 +19,17 @@
     "max_total_bytes": 2000000000,
     "max_files": 64,
     "chunk_bytes": 1048576
+  },
+  "helpers": {
+    "default_profile": "inherit",
+    "profiles": {
+      "lightweight": {
+        "model": "gpt-6-luna",
+        "reasoning_effort": "low",
+        "max_input_bytes": 16384
+      }
+    },
+    "max_active": 1,
+    "max_calls": 4
   }
 }

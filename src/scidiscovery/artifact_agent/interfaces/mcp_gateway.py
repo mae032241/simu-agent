@@ -111,9 +111,11 @@ class UnifiedMCPRouter:
         except WorkerNotAttached:
             status, participant = self.connections.participant(platform_session=context.session,
                 thread_id=context.thread, parent_thread=context.parent_thread,
-                admit=context.subagent_kind in (None, "thread_spawn"))
+                admit=context.subagent_kind in (None, "thread_spawn"),
+                model=context.model, reasoning_effort=context.effort)
         profile = status.execution_profile
-        expected = profile["profile"] if profile is not None else None
+        expected = (self.connections.helper_profile(status, participant) if participant is not None
+                    else profile["profile"] if profile is not None else None)
         if expected is None or (
             canonical_model_id(context.model), context.effort
         ) != (

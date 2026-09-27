@@ -353,7 +353,7 @@ def _local_native_tool_instruction(compiled: Any) -> str:
         "write scratch files/caches under workspace/scratch. Set TMPDIR and XDG_CACHE_HOME to that scratch "
         "directory and PYTHONDONTWRITEBYTECODE=1 on each script call. Only installed readers manage .read-input. "
         "Solver, network, installation, service and domain side effects require declared tools and authorization. "
-        "Optional prepared helpers retain native permissions and fresh context. The owner waits and integrates "
+        "Optional prepared helpers retain native permissions and fresh context. Spawn with the exact model and reasoning effort returned by worker_helper; inherit and lightweight are configuration choices, not permission roles. The owner waits and integrates "
         "findings/files, checking their method and evidence without automatically repeating the entire calculation. "
         "If participation=helper, read only your returned task-specific assignment and selected materials; "
         "describe needed tools. Owner startup/schema/submission directions do not apply unless the subtask needs those files. "

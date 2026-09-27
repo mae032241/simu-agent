@@ -188,7 +188,10 @@ Root interface declarations also own their surface: ordinary `research` omits th
 `scid_catalog(kind="interfaces")`, `scid_describe`, and `scid_call` for independent
 Effect execution or historical recovery. This is one declaration projection, not
 another Operation registry or authorization. Task-managed execution stays with
-`worker_experiment_execute`; internal Operations remain inaccessible. UI reads
+`worker_experiment_execute` while its owner or any recovery descendant is active.
+When the entire lineage has failed, the execution surface and lifecycle events
+expose the original execution for status, sync, collect and outputs. Recovery does
+not permit start, abandon or cancel; internal Operations remain inaccessible. UI reads
 ExecutionService and collection state directly and retains the same authorization.
 
 Selected JSON Pointer values appear in `selected_output`, never a partial
@@ -351,9 +354,56 @@ is looked up using its frozen descriptor before any new side effect; a renamed r
 cannot claim the same semantic project's budget again. Status and the instance UI show
 `authorization.source` (`policy`, `human`, or `none`) and the frozen policy digest/budget.
 
+The control daemon reconciles expired Runs and polls already submitted executions
+serially, independently of Worker calls. Global `lifecycle.interval_seconds` (30)
+and `lifecycle.batch_size` (32) configure bounded, rotating passes. Worker timeout
+records a failed Run and preserves its recovery draft and external execution;
+it does not cancel the solver or imply a solver outcome. Observation failures
+retain the last confirmed execution state and record a refresh diagnostic. The
+reconciler never submits or collects work. Resuming the failed Run retains the
+original execution identity and removes it from Root recovery while the new owner
+is active. A terminal solver outcome does not complete the scientific Run.
+
+Complete experiments use `worker_experiment_execute(action="status")` to refresh
+remote state and progress of submitted work without starting, cancelling or
+collecting it. `advance` can continue authorized work; `collect` transfers outputs. Both return
+elapsed time and log metadata only, with distinct status
+and progress observation times. A refresh failure retains the previous snapshot
+and is explicitly marked; a running state or quiet log alone proves neither
+continued solver progress nor a stall. UI metadata includes these observations so
+progress updates notify subscribers even when the state remains `running`. UI
+reads do not poll the solver. Without a solver-provided completion ratio, the UI
+uses an indeterminate indicator and measured elapsed time/log activity, never elapsed
+budget as a completion percentage. File transfer percentages use observed byte totals
+and remain distinct from solver progress. Mutable progress is excluded from sealed execution
+evidence. Diagnostic status also returns compact progress without submitting or
+collecting; full diagnostic tails remain available through its saved detail file.
+
+Status refreshes save a bounded log-tail snapshot under the exact immutable execution
+ID. Worker `action="logs"` and Root `execution_logs` explicitly page that cache
+without remote access. Neither default nor detailed status includes log text; the
+UI may show a bounded last-line preview. Log reads default to the newest page,
+with text in chronological order. `direction="before"` plus the returned `before`
+cursor reads older cached text; `direction="after"` plus `after` reads new text,
+returning empty text when unchanged. Cursors are scoped to the execution/log.
+Incremental continuity requires a stable source window and an exact text prefix.
+Rotation, a sliding/replaced window, or an older adapter without source identity
+returns `gap="snapshot_replaced"` and a fresh newest page instead of guessing overlap.
+Pages report observation time and truncation; these diagnostics are not sealed
+evidence. The experiment owner chooses when to inspect logs or use an optional
+native helper to summarize a bounded diagnostic question. Status never invokes a
+model; helper summaries retain evidence locations and do not establish solver state.
+Collection retains declared log outputs (TCAD includes `tcad_log`). Cached bodies
+are discarded only after all outputs and the result manifest are durably registered
+and state is `collected`; failed/interrupted collection retains them. Cleanup and
+late refreshes affect only that execution. Recovering its owning task keeps the
+original execution identity and cache. After collection, read retained output files.
+
 `execution_sync` refreshes solver state and bounded logs, including terminal
-executions. `execution_status` reads saved observations without contacting the
-adapter. Artifact transfer starts only with explicit `execution_collect`;
+executions. `execution_status` queries the adapter for submitted, running or
+cancelling executions; unsubmitted and confirmed terminal executions use control
+state. A query failure explicitly returns the error and last observation time.
+Inventory and UI reads remain cached, updated by daemon observations. Artifact transfer starts only with explicit `execution_collect`;
 `execution_outputs` publishes names after collection. One daemon-owned collection
 slot consumes a frozen total budget (600 seconds by default), with cleanup
 reserved inside it. A private control guard holds the locks until its single work
@@ -363,6 +413,19 @@ execution receives busy without being queued. Complete files and a stable output
 manifest survive interrupted collection and registration. Adapters implement
 transport only, optionally consuming the common `CollectionContext`; they do not
 own another scheduler. Query, file and idle defaults are 5, 120 and 30 seconds.
+
+SSH result collection freezes a file list and transfers a standard uncompressed tar
+stream in one connection per bounded manifest batch. The remote does not retain an
+extra archive. A fixed SHA-256 trailer verifies archive transport; local extraction
+checks the exact manifest, member type, size and per-file digest before replacing a
+cache file. Temporary local archives are removed on success or handled failure;
+verified files remain reusable after interruption. A forced process kill may leave
+an unaccepted temporary archive, removed by the next collection for that execution.
+No archive or full result file is buffered in memory. The local disk temporarily
+holds both the archive and extracted files. Archive transfer uses the collection
+and idle budgets; per-file budget applies during extraction. UI shows archive bytes
+received separately from files verified. Upgrading uses the existing joint local
+and remote runner install transaction; old runners fail with an upgrade diagnostic.
 
 Engineering failures use one bounded, redacted diagnostic projection. Root reads
 details by an instance/session-scoped `diagnostic_read` reference; Workers retain
@@ -656,6 +719,13 @@ management. `InstanceReadModel` follows exact instance bindings and frozen paren
 references. General and TCAD presentation providers map existing values into
 source-linked text, parameter tables and safe figures. Unknown fields, missing
 sources or presentation failures remain display gaps, never Worker rejections.
+Completed outputs prioritize their exact same-producer file manifest and published
+attachments ahead of wide input histories, including general Experiment reports.
+Agents do not supply an additional evidence field to display published attachments.
+Manifest display keeps file records, plugin metadata and original array positions,
+while omitting nonvisual calculation bodies; exact original manifests stay readable.
+PNG/JPEG previews serve the complete registered bytes; SVG remains downloadable.
+Presentation grants no review verdict or qualification and never reads draft paths.
 Browser read access, maintenance access and original approval tokens have separate
 scopes; pages do not change approval subjects, deadlines or decision authority.
 
@@ -814,3 +884,28 @@ Scientific semantic conflicts are resolved before repeated implementation search
 equivalent local engineering choices remain with the author. Four modules define
 complete task responsibilities, not a fixed DAG. Static implementation review does
 not establish production behavior, token savings or a deployed runtime.
+
+### Two profiles for general internal helpers
+
+`worker_helper` accepts `profile="inherit"` or `profile="lightweight"`; omission uses
+`helpers.default_profile` (inherit by default). Inherit uses the parent's frozen
+model and reasoning effort. Lightweight uses `helpers.profiles.lightweight`, shipped
+as gpt-6-luna / low, with the model name declared only in configuration. Both retain
+existing native permissions, workspace and allowed tools; neither is limited to
+summarization. Missing lightweight configuration is rejected without model fallback
+or automatic escalation. Fresh-context helpers receive their subtask and selected
+materials, without a new Root task, approval or delivery form.
+
+Explicit instance profile fields override global fields; an explicit empty profiles
+map disables separate profiles. Run creation freezes helper settings; recovery retains
+the original settings and cumulative allowances. Prepare freezes the selected profile
+and actual model in the existing participant record; dispatch and gateway use that same
+record. A mismatched model is rejected before child binding without failing the owner.
+Historical records without a helper profile use their parent's frozen profile only.
+Global max_calls/max_input_bytes remain aggregate limits, with optional smaller
+lightweight max_calls/max_input_bytes; max_active defaults to one. These are not hard
+native token or memory limits, and call counts do not establish actual token cost.
+
+The owner chooses direct diagnosis or delegation. Log access uses the control cache
+for its own execution; status never calls a model. Helpers return findings, evidence
+locations and uncertainty for owner integration, without mandatory per-poll summaries.

@@ -23,6 +23,8 @@ def test_author_reads_saved_diagnostic_detail(tmp_path, state, timed_out):
     if timed_out:
         assert short['source_diagnostic'] == original['source_diagnostic']
     assert 'log_tails' not in short['progress'] and 'log_excerpt' not in short
+    assert 'specific solver diagnostic' not in json.dumps(short)
+    assert short['progress']['log_details_omitted'] is True
     selected = page(tmp_path, short['details_path'], pointer='/progress/log_tails')
     assert json.loads(selected['fragment']) == original['progress']['log_tails']
     assert (tmp_path/short['log_relative_path']).read_text() == log.read_text()

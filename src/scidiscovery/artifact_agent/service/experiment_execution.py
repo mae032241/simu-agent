@@ -27,21 +27,11 @@ class ExperimentExecution:
     def task_lineage(self, run):
         return self.runs.task_lineage(run.run_id)
 
-    def cancel_owned(self, run):
-        if self.runs.compiled_operation(run).spec.executor.capability is None:
-            return
-        self._domain_active(run, cancel=True)
-        origin = self.task_origin(run)
-        for binding in self.runs.scheduler_bindings.list(instance=run.instance_id, namespace="execution",
-                name_prefix="experiment-" + origin + "-"):
-            if self._execution_owner(binding.object_id) == origin:
-                self._cancel(binding.object_id)
-
-    def _domain_active(self, run, *, cancel=False):
+    def _domain_active(self, run):
         if self.services_for is not None:
             self.worker_services.update(self.services_for(run.operation_id))
         lineage = {item.run_id for item in self.task_lineage(run)}
-        return any([service.experiment_activity(lineage, run.inputs, cancel=cancel)
+        return any([service.experiment_activity(lineage, run.inputs, cancel=False)
             for service in self.worker_services.values()
             if callable(getattr(service, "experiment_activity", None))])
 
@@ -53,7 +43,12 @@ class ExperimentExecution:
                 name_prefix="experiment-" + origin + "-"):
             if self._execution_owner(binding.object_id) != origin:
                 continue
-            if self.executions.status(binding.object_id).state not in {"succeeded", "failed", "cancelled", "collected", "abandoned"}:
+            status = self.executions.status(binding.object_id)
+            if status.external_run_id is not None and status.state in {"submitted", "running", "cancelling"}:
+                # Final delivery must not depend on the next background observation.
+                self.bridge.sync(execution_id=binding.object_id, diagnostic_scope="instance:" + run.instance_id)
+                status = self.executions.status(binding.object_id)
+            if status.state not in {"succeeded", "failed", "cancelled", "collected", "abandoned"}:
                 active = True
         if active:
             raise RunOutputError("Finish or cancel this experiment's outstanding execution and diagnostics before final delivery.",
@@ -211,6 +206,12 @@ class ExperimentExecution:
             raise ValueError("Execution configuration changed; the existing execution cannot be restarted.")
         implementation = self._implementation_record(context, current.payload_ref)
         private_outputs = implementation["metadata"].get("private_outputs", ())
+        if request.action == "logs":
+            if request.offset:
+                from .execution_log_reader import invalid
+                raise invalid("For logs use direction and its returned cursor; offset is only for collected output read.")
+            return self.executions.cached_log(execution_id, log_index=request.log_index,
+                direction=request.direction, cursor=request.cursor, max_bytes=self._io_settings(context).read_page_bytes)
         if request.action in {"read", "export"}:
             outputs = [item for item in self.executions.outputs(execution_id) if item.logical_name not in private_outputs]
             item = next((item for item in outputs if item.logical_name == request.output_name), None)
@@ -249,6 +250,11 @@ class ExperimentExecution:
                 self._bind_approval(run, request.name, execution_id)
                 return self._authorization_response(run, request.name, execution_id, self._approval_status(execution_id))
             self.bridge.sync(execution_id=execution_id, diagnostic_scope="instance:" + run.instance_id)
+        elif request.action == "status":
+            current_status = self.executions.status(execution_id)
+            if (current_status.external_run_id is not None
+                    and current_status.state in {"submitted", "running", "cancelling"}):
+                self.bridge.sync(execution_id=execution_id, diagnostic_scope="instance:" + run.instance_id)
         elif request.action == "cancel":
             self._cancel(execution_id)
         elif request.action == "collect":
@@ -260,6 +266,16 @@ class ExperimentExecution:
                 idle_timeout_seconds=self._io_settings(context).idle_timeout_seconds)
         status = self.executions.status(execution_id)
         result = {"name": request.name, "state": status.state}
+        observation = self.executions.observation(execution_id)
+        result["observation"] = {
+            "state": "refresh_failed" if observation.get("observation_error") else
+                "recorded" if observation.get("status_observed_at") else "unobserved",
+            "observed_at": observation.get("status_observed_at"),
+            "progress_observed_at": observation.get("progress_observed_at"),
+        }
+        if isinstance(observation.get("progress"), dict):
+            from ...plugin_runtime.experiment import progress_summary
+            result["progress"] = progress_summary(observation["progress"])
         if status.result_ref is not None:
             manifest = ExecutionResultManifest.model_validate_json(self.executions.artifacts.read(status.result_ref), strict=True)
             result["terminal_state"] = manifest.terminal_state
@@ -268,7 +284,9 @@ class ExperimentExecution:
                 if item.logical_name not in private_outputs]
             # A control observation is sealed without exposing control identities.
             if request.action != "status":
-                record = context.accept_evidence(raw=canonical_json(result), media_type="application/json",
+                # Operational progress is mutable; the scientific receipt stays stable.
+                sealed = {key: value for key, value in result.items() if key not in {"progress", "observation"}}
+                record = context.accept_evidence(raw=canonical_json(sealed), media_type="application/json",
                     derived_from=("research_objective", implementation["alias"]), trusted_parent_refs=(status.result_ref,),
                     metadata={"kind": "experiment_execution", "name": request.name, "implementation": implementation["alias"]})
                 result["reference"] = record["alias"]

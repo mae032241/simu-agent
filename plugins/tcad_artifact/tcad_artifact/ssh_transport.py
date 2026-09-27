@@ -22,6 +22,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from scidiscovery.artifact_agent.schema.execution import LocalFileDescriptor
 
 from .transport_logs import preserve_log
+from .collection_download import HEADER_LIMIT, unpack_results
 from scidiscovery.plugin_runtime.collection import CollectionContext, run_bounded
 from scidiscovery.plugin_runtime.workspace import atomic_json
 from scidiscovery.plugin_runtime.diagnostics import exception_facts
@@ -153,6 +154,52 @@ class SSHRemoteClient:
         if payload.get("size_bytes") != size or payload.get("sha256") != digest.hexdigest():
             raise RuntimeError("VM download differs from response descriptor")
 
+    def get_many_to(self, items, *, on_complete, on_progress):
+        """One standard tar transfer per bounded request; no per-file SSH calls."""
+        batch, records = [], []
+        size = len(_canonical({"schema_version": 1, "operation": "get_archive", "payload": {"files": []}})) + 1
+        base_size = size
+        for descriptor, path in items:
+            if descriptor.size_bytes > self.config.max_transfer_bytes:
+                raise ValueError("download exceeds configured transfer bound")
+            record = {"local_path": descriptor.local_path, "size_bytes": descriptor.size_bytes,
+                      "sha256": descriptor.sha256}
+            extra = len(_canonical(record)) + bool(records)
+            if size + extra > HEADER_LIMIT and batch:
+                self._get_many_batch(batch, records, on_complete, on_progress)
+                batch, records, size = [], [], base_size
+                extra = len(_canonical(record))
+            if size + extra > HEADER_LIMIT:
+                raise ValueError("download descriptor exceeds request header bound")
+            batch.append((descriptor, path))
+            records.append(record)
+            size += extra
+        if batch:
+            self._get_many_batch(batch, records, on_complete, on_progress)
+
+    def _get_many_batch(self, items, records, on_complete, on_progress):
+        # A standard uncompressed tar stream avoids remote archive disk usage.
+        # Account for all member headers, padding, manifest and final tar record.
+        archive_limit = len(_canonical(records)) + sum(x.size_bytes for x, _ in items) + 1024 * (len(items) + 1) + 10240
+        fd, temporary = tempfile.mkstemp(prefix=".results.", suffix=".tar.download", dir=items[0][1].parent)
+        os.close(fd)
+        temporary = Path(temporary)
+        previous_progress = self.download_progress
+        self.download_progress = on_progress
+        try:
+            response, _ = self._call("get_archive", {"files": records}, b"",
+                                     download_to=temporary, download_limit=archive_limit)
+            if _require_ok(response, "get_archive") != {"files": len(items)}:
+                raise RuntimeError("result archive response differs from request")
+            unpack_results(temporary, items, records, context=self.context, on_complete=on_complete)
+        except subprocess.CalledProcessError as error:
+            if b"unsupported remote runner operation" in (error.stderr or b""):
+                raise RemoteRunnerUpgradeRequired("Remote runner lacks archive downloads; reinstall local and remote runtime together") from error
+            raise
+        finally:
+            self.download_progress = previous_progress
+            temporary.unlink(missing_ok=True)
+
     def _call(
         self,
         operation: str,
@@ -192,6 +239,8 @@ class SSHRemoteClient:
         )
         if download_to is not None:
             header = bytearray()
+            archive_tail = bytearray()
+            archive_digest = hashlib.sha256() if operation == "get_archive" else None
             received = 0
             parsed = None
             last_report = 0.0
@@ -207,6 +256,12 @@ class SSHRemoteClient:
                             return
                         parsed = json.loads(header)
                         raw = body
+                    if archive_digest is not None:
+                        # Only the 72-byte checksum trailer is retained in memory.
+                        archive_tail.extend(raw)
+                        raw = bytes(archive_tail[:-72])
+                        del archive_tail[:-72]
+                        archive_digest.update(raw)
                     received += len(raw)
                     if received > download_limit:
                         raise RuntimeError("VM download exceeds inspection bound")
@@ -217,7 +272,7 @@ class SSHRemoteClient:
                         last_report = now
                 timeout = self.context.remaining_seconds() if self.context else self.config.operation_timeout_seconds
                 timeout_kind = "collection_total" if self.context else "operation_total"
-                if self.context:
+                if self.context and operation != "get_archive":
                     file_remaining = self.context.file_timeout_seconds - (time.monotonic() - started)
                     if file_remaining <= timeout:
                         timeout, timeout_kind = max(.001, file_remaining), "file_total"
@@ -236,6 +291,8 @@ class SSHRemoteClient:
                 raise subprocess.CalledProcessError(completed.returncode, command, stderr=completed.stderr)
             if parsed is None:
                 raise RuntimeError("VM download returned no header")
+            if archive_digest is not None and archive_tail != b"sha256:" + archive_digest.hexdigest().encode("ascii") + b"\n":
+                raise RuntimeError("result archive transport checksum differs")
             self.download_progress(received)
             return parsed, b""
         from contextlib import nullcontext
@@ -454,8 +511,18 @@ class SSHTCADTransport:
     def _collect(self, run_id: str, *, context=None) -> dict[str, Any]:
         if not re.fullmatch(r"run_[0-9a-f]{32}", run_id):
             raise ValueError("invalid TCAD run identity")
-        value = self._rpc("tcad_collect", {"run_id": run_id})
         output_directory = self.local_result_root / "runs" / run_id
+        if output_directory.is_symlink():
+            raise ValueError("collection cache must not contain symlinks")
+        output_directory.mkdir(parents=True, exist_ok=True)
+        # The control collection lock owns this execution's single writer. A
+        # forced process kill cannot run finally; discard only its private temps.
+        for stale in output_directory.glob(".*.download"):
+            if context: context.remaining_seconds()
+            stale.unlink()
+        if context:
+            context.report_progress({"phase": "inspect_manifest"})
+        value = self._rpc("tcad_collect", {"run_id": run_id})
         outputs: list[dict[str, Any]] = []
         seen: set[str] = set()
         completed_bytes = 0
@@ -464,6 +531,25 @@ class SSHTCADTransport:
             if context is not None:
                 context.report_progress({"completed_files": len(outputs), "completed_bytes": completed_bytes,
                     "total_files": len(value["outputs"]), "total_bytes": total_bytes, **extra})
+        pending = []
+        ordered = []
+        local_names = set()
+        def completed(descriptor, path, *, reused=False):
+            nonlocal completed_bytes
+            outputs.append({**descriptor.model_dump(mode="json"), "local_path": str(path)})
+            completed_bytes += descriptor.size_bytes
+            progress(phase="verify_cache" if reused else "extract_archive", current_file=None, current_file_bytes=0, reused=reused)
+
+        def matches(candidate, descriptor):
+            if not candidate.is_file() or candidate.stat().st_size != descriptor.size_bytes:
+                return False
+            digest = hashlib.sha256()
+            with candidate.open("rb") as stream:
+                for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                    if context: context.remaining_seconds()
+                    digest.update(chunk)
+            return digest.hexdigest() == descriptor.sha256
+
         for item in value["outputs"]:
             if context is not None:
                 context.remaining_seconds()
@@ -473,38 +559,39 @@ class SSHTCADTransport:
             seen.add(remote_descriptor.name)
             name = (remote_descriptor.name if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", remote_descriptor.name)
                 else "output_" + hashlib.sha256(remote_descriptor.name.encode()).hexdigest())
+            if name in local_names:
+                raise RuntimeError("remote result names map to the same cache file")
+            local_names.add(name)
             path = output_directory / name
             output_directory.mkdir(parents=True, exist_ok=True)
             if path.is_symlink() or output_directory.is_symlink():
                 raise ValueError("collection cache must not contain symlinks")
-            def matches(candidate):
-                if not candidate.is_file() or candidate.stat().st_size != remote_descriptor.size_bytes:
-                    return False
-                digest = hashlib.sha256()
-                with candidate.open("rb") as stream:
-                    for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-                        if context: context.remaining_seconds()
-                        digest.update(chunk)
-                return digest.hexdigest() == remote_descriptor.sha256
-            reused = matches(path)
-            if not reused:
+            ordered.append(remote_descriptor.name)
+            if matches(path, remote_descriptor):
+                completed(remote_descriptor, path, reused=True)
+            else:
+                pending.append((remote_descriptor, path))
+        progress(current_file=None, current_file_bytes=0)
+        batch_download = getattr(self.remote, "get_many_to", None)
+        if pending and callable(batch_download):
+            batch_download(pending, on_complete=completed,
+                on_progress=lambda count: progress(phase="download_archive", archive_bytes=count, current_file=None, current_file_bytes=0))
+        else:
+            for descriptor, path in pending:
+                if context: context.remaining_seconds()
                 temporary = path.with_name(path.name + ".download")
                 if temporary.is_symlink():
                     raise ValueError("collection temporary file must not be a symlink")
                 try:
-                    if isinstance(self.remote, SSHRemoteClient):
-                        self.remote.download_progress = lambda count: progress(current_file=name, current_file_bytes=count)
-                    self.remote.get_to(remote_descriptor.local_path, temporary, remote_descriptor.size_bytes)
-                    if not matches(temporary):
+                    self.remote.get_to(descriptor.local_path, temporary, descriptor.size_bytes)
+                    if not matches(temporary, descriptor):
                         raise RuntimeError("downloaded result differs from remote descriptor")
                     os.replace(temporary, path)
                 finally:
                     temporary.unlink(missing_ok=True)
-            outputs.append(
-                {**remote_descriptor.model_dump(mode="json"), "local_path": str(path)}
-            )
-            completed_bytes += remote_descriptor.size_bytes
-            progress(current_file=None, current_file_bytes=0, reused=reused)
+                completed(descriptor, path)
+        by_name = {item["name"]: item for item in outputs}
+        outputs = [by_name[name] for name in ordered]
         return {"outputs": outputs}
 
     def _rpc(self, tool: str, arguments: dict[str, Any]) -> dict[str, Any]:

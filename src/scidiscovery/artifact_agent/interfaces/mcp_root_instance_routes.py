@@ -195,7 +195,8 @@ class RootInstanceRoutes:
                 ("approval", binding.name, self.approvals.status(binding.object_id).status)
             )
         for binding in self.bindings.list(instance=instance_id, namespace="execution"):
-            if self._task_managed_execution(binding.object_id):
+            if (self._task_managed_execution(binding.object_id)
+                    and not self._execution_recoverable(binding.object_id)):
                 continue
             states.append(
                 ("execution", binding.name, self.executions.status(binding.object_id).state)

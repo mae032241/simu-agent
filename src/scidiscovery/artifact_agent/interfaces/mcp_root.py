@@ -99,6 +99,12 @@ class DiagnosticReadInput(RootToolInput):
     section: Literal["summary", "traceback", "stdout", "stderr"] = "summary"
 
 
+class ExecutionLogsInput(NamedInput):
+    log_index: int = Field(default=0, ge=0)
+    direction: Literal["tail", "before", "after"] = "tail"
+    cursor: str | None = Field(default=None, max_length=2048, description="Pass the returned before/after cursor unchanged; tail requires no cursor.")
+
+
 class ExecutionCollectInput(NamedInput):
     total_seconds: float = Field(default=COLLECTION_SECONDS, gt=0, allow_inf_nan=False,
         description="Total collection attempt budget, including transfer, registration and cleanup. A running attempt is never extended by a duplicate call.")
@@ -297,11 +303,12 @@ ROOT_TOOLS = (
     RootTool("execution_capability_bind", "Freeze one capability selected through a compiled Effect under a semantic artifact name.", ExecutionCapabilityBindInput, surface="execution"),
     RootTool("execution_abandon", "Abandon one named unsubmitted execution.", NamedInput, surface="execution"),
     RootTool("execution_cancel", "Request cancellation of one named submitted execution.", NamedInput, surface="execution"),
-    RootTool("execution_list", "List named executions in this scheduler instance.", ExecutionListInput, surface="execution"),
-    RootTool("execution_status", "Read one named execution state. Summary gives a bounded deduplicated log index and exact error fields; view=detail reads the complete existing response.", NamedReadInput, surface="execution"),
+    RootTool("execution_list", "List standalone executions and recoverable executions whose task lineage has failed.", ExecutionListInput, surface="execution"),
+    RootTool("execution_status", "Refresh remote state and bounded progress for one submitted execution; never submit, cancel or collect. Unsubmitted and confirmed terminal executions read control state directly. Query failures retain the last observation with an explicit error. Status returns timing and log metadata without log text; execution_logs pages the saved cache without querying the remote.", NamedReadInput, surface="execution"),
+    RootTool("execution_logs", "Read one bounded page of this execution's cached diagnostic log; never query the remote, submit or collect. Default tail reads the newest page; before reads earlier pages, after reads new text. Pass the matching returned cursor unchanged. No new text returns empty text. A replaced/rotated snapshot that cannot prove continuity returns gap=snapshot_replaced with the newest page and fresh cursors. Cursors belong to this exact execution/log. Select 0 <= log_index < status log_count. After collection use execution_outputs for retained files.", ExecutionLogsInput, surface="execution"),
     RootTool("execution_outputs", "Bind and list logical outputs and the exact result_artifact_name from this execution; null means not yet bindable. Bind that result before creating analysis; every page preserves the same identity.", NamedPageInput, surface="execution"),
     RootTool("execution_start", "Submit one named execution after its exact local review authorizes it.", NamedInput, surface="execution"),
-    RootTool("execution_sync", "Refresh bounded solver status and logs; never collect artifacts.", NamedReadInput, surface="execution"),
+    RootTool("execution_sync", "Refresh bounded solver status and logs, including failed-task recovery; never submit or collect artifacts.", NamedReadInput, surface="execution"),
     RootTool("execution_collect", "Start or resume terminal artifact collection; returns immediately. Other active collection returns busy without queuing.", ExecutionCollectInput, surface="execution"),
 )
 
@@ -382,14 +389,23 @@ class RootToolFacade(
         )
 
     def _task_managed_execution(self, execution_id: str) -> bool:
-        references = self.executions.record_references(execution_id)
-        return bool(self.executions.artifacts.catalog(references["payload_ref"]).labels.get("experiment_task"))
+        return self._task_execution_owner(execution_id) is not None
 
-    def _resolve(self, namespace: str, name: str) -> str:
+    def _task_execution_owner(self, execution_id: str) -> str | None:
+        request = self.executions.request_artifact_id(execution_id)
+        return self.executions.artifacts.get_by_id(request).labels.get("experiment_run")
+
+    def _execution_recoverable(self, execution_id: str) -> bool:
+        owner = self._task_execution_owner(execution_id)
+        return owner is not None and self.runs.task_recovery_available(
+            owner, instance_id=self._instance_id())
+
+    def _resolve(self, namespace: str, name: str, *, allow_task_recovery: bool = False) -> str:
         object_id = self.bindings.resolve(
             instance=self._instance_id(), namespace=namespace, name=name
         )
-        if namespace == "execution" and self._task_managed_execution(object_id):
+        if (namespace == "execution" and self._task_managed_execution(object_id)
+                and not (allow_task_recovery and self._execution_recoverable(object_id))):
             raise RootToolError("Execution is managed within its scientific task; read the task's scientific materials.")
         return object_id
 
@@ -417,9 +433,9 @@ class RootToolFacade(
     def _is_exact_reviewer_output(self, reference: Any, **values: Any) -> bool:
         return self.runs.is_exact_reviewer_output(reference, **values)
 
-    def _binding(self, namespace: str, name: str) -> SchedulerBinding:
+    def _binding(self, namespace: str, name: str, *, allow_task_recovery: bool = False) -> SchedulerBinding:
         if namespace == "execution":
-            self._resolve(namespace, name)
+            self._resolve(namespace, name, allow_task_recovery=allow_task_recovery)
         return self.bindings.get_binding(
             instance=self._instance_id(), namespace=namespace, name=name
         )

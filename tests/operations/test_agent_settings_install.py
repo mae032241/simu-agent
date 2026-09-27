@@ -21,6 +21,7 @@ def test_settings_first_create_upgrade_preserve_and_symlink_rejection(tmp_path):
     path = config / "agent-settings.json"
     assert json.loads(path.read_text())["defaults"]["narrative_language"] == "zh-CN"
     assert json.loads(path.read_text())["defaults"]["model"] == "gpt-6-sol"
+    assert json.loads(path.read_text())["helpers"]["profiles"]["lightweight"]["model"] == "gpt-6-luna"
     assert path.stat().st_mode & 0o777 == 0o640
     path.write_bytes((ROOT / "deploy/agent_settings_previous_default.json").read_bytes())
     assert run().returncode == 0

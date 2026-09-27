@@ -263,7 +263,7 @@ class InstanceReadModel:
                     priority_refs, presentation_controls = self._run_presentation_refs(run)
             elif binding.namespace == "artifact":
                 focus = roots[:1]
-                if focus and focus[0].schema_id == "scidiscovery.layered-diagnosis.v1":
+                if focus:
                     priority_refs, presentation_controls = self._focused_presentation_refs(focus)
             elif binding.namespace == "approval":
                 # The request and decision describe this approval; ancestor
@@ -327,8 +327,6 @@ class InstanceReadModel:
         """Prioritize only the selected Run's exact published evidence family."""
         output = self.artifacts.catalog(run.output_ref)
         operation = (run.operation_id, run.operation_version, run.operation_digest)
-        if output.schema_id != "scidiscovery.layered-diagnosis.v1":
-            return (run.output_ref,), {}
         manifests, scan_complete = [], len(output.parent_refs) <= 100
         for manifest_ref in output.parent_refs[:100]:
             if manifest_ref.schema_id != "scidiscovery.tool-evidence-manifest.v1":
@@ -353,11 +351,11 @@ class InstanceReadModel:
             return (run.output_ref,), controls
         manifest_ref, manifest = manifests[0]
         result = [run.output_ref, manifest_ref]
-        result.extend(self._cited_presentation_image_refs(output, manifest))
+        result.extend(self._presentation_file_refs(output, manifest))
         return tuple(dict.fromkeys(result)), controls
 
-    def _cited_presentation_image_refs(self, report, manifest):
-        """Resolve only uniquely cited runtime images through one exact manifest."""
+    def _presentation_file_refs(self, report, manifest):
+        """Resolve published attachments and cited images through one exact manifest."""
         if (report.content_encoding != "identity" or manifest.content_encoding != "identity"
                 or report.size_bytes > MAX_SOURCE_BYTES or manifest.size_bytes > MAX_SOURCE_BYTES
                 or len(manifest.parent_refs) > 100):
@@ -385,7 +383,12 @@ class InstanceReadModel:
         for record in records:
             if isinstance(record, dict) and isinstance(record.get("alias"), str):
                 by_alias.setdefault(record["alias"], []).append(record)
-        result = []
+        # Attachments are already an explicit Worker publication. They do not
+        # require an additional schema-specific evidence citation to be visible.
+        for alias, matches in by_alias.items():
+            if len(matches) == 1 and matches[0].get("output_port") == "attachments":
+                citations[alias] = [None]
+        result, downloads = [], []
         for alias, references in citations.items():
             matches = by_alias.get(alias, ())
             if len(references) != 1 or len(matches) != 1:
@@ -397,9 +400,10 @@ class InstanceReadModel:
             binding = bindings.get(alias)
             parent_matches = [parent for parent in manifest.parent_refs
                               if parent.model_dump(mode="json") == reference]
-            if (media not in {"image/png", "image/jpeg"} or not isinstance(reference, dict)
+            port = "attachments" if record.get("output_port") == "attachments" else "tool_evidence"
+            if ((port != "attachments" and media not in {"image/png", "image/jpeg"}) or not isinstance(reference, dict)
                     or len(parent_matches) != 1 or not isinstance(binding, dict)
-                    or binding.get("port_name") != "tool_evidence"
+                    or binding.get("port_name") != port
                     or binding.get("artifact_ref") != reference):
                 continue
             try:
@@ -409,8 +413,10 @@ class InstanceReadModel:
             if (image.media_type.split(";", 1)[0].lower() != media
                     or image.size_bytes != record.get("size_bytes")):
                 continue
-            result.append(parent_matches[0])
-        return tuple(result)
+            if port == "attachments" and image.labels.get("operation_output_port") != "attachments":
+                continue
+            (result if media in {"image/png", "image/jpeg"} else downloads).append(parent_matches[0])
+        return tuple((*result, *downloads))
 
     def _focused_presentation_refs(self, subject_refs):
         """Prioritize exact focused reports with uniquely bound evidence."""
@@ -420,8 +426,6 @@ class InstanceReadModel:
             try:
                 report = self.artifacts.catalog(subject_ref)
             except _READ_ERRORS:
-                continue
-            if report.schema_id != "scidiscovery.layered-diagnosis.v1":
                 continue
             operation = tuple(report.labels.get(key) for key in (
                 "operation_id", "operation_version", "operation_digest"))
@@ -454,7 +458,7 @@ class InstanceReadModel:
                 continue
             manifest_ref, manifest = manifests[0]
             result.append(manifest_ref)
-            result.extend(self._cited_presentation_image_refs(report, manifest))
+            result.extend(self._presentation_file_refs(report, manifest))
         return tuple(dict.fromkeys(result)), controls
 
     def _family_views(self, instance_id, artifact_id):
@@ -715,9 +719,19 @@ class InstanceReadModel:
                 value = self.executions.status(binding.object_id)
                 result.update(state=value.state, executor=value.executor)
                 collection = self._collection(binding.object_id)
+                observation = self.executions.observation(binding.object_id)
+                from ...plugin_runtime.experiment import progress_summary
+                result["execution_progress"] = {
+                    "observed_at": observation.get("status_observed_at"),
+                    "progress_observed_at": observation.get("progress_observed_at"),
+                    "refresh_failed": bool(observation.get("observation_error")),
+                    "progress": progress_summary(observation.get("progress", {}), include_log_text=True),
+                }
+                result["collection_progress"] = {key: collection[key] for key in
+                    ("completed_bytes", "total_bytes", "completed_files", "total_files", "phase", "archive_bytes") if key in collection}
                 result["collection_status"] = collection.get("state", "unknown")
                 result["collection_updated_at"] = collection.get("updated_at")
-                result["source_time"] = collection.get("updated_at")
+                result["source_time"] = collection.get("updated_at") or observation.get("status_observed_at")
                 if value.result_ref:
                     result["outputs"] = [self._ref(instance_id, value.result_ref, "/result_ref")]
             result["inputs"] = [self._ref(instance_id, ref, pointer) for ref, pointer in roots]
@@ -1031,6 +1045,13 @@ class InstanceReadModel:
                         else json.loads(self.artifacts.read(envelope.ref), parse_constant=_reject_constant))
         except (ValueError, UnicodeError, RecursionError, *_READ_ERRORS):
             return view
+        if envelope.schema_id == "scidiscovery.tool-evidence-manifest.v1":
+            from .attachment_presentation import presentation_file_manifest
+            compact = presentation_file_manifest(original)
+            if compact is not None and json_size(compact) <= MAX_PAYLOAD_BYTES:
+                view.update(payload_state="available", payload=compact, display_projection=True)
+                view["gaps"] = [item for item in view["gaps"] if item["code"] != "payload_too_large"]
+                return view
         selected = {}
         used = 0
         for pattern in paths:
