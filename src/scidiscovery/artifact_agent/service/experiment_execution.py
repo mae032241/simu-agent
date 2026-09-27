@@ -33,9 +33,7 @@ class ExperimentExecution:
         origin = self.task_origin(run)
         for binding in self.runs.scheduler_bindings.list(instance=run.instance_id, namespace="execution",
                 name_prefix="experiment-" + origin + "-"):
-            request = self.executions.request(binding.object_id)
-            envelope = self.executions.artifacts.catalog(request.payload_ref)
-            if envelope.labels.get("experiment_task") == origin:
+            if self._execution_owner(binding.object_id) == origin:
                 self._cancel(binding.object_id)
 
     def _domain_active(self, run, *, cancel=False):
@@ -52,8 +50,7 @@ class ExperimentExecution:
         active = self._domain_active(run)
         for binding in self.runs.scheduler_bindings.list(instance=run.instance_id, namespace="execution",
                 name_prefix="experiment-" + origin + "-"):
-            request = self.executions.request(binding.object_id)
-            if self.executions.artifacts.catalog(request.payload_ref).labels.get("experiment_task") != origin:
+            if self._execution_owner(binding.object_id) != origin:
                 continue
             if self.executions.status(binding.object_id).state not in {"succeeded", "failed", "cancelled", "collected", "abandoned"}:
                 active = True
@@ -62,16 +59,23 @@ class ExperimentExecution:
                 details=({"path":"$.payload", "message":"Outstanding work has not reached a real terminal state.",
                     "type":"value_error", "rule_id":"experiment.sealed_material"},))
 
+    def _execution_owner(self, execution_id):
+        envelope = self.executions.artifacts.get_by_id(self.executions.request_artifact_id(execution_id))
+        return envelope.labels.get("experiment_run")
+
     def implementation(self, context, alias):
         from ..schema.refs import ArtifactRef
-        record = next((item for item in self.runs.tool_evidence(context.run_id) if item["alias"] == alias), None)
+        from .sealed_materials import material_error
+        record = self.runs.sealed_material_record(self.runs.status(context.run_id), alias)
         if record is None or record.get("metadata", {}).get("kind") != "experiment_implementation":
-            raise ValueError("Choose an implementation sealed by the configured experiment tool.")
+            raise material_error("experiment_implementation_unavailable",
+                "Choose a sealed implementation created in or explicitly bound to this task.")
         material = ArtifactRef.model_validate(record["artifact_ref"])
         packages = [ref for ref in self.executions.artifacts.verify(material).parent_refs
             if self.executions.artifacts.verify(ref).kind == "experiment_execution_package"]
         if len(packages) != 1:
-            raise ValueError("The sealed implementation has no unique controlled execution package.")
+            raise material_error("experiment_implementation_package_invalid",
+                "The sealed implementation has no unique controlled execution package.")
         return packages[0]
 
     def _contract(self, context):
@@ -109,11 +113,15 @@ class ExperimentExecution:
             derived_from=sources, trusted_parent_refs=(private,), metadata={"kind": "experiment_implementation", "private_outputs":list(private_outputs)})
 
     def _implementation_record(self, context, payload_ref):
-        records = [item for item in self.runs.tool_evidence(context.run_id)
+        records = [item for item in self.runs.available_material_records(self.runs.status(context.run_id))
             if item.get("metadata", {}).get("kind") == "experiment_implementation"
             and self.implementation(context, item["alias"]) == payload_ref]
-        if len(records) != 1:
-            raise ValueError("Execution needs its exact sealed implementation in this task.")
+        if not records:
+            from .sealed_materials import material_error
+            raise material_error("experiment_implementation_unavailable",
+                "Bind the exact sealed implementation used by this execution.")
+        if len({canonical_json(item["artifact_ref"]) for item in records}) != 1:
+            raise ValueError("Execution has conflicting implementation receipts.")
         return records[0]
 
     def _cancel(self, execution_id):
@@ -324,6 +332,16 @@ class _TaskExperimentTools:
         self.__scope(context)
         ref = self.__coordinator.implementation(context, alias)
         return SealedImplementation(ref, self.__coordinator.executions.artifacts.read(ref))
+
+    def source_alias(self, context, ref):
+        from .sealed_materials import material_error
+        run = self.__scope(context)
+        alias = self.__coordinator.runs.material_source_aliases(run).get(ref)
+        if alias is None:
+            raise material_error("experiment_source_not_bound",
+                "Bind the exact original scientific file required by this sealed implementation.",
+                path="$.implementation")
+        return alias
 
     def diagnostic_context(self, context, *, service_name):
         from dataclasses import replace

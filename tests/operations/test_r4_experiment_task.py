@@ -133,7 +133,7 @@ def _real_experiment(tmp_path, monkeypatch, solver="sprocess", before_submit=Non
         output.write_bytes(b"observed fixture\n")
         descriptor = LocalFileDescriptor(name="observation", local_path=str(output), media_type="text/plain",
             size_bytes=output.stat().st_size, sha256=hashlib.sha256(output.read_bytes()).hexdigest())
-        runtime.executions.ingest_result(execution_id=execution_id, external_run_id="external_fixture",
+        runtime.executions.ingest_result(execution_id=execution_id, external_run_id=runtime.executions.status(execution_id).external_run_id,
             outputs=(descriptor, descriptor.model_copy(update={"name":"binary", "media_type":"application/octet-stream"}),
                 descriptor.model_copy(update={"name":"tcad_manifest"})))
     coordinator = runtime.runs.experiment_executions = ExperimentExecution(runs=runtime.runs, executions=runtime.executions, bridge=bridge,
@@ -197,6 +197,8 @@ def _real_experiment(tmp_path, monkeypatch, solver="sprocess", before_submit=Non
     request = {"name":"diagnostic", "implementation":prepared["implementation"], "mode":"preflight"}
     first_debug = worker.call_tool("worker_experiment_debug", request)
     assert first_debug["state"] == "succeeded"
+    observed_debug = worker.call_tool("worker_experiment_debug", {"action":"status", "name":"diagnostic"})
+    assert observed_debug["state"] == "collected" and observed_debug["submission"] == "submitted"
     assert worker.call_tool("worker_experiment_debug", request) == first_debug
     # Reopen with a fresh tool host/service: only the original sealed implementation
     # and persistent receipt are available; there is no legacy author result file.

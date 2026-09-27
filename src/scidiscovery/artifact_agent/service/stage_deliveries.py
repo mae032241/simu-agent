@@ -30,12 +30,18 @@ _PAGE_BYTES = 32 * 1024
 
 def _content(runs, run, record):
     # Read the sealed CAS original, with its existing integrity verification.
-    body = json.loads(runs.read_tool_evidence(run, record["alias"]))
+    from ..schema.refs import ArtifactRef
+    body = json.loads(runs.artifacts.read(ArtifactRef.model_validate(record["artifact_ref"])))
+    aliases = runs.material_source_aliases(run)
+    def current(alias):
+        return aliases.get(record["source_refs"].get(alias))
     kind = record["metadata"]["kind"]
     if kind == "experiment_stage":
         from ...general_science_experiment_task import StageSubmission
+        body["materials"] = [current(alias) for alias in body.get("materials", ())]
         return {key: body[key] for key in StageSubmission.model_fields if key in body}
     if kind == "experiment_implementation":
+        body["scientific_files"] = {name: current(alias) for name, alias in body.get("scientific_files", {}).items()}
         return {key: body[key] for key in ("implementation", "scientific_files") if key in body}
     # Adapter observations contain facts. Debug's workspace log path is not a
     # scientific reference and is deliberately absent from this projection.
@@ -53,7 +59,7 @@ def read_stage_deliveries(runs, run, *, instance_id, **arguments):
         "offset": query.stage_offset or 0, "next_offset": None, "total": 0}
     if run.operation_id != "science.experiment.v1":
         return {**result, "availability": "not_applicable"}
-    records = [record for record in runs.tool_evidence(run.run_id)
+    records = [record for record in runs.available_material_records(run)
         if record.get("metadata", {}).get("kind") in _KINDS]
     selected = set()
     if run.state == "completed" and run.output_ref is not None:
@@ -62,6 +68,7 @@ def read_stage_deliveries(runs, run, *, instance_id, **arguments):
         result["adopted_references"] = payload.get("adopted_stages", [])
         selected = set(result["adopted_references"])
     inputs = {item.source_name: item.artifact_name for item in run.inputs}
+    aliases = runs.material_source_aliases(run)
     sealed = {record["alias"] for record in records}
     versions, entries = {}, []
     for record in records:
@@ -70,13 +77,17 @@ def read_stage_deliveries(runs, run, *, instance_id, **arguments):
         stage = metadata.get("stage") if kind == "experiment_stage" else _KINDS[kind]
         key = (kind, stage)
         versions[key] = versions.get(key, 0) + 1
+        derived = [aliases.get(record["source_refs"].get(alias)) for alias in metadata.get("derived_from", [])]
         entries.append((record, {"reference": record["alias"], "stage": stage,
             "version": versions[key], "delivery_kind": "author_conclusion" if kind == "experiment_stage" else (
                 "scientific_material" if kind == "experiment_implementation" else "executor_observation"),
             "adopted": record["alias"] in selected if result["final_selection"] == "sealed" else None,
+            "origin": "reused" if record["producer_run_id"] != run.run_id else "created_here",
+            **({"source_artifact_name": inputs[record["alias"]]} if record["alias"] in inputs else {}),
+            "unavailable_materials": derived.count(None),
             "materials": [{"reference": alias, "source_kind": "sealed_material" if alias in sealed else "input",
                 **({"artifact_name": inputs[alias]} if alias in inputs else {})}
-                for alias in metadata.get("derived_from", [])], "size_bytes": record["size_bytes"]}))
+                for alias in derived if alias is not None], "size_bytes": record["size_bytes"]}))
     result.update(availability="available", total=len(entries))
     if query.stage_reference is not None:
         pair = next((pair for pair in entries if pair[0]["alias"] == query.stage_reference), None)

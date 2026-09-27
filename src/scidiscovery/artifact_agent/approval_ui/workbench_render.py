@@ -372,6 +372,10 @@ def _sealed_stages(node: dict, instance_id: str) -> str:
     for item in page.get("items", []):
         body += "<article class='stage-delivery'><h3>" + _text(phases.get(item.get("stage"), item.get("stage")))
         body += " · " + _text(kinds.get(item.get("delivery_kind"), item.get("delivery_kind"))) + " · v" + str(item["version"]) + "</h3>"
+        if item.get("origin") == "reused":
+            body += "<p>复用已有封存材料，保留原始来源。</p>"
+        if item.get("unavailable_materials"):
+            body += "<p>部分原始依据未绑定到当前任务；请查看原材料的来源记录。</p>"
         if item.get("adopted") is not None:
             body += "<p>" + ("最终采用" if item["adopted"] else "未被最终报告采用") + "</p>"
         for key, label in (("conclusion", "结论"), ("remaining_question", "未决问题"), ("summary", "执行摘要")):

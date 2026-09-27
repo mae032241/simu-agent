@@ -176,6 +176,18 @@ class ToolAttemptLimit(DiagnosticError):
 
 
 class ToolEvidenceMixin(ReferenceAccessMixin):
+    def sealed_material_record(self, value, alias):
+        from .sealed_materials import resolve_material
+        return resolve_material(self, value, alias)
+
+    def available_material_records(self, value):
+        from .sealed_materials import available_materials
+        return available_materials(self, value)
+
+    def material_source_aliases(self, value):
+        from .sealed_materials import source_aliases
+        return source_aliases(self, value)
+
     def publish_attachments(self, run_id, request, *, workspace):
         from .attachments import publish_attachments
         return publish_attachments(self, run_id, request, workspace=workspace)

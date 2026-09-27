@@ -7,6 +7,17 @@
 配置非法时返回 `tcad_transport_configuration_invalid`，要求管理员修复后再重试同一科学动作，
 私有诊断保留在控制层存储中。
 
+远端 runner 也必须支持执行策略查询，并配置 `agent_execution_policy`、`runner` 和 `debug`。
+仅重装本地服务不会升级远端协议；旧 runner 返回 `tcad_runner_upgrade_required`。
+诊断响应不确定时，调用 `worker_experiment_debug(action="status", name=...)`，只读取持久预留及
+远端状态，不提交、不收集、不重置预算。诊断任务与正式执行列表分别管理。
+
+选择内置 SSH command transport 后，`deploy/reinstall.sh reinstall` 会同时部署远端 runner：
+暂存候选、验证 capability 与策略查询，在启动本地服务前启用远端版本，并保留远端备份供本地安装
+失败时回滚。默认保留远端配置；需要替换时用 `SCID_REMOTE_RUNNER_CONFIG` 显式提供管理员配置。
+缺少策略区块会令部署失败，不会自动把示例配置当作执行授权。本地 socket 和其他外部维护的
+command executor 不触发内置 SSH 部署。
+
 `tcad_control` 是已准备 TCAD 作业的执行适配器，只提供 capability discovery、
 policy discovery、submission lookup、submit、status、cancel、inspection、collect 操作。lookup 按冻结提交摘要权威查回，
 submit 对同一描述符幂等；查询不可用时不得盲目重提。它只管理运行目录和后台进程状态；Artifact、Run、审批、执行

@@ -520,6 +520,8 @@ class SSHTCADTransport:
         if response.get("id") != request_id:
             raise RuntimeError("remote TCAD response identity differs")
         if "error" in response:
+            if tool == "tcad_execution_policy" and response["error"].get("message") == "unknown runner tool":
+                raise RemoteRunnerUpgradeRequired("Remote runner does not support execution policy discovery")
             raise RuntimeError(str(response["error"].get("message", "remote TCAD call failed")))
         try:
             value = response["result"]["structuredContent"]
@@ -634,6 +636,10 @@ class SSHTransportConfigurationError(ValueError):
     """Local configuration failure, before any remote operation is attempted."""
 
 
+class RemoteRunnerUpgradeRequired(RuntimeError):
+    """The deployed remote protocol predates mandatory execution policy discovery."""
+
+
 def read_transport_config(path: Path) -> SSHTCADTransportConfig:
     try:
         metadata = os.lstat(path)
@@ -682,6 +688,8 @@ def main(argv: list[str] | None = None) -> int:
         }
         if isinstance(error, SSHTransportConfigurationError):
             response["error_code"] = "tcad_transport_configuration_invalid"
+        elif isinstance(error, RemoteRunnerUpgradeRequired):
+            response["error_code"] = "tcad_runner_upgrade_required"
     sys.stdout.buffer.write(_canonical(response))
     return 0
 

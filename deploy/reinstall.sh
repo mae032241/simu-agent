@@ -11,6 +11,7 @@ readonly PLATFORM="${SCID_PLATFORM:-codex}"
 readonly WORKER_BACKEND="${SCID_WORKER_BACKEND:-local}"
 readonly PLUGINS="${SCID_PLUGINS:-}"
 readonly COMMAND_CONFIG="${SCID_TCAD_COMMAND_CONFIG:-}"
+readonly REMOTE_RUNNER_CONFIG="${SCID_REMOTE_RUNNER_CONFIG:-}"
 readonly INSTALL_ROOT="${SCID_INSTALL_ROOT:-/opt/scidiscovery}"
 readonly STATE_ROOT="${SCID_STATE_ROOT:-/var/lib/scidiscovery}"
 readonly TCAD_STATE_ROOT_VALUE="${TCAD_STATE_ROOT:-${STATE_ROOT}/tcad}"
@@ -45,6 +46,10 @@ if [[ -n "$COMMAND_CONFIG" ]]; then
     [[ -f "$COMMAND_CONFIG" && ! -L "$COMMAND_CONFIG" ]] || \
         die "TCAD command adapter config not found: ${COMMAND_CONFIG}"
 fi
+if [[ -n "$REMOTE_RUNNER_CONFIG" ]]; then
+    [[ -f "$REMOTE_RUNNER_CONFIG" && ! -L "$REMOTE_RUNNER_CONFIG" ]] || \
+        die "remote runner configuration must be a regular file"
+fi
 if [[ "$MODE" != "--dry-run" ]]; then
     [[ "$(id -u)" -ne 0 ]] || \
         die "run this wrapper as the service user; it invokes sudo itself"
@@ -78,6 +83,9 @@ declare -a INSTALL_ENV=(
 )
 if [[ -n "$COMMAND_CONFIG" ]]; then
     INSTALL_ENV+=("SCID_TCAD_COMMAND_CONFIG=${COMMAND_CONFIG}")
+fi
+if [[ -n "$REMOTE_RUNNER_CONFIG" ]]; then
+    INSTALL_ENV+=("SCID_REMOTE_RUNNER_CONFIG=${REMOTE_RUNNER_CONFIG}")
 fi
 if [[ -n "$CODEX_SKILL_ROOT" ]]; then
     INSTALL_ENV+=("SCID_CODEX_SKILL_ROOT=${CODEX_SKILL_ROOT}")

@@ -47,13 +47,13 @@ class CommandAdapterConfig(BaseModel):
         return value
 
 
-def validate_command_configuration(config: CommandAdapterConfig) -> None:
-    """Check our bundled transport locally; arbitrary external executors own their config."""
+def bundled_ssh_configuration(config: CommandAdapterConfig) -> Path | None:
+    """Resolve only the transport owned by this plugin, never an arbitrary executor."""
     arguments = config.arguments
     if arguments[:2] == ("-m", "tcad_artifact.ssh_transport"):
         arguments = arguments[2:]
     elif Path(config.executable).name != "scidiscovery-tcad-transport":
-        return
+        return None
     if len(arguments) == 2 and arguments[0] == "--config":
         path = arguments[1]
     elif len(arguments) == 1 and arguments[0].startswith("--config="):
@@ -62,8 +62,16 @@ def validate_command_configuration(config: CommandAdapterConfig) -> None:
         raise ValueError("bundled TCAD transport requires one --config argument")
     if not path or not Path(path).is_absolute():
         raise ValueError("bundled TCAD transport configuration path must be absolute")
+    return Path(path)
+
+
+def validate_command_configuration(config: CommandAdapterConfig) -> None:
+    """Check our bundled transport locally; arbitrary external executors own their config."""
+    path = bundled_ssh_configuration(config)
+    if path is None:
+        return
     from .ssh_transport import read_transport_config
-    read_transport_config(Path(path))
+    read_transport_config(path)
 
 
 class CommandTCADExecutorAdapter:
@@ -344,14 +352,23 @@ class CommandTCADExecutorAdapter:
         if response.get("operation") != operation:
             raise RuntimeError("TCAD transport response operation differs")
         if response.get("ok") is not True or not isinstance(response.get("payload"), dict):
-            if response.get("error_code") == "tcad_transport_configuration_invalid":
+            safe_messages = {
+                "tcad_transport_configuration_invalid": (
+                    "TCAD execution is blocked by invalid local transport configuration before remote contact. "
+                    "Ask the administrator to repair the service configuration, then retry the same action. "
+                    "Do not change scientific inputs or repeat this request before repair."),
+                "tcad_runner_upgrade_required": (
+                    "The remote TCAD runner does not support execution policy discovery. "
+                    "Ask the administrator to upgrade the remote runner and validate its policy configuration. "
+                    "This policy query did not submit a job. Do not retry execution before repair."),
+            }
+            code = response.get("error_code")
+            if isinstance(code, str) and code in safe_messages:
                 # Reconstruct a declared safe diagnostic; never trust wire messages,
                 # configuration values, paths or arbitrary wire diagnostic fields.
-                message = ("TCAD execution is blocked by invalid local transport configuration before remote contact. "
-                    "Ask the administrator to repair the service configuration, then retry the same action. "
-                    "Do not change scientific inputs or repeat this request before repair.")
+                message = safe_messages[code]
                 error = DiagnosticError(message, details=(contract_diagnostic(
-                    "tcad_transport_configuration_invalid", phase="tool_execution",
+                    code, phase="tool_execution",
                     affected_action="tool_call", message=message, repairable=False),))
             else:
                 error = RuntimeError(str(response.get("error", "TCAD transport rejected operation")))
@@ -441,4 +458,4 @@ def _adapter_capability(value: SolverCapabilitySnapshot) -> AdapterCapability:
     )
 
 
-__all__ = ["CommandAdapterConfig", "CommandTCADExecutorAdapter", "validate_command_configuration"]
+__all__ = ["CommandAdapterConfig", "CommandTCADExecutorAdapter", "validate_command_configuration", "bundled_ssh_configuration"]

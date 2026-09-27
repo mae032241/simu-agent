@@ -84,7 +84,7 @@ def prepare(request, context):
 
 class DebugInput(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
-    action: Literal["run", "cancel"] = "run"
+    action: Literal["run", "status", "cancel"] = "run"
     implementation: str | None = Field(default=None, max_length=128)
     name: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
     mode: Literal["preflight", "smoke", "initialization"] = "preflight"
@@ -96,6 +96,8 @@ def debug(request, context):
     from scidiscovery.plugin_runtime.workspace import write_control_workspace_file
     execution: ExperimentTools = context.require_service("experiment.execution")
     service = context.require_service("tcad.development_debug")
+    if request.action == "status":
+        return service.status(context, run_name=request.name)
     if request.action == "cancel":
         active = execution.cancel_diagnostics(context, service_name="tcad.development_debug", name=request.name)
         return {"name":request.name, "state":"cancelling" if active else "inactive"}
@@ -104,13 +106,13 @@ def debug(request, context):
     sealed = execution.read_implementation(context, request.implementation)
     package_ref = sealed.artifact_ref
     package = ExecutionPackage.model_validate_json(sealed.content, strict=True)
-    scientific = json.loads(context.read_evidence(request.implementation))
-    aliases = scientific["scientific_files"]
+    aliases = {item.semantic_name: execution.source_alias(context, item.artifact_ref)
+               for item in package.resolved_inputs}
     context.state.update(experiment_project=canonical_json(package.project.model_dump(mode="json")),
         experiment_implementation_ref=package_ref.model_dump(mode="json"),
         experiment_capability=canonical_json(package.capability.model_dump(mode="json")),
         experiment_sources=tuple(TCADDebugSource(source_name=slot.semantic_name,
-            artifact_ref=context.source_descriptor(aliases[slot.semantic_name]).artifact_ref,
+            artifact_ref=next(item.artifact_ref for item in package.resolved_inputs if item.semantic_name == slot.semantic_name),
             media_type=slot.media_type, content=context.input_path(aliases[slot.semantic_name]))
             for slot in package.project.input_slots))
     # Old diagnostic receipts contain executor identities and policy details.
@@ -137,7 +139,7 @@ PREPARE_TOOL = WorkerToolDefinition(name="worker_experiment_prepare",
     description="Read the TCAD implementation schema or seal an implementation for the current experiment. Control resolves the exact active solver capability and supplied scientific files. No prior author or review task is required.",
     input_model=PrepareInput, capability="experiment.implementation", contextual_handler=prepare,
     required_services=("experiment.execution",), evidence_ports=("tool_evidence", "recovery_manifest_output"))
-DEBUG_TOOL = WorkerToolDefinition(name="worker_experiment_debug", description="Run or poll an optional bounded diagnostic of the exact sealed implementation. Diagnostics do not count as formal execution or require a fixed sequence.",
+DEBUG_TOOL = WorkerToolDefinition(name="worker_experiment_debug", description="Run or poll an optional bounded diagnostic of the exact sealed implementation. Use action=status with the same name for a read-only check after an uncertain response; it never submits or collects. Repeating action=run polls existing submissions but may create one if absent. Diagnostics are separate from formal execution and require no fixed sequence.",
     input_model=DebugInput, capability="experiment.debug", contextual_handler=debug,
     required_services=("experiment.execution", "tcad.development_debug"), evidence_ports=("tool_evidence", "recovery_manifest_output"))
 CAPABILITY = ExperimentCapability(tools=(ComponentRef("experiment_prepare_tool"), ComponentRef("experiment_debug_tool")),

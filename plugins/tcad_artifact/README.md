@@ -9,6 +9,22 @@ quotas and execution authorization remain explicit. Invalid transport configurat
 produces `tcad_transport_configuration_invalid`: an administrator must repair it
 before retrying the same scientific action. Private diagnostics stay in control storage.
 
+The remote runner must also support execution-policy discovery and have explicit
+`agent_execution_policy`, `runner`, and `debug` configuration. Updating only the local
+service cannot upgrade that protocol. An older runner reports `tcad_runner_upgrade_required`.
+After an uncertain diagnostic response, use `worker_experiment_debug(action="status", name=...)`:
+this reads the durable reservation and remote status without submitting, collecting,
+or resetting a budget. Diagnostic jobs are separate from the formal execution list.
+
+`deploy/reinstall.sh reinstall` also deploys the bundled SSH runner when selected
+by the command adapter. It stages the remote candidate, verifies capability and policy
+discovery, activates it before starting local services, and retains a remote backup
+for rollback if local installation fails. Existing remote configuration is preserved;
+set `SCID_REMOTE_RUNNER_CONFIG` to an explicit administrator configuration when it
+needs replacement. Missing policy sections fail deployment; examples are never installed
+as implicit authorization. A local socket or an externally managed command executor
+does not trigger bundled SSH deployment.
+
 `tcad_control` is the execution adapter for prepared TCAD jobs. It exposes
 capability and administrator-policy discovery, authoritative submission lookup, submit,
 status, cancel, inspection, and collection. Submission is idempotent for an exact frozen

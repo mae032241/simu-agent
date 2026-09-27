@@ -52,7 +52,7 @@ class InputBindingDescriptor:
 class ValidationSources(dict[str, bytes]):
     """Legacy byte mapping with an immutable projection of exact Run bindings."""
 
-    __slots__ = ("__binding_descriptors", "__validation_deadline", "__tool_snapshot", "__reference_calculation_resolver")
+    __slots__ = ("__binding_descriptors", "__validation_deadline", "__tool_snapshot", "__reference_calculation_resolver", "__sealed_material_resolver")
 
     def __init__(
         self,
@@ -61,12 +61,17 @@ class ValidationSources(dict[str, bytes]):
         validation_deadline: float | None = None,
         tool_snapshot: bytes | None = None,
         reference_calculation_resolver: Callable | None = None,
+        sealed_material_resolver: Callable | None = None,
     ) -> None:
         super().__init__(sources)
         self.__binding_descriptors = MappingProxyType(dict(binding_descriptors))
         self.__validation_deadline = validation_deadline
         self.__tool_snapshot = tool_snapshot
         self.__reference_calculation_resolver = reference_calculation_resolver
+        self.__sealed_material_resolver = sealed_material_resolver
+
+    def sealed_material_record(self, alias):
+        return self.__sealed_material_resolver(alias) if self.__sealed_material_resolver else None
 
     def verified_calculations(self, report):
         """Read-only calculation view; core retains receipt and origin verification."""

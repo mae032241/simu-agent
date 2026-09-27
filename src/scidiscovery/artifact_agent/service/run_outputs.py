@@ -48,6 +48,7 @@ def validate_run_output(
     validation_deadline: float | None = None,
     tool_snapshot: bytes | None = None,
     reference_calculation_resolver=None,
+    sealed_material_resolver=None,
 ) -> ValidatedRunOutput:
     """Validate the one primary result without changing control state."""
 
@@ -219,6 +220,7 @@ def validate_run_output(
             validation_deadline=validation_deadline,
             tool_snapshot=tool_snapshot,
             reference_calculation_resolver=reference_calculation_resolver,
+            sealed_material_resolver=sealed_material_resolver,
         )
         try:
             compiled.implementations[key](

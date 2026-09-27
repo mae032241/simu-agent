@@ -21,6 +21,7 @@ readonly BACKUP_ROOT="${SCID_BACKUP_ROOT:-/var/backups/scidiscovery}"
 readonly CONTROL_SOCKET="/run/scidiscovery/control.sock"
 readonly TCAD_SOCKET="/run/scidiscovery-tcad/control.sock"
 readonly TCAD_COMMAND_CONFIG="${SCID_TCAD_COMMAND_CONFIG:-}"
+readonly REMOTE_RUNNER_CONFIG="${SCID_REMOTE_RUNNER_CONFIG:-}"
 readonly APPROVAL_PORT="${SCID_APPROVAL_PORT:-8765}"
 declare -a PLATFORM_SKILLS=()
 PACKAGE_STAGE=""
@@ -202,6 +203,8 @@ require_sources() {
             skills/sentaurus-tcad-code/scripts/manual_extract.py \
             skills/sentaurus-tcad-code/scripts/validate_deck_project.py \
             plugins/tcad_artifact/deploy/configure_runtime.py \
+            plugins/tcad_artifact/deploy/remote_runtime.py \
+            plugins/tcad_artifact/deploy/remote_deployment.py \
             plugins/tcad_artifact/deploy/systemd/tcad-control.service.in
         do
             [[ -f "${SOURCE_ROOT}/${path}" ]] || die "missing TCAD source: ${path}"
@@ -706,6 +709,14 @@ configure_tcad_runtime() {
     fi
     chown root:"$SERVICE_GROUP" "${configuration_files[@]}"
     chmod 0640 "${configuration_files[@]}"
+}
+
+remote_tcad_runtime() {
+    [[ "$TCAD_ENABLED" -eq 1 && -n "$TCAD_COMMAND_CONFIG" ]] || return 0
+    local -a command=("$PYTHON" "${SOURCE_ROOT}/plugins/tcad_artifact/deploy/remote_runtime.py"
+        "$1" --command-config "$TCAD_COMMAND_CONFIG" --transaction-root "$TRANSACTION_ROOT")
+    [[ -z "$REMOTE_RUNNER_CONFIG" ]] || command+=(--runner-config "$REMOTE_RUNNER_CONFIG")
+    PYTHONNOUSERSITE=1 PYTHONPATH="$SITE_ROOT" "${command[@]}"
 }
 
 retire_legacy_worker_unit() {
@@ -1294,6 +1305,10 @@ rollback_install() {
     trap - ERR INT TERM
     set +e
     ROLLBACK_ARMED=0
+    if [[ -n "$TRANSACTION_ROOT" && -f "${TRANSACTION_ROOT}/remote-tcad.json" ]]; then
+        remote_tcad_runtime rollback || printf '%s\n' \
+            'ERROR: remote TCAD rollback could not be confirmed; preserve the transaction receipt for recovery.' >&2
+    fi
     for unit in \
         scidiscovery-control.service scidiscovery-worker.service \
         scidiscovery-approval-ui.service tcad-control.service
@@ -1331,6 +1346,7 @@ rollback_install() {
 
 complete_install_transaction() {
     local destination
+    remote_tcad_runtime finish
     destination="${BACKUP_ROOT}/transactions/${TRANSACTION_ROOT##*/.transaction-}"
     "$PYTHON" "${SOURCE_ROOT}/deploy/install_transaction.py" seal \
         --root "$TRANSACTION_ROOT" --destination "$destination"
@@ -1402,8 +1418,10 @@ install_all() {
     if [[ "$TCAD_ENABLED" -eq 1 ]]; then
         configure_tcad_runtime
     fi
+    remote_tcad_runtime prepare
     install_units
     configure_platform
+    remote_tcad_runtime activate
     printf '[5/6] Starting services...\n'
     systemctl enable --now \
         scidiscovery-control.service \

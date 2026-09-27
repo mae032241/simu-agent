@@ -76,11 +76,19 @@ Worker's scientific response. A plugin receives only its declared named services
 The `plugin_runtime.experiment.ExperimentTools` structural protocol is the supplied
 per-Run service: `capabilities(context)`, `seal_implementation(context, *, payload,
 scientific_material, sources, private_outputs=())`, `read_implementation(context,
-alias)`, `diagnostic_context(context, *, service_name)`,
+alias)`, `source_alias(context, ref)`, `diagnostic_context(context, *, service_name)`,
 `cancel_diagnostics(context, *, service_name, name)`, and `command(context, request)`.
 `ExperimentMethod` supplies `key`/`content`; `SealedImplementation` supplies exact
 `artifact_ref`/`content`. Commands still pass the task's frozen execution and budget
 gates; these callbacks cannot bind another Run or expose the coordinator.
+`read_implementation` accepts exact implementations created in or explicitly bound
+to the task, retaining original receipts. `source_alias` resolves an immutable file
+reference to a currently available alias; previous-task aliases are never identities.
+Output validators may use `ValidationSources.sealed_material_record(alias)` for a
+control-verified receipt of a current or explicitly bound material. Its original
+source-reference namespace and author are retained; an interrupted author's sealed
+material is not invalidated by the author's later Run state. This callback exposes
+control provenance to validators, not additional Worker form fields or file bytes.
 
 ## Execution adapter boundary
 

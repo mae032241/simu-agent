@@ -24,7 +24,8 @@ class ExperimentReport(BaseModel):
     outcome: Literal["completed", "inconclusive", "blocked"]
     limitations: tuple[str, ...] = Field(default=(), max_length=32)
     remaining_question: str = Field(max_length=8192)
-    adopted_stages: tuple[str, ...] = Field(default=(), max_length=32)
+    adopted_stages: tuple[str, ...] = Field(default=(), max_length=32,
+        description="Tool-returned references or current input names of sealed materials adopted in this report. Control verifies their original receipts.")
 
 
 class StageSubmission(BaseModel):
@@ -50,7 +51,7 @@ class ExecuteExperiment(BaseModel):
     action: Literal["capabilities", "start", "advance", "collect", "status", "read", "export", "cancel"]
     name: str = Field(default="experiment", pattern=r"^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$")
     implementation: str | None = Field(default=None, max_length=128,
-        description="Sealed implementation reference; required for start.")
+        description="Sealed implementation created in or explicitly bound to this task; required for start.")
     output_name: str | None = Field(default=None, max_length=256)
     offset: int = Field(default=0, ge=0)
 
@@ -67,17 +68,28 @@ def validate_report(raw):
 def validate_completion(payload, sources, handoff):
     report = ExperimentReport.model_validate_json(canonical_json(payload), strict=True)
     records = {item["alias"]: item for item in json.loads(sources.tool_snapshot or b"{}").get("records", ())}
+    for alias in report.adopted_stages:
+        resolved = sources.sealed_material_record(alias)
+        if resolved is not None:
+            records[alias] = resolved
     if any(alias not in records for alias in report.adopted_stages):
-        raise SemanticRuleViolation("Adopted stages must identify sealed materials of this task.")
+        raise SemanticRuleViolation("Adopted stages must identify sealed materials created in or explicitly bound to this task.")
     selected = [records[alias] for alias in report.adopted_stages]
     if report.outcome != "completed":
         return
-    implementations = {item["alias"] for item in selected if item["metadata"].get("kind") == "experiment_implementation"}
-    executions = {item["alias"] for item in selected if item["metadata"].get("kind") == "experiment_execution"
-        and item["metadata"].get("implementation") in implementations}
+    def identity(item):
+        return canonical_json(item["artifact_ref"]) if "artifact_ref" in item else item["alias"]
+    def source_identity(item, alias):
+        if "source_refs" in item:
+            ref = item["source_refs"].get(alias)
+            return canonical_json(ref) if ref is not None else None
+        return identity(records[alias]) if alias in records else alias
+    implementations = {identity(item) for item in selected if item["metadata"].get("kind") == "experiment_implementation"}
+    executions = {identity(item) for item in selected if item["metadata"].get("kind") == "experiment_execution"
+        and source_identity(item, item["metadata"].get("implementation")) in implementations}
     validity = [item for item in selected if item["metadata"].get("kind") == "experiment_stage"
         and item["metadata"].get("stage") == "validity"
-        and executions.intersection(item["metadata"].get("derived_from", ()))]
+        and executions.intersection(source_identity(item, alias) for alias in item["metadata"].get("derived_from", ()))]
     if not implementations or not executions or not validity:
         raise SemanticRuleViolation("A completed experiment must adopt a sealed implementation, its collected execution, and a validity assessment citing that execution. Otherwise report blocked or inconclusive.")
 
@@ -115,7 +127,7 @@ no fixed preflight, initialization or reviewer checklist is a submission conditi
 """
 SCHEMA = schema_resource(ExperimentReport, "scidiscovery.experiment-report.v1")
 CONTRACT = semantic_contract(SemanticRuleSpec("experiment.sealed_material",
-    "Adopted stages must identify this task's sealed materials. Completed requires an implementation, its collected execution, and a validity assessment citing that execution. Finish or cancel outstanding execution and diagnostics before final delivery. Design and debug stage submissions are optional. Otherwise report blocked or inconclusive; scientific validity belongs to the author."))
+    "Adopted stages must identify sealed materials created in or explicitly bound to this task; original receipts and authorship are retained. Completed requires an implementation, its collected execution, and a validity assessment citing that exact execution. Finish or cancel outstanding execution and diagnostics before final delivery. Design and debug stage submissions are optional. Otherwise report blocked or inconclusive; scientific validity belongs to the author."))
 PROTOCOL = "scidiscovery.complete-experiment.v1"
 WORKSPACE = WorkspaceContract()
 AGENT = CallableComponent("agent", lambda: None)

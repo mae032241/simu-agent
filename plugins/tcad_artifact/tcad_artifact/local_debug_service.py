@@ -53,6 +53,12 @@ def _debug_policy(context):
     return DebugPolicy.model_validate_json(json.dumps(context.state["debug_policy"]), strict=True)
 
 
+def _continuation_error(code, message):
+    from scidiscovery.operation_contract import DiagnosticError, contract_diagnostic
+    return DiagnosticError(message, details=(contract_diagnostic(code, phase="tool_execution",
+        affected_action="tool_call", path="$.name", repairable=True, message=message),))
+
+
 def debug_response(context: OperationToolContext, run_name: str, response: dict) -> dict:
     runs = context.state.get("runs", {})
     used = context.state.get("reserved_wall_seconds", 0)
@@ -171,6 +177,57 @@ class LocalTCADDebugService:
                 atomic_json(path, ledger)
         return active
 
+    def status(self, context, *, run_name):
+        """Observe an exact diagnostic name without policy discovery, submission or collection."""
+        if _RUN_NAME.fullmatch(run_name) is None:
+            raise TCADDebugError("TCAD development debug name is invalid")
+        subject = None
+        for alias in ("research_objective", "scientific_skeleton", "experiment_plan"):
+            try:
+                subject = context.input_ref(alias)
+                break
+            except (KeyError, ValueError):
+                continue
+        if subject is None:
+            raise TCADDebugError("debug status requires an immutable scientific subject binding")
+        key = canonical_sha256({"subject": subject})
+        path = self.exchange_root / "budgets" / (key + ".json")
+        absent = {"name": run_name, "state": "not_created", "submission": "not_submitted"}
+        if not path.exists():
+            return absent
+        # run() creates its lock before saving the ledger. Take the same lock,
+        # but do not create files or mutate the diagnostic budget on a read.
+        with path.with_suffix(".lock").open("rb") as lock:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_SH)
+            ledger = json.loads(path.read_bytes())
+            reservation = ledger.get("reservations", {}).get(run_name)
+            record = ledger.get("runs", {}).get(run_name)
+            if record is None and reservation is None:
+                return absent
+            record = record or reservation["record"]
+            external = record.get("external_run_id")
+            state = record["state"]
+            try:
+                if external is None:
+                    from scidiscovery.artifact_agent.schema.execution import LocalFileDescriptor
+                    found = self.adapter.lookup_submission(LocalFileDescriptor.model_validate_json(
+                        json.dumps(reservation["submission"]), strict=True))
+                    if found is None:
+                        return {**absent, "allowance_reserved": True}
+                    external, state = found
+                if state not in _TERMINAL:
+                    state = self.adapter.status(external)
+            except Exception as error:
+                from scidiscovery.operation_contract import DiagnosticError, contract_diagnostic
+                message = ("Diagnostic status could not be confirmed. This read-only query did not submit a job. "
+                    "Keep the same diagnostic name and retry status after service recovery; do not start another diagnostic.")
+                raise DiagnosticError(message, details=(contract_diagnostic("tcad_debug_status_unknown",
+                    phase="tool_execution", affected_action="tool_call", message=message),)) from error
+            response = record.get("response", {})
+            return {"name": run_name, "mode": record["mode"], "state": _state(state),
+                "submission": "submitted", "allowance_reserved": True,
+                **{key: response[key] for key in ("summary", "exit_code", "missing_outputs") if key in response}}
+
     @staticmethod
     def _save_budget(context):
         from scidiscovery.plugin_runtime.workspace import atomic_json
@@ -208,8 +265,14 @@ class LocalTCADDebugService:
             raise TCADDebugError("TCAD debug run_name is bound to another mode")
         if output_names is not None and tuple(record.get("output_names", ())) != selected:
             raise TCADDebugError("debug run_name is bound to another output selection; poll without output_names")
+        if "experiment_implementation_ref" in context.state and record.get("implementation_ref") != context.state["experiment_implementation_ref"]:
+            raise _continuation_error("tcad_debug_implementation_mismatch",
+                "This diagnostic name belongs to a different sealed implementation; use its original implementation or a new diagnostic name.")
         if isinstance(record.get("response"), dict) or (self._receipt_directory(context, run_name, record["run_id"]) / "receipt.json").is_file():
             return self._restore_receipt(context, run_name, record)
+        if not context.recovery_authorized(record["run_id"]):
+            raise _continuation_error("tcad_debug_owner_mismatch",
+                "This diagnostic has no retained result and belongs to another task. Use read-only status; recover the owning task to collect or cancel it.")
         state = _state(str(record["state"]))
         if state not in _TERMINAL:
             try:
@@ -487,7 +550,10 @@ class LocalTCADDebugService:
 
     def _restore_receipt(self, context, run_name, record, *, validate=True):
         source_run = record["run_id"]
-        if not context.recovery_authorized(source_run):
+        experiment = "experiment_project" in context.state
+        exact_implementation = (experiment and record.get("implementation_ref") is not None
+            and record["implementation_ref"] == context.state.get("experiment_implementation_ref"))
+        if not context.recovery_authorized(source_run) and not exact_implementation:
             raise TCADDebugError("cached diagnostic belongs to another Run without a control recovery relationship")
         root = self._receipt_directory(context, run_name, source_run)
         receipt = json.loads((root / "receipt.json").read_bytes())
@@ -496,7 +562,8 @@ class LocalTCADDebugService:
         proof = receipt["proof"]
         if proof["run_id"] != source_run or proof["project_sha256"] != record["project_sha256"]:
             raise TCADDebugError("retained diagnostic proof identity changed")
-        experiment = "experiment_project" in context.state
+        if not context.recovery_authorized(source_run) and receipt["response"].get("state") not in _TERMINAL:
+            raise TCADDebugError("Only a retained terminal diagnostic can be reused by another task.")
         if experiment:
             current = DeckProjectDraft.model_validate_json(context.state["experiment_project"], strict=True)
             if (record.get("implementation_ref") != context.state.get("experiment_implementation_ref")

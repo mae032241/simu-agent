@@ -1613,6 +1613,8 @@ def test_generic_reinstaller_passes_resolved_configuration(tmp_path: Path, expli
     workspace.mkdir()
     command_config = tmp_path / "command-adapter.json"
     command_config.write_text("{}\n", encoding="utf-8")
+    remote_config = tmp_path / "remote-runner.json"
+    remote_config.write_text("{}\n", encoding="utf-8")
     install_root = tmp_path / "install"
     state_root = tmp_path / "state"
     tcad_state_root = tmp_path / "tcad-state" if explicit_tcad_state else state_root / "tcad"
@@ -1642,6 +1644,7 @@ def test_generic_reinstaller_passes_resolved_configuration(tmp_path: Path, expli
             "SCID_PLUGINS": "tcad_artifact,curve_score",
             "SCID_WEB_FETCH_ALLOW_FAKE_IP": "1",
             "SCID_TCAD_COMMAND_CONFIG": str(command_config),
+            "SCID_REMOTE_RUNNER_CONFIG": str(remote_config),
             "SCID_INSTALL_ROOT": str(install_root),
             "SCID_STATE_ROOT": str(state_root),
             "TCAD_STATE_ROOT": str(tcad_state_root) if explicit_tcad_state else "",
@@ -1664,6 +1667,7 @@ def test_generic_reinstaller_passes_resolved_configuration(tmp_path: Path, expli
     assert "SCID_PLUGINS=tcad_artifact,curve_score" in output
     assert "SCID_WEB_FETCH_ALLOW_FAKE_IP=1" not in output
     assert f"SCID_TCAD_COMMAND_CONFIG={command_config}" in output
+    assert f"SCID_REMOTE_RUNNER_CONFIG={remote_config}" in output
     assert f"SCID_INSTALL_ROOT={install_root}" in output
     assert f"SCID_STATE_ROOT={state_root}" in output
     assert f"TCAD_STATE_ROOT={tcad_state_root}" in output
@@ -1714,7 +1718,7 @@ render_units "$WORKSPACE/units"
 for fn in require_root validate_source validate_base_python validate_figure_dependencies \
     install_packages retire_old_deployment retire_inactive_tcad_surfaces activate_packages \
     create_local_workspace_root ensure_secret ensure_agent_settings configure_tcad_runtime install_units \
-    configure_platform verify_installation complete_install_transaction; do
+    configure_platform verify_installation complete_install_transaction remote_tcad_runtime; do
     eval "$fn() { :; }"
 done
 install() { printf 'install %s\\n' "$*" >> "$WORKSPACE/mutations"; }

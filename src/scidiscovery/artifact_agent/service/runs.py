@@ -1362,6 +1362,7 @@ class RunService(ToolEvidenceMixin):
                 validation_deadline=validation_deadline,
                 tool_snapshot=self._evidence_snapshot(value.run_id) if tool_evidence_ports(compiled) else None,
                 reference_calculation_resolver=lambda alias: self.reference_calculation_sources(value, alias, validation_deadline=validation_deadline, validation_budget=reference_validation_budget),
+                sealed_material_resolver=lambda alias: self.sealed_material_record(value, alias),
             )
         except WorkspaceError as error:
             failure = RunCheckerError("sealed candidate integrity failed", category="integrity_failure")
