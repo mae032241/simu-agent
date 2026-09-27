@@ -6,7 +6,8 @@ import hashlib
 from ...operations.invoke import (ApprovalProjectorContext, ApprovalSubjectSnapshot,
     effect_operation_plan)
 from ..execution_bridge import ExecutionAuthorizationRequired
-from ..schema.approval import ApprovalOption, CompiledApprovalIdentity
+from ..schema.approval import (ApprovalOption, ApprovalRequest, CompiledApprovalIdentity,
+    HumanDecision, execution_approval_option_id, execution_decision_authorizes)
 from ..schema.common import canonical_json
 from ..schema.execution import ExecutionResultManifest
 from ..schema.artifact import ArtifactRegistration
@@ -227,24 +228,26 @@ class ExperimentExecution:
                 raw = stream.read(page_bytes + 1)
             return {"name": item.logical_name, "text": raw[:page_bytes].decode("utf-8", errors="replace"),
                 "next_offset": request.offset + page_bytes if len(raw) > page_bytes else None}
+        if request.action in {"start", "advance", "status"}:
+            approval = self._approval_status(execution_id)
+            if approval is not None:
+                if request.action != "status":
+                    self._bind_approval(run, request.name, execution_id)
+                response = self._authorization_response(run, request.name, execution_id, approval)
+                if self.executions.status(execution_id).state == "created" and (
+                        request.action == "status" or response["state"] not in {"created", "awaiting_authorization"}):
+                    return response
         if request.action in {"start", "advance"}:
-            approval_id = "apr_" + execution_id
-            from .approvals import ApprovalAccessDenied
-            approval = None
-            if self.executions.approvals is not None:
-                try:
-                    approval = self.executions.approvals.status(approval_id)
-                except ApprovalAccessDenied:
-                    pass
             try:
                 self.bridge.start(execution_id=execution_id,
-                    approval_id=approval_id if approval is not None else None,
+                    approval_id="apr_" + execution_id if approval is not None and approval.status == "decided" else None,
                     compiled_identity=identity,
                     allow_policy_authorization=effect.spec.review.approval.allow_policy_authorization,
                     budget_subject_schemas=("scidiscovery.research-objective.v1",))
             except ExecutionAuthorizationRequired:
-                return {"name": request.name, "state": "awaiting_authorization",
-                    "review_url": self._approval(execution_id, effect, identity)}
+                self._approval(execution_id, effect, identity)
+                self._bind_approval(run, request.name, execution_id)
+                return self._authorization_response(run, request.name, execution_id, self._approval_status(execution_id))
             self.bridge.sync(execution_id=execution_id, diagnostic_scope="instance:" + run.instance_id)
         elif request.action == "cancel":
             self._cancel(execution_id)
@@ -271,11 +274,59 @@ class ExperimentExecution:
                 result["reference"] = record["alias"]
         return result
 
+    def _approval_status(self, execution_id):
+        from .approvals import ApprovalAccessDenied
+        if self.executions.approvals is not None:
+            try:
+                return self.executions.approvals.status("apr_" + execution_id)
+            except ApprovalAccessDenied:
+                pass
+        return None
+
+    def _bind_approval(self, run, name, execution_id):
+        bindings = self.runs.scheduler_bindings
+        approval_id = "apr_" + execution_id
+        if bindings.find_name(instance=run.instance_id, namespace="approval", object_id=approval_id) is None:
+            task = bindings.find_name(instance=run.instance_id, namespace="run", object_id=self.task_origin(run))
+            if task is None:
+                raise ValueError("Execution approval requires its owning task's instance name.")
+            semantic_name = task + ".execution." + name + ".approval"
+            if len(semantic_name) > 256:
+                semantic_name = semantic_name[:231] + "." + hashlib.sha256(semantic_name.encode()).hexdigest()[:24]
+            bindings.bind(instance=run.instance_id, namespace="approval", name=semantic_name,
+                object_id=approval_id)
+
+    def _authorization_response(self, run, name, execution_id, approval):
+        state = {"pending": "awaiting_authorization", "expired": "authorization_expired",
+            "cancelled_by_human": "authorization_cancelled"}.get(approval.status, "created")
+        if approval.status == "decided":
+            stored = ApprovalRequest.model_validate_json(self.executions.artifacts.read(approval.approval_request_ref), strict=True)
+            decision = HumanDecision.model_validate_json(self.executions.artifacts.read(approval.decision_ref), strict=True)
+            if not execution_decision_authorizes(stored, decision):
+                state = "authorization_rejected"
+        authorization = self.executions.authorization(execution_id)
+        result = {"name": name, "state": state, "authorization": {"status": approval.status,
+            **{key: authorization[key] for key in ("reason", "budget", "allowance") if key in authorization}}}
+        bound = self.runs.scheduler_bindings.find_name(instance=run.instance_id, namespace="approval", object_id="apr_" + execution_id)
+        if bound is not None:
+            result["approval_name"] = bound
+        if approval.status == "pending" and approval.review_path and self.approval_base_url:
+            result["review_url"] = self.approval_base_url.rstrip("/") + approval.review_path
+        return result
+
     def _approval(self, execution_id, effect, identity):
         if self.executions.approvals is None or self.approval_base_url is None:
             raise ValueError("This execution needs the configured approval service; no execution has been submitted.")
         contract = effect.spec.review.approval
         refs = self.executions.approval_subject_refs(execution_id)
+        existing = self._approval_status(execution_id)
+        if existing is not None:
+            stored = ApprovalRequest.model_validate_json(self.executions.artifacts.read(existing.approval_request_ref), strict=True)
+            if stored.kind != "execution_authorization" or stored.subject_refs != refs or stored.compiled_identity != identity:
+                raise ValueError("Execution approval does not bind the exact request and contract.")
+            if existing.status == "pending":
+                self.executions.approvals.refresh_access("apr_" + execution_id)
+            return
         snapshots = []
         for index, (port, ref) in enumerate(zip(contract.subject_ports, refs, strict=True)):
             envelope = self.executions.artifacts.verify(ref)
@@ -285,14 +336,13 @@ class ExperimentExecution:
         projector = contract.projector
         document = effect.implementations[f"{projector.plugin_id or effect.plugin_id}:{projector.component_id}"](
             ApprovalProjectorContext(effect.spec.operation_id, effect.spec.version, effect.digest, tuple(snapshots)))
-        launch = self.executions.approvals.create_request(approval_id="apr_" + execution_id,
+        self.executions.approvals.create_request(approval_id="apr_" + execution_id,
             kind="execution_authorization", subject_refs=refs, question=contract.question,
-            options=tuple(ApprovalOption(option_id={"accept": "approve", "reject": "reject"}[item.decision],
+            options=tuple(ApprovalOption(option_id=execution_approval_option_id(item.decision),
                 label=item.label, description=item.description or "Record the declared execution authorization decision.",
                 requires_rationale=item.requires_reason) for item in contract.options),
             requested_by=self.executions.service_actor, idempotency_key="execution-approval:" + execution_id,
             review_document=document, compiled_identity=identity)
-        return launch.url(self.approval_base_url)
 
 
 class _TaskExperimentTools:

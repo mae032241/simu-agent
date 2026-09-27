@@ -19,6 +19,25 @@ from .common import (
 from .refs import ActorRef, ArtifactRef
 
 
+def execution_approval_option_id(decision: str) -> str:
+    """Use the same execution decision vocabulary for every caller."""
+    return {
+        "accept": "authorize_execution",
+        "accept_with_exception": "authorize_execution_with_exception",
+        "reject": "reject_execution",
+        "revise": "revise_execution",
+    }[decision]
+
+
+def execution_decision_authorizes(request, decision) -> bool:
+    # Preserve already sealed Worker receipts using the earlier 'approve'
+    # spelling. A generic scientific approval is never an execution grant.
+    return (request.kind == "execution_authorization"
+        and decision.selected_option in {execution_approval_option_id("accept"),
+            execution_approval_option_id("accept_with_exception"), "approve"}
+        and any(option.option_id == decision.selected_option for option in request.options))
+
+
 class ApprovalOption(SchemaModel):
     option_id: Identifier
     label: Annotated[str, Field(min_length=1, max_length=256)]

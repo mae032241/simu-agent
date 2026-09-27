@@ -12,6 +12,7 @@ from ..schema.approval import (
     ApprovalRequest,
     CompiledApprovalIdentity,
     ReviewDocument,
+    execution_approval_option_id,
 )
 from ..schema.artifact import ArtifactRegistration
 from ..schema.common import canonical_sha256
@@ -488,15 +489,9 @@ class RootExecutionRoutes:
             raise RootToolError(
                 "compiled execution approval projector returned an invalid document"
             )
-        option_ids = {
-            "accept": "authorize_execution",
-            "accept_with_exception": "authorize_execution_with_exception",
-            "reject": "reject_execution",
-            "revise": "revise_execution",
-        }
         options = tuple(
             ApprovalOption(
-                option_id=option_ids[item.decision],
+                option_id=execution_approval_option_id(item.decision),
                 label=item.label,
                 description="按已编译的操作审批契约记录这一选择。",
                 requires_rationale=item.requires_reason,

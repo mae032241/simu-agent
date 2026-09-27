@@ -19,6 +19,7 @@ from ..schema.approval import (
     ApprovalRequest,
     CompiledApprovalIdentity,
     HumanDecision,
+    execution_decision_authorizes,
 )
 from ..schema.artifact import ArtifactRegistration
 from ..schema.execution import (
@@ -385,11 +386,6 @@ class ExecutionService:
             raise ExecutionApprovalError("execution approval is not decided")
         raw_decision = self.artifacts.read(approval.decision_ref)
         decision = HumanDecision.model_validate_json(raw_decision, strict=True)
-        if decision.selected_option not in {
-            "authorize_execution",
-            "authorize_execution_with_exception",
-        }:
-            raise ExecutionApprovalError("human decision did not authorize execution")
         try:
             request_approval = ApprovalRequest.model_validate_json(
                 self.artifacts.read(approval.approval_request_ref), strict=True
@@ -402,6 +398,8 @@ class ExecutionService:
             )
         if request_approval.kind != "execution_authorization":
             raise ExecutionApprovalError("approval is not an execution authorization")
+        if not execution_decision_authorizes(request_approval, decision):
+            raise ExecutionApprovalError("human decision did not authorize execution")
         if request_approval.compiled_identity != compiled_identity:
             raise ExecutionApprovalError(
                 "execution approval compiled identity is missing or changed"
@@ -658,7 +656,8 @@ class ExecutionService:
             return {"source": "none"}
         if value["admission"]["outcome"] != "policy":
             return {"source": "none", "outcome": value["admission"]["outcome"],
-                "policy_digest": value["admission"]["policy_digest"], "reason": value["admission"]["reason"]}
+                "policy_digest": value["admission"]["policy_digest"], "reason": value["admission"]["reason"],
+                "budget": value["admission"]["budget"], "allowance": value["admission"]["allowance"]}
         return {"source": "policy", "policy_digest": value["admission"]["policy_digest"],
             "budget": value["admission"]["budget"], "budget_key": value["admission"]["budget_key"]}
 
