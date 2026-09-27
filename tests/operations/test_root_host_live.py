@@ -29,7 +29,8 @@ def test_cli_loads_generated_override_keys(tmp_path):
     ("config", "tools", "rpc_error", "tool_error", "no_url", "wrong_origin", "not_selected", "turn", None)]
     + [(None, True, False, False, None), (None, False, True, False, None), ("resume_identity", False, True, False, None),
        ("worker_identity", False, True, False, None), (None, False, True, True, None),
-       (None, False, False, False, "Frozen candidate acceptance task")])
+       (None, False, False, False, "Frozen candidate acceptance task"),
+       (None, False, True, True, "Explicit next acceptance task")])
 @pytest.mark.process_e2e
 def test_host_never_uses_model_for_bootstrap_or_failed_prechecks(tmp_path, monkeypatch, failure, verify_only, resume, worker_completed, custom_task):
     project = tmp_path / "project"
@@ -113,7 +114,7 @@ for line in sys.stdin:
         elif verify_only:
             host.initialize_host()
         else:
-            host.run(resume=resume)
+            host.run(resume=resume, task=custom_task if resume else None)
     finally:
         host.close()
     calls = [json.loads(line) for line in requests.read_text().splitlines()]
@@ -141,7 +142,8 @@ for line in sys.stdin:
             resumed = [v['params']['threadId'] for v in calls if v.get('method') == 'thread/resume']
             assert resumed == (['root-from-peer'] if worker_completed else ['root-from-peer', 'existing-worker'])
             prompt = next(v['params']['input'][0]['text'] for v in calls if v.get('method') == 'turn/start')
-            assert prompt == live.RESUME_TASK and prompt != live.TASK
+            assert prompt == (custom_task if custom_task is not None else live.RESUME_TASK)
+            assert prompt != live.TASK
 
     if failure == "rpc_error":
         assert host.last_rpc_error == {"method": "mcpServer/tool/call", "code": -32000,

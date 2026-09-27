@@ -7,6 +7,9 @@ prepare-upgrade copies stopped candidate state with --from-candidate, reusing th
 program from --installed-candidate. Keep that installation for the candidate's life.
 Resume reuses actual platform threads and existing state; it never renews a Run
 deadline. Resource stop still does not prove independent Worker life.
+An explicit next task uses resume --task-file after prior work terminates. It is
+frozen in the new evidence directory. Candidate host-resources.json may override
+host time budgets; test_resources.json still owns memory protection.
 """
 from __future__ import annotations
 
@@ -20,6 +23,7 @@ from pathlib import Path
 import selectors
 import shlex
 import shutil
+import sqlite3
 import subprocess
 import sys
 import time
@@ -38,6 +42,33 @@ except ModuleNotFoundError:
     from probe_root_host import preflight, thread_start_params, rpc_diagnostic, config_flags
 
 HOST_RESOURCES = Path(__file__).with_name("root_host_resources.json")
+
+
+def host_resources(root):
+    override = root / "host-resources.json"
+    return json.loads((override if override.exists() else HOST_RESOURCES).read_text())
+
+
+def continuation_task(root, path):
+    """An explicit new task requires a completed prior turn and no in-flight work."""
+    progress = json.loads((root / "progress.json").read_text())
+    if progress.get("state") != "root_returned_requires_sealed_audit":
+        raise ValueError("new task requires a completed prior Root turn; use plain resume for recovery")
+    for name, table, terminal in (
+        ("runs", "runs", "'completed','failed'"),
+        ("executions", "executions", "'succeeded','failed','cancelled','collected','abandoned'"),
+    ):
+        db = sqlite3.connect((root / f"state/database/{name}.sqlite3").as_uri() + "?mode=ro", uri=True)
+        try:
+            if db.execute(f"SELECT 1 FROM {table} WHERE state NOT IN ({terminal}) LIMIT 1").fetchone():
+                raise ValueError("unfinished work requires recovery before a new acceptance task")
+        finally:
+            db.close()
+    with path.open("rb") as stream:
+        raw = stream.read(65537)
+    if len(raw) > 65536 or not raw.strip():
+        raise ValueError("acceptance task must contain 1..65536 UTF-8 bytes")
+    return raw.decode("utf-8")
 
 TASK = """用户已在管理页选择实例。请先通过 instance_current 确认绑定。
 目标：验证一次真实完整任务的原生 Worker 派发、受控交付及 Root 封存回读。
@@ -153,7 +184,7 @@ class Host:
         self.thread = None
         self.platform_session = None
         self.last_rpc_error = None
-        self.resources = json.loads(HOST_RESOURCES.read_text())
+        self.resources = host_resources(root)
         self.phase = "startup"
         self.phase_deadline = time.monotonic() + self.resources["startup_timeout_seconds"]
         self.logdir = Path(os.environ["SCID_TEST_LOG_DIR"])
@@ -289,7 +320,7 @@ class Host:
                 raise RuntimeError("daemon_startup")
             time.sleep(.1)
     def initialize_host(self, resume=False):
-        probe_native_code_mode(self.logdir, json.loads(HOST_RESOURCES.read_text()))
+        probe_native_code_mode(self.logdir, self.resources)
         self.start_services()
         root = self.root
         # The exact generated project profile is passed explicitly, avoiding a
@@ -370,10 +401,19 @@ class Host:
         if value.get("state") != "active":
             raise RuntimeError("instance_not_selected")
 
-    def run(self, resume=False):
+    def run(self, resume=False, task=None):
+        if task is not None and not resume:
+            raise ValueError("an explicit continuation requires resume")
         self.await_instance(self.initialize_host(resume=resume))
         self.status("resuming_workers" if resume else "scientific_turn", resumed=resume)
         if resume:
+            if task is not None:
+                # The supervisor froze this explicit task after checking durable
+                # quiescence. Do not replay the original task or restore its workers.
+                self.status("scientific_turn", resumed=True, explicit_continuation=True)
+                self.turn(task)
+                self.status("root_returned_requires_sealed_audit", resumed=True)
+                return
             # Platform completion only prevents unnecessary thread restoration;
             # the Root must still verify the control plane's sealed Run result.
             workers, completed = set(), set()
@@ -421,15 +461,17 @@ class Host:
         self.selector.close()
 
 
-def supervised(root, action):
+def supervised(root, action, task_file=None):
     limits = json.loads(guard.DEFAULT_CONFIG.read_text())["limits"]
-    resources = json.loads(HOST_RESOURCES.read_text())
+    resources = host_resources(root)
     if action in ("live", "resume", "lifecycle", "lifecycle-resume"):
         limits["timeout_seconds"] = sum(resources[key] for key in
             ("startup_timeout_seconds", "instance_wait_timeout_seconds", "execution_timeout_seconds"))
     output = root / (action if action not in ("check", "verify", "native", "resume", "lifecycle", "lifecycle-resume") else f"{action}-{time.time_ns()}")
     with (Path("/tmp") / f"scid-tests-{os.getuid()}.lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        prior_evidence = json.loads((root / "progress.json").read_text())["evidence"] if task_file is not None else None
+        task = continuation_task(root, task_file) if task_file is not None else None
         if action == "lifecycle":
             try:
                 from scripts.probe_root_lifecycle import require_no_started_lifecycle
@@ -444,6 +486,14 @@ def supervised(root, action):
             require_lifecycle_resume(root)
         output.mkdir()
         (output / "fixture-logs").mkdir()
+        task_arguments = []
+        if task is not None:
+            frozen = output / "task.txt"
+            frozen.write_text(task)
+            write(output / "task-source.json", {"sha256": hashlib.sha256(task.encode()).hexdigest(),
+                "source": str(task_file), "prior_evidence": prior_evidence,
+                "kind": "explicit_acceptance_continuation"})
+            task_arguments = ["--task-file", str(frozen)]
         if action in ("resume", "lifecycle", "lifecycle-resume"):
             (root / "stop").unlink(missing_ok=True)
         if action in ("live", "resume", "lifecycle", "lifecycle-resume"):
@@ -454,8 +504,8 @@ def supervised(root, action):
         for key in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS", "NUMEXPR_NUM_THREADS", "TOKIO_WORKER_THREADS", "RAYON_NUM_THREADS"):
             environment[key] = "1"
         result = guard.run_one([sys.executable, str(Path(__file__).resolve()), "_" + action,
-                              "--candidate", str(root)], environment, limits, output, lock.fileno(),
-                              limit_address_space=json.loads(HOST_RESOURCES.read_text())["limit_address_space"]
+                              "--candidate", str(root), *task_arguments], environment, limits, output, lock.fileno(),
+                              limit_address_space=resources["limit_address_space"]
                               if action in ("verify", "live", "native", "resume", "lifecycle", "lifecycle-resume") else True)
         write(output / "resource.json", result)
         if result["returncode"] != 0 or result["stop_reason"] != "exited":
@@ -473,8 +523,13 @@ def main():
     parser.add_argument("--candidate", type=Path, required=True)
     parser.add_argument("--from-candidate", type=Path, help="Stopped candidate whose scientific state is copied")
     parser.add_argument("--installed-candidate", type=Path, help="Candidate providing the new installed program")
+    parser.add_argument("--task-file", type=Path, help="Explicit next task after completed work; resume only")
     args = parser.parse_args()
     root = args.candidate.resolve()
+    if args.task_file is not None:
+        if args.action not in ("resume", "supervise-resume", "_resume"):
+            parser.error("--task-file is only supported with resume")
+        args.task_file = args.task_file.resolve()
     os.umask(0o077)
     if args.action in ("prepare", "prepare-upgrade"):
         if len(os.fsencode(root / "control.sock")) >= 104:
@@ -512,6 +567,8 @@ def main():
         (Path(progress["evidence"]) / "continue").touch(exist_ok=False)
         return 0
     if args.action in ("start", "resume", "lifecycle", "lifecycle-resume"):
+        if args.task_file is not None:
+            continuation_task(root, args.task_file)
         result = preflight()
         if result["blockers"]:
             print(json.dumps(result))
@@ -527,7 +584,8 @@ def main():
         launched_at = time.time_ns()
         with launch_log.open("xb") as log:
             child = subprocess.Popen([sys.executable, str(Path(__file__).resolve()),
-                "supervise-" + args.action if resuming else "supervise", "--candidate", str(root)],
+                "supervise-" + args.action if resuming else "supervise", "--candidate", str(root),
+                *(["--task-file", str(args.task_file)] if args.task_file is not None else [])],
                 stdin=subprocess.DEVNULL, stdout=log, stderr=log, start_new_session=True)
         print(f"Host started (pid {child.pid}); waiting for Root's instance URL. "
               f"Evidence: {root}. Human selection and execution use separate budgets.", flush=True)
@@ -551,7 +609,7 @@ def main():
         print(f"Supervisor exited; inspect {launch_log} and progress.json", flush=True)
         return 1
     if args.action in ("supervise", "supervise-resume", "supervise-lifecycle", "supervise-lifecycle-resume"):
-        return supervised(root, args.action.removeprefix("supervise-") if "-" in args.action else "live")
+        return supervised(root, args.action.removeprefix("supervise-") if "-" in args.action else "live", args.task_file)
     descriptor = int(os.environ["SCID_HOST_PROBE_LOCK_FD"])
     info, expected = os.fstat(descriptor), (Path("/tmp") / f"scid-tests-{os.getuid()}.lock").stat()
     if (info.st_dev, info.st_ino) != (expected.st_dev, expected.st_ino):
@@ -585,7 +643,8 @@ def main():
                 host.initialize_host()
                 host.status("host_checked_without_model_turn", model_requests=0)
             else:
-                host.run(resume=args.action == "_resume")
+                host.run(resume=args.action == "_resume",
+                         task=args.task_file.read_text() if args.task_file is not None else None)
         except BaseException as error:
             if args.action == "_verify":
                 write(host.logdir.parent / "host-check.json", {"status": "failed", "model_requests": 0,
@@ -594,6 +653,10 @@ def main():
             raise
         finally:
             host.close()
+            if args.task_file is not None:
+                _run_logged([host.config["python"], str(Path(__file__).with_name("root_host_usage.py")),
+                    "--candidate", str(root), "--evidence", str(host.logdir.parent)],
+                    cwd=host.config["project"], env=host.environment, timeout=30)
     return 0
 
 

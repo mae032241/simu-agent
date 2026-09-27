@@ -2020,6 +2020,7 @@ def test_git_release_builder_emits_clean_manifested_source(tmp_path: Path) -> No
         "scripts/installed_candidates.py", "scripts/probe_native_code_mode.py",
         "scripts/probe_root_host.py", "scripts/probe_root_host_live.py",
         "scripts/root_host_upgrade.py",
+        "scripts/root_host_usage.py",
         "scripts/probe_root_lifecycle.py", "scripts/root_host_resources.json",
         "scripts/root_host_ws_client.py",
         "scripts/compiled_worker_process_guard.py", "scripts/run_compiled_codex_worker.py",
