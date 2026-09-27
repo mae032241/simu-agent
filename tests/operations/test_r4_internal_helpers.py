@@ -196,31 +196,6 @@ def test_helper_tool_activity_records_observed_access_and_participation(tmp_path
     assert all('usage' not in item and 'thread_completed' not in item for item in events)
 
 
-def test_hardened_helper_receives_inline_subtask_without_native_reads(tmp_path):
-    from tests.operations.test_unified_mcp import queued
-    from scidiscovery.helper_tool import HelperRequest
-    _, runtime, root, gateway, profile = queued(tmp_path, backend='hardened')
-    run_id = runtime.scheduler_bindings.resolve(instance=root.facade.instance, namespace='run', name='observation')
-    runtime.runs.worker_connections.attach(run_id=run_id, platform_session='session', thread_id='owner')
-    def rpc(name, arguments, thread, parent=None):
-        return _result(gateway.handle({'jsonrpc': '2.0', 'id': 1, 'method': 'tools/call', 'params': {
-            'name': name, 'arguments': arguments, '_meta': {'x-codex-turn-metadata': {
-                'session_id': 'session', 'thread_id': thread, **profile,
-                **({'parent_thread_id': parent, 'subagent_kind': 'thread_spawn'} if parent else {})}}}}))
-    owner = rpc('scid_call', {'name': 'worker_open_assignment'}, 'owner')
-    runtime.runs.worker_connections.helper_request(run_id,
-        HelperRequest(name='investigate', task='Investigate this source.', materials=['source_table']))
-    helper = rpc('scid_call', {'name': 'worker_open_assignment'}, 'helper', 'owner')
-    assert helper['task'] == 'Investigate this source.'
-    assert helper['role_instructions'] and helper['tools']
-    assert helper['write_protocol'] == 'server_file_tools'
-    assert 'tool_contracts' not in helper and 'output' not in helper
-    contract = rpc('scid_describe', {'name': 'worker_heartbeat'}, 'helper', 'owner')
-    assert 'tool_contracts' not in owner
-    assert 'read' not in owner['startup']['output']
-    assert owner['startup']['output']['form_contract']['properties']['payload']
-    owner_contract = rpc('scid_describe', {'name': 'worker_heartbeat'}, 'owner')
-    assert contract['inputSchema'] == owner_contract['inputSchema']
 
 
 

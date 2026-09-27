@@ -8,7 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from .artifact_agent.schema.common import canonical_json
 from .plugin_runtime.results import materialize_summary_handoff, finalize_result, validate_finalizer_payload
-from .general_science_agent_operations import BASE_TOOLS, _input
+from .general_science_agent_operations import _input
 from .operation_declaration import schema_resource, scientific_agent_operation, semantic_contract
 from .operations.spec import (CallableComponent, CollectionSpec, ComponentRef,
     ComponentSpec, InputPortSpec, OutputPortSpec, SemanticRuleSpec, WorkspaceContract)
@@ -171,7 +171,7 @@ OPERATION = scientific_agent_operation(
     decision_fields=("outcome", "summary", "remaining_question", "limitations"),
     agent=_REF("experiment_task_agent"), prompt=_REF("experiment_task_prompt"),
     workspace=_REF("experiment_task_workspace"),
-    tools=BASE_TOOLS + (_REF("experiment_stage_tool"), _REF("experiment_execute_tool")),
+    tools=(_REF("experiment_stage_tool"), _REF("experiment_execute_tool")),
     inputs=(
         _input("research_objective", "Exact scientific objective and constraints.", "scidiscovery.research-objective.v1"),
         _input("scientific_materials", "Exact hypothesis, evidence, parameters or feedback needed for this experiment.", "*",

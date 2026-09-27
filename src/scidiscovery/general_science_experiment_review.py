@@ -2,7 +2,7 @@
 from pydantic import BaseModel, ConfigDict, Field
 from typing import Literal
 
-from .general_science_agent_operations import BASE_TOOLS, _input
+from .general_science_agent_operations import _input
 from .operation_declaration import schema_resource, scientific_agent_operation, semantic_contract
 from .operations.spec import CallableComponent, ComponentRef, ComponentSpec, OutputPortSpec, SemanticRuleSpec
 
@@ -40,7 +40,7 @@ OPERATION = scientific_agent_operation("science.object.review.v1",
     "A sealed scientific subject has a bounded review question.", "Authoring, execution authorization, or adding undeclared formatting gates.",
     decision_fields=("verdict", "summary", "limitations", "findings"),
     agent=ComponentRef("critic_agent"), workspace=ComponentRef("experiment_task_workspace"),
-    prompt=ComponentRef("experiment_review_prompt"), tools=BASE_TOOLS,
+    prompt=ComponentRef("experiment_review_prompt"), tools=(),
     inputs=(_input("subject", "Exact sealed scientific object to assess.", "*",
         media_types=("*/*",), exposure="on_demand", usage="evidence_inventory"),
         _input("scientific_materials", "Optional objective, evidence and observations needed for this review question.", "*",

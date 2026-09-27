@@ -156,7 +156,7 @@ class LocalWorkerMCPRouter:
             return
         self._opened_call_run_id = None
         # No assignment has been selected. Invalid open arguments must not
-        # enter timing, failure recording, or an old hardened transport lease.
+        # enter timing or failure recording.
         tool = self._tools[name]
         try:
             parse_tool_arguments(tool.input_model, arguments)

@@ -6,7 +6,6 @@ This is a LocalTrusted transport boundary, not protection against a hostile OS u
 
 from __future__ import annotations
 
-import hashlib
 import threading
 from typing import Any, Literal
 
@@ -19,7 +18,7 @@ from ..service.worker_connections import WorkerConnections, WorkerNotAttached
 from .mcp import MCPRouter, rpc_error
 from .mcp_local_worker import LocalWorkerMCPRouter
 from ..worker_services import load_operation_services
-from .mcp_hardened_worker import HardenedWorkerMCPRouter
+from ..runtime import validate_worker_backend
 from .mcp_platform_context import PlatformContext as _Context, platform_context as _context
 
 
@@ -81,6 +80,7 @@ _IDENTITY = {"name": "worker_identity", "description": "Read this Worker's platf
 
 class UnifiedMCPRouter:
     def __init__(self, root, *, plugin_configs=None, worker_backend="local"):
+        validate_worker_backend(worker_backend)
         self.root = root
         self.facade = root.facade
         self.connections = self.facade.runs.worker_connections
@@ -90,7 +90,6 @@ class UnifiedMCPRouter:
             coordinator.services_for = lambda operation_id: load_operation_services(
                 self.facade.runs.operation_catalog, operation_id, self.plugin_configs,
                 self.facade.runs.database_path.parent.parent)
-        self.worker_backend = worker_backend
         self._workers = {}
         self._run_state = {}
         self._lock = threading.RLock()
@@ -142,20 +141,13 @@ class UnifiedMCPRouter:
                     from ..service.experiment_execution import bind_experiment_services
                     bind_experiment_services(self.facade.runs,
                         self.facade.runs.operation_catalog.operation(status.operation_id), services, run_id=status.run_id)
-                cls = LocalWorkerMCPRouter if self.worker_backend == "local" else HardenedWorkerMCPRouter
-                worker = cls(self.facade.runs, operation_id=status.operation_id,
+                worker = LocalWorkerMCPRouter(self.facade.runs, operation_id=status.operation_id,
                     operation_digest=status.operation_digest, tool_services=services, run_id=status.run_id,
                     trusted_caller=(context.session, context.thread), participant=participant)
                 shared = self._run_state.setdefault(status.run_id, (threading.RLock(), {}))
                 worker._lock, worker._tool_state = shared
-                if self.worker_backend == "local":
-                    worker._previous_run_id = self.connections.previous_run(
-                        run_id=status.run_id, platform_session=context.session, thread_id=context.thread)
-                if self.worker_backend == "hardened":
-                    # Same Run transport lease, distinct scientific caller identity.
-                    transport_key = (context.session, participant['owner_thread'] if participant else context.thread, status.run_id)
-                    worker._transport_owner = "transport_" + hashlib.sha256(
-                        "\0".join(transport_key).encode()).hexdigest()
+                worker._previous_run_id = self.connections.previous_run(
+                    run_id=status.run_id, platform_session=context.session, thread_id=context.thread)
                 # A reused platform thread has only one currently bound workspace.
                 for old in tuple(self._workers):
                     if old[:2] == key[:2]:

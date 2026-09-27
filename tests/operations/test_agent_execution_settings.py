@@ -96,14 +96,13 @@ def test_settings_persist_cas_and_do_not_rebind_session(tmp_path):
     assert cleared["settings"] == {} and cleared["revision"] == 2
 
 
-@pytest.mark.parametrize("backend", ["local", "hardened"])
+@pytest.mark.parametrize("backend", ["local"])
 def test_preflight_snapshot_survives_settings_change_and_submission(tmp_path, backend, monkeypatch):
-    from tests.operations.test_l5_hardened_run_backend import _system, _worker, _write_result
-    from tests.operations.test_instance_archive_continuation import _hardened_system
+    from tests.operations.test_local_worker_contracts import _system, _worker, _write_result
+    from tests.operations.test_instance_archive_continuation import _local_archive_system
     from scidiscovery.artifact_agent.interfaces.mcp_local_worker import LocalWorkerMCPRouter
     from blind_csv_plugin.contracts import CSV_SCHEMA_PROBE
-    catalog, runtime, instance, root = (_hardened_system(tmp_path) if backend == "hardened"
-                                      else _system(tmp_path, worker_backend="local"))
+    catalog, runtime, instance, root = _system(tmp_path, worker_backend="local")
     gate = runtime.instance_maintenance
     bindings = runtime.scheduler_bindings
     bindings.save_agent_settings(instance.instance_id,
@@ -125,23 +124,19 @@ def test_preflight_snapshot_survives_settings_change_and_submission(tmp_path, ba
     assert invoked["execution_profile"]["profile"] == normalized["execution_profile"]
     assert root.call_tool("operation_invoke", normalized)["result"]["name"] == invoked["name"]
     compiled = catalog.operation("blind.csv.observe.v1")
-    worker = (_worker(catalog, runtime) if backend == "hardened" else LocalWorkerMCPRouter(runtime.runs,
-        operation_id=compiled.spec.operation_id, operation_digest=compiled.digest))
+    worker = LocalWorkerMCPRouter(runtime.runs,
+        operation_id=compiled.spec.operation_id, operation_digest=compiled.digest)
     opened = worker.call_tool("worker_open_assignment", {})
     assert "简体中文" in opened["narrative_instruction"]
     assignment = json.loads(Path(opened["assignment_path"]).read_text())
     assert assignment["narrative_instruction"] == opened["narrative_instruction"]
-    if backend == "local":
-        assert "role_instructions_sha256" not in opened
-        assert "input_reading" not in opened
-    if backend == "hardened":
-        _write_result(worker)  # English is accepted: language is not scientific validation.
-    else:
-        structure = worker.call_tool("worker_csv_summarize", {})
-        Path(opened["output_directory"], "result.json").write_text(json.dumps({
-            "schema_version": 1, "handoff": {"verdict": "pass", "summary": "Bounded result."},
-            "payload": {"schema_probe": CSV_SCHEMA_PROBE, "structure": structure,
-                        "interpretation": "Mean is two.", "limitations": ["Two rows."]}}))
+    assert "role_instructions_sha256" not in opened
+    assert "input_reading" not in opened
+    structure = worker.call_tool("worker_csv_summarize", {})
+    Path(opened["output_directory"], "result.json").write_text(json.dumps({
+        "schema_version": 1, "handoff": {"verdict": "pass", "summary": "Bounded result."},
+        "payload": {"schema_probe": CSV_SCHEMA_PROBE, "structure": structure,
+                    "interpretation": "Mean is two.", "limitations": ["Two rows."]}}))
     assert worker.call_tool("worker_submit_result", {})["state"] == "completed"
     saved = root.call_tool("run_status", {"name": "snapshot", "output_paths": []})
     assert saved["execution_profile"]["profile"] == normalized["execution_profile"]
@@ -151,9 +146,9 @@ def test_preflight_snapshot_survives_settings_change_and_submission(tmp_path, ba
 
 @pytest.mark.parametrize("legacy", [False, True])
 def test_recovery_inherits_source_budget_and_profile_not_current_defaults(tmp_path, legacy):
-    from tests.operations.test_instance_archive_continuation import _hardened_system
-    from tests.operations.test_l5_hardened_run_backend import _invoke, _worker, _write_result
-    catalog, runtime, instance, root = _hardened_system(tmp_path)
+    from tests.operations.test_instance_archive_continuation import _local_archive_system
+    from tests.operations.test_local_worker_contracts import _invoke, _worker, _write_result
+    catalog, runtime, instance, root = _local_archive_system(tmp_path)
     settings = runtime.scheduler_bindings
     settings.save_agent_settings(instance.instance_id,
         {"defaults": {"model": "gpt-5.6-luna", "reasoning_effort": "low", "narrative_language": "zh-CN", "max_attempts": 3}},
@@ -166,7 +161,6 @@ def test_recovery_inherits_source_budget_and_profile_not_current_defaults(tmp_pa
     old = root.call_tool("run_status", {"name": "source", "output_paths": []})
     root.call_tool("run_record_failure", {"name": "source", "reason": "fixture interruption",
         "expected_state": "running", "expected_last_activity_at": old["last_activity_at"]})
-    runtime.runs.backend.release_transport(old_id, worker._transport_owner)
     if legacy:
         with runtime.runs._connect() as connection:
             connection.execute("UPDATE runs SET execution_profile_json=NULL WHERE run_id=?", (old_id,))
@@ -191,7 +185,7 @@ def test_recovery_inherits_source_budget_and_profile_not_current_defaults(tmp_pa
 
 def test_direct_invoke_freezes_once_replays_and_reports_changed_defaults(tmp_path, monkeypatch):
     from concurrent.futures import ThreadPoolExecutor
-    from tests.operations.test_l5_hardened_run_backend import _system
+    from tests.operations.test_local_worker_contracts import _system
     from scidiscovery.artifact_agent.interfaces.mcp_root import RootToolError
     _, runtime, instance, root = _system(tmp_path, worker_backend="local")
     bindings = runtime.scheduler_bindings
@@ -230,7 +224,7 @@ def test_direct_invoke_freezes_once_replays_and_reports_changed_defaults(tmp_pat
 
 
 def test_direct_invoke_bad_inputs_do_not_create_run(tmp_path):
-    from tests.operations.test_l5_hardened_run_backend import _system
+    from tests.operations.test_local_worker_contracts import _system
     from scidiscovery.artifact_agent.interfaces.mcp_root import RootToolError
     _, _, _, root = _system(tmp_path, worker_backend="local")
     request = dict(name="invalid", operation_id="blind.csv.observe.v1", inputs=[])
@@ -244,7 +238,7 @@ def test_direct_invoke_bad_inputs_do_not_create_run(tmp_path):
 
 @pytest.mark.parametrize('helper_state', ['missing', 'legacy', 'explicit_selection'])
 def test_local_open_directs_legacy_reader_without_rewriting_workspace(tmp_path, helper_state):
-    from tests.operations.test_l5_hardened_run_backend import _system, _invoke
+    from tests.operations.test_local_worker_contracts import _system, _invoke
     from scidiscovery.artifact_agent.interfaces.mcp_local_worker import LocalWorkerMCPRouter
     catalog, runtime, instance, root = _system(tmp_path, worker_backend='local')
     _invoke(root)

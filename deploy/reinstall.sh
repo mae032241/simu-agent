@@ -26,6 +26,11 @@ die() {
     exit 1
 }
 
+validate_worker_backend() {
+    [[ "$WORKER_BACKEND" != "hardened" ]] || die "hardened Worker backend has been retired; finish or archive existing runs on the previous release, then explicitly configure local and regenerate profiles. Local retains native permissions; migration is not automatic."
+    [[ "$WORKER_BACKEND" == "local" ]] || die "SCID_WORKER_BACKEND must be local"
+}
+
 usage() {
     printf 'Usage: %s [--dry-run|install|reinstall|status]\n' "${0##*/}" >&2
 }
@@ -38,6 +43,8 @@ case "$MODE" in
     --dry-run|install|reinstall) ;;
     *) usage; exit 2 ;;
 esac
+
+validate_worker_backend
 
 [[ -d "$WORKSPACE" && ! -L "$WORKSPACE" ]] || \
     die "workspace not found: ${WORKSPACE}; set SCID_WORKSPACE"

@@ -238,27 +238,19 @@ def test_reused_agent_open_checks_new_assignment_not_its_cached_instance(tmp_pat
     assert _activities(runtime.runs, old_id) == before_old
 
 
-def _hardened_system(tmp_path):
-    from tests.operations.test_l5_hardened_run_backend import _system
-    from blind_csv_plugin.plugin import PLUGIN
-    # This test exercises transport finalization only. The default Blind CSV
-    # reviewer requires a native shell and is correctly unavailable hardened.
-    author, reviewer = PLUGIN.operations
-    native = reviewer.executor.native_tools.model_copy(update={"shell": "none"})
-    reviewer = reviewer.model_copy(update={"executor": reviewer.executor.model_copy(update={"native_tools": native})})
-    fixture = PLUGIN.model_copy(update={"operations": (author, reviewer)})
-    return _system(tmp_path, blind_plugin=fixture)
+def _local_csv_system(tmp_path):
+    from tests.operations.test_local_worker_contracts import _system
+    return _system(tmp_path)
 
 
-def test_hardened_final_timing_and_transport_release_still_hold_gate(tmp_path, monkeypatch):
-    from tests.operations.test_l5_hardened_run_backend import _invoke, _worker
-    _, runtime, instance, root = _hardened_system(tmp_path)
+def test_local_final_timing_still_holds_gate(tmp_path, monkeypatch):
+    from tests.operations.test_local_worker_contracts import _invoke, _worker
+    _, runtime, instance, root = _local_csv_system(tmp_path)
     _invoke(root)
     worker = _worker(runtime.runs.operation_catalog, runtime)
     worker.call_tool("worker_open_assignment", {})
     calls = []
     observe = runtime.runs.record_tool_observation
-    release = runtime.runs.backend.release_transport
 
     def still_owned(label):
         with pytest.raises(InstanceMaintenanceBusy):
@@ -270,15 +262,10 @@ def test_hardened_final_timing_and_transport_release_still_hold_gate(tmp_path, m
         still_owned("timing")
         return observe(*args, **kwargs)
 
-    def release_transport(*args, **kwargs):
-        still_owned("release")
-        return release(*args, **kwargs)
-
     monkeypatch.setattr(runtime.runs, "record_tool_observation", observation)
-    monkeypatch.setattr(runtime.runs.backend, "release_transport", release_transport)
     monkeypatch.setattr(worker, "_call_tool", lambda *_: {"state": "completed"})
     assert worker.call_tool("worker_submit_result", {})["state"] == "completed"
-    assert "timing" in calls and calls[-1] == "release"
+    assert "timing" in calls
 
 
 def test_root_cached_instance_is_rechecked_before_any_route_or_diagnostic(tmp_path, monkeypatch):
@@ -293,17 +280,12 @@ def test_root_cached_instance_is_rechecked_before_any_route_or_diagnostic(tmp_pa
         root.call_tool("artifact_ingest_text", {"name": "late", "text": "late"})
 
 
-@pytest.mark.parametrize("backend", ["local", "hardened"])
+@pytest.mark.parametrize("backend", ["local"])
 def test_invalid_open_after_maintenance_never_touches_cached_run_or_transport(tmp_path, monkeypatch, backend):
     from scidiscovery.artifact_agent.interfaces.mcp_worker_protocol import WorkerToolError
-    if backend == "local":
-        from tests.operations.test_l2_run_invariants import _system, _invoke, _worker
-        catalog, runtime, instance, _, root = _system(tmp_path)
-        _invoke(root, "old")
-    else:
-        from tests.operations.test_l5_hardened_run_backend import _invoke, _worker
-        catalog, runtime, instance, root = _hardened_system(tmp_path)
-        _invoke(root)
+    from tests.operations.test_l2_run_invariants import _system, _invoke, _worker
+    catalog, runtime, instance, _, root = _system(tmp_path)
+    _invoke(root, "old")
     worker = _worker(catalog, runtime)
     worker.call_tool("worker_open_assignment", {})
     run_id = worker._run_id
@@ -311,30 +293,12 @@ def test_invalid_open_after_maintenance_never_touches_cached_run_or_transport(tm
     files = tuple(sorted(str(path.relative_to(worker._workspace.root)) for path in worker._workspace.root.rglob("*")))
     freeze(runtime.instance_maintenance, instance.instance_id)
     monkeypatch.setattr(worker, "_engineering_failure", lambda *_: pytest.fail("invalid open wrote an engineering record"))
-    if backend == "hardened":
-        monkeypatch.setattr(runtime.runs.backend, "transport_guard", lambda *_args, **_kwargs: pytest.fail("invalid open touched cached transport"))
     with pytest.raises(WorkerToolError, match="arguments"):
         worker.call_tool("worker_open_assignment", {"unexpected": True})
     assert (runtime.runs.status(run_id), _activities(runtime.runs, run_id)) == before
     assert tuple(sorted(str(path.relative_to(worker._workspace.root)) for path in worker._workspace.root.rglob("*"))) == files
 
 
-def test_late_hardened_open_rejects_before_old_expired_transport(tmp_path, monkeypatch):
-    from tests.operations.test_l5_hardened_run_backend import _invoke, _worker
-    catalog, runtime, instance, root = _hardened_system(tmp_path)
-    _invoke(root)
-    worker = _worker(catalog, runtime)
-    worker.call_tool("worker_open_assignment", {})
-    run_id = worker._run_id
-    with runtime.runs.backend._connect_dispatch() as connection:
-        connection.execute("UPDATE active_transport SET lease_deadline_at = ? WHERE run_id = ?", ("2000-01-01T00:00:00+00:00", run_id))
-    before = runtime.runs.status(run_id), _activities(runtime.runs, run_id)
-    freeze(runtime.instance_maintenance, instance.instance_id)
-    monkeypatch.setattr(worker, "_engineering_failure", lambda *_: pytest.fail("maintenance wrote an old transport error"))
-    monkeypatch.setattr(runtime.runs.backend, "transport_guard", lambda *_args, **_kwargs: pytest.fail("late open reached expired transport"))
-    with pytest.raises(InstanceMaintenanceUnavailable):
-        worker.call_tool("worker_open_assignment", {})
-    assert (runtime.runs.status(run_id), _activities(runtime.runs, run_id)) == before
 
 
 def test_open_failure_before_selection_does_not_inherit_cached_run(tmp_path):
@@ -354,10 +318,9 @@ def test_open_failure_before_selection_does_not_inherit_cached_run(tmp_path):
     assert (runtime.runs.status(run_id), _activities(runtime.runs, run_id)) == before
 
 
-def _backend_runtime(tmp_path, *, hardened=True, state="completed", pending=False):
-    from scidiscovery.artifact_agent.service.hardened_workspace import HardenedWorkerBackend
+def _backend_runtime(tmp_path, *, state="completed", pending=False):
     from scidiscovery.artifact_agent.service.local_workspace import LocalTrustedBackend
-    backend = (HardenedWorkerBackend if hardened else LocalTrustedBackend)(tmp_path / "workspace-root")
+    backend = LocalTrustedBackend(tmp_path / "workspace-root")
     run_id = "run_" + "a" * 32
     workspace = backend.prepare(run_id=run_id, inputs=(), assignment=b"{}", result_schema=b"{}")
     value = SimpleNamespace(run_id=run_id, state=state, backend_id=backend.backend_id,
@@ -369,7 +332,7 @@ def _backend_runtime(tmp_path, *, hardened=True, state="completed", pending=Fals
 
 @pytest.mark.parametrize("finished", [False, True])
 def test_local_native_history_stays_unknown_even_with_stopped_launcher(tmp_path, finished):
-    runtime, value, workspace = _backend_runtime(tmp_path, hardened=False, state="failed", pending=True)
+    runtime, value, workspace = _backend_runtime(tmp_path, state="failed", pending=True)
     if finished:
         directory = workspace.root / "scratch/.analysis-process"
         directory.mkdir(parents=True)
@@ -383,38 +346,8 @@ def test_local_native_history_stays_unknown_even_with_stopped_launcher(tmp_path,
     assert value.recovery_draft == before and workspace.root.is_dir()
 
 
-@pytest.mark.parametrize("lease", ["active", "expired", "missing"])
-def test_hardened_quiescence_requires_terminal_identity_lock_and_inactive_lease(tmp_path, lease):
-    runtime, value, workspace = _backend_runtime(tmp_path)
-    backend = runtime.runs.backend
-    with backend._run_transport_lock(value.run_id):
-        pass
-    if lease != "missing":
-        deadline = datetime.now(timezone.utc) + timedelta(seconds=300 if lease == "active" else -300)
-        with backend._connect_dispatch() as connection:
-            connection.execute("INSERT INTO active_transport VALUES (?, ?, ?)", (value.run_id, "original-owner", deadline.isoformat()))
-    before = backend.dispatch_database.read_bytes()
-    if lease == "active":
-        with pytest.raises(InstanceMaintenanceBusy):
-            with backend_writer_guards(runtime, (value.run_id,), ()):
-                pytest.fail("active lease was ignored")
-    else:
-        with backend_writer_guards(runtime, (value.run_id,), ()) as proof:
-            assert proof["quiescent"]
-            with pytest.raises(BlockingIOError):
-                with backend._run_transport_lock(value.run_id, blocking=False):
-                    pytest.fail("transport lock was not held")
-    assert backend.dispatch_database.read_bytes() == before
-    assert backend.exact_workspace_paths(value.run_id) == (workspace.root,)
 
 
-def test_missing_hardened_transport_lock_does_not_create_a_quiescence_record(tmp_path):
-    runtime, value, _ = _backend_runtime(tmp_path)
-    before = tuple(runtime.runs.backend.transport_lock_root.iterdir())
-    with pytest.raises(InstanceMaintenanceBusy):
-        with backend_writer_guards(runtime, (value.run_id,), ()):
-            pytest.fail("missing transport lock was treated as held")
-    assert tuple(runtime.runs.backend.transport_lock_root.iterdir()) == before
 
 
 def test_backend_identity_change_does_not_renew_historical_quiescence(tmp_path):

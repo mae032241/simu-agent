@@ -22,7 +22,7 @@ from curve_score.diagnostic_tool import (
     DIAGNOSTIC_GUIDANCE, DiagnosticComparisonSpec,
     run_diagnostic_tool,
 )
-from curve_score.science_operations import BASE_TOOLS, Components, validate_analysis_report
+from curve_score.science_operations import Components, validate_analysis_report
 from curve_score.analysis_files import GUIDANCE as ANALYSIS_FILES_GUIDANCE
 from scidiscovery.plugin_runtime.calculations import analysis_evidence_aliases
 from scidiscovery.plugin_runtime.evidence import read_evidence_records
@@ -570,7 +570,7 @@ OPERATIONS = (scientific_agent_operation(
     "Solver execution, mandatory pre-experiment curve contracts, or changing raw evidence.",
     decision_fields=("overall_verdict", "claim_allowed", "summary", "next_action", "remaining_contradiction", "limitations"),
     agent=_ref("result_analysis_agent"), workspace=_ref("tcad_analysis_workspace"),
-    prompt=_ref("result_analysis_prompt"), tools=(*BASE_TOOLS, _ref("result_analysis_score_tool"), _ref("result_analysis_diagnostic_tool"), _ref("analysis_files_tool", "curve_score"), _ref("analysis_inspect_tool"), _ref("analysis_accept_tool")),
+    prompt=_ref("result_analysis_prompt"), tools=(_ref("result_analysis_score_tool"), _ref("result_analysis_diagnostic_tool"), _ref("analysis_files_tool", "curve_score"), _ref("analysis_inspect_tool"), _ref("analysis_accept_tool")),
     native_view_image=True,
     input_validation=InputValidationSpec(validator=_ref("result_analysis_input"),
         rule_id="tcad.result_analysis.input_binding",

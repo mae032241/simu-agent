@@ -17,19 +17,6 @@ from ..artifact_agent.operation_tool_context import OperationToolContext
 _TOOL_NAME = re.compile(r"^worker_[a-z][a-z0-9_]{0,95}$")
 _LOCAL_SERVICE = re.compile(r"^[a-z][a-z0-9_.-]{0,127}$")
 _LIFECYCLE_INPUT_SCHEMA = freeze_json(AgentLifecycleInput.model_json_schema())
-_LOCAL_NATIVE_EQUIVALENT_TOOLS = frozenset(
-    {
-        "worker_file_write_begin",
-        "worker_file_write_chunk",
-        "worker_file_write_commit",
-        "worker_file_apply_patch",
-        "worker_file_json_patch",
-        "worker_file_delete",
-        "worker_file_move",
-    }
-)
-
-
 @dataclass(frozen=True, slots=True)
 class WorkerToolDefinition:
     """One registered tool; lifecycle tools may use the existing Worker router."""
@@ -224,7 +211,6 @@ def operation_local_worker_tools(
         if item.handler is None
         and item.contextual_handler is None
         and item.local_contextual_handler is None
-        and item.name not in _LOCAL_NATIVE_EQUIVALENT_TOOLS
     )
     if missing:
         raise ValueError(
@@ -254,7 +240,6 @@ def operation_local_worker_missing_tools(
         if item.handler is None
         and item.contextual_handler is None
         and item.local_contextual_handler is None
-        and item.name not in _LOCAL_NATIVE_EQUIVALENT_TOOLS
     )
 
 

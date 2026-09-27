@@ -2,7 +2,8 @@
 
 Only the existing bounded CSV fixture is used; no solver or native process is
 started. Both continuation modes retain the original scientific admission and
-hardened transport/recovery mechanisms.
+Local continuation contracts. Archive movement uses an explicit synchronous test writer
+proof; this does not prove production Local native-writer quiescence.
 """
 from pathlib import Path
 import json
@@ -11,26 +12,18 @@ import pytest
 
 from scidiscovery.artifact_agent.schema.artifact import ArtifactRegistration
 from scidiscovery.artifact_agent.approval_ui.read_model import InstanceReadModel
-from scidiscovery.artifact_agent.service.instance_archive import InstanceArchive
+from tests.operations.synchronous_archive_fixture import SynchronousFixtureArchive as InstanceArchive
 from scidiscovery.operations.spec import ComponentRef, ComponentSpec
 from tests.operations.test_instance_archive import save_archive, restore_archive
-from tests.operations.test_l5_hardened_run_backend import RAW, _invoke, _system, _worker, _write_result
+from tests.operations.test_local_worker_contracts import RAW, _invoke, _system, _worker, _write_result
 
 
-def _hardened_system(tmp_path):
+def _local_archive_system(tmp_path):
     from blind_csv_plugin.plugin import PLUGIN
-    # The existing whole-envelope CSV writer needs the ordinary result-file
-    # workspace. The production general workspace now has a finalizer and does
-    # not declare that hardened edit path. Bind a private plain workspace for
-    # this synthetic control-chain fixture, retaining every payload validator.
-    workspace = ComponentRef("archive_fixture_workspace")
-    operations = tuple(operation.model_copy(update={"executor": operation.executor.model_copy(update={
-        "workspace": workspace,
-        "native_tools": operation.executor.native_tools.model_copy(update={"shell": "none"}),
-    })}) for operation in PLUGIN.operations)
-    fixture = PLUGIN.model_copy(update={"operations": operations, "components": (*PLUGIN.components,
-        ComponentSpec("archive_fixture_workspace", "workspace", "scidiscovery.general_science_components:WORKSPACE"))})
-    return _system(tmp_path, blind_plugin=fixture)
+    catalog, runtime, instance, root = _system(tmp_path)
+    # No platform Worker or native process is ever started by this source fixture.
+    runtime.runs._synchronous_archive_fixture = True
+    return catalog, runtime, instance, root
 
 
 def _activity_rows(runs, run_id):
@@ -50,7 +43,7 @@ def _relationships(model, instance_id, keys):
 
 
 def _archived_and_restored_draft(tmp_path):
-    catalog, runtime, instance, root = _hardened_system(tmp_path)
+    catalog, runtime, instance, root = _local_archive_system(tmp_path)
     _invoke(root, "failed_source")
     original_worker = _worker(catalog, runtime)
     opened = original_worker.call_tool("worker_open_assignment", {})
@@ -67,11 +60,6 @@ def _archived_and_restored_draft(tmp_path):
     recovery = runtime.runs.recovery_status(source)
     assert recovery["draft_available"] and recovery["resume_available"]
     assert not recovery["recovery_pending"]
-    assert "native_tools_disabled" in source.backend_capabilities
-    # End the exact original owner's transport normally. Archive still performs
-    # its own nonblocking lock and backend-identity/lease quiescence checks.
-    with runtime.instance_maintenance.guard(instance.instance_id):
-        runtime.runs.backend.release_transport(original_id, original_worker._transport_owner)
     source_input = next(item for item in source.inputs if item.port_name == "source_table")
     preserved = runtime.runs.backend.root / "recovery" / source.recovery_draft["draft_digest"] / "result.json"
     assert preserved.read_bytes() == draft_bytes
@@ -103,8 +91,6 @@ def _archived_and_restored_draft(tmp_path):
     assert _activity_rows(runtime.runs, original_id) == activities
     assert preserved.read_bytes() == draft_bytes
     assert runtime.runs.recovery_status(source) == recovery
-    with runtime.runs.backend._connect_dispatch() as connection:
-        assert connection.execute("SELECT 1 FROM active_transport WHERE run_id=?", (original_id,)).fetchone() is None
     return catalog, runtime, instance, root, source, draft_bytes, activities
 
 
@@ -154,7 +140,7 @@ def test_archive_browse_restore_preserves_real_continuation_admission_and_assign
 
     successor_worker = _worker(catalog, runtime)
     opened = successor_worker.call_tool("worker_open_assignment", {})
-    assert opened["state"] == "opened" and opened["write_protocol"] == "server_file_tools"
+    assert opened["state"] == "opened"
     assert successor_worker._run_id == successor_id
     assignment = json.loads(Path(opened["assignment_path"]).read_bytes())
     assert assignment["recovery_draft"]["scientific_evidence"] is False
@@ -179,8 +165,6 @@ def test_archive_browse_restore_preserves_real_continuation_admission_and_assign
         "name": "restored_continuation", "reason": "Fixture successor ended before submission",
         "expected_state": "running", "expected_last_activity_at": last["last_activity_at"],
     })["state"] == "failed"
-    with runtime.instance_maintenance.guard(instance.instance_id):
-        runtime.runs.backend.release_transport(successor_id, successor_worker._transport_owner)
     original_links = _relationships(_live_model(runtime), instance.instance_id,
         ("artifact:source_csv", "artifact:changed_source_csv", "run:failed_source", "run:restored_continuation"))
     assert any(link["key"] == "run:failed_source" and link["relation"] == continuation

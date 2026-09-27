@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import copy
 import json
+import re
 from pathlib import Path
 
 from .instance_archive_files import hash_file
@@ -56,6 +57,53 @@ class _ArchivedCollection:
         return {**read_json(path), "archived": True}
 
 
+class _ArchivedWorkspaces:
+    """Read historical layouts without constructing any retired execution backend."""
+    def __init__(self, current, runs, package):
+        self._database_path, self._package = runs.database_path, package
+        self.root = package / "workspaces/local"
+        self._template = copy.copy(current)
+        self._template.root = self.root
+        self.backend_id = current.backend_id
+        self.backend_version = current.backend_version
+        self.capabilities = current.capabilities
+
+    def supports_operation(self, compiled):
+        return False  # Archived material never authorizes execution or continuation.
+
+    def _reader(self, backend_id, version):
+        keys = {"local_trusted": "local", "hardened_worker": "hardened"}
+        if backend_id not in keys:
+            raise ArchiveError("unsupported historical workspace backend")
+        reader = copy.copy(self._template)
+        reader.root = self._package / "workspaces" / keys[backend_id]
+        reader.backend_id, reader.backend_version = backend_id, version
+        return reader
+
+    def open(self, run_id):
+        with readonly(self._database_path) as connection:
+            identity = connection.execute(
+                "SELECT backend_id, backend_version FROM runs WHERE run_id=?", (run_id,)).fetchone()
+        if identity is None:
+            raise ArchiveError("historical Run is unavailable")
+        return self._reader(*identity).open(run_id)
+
+    def verify_recovery(self, digest, *, max_files, max_bytes):
+        from .local_workspace import WorkspaceError
+        if re.fullmatch(r"[0-9a-f]{64}", digest) is None:
+            raise WorkspaceError("recovery digest is invalid")
+        with readonly(self._database_path) as connection:
+            identities = connection.execute(
+                "SELECT DISTINCT backend_id, backend_version FROM runs "
+                "WHERE json_extract(recovery_draft_json, '$.draft_digest')=? "
+                "ORDER BY backend_id, backend_version", (digest,)).fetchall()
+        for backend_id, version in identities:
+            reader = self._reader(backend_id, version)
+            if (reader.root / "recovery" / digest).exists():
+                return reader.verify_recovery(digest, max_files=max_files, max_bytes=max_bytes)
+        raise WorkspaceError("historical recovery draft is unavailable")
+
+
 def archived_model(runtime, package, manifest):
     from ..approval_ui.read_model import InstanceReadModel
     from .engineering_diagnostics import EngineeringDiagnostics
@@ -74,12 +122,7 @@ def archived_model(runtime, package, manifest):
     runs.artifacts = artifacts
     runs.scheduler_bindings = bindings
     runs.scheduler_database_path = bindings.database_path
-    runs.backend = copy.copy(runtime.runs.backend)
-    backend_key = "local" if runs.backend.backend_id == "local_trusted" else "hardened"
-    runs.backend.root = package / "workspaces" / backend_key
-    if hasattr(runs.backend, "dispatch_database"):
-        runs.backend.dispatch_database = package / "records" / "dispatch.sqlite3"
-        runs.backend.transport_lock_root = runs.backend.root / "transport-locks"
+    runs.backend = _ArchivedWorkspaces(runtime.runs.backend, runs, package)
     approvals = _database_service(runtime.approvals, package / "records" / "approvals.sqlite3")
     if approvals is not None:
         approvals.artifacts = artifacts

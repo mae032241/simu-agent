@@ -19,7 +19,7 @@ from scidiscovery.platforms.codex import initialize, validate_installation_profi
 from scidiscovery.operations.tooling import operation_agent_type
 from scidiscovery.operations.spec import ComponentRef
 from scidiscovery.general_science_plugin import PLUGIN as GENERAL_PLUGIN
-from test_l5_hardened_run_backend import _system, _invoke
+from test_local_worker_contracts import _system, _invoke
 from test_instance_archive import archive_system, save_archive, restore_archive
 
 
@@ -44,19 +44,6 @@ def call(gateway, name, arguments=None, **context):
 
 def queued(tmp_path, backend="local"):
     plugin = BLIND_PLUGIN
-    if backend == "hardened":
-        # This fixture's reviewer normally uses local file tools. Use a declared
-        # MCP-only cohort here; production backend admission remains unchanged.
-        reviewer = plugin.operations[1]
-        native = reviewer.executor.native_tools.model_copy(update={"shell": "none", "view_image": False})
-        reviewer = reviewer.model_copy(update={"executor": reviewer.executor.model_copy(update={"native_tools": native})})
-        plugin = plugin.model_copy(update={"operations": (plugin.operations[0], reviewer)})
-        # A plain MCP file fixture does not use the general native finalizer.
-        workspace = next(x for x in GENERAL_PLUGIN.components if x.component_id == "workspace")
-        workspace = workspace.model_copy(update={"component_id": "plain_workspace", "resources": ()})
-        operations = tuple(op.model_copy(update={"executor": op.executor.model_copy(
-            update={"workspace": ComponentRef("plain_workspace")})}) for op in plugin.operations)
-        plugin = plugin.model_copy(update={"components": (*plugin.components, workspace), "operations": operations})
     catalog, runtime, instance, root = _system(tmp_path, worker_backend=backend, blind_plugin=plugin)
     _invoke(root)
     gateway = UnifiedMCPRouter(root, worker_backend=backend)
@@ -146,7 +133,7 @@ def test_optional_source_proxy_daemon_does_not_register_worker_as_scheduler(tmp_
             process.kill(); process.join()
 
 
-@pytest.mark.parametrize("backend", ["local", "hardened"])
+@pytest.mark.parametrize("backend", ["local"])
 def test_gateway_scopes_actual_worker_lifecycle_and_sealed_result(tmp_path, backend):
     catalog, runtime, root, gateway, profile = queued(tmp_path, backend)
     listed = gateway.handle({"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
@@ -252,26 +239,10 @@ def test_gateway_scopes_actual_worker_lifecycle_and_sealed_result(tmp_path, back
     content = json.dumps({"schema_version": 1, "handoff": {"verdict": "pass", "summary": "Bounded result."},
         "payload": {"schema_probe": CSV_SCHEMA_PROBE, "structure": structure,
                     "interpretation": "The mean is two.", "limitations": ["Two rows do not establish causality."]}})
-    if backend == "local":
-        Path(opened["output_directory"], "result.json").write_text(content)
-    else:
-        result(call(gateway, "worker_file_write_begin", {"relative_path": "output/result.json"}, **child))
-        result(call(gateway, "worker_file_write_chunk", {"content": content}, **child))
-        result(call(gateway, "worker_file_write_commit", **child))
+    Path(opened["output_directory"], "result.json").write_text(content)
     assert result(call(gateway, "worker_submit_result", **child))["state"] == "completed"
     assert result(call(gateway, "run_status", {"name": "observation", "output_paths": []}))["state"] == "completed"
     assert "error" in call(gateway, "worker_csv_summarize", **child)
-    if backend == "hardened":
-        from scidiscovery.artifact_agent.service.instance_archive import InstanceArchive
-        status = gateway.connections.resolve(platform_session="parent", thread_id="child-1")
-        runtime.runs.backend.release_transport(status.run_id, "transport_" + hashlib.sha256(
-            "\0".join(("parent", "child-1", status.run_id)).encode()).hexdigest())
-        archives = InstanceArchive(runtime)
-        save_archive(archives, status.instance_id)
-        with runtime.runs._connect() as connection:
-            assert connection.execute("SELECT COUNT(*) FROM worker_connections").fetchone()[0] == 0
-        restore_archive(archives, status.instance_id)
-        assert gateway.connections.resolve(platform_session="parent", thread_id="child-1").run_id == status.run_id
     # Reuse is a new exact Run, not reopening or modifying the sealed output.
     _invoke(root, name="second")
     result(call(gateway, "worker_attach", {"name": "second", "thread_id": "child-1"}))
@@ -377,7 +348,7 @@ def test_irreparable_attached_profile_mismatch_fails_run_and_releases_slot(
         assert connection.execute("SELECT COUNT(*) FROM worker_connections").fetchone()[0] == 1
 
 
-@pytest.mark.parametrize("backend", ["local", "hardened"])
+@pytest.mark.parametrize("backend", ["local"])
 def test_generated_install_has_one_mcp_and_no_worker_service_copies(tmp_path, backend):
     catalog, runtime, root, _, _ = queued(tmp_path, backend)
     project = tmp_path / "project"

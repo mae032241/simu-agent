@@ -188,9 +188,6 @@ PLUGIN = PluginDefinition(
                 component=_ref("review_agent"),
                 workspace=_ref("workspace"),
                 tools=(
-                    _ref("file_write_begin_tool", "builtin"),
-                    _ref("file_write_chunk_tool", "builtin"),
-                    _ref("file_write_commit_tool", "builtin"),
                 ),
                 prompt=_ref("prompt"),
                 model="gpt-5.4",
@@ -225,9 +222,6 @@ PLUGIN = PluginDefinition(
                 component=_ref("revision_agent"),
                 workspace=_ref("workspace"),
                 tools=(
-                    _ref("file_write_begin_tool", "builtin"),
-                    _ref("file_write_chunk_tool", "builtin"),
-                    _ref("file_write_commit_tool", "builtin"),
                 ),
                 prompt=_ref("prompt"),
                 model="gpt-5.4",

@@ -177,8 +177,7 @@ manifest 派生，一次提供完整任务/角色、输入索引、语言、预�
 案例矩阵；两份导航合计预算 32 KiB，遗漏有原件指针和计数。内部案例绑定账本留在原件与控制工具，
 视图不改变来源身份、科学资格或文件权限。
 
-Local 打开任务保留按需读取工具合同的冻结位置。Hardened 内联提供相同启动内容和 Agent 表单，
-不提供本地读取命令或整份工具合同表；所选工具通过 `scid_describe` 查阅。内部助手保留独立子任务
+Local 打开任务保留按需读取工具合同的冻结位置；所选工具也可通过 `scid_describe` 查阅。内部助手保留独立子任务
 和选定材料，除非子任务需要，不读取负责人指令或表单。assignment 损坏是工程错误，不能以新合同替代。
 TCAD 作者在最后一次源码诊断前，把初始化覆盖与未测试 reset 路径写入源码注释，使其随封存项目
 到达审查者；审查者独立核对说明与实际源码、证明。源码注释本身不是执行证明。
@@ -365,10 +364,11 @@ Worker 在自身工作区保留可读报告。既有 Run 活动记录还提供 M
 由 Operation 创建的 Run、Artifact、Approval、Execution 记录当前编译 operation id、version
 和 digest；用户直接摄入的原始来源 Artifact 可以没有生产 Operation。Worker 只获得 Run 本地别名，
 不获得内部 Artifact、Approval、current 写接口或外部执行身份。主 Agent 不制造 Worker 科学输出，
-Worker 也不直接写控制元数据。默认 `LocalTrustedBackend` 只管理 Run 目录。已有
-`HardenedWorkerBackend` 作为非默认实验/可选实现保留，但强隔离不属于当前阶段的产品完成门，也不
-得反向增加默认 Operation、插件或 Worker 的协议成本。其当前没有受控读取预置结果的工具，因此会
-明确拒绝直接修订 Operation，而不是宣称一个真实 Agent 无法完成的能力。
+Worker 也不直接写控制元数据。`LocalTrustedBackend` 是唯一执行后端，管理 Run 目录。
+hardened 专属执行、上传、patch 和 Worker MCP 入口已退役。归档读取器继续解释旧 Run backend 标签、
+Artifact 字节、工作区和 dispatch 记录；这些历史事实不能启用旧执行器。
+旧 `worker_backend=hardened` 配置在运行时或部署变更前明确拒绝。迁移需先在旧版结束或归档
+在途任务，再显式选择 `local` 并重新生成 profile；Worker 仍保留声明的原生权限。此次退役不关闭 `SEC-002`。
 
 ## 6. 通用与领域边界
 
@@ -407,10 +407,8 @@ Operation 或 Schema 分支。Agent 主输出的 context validator 则获得其 
   但不阻断当前可信本地原型完成；
 - Run v1 只接受一个 Agent 主结果；声明 collection 输出的 Agent Operation 统一显示为当前后端
   unavailable，preflight 失败关闭；Transform 多输出不受此限制；
-- Hardened v1 的历史实现只支持纯 MCP Operation；当前阶段不扩展、不补齐，也不以其通过作为完成
-  条件。默认 12 个科学 Operation 需要原生能力，在该后端不可用；已支持的纯 MCP fixture 仍保留。
-  transport 租约默认 30 秒，仅 `worker_heartbeat` 续租，长时间工作或调用间隔可能使所有权过期。
-  每 Run 锁保护正在执行的调用，SQLite 写事务在工具执行前已结束；这些机制不续租，也不建立 OS 隔离；
+- Hardened 执行已退役。生产 Local 历史的原生写者静止状态未知时，即使 Run 已终态，仍拒绝破坏性
+  归档。同步归档 fixture 仅证明格式与事务，不证明真实 Local 写者静止；该能力与实际升级仍需另行验收；
 - 审批 UI 已增加结构化参数、证据与原件入口；真实 Fig4 部署后的阅读验收仍需单列，不以合成页面代替；
 - 当前测试证明工程边界和 TCAD 最小纵向路径，不证明论文图数字化精度、Solver 科学正确性、三领域
   通用性或相对单 Agent 的统计优势。
@@ -471,7 +469,7 @@ Local 工作区包含只读的 `tools/read_tool_contract.py`，仅读取冻结 a
 JSON Patch，始终引用最近一次完整响应，不引用前次差异。工作区、assignment 或合同变化，
 回执缺失/过期或差异更长时退回全文。上下文丢失后用 `--full` 重读：阅读回执不能证明模型
 仍然保留基准。回执故障不拒绝科研任务。不新增 MCP、合同注册表、科研状态或权限，不改变
-实际 Schema 和成果。旧工作区仍可直接读原合同；Hardened 不新增原生执行权限。
+实际 Schema 和成果。旧工作区仍可直接读原合同；历史文件不授予执行权限。
 
 Local 工作区还提供 `tools/read_output_schema.py`，仅读取当前 `schema/result.schema.json` 中的
 Agent 填写表单。实际配对的 finalizer 负责移除机械字段；内部端口/校验器接线、Operation 摘要与

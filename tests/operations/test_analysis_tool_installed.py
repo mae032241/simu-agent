@@ -29,7 +29,7 @@ print(json.dumps({key: dict(digest=catalog.operation(key).digest,
     assert json.loads(output) == expected
 
 
-@pytest.mark.parametrize("entry", ["local_worker", "hardened_worker", "proxy"])
+@pytest.mark.parametrize("entry", ["local_worker", "proxy"])
 def test_installed_stdio_errors_share_protocol_diagnostics(installed_probe, entry):
     installed_probe("blind_csv", "entry = " + repr(entry) + r'''
 import json

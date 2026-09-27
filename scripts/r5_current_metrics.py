@@ -27,8 +27,6 @@ TASK_SUCCESSORS = (
     "src/scidiscovery/artifact_agent/service/run_outputs.py",
     "src/scidiscovery/artifact_agent/service/run_records.py",
     "src/scidiscovery/artifact_agent/service/local_workspace.py",
-    "src/scidiscovery/artifact_agent/service/hardened_workspace.py",
-    "src/scidiscovery/artifact_agent/service/hardened_files.py",
     "src/scidiscovery/artifact_agent/service/local_pdf_tool.py",
     "src/scidiscovery/artifact_agent/operation_tool_context.py",
 )
@@ -36,7 +34,6 @@ WORKER_OWNER = "src/scidiscovery/artifact_agent/interfaces/mcp_worker.py"
 WORKER_SUCCESSORS = (
     "src/scidiscovery/artifact_agent/interfaces/mcp_worker_protocol.py",
     "src/scidiscovery/artifact_agent/interfaces/mcp_local_worker.py",
-    "src/scidiscovery/artifact_agent/interfaces/mcp_hardened_worker.py",
 )
 SCHEDULER_OWNER = "src/scidiscovery/scheduler_topology.py"
 SCHEDULER_SUCCESSORS = (

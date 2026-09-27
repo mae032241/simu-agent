@@ -221,15 +221,12 @@ assert catalog.operation("science.result.diagnose.v1").plugin_id == "curve_score
 ''')
 
 
-def test_clean_installed_pure_mcp_plugin_completes_a_hardened_run(
+def test_clean_installed_plugin_completes_a_local_run(
     installed_probe,
 ) -> None:
     installed_probe(
         "blind_csv",
         r'''
-import os
-# Select the fixture's explicit no-shell reviewer before catalog imports/cache.
-os.environ["SCID_TEST_HARDENED_CSV_PLUGIN"] = "1"
 import json
 import sys
 import tempfile
@@ -238,8 +235,8 @@ from pathlib import Path
 
 import blind_csv_plugin
 from blind_csv_plugin.contracts import CSV_SCHEMA_PROBE
-from scidiscovery.artifact_agent.interfaces.mcp_hardened_worker import (
-    HardenedWorkerMCPRouter,
+from scidiscovery.artifact_agent.interfaces.mcp_local_worker import (
+    LocalWorkerMCPRouter,
 )
 from scidiscovery.artifact_agent.interfaces.mcp_root import (
     RootMCPRouter,
@@ -257,21 +254,21 @@ from scidiscovery.platforms import initialize_platform
 assert Path(blind_csv_plugin.__file__).resolve().is_relative_to(
     Path(sys.prefix).resolve()
 )
-root = Path(tempfile.mkdtemp(prefix="installed-hardened-"))
+root = Path(tempfile.mkdtemp(prefix="installed-local-"))
 project = root / "project"
 project.mkdir()
-(project / "AGENTS.md").write_text("# Installed Hardened probe\n", encoding="utf-8")
+(project / "AGENTS.md").write_text("# Installed Local probe\n", encoding="utf-8")
 runtime = open_runtime(
     project_root=project,
     state_root=root / "state",
-    worker_backend="hardened",
+    worker_backend="local",
 )
 catalog = runtime.operation_catalog
 compiled = catalog.operation("blind.csv.observe.v1")
 instance = runtime.scheduler_bindings.create_instance(
-    name="installed_hardened",
-    title="Installed Hardened probe",
-    objective="Complete one installed pure-MCP Operation through Hardened.",
+    name="installed_local",
+    title="Installed Local probe",
+    objective="Complete one installed pure-MCP Operation through Local.",
 )
 raw = b"sample,value\na,1\nb,3\n"
 source = runtime.artifacts.register(
@@ -283,7 +280,7 @@ source = runtime.artifacts.register(
         media_type="text/csv",
         creator=runtime.actor,
     ),
-    idempotency_key="installed:hardened:source",
+    idempotency_key="installed:local:source",
 )
 runtime.scheduler_bindings.bind(
     instance=instance.instance_id,
@@ -322,7 +319,7 @@ initialize_platform(
     python_executable=Path(sys.executable),
     control_socket=root / "control.sock",
     state_root=runtime.state_root,
-    worker_backend="hardened",
+    worker_backend="local",
     operation_catalog=catalog,
 )
 profile = tomllib.loads(
@@ -339,13 +336,13 @@ assert set(platform_config["mcp_servers"]) == {"scidiscovery"}
 server = platform_config["mcp_servers"]["scidiscovery"]
 assert set(server["enabled_tools"]) == {"scid_catalog", "scid_describe", "scid_call"}
 
-worker = HardenedWorkerMCPRouter(
+worker = LocalWorkerMCPRouter(
     runtime.runs,
     operation_id=compiled.spec.operation_id,
     operation_digest=compiled.digest,
 )
 opened = worker.call_tool("worker_open_assignment", {})
-assert opened["write_protocol"] == "server_file_tools"
+assert Path(opened["start_here_path"]).is_file()
 assignment = json.loads(Path(opened["assignment_path"]).read_text("utf-8"))
 assignment_tools = tuple(sorted(assignment["tools"]))
 router_tools = tuple(sorted(item["name"] for item in worker.list_tools()))
@@ -364,12 +361,7 @@ result = canonical_json(
         },
     }
 ).decode("utf-8")
-worker.call_tool(
-    "worker_file_write_begin",
-    {"relative_path": "output/result.json", "operation": "create"},
-)
-worker.call_tool("worker_file_write_chunk", {"content": result})
-worker.call_tool("worker_file_write_commit", {})
+Path(opened["output_directory"], "result.json").write_text(result)
 assert worker.call_tool("worker_submit_result", {})["state"] == "completed"
 status = root_router.call_tool("run_status", {"name": "observation", "intent": "full"})
 assert status["state"] == "completed"

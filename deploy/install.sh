@@ -56,7 +56,6 @@ codex_launch_root_is_distinct() {
 }
 
 validate_local_workspace_root() {
-    [[ "$WORKER_BACKEND" == "local" ]] || return 0
     [[ ! -L "$LOCAL_WORKSPACE_ROOT" ]] || \
         die "local Run workspace must not be a symbolic link"
     local workspace_real local_real state_real
@@ -73,7 +72,6 @@ validate_local_workspace_root() {
 }
 
 create_local_workspace_root() {
-    [[ "$WORKER_BACKEND" == "local" ]] || return 0
     "$PYTHON" - "$WORKSPACE" "$SERVICE_USER" "$SERVICE_GROUP" <<'PY'
 import grp
 import os
@@ -127,7 +125,13 @@ finally:
 PY
 }
 
+validate_worker_backend() {
+    [[ "$WORKER_BACKEND" != "hardened" ]] || die "hardened Worker backend has been retired; finish or archive existing runs on the previous release, then explicitly configure local and regenerate profiles. Local retains native permissions; migration is not automatic."
+    [[ "$WORKER_BACKEND" == "local" ]] || die "SCID_WORKER_BACKEND must be local"
+}
+
 require_sources() {
+    validate_worker_backend
     local path plugin_ids plugin_distributions
     local -a deployment_paths=(
         "$WORKSPACE" "$PYTHON" "$INSTALL_ROOT" "$SCID_STATE"
@@ -165,8 +169,6 @@ require_sources() {
     [[ -n "$PYTHON" && -x "$PYTHON" ]] || die "base Python is unavailable: ${PYTHON}"
     [[ "$PLATFORM" == "codex" ]] || \
         die "SCID_PLATFORM must be codex"
-    [[ "$WORKER_BACKEND" == "local" || "$WORKER_BACKEND" == "hardened" ]] || \
-        die "SCID_WORKER_BACKEND must be local or hardened"
     validate_local_workspace_root
     if [[ -n "$PLUGIN_SPECIFICATION" ]]; then
         plugin_ids="$(
@@ -352,6 +354,7 @@ PY
 }
 
 render_units() {
+    validate_worker_backend
     local output="$1"
     local plugin_config_args=""
     local local_workspace_args=""
@@ -359,10 +362,8 @@ render_units() {
     if [[ "$TCAD_ENABLED" -eq 1 ]]; then
         plugin_config_args="--plugin-config \"tcad_artifact=${CONFIG_ROOT}/tcad-plugin.json\""
     fi
-    if [[ "$WORKER_BACKEND" == "local" ]]; then
-        local_workspace_args="--local-workspace-root \"${LOCAL_WORKSPACE_ROOT}\""
-        local_workspace_access="\"${LOCAL_WORKSPACE_ROOT}\""
-    fi
+    local_workspace_args="--local-workspace-root \"${LOCAL_WORKSPACE_ROOT}\""
+    local_workspace_access="\"${LOCAL_WORKSPACE_ROOT}\""
     local common=(
         "PROJECT_ROOT=${WORKSPACE}"
         "STATE_ROOT=${SCID_STATE}"

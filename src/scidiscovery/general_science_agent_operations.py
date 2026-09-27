@@ -8,7 +8,6 @@ from .operations.spec import CollectionSpec, ComponentRef, NetworkPolicy, InputA
 JSON_CODEC = ComponentRef("json_codec")
 OPAQUE_CODEC = ComponentRef("opaque_codec")
 WORKSPACE_REF = ComponentRef("workspace")
-BUILTIN = "builtin"
 _EVIDENCE_APPROVAL_PROVIDER = ("science.evidence.qualify.v1",)
 _FOUNDATION_ADMISSION = InputAdmissionSpec(
     cohort_id="qualified_foundation",
@@ -21,25 +20,9 @@ _FOUNDATION_ADMISSION = InputAdmissionSpec(
 
 
 def _ref(component_id: str) -> ComponentRef:
-    if component_id in {
-        "file_write_begin_tool",
-        "file_write_chunk_tool",
-        "file_write_commit_tool",
-        "file_apply_patch_tool",
-    }:
-        return ComponentRef(component_id, plugin_id=BUILTIN)
     return ComponentRef(component_id)
 
 
-BASE_TOOLS = tuple(
-    _ref(name)
-    for name in (
-        "file_write_begin_tool",
-        "file_write_chunk_tool",
-        "file_write_commit_tool",
-        "file_apply_patch_tool",
-    )
-)
 
 
 def _input(
@@ -210,7 +193,7 @@ def _agent(
     max_input_bytes: int,
     max_output_bytes: int,
     max_files: int,
-    tools: tuple[ComponentRef, ...] = BASE_TOOLS,
+    tools: tuple[ComponentRef, ...] = (),
     native_view_image: bool = False,
     native_web_search: str = "disabled",
     network: NetworkPolicy = NetworkPolicy(),
@@ -347,7 +330,7 @@ OPERATIONS = (
         max_input_bytes=225 * 1024 * 1024,
         max_output_bytes=32 * 1024,
         max_files=1,
-        tools=BASE_TOOLS + (_ref("pdf_extract_tool"),),
+        tools=(_ref("pdf_extract_tool"),),
         native_view_image=True,
     ),
     _agent(
@@ -383,7 +366,7 @@ OPERATIONS = (
         max_input_bytes=225 * 1024 * 1024,
         max_output_bytes=32 * 1024,
         max_files=1,
-        tools=BASE_TOOLS + (_ref("pdf_extract_tool"),),
+        tools=(_ref("pdf_extract_tool"),),
         native_view_image=True,
     ),
     _agent(
@@ -413,7 +396,7 @@ OPERATIONS = (
         max_input_bytes=96 * 1024 * 1024,
         max_output_bytes=129 * 1024 * 1024 + 64 * 1024,
         max_files=10,
-        tools=BASE_TOOLS + (_ref("pdf_extract_tool"), _ref("source_capture_tool")),
+        tools=(_ref("pdf_extract_tool"), _ref("source_capture_tool")),
         native_view_image=True,
         native_web_search="live",
         network=NetworkPolicy(mode="public_web", max_requests=24),

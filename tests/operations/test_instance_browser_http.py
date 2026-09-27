@@ -103,7 +103,7 @@ def test_discovery_does_not_register_client_and_pause_blocks_only_new_work(tmp_p
     secret_file.write_bytes(secret);secret_file.chmod(0o600)
     try:
         transport=build_root_router(project_root=tmp_path/'project',state_root=state,
-            approval_secret_file=secret_file,approval_base_url=base,scheduler_session_key=key,worker_backend='hardened')
+            approval_secret_file=secret_file,approval_base_url=base,scheduler_session_key=key,worker_backend='local')
         from scidiscovery.artifact_agent.interfaces.mcp_daemon import RootBrokerRouter
         from scidiscovery.artifact_agent.interfaces.mcp_proxy import SCHEDULER_PROXY_FIELD
         broker=RootBrokerRouter(lambda _: transport, client_bindings=runtime.scheduler_bindings)

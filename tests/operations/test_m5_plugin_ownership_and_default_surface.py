@@ -37,8 +37,8 @@ FILE_TOOLS = {
 }
 
 
-def test_common_file_tools_are_registered_once_without_implicit_authority() -> None:
-    assert FILE_TOOLS.issubset(
+def test_retired_file_tools_are_absent_without_implicit_authority() -> None:
+    assert FILE_TOOLS.isdisjoint(
         {item.component_id for item in CORE_PLUGIN.components if item.public}
     )
     assert FILE_TOOLS.isdisjoint(
@@ -50,7 +50,7 @@ def test_common_file_tools_are_registered_once_without_implicit_authority() -> N
     author = catalog.operation("science.experiment.v1")
     reviewer = catalog.operation("science.object.review.v1")
     assert "builtin:file_delete_tool" not in author.permission_template.tools
-    assert "builtin:file_apply_patch_tool" in author.permission_template.tools
+    assert "builtin:file_apply_patch_tool" not in author.permission_template.tools
     assert "builtin:file_delete_tool" not in reviewer.permission_template.tools
 
 

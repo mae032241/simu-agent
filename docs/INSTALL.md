@@ -406,7 +406,7 @@ See [validation scope and outstanding checks](RELEASE.md#current-status).
 | `SCID_SERVICE_USER` | `SUDO_USER` or current user | Service account |
 | `SCID_SERVICE_GROUP` | primary group of service user | Socket/file group |
 | `SCID_PLATFORM` | `codex` | Codex platform selector; other values are rejected |
-| `SCID_WORKER_BACKEND` | `local` | `local` is the trusted native-tool path; `hardened` is the MCP-only file backend, and the value drives daemon, systemd, Codex profiles, and install verification together |
+| `SCID_WORKER_BACKEND` | `local` | Only `local` is supported, with declared native permissions; retired `hardened` is rejected before deployment changes |
 | `SCID_PLUGINS` | empty | Comma-separated local plugin directory names, for example `tcad_artifact,curve_score,curve_figure_evidence` |
 | `SCID_INSTALL_ROOT` | `/opt/scidiscovery` | Installed package root |
 | `SCID_STATE_ROOT` | `/var/lib/scidiscovery` | Control-plane state |
@@ -418,9 +418,15 @@ See [validation scope and outstanding checks](RELEASE.md#current-status).
 When upgrading a local adapter that already uses a separate state directory,
 set `TCAD_STATE_ROOT` to that existing path. Installation does not migrate it.
 
-`hardened` currently rejects Operations requiring shell, code, or `view_image`,
-so TCAD Deck authoring v1 uses `local`. Effect approval and adapter boundaries
-remain independent of that choice.
+`hardened` has been retired. Before upgrading an old hardened deployment, finish or
+archive in-flight work on the prior release, preserve its state, explicitly set
+`SCID_WORKER_BACKEND=local`, and regenerate Codex profiles with the installer.
+The installer, CLI, runtime and platform generator reject the old value with migration
+guidance; no automatic fallback grants native permissions. Historical Run/Artifact and
+archive reads remain available, but retired Runs cannot start on Local. Rollback must
+match the prior configuration and in-flight task identities. This change does not
+provide OS isolation or close `SEC-002`. Local archival still blocks when native
+writers cannot be confirmed stopped; terminal state alone is insufficient.
 
 The remote-runner script documents additional `SCID_SSH_*`, `SCID_VMRUN_*`,
 and `SCID_REMOTE_*` variables through `--dry-run` output and its source header.

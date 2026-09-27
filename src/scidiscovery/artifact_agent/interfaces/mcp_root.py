@@ -307,9 +307,9 @@ ROOT_TOOLS = (
 
 
 def root_tools_for_backend(worker_backend: str) -> tuple[RootTool, ...]:
-    if worker_backend in {"local", "hardened"}:
-        return ROOT_TOOLS
-    raise ValueError("worker backend is invalid")
+    from ..runtime import validate_worker_backend
+    validate_worker_backend(worker_backend)
+    return ROOT_TOOLS
 
 
 class RootToolFacade(

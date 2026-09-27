@@ -115,9 +115,6 @@ def test_blind_plugin_registers_one_real_domain_tool_and_review_edge() -> None:
     compiled = catalog.operation("blind.csv.observe.v1")
     tools = {item.name: item for item in operation_worker_tools(compiled)}
     assert set(tools) == {
-        "worker_file_write_begin",
-        "worker_file_write_chunk",
-        "worker_file_write_commit",
         "worker_csv_summarize",
         "worker_reference_read",
         "worker_helper",

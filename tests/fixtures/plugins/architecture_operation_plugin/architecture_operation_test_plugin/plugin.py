@@ -37,9 +37,6 @@ from scidiscovery.operations.spec import (
     WorkspaceContract,
 )
 from scidiscovery.operations.tooling import WorkerToolDefinition
-from scidiscovery.artifact_agent.interfaces.mcp_worker_protocol import (
-    FILE_JSON_PATCH_TOOL,
-)
 
 
 ARCHITECTURE_TEST_PROMPT = """You are running one architecture-only operation.
@@ -48,14 +45,13 @@ assignment, then use one Codex native code tool to read assignment.json without
 modifying any file. Read the exact input at its declared task-relative path with
 the same native read-only tool, then call
 worker_fixture_inspect with value "registered-domain-tool". Confirm from the
-assignment that native writes, network, and undeclared tools are forbidden for
-this Operation even if the runtime shows them. Create output/result.json only through the
-worker_file_write_begin/chunk/commit lifecycle. Write this exact JSON value on
+assignment that network and undeclared tools are forbidden for
+this Operation even if the runtime shows them. Create output/result.json using native workspace writes. Write this exact JSON value on
 the first create, with no additional fields:
 {"schema_version":1,"handoff":{"verdict":"pass","summary":"Architecture operation completed."},"payload":{"input_seen":true,"network_denied":true,"sibling_read_denied":true,"tool_result":"fixture-inspected:registered-domain-tool"}}
 Do not copy the input object or the tool response wrapper into these fields.
 Then call worker_submit_result.
-Do not use native tools to write, patch, access the network, or inspect files
+Use native writes only inside this task; do not access the network or inspect files
 outside this task. Do not use image, delegation, skills, another operation's
 Worker MCP server, or any undeclared tool. The control plane validates the exact
 result and registered domain-tool receipt."""
@@ -335,7 +331,6 @@ NETWORK_TOOL = WorkerToolDefinition(
     handler=fixture_inspect,
     network_access=True,
 )
-JSON_PATCH_TOOL = FILE_JSON_PATCH_TOOL
 ARCHITECTURE_TEST_WORKSPACE = WorkspaceContract()
 
 
@@ -465,24 +460,6 @@ ARCHITECTURE_TEST_PLUGIN = PluginDefinition(
             "architecture_operation_test_plugin.plugin:PROJECTOR_COMPONENT",
         ),
         ComponentSpec(
-            "file_write_begin_tool",
-            "worker_tool",
-            "scidiscovery.artifact_agent.interfaces.mcp_worker_protocol:FILE_WRITE_BEGIN_TOOL",
-            public=True,
-        ),
-        ComponentSpec(
-            "file_write_chunk_tool",
-            "worker_tool",
-            "scidiscovery.artifact_agent.interfaces.mcp_worker_protocol:FILE_WRITE_CHUNK_TOOL",
-            public=True,
-        ),
-        ComponentSpec(
-            "file_write_commit_tool",
-            "worker_tool",
-            "scidiscovery.artifact_agent.interfaces.mcp_worker_protocol:FILE_WRITE_COMMIT_TOOL",
-            public=True,
-        ),
-        ComponentSpec(
             "fixture_inspect_tool",
             "worker_tool",
             "architecture_operation_test_plugin.plugin:FIXTURE_INSPECT_TOOL",
@@ -503,9 +480,6 @@ ARCHITECTURE_TEST_PLUGIN = PluginDefinition(
                 component=ComponentRef("test_agent"),
                 workspace=ComponentRef("test_workspace"),
                 tools=(
-                    ComponentRef("file_write_begin_tool"),
-                    ComponentRef("file_write_chunk_tool"),
-                    ComponentRef("file_write_commit_tool"),
                     ComponentRef("fixture_inspect_tool"),
                 ),
                 prompt=ComponentRef("test_prompt"),

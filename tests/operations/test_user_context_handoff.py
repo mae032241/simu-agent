@@ -49,7 +49,8 @@ def _context_entry(opened, *, origin):
             assert "source_origin" not in indexed
         else:
             assert indexed["source_origin"] == origin
-        assert not any(entry["source_name"] == item["source_name"] for entry in json.loads((Path(opened["workspace_path"]) / start["workspace"]["paths"]["analysis_navigation"]).read_bytes())["excerpts"])
+        if "workspace" in start:
+            assert not any(entry["source_name"] == item["source_name"] for entry in json.loads((Path(opened["workspace_path"]) / start["workspace"]["paths"]["analysis_navigation"]).read_bytes())["excerpts"])
         assert original not in start_raw
     return assignment, original
 
@@ -104,10 +105,10 @@ def test_new_and_reused_local_workers_open_new_context_assignment(tmp_path, reus
     assert root.call_tool("run_status", {'name': "analysis", "intent": 'full'})["sealed_output"] == old_status["sealed_output"]
 
 
-def test_hardened_assignment_preserves_user_context_original(tmp_path):
+def test_local_assignment_preserves_user_context_original(tmp_path):
     from blind_csv_plugin.plugin import PLUGIN as BLIND
-    from scidiscovery.artifact_agent.interfaces.mcp_hardened_worker import HardenedWorkerMCPRouter
-    from tests.operations.test_l5_hardened_run_backend import _system
+    from scidiscovery.artifact_agent.interfaces.mcp_local_worker import LocalWorkerMCPRouter
+    from tests.operations.test_local_worker_contracts import _system
 
     # The existing MCP-only fixture isolates assignment transport; production TCAD
     # analysis still requires its declared native and collection capabilities.
@@ -124,17 +125,13 @@ def test_hardened_assignment_preserves_user_context_original(tmp_path):
     assert checked["admissible"], checked
     root.call_tool("operation_invoke", request)
     compiled = catalog.operation(request["operation_id"])
-    worker = HardenedWorkerMCPRouter(runtime.runs, operation_id=compiled.spec.operation_id,
+    worker = LocalWorkerMCPRouter(runtime.runs, operation_id=compiled.spec.operation_id,
         operation_digest=compiled.digest)
     opened = worker.call_tool("worker_open_assignment", {})
-    assert opened["write_protocol"] == "server_file_tools"
+    assert Path(opened["start_here_path"]).is_file()
     assignment, original = _context_entry(opened, origin="user_via_scheduler")
     assert original == USER_TEXT.encode("utf-8")
     assert set(assignment["tools"]) == {tool["name"] for tool in worker.list_tools()}
-    # This fixture covers Hardened assignment and original-file readability only.
-    # Its existing general finalizer has no matching file-write policy, so result
-    # submission remains outside this test; the Local cases above cover submission.
-
 
 def test_full_analysis_index_keeps_original_context_reachable(tmp_path):
     from curve_score.analysis_workspace import _start_file

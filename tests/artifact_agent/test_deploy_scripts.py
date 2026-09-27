@@ -78,11 +78,6 @@ def test_rendered_units_share_only_the_local_run_workspace(tmp_path: Path) -> No
     assert local_root in local_ui
     assert '--worker-backend "local"' in local_ui
 
-    hardened_control, hardened_ui = render("hardened")
-    assert local_root not in hardened_control
-    assert local_root not in hardened_ui
-    assert '--local-workspace-root' not in hardened_control
-    assert '--worker-backend "hardened"' in hardened_ui
 
 
 def test_installer_previews_core_only_and_explicit_tcad_paths(tmp_path: Path) -> None:
@@ -132,9 +127,6 @@ def test_installer_previews_core_only_and_explicit_tcad_paths(tmp_path: Path) ->
     assert "tcad-control.service" not in core
     assert "Worker backend: local" in core
 
-    hardened = preview("hardened", "", "hardened")
-    assert "Worker backend: hardened" in hardened
-    assert "deployment preview: pass" in hardened
 
     tcad = preview("tcad", "tcad_artifact,curve_score")
     assert "Selected plugins: tcad_artifact,curve_score" in tcad
@@ -210,7 +202,7 @@ TCAD_ENABLED=1
             "SCID_CONFIG_ROOT": str(root / "config"),
             "SCID_STATE_ROOT": str(root / "state"),
             "SCID_BACKUP_ROOT": str(root / "backups"),
-            "SCID_WORKER_BACKEND": "hardened",
+            "SCID_WORKER_BACKEND": "local",
             "SCID_TEST_CALLS": str(calls_path),
             "TMPDIR": str(root),
         },
@@ -227,7 +219,7 @@ TCAD_ENABLED=1
         assert call["state_root"] == str(root / "state")
         assert call["local_workspace_root"] == str(workspace / ".scidiscovery-runs")
         assert call["control_socket"] == "/run/scidiscovery/control.sock"
-        assert call["worker_backend"] == "hardened"
+        assert call["worker_backend"] == "local"
         assert call["runtime_plugin_configs"] == {"tcad_artifact": str(root / "config/tcad-plugin.json")}
         if phase == "configure_platform":
             assert call["python_path"] == str(site)
@@ -2121,3 +2113,26 @@ def test_release_scan_still_rejects_sensitive_test_fixtures(tmp_path, content):
     path.write_text(content)
     with pytest.raises(RuntimeError, match="release scan failed"):
         release["_scan_release"](tmp_path)
+
+
+@pytest.mark.parametrize("script", ["install.sh", "reinstall.sh"])
+@pytest.mark.parametrize("mode", ["--dry-run", "install"])
+def test_retired_backend_rejected_before_deployment_changes(tmp_path, script, mode):
+    project_root = Path(__file__).resolve().parents[2]
+    workspace = tmp_path / 'workspace'
+    workspace.mkdir()
+    state = tmp_path / 'state'
+    state.mkdir()
+    sentinel = state / 'existing-service-state'
+    sentinel.write_bytes(b'keep current deployment')
+    completed = subprocess.run(['bash', str(project_root / 'deploy' / script), mode],
+        env={**os.environ, 'SCID_WORKER_BACKEND': 'hardened',
+             'SCID_WORKSPACE': str(workspace), 'SCID_PYTHON': sys.executable,
+             'SCID_STATE_ROOT': str(state), 'SCID_INSTALL_ROOT': str(tmp_path / 'install'),
+             'SCID_CONFIG_ROOT': str(tmp_path / 'config'), 'SCID_BACKUP_ROOT': str(tmp_path / 'backups')},
+        capture_output=True, text=True, timeout=10)
+    assert completed.returncode != 0
+    assert 'retired' in completed.stderr and 'explicitly configure local' in completed.stderr
+    assert sentinel.read_bytes() == b'keep current deployment'
+    assert sorted(p.name for p in tmp_path.iterdir()) == ['state', 'workspace']
+    assert not list(workspace.iterdir())

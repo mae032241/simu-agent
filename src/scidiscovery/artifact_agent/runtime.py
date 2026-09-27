@@ -6,7 +6,6 @@ import os
 import stat
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 from scidiscovery.agent_execution_settings import AgentSettings, load_settings
 from scidiscovery.operations.catalog import CompiledCatalog, compile_installed_catalog
@@ -23,12 +22,21 @@ from .service import (
 from .service.local_workspace import LocalTrustedBackend
 from .service.instance_maintenance import InstanceMaintenance
 
-if TYPE_CHECKING:
-    from .service.hardened_workspace import HardenedWorkerBackend
-
 
 class RuntimeConfigurationError(RuntimeError):
     pass
+
+
+def validate_worker_backend(value: str) -> str:
+    if value == "hardened":
+        raise RuntimeConfigurationError(
+            "hardened Worker backend has been retired; finish or archive existing runs on the previous release, "
+            "then explicitly configure local and regenerate profiles. "
+            "Local retains native permissions; migration is not automatic."
+        )
+    if value != "local":
+        raise RuntimeConfigurationError("worker backend must be local")
+    return value
 
 
 @dataclass(frozen=True)
@@ -38,8 +46,7 @@ class ArtifactAgentRuntime:
     actor: ActorRef
     artifacts: ArtifactService
     runs: RunService
-    local_backend: LocalTrustedBackend | None
-    hardened_backend: HardenedWorkerBackend | None
+    local_backend: LocalTrustedBackend
     intake: SecureIntakeService
     approvals: ApprovalService | None
     executions: ExecutionService | None
@@ -64,8 +71,7 @@ def open_runtime(
     project = Path(project_root).expanduser().resolve()
     state = Path(state_root).expanduser().absolute()
     _validate_state_root(project, state)
-    if worker_backend not in {"local", "hardened"}:
-        raise RuntimeConfigurationError("worker backend is invalid")
+    validate_worker_backend(worker_backend)
     operation_catalog = compile_installed_catalog()
     agent_settings = agent_settings or load_settings(agent_settings_file or os.environ.get("SCID_AGENT_SETTINGS_FILE"))
     scheduler_database_path = state / "database" / "scheduler-bindings.sqlite3"
@@ -81,36 +87,19 @@ def open_runtime(
             shared_group=shared_group,
         )
         scheduler_bindings = SchedulerBindingService(scheduler_database_path)
-        local_backend = None
-        hardened_backend = None
-        if worker_backend == "hardened":
-            from .service.hardened_workspace import HardenedWorkerBackend
-
-            hardened_backend = HardenedWorkerBackend(state / "hardened-runs")
-            runs = RunService(
-                artifacts=artifacts,
-                database_path=state / "database" / "runs.sqlite3",
-                service_actor=actor,
-                operation_catalog=operation_catalog,
-                backend=hardened_backend,
-                scheduler_bindings=scheduler_bindings,
-                instance_maintenance=instance_maintenance,
-                agent_settings=agent_settings,
-            )
-        else:
-            local_backend = LocalTrustedBackend(
-                local_workspace_root or project / ".scidiscovery-runs"
-            )
-            runs = RunService(
-                artifacts=artifacts,
-                database_path=state / "database" / "runs.sqlite3",
-                service_actor=actor,
-                operation_catalog=operation_catalog,
-                backend=local_backend,
-                scheduler_bindings=scheduler_bindings,
-                instance_maintenance=instance_maintenance,
-                agent_settings=agent_settings,
-            )
+        local_backend = LocalTrustedBackend(
+            local_workspace_root or project / ".scidiscovery-runs"
+        )
+        runs = RunService(
+            artifacts=artifacts,
+            database_path=state / "database" / "runs.sqlite3",
+            service_actor=actor,
+            operation_catalog=operation_catalog,
+            backend=local_backend,
+            scheduler_bindings=scheduler_bindings,
+            instance_maintenance=instance_maintenance,
+            agent_settings=agent_settings,
+        )
         intake = SecureIntakeService(
             project_root=project,
             artifact_service=artifacts,
@@ -149,7 +138,6 @@ def open_runtime(
         artifacts=artifacts,
         runs=runs,
         local_backend=local_backend,
-        hardened_backend=hardened_backend,
         intake=intake,
         approvals=approvals,
         executions=executions,

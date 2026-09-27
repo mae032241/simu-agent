@@ -290,9 +290,7 @@ navigation budget is 32 KiB, with original pointers and omission counts. Interna
 case binding ledgers remain in originals and control tools. These views do not
 change source identity, scientific qualification or filesystem permissions.
 
-Local open retains the frozen tool-contract path for on-demand reading. Hardened
-open supplies the same startup content and authoring form inline, without native
-reader commands or the complete tool-contract map; selected tools use
+Local open retains the frozen tool-contract path for on-demand reading; selected tools also use
 `scid_describe`. Helpers retain their separate subtask and selected inputs, without
 owner instructions or the owner's form unless their task needs it. Corrupt
 assignments are engineering errors, never permission to substitute newer contracts.
@@ -564,12 +562,14 @@ the compiled operation id, version, and digest. Ordinary user-ingested source
 Artifacts may have no producer Operation. A Worker receives Run-local aliases
 rather than internal Artifact, Approval, current-write, or external-execution
 identities. Root does not manufacture Worker science, and Workers do not write
-control metadata. The default `LocalTrustedBackend` owns only its workspace. The
-existing `HardenedWorkerBackend` remains a non-default experimental/optional
-implementation, but strong isolation is not a current product completion gate
-and must not add protocol cost to default Operations, plugins, or Workers. It
-currently has no controlled reader for a preinitialized result, so it rejects
-direct revision Operations instead of advertising an unusable capability.
+control metadata. `LocalTrustedBackend` is the only execution backend and owns its workspace.
+The retired hardened execution, upload, patch and Worker MCP entry points are removed.
+Historical Run backend labels, Artifact bytes, workspace layouts and dispatch records
+remain readable through archive readers; they never enable the retired executor.
+Old `worker_backend=hardened` configuration is rejected before runtime/deployment changes.
+Migration requires explicitly selecting `local` and regenerating profiles after
+finishing or archiving old work on the prior release; native permissions remain declared.
+This retirement does not resolve `SEC-002`.
 
 ## 6. Generic and domain boundaries
 
@@ -623,14 +623,10 @@ with a reason in the diagnostic `all` view.
 - Run v1 accepts one Agent primary result. Agent Operations declaring collection
   outputs are uniformly unavailable and fail preflight closed; Transform
   multi-output remains supported.
-- The historical Hardened-v1 implementation supports MCP-only Operations. The
-  current milestone neither extends nor completes it and does not require it to
-  pass. The 12 default scientific Operations require native capabilities and are
-  unavailable on this backend; supported MCP-only fixtures remain useful. Its
-  transport lease defaults to 30 seconds and renews only on `worker_heartbeat`:
-  long work or gaps between calls can expire ownership. Per-Run locks fence
-  in-flight calls, and the SQLite writer transaction ends before the tool runs;
-  these mechanisms do not renew the lease or establish OS isolation.
+- Hardened execution is retired. Production Local history with unconfirmed native
+  writers still blocks destructive archival, even for terminal Runs. Synchronous
+  archive fixtures prove format and transaction behavior only; native writer
+  quiescence and deployed upgrade acceptance remain separate release work.
 - The approval UI now provides structured parameters, evidence and original-file
   links. Post-deployment Fig4 reading still requires separate acceptance; synthetic
   page checks do not substitute for it.
@@ -726,7 +722,7 @@ fall back to full text. Use `--full` after context loss: a delivery receipt cann
 prove the model still retains the base. Receipt failures do not reject scientific work.
 This adds no MCP capability, contract registry, scientific state or authority, and
 changes no executable schema or scientific output. Old workspaces retain direct
-reading; Hardened permissions do not gain native execution.
+reading; historical workspace files grant no execution permission.
 
 Local workspaces also provide `tools/read_output_schema.py`, a read-only view of
 `schema/result.schema.json`, the Agent authoring form projected by the actual

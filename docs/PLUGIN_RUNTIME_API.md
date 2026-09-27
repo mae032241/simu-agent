@@ -254,8 +254,18 @@ implementation functions. Pure values/functions can move to their owning public
 module; stateful powers use a narrow injected capability with one control-side owner.
 No plugin acquires lifecycle or approval authority by importing this API. Experiment
 services expose a per-Run adapter, never the coordinator. Shared startup bindings are
-scoped by the real local/hardened tool host without changing cached Run identity;
+scoped by the Local Worker tool host without changing cached Run identity;
 TCAD receives exact implementation values and a derived diagnostic workspace.
+
+## Retired Worker file transport
+
+Only Local executes Workers. Builtin `file_write_begin_tool`, `file_write_chunk_tool`,
+`file_write_commit_tool`, `file_apply_patch_tool`, `file_json_patch_tool`,
+`file_move_tool` and `file_delete_tool` are removed. Plugins must remove those
+references and retain their declared native permission policy; current Local
+previously excluded those tools from its executable projection. Recompilation
+changes Operation digests, so historical Runs retain their frozen identities and
+cannot be resumed under a different backend or a newly compiled contract.
 
 ## Root consumer boundary
 

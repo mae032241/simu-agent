@@ -5,21 +5,21 @@ import sqlite3
 import pytest
 
 from scidiscovery.agent_execution_settings import EXECUTION_SETTINGS_COLUMNS
-from scidiscovery.artifact_agent.service.instance_archive import ArchiveError, InstanceArchive
+from scidiscovery.artifact_agent.service.instance_archive import ArchiveError
+from tests.operations.synchronous_archive_fixture import SynchronousFixtureArchive as InstanceArchive
 from tests.operations.test_instance_archive import save_archive, restore_archive
-from tests.operations.test_instance_archive_continuation import _hardened_system
-from tests.operations.test_l5_hardened_run_backend import _invoke, _worker, _write_result
+from tests.operations.test_instance_archive_continuation import _local_archive_system
+from tests.operations.test_local_worker_contracts import _invoke, _worker, _write_result
 
 
 def _fixture(tmp_path, *, legacy):
-    catalog, runtime, instance, root = _hardened_system(tmp_path)
+    catalog, runtime, instance, root = _local_archive_system(tmp_path)
     _invoke(root)
     worker = _worker(catalog, runtime)
     worker.call_tool("worker_open_assignment", {})
     _write_result(worker)
     worker.call_tool("worker_submit_result", {})
     run_id = worker._run_id
-    runtime.runs.backend.release_transport(run_id, worker._transport_owner)
     if legacy:
         # Synthetic old schema. An actual old installed-package archive is also
         # replayed in installation evidence; no production database is changed.

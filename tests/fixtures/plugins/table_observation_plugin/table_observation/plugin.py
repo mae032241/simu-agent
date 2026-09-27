@@ -37,14 +37,7 @@ from .worker_tool import TABLE_SUMMARY_TOOL
 
 
 _GENERAL = "general_science"
-_BASE_TOOLS = tuple(
-    ComponentRef(name, plugin_id="builtin")
-    for name in (
-        "file_write_begin_tool",
-        "file_write_chunk_tool",
-        "file_write_commit_tool",
-    )
-)
+_BASE_TOOLS = ()
 _CONTRACT = semantic_contract(
     SemanticRuleSpec(
         rule_id="table.payload_consistency",

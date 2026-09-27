@@ -51,9 +51,7 @@ def test_all_backend_tool_contracts_equal_actual_mcp_schemas_and_resolve_refs():
     from jsonschema import Draft202012Validator
     from curve_figure_evidence.plugin import PLUGIN as FIGURE
     from scidiscovery.artifact_agent.interfaces.mcp_local_worker import LocalWorkerMCPRouter
-    from scidiscovery.artifact_agent.interfaces.mcp_hardened_worker import HardenedWorkerMCPRouter
     from scidiscovery.artifact_agent.service.local_workspace import LocalTrustedBackend
-    from scidiscovery.artifact_agent.service.hardened_workspace import HardenedWorkerBackend
     from scidiscovery.operations.tooling import operation_tool_contracts
     catalog = compile_catalog((CORE_PLUGIN, GENERAL_PLUGIN, CURVE_PLUGIN, TCAD_PLUGIN, FIGURE))
     checked = set()
@@ -61,8 +59,7 @@ def test_all_backend_tool_contracts_equal_actual_mcp_schemas_and_resolve_refs():
         compiled = catalog.operation(key)
         if compiled.spec.executor.kind != 'agent':
             continue
-        for backend, router_type in ((LocalTrustedBackend, LocalWorkerMCPRouter),
-                                     (HardenedWorkerBackend, HardenedWorkerMCPRouter)):
+        for backend, router_type in ((LocalTrustedBackend, LocalWorkerMCPRouter),):
             router = router_type(SimpleNamespace(operation_catalog=catalog, backend=backend, worker_connections=SimpleNamespace()),
                 operation_id=key, operation_digest=compiled.digest)
             contracts = operation_tool_contracts(compiled, backend.assignment_tool_names(compiled))
@@ -86,30 +83,15 @@ def test_all_backend_tool_contracts_equal_actual_mcp_schemas_and_resolve_refs():
     assert {'worker_curve_score', 'worker_tcad_curve_score', 'worker_curve_figure_preview'} <= checked
 
 
-@pytest.mark.parametrize('backend_kind', ['local', 'hardened'])
+@pytest.mark.parametrize('backend_kind', ['local'])
 @pytest.mark.parametrize('legacy', [False, True])
 def test_open_delivers_frozen_contracts_and_same_identity_legacy_fallback(tmp_path, monkeypatch, backend_kind, legacy):
     from scidiscovery.artifact_agent.interfaces.mcp_local_worker import LocalWorkerMCPRouter
-    from scidiscovery.artifact_agent.interfaces.mcp_hardened_worker import HardenedWorkerMCPRouter
     from scidiscovery.artifact_agent.service import runs as runs_module
     from scidiscovery.operations.tooling import operation_tool_contracts
     from tests.operations.test_tcad_result_analysis import analysis_system
     router_type = LocalWorkerMCPRouter
-    if backend_kind == 'hardened':
-        # TCAD analysis has collection outputs and is Local-only. Exercise the
-        # file-tool transport with no scientific review chain in this fixture.
-        # The original CSV review requires native reading and remains unsupported.
-        from tests.operations.test_l5_hardened_run_backend import _system
-        from blind_csv_plugin.plugin import PLUGIN as BLIND
-        author, reviewer = BLIND.operations
-        transport_fixture = BLIND.model_copy(update={'operations': (
-            author.model_copy(update={'review': None}), reviewer)})
-        catalog, runtime, _, root = _system(tmp_path, blind_plugin=transport_fixture)
-        request = dict(name='contracts', operation_id='blind.csv.observe.v1',
-            inputs=[dict(port='source_table', artifact_names=['source_csv'])], instruction='Read the declared contract.')
-        router_type = HardenedWorkerMCPRouter
-    else:
-        catalog, runtime, root, request, _, _ = analysis_system(tmp_path)
+    catalog, runtime, root, request, _, _ = analysis_system(tmp_path)
     if legacy:
         original = runs_module.assignment_json
         def old_assignment(*args, **kwargs):
@@ -125,14 +107,9 @@ def test_open_delivers_frozen_contracts_and_same_identity_legacy_fallback(tmp_pa
     frozen = path.read_bytes()
     assignment = json.loads(frozen)
     assert all("port" not in item and "artifact_ref" not in item for item in assignment["inputs"])
-    if backend_kind == 'hardened':
-        assert 'tool_contracts' not in opened and opened['startup']['role_instructions']
-        contracts = {tool['name']: {k: tool[k] for k in ('description', 'inputSchema')}
-                     for tool in worker.list_tools()}
-    else:
-        contracts = json.loads(Path(opened['tool_contracts_path']).read_bytes())
-        if opened['tool_contracts_pointer']:
-            contracts = contracts['tool_contracts']
+    contracts = json.loads(Path(opened['tool_contracts_path']).read_bytes())
+    if opened['tool_contracts_pointer']:
+        contracts = contracts['tool_contracts']
     if backend_kind == 'local' and not legacy:
         assert 'tool_contracts' not in opened
         assert opened['tool_contracts_pointer'] == '/tool_contracts'
@@ -143,30 +120,12 @@ def test_open_delivers_frozen_contracts_and_same_identity_legacy_fallback(tmp_pa
         assert 'tool_contracts' not in assignment
     else:
         assert assignment['tool_contracts'] == contracts
-    if backend_kind == 'local':
-        request_schema = contracts['worker_tcad_curve_score']['inputSchema']
-        assert request_schema['$defs']['AnalysisCurveComparison']['properties']['evaluation_points']['maximum'] == 4096
-        assert '12288' in request_schema['$defs']['TCADScoreRequest']['description']
-    else:
-        assert 'worker_file_write_chunk' in contracts
+    request_schema = contracts['worker_tcad_curve_score']['inputSchema']
+    assert request_schema['$defs']['AnalysisCurveComparison']['properties']['evaluation_points']['maximum'] == 4096
+    assert '12288' in request_schema['$defs']['TCADScoreRequest']['description']
     reopened = worker.call_tool('worker_open_assignment', {})
-    if backend_kind == 'local':
-        assert reopened['tool_contracts_path'] == opened['tool_contracts_path']
-    else:
-        assert reopened['startup'] == opened['startup']
-        assert 'tool_contracts' not in reopened
+    assert reopened['tool_contracts_path'] == opened['tool_contracts_path']
     assert path.read_bytes() == frozen
-    if backend_kind == 'hardened' and not legacy:
-        from scidiscovery.artifact_agent.interfaces.mcp import MCPRouter
-        from scidiscovery.operation_contract import DiagnosticError, contract_diagnostic
-        detail = contract_diagnostic('declared_edit_failure', phase='tool_execution', affected_action='tool_call',
-            message='The declared edit cannot be completed.')
-        def failed_edit(*args):
-            raise DiagnosticError('typed edit failure', details=(detail,))
-        monkeypatch.setattr(worker._editor, 'chunk', failed_edit)
-        reply = MCPRouter(worker, name='hardened').handle(dict(jsonrpc='2.0', id=1, method='tools/call',
-            params=dict(name='worker_file_write_chunk', arguments=dict(content='{}'))))
-        assert reply['error']['data']['diagnostics'] == [detail]
     if backend_kind == 'local' and legacy:
         from scidiscovery.artifact_agent.interfaces.mcp_worker_protocol import WorkerToolError
         original_operation = type(catalog).operation

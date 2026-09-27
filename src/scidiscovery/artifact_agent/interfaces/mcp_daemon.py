@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from ..runtime import validate_worker_backend
+
 from ...agent_execution_settings import load_settings
 
 import argparse
@@ -136,7 +138,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--approval-secret-file", type=Path, required=True)
     parser.add_argument("--approval-base-url", default="http://127.0.0.1:8765")
     parser.add_argument(
-        "--worker-backend", choices=("local", "hardened"), default="local"
+        "--worker-backend", type=validate_worker_backend, default="local"
     )
     parser.add_argument("--local-workspace-root", type=Path)
     parser.add_argument("--plugin-config", action="append", default=[])

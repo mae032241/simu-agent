@@ -10,7 +10,8 @@ import pytest
 from scidiscovery.artifact_agent.runtime import open_runtime
 from scidiscovery.artifact_agent.schema.artifact import ArtifactRegistration
 from scidiscovery.artifact_agent.schema.common import canonical_json
-from scidiscovery.artifact_agent.service.instance_archive import ArchiveError, InstanceArchive
+from scidiscovery.artifact_agent.service.instance_archive import ArchiveError
+from tests.operations.synchronous_archive_fixture import SynchronousFixtureArchive as InstanceArchive
 from scidiscovery.artifact_agent.service.instance_archive_records import readonly
 
 
@@ -19,7 +20,8 @@ def archive_system(tmp_path):
     project = tmp_path / "project"
     project.mkdir()
     runtime = open_runtime(project_root=project, state_root=tmp_path / "state",
-                           worker_backend="hardened", approval_receipt_secret=b"a" * 32)
+                           worker_backend="local", approval_receipt_secret=b"a" * 32)
+    runtime.runs._synchronous_archive_fixture = True
     first = runtime.scheduler_bindings.create_instance_and_bind_session(
         session_key="sch_" + "a" * 32, name="archive.one", title="Original", objective="Verbatim original objective")
     second = runtime.scheduler_bindings.create_instance(name="archive.two", title="Other", objective="Keep everything")
@@ -80,9 +82,9 @@ def test_reconnected_client_blocks_archive_commit_but_disconnect_keeps_history(a
 
 @pytest.mark.parametrize("presence", ["paused", "disconnected", "expired", "cleared"])
 def test_pausing_client_does_not_allow_archiving_queued_or_running_work(tmp_path, presence):
-    from tests.operations.test_instance_archive_continuation import _hardened_system
-    from tests.operations.test_l5_hardened_run_backend import _invoke, _worker
-    catalog,runtime,instance,root=_hardened_system(tmp_path)
+    from tests.operations.test_instance_archive_continuation import _local_archive_system
+    from tests.operations.test_local_worker_contracts import _invoke, _worker
+    catalog,runtime,instance,root=_local_archive_system(tmp_path)
     key='sch_'+'e'*32
     runtime.scheduler_bindings.register_client(session_key=key)
     runtime.scheduler_bindings.bind_session(session_key=key,instance_id=instance.instance_id)
@@ -275,10 +277,6 @@ def failed_run(runtime, instance_id, run_id, *, draft_digest=None):
         for _ in range(2):
             runtime.runs._append_activity(connection, run_id, "tool_failed", "2000-01-01T00:00:00+00:00", b'{"unchanged":null}')
     runtime.scheduler_bindings.bind(instance=instance_id, namespace="run", name=run_id, object_id=run_id)
-    if hasattr(backend, "claim_transport"):
-        backend.claim_transport(run_id, "historical-owner")
-        with sqlite3.connect(backend.dispatch_database) as connection:
-            connection.execute("UPDATE active_transport SET lease_deadline_at='2000-01-01T00:00:00+00:00' WHERE run_id=?", (run_id,))
     return workspace.root
 
 
@@ -310,9 +308,6 @@ def test_failed_recovery_pending_workspace_quarantine_and_shared_draft_preserved
     assert value.state == "failed" and value.recovery_draft["recovery_pending"]
     with readonly(runtime.runs.database_path) as connection:
         assert [tuple(row) for row in connection.execute("SELECT rowid,* FROM run_activity WHERE run_id='run_failedone'")] == original_rows
-    with readonly(runtime.runs.backend.dispatch_database) as connection:
-        assert not connection.execute("SELECT 1 FROM active_transport WHERE run_id='run_failedone'").fetchone()
-        assert connection.execute("SELECT 1 FROM active_transport WHERE run_id='run_failedtwo'").fetchone()
 
 
 def test_legacy_terminal_native_workspace_has_explicit_unknown_busy(tmp_path):
@@ -912,7 +907,8 @@ import os,sys
 sys.path.insert(0,sys.argv[6])
 from scidiscovery.artifact_agent.runtime import open_runtime
 from scidiscovery.artifact_agent.service.instance_archive import InstanceArchive
-runtime=open_runtime(project_root=sys.argv[1],state_root=sys.argv[2],worker_backend='hardened',approval_receipt_secret=b'a'*32)
+runtime=open_runtime(project_root=sys.argv[1],state_root=sys.argv[2],worker_backend='local',approval_receipt_secret=b'a'*32)
+runtime.runs._synchronous_archive_fixture = True
 service=InstanceArchive(runtime)
 def fail(point):
     if point==sys.argv[5]: os._exit(71)

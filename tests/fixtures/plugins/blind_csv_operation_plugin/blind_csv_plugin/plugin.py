@@ -35,14 +35,7 @@ BUILTIN = "builtin"
 JSON_CODEC = ComponentRef("json_codec", plugin_id=GENERAL)
 OPAQUE_CODEC = ComponentRef("opaque_codec", plugin_id=GENERAL)
 WORKSPACE = ComponentRef("workspace", plugin_id=GENERAL)
-FILE_TOOLS = tuple(
-    ComponentRef(name, plugin_id=BUILTIN)
-    for name in (
-        "file_write_begin_tool",
-        "file_write_chunk_tool",
-        "file_write_commit_tool",
-    )
-)
+FILE_TOOLS = ()
 SEMANTIC_CONTRACT = semantic_contract(
     SemanticRuleSpec(
         rule_id="blind.payload_consistency",
@@ -212,20 +205,4 @@ PLUGIN = PluginDefinition(
     components=COMPONENTS, operations=(AUTHOR, REVIEWER),
 )
 
-_hardened_native = REVIEWER.executor.native_tools.model_copy(update={"shell": "none"})
-HARDENED_PLUGIN = PLUGIN.model_copy(update={"operations": (
-    AUTHOR,
-    REVIEWER.model_copy(update={
-        "outputs": tuple(p for p in REVIEWER.outputs if p.name != "attachments"),
-        "executor": REVIEWER.executor.model_copy(update={"native_tools": _hardened_native,
-            "tools": tuple(t for t in REVIEWER.executor.tools
-                if t.component_id not in {"publish_files_tool", "materialize_input_tool"})})}),
-)})
-
-# The stdio transport regression imports this fixture in a fresh interpreter.
-# Select the exact same test contract there as in its parent process.
-import os as _os
-if _os.environ.get("SCID_TEST_HARDENED_CSV_PLUGIN") == "1":
-    PLUGIN = HARDENED_PLUGIN
-
-__all__ = ["PLUGIN", "HARDENED_PLUGIN"]
+__all__ = ["PLUGIN"]

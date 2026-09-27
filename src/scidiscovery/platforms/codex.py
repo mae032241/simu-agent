@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from scidiscovery.artifact_agent.runtime import validate_worker_backend
+
 import json
 import os
 import sys
@@ -81,8 +83,7 @@ def initialize(
     local_workspace_path = _absolute_path(
         local_workspace_root or root / ".scidiscovery-runs"
     )
-    if worker_backend not in {"local", "hardened"}:
-        raise ValueError("worker_backend must be local or hardened")
+    validate_worker_backend(worker_backend)
     config_root = _absolute_path(codex_config_root or root / ".codex")
 
     desired: dict[Path, str] = {}
@@ -96,7 +97,7 @@ def initialize(
         compiled = catalog.operation(operation_id)
         if (
             compiled.spec.executor.kind != "agent"
-            or not _backend_supports_operation(compiled, worker_backend)
+            or not LocalTrustedBackend.supports_operation(compiled)
         ):
             continue
         agent_type = operation_agent_type(compiled)
@@ -187,6 +188,8 @@ def validate_installation_profile(
 ) -> tuple[int, int]:
     """Verify the installed Codex profile against the same compiled catalog."""
 
+    validate_worker_backend(worker_backend)
+
     root = absolute_project_root(project_root)
     workspace_path = _absolute_path(workspace)
     module_path = _absolute_path(python_path)
@@ -201,9 +204,7 @@ def validate_installation_profile(
         catalog.operation(operation_id)
         for operation_id in catalog.operation_ids()
         if catalog.operation(operation_id).spec.executor.kind == "agent"
-        and _backend_supports_operation(
-            catalog.operation(operation_id), worker_backend
-        )
+        and LocalTrustedBackend.supports_operation(catalog.operation(operation_id))
     )
     expected_agents = {operation_agent_type(compiled) for compiled in operations}
     expected_servers = {"scidiscovery"}
@@ -241,17 +242,13 @@ def validate_installation_profile(
             or "default_permissions" in profile
             or "permissions" in profile
             or profile.get("features", {}).get("shell_tool")
-            is not (worker_backend == "local" and compiled.spec.executor.native_tools.shell != "none")
+            is not (compiled.spec.executor.native_tools.shell != "none")
             or profile.get("features", {}).get("unified_exec")
-            is not (worker_backend == "local" and compiled.spec.executor.native_tools.shell != "none")
+            is not (compiled.spec.executor.native_tools.shell != "none")
             or profile.get("tools", {}).get("view_image")
-            is not (worker_backend == "local" and compiled.spec.executor.native_tools.view_image)
+            is not (compiled.spec.executor.native_tools.view_image)
             or bool(profile.get("mcp_servers", {}))
-            or (
-                _local_native_tool_instruction(compiled).strip()
-                if worker_backend == "local"
-                else _hardened_worker_instruction(compiled).strip()
-            )
+            or _local_native_tool_instruction(compiled).strip()
             not in profile.get("developer_instructions", "")
         ):
             raise PlatformConflictError(
@@ -367,54 +364,6 @@ def _local_native_tool_instruction(compiled: Any) -> str:
     )
 
 
-def _hardened_worker_instruction(compiled: Any) -> str:
-    return (
-        "\n\nYou are the spawned Operation worker, not the interactive scheduler. "
-        "Use unified scidiscovery: scid_describe for a logical capability contract, "
-        "then scid_call for worker_open_assignment and subsequent worker_* actions. "
-        "If the scheduler requests attachment identity, describe and call worker_identity, "
-        "relay only its platform thread_id/model/reasoning_effort, then wait for attachment. "
-        "If awaiting scheduler attachment, report that state and wait. Native shell, "
-        "code execution, file tools, network access and view_image are disabled "
-        "for this Hardened profile. Follow startup returned by worker_open_assignment. "
-        "Read scientific inputs only through declared "
-        "Worker tools and write only through declared `worker_file_*` tools. "
-        "Before calling a domain tool, use scid_describe for its complete contract, "
-        "including inputSchema, local $defs, defaults, "
-        "limits and descriptions. Construct arguments from that contract even if the "
-        "platform renders a parameter as unknown or simplifies an array type incorrectly. "
-        "If assignment.json declares a revision, patch its preinitialized editable "
-        "target rather than recreating the complete object; final publication still "
-        "requires the complete immutable snapshot. "
-        "Optional declared worker_helper permits fresh native spawn/wait/close with the same Hardened role; "
-        "helper participation overrides owner submit directions: follow the inline subtask, select complete tool contracts "
-        "with scid_describe, and return findings through native completion. "
-        "Do not call Root/control-plane capabilities, other Operation capabilities, unprepared or recursive delegation, "
-        "skills, apps or plugins. If any forbidden native tool is unexpectedly "
-        "visible, stop instead of using it. Finish only with "
-        "`worker_submit_result`; a validation rejection may be corrected through "
-        "the same server-side file tools.\n"
-    )
-
-
-def _backend_supports_operation(compiled: Any, worker_backend: str) -> bool:
-    return _backend_type(worker_backend).supports_operation(compiled)
-
-
-def _backend_type(worker_backend: str) -> type[Any]:
-    if worker_backend == "local":
-        return LocalTrustedBackend
-    from scidiscovery.artifact_agent.service.hardened_workspace import (
-        HardenedWorkerBackend,
-    )
-
-    return HardenedWorkerBackend
-
-
-def _backend_tool_names(compiled: Any, worker_backend: str) -> tuple[str, ...]:
-    return _backend_type(worker_backend).assignment_tool_names(compiled)
-
-
 def _operation_toml(
     compiled: Any,
     *,
@@ -422,30 +371,30 @@ def _operation_toml(
     python_path: Path | None,
     state_root: Path,
     local_workspace_root: Path | None = None,
-    worker_backend: str = "hardened",
+    worker_backend: str = "local",
     runtime_plugin_configs: Mapping[str, Path] | None = None,
 ) -> str:
     """Compile one Agent Operation into the Codex child-Agent profile."""
 
+    validate_worker_backend(worker_backend)
     executor = compiled.spec.executor
-    if not _backend_supports_operation(compiled, worker_backend):
+    if not LocalTrustedBackend.supports_operation(compiled):
         raise ValueError(
             "compiled Operation requires native tools unavailable on this backend"
         )
-    if worker_backend == "local" and local_workspace_root is None:
+    if local_workspace_root is None:
         raise ValueError("local workspace root is required")
     if executor.prompt is None:
         raise ValueError("compiled Agent operation has no prompt")
     prompt = (
-        (_local_native_tool_instruction(compiled) if worker_backend == "local"
-         else _hardened_worker_instruction(compiled))
+        _local_native_tool_instruction(compiled)
         + "\nFor MCP results, consume structuredContent when present; otherwise read text content once. "
         "Never emit both representations of the same result, including from functions.exec. "
         "Preserve isError, distinct diagnostics and needed non-text content such as images.\n"
         + OPERATION_COMPLETION_INSTRUCTIONS
     )
     agent_type = operation_agent_type(compiled)
-    shell_enabled = worker_backend == "local" and executor.native_tools.shell != "none"
+    shell_enabled = executor.native_tools.shell != "none"
     lines = [
         "# Generated by SciDiscovery. Re-run `scid init codex` to update.",
         f"name = {_quote(agent_type)}",
@@ -458,7 +407,7 @@ def _operation_toml(
         f"unified_exec = {str(shell_enabled).lower()}",
         "",
         "[tools]",
-        f"view_image = {str(worker_backend == 'local' and executor.native_tools.view_image).lower()}",
+        f"view_image = {str(executor.native_tools.view_image).lower()}",
         "",
     ]
     content = "\n".join(lines).rstrip() + "\n"

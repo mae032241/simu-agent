@@ -13,9 +13,6 @@ from scidiscovery.builtin_plugin import CORE_PLUGIN
 from scidiscovery.general_science_plugin import PLUGIN as GENERAL_SCIENCE_PLUGIN
 from scidiscovery.artifact_agent.interfaces.mcp_gateway import GATEWAY_TOOLS
 from scidiscovery.artifact_agent.interfaces.cli import build_parser
-from scidiscovery.artifact_agent.service.hardened_workspace import (
-    HardenedWorkerBackend,
-)
 from scidiscovery.artifact_agent.service.local_workspace import LocalTrustedBackend
 from scidiscovery.artifact_agent.runtime import open_runtime
 from scidiscovery.operations.catalog import compile_catalog, compile_installed_catalog
@@ -78,20 +75,18 @@ def test_control_daemon_passes_backend_choice_to_the_only_root_runtime(
 
 def test_approval_ui_cli_accepts_the_deployed_worker_backend() -> None:
     args = build_parser().parse_args(
-        ["serve-approval-ui", "--worker-backend", "hardened"]
+        ["serve-approval-ui", "--worker-backend", "local"]
     )
-    assert args.worker_backend == "hardened"
+    assert args.worker_backend == "local"
 
 
-def test_hardened_runtime_does_not_create_a_local_run_root(tmp_path: Path) -> None:
+def test_retired_backend_rejected_before_any_runtime_state(tmp_path: Path) -> None:
     project = tmp_path / "project"
     project.mkdir()
-    open_runtime(
-        project_root=project,
-        state_root=tmp_path / "state",
-        worker_backend="hardened",
-    )
+    with pytest.raises(Exception, match="retired.*explicitly configure local"):
+        open_runtime(project_root=project, state_root=tmp_path / "state", worker_backend="hardened")
     assert not (project / ".scidiscovery-runs").exists()
+    assert not (tmp_path / "state").exists()
 
 
 def test_legacy_role_discovery_module_is_absent() -> None:
@@ -209,59 +204,6 @@ def test_codex_profile_contains_root_and_compiled_operation_boundaries(
         assert content.strip() not in scheduler_prompt
 
 
-def test_codex_hardened_profile_remains_explicitly_compilable(tmp_path: Path) -> None:
-    project = tmp_path / "project"
-    project.mkdir()
-    (project / "AGENTS.md").write_text("# Project\n", encoding="utf-8")
-    catalog = compile_catalog(
-        (CORE_PLUGIN, GENERAL_SCIENCE_PLUGIN, BLIND_CSV_PLUGIN)
-    )
-    for compiled in (
-        catalog.operation(operation_id)
-        for operation_id in catalog.operation_ids()
-        if catalog.operation(operation_id).spec.executor.kind == "agent"
-        and HardenedWorkerBackend.supports_operation(
-            catalog.operation(operation_id)
-        )
-    ):
-        profile = tomllib.loads(
-            _operation_toml(
-                compiled,
-                    python=Path(sys.executable),
-                    python_path=Path(__file__).resolve().parents[2] / "src",
-                    state_root=tmp_path / "state",
-                    worker_backend="hardened",
-            )
-        )
-        assert not profile.get("mcp_servers")
-        assert "scid_call" in profile["developer_instructions"]
-        assert "skills, apps or plugins" in profile["developer_instructions"]
-        assert "Set TMPDIR and XDG_CACHE_HOME" not in profile["developer_instructions"]
-    report = initialize_platform(
-        "codex",
-        project,
-        python_executable=Path(sys.executable),
-        control_socket=tmp_path / "control.sock",
-        worker_backend="hardened",
-        codex_config_root=project / ".codex",
-        operation_catalog=catalog,
-    )
-    assert report.changed
-    assert validate_installation_profile(
-        project,
-        workspace=project / "workspace",
-        python_path=Path(__file__).resolve().parents[2] / "src",
-        worker_backend="hardened",
-        operation_catalog=catalog,
-    )[1] > 0
-    with pytest.raises(PlatformConflictError):
-        validate_installation_profile(
-            project,
-            workspace=project / "workspace",
-            python_path=Path(__file__).resolve().parents[2] / "src",
-            worker_backend="local",
-            operation_catalog=catalog,
-        )
 
 
 def test_codex_installation_profile_probe_uses_the_compiled_catalog(
@@ -418,3 +360,19 @@ def test_platform_initializer_rejects_non_codex_platforms(
                 python_executable=Path(sys.executable),
                 control_socket=tmp_path / "control.sock",
             )
+
+
+@pytest.mark.parametrize('surface', ['cli', 'generator', 'root'])
+def test_retired_backend_has_no_dynamic_configuration_entry(tmp_path, surface):
+    from scidiscovery.artifact_agent.runtime import RuntimeConfigurationError
+    from scidiscovery.artifact_agent.interfaces.mcp_root import root_tools_for_backend
+    project = tmp_path / 'project'
+    project.mkdir()
+    with pytest.raises(RuntimeConfigurationError, match='retired.*explicitly configure local'):
+        if surface == 'cli':
+            build_parser().parse_args(['serve-approval-ui', '--worker-backend', 'hardened'])
+        elif surface == 'generator':
+            initialize_platform('codex', project, control_socket=tmp_path / 'control.sock', worker_backend='hardened')
+        else:
+            root_tools_for_backend('hardened')
+    assert not list(project.iterdir())

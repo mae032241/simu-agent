@@ -88,16 +88,6 @@ def _resource_ref(name: str) -> ComponentRef:
     )
 
 
-BASE_TOOLS = tuple(
-    ComponentRef(name, plugin_id="builtin")
-    for name in (
-        "file_write_begin_tool",
-        "file_write_chunk_tool",
-        "file_write_commit_tool",
-    )
-) + (
-    ComponentRef("file_apply_patch_tool", plugin_id="builtin"),
-)
 
 
 _SCHEMA_RESOURCES = {
@@ -294,7 +284,7 @@ def _diagnosis_operation(operation_id: str, purpose: str, applies_when: str, *, 
         "Changing evidence, inventing unsupported metrics, or executing experiments.",
         decision_fields=("overall_verdict", "claim_allowed", "summary", "next_action", "remaining_contradiction", "limitations"),
         agent=ComponentRef("diagnosis_agent"), workspace=ComponentRef("analysis_workspace"),
-        prompt=ComponentRef(prompt), tools=BASE_TOOLS + (ComponentRef("analysis_score_tool"), ComponentRef("analysis_diagnostic_tool"), ComponentRef("analysis_files_tool")),
+        prompt=ComponentRef(prompt), tools=(ComponentRef("analysis_score_tool"), ComponentRef("analysis_diagnostic_tool"), ComponentRef("analysis_files_tool")),
         native_view_image=True,
         input_validation=InputValidationSpec(ComponentRef("diagnosis_inputs"), "science.diagnosis.history_inputs",
             "Analyze selected immutable results. Plans and reviews are optional scientific context. When both a plan and precomputed metric report are supplied, their declared calculation identity must agree."),

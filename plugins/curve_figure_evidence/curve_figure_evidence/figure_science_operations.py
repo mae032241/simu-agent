@@ -18,8 +18,6 @@ BUNDLE_OPERATION = "scidiscovery.curve-bundle.figure-evidence.v3"
 def _general(name):
     return ComponentRef(name, plugin_id="general_science")
 
-BASE_TOOLS = tuple(ComponentRef(name, plugin_id="builtin") for name in (
-    "file_write_begin_tool", "file_write_chunk_tool", "file_write_commit_tool", "file_apply_patch_tool"))
 PDF_TOOL = _general("pdf_extract_tool")
 
 AUTHOR_PROMPT = OPERATION_AGENT_PREAMBLE + """Return exactly one
@@ -179,7 +177,7 @@ OPERATIONS = (
         "Granting qualification or changing source identity.",
         decision_fields=("/scientific_foundation/summary", "/scientific_foundation/missing_inputs", "/scientific_foundation/open_questions", "/problem_frame/current_contradiction"),
         agent=_general("evidence_agent"), workspace=_general("workspace"), prompt=ComponentRef("figure_author_prompt"),
-        tools=BASE_TOOLS+(PDF_TOOL, ComponentRef("figure_source_inspection_tool"), ComponentRef("figure_digitization_preview_tool"), ComponentRef("figure_save_tool"), ComponentRef("figure_reuse_tool")),
+        tools=(PDF_TOOL, ComponentRef("figure_source_inspection_tool"), ComponentRef("figure_digitization_preview_tool"), ComponentRef("figure_save_tool"), ComponentRef("figure_reuse_tool")),
         inputs=(PAPER_SOURCE_INPUT, _input("research_objective", "Explicit scientific target.", "scidiscovery.research-objective.v1",
             resource="research_objective_schema", min_items=0, usage="prior_signal"), *REVISION_CONTEXT_INPUTS),
         outputs=(INTAKE_OUTPUT, FAMILY_OUTPUT), timeout=1500, max_input_bytes=355*1024*1024,
@@ -193,7 +191,7 @@ OPERATIONS = (
         "Redigitizing, revising or qualifying evidence.",
         agent=_general("auditor_agent"), workspace=_general("workspace"), prompt=ComponentRef("figure_audit_prompt"),
         decision_fields=("checks",),
-        tools=BASE_TOOLS+(PDF_TOOL,), inputs=AUDIT_INPUTS, outputs=(AUDIT_OUTPUT,), timeout=600,
+        tools=(PDF_TOOL,), inputs=AUDIT_INPUTS, outputs=(AUDIT_OUTPUT,), timeout=600,
         max_input_bytes=355*1024*1024, max_output_bytes=32*1024, max_files=1, native_view_image=True,
         input_validation=FAMILY_VALIDATION, guards=(ComponentRef("figure_audit_parentage"),)),
 )

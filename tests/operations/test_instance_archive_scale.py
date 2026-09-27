@@ -7,7 +7,7 @@ import pytest
 from scidiscovery.artifact_agent.runtime import open_runtime
 from scidiscovery.artifact_agent.schema.artifact import ArtifactRegistration
 from scidiscovery.artifact_agent.schema.common import canonical_json
-from scidiscovery.artifact_agent.service.instance_archive import InstanceArchive
+from tests.operations.synchronous_archive_fixture import SynchronousFixtureArchive as InstanceArchive
 from scidiscovery.artifact_agent.service.instance_archive_records import Records, canonical, encode, readonly
 
 
@@ -16,7 +16,8 @@ def scale_system(tmp_path):
     project = tmp_path / "project"
     project.mkdir()
     runtime = open_runtime(project_root=project, state_root=tmp_path / "state",
-                           worker_backend="hardened", approval_receipt_secret=b"s" * 32)
+                           worker_backend="local", approval_receipt_secret=b"s" * 32)
+    runtime.runs._synchronous_archive_fixture = True
     target = runtime.scheduler_bindings.create_instance(
         name="scale.small", title="Small target", objective="Original small-instance description")
     other = runtime.scheduler_bindings.create_instance(
@@ -49,10 +50,6 @@ def historical_run(runtime, instance_id, run_id):
         connection.execute("INSERT INTO runs (" + ",".join(values) + ") VALUES (" + ",".join("?" for _ in values) + ")",
                            tuple(values.values()))
     runtime.scheduler_bindings.bind(instance=instance_id, namespace="run", name=run_id, object_id=run_id)
-    backend.claim_transport(run_id, "historical-owner")
-    with sqlite3.connect(backend.dispatch_database) as connection:
-        connection.execute("UPDATE active_transport SET lease_deadline_at='2000-01-01T00:00:00+00:00' WHERE run_id=?",
-                           (run_id,))
     return workspace.root
 
 

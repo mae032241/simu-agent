@@ -359,7 +359,7 @@ LocalTrusted 历史 Run 不能单凭终态证明无写入者，这个限制不�
 | `SCID_SERVICE_USER` | `SUDO_USER` 或当前用户 | 服务账户 |
 | `SCID_SERVICE_GROUP` | 服务用户主组 | socket 和文件组 |
 | `SCID_PLATFORM` | `codex` | Codex 平台选择器；其他值会被拒绝 |
-| `SCID_WORKER_BACKEND` | `local` | `local` 为可信本地原生工具路径；`hardened` 为纯 MCP 文件后端，值同时驱动 daemon、systemd、Codex profile 和安装验证 |
+| `SCID_WORKER_BACKEND` | `local` | 仅支持 `local`，保留声明的原生权限；退役的 `hardened` 在部署变更前拒绝 |
 | `SCID_PLUGINS` | 空 | 逗号分隔的本地插件目录名；例如 `tcad_artifact,curve_score,curve_figure_evidence` |
 | `SCID_INSTALL_ROOT` | `/opt/scidiscovery` | 应用安装目录 |
 | `SCID_STATE_ROOT` | `/var/lib/scidiscovery` | 控制面状态 |
@@ -370,8 +370,11 @@ LocalTrusted 历史 Run 不能单凭终态证明无写入者，这个限制不�
 
 升级已使用独立状态目录的本地适配器时，显式设置 `TCAD_STATE_ROOT` 沿用原目录；安装器不自动迁移数据。
 
-`hardened` 当前拒绝要求 shell、代码或 `view_image` 的 Operation，因此 TCAD Deck 作者第一版必须使用
-`local`；这不会降低 Effect 的独立审批和 adapter 边界。
+`hardened` 已退役。升级旧部署前，先在旧版结束或归档在途任务并保留状态，
+再显式设置 `SCID_WORKER_BACKEND=local`，通过安装器重新生成 Codex profile。安装器、CLI、运行时
+和平台生成器会拒绝旧值并给出迁移说明，不自动降级或扩大原生权限。历史 Run、Artifact 和归档
+仍可读取，旧 Run 不能在 Local 上启动。回滚需核对旧配置和在途任务身份。此次删除不实现 OS
+强隔离，也不关闭 `SEC-002`；Local 原生写者无法证明已停止时仍拒绝归档，终态本身不充分。
 
 Runner 安装脚本还支持 `SCID_SSH_*`、`SCID_VMRUN_*` 和 `SCID_REMOTE_*` 变量。
 

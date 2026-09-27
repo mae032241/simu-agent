@@ -314,14 +314,7 @@ quiescence for that Worker. Recovery integrity is likewise not liveness proof.
                 if "native_tools_disabled" not in value.backend_capabilities:
                     details.append({"kind": "run", "id": run_id, "reason": "native_writers_unconfirmed"})
                     continue
-                from .hardened_workspace import HardenedWorkerBackend
-                if not isinstance(backend, HardenedWorkerBackend):
-                    details.append({"kind": "run", "id": run_id, "reason": "backend_quiescence_unavailable"})
-                    continue
-                try:
-                    stack.enter_context(backend.quiescence_guard(run_id))
-                except (OSError, ValueError, RuntimeError, sqlite3.Error) as error:
-                    details.append({"kind": "transport", "id": run_id, "reason": "transport_busy_or_unconfirmed", "error_type": type(error).__name__})
+                details.append({"kind": "run", "id": run_id, "reason": "backend_quiescence_unavailable"})
             except (OSError, ValueError, RuntimeError, sqlite3.Error, AttributeError, TypeError) as error:
                 details.append({"kind": "run", "id": run_id, "reason": "writer_identity_unavailable", "error_type": type(error).__name__})
         for execution_id in tuple(execution_ids):

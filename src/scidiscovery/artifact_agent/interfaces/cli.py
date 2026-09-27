@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from ..runtime import validate_worker_backend
+
 import argparse
 import json
 import signal
@@ -36,7 +38,7 @@ def build_parser() -> argparse.ArgumentParser:
     initialize.add_argument("--python", type=Path, default=Path(sys.executable))
     initialize.add_argument("--control-socket", type=Path, required=True)
     initialize.add_argument(
-        "--worker-backend", choices=("local", "hardened"), default="local"
+        "--worker-backend", type=validate_worker_backend, default="local"
     )
     initialize.add_argument("--dry-run", action="store_true")
     initialize.add_argument("--plugin-config", action="append", default=[])
@@ -84,7 +86,7 @@ def build_parser() -> argparse.ArgumentParser:
     serve_ui.add_argument("--local-workspace-root", type=Path)
     serve_ui.add_argument("--plugin-config", action="append", default=[])
     serve_ui.add_argument(
-        "--worker-backend", choices=("local", "hardened"), default="local"
+        "--worker-backend", type=validate_worker_backend, default="local"
     )
     return parser
 

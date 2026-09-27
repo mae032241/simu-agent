@@ -60,9 +60,6 @@ def test_compiled_agent_authority_is_exact_and_default_deny() -> None:
     assert authority.inputs == (("agent_input", "full", 1, 4096),)
     assert authority.workspace == "architecture_fixture:test_workspace"
     assert authority.tools == (
-        "architecture_fixture:file_write_begin_tool",
-        "architecture_fixture:file_write_chunk_tool",
-        "architecture_fixture:file_write_commit_tool",
         "architecture_fixture:fixture_inspect_tool",
     )
     assert tuple(tool.name for tool in authority.lifecycle.tools) == (

@@ -18,7 +18,6 @@ from blind_csv_plugin.plugin import (
     JSON_CODEC,
     OBSERVATION,
     PLUGIN,
-    HARDENED_PLUGIN,
     REVIEWER,
     TABLE,
     WORKSPACE,
@@ -26,16 +25,10 @@ from blind_csv_plugin.plugin import (
 from scidiscovery.artifact_agent.interfaces.mcp_local_worker import (
     LocalWorkerMCPRouter,
 )
-from scidiscovery.artifact_agent.interfaces.mcp_hardened_worker import (
-    HardenedWorkerMCPRouter,
-)
 from scidiscovery.artifact_agent.interfaces.mcp_root import RootMCPRouter, RootToolFacade
 from scidiscovery.artifact_agent.runtime import open_runtime
 from scidiscovery.artifact_agent.schema.artifact import ArtifactRegistration
 from scidiscovery.artifact_agent.schema.common import canonical_json
-from scidiscovery.artifact_agent.service.hardened_workspace import (
-    HardenedWorkerBackend,
-)
 from scidiscovery.artifact_agent.service.runs import _revision_workspace_mode
 from scidiscovery.builtin_plugin import CORE_PLUGIN
 from scidiscovery.general_science_plugin import PLUGIN as GENERAL_PLUGIN
@@ -93,7 +86,6 @@ REVISION = scientific_agent_operation(
     prompt=ComponentRef("author_prompt"),
     tools=(
         *FILE_TOOLS,
-        ComponentRef("file_json_patch_tool", plugin_id="builtin"),
     ),
     inputs=(
         _input(
@@ -189,22 +181,16 @@ DUAL_AUTHOR = scientific_agent_operation(
 )
 
 
-def _catalog(*, hardened: bool = False, reviewer=REVIEWER, revision=REVISION):
-    operations = HARDENED_PLUGIN.operations if hardened else (DUAL_AUTHOR, reviewer)
+def _catalog(*, reviewer=REVIEWER, revision=REVISION):
+    operations = (DUAL_AUTHOR, reviewer)
     plugin = PLUGIN.model_copy(
         update={
             "components": (
                 *PLUGIN.components,
-                *(
-                    (
-                        ComponentSpec(
-                            "blind_progress",
-                            "transform",
-                            "tests.operations.test_incremental_revision_runtime:BLIND_PROGRESS",
-                        ),
-                    )
-                    if not hardened
-                    else ()
+                ComponentSpec(
+                    "blind_progress",
+                    "transform",
+                    "tests.operations.test_incremental_revision_runtime:BLIND_PROGRESS",
                 ),
             ),
             "operations": (*operations, revision),
@@ -242,11 +228,7 @@ def _envelope(payload: object, *, verdict: str, summary: str) -> bytes:
 
 def _worker(catalog, runtime, operation_id: str):
     compiled = catalog.operation(operation_id)
-    router = (
-        HardenedWorkerMCPRouter
-        if runtime.hardened_backend is not None
-        else LocalWorkerMCPRouter
-    )
+    router = LocalWorkerMCPRouter
     from scidiscovery.artifact_agent.service.worker_connections import WorkerConnections
     instance = runtime.scheduler_bindings.select_instance(name="incremental_revision")
     value, = [item for item in runtime.runs.list(instance_id=instance.instance_id)
@@ -258,7 +240,7 @@ def _worker(catalog, runtime, operation_id: str):
 
 
 def _system(tmp_path: Path, *, worker_backend: str = "local"):
-    catalog = _catalog(hardened=worker_backend == "hardened")
+    catalog = _catalog()
     project = tmp_path / "project"
     project.mkdir()
     runtime = open_runtime(
@@ -752,25 +734,12 @@ def test_revision_recovery_is_unavailable_after_backend_change(tmp_path: Path) -
     assert root.call_tool(
         "run_status", {"name": "failed_before_backend_change"}
     )["recovery_available"] is True
-    runtime.runs.backend = HardenedWorkerBackend(tmp_path / "replacement-backend")
+    runtime.runs.backend.backend_version = "retired-version"
     assert root.call_tool(
         "run_status", {"name": "failed_before_backend_change"}
     )["recovery_available"] is False
 
 
-def test_hardened_revision_is_rejected_without_a_controlled_read_tool(
-    tmp_path: Path,
-) -> None:
-    catalog, runtime, instance, root = _system(tmp_path, worker_backend="hardened")
-    _create_reviewed_base(catalog, runtime, instance, root)
-    preflight = root.call_tool(
-        "operation_preflight", _revision_request("hardened_revision")
-    )
-    assert preflight["admissible"] is False
-    assert preflight["reason_code"] == "runtime_backend_capability_missing"
-    assert HardenedWorkerBackend.unsupported_requirements(
-        catalog.operation("blind.csv.revise.v1")
-    ) == ("server_file_read",)
 
 
 def test_materializer_without_finalizer_keeps_the_generic_revision_draft() -> None:
@@ -793,7 +762,7 @@ def test_materializer_without_finalizer_keeps_the_generic_revision_draft() -> No
 
 
 
-def test_revision_base_must_be_materializable_and_hardened_requires_patch_tool() -> None:
+def test_revision_base_must_be_materializable() -> None:
     hidden_base = REVISION.inputs[0].model_copy(update={"exposure": "handoff_only"})
     hidden_revision = REVISION.model_copy(
         update={"inputs": (hidden_base, *REVISION.inputs[1:])}
@@ -804,21 +773,6 @@ def test_revision_base_must_be_materializable_and_hardened_requires_patch_tool()
     with pytest.raises(CatalogCompileError) as caught:
         compile_catalog((CORE_PLUGIN, GENERAL_PLUGIN, hidden_plugin))
     assert caught.value.reason_code == "direct_revision_contract_invalid"
-
-    no_patch_revision = REVISION.model_copy(
-        update={
-            "executor": REVISION.executor.model_copy(update={"tools": FILE_TOOLS}),
-            "outputs": tuple(port for port in REVISION.outputs if port.collection is None),
-        }
-    )
-    no_patch_plugin = PLUGIN.model_copy(
-        update={"operations": (*PLUGIN.operations, no_patch_revision)}
-    )
-    catalog = compile_catalog((CORE_PLUGIN, GENERAL_PLUGIN, no_patch_plugin))
-    assert HardenedWorkerBackend.unsupported_requirements(
-        catalog.operation("blind.csv.revise.v1")
-    ) == ("server_file_read", "server_file_patch")
-
 
 @pytest.mark.parametrize("change, reason", [
     ("review_contract", "input_revision_review_contract_mismatch"),

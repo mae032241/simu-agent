@@ -614,6 +614,10 @@ class RunService(ToolEvidenceMixin):
             if row is None:
                 connection.execute("ROLLBACK")
                 raise RunStateConflict("no exact queued Run is available")
+            if (row["backend_id"] != self.backend.backend_id
+                    or row["backend_version"] != self.backend.backend_version
+                    or tuple(json.loads(row["backend_capabilities_json"])) != self.backend.capabilities):
+                raise RunStateConflict("historical Run backend is unavailable; execution cannot migrate automatically")
             if self.operation_catalog.operation(operation_id).spec.independent_review_ports:
                 attached = connection.execute("SELECT 1 FROM worker_connections WHERE run_id=?", (selected_run_id,)).fetchone()
                 if attached is None:

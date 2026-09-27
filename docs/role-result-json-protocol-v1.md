@@ -29,9 +29,8 @@ Agent 必须先调用 `worker_open_assignment`，再读取 assignment、结果 S
 默认 `LocalTrustedBackend` 允许可信本地 Codex 在该工作区内使用编译 Operation 声明的原生工具和
 领域工具。它不提供技术级原生文件隔离，因此只适用于本地开发、可逆文件和无生产凭证场景。
 
-显式 `HardenedWorkerBackend` 不允许原生 shell、代码工具或 `view_image`；文本创建、补丁、JSON
-补丁、移动和删除由该后端注册的 `worker_file_*` 工具完成。它与 Local 使用同一个 OperationSpec、
-CompiledCatalog、preflight、RunService 和 Artifact/current 权威，不是第二套结果协议。
+hardened 专属执行与文件编辑入口已退役；仅 Local 执行保留声明的原生权限。历史 Run/Artifact/归档
+可读，旧 backend 标签不启用执行。旧配置需显式迁移；`SEC-002` 未因此关闭。
 
 Run v1 只支持一个主输出 `output/result.json`。声明 Agent collection 输出的 Operation 会在目录中
 标记为当前后端不可用，并在 preflight 失败关闭；不得写 `bundle.json` 或附件后假装已登记。确定性
@@ -99,7 +98,7 @@ Run 完成不会自动推进 current，也不会自动创建 reviewer Run。curr
 
 1. Agent Operation 恰有一个严格主输出，所有输出 validator 在启动编译时闭合；
 2. 生命周期只有 `worker_open_assignment`、`worker_heartbeat`、`worker_submit_result`；
-3. Local/Hardened 对同一 Operation 的可用性在目录、preflight、Codex profile 和 Run 创建处一致；
+3. Local 对同一 Operation 的可用性在目录、preflight、Codex profile 和 Run 创建处一致；
 4. 裸 payload、额外文件、路径逃逸、符号链接、秘密和超限输出失败关闭；
 5. Artifact 不包含 handoff，调度信号不由 Agent 另行写入；
 6. 旧 Task、worker session、materialize/validate/finalize 协议没有兼容路由。
