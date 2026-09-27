@@ -905,8 +905,11 @@ def test_hard_process_exit_preserves_resumable_gate_and_atomic_records(archive_s
     script = """
 import os,sys
 sys.path.insert(0,sys.argv[6])
+sys.path.insert(0,os.path.dirname(sys.argv[6]))
 from scidiscovery.artifact_agent.runtime import open_runtime
-from scidiscovery.artifact_agent.service.instance_archive import InstanceArchive
+from tests.operations.synchronous_archive_fixture import SynchronousFixtureArchive as InstanceArchive
+# The parent wrote this synthetic recovery synchronously before launching us;
+# this child only moves archive records/files and never starts a native Worker.
 runtime=open_runtime(project_root=sys.argv[1],state_root=sys.argv[2],worker_backend='local',approval_receipt_secret=b'a'*32)
 runtime.runs._synchronous_archive_fixture = True
 service=InstanceArchive(runtime)
