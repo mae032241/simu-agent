@@ -11,15 +11,17 @@ import fcntl
 import json
 import os
 from pathlib import Path
-import re
-import selectors
 import shutil
 import stat
-import subprocess
 import sys
 import tempfile
 import time
 import tomllib
+
+# Engineering scripts use their matching checkout/release adapter; scientific
+# candidate subprocesses still use their explicitly installed interpreter.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+from scidiscovery.platforms.codex_app_server import AppServer, HostLimits, config_flags, rpc_diagnostic
 
 try:
     from scripts import run_tests as guard
@@ -55,42 +57,9 @@ def preflight() -> dict:
             "worker_dispatches": 0, "b0a_passed": False}
 
 
-def config_flags(config: dict) -> list[str]:
-    """CLI splits dotted keys literally; TOML quoting belongs only to values."""
-    flags = []
-    def visit(prefix, value):
-        if isinstance(value, dict):
-            for key, child in value.items():
-                if not re.fullmatch(r"[A-Za-z0-9_-]+", key):
-                    raise ValueError("unsupported_cli_config_key")
-                visit(prefix + [key], child)
-        else:
-            flags.extend(["-c", ".".join(prefix) + "=" + json.dumps(value)])
-    visit([], config)
-    return flags
-
-
 def thread_start_params(workspace: str) -> dict:
     return {"cwd": workspace, "ephemeral": True,
             "approvalPolicy": "never", "sandbox": "workspace-write"}
-
-
-def rpc_diagnostic(error: dict) -> str:
-    """Classify actionable protocol failures without echoing private error text."""
-    message = str(error.get("message", "")).lower()
-    if "trusted platform session/thread metadata is required" in message:
-        return "platform_identity_metadata_missing"
-    if "code-mode host closed its stdout" in message:
-        return "native_code_mode_host_closed"
-    if "failed to load workspace requirements" in message:
-        return "workspace_requirements_unavailable"
-    if "requires experimentalapi" in message:
-        return "experimental_capability_required"
-    if re.search(r"unknown variant|invalid variant|missing field|invalid type", message):
-        return "request_schema_mismatch"
-    if error.get("code") in (-32600, -32602):
-        return "request_rejected"
-    return "rpc_failure"
 
 
 def _protocol_probe(output: Path, limits: dict) -> int:
@@ -101,11 +70,8 @@ def _protocol_probe(output: Path, limits: dict) -> int:
         (output / "protocol.json").write_text(json.dumps(result, indent=2) + "\n")
         return 2
     deadline = time.monotonic() + limits["timeout_seconds"]
-    selector = selectors.DefaultSelector()
     result.update(phase="protocol", status="failed", completed_methods=[])
-    buffer = b""
-    request_id = 0
-    process = None
+    connection = None
     workspace = None
     try:
         workspace = tempfile.TemporaryDirectory(prefix="workspace-", dir=output)
@@ -129,50 +95,29 @@ def _protocol_probe(output: Path, limits: dict) -> int:
         logs = output / "fixture-logs"
         logs.mkdir(exist_ok=True)
         with (logs / "app-server.log").open("wb") as error_log:
-            process = subprocess.Popen(command, cwd=scratch, env=environment,
-                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=error_log, bufsize=0)
-            selector.register(process.stdout, selectors.EVENT_READ)
+            def checkpoint():
+                if time.monotonic() >= deadline:
+                    raise TimeoutError("protocol_timeout")
 
-            def send(value):
-                process.stdin.write((json.dumps(value) + "\n").encode())
-                process.stdin.flush()
+            def observe(message):
+                if message.get("method") == "scid/rpcError":
+                    error = message["params"]["error"]
+                    result["rpc_error_code"] = error.get("code")
+                    result["diagnostic"] = rpc_diagnostic(error)
+
+            connection = AppServer.launch(command, cwd=Path(scratch), environment=environment,
+                stderr=error_log, limits=HostLimits(rpc_timeout_seconds=limits["timeout_seconds"],
+                    termination_grace_seconds=limits["termination_grace_seconds"],
+                    frame_bytes=limits["log_bytes"]), on_event=observe, checkpoint=checkpoint)
 
             def rpc(method, params):
-                nonlocal buffer, request_id
-                request_id += 1
                 result["last_method"] = method
-                send({"id": request_id, "method": method, "params": params})
-                while time.monotonic() < deadline:
-                    if b"\n" not in buffer:
-                        if not selector.select(0.1):
-                            if process.poll() is not None:
-                                raise RuntimeError("app_server_exited")
-                            continue
-                        data = os.read(process.stdout.fileno(), 65536)
-                        if not data:
-                            raise RuntimeError("app_server_closed")
-                        buffer += data
-                        if len(buffer) > limits["log_bytes"]:
-                            raise RuntimeError("protocol_message_limit")
-                    while b"\n" in buffer:
-                        line, buffer = buffer.split(b"\n", 1)
-                        message = json.loads(line)
-                        if "method" in message and "id" in message:
-                            raise RuntimeError("unexpected_server_request")
-                        if message.get("id") != request_id:
-                            continue
-                        if "error" in message:
-                            error = message["error"]
-                            result["rpc_error_code"] = error.get("code")
-                            # No raw protocol errors, account data or tokens in summaries.
-                            result["diagnostic"] = rpc_diagnostic(error)
-                            raise RuntimeError("rpc_error")
-                        result["completed_methods"].append(method)
-                        return message["result"]
-                raise TimeoutError("protocol_timeout")
+                reply = connection.rpc(method, params)
+                result["completed_methods"].append(method)
+                return reply
 
             rpc("initialize", {"clientInfo": {"name": "scid_root_host_probe", "version": "0.1.0"}})
-            send({"method": "initialized", "params": {}})
+            connection.notify("initialized", {})
             reply = rpc("thread/start", thread_start_params(scratch))
             thread = reply["thread"]
             result.update(status="initialized_without_model_turn",
@@ -183,16 +128,8 @@ def _protocol_probe(output: Path, limits: dict) -> int:
     except Exception as error:
         result.update(status="failed", failure_type=type(error).__name__)
     finally:
-        if process is not None:
-            process.terminate()
-            try:
-                process.wait(timeout=limits["termination_grace_seconds"])
-            except subprocess.TimeoutExpired:
-                process.kill()
-                process.wait()
-            process.stdin.close()
-            process.stdout.close()
-        selector.close()
+        if connection is not None:
+            connection.close()
         if workspace is not None:
             workspace.cleanup()
         (output / "protocol.json").write_text(json.dumps(result, indent=2) + "\n")

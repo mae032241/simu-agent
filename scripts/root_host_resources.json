@@ -5,5 +5,7 @@
   "execution_timeout_seconds": 1200,
   "worker_wakeup_timeout_seconds": 30,
   "native_probe_timeout_seconds": 5,
-  "native_probe_frame_bytes": 65536
+  "native_probe_frame_bytes": 65536,
+  "rpc_timeout_seconds": 30,
+  "protocol_frame_bytes": 8388608
 }

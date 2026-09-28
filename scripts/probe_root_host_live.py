@@ -20,7 +20,6 @@ import json
 import os
 import re
 from pathlib import Path
-import selectors
 import shlex
 import shutil
 import sqlite3
@@ -29,6 +28,7 @@ import sys
 import time
 import tomllib
 from urllib.parse import urlsplit, parse_qs
+
 
 try:
     from scripts import run_tests as guard
@@ -40,6 +40,9 @@ except ModuleNotFoundError:
     from probe_native_code_mode import probe as probe_native_code_mode
     from installed_candidates import create_environments, _run_logged
     from probe_root_host import preflight, thread_start_params, rpc_diagnostic, config_flags
+
+from scidiscovery.platforms.codex_app_server import AppServer, HostLimits
+from scidiscovery.platforms.codex_root_host import CodexRootHost, RootIdentity, turn_params
 
 HOST_RESOURCES = Path(__file__).with_name("root_host_resources.json")
 
@@ -97,21 +100,6 @@ def write(path: Path, value):
     temporary = path.with_suffix(path.suffix + ".tmp")
     temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n")
     temporary.replace(path)
-
-
-def turn_params(thread: str, prompt: str) -> dict:
-    return {"threadId": thread, "input": [{"type": "text", "text": prompt}]}
-
-
-
-def require_config(expected: dict, actual: dict):
-    for key, value in expected.items():
-        if key not in actual:
-            raise RuntimeError("effective_config_missing:" + key)
-        if isinstance(value, dict):
-            require_config(value, actual[key])
-        elif value != actual[key]:
-            raise RuntimeError("effective_config_mismatch:" + key)
 
 
 def instance_result(reply: dict, ui_url: str) -> dict:
@@ -176,9 +164,9 @@ def prepare(root: Path, *, distribution="core", plugin_configs=None, task=None):
 class Host:
     def __init__(self, root: Path, limits: dict):
         self.root, self.limits = root, limits
-        self.selector = selectors.DefaultSelector()
+        self.connection = None
+        self.root_host = None
         self.children, self.streams = [], []
-        self.buffer, self.counter, self.responses = b"", 0, {}
         self.done, self.usage, self.items = {}, {}, []
         self.started_threads = set()
         self.thread = None
@@ -213,76 +201,53 @@ class Host:
         self.children.append(child)
         return child
 
-    def pump(self):
+    def checkpoint(self):
         if time.monotonic() >= self.phase_deadline:
             raise TimeoutError(self.phase + "_timeout")
         if (self.root / "stop").exists():
             raise RuntimeError("user_stop")
         if any(p.poll() is not None for p in self.children):
             raise RuntimeError("owned_process_exited")
-        if not self.selector.select(.1):
+
+    def pump(self):
+        self.checkpoint()
+        if self.connection is not None:
+            self.connection.poll(.1)
+
+    def observe(self, message):
+        method, params = message.get("method"), message.get("params", {})
+        if method == "scid/rpcError":
+            error = params["error"]
+            self.last_rpc_error = {"method": params["method"], "code": error.get("code"),
+                                   "diagnostic": rpc_diagnostic(error)}
+            with (self.logdir / "rpc-errors.log").open("a") as stream:
+                stream.write(json.dumps(params, ensure_ascii=False) + "\n")
             return
-        data = os.read(self.app.stdout.fileno(), 65536)
-        if not data:
-            raise RuntimeError("app_server_closed")
-        self.buffer += data
-        if len(self.buffer) > self.limits["log_bytes"]:
-            raise RuntimeError("protocol_message_limit")
-        while b"\n" in self.buffer:
-            line, self.buffer = self.buffer.split(b"\n", 1)
-            message = json.loads(line)
-            method, params = message.get("method"), message.get("params", {})
-            if method and "id" in message:
-                raise RuntimeError("unexpected_server_request:" + method)
-            if "id" in message:
-                self.responses[message["id"]] = message
-                continue
-            if method in ("thread/tokenUsage/updated", "item/completed", "turn/started", "turn/completed", "thread/started", "error"):
-                self.events.write(json.dumps(message, ensure_ascii=False) + "\n")
-                self.events.flush()
-            if method == "turn/started":
-                self.started_threads.add(params["threadId"])
-            elif method == "thread/tokenUsage/updated":
-                # Each notification is cumulative: replace, never sum snapshots.
-                self.usage[params["threadId"]] = params["tokenUsage"]["total"]
-                self.save_usage()
-            elif method == "turn/completed":
-                self.done[(params["threadId"], params["turn"]["id"])] = params["turn"]
-            elif method == "item/completed":
-                item = params.get("item", {})
-                self.items.append({"thread": params.get("threadId"), "type": item.get("type"),
-                    "bytes": len(line), "tool": item.get("tool"), "status": item.get("status")})
-                if params.get("threadId") == self.thread and item.get("type") == "agentMessage":
-                    (self.root / "latest-root-message.txt").write_text(item.get("text", ""))
+        if method in ("thread/tokenUsage/updated", "item/completed", "turn/started", "turn/completed", "thread/started", "error"):
+            self.events.write(json.dumps(message, ensure_ascii=False) + "\n")
+            self.events.flush()
+        if method == "turn/started":
+            self.started_threads.add(params["threadId"])
+        elif method == "thread/tokenUsage/updated":
+            self.usage[params["threadId"]] = params["tokenUsage"]["total"]
+            self.save_usage()
+        elif method == "turn/completed":
+            self.done[(params["threadId"], params["turn"]["id"])] = params["turn"]
+        elif method == "item/completed":
+            item = params.get("item", {})
+            self.items.append({"thread": params.get("threadId"), "type": item.get("type"),
+                "bytes": len(json.dumps(message, ensure_ascii=False).encode()),
+                "tool": item.get("tool"), "status": item.get("status")})
+            if params.get("threadId") == self.thread and item.get("type") == "agentMessage":
+                (self.root / "latest-root-message.txt").write_text(item.get("text", ""))
 
     def rpc(self, method, params):
-        self.counter += 1
-        key = self.counter
-        self.app.stdin.write((json.dumps({"id": key, "method": method, "params": params}) + "\n").encode())
-        self.app.stdin.flush()
-        deadline = time.monotonic() + 30
-        while key not in self.responses:
-            if time.monotonic() > deadline:
-                raise TimeoutError("rpc_timeout:" + method)
-            self.pump()
-        reply = self.responses.pop(key)
-        if "error" in reply:
-            error = reply["error"]
-            self.last_rpc_error = {"method": method, "code": error.get("code"),
-                                   "diagnostic": rpc_diagnostic(error)}
-            # Private, bounded evidence retains the cause; public output contains
-            # only method/code/category, never raw server text or request params.
-            with (self.logdir / "rpc-errors.log").open("a") as stream:
-                stream.write(json.dumps({"method": method, "error": error}, ensure_ascii=False) + "\n")
-            raise RuntimeError(method + ":" + self.last_rpc_error["diagnostic"])
-        return reply["result"]
+        return self.connection.rpc(method, params)
 
     def turn(self, prompt):
-        result = self.rpc("turn/start", turn_params(self.thread, prompt))
-        key = (self.thread, result["turn"]["id"])
-        while key not in self.done:
-            self.pump()
-        if self.done[key]["status"] != "completed":
+        self.root_host.start_turn(prompt)
+        result = self.root_host.wait_turn(max(.001, self.phase_deadline - time.monotonic()))
+        if result["status"] != "completed":
             raise RuntimeError("root_turn_failed")
 
     def start_services(self):
@@ -332,29 +297,18 @@ class Host:
                     if name != "scidiscovery"}
         overrides = config_flags({"mcp_servers": disabled}) + config_flags(config)
         self.app = self.launch_app(overrides)
-        self.selector.register(self.app.stdout, selectors.EVENT_READ)
-        self.rpc("initialize", {"clientInfo": {"name": "scid_b0a_live", "version": "0.1.0"}, "capabilities": {"experimentalApi": True}})
-        self.app.stdin.write(b'{"method":"initialized","params":{}}\n')
-        self.app.stdin.flush()
-        effective = self.rpc("config/read", {"cwd": self.config["project"], "includeLayers": False})["config"]
-        require_config(config, effective)
+        self.attach_connection()
+        self.expected_config = config
+        self.root_host.initialize(cwd=self.config["project"], expected_config=config)
         params = thread_start_params(self.config["project"])
-        params["ephemeral"] = False
         params.update({"model": self.config["profile"]["model"]} if "model" in self.config["profile"] else {})
         if "model_reasoning_effort" in self.config["profile"]:
             params["config"] = {"model_reasoning_effort": self.config["profile"]["model_reasoning_effort"]}
         prior = json.loads((root / "live/thread.json").read_text()) if resume else None
-        result = self.rpc("thread/resume", {"threadId": prior["thread_id"],
-            "cwd": self.config["project"], "excludeTurns": True}) if resume else self.rpc("thread/start", params)
-        if not result["thread"].get("id") or not result["thread"].get("sessionId"):
-            raise RuntimeError("actual_platform_identity_missing")
-        self.thread = result["thread"]["id"]
-        self.platform_session = result["thread"]["sessionId"]
-        if prior and (self.thread != prior["thread_id"] or self.platform_session != prior["session_id"]):
-            raise RuntimeError("resumed_platform_identity_changed")
-        if self.thread != self.platform_session:
-            raise RuntimeError("probe_requires_actual_root_thread")
-        write(self.logdir.parent / "thread.json", {"thread_id": self.thread, "session_id": result["thread"].get("sessionId")})
+        identity = self.root_host.open_root(cwd=self.config["project"],
+            prior=RootIdentity(**prior) if prior else None, options=params)
+        self.thread, self.platform_session = identity.thread_id, identity.session_id
+        write(self.logdir.parent / "thread.json", {"thread_id": self.thread, "session_id": self.platform_session})
         inventory, cursor = [], None
         while True:
             page = self.rpc("mcpServerStatus/list", {"threadId": self.thread, "limit": 20, "cursor": cursor})
@@ -372,6 +326,20 @@ class Host:
             "config_loaded": True, "tools": sorted(required), "instance_state": value.get("state"),
             "code_mode_execution": "native_arithmetic_passed", "b0a_passed": False})
         return value
+
+    def attach_connection(self):
+        self.connection = AppServer(self.app, limits=HostLimits(
+            rpc_timeout_seconds=self.resources.get("rpc_timeout_seconds", 30),
+            termination_grace_seconds=self.limits["termination_grace_seconds"],
+            frame_bytes=self.resources.get("protocol_frame_bytes", self.limits["log_bytes"])),
+            on_event=self.observe, checkpoint=self.checkpoint)
+        self.root_host = CodexRootHost(self.connection)
+
+    def reconnect_root(self):
+        self.attach_connection()
+        self.root_host.initialize(cwd=self.config["project"], expected_config=self.expected_config)
+        self.root_host.open_root(cwd=self.config["project"],
+            prior=RootIdentity(self.thread, self.platform_session))
 
     def current_instance(self):
         # Client-initiated MCP calls have no model turn. Adapt only the actual
@@ -443,6 +411,8 @@ class Host:
 
     def close(self):
         self.save_usage()
+        if self.connection is not None:
+            self.connection.close()
         self.events.close()
         for child in reversed(self.children):
             if child.poll() is None:
@@ -458,7 +428,6 @@ class Host:
                     stream.close()
         for stream in self.streams:
             stream.close()
-        self.selector.close()
 
 
 def supervised(root, action, task_file=None):

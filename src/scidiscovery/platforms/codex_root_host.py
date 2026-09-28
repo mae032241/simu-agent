@@ -1,0 +1,162 @@
+"""One persistent Root connection, usable by the control service and probes.
+
+No instance selection, approvals, scientific decisions, automatic retry or storage
+lives here. The caller persists private events and verifies sealed Run outcomes.
+Returning from a turn leaves the host alive so approvals can be awaited without a
+model request. Disconnect does not cancel or prove quiescence of native Workers.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+import time
+
+from .codex_app_server import AppServer, HostError
+
+
+@dataclass(frozen=True)
+class RootIdentity:
+    thread_id: str
+    session_id: str
+
+    def __post_init__(self):
+        if (not isinstance(self.thread_id, str) or not self.thread_id
+                or self.thread_id != self.session_id):
+            raise HostError("actual_root_identity_invalid")
+
+
+def require_config(expected: dict, actual: dict):
+    for key, value in expected.items():
+        if key not in actual:
+            raise HostError("effective_config_missing")
+        if isinstance(value, dict):
+            if not isinstance(actual[key], dict):
+                raise HostError("effective_config_mismatch")
+            require_config(value, actual[key])
+        elif actual[key] != value:
+            raise HostError("effective_config_mismatch")
+
+
+def turn_params(thread: str, prompt: str) -> dict:
+    return {"threadId": thread, "input": [{"type": "text", "text": prompt}]}
+
+
+class CodexRootHost:
+    def __init__(self, connection: AppServer):
+        self.connection = connection
+        self.identity = None
+        self.turn_id = None
+        self.completion = None
+        self._starting = False
+        self._initialized = False
+        self._sink = connection.on_event
+        connection.on_event = self._event
+
+    def _event(self, message):
+        # The consumer persists before this host advances its observation state.
+        self._sink(message)
+        params = message.get("params", {})
+        if (message.get("method") == "turn/completed" and self.identity
+                and params.get("threadId") == self.identity.thread_id):
+            turn = params.get("turn", {})
+            if self._starting or turn.get("id") == self.turn_id:
+                if not isinstance(turn.get("id"), str) or turn.get("status") not in (
+                        "completed", "failed", "interrupted"):
+                    raise HostError("root_completion_invalid")
+                self.completion = {"id": turn["id"], "status": turn["status"]}
+
+    def initialize(self, *, cwd: str, expected_config: dict):
+        if self._initialized:
+            raise HostError("host_already_initialized")
+        self.connection.rpc("initialize", {"clientInfo": {"name": "scidiscovery", "version": "0.1.1"},
+                                           "capabilities": {"experimentalApi": True}})
+        self.connection.notify("initialized", {})
+        actual = self.connection.rpc("config/read", {"cwd": cwd, "includeLayers": False})
+        try:
+            require_config(expected_config, actual["config"])
+        except (HostError, KeyError, TypeError):
+            self.connection.failed = True
+            raise
+        self._initialized = True
+
+    def open_root(self, *, cwd: str, prior: RootIdentity | None = None,
+                  options: dict | None = None, active_turn_id: str | None = None):
+        """Resume only control-recorded coordinates; never replay a prompt.
+
+        The owner reconciles prior work before choosing active_turn_id=None.
+        Restoring an unfinished turn blocks new work until its terminal event.
+        """
+        if not self._initialized or self.identity is not None:
+            raise HostError("root_open_state_invalid")
+        if active_turn_id is not None and (
+                prior is None or not isinstance(active_turn_id, str) or not active_turn_id):
+            raise ValueError("active turn requires an exact prior Root identity")
+        if prior:
+            self.identity, self.turn_id = prior, active_turn_id
+            params = {"threadId": prior.thread_id, "cwd": cwd, "excludeTurns": True}
+            method = "thread/resume"
+        else:
+            params = {**(options or {}), "cwd": cwd, "ephemeral": False}
+            method = "thread/start"
+        try:
+            result = self.connection.rpc(method, params)
+            thread = result.get("thread", {})
+            identity = RootIdentity(thread.get("id"), thread.get("sessionId"))
+            if prior is not None and identity != prior:
+                raise HostError("resumed_platform_identity_changed")
+        except BaseException:
+            self.identity = None
+            self.connection.failed = True
+            raise
+        self.identity = identity
+        return identity
+
+    def start_turn(self, prompt: str) -> str:
+        if self.identity is None:
+            raise HostError("root_not_open")
+        if self.turn_id is not None and self.completion is None:
+            raise HostError("root_turn_already_active")
+        if not isinstance(prompt, str) or not prompt.strip():
+            raise ValueError("root prompt must be nonempty")
+        self.turn_id, self.completion = None, None
+        self._starting = True
+        try:
+            result = self.connection.rpc("turn/start", turn_params(self.identity.thread_id, prompt))
+            turn = result.get("turn") if isinstance(result, dict) else None
+            turn_id = turn.get("id") if isinstance(turn, dict) else None
+            if not isinstance(turn_id, str) or not turn_id:
+                self.connection.failed = True
+                raise HostError("actual_turn_identity_missing")
+            if self.completion and self.completion["id"] != turn_id:
+                self.connection.failed = True
+                raise HostError("root_completion_identity_mismatch")
+            self.turn_id = turn_id
+            return turn_id
+        finally:
+            self._starting = False
+
+    def poll(self, timeout: float = .1):
+        self.connection.poll(timeout)
+        return self.completion
+
+    def interrupt(self):
+        """Acknowledgement is not a terminal state; keep draining completion."""
+        if self.turn_id is None or self.completion is not None:
+            return
+        self.connection.rpc("turn/interrupt", {"threadId": self.identity.thread_id, "turnId": self.turn_id})
+
+    def wait_turn(self, timeout_seconds: float):
+        if type(timeout_seconds) not in (int, float) or not 0 < timeout_seconds < float("inf"):
+            raise ValueError("turn timeout must be finite and positive")
+        if self.turn_id is None:
+            raise HostError("root_turn_not_started")
+        deadline = time.monotonic() + timeout_seconds
+        while self.completion is None:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                # Keep the exact active turn: caller can interrupt/reconcile, not replay.
+                raise HostError("root_turn_timeout")
+            self.poll(min(.1, remaining))
+        return dict(self.completion)
+
+    def close(self):
+        self.connection.close()

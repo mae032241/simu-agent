@@ -3,7 +3,6 @@ from datetime import datetime, timedelta, timezone
 import io
 import os
 import json
-import selectors
 import shutil
 import socket
 import subprocess
@@ -67,7 +66,7 @@ def test_real_app_server_websocket_initialize_disconnect_reconnect_without_model
         host = LifecycleHost(root, json.loads(live.guard.DEFAULT_CONFIG.read_text())["limits"])
         try:
             host.app = host.launch_app([])
-            host.selector.register(host.app.stdout, selectors.EVENT_READ)
+            host.attach_connection()
             params = {"clientInfo": {"name": "scid_transport_test", "version": "0.1"}}
             initial = host.rpc("initialize", params)
             assert initial.get("userAgent")
@@ -75,7 +74,7 @@ def test_real_app_server_websocket_initialize_disconnect_reconnect_without_model
             host.disconnect_client()
             assert host.server.poll() is None
             host.app = host.connect_client("client-after")
-            host.selector.register(host.app.stdout, selectors.EVENT_READ)
+            host.attach_connection()
             reconnected = host.rpc("initialize", params)
             assert reconnected.get("userAgent") == initial["userAgent"]
             assert host.server.pid == server_pid and host.server.poll() is None
@@ -119,7 +118,7 @@ web.run_app(app, path=sys.argv[1], print=None)
                 time.sleep(.02)
             for name in ("before", "after"):
                 host.app = host.connect_client(name)
-                host.selector.register(host.app.stdout, selectors.EVENT_READ)
+                host.attach_connection()
                 assert host.rpc("initialize", {}) == {"userAgent": "fixture"}
                 host.disconnect_client()
                 assert host.server.poll() is None
@@ -163,9 +162,9 @@ def test_disconnect_closes_only_client_and_retains_owned_server(tmp_path, monkey
         command = [sys.executable, "-c", "import time; time.sleep(30)"]
         host.server = host.launch(command, "server")
         host.app = host.launch(command, "client", True)
-        host.selector.register(host.app.stdout, selectors.EVENT_READ)
-        host.buffer = b"partial stale frame"
-        host.responses[1] = {"old": True}
+        host.attach_connection()
+        host.connection.buffer.extend(b"partial stale frame")
+        connection = host.connection
         client = host.app
         before = datetime.now(timezone.utc)
         disconnected = host.disconnect_client()
@@ -173,8 +172,8 @@ def test_disconnect_closes_only_client_and_retains_owned_server(tmp_path, monkey
         assert client.poll() is not None
         assert host.server.poll() is None
         assert host.children == [host.server]
-        assert not host.selector.get_map()
-        assert host.buffer == b"" and host.responses == {}
+        assert connection.closed
+        assert host.connection is None and host.root_host is None
     finally:
         host.close()
     assert host.server.poll() is not None
@@ -193,7 +192,6 @@ def test_reconnect_reads_original_run_without_restarting_worker(tmp_path, monkey
     host.children = []
     host.server = type("Server", (), {"pid": 123})()
     host.app = type("Client", (), {"pid": 124, "stdin": io.BytesIO(), "stdout": io.BytesIO()})()
-    host.selector = type("Selector", (), {"register": lambda *a: None})()
     prompts, requests = [], []
     now = datetime.now(timezone.utc)
     host.resume_existing = failure == "resume_queued"
@@ -222,6 +220,11 @@ def test_reconnect_reads_original_run_without_restarting_worker(tmp_path, monkey
         return {"thread": {"id": "wrong" if failure == "wrong_identity" else params.get("threadId"),
                            "sessionId": host.platform_session}}
     monkeypatch.setattr(host, "rpc", rpc)
+    def reconnect_root():
+        actual=rpc("thread/resume", {"threadId":host.thread})["thread"]
+        if actual["id"] != host.thread:
+            raise RuntimeError("lifecycle_reconnected_identity_changed")
+    monkeypatch.setattr(host,"reconnect_root",reconnect_root)
     if failure in ("finished_early", "wrong_identity"):
         with pytest.raises(RuntimeError, match="active_attached_worker" if failure == "finished_early" else "identity_changed"):
             host.run()

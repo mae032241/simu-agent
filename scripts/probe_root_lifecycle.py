@@ -9,10 +9,8 @@ import json
 import importlib.util
 import os
 from pathlib import Path
-import selectors
 import shutil
 import sqlite3
-import subprocess
 import sys
 import time
 
@@ -114,18 +112,10 @@ class LifecycleHost(Host):
         return dict(rows[0]) if rows else None
 
     def disconnect_client(self):
-        self.selector.unregister(self.app.stdout)
-        self.app.terminate()
-        try:
-            self.app.wait(timeout=self.limits["termination_grace_seconds"])
-        except subprocess.TimeoutExpired:
-            self.app.kill()
-            self.app.wait()
+        self.connection.close()
         self.children.remove(self.app)
-        self.app.stdin.close()
-        self.app.stdout.close()
-        self.buffer = b""
-        self.responses.clear()
+        self.connection = None
+        self.root_host = None
         return datetime.now(timezone.utc)
 
     def wait_disconnected(self, run_id):
@@ -200,16 +190,11 @@ class LifecycleHost(Host):
                         completed_at=completed["completed_at"])
         write(self.logdir.parent / "lifecycle.json", evidence)
         self.app = self.connect_client("client-after")
-        self.selector.register(self.app.stdout, selectors.EVENT_READ)
-        self.rpc("initialize", {"clientInfo": {"name": "scid_b0a_lifecycle", "version": "0.1.0"},
-                                "capabilities": {"experimentalApi": True}})
-        self.app.stdin.write(b'{"method":"initialized","params":{}}\n')
-        self.app.stdin.flush()
-        # Reload only to obtain actual identity and cumulative usage. No Worker turn.
-        for thread in (self.thread, row["thread_id"]):
-            actual = self.rpc("thread/resume", {"threadId": thread, "excludeTurns": True})["thread"]
-            if actual.get("id") != thread or actual.get("sessionId") != self.platform_session:
-                raise RuntimeError("lifecycle_reconnected_identity_changed")
+        self.reconnect_root()
+        # Restore the exact completed Worker for observation only, never a new turn.
+        actual = self.rpc("thread/resume", {"threadId": row["thread_id"], "excludeTurns": True})["thread"]
+        if actual.get("id") != row["thread_id"] or actual.get("sessionId") != self.platform_session:
+            raise RuntimeError("lifecycle_reconnected_identity_changed")
         self.await_instance(self.current_instance())
         self.status("scientific_turn", lifecycle=True, reconnected=True)
         self.turn(READBACK)
