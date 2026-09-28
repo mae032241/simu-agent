@@ -48,6 +48,7 @@ class ProgressionCoordinator:
         self.closed = threading.Event()
         self.thread = None
         self.lease = None
+        self._pending_fault = None
 
     def start(self):
         # Exactly one owner per deployed control database, including two daemons.
@@ -285,29 +286,51 @@ class ProgressionCoordinator:
             run = self.runtime.runs.status(identity['run_id'])
             if run.state in {'queued', 'running'}:
                 try:
-                    host.restore_worker(identity['thread_id'], identity['platform_session'], str(self.runtime.project_root))
+                    host.restore_worker(identity['thread_id'], identity['platform_session'], str(self.runtime.project_root),
+                        role=identity['role'])
                 except Exception:
                     # A Worker can seal while native state is being reconciled.
                     if self.runtime.runs.status(identity['run_id']).state in {'queued', 'running'}:
                         raise
 
+    def _persist_fault(self):
+        fault = self._pending_fault
+        self.bindings.observe_progression(**fault)
+        self._pending_fault = None
+
     def tick(self):
+        if self._pending_fault is not None:
+            # Maintenance can temporarily prevent recording a connection fault.
+            # Retry only that observation; never reconnect the failed host first.
+            self._persist_fault()
+            return
+        try:
+            self._tick()
+        except Exception as error:
+            try:
+                if self.instance is not None:
+                    row = self._row()
+                    self._pending_fault = dict(instance_id=self.instance,
+                        expected_host=json.loads(row['host_json'] or 'null'),
+                        changes=dict(runtime_status='host_fault', fault_code=getattr(error, 'code', type(error).__name__),
+                            attempts=json.loads(row['checkpoint_json']).get('attempts', 0)+1),
+                        reason='host_fault', stop=True)
+                    self._persist_fault()
+            finally:
+                # Closing a client does not prove native quiescence. Keep the
+                # persisted writer marker, even if maintenance denied fault IO.
+                host, self.host = self.host, None
+                if host is not None:
+                    host.close()
+            raise
+
+    def _tick(self):
         if self.host is None:
             row = self.bindings.next_background_progression()
             if row is None:
                 return
             self.instance = row['instance_id']
-            try:
-                self._connect(row)
-            except Exception as error:
-                self.bindings.observe_progression(instance_id=self.instance,
-                    expected_host=json.loads(self._row()['host_json'] or 'null'),
-                    changes=dict(runtime_status='host_fault', fault_code=getattr(error, 'code', type(error).__name__),
-                        attempts=json.loads(self._row()['checkpoint_json']).get('attempts', 0)+1), reason='host_fault', stop=True)
-                if self.host:
-                    self.host.close()
-                    self.host = None
-                raise
+            self._connect(row)
             if self.host is None:
                 return
         row = self._row()
@@ -328,6 +351,8 @@ class ProgressionCoordinator:
             row = self.bindings.reconnect_host(instance_id=self.instance, scheduler_session=self.host.scheduler_session,
                 expected_generation=row['generation'], **self._host_binding())
             checkpoint = json.loads(row['checkpoint_json'])
+            if not self._reconcile_admissions():
+                return
         if row['mode'] != 'background' or row['state'] not in {'active', 'pending'}:
             self.host.interrupt()
             self.host.poll(0)
@@ -335,56 +360,54 @@ class ProgressionCoordinator:
                 if self.runtime.runs.active_ids(instance_id=self.instance, limit=1):
                     self._save(dict(runtime_status='paused_accepted_work_continues'))
                     return
-                self._save(dict(phase='idle', turn_id=None, processed_snapshot=checkpoint.get('decision_snapshot', checkpoint.get('processed_snapshot', {}))))
+                processed = checkpoint.get('processed_snapshot', {})
+                if self.host.completion and self.host.completion['status'] == 'completed':
+                    processed = checkpoint.get('decision_snapshot', processed)
+                self._save(dict(phase='idle', turn_id=None, processed_snapshot=processed))
                 self.bindings.release_host(instance_id=self.instance, **self._host_binding())
                 self.host.close()
                 self.host = None
             return
-        try:
-            self.host.poll(0)
-            if self.host.turn_id and self.host.completion is None:
-                self._check_budget(row, limits, allow_round=False)
+        self.host.poll(0)
+        if self.host.turn_id and self.host.completion is None:
+            self._check_budget(row, limits, allow_round=False)
+            return
+        checkpoint = json.loads(self._row()['checkpoint_json'])
+        if checkpoint.get('phase') == 'running':
+            if self.host.completion is None:
+                raise ProgressionFault('native_turn_state_unknown')
+            if not self._reconcile_admissions():
                 return
+            processed = checkpoint.get('processed_snapshot', {})
+            if self.host.completion['status'] == 'completed':
+                processed = checkpoint.get('decision_snapshot', processed)
+            self._save(dict(phase='idle', processed_snapshot=processed,
+                running_seconds=checkpoint.get('running_seconds', 0)+max(0, self.clock()-checkpoint.get('round_started_at', self.clock())),
+                runtime_status='waiting', turn_id=None))
             checkpoint = json.loads(self._row()['checkpoint_json'])
-            if checkpoint.get('phase') == 'running':
-                if self.host.completion is None:
-                    raise ProgressionFault('native_turn_state_unknown')
-                if not self._reconcile_admissions():
-                    return
-                self._save(dict(phase='idle', processed_snapshot=checkpoint.get('decision_snapshot', {}),
-                    running_seconds=checkpoint.get('running_seconds', 0)+max(0, self.clock()-checkpoint.get('round_started_at', self.clock())),
-                    runtime_status='waiting', turn_id=None))
-                checkpoint = json.loads(self._row()['checkpoint_json'])
-                if self.host.completion['status'] != 'completed':
-                    self._save(dict(runtime_status='root_turn_failed', attempts=checkpoint.get('attempts', 0)+1), reason='root_turn_failed', stop=True)
-                    return
-            report = checkpoint.get('report') or {}
-            if report.get('completed') and checkpoint.get('messages', []) == checkpoint.get('processed_snapshot', {}).get('messages', []):
-                self._save(dict(runtime_status='goal_completed'), reason='goal_completed', stop=True)
+            if self.host.completion['status'] != 'completed':
+                self._save(dict(runtime_status='root_turn_failed', attempts=checkpoint.get('attempts', 0)+1), reason='root_turn_failed', stop=True)
                 return
-            if not self._check_budget(row, limits):
-                return
-            if self.clock() < checkpoint.get('next_probe_at', 0):
-                return
-            self._save(dict(probes=checkpoint.get('probes', 0)+1, next_probe_at=self.clock()+limits['poll_seconds']))
-            snapshot = self._snapshot(self._row())
-            if snapshot == checkpoint.get('processed_snapshot'):
-                return
-            prompt = self._brief(self._row(), snapshot, limits['context_bytes']-len(INSTRUCTION.encode()))
-            # Intent is durable before the non-idempotent native turn/start.
-            with self.bindings.scheduling_guard(instance_id=self.instance, session_key=row['owner_session'], expected_generation=row['generation']):
-                self._save(dict(phase='prepared', turn_id=None, decision_snapshot=snapshot, round_started_at=self.clock(),
-                    rounds=checkpoint.get('rounds', 0)+1, runtime_status='deciding',
-                    last_report=checkpoint.get('report') or checkpoint.get('last_report'), report=None), reason='host_active')
-            turn = self.host.start_turn(prompt)
-            self._save(dict(phase='running', turn_id=turn))
-        except Exception as error:
-            self._save(dict(runtime_status='host_fault', fault_code=getattr(error, 'code', type(error).__name__),
-                attempts=json.loads(self._row()['checkpoint_json']).get('attempts', 0)+1), reason='host_fault', stop=True)
-            # Keep host marker: connection failure does not prove native quiescence.
-            self.host.close()
-            self.host = None
-            raise
+        report = checkpoint.get('report') or {}
+        if report.get('completed') and checkpoint.get('messages', []) == checkpoint.get('processed_snapshot', {}).get('messages', []):
+            self._save(dict(runtime_status='goal_completed'), reason='goal_completed', stop=True)
+            return
+        if not self._check_budget(row, limits):
+            return
+        if self.clock() < checkpoint.get('next_probe_at', 0):
+            return
+        self._save(dict(probes=checkpoint.get('probes', 0)+1, next_probe_at=self.clock()+limits['poll_seconds']))
+        snapshot = self._snapshot(self._row())
+        if snapshot == checkpoint.get('processed_snapshot'):
+            return
+        prompt = self._brief(self._row(), snapshot, limits['context_bytes']-len(INSTRUCTION.encode()))
+        # Intent is durable before the non-idempotent native turn/start.
+        with self.bindings.scheduling_guard(instance_id=self.instance, session_key=row['owner_session'], expected_generation=row['generation']):
+            self._save(dict(phase='prepared', turn_id=None, decision_snapshot=snapshot, round_started_at=self.clock(),
+                rounds=checkpoint.get('rounds', 0)+1, runtime_status='deciding',
+                last_report=checkpoint.get('report') or checkpoint.get('last_report'), report=None), reason='host_active')
+        turn = self.host.start_turn(prompt)
+        self._save(dict(phase='running', turn_id=turn))
 
     def _check_budget(self, row, limits, allow_round=True):
         checkpoint = json.loads(self._row()['checkpoint_json'])

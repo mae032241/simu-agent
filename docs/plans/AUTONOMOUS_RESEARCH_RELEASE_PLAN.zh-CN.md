@@ -952,7 +952,7 @@ summary 当作 B6 通过，也不声称完成原生 pause/resume/重启、helper
 - 脚本语法检查及 `git diff --check` 通过。没有全仓安装、全套测试、真实浏览器、模型、
   受控外部执行或人工/自动成本效益比较；缺测保留，不把一次源码回归当完整 B 通过。
 
-唯一待执行的安装复验（复用同一 wheel，不重建）：
+当时待执行的安装复验（以下旧候选命令已被后续独立审查修复节点取代）：
 
 ```bash
 SCID_B6_CANDIDATE=/tmp/scid-b6-candidate-20260928 python scripts/run_tests.py --lane installed --output /tmp/scid-b6-installed-final-20260928 tests/operations/test_progression_acceptance.py
@@ -964,3 +964,33 @@ SCID_B6_CANDIDATE=/tmp/scid-b6-candidate-20260928 python scripts/run_tests.py --
 所测运行方式的证据。当前还不能宣称系统级原生宿主、两完整任务真实接续、浏览器附件旅程、
 pause/resume/重连/停止、跨终端运行、原地原生恢复、真实 helper 或成本优劣通过。
 A6 真实短 TCAD 继续遵循用户延期决定。
+
+### B3/B4 独立审查修复节点（2026-09-28）
+
+修复基线 `00cbd78` 的三个恢复边界：
+
+- 中断的 Root 不推进 `processed_snapshot`，暂停释放及活动轮次只在原生 completed 后消费输入；
+  快速 resume 重新核对持久准入，既有已接受任务继续被观察，不派发替代任务。
+- pending/paused 的 interrupt/poll 与连接及活动轮次共用故障处理。连接失败始终清理客户端，
+  即使维护门暂时禁止故障落库，也只重试这条故障记录；保留未知 native writer 标记。
+  明确 resume 后按原线程/轮次重新核对，不能把保留标记当作永久不可恢复。
+- 恢复原生参与者区分 owner/helper。活动 owner 仍须有原生 inProgress；helper 的原生
+  completed/failed/interrupted 可保留计量身份而不唤醒，inProgress 恢复订阅；空或未知状态拒绝。
+  `released_at` 本身不构成原生终态证明。
+
+串行默认守卫验证：`test_progression.py` 24 passed（8.979 s，RSS 128057344 B），
+`test_progression_process.py` 15 passed（12.097 s，RSS 217382912 B）。记录分别为
+`/tmp/scid-b-review-recovery-source`、`/tmp/scid-b-review-recovery-process`；无锁绕过、模型或 TCAD。
+过程回归实际启动 fake app-server 子进程，覆盖暂停/快速恢复断线后显式 resume 的同线程恢复、
+无额外 turn/start、helper 终态/活动态/未知态，以及原有 daemon 入口与提交不确定负例。
+维护禁止故障写入时客户端仍关闭由源码回归覆盖。这些证据不证明真实 Codex interrupt 对 child
+生命周期的影响，也不填补上节尚缺的真实模型、helper、浏览器和成本证据。
+
+上述修改改变两个生产模块，旧 `/tmp/scid-b6-candidate-20260928` wheel 及其逐字节证明已经过期，
+不得复用旧候选宣称验证本节点。后续执行者须用不存在的新候选目录构建并安装复验：
+
+```bash
+SCID_B6_CANDIDATE=/tmp/scid-b6-candidate-recovery-20260928 python scripts/run_tests.py --lane installed --output /tmp/scid-b6-installed-recovery-20260928 tests/operations/test_progression_acceptance.py
+```
+
+本修复节点未运行该安装命令；安装通过后仍须在普通登录终端、用户完成实例选择的前提下另行进行真实旅程。

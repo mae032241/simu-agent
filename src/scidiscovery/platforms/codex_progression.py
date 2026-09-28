@@ -116,14 +116,25 @@ class CodexProgressionHost(CodexRootHost):
         elif turn.get('status') != 'inProgress':
             raise HostError('recorded_turn_state_unknown')
 
-    def restore_worker(self, thread_id, platform_session, cwd):
+    def restore_worker(self, thread_id, platform_session, cwd, *, role="worker"):
+        if role not in {"worker", "helper"}:
+            raise ValueError("invalid native participant role")
         result = self.connection.rpc('thread/resume', dict(threadId=thread_id, cwd=cwd, excludeTurns=True))
         value = result.get('thread', {})
         if (value.get('id'), value.get('sessionId')) != (thread_id, platform_session):
             raise HostError('worker_platform_identity_changed')
         observed = self.connection.rpc('thread/read', dict(threadId=thread_id, includeTurns=True)).get('thread', {})
-        if observed.get('id') != thread_id or not any(turn.get('status') == 'inProgress' for turn in observed.get('turns', [])):
+        if observed.get('id') != thread_id:
+            raise HostError('worker_platform_identity_changed')
+        turns = observed.get('turns', [])
+        statuses = [turn.get('status') for turn in turns]
+        if not statuses or any(status not in {'inProgress', 'completed', 'failed', 'interrupted'} for status in statuses):
+            raise HostError('worker_native_turn_state_unknown')
+        if 'inProgress' not in statuses and role != 'helper':
             raise HostError('worker_native_turn_not_running')
+        # Helpers can finish while their owner remains active. Native terminal
+        # evidence permits keeping their metering identity without waking them;
+        # released_at alone never proves this state.
         # Resume subscribes to the original thread; no synthetic message or turn
         # may restart a side effect whose acceptance cannot be established.
 

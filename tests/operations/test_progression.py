@@ -35,7 +35,7 @@ class Host:
         self.interrupted = True
     def close(self):
         self.closed = True
-    def restore_worker(self, *args):
+    def restore_worker(self, *args, **kwargs):
         self.restored.append(args)
 
 
@@ -358,3 +358,96 @@ def test_unchanged_failed_request_cannot_evade_attempt_limit_by_new_name(progres
     with pytest.raises(Exception, match='same task already failed'):
         _invoke(root, 'renamed.retry')
     assert len(p.runtime.runs.list(instance_id=p.instance)) == 1
+
+
+def test_interrupted_pause_preserves_unprocessed_message_after_release(progression):
+    p = progression
+    p.coordinator.tick()
+    p.coordinator.host.finish()
+    p.coordinator.tick()
+    processed = checkpoint(p)['processed_snapshot']
+    p.root.call_tool('progression_message', dict(name='unprocessed', text='Retain this new direction.'))
+    p.now[0] += 6
+    p.coordinator.tick()
+    interrupted = p.coordinator.host
+    p.root.call_tool('progression_command', dict(command='pause'))
+    interrupted.completion = dict(id=interrupted.turn_id, status='interrupted')
+    p.coordinator.tick()
+    assert p.coordinator.host is None and row(p)['host_json'] is None
+    assert checkpoint(p)['processed_snapshot'] == processed
+    p.root.call_tool('progression_command', dict(command='resume'))
+    p.now[0] += 6
+    p.coordinator.tick()
+    assert 'Retain this new direction.' in p.coordinator.host.prompts[0]
+    assert not p.runtime.runs.list(instance_id=p.instance)
+
+
+def test_interrupted_fast_resume_reconciles_prepared_admission_once(progression, monkeypatch):
+    p = progression
+    p.coordinator.tick()
+    host = p.coordinator.host
+    root = p.root.__class__(p.facade(host.scheduler_session))
+    def lost_binding(*args, **kwargs):
+        raise RuntimeError('binding reply lost')
+    monkeypatch.setattr(root.facade, '_bind_target', lost_binding)
+    with pytest.raises(RuntimeError, match='binding reply lost'):
+        _invoke(root, 'accepted.before.pause')
+    p.root.call_tool('progression_command', dict(command='pause'))
+    p.root.call_tool('progression_command', dict(command='resume'))
+    host.completion = dict(id=host.turn_id, status='interrupted')
+    p.now[0] += 6
+    p.coordinator.tick()
+    assert checkpoint(p)['admissions']['accepted.before.pause']['state'] == 'accepted'
+    assert len(p.runtime.runs.list(instance_id=p.instance)) == 1
+    assert len(host.prompts) == 2 and 'accepted.before.pause' in host.prompts[-1]
+    assert 'do not create a replacement' in host.prompts[-1]
+
+
+@pytest.mark.parametrize('control', ['pause', 'resume'])
+@pytest.mark.parametrize('method', ['interrupt', 'poll'])
+def test_control_disconnect_always_closes_failed_host(progression, monkeypatch, control, method):
+    from scidiscovery.platforms.codex_app_server import HostError
+    p = progression
+    p.coordinator.tick()
+    host = p.coordinator.host
+    original_marker = row(p)['host_json']
+    p.root.call_tool('progression_command', dict(command='pause'))
+    if control == 'resume':
+        p.root.call_tool('progression_command', dict(command='resume'))
+    def disconnect(*args):
+        raise HostError('app_server_closed')
+    monkeypatch.setattr(host, method, disconnect)
+    with pytest.raises(HostError, match='app_server_closed'):
+        p.coordinator.tick()
+    assert host.closed and p.coordinator.host is None
+    assert row(p)['host_json'] == original_marker and row(p)['state'] == 'paused'
+    assert checkpoint(p)['fault_code'] == 'app_server_closed'
+    p.coordinator.tick()
+    assert p.coordinator.host is None
+
+
+def test_control_disconnect_closes_even_when_maintenance_blocks_fault_record(progression, monkeypatch):
+    from scidiscovery.platforms.codex_app_server import HostError
+    from scidiscovery.artifact_agent.service.instance_maintenance import InstanceMaintenanceUnavailable
+    p = progression
+    p.coordinator.tick()
+    host = p.coordinator.host
+    p.root.call_tool('progression_command', dict(command='pause'))
+    def disconnect():
+        raise HostError('app_server_closed')
+    monkeypatch.setattr(host, 'interrupt', disconnect)
+    gate = p.runtime.scheduler_bindings.control_maintenance
+    with gate.exclusive(p.instance):
+        gate.begin(p.instance, 'fault-gate', 'archive')
+    with pytest.raises(InstanceMaintenanceUnavailable):
+        p.coordinator.tick()
+    assert host.closed and p.coordinator.host is None
+    assert p.coordinator._pending_fault is not None and row(p)['host_json'] is not None
+    with pytest.raises(InstanceMaintenanceUnavailable):
+        p.coordinator.tick()
+    with gate.exclusive(p.instance):
+        gate.finish(p.instance, 'fault-gate')
+    p.coordinator.tick()
+    assert p.coordinator._pending_fault is None
+    assert checkpoint(p)['fault_code'] == 'app_server_closed'
+    assert p.coordinator.host is None and row(p)['state'] == 'paused'

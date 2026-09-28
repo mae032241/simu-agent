@@ -33,7 +33,8 @@ for line in sys.stdin:
     elif method in ('thread/start','thread/resume'):
         result={'thread':{'id':p.get('threadId','native-root'),'sessionId':'native-root'}}
     elif method=='thread/read':
-        result={'thread':{'id':p['threadId'],'turns':[{'id':'exact-turn','status':'completed'}]}}
+        status=('inProgress' if p['threadId']=='owner' else os.environ.get('SCID_TEST_HELPER_STATUS','completed') if p['threadId']=='helper' else 'completed')
+        result={'thread':{'id':p['threadId'],'turns':[] if status=='missing' else [{'id':'exact-turn','status':status}]}}
     elif method=='mcpServerStatus/list':
         result={'data':[{'name':'scidiscovery','tools':{} if mode=='missing-tools' else
             {'scid_catalog':{},'scid_describe':{},'scid_call':{}}}]}
@@ -55,9 +56,11 @@ for line in sys.stdin:
         result={'turn':{'id':'exact-turn'}}
         emit({'id':msg['id'],'result':result})
         emit({'method':'thread/tokenUsage/updated','params':{'threadId':'native-root','tokenUsage':{'total':{'inputTokens':100,'cachedInputTokens':50,'outputTokens':20}}}})
-        if mode!='running':emit({'method':'turn/completed','params':{'threadId':'native-root','turn':{'id':'exact-turn','status':'completed'}}})
+        if mode not in {'running','interrupt-disconnect'}:emit({'method':'turn/completed','params':{'threadId':'native-root','turn':{'id':'exact-turn','status':'completed'}}})
         continue
-    elif method=='turn/interrupt':result={}
+    elif method=='turn/interrupt':
+        if mode=='interrupt-disconnect':sys.exit(0)
+        result={}
     else:raise RuntimeError(method)
     emit({'id':msg['id'],'result':result})
 '''
@@ -224,3 +227,69 @@ def test_worker_restore_requires_native_running_turn_not_only_identity(progressi
     p.coordinator.tick()
     with pytest.raises(HostError,match='worker_native_turn_not_running'):
         p.coordinator.host.restore_worker('worker','native-root',str(p.runtime.project_root))
+
+
+@pytest.mark.parametrize('control', ['pause', 'resume'])
+def test_native_disconnect_during_control_retains_marker_without_spinning(progression, tmp_path, monkeypatch, control):
+    p = progression
+    _, requests = native(tmp_path, monkeypatch, p.runtime.project_root, tmp_path/'control.sock', 'interrupt-disconnect')
+    p.coordinator.host_factory = CodexProgressionFactory(project_root=p.runtime.project_root,
+        state_root=p.runtime.state_root, socket_path=tmp_path/'control.sock', approval_base_url='http://127.0.0.1:8765')
+    p.coordinator.tick()
+    host = p.coordinator.host
+    p.root.call_tool('progression_command', dict(command='pause'))
+    if control == 'resume':
+        p.root.call_tool('progression_command', dict(command='resume'))
+    with pytest.raises(HostError, match='app_server_closed'):
+        p.coordinator.tick()
+    assert p.coordinator.host is None and host.connection.closed
+    assert row(p)['host_json'] is not None and row(p)['state'] == 'paused'
+    count = len(methods(requests))
+    p.coordinator.tick()
+    assert len(methods(requests)) == count
+    monkeypatch.setenv('SCID_TEST_MODE', 'complete')
+    p.root.call_tool('progression_command', dict(command='resume'))
+    p.coordinator.tick()
+    assert row(p)['state'] == 'active'
+    assert p.coordinator.host.identity.thread_id == 'native-root'
+    assert checkpoint(p)['phase'] == 'idle' and checkpoint(p)['rounds'] == 1
+    assert methods(requests).count('turn/start') == 1
+    assert 'thread/resume' in methods(requests) and 'thread/read' in methods(requests)
+
+
+@pytest.mark.parametrize('helper_state', ['completed', 'inProgress', 'interrupted', 'unknown', 'missing'])
+def test_restart_running_owner_keeps_terminal_helper_metering_identity(progression, tmp_path, monkeypatch, helper_state):
+    from types import SimpleNamespace
+    from tests.operations.test_local_worker_contracts import _invoke, _worker
+    p = progression
+    _, requests = native(tmp_path, monkeypatch, p.runtime.project_root, tmp_path/'control.sock')
+    monkeypatch.setenv('SCID_TEST_HELPER_STATUS', helper_state)
+    p.coordinator.host_factory = CodexProgressionFactory(project_root=p.runtime.project_root,
+        state_root=p.runtime.state_root, socket_path=tmp_path/'control.sock', approval_base_url='http://127.0.0.1:8765')
+    p.coordinator.tick()
+    root = p.root.__class__(p.facade(p.coordinator.host.scheduler_session))
+    _invoke(root, 'active.owner')
+    run = p.runtime.runs.list(instance_id=p.instance)[0]
+    connections = p.runtime.runs.worker_connections
+    connections.attach(run_id=run.run_id, platform_session='native-root', thread_id='owner')
+    worker = _worker(p.catalog, p.runtime)
+    worker.call_tool('worker_open_assignment', {})
+    connections.helper_request(run.run_id, SimpleNamespace(action='prepare', name='inspection', task='Inspect the same data.', materials=[]))
+    connections.participant(platform_session='native-root', thread_id='helper', parent_thread='owner', admit=True)
+    # Release revokes tool access, but is intentionally not native terminal proof.
+    connections.release_helpers(run.run_id)
+    p.coordinator._event(dict(method='thread/tokenUsage/updated', params=dict(threadId='helper',
+        tokenUsage=dict(total=dict(inputTokens=42, cachedInputTokens=12, outputTokens=5)))))
+    p.coordinator.host.close()
+    p.coordinator.host = None
+    if helper_state in {'unknown', 'missing'}:
+        with pytest.raises(HostError, match='worker_native_turn_state_unknown'):
+            p.coordinator.tick()
+        assert row(p)['state'] == 'paused' and row(p)['host_json'] is not None
+    else:
+        p.coordinator.tick()
+        assert row(p)['state'] == 'active'
+    assert p.runtime.runs.status(run.run_id).state == 'running'
+    assert checkpoint(p)['usage_records']['helper']['counted_tokens']['input_tokens'] == 42
+    assert checkpoint(p)['usage_records']['helper']['role'] == 'helper'
+    assert methods(requests).count('turn/start') == 1
