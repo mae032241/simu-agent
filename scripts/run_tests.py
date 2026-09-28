@@ -55,7 +55,9 @@ def run_one(command, environment, limits, output, lock_fd, *, limit_address_spac
     selector = selectors.DefaultSelector()
     selector.register(process.stdout, selectors.EVENT_READ)
     os.set_blocking(process.stdout.fileno(), False)
-    log = (output / "pytest.log").open("wb")
+    # Live callers relay this file while the child waits for user input. Buffering
+    # hides short prompts (including the instance URL) until the child exits.
+    log = (output / "pytest.log").open("wb", buffering=0)
     try:
         while True:
             descendants, rss = _descendant_rss_kib(process.pid)

@@ -1007,10 +1007,33 @@ core wheel SHA256：`981a02408d202768170a8f5f30865c1a39435da403ae1ba10165315a6b8
 等待用户选择验收实例后继续，未启动真实模型，不写真实 B6 已通过：
 
 ```bash
-cd /home/da/project/ai4s/tcad/git_release/scidiscovery-agent/123/scidiscovery-e5.2 && python scripts/accept_progression.py --candidate /tmp/scid-b6-candidate-recovery-20260928
+cd /home/da/project/ai4s/tcad/git_release/scidiscovery-agent/123/scidiscovery-e5.2 && python scripts/accept_progression.py --candidate /home/da/project/ai4s/tcad/git_release/scidiscovery-agent/.b6-upgrade
 ```
 
 入口需要保持监督终端打开；这不构成“验收监督器退出后服务仍独立存活”的证明。
 真实科学接续、原生生命周期和人工/自动质量成本对照仍须分别取证，A6 TCAD 仍延期。
 验收脚本保留配置中的 token/资源策略（未覆盖时沿用生产默认），只固定本例三任务、八轮、
 1200 s 和一次故障尝试；不再用额外 200000 token 阈值截断两任务旅程。此修正在首次模型提交前完成。
+
+
+### B6 旧实例接续与链接输出修正（2026-09-28）
+
+此前新安装候选未迁入旧实例，真实运行停在 unbound；外层守卫日志采用缓冲写入，
+又使已打印的管理 URL 未及时转发至终端。该次没有模型提交或 Worker 派发；已请求停止，
+共享串行锁确认释放后才继续准备与测试。旧运行证据保留，不替用户选择实例。
+
+现 `.b6-upgrade` 从静止的 `.a6-upgrade` 复制验收状态，复用
+`/tmp/scid-b6-candidate-recovery-20260928` 的新安装。`b0a-calibration` 实例 ID、
+六个已完成 Run 的 ID/状态均一致，21 个 Artifact 文件 SHA256 与快照一致；旧状态未覆盖。
+新候选会话绑定为零；迁移不继承旧调度权，保留原文、封存证据、审批验证及消费记录。
+这两个候选分别持有状态与安装，不得删除作为解释器来源的新安装目录。
+
+`accept_progression.py` 不再隐式构建空状态，要求候选已有实例，打印“选择已有验收实例”，
+并指示 Root 复用既有材料、避免重复未变化的工作。`run_tests.py` 的有界日志改为无缓冲写入，
+管理链接在子进程等待用户期间可见；未改变日志或资源限额。
+
+串行验证：14 项源码（准备/迁移/拒绝空状态）；1 项真实子进程提示可见回归；
+1 项复用旧状态的新安装 daemon/UI、重启和归档恢复通过。证据分别为
+`/tmp/scid-b6-existing-state-source-20260928`、`/tmp/scid-b6-live-output-process-20260928`、
+`/tmp/scid-b6-existing-state-installed-20260928`；安装检查峰值 184766464 B，无止损。
+真实科学旅程仍待用户普通终端启动并在管理页选择原实例，不宣称 B6 已通过。

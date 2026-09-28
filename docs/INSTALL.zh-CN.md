@@ -471,13 +471,17 @@ sudo deploy/cleanup_legacy_services.sh clean
 
 B6 当前为发布候选，资格以 源码仓库 `docs/plans/AUTONOMOUS_RESEARCH_RELEASE_PLAN.zh-CN.md` 的 B6 验收记录 为准。安装、重启或选择实例不会创建目标；只有用户明确启动已冻结原文才运行后台 Root。`progression.enabled` 默认允许显式启动，并非安装即开工；管理员可在公共 agent-settings.json 中设置 `"progression":{"enabled":false}` 禁止新启动。修改公共设置后重启 control 与 UI。普通任务不增加审批或资格门。
 
-真实旅程入口（普通登录终端，使用已登录的 Codex；候选路径须未用于科学验收）：
+真实旅程入口（普通登录终端，使用已登录的 Codex）：先将 `SCID_PREVIOUS_CANDIDATE` 设为已静止的旧验收候选，`SCID_INSTALLED_CANDIDATE` 设为已验证的新版本安装候选。目标路径必须未使用；迁移保留原实例和证据，但不继承会话选择或调度权限。
 
 ```bash
-python scripts/accept_progression.py --candidate /tmp/scid-b6-candidate
+python scripts/probe_root_host_live.py prepare-upgrade \
+  --candidate /tmp/scid-b6-upgrade \
+  --from-candidate "$SCID_PREVIOUS_CANDIDATE" \
+  --installed-candidate "$SCID_INSTALLED_CANDIDATE"
+python scripts/accept_progression.py --candidate /tmp/scid-b6-upgrade
 ```
 
-入口共享资源守卫及串行锁，首次只构建 core wheel，已有候选复用该安装。打开打印的管理页选择或创建实例，之后自动继续，无需再运行协议命令。原生 Root 冻结合成研究原文并启动后台目标，后台 Root 自主选择完整任务。问题含已知样本关系与不能识别机制的情形；最多三个任务、八轮、200000 tokens、1200 秒，不调用 TCAD。原生输出、封存回读审计、错误和缺测分别留在候选的 `journey-*/summary.json`、`progression.json`、`fixture-logs` 和 `resource.json`。机器摘要不自动授予 B6 通过；科学依赖、附件与原生生命周期仍须依据实际证据核对。若启动在任何模型提交之前失败，修复环境后可给同一命令增加 `--retry-startup`；已经可能提交过模型请求时拒绝重放。
+准备过程复用新安装，不重新构建；验收入口拒绝未准备或无既有实例的空状态。入口共享资源守卫及串行锁。打开打印的管理页选择原验收实例，之后自动继续，无需再运行协议命令。原生 Root 冻结合成研究原文并启动后台目标，后台 Root 自主选择完整任务。问题含已知样本关系与不能识别机制的情形；最多三个任务、八轮、1200 秒，token 与资源策略沿用配置，不调用 TCAD。原生输出、封存回读审计、错误和缺测分别留在候选的 `journey-*/summary.json`、`progression.json`、`fixture-logs` 和 `resource.json`。机器摘要不自动授予 B6 通过；科学依赖、附件与原生生命周期仍须依据实际证据核对。若启动在任何模型提交之前失败，修复环境后可给同一命令增加 `--retry-startup`；已经可能提交过模型请求时拒绝重放。
 
 此验收使用可独立运行的生产 daemon/UI 模块，继承当前用户的 PATH、HOME、CODEX_HOME 和现有认证，不复制认证文件。正式单用户运行也可直接用安装解释器启动同一模块：
 

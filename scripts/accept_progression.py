@@ -1,26 +1,42 @@
 """One bounded real B6 journey: installed daemon/UI, user selection, native Root.
 
-Run: python scripts/accept_progression.py --candidate /tmp/scid-b6-candidate
-The first run builds a core wheel. Existing prepared candidates reuse that wheel.
+Run: python scripts/accept_progression.py --candidate <prepared-upgrade-candidate>
+Reuse an existing instance via probe_root_host_live.py prepare-upgrade first.
 This is a foreground supervisor: keep this terminal open. No TCAD or production
 state is used. Select the instance using the printed UI URL; no continue command.
 """
 from __future__ import annotations
 
 import argparse
+from contextlib import closing
 import fcntl
 import json
 import os
 from pathlib import Path
+import sqlite3
 import sys
 import time
 
 try:
     from scripts import run_tests as guard
-    from scripts.probe_root_host_live import Host, prepare, write, host_resources, preflight
+    from scripts.probe_root_host_live import Host, write, host_resources, preflight
 except ModuleNotFoundError:
     import run_tests as guard
-    from probe_root_host_live import Host, prepare, write, host_resources, preflight
+    from probe_root_host_live import Host, write, host_resources, preflight
+
+
+def require_existing_instance(root):
+    """Validate availability only; instance selection stays in the user page."""
+    if not (root / 'candidate.json').is_file():
+        raise ValueError('Prepare an upgrade candidate from the previous acceptance state '
+                         'with probe_root_host_live.py prepare-upgrade first.')
+    database = root / 'state/database/scheduler-bindings.sqlite3'
+    if not database.is_file():
+        raise ValueError('Candidate has no instance database; prepare an upgrade candidate first.')
+    with closing(sqlite3.connect(database.resolve().as_uri() + '?mode=ro', uri=True)) as db:
+        if not db.execute('SELECT 1 FROM scheduler_instances LIMIT 1').fetchone():
+            raise ValueError('Candidate contains no existing instance; use prepare-upgrade '
+                             'to retain the previous acceptance evidence instead of creating empty state.')
 
 
 OBJECTIVE = """请自主完成这个有限研究目标并保留不能判断的部分。
@@ -49,7 +65,7 @@ class Journey(Host):
     def run_journey(self):
         value = self.initialize_host(check_native=False)
         self.status('awaiting_user', management_url=value['management_url'])
-        print('请选择或创建验收实例：' + value['management_url'], flush=True)
+        print('请选择已有验收实例：' + value['management_url'], flush=True)
         while value.get('state') == 'unbound':
             self.pump()
             time.sleep(1)
@@ -58,7 +74,8 @@ class Journey(Host):
             raise RuntimeError('instance_not_selected')
         self.status('scientific_turn')
         (self.root / 'model-submission-started').touch(exist_ok=False)
-        self.turn('请先确认 instance_current，冻结下方用户原文为独立 source_text，按公开合同启动后台目标。'
+        self.turn('请先确认 instance_current，复用所选实例已有原始材料和封存结果，不重复已完成且未变化的工作。'
+            '冻结下方本轮目标原文为 source_text，按公开合同启动后台目标。'
             '本轮只完成目标原文绑定及后台启动，科学任务交给后台 Root 自主选择。'
             '原文不构成审查或执行例外授权，不新增审批或资格门。\n\n' + OBJECTIVE)
         previous = None
@@ -93,8 +110,7 @@ class Journey(Host):
 
 
 def child(root):
-    if not (root / 'candidate.json').exists():
-        prepare(root)
+    require_existing_instance(root)
     settings = json.loads((root / 'agent-settings.json').read_text())
     # Preserve configured token/resource policy. The native usage counter includes
     # cached input; a separate tiny fixture cap would stop the two-task journey
@@ -130,7 +146,10 @@ def main():
         child(root)
         return 0
     os.umask(0o077)
-    root.mkdir(parents=True, exist_ok=True)
+    try:
+        require_existing_instance(root)
+    except (ValueError, sqlite3.Error) as error:
+        parser.error(str(error))
     prerequisites = preflight()
     write(root / 'startup-check.json', prerequisites)
     if prerequisites['blockers']:

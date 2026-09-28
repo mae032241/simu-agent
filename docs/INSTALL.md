@@ -535,13 +535,17 @@ Codex on upgrade; finish tasks bound to old contracts before switching services.
 
 B6 is a release candidate; see the B6 acceptance record in the source repository’s `docs/plans/AUTONOMOUS_RESEARCH_RELEASE_PLAN.zh-CN.md`. Installation, restart and instance selection do not start a goal. The default `progression.enabled=true` permits an explicit start of frozen user text. Administrators can set `"progression":{"enabled":false}` in the shared agent-settings file and restart control/UI to disable new starts. Ordinary tasks acquire no additional approval gate.
 
-From an ordinary terminal with an existing Codex login, run:
+From an ordinary terminal with an existing Codex login, set `SCID_PREVIOUS_CANDIDATE` to the quiescent previous acceptance state and `SCID_INSTALLED_CANDIDATE` to the verified new installation. Use a fresh destination. Preparation preserves existing instances and evidence without inheriting session selection or scheduling authority:
 
 ```bash
-python scripts/accept_progression.py --candidate /tmp/scid-b6-candidate
+python scripts/probe_root_host_live.py prepare-upgrade \
+  --candidate /tmp/scid-b6-upgrade \
+  --from-candidate "$SCID_PREVIOUS_CANDIDATE" \
+  --installed-candidate "$SCID_INSTALLED_CANDIDATE"
+python scripts/accept_progression.py --candidate /tmp/scid-b6-upgrade
 ```
 
-Select/create an instance at the printed management URL; the journey continues automatically. The first run builds only the core wheel; prepared candidates reuse that installation. The serial resource guard bounds the journey. A native interactive Root freezes original intent and starts a background goal; the background Root chooses complete tasks from sealed evidence. Synthetic inputs cover a known sample relation and an unidentifiable mechanism, with at most three tasks, eight rounds, 200000 tokens and 1200 seconds. No TCAD is used. `journey-*/summary.json`, `progression.json`, `fixture-logs` and `resource.json` retain failures, missing evidence and native audit output. A machine summary does not grant B6 qualification. After fixing a startup failure that occurred before any possible model submission, the same command accepts `--retry-startup`; uncertain submissions are never replayed.
+Select the previous instance at the printed management URL; the journey continues automatically. Preparation reuses the installed candidate without rebuilding. The acceptance entry rejects unprepared candidates or empty instance state. The serial resource guard bounds the journey. A native interactive Root freezes original intent and starts a background goal; the background Root chooses complete tasks from sealed evidence. Synthetic inputs cover a known sample relation and an unidentifiable mechanism, with at most three tasks, eight rounds and 1200 seconds; configured token and resource policies are retained. No TCAD is used. `journey-*/summary.json`, `progression.json`, `fixture-logs` and `resource.json` retain failures, missing evidence and native audit output. A machine summary does not grant B6 qualification. After fixing a startup failure that occurred before any possible model submission, the same command accepts `--retry-startup`; uncertain submissions are never replayed.
 
 The journey runs the installed production daemon/UI modules under the logged-in user's PATH, HOME, CODEX_HOME and existing authentication. It copies no credentials. The same standalone control mode can be used with the installation's interpreter and paths:
 
