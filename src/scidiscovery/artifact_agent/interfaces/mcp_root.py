@@ -523,6 +523,9 @@ class RootToolFacade(
             object_id=object_id,
             request_fingerprint=request_fingerprint,
         )
+        if namespace in {'run', 'approval'}:
+            self.bindings.record_goal_binding(instance_id=self._instance_id(), session_key=self.session_key,
+                namespace=namespace, name=target.name, object_id=object_id)
         if namespace == "run":
             self.bindings.record_dispatch_intent(instance_id=self._instance_id(), run_id=object_id, session_key=self.session_key)
         return binding

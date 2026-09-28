@@ -216,7 +216,6 @@ def main(argv: list[str] | None = None) -> int:
         facade_factory=lambda session: router._router(session).facade,
         host_factory=CodexProgressionFactory(project_root=project_root, state_root=state_root,
             socket_path=args.socket, approval_base_url=args.approval_base_url))
-    progression.start()
     def stop(*_):
         progression.close()
         collection.close()
@@ -225,7 +224,7 @@ def main(argv: list[str] | None = None) -> int:
     previous_term = signal.signal(signal.SIGTERM, stop)
     try:
         UnixSocketDaemon(args.socket, router, max_connections=args.max_connections,
-            socket_mode=0o660).serve_forever()
+            socket_mode=0o660, on_ready=progression.start).serve_forever()
     finally:
         progression.close()
         collection.close()

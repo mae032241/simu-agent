@@ -235,3 +235,82 @@ def test_maintenance_blocks_observation_even_after_pause(progression):
     with pytest.raises(InstanceMaintenanceUnavailable):
         p.coordinator._save(dict(probes=100))
     assert checkpoint(p)['probes'] != 100
+
+
+def test_run_creation_crash_reconciles_exact_admission_without_recreation(progression, monkeypatch):
+    p = progression
+    p.coordinator.tick()
+    host = p.coordinator.host
+    root = p.root.__class__(p.facade(host.scheduler_session))
+    def lost_binding(*args, **kwargs):
+        raise RuntimeError('simulated crash before semantic binding')
+    monkeypatch.setattr(root.facade, '_bind_target', lost_binding)
+    with pytest.raises(RuntimeError, match='simulated crash'):
+        _invoke(root, 'accepted')
+    assert checkpoint(p)['admissions']['accepted']['state'] == 'prepared'
+    assert len(p.runtime.runs.list(instance_id=p.instance)) == 1
+    host.finish()
+    p.coordinator.tick()
+    admission = checkpoint(p)['admissions']['accepted']
+    assert admission['state'] == 'accepted'
+    assert p.runtime.scheduler_bindings.resolve(instance=p.instance, namespace='run', name='accepted') == admission['run_id']
+    assert len(p.runtime.runs.list(instance_id=p.instance)) == 1
+
+
+def test_report_goal_complete_is_explicit_and_message_supersedes_report(progression):
+    p = progression
+    p.coordinator.tick()
+    host = p.coordinator.host
+    root = p.root.__class__(p.facade(host.scheduler_session))
+    root.call_tool('progression_report', dict(summary='Goal outcome with explicit limitations.', completed=True))
+    p.root.call_tool('progression_message', dict(name='new.direction', text='Consider this additional scope.'))
+    host.finish()
+    p.now[0] += 6
+    p.coordinator.tick()
+    assert len(host.prompts) == 2
+    assert 'Goal outcome with explicit limitations.' in host.prompts[1]
+    assert checkpoint(p)['report'] is None
+    root.call_tool('progression_report', dict(summary='Additional scope is now answered.', completed=True))
+    host.finish()
+    p.coordinator.tick()
+    assert row(p)['reason'] == 'goal_completed'
+
+
+def test_task_and_round_limits_are_checked_without_losing_usage(progression):
+    p = progression
+    p.coordinator.tick()
+    host = p.coordinator.host
+    root = p.root.__class__(p.facade(host.scheduler_session))
+    _invoke(root, 'first')
+    worker = _worker(p.catalog, p.runtime)
+    worker.call_tool('worker_open_assignment', {})
+    _write_result(worker)
+    worker.call_tool('worker_submit_result', {})
+    from unittest.mock import patch
+    real_status = p.runtime.scheduler_bindings.progression_status
+    def one_task(**kwargs):
+        value = real_status(**kwargs)
+        if kwargs.get('internal'):
+            settings = json.loads(value['config_json'])
+            settings['effective']['progression']['max_tasks'] = 1
+            value['config_json'] = json.dumps(settings)
+        return value
+    with patch.object(p.runtime.scheduler_bindings, 'progression_status', one_task):
+        with pytest.raises(Exception, match='task budget exhausted'):
+            root.facade._background_agent_admission(max_attempts=1)
+    limits = json.loads(row(p)['config_json'])['effective']['progression']
+    assert not p.coordinator._check_budget(row(p), dict(limits, max_rounds=1))
+    assert checkpoint(p)['rounds'] == 1
+
+
+def test_import_restores_spent_budget_and_never_wakes_runtime(progression):
+    from scidiscovery.artifact_agent.service.instance_archive_records import execution_settings_restore_view, schema
+    p = progression
+    p.coordinator.tick()
+    bindings = p.runtime.scheduler_bindings
+    with bindings._connect() as db:
+        saved = dict(schema=schema(db), tables={'scheduler_progression': [dict(row(p))]})
+    imported = execution_settings_restore_view(saved)['tables']['scheduler_progression'][0]
+    assert imported['state'] == 'paused' and imported['host_json'] is None
+    assert json.loads(imported['checkpoint_json'])['rounds'] == 1
+    assert imported['owner_session'] is None

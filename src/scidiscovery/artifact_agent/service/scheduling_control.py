@@ -209,6 +209,50 @@ class SchedulingControl:
                 conflict('Stale scheduling generation; reconciliation is required.')
             yield row['generation']
 
+    def prepare_admission(self, *, instance_id, session_key, name, logical_name, revision,
+                          fingerprint, output_fingerprint):
+        with self.scheduling_guard(instance_id=instance_id, session_key=session_key), self._connect() as db:
+            row = db.execute('SELECT * FROM scheduler_progression WHERE instance_id=?', (instance_id,)).fetchone()
+            if row['mode'] != 'background':
+                return
+            checkpoint = json.loads(row['checkpoint_json'])
+            admissions = checkpoint.setdefault('admissions', {})
+            if any(v['state'] == 'prepared' for v in admissions.values()):
+                conflict('A prior task admission is unresolved; reconcile it before creating more work.')
+            if name in admissions:
+                conflict('Prior task admission must be reconciled by exact identity; do not replay creation.')
+            limits = json.loads(row['config_json'])['effective']['progression']
+            if len(admissions) >= limits['max_tasks']:
+                conflict('Frozen task admission budget exhausted.')
+            admissions[name] = dict(logical_name=logical_name, revision=revision,
+                fingerprint=fingerprint, output_fingerprint=output_fingerprint, state='prepared')
+            value = json.dumps(checkpoint)
+            if len(value.encode()) > 65536:
+                conflict('Control checkpoint capacity reached.')
+            db.execute('UPDATE scheduler_progression SET checkpoint_json=? WHERE instance_id=?', (value, instance_id))
+
+    def record_goal_binding(self, *, instance_id, session_key, namespace, name, object_id):
+        with self.scheduling_guard(instance_id=instance_id, session_key=session_key), self._connect() as db:
+            row = db.execute('SELECT * FROM scheduler_progression WHERE instance_id=?', (instance_id,)).fetchone()
+            if row['mode'] != 'background':
+                return
+            checkpoint = json.loads(row['checkpoint_json'])
+            if namespace == 'run':
+                admission = checkpoint.get('admissions', {}).get(name)
+                if admission is None:
+                    conflict('Background Run has no preceding durable admission intent.')
+                admission.update(state='accepted', run_id=object_id)
+            elif namespace == 'approval':
+                names = checkpoint.setdefault('approval_names', [])
+                if name not in names:
+                    if len(names) >= 32:
+                        conflict('Goal approval observation capacity reached.')
+                    names.append(name)
+            value = json.dumps(checkpoint)
+            if len(value.encode()) > 65536:
+                conflict('Control checkpoint capacity reached.')
+            db.execute('UPDATE scheduler_progression SET checkpoint_json=? WHERE instance_id=?', (value, instance_id))
+
     def record_dispatch_intent(self, *, instance_id, run_id, session_key):
         from .scheduler_bindings import _timestamp
         with self.scheduling_guard(instance_id=instance_id, session_key=session_key) as generation, self._connect() as connection:
@@ -234,6 +278,10 @@ class SchedulingControl:
                 conflict('Background start is no longer pending at this generation.')
             if row.get('host_json') is not None:
                 conflict('Previous host quiescence must be confirmed before activation.')
+            with self._connect() as db:
+                other = db.execute('SELECT 1 FROM scheduler_progression WHERE instance_id!=? AND host_json IS NOT NULL LIMIT 1', (instance_id,)).fetchone()
+            if other:
+                conflict('Another autonomous native host has not been quiesced; runtime is serial.')
             if self.control_settings(instance_id) != json.loads(row['config_json']):
                 conflict('Configuration changed before host activation; explicitly start a new snapshot.')
             self.bind_session(session_key=scheduler_session, instance_id=instance_id)

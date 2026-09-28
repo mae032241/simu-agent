@@ -28,6 +28,7 @@ class UnixSocketDaemon:
         idle_timeout_s: float = DEFAULT_IDLE_TIMEOUT_S,
         max_connections: int = DEFAULT_MAX_CONNECTIONS,
         socket_mode: int = 0o600,
+        on_ready=None,
     ) -> None:
         if idle_timeout_s <= 0:
             raise ValueError("daemon idle timeout must be positive")
@@ -40,6 +41,7 @@ class UnixSocketDaemon:
         self.idle_timeout_s = idle_timeout_s
         self.max_connections = max_connections
         self.socket_mode = socket_mode
+        self.on_ready = on_ready
 
     def serve_forever(self) -> None:
         self.socket_path.parent.mkdir(parents=True, exist_ok=True)
@@ -56,6 +58,8 @@ class UnixSocketDaemon:
                     thread_name_prefix="scidiscovery-client",
                 )
                 try:
+                    if self.on_ready is not None:
+                        self.on_ready()
                     while True:
                         connection, _ = server.accept()
                         connection.settimeout(self.idle_timeout_s)

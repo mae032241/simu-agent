@@ -22,6 +22,7 @@ def test_projection_snapshot_archive_roundtrip_and_old_readonly_schema(tmp_path,
     if legacy:
         with sqlite3.connect(runtime.runs.database_path) as connection:
             connection.execute('ALTER TABLE runs DROP COLUMN decision_fields_json')
+    runtime.scheduler_bindings.progression_command(instance_id=instance.instance_id, session_key=None, command='pause')
     service = InstanceArchive(runtime)
     save_archive(service, instance.instance_id)
     package = service.root / instance.instance_id

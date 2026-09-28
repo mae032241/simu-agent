@@ -125,8 +125,7 @@ class ProgressionCoordinator:
 
     def _identities(self):
         """Attribution uses accepted dispatch and exact native bindings."""
-        with self.bindings._connect() as db:
-            ids = [v[0] for v in db.execute('SELECT run_id FROM scheduler_dispatch_intents WHERE instance_id=?', (self.instance,))]
+        ids = [v['run_id'] for v in json.loads(self._row()['checkpoint_json']).get('admissions', {}).values() if v.get('run_id')]
         result = {}
         with self.runtime.runs._connect() as db:
             for run_id in ids:
@@ -136,22 +135,44 @@ class ProgressionCoordinator:
                     result[row['thread_id']] = dict(row) | dict(role='helper', run_id=run_id)
         return result
 
+    def _reconcile_admissions(self):
+        row = self._row()
+        checkpoint = json.loads(row['checkpoint_json'])
+        admissions = checkpoint.get('admissions', {})
+        for name, intent in admissions.items():
+            if intent['state'] != 'prepared':
+                continue
+            with self.runtime.runs._connect() as db:
+                matches = db.execute('SELECT run_id FROM runs WHERE instance_id=? AND output_binding_fingerprint=?',
+                    (self.instance, intent['output_fingerprint'])).fetchall()
+            if len(matches) != 1:
+                self._save(dict(runtime_status='task_admission_unknown'), reason='task_admission_unknown', stop=True)
+                return False
+            run_id = matches[0]['run_id']
+            with self.bindings.scheduling_guard(instance_id=self.instance, session_key=row['owner_session'], expected_generation=row['generation']):
+                self.bindings.bind(instance=self.instance, namespace='run', name=name,
+                    logical_name=intent['logical_name'], revision=intent['revision'], object_id=run_id,
+                    request_fingerprint=intent['fingerprint'])
+                self.bindings.record_goal_binding(instance_id=self.instance, session_key=row['owner_session'],
+                    namespace='run', name=name, object_id=run_id)
+                self.bindings.record_dispatch_intent(instance_id=self.instance, session_key=row['owner_session'], run_id=run_id)
+        return True
+
     def _snapshot(self, row):
         """Only final Runs and sealed approval changes wake scientific decisions."""
         facade = self.facade_factory(row['owner_session'])
         checkpoint = json.loads(row['checkpoint_json'])
-        baseline = set(checkpoint.get('baseline_runs', []))
         runs = []
-        for binding in self.bindings.list(instance=self.instance, namespace='run'):
-            if binding.object_id in baseline:
-                continue
-            value = self.runtime.runs.status(binding.object_id)
+        selected = dict(checkpoint.get('relevant_runs', {}))
+        selected.update({name: v['run_id'] for name, v in checkpoint.get('admissions', {}).items() if v.get('run_id')})
+        for name, run_id in selected.items():
+            value = self.runtime.runs.status(run_id)
             if value.state not in {'queued', 'running'}:
-                runs.append(dict(name=binding.name, state=value.state, output=value.output_ref.model_dump(mode='json') if value.output_ref else None,
+                runs.append(dict(name=name, state=value.state, output=value.output_ref.model_dump(mode='json') if value.output_ref else None,
                     reason=value.reason))
         approvals = []
-        for binding in self.bindings.list(instance=self.instance, namespace='approval'):
-            value = facade.approval_status(name=binding.name)
+        for name in checkpoint.get('approval_names', []):
+            value = facade.approval_status(name=name)
             if value['status'] != 'pending':
                 approvals.append(value)
         return dict(goal=row['objective_ref_json'], runs=runs, approvals=approvals, messages=checkpoint.get('messages', []))
@@ -167,7 +188,8 @@ class ProgressionCoordinator:
             goal.update(status='available', original=raw.decode('utf-8'))
         checkpoint = json.loads(row['checkpoint_json'])
         brief = dict(objective=goal, changes=[], omissions=[], budget=checkpoint.get('budget'),
-            previous_report=checkpoint.get('report'), material_names=[row['objective_name']],
+            previous_report=checkpoint.get('report') or checkpoint.get('last_report'), material_names=[row['objective_name']],
+            related_results_omitted=checkpoint.get('relevant_omitted', False),
             limitations=['Originals and full contracts are available through public tools.',
                 'Stages are previews; only final sealed outputs establish task conclusions.'])
         previous = checkpoint.get('processed_snapshot', {})
@@ -210,6 +232,9 @@ class ProgressionCoordinator:
     def _connect(self, row):
         self.instance = row['instance_id']
         checkpoint = json.loads(row['checkpoint_json'])
+        settings = json.loads(row['config_json'])['effective']
+        if settings['progression']['max_tasks'] * (1 + settings['helpers']['max_calls']) + 1 > 48:
+            raise RuntimeError('configured_usage_attribution_capacity')
         if checkpoint.get('phase') == 'prepared' and not checkpoint.get('turn_id'):
             self.bindings.observe_progression(instance_id=self.instance,
                 expected_host=json.loads(row['host_json'] or 'null'), changes=dict(runtime_status='submission_unknown'),
@@ -229,11 +254,20 @@ class ProgressionCoordinator:
         initial = dict(runtime_status='connected')
         if 'started_at' not in checkpoint:
             initial.update(started_at=self.clock(), rounds=0, probes=0, attempts=0,
-                baseline_runs=[v.run_id for v in self.runtime.runs.list(instance_id=self.instance)])
+                relevant_runs={})
+            ref = ArtifactRef.model_validate_json(row['objective_ref_json'])
+            related = self.runtime.runs.related_runs(instance_id=self.instance, artifact_ref=ref, limit=17)
+            initial['relevant_omitted'] = len(related) > 16
+            for run in related[:16]:
+                name = self.bindings.find_name(instance=self.instance, namespace='run', object_id=run.run_id)
+                if name:
+                    initial['relevant_runs'][name] = run.run_id
         self._save(initial)
         for event in self.events:
             self._event(event)
         self.events = []
+        if not self._reconcile_admissions():
+            return
         for identity in self._identities().values():
             run = self.runtime.runs.status(identity['run_id'])
             if run.state in {'queued', 'running'}:
@@ -242,17 +276,22 @@ class ProgressionCoordinator:
     def tick(self):
         if self.host is None:
             with self.bindings._connect() as db:
+                outstanding = db.execute('SELECT instance_id,state FROM scheduler_progression WHERE host_json IS NOT NULL').fetchall()
+                if any(v['state'] not in {'active', 'pending'} for v in outstanding):
+                    return  # An unknown native writer keeps the single runtime scope.
                 rows = [dict(v) for v in db.execute("SELECT * FROM scheduler_progression WHERE mode='background' AND state IN ('active','pending') ORDER BY updated_at,instance_id")]
+            if outstanding:
+                rows = [v for v in rows if v['instance_id'] == outstanding[0]['instance_id']]
             row = next((v for v in rows if json.loads(v['config_json']).get('effective', {}).get('progression', {}).get('enabled')), None)
             if row is None:
                 return
             self.instance = row['instance_id']
             try:
                 self._connect(row)
-            except Exception:
+            except Exception as error:
                 self.bindings.observe_progression(instance_id=self.instance,
                     expected_host=json.loads(self._row()['host_json'] or 'null'),
-                    changes=dict(runtime_status='host_fault'), reason='host_fault', stop=True)
+                    changes=dict(runtime_status='host_fault', fault_code=getattr(error, 'code', type(error).__name__)), reason='host_fault', stop=True)
                 if self.host:
                     self.host.close()
                     self.host = None
@@ -269,6 +308,7 @@ class ProgressionCoordinator:
                 if any(v.state in {'queued', 'running'} for v in self.runtime.runs.list(instance_id=self.instance)):
                     self._save(dict(runtime_status='paused_accepted_work_continues'))
                     return
+                self._save(dict(phase='idle', turn_id=None, processed_snapshot=checkpoint.get('decision_snapshot', checkpoint.get('processed_snapshot', {}))))
                 self.bindings.release_host(instance_id=self.instance, **self._host_binding())
                 self.host.close()
                 self.host = None
@@ -282,13 +322,15 @@ class ProgressionCoordinator:
             if checkpoint.get('phase') == 'running':
                 if self.host.completion is None:
                     raise RuntimeError('native_turn_state_unknown')
+                if not self._reconcile_admissions():
+                    return
                 self._save(dict(phase='idle', processed_snapshot=checkpoint.get('decision_snapshot', {}),
                     runtime_status='waiting', turn_id=None))
                 checkpoint = json.loads(self._row()['checkpoint_json'])
                 if self.host.completion['status'] != 'completed':
                     self._save(dict(runtime_status='root_turn_failed'), reason='root_turn_failed', stop=True)
                     return
-            report = checkpoint.get('report', {})
+            report = checkpoint.get('report') or {}
             if report.get('completed') and checkpoint.get('messages', []) == checkpoint.get('processed_snapshot', {}).get('messages', []):
                 self._save(dict(runtime_status='goal_completed'), reason='goal_completed', stop=True)
                 return
@@ -304,11 +346,12 @@ class ProgressionCoordinator:
             # Intent is durable before the non-idempotent native turn/start.
             with self.bindings.scheduling_guard(instance_id=self.instance, session_key=row['owner_session'], expected_generation=row['generation']):
                 self._save(dict(phase='prepared', turn_id=None, decision_snapshot=snapshot,
-                    rounds=checkpoint.get('rounds', 0)+1, runtime_status='deciding'))
+                    rounds=checkpoint.get('rounds', 0)+1, runtime_status='deciding',
+                    last_report=checkpoint.get('report') or checkpoint.get('last_report'), report=None))
             turn = self.host.start_turn(prompt)
             self._save(dict(phase='running', turn_id=turn))
-        except Exception:
-            self._save(dict(runtime_status='host_fault'), reason='host_fault', stop=True)
+        except Exception as error:
+            self._save(dict(runtime_status='host_fault', fault_code=getattr(error, 'code', type(error).__name__)), reason='host_fault', stop=True)
             # Keep host marker: connection failure does not prove native quiescence.
             self.host.close()
             self.host = None

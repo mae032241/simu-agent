@@ -317,6 +317,9 @@ class RootOperationRoutes:
         output_fingerprint = canonical_sha256(
             {"run_request": fingerprint, "output": "primary"}
         )
+        self.bindings.prepare_admission(instance_id=self._instance_id(), session_key=self.session_key,
+            name=target.name, logical_name=target.logical_name, revision=target.revision,
+            fingerprint=fingerprint, output_fingerprint=output_fingerprint)
         try:
             run_id = self.runs.schedule(
                 bound,
@@ -343,11 +346,11 @@ class RootOperationRoutes:
             return
         checkpoint = json.loads(row['checkpoint_json'])
         limits = json.loads(row['config_json'])['effective']['progression']
-        baseline = set(checkpoint.get('baseline_runs', []))
-        runs = self.runs.list(instance_id=self._instance_id())
-        if any(run.state in {'queued', 'running'} for run in runs):
+        with self.runs._connect() as db:
+            active = db.execute("SELECT 1 FROM runs WHERE instance_id=? AND state IN ('queued','running') LIMIT 1", (self._instance_id(),)).fetchone()
+        if active:
             raise RootToolError('Background progression permits one queued/running complete Agent task.')
-        if sum(run.run_id not in baseline for run in runs) >= limits['max_tasks']:
+        if len(checkpoint.get('admissions', {})) >= limits['max_tasks']:
             raise RootToolError('Frozen background task budget exhausted; no new task admitted.')
         if max_attempts is not None and max_attempts > limits['max_attempts']:
             raise RootToolError('Requested attempts exceed the frozen background limit.')
