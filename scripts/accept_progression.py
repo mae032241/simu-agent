@@ -123,14 +123,15 @@ class Journey(Host):
         self.status('root_returned_requires_sealed_audit')
 
 
-def child(root, scenario='science'):
+def child(root, scenario='science', case_file=None):
     require_existing_instance(root)
     settings = json.loads((root / 'agent-settings.json').read_text())
     # Preserve configured token/resource policy. The native usage counter includes
     # cached input; a separate tiny fixture cap would stop the two-task journey
     # before it can test scientific continuation. Only bound this fixture's scope.
-    settings.setdefault('progression', {}).update(
-        max_tasks=3, max_rounds=8, max_elapsed_seconds=1200, max_attempts=1)
+    case = json.loads(case_file.read_text()) if case_file else {}
+    settings.setdefault('progression', {}).update(case.get('progression', dict(
+        max_tasks=3, max_rounds=8, max_elapsed_seconds=1200, max_attempts=1)))
     write(root / 'agent-settings.json', settings)
     journey_type = Journey
     if scenario == 'recovery':
@@ -139,41 +140,61 @@ def child(root, scenario='science'):
         except ModuleNotFoundError:
             from accept_progression_recovery import RecoveryJourney
         journey_type = RecoveryJourney
+    elif scenario == 'managed':
+        try:
+            from scripts.acceptance_managed import ManagedJourney
+        except ModuleNotFoundError:
+            from acceptance_managed import ManagedJourney
+        journey_type = ManagedJourney
+    elif scenario != 'science':
+        try:
+            from scripts.acceptance_native_cases import NativeCaseJourney
+        except ModuleNotFoundError:
+            from acceptance_native_cases import NativeCaseJourney
+        journey_type = NativeCaseJourney
     host = journey_type(root, json.loads(guard.DEFAULT_CONFIG.read_text())['limits'])
+    host.case_config = case
     try:
         host.run_journey()
     except BaseException as error:
         write(host.logdir.parent / 'summary.json', dict(status='failed', b6_passed=False,
-            failure_type=type(error).__name__, diagnostic=str(error), rpc_error=host.last_rpc_error))
+            failure_type=type(error).__name__, diagnostic=str(error), rpc_error=host.last_rpc_error,
+            checks=getattr(host, 'case_checks', {})))
         raise
     finally:
+        write(host.logdir.parent / 'started-threads.json', sorted(host.started_threads))
         host.close()
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--candidate', type=Path, required=True)
-    parser.add_argument('--scenario', choices=('science', 'recovery'), default='science',
+    parser.add_argument('--scenario', choices=('science', 'recovery', 'authority', 'helper', 'helper-crash', 'manual', 'autonomous', 'managed'), default='science',
         help='recovery exercises native Root control against existing results; no new scientific tasks')
+    parser.add_argument('--case-file', type=Path, help='frozen acceptance case from accept_b6.py')
     parser.add_argument('--retry-startup', action='store_true',
         help='retry after fixing startup only when no model submission was attempted')
     parser.add_argument('--child', action='store_true', help=argparse.SUPPRESS)
     args = parser.parse_args()
     root = args.candidate.resolve()
+    if args.scenario not in {'science','recovery'} and args.case_file is None:
+        parser.error('this scenario requires --case-file from accept_b6.py')
+    if args.case_file and json.loads(args.case_file.read_text()).get('scenario', 'managed') != args.scenario:
+        parser.error('case scenario mismatch')
     if args.child:
         fd = int(os.environ['SCID_HOST_PROBE_LOCK_FD'])
         expected = (Path('/tmp') / f'scid-tests-{os.getuid()}.lock').stat()
         actual = os.fstat(fd)
         if (actual.st_dev, actual.st_ino) != (expected.st_dev, expected.st_ino):
             raise RuntimeError('supervision_required')
-        child(root, args.scenario)
+        child(root, args.scenario, args.case_file)
         return 0
     os.umask(0o077)
     try:
         require_existing_instance(root)
     except (ValueError, sqlite3.Error) as error:
         parser.error(str(error))
-    prerequisites = preflight()
+    prerequisites = preflight() if args.scenario != 'managed' else {'blockers': []}
     write(root / 'startup-check.json', prerequisites)
     if prerequisites['blockers']:
         print(json.dumps(prerequisites), flush=True)
@@ -213,7 +234,8 @@ def main():
         thread.start()
         try:
             result = guard.run_one([sys.executable, str(Path(__file__).resolve()), '--child',
-                '--candidate', str(root), '--scenario', args.scenario], environment, limits, output, lock.fileno(), limit_address_space=False)
+                '--candidate', str(root), '--scenario', args.scenario,
+                *(['--case-file', str(args.case_file.resolve())] if args.case_file else [])], environment, limits, output, lock.fileno(), limit_address_space=False)
         finally:
             stop.set()
             thread.join(timeout=1)

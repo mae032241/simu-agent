@@ -1265,3 +1265,23 @@ python scripts/accept_progression.py --scenario recovery --candidate /home/da/pr
 本轮确认：真实暂停、恢复启动、崩溃后的准确查回及安全停止、已有会话的 UI 接管/停止。
 仍未确认：崩溃后自动继续、旧原生 Root 迟到写入拒绝、Worker/helper 崩溃存续、质量/
 token 成本对照及正式部署回滚。B6 保持部分验收，不再让用户重跑同一失败命令。
+
+### B6 剩余项统一执行入口（2026-09-28）
+
+新增 `scripts/accept_b6.py` 和配置化案例集，使用既有受限安装/原生宿主监督器。
+[运行手册](../B6_ACCEPTANCE.zh-CN.md)列明恢复、旧 Root 写入、助手故障、质量/用量配对、
+临时服务托管及旧安装兼容性各自的证据要求。每次尝试先落盘，不自动重试；内容复核绑定
+精确封存摘要，缺测保持缺测。安全暂停不能替代自动恢复，临时服务不能替代正式部署回滚。
+这一变更交付验收工具，没有修改生产自动恢复行为，也没有新增真实平台通过结论。
+
+验证：原有及新增定向源码回归首轮 23 passed；补充验收边界后新增文件 13 passed；
+真实 CLI 子进程 2 passed；发布目录/归档检查 1 passed（30.152 s，峰值 243073024 B）。
+分别见 `/tmp/scid-b6-harness-source-20260928-01`、
+`/tmp/scid-b6-harness-source-20260928-03`、`/tmp/scid-b6-harness-process-20260928-01`、
+`/tmp/scid-b6-harness-release-20260928-01`。均串行且未触发资源止损。
+
+已创建 `.b6-acceptance`，从 `.a6-upgrade` 准备 `manual-known`（1.076 s，104009728 B）。
+准备时发现原 A6 数据库尚无 scheduler_progression 表：仅在表完全不存在时按新目标基线
+处理，已有但损坏的表仍报错；没有修改旧数据库。未启动任何真实模型请求，未自动绑定。
+当前复用 b0151e9 的已验证安装（后续提交只调整验收工具），未提供旧安装版本，rollback
+明确 blocked；正式服务回滚与完整原生资源覆盖仍不计通过。

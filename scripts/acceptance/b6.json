@@ -1,0 +1,142 @@
+{
+  "version": 1,
+  "instance": "b0a-calibration",
+  "resources": {
+    "timeout_seconds": 1200
+  },
+  "progression": {
+    "max_tasks": 3,
+    "max_rounds": 8,
+    "max_elapsed_seconds": 1200,
+    "max_attempts": 1
+  },
+  "poll_seconds": 0.5,
+  "stage_timeout_seconds": 90,
+  "max_observed_runs": 32,
+  "objectives": {
+    "known": "合成测量为 (x,y)=(0,1),(1,3),(2,5)，均无量纲。完成一个完整证据任务，交付观测表及样本内关系；明确无误差条、重复测量和区间外证据，不把吻合写成因果或外推证明。",
+    "ambiguous": "合成观测为 (x,y)=(0,1),(1,3),(2,5)。比较 y=2x+1 与 y=2x+1+c*x*(x-1)*(x-2)，c 未知。完成一个完整证据任务，指出能与不能区分的部分，并给出一个区分实验的候选观测点。不能捏造观测、c 的先验或误差模型。",
+    "helper": "完成一个完整证据任务：分析合成观测 (0,1),(1,3),(2,5) 对线性关系与 y=2x+1+c*x*(x-1)*(x-2) 的区分能力。为验证助手能力，请负责人调用一个原生助手，独立核算 x=0.5 和 x=3 时两式差值的系数，然后核验并整合其结论，交付小表格。助手不成为 Root 任务或正式审查；只派发一个负责人。不要人为睡眠或生成大文件。"
+  },
+  "cases": {
+    "recovery": {
+      "runner": "native",
+      "scenario": "recovery",
+      "requires": [
+        "automatic_recovery"
+      ]
+    },
+    "authority": {
+      "runner": "native",
+      "scenario": "authority",
+      "requires": [
+        "takeover",
+        "stale_write_rejected"
+      ]
+    },
+    "helper": {
+      "runner": "native",
+      "scenario": "helper",
+      "objective": "helper",
+      "requires": [
+        "sealed_delivery",
+        "helper_terminal",
+        "owner_integration"
+      ]
+    },
+    "helper-crash": {
+      "runner": "native",
+      "scenario": "helper-crash",
+      "objective": "helper",
+      "requires": [
+        "fault_injected",
+        "same_participants",
+        "sealed_delivery",
+        "helper_terminal",
+        "owner_integration"
+      ]
+    },
+    "manual-known": {
+      "runner": "native",
+      "scenario": "manual",
+      "objective": "known",
+      "pair": "known",
+      "arm": "manual",
+      "requires": [
+        "sealed_delivery",
+        "quality"
+      ]
+    },
+    "auto-known": {
+      "runner": "native",
+      "scenario": "autonomous",
+      "objective": "known",
+      "pair": "known",
+      "arm": "autonomous",
+      "requires": [
+        "sealed_delivery",
+        "quality"
+      ]
+    },
+    "manual-ambiguous": {
+      "runner": "native",
+      "scenario": "manual",
+      "objective": "ambiguous",
+      "pair": "ambiguous",
+      "arm": "manual",
+      "requires": [
+        "sealed_delivery",
+        "quality"
+      ]
+    },
+    "auto-ambiguous": {
+      "runner": "native",
+      "scenario": "autonomous",
+      "objective": "ambiguous",
+      "pair": "ambiguous",
+      "arm": "autonomous",
+      "requires": [
+        "sealed_delivery",
+        "quality"
+      ]
+    },
+    "managed": {
+      "runner": "managed",
+      "requires": [
+        "terminal_independence",
+        "service_restart",
+        "state_preserved"
+      ]
+    },
+    "rollback": {
+      "runner": "managed",
+      "requires": [
+        "terminal_independence",
+        "service_restart",
+        "state_preserved",
+        "rollback"
+      ]
+    }
+  },
+  "quality": {
+    "known": [
+      "三点及单位准确",
+      "样本内斜率 2、截距 1",
+      "保留测量与外推限制"
+    ],
+    "ambiguous": [
+      "三处扰动项为零，现有点不能区分",
+      "候选点不是新增观测",
+      "保留 c=0 仍不可区分及误差未知"
+    ],
+    "helper": [
+      "差值系数分别为 0.375 和 6",
+      "负责人对助手结果进行了核验和整合",
+      "助手计算没有被写成实际观测"
+    ]
+  },
+  "managed": {
+    "per_service_memory_bytes": 750000000,
+    "runtime_seconds": 180
+  }
+}

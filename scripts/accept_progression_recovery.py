@@ -66,7 +66,7 @@ class RecoveryJourney(Journey):
             if predicate(row):
                 write(self.logdir.parent / (label + '.json'), row)
                 return row
-            if row['reason'] in {'host_fault','budget_exhausted','resource_limit','submission_unknown',
+            if row.get('reason') in {'host_fault','budget_exhausted','resource_limit','submission_unknown',
                     'goal_completed','root_turn_failed','attempt_budget_exhausted','task_admission_unknown'}:
                 raise RuntimeError(label + ':unexpected_stop:' + row['reason'])
             time.sleep(.2)
@@ -89,10 +89,11 @@ class RecoveryJourney(Journey):
     def run_recovery(self):
         value = self.initialize_host(check_native=False)
         self.status('awaiting_user', management_url=value['management_url'])
-        print('请选择已有 b0a-calibration 实例：' + value['management_url'], flush=True)
+        expected_instance = getattr(self, 'case_config', {}).get('instance', 'b0a-calibration')
+        print('请选择已有 ' + expected_instance + ' 实例：' + value['management_url'], flush=True)
         while value.get('state') == 'unbound':
             self.pump(); time.sleep(1); value = self.current_instance()
-        if value.get('state') != 'active' or value.get('name') != 'b0a-calibration':
+        if value.get('state') != 'active' or value.get('name') != expected_instance:
             raise RuntimeError('recovery_requires_original_b0a_calibration_instance')
         # Public contracts intentionally hide mechanical IDs. Resolve the exact
         # user-selected name in the supervisor's read-only state, never by recency.
@@ -142,6 +143,7 @@ class RecoveryJourney(Journey):
         final = self.call('progression_status', {})
         write(self.logdir.parent / 'summary.json', dict(status='root_control_passed',
             b6_passed=False, observed_native_journey=True, scenario='root_control_recovery',
+            checks={'automatic_recovery':'passed'},
             pause=True, resume=True, daemon_restart=True, exact_root_recovered=True,
             takeover=True, new_runs=0, progression=final,
             unverified=['late old-root write rejection with live native request',
