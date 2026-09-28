@@ -236,6 +236,13 @@ def execution_settings_restore_view(data):
         for row in projected["tables"]["scheduler_progression"]:
             # Validation and transfer both project the same immutable snapshot.
             # Projection is idempotent so interrupted restore can verify its commit.
+            if row["reason"] in {"budget_exhausted", "resource_limit"}:
+                checkpoint = json.loads(row["checkpoint_json"])
+                observed = (checkpoint.get("budget") or {}).get("observed_tokens")
+                if "stop_snapshot_tokens" not in checkpoint and observed is not None:
+                    from ..schema.common import canonical_json
+                    checkpoint["stop_snapshot_tokens"] = observed
+                    row["checkpoint_json"] = canonical_json(checkpoint).decode("utf-8")
             generation = row["generation"] + (row["reason"] != "archive_restored")
             row.update(state="paused", reason="archive_restored", owner_session=None, requested_by=None, host_json=None,
                        generation=generation)

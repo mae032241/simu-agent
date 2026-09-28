@@ -89,17 +89,18 @@ def test_snapshot_preserves_wal_science_and_original_but_drops_session_authority
     assert receipt['scientific_identities_rewritten'] is False
 
 
-@pytest.mark.parametrize('state,host,accepted', [('paused', None, True), ('active', None, False),
-                                               ('paused', '{"thread_id":"unresolved"}', False)])
-def test_progression_copy_preserves_usage_and_fences_authority(source, tmp_path, state, host, accepted):
+@pytest.mark.parametrize('state,host,accepted,reason', [('paused', None, True, 'user_paused'),
+    ('paused', None, True, 'budget_exhausted'), ('active', None, False, 'host_active'),
+    ('paused', '{"thread_id":"unresolved"}', False, 'host_fault')])
+def test_progression_copy_preserves_usage_and_fences_authority(source, tmp_path, state, host, accepted, reason):
     from scidiscovery.artifact_agent.service.scheduling_control import CONTROL_SCHEMA
     path = source / 'state/database/scheduler-bindings.sqlite3'
-    checkpoint = json.dumps({'budget': {'consumed_tasks': 2}, 'usage_records': {'root': {'tokens': 123}},
+    checkpoint = json.dumps({'budget': {'consumed_tasks': 2, 'observed_tokens': 110}, 'usage_records': {'root': {'tokens': 123}},
                              'report': {'summary': 'insufficient evidence'}})
     with sqlite3.connect(path) as db:
         db.executescript('CREATE TABLE scheduler_instances(instance_id TEXT PRIMARY KEY);' + CONTROL_SCHEMA)
         db.execute('INSERT INTO scheduler_progression VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
-                   ('existing-instance', 4, 'old-root', 'old-reader', state, 'background', 'user_paused',
+                   ('existing-instance', 4, 'old-root', 'old-reader', state, 'background', reason,
                     'goal', '{}', '{}', 'fingerprint', host, checkpoint, '2026-09-28'))
         db.execute("INSERT INTO scheduler_dispatch_intents VALUES('existing-instance','old-run',4,'old-root','now')")
     target = tmp_path / 'upgrade'
@@ -114,7 +115,10 @@ def test_progression_copy_preserves_usage_and_fences_authority(source, tmp_path,
         row = db.execute('SELECT * FROM scheduler_progression').fetchone()
         assert row['state'] == 'paused' and row['reason'] == 'archive_restored'
         assert row['owner_session'] is row['requested_by'] is row['host_json'] is None
-        assert row['checkpoint_json'] == checkpoint and row['generation'] == 5
+        expected = json.loads(checkpoint)
+        if reason == 'budget_exhausted':
+            expected['stop_snapshot_tokens'] = 110
+        assert json.loads(row['checkpoint_json']) == expected and row['generation'] == 5
         assert not db.execute('SELECT * FROM scheduler_dispatch_intents').fetchall()
 
 
