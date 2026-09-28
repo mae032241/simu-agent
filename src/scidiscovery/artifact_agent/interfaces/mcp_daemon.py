@@ -210,7 +210,15 @@ def main(argv: list[str] | None = None) -> int:
         instance_maintenance=instance_maintenance,
         client_bindings=client_bindings,
     )
+    from ..service.progression import ProgressionCoordinator
+    from ...platforms.codex_progression import CodexProgressionFactory
+    progression = ProgressionCoordinator(runtime=startup_runtime,
+        facade_factory=lambda session: router._router(session).facade,
+        host_factory=CodexProgressionFactory(project_root=project_root, state_root=state_root,
+            socket_path=args.socket, approval_base_url=args.approval_base_url))
+    progression.start()
     def stop(*_):
+        progression.close()
         collection.close()
         signal.signal(signal.SIGTERM, signal.SIG_DFL)
         os.kill(os.getpid(), signal.SIGTERM)
@@ -219,6 +227,7 @@ def main(argv: list[str] | None = None) -> int:
         UnixSocketDaemon(args.socket, router, max_connections=args.max_connections,
             socket_mode=0o660).serve_forever()
     finally:
+        progression.close()
         collection.close()
         signal.signal(signal.SIGTERM, previous_term)
     return 0

@@ -87,6 +87,11 @@ class SchedulingControl:
         finally:
             os.close(fd)
 
+    def control_settings(self, instance_id):
+        from ...agent_execution_settings import effective_settings
+        value = self.agent_settings(instance_id)
+        return {**value, "effective": effective_settings(self.global_settings, value["settings"])}
+
     def progression_status(self, *, instance_id, session_key=None, internal=False):
         self.get_instance(instance_id=instance_id)
         with self._connect() as connection:
@@ -97,10 +102,15 @@ class SchedulingControl:
         value = dict(row)
         if internal:
             return value
+        checkpoint = json.loads(value['checkpoint_json'])
         return {key: value[key] for key in ('state', 'mode', 'reason', 'objective_name')} | {
             'can_schedule': value['state'] == 'active' and value['owner_session'] == session_key,
             'writer': 'this_session' if value['owner_session'] == session_key and session_key else
                       'other_session' if value['owner_session'] else 'none',
+            'report': checkpoint.get('report'),
+            'budget': checkpoint.get('budget'),
+            'usage': checkpoint.get('usage_summary'),
+            'runtime_status': checkpoint.get('runtime_status', 'not_connected'),
             'in_flight': 'Previously accepted Workers and executions retain their authority; their exact Run states remain authoritative.'}
 
     def _selected(self, instance_id, session_key):
@@ -146,10 +156,7 @@ class SchedulingControl:
                 objective_name = old.get('objective_name')
             if mode == 'background' and ref_json is None:
                 conflict('Background progression requires a frozen research objective.')
-            # B1 snapshots instance overrides and their revision. B2/B4 must bind
-            # effective deployment/global + instance settings before host activation;
-            # this sparse snapshot is not an effective execution profile.
-            settings = self.agent_settings(instance_id)
+            settings = self.control_settings(instance_id) if mode == 'background' else {}
             config = json.dumps(settings, sort_keys=True, separators=(',', ':'))
             fingerprint = hashlib.sha256(json.dumps([mode, objective_name, ref_json, config]).encode()).hexdigest()
             if (command == 'start' and exists and old['request_fingerprint'] == fingerprint
@@ -196,7 +203,7 @@ class SchedulingControl:
                 row = self.progression_status(instance_id=instance_id, internal=True)
             if row['state'] != 'active' or row['owner_session'] != identity:
                 conflict('Scheduling is paused or owned by another session; use an explicit control command.')
-            if self.agent_settings(instance_id) != json.loads(row['config_json']):
+            if row['mode'] == 'background' and self.control_settings(instance_id) != json.loads(row['config_json']):
                 conflict('Configuration changed; pause and explicitly start with the new snapshot before scheduling.')
             if expected_generation is not None and row['generation'] != expected_generation:
                 conflict('Stale scheduling generation; reconciliation is required.')
@@ -227,13 +234,30 @@ class SchedulingControl:
                 conflict('Background start is no longer pending at this generation.')
             if row.get('host_json') is not None:
                 conflict('Previous host quiescence must be confirmed before activation.')
-            if self.agent_settings(instance_id) != json.loads(row['config_json']):
+            if self.control_settings(instance_id) != json.loads(row['config_json']):
                 conflict('Configuration changed before host activation; explicitly start a new snapshot.')
             self.bind_session(session_key=scheduler_session, instance_id=instance_id)
             with self._connect() as connection:
                 connection.execute("UPDATE scheduler_progression SET state='active', owner_session=?, generation=generation+1, "
                     "reason='host_active', host_json=? WHERE instance_id=?",
                     (scheduler_session, json.dumps({'platform_session': platform_session, 'thread_id': thread_id}), instance_id))
+            return self.progression_status(instance_id=instance_id, internal=True)
+
+    def reconnect_host(self, *, instance_id, scheduler_session, platform_session, thread_id, expected_generation):
+        """Restore only the exact persisted native host after platform corroboration."""
+        expected = dict(platform_session=platform_session, thread_id=thread_id)
+        if not platform_session or platform_session != thread_id:
+            raise ValueError('actual Root coordinates required')
+        with self.control_maintenance.guard(instance_id), self.scheduling_lock():
+            row = self.progression_status(instance_id=instance_id, internal=True)
+            if (row.get('generation') != expected_generation or row['mode'] != 'background'
+                    or row['state'] not in {'active', 'pending'} or json.loads(row['host_json'] or 'null') != expected):
+                conflict('Recorded host ownership changed; reconciliation required.')
+            if self.control_settings(instance_id) != json.loads(row['config_json']):
+                conflict('Effective configuration changed; explicitly restart with a new snapshot.')
+            self.bind_session(session_key=scheduler_session, instance_id=instance_id)
+            with self._connect() as db:
+                db.execute("UPDATE scheduler_progression SET owner_session=?,state='active',generation=generation+1 WHERE instance_id=?", (scheduler_session, instance_id))
             return self.progression_status(instance_id=instance_id, internal=True)
 
     def release_host(self, *, instance_id, platform_session, thread_id):
@@ -256,6 +280,90 @@ class SchedulingControl:
             raise ValueError('checkpoint must be a bounded control record')
         with self.scheduling_guard(instance_id=instance_id, session_key=session_key, expected_generation=expected_generation), self._connect() as connection:
             connection.execute('UPDATE scheduler_progression SET checkpoint_json=? WHERE instance_id=?', (value, instance_id))
+
+    def progression_message(self, *, instance_id, session_key, name, text, intake):
+        """Reader-authorized original user context, applied at the next safe turn."""
+        if not isinstance(text, str) or not 1 <= len(text) <= 16384:
+            raise ValueError('message must contain 1..16384 characters')
+        self._validate_name(name, label='user message name')
+        raw = text.encode('utf-8')
+        fingerprint = hashlib.sha256(raw).hexdigest()
+        with self.control_maintenance.guard(instance_id), self.scheduling_lock():
+            self._selected(instance_id, session_key)
+            row = self.progression_status(instance_id=instance_id, internal=True)
+            if row['state'] == 'idle':
+                conflict('Start a frozen goal before sending progression context.')
+            checkpoint = json.loads(row['checkpoint_json'])
+            messages = checkpoint.get('messages', [])
+            old = next((v for v in messages if v['name'] == name), None)
+            if old is not None:
+                if old['fingerprint'] != fingerprint:
+                    conflict('Message name is already frozen; use a new semantic name.')
+                return dict(name=name, state='saved', application='next_safe_turn')
+            if len(messages) >= 16:
+                conflict('Message capacity reached; freeze an explicit goal revision.')
+            # Binding is immutable; intake preserves source_origin=user_text.
+            if any(v.name == name for v in self.list(instance=instance_id, namespace='artifact')):
+                conflict('Message name already exists; choose an unused semantic name.')
+            ref = intake.ingest_text(content=raw)
+            self.bind(instance=instance_id, namespace='artifact', name=name, object_id=ref.artifact_id,
+                request_fingerprint=fingerprint)
+            messages.append(dict(name=name, fingerprint=fingerprint, artifact_ref=ref.model_dump(mode='json')))
+            checkpoint['messages'] = messages
+            value = json.dumps(checkpoint)
+            if len(value.encode()) > 65536:
+                conflict('Control checkpoint capacity reached.')
+            with self._connect() as db:
+                db.execute('UPDATE scheduler_progression SET checkpoint_json=? WHERE instance_id=?', (value, instance_id))
+            return dict(name=name, state='saved', application='next_safe_turn',
+                limitation='User text grants no execution or approval authorization; paused goals remain paused.')
+
+    def progression_report(self, *, instance_id, session_key, summary, completed=False, question=None):
+        """Optional Root disposition; a Run completion is never a goal verdict."""
+        if not isinstance(summary, str) or not 1 <= len(summary) <= 4096:
+            raise ValueError('summary must contain 1..4096 characters')
+        if type(completed) is not bool or (question is not None and
+                (not isinstance(question, str) or not 1 <= len(question) <= 2048)):
+            raise ValueError('invalid disposition')
+        if completed and question:
+            raise ValueError('a completed goal cannot await a question')
+        with self.scheduling_guard(instance_id=instance_id, session_key=session_key), self._connect() as db:
+            row = db.execute('SELECT checkpoint_json FROM scheduler_progression WHERE instance_id=?', (instance_id,)).fetchone()
+            checkpoint = json.loads(row[0])
+            checkpoint['report'] = dict(summary=summary, completed=completed, question=question)
+            value = json.dumps(checkpoint)
+            if len(value.encode()) > 65536:
+                raise ValueError('control checkpoint capacity reached')
+            db.execute('UPDATE scheduler_progression SET checkpoint_json=?, reason=? WHERE instance_id=?',
+                (value, 'goal_completed' if completed else 'user_question' if question else 'waiting', instance_id))
+        return self.progression_status(instance_id=instance_id, session_key=session_key)
+
+    def observe_progression(self, *, instance_id, expected_host, changes, reason=None, stop=False):
+        """Trusted runtime observations survive pause; they grant no dispatch authority.
+
+        Serialize merges with the public report, and keep the native writer marker
+        until the adapter has confirmed its terminal turn.
+        """
+        with self.control_maintenance.guard(instance_id), self.scheduling_lock(), self._connect() as db:
+            row = db.execute('SELECT * FROM scheduler_progression WHERE instance_id=?', (instance_id,)).fetchone()
+            if row is None or json.loads(row['host_json'] or 'null') != expected_host:
+                conflict('Native host binding changed during observation.')
+            checkpoint = json.loads(row['checkpoint_json'])
+            checkpoint.update(changes)
+            value = json.dumps(checkpoint, sort_keys=True, allow_nan=False)
+            if len(value.encode()) > 65536:
+                conflict('Control checkpoint capacity reached; stop and retain original records.')
+            values = dict(checkpoint_json=value)
+            if reason is not None:
+                values['reason'] = reason
+            if stop and row['mode'] == 'background':
+                values.update(state='paused', owner_session=None, generation=row['generation']+1)
+            from .scheduler_bindings import _timestamp
+            values['updated_at'] = _timestamp()
+            db.execute('UPDATE scheduler_progression SET ' + ','.join(key+'=?' for key in values) +
+                ' WHERE instance_id=?', (*values.values(), instance_id))
+            return checkpoint
+
 
 
 def owned_mutation(method):

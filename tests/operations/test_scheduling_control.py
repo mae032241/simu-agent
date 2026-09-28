@@ -224,17 +224,13 @@ def test_client_pause_keeps_instance_readable_and_offline_cleanup_retains_goal(t
     assert bindings.progression_status(instance_id=instance.instance_id)['state'] == 'paused'
 
 
-def test_config_changes_require_an_explicit_new_snapshot(control):
+def test_interactive_config_changes_apply_at_next_run_boundary(control):
     bindings, instance = control
     command(bindings, instance, 'start')
     bindings.save_agent_settings(instance, {}, expected_revision=0, maintenance=bindings.control_maintenance)
-    with pytest.raises(SchedulerInstanceConflict, match='Configuration changed'):
-        with bindings.scheduling_guard(instance_id=instance, session_key='first'):
-            pytest.fail('configuration drift was admitted')
-    command(bindings, instance, 'pause')
-    command(bindings, instance, 'start')
     with bindings.scheduling_guard(instance_id=instance, session_key='first'):
         pass
+
 
 
 @pytest.mark.process_e2e

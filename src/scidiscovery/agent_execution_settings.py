@@ -75,10 +75,29 @@ class AttachmentSettings(SettingsValue):
     chunk_bytes: int = Field(default=1048576, ge=4096, le=8388608)
 
 
+class ProgressionSettings(SettingsValue):
+    """Administrator opt-in and bounded background Root execution."""
+    enabled: bool = True
+    max_rounds: int = Field(default=12, ge=1, le=100)
+    max_tasks: int = Field(default=8, ge=1, le=100)
+    max_elapsed_seconds: int = Field(default=3600, ge=1)
+    max_attempts: int = Field(default=2, ge=1, le=10)
+    poll_seconds: int = Field(default=5, ge=1, le=300)
+    max_probes: int = Field(default=720, ge=1)
+    context_bytes: int = Field(default=49152, ge=4096, le=262144)
+    max_tokens: int = Field(default=2000000, ge=1)
+    token_policy: Literal["strict", "bounded_fallback"] = "bounded_fallback"
+    max_rss_bytes: int = Field(default=1000000000, ge=1048576)
+    frame_bytes: int = Field(default=1048576, ge=4096, le=8388608)
+    log_bytes: int = Field(default=1048576, ge=4096)
+    rpc_timeout_seconds: int = Field(default=30, ge=1, le=120)
+
+
 class AgentSettings(SettingsValue):
     schema_version: Literal[1] = 1
     defaults: DefaultSettings = Field(default_factory=DefaultSettings)
     operations: dict[str, OperationSettings] = Field(default_factory=dict)
+    progression: ProgressionSettings = Field(default_factory=ProgressionSettings)
     helpers: HelperSettings = Field(default_factory=HelperSettings)
     execution_io: ExecutionIOSettings = Field(default_factory=ExecutionIOSettings)
     input_materials: MaterialInputSettings = Field(default_factory=MaterialInputSettings)
@@ -167,3 +186,18 @@ def narrative_instruction(profile: dict | None) -> str | None:
             "Preserve field names, enums, identifiers, formulas, code, units, quotations and any text "
             "the scientific contract requires copying exactly. Do not translate historical inputs or "
             "produce a second report. Language is a writing preference, not an output acceptance rule.")
+
+
+def effective_settings(global_settings: AgentSettings, instance_settings: dict) -> dict:
+    """One effective snapshot, including inherited defaults, with no live drift."""
+    def merge(base, override):
+        for key, value in override.items():
+            if isinstance(value, dict) and isinstance(base.get(key), dict):
+                merge(base[key], value)
+            else:
+                base[key] = value
+        return base
+    value = merge(global_settings.model_dump(exclude_none=True), instance_settings)
+    # Instance preferences cannot enable a deployment-wide background runtime.
+    value["progression"]["enabled"] = global_settings.progression.enabled
+    return parse_settings(value).model_dump(exclude_none=True)

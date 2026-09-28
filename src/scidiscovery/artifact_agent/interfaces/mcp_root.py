@@ -60,6 +60,20 @@ class ProgressionCommandInput(RootToolInput):
         description="Exact frozen original user text or research objective for start; changes require pausing first.")
 
 
+class ProgressionMessageInput(RootToolInput):
+    name: str = Field(pattern=_NAME_PATTERN)
+    text: str = Field(min_length=1, max_length=16384,
+        description="Original user direction or supplementary information; saved unchanged for the next safe decision.")
+
+
+class ProgressionReportInput(RootToolInput):
+    summary: str = Field(min_length=1, max_length=4096,
+        description="Current goal outcome or specific waiting condition; retain scientific limitations.")
+    completed: bool = Field(default=False, description="Root judges the whole frozen goal complete, after reading sealed results.")
+    question: str | None = Field(default=None, min_length=1, max_length=2048,
+        description="Specific missing user information, when needed to continue.")
+
+
 class ReadInput(RootToolInput):
     view: Literal["summary", "detail"] = Field(default="summary",
         description="Default compact view with explicit omission and original-detail navigation. Detail preserves exact bindings, original logs and full metadata.")
@@ -288,6 +302,8 @@ SCHEDULING_WRITES = frozenset({
 })
 
 ROOT_TOOLS = (
+    RootTool("progression_message", "Save original user context for the started goal from an authorized reading session, without taking over the background writer. Does not grant approvals or resume a paused goal.", ProgressionMessageInput),
+    RootTool("progression_report", "Optionally record the whole goal outcome, waiting condition or user question. Ordinary tasks and stages require no extra report. No research is triggered by this report.", ProgressionReportInput),
     RootTool("progression_status", "Read scheduling ownership and frozen objective; accepted work has independent Run state.", EmptyInput),
     RootTool("progression_command", "Start, pause, resume, stop or explicitly take over scheduling for the selected instance. Background start remains pending until its host is available. Pause/stop do not cancel accepted work.", ProgressionCommandInput),
     RootTool("diagnostic_read", "Read bounded engineering error details visible to the current instance or session.", DiagnosticReadInput),
@@ -518,6 +534,13 @@ class RootToolFacade(
         with self.bindings.scheduling_guard(instance_id=instance_id, session_key=self.session_key,
                 expected_generation=observed.get("generation")) as generation:
             yield generation
+
+    def progression_message(self, **values):
+        return self.bindings.progression_message(instance_id=self._instance_id(), session_key=self.session_key,
+            intake=self.intake, **values)
+
+    def progression_report(self, **values):
+        return self.bindings.progression_report(instance_id=self._instance_id(), session_key=self.session_key, **values)
 
     def progression_status(self):
         return self.bindings.progression_status(instance_id=self._instance_id(), session_key=self.session_key)

@@ -91,7 +91,7 @@ def open_runtime(
             database_path=state / "database" / "artifact_agent.sqlite3",
             shared_group=shared_group,
         )
-        scheduler_bindings = SchedulerBindingService(scheduler_database_path)
+        scheduler_bindings = SchedulerBindingService(scheduler_database_path, global_settings=agent_settings)
         local_backend = LocalTrustedBackend(
             local_workspace_root or project / ".scidiscovery-runs"
         )

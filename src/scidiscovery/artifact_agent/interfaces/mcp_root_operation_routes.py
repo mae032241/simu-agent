@@ -5,6 +5,7 @@ from __future__ import annotations
 from ..service.scheduling_control import owned_mutation
 
 import uuid
+import json
 from dataclasses import replace
 from typing import Any, Protocol
 
@@ -310,6 +311,7 @@ class RootOperationRoutes:
         )
         if target.existing_object_id is not None:
             return self.run_status(name=target.name)
+        self._background_agent_admission(max_attempts=max_attempts)
         output_name = _derived_name(target.name, "output")
         output_logical_name = _derived_name(target.logical_name, "output")
         output_fingerprint = canonical_sha256(
@@ -334,6 +336,21 @@ class RootOperationRoutes:
             raise OperationEngineeringError("local_run_creation_failed") from error
         self._bind_target("run", target, run_id, fingerprint)
         return self.run_status(name=target.name)
+
+    def _background_agent_admission(self, *, max_attempts):
+        row = self.bindings.progression_status(instance_id=self._instance_id(), internal=True)
+        if row.get('mode') != 'background':
+            return
+        checkpoint = json.loads(row['checkpoint_json'])
+        limits = json.loads(row['config_json'])['effective']['progression']
+        baseline = set(checkpoint.get('baseline_runs', []))
+        runs = self.runs.list(instance_id=self._instance_id())
+        if any(run.state in {'queued', 'running'} for run in runs):
+            raise RootToolError('Background progression permits one queued/running complete Agent task.')
+        if sum(run.run_id not in baseline for run in runs) >= limits['max_tasks']:
+            raise RootToolError('Frozen background task budget exhausted; no new task admitted.')
+        if max_attempts is not None and max_attempts > limits['max_attempts']:
+            raise RootToolError('Requested attempts exceed the frozen background limit.')
 
     def _prepare_local_run(
         self,

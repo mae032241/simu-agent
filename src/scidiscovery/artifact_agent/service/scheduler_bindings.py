@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import os
 import hashlib
 import json
 import sqlite3
@@ -91,7 +92,9 @@ class SchedulerScientificSelection:
 class SchedulerBindingService(SchedulingControl):
     """Keep control identities behind instance-scoped semantic revisions."""
 
-    def __init__(self, database_path: Path | str) -> None:
+    def __init__(self, database_path: Path | str, *, global_settings=None) -> None:
+        from ...agent_execution_settings import load_settings
+        self.global_settings = global_settings or load_settings(os.environ.get("SCID_AGENT_SETTINGS_FILE"))
         self.database_path = Path(database_path).expanduser().absolute()
         self.client_database_path = self.database_path.with_name(self.database_path.stem + "-clients.sqlite3")
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
