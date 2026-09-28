@@ -509,7 +509,11 @@ class RootExecutionRoutes:
         )
 
     def execution_abandon(self, *, name: str) -> dict[str, Any]:
-        self.executions.abandon(self._resolve("execution", name))
+        execution_id = self._resolve("execution", name)
+        if self.execution_bridge is None:
+            self.executions.abandon(execution_id)
+        else:
+            self.execution_bridge.abandon(execution_id)
         return self._execution_status_snapshot(name=name)
 
     def execution_cancel(self, *, name: str) -> dict[str, Any]:

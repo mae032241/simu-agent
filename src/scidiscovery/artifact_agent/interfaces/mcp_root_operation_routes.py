@@ -162,6 +162,7 @@ class RootOperationRoutes:
         self._require_scheduling_enabled()
         values = dict(values)
         profile = values.pop("execution_profile", None)
+        required_review = values.pop("require_execution_review", None)
         try:
             bound = self._prepare_operation_call(**values)
         except OperationInvocationError as error:
@@ -186,6 +187,9 @@ class RootOperationRoutes:
                 raise OperationInvocationError(error.reason_code, port=port.name if port.agent_visible else None,
                     message="The selected subject's original materials do not satisfy this action. Restore its exact sealed materials or choose a compatible scientific subject; control diagnostics retain the detailed cause.") from error
             raise
+        if required_review is not None and bound.compiled.spec.executor.capability is None:
+            raise OperationInvocationError("execution_review_not_applicable",
+                message="require_execution_review applies only to complete experiment tasks")
         if bound.compiled.spec.executor.kind != "agent":
             if profile is not None:
                 raise OperationInvocationError("execution_profile_not_applicable",
@@ -194,6 +198,14 @@ class RootOperationRoutes:
         if self.runs is None:
             raise OperationInvocationError("runtime_backend_unavailable")
         source_name = values.get("resume_from") or values.get("draft_from")
+        inherited_review = bool(source_name and (self.runs.status(self._resolve("run", source_name)).recovery_policy or {}).get("require_execution_review"))
+        if inherited_review and required_review is False:
+            raise OperationInvocationError("execution_review_requirement_immutable",
+                message="Recovery cannot remove the original task's explicit implementation review requirement")
+        required_review = inherited_review or bool(required_review)
+        bound = replace(bound, require_execution_review=required_review)
+        if required_review:
+            values["require_execution_review"] = True
         try:
             settings = self.runs.execution_settings(bound.compiled, instance_id=self._instance_id(),
                 profile=profile, recovery_source=self._resolve("run", source_name) if source_name else None,
@@ -365,6 +377,7 @@ class RootOperationRoutes:
                 "operation_digest": bound.compiled.digest,
                 "execution_profile": bound.execution_profile["profile"],
                 "instruction": bound.instruction,
+                **({"require_execution_review": True} if bound.require_execution_review else {}),
                 "inputs": [
                     {
                         "port": item.port_name,

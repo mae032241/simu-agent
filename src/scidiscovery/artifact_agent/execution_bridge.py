@@ -147,6 +147,16 @@ class ExecutionBridge:
             external_run_id, external_state = recovered
         self._record_started(execution_id, external_run_id, external_state)
 
+    def abandon(self, execution_id: str) -> None:
+        current = self.executions.status(execution_id)
+        descriptor = self.executions.prepared_submission(execution_id)
+        if descriptor is not None:
+            found = self._adapter(current.executor).lookup_submission(descriptor)
+            if found is not None:
+                self._record_started(execution_id, *found)
+                raise ExecutionServiceError("This execution was submitted; use status or cancel instead of abandon.")
+        self.executions.abandon(execution_id, submission_confirmed_absent=descriptor is not None)
+
     def _record_started(self, execution_id: str, external_run_id: str, external_state: str) -> None:
         self.executions.record_submission(
             execution_id=execution_id,

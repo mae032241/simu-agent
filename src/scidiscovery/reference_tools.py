@@ -22,6 +22,7 @@ class ReferenceRule:
 @dataclass(frozen=True, slots=True)
 class ReferencePolicy:
     rules: tuple[ReferenceRule, ...] = (
+        ReferenceRule('scidiscovery.experiment-report.v1', '/adopted_stages/*'),
         ReferenceRule('scidiscovery.layered-diagnosis.v1', '/source_references/*/input_alias'),
         ReferenceRule('scidiscovery.layered-diagnosis.v1', '/evidence/*/source_key'),
         ReferenceRule('scidiscovery.layered-diagnosis.v1', '/evidence/*/locator', locator_prefix=True),

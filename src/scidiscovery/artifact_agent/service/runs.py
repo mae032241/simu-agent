@@ -236,6 +236,7 @@ class RunService(ToolEvidenceMixin):
         self._validate_attempt_limit(max_attempts)
         compiled = bound.compiled
         execution_profile = bound.execution_profile
+        required_review = bound.require_execution_review
         if compiled.spec.executor.kind != "agent":
             raise ValueError("RunService accepts Agent operations only")
         if not self.backend.supports_operation(compiled):
@@ -278,7 +279,7 @@ class RunService(ToolEvidenceMixin):
             execution_profile = {key: settings[key] for key in ("profile", "sources")}
             if max_attempts is None:
                 max_attempts = settings["default_max_attempts"]
-        bound = replace(bound, execution_profile=execution_profile)
+        bound = replace(bound, execution_profile=execution_profile, require_execution_review=required_review)
         raw_inputs = self._input_bindings(bound)
         for item in raw_inputs:
             self.artifacts.verify(item.artifact_ref)
@@ -287,6 +288,8 @@ class RunService(ToolEvidenceMixin):
         deadline_at = future(created_at, compiled.spec.limits.timeout_seconds)
         recovery_digest: str | None = None
         recovery_policy = self._recovery_policy(compiled)
+        if required_review:
+            recovery_policy["require_execution_review"] = True
         if material_policy is not None:
             recovery_policy["input_materials"] = material_policy.model_dump()
         if resume_from is None and draft_from is None:
@@ -351,6 +354,8 @@ class RunService(ToolEvidenceMixin):
                     raise RunStateConflict("draft source digest changed")
             scheduler_budget = max_attempts
             if resume_from is not None or draft_from is not None:
+                if (source.recovery_policy or {}).get("require_execution_review") and not required_review:
+                    raise RunStateConflict("Recovery cannot remove the explicit execution review requirement")
                 recovery_policy["helpers"] = (source.recovery_policy or {}).get("helpers", {"max_depth": 0})
                 recovery_policy["execution_io"] = (source.recovery_policy or {}).get("execution_io", ExecutionIOSettings().model_dump())
                 recovery_policy["attachments"] = (source.recovery_policy or {}).get("attachments", recovery_policy["attachments"])
@@ -375,6 +380,7 @@ class RunService(ToolEvidenceMixin):
                     },
                     "execution_profile": execution_profile["profile"],
                     "instruction": bound.instruction or "",
+                    **({"require_execution_review": True} if required_review else {}),
                     "inputs": json.loads(inputs_json(frozen_inputs)),
                     "limits": compiled.spec.limits.model_dump(mode="json"),
                     "resume_from": resume_from,
@@ -552,17 +558,20 @@ class RunService(ToolEvidenceMixin):
             )
 
     def open(
-        self, *, operation_id: str, operation_digest: str, run_id: str | None = None
+        self, *, operation_id: str, operation_digest: str, run_id: str | None = None,
+        trusted_caller: tuple[str, str] | None = None,
     ) -> tuple[RunStatus, OpenWorkspace]:
         return self._open_exact(
             operation_id=operation_id,
             operation_digest=operation_digest,
             allow_running=False,
             run_id=run_id,
+            trusted_caller=trusted_caller,
         )
 
     def reopen(
-        self, *, operation_id: str, operation_digest: str, run_id: str | None = None
+        self, *, operation_id: str, operation_digest: str, run_id: str | None = None,
+        trusted_caller: tuple[str, str] | None = None,
     ) -> tuple[RunStatus, OpenWorkspace]:
         """Open the exact slot or reattach its running Run after transport restart."""
 
@@ -571,6 +580,7 @@ class RunService(ToolEvidenceMixin):
             operation_digest=operation_digest,
             allow_running=True,
             run_id=run_id,
+            trusted_caller=trusted_caller,
         )
 
     def _open_exact(
@@ -580,6 +590,7 @@ class RunService(ToolEvidenceMixin):
         operation_digest: str,
         allow_running: bool,
         run_id: str | None = None,
+        trusted_caller: tuple[str, str] | None = None,
     ) -> tuple[RunStatus, OpenWorkspace]:
         # Select before taking the instance lock, and reselect the same row in
         # the write transaction. Opening a reused Agent must guard its NEW Run.
@@ -600,9 +611,9 @@ class RunService(ToolEvidenceMixin):
                 except SchedulerInstanceClosed as error:
                     raise InstanceMaintenanceUnavailable("assignment instance is closed") from error
                 return self._open_selected(operation_id=operation_id, operation_digest=operation_digest,
-                    allow_running=allow_running, selected_run_id=str(selected["run_id"]))
+                    allow_running=allow_running, selected_run_id=str(selected["run_id"]), trusted_caller=trusted_caller)
 
-    def _open_selected(self, *, operation_id, operation_digest, allow_running, selected_run_id):
+    def _open_selected(self, *, operation_id, operation_digest, allow_running, selected_run_id, trusted_caller=None):
         now = timestamp()
         expired_run: tuple[str, str, str | None] | None = None
         with self._connect() as connection:
@@ -620,6 +631,11 @@ class RunService(ToolEvidenceMixin):
             if row is None:
                 connection.execute("ROLLBACK")
                 raise RunStateConflict("no exact queued Run is available")
+            if trusted_caller is not None:
+                owner = connection.execute("SELECT platform_session,thread_id FROM worker_connections WHERE run_id=?",
+                    (selected_run_id,)).fetchone()
+                if owner is None or tuple(owner) != trusted_caller:
+                    raise RunStateConflict("Worker binding changed before assignment open; use the currently attached native thread")
             if self.operation_catalog.operation(operation_id).spec.independent_review_ports:
                 attached = connection.execute("SELECT 1 FROM worker_connections WHERE run_id=?", (selected_run_id,)).fetchone()
                 if attached is None:
@@ -1060,6 +1076,18 @@ class RunService(ToolEvidenceMixin):
                 (run_id, reference),
             ).fetchone()
         return row is not None
+
+    def latest_subject_review(self, instance_id: str, subject: ArtifactRef) -> RunStatus | None:
+        """Latest completed formal review of this exact subject, in this instance."""
+        with self._connect() as connection:
+            rows = connection.execute("SELECT * FROM runs WHERE instance_id=? AND operation_id=? AND state='completed' "
+                "ORDER BY completed_at DESC, run_id DESC", (instance_id, "science.object.review.v1")).fetchall()
+        for row in rows:
+            review = status_from_row(row)
+            subjects = [item.artifact_ref for item in review.inputs if item.port_name == "subject"]
+            if subjects == [subject]:
+                return review
+        return None
 
     def completed_for_output(self, artifact_ref: ArtifactRef) -> RunStatus | None:
         """Return the unique completed Run that registered this exact output."""

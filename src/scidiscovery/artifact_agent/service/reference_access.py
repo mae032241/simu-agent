@@ -308,6 +308,8 @@ class ReferenceAccessMixin:
 
     def _reference_edges(self, value, source_ref, policy, call, pointer=None, reference=None, root_ref=None):
         producer, manifest, selected, manifest_ref = self._reference_pair(value, source_ref, policy, call, root_ref)
+        if selected and selected.get('metadata', {}).get('kind') == 'experiment_execution':
+            return self._execution_output_edges(value, source_ref, policy, call, producer, manifest_ref, pointer, reference), []
         rules = [rule for rule in policy.rules if rule.schema_id == source_ref.schema_id]
         aliases = []
         sections = []
@@ -439,6 +441,45 @@ class ReferenceAccessMixin:
                           '_proof_run': original_proof[0] if original_proof else None,
                           '_proof_manifest': original_proof[1] if original_proof else None})
         return edges, sections
+
+    def _execution_output_edges(self, value, source_ref, policy, call, producer, proof_ref, pointer, reference):
+        """Join a sealed public receipt to its exact control manifest, not to IDs supplied by a caller."""
+        from ..schema.execution import ExecutionResultManifest
+        parents = [ref for ref in self.artifacts.catalog(source_ref).parent_refs
+                   if ref.schema_id == 'scidiscovery.execution-result']
+        if len(parents) != 1:
+            raise ReferenceAccessError('reference_execution_unpaired', 'Execution receipt has no unique sealed result manifest.')
+        result = ExecutionResultManifest.model_validate_json(self._reference_read_bytes(value, parents[0], policy, call))
+        receipt = json.loads(self._reference_read_bytes(value, source_ref, policy, call))
+        manifest_parents = self.artifacts.catalog(parents[0]).parent_refs
+        outputs = {}
+        for ref in result.output_refs:
+            self._reference_deadline(call)
+            envelope = self.artifacts.catalog(ref)
+            name = envelope.labels.get('logical_name')
+            if (ref not in manifest_parents or not name or name in outputs
+                    or envelope.labels.get('execution_id') != result.execution_id):
+                raise ReferenceAccessError('reference_execution_unpaired', 'Collected output identity differs from its sealed manifest.')
+            outputs[name] = envelope
+        edges = []
+        for item in receipt.get('outputs', ()):
+            name = item['name']
+            target = outputs.get(name)
+            if target is None or (target.media_type, target.size_bytes) != (item['media_type'], item['size_bytes']):
+                raise ReferenceAccessError('reference_execution_unpaired', 'Scientific output name differs from its collected original.')
+            locator = '/outputs/' + _escape(name)
+            if pointer and not (locator == pointer or locator.startswith(pointer + '/')):
+                continue
+            edge = {'source_ref': source_ref.model_dump(mode='json'), 'locator': locator,
+                    'target_ref': target.ref.model_dump(mode='json')}
+            handle = 'ref_' + _digest(edge)
+            if reference is not None and reference != handle:
+                continue
+            edges.append({'reference': handle, 'locator': locator, 'alias': name, 'file_name': name,
+                'media_type': target.media_type, 'size_bytes': target.size_bytes,
+                '_edge': edge, '_producer': None, '_manifest_ref': proof_ref.model_dump(mode='json'),
+                '_manifest_run': producer.run_id, '_proof_run': None, '_proof_manifest': None})
+        return edges
 
     def _reference_settle(self, connection, value, call, response, *, request_key=None):
         encoded = canonical_json(response)

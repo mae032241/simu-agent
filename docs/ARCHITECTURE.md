@@ -39,6 +39,30 @@ debugging, execution, collection, validity and delivery in one Run. TCAD is a do
 capability of that task. Normal stages require no independent review or approval;
 applicable qualification and execution authorization remain explicit contracts.
 
+An experiment invocation may explicitly set `require_execution_review=true` when
+its task requires independent implementation review before formal execution. New
+tasks default to false; recovery inherits a true requirement and cannot remove it.
+Control resolves the latest completed independent review of the exact sealed
+implementation and requires `pass` under a compatible review contract. Diagnostic
+runs remain available. Workers neither enter review IDs nor receive a new global
+review gate. Revised implementations require their own review.
+
+Queued Worker attachments may be corrected by calling `worker_attach` again before
+the assignment opens. Opening verifies the current native thread binding within
+the state transition transaction; a running assignment cannot be rebound.
+
+Bound experiment reports expose their adopted stages through the existing paginated
+reference tool. A collected execution stage resolves named original files from its
+exact sealed result manifest, including media type and size. Reading these files
+does not take over the execution or grant access to other runs.
+
+Execution budget responses explain when allowance is shared by scientific subject.
+Abandonment refunds an unused reservation only after confirming no external
+submission exists; uncertain submission lookup preserves the reservation. Reservation
+history remains recorded. Diagnostic failures distinguish exhausted budgets,
+preparation failure, unknown submission, status failure and collection failure,
+without returning private backend exception text.
+
 A task seals scientific stage conclusions and material references as work proceeds.
 The UI reads the same stage projection, without dispatching work. A stage preview is
 not final completion: the final report identifies adopted stage versions and their

@@ -126,7 +126,7 @@ class ExperimentExecution:
             prepared = self.executions.prepared_submission(execution_id)
             found = None if prepared is None else self.bridge._adapter(status.executor).lookup_submission(prepared)
             if found is None:
-                self.executions.abandon(execution_id)
+                self.executions.abandon(execution_id, submission_confirmed_absent=prepared is not None)
                 return
             self.bridge._record_started(execution_id, *found)
         if self.executions.status(execution_id).state != "abandoned":
@@ -180,6 +180,30 @@ class ExperimentExecution:
         return {"name":name, "path":str(Path("scratch/collected") / request.name / name),
             "media_type":envelope.media_type, "size_bytes":envelope.size_bytes}
 
+    def _required_review(self, run, implementation):
+        if not (run.recovery_policy or {}).get("require_execution_review"):
+            return None
+        from ..schema.refs import ArtifactRef
+        from .sealed_materials import material_error
+        from ...general_science_experiment_review import ExperimentReview
+        subject = ArtifactRef.model_validate(implementation["artifact_ref"])
+        review = self.runs.latest_subject_review(run.instance_id, subject)
+        if review is None or review.output_ref is None:
+            raise material_error("experiment_execution_review_required",
+                "This task explicitly requires independent implementation review. Obtain a completed science.object.review.v1 pass for this exact sealed implementation before formal execution.")
+        compiled = self.runs.operation_catalog.operation("science.object.review.v1")
+        if review.operation_version != compiled.spec.version or "subject" not in compiled.spec.independent_review_ports:
+            raise material_error("experiment_execution_review_incompatible",
+                "The exact implementation review uses a different installed review contract; obtain a compatible independent review.")
+        envelope = self.runs.artifacts.catalog(review.output_ref)
+        if envelope.schema_id != "scidiscovery.experiment-review.v1" or envelope.size_bytes > compiled.spec.limits.max_output_bytes:
+            raise material_error("experiment_execution_review_invalid", "The exact implementation review has no valid sealed review result.")
+        result = ExperimentReview.model_validate_json(self.runs.artifacts.read(review.output_ref), strict=True)
+        if result.verdict != "pass":
+            raise material_error("experiment_execution_review_not_passed",
+                "The latest independent review of this exact implementation did not pass. Resolve its findings and review any revised implementation before execution; budget approval does not override this task requirement.")
+        return review.output_ref
+
     def command(self, context, request):
         run, effect, identity, _ = self._contract(context)
         plan = effect_operation_plan(effect)
@@ -194,11 +218,13 @@ class ExperimentExecution:
             if request.implementation is None:
                 raise ValueError("Choose a sealed implementation before starting execution.")
             payload = self.implementation(context, request.implementation)
+            reviewed = self._required_review(run, self._implementation_record(context, payload))
             self.executions.create(executor=plan.executor, preparation_profile=plan.preparation_profile,
                 payload_ref=payload, execution_id=execution_id, compiled_identity=identity,
                 labels={"operation_id": identity.operation_id, "operation_version": identity.operation_version,
                     "operation_digest": identity.operation_digest, "approval_contract_digest": identity.approval_contract_digest,
-                    "experiment_run": self.task_origin(run)})
+                    "experiment_run": self.task_origin(run),
+                    **({"implementation_review": reviewed.model_dump_json()} if reviewed is not None else {})})
             self.runs.scheduler_bindings.bind(instance=run.instance_id, namespace="execution",
                 name="experiment-" + self.task_origin(run) + "-" + request.name, object_id=execution_id)
         current = self.executions.request(execution_id)
@@ -239,6 +265,8 @@ class ExperimentExecution:
                         request.action == "status" or response["state"] not in {"created", "awaiting_authorization"}):
                     return response
         if request.action in {"start", "advance"}:
+            if self.executions.status(execution_id).external_run_id is None:
+                self._required_review(run, implementation)
             try:
                 self.bridge.start(execution_id=execution_id,
                     approval_id="apr_" + execution_id if approval is not None and approval.status == "decided" else None,
@@ -324,7 +352,7 @@ class ExperimentExecution:
                 state = "authorization_rejected"
         authorization = self.executions.authorization(execution_id)
         result = {"name": name, "state": state, "authorization": {"status": approval.status,
-            **{key: authorization[key] for key in ("reason", "budget", "allowance") if key in authorization}}}
+            **{key: authorization[key] for key in ("reason", "budget", "allowance", "budget_usage") if key in authorization}}}
         bound = self.runs.scheduler_bindings.find_name(instance=run.instance_id, namespace="approval", object_id="apr_" + execution_id)
         if bound is not None:
             result["approval_name"] = bound

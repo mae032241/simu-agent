@@ -13,7 +13,7 @@ from scidiscovery.artifact_agent.service.experiment_execution import bind_experi
 from scidiscovery.operation_contract import DiagnosticError
 
 
-def continuation(tmp_path, monkeypatch, solver="sprocess", *, all_stages=False, include_grid=True):
+def continuation(tmp_path, monkeypatch, solver="sprocess", *, all_stages=False, include_grid=True, require_execution_review=False):
     runtime, root, catalog, connections, instance = _real_experiment(tmp_path, monkeypatch, solver)
     runs = runtime.runs
     old_id = runtime.scheduler_bindings.resolve(instance=instance.instance_id, namespace="run", name="observe")
@@ -28,6 +28,8 @@ def continuation(tmp_path, monkeypatch, solver="sprocess", *, all_stages=False, 
         "inputs":[{"port":"research_objective", "artifact_names":["objective"]},
                   {"port":"prior_experiment", "artifact_names":["observe.output"]},
                   {"port":"scientific_materials", "artifact_names":names}], "instruction":"Reuse exact sealed materials."}
+    if require_execution_review:
+        invocation["require_execution_review"] = True
     result = root.call_tool("operation_invoke", invocation)
     assert result["result"]["state"] == "queued", result
     run_id = runtime.scheduler_bindings.resolve(instance=instance.instance_id, namespace="run", name="continuation")
@@ -49,6 +51,25 @@ def submit(f, aliases, outcome="completed"):
         "payload":{"summary":"Retained exact observations.", "outcome":outcome,
                    "remaining_question":"", "adopted_stages":aliases}}))
     return f.worker.call_tool("worker_submit_result", {})
+
+
+def test_bound_report_exposes_named_collected_originals_without_execution_takeover(tmp_path, monkeypatch):
+    f = continuation(tmp_path, monkeypatch)
+    prior = next(i.source_name for i in f.runs.status(f.run_id).inputs if i.port_name == "prior_experiment")
+    directory = f.worker.call_tool("worker_reference_read", {"source": prior})
+    original = next(r for r in f.records if r["metadata"].get("kind") == "experiment_execution")
+    entry = next(item for item in directory["references"] if item["alias"] == original["alias"])
+    stage = f.worker.call_tool("worker_reference_read", {"source": prior, "action": "read", "reference": entry["reference"]})
+    files = f.worker.call_tool("worker_reference_read", {"source": stage["source"]})
+    names = {item["file_name"] for item in files["references"]}
+    assert names == {"observation", "binary"}
+    assert "tcad_manifest" not in json.dumps(files) and "artifact_id" not in json.dumps(files)
+    entry = next(item for item in files["references"] if item["file_name"] == "binary")
+    delivered = f.worker.call_tool("worker_reference_read", {"source": stage["source"], "action": "read",
+        "reference": entry["reference"], "delivery": "file"})
+    assert Path(delivered["file_path"]).read_bytes() == b"observed fixture\n"
+    assert not f.runtime.scheduler_bindings.list(instance=f.instance.instance_id, namespace="execution",
+        name_prefix="experiment-" + f.run_id + "-")
 
 
 @pytest.mark.parametrize("solver", ["sprocess", "sdevice"])

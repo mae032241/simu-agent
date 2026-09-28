@@ -463,6 +463,7 @@ class LocalWorkerMCPRouter:
                 status, workspace = opener(
                     operation_id=self.operation_id,
                     operation_digest=self.operation_digest,
+                    trusted_caller=self._trusted_caller if not self.is_helper else None,
                     **({"run_id": self._bound_run_id} if self._bound_run_id else {}),
                 )
             except RunStateConflict as error:

@@ -73,7 +73,7 @@ _DECLARATIONS = (
     ("scid_describe", "Read one capability's exact contract before calling it.", DescribeInput),
     ("scid_call", "Call an authorized capability by its exact contract.", CallInput),
 )
-_ATTACH = {"name": "worker_attach", "description": "Bind the actual spawned child thread to an exact queued Run; Root only.",
+_ATTACH = {"name": "worker_attach", "description": "Bind the actual spawned child thread to an exact queued Run; Root only. Calling again with a corrected native ID replaces an unopened queued binding. Once assignment is opened, ownership cannot change.",
            "inputSchema": AttachInput.model_json_schema()}
 _IDENTITY = {"name": "worker_identity", "description": "Read this Worker's platform-supplied thread ID and model profile for scheduler attachment; does not claim a Run.",
              "inputSchema": _Input.model_json_schema()}

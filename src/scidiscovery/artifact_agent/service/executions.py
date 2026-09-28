@@ -652,12 +652,18 @@ class ExecutionService:
             if row["decision_ref_json"] is not None:
                 return {"source": "human", "decision_ref": json.loads(row["decision_ref_json"])}
             value = self._current_policy_record(connection, execution_id)
+            usage = None
+            if value is not None:
+                admission = ExecutionAdmission.model_validate(value["admission"])
+                remaining = self._budget_remaining(connection, row["executor"], admission)
+                usage = {"scope": "shared_scientific_subject", "remaining": remaining}
         if value is None:
             return {"source": "none"}
         if value["admission"]["outcome"] != "policy":
             return {"source": "none", "outcome": value["admission"]["outcome"],
                 "policy_digest": value["admission"]["policy_digest"], "reason": value["admission"]["reason"],
-                "budget": value["admission"]["budget"], "allowance": value["admission"]["allowance"]}
+                "budget": value["admission"]["budget"], "allowance": value["admission"]["allowance"],
+                "budget_usage": usage}
         return {"source": "policy", "policy_digest": value["admission"]["policy_digest"],
             "budget": value["admission"]["budget"], "budget_key": value["admission"]["budget_key"]}
 
@@ -705,19 +711,23 @@ class ExecutionService:
             )
             connection.execute("COMMIT")
 
-    def abandon(self, execution_id: str) -> None:
+    def abandon(self, execution_id: str, *, submission_confirmed_absent: bool = False) -> None:
         """Permanently prevent an unsubmitted execution from being authorized."""
 
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             row = self._row(connection, execution_id)
-            if row["state"] == "abandoned":
-                connection.execute("ROLLBACK")
-                return
-            if row["state"] not in {"created", "authorized"}:
+            if row["state"] not in {"created", "authorized", "abandoned"} or row["external_run_id"] is not None:
                 raise ExecutionStateConflict(
                     "only an unsubmitted execution can be abandoned"
                 )
+            prepared = connection.execute("SELECT 1 FROM execution_prepared_submissions WHERE execution_id=?", (execution_id,)).fetchone()
+            if prepared is not None and not submission_confirmed_absent:
+                raise ExecutionStateConflict("prepared execution needs authoritative absence confirmation before abandonment; query its existing submission")
+            reservation = connection.execute("SELECT reserved_json,consumed_json FROM execution_budget_reservations WHERE execution_id=?", (execution_id,)).fetchone()
+            if reservation is not None and reservation["consumed_json"] is None:
+                connection.execute("UPDATE execution_budget_reservations SET consumed_json=? WHERE execution_id=?",
+                    (canonical_json({key: 0 for key in json.loads(reservation["reserved_json"])}), execution_id))
             connection.execute(
                 "UPDATE executions SET state = 'abandoned' WHERE execution_id = ?",
                 (execution_id,),

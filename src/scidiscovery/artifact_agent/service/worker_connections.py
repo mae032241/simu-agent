@@ -85,7 +85,10 @@ class WorkerConnections:
             current = connection.execute("SELECT * FROM worker_connections WHERE run_id=?", (run_id,)).fetchone()
             if current is not None:
                 if (current["platform_session"], current["thread_id"]) != (platform_session, thread_id):
-                    raise RunStateConflict("Run already belongs to another Worker thread")
+                    # Nothing scientific has been opened yet. Correct a mistaken
+                    # platform handle without consuming/failing the queued Run.
+                    connection.execute("UPDATE worker_connections SET platform_session=?,thread_id=?,attached_at=? WHERE run_id=?",
+                        (platform_session, thread_id, timestamp(), run_id))
                 return
             connection.execute(
                 "INSERT INTO worker_connections(run_id,platform_session,thread_id,attached_at) VALUES(?,?,?,?)",

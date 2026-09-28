@@ -65,6 +65,23 @@ def queued(tmp_path, backend="local"):
     return catalog, runtime, root, gateway, profile
 
 
+def test_wrong_worker_handle_can_be_corrected_only_before_assignment_open(tmp_path):
+    from scidiscovery.artifact_agent.service.run_records import RunStateConflict
+    _, runtime, root, gateway, profile = queued(tmp_path)
+    result(call(gateway, "worker_attach", {"name": "observation", "thread_id": "wrong-handle"}))
+    old = gateway.connections.resolve(platform_session="parent", thread_id="wrong-handle")
+    result(call(gateway, "worker_attach", {"name": "observation", "thread_id": "native-child"}))
+    # Simulate a cached old request that resolved the binding before correction.
+    with pytest.raises(RunStateConflict, match="binding changed"):
+        runtime.runs.reopen(operation_id=old.operation_id, operation_digest=old.operation_digest,
+            run_id=old.run_id, trusted_caller=("parent", "wrong-handle"))
+    assert runtime.runs.status(old.run_id).state == "queued"
+    assert "error" in call(gateway, "worker_open_assignment", child="wrong-handle", profile=profile)
+    assert result(call(gateway, "worker_open_assignment", child="native-child", profile=profile))["state"] == "opened"
+    assert "error" in call(gateway, "worker_attach", {"name": "observation", "thread_id": "third-child"})
+    assert gateway.connections.resolve(platform_session="parent", thread_id="native-child").run_id == old.run_id
+
+
 def test_codex_optional_source_preserves_worker_scope_and_attachment(tmp_path):
     _, runtime, root, gateway, profile = queued(tmp_path)
 
@@ -319,13 +336,13 @@ def test_durable_binding_reconnects_exact_run_and_rejects_other_thread(tmp_path)
     child = {"child": "child-1", "profile": profile}
     result(call(gateway, "worker_attach", {"name": "observation", "thread_id": "child-1"}))
     result(call(gateway, "worker_attach", {"name": "observation", "thread_id": "child-1"}))
-    assert "error" in call(gateway, "worker_attach", {"name": "observation", "thread_id": "child-2"})
     assert "error" in call(gateway, "worker_attach", {"name": "observation", "thread_id": "parent"})
     assert "error" not in rpc(
         gateway, "scid_catalog", child="child-1",
         profile={**profile, "model": profile["model"].upper()},
     )
     first = result(call(gateway, "worker_open_assignment", **child))
+    assert "error" in call(gateway, "worker_attach", {"name": "observation", "thread_id": "child-2"})
     new_gateway = UnifiedMCPRouter(root)
     second = result(call(new_gateway, "worker_open_assignment", **child))
     assert first["workspace_path"] == second["workspace_path"]

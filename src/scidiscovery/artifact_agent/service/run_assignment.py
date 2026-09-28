@@ -56,6 +56,10 @@ def assignment_json(
                 "digest": bound.compiled.digest,
             },
             "instruction": bound.instruction or "",
+            **({"execution_requirements": {
+                "independent_implementation_review": "required",
+                "instruction": "Before formal execution, obtain an independent science.object.review.v1 pass for the exact sealed implementation. Control resolves the review automatically. Revised implementations require their own review; diagnostic tools remain available."}}
+               if bound.require_execution_review else {}),
             "role_instructions": operation_role_instructions(bound.compiled),
             "narrative_instruction": narrative_instruction(
                 bound.execution_profile["profile"] if bound.execution_profile else None),

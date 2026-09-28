@@ -151,6 +151,8 @@ class OperationCallInput(NamedInput, RevisionInput):
     inputs: tuple[OperationInputSelection, ...] = Field(max_length=64)
     instruction: str | None = Field(default=None, max_length=65536)
     parameters: EmptyOperationParameters = Field(default_factory=dict)
+    require_execution_review: bool | None = Field(default=None,
+        description="Experiment tasks only. Set true when the user/task explicitly requires independent implementation review before formal execution. Control requires a pass on the exact sealed implementation and resolves the review automatically; no Worker binding fields. Omission defaults to false for new tasks and inherits the requirement on recovery. Recovery cannot remove an existing requirement.")
     execution_profile: ExecutionProfile | None = Field(default=None,
         description="Control-owned model, reasoning effort and narrative language snapshot. Invoke resolves and freezes defaults when omitted. Optional preflight returns normalized_request; reuse it unchanged to preserve that snapshot. Not scientific parameters.")
     max_attempts: int | None = Field(
