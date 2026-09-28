@@ -169,7 +169,7 @@ def test_instance_current_is_pure_and_ui_directly_creates_and_binds(
         ui.stop()
 
 
-def test_direct_ui_selection_atomically_transfers_the_single_session_owner(
+def test_direct_ui_selection_preserves_other_readers_and_requires_explicit_takeover(
     tmp_path: Path,
 ) -> None:
     runtime, _, secret, ui, base = _setup(tmp_path)
@@ -190,6 +190,7 @@ def test_direct_ui_selection_atomically_transfers_the_single_session_owner(
             },
         )
         assert status == 303
+        first.call_tool("progression_command", {"command": "start"})
 
         capability, csrf, page = _management_page(second, base)
         assert b"m6a.transfer" in page
@@ -210,8 +211,15 @@ def test_direct_ui_selection_atomically_transfers_the_single_session_owner(
             "capability": capability, "csrf": csrf, "name": "m6a.transfer",
             "confirm_binding": "yes", "expected_binding": expected})
         assert status == 303
-        assert first.call_tool("instance_current", {})["state"] == "unbound"
+        assert first.call_tool("instance_current", {})["name"] == "m6a.transfer"
         assert second.call_tool("instance_current", {})["name"] == "m6a.transfer"
+        assert first.call_tool("progression_status", {})["can_schedule"]
+        assert not second.call_tool("progression_status", {})["can_schedule"]
+        status, _, _ = _request(base, "POST", "/instances/progression", form={
+            "capability": capability, "csrf": csrf, "command": "takeover"})
+        assert status == 303
+        assert second.call_tool("progression_status", {})["can_schedule"]
+        assert not first.call_tool("progression_status", {})["can_schedule"]
         restarted = _root(
             runtime,
             session_key="sch_" + "3" * 32,

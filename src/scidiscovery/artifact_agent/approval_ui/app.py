@@ -418,7 +418,8 @@ class ApprovalUI:
                 current_id = self.bindings.session_instance(session_key=capability.session_key)
                 current = self.bindings.get_instance(instance_id=current_id) if current_id else None
             controls = session_controls(rows, token=token, csrf=self.session_id, current=current,
-                expires_at=capability.expires_at, workbench_available=self.read_model is not None)
+                expires_at=capability.expires_at, workbench_available=self.read_model is not None,
+                progression=self.bindings.progression_status(instance_id=current.instance_id, session_key=capability.session_key) if current else None)
             body = management_page("科研会话 · " + capability.session_key[-8:],
                 "<p><a href='/sessions'>返回会话列表</a></p>" + controls)
         else:
@@ -812,6 +813,7 @@ class ApprovalUI:
             "create",
             "create-unbound",
             "client-state",
+            "progression",
             "clients-clear",
             "select",
             "access",
@@ -917,13 +919,32 @@ class ApprovalUI:
                 raise ValueError("CSRF mismatch")
             # Local browser access is a human, same-origin form action. Only
             # changing a research conversation's binding needs its capability.
-            if action in {"create", "select"}:
+            if action in {"create", "select", "progression"}:
                 capability_token = _required(form, "capability")
                 capability = self._instance_capability(capability_token)
             elif self.browser_access is None:
                 raise ValueError("local instance management is unavailable")
             maintenance_access = False
             with self._shared_maintenance():
+                if action == "progression":
+                    key = capability.session_key
+                    bound = self.bindings.session_instance(session_key=key)
+                    if bound is None:
+                        raise SchedulerInstanceConflict("请先选择读取实例。")
+                    name = _one(form, "objective_name") or None
+                    ref = None
+                    if name:
+                        if self.read_model is None:
+                            raise ValueError("objective service unavailable")
+                        artifact = self.read_model.artifacts.get_by_id(self.bindings.resolve(instance=bound, namespace="artifact", name=name))
+                        if artifact.kind != "scidiscovery.research-objective.v1":
+                            raise ValueError("start requires a frozen research objective")
+                        ref = artifact.ref
+                    self.bindings.progression_command(instance_id=bound, session_key=key,
+                        command=_required(form, "command"), mode=_one(form, "mode") or "interactive",
+                        objective_name=name, objective_ref=ref)
+                    return self._respond(handler, HTTPStatus.SEE_OTHER, b"", "text/plain; charset=utf-8",
+                        extra_headers={"Location": "/sessions/" + key + "?" + urlencode({"capability": capability_token})})
                 if action == "clients-clear":
                     cleared = self.bindings.clear_offline_clients(can_clear_instance=self._cache_writable)
                     return self._respond(handler, HTTPStatus.SEE_OTHER, b"", "text/plain; charset=utf-8",

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from ..service.scheduling_control import owned_mutation
+
 import json
 from itertools import islice
 from typing import Any
@@ -327,6 +329,7 @@ class RootRunRoutes:
             result["execution_profile"] = {"profile":result["execution_profile"]["profile"]}
         return result
 
+    @owned_mutation
     def run_record_failure(
         self,
         *,

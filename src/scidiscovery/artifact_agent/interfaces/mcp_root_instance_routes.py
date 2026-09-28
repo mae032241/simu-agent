@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from ..service.scheduling_control import owned_mutation
+
 import hashlib
 from typing import Any
 from urllib.parse import urlencode
@@ -15,8 +17,6 @@ from .mcp_root_shared import RootToolError
 class RootInstanceRoutes:
     def instance_current(self) -> dict[str, Any]:
         if self.session_key is not None:
-            if not self.bindings.client_enabled(session_key=self.session_key):
-                return {"state": "paused", "management_url": self._instance_management_url()}
             bound = self.bindings.session_instance(session_key=self.session_key)
             if bound is None:
                 self.instance = None
@@ -27,6 +27,7 @@ class RootInstanceRoutes:
             self.instance = bound
         value = self.bindings.get_instance(instance_id=self._instance_id())
         result = self._instance_value(value)
+        result["scheduling"] = self.progression_status()
         if (self.session_key is not None and self.instance_management_secret is not None
                 and self.approval_base_url is not None):
             result["management_url"] = self._instance_management_url()
@@ -40,6 +41,7 @@ class RootInstanceRoutes:
             ]
         }
 
+    @owned_mutation
     def instance_close(self) -> dict[str, Any]:
         with self._create_lock:
             instance_id = self._instance_id()
@@ -111,6 +113,7 @@ class RootInstanceRoutes:
             ]
         }
 
+    @owned_mutation
     def scientific_current_select(
         self, *, name: str, kind: str, expected_artifact_name: str | None
     ) -> dict[str, Any]:
@@ -223,6 +226,7 @@ class RootInstanceRoutes:
             ]
         }
 
+    @owned_mutation
     def artifact_ingest_file(
         self,
         *,
@@ -255,6 +259,7 @@ class RootInstanceRoutes:
                 binding = self._binding("artifact", target.name)
         return {**self._binding_value(binding), "state": "bound"}
 
+    @owned_mutation
     def artifact_ingest_text(
         self,
         *,

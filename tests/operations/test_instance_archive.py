@@ -98,6 +98,8 @@ def test_pausing_client_does_not_allow_archiving_queued_or_running_work(tmp_path
             db.execute('UPDATE scheduler_clients SET last_seen=0')
     if presence == 'cleared':
         assert runtime.scheduler_bindings.clear_offline_clients() == 1
+    # Client presence cannot pause the separate administrative writer.
+    runtime.scheduler_bindings.progression_command(instance_id=instance.instance_id, session_key=None, command='pause')
     service=InstanceArchive(runtime)
     for expected in ('queued','running'):
         view=service.preview(instance.instance_id)

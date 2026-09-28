@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from ..service.scheduling_control import owned_mutation
+
 import uuid
 from dataclasses import replace
 from typing import Any, Protocol
@@ -240,6 +242,7 @@ class RootOperationRoutes:
                            for item in normalized["inputs"]]}
         return result
 
+    @owned_mutation
     def operation_invoke(self, **values: Any) -> dict[str, Any]:
         with self._create_lock:
             try:

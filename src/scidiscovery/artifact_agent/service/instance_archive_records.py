@@ -27,7 +27,7 @@ DATABASES = {
 }
 TABLES = {
     "scheduler": ("scheduler_instances", "scheduler_bindings", "scheduler_observations",
-                  "scheduler_scientific_selections", "scheduler_sessions"),
+                  "scheduler_scientific_selections", "scheduler_sessions", "scheduler_progression", "scheduler_dispatch_intents"),
     "runs": ("runs", "run_activity", "run_tool_evidence", "run_activity_sequence", "worker_connections", "worker_participants"),
     "approvals": ("approval_requests", "approval_decisions", "used_nonces", "decision_attempts"),
     "executions": ("executions", "execution_policy_authorizations", "execution_current_policy",
@@ -206,6 +206,39 @@ def execution_settings_restore_view(data):
             for name, (_, default) in missing.items():
                 row[name] = default
     projected = data if result is None else result
+    if "scheduler_instances" in projected["schema"]["tables"]:
+        from .scheduling_control import CONTROL_SCHEMA, CONTROL_VERSION
+        projected = deepcopy(projected)
+        if projected["schema"]["user_version"] > CONTROL_VERSION:
+            raise ArchiveError("unsupported scheduler control schema version")
+        with sqlite3.connect(":memory:") as transient:
+            transient.row_factory = sqlite3.Row
+            transient.executescript(CONTROL_SCHEMA)
+            addition = schema(transient)
+        for table in addition["tables"]:
+            if table not in projected["schema"]["tables"]:
+                projected["schema"]["tables"][table] = addition["tables"][table]
+                projected["schema"]["objects"].extend(obj for obj in addition["objects"] if obj["tbl_name"] == table)
+        if any(obj["name"] == "scheduler_sessions_one_owner" for obj in projected["schema"]["objects"]):
+            objects = projected["schema"]["objects"]
+            with sqlite3.connect(":memory:") as transient:
+                transient.row_factory = sqlite3.Row
+                for obj in sorted((obj for obj in objects if obj["tbl_name"] == "scheduler_sessions"), key=lambda obj: obj["type"] != "table"):
+                    if obj["sql"]:
+                        transient.execute(obj["sql"])
+                transient.execute("DROP INDEX scheduler_sessions_one_owner")
+                projected["schema"]["tables"]["scheduler_sessions"] = schema(transient)["tables"]["scheduler_sessions"]
+            projected["schema"]["objects"] = [obj for obj in objects if obj["name"] != "scheduler_sessions_one_owner"]
+        projected["schema"]["objects"].sort(key=lambda obj: (obj["type"], obj["name"]))
+        projected["schema"]["user_version"] = CONTROL_VERSION
+        projected["tables"].setdefault("scheduler_progression", [])
+        projected["tables"].setdefault("scheduler_dispatch_intents", [])
+        for row in projected["tables"]["scheduler_progression"]:
+            # Validation and transfer both project the same immutable snapshot.
+            # Projection is idempotent so interrupted restore can verify its commit.
+            generation = row["generation"] + (row["reason"] != "archive_restored")
+            row.update(state="paused", reason="archive_restored", owner_session=None, requested_by=None, host_json=None,
+                       generation=generation)
     if "runs" in projected["schema"]["tables"]:
         for table, ddl in (("worker_connections", WORKER_CONNECTION_SCHEMA), ("worker_participants", WORKER_PARTICIPANT_SCHEMA)):
             if table in projected["schema"]["tables"]:
@@ -292,7 +325,7 @@ class Records:
     # These columns belong to control records. Instruction, reason, arbitrary
     # scientific payloads and cache presentation text never grant reachability.
     CONTROL_COLUMNS = (
-        "artifact_ref_json", "inputs_json", "output_ref_json", "completion_receipt_json",
+        "objective_ref_json", "checkpoint_json", "artifact_ref_json", "inputs_json", "output_ref_json", "completion_receipt_json",
         "recovery_draft_json", "record_json", "diagnostic_json", "request_ref_json",
         "decision_ref_json", "create_request_json", "binding_json", "payload_ref_json", "result_ref_json",
     )
@@ -402,7 +435,7 @@ class Records:
         result = {key: {"schema": data["schema"], "tables": {table: [] for table in data["tables"]}}
                   for key, data in self.databases.items()}
         for table in result["scheduler"]["tables"]:
-            column = "instance_id" if table in {"scheduler_instances", "scheduler_sessions"} else "instance"
+            column = "instance_id" if table in {"scheduler_instances", "scheduler_sessions", "scheduler_progression", "scheduler_dispatch_intents"} else "instance"
             result["scheduler"]["tables"][table] = self._materialize("scheduler", table,
                 where=quote(column) + "=?", parameters=(instance_id,))
         bindings = result["scheduler"]["tables"]["scheduler_bindings"]
@@ -612,7 +645,8 @@ class Records:
                     continue
                 where, parameters, owner_column, owners = "", (), None, ()
                 if database == "scheduler":
-                    where, parameters = "instance IS NOT ?", (instance_id,)
+                    owner = "instance_id" if table in {"scheduler_instances", "scheduler_sessions", "scheduler_progression", "scheduler_dispatch_intents"} else "instance"
+                    where, parameters = owner + " IS NOT ?", (instance_id,)
                 elif database == "runs":
                     where = "instance_id IS NOT ?" if table == "runs" else "run_id NOT IN (SELECT run_id FROM runs WHERE instance_id=?)"
                     parameters = (instance_id,)

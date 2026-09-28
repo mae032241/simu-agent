@@ -68,6 +68,7 @@ def _archived_and_restored_draft(tmp_path):
         ("artifact:source_csv", "run:failed_source"))
     assert any(link["key"] == "run:failed_source" and link["relation"] == "consumes"
         for link in original_links["artifact:source_csv"]["successors"])
+    root.call_tool("progression_command", {"command": "pause"})
     service = InstanceArchive(runtime)
     assert save_archive(service, instance.instance_id)["storage_state"] == "archived"
     assert not preserved.exists()
@@ -129,6 +130,8 @@ def test_archive_browse_restore_preserves_real_continuation_admission_and_assign
     }
     admitted = root.call_tool("operation_preflight", request)
     assert admitted["admissible"] is True, admitted
+    assert root.call_tool("progression_status", {})["state"] == "paused"
+    root.call_tool("progression_command", {"command": "resume"})
     invoked = root.call_tool("operation_invoke", request)
     assert invoked["result"]["state"] == "queued"
     successor_id = runtime.scheduler_bindings.resolve(instance=instance.instance_id,
@@ -172,6 +175,7 @@ def test_archive_browse_restore_preserves_real_continuation_admission_and_assign
     chosen_key = "artifact:changed_source_csv" if use_changed_input else "artifact:source_csv"
     assert any(link["key"] == "run:restored_continuation" and link["relation"] == "consumes"
         for link in original_links[chosen_key]["successors"])
+    root.call_tool("progression_command", {"command": "pause"})
     service = InstanceArchive(runtime)
     assert save_archive(service, instance.instance_id)["storage_state"] == "archived"
     archived_links = _relationships(service.archived_model(instance.instance_id), instance.instance_id, original_links)

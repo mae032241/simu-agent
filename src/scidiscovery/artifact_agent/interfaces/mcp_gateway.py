@@ -256,7 +256,17 @@ class UnifiedMCPRouter:
                     runs.scheduler_bindings.require_active_instance(instance_id=instance_id)
                     if runs.status(run_id).instance_id != instance_id:
                         raise DiagnosticError("Run belongs to another research instance")
-                    self.connections.attach(run_id=run_id, platform_session=context.session, thread_id=parsed.thread_id)
+                    # An exact existing connection can recover without renewed scheduling
+                    # authority. A new attachment must belong to this generation's intent.
+                    with runs._connect() as connection:
+                        attached = connection.execute("SELECT platform_session, thread_id FROM worker_connections WHERE run_id=?", (run_id,)).fetchone()
+                    if attached is not None and tuple(attached) == (context.session, parsed.thread_id):
+                        self.connections.attach(run_id=run_id, platform_session=context.session, thread_id=parsed.thread_id)
+                    else:
+                        with self.facade.scheduling_guard() as generation:
+                            self.facade.bindings.require_dispatch_intent(instance_id=instance_id, run_id=run_id,
+                                session_key=self.facade.session_key, generation=generation)
+                            self.connections.attach(run_id=run_id, platform_session=context.session, thread_id=parsed.thread_id)
             return {"state": "attached", "name": parsed.name}
         # Existing Root handlers remain the sole authority for bindings, approvals and Run lifecycle.
         return self.root.call_tool(values.name, values.arguments, surface=values.surface)

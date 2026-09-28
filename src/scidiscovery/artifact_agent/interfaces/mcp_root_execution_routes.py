@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from ..service.scheduling_control import owned_mutation
+
 import hashlib
 from typing import Any
 
@@ -76,6 +78,7 @@ class RootExecutionRoutes:
             "capabilities": [dict(item.public_summary) for item in capabilities],
         }
 
+    @owned_mutation
     def execution_capability_bind(
         self,
         *,
@@ -508,10 +511,12 @@ class RootExecutionRoutes:
             compiled_identity,
         )
 
+    @owned_mutation
     def execution_abandon(self, *, name: str) -> dict[str, Any]:
         self.executions.abandon(self._resolve("execution", name))
         return self.execution_status(name=name)
 
+    @owned_mutation
     def execution_cancel(self, *, name: str) -> dict[str, Any]:
         if self.execution_bridge is None:
             raise RootToolError("no execution bridge is configured")
@@ -543,6 +548,7 @@ class RootExecutionRoutes:
                if self.execution_collection is not None else {}),
         }
 
+    @owned_mutation
     def execution_collect(self, *, name: str, total_seconds: float) -> dict:
         execution_id = self._resolve("execution", name)
         if self.execution_collection is None:
@@ -563,6 +569,7 @@ class RootExecutionRoutes:
         items, cursor = page(values(), key="name", limit=limit, before=before)
         return {"executions": items, "next_before": cursor}
 
+    @owned_mutation
     def execution_outputs(self, *, name: str) -> dict[str, Any]:
         execution_id = self._resolve("execution", name)
         result_name = self._publish_execution_result(name=name)
@@ -580,6 +587,7 @@ class RootExecutionRoutes:
             )
         return {"execution_name": name, "result_artifact_name": result_name, "outputs": outputs}
 
+    @owned_mutation
     def execution_start(self, *, name: str) -> dict[str, Any]:
         self._require_scheduling_enabled()
         if self.execution_bridge is None:
@@ -606,6 +614,7 @@ class RootExecutionRoutes:
                 "authorization_required": "human"}
         return self.execution_status(name=name)
 
+    @owned_mutation
     def execution_sync(self, *, name: str) -> dict[str, Any]:
         if self.execution_bridge is None:
             raise RootToolError("no execution bridge is configured")

@@ -128,7 +128,15 @@ class InstanceArchive:
         return digest(value)
 
     def _require_paused_clients(self, instance_id):
-        if self.runtime.scheduler_bindings.active_clients(instance_id=instance_id):
+        control = self.runtime.scheduler_bindings.progression_status(instance_id=instance_id, internal=True)
+        if control.get("host_json") is not None:
+            raise InstanceMaintenanceBusy("The native Root host must confirm quiescence before archiving.",
+                details=({"kind": "root_host", "reason": "host_quiescence_unconfirmed"},))
+        if control["state"] == "active":
+            raise InstanceMaintenanceBusy("Pause scheduling before archiving; accepted Workers still require quiescence.")
+        # Reading sessions hold no scheduling authority. Legacy clients without
+        # a control record retain the previous pause prerequisite.
+        if control["state"] == "idle" and self.runtime.scheduler_bindings.active_clients(instance_id=instance_id):
             raise InstanceMaintenanceBusy("请先在工作台暂停关联科研会话，再归档实例。",
                 details=({"kind": "research_client", "reason": "client_scheduling_enabled",
                     "message": "关联科研会话仍允许调度；请先在首页的科研会话管理中暂停，再归档。"},))

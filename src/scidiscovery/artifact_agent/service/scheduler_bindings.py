@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from ..schema.refs import ArtifactRef
+from .scheduling_control import SchedulingControl, CONTROL_SCHEMA, CONTROL_VERSION
 from ...agent_execution_settings import EXECUTION_SETTINGS_COLUMNS, parse_settings
 
 
@@ -87,7 +88,7 @@ class SchedulerScientificSelection:
     selected_at: str
 
 
-class SchedulerBindingService:
+class SchedulerBindingService(SchedulingControl):
     """Keep control identities behind instance-scoped semantic revisions."""
 
     def __init__(self, database_path: Path | str) -> None:
@@ -125,7 +126,7 @@ class SchedulerBindingService:
         self._validate_name(name, label="research instance name")
         _bounded_text(title, label="research instance title", maximum=512)
         _bounded_text(objective, label="research instance objective", maximum=8192)
-        with self._connect() as connection:
+        with self.control_maintenance.global_guard(), self.scheduling_lock(), self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             self._check_session_snapshot(connection, session_key, None, expected_binding)
             value = self._create_instance_in_connection(
@@ -146,7 +147,7 @@ class SchedulerBindingService:
 
         self._validate_session_key(session_key)
         self._validate_name(name, label="research instance name")
-        with self._connect() as connection:
+        with self.control_maintenance.global_guard(), self.scheduling_lock(), self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             row = connection.execute(
                 "SELECT * FROM scheduler_instances WHERE name = ?", (name,)
@@ -218,11 +219,24 @@ class SchedulerBindingService:
     def set_client_enabled(self, *, session_key: str, enabled: bool, expected: bool) -> None:
         if not self.client_database_path.exists():
             raise SchedulerInstanceConflict("会话尚未登记，请先连接科研客户端。")
-        with self._client_connect() as connection:
-            cursor = connection.execute("UPDATE scheduler_clients SET enabled=? WHERE session_key=? AND enabled=?",
-                                        (int(enabled), session_key, int(expected)))
-            if cursor.rowcount != 1:
-                raise SchedulerInstanceConflict("会话状态已变化，请刷新后重试。")
+        with self.control_maintenance.global_guard(), self.scheduling_lock():
+            bound = self.session_instance(session_key=session_key)
+            if bound:
+                self.control_maintenance.ensure_available(bound)
+            with self._client_connect() as connection:
+                row = connection.execute("SELECT enabled FROM scheduler_clients WHERE session_key=?", (session_key,)).fetchone()
+                if row is None or bool(row[0]) != expected:
+                    raise SchedulerInstanceConflict("会话状态已变化，请刷新后重试。")
+            if bound:
+                state = self.progression_status(instance_id=bound, internal=True)
+                if (state.get("owner_session") == session_key
+                        or (state["state"] == "pending" and state.get("requested_by") == session_key)
+                        or (enabled and state["state"] == "paused")):
+                    self.progression_command(instance_id=bound, session_key=session_key,
+                        command="resume" if enabled else "pause")
+            with self._client_connect() as connection:
+                connection.execute("UPDATE scheduler_clients SET enabled=? WHERE session_key=?",
+                                   (int(enabled), session_key))
 
     def clear_offline_clients(self, *, can_clear_instance=None) -> int:
         """Remove transient clients and their bindings, never instance records.
@@ -232,7 +246,7 @@ class SchedulerBindingService:
         """
         if not self.client_database_path.exists():
             return 0
-        with self._client_connect(bindings=True) as connection:
+        with self.control_maintenance.global_guard(), self.scheduling_lock(), self._client_connect(bindings=True) as connection:
             # Finish any sidecar migration before locking both attached databases.
             connection.commit()
             connection.execute("BEGIN IMMEDIATE")
@@ -292,7 +306,7 @@ class SchedulerBindingService:
         owner = next((row for row in values if row["instance_id"] == instance_id), None)
         fingerprint = hashlib.sha256(json.dumps([session_key, instance_id, values], sort_keys=True).encode()).hexdigest()
         return {"current_instance_id": current["instance_id"] if current else None,
-                "target_bound": owner is not None, "target_is_current": owner is not None and owner["session_key"] == session_key,
+                "target_bound": owner is not None, "target_is_current": current is not None and current["instance_id"] == instance_id,
                 "fingerprint": fingerprint}
 
     @classmethod
@@ -396,6 +410,9 @@ class SchedulerBindingService:
                 """,
                 (closed_at, instance_id),
             )
+            connection.execute("UPDATE scheduler_progression SET state='stopped', reason='instance_closed', "
+                "owner_session=NULL, generation=generation+1, updated_at=? WHERE instance_id=?",
+                (closed_at, instance_id))
             connection.execute(
                 "DELETE FROM scheduler_sessions WHERE instance_id = ?",
                 (instance_id,),
@@ -413,7 +430,7 @@ class SchedulerBindingService:
 
     def bind_session(self, *, session_key: str, instance_id: str) -> None:
         self._validate_session_key(session_key)
-        with self._connect() as connection:
+        with self.control_maintenance.global_guard(), self.scheduling_lock(), self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             self._bind_session_in_connection(
                 connection, session_key=session_key, instance_id=instance_id
@@ -477,10 +494,10 @@ class SchedulerBindingService:
             closed_at=None,
         )
 
-    @staticmethod
     def _bind_session_in_connection(
-        connection: sqlite3.Connection, *, session_key: str, instance_id: str
+        self, connection: sqlite3.Connection, *, session_key: str, instance_id: str
     ) -> None:
+        self.control_maintenance.ensure_available(instance_id)
         row = connection.execute(
             """
             SELECT instance.state
@@ -493,10 +510,6 @@ class SchedulerBindingService:
             raise SchedulerInstanceNotFound("unknown research instance")
         if row["state"] != "active":
             raise SchedulerInstanceClosed("research instance is closed")
-        connection.execute(
-            "DELETE FROM scheduler_sessions WHERE instance_id = ? AND session_key <> ?",
-            (instance_id, session_key),
-        )
         connection.execute(
             """
             INSERT INTO scheduler_sessions (session_key, instance_id, updated_at)
@@ -1083,6 +1096,7 @@ class SchedulerBindingService:
                 raise SchedulerBindingError(
                     "scheduler database cannot provide atomic attached commits"
                 )
+            connection.execute("BEGIN IMMEDIATE")
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS scheduler_instances (
@@ -1160,24 +1174,14 @@ class SchedulerBindingService:
                 )
                 """
             )
-            connection.execute(
-                """
-                DELETE FROM scheduler_sessions
-                WHERE rowid NOT IN (
-                    SELECT newest.rowid
-                    FROM scheduler_sessions AS newest
-                    WHERE newest.instance_id = scheduler_sessions.instance_id
-                    ORDER BY newest.updated_at DESC, newest.rowid DESC
-                    LIMIT 1
-                )
-                """
-            )
-            connection.execute(
-                """
-                CREATE UNIQUE INDEX IF NOT EXISTS scheduler_sessions_one_owner
-                ON scheduler_sessions(instance_id)
-                """
-            )
+            version = connection.execute("PRAGMA user_version").fetchone()[0]
+            if version > CONTROL_VERSION:
+                raise SchedulerBindingError("scheduler control schema is newer than this installation")
+            connection.execute("DROP INDEX IF EXISTS scheduler_sessions_one_owner")
+            for statement in CONTROL_SCHEMA.split(";"):
+                if statement.strip():
+                    connection.execute(statement)
+            connection.execute(f"PRAGMA user_version={CONTROL_VERSION}")
             columns = {
                 str(row["name"])
                 for row in connection.execute(

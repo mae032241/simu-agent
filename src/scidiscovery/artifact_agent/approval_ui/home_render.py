@@ -16,7 +16,7 @@ def client_directory(rows, *, csrf, links, offset=0, cleared=None):
     cards = []
     for row in rows:
         key = row["session_key"]
-        state = "已暂停" if not row["enabled"] else "已绑定 · 允许调度" if row["instance_id"] else "申请绑定"
+        state = "已暂停" if not row["enabled"] else "已选择 · 按实例调度权执行" if row["instance_id"] else "申请绑定"
         label = "暂停后续调度" if row["enabled"] else "恢复调度"
         cards.append("<article class='instance-directory-card'><h2>科研会话 · " + escape(key[-8:]) + "</h2>"
             "<p>在线 · " + state + "</p><p>关联实例：" + escape(row["title"] or "尚未绑定") + "</p>"
@@ -64,7 +64,7 @@ def create_form(*, csrf, token=None):
         "<button type='submit'>" + label + "</button></form></div></details>")
 
 
-def session_controls(rows, *, token, csrf, current=None, expires_at=None, workbench_available=True):
+def session_controls(rows, *, token, csrf, current=None, expires_at=None, workbench_available=True, progression=None):
     current_title = escape(current.title) if current else "尚未绑定实例"
     body = ("<section class='home-session' id='session-binding'><h2>实例绑定</h2><p class='session-title'>"
             + current_title + "</p><p>打开实例查看资料不会改变会话绑定。</p>")
@@ -75,6 +75,18 @@ def session_controls(rows, *, token, csrf, current=None, expires_at=None, workbe
     elif current:
         body += "<a href='/instance/" + quote(current.instance_id, safe="") + "'>查看当前实例基本信息</a>"
     body += "<p class='source-note'>本页会话授权有效期：" + escape(expires_at or "") + "</p>"
+    if current and progression:
+        body += ("<section><h3>调度控制</h3><p>状态：" + escape(progression["state"])
+            + " · " + escape(progression["reason"]) + " · 调度者：" + escape(progression.get("writer", "none")) + "</p>"
+            + "<p>暂停和停止仅阻止后续调度；已接受任务继续交付。后台启动当前等待宿主接线。</p>"
+            + "<form method='post' action='/instances/progression'>" + common
+            + "<label>确切目标名称（启动时可指定）<input name='objective_name'></label>"
+            + "<label>模式<select name='mode'><option value='interactive'>交互</option><option value='background'>后台（待接线）</option></select></label>"
+            + "<button name='command' value='start'>启动</button></form>")
+        for command, label in (("pause", "暂停"), ("resume", "恢复"), ("stop", "停止"), ("takeover", "接管交互调度")):
+            body += ("<form method='post' action='/instances/progression'>" + common
+                + hidden("command", command) + "<button type='submit'>" + label + "</button></form>")
+        body += "</section>"
     options = "<option value='' disabled selected>选择要绑定的实例</option>"
     for row in rows:
         instance = row["instance"]
@@ -84,7 +96,7 @@ def session_controls(rows, *, token, csrf, current=None, expires_at=None, workbe
             + " · " + escape(row["binding_label"]) + "</option>")
     body += ("<section><h3>绑定或接续实例</h3><form class='instance-command' method='post' action='/instances/select'>"
         + common + "<label>目标实例<select name='name' required>" + options + "</select></label>"
-        "<button type='submit'>绑定到当前会话</button></form><p class='source-note'>切换或接管已有绑定前，会展示影响并要求确认。</p></section>"
+        "<button type='submit'>绑定到当前会话</button></form><p class='source-note'>选择仅增加当前读取关系；调度权须通过上方控制取得或显式接管。</p></section>"
         + "<p><a href='/#create-instance'>需要新实例？前往首页创建</a></p></section>")
     return body
 
@@ -135,9 +147,9 @@ def confirm_binding(*, action, values, token, csrf, snapshot, current_title, tar
     fields = hidden("capability", token) + hidden("csrf", csrf) + hidden("confirm_binding", "yes")
     fields += hidden("expected_binding", snapshot["fingerprint"])
     fields += "".join(hidden(key, value) for key, value in values.items())
-    ownership = "目标实例已有其他会话绑定；确认后会转移该绑定。" if snapshot["target_bound"] else "目标实例没有其他会话绑定。"
+    ownership = "目标实例已有其他读取会话；选择后这些会话仍可读取。" if snapshot["target_bound"] else "目标实例没有其他会话绑定。"
     return page("确认科研会话接续", "<section class='home-session'><p>当前实例：<strong>" + escape(current_title)
         + "</strong></p><p>接续到：<strong>" + escape(target_title) + "</strong></p><p>" + ownership
-        + "</p><p>原实例的记录会保留。转移绑定不会停止、重启或重新计算已有任务，也不代表新的执行授权。</p>"
+        + "</p><p>原实例的记录会保留。读取选择不取得或转移调度权，也不代表新的执行授权。</p>"
         "<p>已记录的任务情况：" + escape(activity) + "</p><form method='post' action='/instances/" + escape(action, quote=True) + "'>"
         + fields + "<button type='submit'>确认接续到当前会话</button> <a href='/sessions'>取消并返回会话列表</a></form></section>")

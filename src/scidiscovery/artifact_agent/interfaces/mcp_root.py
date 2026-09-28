@@ -5,6 +5,7 @@ from __future__ import annotations
 from ...agent_execution_settings import ExecutionProfile
 
 import threading
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Annotated, Any, Literal
 
@@ -50,6 +51,13 @@ class RootToolInput(BaseModel):
 
 class EmptyInput(RootToolInput):
     pass
+
+
+class ProgressionCommandInput(RootToolInput):
+    command: Literal["start", "pause", "resume", "stop", "takeover"]
+    mode: Literal["interactive", "background"] = "interactive"
+    objective_name: str | None = Field(default=None, pattern=_NAME_PATTERN,
+        description="Exact bound research objective for start; changes require pausing first.")
 
 
 class ReadInput(RootToolInput):
@@ -273,7 +281,15 @@ class RootTool:
         }
 
 
+SCHEDULING_WRITES = frozenset({
+    "instance_close", "scientific_current_select", "artifact_ingest_file", "artifact_ingest_text",
+    "operation_invoke", "run_record_failure", "execution_capability_bind", "execution_abandon",
+    "execution_cancel", "execution_outputs", "execution_start", "execution_sync", "execution_collect",
+})
+
 ROOT_TOOLS = (
+    RootTool("progression_status", "Read scheduling ownership and frozen objective; accepted work has independent Run state.", EmptyInput),
+    RootTool("progression_command", "Start, pause, resume, stop or explicitly take over scheduling for the selected instance. Background start remains pending until its host is available. Pause/stop do not cancel accepted work.", ProgressionCommandInput),
     RootTool("diagnostic_read", "Read bounded engineering error details visible to the current instance or session.", DiagnosticReadInput),
     RootTool("instance_current", "Read the bound research instance or return its direct local management URL.", ReadInput),
     RootTool("instance_list", "List research instances without exposing internal identity.", InstanceListInput),
@@ -482,7 +498,7 @@ class RootToolFacade(
         object_id: str,
         request_fingerprint: str,
     ) -> SchedulerBinding:
-        return self.bindings.bind(
+        binding = self.bindings.bind(
             instance=self._instance_id(),
             namespace=namespace,
             name=target.name,
@@ -491,6 +507,31 @@ class RootToolFacade(
             object_id=object_id,
             request_fingerprint=request_fingerprint,
         )
+        if namespace == "run":
+            self.bindings.record_dispatch_intent(instance_id=self._instance_id(), run_id=object_id, session_key=self.session_key)
+        return binding
+
+    @contextmanager
+    def scheduling_guard(self):
+        instance_id = self._instance_id()
+        observed = self.bindings.progression_status(instance_id=instance_id, internal=True)
+        with self.bindings.scheduling_guard(instance_id=instance_id, session_key=self.session_key,
+                expected_generation=observed.get("generation")) as generation:
+            yield generation
+
+    def progression_status(self):
+        return self.bindings.progression_status(instance_id=self._instance_id(), session_key=self.session_key)
+
+    def progression_command(self, *, command, mode="interactive", objective_name=None):
+        instance_id = self._instance_id()
+        ref = None
+        if objective_name is not None:
+            artifact = self.artifacts.get_by_id(self._resolve_input_artifact(objective_name))
+            if artifact.kind != "scidiscovery.research-objective.v1":
+                raise RootToolError("start requires a research objective Artifact")
+            ref = artifact.ref
+        return self.bindings.progression_command(instance_id=instance_id, session_key=self.session_key,
+            command=command, mode=mode, objective_name=objective_name, objective_ref=ref)
 
     def _require_scheduling_enabled(self) -> None:
         if self.session_key is not None and not self.bindings.client_enabled(session_key=self.session_key):
@@ -578,6 +619,12 @@ class RootMCPRouter:
             return self._call_tool(name, arguments)
 
     def _call_tool(self, name: str, arguments: dict[str, Any] | None) -> Any:
+        if name in SCHEDULING_WRITES:
+            with self.facade.scheduling_guard():
+                return self._dispatch_tool(name, arguments)
+        return self._dispatch_tool(name, arguments)
+
+    def _dispatch_tool(self, name: str, arguments: dict[str, Any] | None) -> Any:
         try:
             tool = self._tools[name]
         except KeyError as error:

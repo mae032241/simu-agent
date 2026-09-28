@@ -31,7 +31,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--approval-secret-file", type=Path)
     parser.add_argument("--shared-group", action="store_true")
     parser.add_argument("--instance")
+    parser.add_argument("--session", help="Existing UI-selected research session; no automatic instance binding.")
     commands = parser.add_subparsers(dest="command", required=True)
+
+    control = commands.add_parser("progression")
+    control.add_argument("action", choices=("start", "status", "pause", "resume", "stop", "takeover"))
+    control.add_argument("--mode", choices=("interactive", "background"), default="interactive")
+    control.add_argument("--objective-name")
 
     initialize = commands.add_parser("init")
     initialize.add_argument("platform", choices=("codex",))
@@ -167,6 +173,17 @@ def _run(args: argparse.Namespace) -> Any:
         worker_backend=getattr(args, "worker_backend", "local"),
         local_workspace_root=getattr(args, "local_workspace_root", None),
     )
+    if args.command == "progression":
+        if not args.session:
+            raise ValueError("--session must identify an existing selection made in the management UI")
+        instance_id = runtime.scheduler_bindings.session_instance(session_key=args.session)
+        if instance_id is None:
+            raise ValueError("choose the research instance in the management UI first")
+        facade = RootToolFacade(runtime.artifacts, runtime.intake, runs=runtime.runs,
+            approvals=runtime.approvals, executions=runtime.executions, bindings=runtime.scheduler_bindings,
+            instance=instance_id, session_key=args.session, operation_catalog=runtime.operation_catalog)
+        return (facade.progression_status() if args.action == "status" else
+            facade.progression_command(command=args.action, mode=args.mode, objective_name=args.objective_name))
     if args.command == "instance-create":
         with runtime.maintenance.shared():
             return _instance_value(
@@ -202,7 +219,8 @@ def _run(args: argparse.Namespace) -> Any:
 
         if args.instance is None:
             raise ValueError("--instance is required for active bundle import")
-        with runtime.maintenance.shared():
+        instance = runtime.scheduler_bindings.select_instance(name=args.instance)
+        with runtime.scheduler_bindings.scheduling_guard(instance_id=instance.instance_id, session_key=None):
             return import_active_research_bundle(
                 runtime=runtime,
                 instance_name=args.instance,

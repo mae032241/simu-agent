@@ -20,6 +20,7 @@ def _fixture(tmp_path, *, legacy):
     _write_result(worker)
     worker.call_tool("worker_submit_result", {})
     run_id = worker._run_id
+    runtime.scheduler_bindings.progression_command(instance_id=instance.instance_id, session_key=None, command="pause")
     if legacy:
         # Synthetic old schema. An actual old installed-package archive is also
         # replayed in installation evidence; no production database is changed.

@@ -426,7 +426,7 @@ def root_response(name, value, arguments):
                 "parent_count": value["parent_count"] if "parent_count" in value else len(value["parents"]),
                 "detail": {"tool": name, "name": value["name"], "view": "parents"}}
     if name in {"instance_current", "instance_close"} and not detail:
-        return pick(value, "name", "title", "state", "management_url")
+        return pick(value, "name", "title", "state", "management_url", "scheduling")
     if name == "approval_status" and not detail:
         result = pick(value, "name", "status", "selected_option", "review_url", "rationale")
         rationale = result.get("rationale")
