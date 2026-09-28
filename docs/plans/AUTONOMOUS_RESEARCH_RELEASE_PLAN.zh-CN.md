@@ -2,7 +2,7 @@
 
 日期：2026-09-27
 
-状态：B0a 的最小真实闭环、原线程恢复、客户端断线期间 Worker 完成提交及重连回读已通过；服务崩溃/助手生命周期与完整进程内存覆盖待验。B0b 的可安装宿主适配与试验入口迁移已实现，服务接线尚未启用；B1 控制状态、唯一写者和归档迁移已实现并经本地无模型回归验证；B2–B4 的源码实现与无模型过程验证已完成；B5 最小 UI、持久回读事项与成果/费用投影已实现并经无模型回归验证；B6 候选、恢复边界与普通终端入口已实现；源码与进程回归通过，真实多任务旅程、浏览器/聊天宿主旅程与原生生命周期仍待验。
+状态：B0a 的最小真实闭环、原线程恢复、客户端断线期间 Worker 完成提交及重连回读已通过；服务崩溃/助手生命周期与完整进程内存覆盖待验。B0b 可安装宿主适配和 B2 服务接线已实现，服务默认休眠，用户明确启动目标才运行；B1 控制状态、唯一写者和归档迁移已实现并经本地无模型回归验证；B2–B4 的源码实现与无模型过程验证已完成；B5 最小 UI、持久回读事项与成果/费用投影已实现并经无模型回归验证；B6 候选、恢复边界与普通终端入口已实现。独立审查发现的三个恢复缺陷已修复，新候选安装、daemon/UI、原地重启和归档恢复检查通过；真实多任务旅程、浏览器/聊天宿主旅程与原生生命周期仍待验。
 
 参考基线：`dev` / `e27352a`；实施前核对当前工作树及已安装候选，保留其他执行者的修订。
 分支与提交遵循[总路线第 4.3 节](SCIENTIFIC_CONTINUATION_AND_SIMPLIFICATION_PLAN.zh-CN.md#43-分支与提交约定)。
@@ -958,8 +958,7 @@ summary 当作 B6 通过，也不声称完成原生 pause/resume/重启、helper
 SCID_B6_CANDIDATE=/tmp/scid-b6-candidate-20260928 python scripts/run_tests.py --lane installed --output /tmp/scid-b6-installed-final-20260928 tests/operations/test_progression_acceptance.py
 ```
 
-独立审查及串行安装复验后，普通登录终端可用
-`python scripts/accept_progression.py --candidate /tmp/scid-b6-candidate-20260928` 继续真实旅程。
+本节旧候选已被后续恢复修复和安装节点替代；真实旅程使用文末新候选命令。
 系统级单元与单用户终端的 PATH、HOME/CODEX_HOME、PrivateTmp 及写权限不同；候选只承诺
 所测运行方式的证据。当前还不能宣称系统级原生宿主、两完整任务真实接续、浏览器附件旅程、
 pause/resume/重连/停止、跨终端运行、原地原生恢复、真实 helper 或成本优劣通过。
@@ -994,3 +993,22 @@ SCID_B6_CANDIDATE=/tmp/scid-b6-candidate-recovery-20260928 python scripts/run_te
 ```
 
 本修复节点未运行该安装命令；安装通过后仍须在普通登录终端、用户完成实例选择的前提下另行进行真实旅程。
+
+### B6 最新安装验收（2026-09-28）
+
+`28023f9` 修复后重新构建并保留候选 `/tmp/scid-b6-candidate-recovery-20260928`。
+core wheel SHA256：`981a02408d202768170a8f5f30865c1a39435da403ae1ba10165315a6b8ff1a9`。
+上述单项 installed 命令实际通过，6.833 s，观测树 RSS 峰值 187535360 B，无资源止损。
+覆盖安装目录导入、实际 daemon/UI 启动、同状态原地重启，以及未替换生产归档守卫的
+旧形状/带推进记录实例归档恢复；恢复保留报告及消费记录，移除旧会话与调度权且保持暂停。
+证据：`/tmp/scid-b6-installed-recovery-20260928/result.json`。
+
+无模型安装检查已完成。工具沙箱仍不能访问原生 daemon；已向用户交付下面的单一普通终端入口，
+等待用户选择验收实例后继续，未启动真实模型，不写真实 B6 已通过：
+
+```bash
+cd /home/da/project/ai4s/tcad/git_release/scidiscovery-agent/123/scidiscovery-e5.2 && python scripts/accept_progression.py --candidate /tmp/scid-b6-candidate-recovery-20260928
+```
+
+入口需要保持监督终端打开；这不构成“验收监督器退出后服务仍独立存活”的证明。
+真实科学接续、原生生命周期和人工/自动质量成本对照仍须分别取证，A6 TCAD 仍延期。
