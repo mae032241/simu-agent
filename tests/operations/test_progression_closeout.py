@@ -145,3 +145,19 @@ def test_missing_accepted_identity_is_unresolved_not_empty_success(progression, 
     assert status['closeout']['unresolved'][0]['name'] == 'accepted'
     assert not status['closeout']['accepted_tasks_terminal']
     assert status['report'] is None
+
+
+def test_new_root_missing_usage_is_not_hidden_by_historical_root(progression, monkeypatch):
+    p = progression
+    p.coordinator.tick()
+    usage(p, 100)
+    assert p.root.call_tool('progression_status', {})['usage']['coverage'] == 'observed'
+    # Exact control snapshot after a new host takes over, before its first usage
+    # notification. Historical accounting remains unchanged across that boundary.
+    snapshot = row(p)
+    snapshot['host_json'] = json.dumps(dict(thread_id='new-root', platform_session='new-root'))
+    monkeypatch.setattr(p.runtime.scheduler_bindings, 'progression_status', lambda **_: snapshot)
+    status = p.root.call_tool('progression_status', {})
+    assert status['usage']['coverage'] == status['budget']['token_coverage'] == 'partial'
+    assert status['usage']['unmeasured_participants']['root'] == 1
+    assert status['budget']['observed_tokens'] == 110

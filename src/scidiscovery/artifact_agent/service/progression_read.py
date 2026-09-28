@@ -22,7 +22,10 @@ def progression_read_view(*, bindings, runs, artifacts, operation_catalog, insta
         stop_reason=status.get('reason'), tasks=[], in_flight=[], unresolved=[], omissions=[])
     records = checkpoint.get('usage_records', {})
     missing = {}
-    if checkpoint.get('started_at') is not None and not any(record['role'] == 'root' for record in records.values()):
+    host = json.loads(row.get('host_json') or 'null')
+    if host and records.get(host['thread_id'], {}).get('role') != 'root':
+        missing['root'] = 1
+    elif not host and checkpoint.get('started_at') is not None and not any(record['role'] == 'root' for record in records.values()):
         missing['root'] = 1
     remaining = 32768
     for name, admission in checkpoint.get('admissions', {}).items():
