@@ -466,3 +466,36 @@ sudo deploy/cleanup_legacy_services.sh clean
 `scid_describe` 返回实际生效的预算，新 Run 冻结预算和交付方式。超限诊断指出具体材料；
 不得通过丢弃必要原始证据规避失败。该预算不替代 TCAD 执行授权与运行资源策略。
 升级需要重新生成角色并重载 Codex；不要在旧合同任务运行期间切换服务版本。
+
+## 后台研究候选：启用、验收与回滚
+
+B6 当前为发布候选，资格以 源码仓库 `docs/plans/AUTONOMOUS_RESEARCH_RELEASE_PLAN.zh-CN.md` 的 B6 验收记录 为准。安装、重启或选择实例不会创建目标；只有用户明确启动已冻结原文才运行后台 Root。`progression.enabled` 默认允许显式启动，并非安装即开工；管理员可在公共 agent-settings.json 中设置 `"progression":{"enabled":false}` 禁止新启动。修改公共设置后重启 control 与 UI。普通任务不增加审批或资格门。
+
+真实旅程入口（普通登录终端，使用已登录的 Codex；候选路径须未用于科学验收）：
+
+```bash
+python scripts/accept_progression.py --candidate /tmp/scid-b6-candidate
+```
+
+入口共享资源守卫及串行锁，首次只构建 core wheel，已有候选复用该安装。打开打印的管理页选择或创建实例，之后自动继续，无需再运行协议命令。原生 Root 冻结合成研究原文并启动后台目标，后台 Root 自主选择完整任务。问题含已知样本关系与不能识别机制的情形；最多三个任务、八轮、200000 tokens、1200 秒，不调用 TCAD。原生输出、封存回读审计、错误和缺测分别留在候选的 `journey-*/summary.json`、`progression.json`、`fixture-logs` 和 `resource.json`。机器摘要不自动授予 B6 通过；科学依赖、附件与原生生命周期仍须依据实际证据核对。若启动在任何模型提交之前失败，修复环境后可给同一命令增加 `--retry-startup`；已经可能提交过模型请求时拒绝重放。
+
+此验收使用可独立运行的生产 daemon/UI 模块，继承当前用户的 PATH、HOME、CODEX_HOME 和现有认证，不复制认证文件。正式单用户运行也可直接用安装解释器启动同一模块：
+
+```bash
+# 以下变量取自该安装，不能把两个 daemon 指向同一 state/socket。
+export SCID_AGENT_SETTINGS_FILE="$SCID_CONFIG_ROOT/agent-settings.json"
+"$SCID_PYTHON" -m scidiscovery.artifact_agent.interfaces.mcp_daemon \
+  --project-root "$SCID_WORKSPACE" --state-root "$SCID_STATE_ROOT" \
+  --socket "$SCID_CONTROL_SOCKET" --approval-secret-file "$SCID_APPROVAL_SECRET" \
+  --approval-base-url http://127.0.0.1:8765 --worker-backend local \
+  --local-workspace-root "$SCID_WORKSPACE/.scidiscovery-runs" \
+  --runtime-summary "$SCID_STATE_ROOT/runtime-summary.json"
+```
+
+UI 使用安装器已有 `scidiscovery-approval-ui` 服务，且必须指向相同 state、设置、签名密钥及端口。独立 daemon 的解释器须能导入安装包（wheel venv 自带；site 安装遵循原安装的 PYTHONPATH）。需要关闭交互终端后保持服务时，将上面的 daemon 命令交给当前用户的进程管理器，例如 `systemd-run --user --unit=scid-user-control --setenv=PATH="$PATH" --setenv=CODEX_HOME="${CODEX_HOME:-$HOME/.codex}" --setenv=SCID_AGENT_SETTINGS_FILE="$SCID_AGENT_SETTINGS_FILE" --setenv=PYTHONPATH="${PYTHONPATH:-}" --property=MemoryMax=1500M --working-directory="$SCID_WORKSPACE" <上述解释器及参数>`；使用 `systemctl --user status/stop/restart scid-user-control` 管理。先停止系统级 control，确认没有其他有效写者，再启用户服务；保留相同 state/socket，禁止同时启动两个入口。用户服务是否跨注销存活取决于主机 user manager 配置，不能由本项目保证。
+
+系统级安装默认 `SCID_SERVICE_USER=SUDO_USER` 或当前用户，未必是专用账号；但其 systemd PATH 不继承登录 shell，单元有 `PrivateTmp=true`、`ProtectHome=read-only`，且不显式继承自定义 CODEX_HOME。即使账号相同，也不能据普通终端验收宣称这个单元的原生 Codex daemon、认证刷新与 helper 写入已通过。当前原生资格应在所选运行方式下验证，不应复制密钥或随意放宽系统单元权限。真实模型/助手、浏览器操作、跨终端持续运行及费用优劣，未测量者保持缺测。
+
+升级前保存版本与 wheel 清单、agent-settings、生成配置、签名密钥、state 数据库和 WAL、封存对象、工作区结果及归档目录。通过管理页暂停/停止推进，核清已接受 Worker 与外部作业，并停止所有写者后备份；活跃数据库用 SQLite backup 或既有维护/归档机制，不能只复制主文件。`prepare-upgrade` 复制旧候选时拒绝未完成任务、活跃或身份未核清的宿主；复制后的推进保持暂停，旧会话/派发权清除，预算、封存结果和历史通知保留。管理页重新选择实例，显式恢复之前不会运行。
+
+回滚顺序：管理页停止新派发 → 核对在途/未知提交 → 停 control 与相关宿主 → 备份当前完整状态 → 切换兼容代码/配置 → 保持推进停用并先只读核对。不要用 `git revert`、旧数据库覆盖或恢复旧快照抹掉已经接受的外部提交。A 版本不认识新增推进表；不能假定它会安全拒绝新数据。新控制服务拒绝高于自身的 scheduler `user_version`；归档外层仍为 v1，内含新控制表，不能凭外层版本判断旧代码兼容。无同格式恢复证据时禁止降级读取/写入活动库，保留新版代码停用推进作为只读/人工恢复入口。任何未知提交必须先查回原作业，不能重新发起。

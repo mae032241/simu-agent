@@ -117,6 +117,25 @@ class SchedulingControl:
         value = self.agent_settings(instance_id)
         return {**value, "effective": effective_settings(self.global_settings, value["settings"])}
 
+    def next_background_progression(self):
+        """Select one eligible host without bypassing an unresolved native writer."""
+        with self._connect() as connection:
+            outstanding = connection.execute(
+                'SELECT instance_id,state FROM scheduler_progression WHERE host_json IS NOT NULL'
+            ).fetchall()
+            if any(row['state'] not in {'active', 'pending'} for row in outstanding):
+                return None
+            rows = connection.execute(
+                "SELECT * FROM scheduler_progression WHERE mode='background' "
+                "AND state IN ('active','pending') ORDER BY updated_at,instance_id"
+            )
+            for row in rows:
+                if outstanding and row['instance_id'] != outstanding[0]['instance_id']:
+                    continue
+                if json.loads(row['config_json']).get('effective', {}).get('progression', {}).get('enabled'):
+                    return dict(row)
+        return None
+
     def progression_status(self, *, instance_id, session_key=None, internal=False):
         self.get_instance(instance_id=instance_id)
         with self._connect() as connection:

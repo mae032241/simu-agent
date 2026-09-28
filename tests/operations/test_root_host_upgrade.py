@@ -89,6 +89,35 @@ def test_snapshot_preserves_wal_science_and_original_but_drops_session_authority
     assert receipt['scientific_identities_rewritten'] is False
 
 
+@pytest.mark.parametrize('state,host,accepted', [('paused', None, True), ('active', None, False),
+                                               ('paused', '{"thread_id":"unresolved"}', False)])
+def test_progression_copy_preserves_usage_and_fences_authority(source, tmp_path, state, host, accepted):
+    from scidiscovery.artifact_agent.service.scheduling_control import CONTROL_SCHEMA
+    path = source / 'state/database/scheduler-bindings.sqlite3'
+    checkpoint = json.dumps({'budget': {'consumed_tasks': 2}, 'usage_records': {'root': {'tokens': 123}},
+                             'report': {'summary': 'insufficient evidence'}})
+    with sqlite3.connect(path) as db:
+        db.executescript('CREATE TABLE scheduler_instances(instance_id TEXT PRIMARY KEY);' + CONTROL_SCHEMA)
+        db.execute('INSERT INTO scheduler_progression VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+                   ('existing-instance', 4, 'old-root', 'old-reader', state, 'background', 'user_paused',
+                    'goal', '{}', '{}', 'fingerprint', host, checkpoint, '2026-09-28'))
+        db.execute("INSERT INTO scheduler_dispatch_intents VALUES('existing-instance','old-run',4,'old-root','now')")
+    target = tmp_path / 'upgrade'
+    if not accepted:
+        with pytest.raises(ValueError, match='unresolved scheduler'):
+            snapshot_state(source, target)
+        assert not (target / 'state').exists()
+        return
+    snapshot_state(source, target)
+    with sqlite3.connect(target / 'state/database/scheduler-bindings.sqlite3') as db:
+        db.row_factory = sqlite3.Row
+        row = db.execute('SELECT * FROM scheduler_progression').fetchone()
+        assert row['state'] == 'paused' and row['reason'] == 'archive_restored'
+        assert row['owner_session'] is row['requested_by'] is row['host_json'] is None
+        assert row['checkpoint_json'] == checkpoint and row['generation'] == 5
+        assert not db.execute('SELECT * FROM scheduler_dispatch_intents').fetchall()
+
+
 @pytest.mark.parametrize('table,state', [('runs', 'running'), ('executions', 'submitted')])
 def test_rejects_unfinished_work_without_changing_source(source, tmp_path, table, state):
     database(source / f'state/database/{table}.sqlite3', f"INSERT INTO {table} VALUES('unfinished','{state}');")

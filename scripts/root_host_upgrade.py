@@ -91,6 +91,11 @@ def snapshot_state(source, target):
         with closing(_readonly(state / 'database/executions.sqlite3')) as db:
             if db.execute("SELECT 1 FROM executions WHERE state NOT IN ('succeeded','failed','cancelled','collected','abandoned') LIMIT 1").fetchone():
                 raise ValueError('source has unfinished executions; reconcile them first')
+        with closing(_readonly(state / 'database/scheduler-bindings.sqlite3')) as db:
+            if db.execute("SELECT 1 FROM sqlite_master WHERE name='scheduler_progression'").fetchone():
+                if db.execute("SELECT 1 FROM scheduler_progression WHERE host_json IS NOT NULL "
+                              "OR state IN ('active','pending') LIMIT 1").fetchone():
+                    raise ValueError('source has an active or unresolved scheduler; stop and reconcile it first')
         if list((state / 'maintenance/instances').glob('*.json')):
             raise ValueError('source has unfinished instance maintenance')
         state_files, project_files = _files(state), _files(project, project=True)
@@ -114,6 +119,22 @@ def snapshot_state(source, target):
         if path.exists():
             with sqlite3.connect(path) as db:
                 db.execute('DELETE FROM ' + table)
+                if table == 'scheduler_sessions' and db.execute(
+                        "SELECT 1 FROM sqlite_master WHERE name='scheduler_progression'").fetchone():
+                    # Copy science/accounting, never live control authority. The
+                    # archive projection already defines this recovery boundary.
+                    from scidiscovery.artifact_agent.service.instance_archive_records import execution_settings_restore_view, schema
+                    db.row_factory = sqlite3.Row
+                    rows = [dict(row) for row in db.execute('SELECT * FROM scheduler_progression')]
+                    projection = execution_settings_restore_view({
+                        'schema': schema(db),
+                        'tables': {'scheduler_progression': rows, 'scheduler_sessions': []},
+                    })
+                    for row in projection['tables']['scheduler_progression']:
+                        columns = [key for key in row if key != 'instance_id']
+                        db.execute('UPDATE scheduler_progression SET ' + ','.join(key+'=?' for key in columns)
+                                   + ' WHERE instance_id=?', [row[key] for key in columns] + [row['instance_id']])
+                    db.execute('DELETE FROM scheduler_dispatch_intents')
     return {'source_candidate': str(source), 'source_head': config['head'],
             'state_files': state_files, 'project_files': project_files,
             'session_bindings_copied': False, 'scientific_identities_rewritten': False}

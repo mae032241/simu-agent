@@ -987,6 +987,26 @@ class RunService(ToolEvidenceMixin):
             ).fetchall()
         return tuple(str(row["run_id"]) for row in rows)
 
+    def admission_matches(self, *, instance_id: str, output_fingerprint: str) -> tuple[str, ...]:
+        """Resolve a prepared admission exactly; two matches establish ambiguity."""
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT run_id FROM runs WHERE instance_id=? AND output_binding_fingerprint=? LIMIT 2",
+                (instance_id, output_fingerprint),
+            ).fetchall()
+        return tuple(row['run_id'] for row in rows)
+
+    def native_identities(self, run_id: str) -> tuple[dict, ...]:
+        """Read accepted Worker/helper bindings for attribution and reconnection."""
+        with self._connect() as connection:
+            self._row(connection, run_id)
+            rows = connection.execute(
+                "SELECT thread_id,platform_session,'worker' AS role FROM worker_connections WHERE run_id=? "
+                "UNION ALL SELECT thread_id,platform_session,'helper' AS role FROM worker_participants "
+                "WHERE run_id=? AND thread_id IS NOT NULL", (run_id, run_id),
+            ).fetchall()
+        return tuple(dict(row, run_id=run_id) for row in rows)
+
     def related_runs(self, *, instance_id: str, artifact_ref: ArtifactRef,
                      relation: str = "input", limit: int = 51) -> tuple[RunStatus, ...]:
         """Read exact input/output edges without loading or validating outputs."""

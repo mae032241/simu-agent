@@ -132,12 +132,9 @@ class ProgressionCoordinator:
         """Attribution uses accepted dispatch and exact native bindings."""
         ids = [v['run_id'] for v in json.loads(self._row()['checkpoint_json']).get('admissions', {}).values() if v.get('run_id')]
         result = {}
-        with self.runtime.runs._connect() as db:
-            for run_id in ids:
-                for row in db.execute('SELECT thread_id,platform_session FROM worker_connections WHERE run_id=?', (run_id,)):
-                    result[row['thread_id']] = dict(row) | dict(role='worker', run_id=run_id)
-                for row in db.execute('SELECT thread_id,platform_session FROM worker_participants WHERE run_id=? AND thread_id IS NOT NULL', (run_id,)):
-                    result[row['thread_id']] = dict(row) | dict(role='helper', run_id=run_id)
+        for run_id in ids:
+            for identity in self.runtime.runs.native_identities(run_id):
+                result[identity['thread_id']] = identity
         return result
 
     def _reconcile_admissions(self):
@@ -147,13 +144,12 @@ class ProgressionCoordinator:
         for name, intent in admissions.items():
             if intent['state'] != 'prepared':
                 continue
-            with self.runtime.runs._connect() as db:
-                matches = db.execute('SELECT run_id FROM runs WHERE instance_id=? AND output_binding_fingerprint=?',
-                    (self.instance, intent['output_fingerprint'])).fetchall()
+            matches = self.runtime.runs.admission_matches(instance_id=self.instance,
+                output_fingerprint=intent['output_fingerprint'])
             if len(matches) != 1:
                 self._save(dict(runtime_status='task_admission_unknown'), reason='task_admission_unknown', stop=True)
                 return False
-            run_id = matches[0]['run_id']
+            run_id = matches[0]
             with self.bindings.scheduling_guard(instance_id=self.instance, session_key=row['owner_session'], expected_generation=row['generation']):
                 self.bindings.bind(instance=self.instance, namespace='run', name=name,
                     logical_name=intent['logical_name'], revision=intent['revision'], object_id=run_id,
@@ -297,14 +293,7 @@ class ProgressionCoordinator:
 
     def tick(self):
         if self.host is None:
-            with self.bindings._connect() as db:
-                outstanding = db.execute('SELECT instance_id,state FROM scheduler_progression WHERE host_json IS NOT NULL').fetchall()
-                if any(v['state'] not in {'active', 'pending'} for v in outstanding):
-                    return  # An unknown native writer keeps the single runtime scope.
-                rows = [dict(v) for v in db.execute("SELECT * FROM scheduler_progression WHERE mode='background' AND state IN ('active','pending') ORDER BY updated_at,instance_id")]
-            if outstanding:
-                rows = [v for v in rows if v['instance_id'] == outstanding[0]['instance_id']]
-            row = next((v for v in rows if json.loads(v['config_json']).get('effective', {}).get('progression', {}).get('enabled')), None)
+            row = self.bindings.next_background_progression()
             if row is None:
                 return
             self.instance = row['instance_id']

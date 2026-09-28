@@ -151,6 +151,7 @@ def prepare(root: Path, *, distribution="core", plugin_configs=None, task=None):
         defaults["reasoning_effort"] = profile["model_reasoning_effort"]
     write(root / "agent-settings.json", {"schema_version": 1, "defaults": defaults})
     (root / "approval-secret").write_bytes(os.urandom(32))
+    (root / "approval-secret").chmod(0o600)
     manifest = {str(p.relative_to(build)): hashlib.sha256(p.read_bytes()).hexdigest()
                 for p in (build / "wheelhouse").glob("*.whl")}
     write(root / "candidate.json", {"python": str(installed.python), "project": str(project),
@@ -284,8 +285,9 @@ class Host:
             if time.monotonic() > deadline or any(p.poll() is not None for p in self.children):
                 raise RuntimeError("daemon_startup")
             time.sleep(.1)
-    def initialize_host(self, resume=False):
-        probe_native_code_mode(self.logdir, self.resources)
+    def initialize_host(self, resume=False, *, check_native=True):
+        if check_native:
+            probe_native_code_mode(self.logdir, self.resources)
         self.start_services()
         root = self.root
         # The exact generated project profile is passed explicitly, avoiding a
@@ -324,7 +326,7 @@ class Host:
         value = self.current_instance()
         write(self.logdir.parent / "host-check.json", {"status": "passed", "model_requests": 0,
             "config_loaded": True, "tools": sorted(required), "instance_state": value.get("state"),
-            "code_mode_execution": "native_arithmetic_passed", "b0a_passed": False})
+            "code_mode_execution": "native_arithmetic_passed" if check_native else "not_probed", "b0a_passed": False})
         return value
 
     def attach_connection(self):

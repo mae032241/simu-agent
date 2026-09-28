@@ -530,3 +530,35 @@ new Runs freeze budgets and delivery modes. Admission errors identify the materi
 do not drop necessary evidence to bypass a rejection. These budgets do not replace
 TCAD execution authorization or solver resource policy. Regenerate roles and reload
 Codex on upgrade; finish tasks bound to old contracts before switching services.
+
+## Background research candidate: activation and rollback
+
+B6 is a release candidate; see the B6 acceptance record in the source repository’s `docs/plans/AUTONOMOUS_RESEARCH_RELEASE_PLAN.zh-CN.md`. Installation, restart and instance selection do not start a goal. The default `progression.enabled=true` permits an explicit start of frozen user text. Administrators can set `"progression":{"enabled":false}` in the shared agent-settings file and restart control/UI to disable new starts. Ordinary tasks acquire no additional approval gate.
+
+From an ordinary terminal with an existing Codex login, run:
+
+```bash
+python scripts/accept_progression.py --candidate /tmp/scid-b6-candidate
+```
+
+Select/create an instance at the printed management URL; the journey continues automatically. The first run builds only the core wheel; prepared candidates reuse that installation. The serial resource guard bounds the journey. A native interactive Root freezes original intent and starts a background goal; the background Root chooses complete tasks from sealed evidence. Synthetic inputs cover a known sample relation and an unidentifiable mechanism, with at most three tasks, eight rounds, 200000 tokens and 1200 seconds. No TCAD is used. `journey-*/summary.json`, `progression.json`, `fixture-logs` and `resource.json` retain failures, missing evidence and native audit output. A machine summary does not grant B6 qualification. After fixing a startup failure that occurred before any possible model submission, the same command accepts `--retry-startup`; uncertain submissions are never replayed.
+
+The journey runs the installed production daemon/UI modules under the logged-in user's PATH, HOME, CODEX_HOME and existing authentication. It copies no credentials. The same standalone control mode can be used with the installation's interpreter and paths:
+
+```bash
+export SCID_AGENT_SETTINGS_FILE="$SCID_CONFIG_ROOT/agent-settings.json"
+"$SCID_PYTHON" -m scidiscovery.artifact_agent.interfaces.mcp_daemon \
+  --project-root "$SCID_WORKSPACE" --state-root "$SCID_STATE_ROOT" \
+  --socket "$SCID_CONTROL_SOCKET" --approval-secret-file "$SCID_APPROVAL_SECRET" \
+  --approval-base-url http://127.0.0.1:8765 --worker-backend local \
+  --local-workspace-root "$SCID_WORKSPACE/.scidiscovery-runs" \
+  --runtime-summary "$SCID_STATE_ROOT/runtime-summary.json"
+```
+
+Keep the installed approval UI on the same state, settings, signing key and port. A wheel venv supplies its package imports; site installs require the installation's PYTHONPATH. For independent terminal lifetime, run the above command under the current user's process manager, for example `systemd-run --user --unit=scid-user-control --setenv=PATH="$PATH" --setenv=CODEX_HOME="${CODEX_HOME:-$HOME/.codex}" --setenv=SCID_AGENT_SETTINGS_FILE="$SCID_AGENT_SETTINGS_FILE" --setenv=PYTHONPATH="${PYTHONPATH:-}" --property=MemoryMax=1500M --working-directory="$SCID_WORKSPACE" <interpreter and daemon arguments above>`. Manage it with `systemctl --user status/stop/restart scid-user-control`. Stop the system control service and reconcile all writers first; never run both against one state/socket. Persistence after logout depends on the host's user manager configuration.
+
+The system installer defaults SERVICE_USER to SUDO_USER or the current user. Its systemd unit still uses the manager's PATH, PrivateTmp and read-only home, and does not explicitly inherit custom CODEX_HOME. A terminal success cannot qualify native daemon access, authentication refresh or helper writes in that different environment. Validate the intended service mode; do not copy keys or loosen unit permissions to imply support. Real models/helpers, browser interaction, terminal independence and cost comparisons remain unmeasured until observed.
+
+Before upgrading, save the code/wheel manifest, settings, generated configuration, signing key, complete state including committed WAL, sealed objects, workspaces and archives. Pause/stop new scheduling, reconcile accepted Workers/external jobs and stop all writers before backup. Use SQLite backup or existing maintenance/archive mechanisms for live databases, never copy only their main files. Candidate `prepare-upgrade` rejects unfinished tasks and active/unresolved schedulers. Its copied state pauses progression, clears old session/dispatch authority and retains budget, sealed results and historical notices; select the instance again and explicitly resume.
+
+Rollback: stop new dispatch in the UI, reconcile in-flight/unknown submissions, stop control/native hosts, back up current state, then switch compatible code/configuration while keeping progression disabled for initial reads. Never overwrite current databases with an old snapshot or use a code revert to erase accepted submissions. Pre-B code does not understand the new progression tables and may not safely reject them. Current code rejects scheduler user_version newer than its own; archive envelope v1 alone does not imply old-code compatibility because it contains new tables. Without tested format compatibility, retain the current version with progression disabled for reading/manual recovery. Query the original external submission before considering any retry.
