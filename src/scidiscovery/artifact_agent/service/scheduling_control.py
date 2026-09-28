@@ -48,6 +48,15 @@ def conflict(message):
     raise SchedulerInstanceConflict(message)
 
 
+def is_goal_anchor(artifact):
+    """Starting control needs original intent, not prior scientific qualification."""
+    from .intake import USER_TEXT_MEDIA_TYPE, USER_TEXT_SOURCE_ORIGIN
+    return (artifact.schema_id == 'scidiscovery.research-objective.v1' or
+            (artifact.kind == 'source_text' and artifact.schema_id == 'opaque'
+             and artifact.media_type == USER_TEXT_MEDIA_TYPE
+             and artifact.labels.get('source_origin') == USER_TEXT_SOURCE_ORIGIN))
+
+
 class SchedulingControl:
     @property
     def control_maintenance(self):
@@ -119,8 +128,6 @@ class SchedulingControl:
             exists = old['state'] != 'idle'
             if expected_generation is not None and (not exists or old['generation'] != expected_generation):
                 conflict('Scheduling generation changed; reread control status.')
-            if exists and old['owner_session'] not in {None, session_key} and command not in {'takeover', 'pause', 'stop'}:
-                conflict('Another scheduler owns this instance; explicitly take over first.')
             # Pause and stop are explicit controls available to an authorized reader.
             if command in {'resume', 'takeover'} and exists:
                 mode = old['mode'] if command == 'resume' else mode
@@ -139,14 +146,23 @@ class SchedulingControl:
                 objective_name = old.get('objective_name')
             if mode == 'background' and ref_json is None:
                 conflict('Background progression requires a frozen research objective.')
+            # B1 snapshots instance overrides and their revision. B2/B4 must bind
+            # effective deployment/global + instance settings before host activation;
+            # this sparse snapshot is not an effective execution profile.
             settings = self.agent_settings(instance_id)
             config = json.dumps(settings, sort_keys=True, separators=(',', ':'))
             fingerprint = hashlib.sha256(json.dumps([mode, objective_name, ref_json, config]).encode()).hexdigest()
-            if command == 'start' and exists:
-                if old['request_fingerprint'] == fingerprint:
-                    return self.progression_status(instance_id=instance_id, session_key=session_key)
-                if old['state'] not in {'stopped', 'paused'}:
-                    conflict('Pause or stop before changing the frozen objective or configuration.')
+            if (command == 'start' and exists and old['request_fingerprint'] == fingerprint
+                    and (old.get('requested_by') == session_key or old['owner_session'] == session_key
+                         or old['state'] in {'paused', 'stopped'})):
+                # The original user can retry after a native host acquired ownership.
+                # Returning a paused/stopped task does not resume it or change authority.
+                return self.progression_status(instance_id=instance_id, session_key=session_key)
+            if exists and old['owner_session'] not in {None, session_key} and command not in {'takeover', 'pause', 'stop'}:
+                conflict('Another scheduler owns this instance; explicitly take over first.')
+            if (command == 'start' and exists and old['state'] not in {'stopped', 'paused'}
+                    and old.get('objective_ref_json') is not None):
+                conflict('Pause or stop before changing the frozen objective or configuration.')
             state = {'pause': 'paused', 'stop': 'stopped'}.get(command, 'active' if mode == 'interactive' else 'pending')
             reason = {'pause': 'user_paused', 'stop': 'user_stopped'}.get(command,
                        'interactive' if mode == 'interactive' else 'runtime_unavailable')
@@ -229,8 +245,8 @@ class SchedulingControl:
         with self.control_maintenance.guard(instance_id), self.scheduling_lock():
             row = self.progression_status(instance_id=instance_id, internal=True)
             expected = {'platform_session': platform_session, 'thread_id': thread_id}
-            if row['state'] == 'active' or json.loads(row.get('host_json') or 'null') != expected:
-                conflict('Host release requires paused control and the exact confirmed host.')
+            if (row['state'] == 'active' and row['mode'] == 'background') or json.loads(row.get('host_json') or 'null') != expected:
+                conflict('Host release requires inactive background control and the exact confirmed host.')
             with self._connect() as connection:
                 connection.execute('UPDATE scheduler_progression SET host_json=NULL WHERE instance_id=?', (instance_id,))
 

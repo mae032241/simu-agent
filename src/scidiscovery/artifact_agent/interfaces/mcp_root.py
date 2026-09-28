@@ -57,7 +57,7 @@ class ProgressionCommandInput(RootToolInput):
     command: Literal["start", "pause", "resume", "stop", "takeover"]
     mode: Literal["interactive", "background"] = "interactive"
     objective_name: str | None = Field(default=None, pattern=_NAME_PATTERN,
-        description="Exact bound research objective for start; changes require pausing first.")
+        description="Exact frozen original user text or research objective for start; changes require pausing first.")
 
 
 class ReadInput(RootToolInput):
@@ -527,8 +527,9 @@ class RootToolFacade(
         ref = None
         if objective_name is not None:
             artifact = self.artifacts.get_by_id(self._resolve_input_artifact(objective_name))
-            if artifact.kind != "scidiscovery.research-objective.v1":
-                raise RootToolError("start requires a research objective Artifact")
+            from ..service.scheduling_control import is_goal_anchor
+            if not is_goal_anchor(artifact):
+                raise RootToolError("start requires frozen original user text or a research objective Artifact")
             ref = artifact.ref
         return self.bindings.progression_command(instance_id=instance_id, session_key=self.session_key,
             command=command, mode=mode, objective_name=objective_name, objective_ref=ref)

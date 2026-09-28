@@ -281,3 +281,96 @@ def test_cli_uses_existing_ui_selection_and_shared_controls(archive_system, monk
     assert cli.main(['--session', 'unselected', 'progression', 'takeover']) == 2
     assert 'management UI' in capsys.readouterr().err
     assert runtime.scheduler_bindings.progression_status(instance_id=instance)['state'] == 'paused'
+
+
+@pytest.fixture(params=['user_text', 'projected_objective'])
+def anchored_goal(tmp_path, request):
+    from scidiscovery.artifact_agent.schema.artifact import ArtifactRegistration
+    from scidiscovery.artifact_agent.transforms import project_research_objective
+    from scidiscovery.general_science_plugin import PLUGIN
+    from tests.operations.test_general_transform_operations import _intake
+    from tests.operations.test_local_worker_contracts import _system
+    _, runtime, instance, root = _system(tmp_path)
+    bindings = runtime.scheduler_bindings
+    bindings.bind_session(session_key='goal-user', instance_id=instance.instance_id)
+    root.facade.session_key = 'goal-user'
+    root.call_tool('artifact_ingest_text', {'name': 'other.goal', 'text': 'A different exact goal.'})
+    if request.param == 'user_text':
+        root.call_tool('artifact_ingest_text', {'name': 'goal', 'text': 'Investigate the supplied curve within the stated range.'})
+    else:
+        foundation = _intake().scientific_foundation.model_dump(mode='json')
+        foundation['objective_contract'] = {
+            'objective_key': 'goal', 'intent': 'mechanism_discrimination', 'statement': foundation['objective'],
+            'closure_requirements': [{'requirement_key': 'comparison', 'description': 'Compare supplied cases.',
+                'requirement_type': 'comparison_present', 'comparison_purposes': ['mechanism_separation']}]}
+        raw = project_research_objective(json.dumps(foundation).encode())
+        output = next(operation for operation in PLUGIN.operations if operation.operation_id == 'science.objective.project.v1').outputs[0]
+        goal = runtime.artifacts.register(raw, ArtifactRegistration(kind=output.kind, schema_id=output.schema_id,
+            payload_schema_version=1, media_type='application/json', creator=runtime.actor), idempotency_key='goal')
+        assert (goal.kind, goal.schema_id) == ('research_objective', 'scidiscovery.research-objective.v1')
+        bindings.bind(instance=instance.instance_id, namespace='artifact', name='goal', object_id=goal.artifact_id)
+    return runtime, instance.instance_id, root
+
+
+def test_public_goal_start_accepts_original_text_and_projected_objective(anchored_goal):
+    runtime, instance, root = anchored_goal
+    bindings = runtime.scheduler_bindings
+    request = {'command': 'start', 'mode': 'background', 'objective_name': 'goal'}
+    # Intake's initial interactive writer is not already a scientific goal.
+    assert root.call_tool('progression_command', request)['state'] == 'pending'
+    pending = bindings.progression_status(instance_id=instance, internal=True)
+    assert root.call_tool('progression_command', request)['state'] == 'pending'
+    bindings.activate_host(instance_id=instance, source_session='goal-user', scheduler_session='host-proxy',
+        platform_session='actual-root', thread_id='actual-root', expected_generation=pending['generation'])
+    active = bindings.progression_status(instance_id=instance, internal=True)
+    assert root.call_tool('progression_command', request)['state'] == 'active'
+    assert bindings.progression_status(instance_id=instance, internal=True) == active
+    with pytest.raises(SchedulerInstanceConflict, match='Another scheduler'):
+        root.call_tool('progression_command', {**request, 'objective_name': 'other.goal'})
+    for state, action in [('paused', 'pause'), ('stopped', 'stop')]:
+        root.call_tool('progression_command', {'command': action})
+        frozen = bindings.progression_status(instance_id=instance, internal=True)
+        assert root.call_tool('progression_command', request)['state'] == state
+        assert bindings.progression_status(instance_id=instance, internal=True) == frozen
+    with runtime.runs._connect() as connection:
+        assert connection.execute('SELECT COUNT(*) FROM runs').fetchone()[0] == 0
+
+
+def test_goal_ui_uses_the_same_anchor_contract(anchored_goal):
+    from types import SimpleNamespace
+    from scidiscovery.artifact_agent.approval_ui import ApprovalUI
+    from scidiscovery.artifact_agent.service.instance_management import issue_instance_management_capability
+    from tests.operations.test_m6a_direct_instance_management import _request
+    runtime, instance, _ = anchored_goal
+    secret = b's'*32
+    ui = ApprovalUI(runtime.approvals, bindings=runtime.scheduler_bindings, instance_management_secret=secret)
+    ui.read_model = SimpleNamespace(artifacts=runtime.artifacts)
+    base = ui.start()
+    try:
+        capability = issue_instance_management_capability(session_key='goal-user', secret=secret)
+        status, _, _ = _request(base, 'POST', '/instances/progression', form={
+            'capability': capability, 'csrf': ui.session_id, 'command': 'start', 'mode': 'background', 'objective_name': 'goal'})
+        assert status == 303
+        assert runtime.scheduler_bindings.progression_status(instance_id=instance)['state'] == 'pending'
+    finally:
+        ui.stop()
+
+
+def test_confirmed_old_host_release_after_interactive_takeover(anchored_goal):
+    runtime, instance, root = anchored_goal
+    bindings = runtime.scheduler_bindings
+    root.call_tool('progression_command', {'command': 'start', 'mode': 'background', 'objective_name': 'goal'})
+    pending = bindings.progression_status(instance_id=instance, internal=True)
+    bindings.activate_host(instance_id=instance, source_session='goal-user', scheduler_session='host-proxy',
+        platform_session='actual-root', thread_id='actual-root', expected_generation=pending['generation'])
+    with pytest.raises(SchedulerInstanceConflict):
+        bindings.release_host(instance_id=instance, platform_session='actual-root', thread_id='actual-root')
+    root.call_tool('progression_command', {'command': 'takeover'})
+    active = bindings.progression_status(instance_id=instance, internal=True)
+    assert active['host_json'] is not None
+    bindings.release_host(instance_id=instance, platform_session='actual-root', thread_id='actual-root')
+    restored = bindings.progression_status(instance_id=instance, internal=True)
+    assert restored['state'] == 'active' and restored['host_json'] is None
+    assert restored['generation'] == active['generation']
+    with bindings.scheduling_guard(instance_id=instance, session_key='goal-user'):
+        pass

@@ -937,8 +937,9 @@ class ApprovalUI:
                         if self.read_model is None:
                             raise ValueError("objective service unavailable")
                         artifact = self.read_model.artifacts.get_by_id(self.bindings.resolve(instance=bound, namespace="artifact", name=name))
-                        if artifact.kind != "scidiscovery.research-objective.v1":
-                            raise ValueError("start requires a frozen research objective")
+                        from ..service.scheduling_control import is_goal_anchor
+                        if not is_goal_anchor(artifact):
+                            raise ValueError("start requires frozen original user text or a research objective")
                         ref = artifact.ref
                     self.bindings.progression_command(instance_id=bound, session_key=key,
                         command=_required(form, "command"), mode=_one(form, "mode") or "interactive",
