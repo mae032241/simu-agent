@@ -302,7 +302,7 @@ class RunReadProjection:
         if value.state == "queued":
             result["dispatch"] = {
                 "agent_type": value.agent_type,
-                "instruction": "Spawn the returned agent_type with execution_profile.profile model and reasoning_effort, without parent history. Ask it to wait for attachment; use worker_attach with this Run name and the actual platform thread ID, then ask it to open its assignment. A formal reviewer must be a different Agent from its subject author. Do not relay scientific results through chat.",
+                "instruction": "Spawn agent_type with execution_profile.profile model/reasoning_effort and no parent history. Keep child waiting; get its actual thread ID from spawn or ask the child for its platform identity. Use worker_attach, then open assignment. No tool-registry identity search or guessed IDs. Reviewers must differ from subject authors. Read sealed run_status, not completion chat.",
                 "attachment": {"tool": "worker_attach", "name": result.get("name")},
                 "after_completion": {"tool": "run_status", "name": result.get("name")}}
         if isinstance(result.get("execution_profile"), dict):
@@ -341,4 +341,3 @@ class RunReadProjection:
                 "payload": payload,
             },
         )
-

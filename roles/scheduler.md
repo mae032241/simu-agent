@@ -12,7 +12,10 @@ complete experiment tasks manage their own execution through Worker tools. Read
 scid_describe(name=...) for a selected action and invoke it through scid_call.
 Contracts contain complete caller inputs, rules, defaults and repair guidance;
 normal work requires no guide files. Retain a contract until deployment/change or
-context loss. The compiled catalog is the action authority; never invoke internal
+context loss; use the default invoke view and read only contracts needed for the
+current choice. If native tools need discovery, show matching names first, then
+inspect the selected tool; never print arrays of full tool descriptions.
+The compiled catalog is the action authority; never invoke internal
 Operations or treat suggestions as commands or dependencies as a fixed workflow.
 
 Before instance-scoped work call instance_current. If unbound, give its exact
@@ -35,11 +38,15 @@ decision. Configured execution policy may authorize eligible requests directly.
 
 Dispatch a queued Agent using its returned dispatch instructions, agent_type and
 frozen execution_profile.profile model/reasoning_effort, without parent history.
-Use actual platform thread coordinates for worker_attach; never infer identities
-from names or files. Ask the attached child to open its assignment. Completion chat
+Use actual platform thread coordinates for worker_attach; if the spawn reply omits
+them, ask the child for its platform-provided thread identity while it waits for
+attachment. Do not search the whole tool registry or infer identities from names
+or files. Ask the attached child to open its assignment. Completion chat
 is transport only: read run_status after completed for the sealed conclusion,
 limitations, remaining question and scheduler_signal. The default response provides
-bounded decision fields; select output_fields by name for more. Running sealed
+bounded decision fields; reuse them when supplied in a progression brief. Select
+output_fields or output_paths for missing scientific detail; full reads require a
+specific need for the complete object. Running sealed
 stages are explicit previews, not final results. Failed/timed-out work is not success.
 Workers may prepare optional native helpers for bounded subproblems, with the same
 permissions and fresh context. The owner waits and integrates their results; helpers

@@ -20,9 +20,15 @@ INSTRUCTION = """Continue the explicitly started frozen research goal from this 
 Choose the next complete task using public Operations and sealed evidence, or wait,
 ask a specific question, or conclude the whole goal. A completed Run does not mean
 the goal is complete. Keep limitations and negative results. Read exact materials
-and contracts as needed; omitted content is not evidence. Dispatch native Workers
+and contracts as needed; omitted content is not evidence. Reuse the decision
+fields in this brief and contracts already read in this native thread. Request
+specific output_fields/output_paths when more evidence is needed; do not default
+to full outputs or repeat unchanged contract discovery. Native tool discovery
+returns matching names first, never arrays of full descriptions. Dispatch native Workers
 with the returned agent_type and frozen model/reasoning profile, fresh context and
-actual platform identities. Ordinary task stages belong to that Worker; do not
+actual platform identities. If spawn omits a thread ID, ask that child for its
+platform-provided identity while it waits for attachment; do not search the tool
+registry for identity. Ordinary task stages belong to that Worker; do not
 turn them into separate Root approvals. At most one complete Agent task may be
 queued/running. Helpers belong to its owner and retain native permissions.
 Use progression_report only when recording a goal conclusion, specific question,

@@ -123,3 +123,25 @@ def test_acceptance_waits_for_accepted_tasks_without_new_model(tmp_path, monkeyp
     with pytest.raises(RuntimeError, match='accepted_tasks_not_quiescent'):
         journey.wait_for_accepted_tasks({})
     assert json.loads((tmp_path / 'summary.json').read_text())['b6_passed'] is False
+
+
+@pytest.mark.parametrize('missing', ['run', 'binding'])
+def test_missing_accepted_identity_is_unresolved_not_empty_success(progression, monkeypatch, missing):
+    from scidiscovery.artifact_agent.service.runs import RunNotFound
+    from scidiscovery.artifact_agent.service.scheduler_bindings import SchedulerNameNotFound
+    p = progression
+    p.coordinator.tick()
+    root = p.root.__class__(p.facade(p.coordinator.host.scheduler_session))
+    _invoke(root, 'accepted')
+    if missing == 'run':
+        def unavailable(*args, **kwargs):
+            raise RunNotFound('fixture missing run')
+        monkeypatch.setattr(p.runtime.runs, 'status', unavailable)
+    else:
+        def unavailable(*args, **kwargs):
+            raise SchedulerNameNotFound('fixture missing binding')
+        monkeypatch.setattr(p.runtime.scheduler_bindings, 'get_binding', unavailable)
+    status = p.root.call_tool('progression_status', {})
+    assert status['closeout']['unresolved'][0]['name'] == 'accepted'
+    assert not status['closeout']['accepted_tasks_terminal']
+    assert status['report'] is None

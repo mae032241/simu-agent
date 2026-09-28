@@ -3,6 +3,8 @@ import json
 
 from .run_read_projection import RunReadProjection, run_is_terminal
 from .scheduling_control import progression_status_view
+from .runs import RunNotFound
+from .scheduler_bindings import SchedulerNameNotFound
 
 
 def progression_read_view(*, bindings, runs, artifacts, operation_catalog, instance_id, session_key=None):
@@ -28,8 +30,12 @@ def progression_read_view(*, bindings, runs, artifacts, operation_catalog, insta
         if admission.get('state') != 'accepted' or not admission.get('run_id'):
             closeout['unresolved'].append(dict(name=name, state='admission_unresolved', read=read))
             continue
-        value = runs.status(admission['run_id'])
-        binding = bindings.get_binding(instance=instance_id, namespace='run', name=name)
+        try:
+            value = runs.status(admission['run_id'])
+            binding = bindings.get_binding(instance=instance_id, namespace='run', name=name)
+        except (RunNotFound, SchedulerNameNotFound):
+            closeout['unresolved'].append(dict(name=name, state='identity_unresolved', read=read))
+            continue
         if binding.object_id != value.run_id or value.instance_id != instance_id:
             closeout['unresolved'].append(dict(name=name, state='identity_unresolved', read=read))
             continue
