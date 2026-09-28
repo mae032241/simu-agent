@@ -46,6 +46,7 @@ class CodexRootHost:
         self.identity = None
         self.turn_id = None
         self.completion = None
+        self.terminal_transport_error = None
         self._starting = False
         self._initialized = False
         self._sink = connection.on_event
@@ -111,6 +112,8 @@ class CodexRootHost:
         return identity
 
     def start_turn(self, prompt: str) -> str:
+        if self.terminal_transport_error is not None:
+            raise HostError('host_connection_unusable')
         if self.identity is None:
             raise HostError("root_not_open")
         if self.turn_id is not None and self.completion is None:
@@ -135,6 +138,8 @@ class CodexRootHost:
             self._starting = False
 
     def poll(self, timeout: float = .1):
+        if self.terminal_transport_error is not None:
+            return self.completion
         self.connection.poll(timeout)
         return self.completion
 
@@ -142,7 +147,17 @@ class CodexRootHost:
         """Acknowledgement is not a terminal state; keep draining completion."""
         if self.turn_id is None or self.completion is not None:
             return
-        self.connection.rpc("turn/interrupt", {"threadId": self.identity.thread_id, "turnId": self.turn_id})
+        try:
+            self.connection.rpc("turn/interrupt", {"threadId": self.identity.thread_id, "turnId": self.turn_id})
+        except HostError as error:
+            # A matching native terminal event was persisted by the sink before
+            # completion was set. Losing the separate interrupt reply does not
+            # undo that proof. Retire this connection; never reuse a timed-out RPC.
+            if (error.code != 'rpc_timeout' or error.method != 'turn/interrupt'
+                    or self.completion is None or self.completion['id'] != self.turn_id):
+                raise
+            self.terminal_transport_error = error.code
+            self.connection.close()
 
     def wait_turn(self, timeout_seconds: float):
         if type(timeout_seconds) not in (int, float) or not 0 < timeout_seconds < float("inf"):

@@ -1198,3 +1198,32 @@ python scripts/accept_progression.py --scenario recovery --candidate /home/da/pr
 保持终端打开，按打印链接选择已有 `b0a-calibration`。不创建新实例，不另跑 continue。
 此入口尚待真实执行；浏览器交付已补证，但完整原生恢复、旧 Root 迟到写入拒绝、
 Worker/helper 崩溃存续、成本对照与正式部署回滚仍不能标记通过。A6 TCAD 继续延期。
+
+### B6 首次原生控制验收：暂停确认失败（2026-09-28）
+
+用户运行并选择原实例后，`journey-1790591598945275357` 已进入真实 Root 回合。
+控制在 10:33:39.033 UTC 记录暂停；原生 rollout 在 10:33:39.285 UTC 记录该确切
+turn 的 `turn_aborted / interrupted`，回合持续 536 ms。进一步核对控制 checkpoint 也已
+持久化 `native_completion=interrupted`；但中断 RPC 的应答仍超时，约 30 s 后记录
+`host_fault / rpc_timeout`，因此保留原宿主标记。
+验收按失败退出，清理仅再提交一次暂停；没有冒充宿主已释放，没有继续恢复、崩溃重启或接管。
+
+原六个 Run 均 completed，没有新 Run。未收到 tokenUsage，计量为缺测，不能据此写零消耗。
+监督器耗时 51.087 s，树 RSS 峰值 1275420672 B，正常错误退出，无资源止损记录。
+证据在 `.b6-native-recovery/journey-1790591598945275357/` 的 `summary.json`、
+`resource.json`、`pause-audit.json` 和确切原生线程 rollout。
+
+已定位框架缺陷为：确切终态已持久化，仍让独立的中断应答超时否定暂停收尾。
+目前没有逐帧传输证据，中断应答为何缺失仍未知；终态通知已送达，不应再将它列为缺失。
+[官方 app-server 合同](https://learn.chatgpt.com/docs/app-server)要求中断响应及
+`turn/completed` 终态；不能靠延长超时、清空宿主标记或把原生日志替作线上协议跳过对账。
+此候选已尝试真实回合，不重跑原启动命令；修复须保留终态证据与应答异常的区别。
+
+中断边界修复：只有 sink 已成功持久化确切当前线程/回合的正式终态、且随后发生
+`turn/interrupt` 应答超时，才保留终态并关闭失效连接，完成暂停收尾；没有终态、
+其他线程终态或其他协议错误仍按未知/故障处理。快速恢复通过新连接恢复原记录，
+不会复用失败连接或重放已接受回合；控制保留 `interrupt_reply_timeout_after_terminal`。
+没有延长超时、增加重试预算或根据磁盘 rollout 强行修改控制状态。
+过程回归：宿主适配 20 passed（2.240 s，62177280 B），控制进程 17 passed
+（26.393 s，216649728 B），分别见 `/tmp/scid-b6-interrupt-terminal-20260928`、
+`/tmp/scid-b6-interrupt-control-20260928`。这些是受控协议进程，真实平台复验尚未完成。

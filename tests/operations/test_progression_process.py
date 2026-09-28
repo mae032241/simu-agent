@@ -56,10 +56,13 @@ for line in sys.stdin:
         result={'turn':{'id':'exact-turn'}}
         emit({'id':msg['id'],'result':result})
         emit({'method':'thread/tokenUsage/updated','params':{'threadId':'native-root','tokenUsage':{'total':{'inputTokens':100,'cachedInputTokens':50,'outputTokens':20}}}})
-        if mode not in {'running','interrupt-disconnect'}:emit({'method':'turn/completed','params':{'threadId':'native-root','turn':{'id':'exact-turn','status':'completed'}}})
+        if mode not in {'running','interrupt-disconnect','interrupt-terminal-no-ack'}:emit({'method':'turn/completed','params':{'threadId':'native-root','turn':{'id':'exact-turn','status':'completed'}}})
         continue
     elif method=='turn/interrupt':
         if mode=='interrupt-disconnect':sys.exit(0)
+        if mode=='interrupt-terminal-no-ack':
+            emit({'method':'turn/completed','params':{'threadId':'native-root','turn':{'id':p['turnId'],'status':'interrupted'}}})
+            continue
         result={}
     else:raise RuntimeError(method)
     emit({'id':msg['id'],'result':result})
@@ -227,6 +230,36 @@ def test_worker_restore_requires_native_running_turn_not_only_identity(progressi
     p.coordinator.tick()
     with pytest.raises(HostError,match='worker_native_turn_not_running'):
         p.coordinator.host.restore_worker('worker','native-root',str(p.runtime.project_root))
+
+
+@pytest.mark.parametrize('control', ['pause', 'resume'])
+def test_terminal_interrupt_without_reply_releases_or_reconnects_without_replay(progression, tmp_path, monkeypatch, control):
+    from scidiscovery.platforms.codex_app_server import HostLimits
+    p = progression
+    _, requests = native(tmp_path, monkeypatch, p.runtime.project_root, tmp_path/'control.sock', 'interrupt-terminal-no-ack')
+    p.coordinator.host_factory = CodexProgressionFactory(project_root=p.runtime.project_root,
+        state_root=p.runtime.state_root, socket_path=tmp_path/'control.sock', approval_base_url='http://127.0.0.1:8765')
+    p.coordinator.tick()
+    host = p.coordinator.host
+    host.connection.limits = HostLimits(rpc_timeout_seconds=.2, termination_grace_seconds=1)
+    p.root.call_tool('progression_command', dict(command='pause'))
+    if control == 'resume':
+        p.root.call_tool('progression_command', dict(command='resume'))
+    p.coordinator.tick()
+    assert host.connection.closed and p.coordinator.host is None
+    assert checkpoint(p)['native_completion'] == 'interrupted'
+    assert checkpoint(p)['last_transport_warning'] == 'interrupt_reply_timeout_after_terminal'
+    assert not checkpoint(p).get('fault_code') and checkpoint(p)['attempts'] == 0
+    assert methods(requests).count('turn/start') == 1
+    assert checkpoint(p)['usage_records']['native-root']['counted_tokens']['input_tokens'] == 100
+    if control == 'pause':
+        assert row(p)['state'] == 'paused' and row(p)['host_json'] is None
+    else:
+        assert row(p)['state'] == 'pending' and row(p)['host_json'] is not None
+        p.coordinator.tick()
+        assert row(p)['state'] == 'active' and p.coordinator.host is not host
+        assert 'thread/resume' in methods(requests)
+        assert methods(requests).count('turn/start') == 1
 
 
 @pytest.mark.parametrize('control', ['pause', 'resume'])

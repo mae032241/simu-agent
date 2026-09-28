@@ -41,10 +41,15 @@ for line in sys.stdin:
         if mode=='oversized':print('x'*8193,flush=True);continue
         if mode=='server-request':emit({'id':42,'method':'item/commandExecution/requestApproval','params':{}});continue
         if mode=='error':emit({'id':msg['id'],'error':{'code':-32603,'message':'failed to load workspace requirements: secret'}});continue
-    elif m=='turn/interrupt':result={}
+    elif m=='turn/interrupt':
+        if mode in ('terminal-no-ack','foreign-terminal-no-ack','no-terminal-no-ack'):
+            if mode != 'no-terminal-no-ack':
+                emit({'method':'turn/completed','params':{'threadId':'other' if mode=='foreign-terminal-no-ack' else 'root','turn':{'id':p['turnId'],'status':'interrupted'}}})
+            continue
+        result={}
     else:result={}
     emit({'id':msg['id'],'result':result})
-    if m=='turn/start' and mode not in ('interrupt','waiting'):
+    if m=='turn/start' and mode not in ('interrupt','waiting','terminal-no-ack','foreign-terminal-no-ack','no-terminal-no-ack'):
         emit({'method':'thread/tokenUsage/updated','params':{'threadId':'root','turnId':'t'+str(turn),
               'tokenUsage':{'total':{'inputTokens':turn*10,'cachedInputTokens':turn*2,'outputTokens':turn}}}})
         emit({'method':'turn/completed','params':{'threadId':'worker','turn':{'id':'worker-turn','status':'completed'}}})
@@ -111,6 +116,24 @@ def test_interrupt_acknowledgement_is_not_completion(peer,tmp_path):
     assert host.wait_turn(2)['status']=='interrupted'
     calls=[json.loads(x) for x in (tmp_path/'requests').read_text().splitlines()]
     assert next(c['params'] for c in calls if c['method']=='turn/interrupt')=={'threadId':'root','turnId':'t1'}
+
+
+@pytest.mark.parametrize('mode', ['terminal-no-ack','foreign-terminal-no-ack','no-terminal-no-ack'])
+def test_terminal_proof_survives_missing_interrupt_reply_but_transport_cannot_restart(peer, tmp_path, mode):
+    host, events = peer(mode, limits=HostLimits(rpc_timeout_seconds=.2, termination_grace_seconds=1, frame_bytes=8192))
+    host.open_root(cwd=str(tmp_path)); host.start_turn('one turn')
+    if mode != 'terminal-no-ack':
+        with pytest.raises(HostError, match='turn/interrupt:rpc_timeout'):
+            host.interrupt()
+        assert host.completion is None
+    else:
+        host.interrupt()
+        assert host.poll(0) == {'id':'t1', 'status':'interrupted'}
+        assert host.connection.closed and host.terminal_transport_error == 'rpc_timeout'
+        assert any(event['method']=='turn/completed' for event in events)
+        with pytest.raises(HostError, match='host_connection_unusable'):
+            host.start_turn('must not replay')
+        assert host.completion == {'id':'t1', 'status':'interrupted'}
 
 
 def test_turn_timeout_preserves_exact_active_turn_for_interrupt(peer,tmp_path):

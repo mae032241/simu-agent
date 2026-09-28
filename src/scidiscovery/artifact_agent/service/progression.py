@@ -354,6 +354,14 @@ class ProgressionCoordinator:
             if self.host.completion and self.host.completion['status'] == 'completed':
                 processed = checkpoint.get('decision_snapshot', processed)
             self._save(dict(phase='idle', turn_id=None, processed_snapshot=processed))
+            if getattr(self.host, 'terminal_transport_error', None):
+                self._save(dict(last_transport_warning='interrupt_reply_timeout_after_terminal'))
+                # Explicit resume retains the exact recorded host. Next tick
+                # reconnects a fresh client and restores participants; no new
+                # model turn can use the failed transport.
+                self.host.close()
+                self.host = None
+                return
             row = self.bindings.reconnect_host(instance_id=self.instance, scheduler_session=self.host.scheduler_session,
                 expected_generation=row['generation'], **self._host_binding())
             checkpoint = json.loads(row['checkpoint_json'])
@@ -362,6 +370,8 @@ class ProgressionCoordinator:
         if row['mode'] != 'background' or row['state'] not in {'active', 'pending'}:
             self.host.interrupt()
             self.host.poll(0)
+            if getattr(self.host, 'terminal_transport_error', None) and checkpoint.get('last_transport_warning') != 'interrupt_reply_timeout_after_terminal':
+                self._save(dict(last_transport_warning='interrupt_reply_timeout_after_terminal'))
             if self.host.turn_id is None or self.host.completion is not None:
                 if self.runtime.runs.active_ids(instance_id=self.instance, limit=1):
                     self._save(dict(runtime_status='paused_accepted_work_continues'))
