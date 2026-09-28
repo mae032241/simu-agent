@@ -107,6 +107,18 @@ class AttachmentSettings(SettingsValue):
     chunk_bytes: int = Field(default=1048576, ge=4096, le=8388608)
 
 
+class PresentationSettings(SettingsValue):
+    """Optional, serial post-seal copy editing; never scientific admission."""
+    enabled: bool = True
+    command: list[str] = Field(default_factory=lambda: ["codex"], min_length=1, max_length=16)
+    timeout_seconds: int = Field(default=60, ge=1, le=600)
+    interval_seconds: int = Field(default=5, ge=1, le=3600)
+    max_source_bytes: int = Field(default=1048576, ge=1024, le=8388608)
+    max_input_bytes: int = Field(default=16384, ge=1024, le=262144)
+    max_output_bytes: int = Field(default=32768, ge=1024, le=262144)
+    memory_limit_bytes: int = Field(default=2147483648, ge=268435456)
+
+
 class AgentSettings(SettingsValue):
     schema_version: Literal[1] = 1
     defaults: DefaultSettings = Field(default_factory=DefaultSettings)
@@ -116,6 +128,7 @@ class AgentSettings(SettingsValue):
     lifecycle: LifecycleSettings = Field(default_factory=LifecycleSettings)
     input_materials: MaterialInputSettings = Field(default_factory=MaterialInputSettings)
     attachments: AttachmentSettings = Field(default_factory=AttachmentSettings)
+    presentation: PresentationSettings = Field(default_factory=PresentationSettings)
 
     def sparse(self) -> dict:
         return self.model_dump(exclude_none=True, exclude_unset=True)

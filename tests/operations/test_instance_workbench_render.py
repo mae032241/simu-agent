@@ -17,6 +17,23 @@ def _metadata(kind: str, name: str, state: str) -> dict:
             "created_at": "2026-09-14T00:00:00Z", "source_time": "2026-09-14T00:00:00Z"}
 
 
+def test_experiment_parent_expands_to_exact_stage_versions_and_approval_nodes():
+    overview = _overview()
+    parent = {**_metadata("run", "experiment", "running"), "operation_id": "science.experiment.v1",
+        "experiment_children": {"items": [
+            {"kind": "stage", "reference": "tool_evidence_001", "parent_key": "run:experiment",
+             "title": "实验方案<script>bad</script>", "version": 2, "state": "sealed"},
+            {"kind": "approval", "key": "approval:exact", "parent_key": "run:experiment", "title": "正式执行审批", "state": "pending"}],
+            "total": 12, "pending_approvals": 1, "offset": 0, "next_offset": 8, "gaps": []}}
+    overview["trajectory"] = {"items": [parent], "page": 1, "total_pages": 1, "total": 1, "page_size": 10}
+    html = render_workbench(overview, browse_base="/instance/instance-a", csrf_token="csrf").decode()
+    assert "class='research-panel experiment-children' open" in html
+    assert "?stage_reference=tool_evidence_001" in html and "?child_offset=8#experiment-children" in html
+    assert "nodes/approval%3Aexact" in html and "正式执行审批" in html
+    assert "实验方案&lt;script&gt;bad&lt;/script&gt; · v2" in html
+    assert "<script>bad" not in html
+
+
 def _source(artifact: str, *, key: str | None = None) -> dict:
     return {"artifact_id": artifact, "key": key, "source_pointer": "/inputs/0/artifact_ref"}
 

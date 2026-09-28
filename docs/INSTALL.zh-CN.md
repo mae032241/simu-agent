@@ -437,6 +437,39 @@ sudo deploy/cleanup_legacy_services.sh clean
 
 ## 实验材料与读取预算
 
+### 封存后的 UI 自动导读
+
+阶段结论及最终 Run 结果封存后，控制层将展示整理请求写入既有 UI 缓存；审批 UI
+服务串行处理。模型使用 `helpers.profiles.lightweight`（包默认 `gpt-6-luna` / `low`），
+不占用 Worker 的原生 helper 次数，也不要求 Worker 或 Root 阅读、确认或审批。
+原始结论、数值、图件、执行状态均保留；导读单独标注，可失败或缺失。
+相同来源版本与配置只入队一次，重启后不自动重试已发起但状态不明的模型调用。
+
+`agent-settings.json` 的 `presentation` 配置默认启用，支持：
+
+```json
+{"presentation":{"enabled":true,"command":["/absolute/path/to/codex"],
+  "timeout_seconds":60,"interval_seconds":5,"max_source_bytes":1048576,
+  "max_input_bytes":16384,"max_output_bytes":32768,"memory_limit_bytes":2147483648}}
+```
+
+使用 [Codex 非交互结构化输出](https://developers.openai.com/codex/noninteractive/)，每次为
+独立临时会话，只传有界科学文本，不加载用户工具配置、项目说明或父会话，不提供
+科学执行工具。服务用户须能执行 `command` 并使用自己的 Codex 认证；systemd 不会
+继承交互 shell 的 nvm PATH，建议填写绝对路径。没有可用启动器或认证时回退原文，
+不会影响封存和审批。无需更改 VM runner。
+
+缓存位于 `ui/workbench.sqlite3` 的 `display_summaries` 表，按实例及精确 ArtifactRef
+隔离；保存成功调用的 input/cached-input/output token、输入字节及耗时。
+失败调用的实际 token 可能不可得，不能按零计费；完整错误进入受实例限制的工程诊断。
+历史材料不会因打开页面而触发模型调用。全局禁用后重启服务可停止后台整理。
+整理失败时，具有实例管理权限的页面会显示“重新整理”：阶段结论在实验节点详情的
+子节点中，最终报告在“自动导读”区域。点击只将该封存版本的失败请求重新入队，沿用
+其整理配置；不修改科学结果，不要求 Worker 核对。排队中、运行中或成功后不提供
+重试，旧页面重复点击也不会启动第二次重试。归档、维护期间及全局禁用时不可重试。
+
+### 科学材料预算
+
 完整实验的 `scientific_materials` 支持原始 PDF、图片、CSV、JSON、归档和网格文件；
 `scientific_files` 也接受这些类型，显式采用按需文件交付。它们共用材料存储预算，
 不再把 1 MB 当作论文或文件的准入上限。小文本可以直接读取，较大或二进制材料

@@ -439,6 +439,9 @@ class ToolEvidenceMixin(ReferenceAccessMixin):
                     'media_type':media_type,'size_bytes':len(raw),'metadata':metadata,'tool_name':tool_name}
             connection.execute('INSERT INTO run_tool_evidence VALUES (?,?,?,?,?)',(run_id,ordinal,key,canonical_json(record),alias))
         self._refresh_evidence_schema(run_id)
+        if metadata.get("kind") == "experiment_stage":
+            from .presentation_summaries import enqueue
+            enqueue(self, value, artifact)
         return record
 
     def adopt_bound_tool_evidence(self, run_id: str, *, allowed_ports: tuple[str, ...], manifest_alias: str) -> list[dict]:

@@ -347,14 +347,19 @@ def _compact_parameter(row: dict, evidence_href: EvidenceHref) -> str:
     uncertainty = row.get("uncertainty")
     uncertainty_html = ("<span class='uncertainty-flag'>不确定性未提供估计</span>" if uncertainty is None
                         else "<span class='uncertainty-flag'>不确定性：</span>" + render_json_value(uncertainty, max_bytes=768, compact_numbers=True))
-    detail = ("<p class='field-label'>原记录报告值</p>" + _reported_values(row.get("reported_values"), evidence_href)
+    description = row.get("description")
+    copy = row.get("display_copy")
+    detail = (("<p class='field-label'>参数说明原文</p>" + render_json_value(description, max_bytes=16384) if description else "")
+        + "<p class='field-label'>原记录报告值</p>" + _reported_values(row.get("reported_values"), evidence_href)
         + "<p class='field-label'>适用条件</p>" + _conditions(row.get("conditions"), evidence_href)
         + "<p class='field-label'>案例与变量范围</p>" + render_json_value(row.get("case_scope"), max_bytes=1024)
         + "<p class='field-label'>获得方式</p>" + render_json_value(row.get("acquisition", "未记录"), max_bytes=768)
         + "<p class='field-label'>选择理由</p>" + render_json_value(row.get("rationale", "未记录"), max_bytes=1536, compact_numbers=True)
         + "<p class='source-note'>" + _text(row.get("source_status", "该原记录未直接列出出处")) + "</p>"
         + _sources(row.get("sources"), evidence_href))
-    rendered = ("<tr><th scope='row'>" + _text(row.get("name", "未命名参数"), 100) + "</th>"
+    rendered = ("<tr><th scope='row'>" + (_text(copy["title"], 80) + "<small> · 自动导读</small><p>原字段：" + _text(row.get("name"), 100) + "</p>"
+        if isinstance(copy, dict) else _text(row.get("name", "未命名参数"), 100))
+        + ("<p class='parameter-description'>" + render_scientific_text(description, 180) + "</p>" if isinstance(description, str) and description else "") + "</th>"
         "<td><div class='parameter-value'>" + value + "</div><span class='parameter-unit'>"
         + _text({"category": "类别取值", "dimensionless": "无量纲"}.get(row.get("unit"), row.get("unit", "单位未记录")) if isinstance(row.get("unit"), str) else row.get("unit"), 48) + "</span></td><td>" + status + uncertainty_html
         + "</td><td><p class='record-type'>" + _text(row.get("record_type", "原参数记录")) + "</p>" + render_source(row.get("field_sources", {}).get("selected_value", row.get("source")), evidence_href)
@@ -501,7 +506,7 @@ def render_presentation(presentation: dict | None, *, evidence_href: EvidenceHre
         if len(figures) > 8:
             figure_body = "<p>内嵌预览前 8 张；其余图件可逐项打开原图。</p>" + figure_body
         append(fold_panel("图件与结果对照", figure_body,
-                          count=min(len(figures), 32), class_name="figures-panel"))
+                          count=min(len(figures), 32), class_name="figures-panel", expanded=True))
 
     curve_sections = [section for section in sections if section.get("kind") == "curve_evidence"]
     if curve_sections:

@@ -235,6 +235,7 @@ def _run(args: argparse.Namespace) -> Any:
         assert runtime.approvals is not None
         from ..approval_ui.read_model import InstanceReadModel
         from ..approval_ui.trajectory import TrajectoryStore
+        from ..service.presentation_summaries import SummaryWorker, store_for
         from ..service.engineering_diagnostics import EngineeringDiagnostics
         from ..service.execution_collection import ExecutionCollection
         from ..service.instance_archive import InstanceArchive
@@ -252,6 +253,7 @@ def _run(args: argparse.Namespace) -> Any:
             read_model=InstanceReadModel(artifacts=runtime.artifacts, bindings=runtime.scheduler_bindings,
                 runs=runtime.runs, approvals=runtime.approvals, executions=runtime.executions,
                 operation_catalog=runtime.operation_catalog,
+                presentation_summaries=store_for(runtime.runs),
                 engineering_diagnostics=EngineeringDiagnostics(state / "engineering-diagnostics"),
                 execution_collection=ExecutionCollection(runtime.executions, plugin_configs={})),
             local_identity=LocalIdentityRef(
@@ -260,6 +262,8 @@ def _run(args: argparse.Namespace) -> Any:
             ),
         )
         url = ui.start()
+        summaries = SummaryWorker(runtime.runs, writable=ui._cache_writable)
+        summaries.start()
         print(canonical_json({"approval_ui": url}).decode("utf-8"), flush=True)
         stopped = threading.Event()
         previous = signal.signal(signal.SIGTERM, lambda *_: stopped.set())
@@ -269,6 +273,7 @@ def _run(args: argparse.Namespace) -> Any:
             pass
         finally:
             signal.signal(signal.SIGTERM, previous)
+            summaries.close()
             ui.stop()
         return {"approval_ui": "stopped"}
     raise AssertionError(f"unhandled command: {args.command}")

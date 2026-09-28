@@ -494,6 +494,47 @@ The initial upgrade requires installation, role regeneration and reloading Codex
 
 ## Experiment material and reading budgets
 
+### Automatic UI reading aids after sealing
+
+Sealed stage conclusions and final Run outputs enqueue optional display-copy jobs
+in the existing UI cache. The approval UI service processes them serially, using
+`helpers.profiles.lightweight` (packaged default: `gpt-6-luna`, `low`). These calls
+do not consume the Worker's native helper allowance or require Worker/Root review.
+Original conclusions, values, figures and execution states remain authoritative.
+Identical source versions and configuration are cached; interrupted model calls
+are not retried automatically after restart.
+
+Configure the top-level `presentation` section of `agent-settings.json`:
+
+```json
+{"presentation":{"enabled":true,"command":["/absolute/path/to/codex"],
+  "timeout_seconds":60,"interval_seconds":5,"max_source_bytes":1048576,
+  "max_input_bytes":16384,"max_output_bytes":32768,"memory_limit_bytes":2147483648}}
+```
+
+The adapter uses [Codex non-interactive structured output](https://developers.openai.com/codex/noninteractive/)
+in an ephemeral session with bounded scientific excerpts, no parent history,
+project instructions, user tool configuration or scientific execution tools.
+The service account needs an executable command and its own Codex authentication;
+systemd does not inherit an interactive nvm PATH, so an absolute path is recommended.
+Missing authentication or failed generation falls back to originals without
+blocking submissions or approvals. No VM runner update is needed.
+
+`ui/workbench.sqlite3`, table `display_summaries`, stores instance-scoped exact
+ArtifactRef identities and successful-call token usage, input bytes and elapsed
+time. Failed-call usage can be unknown and must not be counted as zero. Failures
+have instance-scoped engineering diagnostics. Viewing historical content never
+starts a model call. Disable globally and restart the services to stop processing.
+After failure, pages with instance management access offer **Regenerate**: stage
+copies in the experiment detail's child nodes, and final reports in the automatic
+reading guide. It requeues the exact sealed version using its recorded copy-editing
+configuration; scientific results and Worker responsibilities are unchanged. Queued,
+running and successful copies cannot be retried. Repeated submissions from an old
+page cannot start another attempt. Archived instances, maintenance and global disable
+block retries.
+
+### Scientific material budgets
+
 Complete experiments accept exact PDFs, images, CSV, JSON, archives and grids via
 `scientific_materials`; `scientific_files` supports the same types with explicit lazy
 file delivery. Both share the stored-material budget. Small text remains directly

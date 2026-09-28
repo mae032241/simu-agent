@@ -707,6 +707,9 @@ class RunService(ToolEvidenceMixin):
         self.worker_connections.release_helpers(run_id)
         value = self.status(run_id)
         if value.state == "completed":
+            if value.output_ref is not None:
+                from .presentation_summaries import enqueue
+                enqueue(self, value, value.output_ref)
             return "completed", ()
         value = self._require_running(run_id)
         try:
@@ -1685,6 +1688,8 @@ class RunService(ToolEvidenceMixin):
                 connection.execute("ROLLBACK")
                 raise RunStateConflict("Run completion compare-and-set failed")
             connection.execute("COMMIT")
+        from .presentation_summaries import enqueue
+        enqueue(self, value, output)
         return receipt
 
     def _require_running(self, run_id: str) -> RunStatus:

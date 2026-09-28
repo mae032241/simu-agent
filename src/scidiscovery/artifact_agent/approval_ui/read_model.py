@@ -38,7 +38,7 @@ MAX_SCOPE_RECORDS = 1000
 
 class InstanceReadModel:
     def __init__(self, *, artifacts, bindings, runs, approvals, executions, operation_catalog,
-                 engineering_diagnostics=None, execution_collection=None) -> None:
+                 engineering_diagnostics=None, execution_collection=None, presentation_summaries=None) -> None:
         self.artifacts = artifacts
         self.bindings = bindings
         self.runs = runs
@@ -47,6 +47,7 @@ class InstanceReadModel:
         self.operation_catalog = operation_catalog
         self.engineering_diagnostics = engineering_diagnostics
         self.execution_collection = execution_collection
+        self.presentation_summaries = presentation_summaries
 
     def overview(self, instance_id: str) -> dict[str, Any]:
         instance = self.bindings.get_instance(instance_id=instance_id)
@@ -151,10 +152,25 @@ class InstanceReadModel:
         # Cards need metadata only; scientific payloads remain behind the node links.
         fields = ("key", "kind", "name", "title", "state", "created_at", "source_time",
                   "last_activity_at", "completed_at", "collection_status", "operation_id")
+        from .experiment_trajectory import parent_binding, read_children
         items = []
+        grouped = set()
         for record in records:
+            # Keep numbered source-record pagination. A child whose parent lies
+            # on another page still appears under that exact experiment here.
+            try:
+                owner = parent_binding(self, instance_id, record)
+            except _READ_ERRORS:
+                owner = None  # Unresolved ownership stays visible as a root.
+            record = owner or record
+            if (record.namespace, record.object_id) in grouped:
+                continue
+            grouped.add((record.namespace, record.object_id))
             metadata = self._metadata(instance_id, record)
-            items.append({key: metadata[key] for key in fields if key in metadata})
+            node = {key: metadata[key] for key in fields if key in metadata}
+            if metadata.get("operation_id") == "science.experiment.v1":
+                node["experiment_children"] = read_children(self, self._run(instance_id, record.object_id))
+            items.append(node)
         return {"items": items, "page": page, "total": total,
                 "total_pages": max(1, (total + limit - 1) // limit), "page_size": limit}
 
@@ -176,7 +192,7 @@ class InstanceReadModel:
 
     def node(self, instance_id: str, key: str, diagnostic_after: int = 0, diagnostic_limit: int = 50,
              stage_offset: int = 0, stage_limit: int = 4, stage_reference: str | None = None,
-             stage_text_offset: int = 0) -> dict[str, Any]:
+             stage_text_offset: int = 0, child_offset: int = 0) -> dict[str, Any]:
         if (type(diagnostic_after) is not int or diagnostic_after < 0
                 or type(diagnostic_limit) is not int or not 1 <= diagnostic_limit <= 100):
             raise ValueError("invalid diagnostic page bounds")
@@ -196,6 +212,8 @@ class InstanceReadModel:
                 result["diagnostics"] = self.runs.diagnostic_events(value, after=diagnostic_after, limit=diagnostic_limit)
                 self._run_detail(result, value)
                 if value.operation_id == "science.experiment.v1":
+                    from .experiment_trajectory import read_children
+                    result["experiment_children"] = read_children(self, value, offset=child_offset)
                     from ..service.stage_deliveries import read_stage_deliveries
                     result["sealed_stages"] = read_stage_deliveries(self.runs, value, instance_id=instance_id,
                         stage_offset=stage_offset, stage_limit=stage_limit, stage_reference=stage_reference,
@@ -243,7 +261,14 @@ class InstanceReadModel:
 
     def node_metadata(self, instance_id: str, key: str) -> dict[str, Any]:
         """Refresh one known node without touching scientific payloads or drafts."""
-        return self._metadata(instance_id, self._binding(instance_id, key))
+        binding = self._binding(instance_id, key)
+        result = self._metadata(instance_id, binding)
+        if result.get("operation_id") == "science.experiment.v1":
+            from .experiment_progress import read_progress
+            from .experiment_trajectory import read_children
+            result["experiment_progress"] = read_progress(self, self._run(instance_id, binding.object_id))
+            result["experiment_children"] = read_children(self, self._run(instance_id, binding.object_id))
+        return result
 
     def node_context(self, instance_id: str, key: str) -> dict[str, Any]:
         binding = self._binding(instance_id, key)
@@ -703,6 +728,8 @@ class InstanceReadModel:
                 roots = [(item.artifact_ref, f"/inputs/{i}/artifact_ref") for i, item in enumerate(value.inputs[:1])]
                 result["input_count"] = len(value.inputs)
                 if value.output_ref:
+                    if self.presentation_summaries is not None:
+                        result["display_copy"] = self.presentation_summaries.read(instance_id, value.output_ref)
                     result["outputs"] = [self._ref(instance_id, value.output_ref, "/output_ref")]
                     output = self.artifacts.catalog(value.output_ref)
                     result["recorded_scientific_claim_admissible"] = output.labels.get("scientific_claim_admissible")
@@ -756,6 +783,9 @@ class InstanceReadModel:
             return {"state": "unknown", "gaps": [gap("collection_observation_unavailable", error_type=type(error).__name__)]}
 
     def _run_detail(self, result, value):
+        if value.operation_id == "science.experiment.v1":
+            from .experiment_progress import read_progress
+            result["experiment_progress"] = read_progress(self, value, detail=True)
         from ...plugin_runtime.observation import read_summary
         try:
             result["native_execution"] = read_summary(self.runs.backend.open(value.run_id).root)
@@ -1149,7 +1179,8 @@ class InstanceReadModel:
         if json_size(result) <= MAX_RESPONSE_BYTES:
             return result
         reduced = ({key: value for key, value in result.items() if key in {
-            "key", "kind", "name", "created_at", "state", "title", "source", "operation_id", "original", "outputs", "sealed_stages"}}
+            "key", "kind", "name", "created_at", "state", "title", "source", "operation_id", "original", "outputs", "sealed_stages",
+            "experiment_progress", "experiment_children"}}
             | {"payload_state": "too_large", "gaps": [gap("node_byte_limit")]})
         diagnostics = result.get("diagnostics")
         if isinstance(diagnostics, dict):
