@@ -26,7 +26,11 @@ def rows(candidate, database, query, args=()):
     path = Path(candidate) / 'state/database' / (database + '.sqlite3')
     with closing(sqlite3.connect(path.resolve().as_uri() + '?mode=ro', uri=True)) as db:
         db.row_factory = sqlite3.Row
-        return [dict(row) for row in db.execute(query, args)]
+        # SQLite stores canonical JSON as BLOB in production. Normalize only
+        # declared JSON columns for evidence serialization; preserve all other
+        # binary data and reject invalid UTF-8 instead of stringifying bytes.
+        return [{key: value.decode('utf-8') if key.endswith('_json') and isinstance(value, bytes)
+                 else value for key, value in dict(row).items()} for row in db.execute(query, args)]
 
 
 def control_rows(candidate, query='SELECT * FROM scheduler_progression', args=()):

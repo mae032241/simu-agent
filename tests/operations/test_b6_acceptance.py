@@ -131,7 +131,8 @@ def test_managed_launcher_is_bounded_and_only_targets_its_owned_unit(tmp_path,mo
     assert unit.name.startswith('scid-b6-')
 
 
-def test_report_requires_successful_supervisor_close_and_exact_content_review(tmp_path):
+@pytest.mark.parametrize('storage', ['text', 'blob'])
+def test_report_requires_successful_supervisor_close_and_exact_content_review(tmp_path, storage):
     import hashlib
     import sqlite3
     from scripts.b6_evidence import sealed_outputs
@@ -145,7 +146,8 @@ def test_report_requires_successful_supervisor_close_and_exact_content_review(tm
         db.executescript('CREATE TABLE runs(run_id,state,output_ref_json); '
             'CREATE TABLE worker_connections(run_id,thread_id); '
             'CREATE TABLE worker_participants(run_id,name,platform_session,owner_thread,thread_id,admitted_at,released_at);')
-        db.execute('INSERT INTO runs VALUES(?,?,?)',tuple(run.values()))
+        db.execute('INSERT INTO runs VALUES(?,?,?)', (run['run_id'],run['state'],
+            run['output_ref_json'].encode() if storage=='blob' else run['output_ref_json']))
     with sqlite3.connect(database/'scheduler-bindings.sqlite3') as db:
         db.executescript('CREATE TABLE scheduler_instances(instance_id,name); '
             'CREATE TABLE scheduler_progression(instance_id,checkpoint_json);')
@@ -193,3 +195,22 @@ def test_original_a6_snapshot_without_progression_table_is_a_fresh_baseline(tmp_
         db.execute('CREATE TABLE scheduler_progression(broken)')
     with pytest.raises(sqlite3.OperationalError):
         control_rows(tmp_path,'SELECT state FROM scheduler_progression')
+
+
+def test_blob_snapshot_roundtrips_without_changing_frozen_reference(tmp_path):
+    import sqlite3
+    from scripts.b6_evidence import run_snapshot, rows, read
+    database=tmp_path/'state/database';database.mkdir(parents=True)
+    original='{"artifact_id":"原件", "sha256":"exact"}'
+    with sqlite3.connect(database/'runs.sqlite3') as db:
+        db.execute('CREATE TABLE runs(run_id,state,output_ref_json)')
+        db.execute('INSERT INTO runs VALUES(?,?,?)',('r','completed',original.encode('utf-8')))
+    snapshot=run_snapshot(tmp_path)
+    write(tmp_path/'before-runs.json',snapshot)
+    assert read(tmp_path/'before-runs.json')==run_snapshot(tmp_path)
+    assert snapshot[0]['output_ref_json']==original
+    with sqlite3.connect(database/'runs.sqlite3') as db:
+        assert db.execute('SELECT typeof(output_ref_json) FROM runs').fetchone()[0]=='blob'
+        db.execute('UPDATE runs SET output_ref_json=?',(b'\xff',))
+    with pytest.raises(UnicodeDecodeError):run_snapshot(tmp_path)
+    assert rows(tmp_path,'runs','SELECT output_ref_json AS payload FROM runs')[0]['payload']==b'\xff'
