@@ -60,3 +60,16 @@ def test_uncertain_start_attempts_one_pause_and_preserves_original_failure(tmp_p
         journey.run_journey()
     assert calls == [('progression_command', {'command':'pause'})]
     assert json.loads((tmp_path/'failure-pause.json').read_text())['status'] == 'unconfirmed'
+
+
+def test_known_recovery_stop_does_not_wait_until_timeout(monkeypatch):
+    import scripts.accept_progression_recovery as acceptance
+    journey = RecoveryJourney.__new__(RecoveryJourney)
+    journey.phase_deadline = acceptance.time.monotonic() + 90
+    journey.pump = lambda: None
+    journey.row = lambda: {'state':'paused','reason':'root_turn_failed'}
+    def unexpected_sleep(_):
+        pytest.fail('known stopped recovery must be reported immediately')
+    monkeypatch.setattr(acceptance.time, 'sleep', unexpected_sleep)
+    with pytest.raises(RuntimeError, match='recovered:unexpected_stop:root_turn_failed'):
+        journey.wait_row(lambda row: False, 'recovered')

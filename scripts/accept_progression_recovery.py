@@ -66,7 +66,8 @@ class RecoveryJourney(Journey):
             if predicate(row):
                 write(self.logdir.parent / (label + '.json'), row)
                 return row
-            if row['reason'] in {'host_fault','budget_exhausted','resource_limit','submission_unknown','goal_completed'}:
+            if row['reason'] in {'host_fault','budget_exhausted','resource_limit','submission_unknown',
+                    'goal_completed','root_turn_failed','attempt_budget_exhausted','task_admission_unknown'}:
                 raise RuntimeError(label + ':unexpected_stop:' + row['reason'])
             time.sleep(.2)
         raise TimeoutError(label)
