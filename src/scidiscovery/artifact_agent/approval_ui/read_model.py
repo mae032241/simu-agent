@@ -82,6 +82,7 @@ class InstanceReadModel:
             "management_description": instance.objective,
             "objective_refs": objectives[:100],
             "active_tasks": active,
+            "progression": self.bindings.progression_status(instance_id=instance_id),
             "active_task_pages": pages,
             "nodes": recent,
             "gaps": gaps + ([] if objectives else [gap("no_objective_in_observed_active_run_bindings")]),

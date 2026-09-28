@@ -118,6 +118,18 @@ def archived_model(runtime, package, manifest):
     artifacts.cas.root = package / "objects"
     artifacts.cas.objects_root = artifacts.cas.root / "sha256"
     bindings = _database_service(runtime.scheduler_bindings, package / "records" / "scheduler.sqlite3")
+    progression_status = bindings.progression_status
+    def historical_progression(**kwargs):
+        with bindings._connect() as db:
+            exists = db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='scheduler_progression'").fetchone()
+        if not exists:
+            return dict(state='unknown', reason='historical_progression_unavailable', historical=True)
+        value = progression_status(**kwargs)
+        value.update(historical=True, can_schedule=False, writer='none')
+        if value.get('notifications'):
+            value['notifications']['current_id'] = None
+        return value
+    bindings.progression_status = historical_progression
     runs = _database_service(runtime.runs, package / "records" / "runs.sqlite3")
     runs.artifacts = artifacts
     runs.scheduler_bindings = bindings
@@ -146,7 +158,7 @@ def archived_model(runtime, package, manifest):
     runs.backend = _ReadOnly(runs.backend, {"root", "backend_id", "backend_version", "capabilities", "open", "verify_recovery", "supports_operation"})
     artifact_reads = _ReadOnly(artifacts, {"catalog", "get_by_id", "read", "verify", "open_original", "list_artifacts", "registry", "cas"})
     binding_reads = _ReadOnly(bindings, {"database_path", "get_instance", "binding_page", "get_binding", "find_name",
-        "find_owner", "instance_bindings", "scientific_selections", "selection_records", "list_instances"})
+        "find_owner", "instance_bindings", "scientific_selections", "selection_records", "list_instances", "progression_status"})
     run_reads = _ReadOnly(runs, {"status", "active_ids", "recent_ids", "diagnostic_events", "diagnostic_reference_belongs",
         "recovery_status", "tool_timing", "related_runs", "recovery_links", "backend", "database_path"})
     approval_reads = _ReadOnly(approvals, {"status", "active_ids", "has_request", "review", "request_summary", "list_requests"}) if approvals else None

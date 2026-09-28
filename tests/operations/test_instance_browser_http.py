@@ -96,6 +96,7 @@ def test_instance_browser_grants_read_without_rebinding_or_cross_instance_access
 
 def test_discovery_does_not_register_client_and_pause_blocks_only_new_work(tmp_path):
     from scidiscovery.artifact_agent.interfaces.mcp import build_root_router
+    from scidiscovery.artifact_agent.service.scheduler_bindings import SchedulerInstanceConflict
     from scidiscovery.artifact_agent.interfaces.mcp_root import RootToolError
     runtime,state,secret,ui,base=_setup(tmp_path)
     key='sch_'+'d'*32
@@ -120,13 +121,16 @@ def test_discovery_does_not_register_client_and_pause_blocks_only_new_work(tmp_p
         instance=runtime.scheduler_bindings.create_instance_and_bind_session(
             session_key=key,name='paused.client',title='Client',objective='Exact objective')
         runtime.scheduler_bindings.set_client_enabled(session_key=key,enabled=False,expected=True)
-        assert root.call_tool('instance_current',{})['state']=='paused'
+        # Instance reading and client scheduling authority are independent.
+        assert root.call_tool('instance_current',{})['state']=='active'
+        assert not runtime.scheduler_bindings.client_enabled(session_key=key)
         assert root.call_tool('run_list',{})['runs']==[]
         for action,args in (
             ('operation_preflight',{'name':'paused.preflight','operation_id':'science.experiment.v1','inputs':[]}),
             ('operation_invoke',{'name':'paused.invoke','operation_id':'science.experiment.v1','inputs':[]}),
             ('execution_start',{'name':'paused.execution'})):
-            with pytest.raises(RootToolError,match='paused by the workbench'):
+            error = RootToolError if action == 'operation_preflight' else SchedulerInstanceConflict
+            with pytest.raises(error, match='paused (by|in) the workbench'):
                 root.call_tool(action,args, surface="execution" if action == "execution_start" else "research")
         assert runtime.runs.active_ids(instance_id=instance.instance_id,limit=10)==()
         runtime.scheduler_bindings.set_client_enabled(session_key=key,enabled=True,expected=False)

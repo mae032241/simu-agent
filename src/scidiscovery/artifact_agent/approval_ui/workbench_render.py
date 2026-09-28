@@ -8,6 +8,7 @@ from urllib.parse import quote, urlencode
 
 from .presentation_render import render_json_value, render_presentation, safe_local_href, render_source, fold_panel, human_value, approval_heading, render_scientific_text
 from .navigation import navigation
+from .progression_render import render_progression
 
 
 _MAX_PAGE_BYTES = 256 * 1024
@@ -263,8 +264,10 @@ def render_workbench(overview: dict, *, browse_base: str, csrf_token: str, can_m
         + "<p class='source-note'>按登记时间从新到旧排列；成果登记见下方全部记录。新增记录后页码可能移动。</p><ol class='trajectory-list'>"
         + "".join(_node_card(n, instance_id, compact=True) for n in important) + "</ol>"
         + ("<p>暂无任务、审批或执行节点；成果可在下方全部记录查看。</p>" if not important else "") + trajectory_navigation + "</section>")
-    active_panel = (fold_panel("多个活动分支", "<ul class='active-branches'>" + "".join(_node_card(n, instance_id, compact=True) for n in active) + "</ul>", count=len(active))
+    active_panel = ("<h3>当前任务 / 多个活动分支</h3><ul class='active-branches'>" + "".join(_node_card(n, instance_id, compact=True) for n in active) + "</ul>"
         if active else "<p class='source-note active-note'><span class='quiet-dot'></span>当前没有正在运行的任务</p>")
+    if any(page.get('has_more') for page in _dict(overview.get('active_task_pages')).values()):
+        active_panel += "<p class='source-gap'>活动任务列表达到读取上限；其余任务请通过任务查询继续读取。</p>"
     display = _dict(overview.get("display_node"))
     title = "最近节点" if not overview.get("selected_node") else "选中节点"
     display_link = _link(_node_href(instance_id, display.get("key")), "打开节点详情 →") if display else ""
@@ -272,7 +275,8 @@ def render_workbench(overview: dict, *, browse_base: str, csrf_token: str, can_m
         evidence_href=lambda artifact, pointer: _evidence_href(instance_id, artifact, pointer),
         image_href=lambda artifact: base + "/evidence/" + quote(artifact, safe="") + "?format=image")
     content = ("<div class='workspace-grid'><aside class='workspace-sidebar'>" + _goal_panel(overview, instance_id) + timeline
-        + "</aside><div class='workspace-main'><div class='panel-heading'><h2>" + title + "</h2>" + display_link + "</div>"
+        + "</aside><div class='workspace-main'>" + render_progression(overview.get('progression'), instance_id=instance_id)
+        + "<div class='panel-heading'><h2>" + title + "</h2>" + display_link + "</div>"
         + active_panel + presentation + _sealed_stages(display, instance_id) + "</div></div>")
     all_records = "<ol class='trajectory-list all-records'>" + "".join(_node_card(n, instance_id, compact=True) for n in rows) + "</ol>" + more
     footer = fold_panel("全部记录（含成果登记）", all_records, count=len(rows))

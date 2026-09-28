@@ -386,7 +386,7 @@ class ProgressionCoordinator:
             with self.bindings.scheduling_guard(instance_id=self.instance, session_key=row['owner_session'], expected_generation=row['generation']):
                 self._save(dict(phase='prepared', turn_id=None, decision_snapshot=snapshot, round_started_at=self.clock(),
                     rounds=checkpoint.get('rounds', 0)+1, runtime_status='deciding',
-                    last_report=checkpoint.get('report') or checkpoint.get('last_report'), report=None))
+                    last_report=checkpoint.get('report') or checkpoint.get('last_report'), report=None), reason='host_active')
             turn = self.host.start_turn(prompt)
             self._save(dict(phase='running', turn_id=turn))
         except Exception as error:

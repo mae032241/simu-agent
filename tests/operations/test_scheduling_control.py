@@ -129,13 +129,20 @@ def test_pending_background_exact_objective_snapshot_and_trusted_activation(arch
     assert json.loads(active['objective_ref_json']) == goal.ref.model_dump(mode='json')
     bindings.checkpoint_progression(instance_id=instance, session_key='actual-root', expected_generation=active['generation'], checkpoint={'consumed': 27})
     command(bindings, instance, 'pause', user)
+    paused_checkpoint = json.loads(bindings.progression_status(instance_id=instance, internal=True)['checkpoint_json'])
     assert not archive.preview(instance)['ready']
     bindings.release_host(instance_id=instance, platform_session='actual-root', thread_id='actual-root')
     save_archive(archive, instance)
+    archived_status = archive.archived_model(instance).overview(instance)['progression']
+    assert archived_status['historical'] and not archived_status['can_schedule']
+    assert archived_status['notifications']['current_id'] is None
+    assert archived_status['notifications']['items'] == paused_checkpoint['notices']
     restore_archive(archive, instance)
     restored = bindings.progression_status(instance_id=instance, internal=True)
     assert (restored['state'], restored['reason'], restored['owner_session'], restored['host_json']) == ('paused', 'archive_restored', None, None)
-    assert json.loads(restored['checkpoint_json']) == {'consumed': 27}
+    assert json.loads(restored['checkpoint_json']) == paused_checkpoint
+    assert paused_checkpoint['consumed'] == 27
+    assert bindings.progression_status(instance_id=instance)['notifications']['current_id'] is None
     assert restored['objective_ref_json'] == active['objective_ref_json']
     assert restored['config_json'] == active['config_json']
     assert bindings.session_instance(session_key=user) is None

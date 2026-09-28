@@ -3,6 +3,7 @@ from html import escape
 from urllib.parse import quote
 
 from .navigation import hidden, navigation
+from .progression_render import render_progression
 
 
 def page(title, content):
@@ -76,12 +77,11 @@ def session_controls(rows, *, token, csrf, current=None, expires_at=None, workbe
         body += "<a href='/instance/" + quote(current.instance_id, safe="") + "'>查看当前实例基本信息</a>"
     body += "<p class='source-note'>本页会话授权有效期：" + escape(expires_at or "") + "</p>"
     if current and progression:
-        body += ("<section><h3>调度控制</h3><p>状态：" + escape(progression["state"])
-            + " · " + escape(progression["reason"]) + " · 调度者：" + escape(progression.get("writer", "none")) + "</p>"
-            + "<p>暂停和停止仅阻止后续调度；已接受任务继续交付。后台启动当前等待宿主接线。</p>"
+        body += render_progression(progression, instance_id=current.instance_id)
+        body += ("<section><h3>调度控制</h3><p>后台启动以实际宿主状态为准。</p>"
             + "<form method='post' action='/instances/progression'>" + common
             + "<label>确切目标名称（启动时可指定）<input name='objective_name'></label>"
-            + "<label>模式<select name='mode'><option value='interactive'>交互</option><option value='background'>后台（待接线）</option></select></label>"
+            + "<label>模式<select name='mode'><option value='interactive'>交互</option><option value='background'>后台</option></select></label>"
             + "<button name='command' value='start'>启动</button></form>")
         for command, label in (("pause", "暂停"), ("resume", "恢复"), ("stop", "停止"), ("takeover", "接管交互调度")):
             body += ("<form method='post' action='/instances/progression'>" + common
