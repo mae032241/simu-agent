@@ -1227,3 +1227,16 @@ turn 的 `turn_aborted / interrupted`，回合持续 536 ms。进一步核对控
 过程回归：宿主适配 20 passed（2.240 s，62177280 B），控制进程 17 passed
 （26.393 s，216649728 B），分别见 `/tmp/scid-b6-interrupt-terminal-20260928`、
 `/tmp/scid-b6-interrupt-control-20260928`。这些是受控协议进程，真实平台复验尚未完成。
+
+修复节点 `b0151e9` 的新安装检查通过（6.936 s，RSS 峰值 187351040 B），证据为
+`/tmp/scid-b6-interrupt-fixed-installed-20260928`。重新由原六个 Run 的 A6 快照准备
+`.b6-native-recovery-fixed`（0.912 s，105254912 B），未修改失败候选或其原生线程记录。
+普通终端复验使用同一入口，将候选改为该路径：
+
+```bash
+cd /home/da/project/ai4s/tcad/git_release/scidiscovery-agent/123/scidiscovery-e5.2
+python scripts/accept_progression.py --scenario recovery --candidate /home/da/project/ai4s/tcad/git_release/scidiscovery-agent/.b6-native-recovery-fixed
+```
+
+仍选择已有 `b0a-calibration`；本轮不派发科学任务。中断应答本身为何未及时到达仍未确定，
+本修复只纠正已确认终态被应答超时否定的框架行为，不能提前宣称真实恢复验收通过。
