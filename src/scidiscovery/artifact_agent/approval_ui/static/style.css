@@ -11,7 +11,7 @@
 .experiment-child .workbench-state { margin-left: 4px; }
 .experiment-children > summary { font-size: 13px; }
 .pending-approval-note { color: #795400; font-weight: 700; }
-body { margin: 0; min-width: 320px; }
+body { margin: 0; min-width: 320px; overflow-wrap: anywhere; }
 button, input, textarea { font: inherit; }
 code, pre { font-family: "SFMono-Regular", Consolas, monospace; }
 p { line-height: 1.65; }

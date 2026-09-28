@@ -537,7 +537,7 @@ def _sealed_stages(node: dict, instance_id: str) -> str:
     selected = ""
     if isinstance(material, dict):
         selected = "<section class='selected-stage'><h2>当前阶段封存原文</h2><p>" + _text(material.get("reference")) + "</p>"
-        selected += "<pre>" + html.escape(material.get("text", "")) + "</pre>"
+        selected += "<pre class='json-tree'>" + html.escape(material.get("text", "")) + "</pre>"
         selected += link({"stage_offset": 0}, "返回所属实验与阶段历史")
         if material.get("next_text_offset") is not None:
             selected += "<p>原文尚有后续内容。</p>" + link({"stage_reference": material["reference"],
