@@ -1037,3 +1037,42 @@ cd /home/da/project/ai4s/tcad/git_release/scidiscovery-agent/123/scidiscovery-e5
 `/tmp/scid-b6-existing-state-source-20260928`、`/tmp/scid-b6-live-output-process-20260928`、
 `/tmp/scid-b6-existing-state-installed-20260928`；安装检查峰值 184766464 B，无止损。
 真实科学旅程仍待用户普通终端启动并在管理页选择原实例，不宣称 B6 已通过。
+
+
+### B6 首次真实后台两任务旅程（2026-09-28，部分通过）
+
+用户在 `.b6-upgrade` 选择原 `b0a-calibration` 后，本轮实际完成后台 start、真实 Root
+两轮选择/派发、两名原生 Worker 的封存交付，以及读取者审计。原六个历史 Run 保留，
+新增 `b0a.identifiability.intake` 和 `b0a.identifiability.intake.rev2` 均 completed。
+第二项冻结 `prior_draft` 为第一项精确输出，补充非节点观测的代数判别设计和 CSV；
+并非脚本固定第二个 Operation。两份输出的 CAS SHA256、完成回执和父引用核验一致。
+CSV 两行候选点 x=0.5/3 的 p(x)=0.375/6、线性预测 2/7 均正确，明确是设计点、不是观测。
+附件登记与字节已核验；尚不宣称真实浏览器下载、图件或所有交付类型均通过。
+
+首次封存后控制自动唤醒第二轮；等待 Worker 时 Root 累计用量保持不变。达到配置
+2000000 token 上限后，控制进入 paused/budget_exhausted，已接受的第二名 Worker
+仍完成交付，宿主标记随后释放；没有增加预算或新派任务。停止时观测为 2032316，
+收尾后的真实角色累计为 2120986。当前 budget 投影保留停止时快照，usage 分组继续更新，
+两者尚未清楚区分，需修正展示语义。目标级 report/last_report 仍为空，不能将本轮记为
+完整目标收尾或 B6 通过。
+
+| 范围 | 输入 token | 其中缓存输入 | 输出 token |
+|---|---:|---:|---:|
+| 后台 Root | 1001739 | 880384 | 7592 |
+| 两名 Worker 合计 | 1086534 | 1003648 | 25121 |
+| 启动及末次只读审计 Root（单列） | 417204 | 368128 | 5340 |
+
+缓存输入是输入子集；输出含 reasoning，不额外相加。没有 helper 记录，本例不证明
+agent-as-tool 的收益。监督器运行 942.419 s，正常退出，采样进程树 RSS 峰值
+1274593280 B，无资源止损；detached native daemon 的完整资源覆盖仍未知。
+
+后台 Root 两轮 25 个工具输出合计约 122890 B。最大 40549 B 来自原生
+`ALL_TOOLS.filter(...identity|thread...)` 后打印全部匹配描述；其次是
+`run_status(intent="full")` 的 20689 B。还出现整批合同读取和同一 hypothesis 合同重复读取。
+这些记录说明工具/身份发现与结果读取仍有成本，不能把全部回包称为无用，也不能把
+本轮高缓存比例当作相比人工基线的效率收益。下一步应精简实际身份发现、结果与合同读取，
+并提供预算停止后的确定性成果交接；不靠提高本轮预算或重新派发已完成任务掩盖问题。
+
+证据：`.b6-upgrade/journey-1790573752253299544/sealed-audit.json`、`resource.json`、
+`summary.json`、`progression.json` 与原生事件。未完成：后台目标级收尾、完整原生
+pause/resume/服务崩溃恢复、helper 生命周期、人工/自动成本对照；A6 TCAD 仍延期。
