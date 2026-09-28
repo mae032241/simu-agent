@@ -123,7 +123,7 @@ class Journey(Host):
         self.status('root_returned_requires_sealed_audit')
 
 
-def child(root):
+def child(root, scenario='science'):
     require_existing_instance(root)
     settings = json.loads((root / 'agent-settings.json').read_text())
     # Preserve configured token/resource policy. The native usage counter includes
@@ -132,7 +132,14 @@ def child(root):
     settings.setdefault('progression', {}).update(
         max_tasks=3, max_rounds=8, max_elapsed_seconds=1200, max_attempts=1)
     write(root / 'agent-settings.json', settings)
-    host = Journey(root, json.loads(guard.DEFAULT_CONFIG.read_text())['limits'])
+    journey_type = Journey
+    if scenario == 'recovery':
+        try:
+            from scripts.accept_progression_recovery import RecoveryJourney
+        except ModuleNotFoundError:
+            from accept_progression_recovery import RecoveryJourney
+        journey_type = RecoveryJourney
+    host = journey_type(root, json.loads(guard.DEFAULT_CONFIG.read_text())['limits'])
     try:
         host.run_journey()
     except BaseException as error:
@@ -146,6 +153,8 @@ def child(root):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--candidate', type=Path, required=True)
+    parser.add_argument('--scenario', choices=('science', 'recovery'), default='science',
+        help='recovery exercises native Root control against existing results; no new scientific tasks')
     parser.add_argument('--retry-startup', action='store_true',
         help='retry after fixing startup only when no model submission was attempted')
     parser.add_argument('--child', action='store_true', help=argparse.SUPPRESS)
@@ -157,7 +166,7 @@ def main():
         actual = os.fstat(fd)
         if (actual.st_dev, actual.st_ino) != (expected.st_dev, expected.st_ino):
             raise RuntimeError('supervision_required')
-        child(root)
+        child(root, args.scenario)
         return 0
     os.umask(0o077)
     try:
@@ -204,7 +213,7 @@ def main():
         thread.start()
         try:
             result = guard.run_one([sys.executable, str(Path(__file__).resolve()), '--child',
-                '--candidate', str(root)], environment, limits, output, lock.fileno(), limit_address_space=False)
+                '--candidate', str(root), '--scenario', args.scenario], environment, limits, output, lock.fileno(), limit_address_space=False)
         finally:
             stop.set()
             thread.join(timeout=1)

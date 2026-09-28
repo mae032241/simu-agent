@@ -1149,3 +1149,52 @@ Chrome 已渲染上述真实数据生成的本地页面，确认两项成果和�
 本轮代码收尾完成。B6 剩余取证为：完整原生暂停/恢复/接管/服务崩溃旅程、助手生命周期、
 人工/自动质量成本对照、detached daemon 的完整资源覆盖，以及正式服务环境的部署回滚和
 认证 UI 操作/下载。不能用本轮无模型测试替代这些结论；不自动恢复已耗尽预算的旧目标。
+
+### B6 真实浏览器交付与原生恢复入口（2026-09-28，后续验收）
+
+使用最终安装候选和 `.b6-upgrade` 的独立状态副本 `.b6-delivery`，通过真实 HTTP 服务
+核对两项封存任务页面入口、CSV 发现和下载。未授权下载被拒绝，只读浏览 cookie 无权
+恢复推进；全部 SQLite 逻辑内容在操作前后相同，无新模型或 Run。
+HTTP 下载 SHA256 与此前封存审计的 `b7b0baa79e88d8a21ae016afd55e0b9a35d3179446b217a776fba08a0357ed91`
+一致。耗时 1.744 s，树 RSS 峰值 183422976 B；证据：
+`/tmp/scid-b6-http-delivery-20260928-02`。首轮脚本漏发浏览器 Accept 头，拿到旧元数据页，
+未取得进入表单；修正请求后通过，失败证据保留。
+
+实际 Chrome 经进入实例表单取得浏览权限、进入第二项任务页面、点击真实附件下载链接，
+下载内容哈希一致，数据库内容未变。最终耗时 2.188 s，树 RSS 峰值 1320144896 B；
+证据：`/tmp/scid-b6-browser-delivery-live-20260928-05`。本例 CSV 页面直接提供下载，
+没有独立预览入口；不宣称已验证图件或全部附件类型。
+
+浏览器早期两次运行分别在 1570615296 / 1512140800 B 被默认 1500000000 B RSS 守卫
+终止，没有系统内存止损记录；这不是系统 OOM。尝试单进程 Chrome 后发生浏览器崩溃，
+恢复正常进程模式、限制一个 renderer；后续脚本把独立预览当成必选步骤的断言也已修正。
+最终仅此浏览器验收按用户此前允许的 2 GB 设置采样 RSS 上限，未修改生产或默认测试配置，
+仍有串行锁、90 s 超时和系统可用内存/Dirty 止损；不宣称聚合硬隔离。
+
+原生控制恢复入口新增 `--scenario recovery`：通过真实客户端提交控制命令，等待原生
+turn 已接受后暂停，确认宿主释放，恢复，再终止并重启本监督器拥有的控制 daemon，
+要求恢复准确原线程、冻结目标/配置和累计用量，最后交互接管并停止。只读复用已有科学
+结果，不创建 Worker 或新 Run；不伪造平台身份、不直接写控制数据库。
+若 Root 提前完成导致未触发故障时机，记为未完成该场景，不重放未知提交。
+
+专用候选 `.b6-native-recovery` 来自同一 `b0a-calibration` 实例首次 B6 推进前的
+`.a6-upgrade` 快照，保留原六个已完成 Run；使用最新已验证安装。未修改当前八个 Run 的
+`.b6-upgrade`，没有清零其 2120986 token 消费。入口拒绝复用已经启动过目标的 checkpoint，
+避免把旧预算当新预算。候选准备耗时 0.951 s，RSS 峰值 104226816 B。
+线程/目标/配置/用量不倒退与实际运行阶段的两项断言测试通过：
+`/tmp/scid-b6-recovery-accounting-final-20260928`（1.688 s，116420608 B）。
+原文提交参数另经生产合同校验，连同候选入口共 5 项测试通过：
+`/tmp/scid-b6-recovery-contract-final-20260928`。入口异常时只尝试一次暂停；暂停结果不明
+则明确保留未确认状态和原失败，不重试启动。该清理及前述控制断言共 3 项通过：
+`/tmp/scid-b6-recovery-cleanup-final-20260928`（1.680 s，114163712 B）。
+
+当前沙箱预检仍报 `native_daemon_directory_blocked`，未提交模型。普通终端入口为：
+
+```bash
+cd /home/da/project/ai4s/tcad/git_release/scidiscovery-agent/123/scidiscovery-e5.2
+python scripts/accept_progression.py --scenario recovery --candidate /home/da/project/ai4s/tcad/git_release/scidiscovery-agent/.b6-native-recovery
+```
+
+保持终端打开，按打印链接选择已有 `b0a-calibration`。不创建新实例，不另跑 continue。
+此入口尚待真实执行；浏览器交付已补证，但完整原生恢复、旧 Root 迟到写入拒绝、
+Worker/helper 崩溃存续、成本对照与正式部署回滚仍不能标记通过。A6 TCAD 继续延期。
