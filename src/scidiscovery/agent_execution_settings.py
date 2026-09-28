@@ -201,5 +201,5 @@ def effective_settings(global_settings: AgentSettings, instance_settings: dict) 
     for key, default in dict(model=packaged_default_model(), reasoning_effort="medium", narrative_language="en").items():
         value["defaults"].setdefault(key, default)
     # Instance preferences cannot enable a deployment-wide background runtime.
-    value["progression"]["enabled"] = global_settings.progression.enabled
+    value["progression"]["enabled"] = global_settings.progression.enabled and value["progression"]["enabled"]
     return parse_settings(value).model_dump(exclude_none=True)

@@ -108,6 +108,12 @@ class SchedulingControl:
             'writer': 'this_session' if value['owner_session'] == session_key and session_key else
                       'other_session' if value['owner_session'] else 'none',
             'report': checkpoint.get('report'),
+            'last_report': checkpoint.get('last_report'),
+            'resources': checkpoint.get('resources'),
+            'fault_code': checkpoint.get('fault_code'),
+            'messages': [dict(name=v['name'], application='next_safe_turn',
+                processed=v in checkpoint.get('processed_snapshot', {}).get('messages', []))
+                for v in checkpoint.get('messages', [])],
             'budget': checkpoint.get('budget'),
             'usage': checkpoint.get('usage_summary'),
             'runtime_status': checkpoint.get('runtime_status', 'not_connected'),
@@ -175,13 +181,17 @@ class SchedulingControl:
                        'interactive' if mode == 'interactive' else 'runtime_unavailable')
             if command in {'pause', 'stop'} and exists:
                 mode = old['mode']
+            checkpoint = json.loads(old.get('checkpoint_json', '{}'))
+            if command == 'start' and old.get('objective_ref_json') != ref_json:
+                checkpoint['last_report'] = checkpoint.get('report') or checkpoint.get('last_report')
+                checkpoint['report'] = None
             values = dict(generation=old.get('generation', 0)+1,
                 requested_by=session_key if command in {'start', 'resume', 'takeover'} else old.get('requested_by'),
                 owner_session=session_key if state == 'active' else None,
                 state=state, mode=mode, reason=reason, objective_name=objective_name,
                 objective_ref_json=ref_json, config_json=config if command == 'start' or not exists else old['config_json'],
                 request_fingerprint=fingerprint if command == 'start' or not exists else old['request_fingerprint'],
-                host_json=old.get('host_json'), checkpoint_json=old.get('checkpoint_json', '{}'))
+                host_json=old.get('host_json'), checkpoint_json=json.dumps(checkpoint))
             with self._connect() as connection:
                 self._write_progression(connection, instance_id, values)
             if state == 'active' and self.client_database_path.exists():
@@ -210,7 +220,7 @@ class SchedulingControl:
             yield row['generation']
 
     def prepare_admission(self, *, instance_id, session_key, name, logical_name, revision,
-                          fingerprint, output_fingerprint):
+                          fingerprint, output_fingerprint, scientific_signature):
         with self.scheduling_guard(instance_id=instance_id, session_key=session_key), self._connect() as db:
             row = db.execute('SELECT * FROM scheduler_progression WHERE instance_id=?', (instance_id,)).fetchone()
             if row['mode'] != 'background':
@@ -225,7 +235,7 @@ class SchedulingControl:
             if len(admissions) >= limits['max_tasks']:
                 conflict('Frozen task admission budget exhausted.')
             admissions[name] = dict(logical_name=logical_name, revision=revision,
-                fingerprint=fingerprint, output_fingerprint=output_fingerprint, state='prepared')
+                fingerprint=fingerprint, output_fingerprint=output_fingerprint, scientific_signature=scientific_signature, state='prepared')
             value = json.dumps(checkpoint)
             if len(value.encode()) > 65536:
                 conflict('Control checkpoint capacity reached.')

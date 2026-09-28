@@ -311,7 +311,11 @@ class RootOperationRoutes:
         )
         if target.existing_object_id is not None:
             return self.run_status(name=target.name)
-        self._background_agent_admission(max_attempts=max_attempts)
+        scientific_signature = canonical_sha256(dict(operation=bound.compiled.digest,
+            inputs=[dict(port=item.port_name, ref=item.artifact.ref.model_dump(mode='json')) for item in bound.inputs],
+            instruction=bound.instruction, profile=bound.execution_profile,
+            resume_from=resume_run_id, draft_from=draft_run_id))
+        self._background_agent_admission(max_attempts=max_attempts, scientific_signature=scientific_signature)
         output_name = _derived_name(target.name, "output")
         output_logical_name = _derived_name(target.logical_name, "output")
         output_fingerprint = canonical_sha256(
@@ -319,7 +323,7 @@ class RootOperationRoutes:
         )
         self.bindings.prepare_admission(instance_id=self._instance_id(), session_key=self.session_key,
             name=target.name, logical_name=target.logical_name, revision=target.revision,
-            fingerprint=fingerprint, output_fingerprint=output_fingerprint)
+            fingerprint=fingerprint, output_fingerprint=output_fingerprint, scientific_signature=scientific_signature)
         try:
             run_id = self.runs.schedule(
                 bound,
@@ -340,7 +344,7 @@ class RootOperationRoutes:
         self._bind_target("run", target, run_id, fingerprint)
         return self.run_status(name=target.name)
 
-    def _background_agent_admission(self, *, max_attempts):
+    def _background_agent_admission(self, *, max_attempts, scientific_signature=None):
         row = self.bindings.progression_status(instance_id=self._instance_id(), internal=True)
         if row.get('mode') != 'background':
             return
@@ -352,6 +356,10 @@ class RootOperationRoutes:
             raise RootToolError('Background progression permits one queued/running complete Agent task.')
         if len(checkpoint.get('admissions', {})) >= limits['max_tasks']:
             raise RootToolError('Frozen background task budget exhausted; no new task admitted.')
+        for prior in checkpoint.get('admissions', {}).values():
+            if (scientific_signature and prior.get('scientific_signature') == scientific_signature
+                    and prior.get('run_id') and self.runs.status(prior['run_id']).state == 'failed'):
+                raise RootToolError('The same task already failed with unchanged inputs and instruction; use its exact recovery contract or change the scientific request.')
         if max_attempts is not None and max_attempts > limits['max_attempts']:
             raise RootToolError('Requested attempts exceed the frozen background limit.')
 

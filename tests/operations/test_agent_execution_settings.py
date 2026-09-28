@@ -261,3 +261,12 @@ def test_local_open_directs_legacy_reader_without_rewriting_workspace(tmp_path, 
     assert helper.exists() is (helper_state != 'missing')
     if helper_state == 'legacy':
         assert helper.read_text() == '"""Legacy helper: --offset and --version."""\n'
+
+
+def test_progression_disable_inherits_without_instance_reenabling_deployment():
+    from scidiscovery.agent_execution_settings import effective_settings
+    assert not effective_settings(parse_settings({'progression': {'enabled': False}}),
+        {'progression': {'enabled': True}})['progression']['enabled']
+    assert not effective_settings(parse_settings({}),
+        {'progression': {'enabled': False}})['progression']['enabled']
+    assert effective_settings(parse_settings({}), {})['progression']['enabled']

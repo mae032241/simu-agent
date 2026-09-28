@@ -314,3 +314,47 @@ def test_import_restores_spent_budget_and_never_wakes_runtime(progression):
     assert imported['state'] == 'paused' and imported['host_json'] is None
     assert json.loads(imported['checkpoint_json'])['rounds'] == 1
     assert imported['owner_session'] is None
+
+
+def test_fast_pause_resume_waits_for_native_terminal_and_retains_budget(progression):
+    p = progression
+    p.coordinator.tick()
+    host = p.coordinator.host
+    p.root.call_tool('progression_command', dict(command='pause'))
+    p.root.call_tool('progression_command', dict(command='resume'))
+    p.coordinator.tick()
+    assert row(p)['state'] == 'pending' and host.interrupted
+    host.finish()
+    p.coordinator.tick()
+    assert row(p)['state'] == 'active'
+    assert row(p)['owner_session'] == host.scheduler_session
+    assert checkpoint(p)['rounds'] == 1
+
+
+def test_instance_selection_and_goal_revision_do_not_reuse_completed_report(progression):
+    p = progression
+    p.coordinator.tick()
+    host = p.coordinator.host
+    p.facade(host.scheduler_session).progression_report(summary='Old goal outcome.', completed=True)
+    p.root.call_tool('progression_command', dict(command='pause'))
+    message = p.root.call_tool('progression_message', dict(name='new.goal', text='A changed objective.'))
+    assert message['state'] == 'saved'
+    p.root.call_tool('progression_command', dict(command='start', mode='background', objective_name='new.goal'))
+    assert checkpoint(p)['report'] is None
+    host.finish()
+    p.now[0] += 6
+    p.coordinator.tick()
+    assert row(p)['state'] == 'active' and len(host.prompts) == 2
+    assert 'A changed objective.' in host.prompts[-1]
+
+
+def test_unchanged_failed_request_cannot_evade_attempt_limit_by_new_name(progression):
+    p = progression
+    p.coordinator.tick()
+    root = p.root.__class__(p.facade(p.coordinator.host.scheduler_session))
+    _invoke(root, 'failed.task')
+    run = p.runtime.runs.list(instance_id=p.instance)[0]
+    p.runtime.runs.record_failure(run.run_id, reason='fixture runtime failure', expected_state='queued', expected_last_activity_at=run.last_activity_at)
+    with pytest.raises(Exception, match='same task already failed'):
+        _invoke(root, 'renamed.retry')
+    assert len(p.runtime.runs.list(instance_id=p.instance)) == 1

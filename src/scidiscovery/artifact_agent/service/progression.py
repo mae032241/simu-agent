@@ -32,8 +32,10 @@ invent retries. User text does not authorize an approval or execution exception.
 """
 
 
-def digest(value):
-    return hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+class ProgressionFault(RuntimeError):
+    def __init__(self, code):
+        self.code = code
+        super().__init__(code)
 
 
 class ProgressionCoordinator:
@@ -89,7 +91,7 @@ class ProgressionCoordinator:
             return
         if self.host is None:
             if len(self.events) >= 128:
-                raise RuntimeError('native_initialization_event_limit')
+                raise ProgressionFault('native_initialization_event_limit')
             self.events.append(event)
             return
         params = event.get('params', {})
@@ -101,15 +103,18 @@ class ProgressionCoordinator:
             role = 'root' if thread == self.host.identity.thread_id else identities.get(thread, {}).get('role', 'unattributed')
             records = checkpoint.get('usage_records', {})
             if thread not in records and len(records) >= 64:
-                raise RuntimeError('usage_identity_capacity')
+                raise ProgressionFault('usage_identity_capacity')
             previous = records.get(thread)
             if previous and previous['role'] == 'unattributed' and role != 'unattributed':
                 # Native notifications can precede the exact Worker attach. Only
                 # the now-authoritative connection may repair that attribution.
                 previous = {**previous, 'role': role, 'owner': self.instance}
-            records[thread] = observe_usage(params, previous=previous, role=role,
+            record = observe_usage(params, previous=previous, role=role,
                 owner=self.instance if role != 'unattributed' else None,
                 outcome='running')
+            # Keep reducer state, not repeated diagnostic prose or per-event deltas.
+            records[thread] = {key: record[key] for key in ('platform', 'thread_id', 'role', 'owner',
+                'outcome', 'high_water', 'counted_tokens', 'has_gaps', 'coverage')}
             self._save(dict(usage_records=records, usage_summary=usage_summary(list(records.values()))))
         elif thread == self.host.identity.thread_id:
             turn = params.get('turn', {})
@@ -192,6 +197,14 @@ class ProgressionCoordinator:
             related_results_omitted=checkpoint.get('relevant_omitted', False),
             limitations=['Originals and full contracts are available through public tools.',
                 'Stages are previews; only final sealed outputs establish task conclusions.'])
+        brief['active_tasks'] = []
+        for name, intent in checkpoint.get('admissions', {}).items():
+            if not intent.get('run_id'):
+                continue
+            value = self.runtime.runs.status(intent['run_id'])
+            if value.state in {'queued', 'running'}:
+                brief['active_tasks'].append(dict(name=name, state=value.state, deadline=value.deadline_at,
+                    instruction='Observe this accepted task; do not create a replacement or repeat uncertain native dispatch.'))
         previous = checkpoint.get('processed_snapshot', {})
         prior = {v['name']: v for v in previous.get('runs', [])}
         for run in snapshot['runs']:
@@ -226,15 +239,19 @@ class ProgressionCoordinator:
                 entry = brief['changes'].pop(0)
                 brief['omissions'].append(dict(name=entry['name'], read='run_status'))
             else:
-                raise RuntimeError('decision_brief_capacity')
+                raise ProgressionFault('decision_brief_capacity')
         return INSTRUCTION + '\n' + json.dumps(brief, ensure_ascii=False)
 
     def _connect(self, row):
         self.instance = row['instance_id']
         checkpoint = json.loads(row['checkpoint_json'])
         settings = json.loads(row['config_json'])['effective']
-        if settings['progression']['max_tasks'] * (1 + settings['helpers']['max_calls']) + 1 > 48:
-            raise RuntimeError('configured_usage_attribution_capacity')
+        if settings['progression']['max_tasks'] * (1 + settings['helpers']['max_calls']) + settings['progression']['max_rounds'] > 64:
+            raise ProgressionFault('configured_usage_attribution_capacity')
+        if checkpoint.get('attempts', 0) >= settings['progression']['max_attempts']:
+            self.bindings.observe_progression(instance_id=self.instance, expected_host=json.loads(row['host_json'] or 'null'),
+                changes=dict(runtime_status='attempt_budget_exhausted'), reason='attempt_budget_exhausted', stop=True)
+            return
         if checkpoint.get('phase') == 'prepared' and not checkpoint.get('turn_id'):
             self.bindings.observe_progression(instance_id=self.instance,
                 expected_host=json.loads(row['host_json'] or 'null'), changes=dict(runtime_status='submission_unknown'),
@@ -271,7 +288,12 @@ class ProgressionCoordinator:
         for identity in self._identities().values():
             run = self.runtime.runs.status(identity['run_id'])
             if run.state in {'queued', 'running'}:
-                host.restore_worker(identity['thread_id'], identity['platform_session'], str(self.runtime.project_root))
+                try:
+                    host.restore_worker(identity['thread_id'], identity['platform_session'], str(self.runtime.project_root))
+                except Exception:
+                    # A Worker can seal while native state is being reconciled.
+                    if self.runtime.runs.status(identity['run_id']).state in {'queued', 'running'}:
+                        raise
 
     def tick(self):
         if self.host is None:
@@ -291,7 +313,8 @@ class ProgressionCoordinator:
             except Exception as error:
                 self.bindings.observe_progression(instance_id=self.instance,
                     expected_host=json.loads(self._row()['host_json'] or 'null'),
-                    changes=dict(runtime_status='host_fault', fault_code=getattr(error, 'code', type(error).__name__)), reason='host_fault', stop=True)
+                    changes=dict(runtime_status='host_fault', fault_code=getattr(error, 'code', type(error).__name__),
+                        attempts=json.loads(self._row()['checkpoint_json']).get('attempts', 0)+1), reason='host_fault', stop=True)
                 if self.host:
                     self.host.close()
                     self.host = None
@@ -301,11 +324,26 @@ class ProgressionCoordinator:
         row = self._row()
         checkpoint = json.loads(row['checkpoint_json'])
         limits = json.loads(row['config_json'])['effective']['progression']
+        if row['mode'] == 'background' and row['state'] == 'pending':
+            # Explicit resume/start can arrive before the old Root interruption
+            # was acknowledged. Reclaim the existing connection only at a proven
+            # terminal boundary, preserving accepted work and consumed budgets.
+            self.host.interrupt()
+            self.host.poll(0)
+            if self.host.turn_id and self.host.completion is None:
+                return
+            processed = checkpoint.get('processed_snapshot', {})
+            if self.host.completion and self.host.completion['status'] == 'completed':
+                processed = checkpoint.get('decision_snapshot', processed)
+            self._save(dict(phase='idle', turn_id=None, processed_snapshot=processed))
+            row = self.bindings.reconnect_host(instance_id=self.instance, scheduler_session=self.host.scheduler_session,
+                expected_generation=row['generation'], **self._host_binding())
+            checkpoint = json.loads(row['checkpoint_json'])
         if row['mode'] != 'background' or row['state'] not in {'active', 'pending'}:
             self.host.interrupt()
             self.host.poll(0)
             if self.host.turn_id is None or self.host.completion is not None:
-                if any(v.state in {'queued', 'running'} for v in self.runtime.runs.list(instance_id=self.instance)):
+                if self.runtime.runs.active_ids(instance_id=self.instance, limit=1):
                     self._save(dict(runtime_status='paused_accepted_work_continues'))
                     return
                 self._save(dict(phase='idle', turn_id=None, processed_snapshot=checkpoint.get('decision_snapshot', checkpoint.get('processed_snapshot', {}))))
@@ -321,14 +359,15 @@ class ProgressionCoordinator:
             checkpoint = json.loads(self._row()['checkpoint_json'])
             if checkpoint.get('phase') == 'running':
                 if self.host.completion is None:
-                    raise RuntimeError('native_turn_state_unknown')
+                    raise ProgressionFault('native_turn_state_unknown')
                 if not self._reconcile_admissions():
                     return
                 self._save(dict(phase='idle', processed_snapshot=checkpoint.get('decision_snapshot', {}),
+                    running_seconds=checkpoint.get('running_seconds', 0)+max(0, self.clock()-checkpoint.get('round_started_at', self.clock())),
                     runtime_status='waiting', turn_id=None))
                 checkpoint = json.loads(self._row()['checkpoint_json'])
                 if self.host.completion['status'] != 'completed':
-                    self._save(dict(runtime_status='root_turn_failed'), reason='root_turn_failed', stop=True)
+                    self._save(dict(runtime_status='root_turn_failed', attempts=checkpoint.get('attempts', 0)+1), reason='root_turn_failed', stop=True)
                     return
             report = checkpoint.get('report') or {}
             if report.get('completed') and checkpoint.get('messages', []) == checkpoint.get('processed_snapshot', {}).get('messages', []):
@@ -345,13 +384,14 @@ class ProgressionCoordinator:
             prompt = self._brief(self._row(), snapshot, limits['context_bytes']-len(INSTRUCTION.encode()))
             # Intent is durable before the non-idempotent native turn/start.
             with self.bindings.scheduling_guard(instance_id=self.instance, session_key=row['owner_session'], expected_generation=row['generation']):
-                self._save(dict(phase='prepared', turn_id=None, decision_snapshot=snapshot,
+                self._save(dict(phase='prepared', turn_id=None, decision_snapshot=snapshot, round_started_at=self.clock(),
                     rounds=checkpoint.get('rounds', 0)+1, runtime_status='deciding',
                     last_report=checkpoint.get('report') or checkpoint.get('last_report'), report=None))
             turn = self.host.start_turn(prompt)
             self._save(dict(phase='running', turn_id=turn))
         except Exception as error:
-            self._save(dict(runtime_status='host_fault', fault_code=getattr(error, 'code', type(error).__name__)), reason='host_fault', stop=True)
+            self._save(dict(runtime_status='host_fault', fault_code=getattr(error, 'code', type(error).__name__),
+                attempts=json.loads(self._row()['checkpoint_json']).get('attempts', 0)+1), reason='host_fault', stop=True)
             # Keep host marker: connection failure does not prove native quiescence.
             self.host.close()
             self.host = None
@@ -363,19 +403,27 @@ class ProgressionCoordinator:
         exhausted = elapsed >= limits['max_elapsed_seconds']
         exhausted |= allow_round and checkpoint.get('rounds', 0) >= limits['max_rounds']
         exhausted |= checkpoint.get('probes', 0) >= limits['max_probes']
+        exhausted |= checkpoint.get('attempts', 0) >= limits['max_attempts']
         tokens = sum(sum(v['counted_tokens'][key] for key in ('input_tokens', 'output_tokens')) for v in checkpoint.get('usage_records', {}).values())
         exhausted |= tokens >= limits['max_tokens']
         coverage = checkpoint.get('usage_summary', {}).get('coverage', 'missing')
         expected_threads = set(self._identities()) | {self.host.identity.thread_id}
-        if expected_threads - set(checkpoint.get('usage_records', {})):
+        if (expected_threads - set(checkpoint.get('usage_records', {})) or
+                any(v['role'] == 'unattributed' for v in checkpoint.get('usage_records', {}).values())):
             coverage = 'partial' if checkpoint.get('usage_records') else 'missing'
         resources = self.host.resources.sample() if hasattr(self.host, 'resources') else None
         resource_stop = bool(resources and (resources['owned_tree_rss_bytes'] +
             (resources['control_daemon_rss_bytes'] or 0)) >= limits['max_rss_bytes'])
         exhausted |= resource_stop
         exhausted |= allow_round and limits['token_policy'] == 'strict' and coverage != 'observed'
+        running = checkpoint.get('running_seconds', 0)
+        if checkpoint.get('phase') in {'prepared', 'running'}:
+            running += max(0, self.clock()-checkpoint.get('round_started_at', self.clock()))
         self._save(dict(resources=resources, budget=dict(rounds=checkpoint.get('rounds', 0), elapsed_seconds=elapsed,
-            probes=checkpoint.get('probes', 0), observed_tokens=tokens, limits=limits,
+            root_running_seconds=running, waiting_seconds=max(0, elapsed-running),
+            time_coverage='observed_wall_intervals_including_recovery_gaps',
+            probes=checkpoint.get('probes', 0), attempts=checkpoint.get('attempts', 0),
+            tasks=len(checkpoint.get('admissions', {})), observed_tokens=tokens, limits=limits,
             token_coverage=coverage, token_enforcement='asynchronous_observation; time_and_round_limits_apply')),
             **(dict(reason='resource_limit' if resource_stop else 'budget_exhausted', stop=True) if exhausted else {}))
         if resource_stop:

@@ -183,3 +183,44 @@ def test_daemon_entry_wires_dormant_runtime_and_survives_frontend_disconnect(tmp
         finally:
             daemon.terminate()
             daemon.wait(timeout=10)
+
+
+def test_owned_resource_stop_preserves_unrelated_process(tmp_path):
+    from scidiscovery.platforms.process_observation import OwnedProcessTree
+    other=subprocess.Popen([sys.executable,'-c','import time;time.sleep(20)'])
+    owned=subprocess.Popen([sys.executable,'-c','import time;time.sleep(20)'])
+    try:
+        observation=OwnedProcessTree(owned.pid)
+        sample=observation.sample()
+        assert sample['observed_processes']==1
+        assert sample['coverage']=='sampled_owned_tree'
+        observation.terminate()
+        owned.wait(timeout=3)
+        assert other.poll() is None
+    finally:
+        for process in (owned,other):
+            if process.poll() is None:process.terminate()
+            process.wait(timeout=3)
+
+
+def test_protocol_resource_guard_operates_while_rpc_is_running(progression,tmp_path,monkeypatch):
+    p=progression
+    _,requests=native(tmp_path,monkeypatch,p.runtime.project_root,tmp_path/'control.sock')
+    factory=CodexProgressionFactory(project_root=p.runtime.project_root,
+        state_root=p.runtime.state_root,socket_path=tmp_path/'control.sock',approval_base_url='http://127.0.0.1:8765')
+    settings=json.loads(row(p)['config_json'])
+    settings['effective']['progression']['max_rss_bytes']=1
+    value=dict(row(p),config_json=json.dumps(settings))
+    with pytest.raises(HostError,match='resource_limit'):
+        factory(value,lambda event:None)
+    assert 'turn/start' not in methods(requests)
+
+
+def test_worker_restore_requires_native_running_turn_not_only_identity(progression,tmp_path,monkeypatch):
+    p=progression
+    native(tmp_path,monkeypatch,p.runtime.project_root,tmp_path/'control.sock')
+    p.coordinator.host_factory=CodexProgressionFactory(project_root=p.runtime.project_root,
+        state_root=p.runtime.state_root,socket_path=tmp_path/'control.sock',approval_base_url='http://127.0.0.1:8765')
+    p.coordinator.tick()
+    with pytest.raises(HostError,match='worker_native_turn_not_running'):
+        p.coordinator.host.restore_worker('worker','native-root',str(p.runtime.project_root))

@@ -8,6 +8,7 @@ import re
 import shutil
 import subprocess
 import threading
+import time
 import tomllib
 from urllib.parse import urlsplit
 
@@ -56,6 +57,18 @@ class CodexProgressionHost(CodexRootHost):
         self.scheduler_session = None
         from .process_observation import OwnedProcessTree
         self.resources = OwnedProcessTree(connection.child.pid)
+        self.resource_limit = None
+        self._sample_at = 0
+
+    def guard_resources(self):
+        now = time.monotonic()
+        if self.resource_limit is None or now < self._sample_at:
+            return
+        self._sample_at = now + .1
+        sample = self.resources.sample()
+        if sample['owned_tree_rss_bytes'] + (sample['control_daemon_rss_bytes'] or 0) >= self.resource_limit:
+            self.resources.terminate()
+            raise HostError('resource_limit')
 
     def verify_tools_and_session(self, *, approval_base_url):
         cursor = None
@@ -108,6 +121,9 @@ class CodexProgressionHost(CodexRootHost):
         value = result.get('thread', {})
         if (value.get('id'), value.get('sessionId')) != (thread_id, platform_session):
             raise HostError('worker_platform_identity_changed')
+        observed = self.connection.rpc('thread/read', dict(threadId=thread_id, includeTurns=True)).get('thread', {})
+        if observed.get('id') != thread_id or not any(turn.get('status') == 'inProgress' for turn in observed.get('turns', [])):
+            raise HostError('worker_native_turn_not_running')
         # Resume subscribes to the original thread; no synthetic message or turn
         # may restart a side effect whose acceptance cannot be established.
 
@@ -149,6 +165,8 @@ class CodexProgressionFactory:
                 limits=HostLimits(rpc_timeout_seconds=limits['rpc_timeout_seconds'], frame_bytes=limits['frame_bytes']),
                 on_event=on_event)
             host = CodexProgressionHost(connection, log)
+            host.resource_limit = limits["max_rss_bytes"]
+            connection.checkpoint = host.guard_resources
             host.initialize(cwd=str(self.project_root), expected_config=config)
             previous = json.loads(row['host_json'] or 'null')
             checkpoint = json.loads(row['checkpoint_json'])
