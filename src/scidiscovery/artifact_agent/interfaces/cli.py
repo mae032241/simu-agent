@@ -262,7 +262,7 @@ def _run(args: argparse.Namespace) -> Any:
             ),
         )
         url = ui.start()
-        summaries = SummaryWorker(runtime.runs, writable=ui._cache_writable)
+        summaries = SummaryWorker(runtime.runs, project_root=runtime.project_root, writable=ui._cache_writable)
         summaries.start()
         print(canonical_json({"approval_ui": url}).decode("utf-8"), flush=True)
         stopped = threading.Event()

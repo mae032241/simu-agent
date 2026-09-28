@@ -16,7 +16,8 @@ def model_for(f):
 
 
 @pytest.mark.process_e2e
-def test_browser_script_refresh_preserves_history_and_escapes_copy():
+@pytest.mark.parametrize("view", ["run", "stage"])
+def test_browser_script_refresh_preserves_history_and_escapes_copy(view):
     from pathlib import Path
     from shutil import which
     from scidiscovery.plugin_runtime.collection import run_bounded
@@ -26,7 +27,7 @@ def test_browser_script_refresh_preserves_history_and_escapes_copy():
     root = Path(__file__).resolve().parents[2]
     result = run_bounded([node, "--max-old-space-size=128", "--v8-pool-size=1",
         str(root / "tests/fixtures/workbench_progress.mjs"),
-        str(root / "src/scidiscovery/artifact_agent/approval_ui/static/workbench.js")],
+        str(root / "src/scidiscovery/artifact_agent/approval_ui/static/workbench.js"), view],
         input=b"", timeout=10, max_output_bytes=8192)
     assert result.returncode == 0, result.stderr.decode()
     assert b"workbench progress refresh passed" in result.stdout

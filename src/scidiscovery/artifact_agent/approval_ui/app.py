@@ -611,7 +611,7 @@ class ApprovalUI:
                 view["review_url"] = model.approvals.status(binding.object_id).review_path
             body = render_node(view, instance_id=instance_id,
                 csrf_token=self.session_id, can_retry_summary=can_retry_summary,
-                presentation=self._workbench_presentation(instance_id, key))
+                presentation=None if view.get("stage_reference") else self._workbench_presentation(instance_id, key))
         else:
             key, reference = _one(query, "node_key"), unquote(parts[3])
             value = model.diagnostics(instance_id, reference, node_key=key,
@@ -778,7 +778,7 @@ class ApprovalUI:
                     limit=int(_one(query, "limit") or "30"))
             elif len(parts) == 5 and parts[3] == "nodes":
                 if _one(query, "view") == "metadata":
-                    result = model.node_metadata(instance_id, unquote(parts[4]))
+                    result = model.node_metadata(instance_id, unquote(parts[4]), stage_reference=_one(query, "stage_reference"))
                 else:
                     result = model.node(instance_id, unquote(parts[4]),
                         diagnostic_after=int(_one(query, "diagnostic_after") or "0"),
@@ -827,8 +827,8 @@ class ApprovalUI:
             return self._error(handler, HTTPStatus.FORBIDDEN)
         parsed = urlparse(handler.path)
         parts = [part for part in parsed.path.split("/") if part]
-        if len(parts) == 4 and parts[0] == "instance" and parts[2:] == ["display-summary", "retry"]:
-            return self._handle_summary_retry(handler, parts[1])
+        if len(parts) == 4 and parts[0] == "instance" and parts[2] == "display-summary" and parts[3] in {"retry", "generate"}:
+            return self._handle_summary_retry(handler, parts[1], generate=parts[3] == "generate")
         if len(parts) == 4 and parts[0] == "instance" and parts[2] == "manage":
             return self._handle_management_post(handler, parts[1], parts[3])
         if len(parts) == 2 and parts[0] == "instances" and parts[1] in {
@@ -1112,7 +1112,7 @@ class ApprovalUI:
             and self.bindings.agent_settings(instance_id)["settings"].get("presentation", {}).get("enabled", True)
             and self._cache_writable(instance_id))
 
-    def _handle_summary_retry(self, handler, instance_id):
+    def _handle_summary_retry(self, handler, instance_id, *, generate=False):
         from .read_model import ReadModelNotFound
         if not self._valid_origin(handler.headers.get("Origin")):
             return self._error(handler, HTTPStatus.FORBIDDEN)
@@ -1123,7 +1123,7 @@ class ApprovalUI:
             if not 0 <= length <= MAX_POST_BYTES:
                 return self._error(handler, HTTPStatus.REQUEST_ENTITY_TOO_LARGE)
             handler.connection.settimeout(10)
-            form = parse_qs(handler.rfile.read(length).decode("utf-8"), strict_parsing=True, max_num_fields=4)
+            form = parse_qs(handler.rfile.read(length).decode("utf-8"), strict_parsing=True, max_num_fields=5)
             if not secrets.compare_digest(_required(form, "csrf"), self.session_id):
                 raise BrowserAccessDenied("CSRF mismatch")
             with self._shared_maintenance():
@@ -1134,14 +1134,31 @@ class ApprovalUI:
                 with guard:
                     key = _required(form, "node_key")
                     self.read_model.node_metadata(instance_id, key)
-                    self.read_model.presentation_summaries.retry(instance_id,
-                        _required(form, "cache_key"), int(_required(form, "generation")))
+                    stage_reference = _one(form, "stage_reference")
+                    run, ref, _ = self.read_model.display_source(instance_id, key, stage_reference)
+                    existing = self.read_model.presentation_summaries.read(instance_id, ref)
+                    if generate:
+                        from ..service.presentation_summaries import enqueue
+                        if existing is None and enqueue(self.read_model.runs, run, ref) is None:
+                            raise ValueError("展示整理配置不可用。")
+                    else:
+                        if existing is None or (existing.get("retry") or {}).get("cache_key") != _required(form, "cache_key"):
+                            # Queued/running duplicate POSTs remain harmless, but
+                            # cannot be used to select another stage's cache job.
+                            if existing is None or existing.get("state") not in {"queued", "running"}:
+                                raise ValueError("导读版本已变化，请刷新当前阶段。")
+                            return self._respond(handler, HTTPStatus.SEE_OTHER, b"", "text/plain; charset=utf-8",
+                                extra_headers={"Location": f"/instance/{quote(instance_id, safe='')}/nodes/{quote(key, safe='')}"
+                                    + ("?" + urlencode({"stage_reference": stage_reference}) if stage_reference else "")})
+                        self.read_model.presentation_summaries.retry(instance_id,
+                            _required(form, "cache_key"), int(_required(form, "generation")))
         except PermissionError as error:
             return self._error(handler, HTTPStatus.FORBIDDEN, str(error))
         except (ValueError, UnicodeError, ReadModelNotFound, SchedulerInstanceNotFound) as error:
             return self._error(handler, HTTPStatus.CONFLICT, str(error))
         return self._respond(handler, HTTPStatus.SEE_OTHER, b"", "text/plain; charset=utf-8",
-            extra_headers={"Location": f"/instance/{quote(instance_id, safe='')}/nodes/{quote(key, safe='')}"})
+            extra_headers={"Location": f"/instance/{quote(instance_id, safe='')}/nodes/{quote(key, safe='')}"
+                + ("?" + urlencode({"stage_reference": stage_reference}) if stage_reference else "")})
 
     def _cache_writable(self, instance_id):
         if self.instance_archive is None:

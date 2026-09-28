@@ -5,6 +5,7 @@ readonly SOURCE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly WORKSPACE="${SCID_WORKSPACE:-${SOURCE_ROOT}/workspace/default}"
 readonly CODEX_LAUNCH_ROOT="${SCID_CODEX_LAUNCH_ROOT:-}"
 readonly PYTHON="${SCID_PYTHON:-$(command -v python3 || true)}"
+readonly CODEX_EXECUTABLE="${SCID_CODEX_EXECUTABLE:-$(command -v codex || true)}"
 readonly SERVICE_USER="${SCID_SERVICE_USER:-${SUDO_USER:-$(id -un)}}"
 readonly SERVICE_GROUP="${SCID_SERVICE_GROUP:-$(id -gn "$SERVICE_USER")}"
 readonly PLATFORM="${SCID_PLATFORM:-codex}"
@@ -15,6 +16,7 @@ readonly SITE_ROOT="${INSTALL_ROOT}/site"
 readonly SCID_STATE="${SCID_STATE_ROOT:-/var/lib/scidiscovery}"
 readonly LOCAL_WORKSPACE_ROOT="${WORKSPACE}/.scidiscovery-runs"
 readonly INSTANCE_ARCHIVE_ROOT="${WORKSPACE}/.scidiscovery-archive/instances"
+readonly PRESENTATION_ROOT="${WORKSPACE}/.scidiscovery-ui"
 readonly TCAD_STATE="${TCAD_STATE_ROOT:-${SCID_STATE}/tcad}"
 readonly CONFIG_ROOT="${SCID_CONFIG_ROOT:-/etc/scidiscovery}"
 readonly BACKUP_ROOT="${SCID_BACKUP_ROOT:-/var/backups/scidiscovery}"
@@ -72,23 +74,22 @@ validate_local_workspace_root() {
     fi
 }
 
-create_local_workspace_root() {
-    [[ "$WORKER_BACKEND" == "local" ]] || return 0
-    "$PYTHON" - "$WORKSPACE" "$SERVICE_USER" "$SERVICE_GROUP" <<'PY'
+create_private_workspace_root() {
+    "$PYTHON" - "$WORKSPACE" "$SERVICE_USER" "$SERVICE_GROUP" "$1" <<'PY'
 import grp
 import os
 import pwd
 import sys
 
-workspace, user, group = sys.argv[1:]
+workspace, user, group, directory = sys.argv[1:]
 flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
 parent = os.open(workspace, flags)
 try:
     try:
-        os.mkdir(".scidiscovery-runs", mode=0o700, dir_fd=parent)
+        os.mkdir(directory, mode=0o700, dir_fd=parent)
     except FileExistsError:
         pass
-    child = os.open(".scidiscovery-runs", flags, dir_fd=parent)
+    child = os.open(directory, flags, dir_fd=parent)
     try:
         os.fchown(child, pwd.getpwnam(user).pw_uid, grp.getgrnam(group).gr_gid)
         os.fchmod(child, 0o700)
@@ -97,6 +98,15 @@ try:
 finally:
     os.close(parent)
 PY
+}
+
+create_local_workspace_root() {
+    [[ "$WORKER_BACKEND" == "local" ]] || return 0
+    create_private_workspace_root .scidiscovery-runs
+}
+
+create_presentation_root() {
+    create_private_workspace_root .scidiscovery-ui
 }
 
 create_instance_archive_root() {
@@ -131,7 +141,7 @@ require_sources() {
     local path plugin_ids plugin_distributions
     local -a deployment_paths=(
         "$WORKSPACE" "$PYTHON" "$INSTALL_ROOT" "$SCID_STATE"
-        "$LOCAL_WORKSPACE_ROOT" "$INSTANCE_ARCHIVE_ROOT" "$CONFIG_ROOT" "$BACKUP_ROOT"
+        "$LOCAL_WORKSPACE_ROOT" "$INSTANCE_ARCHIVE_ROOT" "$PRESENTATION_ROOT" "$CONFIG_ROOT" "$BACKUP_ROOT"
     )
     for path in \
         pyproject.toml \
@@ -156,6 +166,13 @@ require_sources() {
         [[ "$path" = /* ]] || die "deployment paths must be absolute: ${path}"
         validate_systemd_value "deployment path" "$path"
     done
+    if [[ -n "$CODEX_EXECUTABLE" ]]; then
+        [[ "$CODEX_EXECUTABLE" = /* && -f "$CODEX_EXECUTABLE" && -x "$CODEX_EXECUTABLE" ]] || \
+            die "SCID_CODEX_EXECUTABLE must name an executable absolute file"
+        validate_systemd_value "SCID_CODEX_EXECUTABLE" "$CODEX_EXECUTABLE"
+    else
+        printf '%s\n' 'WARNING: Codex was not found; UI summaries need SCID_CODEX_EXECUTABLE or presentation.command configured.' >&2
+    fi
     [[ "$SERVICE_USER" =~ ^[A-Za-z_][A-Za-z0-9_-]*$ ]] || \
         die "SCID_SERVICE_USER is invalid"
     [[ "$SERVICE_GROUP" =~ ^[A-Za-z_][A-Za-z0-9_-]*$ ]] || \
@@ -375,6 +392,7 @@ render_units() {
         "RUNTIME_IDENTITY=${SITE_ROOT}/runtime-identity.json"
         "APPROVAL_SECRET=${CONFIG_ROOT}/approval-receipt.key"
         "AGENT_SETTINGS_FILE=${CONFIG_ROOT}/agent-settings.json"
+        "CODEX_EXECUTABLE=${CODEX_EXECUTABLE}"
         "WORKER_BACKEND=${WORKER_BACKEND}"
     )
     render_unit \
@@ -392,6 +410,7 @@ render_units() {
         "${common[@]}" \
         "APPROVAL_USER=${SERVICE_USER}" \
         "INSTANCE_ARCHIVE_ROOT=${INSTANCE_ARCHIVE_ROOT}" \
+        "PRESENTATION_ROOT=${PRESENTATION_ROOT}" \
         "PLUGIN_CONFIG_ARGS=${plugin_config_args}" \
         "APPROVAL_PORT=${APPROVAL_PORT}" \
         "LOCAL_IDENTITY=local_user" \
@@ -1408,6 +1427,7 @@ install_all() {
     install -d -o "$SERVICE_USER" -g "$SERVICE_GROUP" -m 0750 "$SCID_STATE"
     create_local_workspace_root
     create_instance_archive_root
+    create_presentation_root
     if [[ "$TCAD_LOCAL_SERVICE" -eq 1 ]]; then
         install -d -o "$SERVICE_USER" -g "$SERVICE_GROUP" -m 0750 "$TCAD_STATE"
     fi

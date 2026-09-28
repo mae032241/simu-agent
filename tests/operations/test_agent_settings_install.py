@@ -39,16 +39,22 @@ def test_settings_first_create_upgrade_preserve_and_symlink_rejection(tmp_path):
     assert outside.read_bytes() == user_bytes
 
 
-def test_both_service_units_use_same_global_settings_file(tmp_path):
+def test_both_service_units_use_same_global_settings_file(tmp_path, monkeypatch):
     from tests.operations.test_instance_archive_install import _install_function
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     units = tmp_path / "units"
+    cli = tmp_path / "user node bin" / "codex"
+    cli.parent.mkdir()
+    cli.write_text("#!/bin/sh\nexit 0\n")
+    cli.chmod(0o750)
+    monkeypatch.setenv("SCID_CODEX_EXECUTABLE", str(cli))
     result = _install_function(workspace, "render_units", str(units))
     assert result.returncode == 0, result.stderr
     paths = []
     for name in ("control", "approval-ui"):
         lines = (units / f"scidiscovery-{name}.service").read_text().splitlines()
         paths.append(next(line for line in lines if "SCID_AGENT_SETTINGS_FILE=" in line))
+        assert f'Environment="SCID_CODEX_EXECUTABLE={cli}"' in lines
     assert paths[0] == paths[1]
     assert "@AGENT_SETTINGS_FILE@" not in paths[0]

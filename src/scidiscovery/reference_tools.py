@@ -43,7 +43,7 @@ class ReferencePolicy:
 
 
 class ReferenceReadRequest(SchemaModel):
-    source: str = Field(min_length=1, max_length=256, description='Frozen input or current controlled access alias; not an Artifact ID.')
+    source: str = Field(min_length=1, max_length=256, description='Frozen input, sealed stage, published attachment (including recovered files), or current controlled access alias; not an Artifact ID.')
     action: Literal['list', 'read'] = 'list'
     delivery: Literal['fragment', 'file'] = Field(default='fragment', description='Read a bounded text fragment, or expose the exact complete original as a native read-only file.')
     reference: str | None = Field(default=None, max_length=256, description='Exact reference handle returned by list; required for read.')
@@ -78,7 +78,7 @@ def reference_tool():
     from .operations.tooling import WorkerToolDefinition
     return WorkerToolDefinition(
         name='worker_reference_read',
-        description='List direct citations and published attachments of one exact bound report, or read a selected original. Use delivery=file for large originals (streamed under frozen input_materials budgets); fragment reads have bounded memory. Select one calculation before requesting its inputs.',
+        description='List direct citations and published attachments of one exact bound report, or read a selected original. Current and recovered stage/file aliases also support list: content reads that material, while stage references open its currently bound scientific sources. Use delivery=file for images and large originals (streamed under frozen input_materials budgets); fragment reads have bounded memory. Select one calculation before requesting its inputs.',
         input_model=ReferenceReadRequest, capability='reference.read',
         contextual_handler=reference_handler, reference_policy=ReferencePolicy(),
     )

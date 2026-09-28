@@ -219,7 +219,10 @@ class ReferenceAccessMixin:
             'source_ref': source.model_dump(mode='json'), 'request': request.model_dump(mode='json')})
 
     def _reference_current_material(self, value, alias):
-        visible = {port.name for port in self._compiled(value).spec.outputs if port.agent_visible}
+        # Visibility governs authoring fields, not access to scientific files
+        # already published into this exact Run (including verified recovery).
+        visible = {port.name for port in self._compiled(value).spec.outputs
+                   if port.agent_visible or port.kind == 'scientific_attachment'}
         record = next((item for item in self.tool_evidence(value.run_id) if item['alias'] == alias), None)
         if record is None:
             return None
@@ -228,6 +231,32 @@ class ReferenceAccessMixin:
                 or envelope.schema_id == 'scidiscovery.tool-evidence-manifest.v1'):
             return None
         return record
+
+    def _reference_current_edges(self, value, record):
+        edges = [{'reference': 'content', 'alias': record['alias'],
+                  'media_type': record['media_type'], 'size_bytes': record['size_bytes'],
+                  '_current_alias': record['alias'], '_edge': {'target_ref': record['artifact_ref']}}]
+        if record.get('metadata', {}).get('kind') != 'experiment_stage':
+            return edges
+        from .sealed_materials import resolve_material
+        origin = resolve_material(self, value, record['alias'])
+        available = {item.artifact_ref: item.source_name for item in self._reference_roots(value)}
+        for item in self.tool_evidence(value.run_id):
+            if self._reference_current_material(value, item['alias']) is not None:
+                available.setdefault(_ref(item['artifact_ref']), item['alias'])
+        parents = self.artifacts.catalog(_ref(record['artifact_ref'])).parent_refs
+        for original_alias in dict.fromkeys(origin['metadata'].get('derived_from', ())):
+            target = origin['source_refs'].get(original_alias)
+            if target not in available or target not in parents:
+                continue
+            alias = available[target]
+            envelope = self.artifacts.catalog(target)
+            edge = {'source_ref': record['artifact_ref'], 'locator': '/materials/' + _escape(original_alias),
+                    'target_ref': target.model_dump(mode='json')}
+            edges.append({'reference': 'ref_' + _digest(edge), 'alias': alias, 'locator': edge['locator'],
+                'media_type': envelope.media_type, 'size_bytes': envelope.size_bytes,
+                '_current_alias': alias, '_edge': edge})
+        return edges
 
     def _reference_source(self, value, alias, policy):
         source = next((item for item in self._reference_roots(value) if item.source_name == alias), None)
@@ -563,9 +592,7 @@ class ReferenceAccessMixin:
             if current_material is not None:
                 # The current Run already owns this immutable scientific source;
                 # reading it does not create another provenance receipt or alias.
-                edges = [{'reference': 'content', 'alias': request.source,
-                    'media_type': current_material['media_type'], 'size_bytes': current_material['size_bytes'],
-                    '_edge': {'target_ref': current_material['artifact_ref']}}]
+                edges = self._reference_current_edges(value, current_material)
                 sections = []
             else:
                 edges, sections = self._reference_edges(value, source, policy, call, request.pointer if request.action == 'list' else None,
@@ -605,7 +632,7 @@ class ReferenceAccessMixin:
                 self._reference_reserve_bytes(value, target, policy, call, material=True, file_delivery=True)
             else:
                 raw = self._reference_read_bytes(value, target, policy, call, material=True)
-            alias = request.source if current_material is not None else self._reference_alias(value, target)
+            alias = selected['_current_alias'] if current_material is not None else self._reference_alias(value, target)
             response = {'action': 'read', 'source': alias, 'media_type': selected['media_type'],
                         'provided': {'pointer': request.pointer, 'offset': request.offset, 'characters': 0}, 'next_offset': None, 'omitted': False}
             envelope = self.artifacts.catalog(target)

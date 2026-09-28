@@ -2,6 +2,7 @@
 import json
 import os
 from pathlib import Path
+import shutil
 import sys
 import tempfile
 import time
@@ -17,6 +18,65 @@ OUTPUT_SCHEMA = {"type": "object", "additionalProperties": False, "required": ["
     "items": {"type": "array", "maxItems": 8, "items": {"type": "object", "additionalProperties": False,
         "required": ["source", "title", "summary"], "properties": {
             key: {"type": "string"} for key in ("source", "title", "summary")}}}}}
+
+
+def resolve_command(command):
+    """Resolve the service launcher without depending on an interactive shell PATH."""
+    command = list(command)
+    if command[0] == "codex":
+        command[0] = os.environ.get("SCID_CODEX_EXECUTABLE") or command[0]
+    executable = shutil.which(command[0])
+    if executable is None:
+        raise RuntimeError("display_launcher_unavailable: configure SCID_CODEX_EXECUTABLE or presentation.command")
+    executable = os.path.abspath(executable)
+    command[0] = executable
+    # npm's Codex entrypoint uses env node. nvm installs node beside that
+    # entrypoint, outside systemd's PATH. Keep the symlink's directory here.
+    with open(executable, "rb") as stream:
+        shebang = stream.readline(256).strip()
+    if shebang == b"#!/usr/bin/env node":
+        node = shutil.which("node", path=str(Path(executable).parent)) or shutil.which("node")
+        if node is None:
+            raise RuntimeError("display_interpreter_unavailable: configure presentation.command with an absolute Node path")
+        command.insert(0, os.path.abspath(node))
+    return command
+
+
+def display_environment(home):
+    """Keep the helper's index and refreshed login separate from research history."""
+    if home is None:
+        return None
+    source = Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex")
+    target = Path(home)
+    if not target.is_absolute() or target.is_symlink() or target.resolve() == source.resolve():
+        raise ValueError("display_home_must_be_a_separate_absolute_directory")
+    target.mkdir(mode=0o700, parents=True, exist_ok=True)
+    target.chmod(0o700)
+    try:
+        with (target / ".gitignore").open("x") as ignore:
+            ignore.write("*\n")
+    except FileExistsError:
+        pass
+    auth = target / "auth.json"
+    if not auth.exists() and (source / "auth.json").is_file():
+        # Seed once. Codex owns later refreshes in this persistent private home;
+        # never overwrite it with the interactive user's potentially older cache.
+        with tempfile.NamedTemporaryFile(dir=target, delete=False) as staged:
+            staged_path = Path(staged.name)
+            try:
+                with (source / "auth.json").open("rb") as original:
+                    shutil.copyfileobj(original, staged)
+                staged.flush()
+                os.replace(staged_path, auth)
+            finally:
+                staged_path.unlink(missing_ok=True)
+    # Preserve legacy home-level managed policy without copying user config,
+    # session transcripts, plugins, or skills into the display-only runtime.
+    for name in ("requirements.toml", "managed_config.toml"):
+        policy = target / name
+        if not policy.exists() and not policy.is_symlink() and (source / name).is_file():
+            policy.symlink_to((source / name).absolute())
+    return {**os.environ, "CODEX_HOME": str(target)}
 
 
 def invoke_codex(source, profile, settings, stop):
@@ -37,19 +97,19 @@ def invoke_codex(source, profile, settings, stop):
         root = Path(directory)
         schema, output = root / "schema.json", root / "result.json"
         schema.write_bytes(canonical_json(OUTPUT_SCHEMA))
-        command = [*settings.command, "exec", "--ephemeral", "--ignore-user-config", "--skip-git-repo-check",
+        command = [*resolve_command(settings.command), "exec", "--ephemeral", "--ignore-user-config", "--skip-git-repo-check",
             "--sandbox", "read-only", "--cd", directory, "--model", profile["model"],
             "--json", "--output-schema", str(schema), "--output-last-message", str(output)]
         overrides = {"approval_policy": "never", "model_reasoning_effort": profile.get("reasoning_effort") or "low",
             "project_doc_max_bytes": 0, "features.shell_tool": False, "features.unified_exec": False,
             "features.apps": False, "agents.enabled": False, "tools.view_image": False, "web_search": "disabled",
-            "sqlite_home": str(root / "state"), "log_dir": str(root / "logs")}
+            "log_dir": str(root / "logs")}
         for key, value in overrides.items():
             command.extend(["-c", key + "=" + json.dumps(value)])
         command.append("-")
         guarded = [sys.executable, "-m", __name__, str(settings.memory_limit_bytes), *command]
         result = run_bounded(guarded, input=prompt, timeout=settings.timeout_seconds,
-            max_output_bytes=4 * settings.max_output_bytes, context=Context())
+            max_output_bytes=4 * settings.max_output_bytes, context=Context(), env=display_environment(settings.codex_home))
         if result.returncode != 0 or not output.is_file() or output.stat().st_size > settings.max_output_bytes:
             error = RuntimeError("display_helper_exit_" + str(result.returncode) if result.returncode else "display_output_unavailable")
             error.stdout, error.stderr = result.stdout, result.stderr

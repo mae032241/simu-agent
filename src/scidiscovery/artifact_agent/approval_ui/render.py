@@ -13,7 +13,7 @@ from ..schema.approval import (
     ReviewDocumentItem,
     parse_json_pointer,
 )
-from ..service.approvals import ApprovalReview
+from ..service.approvals import ApprovalReview, UI_CANCEL_OPTION
 from .presentation_render import (
     EvidenceHref,
     ImageHref,
@@ -391,7 +391,15 @@ def _render_decision(
         f"<strong>{html.escape(identity.display_name)}</strong>"
         f"<code>{html.escape(identity.identity_id)}</code></p>"
         "<button class='submit-decision' type='submit'>确认并记录决定</button>"
-        "</form></section>"
+        "</form>"
+        + fold_panel("作废此审批请求", "<p>仅关闭尚未决策的请求，不授予任何审批或执行资格。记录仍保留。</p>"
+            + f"<form method='post' action='{html.escape(action, quote=True)}' data-cancel-approval>"
+            + "".join(f"<input type='hidden' name='{key}' value='{html.escape(value, quote=True)}'>"
+                for key, value in {"token": access_token, "csrf": review.csrf_token, "nonce": review.decision_nonce,
+                    "confirm": "confirm", "selected_option": UI_CANCEL_OPTION.option_id}.items())
+            + "<label>作废说明（选填）<textarea name='rationale' maxlength='16384'></textarea></label>"
+            + "<button type='submit'>确认作废此请求</button></form>", class_name="approval-cancel")
+        + "</section>"
     )
 
 

@@ -18,16 +18,20 @@ class Element {
 }
 
 const page = new Element(), header = new Element(), progress = new Element();
-const live = new Element(), copy = new Element(), children = new Element(), history = new Element();
+const live = new Element(), copy = new Element(), actions = new Element(), children = new Element(), history = new Element();
+const stageMode = process.argv[3] === "stage";
 page.dataset.instanceId = "instance-one";
 progress.dataset.experimentKey = "run:experiment";
 copy.dataset.displayCopy = "run:experiment";
+copy.dataset.displayStage = stageMode ? "sealed/a" : "";
+copy.parent = new Element(); copy.parent.open = false;
 progress.select = {"[data-experiment-live]": live};
 children.dataset = {experimentChildren: "run:experiment", childOffset: "0"};
 history.dataset = {experimentChildren: "run:experiment", childOffset: "8"};
 history.textContent = "older stages being read";
 children.parent = new Element(); children.parent.open = true;
-page.select = {".workbench-header": header, "[data-experiment-key]": progress, "[data-display-copy]": copy};
+page.select = {".workbench-header": header, "[data-experiment-key]": progress, "[data-display-copy]": copy,
+  "[data-display-actions]": actions};
 page.selectAll = {"[data-experiment-children]": [children, history]};
 const events = new Map(), timers = new Map(); let sequence = 0;
 const document = {
@@ -38,6 +42,7 @@ const document = {
 };
 const requests = [];
 const value = {key: "run:experiment", state: "running", experiment_progress: {stages: [], executions: []},
+  stage_reference: stageMode ? "sealed/a" : undefined,
   display_copy: {state: "ready", items: [{title: "<img onerror=alert(1)>", summary: "尚不能判断。"}]},
   experiment_children: {total: 10, pending_approvals: 1, next_offset: 8, items: [
     {kind: "stage", parent_key: "run:experiment", reference: "sealed/a", title: "设计", version: 2},
@@ -58,7 +63,7 @@ async function tick() {
 }
 await tick();
 assert.equal(requests.length, 1);
-assert.match(requests[0].url, /run%3Aexperiment\?view=metadata$/);
+assert.match(requests[0].url, stageMode ? /view=metadata&stage_reference=sealed%2Fa$/ : /run%3Aexperiment\?view=metadata$/);
 assert.equal(requests[0].options.credentials, "same-origin");
 assert.match(live.textContent, /运行中/);
 assert.match(children.textContent, /设计 · v2/);
@@ -67,17 +72,29 @@ assert.match(children.textContent, /更早的子节点/);
 assert.equal(history.textContent, "older stages being read");
 assert.equal(children.parent.open, true);
 assert.match(copy.textContent, /<img onerror=alert\(1\)>/);
+assert.equal(copy.parent.open, false, "refresh must preserve a collapsed guide");
 value.display_copy = {state: "failed", items: [], retry: {cache_key: "exact-copy", generation: 2}};
 await tick();
-assert.match(copy.textContent, /重新整理/);
-const form = copy.children[0].children.find(child => child.method === "post");
+assert.match(actions.textContent, /重新整理/);
+const form = actions.children.find(child => child.method === "post");
 assert.equal(form.action, "/instance/instance-one/display-summary/retry");
 assert.equal(form.children.find(child => child.name === "generation").value, "2");
+if (stageMode) assert.equal(form.children.find(child => child.name === "stage_reference").value, "sealed/a");
 value.display_copy = {state: "queued", items: []};
 value.state = "completed";
 await tick();
 assert.match(live.textContent, /报告已交付/);
 assert.doesNotMatch(copy.textContent, /重新整理/);
+assert.match(actions.textContent, /导读整理中/);
+value.display_copy = {state: "not_generated", items: []};
+await tick();
+assert.match(actions.textContent, /生成导读/);
+if (stageMode) {
+  value.stage_reference = undefined;
+  value.display_copy = {state: "ready", items: [{title: "wrong parent copy", summary: "must not appear"}]};
+  await tick();
+  assert.doesNotMatch(copy.textContent, /wrong parent copy/);
+}
 document.hidden = true; events.get("visibilitychange")();
 assert.equal(timers.size, 0, "hidden pages must stop polling");
 console.log("workbench progress refresh passed");

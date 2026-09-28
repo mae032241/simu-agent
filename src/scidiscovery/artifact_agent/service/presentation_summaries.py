@@ -74,16 +74,16 @@ class SummaryStore:
             return None
         return {"state": row[0], "items": json.loads(row[1]) if row[1] else [],
                 "usage": json.loads(row[2]) if row[2] else {}, "error_code": row[3],
-                "retry": {"cache_key": row[4], "generation": row[5]} if row[0] == "failed" else None}
+                "retry": {"cache_key": row[4], "generation": row[5]} if row[0] in {"failed", "ready"} else None}
 
     def retry(self, instance_id, key, generation):
-        """One explicit retry of an exact failed copy; old forms cannot retry again."""
+        """One explicit regeneration of an exact copy; old forms cannot retry again."""
         with self.connect() as db:
             row = db.execute("SELECT * FROM display_summaries WHERE instance_id=? AND cache_key=?",
                 (instance_id, key)).fetchone()
             if row is None:
                 raise ValueError("没有找到该实例的展示整理记录。")
-            if row["retry_generation"] != generation or row["state"] != "failed":
+            if row["retry_generation"] != generation or row["state"] not in {"failed", "ready"}:
                 return False
             # A newer settings-specific copy supersedes this old browser form.
             latest = db.execute("SELECT cache_key FROM display_summaries WHERE instance_id=? AND source_ref=? "
@@ -123,7 +123,7 @@ def enqueue(runs, run, ref):
         profile = helpers["profiles"].get("lightweight")
         if profile is None or not profile.get("model"):
             return
-        store_for(runs).enqueue(run.instance_id, ref, settings.model_dump(), profile)
+        return store_for(runs).enqueue(run.instance_id, ref, settings.model_dump(), profile)
     except Exception as error:
         LOGGER.warning("Display summary enqueue failed (%s); sealed result retained", type(error).__name__)
 
@@ -177,9 +177,10 @@ def validate_copy(value, source):
 
 
 class SummaryWorker:
-    def __init__(self, runs, *, invoke=None, writable=lambda _: True):
+    def __init__(self, runs, *, project_root, invoke=None, writable=lambda _: True):
         from .presentation_summary_runner import invoke_codex
         self.runs, self.store = runs, store_for(runs)
+        self.default_codex_home = Path(project_root).resolve() / ".scidiscovery-ui" / "display-codex"
         self.invoke = invoke or invoke_codex
         self.writable = writable
         self.stop_event = threading.Event()
@@ -206,6 +207,8 @@ class SummaryWorker:
             if not self.writable(job["instance_id"]):
                 raise ValueError("instance_not_active")
             settings = PresentationSettings.model_validate_json(job["settings"])
+            if settings.codex_home is None:
+                settings = settings.model_copy(update={"codex_home": str(self.default_codex_home)})
             ref = ArtifactRef.model_validate_json(job["source_ref"])
             if self.runs.artifacts.catalog(ref).size_bytes > settings.max_source_bytes:
                 raise ValueError("display_source_limit")

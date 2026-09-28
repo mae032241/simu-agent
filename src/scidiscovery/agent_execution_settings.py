@@ -111,6 +111,7 @@ class PresentationSettings(SettingsValue):
     """Optional, serial post-seal copy editing; never scientific admission."""
     enabled: bool = True
     command: list[str] = Field(default_factory=lambda: ["codex"], min_length=1, max_length=16)
+    codex_home: str | None = None
     timeout_seconds: int = Field(default=60, ge=1, le=600)
     interval_seconds: int = Field(default=5, ge=1, le=3600)
     max_source_bytes: int = Field(default=1048576, ge=1024, le=8388608)

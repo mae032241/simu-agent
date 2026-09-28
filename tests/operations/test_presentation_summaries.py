@@ -33,7 +33,7 @@ def test_sealing_queues_once_without_worker_review_and_helper_failure_keeps_orig
     assert store.read("unrelated-instance", ref) is None
     def broken(*_):
         raise RuntimeError("backend unavailable")
-    worker = SummaryWorker(f.runs, invoke=broken)
+    worker = SummaryWorker(f.runs, project_root=f.runtime.project_root, invoke=broken)
     for _ in range(20):
         if not worker.process_one():
             break
@@ -43,10 +43,11 @@ def test_sealing_queues_once_without_worker_review_and_helper_failure_keeps_orig
     assert submit(f, [], outcome="inconclusive")["state"] == "completed"
     output = f.runs.status(f.run_id).output_ref
     assert store.read(f.instance.instance_id, output)["state"] == "queued"
-    def generate(source, *_):
+    def generate(source, profile, settings, stop):
+        assert settings.codex_home == str(f.runtime.project_root / ".scidiscovery-ui" / "display-codex")
         return {"items": [{"source": source["fragments"][0]["source"],
             "title": "<未定结论>", "summary": "边界仍不确定。"}]}, {"input_tokens": 120}
-    assert SummaryWorker(f.runs, invoke=generate).process_one()
+    assert SummaryWorker(f.runs, project_root=f.runtime.project_root, invoke=generate).process_one()
     copy = store.read(f.instance.instance_id, output)
     assert copy["state"] == "ready" and copy["usage"]["input_tokens"] == 120
     from scidiscovery.artifact_agent.approval_ui.workbench_render import _display_copy
@@ -83,7 +84,7 @@ def test_summary_workers_are_serial_and_do_not_repeat_interrupted_calls(tmp_path
     ref = ArtifactRef(artifact_id="original", sha256="a"*64, kind="fixture", schema_id="fixture.v1")
     store.enqueue("one", ref, PresentationSettings().model_dump(), {"model": "small"})
     runs = SimpleNamespace(database_path=tmp_path / "database/runs.sqlite3")
-    worker = SummaryWorker(runs, invoke=lambda *_: pytest.fail("repeated uncertain model request"))
+    worker = SummaryWorker(runs, project_root=tmp_path, invoke=lambda *_: pytest.fail("repeated uncertain model request"))
     with store.path.with_suffix(".summary.lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         assert worker.process_one() is False
@@ -150,6 +151,8 @@ def test_manual_retry_http_requires_access_and_requeues_stage_and_final_copy(tmp
         for ref in (stage_ref, output):
             retry = store.read(instance, ref)["retry"]
             form = {"csrf": ui.session_id, "node_key": "run:continuation", **retry}
+            if ref == stage_ref:
+                form["stage_reference"] = stage["reference"]
             assert _request(base, "POST", endpoint, form=form)[0] == 403
             assert _request(base, "POST", endpoint, form=form, cookie=read_only)[0] == 403
             assert _request(base, "POST", endpoint, form={**form, "csrf": "wrong"}, cookie=cookie)[0] == 403
@@ -209,11 +212,82 @@ def test_available_codex_launcher_can_start_under_display_memory_limit(monkeypat
     codex = which("codex")
     if codex is None:
         pytest.skip("Codex CLI is not installed on this host")
+    monkeypatch.setenv("SCID_CODEX_EXECUTABLE", codex)
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")
     monkeypatch.setenv("PYTHONPATH", str(Path(__file__).resolve().parents[2] / "src"))
-    result = runner.run_bounded([sys.executable, "-m", runner.__name__, "2147483648", codex, "exec", "--help"],
+    result = runner.run_bounded([sys.executable, "-m", runner.__name__, "2147483648", *runner.resolve_command(["codex"]), "exec", "--help"],
         input=b"", timeout=10, max_output_bytes=32768)
     assert result.returncode == 0, result.stderr.decode()
     assert b"--output-schema" in result.stdout and b"--ignore-user-config" in result.stdout
+
+
+def test_display_command_respects_custom_configuration_and_reports_missing_launcher(tmp_path, monkeypatch):
+    from scidiscovery.artifact_agent.service.presentation_summary_runner import resolve_command
+    monkeypatch.setenv("SCID_CODEX_EXECUTABLE", str(tmp_path / "missing-codex"))
+    monkeypatch.setenv("PATH", str(tmp_path))
+    assert resolve_command([sys.executable, "custom.py"]) == [sys.executable, "custom.py"]
+    with pytest.raises(RuntimeError, match="display_launcher_unavailable"):
+        resolve_command(["codex"])
+    cli = tmp_path / "codex"
+    cli.write_text("#!/usr/bin/env node\n")
+    cli.chmod(0o750)
+    monkeypatch.setenv("SCID_CODEX_EXECUTABLE", str(cli))
+    with pytest.raises(RuntimeError, match="display_interpreter_unavailable"):
+        resolve_command(["codex"])
+
+
+def test_display_home_seeds_login_once_without_research_history(tmp_path, monkeypatch):
+    from scidiscovery.artifact_agent.service.presentation_summary_runner import display_environment
+    original = tmp_path / "interactive"
+    original.mkdir()
+    (original / "auth.json").write_text('{"test_credential":"initial"}')
+    (original / "config.toml").write_text("# user tools must not be loaded")
+    (original / "requirements.toml").write_text("# managed restrictions")
+    (original / "sessions").mkdir()
+    monkeypatch.setenv("CODEX_HOME", str(original))
+    helper = tmp_path / "display"
+    assert display_environment(str(helper))["CODEX_HOME"] == str(helper)
+    assert (helper / "auth.json").read_bytes() == (original / "auth.json").read_bytes()
+    assert helper.stat().st_mode & 0o777 == 0o700
+    assert (helper / "auth.json").stat().st_mode & 0o777 == 0o600
+    assert (helper / ".gitignore").read_text() == "*\n"
+    assert not (helper / "sessions").exists() and not (helper / "config.toml").exists()
+    (helper / "auth.json").write_text('{"test_credential":"refreshed"}')
+    (original / "requirements.toml").write_text("# updated managed restrictions")
+    display_environment(str(helper))
+    assert "refreshed" in (helper / "auth.json").read_text()
+    assert "initial" in (original / "auth.json").read_text()
+    assert "updated" in (helper / "requirements.toml").read_text()
+    with pytest.raises(ValueError, match="separate_absolute"):
+        display_environment(str(original))
+
+
+@pytest.mark.process_e2e
+def test_default_display_command_uses_pinned_launcher_and_adjacent_node(tmp_path, monkeypatch):
+    from shutil import which
+    from scidiscovery.artifact_agent.service.presentation_summary_runner import invoke_codex
+    node = which("node")
+    if node is None:
+        pytest.skip("Node is not installed on this host")
+    binary = tmp_path / "user-node-bin"
+    binary.mkdir()
+    (binary / "node").symlink_to(node)
+    cli = binary / "codex"
+    cli.write_text('''#!/usr/bin/env node
+const fs = require('fs');
+fs.readFileSync(0);
+fs.writeFileSync(process.argv[process.argv.indexOf('--output-last-message')+1], JSON.stringify({items:[
+{source:'/summary',title:'Uncertain result',summary:'No solver was run.'}]}));
+console.log(JSON.stringify({type:'turn.completed',usage:{input_tokens:123,output_tokens:12}}));
+''')
+    cli.chmod(0o750)
+    monkeypatch.setenv("SCID_CODEX_EXECUTABLE", str(cli))
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")
+    monkeypatch.setenv("PYTHONPATH", str(Path(__file__).resolve().parents[2] / "src"))
+    value, usage = invoke_codex({"fragments": [{"source": "/summary", "text": "No solver was run."}],
+        "source_excerpt_omitted": False}, {"model": "configured-small"}, PresentationSettings(), threading.Event())
+    assert value["items"][0]["title"] == "Uncertain result"
+    assert usage["input_tokens"] == 123
 
 
 @pytest.mark.live_platform
@@ -224,11 +298,15 @@ def test_live_lightweight_display_copy_on_synthetic_text(monkeypatch, tmp_path):
     from scidiscovery.artifact_agent.service.presentation_summary_runner import invoke_codex
     if os.environ.get("SCID_LIVE_UI_SUMMARY") != "1":
         pytest.skip("explicit opt-in required for a real model call")
+    monkeypatch.setenv("SCID_CODEX_EXECUTABLE", which("codex") or "codex")
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")
     monkeypatch.setenv("PYTHONPATH", str(Path(__file__).resolve().parents[2] / "src"))
+    settings = PresentationSettings(codex_home=str(tmp_path / "codex-home"), memory_limit_bytes=int(os.environ.get(
+        "SCID_LIVE_UI_MEMORY_BYTES", PresentationSettings().memory_limit_bytes)))
     source = fragments({"summary": "合成验证：实验尚未执行，边界条件存在不确定性。"}, max_bytes=2048)
     try:
         value, usage = invoke_codex(source, AgentSettings().helpers.profiles["lightweight"].model_dump(),
-            PresentationSettings(command=[which("codex") or "codex"]), threading.Event())
+            settings, threading.Event())
     except Exception as exc:
         diagnostic = Path(os.environ.get("SCID_LIVE_UI_DIAGNOSTIC", str(tmp_path / "display-helper-diagnostic.json")))
         diagnostic.touch(mode=0o600)
@@ -236,4 +314,5 @@ def test_live_lightweight_display_copy_on_synthetic_text(monkeypatch, tmp_path):
             for key in ("stdout", "stderr")}))
         pytest.fail(f"{exc}; diagnostic: {diagnostic}", pytrace=False)
     assert validate_copy(value, source)
+    Path(os.environ.get("SCID_LIVE_UI_USAGE", str(tmp_path / "display-usage.json"))).write_text(json.dumps(usage))
     print("display_summary_usage=" + json.dumps(usage, ensure_ascii=False))

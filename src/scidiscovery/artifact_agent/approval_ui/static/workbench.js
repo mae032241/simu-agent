@@ -101,28 +101,43 @@ document.addEventListener("click", async (event) => {
   let overflow = false;
   const progressPanel = page.querySelector("[data-experiment-key]");
   const copyPanel = page.querySelector("[data-display-copy]");
+  const copyActions = page.querySelector("[data-display-actions]");
+  const displayStage = copyPanel?.dataset.displayStage || "";
   const liveNode = progressPanel?.dataset.experimentKey || copyPanel?.dataset.displayCopy;
   const liveProgress = Boolean(liveNode);
 
-  function retryForm(copy, key) {
-    if (copy?.state !== "failed" || !copy.retry
-        || document.querySelector("meta[name='summary-retry-enabled']")?.content !== "true") return null;
+  function retryForm(copy, key, stage = "") {
+    if (!copy) return null;
+    if (["queued", "running"].includes(copy.state)) {
+      const button = document.createElement("button");
+      button.type = "button"; button.disabled = true; button.textContent = "导读整理中…";
+      return button;
+    }
+    if (document.querySelector("meta[name='summary-retry-enabled']")?.content !== "true") {
+      const link = document.createElement("a");
+      link.href = "/instances/manage"; link.textContent = "从实例管理进入以生成或重新整理导读";
+      return link;
+    }
+    const generate = copy.state === "not_generated";
+    if (!generate && !copy.retry) return null;
     const csrf = document.querySelector("meta[name='workbench-csrf']")?.content;
     if (!csrf) return null;
     const form = document.createElement("form");
     form.method = "post";
-    form.action = `/instance/${instancePath}/display-summary/retry`;
+    form.action = `/instance/${instancePath}/display-summary/${generate ? "generate" : "retry"}`;
     form.dataset.summaryRetry = "";
-    for (const [name, value] of Object.entries({csrf, node_key: key,
-      cache_key: copy.retry.cache_key, generation: copy.retry.generation})) {
+    const fields = {csrf, node_key: key};
+    if (!generate) Object.assign(fields, copy.retry);
+    if (stage) fields.stage_reference = stage;
+    for (const [name, value] of Object.entries(fields)) {
       const input = document.createElement("input");
       input.type = "hidden"; input.name = name; input.value = String(value);
       form.append(input);
     }
     const button = document.createElement("button");
-    button.type = "submit"; button.textContent = "重新整理";
+    button.type = "submit"; button.textContent = generate ? "生成导读" : "重新整理";
     const note = document.createElement("small");
-    note.textContent = "仅重试展示文案，不修改科学结果。";
+    note.textContent = "仅整理展示文案，不修改科学结果。";
     form.append(button, note);
     return form;
   }
@@ -135,6 +150,7 @@ document.addEventListener("click", async (event) => {
 
   function updateCopy(node) {
     if (!copyPanel || node.key !== copyPanel.dataset.displayCopy || !node.display_copy) return;
+    if ((node.stage_reference || "") !== displayStage) return;
     const copy = node.display_copy;
     const content = document.createDocumentFragment();
     for (const item of (copy.items || []).slice(0, 4)) {
@@ -147,11 +163,12 @@ document.addEventListener("click", async (event) => {
     if (!copy.items?.length) {
       const message = document.createElement("p");
       message.textContent = ["queued", "running"].includes(copy.state)
-        ? "展示导读正在整理；可直接阅读下方原始结果。" : "展示整理暂不可用，以下保留原始结果。";
+        ? "展示导读正在整理；可直接阅读下方原始结果。" : copy.state === "not_generated"
+        ? "该版本尚未生成导读，可阅读下方原文。" : "展示整理暂不可用，以下保留原始结果。";
       content.append(message);
     }
-    const retry = retryForm(copy, node.key);
-    if (retry) content.append(retry);
+    const retry = retryForm(copy, node.key, displayStage);
+    if (copyActions) copyActions.replaceChildren(...(retry ? [retry] : []));
     copyPanel.replaceChildren(content);
   }
 
@@ -249,7 +266,7 @@ document.addEventListener("click", async (event) => {
         const timestamp = document.createElement("p");
         timestamp.textContent = time(child.source_time);
         row.append(timestamp);
-        const retry = retryForm(child.display_copy, node.key);
+        const retry = stage ? retryForm(child.display_copy || {state: "not_generated"}, child.parent_key, child.reference) : null;
         if (retry) row.append(retry);
         if (child.parent_key !== node.key) {
           const source = document.createElement("p");
@@ -359,7 +376,7 @@ document.addEventListener("click", async (event) => {
     pollDeadline = window.setTimeout(() => controller.abort(), 8000);
     try {
       const endpoint = liveProgress
-        ? `/api/instances/${instancePath}/nodes/${encodeURIComponent(liveNode)}?view=metadata`
+        ? `/api/instances/${instancePath}/nodes/${encodeURIComponent(liveNode)}?view=metadata${displayStage ? "&stage_reference=" + encodeURIComponent(displayStage) : ""}`
         : `/api/instances/${instancePath}/overview`;
       const response = await fetch(endpoint, {
         credentials: "same-origin", cache: "no-store", referrerPolicy: "no-referrer",

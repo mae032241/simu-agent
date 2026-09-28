@@ -158,7 +158,8 @@ def _experiment_children(node, instance_id, *, retry_csrf=""):
         inherited = "<p class='source-note'>原实验的执行记录，当前为恢复任务。</p>" if child.get("parent_key") != node["key"] else ""
         rows.append("<li class='experiment-child'><div>" + _link(href, title) + " " + state + "</div>"
             + _time(child.get("source_time")) + inherited
-            + _summary_retry(child.get("display_copy"), instance_id, node["key"], retry_csrf) + "</li>")
+            + (_summary_retry(child.get("display_copy") or {"state": "not_generated"}, instance_id,
+                child.get("parent_key", node["key"]), retry_csrf, stage_reference=child.get("reference")) if stage else "") + "</li>")
     body = "<ol class='experiment-child-list'>" + "".join(rows) + "</ol>" if rows else "<p>尚无阶段、执行或审批记录。</p>"
     if page.get("pending_approvals"):
         body = "<p class='pending-approval-note'>待处理审批：" + str(page["pending_approvals"]) + "</p>" + body
@@ -174,17 +175,28 @@ def _experiment_children(node, instance_id, *, retry_csrf=""):
         expanded=bool(page.get("pending_approvals") or page.get("offset")))
 
 
-def _summary_retry(copy, instance_id, node_key, csrf):
-    if not isinstance(copy, dict) or copy.get("state") != "failed":
+def _summary_retry(copy, instance_id, node_key, csrf, *, stage_reference=None):
+    if not isinstance(copy, dict):
         return ""
+    if copy.get("state") in {"queued", "running"}:
+        return "<button type='button' disabled>导读整理中…</button>"
     retry = copy.get("retry")
-    if not csrf or not retry:
+    if not csrf:
+        return _link("/instances/manage", "从实例管理进入以生成或重新整理导读")
+    generate = copy.get("state") == "not_generated"
+    if not generate and not retry:
         return ""
-    fields = {"csrf": csrf, "node_key": node_key, "cache_key": retry["cache_key"], "generation": retry["generation"]}
+    fields = {"csrf": csrf, "node_key": node_key}
+    if not generate:
+        fields.update(cache_key=retry["cache_key"], generation=retry["generation"])
+    if stage_reference:
+        fields["stage_reference"] = stage_reference
     inputs = "".join("<input type='hidden' name='" + key + "' value='" + html.escape(str(value), quote=True) + "'>"
         for key, value in fields.items())
-    return ("<form method='post' action='" + _path(instance_id) + "/display-summary/retry' data-summary-retry>"
-        + inputs + "<button type='submit'>重新整理</button><small>仅重试展示文案，不修改科学结果。</small></form>")
+    action = "generate" if generate else "retry"
+    label = "生成导读" if generate else "重新整理"
+    return ("<form method='post' action='" + _path(instance_id) + "/display-summary/" + action + "' data-summary-retry>"
+        + inputs + "<button type='submit'>" + label + "</button><small>仅整理展示文案，不修改科学结果。</small></form>")
 
 
 def _display_copy(node, instance_id="", *, retry_csrf=""):
@@ -196,10 +208,16 @@ def _display_copy(node, instance_id="", *, retry_csrf=""):
         body += "<h3>" + _text(item["title"], 80) + "</h3><p>" + render_scientific_text(item["summary"], 600) + "</p>"
     if not body:
         body = "<p>" + ("展示导读正在整理；可直接阅读下方原始结果。" if copy.get("state") in {"queued", "running"}
+            else "该版本尚未生成导读，可阅读下方原文。" if copy.get("state") == "not_generated"
             else "展示整理暂不可用，以下保留原始结果。") + "</p>"
-    return ("<section class='latest-stage'><h2>自动导读</h2><p class='source-note'>轻量模型整理，可能有省略；科学结论、数值和限制以原文为准。</p>"
-        + "<div data-display-copy='" + html.escape(node["key"], quote=True) + "'>" + body
-        + _summary_retry(copy, instance_id, node["key"], retry_csrf) + "</div></section>")
+    stage = node.get("stage_reference", "")
+    content = ("<p class='source-note'>轻量模型整理，可能有省略；科学结论、数值和限制以原文为准。</p>"
+        + "<div data-display-copy='" + html.escape(node["key"], quote=True) + "' data-display-stage='"
+        + html.escape(stage, quote=True) + "'>" + body + "</div>")
+    return ("<section class='latest-stage display-copy-section'>"
+        + fold_panel("自动导读", content, class_name="display-copy-panel")
+        + "<div data-display-actions>" + _summary_retry(copy, instance_id, node["key"], retry_csrf, stage_reference=stage)
+        + "</div></section>")
 
 
 _PHASE_LABELS = {"design": "设计", "implementation": "实现", "debug": "调试", "execution": "执行", "validity": "有效性判断"}
@@ -229,7 +247,7 @@ def _experiment_progress(node, instance_id):
     if progress.get("omitted_executions") or progress.get("gaps"):
         body += "<p class='source-note'>此处为部分执行记录；完整记录或读取缺口请在研究轨迹中核对。</p>"
     panel = ("<section class='experiment-progress-panel' data-experiment-key='" + html.escape(node["key"], quote=True)
-        + "'><h2>实验进展</h2><div data-experiment-live aria-live='polite'>" + body + "</div>"
+        + "'><div data-experiment-live aria-live='polite'>" + body + "</div>"
         + "<p class='source-note'>自动更新控制状态；阶段可反复修订，未提供求解完成百分比时不作推算。</p></section>")
     conclusion = _dict(progress.get("latest_conclusion"))
     if conclusion:
@@ -239,7 +257,7 @@ def _experiment_progress(node, instance_id):
             + ("<p>限制：" + render_scientific_text("；".join(conclusion.get("limitations", [])), 2048) + "</p>" if conclusion.get("limitations") else "")
             + ("<p>未决问题：" + render_scientific_text(conclusion["remaining_question"], 512) + "</p>" if conclusion.get("remaining_question") else "")
             + _link(href, "查看该版本全文与依据") + "<p class='source-note'>阶段交付不等于最终报告通过。</p></section>")
-    return panel
+    return fold_panel("实验进展", panel, class_name="experiment-progress", expanded=node.get("state") in {"running", "queued"})
 
 
 def _execution_progress(node: dict) -> str:
@@ -516,13 +534,15 @@ def _sealed_stages(node: dict, instance_id: str) -> str:
     else:
         body += "<p>最终采用版本尚未封存。</p>"
     material = page.get("material")
+    selected = ""
     if isinstance(material, dict):
-        body += "<h3>" + _text(material.get("reference")) + " · 科学材料原文</h3>"
-        body += "<pre>" + html.escape(material.get("text", "")) + "</pre>"
-        body += link({"stage_offset": 0}, "返回阶段历史")
+        selected = "<section class='selected-stage'><h2>当前阶段封存原文</h2><p>" + _text(material.get("reference")) + "</p>"
+        selected += "<pre>" + html.escape(material.get("text", "")) + "</pre>"
+        selected += link({"stage_offset": 0}, "返回所属实验与阶段历史")
         if material.get("next_text_offset") is not None:
-            body += "<p>原文尚有后续内容。</p>" + link({"stage_reference": material["reference"],
+            selected += "<p>原文尚有后续内容。</p>" + link({"stage_reference": material["reference"],
                 "stage_text_offset": material["next_text_offset"]}, "下一段原文")
+        selected += "</section>"
     for item in page.get("items", []):
         title = str(phases.get(item.get("stage"), item.get("stage")))
         title += " · " + str(kinds.get(item.get("delivery_kind"), item.get("delivery_kind"))) + " · v" + str(item["version"])
@@ -560,22 +580,23 @@ def _sealed_stages(node: dict, instance_id: str) -> str:
     if page.get("next_offset") is not None:
         body += link({"stage_offset": page["next_offset"]}, "后续阶段版本")
     panel = fold_panel("已封存阶段与版本历史", body, count=page.get("total", len(page.get("items", []))),
-        class_name="stage-history", expanded=isinstance(material, dict) or bool(page.get("offset", 0)))
-    return "<section id='sealed-stages'>" + panel + "</section>"
+        class_name="stage-history", expanded=bool(page.get("offset", 0)))
+    return "<section id='sealed-stages'>" + selected + panel + "</section>"
 
 
 def render_node(node: dict, *, instance_id: str, presentation: dict | None = None,
                 csrf_token: str = "", can_retry_summary: bool = False) -> bytes:
     key = str(node.get("key", ""))
-    heading = _record_title(node)
+    heading = node.get("stage_title") or _record_title(node)
     storage = _dict(node.get("storage")).get("storage_state")
     header = ("<header class='workbench-header'><nav aria-label='节点导航'>"
-        + _link(_path(instance_id), "← 返回研究实例") + _link(_node_href(instance_id,key), "刷新节点")
+        + _link(_path(instance_id), "← 返回研究实例") + _link(_node_href(instance_id,key)
+            + ("?" + urlencode({"stage_reference": node["stage_reference"]}) if node.get("stage_reference") else ""), "刷新节点")
         + "</nav><div class='workspace-heading'><h1>" + _text(heading) + "</h1>" + _state(node.get("state")) + "</div>"
         + _time(node.get("completed_at") or node.get("source_time") or node.get("created_at"))
         + ("<span class='archive-read-only'>已归档 · 只读</span>" if storage == "archived" else "")
         + "<p class='workbench-update-status' role='status'>显示当前读取的记录。</p></header>")
-    science = render_presentation(presentation, show_summary=node.get("kind") != "approval",
+    science = "" if node.get("stage_reference") else render_presentation(presentation, show_summary=node.get("kind") != "approval",
         evidence_href=lambda artifact, pointer: _evidence_href(instance_id, artifact, pointer),
         image_href=lambda artifact: _path(instance_id) + "/evidence/" + quote(artifact, safe="") + "?format=image")
     approval = ""
@@ -621,7 +642,9 @@ def render_node(node: dict, *, instance_id: str, presentation: dict | None = Non
     if node.get("gaps"):
         details += fold_panel("读取缺口",render_json_value(node["gaps"],max_bytes=4096),count=len(node["gaps"]))
     body = header + "<div class='workspace-grid node-workspace'><aside class='workspace-sidebar'>" + _goal_panel(node,instance_id)
-    body += "<p class='source-note'>运行完成、科学结论与人工批准分别记录。</p></aside><div class='workspace-main'>" + approval + _experiment_progress(node, instance_id)
+    body += "<p class='source-note'>运行完成、科学结论与人工批准分别记录。</p></aside><div class='workspace-main'>" + approval
+    if not node.get("stage_reference"):
+        body += _experiment_progress(node, instance_id)
     retry_csrf = csrf_token if can_retry_summary else ""
     body += "<section id='experiment-children'>" + _experiment_children(node, instance_id, retry_csrf=retry_csrf) + "</section>"
     body += _display_copy(node, instance_id, retry_csrf=retry_csrf) + science + _sealed_stages(node, instance_id) + details + "</div></div>"

@@ -199,6 +199,8 @@ class InstanceReadModel:
         binding = self._binding(instance_id, key)
         result = self._metadata(instance_id, binding)
         result["source"] = {"namespace": binding.namespace, "name": binding.name, "object_id": binding.object_id}
+        if stage_reference:
+            self._stage_display_copy(instance_id, key, stage_reference, result)
         result["gaps"] = []
         result["qualification"] = {"state": "not_evaluated", "reason": "historical_read_does_not_establish_current_qualification"}
         try:
@@ -259,10 +261,38 @@ class InstanceReadModel:
             return None
         return read_stage_deliveries(self.runs, value, instance_id=instance_id, **arguments)
 
-    def node_metadata(self, instance_id: str, key: str) -> dict[str, Any]:
+    def display_source(self, instance_id, key, stage_reference=None):
+        """Resolve the same sealed source for display, refresh and explicit generation."""
+        from ..schema.refs import ArtifactRef
+        binding = self._binding(instance_id, key)
+        if binding.namespace != "run":
+            raise ReadModelNotFound("展示整理需要任务的封存材料。")
+        run = self._run(instance_id, binding.object_id)
+        if stage_reference:
+            record = self.runs.sealed_material_record(run, stage_reference)
+            if record is None or record.get("metadata", {}).get("kind") not in {
+                "experiment_stage", "experiment_implementation", "experiment_debug", "experiment_execution"}:
+                raise ReadModelNotFound("没有找到该任务的确切阶段材料。")
+            return run, ArtifactRef.model_validate(record["artifact_ref"]), record["metadata"]
+        if run.output_ref is None:
+            raise ReadModelNotFound("任务尚无封存结果。")
+        return run, run.output_ref, {}
+
+    def _stage_display_copy(self, instance_id, key, stage_reference, result):
+        _, ref, metadata = self.display_source(instance_id, key, stage_reference)
+        from .experiment_trajectory import PHASES, KINDS
+        phase = metadata.get("stage") or KINDS.get(metadata.get("kind"))
+        result["stage_reference"] = stage_reference
+        result["stage_title"] = PHASES.get(phase, "阶段材料")
+        result["display_copy"] = ((self.presentation_summaries.read(instance_id, ref)
+            if self.presentation_summaries is not None else None) or {"state": "not_generated", "items": []})
+
+    def node_metadata(self, instance_id: str, key: str, *, stage_reference=None) -> dict[str, Any]:
         """Refresh one known node without touching scientific payloads or drafts."""
         binding = self._binding(instance_id, key)
         result = self._metadata(instance_id, binding)
+        if stage_reference:
+            self._stage_display_copy(instance_id, key, stage_reference, result)
         if result.get("operation_id") == "science.experiment.v1":
             from .experiment_progress import read_progress
             from .experiment_trajectory import read_children
@@ -729,7 +759,8 @@ class InstanceReadModel:
                 result["input_count"] = len(value.inputs)
                 if value.output_ref:
                     if self.presentation_summaries is not None:
-                        result["display_copy"] = self.presentation_summaries.read(instance_id, value.output_ref)
+                        result["display_copy"] = self.presentation_summaries.read(instance_id, value.output_ref) or {
+                            "state": "not_generated", "items": []}
                     result["outputs"] = [self._ref(instance_id, value.output_ref, "/output_ref")]
                     output = self.artifacts.catalog(value.output_ref)
                     result["recorded_scientific_claim_admissible"] = output.labels.get("scientific_claim_admissible")
