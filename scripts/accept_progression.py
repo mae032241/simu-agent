@@ -96,8 +96,11 @@ def child(root):
     if not (root / 'candidate.json').exists():
         prepare(root)
     settings = json.loads((root / 'agent-settings.json').read_text())
-    settings['progression'] = dict(max_tasks=3, max_rounds=8, max_elapsed_seconds=1200,
-        max_tokens=200000, max_attempts=1)
+    # Preserve configured token/resource policy. The native usage counter includes
+    # cached input; a separate tiny fixture cap would stop the two-task journey
+    # before it can test scientific continuation. Only bound this fixture's scope.
+    settings.setdefault('progression', {}).update(
+        max_tasks=3, max_rounds=8, max_elapsed_seconds=1200, max_attempts=1)
     write(root / 'agent-settings.json', settings)
     host = Journey(root, json.loads(guard.DEFAULT_CONFIG.read_text())['limits'])
     try:
