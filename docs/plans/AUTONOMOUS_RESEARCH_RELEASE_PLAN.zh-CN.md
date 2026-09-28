@@ -994,6 +994,43 @@ SCID_B6_CANDIDATE=/tmp/scid-b6-candidate-recovery-20260928 python scripts/run_te
 
 本修复节点未运行该安装命令；安装通过后仍须在普通登录终端、用户完成实例选择的前提下另行进行真实旅程。
 
+### B6 停止后成果交接与最终用量修复（2026-09-28）
+
+基线 `1ff4a6b`。真实旅程暴露预算停止后 Root 尚无 report、晚到 token 与旧预算快照不一致；
+本节点仅修控制读取与展示，不重跑模型或生成目标科学结论。
+
+`progression_status.closeout` 是机械读取交接，与 Root 的 `report/last_report` 分开：
+`kind=sealed_task_handoff`、`goal_assessment=not_inferred`、`stop_reason`、`tasks`、
+`in_flight`、`unresolved`、`omissions`、`accepted_tasks_terminal`。最后一项只表示已接受任务
+权威状态全部终态，不表示成功或目标完成。任务按 checkpoint 的准入精确引用读取，复用提取到
+公共 service 的既有 Run decision 投影；字段选择、封存限制和遗漏规则不另造一套。
+每项保留准确 Run/输出名和 `run_status` 读取入口。科学内容预算 32768 bytes，超限保留名称、
+状态与明确遗漏入口。只读取当前目标准入，不扫全实例、不写报告或 checkpoint、不唤醒宿主。
+MCP、会话页、实例页和归档只读模型共享同一读取；关闭宿主和重开服务不会丢失交接。
+
+`budget.observed_tokens` 由最新持久 usage_records 累计输入+输出计算，缓存输入不再相加；
+`stop_snapshot_tokens` 首次 runtime 止损时保存且 resume 不重置。旧预算止损记录可从原预算
+快照读取 stop_snapshot，但没有累计记录时最新总量保持未测量。coverage 保留历史部分测量，
+已接受参与者没有计量时按角色给 `usage.unmeasured_participants`；不公开原生身份或机械绑定。
+预算上限与已消耗记录未改。验收脚本暂停出口只读等待本目标已接受任务终态，沿用原执行期限，
+未静止留下 `accepted_tasks_not_quiescent / b6_passed=false`，不会因暂停立即进入最终读者并清理在途工作。
+
+定向验证均经 `scripts/run_tests.py` 默认守卫串行运行：
+
+- source 首轮 55 passed、1 failed、1 deselected（19.169 s，RSS 145039360 B）。新断言误把归档
+  historical 合同与在线 current 合同视作相同；改为核对封存科学字段和用量。
+- source 收尾 25 passed、1 failed、1 deselected（10.160 s，RSS 139972608 B）。历史 summary-only
+  fixture 原有 partial 被缺测判断降成 missing，已保留已有部分测量；closeout 晚封存、重开、
+  归档字节不变、失败/未核清与控制回归均已通过。
+- 最后 UI 单项、原 Root context 边界和验收等待出口 8 passed（3.092 s，RSS 131268608 B）。
+  提取后的原 RootToolError 接口保持兼容。首次命令遇外部串行锁拒绝，后正常重试，未绕过或杀进程。
+- fake app-server/daemon process 15 passed（12.590 s，RSS 219152384 B），没有真实模型或 TCAD。
+
+证据：`/tmp/scid-b6-closeout-source`、`/tmp/scid-b6-closeout-source-fix`、
+`/tmp/scid-b6-closeout-source-final-retry`、`/tmp/scid-b6-closeout-process`；失败记录保留。
+`git diff --check` 通过。未重复已通过的整组测试、全套、安装、真实浏览器或真实模型。
+本节点再次改变生产源码，之前所有候选 wheel 不代表此版本；统一 installed 节点须重新构建。
+
 ### B6 最新安装验收（2026-09-28）
 
 `28023f9` 修复后重新构建并保留候选 `/tmp/scid-b6-candidate-recovery-20260928`。

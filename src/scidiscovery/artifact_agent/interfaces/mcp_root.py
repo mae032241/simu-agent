@@ -546,7 +546,9 @@ class RootToolFacade(
         return self.bindings.progression_report(instance_id=self._instance_id(), session_key=self.session_key, **values)
 
     def progression_status(self):
-        return self.bindings.progression_status(instance_id=self._instance_id(), session_key=self.session_key)
+        from ..service.progression_read import progression_read_view
+        return progression_read_view(bindings=self.bindings, runs=self.runs, artifacts=self.artifacts,
+            operation_catalog=self._operation_catalog, instance_id=self._instance_id(), session_key=self.session_key)
 
     def progression_command(self, *, command, mode="interactive", objective_name=None):
         instance_id = self._instance_id()

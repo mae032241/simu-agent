@@ -7,59 +7,7 @@ import hashlib
 import json
 
 from .mcp_root_shared import RootToolError
-
-
-def run_intent_projection(value, *, intent):
-    """Pure compact projection; the route avoids assembling excluded details."""
-    result = pick(
-        value,
-        "name",
-        "operation_id",
-        "operation_contract_status",
-        "state",
-        "agent_type",
-        "execution_profile",
-        "deadline_at",
-        "last_activity_at",
-        "output_artifact_name",
-        "recovery_available",
-        "sealed_output_status",
-        "diagnostics_available",
-        "content_unavailable",
-        "sealed_stages",
-        "dispatch",
-        "reason",
-    )
-    if isinstance(result.get("execution_profile"), dict):
-        result["execution_profile"] = pick(result["execution_profile"], "profile")
-    if intent == "full" and value.get("state") == "completed":
-        result.update(pick(value, "output_delivery", "sealed_output", "scheduler_signal", "scheduler_signal_status"))
-    elif intent == "navigation" and value.get("state") == "completed":
-        result.update(pick(value, "output_delivery", "output_index", "output_metadata"))
-    elif intent == "decision" and value.get("state") == "completed":
-        result.update(
-            pick(
-                value,
-                "output_delivery",
-                "output_metadata",
-                "selected_output",
-                "default_output_unavailable",
-                "output_index",
-                "scheduler_signal",
-                "scheduler_signal_status",
-                "scheduler_signal_omissions",
-            )
-        )
-    return result
-
-
-def run_is_terminal(state):
-    # Unknown lifecycle values fail closed; they cannot opt into long details.
-    return state in {"completed", "failed", "timed_out", "cancelled", "canceled"}
-
-
-def pick(value, *keys):
-    return {key: value[key] for key in keys if key in value}
+from ..service.run_read_projection import run_intent_projection, run_is_terminal, pick
 
 
 def page(items, *, key, limit=20, before=None):

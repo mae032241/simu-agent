@@ -82,6 +82,44 @@ def record_progression_notice(checkpoint, *, objective, state, reason):
     checkpoint['current_notice'] = identity
 
 
+def progression_status_view(value, *, session_key=None):
+    """Project one captured control row without a second database read."""
+    if "checkpoint_json" not in value:
+        return value
+    checkpoint = json.loads(value['checkpoint_json'])
+    from ...platforms.codex_usage import usage_summary
+    records = list(checkpoint.get('usage_records', {}).values())
+    usage = usage_summary(records) if records else checkpoint.get('usage_summary', usage_summary([]))
+    budget = dict(checkpoint.get('budget') or {})
+    stop_snapshot = checkpoint.get('stop_snapshot_tokens', budget.get('observed_tokens')
+        if value['reason'] in {'budget_exhausted', 'resource_limit'} else None)
+    budget.update(observed_tokens=sum(sum(record['counted_tokens'][key] for key in
+        ('input_tokens', 'output_tokens')) for record in records) if records else None,
+        stop_snapshot_tokens=stop_snapshot,
+        token_coverage=usage['coverage'])
+    return {key: value[key] for key in ('state', 'mode', 'reason', 'objective_name')} | {
+        'can_schedule': value['state'] == 'active' and value['owner_session'] == session_key,
+        'writer': 'this_session' if value['owner_session'] == session_key and session_key else
+                  'other_session' if value['owner_session'] else 'none',
+        'report': checkpoint.get('report'),
+        'last_report': checkpoint.get('last_report'),
+        'resources': checkpoint.get('resources'),
+        'fault_code': checkpoint.get('fault_code'),
+        'last_command': checkpoint.get('last_command'),
+        'notifications': {
+            'items': checkpoint.get('notices', []),
+            'current_id': checkpoint.get('current_notice') if value['reason'] != 'archive_restored' else None,
+            'omitted': checkpoint.get('notices_omitted', 0),
+            'delivery': 'pull_only', 'read_status': 'not_recorded'},
+        'messages': [dict(name=v['name'], application='next_safe_turn',
+            processed=v in checkpoint.get('processed_snapshot', {}).get('messages', []))
+            for v in checkpoint.get('messages', [])],
+        'budget': budget,
+        'usage': usage,
+        'runtime_status': checkpoint.get('runtime_status', 'not_connected'),
+        'in_flight': 'Previously accepted Workers and executions retain their authority; their exact Run states remain authoritative.'}
+
+
 class SchedulingControl:
     @property
     def control_maintenance(self):
@@ -146,28 +184,7 @@ class SchedulingControl:
         value = dict(row)
         if internal:
             return value
-        checkpoint = json.loads(value['checkpoint_json'])
-        return {key: value[key] for key in ('state', 'mode', 'reason', 'objective_name')} | {
-            'can_schedule': value['state'] == 'active' and value['owner_session'] == session_key,
-            'writer': 'this_session' if value['owner_session'] == session_key and session_key else
-                      'other_session' if value['owner_session'] else 'none',
-            'report': checkpoint.get('report'),
-            'last_report': checkpoint.get('last_report'),
-            'resources': checkpoint.get('resources'),
-            'fault_code': checkpoint.get('fault_code'),
-            'last_command': checkpoint.get('last_command'),
-            'notifications': {
-                'items': checkpoint.get('notices', []),
-                'current_id': checkpoint.get('current_notice') if value['reason'] != 'archive_restored' else None,
-                'omitted': checkpoint.get('notices_omitted', 0),
-                'delivery': 'pull_only', 'read_status': 'not_recorded'},
-            'messages': [dict(name=v['name'], application='next_safe_turn',
-                processed=v in checkpoint.get('processed_snapshot', {}).get('messages', []))
-                for v in checkpoint.get('messages', [])],
-            'budget': checkpoint.get('budget'),
-            'usage': checkpoint.get('usage_summary'),
-            'runtime_status': checkpoint.get('runtime_status', 'not_connected'),
-            'in_flight': 'Previously accepted Workers and executions retain their authority; their exact Run states remain authoritative.'}
+        return progression_status_view(value, session_key=session_key)
 
     def _selected(self, instance_id, session_key):
         self.require_active_instance(instance_id=instance_id)
@@ -465,6 +482,10 @@ class SchedulingControl:
                 conflict('Native host binding changed during observation.')
             checkpoint = json.loads(row['checkpoint_json'])
             checkpoint.update(changes)
+            if stop and 'stop_snapshot_tokens' not in checkpoint:
+                records = list(checkpoint.get('usage_records', {}).values())
+                checkpoint['stop_snapshot_tokens'] = sum(sum(record['counted_tokens'][key]
+                    for key in ('input_tokens', 'output_tokens')) for record in records) if records else None
             record_progression_notice(checkpoint, objective=row['objective_ref_json'],
                 state='paused' if stop and row['mode'] == 'background' else row['state'],
                 reason=reason if reason is not None else row['reason'])

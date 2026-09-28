@@ -48,6 +48,11 @@ class InstanceReadModel:
         self.engineering_diagnostics = engineering_diagnostics
         self.execution_collection = execution_collection
 
+    def progression_status(self, instance_id, *, session_key=None):
+        from ..service.progression_read import progression_read_view
+        return progression_read_view(bindings=self.bindings, runs=self.runs, artifacts=self.artifacts,
+            operation_catalog=self.operation_catalog, instance_id=instance_id, session_key=session_key)
+
     def overview(self, instance_id: str) -> dict[str, Any]:
         instance = self.bindings.get_instance(instance_id=instance_id)
         recent = self.nodes(instance_id, limit=30)
@@ -82,7 +87,7 @@ class InstanceReadModel:
             "management_description": instance.objective,
             "objective_refs": objectives[:100],
             "active_tasks": active,
-            "progression": self.bindings.progression_status(instance_id=instance_id),
+            "progression": self.progression_status(instance_id),
             "active_task_pages": pages,
             "nodes": recent,
             "gaps": gaps + ([] if objectives else [gap("no_objective_in_observed_active_run_bindings")]),

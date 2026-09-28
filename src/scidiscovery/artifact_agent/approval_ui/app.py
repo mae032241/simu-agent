@@ -419,7 +419,9 @@ class ApprovalUI:
                 current = self.bindings.get_instance(instance_id=current_id) if current_id else None
             controls = session_controls(rows, token=token, csrf=self.session_id, current=current,
                 expires_at=capability.expires_at, workbench_available=self.read_model is not None,
-                progression=self.bindings.progression_status(instance_id=current.instance_id, session_key=capability.session_key) if current else None)
+                progression=(self.read_model.progression_status(current.instance_id, session_key=capability.session_key)
+                    if self.read_model else self.bindings.progression_status(instance_id=current.instance_id,
+                        session_key=capability.session_key)) if current else None)
             body = management_page("科研会话 · " + capability.session_key[-8:],
                 "<p><a href='/sessions'>返回会话列表</a></p>" + controls)
         else:

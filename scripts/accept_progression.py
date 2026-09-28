@@ -51,6 +51,19 @@ y=2x+1+c*x*(x-1)*(x-2)（c 未知），若不能，什么新观测能够区分�
 
 
 class Journey(Host):
+    def wait_for_accepted_tasks(self, status):
+        """Drain accepted work under the existing execution deadline; no model call."""
+        while not (status.get('closeout') or {}).get('accepted_tasks_terminal', False):
+            write(self.logdir.parent / 'summary.json', dict(status='accepted_tasks_not_quiescent',
+                progression=status, b6_passed=False))
+            if time.monotonic() >= self.phase_deadline:
+                raise RuntimeError('accepted_tasks_not_quiescent')
+            self.pump()
+            time.sleep(2)
+            status = self.call('progression_status', {})
+            write(self.logdir.parent / 'progression.json', status)
+        return status
+
     def call(self, name, arguments):
         reply = self.rpc('mcpServer/tool/call', dict(threadId=self.thread, server='scidiscovery',
             tool='scid_call', arguments=dict(name=name, arguments=arguments),
@@ -88,6 +101,7 @@ class Journey(Host):
                     ensure_ascii=False), flush=True)
                 previous = status
             if status.get('reason') == 'goal_completed' or status.get('state') in {'paused', 'stopped'}:
+                status = self.wait_for_accepted_tasks(status)
                 break
             if status.get('reason') in {'not_started', 'user_question'}:
                 raise RuntimeError('goal_not_started_or_requires_answer')

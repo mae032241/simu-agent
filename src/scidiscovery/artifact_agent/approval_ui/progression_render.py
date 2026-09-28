@@ -45,6 +45,24 @@ def render_progression(status, *, instance_id):
         body += '<p>目标结束记录：' + ('已记录' if report.get('completed') else '未记录') + '</p>'
         body += '<p>剩余 / 待答问题：' + _text(report.get('question')) + '</p>'
     body += "<p><a href='" + base + "#trajectory'>任务成果、限制、图件、表格与授权原件</a>（任务完成不自动代表整个目标完成。）</p>"
+    closeout = status.get('closeout')
+    if closeout:
+        body += '<h3>本目标任务成果交接</h3><p>以下按已接受任务读取封存结果，不代表整个目标完成，也不是新的科学结论。</p>'
+        body += '<p>停止 / 等待原因：' + _text(reasons.get(closeout.get('stop_reason'), closeout.get('stop_reason'))) + '</p>'
+        for item in closeout['tasks']:
+            body += "<h4><a href='" + base + '/nodes/' + quote('run:' + item['name'], safe='') + "'>" + _text(item['name']) + '</a> · ' + _text(item['state']) + '</h4>'
+            output = item.get('output_artifact_name')
+            if output:
+                body += "<p><a href='" + base + '/nodes/' + quote('artifact:' + output, safe='') + "'>封存输出 · " + _text(output) + '</a></p>'
+            body += render_json_value({key: item[key] for key in ('selected_output', 'scheduler_signal',
+                'scheduler_signal_omissions', 'content_unavailable', 'reason') if key in item}, max_bytes=16384)
+        if closeout['in_flight'] or closeout['unresolved']:
+            body += '<p>仍有在途或未核清任务，不得视为交付完成。</p>' + render_json_value(
+                closeout['in_flight'] + closeout['unresolved'], max_bytes=8192)
+        if closeout['omissions']:
+            body += '<p>部分结果超过交接显示上限，请从准确任务入口继续读取。</p>'
+        if not closeout['tasks']:
+            body += '<p>尚无可读取的已接受任务成果。</p>'
     notices = status.get('notifications') or {}
     body += '<h3>持久事项</h3><p>刷新页面或查询推进状态可重读；相同阻塞合并。提供读取不等于用户已读或科研完成；未提供聊天推送和已读回执。</p>'
     categories = dict(user_decision='需用户决定', system_wait='系统等待', status='普通状态变化')
@@ -75,7 +93,8 @@ def render_progression(status, *, instance_id):
     body += '<h3>预算、用量与缺测</h3><dl class="metadata">'
     for key, label in (('rounds', '推进轮次'), ('tasks', '任务数'), ('attempts', '尝试数'), ('probes', '探测数'),
             ('elapsed_seconds', '经过时间（秒）'), ('root_running_seconds', 'Root 运行时间（秒）'),
-            ('waiting_seconds', '等待时间（秒）'), ('observed_tokens', '已观测 Token'),
+            ('waiting_seconds', '等待时间（秒）'), ('observed_tokens', '最新已观测 Token'),
+            ('stop_snapshot_tokens', '首次止损时已观测 Token'),
             ('token_coverage', '目标 Token 覆盖'), ('time_coverage', '时间覆盖'), ('token_enforcement', 'Token 约束方式')):
         body += '<dt>' + label + '</dt><dd>' + _text(budget.get(key)) + '</dd>'
     body += '</dl>'
@@ -83,6 +102,8 @@ def render_progression(status, *, instance_id):
         body += '<details><summary>本次冻结预算上限</summary>' + render_json_value(budget['limits'], max_bytes=8192) + '</details>'
     usage = status.get('usage') or {}
     body += '<p>用量覆盖：' + _text(usage.get('coverage')) + '；货币费用未测量。缓存输入是输入子集，不重复相加。</p>'
+    if usage.get('unmeasured_participants'):
+        body += '<p>已知参与者尚无用量观测：</p>' + render_json_value(usage['unmeasured_participants'], max_bytes=2048)
     body += '<table><thead><tr><th>归属</th><th>输入 Token</th><th>缓存输入</th><th>输出 Token</th><th>失败线程</th><th>缺测线程</th></tr></thead><tbody>'
     for role, label in (('root', 'Root'), ('worker', 'Worker'), ('helper', '助手'), ('unattributed', '未归属')):
         group = usage.get('groups', {}).get(role, {})

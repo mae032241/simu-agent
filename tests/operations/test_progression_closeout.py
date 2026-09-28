@@ -1,0 +1,125 @@
+"""Mechanical sealed handoff survives stopping, reopening and readonly archives."""
+import hashlib
+import json
+from copy import copy
+
+import pytest
+
+from scidiscovery.artifact_agent.approval_ui.progression_render import render_progression
+from scidiscovery.artifact_agent.service.scheduler_bindings import SchedulerBindingService
+from tests.operations.test_progression import progression, checkpoint, row
+from tests.operations.test_local_worker_contracts import _invoke, _worker, _write_result
+from tests.operations.synchronous_archive_fixture import SynchronousFixtureArchive
+from tests.operations.test_instance_archive import save_archive, restore_archive
+
+
+def usage(p, tokens):
+    p.coordinator._event(dict(method='thread/tokenUsage/updated', params=dict(threadId='native-root',
+        tokenUsage=dict(total=dict(inputTokens=tokens, cachedInputTokens=40, outputTokens=10)))))
+
+
+def test_budget_closeout_reads_late_seal_and_usage_without_root_report(progression, monkeypatch):
+    p = progression
+    p.coordinator.tick()
+    host = p.coordinator.host
+    root = p.root.__class__(p.facade(host.scheduler_session))
+    _invoke(root, 'accepted')
+    worker = _worker(p.catalog, p.runtime)
+    worker.call_tool('worker_open_assignment', {})
+    usage(p, 100)
+    p.now[0] += 100000
+    p.coordinator.tick()
+    status = p.root.call_tool('progression_status', {})
+    assert status['reason'] == 'budget_exhausted'
+    assert status['report'] is None and status['last_report'] is None
+    assert status['closeout']['in_flight'][0]['name'] == 'accepted'
+    assert not status['closeout']['accepted_tasks_terminal']
+    assert status['budget']['stop_snapshot_tokens'] == 110
+    usage(p, 140)
+    usage(p, 140)
+    _write_result(worker)
+    worker.call_tool('worker_submit_result', {})
+    host.finish()
+    p.coordinator.tick()
+    assert p.coordinator.host is None and row(p)['host_json'] is None
+    before = row(p)
+    monkeypatch.setattr(p.runtime.runs, 'list', lambda **kw: pytest.fail('must not scan instance'))
+    status = p.root.call_tool('progression_status', {})
+    assert row(p) == before and len(host.prompts) == 1
+    assert status['budget']['observed_tokens'] == 150
+    assert status['budget']['stop_snapshot_tokens'] == 110
+    assert status['closeout']['goal_assessment'] == 'not_inferred'
+    assert status['closeout']['accepted_tasks_terminal']
+    item = status['closeout']['tasks'][0]
+    assert item['output_artifact_name'] == 'accepted.output'
+    original = root.call_tool('run_status', dict(name='accepted', intent='decision'))
+    assert item['selected_output'] == original['selected_output']
+    assert item['scheduler_signal'] == original['scheduler_signal']
+    assert 'native-root' not in json.dumps(status)
+    reopened = copy(p.root.facade)
+    reopened.bindings = SchedulerBindingService(p.runtime.scheduler_bindings.database_path)
+    assert reopened.progression_status() == status
+    page = render_progression(status, instance_id=p.instance)
+    assert '本目标任务成果交接' in page and '首次止损时已观测 Token' in page
+    assert 'accepted.output' in page and 'Bounded result.' in page
+    # Synchronous fixture proof only; no claim about native writer quiescence.
+    p.runtime.runs._synchronous_archive_fixture = True
+    archive = SynchronousFixtureArchive(p.runtime)
+    save_archive(archive, p.instance)
+    package = archive.root / p.instance
+    def digest():
+        return {str(path): hashlib.sha256(path.read_bytes()).hexdigest()
+            for path in package.rglob('*') if path.is_file()}
+    sealed = digest()
+    archived = archive.archived_model(p.instance).progression_status(p.instance)
+    assert archived['historical']
+    archived_item = archived['closeout']['tasks'][0]
+    assert archived_item['selected_output'] == item['selected_output']
+    assert archived_item['scheduler_signal'] == item['scheduler_signal']
+    assert archived['closeout']['accepted_tasks_terminal']
+    assert archived['budget'] == status['budget'] and digest() == sealed
+    restore_archive(archive, p.instance)
+    from scidiscovery.artifact_agent.service.progression_read import progression_read_view
+    restored = progression_read_view(bindings=p.runtime.scheduler_bindings, runs=p.runtime.runs,
+        artifacts=p.runtime.artifacts, operation_catalog=p.runtime.operation_catalog, instance_id=p.instance)
+    assert restored['budget'] == status['budget']
+
+
+def test_failed_and_unresolved_handoff_never_claims_goal_complete(progression):
+    p = progression
+    p.coordinator.tick()
+    root = p.root.__class__(p.facade(p.coordinator.host.scheduler_session))
+    _invoke(root, 'failed')
+    intent = checkpoint(p)['admissions']['failed']
+    value = p.runtime.runs.status(intent['run_id'])
+    p.runtime.runs.record_failure(value.run_id, reason='fixture failure', expected_state=value.state,
+        expected_last_activity_at=value.last_activity_at, timed_out=False)
+    admissions = checkpoint(p)['admissions']
+    admissions['uncertain'] = dict(state='prepared')
+    p.coordinator._save(dict(admissions=admissions))
+    p.root.call_tool('progression_command', dict(command='pause'))
+    status = p.root.call_tool('progression_status', {})
+    assert status['closeout']['tasks'][0]['state'] == 'failed'
+    assert status['closeout']['unresolved'][0]['name'] == 'uncertain'
+    assert not status['closeout']['accepted_tasks_terminal']
+    assert status['report'] is None and status['closeout']['goal_assessment'] == 'not_inferred'
+    assert status['budget']['observed_tokens'] is None and status['usage']['coverage'] == 'missing'
+
+
+def test_acceptance_waits_for_accepted_tasks_without_new_model(tmp_path, monkeypatch):
+    import scripts.accept_progression as acceptance
+    journey = object.__new__(acceptance.Journey)
+    journey.phase_deadline = 10
+    journey.logdir = tmp_path / 'logs'
+    observed = []
+    journey.pump = lambda: observed.append('pump')
+    final = dict(closeout=dict(accepted_tasks_terminal=True))
+    journey.call = lambda name, args: observed.append(name) or final
+    monkeypatch.setattr(acceptance.time, 'monotonic', lambda: 1)
+    monkeypatch.setattr(acceptance.time, 'sleep', lambda _: None)
+    assert journey.wait_for_accepted_tasks(dict(closeout=dict(accepted_tasks_terminal=False))) == final
+    assert observed == ['pump', 'progression_status']
+    monkeypatch.setattr(acceptance.time, 'monotonic', lambda: 11)
+    with pytest.raises(RuntimeError, match='accepted_tasks_not_quiescent'):
+        journey.wait_for_accepted_tasks({})
+    assert json.loads((tmp_path / 'summary.json').read_text())['b6_passed'] is False

@@ -1,5 +1,6 @@
 """Durable pull notices and shared UI projections without models or solvers."""
 import json
+from copy import copy
 from urllib.parse import parse_qs, urlparse
 
 from scidiscovery.artifact_agent.approval_ui.read_model import InstanceReadModel
@@ -26,7 +27,9 @@ def test_notices_coalesce_survive_reconnect_and_reads_do_not_acknowledge(progres
     assert len([item for item in notices['items'] if item['category'] == 'user_decision']) == 1
     assert notices['delivery'] == 'pull_only' and notices['read_status'] == 'not_recorded'
     reopened = SchedulerBindingService(bindings.database_path)
-    assert reopened.progression_status(instance_id=p.instance, session_key=p.user) == status
+    reader = copy(p.root.facade)
+    reader.bindings = reopened
+    assert reader.progression_status() == status
     assert p.root.call_tool('progression_status', {}) == status
     assert row(p) == before  # A query neither writes nor acknowledges a notice.
     assert 'native-root' not in json.dumps(status)
